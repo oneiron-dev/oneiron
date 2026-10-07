@@ -43,12 +43,31 @@ refused workbooks only. The adapter refuses, before any output:
   or computed: Excel reads it from that workbook when it is open, this one under the name it
   was saved with, which the recalc does not know. The writer refuses the workbook as soon as
   evaluation meets such text, whatever IFERROR makes of the closed workbook's `#REF!`;
-- a function the engine does not implement, after the `_xlfn.`/`_xlws.` prefixes resolve
-  as the engine resolves them, where the engine would cache `#NAME?`;
+- an Excel function the engine does not implement, after the `_xlfn.`/`_xlws.` prefixes
+  resolve as the engine resolves them, where the engine would cache `#NAME?`: a bare name of
+  the Excel 2007 file format's functions (with the bare names the fork's list lacks, from
+  LibreOffice's and Apache POI's function tables: DBCS, the name a file gives JIS, USDOLLAR,
+  YEN, DATESTRING, NUMBERSTRING, the Thai functions and EUROCONVERT), one written `_xlfn.` or
+  `_xlws.`, one passed by name (`_xleta.`), or an Excel 4.0 macro function a defined name may
+  call (any `GET.` name, `EVALUATE`, `FILES` and the others);
+- a call that Excel may resolve through code the file does not carry: an XLL add-in's
+  function (`_xll.Foo`), and, in a package holding a VBA project (`xl/vbaProject.bin`, or any
+  part typed `application/vnd.ms-office.vbaProject`), any called name the engine does not
+  resolve, which Excel with macros enabled would call. Every other called name is outside
+  Excel's function list as the file spells it (`IMAGE` without `_xlfn.`, `EOM`, a VBA
+  function saved in an `.xlsx`, Google Sheets' `__xludf.DUMMYFUNCTION` and `arrayformula`):
+  Excel for Windows reads it as an undefined name, `#NAME?`, whatever the call's arguments
+  hold, which IFERROR and the criteria functions see, and the engine does the same natively,
+  in a cell or a defined name. Excel saves `ca="1"` on such a formula only when it evaluated
+  the call; the writer flags every formula holding one, so a call in an IF branch Excel does
+  not take is saved calculate-always where Excel saves no flag, as a volatile call there is
+  (the cached values agree);
 - a workbook name used as a function: a defined name that holds a LAMBDA, a name passed where
-  MAP, REDUCE, SCAN, BYROW, BYCOL, MAKEARRAY, GROUPBY or PIVOTBY take their LAMBDA, or a
-  defined name called like a function. The engine does not resolve workbook LAMBDA names
-  yet and would cache `#NAME?`; LET names and LAMBDA parameters stay native;
+  MAP, REDUCE, SCAN, BYROW, BYCOL, MAKEARRAY, GROUPBY or PIVOTBY take their LAMBDA, a
+  defined name called like a function, or a linked workbook's name called as one
+  (`[1]!Fn(1)`, as Excel writes an add-in workbook's function). The engine does not resolve
+  workbook LAMBDA names yet and would cache `#NAME?`; LET names and LAMBDA parameters stay
+  native;
 - a shared or inline string whose OOXML escapes the writer's reader (Calamine 0.36) decodes
   differently from Excel: it decodes `_x00HH_` but keeps `_x20AC_` (the euro sign) as seven
   characters. It decodes no escape in a literal `t="str"` value, a cell formula, a defined
@@ -142,19 +161,25 @@ goldens reader resolves Excel's rich-value error caches since 2026-10-03), again
 LibreOffice's 753 (the unchanged evaluator scored 754). The comparison uses a pinned UTC
 instant; the edit round trip uses the caller's clock (above).
 
-The shipped adapter on the same corpus (2026-10-07, `recalc_native` over the 5,455 saved
+The shipped adapter on the same corpus (2026-10-08, `recalc_native` over the 5,455 saved
 originals, 3,040 of them with formulas; the retained OPC reader admits their ZIP directory
-entries): 2,959 of the 3,040 formula workbooks (97.3%) recalculate natively, none is refused
-outright and 81 fall back: 32 for functions the engine lacks, 15 for precision-as-displayed, 12
-for CELL("filename"), 8 for linked-workbook forms the engine does not read as Excel does (5
-linked ranges INDEX selects at a computed row, 3 approximate VLOOKUPs over open linked ranges),
-6 for a reference to the workbook itself (`[0]`), 5 over the token bound and 3 for an unreadable
-defined name. The 2,886 native workbooks with scored cells match Excel (none of their 922,058
-scored cells differs); the other 73 hold only cells downstream of NOW, TODAY and RAND, which the
-comparison skips. Of the 279 formula workbooks with external links or external relationship
-targets, which all fell back before, 236 recalculate natively (none of their 480,230 scored
-cells differs from Excel), 35 now meet another reason (12 precision-as-displayed, 11 unknown
-functions, 6 CELL("filename"), 6 the workbook itself) and 8 a linked-workbook form. Of the 274
+entries): 2,986 of the 3,040 formula workbooks (98.2%) recalculate natively, none is refused
+outright and 54 fall back: 15 for precision-as-displayed, 12 for CELL("filename"), 8 for
+linked-workbook forms the engine does not read as Excel does (5 linked ranges INDEX selects at a
+computed row, 3 approximate VLOOKUPs over open linked ranges), 6 for a reference to the workbook
+itself (`[0]`), 5 for an Excel function the engine lacks (`_xlfn.ANCHORARRAY`), 5 over the token
+bound and 3 for an unreadable defined name. The 2,913 native workbooks with scored cells match
+Excel (none of their 1,043,269 scored cells differs); the other 73 hold only cells downstream of
+NOW, TODAY and RAND, which the comparison skips. Of the 32 that fell back for an unregistered
+function before, 27 recalculate natively and match Excel on every scored cell, those calling the
+names too: 6 with `IMAGE` written without `_xlfn.` (`#NAME?`), 3 with the VBA function `ClrCnt`
+and no VBA project (`#NAME?`), 3 with `EOM` in a SUMIFS criterion (0), 6 with Google Sheets'
+`__xludf.DUMMYFUNCTION` and 3 with its `arrayformula`, inside IFERROR (IFERROR's value), and 6
+whose `TjDAY()` sits in an IF branch Excel does not take (`""`). Of the 279 formula workbooks with
+external links or external relationship targets, which all fell back before, 242 recalculate
+natively (none of the 480,230 scored cells of the first 236 differs from Excel; the other 6 are
+the `TjDAY` workbooks), 29 meet another reason (12 precision-as-displayed, 6 CELL("filename"), 6
+the workbook itself, 5 `_xlfn.ANCHORARRAY`) and 8 a linked-workbook form. Of the 274
 that fell back for caller context, 254 recalculate natively (none of their 384,165 scored cells
 differs); 12 read CELL("filename"), 6 the workbook itself and 2 pass the token bound. The checks
 for escaped names and formulas, related tables and malformed workbook metadata change no corpus

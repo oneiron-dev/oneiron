@@ -1,5 +1,5 @@
 //! Bound formula AST evaluation, keep what only the host knows out of native
-//! recalc and find the functions the engine does not implement.
+//! recalc and find the called names the engine does not resolve.
 use std::collections::BTreeSet;
 
 use formualizer_common::LiteralValue;
@@ -25,9 +25,12 @@ pub(super) struct Inspection {
     /// workbook alone. INDIRECT text that names a workbook, which may be
     /// computed, is the writer's to refuse as evaluation meets it.
     pub host_context: Option<&'static str>,
-    /// A function the engine's registry does not resolve. The engine would
-    /// cache `#NAME?` for it where Excel computes a value.
-    pub unknown_function: Option<String>,
+    /// Every name called as a function, or passed by name (`_xleta.`), that
+    /// the engine's registry does not resolve and that is not a LET name or
+    /// LAMBDA parameter, each once, as the formula spells it with its
+    /// prefixes. The engine evaluates such a call to `#NAME?`; the workbook
+    /// check decides whether Excel does too.
+    pub unknown_functions: Vec<String>,
     /// A name passed where a helper (MAP, REDUCE, BYROW, ...) takes its
     /// LAMBDA, or invoked, that is not a LET name or LAMBDA parameter. The
     /// engine does not resolve a workbook name to a LAMBDA yet.
@@ -54,8 +57,9 @@ pub(super) fn inspect_formula(formula: &str) -> Result<Inspection> {
     let mut pending: Vec<(&ASTNode, usize)> = vec![(&node, 1)];
     let mut host_context = None;
     let mut lambda = false;
-    // Called names, names in a callable position, and the LET names and
-    // LAMBDA parameters either may name.
+    // Called names (as spelled, and as the registry looks them up), names in
+    // a callable position, and the LET names and LAMBDA parameters either
+    // may name.
     let mut called = Vec::new();
     let mut callable = Vec::new();
     let mut local = BTreeSet::new();
@@ -71,7 +75,7 @@ pub(super) fn inspect_formula(formula: &str) -> Result<Inspection> {
                     && let Some(function) = strip_prefix(name, "_xleta.")
                 {
                     host_context = host_context.or_else(|| needs_host(function, None));
-                    called.push(function);
+                    called.push((name.as_str(), function));
                 }
             }
             ASTNodeType::UnaryOp { expr, .. } => pending.push((expr, depth + 1)),
@@ -103,7 +107,7 @@ pub(super) fn inspect_formula(formula: &str) -> Result<Inspection> {
                 {
                     callable.push(name);
                 }
-                called.push(name.as_str());
+                called.push((name.as_str(), name.as_str()));
                 pending.extend(args.iter().map(|arg| (arg, depth + 1)));
             }
             ASTNodeType::Call { callee, args } => {
@@ -118,17 +122,23 @@ pub(super) fn inspect_formula(formula: &str) -> Result<Inspection> {
             }
         }
     }
-    let unknown_function = called
+    let mut seen = BTreeSet::new();
+    let unknown_functions = called
         .into_iter()
-        .find(|name| !local.contains(&name.to_ascii_uppercase()) && !registered(name))
-        .map(str::to_owned);
+        .filter(|(spelled, name)| {
+            !local.contains(&name.to_ascii_uppercase())
+                && !registered(name)
+                && seen.insert(spelled.to_ascii_uppercase())
+        })
+        .map(|(spelled, _)| spelled.to_owned())
+        .collect();
     let callable_name = callable
         .into_iter()
         .find(|name| !local.contains(&name.to_ascii_uppercase()))
         .map(str::to_owned);
     Ok(Inspection {
         host_context,
-        unknown_function,
+        unknown_functions,
         callable_name,
         lambda,
     })
@@ -231,7 +241,7 @@ fn registered(name: &str) -> bool {
     formualizer_eval::function_registry::get("", name).is_some()
 }
 
-fn strip_prefix<'a>(name: &'a str, prefix: &str) -> Option<&'a str> {
+pub(super) fn strip_prefix<'a>(name: &'a str, prefix: &str) -> Option<&'a str> {
     name.get(..prefix.len())
         .filter(|head| head.eq_ignore_ascii_case(prefix))
         .map(|_| &name[prefix.len()..])
