@@ -75,12 +75,17 @@ impl StoreClock {
     /// [`Self::now_recorded_at`] without observing it: the floor stays where
     /// the vault's writes put it, so a stamp read this way (a job row's) moves
     /// no later write's clock, even after the source rolls back.
+    ///
+    /// The floor stays locked while the source is read, as in
+    /// [`Self::now_recorded_at`]: no other caller can observe the clock
+    /// between the two reads, so a peek never returns below a floor another
+    /// caller saw first.
     pub(crate) fn peek_recorded_at(&self) -> u64 {
-        let floor = *self
+        let floor = self
             .floor
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        floor.max(self.source.now_recorded_at())
+        (*floor).max(self.source.now_recorded_at())
     }
     /// Nondecreasing seconds, not one fictitious second for each write.
     /// Transactions persist this floor before commit.
@@ -211,3 +216,6 @@ pub(crate) fn recorded_at_in_txn(
     }
     Ok(now)
 }
+
+#[cfg(test)]
+mod tests;
