@@ -331,16 +331,32 @@ fn a_cuda_device_resolves_through_the_environment() {
     );
 }
 
+/// Resolution must carry the shipped `policy/embedder.toml` candidate row
+/// through unchanged, in that order: `auto` tries the first permitted device
+/// that is available, so the sequence is observable selection policy.
+///
+/// The expectation is read from the manifest here by a second, independent
+/// parse of the same shipped file, rather than restated as a literal or
+/// taken from `LocalEmbedderConfig::default()` — the default is produced by
+/// the same private `shipped_device_policy()` path under test, so comparing
+/// against it would only assert that one function equals itself. Which
+/// accelerators the manifest lists, and in what order, stays a policy edit
+/// owned by that file; what cannot change silently is resolution dropping,
+/// reordering, or extending the row on its way to the vault.
 #[test]
 fn shipped_auto_device_policy_is_an_ordered_manifest_row() {
+    let shipped: super::embedder::LocalDevicePolicy =
+        toml::from_str(include_str!("../../policy/embedder.toml"))
+            .expect("the shipped device policy parses into the public policy shape");
+    let manifest_row = shipped
+        .auto_devices
+        .expect("the shipped manifest carries an auto_devices row");
+
     let resolved = resolve("dimensions = 1024\n\n[embedder]\n").expect("local default");
     assert_eq!(
         resolved.embedder.expect("embedder").local.auto_devices,
-        [
-            EmbedderDevice::Metal,
-            EmbedderDevice::Cuda,
-            EmbedderDevice::Cpu
-        ],
+        manifest_row,
+        "resolution must carry the shipped manifest row through in order"
     );
 }
 

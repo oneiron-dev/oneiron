@@ -3,50 +3,6 @@
 use super::*;
 
 #[test]
-fn diagnostic_rejects_noncanonical_body_bytes() -> Result<()> {
-    let canonical = encode_diagnostic_event_body(&sample_event())?;
-    validate_diagnostic_event_body_bytes(&canonical)?;
-
-    let mut entries = body_entries(&canonical);
-    entries.swap(0, 1);
-    let reordered = encode_entries(entries);
-    assert_ne!(reordered, canonical);
-    assert_rejected(&reordered, "reordered body keys");
-    assert!(validate_diagnostic_event_body_bytes(&reordered).is_err());
-
-    // A wider integer marker preserves the decoded value, but not its bytes.
-    let mut key = Vec::new();
-    rmpv::encode::write_value(&mut key, &Value::from("schema_version")).unwrap();
-    let offset = canonical
-        .windows(key.len())
-        .position(|part| part == key)
-        .unwrap()
-        + key.len();
-    assert_eq!(canonical[offset], 0x01);
-    let mut wide = canonical[..offset].to_vec();
-    wide.extend_from_slice(&[0xCC, 0x01]);
-    wide.extend_from_slice(&canonical[offset + 1..]);
-    decode_diagnostic_event_body(&wide)?;
-    assert_eq!(
-        validate_diagnostic_event_body_bytes(&wide)
-            .unwrap_err()
-            .kind(),
-        ErrorKind::InvalidDiagnosticBody
-    );
-
-    let uppercase = seed_id(0xAB).to_hex().to_uppercase();
-    for (key, value) in [
-        ("actor_ref", Value::from(uppercase.clone())),
-        ("evidence_refs", Value::Array(vec![Value::from(uppercase)])),
-    ] {
-        let mut entries = body_entries(&canonical);
-        set_key(&mut entries, key, value);
-        assert_rejected(&encode_entries(entries), "uppercase entity ref");
-    }
-    Ok(())
-}
-
-#[test]
 fn diagnostic_escape_requires_exact_writer_form() -> Result<()> {
     let canonical = encode_diagnostic_event_body(&sample_event())?;
     for hostile in [

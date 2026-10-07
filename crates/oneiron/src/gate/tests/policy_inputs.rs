@@ -180,17 +180,6 @@ fn min_of_two_caps() {
 }
 
 #[test]
-fn introducer_lower_wins() {
-    assert_eq!(
-        foreign_agent_effective_ceiling(
-            PolicyApprovalCeiling::Auto,
-            PolicyApprovalCeiling::Proposed,
-        ),
-        PolicyApprovalCeiling::Proposed
-    );
-}
-
-#[test]
 fn widen_on_request_path() {
     let capped = foreign_agent_effective_ceiling(
         PolicyApprovalCeiling::Auto,

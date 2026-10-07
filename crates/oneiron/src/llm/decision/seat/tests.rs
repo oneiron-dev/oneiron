@@ -86,6 +86,23 @@ fn decide(stub: &Stub, req: SeatRequest, guard: &BudgetGuard) -> LlmResult<Typed
         guard,
     ))
 }
+fn decide_with_band(
+    stub: &Stub,
+    req: SeatRequest,
+    guard: &BudgetGuard,
+    band: DecisionBand,
+) -> LlmResult<TypedDecision> {
+    let mut dial = dial();
+    dial.band = band;
+    run(decide_at_remote_seat(
+        stub,
+        req,
+        EntityId::now(),
+        vec![],
+        dial,
+        guard,
+    ))
+}
 #[test]
 fn confident_accept_no_is_measured_twice_with_distinct_leases_and_version_pins() {
     let stub = Stub::new(vec![
@@ -146,43 +163,61 @@ fn disagreement_and_noul_uncertainty_hold() {
 }
 #[test]
 fn choice_and_score_confidence_hold_below_high_and_admit_at_or_above_it() {
-    for answer_contract in [
-        (
-            AnswerContract::Choice {
-                options: vec!["yes".into(), "no".into()],
-            },
-            DecisionAnswer::Choice("yes".into()),
-            vec![],
-        ),
-        (
-            AnswerContract::Score { min: 0.0, max: 2.0 },
-            DecisionAnswer::Score(1.0),
-            vec!["low".into(), "medium".into(), "high".into()],
-        ),
+    for band in [
+        DecisionBand {
+            low: 0.35,
+            high: 0.65,
+        },
+        DecisionBand {
+            low: 0.2,
+            high: 0.8,
+        },
     ] {
-        for (confidence, hold) in [
-            (0.1, true),
-            (0.35, true),
-            (0.649, true),
-            (0.65, false),
-            (0.9, false),
+        for answer_contract in [
+            (
+                AnswerContract::Choice {
+                    options: vec!["yes".into(), "no".into()],
+                },
+                DecisionAnswer::Choice("yes".into()),
+                vec![],
+            ),
+            (
+                AnswerContract::Score { min: 0.0, max: 2.0 },
+                DecisionAnswer::Score(1.0),
+                vec!["low".into(), "medium".into(), "high".into()],
+            ),
         ] {
-            let mut req = request();
-            req.question.contract = answer_contract.0.clone();
-            req.question.accept_type = false;
-            req.score_levels = answer_contract.2.clone();
-            let stub = Stub::new(vec![Ok(response(answer_contract.1.clone(), confidence))]);
-            let result = decide(&stub, req, &guard(4)).unwrap();
-            assert_eq!(result.in_band, hold);
-            assert_eq!(
-                result.answer,
-                if hold {
-                    DecisionAnswer::Abstain
-                } else {
-                    answer_contract.1.clone()
-                }
-            );
-            assert_eq!(result.human_ask, hold.then_some(HumanAskReason::Uncertain));
+            // Low confidence is uncertain, not a confident negative Noul.
+            for (confidence, hold) in [
+                (0.1, true),
+                (band.low, true),
+                ((band.low + band.high) / 2.0, true),
+                (band.high - 0.001, true),
+                (band.high - f64::EPSILON, true),
+                (band.high, false),
+                (0.9, false),
+            ] {
+                let mut req = request();
+                req.question.contract = answer_contract.0.clone();
+                req.question.accept_type = false;
+                req.score_levels = answer_contract.2.clone();
+                let stub = Stub::new(vec![Ok(response(answer_contract.1.clone(), confidence))]);
+                let result = decide_with_band(&stub, req, &guard(4), band).unwrap();
+                assert_eq!(
+                    result.in_band, hold,
+                    "confidence {confidence}, band {band:?}"
+                );
+                assert_eq!(
+                    result.answer,
+                    if hold {
+                        DecisionAnswer::Abstain
+                    } else {
+                        answer_contract.1.clone()
+                    }
+                );
+                assert_eq!(result.human_ask, hold.then_some(HumanAskReason::Uncertain));
+                assert_eq!(result.receipt.band, band);
+            }
         }
     }
 }
