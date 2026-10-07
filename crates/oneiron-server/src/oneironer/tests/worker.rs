@@ -300,6 +300,62 @@ fn a_tagger_swapped_for_another_checkpoint_stops_the_worker_after_its_idle_wait(
     );
 }
 
+/// A tagger swapped for another checkpoint while the worker drains a backlog
+/// larger than one batch: no answer the other model gave settles under the
+/// configured checkpoint. The turn it answered and every turn after it still
+/// owe a pass, and the worker stops.
+#[test]
+fn a_tagger_swapped_mid_backlog_settles_no_answer_under_the_configured_checkpoint() {
+    let stub = StubTagger::start(Answer::Good);
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open_vault(dir.path(), true, false);
+    // The backlog is on disk before the worker starts.
+    let backlog: BTreeSet<EntityId> = (0..6)
+        .map(|index| witness(&vault, &format!("backlog turn {index} where Ada met Grace")))
+        .collect();
+    let mut config = stub.config();
+    config.batch_size = 2;
+    // The configured checkpoint answers the first batch; another model
+    // answers the third extract and every one after it.
+    stub.swap_card_at_extract(3, card("ffffffffffffffff"));
+    let tagged = server(&vault, Some(&config));
+    let running = Running::start(&tagged);
+    assert!(
+        wait_until(|| running
+            .worker
+            .as_ref()
+            .is_some_and(tokio::task::JoinHandle::is_finished)),
+        "the worker stops once the tagger is another checkpoint"
+    );
+    running.stop();
+
+    let extracts = stub.extracts();
+    assert!(extracts.len() >= 3, "the other model answered a call");
+    let answered_as_configured: BTreeSet<EntityId> = extracts[..2]
+        .iter()
+        .map(|body| EntityId::from_hex(body["turn"].as_str().expect("turn")).expect("turn id"))
+        .collect();
+    let rows = markers(&vault);
+    let turns_in = |wanted: &dyn Fn(AttemptState) -> bool| -> BTreeSet<EntityId> {
+        rows.iter()
+            .filter(|row| wanted(row.state))
+            .map(|row| {
+                let key = row.dedupe_key.as_deref().expect("marker dedupe key");
+                EntityId::from_hex(key.split('@').next().expect("turn half")).expect("turn id")
+            })
+            .collect()
+    };
+    let completed = turns_in(&|state| state == AttemptState::Completed);
+    let pending =
+        turns_in(&|state| matches!(state, AttemptState::Queued | AttemptState::Scheduled));
+    assert_eq!(completed, answered_as_configured);
+    assert_eq!(
+        pending,
+        backlog.difference(&completed).copied().collect(),
+        "every turn the configured checkpoint did not answer still owes a pass"
+    );
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }

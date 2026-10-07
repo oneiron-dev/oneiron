@@ -3,11 +3,11 @@
 //!
 //! The engine commits the markers with the writes, leases them and settles
 //! them; it never starts a thread. This loop is the host half, shaped like the
-//! embedding worker: make sure the tagger is the configured one, then drain
-//! what is ready, then wait. Pickup is level-triggered: every pass reads the
-//! markers that are ready now, and a commit to the job tables only wakes the
-//! loop early. Everything the reconciler does is sync, so every pass runs on
-//! a blocking thread.
+//! embedding worker: make sure the tagger is the configured one before every
+//! pass, drain what is ready, then wait. Pickup is level-triggered: every pass
+//! reads the markers that are ready now, and a commit to the job tables only
+//! wakes the loop early. Everything the reconciler does is sync, so every pass
+//! runs on a blocking thread.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -78,33 +78,19 @@ impl SyncServer {
                         .into_iter()
                         .chain(pass.earliest_retry_at())
                         .min();
-                    let claimed = pass.traces.len();
-                    let call_failed = pass.failed_calls > 0;
-                    if call_failed {
-                        // The tagger may come back as another model: probe
-                        // before the next pass, then back off.
+                    if pass.failed_calls > 0 {
                         tracing::warn!("tagger call failed; backing off");
                         tokio::time::sleep(backoff).await;
                         backoff = (backoff * 2).min(MAX_BACKOFF);
-                        if !self.tagger_still_configured().await {
-                            return;
+                    } else {
+                        backoff = FIRST_BACKOFF;
+                        if pass.traces.is_empty() {
+                            let wait = self.until_ready(next_retry, idle);
+                            tokio::select! {
+                                _ = wake.recv() => {}
+                                () = tokio::time::sleep(wait) => {}
+                            }
                         }
-                        continue;
-                    }
-                    backoff = FIRST_BACKOFF;
-                    if claimed > 0 {
-                        continue;
-                    }
-                    let wait = self.until_ready(next_retry, idle);
-                    tokio::select! {
-                        _ = wake.recv() => {}
-                        () = tokio::time::sleep(wait) => {}
-                    }
-                    // The tagger may have been swapped while the loop waited:
-                    // its answers settle under the configured checkpoint, so
-                    // probe before the next pass.
-                    if !self.tagger_still_configured().await {
-                        return;
                     }
                 }
                 Ok(Err(error)) => {
@@ -116,6 +102,12 @@ impl SyncServer {
                     tracing::error!(%error, "tagging pass task ended; worker stopping");
                     return;
                 }
+            }
+            // Every pass settles its answers under the configured checkpoint,
+            // so every pass follows a probe: the tagger may have been swapped
+            // while the loop waited, backed off, or drained the last batch.
+            if !self.tagger_still_configured().await {
+                return;
             }
         }
     }

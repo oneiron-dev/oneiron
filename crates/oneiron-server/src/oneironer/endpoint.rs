@@ -3,10 +3,10 @@
 //!
 //! `GET {url}/v1/model` answers with a model card (identity and what the model
 //! returns); `POST {url}/v1/extract` takes the engine's `EncoderInput` and
-//! answers with an `EncoderOutput`. The client follows the embedder endpoint's
-//! rules: a loopback host is on-device, one attempt per call, no redirects, a
-//! bounded body, and errors that carry the failure class and never vault text.
-//! It takes no proxy.
+//! answers with an `EncoderOutput`, which a card read after it vouches for.
+//! The client follows the embedder endpoint's rules: a loopback host is
+//! on-device, one attempt per call, no redirects, a bounded body, and errors
+//! that carry the failure class and never vault text. It takes no proxy.
 
 use std::io::Read;
 use std::time::Duration;
@@ -234,7 +234,20 @@ impl ExtractionEncoder for HttpTagger {
     }
 
     fn infer(&self, input: &EncoderInput) -> oneiron::Result<EncoderOutput> {
-        self.post_extract(input)
+        let output = self.post_extract(input)?;
+        // The answer names no checkpoint, and it settles under the configured
+        // one; so the card is read again once the answer is in. A tagger that
+        // is no longer the configured one fails the call, and its marker
+        // waits. Only a swap there and back inside one call passes this.
+        match self.probe() {
+            Ok(ProbeOutcome::Ready(_)) => Ok(output),
+            Ok(ProbeOutcome::Unreachable(_)) => Err(failure(
+                "tagger model card unreadable after extract".to_owned(),
+            )),
+            Err(_) => Err(failure(
+                "tagger is not the configured checkpoint after extract".to_owned(),
+            )),
+        }
     }
 }
 

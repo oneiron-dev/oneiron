@@ -42,6 +42,9 @@ pub(super) struct StubState {
     answer: Mutex<Answer>,
     card: Mutex<Value>,
     extracts: Mutex<Vec<Value>>,
+    /// The extract, counted from one, at which the stub starts serving this
+    /// card: that call is the first one the other model answers.
+    swap: Mutex<Option<(usize, Value)>>,
 }
 
 pub(super) struct StubTagger {
@@ -74,6 +77,7 @@ impl StubTagger {
             answer: Mutex::new(answer),
             card: Mutex::new(card(CHECKPOINT)),
             extracts: Mutex::new(Vec::new()),
+            swap: Mutex::new(None),
         });
         let app = Router::new()
             .route("/v1/model", get(stub_model))
@@ -106,6 +110,11 @@ impl StubTagger {
         *self.state.card.lock().expect("card lock") = card;
     }
 
+    /// From its `nth` extract on, the stub is another model serving `card`.
+    pub(super) fn swap_card_at_extract(&self, nth: usize, card: Value) {
+        *self.state.swap.lock().expect("swap lock") = Some((nth, card));
+    }
+
     /// Every `POST /v1/extract` body the stub received.
     pub(super) fn extracts(&self) -> Vec<Value> {
         self.state.extracts.lock().expect("extracts lock").clone()
@@ -125,11 +134,15 @@ async fn stub_extract(
     axum::Json(body): axum::Json<Value>,
 ) -> Result<axum::response::Response, StatusCode> {
     use axum::response::IntoResponse;
-    state
-        .extracts
-        .lock()
-        .expect("extracts lock")
-        .push(body.clone());
+    let received = {
+        let mut extracts = state.extracts.lock().expect("extracts lock");
+        extracts.push(body.clone());
+        extracts.len()
+    };
+    let swap = state.swap.lock().expect("swap lock").clone();
+    if let Some((_, swapped)) = swap.filter(|(nth, _)| *nth == received) {
+        *state.card.lock().expect("card lock") = swapped;
+    }
     let answer = *state.answer.lock().expect("answer lock");
     let first = body["messages"][0]["text"]
         .as_str()
