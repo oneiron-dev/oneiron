@@ -15,7 +15,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/bin/recalc_native.rs` | src | s | — | — | Measure the shipped retained XLSX adapter without a precision fallback |
 | `src/calc.rs` | src | s | 2 struct · 3 enum · 1 trait · 2 fn | CalcReport, CalcSetup, CalcValue, EngineId, RecalcEngine, RouteDecision | Storage-independent recalc seam: pure over cell maps, no vault, no filesystem, no clock |
 | `src/clock.rs` | src | s | 1 struct · 5 fn | RecalcClock | What one recalculation reads from its caller: the instant NOW() and TODAY() observe, the local UTC offset… |
-| `src/context.rs` | src | s | 3 crate-vis | — | Bound formula AST evaluation, keep what only the host knows out of native recalc and find the functions the… |
+| `src/context.rs` | src | s | 4 crate-vis | — | Bound formula AST evaluation, keep what only the host knows out of native recalc and find the called names… |
 | `src/engine.rs` | src | s | 1 struct · 1 fn · 6 const · 1 re-export · 1 crate-vis | FormualizerEngine | The owned formualizer engine behind the [`RecalcEngine`] seam |
 | `src/error.rs` | src | s | 1 enum · 1 fn · 1 type | FormulaError | Typed failures for the formula crate |
 | `src/lib.rs` | src | s | 6 mod · 7 re-export | — | In-process XLSX formula recalculation, the default of the edit round trip |
