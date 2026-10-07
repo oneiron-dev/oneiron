@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use super::{CallEnvelope, ModelId};
-use crate::entity_id::bytes_to_hex_lower;
+use oneiron_contracts::entity_id::bytes_to_hex_lower;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LlmRequest {
@@ -103,7 +103,7 @@ pub enum ImageContent {
 /// Typed stream events. Deltas are transient; only [`Self::Done`] is durable.
 ///
 /// Adapters must not emit [`Self::Done`] for a successful empty response; they
-/// should report [`FatalLlmError::EmptyResponse`](crate::FatalLlmError::EmptyResponse) instead.
+/// should report [`FatalLlmError::EmptyResponse`](crate::llm::FatalLlmError::EmptyResponse) instead.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum LlmStreamEvent {
@@ -231,7 +231,8 @@ pub enum FinishReason {
     Other { name: String },
 }
 
-pub(crate) fn canonical_json_bytes<T: Serialize>(
+/// Serializes `value` as JSON with every object's keys sorted, so equal values hash equal.
+pub fn canonical_json_bytes<T: Serialize>(
     value: &T,
 ) -> std::result::Result<Vec<u8>, serde_json::Error> {
     let value = serde_json::to_value(value)?;

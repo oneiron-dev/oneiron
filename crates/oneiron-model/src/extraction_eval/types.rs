@@ -250,7 +250,9 @@ pub struct Of360Ar3MetricTier {
 impl Of360Ar3MetricTier {
     /// Checks metadata and numeric consistency using the evaluator's metric helpers.
     /// Raw dataset/run inputs are still required to establish result authenticity.
-    pub(crate) fn validate(&self) -> Of360Result<()> {
+    /// Public so `oneiron`'s autoreason campaign report (its one caller outside this crate)
+    /// runs the same check across the crate line.
+    pub fn validate(&self) -> Of360Result<()> {
         validate_metric_definitions(&self.metric_definitions)?;
         // The landed envelope is a symbolic pin, not a hash computed from JSON.
         // Only the canonical definitions can be emitted by the AR-3 evaluator.

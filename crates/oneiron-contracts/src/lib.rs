@@ -21,6 +21,7 @@ pub mod retrieval_quality;
 pub mod retrieval_telemetry;
 pub mod secret_custody;
 pub mod secret_lease;
+pub mod serialize;
 pub mod temporal;
 pub mod write_envelope;
 

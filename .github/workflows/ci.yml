@@ -214,11 +214,11 @@ jobs:
       - name: Featureless oneiron library tests
         env:
           RUSTC_WRAPPER: sccache
-        run: cargo test --locked -p oneiron -p oneiron-contracts -p oneiron-retrieval --lib --no-default-features
+        run: cargo test --locked -p oneiron -p oneiron-contracts -p oneiron-retrieval -p oneiron-model --lib --no-default-features
       - name: Featureless oneiron library tests (nextest, no retries)
         env:
           RUSTC_WRAPPER: sccache
-        run: cargo nextest run --locked -p oneiron -p oneiron-contracts -p oneiron-retrieval --lib --no-default-features --profile featureless --no-fail-fast --retries 0
+        run: cargo nextest run --locked -p oneiron -p oneiron-contracts -p oneiron-retrieval -p oneiron-model --lib --no-default-features --profile featureless --no-fail-fast --retries 0
       - name: Compiler cache stats
         if: always() && steps.sccache.outcome == 'success'
         run: sccache --show-stats

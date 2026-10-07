@@ -22,6 +22,7 @@ doctest = true
 # Lower engine crates split out of this one. This crate re-exports each moved
 # module at its old `oneiron::<module>` path.
 oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
+oneiron-model = { version = "0.1.0", path = "../oneiron-model" }
 oneiron-retrieval = { version = "0.1.0", path = "../oneiron-retrieval" }
 oneiron-sandbox-contract = { path = "../oneiron-sandbox-contract" }
 oneiron-seal = { version = "0.1.0", path = "../oneiron-seal" }
@@ -200,14 +201,14 @@ sync = [
 # mirror-failure hook for ONE-1140's root-snapshot/`ls:`-mirror atomicity
 # test in `oneiron-server`). No production effect; enabled only by
 # downstream crates' dev-dependencies.
-test-hooks = []
+test-hooks = ["oneiron-model/test-hooks"]
 # Compiles in `Vault::open_unseeded_for_test` — the only way to open a vault
 # without seeding the default policy manifest (the effect-spine oracle needs
 # it). Enabled only via the self dev-dependency below. Even under
 # `--all-features` the production `Vault::open` path always seeds; the unseeded
 # opener is an explicit test-named function, not a silent config field.
 # Also turns on the lower crates' test-only constructors this crate's tests use.
-test-support = ["oneiron-contracts/test-support"]
+test-support = ["oneiron-contracts/test-support", "oneiron-model/test-support"]
 
 [dev-dependencies]
 wat = "1"

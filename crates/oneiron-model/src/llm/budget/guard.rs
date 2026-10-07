@@ -10,7 +10,7 @@ use super::types::{
     DEFAULT_BUDGET_RESERVE_UNITS,
 };
 use crate::llm::{BudgetDenied, BudgetLease, LlmRequest, LlmUsage, ModelLocality};
-use crate::write_envelope::WriteActor;
+use oneiron_contracts::write_envelope::WriteActor;
 
 #[derive(Debug, Clone)]
 pub struct BudgetGuard {
@@ -58,9 +58,17 @@ impl BudgetGuard {
     /// one actor and must not be reused for another's calls.
     ///
     /// The table must already have passed `resolve_policy_manifest`: this
-    /// constructor performs no fallible row validation.
+    /// constructor performs no fallible row validation. Public so `oneiron`'s
+    /// policy-manifest fold (its one caller outside this module) builds the guard
+    /// across the crate line. A guard built from any table still issues every
+    /// lease itself; a caller that builds one governs only its own calls.
+    ///
+    /// # Panics
+    ///
+    /// When `policy` has more rows than a `u16` row index can address (65,536), which
+    /// `resolve_policy_manifest` already refuses.
     #[must_use]
-    pub(crate) fn with_policy_table(
+    pub fn with_policy_table(
         attempt_id: impl Into<String>,
         limit_units: u64,
         reserve_units: u64,
@@ -68,7 +76,9 @@ impl BudgetGuard {
         actor: WriteActor,
         policy: &BudgetPolicyTable,
     ) -> Self {
-        debug_assert!(
+        // A hard check, not a debug one: this constructor is public now, and a row past the
+        // u16 index range would be dropped silently instead of enforced.
+        assert!(
             policy.rows().len() <= usize::from(u16::MAX) + 1,
             "resolved budget policy rows must stay addressable by a u16 row index"
         );

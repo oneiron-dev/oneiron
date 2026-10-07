@@ -48,7 +48,7 @@ print("PASS error::tests::fixture")
 # puts its check in front of the default gates.
 CODEMAP_GATE = ("codemap", ["scripts/codemap/check.sh"])
 # The lower engine crates split out of `oneiron` keep featureless lanes of their own.
-LOWER = ["-p", "oneiron-contracts", "-p", "oneiron-retrieval"]
+LOWER = ["-p", "oneiron-contracts", "-p", "oneiron-retrieval", "-p", "oneiron-model"]
 GATES = [
     ("fmt", ["cargo", "fmt", "--check"]),
     ("clippy", ["cargo", "clippy", "--locked", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"]),

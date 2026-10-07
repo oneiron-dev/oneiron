@@ -7688,6 +7688,7 @@ dependencies = [
  "oneiron-contracts",
  "oneiron-docedit",
  "oneiron-guest",
+ "oneiron-model",
  "oneiron-retrieval",
  "oneiron-sandbox-contract",
  "oneiron-seal",
@@ -7987,6 +7988,19 @@ dependencies = [
  "tempfile",
  "tokio",
  "zeroize",
+]
+
+[[package]]
+name = "oneiron-model"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "futures-core",
+ "oneiron-contracts",
+ "rmpv",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

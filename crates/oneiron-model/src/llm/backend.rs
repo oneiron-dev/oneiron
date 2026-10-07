@@ -123,7 +123,10 @@ impl BudgetLease {
         }
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
+    /// A lease no guard issued, for tests that need one without a budget. Compiled only
+    /// under `cfg(test)` and the `test-hooks` / `test-support` features, which `oneiron`
+    /// forwards from its own and enables only for tests.
+    #[cfg(any(test, feature = "test-hooks", feature = "test-support"))]
     pub fn for_test(id: impl Into<String>) -> Self {
         Self::issued(id, Arc::new(()))
     }

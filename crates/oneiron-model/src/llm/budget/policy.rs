@@ -1,7 +1,7 @@
 //! Resolved manifest policy table for one budget meter.
 
-use crate::entity_id::EntityId;
 use crate::llm::CallPurpose;
+use oneiron_contracts::entity_id::EntityId;
 
 /// Resolved `budget_policy` manifest table: ordered per-purpose/per-actor
 /// floors and caps for ONE budget meter.
@@ -31,36 +31,36 @@ use crate::llm::CallPurpose;
 /// { actor: "<canonical-actor-ref>", floor: 50_000, cap: 150_000 }
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct BudgetPolicyTable {
+pub struct BudgetPolicyTable {
     rows: Vec<BudgetPolicyRow>,
 }
 
 impl BudgetPolicyTable {
     #[must_use]
-    pub(crate) fn from_rows(rows: Vec<BudgetPolicyRow>) -> Self {
+    pub fn from_rows(rows: Vec<BudgetPolicyRow>) -> Self {
         Self { rows }
     }
 
     #[must_use]
-    pub(crate) fn rows(&self) -> &[BudgetPolicyRow] {
+    pub fn rows(&self) -> &[BudgetPolicyRow] {
         &self.rows
     }
 
     #[must_use]
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.rows.is_empty()
     }
 
     /// Appends one decoded manifest's rows, preserving resolved order: row
     /// indices are manifest-scan order, then row order inside each manifest.
-    pub(crate) fn extend_rows(&mut self, other: Self) {
+    pub fn extend_rows(&mut self, other: Self) {
         self.rows.extend(other.rows);
     }
 }
 
 /// One `budget_policy` row: a selector plus a floor, a cap, or both.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct BudgetPolicyRow {
+pub struct BudgetPolicyRow {
     selector: BudgetPolicySelector,
     floor_units: Option<u64>,
     cap_units: Option<u64>,
@@ -68,7 +68,7 @@ pub(crate) struct BudgetPolicyRow {
 
 impl BudgetPolicyRow {
     #[must_use]
-    pub(crate) fn new(
+    pub fn new(
         selector: BudgetPolicySelector,
         floor_units: Option<u64>,
         cap_units: Option<u64>,
@@ -81,24 +81,24 @@ impl BudgetPolicyRow {
     }
 
     #[must_use]
-    pub(crate) fn selector(&self) -> &BudgetPolicySelector {
+    pub fn selector(&self) -> &BudgetPolicySelector {
         &self.selector
     }
 
     #[must_use]
-    pub(crate) fn floor_units(&self) -> Option<u64> {
+    pub fn floor_units(&self) -> Option<u64> {
         self.floor_units
     }
 
     #[must_use]
-    pub(crate) fn cap_units(&self) -> Option<u64> {
+    pub fn cap_units(&self) -> Option<u64> {
         self.cap_units
     }
 }
 
 /// The one call set a policy row selects.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum BudgetPolicySelector {
+pub enum BudgetPolicySelector {
     Purpose(CallPurpose),
     Actor(EntityId),
 }
@@ -117,7 +117,7 @@ impl BudgetPolicySelector {
     /// Pinned snake-case manifest name of a purpose selector. `Other` rows
     /// carry their own name; the manifest parser maps every built-in name to
     /// its variant, so an `Other` name never collides with a built-in one.
-    pub(crate) fn purpose_manifest_name(purpose: &CallPurpose) -> &str {
+    pub fn purpose_manifest_name(purpose: &CallPurpose) -> &str {
         match purpose {
             CallPurpose::Extraction => "extraction",
             CallPurpose::Consolidation => "consolidation",

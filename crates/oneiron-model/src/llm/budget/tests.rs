@@ -309,7 +309,7 @@ fn self_budget_read_reports_current_meter() {
 fn policy_test_actor(seed: u8) -> WriteActor {
     WriteActor::new(
         EntityId::from_bytes([seed; 16]).expect("test actor id"),
-        crate::edge::EdgeActorClass::Agent,
+        oneiron_contracts::edge::EdgeActorClass::Agent,
     )
 }
 

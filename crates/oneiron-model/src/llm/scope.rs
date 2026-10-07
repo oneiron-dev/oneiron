@@ -1,5 +1,5 @@
 //! Four-axis branch scope and exact readable/writable resource identities.
-use crate::{EntityId, Error, Result};
+use oneiron_contracts::{EntityId, Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -10,7 +10,7 @@ pub enum ScopeResource {
         key: String,
     },
     DocumentVersion {
-        #[serde(with = "crate::serialize::entity_ref")]
+        #[serde(with = "oneiron_contracts::serialize::entity_ref")]
         document: EntityId,
         version: String,
     },
@@ -24,13 +24,13 @@ pub enum ScopeResource {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Scope {
-    #[serde(with = "crate::serialize::entity_ref::optional")]
+    #[serde(with = "oneiron_contracts::serialize::entity_ref::optional")]
     pub world: Option<EntityId>,
-    #[serde(with = "crate::serialize::entity_ref::optional")]
+    #[serde(with = "oneiron_contracts::serialize::entity_ref::optional")]
     pub facet: Option<EntityId>,
-    #[serde(with = "crate::serialize::entity_ref::optional")]
+    #[serde(with = "oneiron_contracts::serialize::entity_ref::optional")]
     pub relationship: Option<EntityId>,
-    #[serde(with = "crate::serialize::entity_ref::optional")]
+    #[serde(with = "oneiron_contracts::serialize::entity_ref::optional")]
     pub project: Option<EntityId>,
     pub readable: BTreeSet<ScopeResource>,
     pub writable: BTreeSet<ScopeResource>,

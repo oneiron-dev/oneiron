@@ -8,8 +8,8 @@ use super::ledger::{
 };
 use super::policy::{BudgetPolicyRow, BudgetPolicyTable};
 use super::types::{BudgetAdmission, BudgetExhaustionPolicy, BudgetRead, BudgetThreshold};
-use crate::entity_id::EntityId;
 use crate::llm::{BudgetDenied, BudgetLease, CallPurpose};
+use oneiron_contracts::entity_id::EntityId;
 
 #[derive(Debug)]
 pub(super) struct BudgetState {

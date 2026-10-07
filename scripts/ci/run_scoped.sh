@@ -22,7 +22,7 @@ done
 # Lower engine crates split out of the core crate: each library keeps a featureless lane of its
 # own, like `oneiron`'s. `lower` selects all of them; `lower_touched` the ones this change touched.
 lower=(); lower_touched=()
-for p in oneiron-contracts oneiron-retrieval; do
+for p in oneiron-contracts oneiron-retrieval oneiron-model; do
   lower+=(-p "$p")
   case " $packages " in *" $p "*) lower_touched+=(-p "$p") ;; esac
 done

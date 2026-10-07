@@ -20,6 +20,7 @@ use oneiron_contracts::registry::{
 use oneiron_contracts::retrieval_telemetry::{
     RetrievalBlendWeights, validate_retrieval_blend_weights,
 };
+use oneiron_contracts::serialize::entity_ref;
 
 #[test]
 fn derive_refuses_an_empty_or_non_utf8_domain() {
@@ -261,4 +262,28 @@ fn actor_class_decoder_refuses_bytes_outside_the_three_classes() {
     }
     assert_eq!(EdgeActorClass::try_from_u8(0), Some(EdgeActorClass::Human));
     assert_eq!(EdgeActorClass::try_from_u8(2), Some(EdgeActorClass::System));
+}
+
+#[test]
+fn entity_ref_adapters_refuse_malformed_and_sentinel_ids() {
+    let zeros = format!("\"{}\"", "0".repeat(32));
+    for text in ["\"zz\"", "\"0011\"", zeros.as_str()] {
+        let mut de = serde_json::Deserializer::from_str(text);
+        assert!(entity_ref::deserialize(&mut de).is_err(), "{text}");
+        let mut de = serde_json::Deserializer::from_str(text);
+        assert!(
+            entity_ref::optional::deserialize(&mut de).is_err(),
+            "{text}"
+        );
+        let list = format!("[{text}]");
+        let mut de = serde_json::Deserializer::from_str(&list);
+        assert!(
+            entity_ref::sequence::deserialize(&mut de).is_err(),
+            "{list}"
+        );
+    }
+    let id = EntityId::from_bytes([0x11; 16]).unwrap();
+    let list = format!("[\"{}\"]", id.to_hex());
+    let mut de = serde_json::Deserializer::from_str(&list);
+    assert_eq!(entity_ref::sequence::deserialize(&mut de).unwrap(), [id]);
 }

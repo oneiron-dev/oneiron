@@ -50,14 +50,14 @@ impl DreamerFailureClass {
 
 /// Policy composition is itself authored vault data, not an engine choice.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) enum DreamerFailurePrecedence {
+pub enum DreamerFailurePrecedence {
     #[default]
     NestedNarrowing,
     HolderOverrideCappedAtVault,
 }
 
 impl DreamerFailurePrecedence {
-    pub(crate) fn parse(value: &str) -> Option<Self> {
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "nested_narrowing" => Some(Self::NestedNarrowing),
             "holder_override_capped_at_vault" => Some(Self::HolderOverrideCappedAtVault),
@@ -65,7 +65,7 @@ impl DreamerFailurePrecedence {
         }
     }
 
-    pub(crate) fn restrict(self, other: Self) -> Self {
+    pub fn restrict(self, other: Self) -> Self {
         if self == Self::NestedNarrowing || other == Self::NestedNarrowing {
             Self::NestedNarrowing
         } else {
@@ -81,13 +81,13 @@ pub struct DreamerFailureDecision {
     /// Effective manifest default; a holder choice cannot exceed the vault cap.
     pub consolidation_eligible: bool,
     pub effector_eligible: bool,
-    pub(crate) consolidation_ceiling: bool,
-    pub(crate) effector_ceiling: bool,
-    pub(crate) precedence: DreamerFailurePrecedence,
+    pub consolidation_ceiling: bool,
+    pub effector_ceiling: bool,
+    pub precedence: DreamerFailurePrecedence,
 }
 
 impl DreamerFailureDecision {
-    pub(crate) fn consolidation_with_stage(self, stage: Option<bool>) -> bool {
+    pub fn consolidation_with_stage(self, stage: Option<bool>) -> bool {
         self.compose(
             stage,
             self.consolidation_eligible,
@@ -95,7 +95,7 @@ impl DreamerFailureDecision {
         )
     }
 
-    pub(crate) fn effector_with_stage(self, stage: Option<bool>) -> bool {
+    pub fn effector_with_stage(self, stage: Option<bool>) -> bool {
         self.compose(stage, self.effector_eligible, self.effector_ceiling)
     }
 
@@ -110,19 +110,19 @@ impl DreamerFailureDecision {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct DreamerFailureRule {
-    pub(crate) class: DreamerFailureClass,
+pub struct DreamerFailureRule {
+    pub class: DreamerFailureClass,
     /// Vault ceilings. A true ceiling is not an effect or promotion grant.
-    pub(crate) consolidation_eligible: bool,
-    pub(crate) effector_eligible: bool,
+    pub consolidation_eligible: bool,
+    pub effector_eligible: bool,
     /// Shipped/owner-authored default when no stage choice is present.
-    pub(crate) default_consolidation_eligible: bool,
-    pub(crate) default_effector_eligible: bool,
+    pub default_consolidation_eligible: bool,
+    pub default_effector_eligible: bool,
 }
 
 /// Strictly parse three optional class rows. No unknown or duplicate classes,
 /// unknown keys, coercions, or route override can silently grant eligibility.
-pub(crate) fn parse_failure_rules(value: &Value) -> Option<Vec<DreamerFailureRule>> {
+pub fn parse_failure_rules(value: &Value) -> Option<Vec<DreamerFailureRule>> {
     let Value::Array(rows) = value else {
         return None;
     };
@@ -184,7 +184,7 @@ pub(crate) fn parse_failure_rules(value: &Value) -> Option<Vec<DreamerFailureRul
     Some(parsed)
 }
 
-pub(crate) fn decide_failure(
+pub fn decide_failure(
     rules: &[DreamerFailureRule],
     class: DreamerFailureClass,
     precedence: DreamerFailurePrecedence,
@@ -208,7 +208,7 @@ pub(crate) fn decide_failure(
     }
 }
 
-pub(crate) fn fallback_failure_class(response: &super::LlmResponse) -> Option<DreamerFailureClass> {
+pub fn fallback_failure_class(response: &super::LlmResponse) -> Option<DreamerFailureClass> {
     match &response.finish_reason {
         super::FinishReason::Other { name } if name.starts_with("fallback:") => {
             Some(DreamerFailureClass::Fatal)

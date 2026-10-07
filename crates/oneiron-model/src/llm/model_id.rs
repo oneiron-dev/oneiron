@@ -172,7 +172,9 @@ pub(super) fn validated_static_model_id(value: &'static str) -> ModelId {
         .unwrap_or_else(|error| unreachable!("hard-coded model id {value:?} is invalid: {error}"))
 }
 
-pub(super) fn dynamic_model_id(provider: &str, name: String, revision: &str) -> ModelId {
+/// `provider/name@revision` as a [`ModelId`]; the segments must already be sanitized.
+/// Public so `oneiron`'s auto-checker names a model the same way the safeguard binding does.
+pub fn dynamic_model_id(provider: &str, name: String, revision: &str) -> ModelId {
     ModelId::new(format!("{provider}/{name}@{revision}"))
         .expect("sanitized safeguard model binding produces a valid model id")
 }
