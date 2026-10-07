@@ -4311,17 +4311,21 @@ fn claim_aging_class_treats_core_relationship_root_as_durable() {
 fn claim_access_factor_halves_once_per_class_half_life() {
     let now = 10 * 365 * DECAY_DAY_SECS;
 
-    for (predicate, class, half_life_days) in [
-        ("identity.legal_name", ClaimAgingClass::Durable, 365_u64),
-        ("hobby.collects", ClaimAgingClass::Standard, 90),
-        ("location.current", ClaimAgingClass::Ephemeral, 14),
+    for (predicate, class) in [
+        ("identity.legal_name", ClaimAgingClass::Durable),
+        ("hobby.collects", ClaimAgingClass::Standard),
+        ("location.current", ClaimAgingClass::Ephemeral),
     ] {
         let body = decay_claim(predicate, ClaimLifecycleStatus::Active, None);
         let fresh = claim_access_factor(&body, now, now, None).expect("no override to reject");
         assert_eq!(fresh.aging_class, class, "{predicate}");
         assert_eq!(fresh.access_factor, 1.0, "{predicate} learned at now");
 
-        let half_life_secs = half_life_days * DECAY_DAY_SECS;
+        let half_life_secs = class.policy().half_life_secs as u64;
+        assert!(
+            half_life_secs > 0,
+            "{predicate} must carry a positive half-life"
+        );
         let halved = decay_factor(&body, now - half_life_secs, now);
         assert!(
             (halved - 0.5).abs() < 1e-6,
@@ -4332,6 +4336,28 @@ fn claim_access_factor_halves_once_per_class_half_life() {
             (quartered - 0.25).abs() < 1e-6,
             "{predicate} at two half-lives: {quartered}"
         );
+    }
+}
+
+/// Class policies retain their published day counts and report them in seconds.
+#[test]
+fn claim_aging_class_policies_keep_their_published_half_lives() {
+    assert_eq!(DURABLE_ACCESS_HALF_LIFE_DAYS, 365.0);
+    assert_eq!(STANDARD_ACCESS_HALF_LIFE_DAYS, 90.0);
+    assert_eq!(EPHEMERAL_ACCESS_HALF_LIFE_DAYS, 14.0);
+
+    for (class, half_life_days) in [
+        (ClaimAgingClass::Durable, 365_u64),
+        (ClaimAgingClass::Standard, 90),
+        (ClaimAgingClass::Ephemeral, 14),
+    ] {
+        let policy = class.policy();
+        assert_eq!(
+            policy.half_life_secs,
+            (half_life_days * DECAY_DAY_SECS) as f64,
+            "{class:?} half-life in seconds"
+        );
+        assert_eq!(policy.floor, ACCESS_FACTOR_FLOOR, "{class:?} floor");
     }
 }
 

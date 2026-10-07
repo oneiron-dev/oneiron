@@ -1666,7 +1666,7 @@ fn pack_neighbors_apply_the_status_gate() -> Result<()> {
     Ok(())
 }
 
-/// Blocker 2 cap: with the default 0.5 fraction, 2 base + 4 fictional
+/// Blocker 2 cap: with an explicit 0.5 fraction, 2 base + 4 fictional
 /// claims give a claim budget of 6 and a non-base cap of 3 — the three
 /// highest-scoring fiction claims survive, the lowest is dropped, and both
 /// base claims are always kept (fiction can never crowd base out).
@@ -1691,7 +1691,8 @@ fn world_all_scope_cap_drops_excess_fiction() -> Result<()> {
     let pack = vault
         .context_pack()
         .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
-        .run()?; // default fraction = 0.5
+        .non_base_world_claim_fraction(0.5)
+        .run()?;
 
     let ids: HashSet<EntityId> = pack.results.iter().map(|entity| entity.id).collect();
     assert!(
@@ -1711,6 +1712,19 @@ fn world_all_scope_cap_drops_excess_fiction() -> Result<()> {
         5,
         "2 base + capped 3 fiction = 5 surviving claims"
     );
+
+    // The unset builder retains the same documented default behavior.
+    let defaulted = vault
+        .context_pack()
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
+        .run()?;
+    let defaulted_ids: HashSet<EntityId> =
+        defaulted.results.iter().map(|entity| entity.id).collect();
+    assert_eq!(
+        defaulted_ids, ids,
+        "the documented default fraction must cap exactly like the explicit 0.5"
+    );
+    assert_eq!(defaulted.results.len(), pack.results.len());
     Ok(())
 }
 

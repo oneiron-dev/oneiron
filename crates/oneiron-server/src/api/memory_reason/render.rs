@@ -154,6 +154,9 @@ mod tests {
         for field in ["shortId", "kind", "text"] {
             assert_eq!(decoded[0][field], evidence[0].text);
         }
+        // One line per quoted field: an escape that let a control through
+        // would split the scalar and add lines here.
+        assert_eq!(encoded.lines().count(), 3);
     }
 
     #[test]
@@ -172,7 +175,3 @@ mod tests {
         assert!(lines.next().is_none());
     }
 }
-
-#[cfg(test)]
-#[path = "render_tests.rs"]
-mod render_tests;

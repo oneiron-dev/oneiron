@@ -886,20 +886,46 @@ fn for_profile_yields_no_driver_for_byoa_and_a_driver_for_engine() {
 
 // ── the margin law ──────────────────────────────────────────────────────
 
+/// The first velocity sample replaces the seed; later samples blend with it.
 #[test]
 fn driver_observe_velocity_displaces_the_cold_start_seeds() {
-    let mut driver = engine_driver(100_000);
+    let budget = 100_000_u64;
+    let mut driver = engine_driver(budget);
     let seeded_threshold = driver.compact_at();
 
-    // The first sample replaces the seed: 30 seconds at 500 tokens/second
-    // reserves 15,000 tokens, well away from the threshold floor.
-    driver.observe_velocity(500.0);
+    let fast_sample = MarginLaw::SEED_VELOCITY_TPS * 10.0;
+    driver.observe_velocity(fast_sample);
+
+    // Velocity observation leaves the latency seed unchanged.
+    let fast_margin = (MarginLaw::SEED_LATENCY_MS / 1_000.0 * fast_sample).ceil() as u64;
+    assert!(
+        fast_margin < budget / 2,
+        "fixture must exercise the margin law without reaching the half-budget floor"
+    );
     let fast_threshold = driver.compact_at();
-    assert_eq!(fast_threshold, 85_000);
-    assert!(fast_threshold < seeded_threshold);
+    assert_eq!(
+        driver.margin().measured_velocity_tps(),
+        fast_sample.round() as u64,
+        "the first sample must displace the velocity seed outright, not blend with it"
+    );
+    assert_eq!(
+        fast_threshold,
+        budget - fast_margin,
+        "away from the floor the threshold is exactly budget - margin"
+    );
+    assert!(
+        fast_threshold < seeded_threshold,
+        "a faster session must reserve more and compact earlier: \
+         {fast_threshold} vs seeded {seeded_threshold}"
+    );
 
     // A smaller subsequent sample reduces the reserve and delays compaction.
     driver.observe_velocity(1.0);
+    let adapted_velocity = driver.margin().measured_velocity_tps();
+    assert!(
+        adapted_velocity > 1 && adapted_velocity < fast_sample as u64,
+        "a later sample must blend with the measured history, got {adapted_velocity}"
+    );
     let adapted_threshold = driver.compact_at();
     assert!(adapted_threshold > fast_threshold);
     assert!(adapted_threshold < seeded_threshold);

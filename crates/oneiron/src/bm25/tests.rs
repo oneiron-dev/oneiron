@@ -938,6 +938,56 @@ fn rank_profile_default_lowers_to_contract_literals() -> Result<()> {
     Ok(())
 }
 
+/// Explicit active-channel overrides leave fixed scoring parameters and
+/// unsupported channel slots unchanged.
+#[test]
+fn rank_profile_overrides_lower_onto_the_fixed_scoring_frame() -> Result<()> {
+    let default = crate::config::Bm25RankProfile::default().to_bm25_config()?;
+
+    let overridden = crate::config::Bm25RankProfile::default()
+        .with_formula(Bm25Formula::Plus { delta: 1.0 })
+        .with_channel_weight(AnalyzerChannel::Surface, 0.25)
+        .with_channel_b(AnalyzerChannel::Surface, 0.10)
+        .with_channel_weight(AnalyzerChannel::Stem, 0.75)
+        .with_channel_b(AnalyzerChannel::Stem, 1.00)
+        .with_channel_weight(AnalyzerChannel::NormalizedOverlay, 0.0)
+        .with_channel_b(AnalyzerChannel::NormalizedOverlay, 0.50)
+        .with_channel_weight(AnalyzerChannel::CjkNgram, 2.00)
+        .with_channel_b(AnalyzerChannel::CjkNgram, 0.00)
+        .to_bm25_config()?;
+
+    assert_eq!(overridden.formula, Bm25Formula::Plus { delta: 1.0 });
+    for (channel, weight, b) in [
+        (AnalyzerChannel::Surface, 0.25, 0.10),
+        (AnalyzerChannel::Stem, 0.75, 1.00),
+        (AnalyzerChannel::NormalizedOverlay, 0.0, 0.50),
+        (AnalyzerChannel::CjkNgram, 2.00, 0.00),
+    ] {
+        let field = overridden.field(channel);
+        assert_eq!(field.weight, weight, "{channel:?} weight override");
+        assert_eq!(field.b, b, "{channel:?} b override");
+        assert_eq!(
+            field.length_policy,
+            default.field(channel).length_policy,
+            "{channel:?} length policy is not overridable"
+        );
+    }
+
+    assert_eq!(overridden.k1, default.k1);
+    for reserved in [
+        AnalyzerChannel::Shingle,
+        AnalyzerChannel::Synonym,
+        AnalyzerChannel::Phonetic,
+    ] {
+        assert_eq!(
+            overridden.field(reserved).weight,
+            0.0,
+            "{reserved:?} must stay disabled"
+        );
+    }
+    Ok(())
+}
+
 /// AC3: a `weight == 0.0` channel override excludes that channel from
 /// scoring through both public paths (`search_text_with_profile` and
 /// the pipeline's `rank_profile`). The query `running` reaches the
