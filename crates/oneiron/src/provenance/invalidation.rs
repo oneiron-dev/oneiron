@@ -2,7 +2,7 @@
 //! stops justifying its semantic edge in the same transaction. Replaying an
 //! older image of that edge never brings the support back.
 
-use super::queries::{edge_provenance_cohort_in_txn, walk_edge_provenance_cohort_in_txn};
+use super::queries::walk_edge_provenance_cohort_in_txn;
 use super::{
     EdgeRef, PREDICATE_EDGE_PROVENANCE, ProvenancePrecedence, StoredProvenanceClaim,
     decode_edge_provenance_body, resolve_persisted_actor_class, restamp_edge_flags, winner_index,
@@ -42,7 +42,10 @@ const REPLAY_SCAN_CEILING: usize = MAX_EDGE_QUERY_RESULTS * 10;
 /// kept: another wrapper may still justify the edge, and its head has its own
 /// truth. Never a bare downgrade, which would propagate again. Changed flags
 /// invalidate both endpoints' PPR and bump the graph version in this
-/// transaction. Malformed provenance fails closed.
+/// transaction. Malformed provenance fails closed. The erasure that staled
+/// `id` must complete, so the winner is folded over a streaming walk of the
+/// source's `claim_of` rows, one candidate held, under no materialization cap:
+/// ordinary claims about a busy source never refuse it.
 pub(crate) fn refresh_stale_wrapper_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -78,17 +81,32 @@ pub(crate) fn refresh_stale_wrapper_in_txn(
         return Ok(());
     };
     let subject = EdgeRef::new(source, kind, target);
-    let live =
-        edge_provenance_cohort_in_txn(store, txn, &subject, None, &[ClaimLifecycleStatus::Active])?;
-    let precedence: Vec<ProvenancePrecedence> =
-        live.iter().map(StoredProvenanceClaim::precedence).collect();
-    let flags = match winner_index(&precedence) {
-        Some(index) => live[index].flags(),
-        None => EdgeProvenanceFlags {
+    let mut winner: Option<(ProvenancePrecedence, EdgeProvenanceFlags)> = None;
+    walk_edge_provenance_cohort_in_txn(
+        store,
+        txn,
+        &subject,
+        None,
+        &[ClaimLifecycleStatus::Active],
+        usize::MAX,
+        |claim, _| {
+            let candidate = claim.precedence();
+            if winner
+                .as_ref()
+                .is_none_or(|(best, _)| winner_index(&[*best, candidate]) == Some(1))
+            {
+                winner = Some((candidate, claim.flags()));
+            }
+            ControlFlow::Continue(())
+        },
+    )?;
+    let flags = winner.map_or(
+        EdgeProvenanceFlags {
             confirmation_status: EdgeConfirmationStatus::Retracted,
             actor_class,
         },
-    };
+        |(_, flags)| flags,
+    );
     stamp_in_txn(store, txn, &subject, edge.provenance, flags)
 }
 

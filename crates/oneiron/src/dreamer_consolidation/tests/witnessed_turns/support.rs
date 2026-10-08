@@ -231,6 +231,48 @@ fn recovering_a_window_over_withdrawn_support_completes_retracted() -> Result<()
     Ok(())
 }
 
+/// Seeds one more ordinary claim about `source` than an edge read may
+/// materialize, as raw rows copying `claim`'s record (the way the neighbors
+/// regression seeds a high-degree node).
+fn crowd(vault: &Vault, source: EntityId, claim: EntityId) -> Result<()> {
+    let mut value = [0u8; 12];
+    value[0..4].copy_from_slice(&0.9_f32.to_le_bytes());
+    value[4..12].copy_from_slice(&1_u64.to_le_bytes());
+    vault.with_write_txn(|txn| {
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &claim)?
+            .expect("the claim record");
+        for index in 0..=crate::vault::MAX_EDGE_QUERY_RESULTS {
+            let mut bytes = [0u8; 16];
+            bytes[..8].copy_from_slice(&(index as u64 + 1).to_le_bytes());
+            bytes[15] = 0xC9;
+            let copy = EntityId::from_bytes(bytes)?;
+            vault.store.entities.put(txn, copy.as_bytes(), &raw)?;
+            let key = crate::store::Store::encode_edge_key(&source, EdgeKind::ClaimOf, &copy);
+            vault.store.edges_in.put(txn, &key, &value)?;
+        }
+        Ok(())
+    })
+}
+
+/// Erasing an attachment's cited words completes on a crowded TURN: the
+/// refresh of its edge streams the TURN's claims, so one more ordinary claim
+/// about the TURN than an edge read may materialize never refuses the
+/// erasure, and the support is still withdrawn.
+#[test]
+fn erasing_the_cited_words_of_a_crowded_turn_still_retracts_the_support() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = attached(&vault)?;
+    crowd(&vault, fixture.turn, fixture.head)?;
+    delete_message(&vault, fixture.cited)?;
+    assert!(!current(&vault, &fixture.wrapper)?, "the wrapper is hidden");
+    assert_eq!(
+        support_status(&vault, fixture.turn, fixture.head)?,
+        [Some(Retracted); 2],
+        "the erased words no longer support the head"
+    );
+    Ok(())
+}
+
 /// The withdrawn-support walk holds only the replayed edge's own wrappers, so
 /// ordinary claims about its source never refuse a valid replay. With one
 /// more ordinary claim about the TURN than an edge read may materialize
@@ -246,24 +288,7 @@ fn a_bare_replay_from_a_crowded_source_lands_as_written() -> Result<()> {
     let subject = EntityId::now();
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
     let unnamed = put_head(&vault, subject)?;
-    let mut value = [0u8; 12];
-    value[0..4].copy_from_slice(&0.9_f32.to_le_bytes());
-    value[4..12].copy_from_slice(&1_u64.to_le_bytes());
-    vault.with_write_txn(|txn| {
-        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &unnamed)?
-            .expect("the head's claim record");
-        for index in 0..=crate::vault::MAX_EDGE_QUERY_RESULTS {
-            let mut bytes = [0u8; 16];
-            bytes[..8].copy_from_slice(&(index as u64 + 1).to_le_bytes());
-            bytes[15] = 0xC9;
-            let claim = EntityId::from_bytes(bytes)?;
-            vault.store.entities.put(txn, claim.as_bytes(), &raw)?;
-            let key =
-                crate::store::Store::encode_edge_key(&fixture.turn, EdgeKind::ClaimOf, &claim);
-            vault.store.edges_in.put(txn, &key, &value)?;
-        }
-        Ok(())
-    })?;
+    crowd(&vault, fixture.turn, unnamed)?;
     for over in ["no stored edge", "its own bare copy"] {
         vault.with_write_txn(|txn| {
             vault
