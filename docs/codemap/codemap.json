@@ -33833,7 +33833,7 @@
      "path": "src/sync/ingest/entity.rs",
      "purpose": "The entity-ingest ladder: one admission for every replicated entities-map value",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
