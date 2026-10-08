@@ -203,7 +203,9 @@ pub struct MemoryItem {
     /// Salience, when stamped.
     pub salience: Option<f32>,
     /// A conversation record's current reactions, one grouped line per
-    /// glyph (`👍×8 (Anna, Ben, +6)`); empty for every other item.
+    /// glyph (`👍×8 (Anna, Ben, +6)`); a TURN's lines are followed by those of
+    /// each message it quotes ([`Self::cited_messages`]). Empty for every
+    /// other item.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reactions: Vec<String>,
     /// For a TURN item, the messages whose words the query matched, best
@@ -781,7 +783,7 @@ impl Memory<'_> {
                 let (scoped, status) = builder.run_scoped_with_run_status(&lane)?;
                 receipt.restrict_with(&scoped.receipt);
                 let mut pack = scoped.value;
-                lane.attach_reactions(&mut pack)?;
+                lane.attach_reactions_quoting(&mut pack, &status.cited_messages)?;
 
                 let rendered = pack_format.map(|fmt| {
                     let config = SerializeConfig {

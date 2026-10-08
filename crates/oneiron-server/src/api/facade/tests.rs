@@ -1124,8 +1124,9 @@ impl OwnerFacade {
         (status, serde_json::from_slice(&body).expect("JSON"))
     }
 
-    /// Witnesses one user message per entry and returns their short ids.
-    async fn witness(&self, conversation: &str, messages: &[(u64, &str)]) -> Vec<String> {
+    /// Witnesses one user message per entry, each its own turn, and returns
+    /// the receipts' `(turn, message)` short ids.
+    async fn witness(&self, conversation: &str, messages: &[(u64, &str)]) -> Vec<(String, String)> {
         let mut said = Vec::new();
         for (at, content) in messages {
             let (status, receipt) = self
@@ -1138,12 +1139,11 @@ impl OwnerFacade {
                 )
                 .await;
             assert_eq!(status, StatusCode::OK, "{receipt}");
-            said.push(
-                receipt["message_short_ids"][0]
-                    .as_str()
-                    .expect("id")
-                    .to_owned(),
-            );
+            let id = |value: &Value| value.as_str().expect("id").to_owned();
+            said.push((
+                id(&receipt["turn_short_id"]),
+                id(&receipt["message_short_ids"][0]),
+            ));
         }
         said
     }
@@ -1215,6 +1215,8 @@ async fn recall_reads_time_words_without_refusing_and_resolves_them_as_of() {
             .await,
     ]
     .concat();
+    // Recall returns each message as its turn (ARCH-0004).
+    let said: Vec<String> = said.into_iter().map(|(turn, _)| turn).collect();
     let recall =
         |query: &str, as_of: Option<u64>| facade.recall(json!({"query": query, "as_of": as_of}));
     let both = |found: &[(String, String)]| {
@@ -1248,10 +1250,10 @@ async fn recall_reads_time_words_without_refusing_and_resolves_them_as_of() {
 /// Wave 9 long-context A/B: recall named a message `ms87:76@<revision>` where
 /// its witness receipt said `ms87:76`, so a client stripped the suffix to join
 /// them; and TURN, CONVERSATION and PERSON rows took recall `limit` slots.
-/// Recall now returns the receipt's short id with the revision beside it,
-/// turns and conversations take no slot unless the scope names their kinds,
-/// and the author every message points at ranks below the messages that
-/// matched.
+/// Recall now returns the receipt's short ids with the revision beside them,
+/// a matched message as the one turn that quotes it (ARCH-0004), conversations
+/// take no slot unless the scope names their kind, and the author every
+/// message points at ranks below the turns that matched.
 #[tokio::test]
 async fn recall_returns_witness_short_ids_and_limit_counts_content() {
     let facade = OwnerFacade::new("facade-ids-and-slots-secret");
@@ -1280,11 +1282,15 @@ async fn recall_returns_witness_short_ids_and_limit_counts_content() {
     let items = pack["items"].as_array().expect("items");
     assert_eq!(items.len(), 5, "{pack}");
     for item in items {
-        assert_eq!(item["kind"], "MESSAGE", "{item}");
+        assert_eq!(item["kind"], "TURN", "{item}");
         let short_id = item["short_id"].as_str().expect("short id");
+        let quoted = item["cited_messages"][0]["short_id"]
+            .as_str()
+            .expect("quoted message");
         assert!(
-            said.iter().any(|id| id == short_id),
-            "{short_id} in {said:?}"
+            said.iter()
+                .any(|(turn, message)| turn == short_id && message == quoted),
+            "{short_id} quoting {quoted} in {said:?}"
         );
         assert_eq!(
             item["source_revision_ref"].as_str().map(str::len),
@@ -1293,21 +1299,21 @@ async fn recall_returns_witness_short_ids_and_limit_counts_content() {
         );
     }
 
-    // People stay in recall: the author comes after every matching message.
+    // People stay in recall: the author comes after every matching turn.
     let (found, _) = facade
         .recall(json!({"query": "tide table spring tide", "limit": 10}))
         .await;
     let kinds: Vec<&str> = found.iter().map(|(_, kind)| kind.as_str()).collect();
-    assert_eq!(kinds[..7], ["MESSAGE"; 7], "{found:?}");
+    assert_eq!(kinds[..7], ["TURN"; 7], "{found:?}");
     assert!(kinds[7..].contains(&"PERSON"), "{found:?}");
 
     // Containers come back when the scope names them.
     let (found, _) = facade
         .recall(json!({"query": "tide table spring tide", "limit": 5,
-            "scope": {"kinds": ["TURN"]}}))
+            "scope": {"kinds": ["CONVERSATION"]}}))
         .await;
     assert!(
-        !found.is_empty() && found.iter().all(|(_, kind)| kind == "TURN"),
+        !found.is_empty() && found.iter().all(|(_, kind)| kind == "CONVERSATION"),
         "{found:?}"
     );
 }

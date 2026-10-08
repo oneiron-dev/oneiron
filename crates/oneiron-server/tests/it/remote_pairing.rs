@@ -213,8 +213,12 @@ async fn a_core_read_slip_lets_a_non_owner_agent_recall() {
             .unwrap()
     })
     .await;
+    // The message comes back as its turn, quoting it (ARCH-0004).
     assert!(
-        pack.items.iter().any(|item| item.short_id == said),
+        pack.items.iter().any(|item| item
+            .cited_messages
+            .iter()
+            .any(|message| message.short_id == said)),
         "{pack:?}"
     );
 }

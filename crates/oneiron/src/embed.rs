@@ -4,7 +4,8 @@ mod locality;
 mod turn;
 pub(crate) use cold_attach::{COLD_ATTACH_PENDING_KEY, remark_all_embeddable_pending_in_txn};
 pub(crate) use eligibility::{
-    embeddable_payload, embeddable_payload_in_txn, indexed_payload, turn_text_in_txn,
+    embeddable_payload, embeddable_payload_in_txn, indexed_payload, readable_turn_text_in_txn,
+    turn_text_in_txn,
 };
 pub(crate) use locality::clear_embedding_locality_in_txn;
 pub(crate) use turn::{

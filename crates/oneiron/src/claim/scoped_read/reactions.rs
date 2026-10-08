@@ -3,6 +3,7 @@ use super::*;
 use crate::context_pack::ContextPack;
 use crate::reaction::{REACTIONS_FIELD, ReactionSignal};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use std::collections::HashMap;
 
 impl ScopedRead<'_> {
     /// The current reactions on one conversation record this read may see,
@@ -27,13 +28,29 @@ impl ScopedRead<'_> {
     /// Attaches each hydrated MESSAGE or TURN result's grouped reaction lines
     /// under [`REACTIONS_FIELD`]. Run after the pack's own scope filter.
     pub fn attach_reactions(&self, pack: &mut ContextPack) -> Result<()> {
+        self.attach_reactions_quoting(pack, &HashMap::new())
+    }
+
+    /// [`Self::attach_reactions`] for a pack whose TURNs took the place of
+    /// matched messages (`quoted`, per TURN): a TURN's lines are followed by
+    /// those of each message it quotes that this read may see.
+    pub(crate) fn attach_reactions_quoting(
+        &self,
+        pack: &mut ContextPack,
+        quoted: &HashMap<EntityId, Vec<EntityId>>,
+    ) -> Result<()> {
         let rtxn = self.grant_read_txn()?;
         let policy = self.policy_manifest_in(&rtxn)?;
         for entity in &mut pack.results {
             if !matches!(entity.entity_type, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN) {
                 continue;
             }
-            let lines = self.reaction_lines_in(&rtxn, &policy, &entity.id)?;
+            let mut lines = self.reaction_lines_in(&rtxn, &policy, &entity.id)?;
+            for message in quoted.get(&entity.id).into_iter().flatten() {
+                if self.is_entity_readable_with_policy_in(&rtxn, &policy, message)? {
+                    lines.extend(self.reaction_lines_in(&rtxn, &policy, message)?);
+                }
+            }
             if let (Some(fields), false) = (entity.fields.as_mut(), lines.is_empty()) {
                 fields.insert(REACTIONS_FIELD.to_owned(), serde_json::json!(lines));
             }

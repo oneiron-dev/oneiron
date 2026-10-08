@@ -132,6 +132,7 @@ impl ScopedRead<'_> {
             }
             if admission.visible() {
                 self.filter_context_entity_edges(rtxn, policy, filter, &mut entity)?;
+                self.filter_turn_content(rtxn, policy, &mut entity)?;
                 kept.push(entity);
             }
         }
@@ -251,6 +252,39 @@ impl ScopedRead<'_> {
             })
             .collect();
         edges.retain(|edge| permitted.contains(&(edge.kind, edge.target)));
+        Ok(())
+    }
+
+    /// A hydrated TURN's `content` is its messages' text (ARCH-0004), read
+    /// for no one; keep only the messages this read may see.
+    fn filter_turn_content(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        entity: &mut ContextEntity,
+    ) -> Result<()> {
+        let Some(fields) = entity.fields.as_mut() else {
+            return Ok(());
+        };
+        if entity.entity_type != crate::registry::ENTITY_TYPE_TURN
+            || !fields.contains_key("content")
+        {
+            return Ok(());
+        }
+        match crate::embed::readable_turn_text_in_txn(self.vault, rtxn, &entity.id, |message| {
+            self.is_entity_readable_with_policy_in(rtxn, policy, message)
+        })? {
+            Some(text) => {
+                fields.insert("content".to_owned(), serde_json::Value::String(text));
+            }
+            // Its messages hold words this read may not see; a `content` of
+            // the turn's own body (no messages say anything) stays.
+            None => {
+                if crate::embed::turn_text_in_txn(self.vault, rtxn, &entity.id)?.is_some() {
+                    fields.remove("content");
+                }
+            }
+        }
         Ok(())
     }
 }

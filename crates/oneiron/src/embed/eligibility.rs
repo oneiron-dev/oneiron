@@ -36,14 +36,28 @@ pub(crate) fn turn_text_in_txn(
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
 ) -> Result<Option<String>> {
+    readable_turn_text_in_txn(vault, txn, turn, |_| Ok(true))
+}
+
+/// [`turn_text_in_txn`] over only the messages `readable` admits: the turn as
+/// one reader is shown it. A reader who may read a turn but not one of its
+/// messages never reads that message's words through the turn.
+pub(crate) fn readable_turn_text_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+    mut readable: impl FnMut(&EntityId) -> Result<bool>,
+) -> Result<Option<String>> {
     let Some(messages) = crate::tagging::turn_messages_in_txn(vault, txn, turn)? else {
         return Ok(None);
     };
-    let text = messages
-        .into_iter()
-        .map(|message| message.text)
-        .collect::<Vec<_>>()
-        .join("\n");
+    let mut lines = Vec::with_capacity(messages.len());
+    for message in messages {
+        if readable(&EntityId::from_hex(&message.id)?)? {
+            lines.push(message.text);
+        }
+    }
+    let text = lines.join("\n");
     Ok(has_content(&text).then_some(text))
 }
 

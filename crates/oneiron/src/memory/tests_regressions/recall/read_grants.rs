@@ -28,7 +28,7 @@ fn actor_bound_recall_requires_its_read_grant_on_both_paths() {
                 .unwrap()
         };
         assert!(
-            recall().items.iter().all(|item| item.kind != "MESSAGE"),
+            !recall().items.iter().any(gives_control_message),
             "ungranted actor received the message"
         );
     }
@@ -51,7 +51,7 @@ fn actor_bound_recall_requires_its_read_grant_on_both_paths() {
             .recall("window seat", Effort::Light, &scope, 20, None, None)
             .unwrap();
         assert!(
-            pack.items.iter().all(|item| item.kind != "MESSAGE"),
+            !pack.items.iter().any(gives_control_message),
             "policy permit alone admitted a message: {scope:?}"
         );
     }
@@ -69,7 +69,7 @@ fn actor_bound_recall_requires_its_read_grant_on_both_paths() {
             .recall("window seat", Effort::Light, &scope, 20, None, None)
             .unwrap();
         assert!(
-            pack.items.iter().any(|item| item.kind == "MESSAGE"),
+            pack.items.iter().any(gives_control_message),
             "granted actor lost the message: {scope:?}"
         );
     }
@@ -331,7 +331,7 @@ fn scoped_recall_rechecks_a_grant_revoked_during_retrieval() {
             None,
         )
         .unwrap();
-    assert!(pack.items.iter().all(|item| item.kind != "MESSAGE"));
+    assert!(!pack.items.iter().any(gives_control_message));
     assert!(
         !pack
             .rendered
@@ -339,4 +339,77 @@ fn scoped_recall_rechecks_a_grant_revoked_during_retrieval() {
             .unwrap_or_default()
             .contains("window seat control recall")
     );
+}
+
+/// ARCH-0004 recall returns a matched message as its TURN, whose text is its
+/// messages'. A reader who may read the turn and one of its messages, but
+/// not the other, never reads the other's words through the turn: not in
+/// the item, not in a quote, not in the rendered pack.
+#[test]
+fn a_turn_shows_a_scoped_reader_only_the_messages_it_may_read() {
+    let (_dir, vault, owner, scoped) = recall_after_control_writes_fixture(true);
+    let space = EntityId::from_bytes([0x68; 16]).unwrap();
+    let mut granted = witness_message(0, WitnessAuthor::User, "harbor view table for two");
+    granted.metadata = Some(serde_json::json!({"rel": space.to_hex()}));
+    // No space: a message only its owner's grants admit.
+    let withheld = witness_message(1, WitnessAuthor::User, "harbor locker code is 4471");
+    facade_for(&vault, owner)
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::from_bytes([0x77; 16]).unwrap().to_hex(),
+            turn_ref: None,
+            messages: vec![granted, withheld],
+            occurred_at: crate::unix_seconds_now() - 28 * 86_400,
+        })
+        .expect("witness a turn of two messages");
+
+    let owner_pack = facade_for(&vault, owner)
+        .recall(
+            "harbor",
+            Effort::Light,
+            &RecallScope::default(),
+            20,
+            None,
+            None,
+        )
+        .expect("owner recall");
+    assert!(
+        owner_pack
+            .items
+            .iter()
+            .any(|item| item.kind == "TURN" && item.value_text.contains("4471")),
+        "the owner reads the whole turn: {:?}",
+        owner_pack.items
+    );
+
+    for effort in [Effort::Light, Effort::Medium] {
+        for format in [Some("json"), Some("md")] {
+            let pack = facade_for(&vault, scoped)
+                .recall("harbor", effort, &RecallScope::default(), 20, format, None)
+                .expect("scoped recall");
+            let turn = pack
+                .items
+                .iter()
+                .find(|item| item.kind == "TURN")
+                .unwrap_or_else(|| panic!("{effort:?} returns the turn: {:?}", pack.items));
+            assert_eq!(turn.value_text, "harbor view table for two", "{effort:?}");
+            for item in &pack.items {
+                assert!(!item.value_text.contains("4471"), "{effort:?}: {item:?}");
+                assert!(
+                    item.cited_messages
+                        .iter()
+                        .all(|message| !message.value_text.contains("4471")),
+                    "{effort:?}: {item:?}"
+                );
+            }
+            let rendered = pack.rendered.expect("rendered pack");
+            // Light renders the minimal profile, which carries no content.
+            if effort == Effort::Medium {
+                assert!(rendered.contains("harbor view"), "{format:?}: {rendered}");
+            }
+            assert!(
+                !rendered.contains("4471"),
+                "{effort:?} {format:?}: {rendered}"
+            );
+        }
+    }
 }

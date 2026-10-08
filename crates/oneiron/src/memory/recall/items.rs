@@ -22,9 +22,12 @@ impl Memory<'_> {
             };
             let entity_type = row.entity_type;
             let body = row.body.clone();
-            // A TURN's text is its messages', which its own body does not hold.
+            // A TURN's text is its messages', which its own body does not
+            // hold: those this actor may read.
             let turn_text = if entity_type == ENTITY_TYPE_TURN {
-                crate::embed::turn_text_in_txn(self.vault, txn, id)?
+                crate::embed::readable_turn_text_in_txn(self.vault, txn, id, |message| {
+                    lane.is_entity_readable_in(txn, message)
+                })?
             } else {
                 None
             };
@@ -117,7 +120,7 @@ impl Memory<'_> {
                     },
                     str::to_owned,
                 );
-            let reactions = if matches!(entity_type, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN) {
+            let mut reactions = if matches!(entity_type, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN) {
                 lane.reaction_lines(id)?
             } else {
                 Vec::new()
@@ -132,7 +135,8 @@ impl Memory<'_> {
                 Vec::new()
             };
             // Each message a TURN took in is read through the same lane, so a
-            // quote is one the actor may read.
+            // quote is one the actor may read. Its reactions ride on the turn
+            // that returns it.
             let mut cited_messages = Vec::with_capacity(cited.len());
             for message in cited {
                 if let Some(item) = self.memory_item_for(
@@ -143,6 +147,7 @@ impl Memory<'_> {
                     &[],
                     receipt,
                 )? {
+                    reactions.extend(item.reactions);
                     cited_messages.push(CitedMessage {
                         short_id: item.short_id,
                         value_text: item.value_text,

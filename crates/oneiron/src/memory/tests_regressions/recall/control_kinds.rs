@@ -58,7 +58,8 @@ fn recall_leaves_a_fresh_slip_mint_out_unless_the_kind_is_named() {
         .expect("recall");
     let kinds: Vec<&str> = pack.items.iter().map(|item| item.kind.as_str()).collect();
     assert_eq!(pack.retrieval_meta.sparse, Some(true));
-    assert!(kinds.contains(&"MESSAGE"), "{kinds:?}");
+    // The message comes back as its turn (ARCH-0004).
+    assert!(kinds.contains(&"TURN"), "{kinds:?}");
     assert!(!kinds.contains(&"AUTHORITY_LOG"), "{kinds:?}");
 
     // The caller's own kind filter names it.
@@ -171,10 +172,22 @@ fn recall_after_control_writes_fixture(
     (dir, vault, owner, scoped)
 }
 
+/// Whether a recall item hands its reader the control fixture's message: the
+/// message itself, or a turn that holds or quotes its words.
+fn gives_control_message(item: &crate::memory::MemoryItem) -> bool {
+    const SAID: &str = "window seat control recall";
+    item.kind == "MESSAGE"
+        || item.value_text.contains(SAID)
+        || item
+            .cited_messages
+            .iter()
+            .any(|message| message.value_text.contains(SAID))
+}
+
 fn assert_recall_after_control_writes_has_only_context(pack: &crate::memory::MemoryPack) {
     let kinds: Vec<&str> = pack.items.iter().map(|item| item.kind.as_str()).collect();
     assert!(
-        kinds.contains(&"MESSAGE"),
+        pack.items.iter().any(gives_control_message),
         "message remains readable: {kinds:?}"
     );
     for control in ["AUTHORITY_LOG", "POLICY_MANIFEST", "ACCESS_GRANT"] {

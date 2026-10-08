@@ -33,12 +33,38 @@ fn recall_returns_versioned_pack_with_provenance() {
         assert!(pack.retrieval_meta.total_candidates >= 1);
     }
 
-    // MESSAGE items carry their TURN as structural evidence.
+    // The message comes back as its TURN, which quotes it (ARCH-0004).
     let pack = facade
         .recall(
             "aurora",
             Effort::Medium,
             &RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+        .expect("recall");
+    let turn_item = pack
+        .items
+        .iter()
+        .find(|item| item.kind == "TURN")
+        .expect("turn item");
+    assert_eq!(
+        turn_item.cited_messages[0].value_text,
+        "aurora borealis sighting over the fjord"
+    );
+    assert!(pack.items.iter().all(|item| item.kind != "MESSAGE"));
+
+    // MESSAGE items, when the scope names that kind alone, carry their TURN
+    // as structural evidence.
+    let pack = facade
+        .recall(
+            "aurora",
+            Effort::Medium,
+            &RecallScope {
+                kinds: Some(vec!["MESSAGE".to_owned()]),
+                ..RecallScope::default()
+            },
             10,
             None,
             None,
