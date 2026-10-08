@@ -29,7 +29,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::campaign::compliance::{
     JurisdictionObservation, rank_jurisdiction_observation, select_jurisdiction,
 };
-use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject};
+use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::conversation::{ConversationBody, RoomRole};
 use crate::counterparty_contact::{
     CounterpartyContactStatus, CounterpartyFirstTouch, CounterpartyOptOut,
@@ -96,7 +96,8 @@ pub(super) fn carry_current_authority(
         &classes,
         &databases["entities"],
         &image_entities,
-        &live.authority,
+        &live,
+        databases.get("edges_in").map_or(&[][..], Vec::as_slice),
     );
     for (database, live_rows) in &live.rows {
         let scoped = |rows| refused(&classes, database, rows, &image_entities);
@@ -137,6 +138,9 @@ struct LiveRows {
     /// The authority each live entity of a projected kind carries, by id. An
     /// entity the live vault deleted is absent, except an outbound grant.
     authority: Projected,
+    /// The `edges_in` keys of the `claim_of` edges through which the campaign
+    /// gate finds a subject's jurisdiction and membership claims.
+    claim_of: Vec<Vec<u8>>,
 }
 
 /// Entity ids with the authority their bodies carry and the class's name.
@@ -147,6 +151,7 @@ fn current_rows(current: &Vault, classes: &Classes) -> Result<LiveRows> {
     let mut live = LiveRows {
         rows: BTreeMap::new(),
         authority: BTreeMap::new(),
+        claim_of: Vec::new(),
     };
     for entry in crate::store::DB_MANIFEST {
         if !Classes::has_authority(entry.name) {
@@ -192,7 +197,33 @@ fn current_rows(current: &Vault, classes: &Classes) -> Result<LiveRows> {
         }
         live.rows.insert(entry.name, rows);
     }
+    let wanted: BTreeSet<&[u8]> = live
+        .authority
+        .iter()
+        .filter(|(_, (_, _, current))| current.campaign_reads())
+        .map(|(key, _)| key.as_slice())
+        .collect();
+    if !wanted.is_empty() {
+        let edges = current
+            .store
+            .env
+            .open_database::<Bytes, Bytes>(&txn, Some("edges_in"))?
+            .ok_or_else(super::codec_error)?;
+        for row in edges.iter(&txn)? {
+            let (key, _) = row?;
+            if claim_of_edge(key).is_some_and(|(_, claim)| wanted.contains(claim)) {
+                live.claim_of.push(key.to_vec());
+            }
+        }
+    }
     Ok(live)
+}
+
+/// The subject and claim of an `edges_in` key of a `claim_of` edge
+/// (`subject(16) | kind(1) | claim(16)`).
+fn claim_of_edge(key: &[u8]) -> Option<(&[u8], &[u8])> {
+    (key.len() == 33 && key[16] == crate::edge::EdgeKind::ClaimOf as u8)
+        .then(|| (&key[..16], &key[17..]))
 }
 
 /// The names of the projected classes whose authority the image would roll
@@ -204,17 +235,16 @@ fn authority_moved(
     classes: &Classes,
     image: &CanonicalRows,
     image_entities: &BTreeSet<&[u8]>,
-    live: &Projected,
+    current: &LiveRows,
+    image_claim_of: &[(Vec<u8>, Vec<u8>)],
 ) -> BTreeSet<&'static str> {
+    let live = &current.authority;
     let mut moved = BTreeSet::new();
     let mut held = BTreeSet::new();
     let mut image_verdicts = Vec::new();
     let mut image_bytes = BTreeSet::new();
-    let mut image_jurisdictions = Vec::new();
-    let mut enrolled: BTreeSet<EntityId> = live
-        .values()
-        .filter_map(|(_, _, current)| current.enrollment())
-        .collect();
+    let mut image_members: BTreeSet<&[u8]> = BTreeSet::new();
+    let mut image_observations: BTreeMap<&[u8], Observation> = BTreeMap::new();
     for (key, value) in image {
         let (
             Class::Refuse {
@@ -232,7 +262,9 @@ fn authority_moved(
         if projection == Projection::Skill {
             image_bytes.extend(skill_bytes(value));
         }
-        enrolled.extend(authority.enrollment());
+        if authority.enrolls() {
+            image_members.insert(key.as_slice());
+        }
         // A claim compared in aggregate still has its read scope compared as
         // any claim's is, whatever the live body under its id became.
         let scope_moved = |access| {
@@ -247,8 +279,11 @@ fn authority_moved(
                 }
                 continue;
             }
-            Compared::Jurisdiction { access, facts } => {
-                image_jurisdictions.extend(facts);
+            Compared::Jurisdiction {
+                access,
+                observation,
+            } => {
+                image_observations.insert(key.as_slice(), observation);
                 if scope_moved(access) {
                     moved.insert(what);
                 }
@@ -282,58 +317,107 @@ fn authority_moved(
     if scan_postures(image_verdicts, &image_bytes) != scan_postures(live_verdicts, &image_bytes) {
         moved.insert("skill scan verdicts");
     }
-    let live_jurisdictions = live.values().filter_map(|(_, _, current)| match current {
-        Compared::Jurisdiction { facts, .. } => facts.clone(),
-        _ => None,
-    });
-    if jurisdictions(image_jurisdictions, image_entities, &enrolled)
-        != jurisdictions(live_jurisdictions, image_entities, &enrolled)
+    let live_members: BTreeSet<&[u8]> = live
+        .iter()
+        .filter(|(_, (_, _, current))| current.enrolls())
+        .map(|(key, _)| key.as_slice())
+        .collect();
+    let live_observations: BTreeMap<&[u8], Observation> = live
+        .iter()
+        .filter_map(|(key, (_, _, current))| match current {
+            Compared::Jurisdiction { observation, .. } => {
+                Some((key.as_slice(), observation.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    let image_view = CampaignView::new(
+        image_claim_of.iter().map(|(key, _)| key.as_slice()),
+        &image_members,
+        &image_observations,
+    );
+    let live_view = CampaignView::new(
+        current.claim_of.iter().map(Vec::as_slice),
+        &live_members,
+        &live_observations,
+    );
+    if image_view
+        .enrolled
+        .union(&live_view.enrolled)
+        .filter(|subject| image_entities.contains(**subject))
+        .any(|subject| image_view.selection(subject) != live_view.selection(subject))
     {
         moved.insert("recipient jurisdictions");
     }
     moved
 }
 
-/// An active `comm.jurisdiction` observation about an entity, as the campaign
-/// gate ranks it; `None` when its value does not decode.
+/// What one `comm.jurisdiction` claim tells the campaign gate.
 #[derive(Clone, PartialEq)]
-struct JurisdictionFacts {
-    subject: EntityId,
-    observation: Option<JurisdictionObservation>,
+enum Observation {
+    /// An inactive claim, which the gate skips.
+    Inactive,
+    /// An active claim as the gate ranks it; `None` when its value does not
+    /// decode, which fails the gate closed.
+    Active(Option<JurisdictionObservation>),
 }
 
-/// The jurisdiction and confidence the campaign gate selects for each subject
-/// the image holds (`held`) and either vault enrolls in a campaign
-/// (`enrolled`), from that subject's active observations. They pick which
-/// compliance rules bind a campaign send, so a newer observation that moves
-/// the selection is authority, and a refreshed one with the same result
-/// changes nothing. The gate reads no jurisdiction of a subject outside every
-/// campaign, so its observations are content; enrolment itself is compared
-/// as the campaign enrolment family. An observation that does not decode
-/// fails the gate closed, and compares as `Err`.
-fn jurisdictions(
-    observations: impl IntoIterator<Item = JurisdictionFacts>,
-    held: &BTreeSet<&[u8]>,
-    enrolled: &BTreeSet<EntityId>,
-) -> BTreeMap<EntityId, std::result::Result<Option<(String, Option<u16>)>, ()>> {
-    let mut by_subject: BTreeMap<EntityId, Option<Vec<JurisdictionObservation>>> = BTreeMap::new();
-    for facts in observations {
-        if !held.contains(facts.subject.as_bytes().as_slice()) || !enrolled.contains(&facts.subject)
-        {
-            continue;
+/// The jurisdiction and confidence the campaign gate selects for a subject,
+/// or `Err` when it fails closed.
+type Selection = std::result::Result<Option<(String, Option<u16>)>, ()>;
+
+/// What the campaign gate reads in one vault, finding a subject's claims as
+/// it does, through their `claim_of` edges, whatever subject a body names:
+/// the subjects an active membership enrolls, and each subject's
+/// jurisdiction observations. The selection they give a subject the image
+/// holds and either vault enrolls picks which compliance rules bind a
+/// campaign send, so a newer observation that moves it is authority, and a
+/// refreshed one with the same result changes nothing. The gate reads no
+/// jurisdiction of a subject outside every campaign, so its observations are
+/// content; enrolment itself is compared as the campaign enrolment family.
+#[derive(Default)]
+struct CampaignView<'a> {
+    enrolled: BTreeSet<&'a [u8]>,
+    observations: BTreeMap<&'a [u8], Vec<&'a Observation>>,
+}
+
+impl<'a> CampaignView<'a> {
+    fn new(
+        claim_of: impl IntoIterator<Item = &'a [u8]>,
+        members: &BTreeSet<&[u8]>,
+        observations: &'a BTreeMap<&'a [u8], Observation>,
+    ) -> Self {
+        let mut view = Self::default();
+        for key in claim_of {
+            let Some((subject, claim)) = claim_of_edge(key) else {
+                continue;
+            };
+            if members.contains(claim) {
+                view.enrolled.insert(subject);
+            }
+            if let Some(observation) = observations.get(claim) {
+                view.observations
+                    .entry(subject)
+                    .or_default()
+                    .push(observation);
+            }
         }
-        let ranked = by_subject
-            .entry(facts.subject)
-            .or_insert_with(|| Some(Vec::new()));
-        match (ranked.as_mut(), facts.observation) {
-            (Some(observations), Some(observation)) => observations.push(observation),
-            _ => *ranked = None,
-        }
+        view
     }
-    by_subject
-        .into_iter()
-        .map(|(subject, ranked)| (subject, ranked.map(select_jurisdiction).ok_or(())))
-        .collect()
+
+    /// The jurisdiction and confidence the gate selects for `subject`; `Err`
+    /// when an active observation does not decode, which fails it closed.
+    fn selection(&self, subject: &[u8]) -> Selection {
+        let mut ranked = Vec::new();
+        for observation in self.observations.get(subject).into_iter().flatten() {
+            match observation {
+                Observation::Inactive => {}
+                Observation::Active(Some(observation)) => ranked.push(observation.clone()),
+                Observation::Active(None) => return Err(()),
+            }
+        }
+        Ok(select_jurisdiction(ranked))
+    }
 }
 
 /// One active skill scan verdict: the bytes it is about, the risk it found,
@@ -475,12 +559,12 @@ enum Compared {
         access: (Option<EntityId>, bool),
         verdict: ScanVerdictFacts,
     },
-    /// A `comm.jurisdiction` claim: its read scope, and the observation,
-    /// compared as the selection the campaign gate makes for its subject
-    /// (`None` for one the gate never reads: inactive, or about an edge).
+    /// A `comm.jurisdiction` claim: its read scope, and its observation,
+    /// compared as part of the selection the campaign gate makes for each
+    /// subject it reaches.
     Jurisdiction {
         access: (Option<EntityId>, bool),
-        facts: Option<JurisdictionFacts>,
+        observation: Observation,
     },
 }
 
@@ -494,26 +578,26 @@ impl Compared {
         }
     }
 
-    /// The subject an active `campaign.member` claim enrolls, as the campaign
-    /// gate finds it.
-    fn enrollment(&self) -> Option<EntityId> {
+    /// Whether this is an active `campaign.member` claim, which enrolls each
+    /// subject the campaign gate reaches it from.
+    fn enrolls(&self) -> bool {
         let Self::Claim {
             authority: Some((_, body)),
             ..
         } = self
         else {
-            return None;
+            return false;
         };
-        let claim = crate::claim::decode_claim_body(body, true).ok()?;
-        match claim.subject {
-            ClaimSubject::Entity(subject)
-                if claim.predicate == crate::campaign::claims::PREDICATE_CAMPAIGN_MEMBER
-                    && claim.lifecycle == ClaimLifecycleStatus::Active =>
-            {
-                Some(subject)
-            }
-            _ => None,
-        }
+        crate::claim::decode_claim_body(body, true).is_ok_and(|claim| {
+            claim.predicate == crate::campaign::claims::PREDICATE_CAMPAIGN_MEMBER
+                && claim.lifecycle == ClaimLifecycleStatus::Active
+        })
+    }
+
+    /// Whether the campaign gate reads this claim: a jurisdiction observation
+    /// or an active membership.
+    fn campaign_reads(&self) -> bool {
+        matches!(self, Self::Jurisdiction { .. }) || self.enrolls()
     }
 
     /// The authority family a claim belongs to, which names it in a refusal.
@@ -644,7 +728,7 @@ fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
                 if claim.predicate == crate::campaign::claims::PREDICATE_COMM_JURISDICTION {
                     return Compared::Jurisdiction {
                         access: (space, private),
-                        facts: jurisdiction(&claim),
+                        observation: jurisdiction(&claim),
                     };
                 }
                 let authority = super::restore_class::authority_claim(&claim)
@@ -699,17 +783,14 @@ fn scan_verdict(claim: &crate::claim::ClaimBody) -> ScanVerdictFacts {
     }
 }
 
-/// What an active `comm.jurisdiction` observation about an entity tells the
-/// campaign gate, which reads a subject's active observations through their
-/// `claim_of` edges.
-fn jurisdiction(claim: &crate::claim::ClaimBody) -> Option<JurisdictionFacts> {
-    let ClaimSubject::Entity(subject) = claim.subject else {
-        return None;
-    };
-    (claim.lifecycle == ClaimLifecycleStatus::Active).then(|| JurisdictionFacts {
-        subject,
-        observation: rank_jurisdiction_observation(claim).ok(),
-    })
+/// What a `comm.jurisdiction` claim tells the campaign gate, which reads
+/// only active ones.
+fn jurisdiction(claim: &crate::claim::ClaimBody) -> Observation {
+    if claim.lifecycle == ClaimLifecycleStatus::Active {
+        Observation::Active(rank_jurisdiction_observation(claim).ok())
+    } else {
+        Observation::Inactive
+    }
 }
 
 /// One refused family's compared rows, in key order.

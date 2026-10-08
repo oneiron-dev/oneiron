@@ -450,8 +450,8 @@ fn jurisdiction_observation(
     observation
 }
 
-/// Enrolls `recipient` in a campaign by email.
-fn enroll(live: &Vault, recipient: EntityId) {
+/// Enrolls `recipient` in a campaign by email, returning the membership.
+fn enroll(live: &Vault, recipient: EntityId) -> EntityId {
     use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
     let entry = |key: &str, value: rmpv::Value| (rmpv::Value::from(key), value);
     let reference = || rmpv::Value::from(EntityId::now().to_hex());
@@ -478,8 +478,10 @@ fn enroll(live: &Vault, recipient: EntityId) {
         ClaimLifecycleStatus::Active,
     )
     .unwrap();
-    live.put_claim(&EntityId::now(), &member, TimeRange { start: 5, end: 5 }, 5)
+    let id = EntityId::now();
+    live.put_claim(&id, &member, TimeRange { start: 5, end: 5 }, 5)
         .unwrap();
+    id
 }
 
 /// ASTRA-9A-2-R3 F4: a campaign recipient's newest `comm.jurisdiction`
@@ -585,5 +587,55 @@ fn restore_refuses_to_reopen_a_jurisdiction_claim_made_private_since() {
     .err()
     .expect("the restore must be refused");
     assert!(error.to_string().contains("claim privacy"), "{error}");
+    assert!(!destination.exists());
+}
+
+/// ASTRA-9A-2-R3 F6 / SOL-9A-2-R3 F32: the campaign gate finds a subject's
+/// membership and jurisdiction claims through their `claim_of` edges,
+/// whatever subject a body now names. A membership rewritten under its id to
+/// name someone else before the backup still enrolls the recipient it was
+/// written for, so that recipient's jurisdiction moved since refuses the
+/// restore.
+#[test]
+fn restore_reads_campaign_recipients_through_their_claim_of_edges() {
+    let (_dir, live) = crate::test_util::open_test_vault_with(VaultConfig::device());
+    let backups = tempfile::tempdir().unwrap();
+    let recipient = person(&live, b"recipient");
+    let other = person(&live, b"other");
+    let member = enroll(&live, recipient);
+    let mut retargeted = live.get_claim(&member).unwrap().unwrap();
+    retargeted.subject = crate::claim::ClaimSubject::Entity(other);
+    live.put_claim(&member, &retargeted, TimeRange { start: 5, end: 5 }, 6)
+        .unwrap();
+    let observation = EntityId::now();
+    live.put_claim(
+        &observation,
+        &jurisdiction_observation(recipient, "UK", 10),
+        TimeRange { start: 10, end: 10 },
+        10,
+    )
+    .unwrap();
+    let image = backups.path().join("backup");
+    live.snapshot_checkpoint(&image, 100).unwrap();
+
+    let mut moved = live.get_claim(&observation).unwrap().unwrap();
+    moved.value = jurisdiction_observation(recipient, "US", 30).value;
+    live.put_claim(&observation, &moved, TimeRange { start: 10, end: 10 }, 30)
+        .unwrap();
+
+    let destination = backups.path().join("restored");
+    let error = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &destination,
+        VaultConfig::device(),
+        &live,
+        200,
+    )
+    .err()
+    .expect("the restore must be refused");
+    assert!(
+        error.to_string().contains("recipient jurisdictions"),
+        "{error}"
+    );
     assert!(!destination.exists());
 }
