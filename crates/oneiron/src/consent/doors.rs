@@ -384,19 +384,32 @@ impl Vault {
         slot: &[u8; 32],
         decision_id: GateDecisionId,
     ) -> Result<()> {
-        if APPROVE_ONCE_MARKERS
-            .get(&self.store, &*wtxn, slot)?
-            .is_some()
-        {
-            return Err(Error::Gate(GateError::ConsentApproveOnceSpent(
-                "this already carries an owner decision",
-            )));
-        }
+        self.ensure_decision_slot_open_in_txn(wtxn, slot)?;
         let marker = ApproveOnceMarker {
             state: CONSENT_APPROVE_ONCE_SPENT,
             decision_id,
         };
         APPROVE_ONCE_MARKERS.put(&self.store, wtxn, slot, &marker)?;
+        Ok(())
+    }
+
+    /// Refuses, without taking it, when the decision slot `slot` names is
+    /// already taken: a path that decides nothing still must not act on
+    /// something an owner already decided.
+    ///
+    /// # Errors
+    /// [`GateError::ConsentApproveOnceSpent`](crate::error::GateError::ConsentApproveOnceSpent)
+    /// when the slot is taken.
+    pub(crate) fn ensure_decision_slot_open_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        slot: &[u8; 32],
+    ) -> Result<()> {
+        if APPROVE_ONCE_MARKERS.get(&self.store, txn, slot)?.is_some() {
+            return Err(Error::Gate(GateError::ConsentApproveOnceSpent(
+                "this already carries an owner decision",
+            )));
+        }
         Ok(())
     }
 

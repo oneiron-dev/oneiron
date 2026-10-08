@@ -227,8 +227,9 @@ fn a_batch_carries_one_decision_whichever_owner_comes_first() -> Result<()> {
     assert_eq!(decisions_for(&vault, &owner, &batch)?, ["approved"]);
     assert!(decisions_for(&vault, &other, &batch)?.is_empty());
 
-    // Declined, then declined again or approved by either owner, in one call
-    // or as approve_once then admit: refused, and nothing is admitted.
+    // Declined, then declined again, approved or admitted by either owner, in
+    // one call, as approve_once then admit, or unconsented: refused, and
+    // nothing is admitted.
     let (_dir, vault, owner, batch) = fixture()?;
     let other = second_owner(&vault)?;
     let denied = vault.decline_imported_claim_batch(&owner, &batch)?;
@@ -242,6 +243,14 @@ fn a_batch_carries_one_decision_whichever_owner_comes_first() -> Result<()> {
         assert!(spent(
             vault
                 .approve_imported_claim_batch(decider, &batch)
+                .unwrap_err()
+        ));
+    }
+    // Nor is it admitted as Proposed, with no consent at all.
+    for admitter in [&owner, &other] {
+        assert!(spent(
+            vault
+                .admit_imported_claim_batch(admitter, &batch)
                 .unwrap_err()
         ));
     }

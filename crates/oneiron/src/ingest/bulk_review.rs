@@ -74,6 +74,7 @@ impl Vault {
     /// Atomically admit the entire batch as Proposed without consent, or Approved
     /// with one exact approve-once act. Never creates a per-claim approval queue.
     /// The consent marker is spent only when all candidates pass their Gate writes.
+    /// A batch any owner already approved or declined is refused either way.
     ///
     /// # Errors
     /// An invalid owner, bad target, or failed Gate write leaves no imported
@@ -142,15 +143,19 @@ impl Vault {
         owner.revalidate_in_txn(self, txn)?;
         let authorization =
             crate::consent::approve_once_authorization_in_txn(&self.store, txn, &digest)?;
+        // The batch's one decision slot: an earlier approval or decline, by
+        // any owner, refuses every admission of it before anything is written.
+        let slot = decision_slot(batch)?;
         let approval = if authorization.is_some() {
-            // The approval is this batch's one decision, whichever owner
-            // made it; an earlier approval or decline refuses it first.
+            // The approval is that decision, whichever owner made it.
             let approving =
                 crate::consent::approve_once_decision_in_txn(&self.store, txn, &digest)?
                     .ok_or(Error::CorruptedIndex("consent approve-once marker"))?;
-            self.take_decision_slot_in_txn(txn, &decision_slot(batch)?, approving)?;
+            self.take_decision_slot_in_txn(txn, &slot, approving)?;
             ClaimApprovalStatus::Approved
         } else {
+            // An unconsented import decides nothing, so it takes no slot.
+            self.ensure_decision_slot_open_in_txn(txn, &slot)?;
             ClaimApprovalStatus::Proposed
         };
         let actor = WriteActor::new(owner.actor(), EdgeActorClass::Human);
