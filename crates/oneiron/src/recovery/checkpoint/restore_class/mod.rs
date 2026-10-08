@@ -100,8 +100,8 @@ pub(super) enum Projection {
     Project,
     /// A TASK authority fact (owner, cancellation, acknowledgement, human
     /// assignment), one added since the image to a task the image holds
-    /// counting as changed; or a task's owner and assignee, which authorize the
-    /// asks bound to it. The rest of a TASK body is content.
+    /// counting as changed; or a task's owner, assignee and ask class, which
+    /// authorize the asks bound to it. The rest of a TASK body is content.
     Task,
     /// Every outbound grant, without the stamp each use writes. One only one
     /// side holds counts as changed.

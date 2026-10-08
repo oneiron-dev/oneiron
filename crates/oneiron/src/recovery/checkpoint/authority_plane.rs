@@ -349,11 +349,8 @@ enum Compared {
     OutboundGrant(Box<StandingOutboundGrant>),
     /// An authority fact about a task.
     TaskFact(TaskAuthorityFact),
-    /// Who owns a task and whom it is assigned to.
-    TaskBinding {
-        owner: String,
-        assignee: Option<EntityId>,
-    },
+    /// Who owns a task, whom it is assigned to, and its ask class.
+    TaskBinding(crate::task_verb::TaskBinding),
     /// An active skill scan verdict, compared as a posture.
     ScanVerdict(ScanVerdictFacts),
 }
@@ -490,10 +487,7 @@ fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
         ),
         Projection::Task => match crate::task_authority::decode_task_authority_fact_body(body) {
             Ok(fact) => Compared::TaskFact(fact),
-            Err(_) => {
-                let (owner, assignee) = crate::task_verb::task_binding(body)?;
-                Compared::TaskBinding { owner, assignee }
-            }
+            Err(_) => Compared::TaskBinding(crate::task_verb::task_binding(body)?),
         },
         Projection::OutboundGrant => {
             crate::outbound_grant::decode_standing_outbound_grant_body(body).map_or_else(
