@@ -131,7 +131,7 @@ pub(super) fn consume_carriers_in_txn(
             continue;
         };
         if carrier.order == order && carrier.pending(scope) {
-            consume_in_txn(vault, txn, scope, &turn, carrier)?;
+            consume_in_txn(vault, txn, scope, &turn, carrier, u64::MAX)?;
         }
     }
     Ok(())
@@ -139,7 +139,9 @@ pub(super) fn consume_carriers_in_txn(
 
 /// The complete-second door: every carrier still pending for `scope` at or
 /// before `upper` is consumed, as that settlement completes the temporal
-/// keys of those seconds.
+/// keys of those seconds. It vouches for no row past `upper`: the caller
+/// enqueued its round in an earlier commit, so a row re-put past the
+/// settled seconds since is new work on its own temporal key.
 pub(super) fn consume_carriers_through_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -148,7 +150,7 @@ pub(super) fn consume_carriers_through_in_txn(
 ) -> Result<()> {
     for (turn, carrier) in REDIRTY.scan(&vault.store, txn)? {
         if carrier.pending(scope) && carrier.position <= upper {
-            consume_in_txn(vault, txn, scope, &turn, carrier)?;
+            consume_in_txn(vault, txn, scope, &turn, carrier, upper)?;
         }
     }
     Ok(())
@@ -174,17 +176,20 @@ pub(super) fn reopen_carriers_in_txn(
     Ok(())
 }
 
+/// Consumes `carrier` for `scope` at the TURN row's `learned_at`, read here,
+/// capped at `through`: a row past it is not marked read.
 fn consume_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     scope: DreamerConsolidationScope,
     turn: &EntityId,
     mut carrier: Carrier,
+    through: u64,
 ) -> Result<()> {
     let Some(row) = vault.store.port_entity_record(txn, turn)? else {
         return Ok(());
     };
-    carrier.consume(scope, row.learned_at);
+    carrier.consume(scope, row.learned_at.min(through));
     REDIRTY.put(&vault.store, txn, turn, &carrier)
 }
 

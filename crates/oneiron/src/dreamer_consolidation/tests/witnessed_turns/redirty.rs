@@ -5,7 +5,8 @@
 //! learned is planned by a session end in that same second, and settling it
 //! strands no TURN learned after it. A consumed continuation hides no later
 //! re-put of its TURN, comes back on an operator's full rescan, and settles
-//! through the public complete-second door.
+//! through the public complete-second door, which leaves a re-put past the
+//! settled second dirty.
 #![cfg(feature = "sync")]
 
 use super::*;
@@ -251,6 +252,36 @@ fn a_consumed_continuation_comes_back_on_a_full_rescan_and_settles_by_second() -
     assert!(
         dirty(&vault)?.is_empty(),
         "settling through its second consumes it"
+    );
+    Ok(())
+}
+
+/// A host settles a carried round through the public complete-second door
+/// after a later re-put of its TURN: the settlement completes the carrier's
+/// second, not the re-put above it, which the next scan selects.
+#[test]
+fn a_public_settlement_leaves_a_later_re_put_dirty() -> Result<()> {
+    let (_dir, vault, clock) = open_clocked_vault();
+    let (turn, _, _, input) = stream_turn(&vault, 0x9B, "call me", "finalize")?;
+    let writer = EntityId::from_bytes([0x9B; 16])?;
+    consume(&vault)?;
+    end_stream(&vault, writer, &input, " Oleksii", "finalize");
+    queue_micro(&vault)?;
+    clock.set(60);
+    let row = vault.get_raw(&turn)?.expect("the turn row");
+    vault.put_entity(
+        &turn,
+        crate::registry::ENTITY_TYPE_TURN,
+        occurred(60),
+        60,
+        &row[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+    )?;
+    let scope = DreamerConsolidationScope::Micro;
+    crate::dreamer_consolidation::advance_watermark(&vault, scope, 50)?;
+    assert_eq!(
+        dirty(&vault)?,
+        vec![turn],
+        "the re-put past the settled second is new work"
     );
     Ok(())
 }
