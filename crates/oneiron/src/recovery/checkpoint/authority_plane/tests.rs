@@ -367,3 +367,53 @@ fn restore_refuses_a_changed_row_of_another_packs_kind_under_an_engine_prefix() 
     );
     assert!(!destination.exists());
 }
+
+/// SOL-9A-2-R3 F29: the install executor acts on an approved, active board
+/// plugin install even when it is stale, so withdrawing one is a narrowing. A
+/// restore over the vault from before the withdrawal is refused rather than
+/// bring the install back.
+#[test]
+fn restore_refuses_to_return_a_stale_plugin_install_withdrawn_since() {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    let root = tempfile::tempdir().unwrap();
+    let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    let hub = person(&live, b"hub");
+    let mut install = ClaimBody::new(
+        crate::context_board::PREDICATE_PLUGIN_SECTION_INSTALL,
+        ClaimSubject::Entity(hub),
+        rmpv::Value::from("install"),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    install.stale = true;
+    let claim = EntityId::now();
+    live.put_claim(&claim, &install, TimeRange { start: 1, end: 1 }, 1)
+        .unwrap();
+    let stored = live.get_claim(&claim).unwrap().unwrap();
+    assert_eq!(
+        (stored.approval, stored.lifecycle, stored.stale),
+        (
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+            true
+        )
+    );
+    let image = root.path().join("backup");
+    live.snapshot_checkpoint(&image, 100).unwrap();
+    live.retract_claim(&claim, 10).unwrap();
+
+    let destination = root.path().join("restored");
+    let error = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &destination,
+        VaultConfig::device(),
+        &live,
+        200,
+    )
+    .err()
+    .expect("the restore must be refused");
+    assert!(error.to_string().contains("board plugins"), "{error}");
+    assert!(!destination.exists());
+}

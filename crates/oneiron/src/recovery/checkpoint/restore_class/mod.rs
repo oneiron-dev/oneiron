@@ -218,8 +218,9 @@ pub(super) const AUTHORITY_CLAIMS: &[(&str, &str)] = &[
 ];
 
 /// [`AUTHORITY_CLAIMS`] families whose readers act only on an approved,
-/// active, fresh claim. One awaiting approval, rejected or retracted
-/// authorizes nothing, so it is content.
+/// active claim. One awaiting approval, rejected or retracted authorizes
+/// nothing, so it is content. A stale one still counts: the install executor
+/// accepts it, so withdrawing it is a narrowing.
 const APPROVED_AUTHORITY_CLAIMS: &[&str] = &["plugin.section_install"];
 
 /// The [`AUTHORITY_CLAIMS`] family `claim` carries authority in, by name.
@@ -227,8 +228,7 @@ pub(super) fn authority_claim(claim: &ClaimBody) -> Option<&'static str> {
     let predicate = claim.predicate.as_str();
     let in_effect = !APPROVED_AUTHORITY_CLAIMS.contains(&predicate)
         || (claim.approval == ClaimApprovalStatus::Approved
-            && claim.lifecycle == ClaimLifecycleStatus::Active
-            && !claim.stale);
+            && claim.lifecycle == ClaimLifecycleStatus::Active);
     AUTHORITY_CLAIMS
         .iter()
         .find(|(family, _)| {

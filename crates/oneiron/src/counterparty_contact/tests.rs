@@ -662,7 +662,7 @@ fn a_restore_never_rebinds_a_contact_to_the_party_it_left() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault.put_claim(
         &new_head,
         &rebound,
