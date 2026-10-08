@@ -72,6 +72,21 @@ impl StoreClock {
         *floor = (*floor).max(persisted).max(self.source.now_recorded_at());
         Ok(*floor)
     }
+    /// [`Self::now_recorded_at`] without observing it: the floor stays where
+    /// the vault's writes put it, so a stamp read this way (a job row's) moves
+    /// no later write's clock, even after the source rolls back.
+    ///
+    /// The floor stays locked while the source is read, as in
+    /// [`Self::now_recorded_at`]: no other caller can observe the clock
+    /// between the two reads, so a peek never returns below a floor another
+    /// caller saw first.
+    pub(crate) fn peek_recorded_at(&self) -> u64 {
+        let floor = self
+            .floor
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (*floor).max(self.source.now_recorded_at())
+    }
     /// Nondecreasing seconds, not one fictitious second for each write.
     /// Transactions persist this floor before commit.
     pub fn now_recorded_at(&self) -> u64 {
@@ -125,6 +140,16 @@ impl crate::Vault {
     pub fn new_entity_id(&self) -> Result<crate::EntityId> {
         self.store.clock.entity_id()
     }
+}
+
+/// The stamp a job row takes in a write transaction: the clock floor the
+/// vault has committed (another handle on it may have raised it) or this
+/// store's clock if later, read without moving either floor.
+pub(crate) fn job_recorded_at_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+) -> Result<u64> {
+    Ok(authorization_floor_in_txn(store, txn)?.max(store.clock().peek_recorded_at()))
 }
 
 /// Read the already committed floor within the authorization snapshot.
@@ -201,3 +226,6 @@ pub(crate) fn recorded_at_in_txn(
     }
     Ok(now)
 }
+
+#[cfg(test)]
+mod tests;
