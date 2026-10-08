@@ -57,5 +57,30 @@ fn invalid(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidEditManifest(reason))
 }
 
+/// Fault injection for recovery checks: drops `entity`'s document head row
+/// alone, as a damaged vault can lose it, keeping the stored history. The
+/// returned closure puts the row back.
+#[cfg(all(test, feature = "sync"))]
+pub(crate) fn lose_head_for_test(
+    vault: &crate::Vault,
+    entity: &crate::EntityId,
+) -> crate::Result<impl FnOnce(&crate::Vault) -> crate::Result<()>> {
+    let entity = *entity;
+    let mut txn = vault.store.env.write_txn()?;
+    let key = crate::side_table::HexId(entity);
+    let head = storage::ENTITY_DOC_HEAD
+        .get(&vault.store, &txn, &key)?
+        .ok_or(Error::EntityNotFound)?;
+    storage::ENTITY_DOC_HEAD.delete(&vault.store, &mut txn, &key)?;
+    txn.commit()?;
+    Ok(move |vault: &crate::Vault| {
+        let mut txn = vault.store.env.write_txn()?;
+        let key = crate::side_table::HexId(entity);
+        storage::ENTITY_DOC_HEAD.put(&vault.store, &mut txn, &key, &head)?;
+        txn.commit()?;
+        Ok(())
+    })
+}
+
 #[cfg(test)]
 mod tests;

@@ -43,8 +43,6 @@ mod memory;
 #[cfg(test)]
 mod tests;
 pub use contracts::*;
-#[cfg(feature = "sync")]
-pub(crate) use integrity::invalidate_dependent_in_txn;
 pub(crate) use integrity::{
     invalidate_source_in_txn, record_dependency_in_txn, record_derived_edge_in_txn, stale_in_txn,
 };

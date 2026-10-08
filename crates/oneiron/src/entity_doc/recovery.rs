@@ -13,8 +13,8 @@ use heed::{RoTxn, RwTxn};
 fn guard(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId) -> Result<()> {
     // Existing causal bases, pinned quotes and receipts cannot be rebuilt from
     // a value-only snapshot. Refuse instead of discarding their authority.
-    // Citation floors do not refuse: `restore` keeps a document that already
-    // holds the recovered value, and stales their citers when it rebuilds.
+    // Citation floors do not refuse capture: `restore` keeps a document that
+    // already holds the recovered value, and refuses only a rebuild.
     if !super::forks::all_forks(&vault.store, txn, entity)?.is_empty() {
         return Err(invalid("entity document forks require causal recovery"));
     }
@@ -92,11 +92,15 @@ pub(crate) fn restore(
         if holds_value(vault, txn, &entity, old, row)? {
             return Ok(());
         }
-        // The rebuild keeps no old operation and takes a fresh incarnation:
-        // every live record citing this document's history goes stale here,
-        // in this transaction, rather than naming a frontier that is gone.
-        super::citation_floor::invalidate_citers_in_txn(&vault.store, txn, &entity)?;
     }
+    // The rebuild keeps no old operation and takes a fresh incarnation, and
+    // `persist` replaces whatever history is stored, even without a head: a
+    // live citer's frontier would no longer resolve. Refuse while one holds a
+    // floor; the floors of citers gone, deleted or stale go with the history.
+    if super::citation_floor::has_live_citer(&vault.store, txn, &entity)? {
+        return Err(invalid("entity document recovery would drop cited history"));
+    }
+    super::citation_floor::erase_in_txn(&vault.store, txn, &entity)?;
     let doc = EntityDoc::rebuild_value(
         entity,
         &row.text,

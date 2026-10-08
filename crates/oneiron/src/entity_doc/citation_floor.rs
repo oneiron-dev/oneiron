@@ -1,11 +1,11 @@
 //! Citation floors: a derived record that quotes an entity document keeps the
 //! history it quoted. The citing write records the frontier it read (or the
 //! birth state, when the entity had no document yet) in its own transaction.
-//! An owner purge never drops history past the floor of a live citer; a
-//! value-only recovery that rebuilds the document under a fresh incarnation
-//! stales those citers instead of leaving them naming lost history. Unlike a
-//! `CitationPin`, a floor is not a quote the recovery artifact must carry, so
-//! canonical capture stays available.
+//! An owner purge never drops history past the floor of a live citer, and a
+//! value-only recovery that would rebuild the document under a fresh
+//! incarnation refuses while one exists. Unlike a `CitationPin`, a floor is
+//! not a quote the recovery artifact must carry, so canonical capture stays
+//! available.
 
 use super::document::decode_frontier;
 use super::side_keys::HexPair;
@@ -113,27 +113,22 @@ pub(super) fn live_frontiers(
     Ok(frontiers)
 }
 
-/// A value-only rebuild keeps none of the document's history: every live citer
-/// that recorded a floor on `entity` is staled (and queued for regeneration)
-/// in the caller's transaction, then the floors go. Other dependents of the
-/// entity are untouched.
-pub(super) fn invalidate_citers_in_txn(
-    store: &Store,
-    txn: &mut RwTxn<'_>,
-    entity: &EntityId,
-) -> Result<()> {
-    let prefix = entity_prefix(entity);
-    for HexPair(_, HexId(citer)) in ENTITY_DOC_CITATION_FLOOR.scan_keys(store, txn, &prefix)? {
+/// Whether a live citer holds a floor on `entity`: a value-only rebuild keeps
+/// none of the document's history, so it refuses while one does.
+pub(super) fn has_live_citer(store: &Store, txn: &RoTxn<'_>, entity: &EntityId) -> Result<bool> {
+    for HexPair(_, HexId(citer)) in
+        ENTITY_DOC_CITATION_FLOOR.scan_keys(store, txn, &entity_prefix(entity))?
+    {
         if live_entity_row_in_txn(store, txn, &citer)?.is_live() {
-            crate::ports::invalidate_dependent_in_txn(store, txn, entity, &citer)?;
+            return Ok(true);
         }
     }
-    ENTITY_DOC_CITATION_FLOOR.delete_from(store, txn, &prefix)?;
-    Ok(())
+    Ok(false)
 }
 
-/// Erasure removes the floors with the history they held; the citers are
-/// staled by the erasure's own dependency index.
+/// Erasure, and a rebuild no live citer refused, remove the floors with the
+/// history they held; an erasure's citers are staled by its own dependency
+/// index.
 pub(super) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<()> {
     ENTITY_DOC_CITATION_FLOOR.delete_from(store, txn, &entity_prefix(entity))?;
     Ok(())

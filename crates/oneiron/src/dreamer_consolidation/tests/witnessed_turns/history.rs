@@ -1,8 +1,8 @@
 //! A stored citation keeps the MESSAGE history it names. While the citing
-//! claim is live, the owner's history purge stops at the cited frontier, and
-//! an in-place recovery of the same value keeps the document as it is; only a
-//! recovery that must rebuild the document from another value stales the
-//! claim, instead of leaving it naming lost history.
+//! claim is live, the owner's history purge stops at the cited frontier, an
+//! in-place recovery of the same value keeps the document as it is, and a
+//! recovery that would rebuild the document from a value-only artifact, over
+//! another value or a lost head, refuses and leaves that history in place.
 #![cfg(feature = "sync")]
 
 use super::*;
@@ -86,9 +86,9 @@ fn capture_message(vault: &Vault, message: EntityId) -> Result<CanonicalSnapshot
 /// quote the artifact must carry) and recovered into the MESSAGE's own vault.
 /// Recovering its current value leaves the document, its history and its
 /// incarnation untouched: the claim stays current and its cited frontier
-/// still reads the quoted words. Recovering an older value rebuilds the
-/// document from that value under a fresh incarnation, so the claim naming
-/// the lost history is no longer current.
+/// still reads the quoted words. Recovering an older value would rebuild the
+/// document without that history, so it refuses, and the claim, the current
+/// words and the cited frontier all stay.
 #[test]
 fn in_place_recovery_keeps_cited_history_unless_the_value_differs() -> Result<()> {
     let (dir, vault) = open_vault();
@@ -123,11 +123,51 @@ fn in_place_recovery_keeps_cited_history_unless_the_value_differs() -> Result<()
         Some(SAID),
         "the cited frontier still reads the quoted words"
     );
-    recover(&older, "older.manifest")?;
-    assert_eq!(vault.entity_text(&cited)?, SAID, "the older value is back");
     assert!(
-        !current(&vault, &claim)?,
-        "the rebuilt document no longer holds the cited history"
+        recover(&older, "older.manifest").is_err(),
+        "an older value cannot replace the cited history"
     );
+    assert!(current(&vault, &claim)?, "the citation stays current");
+    assert_eq!(vault.entity_text(&cited)?, format!("{SAID}, thanks"));
+    assert_eq!(vault.entity_text_frontier(&cited)?, latest);
+    assert_eq!(
+        vault.entity_text_at(&cited, &read_at).ok().as_deref(),
+        Some(SAID),
+        "the cited frontier still reads the quoted words"
+    );
+    Ok(())
+}
+
+/// A vault that lost a cited MESSAGE's document head, and nothing else, is
+/// recovered in place from a window of the MESSAGE's current value. The
+/// value-only rebuild would replace the history the claim cites, so the
+/// recovery refuses: the claim stays current, and once the head row is back
+/// the cited frontier still reads the quoted words.
+#[test]
+fn a_recovery_over_a_lost_head_keeps_the_cited_history() -> Result<()> {
+    let (dir, vault) = open_vault();
+    let (turn, _, cited, input) = stream_turn(&vault, 0x85, SAID, "finalize")?;
+    let read_at = vault.entity_text_anchor(&cited, 0, 0)?.frontier().to_vec();
+    let claim = cite_message(&vault, turn)?;
+    let writer = EntityId::from_bytes([0x85; 16])?;
+    end_stream(&vault, writer, &input, ", thanks", "finalize");
+    let snapshot = capture_message(&vault, cited)?;
+    let put_back = crate::entity_doc::lose_head_for_test(&vault, &cited)?;
+    let recovered = crate::recovery::recover_vault_window(
+        &vault,
+        &crate::sync::bridge::Materializer::new(),
+        dir.path().join("lost-head.manifest"),
+        &snapshot,
+        crate::recovery::RecoveryBudget::default(),
+    );
+    assert!(recovered.is_err(), "the rebuild would drop cited history");
+    assert!(current(&vault, &claim)?, "the citation stays current");
+    put_back(&vault)?;
+    assert_eq!(
+        vault.entity_text_at(&cited, &read_at).ok().as_deref(),
+        Some(SAID),
+        "the cited frontier still reads the quoted words"
+    );
+    assert_eq!(vault.entity_text(&cited)?, format!("{SAID}, thanks"));
     Ok(())
 }
