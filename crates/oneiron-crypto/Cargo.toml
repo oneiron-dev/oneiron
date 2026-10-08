@@ -1,0 +1,39 @@
+[package]
+name = "oneiron-crypto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Versioned crypto contract: sealed envelopes, suite ids, signature records, fail-closed parser"
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[lib]
+doctest = false
+
+# Every primitive is pinned to an exact release; see README.md for the choice and
+# its audit status. A bump is a reviewed change with its known-answer tests rerun.
+[dependencies]
+aes-gcm = { version = "=0.11.1", default-features = false, features = ["aes", "alloc", "zeroize"] }
+argon2 = { version = "=0.6.0", default-features = false, features = ["alloc", "zeroize"] }
+chacha20poly1305 = { version = "=0.11.0", default-features = false, features = ["alloc", "zeroize"] }
+ed25519-dalek = { version = "=3.0.0", default-features = false, features = ["alloc", "fast", "zeroize"] }
+hkdf = "=0.13.0"
+ml-kem = { version = "=0.3.2", features = ["zeroize"] }
+rand_core = "=0.10.1"
+sha2 = "=0.11.0"
+sha3 = "=0.11.0"
+slh-dsa = { version = "=0.2.0-rc.5", features = ["zeroize"] }
+thiserror = { workspace = true }
+x25519-dalek = { version = "=3.0.0", default-features = false, features = ["static_secrets", "zeroize"] }
+zeroize = { version = "=1.9.0", features = ["derive"] }
+
+[dev-dependencies]
+getrandom = { version = "=0.4.3", features = ["sys_rng"] }
+hex = "0.4"
+proptest = "1.11"
+serde_json = { workspace = true }
+
+[lints]
+workspace = true
