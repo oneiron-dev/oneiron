@@ -101,7 +101,8 @@ pub(super) enum Projection {
     /// claim by claim, so a refreshed scan with the same result, or a scan of
     /// bytes the image does not hold, changes nothing. Recipient jurisdiction
     /// observations are compared the same way, as the jurisdiction the
-    /// campaign gate selects for each subject the image holds.
+    /// campaign gate selects for each subject the image holds and a campaign
+    /// enrolls. Either kind's read scope is still compared claim by claim.
     Claim,
     /// A project's authority (parents, claims scope, slice, depth, leader,
     /// board), roster, role and budget.

@@ -421,42 +421,85 @@ fn restore_refuses_to_return_a_stale_plugin_install_withdrawn_since() {
     assert!(!destination.exists());
 }
 
-/// ASTRA-9A-2-R3 F4: a recipient's newest `comm.jurisdiction` observation
-/// picks which compliance rules bind a campaign send. A restore from before a
-/// newer observation that moved it is refused rather than send under the
-/// older jurisdiction's rules; a refreshed observation with the same result
+/// An evidence-bearing `comm.jurisdiction` observation of `recipient`.
+fn jurisdiction_observation(
+    recipient: EntityId,
+    jurisdiction: &str,
+    observed_at: u64,
+) -> crate::claim::ClaimBody {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    let mut observation = ClaimBody::new(
+        crate::campaign::claims::PREDICATE_COMM_JURISDICTION,
+        ClaimSubject::Entity(recipient),
+        rmpv::Value::Map(vec![
+            (
+                rmpv::Value::from("jurisdiction"),
+                rmpv::Value::from(jurisdiction),
+            ),
+            (
+                rmpv::Value::from("observed_at"),
+                rmpv::Value::from(observed_at),
+            ),
+        ]),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    observation.evidence = Some(rmpv::Value::from("connector:profile-region"));
+    observation
+}
+
+/// Enrolls `recipient` in a campaign by email.
+fn enroll(live: &Vault, recipient: EntityId) {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    let entry = |key: &str, value: rmpv::Value| (rmpv::Value::from(key), value);
+    let reference = || rmpv::Value::from(EntityId::now().to_hex());
+    let member = ClaimBody::new(
+        crate::campaign::claims::PREDICATE_CAMPAIGN_MEMBER,
+        ClaimSubject::Entity(recipient),
+        rmpv::Value::Map(vec![
+            entry("campaign", reference()),
+            entry(
+                "state",
+                rmpv::Value::Map(vec![entry("kind", rmpv::Value::from("enrolled"))]),
+            ),
+            entry(
+                "channels",
+                rmpv::Value::Array(vec![rmpv::Value::Map(vec![
+                    entry("channel", rmpv::Value::from("email")),
+                    entry("basis_evidence", reference()),
+                    entry("sender_ref", reference()),
+                ])]),
+            ),
+        ]),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    live.put_claim(&EntityId::now(), &member, TimeRange { start: 5, end: 5 }, 5)
+        .unwrap();
+}
+
+/// ASTRA-9A-2-R3 F4: a campaign recipient's newest `comm.jurisdiction`
+/// observation picks which compliance rules bind a campaign send. A restore
+/// from before a newer observation that moved it is refused rather than send
+/// under the older jurisdiction's rules. A refreshed observation with the
+/// same result, or a moved one for someone in no campaign (SOL-9A-2-R3 F31),
 /// does not block the restore.
 #[test]
 fn restore_refuses_to_roll_back_a_recipient_jurisdiction_moved_since() {
-    use crate::campaign::claims::PREDICATE_COMM_JURISDICTION;
-    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
     // No policy manifest, as the other restore regressions run.
     let (_dir, live) = crate::test_util::open_test_vault_with(VaultConfig::device());
     let backups = tempfile::tempdir().unwrap();
     let recipient = person(&live, b"recipient");
-    let observe = |jurisdiction: &str, observed_at: u64| {
-        let mut observation = ClaimBody::new(
-            PREDICATE_COMM_JURISDICTION,
-            ClaimSubject::Entity(recipient),
-            rmpv::Value::Map(vec![
-                (
-                    rmpv::Value::from("jurisdiction"),
-                    rmpv::Value::from(jurisdiction),
-                ),
-                (
-                    rmpv::Value::from("observed_at"),
-                    rmpv::Value::from(observed_at),
-                ),
-            ]),
-            1.0,
-            ClaimApprovalStatus::Auto,
-            ClaimLifecycleStatus::Active,
-        )
-        .unwrap();
-        observation.evidence = Some(rmpv::Value::from("connector:profile-region"));
+    let bystander = person(&live, b"bystander");
+    enroll(&live, recipient);
+    let observe = |subject: EntityId, jurisdiction: &str, observed_at: u64| {
         live.put_claim(
             &EntityId::now(),
-            &observation,
+            &jurisdiction_observation(subject, jurisdiction, observed_at),
             TimeRange {
                 start: observed_at,
                 end: observed_at,
@@ -465,7 +508,8 @@ fn restore_refuses_to_roll_back_a_recipient_jurisdiction_moved_since() {
         )
         .unwrap();
     };
-    observe("UK", 10);
+    observe(recipient, "UK", 10);
+    observe(bystander, "UK", 10);
     let image = backups.path().join("backup");
     live.snapshot_checkpoint(&image, 100).unwrap();
     let restore = |name: &str| {
@@ -479,14 +523,67 @@ fn restore_refuses_to_roll_back_a_recipient_jurisdiction_moved_since() {
         .map(drop)
     };
 
-    observe("uk", 20);
+    observe(bystander, "US", 15);
+    restore("bystander").expect("a jurisdiction outside every campaign is content");
+    observe(recipient, "uk", 20);
     restore("refreshed").expect("the same jurisdiction, observed again, restores");
 
-    observe("US", 30);
+    observe(recipient, "US", 30);
     let error = restore("moved").expect_err("a moved jurisdiction refuses the restore");
     assert!(
         error.to_string().contains("recipient jurisdictions"),
         "{error}"
     );
     assert!(!backups.path().join("moved").exists());
+}
+
+/// ASTRA-9A-2-R3 F5: an older jurisdiction observation rewritten under its id
+/// into another claim and made private keeps its read scope compared, though
+/// the jurisdiction the campaign gate selects did not move.
+#[test]
+fn restore_refuses_to_reopen_a_jurisdiction_claim_made_private_since() {
+    let (_dir, live) = crate::test_util::open_test_vault_with(VaultConfig::device());
+    let backups = tempfile::tempdir().unwrap();
+    let recipient = person(&live, b"recipient");
+    let older = EntityId::now();
+    for (id, observed_at) in [(older, 10), (EntityId::now(), 20)] {
+        live.put_claim(
+            &id,
+            &jurisdiction_observation(recipient, "UK", observed_at),
+            TimeRange {
+                start: observed_at,
+                end: observed_at,
+            },
+            observed_at,
+        )
+        .unwrap();
+    }
+    let image = backups.path().join("backup");
+    live.snapshot_checkpoint(&image, 100).unwrap();
+
+    let mut rewritten = live.get_claim(&older).unwrap().unwrap();
+    rewritten.predicate = "profile.region".to_owned();
+    let mut scope = match rewritten.scope.take() {
+        Some(rmpv::Value::Map(entries)) => entries,
+        _ => Vec::new(),
+    };
+    scope.retain(|(key, _)| key.as_str() != Some("private"));
+    scope.push((rmpv::Value::from("private"), rmpv::Value::from(true)));
+    rewritten.scope = Some(rmpv::Value::Map(scope));
+    live.put_claim(&older, &rewritten, TimeRange { start: 10, end: 10 }, 30)
+        .unwrap();
+    assert!(crate::claim::claim_access_axes(&live.get_claim(&older).unwrap().unwrap()).1);
+
+    let destination = backups.path().join("restored");
+    let error = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &destination,
+        VaultConfig::device(),
+        &live,
+        200,
+    )
+    .err()
+    .expect("the restore must be refused");
+    assert!(error.to_string().contains("claim privacy"), "{error}");
+    assert!(!destination.exists());
 }

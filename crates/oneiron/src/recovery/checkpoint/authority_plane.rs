@@ -211,6 +211,10 @@ fn authority_moved(
     let mut image_verdicts = Vec::new();
     let mut image_bytes = BTreeSet::new();
     let mut image_jurisdictions = Vec::new();
+    let mut enrolled: BTreeSet<EntityId> = live
+        .values()
+        .filter_map(|(_, _, current)| current.enrollment())
+        .collect();
     for (key, value) in image {
         let (
             Class::Refuse {
@@ -228,23 +232,24 @@ fn authority_moved(
         if projection == Projection::Skill {
             image_bytes.extend(skill_bytes(value));
         }
+        enrolled.extend(authority.enrollment());
+        // A claim compared in aggregate still has its read scope compared as
+        // any claim's is, whatever the live body under its id became.
+        let scope_moved = |access| {
+            live.get(key)
+                .is_some_and(|(_, _, current)| current.access() != Some(access))
+        };
         match authority {
-            Compared::ScanVerdict(verdict) => {
+            Compared::ScanVerdict { access, verdict } => {
                 image_verdicts.push(verdict);
+                if scope_moved(access) {
+                    moved.insert(what);
+                }
                 continue;
             }
             Compared::Jurisdiction { access, facts } => {
                 image_jurisdictions.extend(facts);
-                // Its read scope compares as any claim's does.
-                if let Some((
-                    _,
-                    _,
-                    Compared::Jurisdiction {
-                        access: current, ..
-                    },
-                )) = live.get(key)
-                    && *current != access
-                {
+                if scope_moved(access) {
                     moved.insert(what);
                 }
                 continue;
@@ -271,7 +276,7 @@ fn authority_moved(
         }
     }
     let live_verdicts = live.values().filter_map(|(_, _, current)| match current {
-        Compared::ScanVerdict(verdict) => Some(verdict.clone()),
+        Compared::ScanVerdict { verdict, .. } => Some(verdict.clone()),
         _ => None,
     });
     if scan_postures(image_verdicts, &image_bytes) != scan_postures(live_verdicts, &image_bytes) {
@@ -281,8 +286,8 @@ fn authority_moved(
         Compared::Jurisdiction { facts, .. } => facts.clone(),
         _ => None,
     });
-    if jurisdictions(image_jurisdictions, image_entities)
-        != jurisdictions(live_jurisdictions, image_entities)
+    if jurisdictions(image_jurisdictions, image_entities, &enrolled)
+        != jurisdictions(live_jurisdictions, image_entities, &enrolled)
     {
         moved.insert("recipient jurisdictions");
     }
@@ -298,18 +303,23 @@ struct JurisdictionFacts {
 }
 
 /// The jurisdiction and confidence the campaign gate selects for each subject
-/// the image holds (`held`), from that subject's active observations. They
-/// pick which compliance rules bind a send, so a newer observation that moves
+/// the image holds (`held`) and either vault enrolls in a campaign
+/// (`enrolled`), from that subject's active observations. They pick which
+/// compliance rules bind a campaign send, so a newer observation that moves
 /// the selection is authority, and a refreshed one with the same result
-/// changes nothing. An observation that does not decode fails the gate
-/// closed, and compares as `Err`.
+/// changes nothing. The gate reads no jurisdiction of a subject outside every
+/// campaign, so its observations are content; enrolment itself is compared
+/// as the campaign enrolment family. An observation that does not decode
+/// fails the gate closed, and compares as `Err`.
 fn jurisdictions(
     observations: impl IntoIterator<Item = JurisdictionFacts>,
     held: &BTreeSet<&[u8]>,
+    enrolled: &BTreeSet<EntityId>,
 ) -> BTreeMap<EntityId, std::result::Result<Option<(String, Option<u16>)>, ()>> {
     let mut by_subject: BTreeMap<EntityId, Option<Vec<JurisdictionObservation>>> = BTreeMap::new();
     for facts in observations {
-        if !held.contains(facts.subject.as_bytes().as_slice()) {
+        if !held.contains(facts.subject.as_bytes().as_slice()) || !enrolled.contains(&facts.subject)
+        {
             continue;
         }
         let ranked = by_subject
@@ -459,8 +469,12 @@ enum Compared {
     /// Any other TASK body: it binds no ask, so one replacing a task the
     /// image holds differs from it.
     TaskUnbound,
-    /// An active skill scan verdict, compared as a posture.
-    ScanVerdict(ScanVerdictFacts),
+    /// A skill scan verdict claim: its read scope, and the verdict, compared
+    /// as a posture.
+    ScanVerdict {
+        access: (Option<EntityId>, bool),
+        verdict: ScanVerdictFacts,
+    },
     /// A `comm.jurisdiction` claim: its read scope, and the observation,
     /// compared as the selection the campaign gate makes for its subject
     /// (`None` for one the gate never reads: inactive, or about an edge).
@@ -471,6 +485,37 @@ enum Compared {
 }
 
 impl Compared {
+    /// The read scope of a claim of any kind.
+    fn access(&self) -> Option<(Option<EntityId>, bool)> {
+        match self {
+            Self::Claim { space, private, .. } => Some((*space, *private)),
+            Self::ScanVerdict { access, .. } | Self::Jurisdiction { access, .. } => Some(*access),
+            _ => None,
+        }
+    }
+
+    /// The subject an active `campaign.member` claim enrolls, as the campaign
+    /// gate finds it.
+    fn enrollment(&self) -> Option<EntityId> {
+        let Self::Claim {
+            authority: Some((_, body)),
+            ..
+        } = self
+        else {
+            return None;
+        };
+        let claim = crate::claim::decode_claim_body(body, true).ok()?;
+        match claim.subject {
+            ClaimSubject::Entity(subject)
+                if claim.predicate == crate::campaign::claims::PREDICATE_CAMPAIGN_MEMBER
+                    && claim.lifecycle == ClaimLifecycleStatus::Active =>
+            {
+                Some(subject)
+            }
+            _ => None,
+        }
+    }
+
     /// The authority family a claim belongs to, which names it in a refusal.
     fn family(&self) -> Option<&'static str> {
         match self {
@@ -589,10 +634,13 @@ fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
         Projection::Claim => crate::claim::decode_claim_body(body, true).map_or_else(
             |_| whole(),
             |claim| {
-                if claim.predicate == crate::skill_hub::PREDICATE_SKILL_SCAN_VERDICT {
-                    return scan_verdict(&claim);
-                }
                 let (space, private) = crate::claim::claim_access_axes(&claim);
+                if claim.predicate == crate::skill_hub::PREDICATE_SKILL_SCAN_VERDICT {
+                    return Compared::ScanVerdict {
+                        access: (space, private),
+                        verdict: scan_verdict(&claim),
+                    };
+                }
                 if claim.predicate == crate::campaign::claims::PREDICATE_COMM_JURISDICTION {
                     return Compared::Jurisdiction {
                         access: (space, private),
@@ -629,7 +677,7 @@ fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
 
 /// What an active skill scan verdict tells the activation gate; an inactive
 /// one tells it nothing. A risk that does not decode counts as the worst.
-fn scan_verdict(claim: &crate::claim::ClaimBody) -> Compared {
+fn scan_verdict(claim: &crate::claim::ClaimBody) -> ScanVerdictFacts {
     let field = |name: &str| match &claim.value {
         rmpv::Value::Map(fields) => fields
             .iter()
@@ -638,7 +686,7 @@ fn scan_verdict(claim: &crate::claim::ClaimBody) -> Compared {
         _ => None,
     };
     let active = claim.lifecycle == ClaimLifecycleStatus::Active;
-    Compared::ScanVerdict(ScanVerdictFacts {
+    ScanVerdictFacts {
         content_hash: field("contentHash").map(str::to_owned),
         risk: if active {
             crate::skill_hub::scan_verdict_row_risk(claim).unwrap_or(ScanRiskLevel::Critical)
@@ -648,7 +696,7 @@ fn scan_verdict(claim: &crate::claim::ClaimBody) -> Compared {
         partial: active
             && field("provider") == Some(crate::skill_hub::osv::OSV_SCAN_PROVIDER)
             && field("completeness") == Some("partial"),
-    })
+    }
 }
 
 /// What an active `comm.jurisdiction` observation about an entity tells the
