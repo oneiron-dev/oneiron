@@ -10687,7 +10687,7 @@
      "path": "src/connector_key/mod.rs",
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 2,
       "re-export": 9
      }
@@ -11507,6 +11507,16 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/context_board/own_changes.rs",
+     "purpose": "Read-time own-proposal outcomes and connector changes for one session",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "AdmittedPluginSection",
       "PackSectionRegistration",
@@ -11671,20 +11681,26 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "ChangedDelivery",
+      "ChangedEvent",
       "ChangedLine",
+      "ConnectorChange",
+      "ConnectorMount",
+      "ProposalChange",
+      "ProposalReason",
       "ServedLifecycle",
       "SessionReadSet"
      ],
      "path": "src/context_board/read_set.rs",
      "purpose": "Session read-set tracking, separate from the stateless board renderer",
      "surface": {
-      "crate-vis": 1,
-      "enum": 1,
-      "fn": 8,
-      "struct": 2
+      "crate-vis": 7,
+      "enum": 4,
+      "fn": 11,
+      "struct": 5
      }
     },
     {
@@ -11833,7 +11849,7 @@
      "path": "src/context_board/stream/registry.rs",
      "purpose": "The board stream registry: connections, subscriptions and event routing",
      "surface": {
-      "fn": 10,
+      "fn": 11,
       "struct": 2
      }
     },
@@ -11906,7 +11922,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/context_board/surfaces_tests.rs",
@@ -18137,7 +18153,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ProposalPolicySource",
@@ -18148,7 +18164,7 @@
      "purpose": "Actor-scoped, receipt-backed proposal observation; crossing only asks a question",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 3,
       "struct": 3
      }
@@ -38612,7 +38628,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 52,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39587,7 +39603,7 @@
    },
    "over_bar": 22,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2356,
+   "source_files": 2357,
    "test_files": 836
   },
   "oneiron-android": {
@@ -46293,7 +46309,7 @@
      "path": "src/api/context_board/cursor.rs",
      "purpose": "Server-owned MEMORIES cursors and session read sets, keyed by principal and session",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -46333,7 +46349,7 @@
      "path": "src/api/context_board/session.rs",
      "purpose": "Actor-bound session observations shared by core reads and board rendering",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -46813,7 +46829,7 @@
      "path": "src/api/mcp_gateway/board_observations.rs",
      "purpose": "Session-clock read observations and turn-local riders for MCP boards",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
