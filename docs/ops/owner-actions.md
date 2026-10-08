@@ -129,11 +129,12 @@ A restore refuses, and changes nothing, when:
   change), machine identities, published artifacts; for a room, skill, agent, contact, claim or
   task the backup holds: room roles and membership (who is in a room, their role, how far back
   they read), a skill quarantine, an agent switched off or narrowed, a contact revoked, opted
-  out or rebound to another party, a relationship membership retracted, a task cancelled, reassigned or its ask class
-  narrowed; or an e-sign ceremony the backup holds (a signature, rejection or void since). The
-  refusal names what moved. Content edits do not block the
-  restore, and a room, document or claim created after the backup is simply not in the restored
-  vault. Rehearse with `--scratch` to read the old content beside the vault instead;
+  out, rebound to another party or marked as first met in public (a contact first met in public
+  since the backup also refuses), a recipient's observed jurisdiction that moved, a
+  relationship membership retracted, a task cancelled, reassigned or its ask class narrowed; or
+  an e-sign ceremony the backup holds (a signature, rejection or void since). The refusal names
+  what moved. Content edits do not block the restore, and a room, document or claim created
+  after the backup is simply not in the restored vault. Rehearse with `--scratch` to read the old content beside the vault instead;
 - the restored vault would make someone an owner or member who is not one now: a person
   deleted, merged away or removed from a shared vault since the backup does not get their
   authority back;

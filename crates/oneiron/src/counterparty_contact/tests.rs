@@ -625,13 +625,75 @@ fn a_restore_never_undoes_a_stop_or_a_contact_revocation_since() -> Result<()> {
     Ok(())
 }
 
+/// Replaces `contact`'s live `predicate` head with `head`, naming `value`, as
+/// an owner's correction does, and rebuilds the contact from its heads.
+fn replace_contact_head(
+    vault: &Vault,
+    contact: EntityId,
+    predicate: &str,
+    value: Value,
+    head: EntityId,
+    at: u64,
+) -> Result<CounterpartyContactRecord> {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSubject};
+    let old_head = vault
+        .claims_for_subject(&contact)?
+        .into_iter()
+        .find(|id| {
+            vault.get_claim(id).ok().flatten().is_some_and(|body| {
+                body.predicate == predicate && body.lifecycle == ClaimLifecycleStatus::Active
+            })
+        })
+        .expect("the contact's live head");
+    let replacement = ClaimBody::new(
+        predicate,
+        ClaimSubject::Entity(contact),
+        value,
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )?;
+    vault.put_claim(
+        &head,
+        &replacement,
+        crate::TimeRange { start: at, end: at },
+        at,
+    )?;
+    vault.supersede_claim(&head, &old_head, at)?;
+    rematerialize_contact_cache(vault, &contact)
+}
+
+/// A restore of `image` over `vault`, into `destination`, which must be
+/// refused for counterparty contacts with nothing created.
+fn assert_contact_restore_refused(
+    vault: &Vault,
+    image: &std::path::Path,
+    destination: &std::path::Path,
+) {
+    let error = Vault::restore_checkpoint_keeping_authority(
+        image,
+        destination,
+        vault.config.clone(),
+        vault,
+        200,
+    )
+    .err()
+    .expect("the restore must be refused");
+    assert!(
+        error
+            .to_string()
+            .contains("counterparty contacts and their consents"),
+        "{error}"
+    );
+    assert!(!destination.exists());
+}
+
 /// SOL-9A-2-R3 F28: rebinding a contact to another party leaves the party it
 /// left unknown, without the contact's disclosure standing. A restore from
 /// before the rebinding is refused rather than hand that party the contact
 /// back, though its status and consents never changed.
 #[test]
 fn a_restore_never_rebinds_a_contact_to_the_party_it_left() -> Result<()> {
-    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSubject};
     let (_tmp, vault) = open_vault();
     let identity = entity(0x7C);
     let contact = entity(0x7D);
@@ -644,53 +706,63 @@ fn a_restore_never_rebinds_a_contact_to_the_party_it_left() -> Result<()> {
     let image = backups.path().join("before-rebinding");
     vault.snapshot_checkpoint(&image, 100)?;
 
-    let old_head = vault
-        .claims_for_subject(&contact)?
-        .into_iter()
-        .find(|id| {
-            vault.get_claim(id).ok().flatten().is_some_and(|body| {
-                body.predicate == PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY
-                    && body.lifecycle == ClaimLifecycleStatus::Active
-            })
-        })
-        .expect("the contact's party head");
-    let new_head = entity(0x7E);
-    let rebound = ClaimBody::new(
+    let record = replace_contact_head(
+        &vault,
+        contact,
         PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
-        ClaimSubject::Entity(contact),
         Value::from("rin@example.com"),
-        1.0,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    )?;
-    vault.put_claim(
-        &new_head,
-        &rebound,
-        crate::TimeRange { start: 20, end: 20 },
+        entity(0x7E),
         20,
     )?;
-    vault.supersede_claim(&new_head, &old_head, 20)?;
-    let record = rematerialize_contact_cache(&vault, &contact)?;
     assert_eq!(record.counterparty, "rin@example.com");
     assert_eq!(record.status, CounterpartyContactStatus::Active);
     assert!(record.opt_out.is_none());
 
-    let destination = backups.path().join("after-rebinding");
-    let error = Vault::restore_checkpoint_keeping_authority(
-        &image,
-        &destination,
-        vault.config.clone(),
+    assert_contact_restore_refused(&vault, &image, &backups.path().join("after-rebinding"));
+    Ok(())
+}
+
+/// ASTRA-9A-2-R3 F3: a contact first met in public holds a send for the
+/// owner rather than send it under an ordinary grant. A restore from before
+/// the owner reclassified a contact as public, or from before a public
+/// contact was made, is refused rather than drop the hold.
+#[test]
+fn a_restore_never_drops_the_hold_of_a_public_first_touch() -> Result<()> {
+    let (_tmp, vault) = open_vault();
+    let identity = entity(0x7F);
+    let contact = entity(0x80);
+    put_identity(&vault, identity, "email", "owner@example.com")?;
+    vault.create_counterparty_contact(
+        &contact,
+        &CounterpartyContactRecord::user_introduction(identity, "sora@example.com", 10)?,
+    )?;
+    let backups = tempfile::tempdir()?;
+
+    let before_correction = backups.path().join("before-correction");
+    vault.snapshot_checkpoint(&before_correction, 100)?;
+    let record = replace_contact_head(
         &vault,
-        200,
-    )
-    .err()
-    .expect("the restore must be refused");
-    assert!(
-        error
-            .to_string()
-            .contains("counterparty contacts and their consents"),
-        "{error}"
+        contact,
+        PREDICATE_COUNTERPARTY_CONTACT_FIRST_TOUCH,
+        Value::from(CounterpartyFirstTouch::Public.as_str()),
+        entity(0x81),
+        20,
+    )?;
+    assert_eq!(record.first_touch, CounterpartyFirstTouch::Public);
+    assert_eq!(record.status, CounterpartyContactStatus::Active);
+    assert!(record.opt_out.is_none());
+    assert_contact_restore_refused(
+        &vault,
+        &before_correction,
+        &backups.path().join("after-correction"),
     );
-    assert!(!destination.exists());
+
+    let before_public = backups.path().join("before-public");
+    vault.snapshot_checkpoint(&before_public, 110)?;
+    vault.create_counterparty_contact(
+        &entity(0x82),
+        &CounterpartyContactRecord::public(identity, "kai@example.com", 30)?,
+    )?;
+    assert_contact_restore_refused(&vault, &before_public, &backups.path().join("after-public"));
     Ok(())
 }

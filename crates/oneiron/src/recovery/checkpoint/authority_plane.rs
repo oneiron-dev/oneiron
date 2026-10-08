@@ -26,9 +26,14 @@ use crate::agent_def::{
     AgentCeiling, AgentScope, AgentWakeCadence, DreamingMode, McpRef, MemoryProfile,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+use crate::campaign::compliance::{
+    JurisdictionObservation, rank_jurisdiction_observation, select_jurisdiction,
+};
+use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject};
 use crate::conversation::{ConversationBody, RoomRole};
-use crate::counterparty_contact::{CounterpartyContactStatus, CounterpartyOptOut};
+use crate::counterparty_contact::{
+    CounterpartyContactStatus, CounterpartyFirstTouch, CounterpartyOptOut,
+};
 use crate::llm::ModelTierRef;
 use crate::note::NoteKind;
 use crate::outbound_grant::StandingOutboundGrant;
@@ -205,6 +210,7 @@ fn authority_moved(
     let mut held = BTreeSet::new();
     let mut image_verdicts = Vec::new();
     let mut image_bytes = BTreeSet::new();
+    let mut image_jurisdictions = Vec::new();
     for (key, value) in image {
         let (
             Class::Refuse {
@@ -222,9 +228,28 @@ fn authority_moved(
         if projection == Projection::Skill {
             image_bytes.extend(skill_bytes(value));
         }
-        if let Compared::ScanVerdict(verdict) = authority {
-            image_verdicts.push(verdict);
-            continue;
+        match authority {
+            Compared::ScanVerdict(verdict) => {
+                image_verdicts.push(verdict);
+                continue;
+            }
+            Compared::Jurisdiction { access, facts } => {
+                image_jurisdictions.extend(facts);
+                // Its read scope compares as any claim's does.
+                if let Some((
+                    _,
+                    _,
+                    Compared::Jurisdiction {
+                        access: current, ..
+                    },
+                )) = live.get(key)
+                    && *current != access
+                {
+                    moved.insert(what);
+                }
+                continue;
+            }
+            _ => {}
         }
         held.insert(key.as_slice());
         match live.get(key) {
@@ -252,7 +277,53 @@ fn authority_moved(
     if scan_postures(image_verdicts, &image_bytes) != scan_postures(live_verdicts, &image_bytes) {
         moved.insert("skill scan verdicts");
     }
+    let live_jurisdictions = live.values().filter_map(|(_, _, current)| match current {
+        Compared::Jurisdiction { facts, .. } => facts.clone(),
+        _ => None,
+    });
+    if jurisdictions(image_jurisdictions, image_entities)
+        != jurisdictions(live_jurisdictions, image_entities)
+    {
+        moved.insert("recipient jurisdictions");
+    }
     moved
+}
+
+/// An active `comm.jurisdiction` observation about an entity, as the campaign
+/// gate ranks it; `None` when its value does not decode.
+#[derive(Clone, PartialEq)]
+struct JurisdictionFacts {
+    subject: EntityId,
+    observation: Option<JurisdictionObservation>,
+}
+
+/// The jurisdiction and confidence the campaign gate selects for each subject
+/// the image holds (`held`), from that subject's active observations. They
+/// pick which compliance rules bind a send, so a newer observation that moves
+/// the selection is authority, and a refreshed one with the same result
+/// changes nothing. An observation that does not decode fails the gate
+/// closed, and compares as `Err`.
+fn jurisdictions(
+    observations: impl IntoIterator<Item = JurisdictionFacts>,
+    held: &BTreeSet<&[u8]>,
+) -> BTreeMap<EntityId, std::result::Result<Option<(String, Option<u16>)>, ()>> {
+    let mut by_subject: BTreeMap<EntityId, Option<Vec<JurisdictionObservation>>> = BTreeMap::new();
+    for facts in observations {
+        if !held.contains(facts.subject.as_bytes().as_slice()) {
+            continue;
+        }
+        let ranked = by_subject
+            .entry(facts.subject)
+            .or_insert_with(|| Some(Vec::new()));
+        match (ranked.as_mut(), facts.observation) {
+            (Some(observations), Some(observation)) => observations.push(observation),
+            _ => *ranked = None,
+        }
+    }
+    by_subject
+        .into_iter()
+        .map(|(subject, ranked)| (subject, ranked.map(select_jurisdiction).ok_or(())))
+        .collect()
 }
 
 /// One active skill scan verdict: the bytes it is about, the risk it found,
@@ -299,8 +370,9 @@ fn scan_postures(
 
 /// Whether an entity only one vault holds (only the live one when
 /// `live_only`) still counts as changed: an outbound grant; a claim of an
-/// authority family; a contact that is revoked or opted out, whose absence
-/// would let a send through; and an owner, cancellation or human assignment
+/// authority family; a contact that is revoked, opted out or first met in
+/// public (which holds a send for the owner), whose absence would let a send
+/// through; and an owner, cancellation or human assignment
 /// fact added since the image to a task the image holds. An acknowledgement
 /// only takes a failed task off the board.
 fn presence_is_authority(
@@ -311,8 +383,15 @@ fn presence_is_authority(
 ) -> bool {
     match authority {
         Compared::Contact {
-            status, opt_out, ..
-        } => opt_out.is_some() || *status != CounterpartyContactStatus::Active,
+            status,
+            opt_out,
+            first_touch,
+            ..
+        } => {
+            opt_out.is_some()
+                || *status != CounterpartyContactStatus::Active
+                || *first_touch == CounterpartyFirstTouch::Public
+        }
         Compared::TaskFact(fact) => {
             live_only
                 && fact.kind != TaskAuthorityFactKind::Acked
@@ -343,11 +422,13 @@ enum Compared {
     },
     /// What bounds an agent.
     Agent(Box<AgentBounds>),
-    /// Which party on which identity a counterparty contact binds, whether it
+    /// Which party on which identity a counterparty contact binds, how it was
+    /// first met (a public first touch holds a send for the owner), whether it
     /// is live, and the party's consents.
     Contact {
         identity: EntityId,
         party: String,
+        first_touch: CounterpartyFirstTouch,
         status: CounterpartyContactStatus,
         opt_out: Option<CounterpartyOptOut>,
         promo_consent: bool,
@@ -380,6 +461,13 @@ enum Compared {
     TaskUnbound,
     /// An active skill scan verdict, compared as a posture.
     ScanVerdict(ScanVerdictFacts),
+    /// A `comm.jurisdiction` claim: its read scope, and the observation,
+    /// compared as the selection the campaign gate makes for its subject
+    /// (`None` for one the gate never reads: inactive, or about an edge).
+    Jurisdiction {
+        access: (Option<EntityId>, bool),
+        facts: Option<JurisdictionFacts>,
+    },
 }
 
 impl Compared {
@@ -485,6 +573,7 @@ fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
                 |contact| Compared::Contact {
                     identity: contact.identity_ref,
                     party: contact.counterparty,
+                    first_touch: contact.first_touch,
                     status: contact.status,
                     opt_out: contact.opt_out,
                     promo_consent: contact.promo_consent,
@@ -504,6 +593,12 @@ fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
                     return scan_verdict(&claim);
                 }
                 let (space, private) = crate::claim::claim_access_axes(&claim);
+                if claim.predicate == crate::campaign::claims::PREDICATE_COMM_JURISDICTION {
+                    return Compared::Jurisdiction {
+                        access: (space, private),
+                        facts: jurisdiction(&claim),
+                    };
+                }
                 let authority = super::restore_class::authority_claim(&claim)
                     .map(|family| (family, body.to_vec()));
                 Compared::Claim {
@@ -553,6 +648,19 @@ fn scan_verdict(claim: &crate::claim::ClaimBody) -> Compared {
         partial: active
             && field("provider") == Some(crate::skill_hub::osv::OSV_SCAN_PROVIDER)
             && field("completeness") == Some("partial"),
+    })
+}
+
+/// What an active `comm.jurisdiction` observation about an entity tells the
+/// campaign gate, which reads a subject's active observations through their
+/// `claim_of` edges.
+fn jurisdiction(claim: &crate::claim::ClaimBody) -> Option<JurisdictionFacts> {
+    let ClaimSubject::Entity(subject) = claim.subject else {
+        return None;
+    };
+    (claim.lifecycle == ClaimLifecycleStatus::Active).then(|| JurisdictionFacts {
+        subject,
+        observation: rank_jurisdiction_observation(claim).ok(),
     })
 }
 

@@ -420,3 +420,73 @@ fn restore_refuses_to_return_a_stale_plugin_install_withdrawn_since() {
     assert!(error.to_string().contains("board plugins"), "{error}");
     assert!(!destination.exists());
 }
+
+/// ASTRA-9A-2-R3 F4: a recipient's newest `comm.jurisdiction` observation
+/// picks which compliance rules bind a campaign send. A restore from before a
+/// newer observation that moved it is refused rather than send under the
+/// older jurisdiction's rules; a refreshed observation with the same result
+/// does not block the restore.
+#[test]
+fn restore_refuses_to_roll_back_a_recipient_jurisdiction_moved_since() {
+    use crate::campaign::claims::PREDICATE_COMM_JURISDICTION;
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    // No policy manifest, as the other restore regressions run.
+    let (_dir, live) = crate::test_util::open_test_vault_with(VaultConfig::device());
+    let backups = tempfile::tempdir().unwrap();
+    let recipient = person(&live, b"recipient");
+    let observe = |jurisdiction: &str, observed_at: u64| {
+        let mut observation = ClaimBody::new(
+            PREDICATE_COMM_JURISDICTION,
+            ClaimSubject::Entity(recipient),
+            rmpv::Value::Map(vec![
+                (
+                    rmpv::Value::from("jurisdiction"),
+                    rmpv::Value::from(jurisdiction),
+                ),
+                (
+                    rmpv::Value::from("observed_at"),
+                    rmpv::Value::from(observed_at),
+                ),
+            ]),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        observation.evidence = Some(rmpv::Value::from("connector:profile-region"));
+        live.put_claim(
+            &EntityId::now(),
+            &observation,
+            TimeRange {
+                start: observed_at,
+                end: observed_at,
+            },
+            observed_at,
+        )
+        .unwrap();
+    };
+    observe("UK", 10);
+    let image = backups.path().join("backup");
+    live.snapshot_checkpoint(&image, 100).unwrap();
+    let restore = |name: &str| {
+        Vault::restore_checkpoint_keeping_authority(
+            &image,
+            &backups.path().join(name),
+            VaultConfig::device(),
+            &live,
+            200,
+        )
+        .map(drop)
+    };
+
+    observe("uk", 20);
+    restore("refreshed").expect("the same jurisdiction, observed again, restores");
+
+    observe("US", 30);
+    let error = restore("moved").expect_err("a moved jurisdiction refuses the restore");
+    assert!(
+        error.to_string().contains("recipient jurisdictions"),
+        "{error}"
+    );
+    assert!(!backups.path().join("moved").exists());
+}

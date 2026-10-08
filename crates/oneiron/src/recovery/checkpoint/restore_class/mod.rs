@@ -85,8 +85,11 @@ pub(super) enum Projection {
     /// scope, connectors, tools, skills, model, memory and waking.
     Agent,
     /// Which party on which identity a counterparty contact binds (the pair a
-    /// sender resolves to the contact and its disclosure standing), whether
-    /// it is live, and the party's opt-out and promotional consent.
+    /// sender resolves to the contact and its disclosure standing), how it
+    /// was first met (a public first touch holds a send for the owner),
+    /// whether it is live, and the party's opt-out and promotional consent.
+    /// One only one vault holds counts as changed when it is revoked, opted
+    /// out or first met in public.
     Contact,
     /// A NOTE's kind, which decides who reads it, and its author. A body
     /// that does not decode is content.
@@ -96,7 +99,9 @@ pub(super) enum Projection {
     /// counts as changed. Skill scan verdicts are compared as the activation
     /// posture the bytes of each skill the image holds take from them, not
     /// claim by claim, so a refreshed scan with the same result, or a scan of
-    /// bytes the image does not hold, changes nothing.
+    /// bytes the image does not hold, changes nothing. Recipient jurisdiction
+    /// observations are compared the same way, as the jurisdiction the
+    /// campaign gate selects for each subject the image holds.
     Claim,
     /// A project's authority (parents, claims scope, slice, depth, leader,
     /// board), roster, role and budget.
