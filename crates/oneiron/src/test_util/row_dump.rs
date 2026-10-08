@@ -8,8 +8,9 @@
 //!
 //! A few row families are not a function of the writes alone, and are masked
 //! so two opens given the same writes dump the same bytes (see
-//! [`mask_unrepeatable_stamps`] and [`mask_embed_job_stamps`]). Every other
-//! byte is compared as stored.
+//! `crate::vault::mask_unrepeatable_stamps` and
+//! `crate::vault::mask_embed_job_stamps`). Every other byte is compared as
+//! stored.
 
 use std::collections::BTreeMap;
 
@@ -77,80 +78,12 @@ pub(crate) fn dump_rows(vault: &Vault) -> RowDump {
     manifest.sort_unstable();
     assert_eq!(dumped, manifest, "the row dump covers every named database");
     if let Some(rows) = out.get_mut("vault_meta") {
-        mask_unrepeatable_stamps(rows);
+        crate::vault::mask_unrepeatable_stamps(rows).expect("revision state decodes");
     }
     if let Some(rows) = out.get_mut("sync_queue") {
-        mask_embed_job_stamps(rows);
+        crate::vault::mask_embed_job_stamps(rows);
     }
     out
-}
-
-/// An embed job row (`e:` + entity id) carries its priority and the wall-clock
-/// millisecond it was queued at. The queue time is masked to zero.
-fn mask_embed_job_stamps(rows: &mut [(Vec<u8>, Vec<u8>)]) {
-    const EMBED_KEY_LEN: usize = 2 + crate::entity_id::ENTITY_ID_LEN;
-    for (key, value) in rows.iter_mut() {
-        if key.starts_with(b"e:") && key.len() == EMBED_KEY_LEN && value.len() == 9 {
-            value[1..].fill(0);
-        }
-    }
-}
-
-/// Masks the two `vault_meta` row families whose bytes differ between two
-/// opens given the same writes:
-///
-/// - the entity-revision state row stamps `changed_at_ms` from the wall
-///   clock, not the store clock;
-/// - an overwritten entity's revision history is a Loro document, whose peer
-///   id is random per document. The document, the frontiers retained from
-///   it, and the frontier references hashed from those (in the frontier and
-///   identity keys and the state row's `live`/`indexed`) all carry it.
-///
-/// What stays: which entity holds a document, how many frontiers it retains,
-/// which entity each identity row names, whether its live revision is the
-/// indexed one, and whether it has a document.
-fn mask_unrepeatable_stamps(rows: &mut [(Vec<u8>, Vec<u8>)]) {
-    const DOC: &[u8] = b"entity_revision:doc:";
-    const FRONTIER: &[u8] = b"entity_revision:frontier:";
-    const IDENTITY: &[u8] = b"entity_revision:identity:";
-    const STATE: &[u8] = b"entity_revision:state:";
-    const MASK: &[u8] = b"<loro>";
-    const ID_LEN: usize = crate::entity_id::ENTITY_ID_LEN;
-    for (key, value) in rows.iter_mut() {
-        if key.starts_with(DOC) {
-            *value = MASK.to_vec();
-        } else if key.starts_with(FRONTIER) {
-            key.truncate(FRONTIER.len() + ID_LEN);
-            key.extend_from_slice(MASK);
-            *value = MASK.to_vec();
-        } else if key.starts_with(IDENTITY) {
-            key.truncate(IDENTITY.len());
-            key.extend_from_slice(MASK);
-        } else if key.starts_with(STATE) {
-            let mut state =
-                rmpv::decode::read_value(&mut value.as_slice()).expect("revision state decodes");
-            let rmpv::Value::Map(entries) = &mut state else {
-                panic!("revision state is a map");
-            };
-            let field = |entries: &[(rmpv::Value, rmpv::Value)], name: &str| {
-                entries
-                    .iter()
-                    .find(|(field, _)| field.as_str() == Some(name))
-                    .map(|(_, value)| value.clone())
-            };
-            let published = field(entries, "live") == field(entries, "indexed");
-            for (field, stamp) in entries.iter_mut() {
-                match field.as_str() {
-                    Some("changed_at_ms") => *stamp = rmpv::Value::from(0_u64),
-                    Some("live") => *stamp = rmpv::Value::Nil,
-                    Some("indexed") => *stamp = rmpv::Value::Boolean(published),
-                    _ => {}
-                }
-            }
-            value.clear();
-            rmpv::encode::write_value(value, &state).expect("revision state encodes");
-        }
-    }
 }
 
 /// One row a write changed: its database, key and value, and whether the

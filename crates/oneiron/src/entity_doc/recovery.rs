@@ -2,7 +2,6 @@
 
 use super::{EntityDoc, storage};
 use crate::error::ArtifactError;
-use crate::ports::{DocumentRowStore, DocumentSlot};
 use crate::recovery::CanonicalEntityDocument;
 use crate::side_table::HexId;
 fn invalid(reason: &'static str) -> crate::Error {
@@ -76,15 +75,16 @@ pub(crate) fn restore(
     guard(vault, txn, &entity)?;
     let document_id = EntityId::from_bytes(row.document_id)?;
     let document = document_id.to_hex();
-    if let Some(old) = storage::ENTITY_DOC_HEAD.get(&vault.store, txn, &HexId(entity))? {
-        if old.document != document {
-            return Err(invalid(
-                "entity document recovery conflicts with existing head",
-            ));
-        }
-        vault
-            .store
-            .port_document_updates_delete(txn, DocumentSlot::of(document_id))?;
+    // An existing head keeps its updates until `persist` below replaces them
+    // with the recovered snapshot: it reads the intact document first, so
+    // recovering the same text owes the turn no tag pass.
+    let existing = storage::ENTITY_DOC_HEAD.get(&vault.store, txn, &HexId(entity))?;
+    if let Some(old) = &existing
+        && old.document != document
+    {
+        return Err(invalid(
+            "entity document recovery conflicts with existing head",
+        ));
     }
     let doc = EntityDoc::rebuild_value(
         entity,
@@ -103,5 +103,13 @@ pub(crate) fn restore(
         generation: 0,
         pending: 0,
     };
-    storage::persist(vault, txn, &entity, &mut head, &doc, None)
+    storage::persist(vault, txn, &entity, &mut head, &doc, None)?;
+    // With no head the text could not be read, so a MESSAGE or TURN whose
+    // text this restores owes its turn a tag pass (ARCH-0036).
+    if existing.is_none()
+        && let Some(entity_type) = crate::tagging::text_entity_type_in_txn(vault, txn, &entity)?
+    {
+        crate::tagging::mark_on_publication_in_txn(vault, txn, &entity, entity_type)?;
+    }
+    Ok(())
 }

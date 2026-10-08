@@ -166,6 +166,15 @@ impl BoardStreamRegistry {
         self.connections.get(c)
     }
 
+    /// The epoch of the last keyframe this connection's carrier lane took:
+    /// the receiver ignores any frame older than it.
+    #[must_use]
+    pub fn carrier_epoch(&self, c: &StreamConnectionId) -> Option<u64> {
+        self.connections
+            .get(c)
+            .and_then(|state| state.carrier.epoch)
+    }
+
     pub fn superseded_intermediate_deltas(&self, c: &StreamConnectionId) -> Option<usize> {
         Some(
             self.connections
