@@ -3040,7 +3040,7 @@ fn a_restore_never_widens_a_task_ask_class_narrowed_since() -> Result<()> {
     let image = backups.path().join("backup");
     fixture.vault.snapshot_checkpoint(&image, 100)?;
 
-    let mut narrowed = class.clone();
+    let mut narrowed = class;
     let dropped = fixture.people[0];
     narrowed.allowed_recipients.remove(&dropped);
     narrowed.required_people.remove(&dropped);
