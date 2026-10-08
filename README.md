@@ -26,12 +26,20 @@ that applications can embed or run as a daemon.
   judgments, and optional JavaScript code execution have Rust implementations.
   Hosts supply the required inference, scheduling, policy, and budget bindings.
   Standard daemon startup does not bind a Dreamer model or code executor.
-- **Optional embedding backends.** The daemon can provision a local embedder or
-  use a configured endpoint. Generative-model adapters need host runtimes or
-  remote providers; they do not bundle model weights.
+- **Models behind one seam.** Generative models plug in through the
+  `LlmBackend` trait. Adapter crates cover a local in-process runtime,
+  OpenAI-compatible and Anthropic Messages APIs, Gemini, a self-hosted model
+  server, and the System One typed-decision service. The host loads the model or
+  holds the credentials; no adapter bundles model weights. Standard daemon
+  startup binds no generative model.
+- **Optional embedding backends.** The daemon can run with no embedder,
+  provision a local embedder, or use a configured endpoint.
+- **Owner actions.** The CLI and the `/v1/owner` routes cover where the vault
+  lives (`doctor`), backups, restore rehearsal, restore, export, the secret-scan
+  switch, and one-act approval of an import batch or an agent run. None of them
+  needs a model. See [docs/ops/owner-actions.md](./docs/ops/owner-actions.md).
 
-These are implemented APIs and components. They do not mean that every workflow
-in the direction section below is complete.
+These are implemented APIs and components. Oneiron is pre-release.
 
 ## Quick Start: the embedded Rust API
 
@@ -79,13 +87,15 @@ cargo build --locked -p oneiron --release
 cargo install --locked --path crates/oneiron-server
 ```
 
+This installs two binaries, `oneiron-server` and `oneiron`. They run the same CLI.
+
 Use a separate, new vault and config for this **development-only** daemon
 example. It selects no embedding backend and binds an unauthenticated server
 to loopback:
 
 ```sh
 oneiron-server init ./server-vault --config ./oneiron-server.toml --embedder none
-oneiron-server doctor ./server-vault
+oneiron-server doctor ./server-vault --config ./oneiron-server.toml
 oneiron-server serve --config ./oneiron-server.toml --host 127.0.0.1 \
   --insecure-allow-unauthenticated
 ```
@@ -99,26 +109,10 @@ See [DEPLOYMENT.md](./DEPLOYMENT.md) for service templates.
 Oneiron is pre-release. This README uses source builds rather than assuming a
 published package or release binary.
 
-## Where it is going
-
-These are architecture directions and ongoing work, not a list of finished
-features.
-
-1. **Local-first memory with optional hosting.** Keep the same vault model across
-   embedding, a local daemon, and an optional hosted peer. Keep local use available
-   without requiring a hosted account.
-2. **Memory that shows its work.** Connect generated memory and typed judgments
-   to their sources, actors, and decision receipts. Keep model advice separate
-   from write authority.
-3. **Dreamer consolidation.** Build background workflows that reconcile evidence,
-   handle conflicting claims, and refresh derived memory between sessions.
-4. **One scoped agent API.** Make MCP and sandboxed code mode projections of the
-   same typed operations, read scopes, and write gates.
-5. **Measured learning and local models.** Use recorded outcomes to improve skills
-   and model choices. Explore small local models for Dreamer tasks without sending
-   vault text out for that training.
-
 ## Crates
+
+The `oneiron` crate is being split into smaller crates behind the same facade.
+This table lists the crates on main today.
 
 | Crate | Role |
 |-------|------|
@@ -174,11 +168,14 @@ cargo nextest run --locked -p oneiron --features sync,test-hooks --profile full
 ```
 
 The second command is the narrow sync lane, not the full workspace gate.
-[AGENTS.md](./AGENTS.md) covers scoped tests and host requirements.
+[AGENTS.md](./AGENTS.md) covers scoped tests, host requirements, and what
+to test: new tests carry truth from outside the code, preferably end to end.
 [WORKFLOW.md](./WORKFLOW.md) covers verification and PRs.
 `scripts/verify.sh --list` shows the scripted gate without building.
 
 - [oneiron.skills.md](./oneiron.skills.md): HTTP API reference.
+- [docs/ops/owner-actions.md](./docs/ops/owner-actions.md): backup, restore,
+  export, and owner approvals.
 - [UPGRADING.md](./UPGRADING.md): authentication and text-index upgrade notes.
 - [MIGRATIONS.md](./MIGRATIONS.md): storage-format decision history.
 
