@@ -2734,9 +2734,9 @@ fn ready_parent_budget_continues_after_reopen_without_other_traffic() {
     };
     let mut append = input(room, Some(trunk), false, actor);
     append.session = Some(session);
-    // Durable commits dominate this test's run time, so the 10,001 children
-    // are appended in one source transaction and reach the peer as one live
-    // delta (a few transactions) rather than one commit per record.
+    // The 10,001 children are appended in one source transaction and reach
+    // the peer as one live delta (a few transactions), not one durable commit
+    // per record.
     let children = source
         .with_write_txn(|txn| {
             (0..10_001)
