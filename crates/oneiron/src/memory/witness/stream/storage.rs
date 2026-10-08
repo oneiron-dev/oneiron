@@ -67,6 +67,15 @@ pub(super) fn receipt(
 ) -> Result<Option<MessageStreamReceipt>> {
     RECEIPT.get(&vault.store, txn, &id)
 }
+/// The latest stream finality of a MESSAGE and the generation that wrote it,
+/// in the caller's transaction. An atomically committed MESSAGE has none.
+pub(crate) fn message_stream_finality_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    message: &EntityId,
+) -> Result<Option<(StreamFinality, EntityId)>> {
+    Ok(receipt(vault, txn, *message)?.map(|done| (done.finality, done.generation)))
+}
 pub(super) fn finish(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

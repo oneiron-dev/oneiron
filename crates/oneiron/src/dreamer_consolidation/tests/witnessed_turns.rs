@@ -873,3 +873,150 @@ fn gap_queue_refuses_a_text_gap_whose_message_changed_after_the_scan() -> Result
     }
     Ok(())
 }
+
+fn id_of(message: &WitnessMessage) -> EntityId {
+    EntityId::from_hex(message.id.as_deref().expect("message id")).expect("message id hex")
+}
+
+fn partition_of(conversation: EntityId) -> ConsolidationPartitionKey {
+    ConsolidationPartitionKey {
+        conversation_ref: conversation,
+        world_ref: None,
+        facet_ref: None,
+    }
+}
+
+/// One user MESSAGE written through the stream doors into a fresh turn and
+/// ended by `ending`: (turn, conversation, message, the stream's input).
+fn stream_turn(
+    vault: &Vault,
+    seed: u8,
+    text: &str,
+    ending: &str,
+) -> Result<(EntityId, EntityId, EntityId, WitnessTurn)> {
+    let person = EntityId::from_bytes([seed; 16])?;
+    vault.put_entity(
+        &person,
+        ENTITY_TYPE_PERSON,
+        occurred(1),
+        1,
+        b"stream writer",
+    )?;
+    // A continuation stream needs its human writer's live owner binding.
+    crate::test_util::bind_test_owner(vault, person);
+    let conversation = EntityId::from_bytes([seed + 1; 16])?;
+    let turn = EntityId::now();
+    let input = WitnessTurn {
+        conversation_ref: conversation.to_hex(),
+        turn_ref: Some(turn.to_hex()),
+        messages: vec![message(0, WitnessAuthor::User, "", true)],
+        occurred_at: 10,
+    };
+    end_stream(vault, person, &input, text, ending);
+    Ok((turn, conversation, id_of(&input.messages[0]), input))
+}
+
+/// Opens a stream on `input`'s MESSAGE as `writer` (a continuation once the
+/// MESSAGE exists), appends `text` and ends it by `ending`.
+fn end_stream(vault: &Vault, writer: EntityId, input: &WitnessTurn, text: &str, ending: &str) {
+    let memory = vault.memory(writer, EdgeActorClass::Human);
+    let handle = memory
+        .begin_message_stream(input, Some(crate::memory::MessageWriteMode::Atomic))
+        .expect("stream begins");
+    memory.append_to_stream(handle, text).expect("append");
+    match ending {
+        "finalize" => {
+            memory.finalize_stream(handle).expect("finalize");
+        }
+        "cancel" => {
+            memory
+                .cancel_stream(handle, crate::memory::StreamCancelReason::UserInterrupted)
+                .expect("cancel");
+        }
+        "idle timeout" => {
+            let pump = vault.pump_message_streams_at(u64::MAX).expect("pump");
+            assert_eq!(pump.finalized.len(), 1, "the quiet stream timed out");
+        }
+        other => panic!("unknown stream ending {other}"),
+    }
+}
+
+/// Only final words are transcript. A stream that ends by cancellation or by
+/// idle timeout keeps its text as audit, never as words the Dreamer reads or
+/// cites; an explicit finalize is final.
+#[test]
+fn only_finalized_stream_text_reaches_the_branch() -> Result<()> {
+    for ending in ["finalize", "cancel", "idle timeout"] {
+        let (_dir, vault) = open_vault();
+        let (turn, conversation, _, _) = stream_turn(&vault, 0x75, SAID, ending)?;
+        let branch = BranchResources::open(
+            &vault,
+            vault.dreamer_authority()?,
+            partition_of(conversation),
+            &[turn],
+            AttemptId::now(),
+            None,
+        )?;
+        let transcript = branch.transcript(branch.scope(), &[turn])?;
+        let cited = branch.verify_evidence_refs(&[SwarmEvidenceRef {
+            source_id: turn,
+            claim_id: None,
+            byte_range: Some(name_range()),
+        }]);
+        if ending == "finalize" {
+            assert_eq!(transcript, format!("[{} user] {SAID}\n", turn.to_hex()));
+            assert_eq!(
+                cited?[0].content_hash,
+                swarm_evidence_content_hash(b"Oleksii")
+            );
+        } else {
+            assert_eq!(
+                transcript,
+                format!("[{} user] \n", turn.to_hex()),
+                "{ending}: audit text is not transcript"
+            );
+            assert!(cited.is_err(), "{ending}: audit text is not evidence");
+        }
+    }
+    Ok(())
+}
+
+/// The latest stream decides. A final message whose later continuation was
+/// cancelled is audit text, and a branch that read it while it was final
+/// refuses once that finality moved, even though the words did not.
+#[cfg(feature = "sync")]
+#[test]
+fn a_cancelled_continuation_turns_its_final_message_into_audit_text() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (turn, conversation, _, input) = stream_turn(&vault, 0x77, SAID, "finalize")?;
+    let actor = vault.dreamer_authority()?;
+    let open = || {
+        BranchResources::open(
+            &vault,
+            actor,
+            partition_of(conversation),
+            &[turn],
+            AttemptId::now(),
+            None,
+        )
+    };
+    let branch = open()?;
+    assert!(branch.transcript(branch.scope(), &[turn])?.contains(SAID));
+    end_stream(
+        &vault,
+        EntityId::from_bytes([0x77; 16])?,
+        &input,
+        "",
+        "cancel",
+    );
+    assert!(
+        branch.transcript(branch.scope(), &[turn]).is_err(),
+        "the finality the branch read moved under it"
+    );
+    let reopened = open()?;
+    assert_eq!(
+        reopened.transcript(reopened.scope(), &[turn])?,
+        format!("[{} user] \n", turn.to_hex())
+    );
+    Ok(())
+}

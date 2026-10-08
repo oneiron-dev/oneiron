@@ -2,18 +2,21 @@
 //!
 //! A TURN that carries `txt|text` is read exactly as stored, even when that
 //! string is empty. A TURN without it (a witnessed turn) takes its text from
-//! its MESSAGE children: the visible rows of the TURN's own author bucket,
-//! ordered by `(order, id)` and joined with exactly `"\n"`, never trimmed.
-//! `system` interleave and hidden rows never enter it, and a non-system row of
-//! another bucket refuses the turn instead of being read as its speaker.
+//! its MESSAGE children: the visible, final rows of the TURN's own author
+//! bucket, ordered by `(order, id)` and joined with exactly `"\n"`, never
+//! trimmed. `system` interleave, hidden rows and stream audit text never enter
+//! it, and a non-system row of another bucket refuses the turn instead of
+//! being read as its speaker. A row is final when it was committed atomically
+//! or its latest stream receipt is `Final`; a stream that ended cancelled, by
+//! idle timeout or by crash recovery leaves audit text, never words.
 //!
 //! Every child the text depends on is read as the same actor under the
 //! relationship gate (private rows and relationship rows without a live grant
 //! are withheld) in the caller's snapshot, and pinned at its exact logical
-//! version, `AuthoredBy` targets and document frontier. Later doors re-collect
-//! and compare against that pin; they never reinterpret frozen offsets
-//! against new text. An incomplete or unreadable child set refuses; a partial
-//! transcript is never assembled.
+//! version, `AuthoredBy` targets, document frontier and stream finality. Later
+//! doors re-collect and compare against that pin; they never reinterpret
+//! frozen offsets against new text. An incomplete or unreadable child set
+//! refuses; a partial transcript is never assembled.
 
 use std::collections::BTreeMap;
 
@@ -26,6 +29,7 @@ use crate::dreamer_runner::{DreamerTurnRole, dreamer_turn_role};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::gate::{WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER};
 use crate::llm::{Scope, ScopeResource};
+use crate::memory::StreamFinality;
 use crate::ports::EdgeDirection;
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::write_envelope::WriteActor;
@@ -43,6 +47,8 @@ struct MessagePin {
     /// Exact `AuthoredBy` targets: one for a non-system row, none for system.
     authors: Vec<EntityId>,
     frontier: Option<Vec<u8>>,
+    /// Latest stream receipt `(finality, generation)`; `None` when atomic.
+    stream: Option<(StreamFinality, EntityId)>,
 }
 
 /// The frozen text of one TURN and every MESSAGE it was read from.
@@ -214,14 +220,18 @@ pub(super) fn collect_in(
         let frontier = crate::entity_doc::source_frontier_in_txn(&vault.store, txn, &id)?;
         #[cfg(not(feature = "sync"))]
         let frontier = None;
+        // Finality is read in this snapshot, beside the row it qualifies.
+        let stream = crate::memory::message_stream_finality_in_txn(vault, txn, &id)?;
+        let words = stream.is_none_or(|(finality, _)| finality == StreamFinality::Final);
         messages.push(MessagePin {
             id,
             learned_at,
             version: document_version(id, &body),
             authors,
             frontier,
+            stream,
         });
-        children.push((id, message));
+        children.push((id, message, words));
     }
     Ok(TurnText {
         text: project(bucket, children)?,
@@ -335,18 +345,18 @@ pub(crate) fn cited_evidence_bytes(
     Ok(bytes.to_vec())
 }
 
-/// The projection over already-read children. `bucket` is the TURN's own
-/// MESSAGE author string.
-fn project(bucket: &str, children: Vec<(EntityId, MessageText)>) -> Result<Option<String>> {
+/// The projection over already-read children, each with whether its text is
+/// final. `bucket` is the TURN's own MESSAGE author string.
+fn project(bucket: &str, children: Vec<(EntityId, MessageText, bool)>) -> Result<Option<String>> {
     let mut visible = Vec::new();
-    for (id, message) in children {
+    for (id, message, words) in children {
         if message.author == WITNESS_AUTHOR_SYSTEM {
             continue;
         }
         if message.author != bucket {
             return Err(invalid_consolidation("witnessed turn mixes author buckets"));
         }
-        if message.is_visible {
+        if message.is_visible && words {
             visible.push((message.order, id, message.content));
         }
     }
