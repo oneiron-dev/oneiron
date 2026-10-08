@@ -11305,7 +11305,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AuthenticatedOwner",
@@ -11314,7 +11314,7 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 15,
       "fn": 16,
       "struct": 2
      }
@@ -19077,6 +19077,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/gate/run_proposal_fixture.rs",
+     "purpose": "Test-support seam: park one Dreamer-authored proposal on a run's consent lane, as a dream pass does, so a…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/gate/share.rs",
      "purpose": "Narrow adapter for the audience-crossing creation of a brief read grant",
      "surface": {
@@ -20807,7 +20817,7 @@
      "path": "src/ingest/bulk_review.rs",
      "purpose": "One import-time human act for the exact set of imported claim candidates",
      "surface": {
-      "fn": 2,
+      "fn": 4,
       "struct": 3
      }
     },
@@ -23934,13 +23944,14 @@
      "kind": "src",
      "notable": [
       "ExportOptions",
+      "ExportReceipt",
       "MemoryExport"
      ],
      "path": "src/memory/export.rs",
      "purpose": "Full-vault memory export through the existing five-format pack writers",
      "surface": {
-      "fn": 3,
-      "struct": 2
+      "fn": 4,
+      "struct": 3
      }
     },
     {
@@ -27712,7 +27723,8 @@
      "path": "src/policy_model/owner_rows/authority.rs",
      "purpose": "Live policy-power holders from shared membership and owner-stamped action grants",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4,
+      "fn": 1
      }
     },
     {
@@ -29524,6 +29536,24 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/authority_plane.rs",
+     "purpose": "A historical restore gives content as it stood, never authority as it stood",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/checkpoint/authority_plane/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "RestoreEpoch",
       "RestoreReason",
@@ -29533,7 +29563,7 @@
      "purpose": "Tier-C physical-row checkpoints and one restore/wake/migrate path",
      "surface": {
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "re-export": 1,
       "struct": 2
      }
@@ -39860,7 +39890,7 @@
     "consent": {
      "files": 17,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "DEC-0006 unified consent-mode — bounded standing grants"
     },
@@ -40145,7 +40175,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 130,
+     "files": 131,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40474,7 +40504,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 18,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -40845,10 +40875,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 21,
+   "over_bar": 22,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2427,
-   "test_files": 850
+   "source_files": 2429,
+   "test_files": 851
   },
   "oneiron-android": {
    "files": [
@@ -46325,6 +46355,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes.rs",
+     "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -46627,6 +46667,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/owner_routes.rs",
+     "purpose": "`/v1/owner`: one owner door, receipted acts, whole-batch and whole-run consent",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -46828,7 +46876,33 @@
      "surface": {
       "enum": 4,
       "fn": 2,
+      "re-export": 1,
       "struct": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BackupArgs",
+      "DoctorArgs",
+      "ExportArgs",
+      "ImportBatchArgs",
+      "ImportCommand",
+      "ImportDecisionArgs",
+      "RestoreArgs",
+      "RunArgs",
+      "RunDecisionArgs",
+      "RunsCommand",
+      "SecretScanArgs",
+      "SecretScanSwitch",
+      "ServeOnlyArgs"
+     ],
+     "path": "src/cli/owner_args.rs",
+     "purpose": "Flags for the owner's own commands: doctor, backup, restore, export, the secret scan switch, import consent…",
+     "surface": {
+      "enum": 3,
+      "struct": 10
      }
     },
     {
@@ -46849,8 +46923,9 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy",
      "surface": {
       "const": 1,
-      "fn": 10,
-      "re-export": 4,
+      "crate-vis": 1,
+      "fn": 9,
+      "re-export": 5,
       "struct": 1
      }
     },
@@ -46897,6 +46972,34 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/commands/msgpack_json.rs",
+     "purpose": "JSON renderings of MessagePack claim values for command output",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/owner.rs",
+     "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, export, the secret scan switch, import…",
+     "surface": {
+      "fn": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/commands/owner/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/commands/reembed.rs",
      "purpose": "`reembed`: moves a stopped vault to the configured embedding space",
      "surface": {
@@ -46927,6 +47030,21 @@
      "path": "src/commands/writer_lease_tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BackupConfig",
+      "BackupConfigOverride"
+     ],
+     "path": "src/config/backup.rs",
+     "purpose": "The `[backup]` section: where local backups go, whether `serve` takes them on its own, how often, and how…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2,
+      "struct": 2
+     }
     },
     {
      "bucket": "m",
@@ -47018,8 +47136,8 @@
      "path": "src/config/mod.rs",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
-      "mod": 5,
-      "re-export": 5
+      "mod": 6,
+      "re-export": 6
      }
     },
     {
@@ -48218,6 +48336,84 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup.rs",
+     "purpose": "Local backups of one vault: take, list, prune, rehearse and restore",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/owner/backup/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/imports.rs",
+     "purpose": "Bulk import consent: preview the exact batch, then approve or decline it whole (OF-202)",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/location.rs",
+     "purpose": "Where the owner's data lives: the vault path and size, the backups beside it, and the last time anything…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/mod.rs",
+     "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/runs.rs",
+     "purpose": "Agent-run batch consent: see what a run is waiting on, then approve or decline the whole run in one act…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/schedule.rs",
+     "purpose": "Scheduled backups for a running `serve`",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/stamp.rs",
+     "purpose": "UTC times for backup file names and reports, with no date library: `20261008T123456.789Z` in file names, RFC…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "InvalidView",
       "View"
@@ -48366,7 +48562,7 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 6,
       "struct": 1
      }
@@ -48750,6 +48946,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/owner_backup.rs",
+     "purpose": "The owner's backup loop through the shipped `oneiron` binary: back up, change the vault, rehearse (live…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -48815,7 +49019,7 @@
      "purpose": "Host-bound UI and agent action executor over the engine's one verb registry"
     },
     "api": {
-     "files": 164,
+     "files": 166,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -48836,21 +49040,21 @@
      "purpose": "Broadcast group for multi-device fan-out with echo suppression"
     },
     "cli": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "—"
     },
     "commands": {
-     "files": 9,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -48933,6 +49137,13 @@
      "layout": "file",
      "purpose": "ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1)"
     },
+    "owner": {
+     "files": 8,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`"
+    },
     "projection": {
      "files": 2,
      "impl_vault": false,
@@ -48999,8 +49210,8 @@
    },
    "over_bar": 2,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 244,
-   "test_files": 105
+   "source_files": 256,
+   "test_files": 109
   },
   "oneiron-uniffi": {
    "files": [
