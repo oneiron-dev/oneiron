@@ -767,11 +767,23 @@ fn a_restore_never_drops_the_hold_of_a_public_first_touch() -> Result<()> {
     Ok(())
 }
 
+/// A native-mail sender, bound to the agent every test identity is bound to,
+/// under a policy that knows only a recipient the owner introduced: a send
+/// to anyone else is held as cold.
+fn put_native_mail_sender(vault: &Vault, id: EntityId) -> Result<()> {
+    crate::test_util::put_native_mail_sender(
+        vault,
+        id,
+        entity(0x6F),
+        &[CounterpartyFirstTouch::UserIntroduction],
+    )
+}
+
 /// ASTRA-9A-2-R3 F8: the send gate reads a party's contacts in id order and
 /// takes the first one's first touch, which decides whether a native-mail
-/// send is to a known recipient or held as cold. A contact made since the
-/// backup that the gate reads first, with another first touch, refuses the
-/// restore; one it reads after does not.
+/// send is to a recipient the policy knows or is held as cold. A contact made
+/// since the backup that the gate reads first, and that makes a known
+/// recipient cold, refuses the restore; one it reads after does not.
 #[test]
 fn a_restore_never_drops_a_contact_the_send_gate_reads_first() -> Result<()> {
     let (_tmp, vault) = open_vault();
@@ -779,6 +791,7 @@ fn a_restore_never_drops_a_contact_the_send_gate_reads_first() -> Result<()> {
     put_identity(&vault, desk, "email", "desk@example.com")?;
     put_identity(&vault, inbox, "email", "inbox@example.com")?;
     put_identity(&vault, studio, "email", "studio@example.com")?;
+    put_native_mail_sender(&vault, entity(0x8E))?;
     vault.create_counterparty_contact(
         &entity(0x91),
         &CounterpartyContactRecord::user_introduction(desk, "sora@example.com", 10)?,
@@ -806,4 +819,52 @@ fn a_restore_never_drops_a_contact_the_send_gate_reads_first() -> Result<()> {
     )?;
     assert_contact_restore_refused(&vault, &image, &backups.path().join("read-first"));
     Ok(())
+}
+
+/// ASTRA-9A-2-R3 F9: a contact the send gate never reads first changes no
+/// send, so a restore that drops it goes ahead: one made since between the
+/// first contact and a later one, and one on another channel class, which a
+/// send on email never reads and a send on its own class reads without a
+/// hold.
+#[test]
+fn a_restore_drops_a_contact_the_send_gate_never_reads_first() -> Result<()> {
+    let (_tmp, vault) = open_vault();
+    let (desk, inbox, studio, chat) = (entity(0x8A), entity(0x8B), entity(0x8C), entity(0x8D));
+    put_identity(&vault, desk, "email", "desk@example.com")?;
+    put_identity(&vault, inbox, "email", "inbox@example.com")?;
+    put_identity(&vault, studio, "email", "studio@example.com")?;
+    put_identity(&vault, chat, "telegram", "@desk")?;
+    put_native_mail_sender(&vault, entity(0x8E))?;
+    vault.create_counterparty_contact(
+        &entity(0x90),
+        &CounterpartyContactRecord::user_introduction(desk, "sora@example.com", 10)?,
+    )?;
+    vault.create_counterparty_contact(
+        &entity(0x95),
+        &CounterpartyContactRecord::user_introduction(studio, "sora@example.com", 11)?,
+    )?;
+    vault.create_counterparty_contact(
+        &entity(0xA5),
+        &CounterpartyContactRecord::user_introduction(desk, "rin@example.com", 12)?,
+    )?;
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100)?;
+
+    vault.create_counterparty_contact(
+        &entity(0x91),
+        &CounterpartyContactRecord::inbound_first(inbox, "sora@example.com", 20)?,
+    )?;
+    vault.create_counterparty_contact(
+        &entity(0xA0),
+        &CounterpartyContactRecord::inbound_first(chat, "rin@example.com", 30)?,
+    )?;
+    Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &backups.path().join("restored"),
+        vault.config.clone(),
+        &vault,
+        200,
+    )
+    .map(drop)
 }

@@ -4,6 +4,7 @@
 //! never copy free pages, locks, index pages, telemetry or process leases. This
 //! is distinct from the logical export's entity/claim transformation format.
 mod authority_plane;
+mod decisions;
 mod rebuild;
 mod restore_class;
 mod tiers;
@@ -281,7 +282,9 @@ impl Vault {
     /// manifest, custody, machine identity, room role or membership, e-sign
     /// ceremony) moved since the checkpoint, rather than roll it back
     /// (ARCH-0038, RD-20); refuses and removes `destination` when the result
-    /// would make someone an owner or member who is not one of `current` now.
+    /// would make someone an owner or member who is not one of `current` now,
+    /// or when a decision the engine makes from restored rows would permit
+    /// more than it does in `current` (`decisions`).
     pub fn restore_checkpoint_keeping_authority(
         path: &Path,
         destination: &Path,
@@ -299,7 +302,9 @@ impl Vault {
             RestoreReason::Restore,
             restored_at,
         )?;
-        if let Err(error) = authority_plane::refuse_new_members(current, &vault) {
+        if let Err(error) = authority_plane::refuse_new_members(current, &vault)
+            .and_then(|()| decisions::refuse_loosened_decisions(current, &vault))
+        {
             drop(vault);
             // This call created the destination; nothing else is in it.
             let _ = std::fs::remove_dir_all(destination);

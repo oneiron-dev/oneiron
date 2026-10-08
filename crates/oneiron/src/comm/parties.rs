@@ -84,6 +84,29 @@ pub(super) fn active_comm_party_key_in_txn(
         .map(str::to_owned))
 }
 
+/// The `party_key` of every comm-owned PERSON row, whatever its lifecycle:
+/// every party a party lookup can reach.
+pub(crate) fn comm_party_keys_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+) -> crate::Result<std::collections::BTreeSet<String>> {
+    let mut keys = std::collections::BTreeSet::new();
+    for entry in store.port_entity_ids_by_type(rtxn, ENTITY_TYPE_PERSON, None)? {
+        let Some(raw) = store.port_entity_record(rtxn, &entry?)? else {
+            continue;
+        };
+        let Ok(value) = rmpv::decode::read_value(&mut Cursor::new(&raw.body)) else {
+            continue;
+        };
+        if let Ok(key) =
+            value_map(&value).and_then(|entries| required_string(entries, KEY_PARTY_KEY))
+        {
+            keys.insert(key.to_owned());
+        }
+    }
+    Ok(keys)
+}
+
 /// Every active comm-owned PERSON row, grouped by its exact `party_key`, ids
 /// ascending. This is the synced truth the node-local index caches.
 fn active_comm_persons_by_party_key_in_txn(
