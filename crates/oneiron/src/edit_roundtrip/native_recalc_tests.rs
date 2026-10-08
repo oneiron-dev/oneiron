@@ -19,7 +19,7 @@ const INPUT: &str = "xl/worksheets/input.xml";
 const OUTPUT: &str = "xl/worksheets/result.xml";
 const OPAQUE: &str = "vendor/opaque.bin";
 const UNKNOWN: &[u8] = b"opaque vendor bytes\0\xff";
-const NATIVE_STAMP: &str = "oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.10";
+const NATIVE_STAMP: &str = "oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.11";
 
 fn build(parts: Vec<(&str, Vec<u8>)>) -> Vec<u8> {
     opc::write(&OpcPackage::from_parts(
@@ -372,8 +372,9 @@ fn refused_workbooks_reach_the_host_recalc_untouched() {
         "<f>CELL(&quot;filename&quot;,A1)</f>",
         "<f>LAMBDA(x,CELL(&quot;row&quot;)+x)(2)</f>",
         deep_chain.as_str(),
-        // The engine would cache #NAME? where Excel computes a value.
-        "<f>NOSUCHFUNCTION(1)</f>",
+        // An Excel function the engine lacks: it would cache #NAME? where
+        // Excel computes a value.
+        "<f>_xlfn.ANCHORARRAY(Input!A1)</f>",
         // The edit gate requires the OOXML prefix in a recalculated sheet.
         "<f>XLOOKUP(2,Input!A1:A1,Input!A1:A1)</f>",
     ];
@@ -393,6 +394,16 @@ fn refused_workbooks_reach_the_host_recalc_untouched() {
         "xl/workbook.xml",
         part_text(&local, "xl/workbook.xml")
             .replace("</sheets>", r#"</sheets><calcPr fullPrecision="0"/>"#),
+    ));
+    // A function the workbook's VBA project may define, which Excel with
+    // macros enabled would call.
+    inputs.push(with_part(
+        &workbook(
+            r#"<c r="A1"><v>2</v></c>"#,
+            r#"<c r="A1"><f>ClrCnt(Input!A1,14)</f></c>"#,
+        ),
+        "xl/vbaProject.bin",
+        b"VBA project".to_vec(),
     ));
     // A workbook LAMBDA name, which the engine would resolve to #NAME?.
     let named = workbook(
@@ -517,6 +528,33 @@ fn clock_functions_recalculate_natively_on_the_session_clock_or_the_hosts() {
     // Days from 1899-12-30, Excel's serial epoch, to the local date.
     let expected = (local.div_euclid(86_400) + 25_569) as f64;
     assert!((today - expected).abs() <= 1.0, "{today} vs {expected}");
+    assert!(
+        host.seen.borrow().is_empty(),
+        "the host calculator never ran"
+    );
+}
+
+#[test]
+fn names_excel_does_not_know_recalculate_natively_to_name_errors() {
+    // Excel reads a called name outside its function list, as the file
+    // spells it, as an undefined name: #NAME?, which IFERROR sees.
+    let input = workbook(
+        r#"<c r="A1"><v>2</v></c>"#,
+        r#"<c r="A1"><f>IFERROR(EOM(Input!A1,0),5)</f><v>0</v></c><c r="B1"><f>ClrCnt(Input!A1,14)</f><v>0</v></c>"#,
+    );
+    let host = Host::default();
+    let proposal = proposed(run_edit_roundtrip(
+        &host,
+        &input,
+        OfficeFormat::Xlsx,
+        &recalc_plan(),
+        "run:unknown-names",
+    ));
+    assert!(proposal.validation.ok, "{:?}", proposal.validation);
+    assert_eq!(stamp(&proposal).as_deref(), Some(NATIVE_STAMP));
+    let xml = part_text(&proposal.new_bytes, OUTPUT);
+    assert_eq!(cached(&xml, "A1"), "5", "{xml}");
+    assert_eq!(cached(&xml, "B1"), "#NAME?", "{xml}");
     assert!(
         host.seen.borrow().is_empty(),
         "the host calculator never ran"

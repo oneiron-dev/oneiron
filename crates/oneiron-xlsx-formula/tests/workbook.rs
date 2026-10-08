@@ -1716,15 +1716,28 @@ fn filterxml_evaluates_like_excel_for_windows() {
 }
 
 #[test]
-fn functions_the_engine_lacks_fall_back_instead_of_caching_name_errors() {
+fn excel_functions_the_engine_lacks_fall_back_instead_of_caching_name_errors() {
     for (formula, function) in [
         (
             r#"_xlfn.WEBSERVICE("https://example.invalid/")"#,
             "_xlfn.WEBSERVICE",
         ),
-        ("1+NOSUCHFUNCTION(2)", "NOSUCHFUNCTION"),
-        ("_xludf.MACRO(1)", "_xludf.MACRO"),
         ("_xlfn.ANCHORARRAY(Input!A1)", "_xlfn.ANCHORARRAY"),
+        // Beside a name Excel does not know, in the same formula.
+        (
+            "IFERROR(EOM(Input!A1,0),0)+_xlfn.ANCHORARRAY(Input!A1)",
+            "_xlfn.ANCHORARRAY",
+        ),
+        // Excel's, written bare, though the fork's Excel 2007 list lacks them:
+        // DBCS is the name a file gives JIS.
+        (r#"ISERROR(DBCS("ABC"))"#, "DBCS"),
+        ("NUMBERSTRING(12,1)", "NUMBERSTRING"),
+        ("THAIYEAR(Input!A1)", "THAIYEAR"),
+        // Passed by name: Excel writes `_xleta.` for its own functions only.
+        (
+            "_xlfn.BYROW(Input!A1:A2,_xleta.WEBSERVICE)",
+            "_xleta.WEBSERVICE",
+        ),
     ] {
         let input = fixture(
             "",
@@ -1736,17 +1749,36 @@ fn functions_the_engine_lacks_fall_back_instead_of_caching_name_errors() {
         );
         assert_eq!(
             fallback(&input),
-            format!("function the engine does not implement: {function}")
+            format!("function the engine does not implement: {function}"),
+            "{formula}"
         );
     }
     let named = with_names(
         &fixture("", r#"<c r="A1"><f>scaled</f><v>0</v></c>"#, false),
-        r#"<definedName name="scaled">NOSUCHFUNCTION(2)</definedName>"#,
+        r#"<definedName name="scaled">EOM(Input!$A$1,0)+_xlfn.ANCHORARRAY(Input!$A$1)</definedName>"#,
     );
     assert_eq!(
         fallback(&named),
-        "function the engine does not implement: NOSUCHFUNCTION"
+        "function the engine does not implement: _xlfn.ANCHORARRAY"
     );
+    // Excel 4.0 macro functions a defined name calls, which Excel runs.
+    for (formula, function) in [
+        ("GET.WORKBOOK(1)", "GET.WORKBOOK"),
+        ("EVALUATE(Input!$A$1)", "EVALUATE"),
+    ] {
+        let named = with_names(
+            &fixture(
+                "",
+                r#"<c r="A1"><f>IFERROR(colour,0)</f><v>0</v></c>"#,
+                false,
+            ),
+            &format!(r#"<definedName name="colour">{formula}</definedName>"#),
+        );
+        assert_eq!(
+            fallback(&named),
+            format!("function the engine does not implement: {function}")
+        );
+    }
     // LET names and LAMBDA parameters are callable; storage prefixes resolve,
     // and so do Excel's unprefixed compatibility names.
     let input = fixture(
@@ -1760,6 +1792,188 @@ fn functions_the_engine_lacks_fall_back_instead_of_caching_name_errors() {
         "{xml}"
     );
     assert!(xml.contains("<f>NORMSDIST(0)</f><v>0.5</v>"), "{xml}");
+}
+
+#[test]
+fn names_excel_does_not_know_recalculate_natively_to_name_errors() {
+    // Excel for Windows 16.0.20430 reads a called name outside its function
+    // list, as the file spells it, as an undefined name: #NAME?, which IFERROR
+    // and SUMIFS's criteria see (SpreadsheetBench truth: IMAGE written without
+    // `_xlfn.`, EOM, ClrCnt with no VBA project, Google Sheets'
+    // __xludf.DUMMYFUNCTION and arrayformula), whatever the call's arguments
+    // hold (probe-unknown-names-1).
+    let inputs = r#"<c r="A1"><v>45000</v></c><c r="B1"><v>1</v></c></row><row r="2"><c r="A2"><v>45100</v></c><c r="B2"><v>2</v></c></row><row r="3"><c r="A3"><v>45200</v></c><c r="B3"><v>3</v></c>"#;
+    let formulas = [
+        ("A1", r#"IMAGE("x")"#),
+        ("B1", "IFERROR(EOM(Input!A1,0),0)"),
+        (
+            "C1",
+            r#"SUMIFS(Input!B1:B3,Input!A1:A3,"<="&EOM(Input!A1,0))"#,
+        ),
+        ("D1", r#"IFERROR(__xludf.DUMMYFUNCTION("x"),5)"#),
+        ("E1", "ClrCnt(Input!A1,14)"),
+        ("F1", "IFERROR(arrayformula(Input!A1:A3*2),6)"),
+        ("G1", "IFERROR(due,7)"),
+        ("H1", "IFERROR(_xludf.MACRO(1),8)"),
+        ("I1", "1+NOSUCHFUNCTION(2)"),
+        // The call is #NAME? whatever its arguments hold.
+        ("J1", "ERROR.TYPE(EOM(1/0))"),
+        ("K1", "ERROR.TYPE(EOM(1/0,NA()))"),
+        // A branch IF does not take is not evaluated.
+        ("L1", "IF(TRUE,1,EOM(1))"),
+    ];
+    let cells: String = formulas
+        .iter()
+        .map(|(cell, formula)| {
+            let formula = formula
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('"', "&quot;");
+            format!(r#"<c r="{cell}"><f>{formula}</f><v>0</v></c>"#)
+        })
+        .collect();
+    // A name outside the list inside a defined name is #NAME? there too.
+    let input = with_names(
+        &fixture(inputs, &cells, false),
+        r#"<definedName name="due">EOM(Input!$A$1,0)</definedName>"#,
+    );
+    let report = recalc(&input).expect("native recalc");
+    assert_eq!(report.formula_count, formulas.len());
+    let xml = part_text(&report.bytes, OUTPUT);
+    for (cell, expected) in [
+        ("A1", "#NAME?"),
+        ("B1", "0"),
+        ("C1", "0"),
+        ("D1", "5"),
+        ("E1", "#NAME?"),
+        ("F1", "6"),
+        ("G1", "7"),
+        ("H1", "8"),
+        ("I1", "#NAME?"),
+        ("J1", "5"),
+        ("K1", "5"),
+        ("L1", "1"),
+    ] {
+        assert_eq!(cached(&xml, cell), expected, "{cell} in {xml}");
+        assert_eq!(
+            xml.contains(&format!(r#"<c r="{cell}" t="e">"#)),
+            expected == "#NAME?",
+            "{cell} in {xml}"
+        );
+    }
+    // Excel saves `ca="1"` on such a formula only when it evaluated the call;
+    // the writer flags every formula holding one, as it flags a volatile call
+    // in a branch not taken. The flag makes Excel recalculate
+    // the cell on load; the cached value is Excel's.
+    assert!(
+        xml.contains(r#"<c r="L1"><f ca="1">IF(TRUE,1,EOM(1))</f><v>1</v></c>"#),
+        "{xml}"
+    );
+    assert_eq!(
+        recalc(&report.bytes).expect("idempotent").bytes,
+        report.bytes
+    );
+}
+
+#[test]
+fn names_an_add_in_a_vba_project_or_a_workbook_may_define_fall_back() {
+    let vba = "function the workbook's VBA project may define: ClrCnt";
+    let call = fixture(
+        "",
+        r#"<c r="A1"><f>ClrCnt(Input!A1,14)</f><v>0</v></c>"#,
+        false,
+    );
+    assert_eq!(
+        fallback(&with_part(&call, "xl/vbaProject.bin", b"VBA".to_vec())),
+        vba
+    );
+    // A VBA project under another part name, typed by its override or by its
+    // extension's default.
+    let typed = |name: &str, entry: &str| {
+        edit_part(
+            &with_part(&call, name, b"VBA".to_vec()),
+            "[Content_Types].xml",
+            |types| types.replace("</Types>", &format!("{entry}</Types>")),
+        )
+    };
+    let renamed = typed(
+        "xl/macros.bin",
+        r#"<Override PartName="/xl/Macros.bin" ContentType="application/vnd.ms-office.vbaProject"/>"#,
+    );
+    assert_eq!(fallback(&renamed), vba);
+    let by_extension = typed(
+        "xl/project.vba",
+        r#"<Default Extension="VBA" ContentType="application/vnd.ms-office.vbaProject"/>"#,
+    );
+    assert_eq!(fallback(&by_extension), vba);
+    // In a defined name too.
+    let named = with_names(
+        &fixture(
+            "",
+            r#"<c r="A1"><f>IFERROR(colour,0)</f><v>0</v></c>"#,
+            false,
+        ),
+        r#"<definedName name="colour">ClrCnt(Input!$A$1,14)</definedName>"#,
+    );
+    assert_eq!(
+        fallback(&with_part(&named, "xl/vbaProject.bin", b"VBA".to_vec())),
+        vba
+    );
+    // An XLL add-in's function.
+    assert_eq!(
+        fallback(&fixture(
+            "",
+            r#"<c r="A1"><f>_xll.Foo(1)</f><v>0</v></c>"#,
+            false
+        )),
+        "XLL add-in function: _xll.Foo"
+    );
+    // A workbook LAMBDA name, and a linked workbook's name (an add-in's
+    // function is one), called as functions.
+    let lambda = with_names(
+        &fixture("", r#"<c r="A1"><f>MyFn(1)</f><v>0</v></c>"#, false),
+        r#"<definedName name="MyFn">_xlfn.LAMBDA(_xlpm.x,_xlpm.x+1)</definedName>"#,
+    );
+    assert_eq!(fallback(&lambda), "name used as a function: MyFn");
+    assert_eq!(
+        fallback(&linked_workbook(
+            RATES,
+            r#"<c r="A1"><f>[1]!Fn(1)</f><v>0</v></c>"#
+        )),
+        "name used as a function: [1]!Fn"
+    );
+    let table = edit_part(&related_table(&prices("", PRICE, "")), OUTPUT, |xml| {
+        xml.replace("SUM(Prices[Price])", "Prices(1)")
+    });
+    assert_eq!(fallback(&table), "name used as a function: Prices");
+    // A workbook name comes first, then Excel's functions, then an add-in.
+    let mixed = with_names(
+        &fixture(
+            "",
+            r#"<c r="A1"><f>_xll.Foo(1)+_xlfn.ANCHORARRAY(Input!A1)+MyFn(1)</f><v>0</v></c>"#,
+            false,
+        ),
+        r#"<definedName name="MyFn">Input!$A$1</definedName>"#,
+    );
+    assert_eq!(fallback(&mixed), "name used as a function: MyFn");
+    let unnamed = fixture(
+        "",
+        r#"<c r="A1"><f>_xll.Foo(1)+_xlfn.ANCHORARRAY(Input!A1)</f><v>0</v></c>"#,
+        false,
+    );
+    assert_eq!(
+        fallback(&unnamed),
+        "function the engine does not implement: _xlfn.ANCHORARRAY"
+    );
+    assert_eq!(
+        fallback(&with_part(
+            &edit_part(&unnamed, OUTPUT, |xml| xml
+                .replace("+_xlfn.ANCHORARRAY(Input!A1)", "+ClrCnt(1)")),
+            "xl/vbaProject.bin",
+            b"VBA".to_vec()
+        )),
+        "XLL add-in function: _xll.Foo"
+    );
 }
 
 #[test]
@@ -1784,7 +1998,7 @@ fn native_measurement_cli_writes_recalc_and_refuses_overwrite_or_fallback() {
     assert_eq!(report["engine"]["engine"], "oneiron-xlsx-formula");
     assert_eq!(
         report["engine"]["version"],
-        "0.1.0+formualizer.0.9.3-oneiron.10"
+        "0.1.0+formualizer.0.9.3-oneiron.11"
     );
     assert_eq!(report["formulas"], 1);
     assert_eq!(report["precision_fallback"], false);
