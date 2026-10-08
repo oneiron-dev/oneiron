@@ -1354,3 +1354,76 @@ fn a_continuation_in_a_dag_conversation_still_finalizes() -> Result<()> {
     assert_eq!(content(&vault, &message)?, "call me Oleksii");
     Ok(())
 }
+
+/// The projection contract over stored rows, at the branch door: rows sort by
+/// `(order, id)` with the id breaking an order tie, an empty visible row keeps
+/// its line (so later offsets count its newline), system rows stay out, and a
+/// non-system row of another bucket refuses the turn. The witness
+/// door refuses order collisions and foreign buckets, and sync refuses every
+/// replicated MESSAGE, so these rows are seeded through the test-only
+/// canonical-envelope door: the reader holds its contract on any stored row.
+#[test]
+fn stored_rows_join_by_order_then_id_and_a_foreign_bucket_refuses() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let later = WitnessMessage {
+        id: Some(EntityId::from_bytes([0x22; 16])?.to_hex()),
+        ..message(1, WitnessAuthor::User, "b", true)
+    };
+    let (turn, conversation) = witness(&vault, 0x7d, vec![later]);
+    let writer = EntityId::from_bytes([0x7d; 16])?;
+    let seed = |id: EntityId, author: &str, order: u32, is_visible: bool, text: &str| {
+        let body = crate::gate::WitnessMessageEnvelope {
+            author,
+            message_type: "dialogue",
+            content: text,
+            metadata: None,
+            is_visible,
+            order,
+        }
+        .encode_body()?;
+        let mut batch = vault
+            .batch()
+            .put_canonical_message_for_test(&id, occurred(10), 10, &body)
+            .edge(&id, EdgeKind::PartOf, &turn, 1.0)
+            .edge(&id, EdgeKind::BelongsTo, &conversation, 1.0);
+        if author != "system" {
+            batch = batch.edge(&id, EdgeKind::AuthoredBy, &writer, 1.0);
+        }
+        batch.commit()
+    };
+    seed(EntityId::from_bytes([0x11; 16])?, "user", 1, true, "a")?;
+    seed(EntityId::now(), "system", 0, true, "tool output")?;
+    seed(EntityId::now(), "user", 0, true, "")?;
+    let actor = vault.dreamer_authority()?;
+    let open = || {
+        BranchResources::open(
+            &vault,
+            actor,
+            partition_of(conversation),
+            &[turn],
+            AttemptId::now(),
+            None,
+        )
+    };
+    let branch = open()?;
+    assert_eq!(
+        branch.transcript(branch.scope(), &[turn])?,
+        format!("[{} user] \na\nb\n", turn.to_hex())
+    );
+    let at = |start, end| SwarmEvidenceRef {
+        source_id: turn,
+        claim_id: None,
+        byte_range: Some((start, end)),
+    };
+    let cited = branch.verify_evidence_refs(&[at(1, 2), at(3, 4)])?;
+    assert_eq!(
+        (cited[0].content_hash, cited[1].content_hash),
+        (
+            swarm_evidence_content_hash(b"a"),
+            swarm_evidence_content_hash(b"b")
+        )
+    );
+    seed(EntityId::now(), "companion", 2, true, "not the speaker")?;
+    assert!(open().is_err(), "another speaker's words refuse the turn");
+    Ok(())
+}
