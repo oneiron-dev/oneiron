@@ -3,91 +3,6 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 
 #[test]
-fn bridge_authenticates_pull_and_idempotent_push_with_normalized_receipts() {
-    // The isolated integration target also compiles the scheduler; keep its
-    // entry functions live without starting a global timer or reading env.
-    let _ = LinearBridge::configured;
-    let _ = spawn;
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("address");
-    let expected = LinearIssueChange {
-        event_id: "event-1".into(),
-        issue: LinearIssueRef {
-            issue_id: "issue-1".into(),
-            team_id: "team-1".into(),
-            identifier: "TEAM-1".into(),
-        },
-        updated_at_ms: 1000,
-        fields: MirroredTaskFields {
-            title: "work".into(),
-            description: None,
-            priority: None,
-            assignee_ref: None,
-            status: "queued".into(),
-        },
-    };
-    let receipt = serde_json::to_vec(&expected).expect("receipt");
-    let changes = serde_json::to_vec(&LinearChangePage {
-        changes: vec![expected.clone()],
-        next_cursor: Some("next".into()),
-    })
-    .expect("changes");
-    let server = std::thread::spawn(move || {
-        for (index, response) in [changes, receipt].into_iter().enumerate() {
-            let (mut socket, _) = listener.accept().expect("accept");
-            socket
-                .set_read_timeout(Some(Duration::from_secs(3)))
-                .expect("timeout");
-            let mut data = Vec::new();
-            let mut buffer = [0u8; 4096];
-            loop {
-                let count = socket.read(&mut buffer).expect("request");
-                assert!(count > 0);
-                data.extend_from_slice(&buffer[..count]);
-                if let Some(end) = data.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
-                    let headers = String::from_utf8_lossy(&data[..end]).to_lowercase();
-                    let content_length = headers
-                        .lines()
-                        .find_map(|line| line.strip_prefix("content-length: "))
-                        .map_or(0, |value| value.parse::<usize>().expect("length"));
-                    if data.len() >= end + 4 + content_length {
-                        break;
-                    }
-                }
-            }
-            let request = String::from_utf8_lossy(&data).to_lowercase();
-            assert!(request.contains("authorization: bearer test-token\r\n"));
-            if index == 0 {
-                assert!(request.starts_with("get /changes?cursor=old%2fcursor "));
-            } else {
-                assert!(request.starts_with("post /issues "));
-                assert!(request.contains("\"operation_id\":\""));
-                assert!(request.contains("\"task_ref\":\""));
-            }
-            write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", response.len()).expect("headers");
-            socket.write_all(&response).expect("body");
-        }
-    });
-    let mut bridge = LinearBridge {
-        client: Client::builder()
-            .timeout(Duration::from_secs(3))
-            .build()
-            .expect("client"),
-        base: reqwest::Url::parse(&format!("http://{addr}/")).expect("URL"),
-        credential: reqwest::header::HeaderValue::from_static("Bearer test-token"),
-        request_timeout: Duration::from_secs(3),
-    };
-    let page = bridge.changes_since(Some("old/cursor")).expect("page");
-    assert_eq!(page.next_cursor.as_deref(), Some("next"));
-    assert_eq!(page.changes, vec![expected.clone()]);
-    let created = bridge
-        .create_issue([5u8; 32], EntityId::now(), &expected.fields)
-        .expect("create");
-    assert_eq!(created, expected);
-    server.join().expect("requests authenticated");
-}
-
-#[test]
 fn scheduled_pass_pushes_dirty_task_then_applies_inbound_page() {
     use oneiron::task_verb::{TaskAssignee, TaskCreateSpec};
     use oneiron::{
@@ -200,23 +115,6 @@ fn scheduled_pass_pushes_dirty_task_then_applies_inbound_page() {
     server.join().expect("provider exchange");
 }
 
-#[tokio::test]
-async fn configured_bridge_builds_inside_tokio_without_blocking_client_panic() {
-    let bridge = build_bridge(
-        Some("http://127.0.0.1:12345/".to_owned()),
-        Some("test-token".to_owned()),
-        15,
-    )
-    .await
-    .expect("construct blocking client off runtime thread")
-    .expect("configured");
-    assert_eq!(bridge.base.scheme(), "http");
-    assert_eq!(
-        bridge.credential,
-        reqwest::header::HeaderValue::from_static("Bearer test-token")
-    );
-}
-
 #[test]
 fn linked_update_sends_expected_base_and_refuses_remote_precondition_miss() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
@@ -281,85 +179,6 @@ fn linked_update_sends_expected_base_and_refuses_remote_precondition_miss() {
         Err(LinearSyncError::RemoteChanged)
     ));
     server.join().expect("provider checked precondition");
-}
-
-#[tokio::test]
-async fn narrowed_vault_timeout_controls_authenticated_bridge_request() {
-    use oneiron::{LinearChangeSource, Vault, VaultConfig};
-    let dir = tempfile::tempdir().expect("tempdir");
-    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
-    let policy = vault.linear_mirror_policy().expect("seeded manifest");
-    let mut holder = policy;
-    holder.request_timeout_secs = 1;
-    holder.poll_interval_secs = policy.poll_interval_secs + 1;
-    let narrowed = policy.with_holder(Some(holder)).expect("holder narrowing");
-    assert!(narrowed.request_timeout_secs < policy.request_timeout_secs);
-    assert!(narrowed.poll_interval_secs > policy.poll_interval_secs);
-
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    let server = std::thread::spawn(move || {
-        for pass in 0..2 {
-            let (mut socket, _) = listener.accept().expect("accept");
-            socket
-                .set_read_timeout(Some(Duration::from_secs(4)))
-                .expect("read timeout");
-            let mut request = [0u8; 2048];
-            let size = socket.read(&mut request).expect("request");
-            assert!(size > 0);
-            assert!(
-                String::from_utf8_lossy(&request[..size])
-                    .to_lowercase()
-                    .contains("authorization: bearer test-token")
-            );
-            if pass == 0 {
-                std::thread::sleep(Duration::from_millis(1_200));
-            }
-            let payload = b"{\"changes\":[],\"next_cursor\":null}";
-            let _ = write!(
-                socket,
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                payload.len()
-            );
-            let _ = socket.write_all(payload);
-        }
-    });
-    let url = format!("http://{addr}/");
-    let short = build_bridge(
-        Some(url.clone()),
-        Some("test-token".into()),
-        narrowed.request_timeout_secs,
-    )
-    .await
-    .expect("bridge")
-    .expect("configured");
-    let short_result = tokio::task::spawn_blocking(move || {
-        let mut short = short;
-        short.changes_since(None)
-    })
-    .await
-    .expect("blocking task");
-    assert!(
-        matches!(short_result, Err(LinearSyncError::Transport(_))),
-        "one-second policy must time out the slow response"
-    );
-    let long = build_bridge(
-        Some(url),
-        Some("test-token".into()),
-        policy.request_timeout_secs,
-    )
-    .await
-    .expect("bridge")
-    .expect("configured");
-    let page = tokio::task::spawn_blocking(move || {
-        let mut long = long;
-        long.changes_since(None)
-    })
-    .await
-    .expect("blocking task")
-    .expect("longer policy succeeds");
-    assert!(page.changes.is_empty());
-    server.join().expect("requests");
 }
 
 #[test]

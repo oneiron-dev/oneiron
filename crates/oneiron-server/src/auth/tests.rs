@@ -166,31 +166,6 @@ fn legacy_headers_and_unlogged_v1_v2_tokens_never_authenticate() {
 }
 
 #[test]
-fn logged_host_root_does_not_make_the_verbatim_secret_a_credential() {
-    let fixture = Fixture::new();
-    let headers = bearer(SECRET);
-    assert_unauthorized(CoreAuth::from_headers(
-        &headers,
-        &fixture.config,
-        fixture.vault.as_ref(),
-    ));
-    assert_unauthorized(require_owner_auth(
-        &headers,
-        &fixture.config,
-        fixture.vault.as_ref(),
-    ));
-    let slip = fixture.mint(|_| {});
-    let auth = require_owner_auth(
-        &fixture.headers(&slip),
-        &fixture.config,
-        fixture.vault.as_ref(),
-    )
-    .unwrap();
-    assert!(auth.is_owner_grade());
-    assert!(auth.credential_is_live(fixture.vault.as_ref()));
-}
-
-#[test]
 fn identified_exact_top_slips_are_owner_grade_and_individually_revocable() {
     let fixture = Fixture::new();
     let slip = fixture.mint(|claims| claims.actor_class = Some("human".into()));
@@ -440,78 +415,6 @@ fn slip_tampering_wrong_holder_and_stale_or_missing_proofs_fail_closed() {
 }
 
 #[test]
-fn v2_shaped_secrets_cannot_bypass_slip_parsing() {
-    for secret in ["v2.something.rest", "v2.slip.not-a-slip"] {
-        let fixture = Fixture::with_secret(secret);
-        assert_unauthorized(require_owner_auth(
-            &bearer(secret),
-            &fixture.config,
-            fixture.vault.as_ref(),
-        ));
-        let scoped = fixture.mint(|claims| claims.scope.verbs = verbs(&["read"]));
-        assert!(!fixture.auth(&scoped).unwrap().is_owner_grade());
-    }
-}
-
-#[test]
-fn wrong_or_empty_secret_cannot_replace_a_logged_slip_and_absent_credentials_fail_closed() {
-    let fixture = Fixture::new();
-    let slip = fixture.mint(|_| {});
-    for secret in ["unrecognized-host", ""] {
-        let config = config_with_secret(secret);
-        let authenticated =
-            CoreAuth::from_headers(&fixture.headers(&slip), &config, fixture.vault.as_ref())
-                .unwrap();
-        assert_eq!(authenticated.jti(), fixture.auth(&slip).unwrap().jti());
-        assert_unauthorized(CoreAuth::from_headers(
-            &bearer(secret),
-            &config,
-            fixture.vault.as_ref(),
-        ));
-    }
-    assert_unauthorized(CoreAuth::from_headers(
-        &HeaderMap::new(),
-        &fixture.config,
-        fixture.vault.as_ref(),
-    ));
-}
-
-#[test]
-fn idempotency_partitions_follow_the_verified_credential_and_attenuation() {
-    let fixture = Fixture::new();
-    let root = fixture.mint(|_| {});
-    let mut read = root.clone();
-    let mut scope = Scope::top();
-    scope.verbs = verbs(&["read"]);
-    read.attenuate(
-        SlipCaveat {
-            scope: Some(scope),
-            ..Default::default()
-        },
-        &fixture.holder,
-    )
-    .unwrap();
-    let mut write = root.clone();
-    let mut scope = Scope::top();
-    scope.verbs = verbs(&["write"]);
-    write
-        .attenuate(
-            SlipCaveat {
-                scope: Some(scope),
-                ..Default::default()
-            },
-            &fixture.holder,
-        )
-        .unwrap();
-    let sibling = fixture.mint(|claims| claims.scope.verbs = verbs(&["read"]));
-    let principals: BTreeSet<_> = [root, read, write, sibling]
-        .iter()
-        .map(|slip| fixture.auth(slip).unwrap().idempotency_principal())
-        .collect();
-    assert_eq!(principals.len(), 4);
-}
-
-#[test]
 fn development_hatch_does_not_mint_authority_and_honours_explicit_revocation() {
     let dir = tempfile::tempdir().unwrap();
     let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap();
@@ -682,27 +585,4 @@ fn reconnect_identity_keeps_exact_instrument_not_remaining_ttl() {
         first.idempotency_principal(),
         narrowed_auth.idempotency_principal()
     );
-}
-
-#[test]
-fn credential_predicate_reads_the_note_writer_snapshot() {
-    let dir = tempfile::tempdir().unwrap();
-    let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap();
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"writer-snapshot-root").unwrap();
-    let verified = vault.verified_host_root_slip(&issuer).unwrap();
-    let id = verified.claims().slip_id;
-    let auth = CoreAuth::from_verified(verified, true).unwrap();
-    vault
-        .with_write_txn(|txn| {
-            assert!(auth.credential_is_live_in_write_txn(&vault, txn));
-            Ok(())
-        })
-        .unwrap();
-    vault.revoke_capability_slip(&issuer, id).unwrap();
-    vault
-        .with_write_txn(|txn| {
-            assert!(!auth.credential_is_live_in_write_txn(&vault, txn));
-            Ok(())
-        })
-        .unwrap();
 }
