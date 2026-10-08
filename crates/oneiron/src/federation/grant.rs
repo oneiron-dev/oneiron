@@ -10,8 +10,9 @@ use super::codec::{
     required_value,
 };
 
+use super::codec::invalid_grant;
 use crate::entity_id::EntityId;
-use crate::error::{Error, RecordError, Result};
+use crate::error::Result;
 
 /// Current FederationGrant body schema version.
 ///
@@ -802,10 +803,4 @@ fn guest_authority_scope() -> super::Scope {
     let mut scope = super::Scope::top();
     scope.verbs = super::ScopeAxis::Some(BTreeSet::from(["read".to_owned(), "propose".to_owned()]));
     scope
-}
-
-pub(super) fn invalid_grant() -> Error {
-    Error::Record(RecordError::InvalidFederationGrantBody(
-        "body failed validation",
-    ))
 }

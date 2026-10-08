@@ -5,7 +5,10 @@
 //! unknown keys, duplicate keys, unknown role/preset strings, unsupported
 //! scope kinds, and preset/role mismatches are rejected.
 
-mod codec;
+// The scope vocabulary and its codecs (six-axis scopes, pact direction scopes, selector
+// kinds, the shared map/entity-ref helpers) are defined in `oneiron-authority`. The module
+// aliases keep every `federation::<module>::` path this crate uses.
+pub(crate) use oneiron_authority::federation::{codec, pact_scope, scope_codec};
 mod content_write;
 pub(crate) use content_write::{ActorContentTxn, actor_for_txn};
 mod coreference;
@@ -32,12 +35,9 @@ pub use pending_act::{
 pub use rulings::{AdminRuling, AdminRulingReceipt, fold_admin_rulings};
 pub use shared_creation::{InitialSharedMember, SharedVaultCreation, SharedVaultPreset};
 mod guest;
-mod pact_scope;
 mod peer_authority;
 pub mod record_scope;
 mod relationships;
-pub(crate) mod scope_codec;
-mod selector_kind;
 mod stale;
 
 pub use self::coreference::{
@@ -84,8 +84,7 @@ pub(crate) use self::grant::{
 #[cfg(any(feature = "sync", test))]
 pub(crate) use self::pact_scope::base_world_axis;
 pub(crate) use self::pact_scope::{
-    decode_federation_direction_scope_value, decode_federation_pact_scope_value,
-    federation_direction_scope_value, federation_pact_scope_value,
+    decode_federation_direction_scope_value, federation_direction_scope_value,
 };
 pub(crate) use self::peer_authority::{
     admitted_peer_consent_roots_for_store_in_txn, admitted_peer_consent_roots_in_txn,
@@ -142,8 +141,9 @@ use std::collections::{BTreeMap, BTreeSet};
 #[cfg(test)]
 use std::io::Cursor;
 
-mod scope;
-pub use scope::{Scope, ScopeAtom, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
+pub use oneiron_authority::federation::{
+    Scope, ScopeAtom, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling,
+};
 
 mod org_admin;
 pub use org_admin::{OrgAdminError, OrgAdminPolicy, OrgAdminPower};
