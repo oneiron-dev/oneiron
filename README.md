@@ -1,165 +1,187 @@
-<div align="center">
+# Oneiron
 
-# oneiron
-
-**Embedded retrieval engine for memory-first applications.**
-
-One binary. One process. Zero network hops.
-
-<br>
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./docs/architecture-dark.svg?v=13">
-  <source media="(prefers-color-scheme: light)" srcset="./docs/architecture-light.svg?v=13">
-  <img alt="oneiron architecture" src="./docs/architecture-light.svg?v=13" width="700">
-</picture>
-
-<br>
-
-</div>
+**Long-context AI memory for agents, built around a local Rust vault.**
 
 ## Why
 
-Most retrieval stacks bolt together separate services for vectors, text, and graphs — network hops, consistency gaps, and operational complexity that doesn't belong on a phone. Oneiron runs in-process as a Rust library with C FFI bindings. Every query touches a single LMDB environment with ACID transactions. Embed it on iOS, Android, desktop, or Node.js — or run the same engine as the `oneiron-server` daemon, locally or hosted.
+Agents need useful memory across sessions, not just a longer prompt.
+They also need to know where a memory came from and which changes are allowed.
+Oneiron brings storage, retrieval, provenance, and write policy into one engine
+that applications can embed or run as a daemon.
 
-<div align="center">
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./docs/deployment-dark.svg?v=13">
-  <source media="(prefers-color-scheme: light)" srcset="./docs/deployment-light.svg?v=13">
-  <img alt="oneiron deployment targets" src="./docs/deployment-light.svg?v=13" width="600">
-</picture>
-</div>
+## What works today
 
-## Signals
+- **Local storage.** Each vault uses one LMDB environment. `BatchBuilder` can
+  write entities, indexes, and edges in one atomic transaction.
+- **Hybrid retrieval.** Vector and BM25F text search, graph expansion, time
+  filters, and phonetic matching share a query pipeline. It ranks their candidate
+  union with configurable memory metadata.
+- **Typed memory and guarded writes.** Claims carry provenance and lifecycle
+  state. Actor-write APIs check configured policy and consent before admitting
+  claim changes. Policy decisions and scoped reads expose receipts.
+- **A server and replication layer.** `oneiron-server` exposes HTTP and WebSocket
+  interfaces, including MCP over HTTP. The optional `sync` feature adds
+  Loro-based replication.
+- **Host-bound agent components.** Dreamer consolidation, durable work, typed
+  judgments, and optional JavaScript code execution have Rust implementations.
+  Hosts supply the required inference, scheduling, policy, and budget bindings.
+  Standard daemon startup does not bind a Dreamer model or code executor.
+- **Models behind one seam.** Generative models plug in through the
+  `LlmBackend` trait. Adapter crates cover a local in-process runtime,
+  OpenAI-compatible and Anthropic Messages APIs, Gemini, and a self-hosted
+  model server. Typed decisions use a separate seat, `RemoteDecisionSeat`; the
+  System One adapter implements it. The host loads the model or holds the
+  credentials; no adapter bundles model weights. Standard daemon startup binds
+  no generative model.
+- **Optional embedding backends.** The daemon can run with no embedder,
+  provision a local embedder, or use a configured endpoint.
+- **Owner actions.** The CLI covers where the vault lives (`doctor`), backups,
+  restore rehearsal, restore, export, the secret-scan switch, and one-act
+  approval of an import batch or an agent run. A running server offers the same
+  actions under `/v1/owner`, except two: restore is CLI-only, and export is
+  `POST /v1/core/facade/export`. None of them needs a model. See [docs/ops/owner-actions.md](./docs/ops/owner-actions.md).
 
-| Signal | Engine | What it finds |
-|--------|--------|---------------|
-| **Vector** | HNSW (flat NSW), SIMD-accelerated | Semantically similar content |
-| **Text** | BM25 inverted index | Exact keywords and phrases |
-| **Graph** | Personalized PageRank over typed edges | Relationally connected entities |
-| **Temporal** | Bi-temporal range indexes | Events by when they happened or were recorded |
-| **Phonetic** | Code-based posting lists | Fuzzy matches from voice/ASR misspellings |
+These are implemented APIs and components. Oneiron is pre-release.
 
-Any subset of signals can be combined via **Reciprocal Rank Fusion** with per-signal boosts.
+## Quick Start: the embedded Rust API
 
-## Quick Start
+This stores and reads a byte payload. It needs no model, embedding, or network
+service. It is a low-level storage example, not a typed claim or a retrieval query.
 
 ```rust
-use oneiron::{Vault, VaultConfig, EntityId};
+use oneiron::registry::ENTITY_TYPE_SUMMARY;
+use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 
-let config = VaultConfig::device();
-let vault = Vault::open("./my-vault", config)?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let vault = Vault::open("./my-vault", VaultConfig::device())?;
 
-let id = EntityId::now();
-vault.put_entity(&id, b"msgpack blob")?;
-vault.put_vector(&id, &embedding)?;
+    let id = EntityId::now();
+    let payload = b"Hello, Oneiron!";
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    vault.put_entity(
+        &id,
+        ENTITY_TYPE_SUMMARY,
+        TimeRange {
+            start: timestamp,
+            end: timestamp,
+        },
+        timestamp,
+        payload,
+    )?;
+    assert_eq!(vault.get(&id)?.as_deref(), Some(payload.as_slice()));
+    println!("Stored and read entity {}", id.to_ulid());
+    Ok(())
+}
 ```
 
-## Install
+`Vault::open` can create a vault. On Linux, `Vault::open_existing` opens only an
+initialized vault and never creates one.
 
-Install the local daemon from crates.io after publication:
+## Install and build from source
+
+Use the Rust toolchain pinned in [rust-toolchain.toml](./rust-toolchain.toml).
+From the repository root:
 
 ```sh
-cargo install oneiron-server
+cargo build --locked -p oneiron --release
+cargo install --locked --path crates/oneiron-server
 ```
 
-From a checkout:
+This installs two binaries, `oneiron-server` and `oneiron`. They run the same CLI.
+
+Use a separate, new vault and config for this **development-only** daemon
+example. It selects no embedding backend and binds an unauthenticated server
+to loopback:
 
 ```sh
-cargo install --path crates/oneiron-server
+oneiron-server init ./server-vault --config ./oneiron-server.toml --embedder none
+oneiron-server doctor ./server-vault --config ./oneiron-server.toml
+oneiron-server serve --config ./oneiron-server.toml --host 127.0.0.1 \
+  --insecure-allow-unauthenticated
 ```
 
-One-line install from GitHub:
+This assumes no `ONEIRON_*` overrides. Existing vaults need matching storage,
+analyzer, and vector settings. Do not use unauthenticated mode for a shared or
+network-facing vault. For authenticated setup, start with
+`oneiron-server token bootstrap --help` and the
+[authentication reference](./oneiron.skills.md#authentication).
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for service templates.
+Oneiron is pre-release. This README uses source builds rather than assuming a
+published package or release binary.
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/oneiron-dev/oneiron/main/deploy/install-oneiron-server.sh | sh
-```
+## Crates
 
-Create and inspect the default local vault:
+A split of the `oneiron` crate into smaller crates is in progress. This table
+lists the crates on main today.
 
-```sh
-oneiron-server init ~/.local/share/oneiron/default
-oneiron-server doctor ~/.local/share/oneiron/default
-```
+| Crate | Role |
+|-------|------|
+| [oneiron](./crates/oneiron) | Local vault, retrieval, typed memory, and write policy. |
+| [oneiron-server](./crates/oneiron-server) | HTTP and WebSocket daemon around the vault. |
+| [oneiron-driver](./crates/oneiron-driver) | In-process agent runtime driver. |
+| [oneiron-ffi](./crates/oneiron-ffi) | C interface to the engine. |
+| [oneiron-napi](./crates/oneiron-napi) | Native Node.js bindings. |
+| [oneiron-py](./crates/oneiron-py) | Native Python extension. |
+| [oneiron-remote](./crates/oneiron-remote) | Shared embedded and remote SDK backend. |
+| [oneiron-uniffi](./crates/oneiron-uniffi) | Definition-only UniFFI interface contract. |
+| [oneiron-android](./crates/oneiron-android) | JNI/Kotlin ownership adapter. |
+| [oneiron-llm-anthropic](./crates/oneiron-llm-anthropic) | Anthropic Messages adapter. |
+| [oneiron-llm-gemini](./crates/oneiron-llm-gemini) | Gemini adapter. |
+| [oneiron-llm-openai](./crates/oneiron-llm-openai) | OpenAI-compatible adapter. |
+| [oneiron-llm-own-server](./crates/oneiron-llm-own-server) | User-hosted model endpoint adapter. |
+| [oneiron-llm-local](./crates/oneiron-llm-local) | Host-supplied in-process model adapter. |
+| [oneiron-llm-systemone](./crates/oneiron-llm-systemone) | Remote typed-decision service adapter. |
+| [oneiron-image-comfyui](./crates/oneiron-image-comfyui) | ComfyUI image adapter. |
+| [oneiron-image-openrouter](./crates/oneiron-image-openrouter) | OpenRouter image adapter. |
+| [oneiron-mesh-transport](./crates/oneiron-mesh-transport) | Vault-scoped peer transport. |
+| [oneiron-linear](./crates/oneiron-linear) | Linear issue-mirroring adapter. |
+| [oneiron-docedit](./crates/oneiron-docedit) | Native document editing and revision support. |
+| [oneiron-xlsx-formula](./crates/oneiron-xlsx-formula) | In-process spreadsheet formula recalculation. |
+| [oneiron-seal](./crates/oneiron-seal) | PDF signature sealing and verification. |
+| [oneiron-guest](./crates/oneiron-guest) | Linux sandbox guest agent and conformance adapter. |
+| [oneiron-sandbox-contract](./crates/oneiron-sandbox-contract) | Shared host/guest sandbox protocol rules. |
+| [oneiron-vault-contract](./crates/oneiron-vault-contract) | Supervisor-to-vault process protocol and limits. |
+| [oneiron-bench](./crates/oneiron-bench) | Benchmark and evaluation harness. |
+| [oneiron-macos](./apps/macos/src-tauri) | macOS menu-bar voice recorder embedding the vault. |
 
-Run the daemon:
+The [code map](./docs/CODEMAP.md) links to the modules and source files of each
+crate under `crates/`. It does not cover the macOS app.
 
-```sh
-oneiron-server serve --vault-path ~/.local/share/oneiron/default
-```
+## Storage layout
 
-`serve` also remains the default command for the existing flags:
+This diagram matches the vault's named-database manifest. It shows storage
+components, not which optional runtime features are enabled.
 
-```sh
-oneiron-server --vault-path ~/.local/share/oneiron/default --port 9090
-```
-
-The default service vault convention is
-`~/.local/share/oneiron/default/`. `oneiron-server serve` reads
-`~/.config/oneiron/oneiron.toml` when present; file values are overridden by
-`ONEIRON_*` environment variables and then by CLI flags.
-
-## Building
-
-```sh
-cargo build --release
-cargo nextest run -p oneiron                                           # fast tier
-cargo nextest run -p oneiron --features sync,test-hooks --profile full  # narrow sync full tier
-```
-
-Tests run via [cargo-nextest](https://nexte.st) (`cargo install cargo-nextest`);
-profiles and the slow-test tier live in `.config/nextest.toml`. Plain
-`cargo test` still works. The narrow sync test suite needs `test-hooks`; it is
-not the full workspace gate.
-
-For agent setup, scoped formatting/tests, and host requirements, start with
-[`AGENTS.md`](./AGENTS.md). [`WORKFLOW.md`](./WORKFLOW.md) covers parallel worktrees,
-build ownership, and full verification. `scripts/verify.sh --list` shows the
-scripted gate without building. The generated [`code map`](./docs/CODEMAP.md)
-links to each crate's file index; `main` regenerates it after every push, and
-`python3 scripts/codemap/codemap.py` writes a fresh local copy to read (never commit it).
-
-## Upgrade Notes
-
-- The protected legacy `/api/*` routes on `oneiron-server` now require an
-  **owner-grade** bearer: the configured trust-root secret sent verbatim, or a
-  minted token carrying no narrowing claims. A scoped token (`scope=…` and/or
-  `principal_ref=…`) authenticates but is refused there with `UNAUTHORIZED`,
-  however wide its scopes — those routes read the whole vault under one actor
-  ref. The same owner-grade bar covers every `/v1/consumer/*` and `/v1/usage/*`
-  route: the billing and metering surfaces are trust-root instruments too.
-  (`/api/health` stays public and unauthenticated.) Scoped tokens remain
-  `/v1`-plane instruments, accepted only on `/v1/core/*` and `/v1/companion/*`
-  and subject to the scopes the token names. Callers that drove `/api/*` with a
-  scoped token must switch to the trust-root credential or move to the
-  equivalent `/v1/core/*` route; `/v1/consumer/*` and `/v1/usage/*` have no
-  scoped equivalent.
-- `ANALYZER_VERSION = "v3"` (portable emoji lane; `v2` added Han `whichlang`
-  routing) changes analyzer-manifest hashes. Existing text indexes built with
-  older analyzer manifests must be rebuilt after upgrading; create a `VaultConfig`,
-  set `config.skip_text_index_manifest_check = true`, reopen with that config,
-  run `MaintenanceBuilder::clear_text_index`, reopen normally, then reindex
-  documents.
-
-## Design
-
-28 LMDB databases per vault. Atomic multi-database writes via `BatchBuilder`. MessagePack entity blobs. Context packing into LLM-ready formats.
-
-<div align="center">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="./docs/storage-dark.svg?v=13">
   <source media="(prefers-color-scheme: light)" srcset="./docs/storage-light.svg?v=13">
-  <img alt="oneiron storage layout" src="./docs/storage-light.svg?v=13" width="700">
+  <img alt="Oneiron vault storage layout" src="./docs/storage-light.svg?v=13" width="700">
 </picture>
-</div>
 
-Full details:
+## Development and documentation
 
-- [`DEPLOYMENT.md`](./DEPLOYMENT.md) — local daemon install, config, and service templates
-- [`MIGRATIONS.md`](./MIGRATIONS.md) — storage-ABI decision history
-- Schema and architecture design docs live in the separate docs repo; this repo
-  keeps the diagrams above under `docs/`.
+Tests use [cargo-nextest](https://nexte.st). The default profile skips the slow
+set; the full profile includes it.
+
+```sh
+cargo nextest run --locked -p oneiron --all-features
+cargo nextest run --locked -p oneiron --features sync,test-hooks --profile full
+```
+
+The second command is the narrow sync lane, not the full workspace gate.
+[AGENTS.md](./AGENTS.md) covers scoped tests, host requirements, and what
+to test: new tests carry truth from outside the code, preferably end to end.
+[WORKFLOW.md](./WORKFLOW.md) covers verification and PRs.
+`scripts/verify.sh --list` shows the scripted gate without building.
+
+- [oneiron.skills.md](./oneiron.skills.md): HTTP API reference.
+- [docs/ops/owner-actions.md](./docs/ops/owner-actions.md): backup, restore,
+  export, and owner approvals.
+- [UPGRADING.md](./UPGRADING.md): authentication and text-index upgrade notes.
+- [MIGRATIONS.md](./MIGRATIONS.md): storage-format decision history.
 
 ## License
 
-Apache 2.0
+[Apache-2.0](./LICENSE).
