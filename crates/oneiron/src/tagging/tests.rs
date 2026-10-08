@@ -3293,3 +3293,56 @@ fn a_ready_marker_indexed_only_under_a_later_instant_is_claimed_at_once() {
         "the stale entry is gone"
     );
 }
+
+/// With no marker to claim, a pass takes no writer, however many distinct
+/// instants other kinds' jobs wait at: where a claim starts is found outside
+/// the writer, so an idle worker never holds off another writer.
+#[test]
+fn an_idle_pass_takes_no_writer_however_many_instants_other_jobs_wait_at() {
+    use std::sync::mpsc;
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    vault
+        .try_with_write_txn(|txn| {
+            for at in 1..=200_u64 {
+                let mut id = [0x10_u8; 16];
+                id[8..].copy_from_slice(&at.to_be_bytes());
+                let key = [&at.to_be_bytes()[..], &id[..]].concat();
+                vault.store.attempt_ready.put(txn, &key, &id)?;
+            }
+            Ok::<(), crate::Error>(())
+        })
+        .expect("other kinds' jobs waiting at distinct instants");
+    let tagger = Scripted::new(Answer::Good);
+    let (held, writer_held) = mpsc::channel();
+    let (release, released) = mpsc::channel::<()>();
+    let holder = {
+        let vault = Arc::clone(&vault);
+        std::thread::spawn(move || {
+            let txn = vault.store.env.write_txn().expect("writer");
+            held.send(()).expect("held");
+            released.recv().ok();
+            drop(txn);
+        })
+    };
+    writer_held.recv().expect("another writer holds the vault");
+    let (done, finished) = mpsc::channel();
+    let drainer = {
+        let (vault, tagger) = (Arc::clone(&vault), Arc::clone(&tagger));
+        std::thread::spawn(move || {
+            let pass = reconciler(&vault, &tagger)
+                .drain_once()
+                .map(|pass| pass.traces.len());
+            done.send(pass).ok();
+        })
+    };
+    let idle = finished.recv_timeout(std::time::Duration::from_secs(10));
+    release.send(()).ok();
+    holder.join().expect("holder");
+    drainer.join().expect("drainer");
+    assert_eq!(
+        idle.expect("the pass ended while another writer held the vault")
+            .expect("drain"),
+        0
+    );
+}

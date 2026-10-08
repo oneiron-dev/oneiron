@@ -437,8 +437,9 @@ impl TaggingReconciler {
     }
 
     /// Leases the next ready marker, reading only the owner-retained entries
-    /// of the readiness index, so another kind's ready backlog costs the
-    /// writer nothing.
+    /// of the readiness index. Where the claim starts is found outside the
+    /// writer, so another kind's waiting jobs cost the writer one seek, and a
+    /// claim with nothing to claim or repair takes no writer at all.
     ///
     /// Every job row this reconciler writes is stamped from the store clock
     /// without persisting its floor, and a claim that finds nothing commits
@@ -446,20 +447,35 @@ impl TaggingReconciler {
     /// while the clock runs and the queue is empty. The lease is stamped once
     /// the write lock is held, so waiting for another writer does not age it.
     fn claim(&self) -> Result<Option<AttemptRecord>> {
+        let queue = AttemptQueue::from_store(&self.vault.store);
+        let attempt = |now| ClaimAttempt {
+            lease_owner: self.lease_owner.clone(),
+            now,
+        };
+        let start = {
+            let txn = self.vault.store.env.read_txn()?;
+            let now = self.stamp_in_txn(&txn)?;
+            queue.owner_retained_claim_start_in_txn(
+                &txn,
+                TAGGING_MARKER_KIND,
+                &attempt(now),
+                now,
+            )?
+        };
+        let Some(start) = start else {
+            return Ok(None);
+        };
         let mut txn = self.vault.store.env.write_txn()?;
         #[cfg(test)]
         self.vault.test_hooks().run_after_tagging_claim_writer();
         let now = self.stamp_in_txn(&txn)?;
-        let (claimed, repaired) = AttemptQueue::from_store(&self.vault.store)
-            .claim_owner_retained_in_txn(
-                &mut txn,
-                TAGGING_MARKER_KIND,
-                ClaimAttempt {
-                    lease_owner: self.lease_owner.clone(),
-                    now,
-                },
-                now,
-            )?;
+        let (claimed, repaired) = queue.claim_owner_retained_in_txn(
+            &mut txn,
+            TAGGING_MARKER_KIND,
+            attempt(now),
+            now,
+            start,
+        )?;
         let ClaimOutcome::Claimed(record) = claimed else {
             // An empty claim commits only the index entries it repaired, so
             // the next pass does not meet them again.
