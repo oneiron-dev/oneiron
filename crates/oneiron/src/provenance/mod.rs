@@ -56,7 +56,10 @@
 //!   erasing transaction (the ports dependency index). Its support is
 //!   withdrawn: every cohort counts it as retracted, never live, and the
 //!   stale door re-derives the edge's flags at once — from the remaining live
-//!   WINNER, else the retracted stamp. The edge itself is kept.
+//!   WINNER, else the retracted stamp. The edge itself is kept. A replayed
+//!   image of the edge (sync rematerialization, an edge delta) never
+//!   outranks this: when the edge has local wrappers and none is live, the
+//!   replay arm restores the retracted stamp in the replay's own transaction.
 //!
 //! * **SUPERSEDE** — "a newer edge.provenance Claim … takes precedence; the
 //!   prior Claim gets valid_to set (closed, not deleted). Confidence breaks
@@ -146,7 +149,9 @@ mod edge_ref;
 mod entity_ref_wire;
 mod imported;
 mod invalidation;
-pub(crate) use invalidation::refresh_stale_wrapper_in_txn;
+pub(crate) use invalidation::{
+    refresh_stale_wrapper_in_txn, replay_needs_cohort_check, withdraw_replayed_support_in_txn,
+};
 mod lifecycle;
 pub mod made_by;
 mod queries;

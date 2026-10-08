@@ -15,6 +15,7 @@ use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
 use crate::vault::MAX_EDGE_QUERY_RESULTS;
+use std::ops::ControlFlow;
 
 impl Vault {
     /// The write-verb validity guard for a REPLACEMENT-style
@@ -196,6 +197,34 @@ pub(super) fn edge_provenance_cohort_in_txn(
     lifecycles: &[ClaimLifecycleStatus],
 ) -> Result<Vec<StoredProvenanceClaim>> {
     let mut matched = Vec::new();
+    walk_edge_provenance_cohort_in_txn(
+        store,
+        txn,
+        subject,
+        exclude,
+        lifecycles,
+        MAX_EDGE_QUERY_RESULTS,
+        |claim, _| {
+            matched.push(claim);
+            ControlFlow::Continue(())
+        },
+    )?;
+    Ok(matched)
+}
+
+/// The rows [`edge_provenance_cohort_in_txn`] selects, handed to `visit` one
+/// at a time with their [`cohort_lifecycle`] until it breaks. Past `ceiling`
+/// scanned `claim_of` rows the walk refuses with [`Error::IndexOverflow`]:
+/// a crowded source is never read as an empty cohort.
+pub(super) fn walk_edge_provenance_cohort_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    subject: &EdgeRef,
+    exclude: Option<&EntityId>,
+    lifecycles: &[ClaimLifecycleStatus],
+    ceiling: usize,
+    mut visit: impl FnMut(StoredProvenanceClaim, ClaimLifecycleStatus) -> ControlFlow<()>,
+) -> Result<()> {
     for (scanned, entry) in store
         .port_edges(
             txn,
@@ -206,7 +235,7 @@ pub(super) fn edge_provenance_cohort_in_txn(
         )?
         .enumerate()
     {
-        if scanned >= MAX_EDGE_QUERY_RESULTS {
+        if scanned >= ceiling {
             return Err(Error::IndexOverflow("live provenance claims"));
         }
         let edge_row = entry?;
@@ -250,12 +279,13 @@ pub(super) fn edge_provenance_cohort_in_txn(
         if EdgeRef::new(source, kind, target) != *subject {
             continue;
         }
-        if !lifecycles.contains(&cohort_lifecycle(store, txn, &claim_id, wrapper.lifecycle)?) {
+        let lifecycle = cohort_lifecycle(store, txn, &claim_id, wrapper.lifecycle)?;
+        if !lifecycles.contains(&lifecycle) {
             continue;
         }
         let record = decode_edge_provenance_body(&wrapper.value)?;
         let actor_class = resolve_persisted_actor_class(&record, wrapper.evidence.as_ref())?;
-        matched.push(StoredProvenanceClaim {
+        let claim = StoredProvenanceClaim {
             id: claim_id,
             occurred_start: header.occurred_start,
             learned_at: header.learned_at,
@@ -263,7 +293,10 @@ pub(super) fn edge_provenance_cohort_in_txn(
             wrapper,
             record,
             actor_class,
-        });
+        };
+        if visit(claim, lifecycle).is_break() {
+            break;
+        }
     }
-    Ok(matched)
+    Ok(())
 }

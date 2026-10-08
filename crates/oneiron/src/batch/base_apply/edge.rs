@@ -49,6 +49,12 @@ pub(super) fn apply_edge_op(store: &Store, wtxn: &mut RwTxn<'_>, op: BatchOp) ->
         // off-table row before it ever enters the admitted document. A
         // federation peer therefore cannot replay a facet stamp local
         // writers may not write.
+        //
+        // Nor does a replayed image outrank local invalidation: once it is
+        // written, a semantic image asserting support (any but a retracted
+        // one, or a bare one over a stored bare edge) meets the local wrapper
+        // cohort, and support whose wrappers are all closed or stale here
+        // goes back to retracted, even over a removed edge.
         BatchOp::EdgeWithCreatedAt {
             src,
             kind,
@@ -58,9 +64,15 @@ pub(super) fn apply_edge_op(store: &Store, wtxn: &mut RwTxn<'_>, op: BatchOp) ->
             vad,
             provenance,
         } => {
+            let subject = crate::provenance::EdgeRef::new(src, kind, tgt);
+            let check =
+                crate::provenance::replay_needs_cohort_check(store, wtxn, &subject, provenance)?;
             apply_edge_with_created_at(
                 store, wtxn, src, kind, tgt, weight, created_at, vad, provenance,
             )?;
+            if check {
+                crate::provenance::withdraw_replayed_support_in_txn(store, wtxn, &subject)?;
+            }
             ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
             Ok(true)
         }
