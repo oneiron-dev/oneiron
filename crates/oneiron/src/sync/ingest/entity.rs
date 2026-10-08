@@ -144,8 +144,8 @@ impl RefusalRetry {
 
 /// A row checked against a sibling row of the same entities map: an ask word or
 /// receipt against its group, a project's derived home room against its project.
-/// Both replay drivers visit these after every other row, so the outcome never
-/// depends on key or hash order.
+/// Forward remat and observer B visit these after every other row of a pass or
+/// delta, so a sibling carried in the same map is always resolved first.
 pub(in crate::sync) fn waits_for_sibling_row(blob: &[u8]) -> bool {
     crate::task_verb::waits_for_ask_group(blob)
         || EntityMetadataHeader::parse(blob).is_some_and(|header| {

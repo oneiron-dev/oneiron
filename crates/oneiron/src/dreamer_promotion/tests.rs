@@ -1861,6 +1861,22 @@ impl Drop for BlockingPromotionAutoChecker {
 fn promotion_bounds_repeated_blocked_checker_calls_and_records_each_refusal() -> Result<()> {
     let (_dir, vault) = open_auto_checker_vault();
     let fixture = fixture(&vault)?;
+    let batch = || -> Vec<_> {
+        (0..3)
+            .map(|_| candidate(&fixture, "profile.name", "Ada", vec![fixture.turn]))
+            .collect()
+    };
+    // Behind a host that answers at once, every candidate consults it.
+    let answering = CountingAutoChecker::new(AutoCheckOutcome::Unavailable);
+    let control = promote_consolidated_claims_with_checker(
+        &vault,
+        &fixture.run,
+        batch(),
+        Some(&BoundedAutoChecker::new(answering.clone())),
+    )?;
+    assert_eq!(control.rejected.len(), 3);
+    assert_eq!(answering.calls(), 3);
+
     let calls = Arc::new(AtomicUsize::new(0));
     let (release, waiting) = std::sync::mpsc::sync_channel(1);
     let (dropped, worker_exited) = std::sync::mpsc::sync_channel(1);
@@ -1874,9 +1890,7 @@ fn promotion_bounds_repeated_blocked_checker_calls_and_records_each_refusal() ->
     // waits out the deadline and keeps the host's one slot; every later
     // consult, in this promotion and the next, refuses without a handoff.
     for _ in 0..2 {
-        let candidates: Vec<_> = (0..3)
-            .map(|_| candidate(&fixture, "profile.name", "Ada", vec![fixture.turn]))
-            .collect();
+        let candidates = batch();
         let ids: Vec<_> = candidates
             .iter()
             .map(|candidate| candidate.claim_id)

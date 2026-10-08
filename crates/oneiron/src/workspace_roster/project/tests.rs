@@ -1786,29 +1786,45 @@ fn a_project_whose_home_room_id_sorts_first_reimports() -> Result<()> {
 #[cfg(feature = "sync")]
 #[test]
 fn a_project_whose_home_room_id_sorts_first_replays_without_a_stuck_window() -> Result<()> {
-    // Window replay walks rows in key order, so the home room comes before its
-    // project. Once the project's own write produces the room, the window must
-    // not stay flagged for rematerialization.
+    // Window replay walks rows in key order and a live delta in hash order, so
+    // the home room can come before its project. Once the project's own write
+    // produces the room, the window must not stay flagged for rematerialization.
     let (_source_dir, source) = crate::test_util::open_test_vault_with(Default::default());
     let (child_id, child) = child_project_whose_home_room_sorts_first(&source)?;
     source.put_project(child_id, &child, 10)?;
     let key = crate::sync::types::WindowKey::new("1970-01");
     let doc = crate::sync::schema::create_window_doc("home-room-first", &key);
     crate::sync::window::reverse_rematerialize(&source, &doc, &key)?;
-    let (_peer_dir, peer) = crate::test_util::open_test_vault_with(Default::default());
-    let materializer = crate::sync::bridge::Materializer::new();
-    crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key)?;
     let room_id = EntityId::from_hex(&child.home_room)?;
-    assert_eq!(
-        peer.project_room(room_id)?.expect("room").project_id,
-        child_id.to_hex()
-    );
-    assert_eq!(
-        crate::sync::pending_remat_windows(&peer)?,
-        Vec::<String>::new(),
-        "still pending: {:?}",
-        crate::sync::quarantine::pending_remat_entities(&peer, key.as_str())
-    );
+    for live in [true, false] {
+        let (_peer_dir, peer) = crate::test_util::open_test_vault_with(Default::default());
+        let peer = std::sync::Arc::new(peer);
+        let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+        if live {
+            let received = crate::sync::schema::create_window_doc("home-room-received", &key);
+            let _observer = crate::sync::bridge::register_observer_b(
+                &received,
+                &peer,
+                &materializer,
+                key.as_str(),
+            );
+            received
+                .import(&doc.export(loro::ExportMode::all_updates()).expect("export"))
+                .expect("import");
+        } else {
+            crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key)?;
+        }
+        assert_eq!(
+            peer.project_room(room_id)?.expect("room").project_id,
+            child_id.to_hex()
+        );
+        assert_eq!(
+            crate::sync::pending_remat_windows(&peer)?,
+            Vec::<String>::new(),
+            "live={live}, still pending: {:?}",
+            crate::sync::quarantine::pending_remat_entities(&peer, key.as_str())
+        );
+    }
     Ok(())
 }
 

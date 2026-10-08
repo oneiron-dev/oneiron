@@ -69,7 +69,7 @@ pub(super) fn materialize_entities_with_changes(
         // One delta has no row order: an ask word, receipt or project home room
         // must not reach its sibling check before the row it names.
         let mut updates: Vec<_> = delta.updated.iter().collect();
-        updates.sort_by_key(|(_, value)| {
+        updates.sort_by_cached_key(|(_, value)| {
             matches!(
                 value,
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob)))
