@@ -62,26 +62,11 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
             config.exhaustion_policy,
         ),
     };
-    // Only attach when the existing owner supplied a connection and outputs.
-    // Extraction-only configuration must not construct a throwaway host here.
-    #[cfg(all(unix, feature = "voice"))]
-    let voice = match factory
-        .voice_serve_bindings()
-        .map_err(PassRunError::PreAdmission)?
-    {
-        Some(bindings) => {
-            let host = factory
-                .voice_host(vault, &guard)
-                .map_err(PassRunError::PreAdmission)?
-                .ok_or_else(|| {
-                    PassRunError::PreAdmission(oneiron::Error::InvalidConfig(
-                        "voice serve bindings require an attached host".into(),
-                    ))
-                })?;
-            Some((host, bindings))
-        }
-        None => None,
-    };
+    // Asked after the meter exists so attached work spends this pass's
+    // budget; a refusal stops the pass before any attempt is admitted.
+    let attachment = factory
+        .pass_attachment(vault, &guard)
+        .map_err(PassRunError::PreAdmission)?;
     let mut driver = DreamerWakeDriver::new(vault, pass_budget_id.to_owned(), deadline)
         .with_budget_guard(guard.clone());
     if let Some(author) = config.milestones.clone() {
@@ -115,18 +100,17 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
         }
     }
     let pass = driver.run_wake_pass(input, &mut executor, cancel);
-    #[cfg(all(unix, feature = "voice"))]
-    if let Some((host, bindings)) = voice {
-        let (result, served) = bindings.serve_for_pass(host, pass).await;
-        let report = result.map_err(PassRunError::Failed)?;
-        served.map_err(|error| {
-            PassRunError::Failed(oneiron::Error::InvalidConfig(format!(
-                "voice serve failed: {error}"
-            )))
-        })?;
-        return Ok(report);
-    }
-    pass.await.map_err(PassRunError::Failed)
+    let Some(attachment) = attachment else {
+        return pass.await.map_err(PassRunError::Failed);
+    };
+    let (result, served) = attachment.serve(Box::pin(pass)).await;
+    let report = result.map_err(PassRunError::Failed)?;
+    served.map_err(|error| {
+        PassRunError::Failed(oneiron::Error::InvalidConfig(format!(
+            "pass attachment failed: {error}"
+        )))
+    })?;
+    Ok(report)
 }
 
 /// The units ORDINARY pass execution may spend: the dialed total minus the

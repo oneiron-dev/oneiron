@@ -7804,7 +7804,6 @@ version = "0.1.0"
 dependencies = [
  "oneiron",
  "oneiron-llm-local",
- "oneiron-server",
  "rmpv",
  "serde_json",
  "tempfile",
@@ -8077,6 +8076,9 @@ dependencies = [
  "libc",
  "loro",
  "oneiron",
+ "oneiron-driver",
+ "oneiron-llm-anthropic",
+ "oneiron-llm-openai",
  "oneiron-remote",
  "oneiron-vault-contract",
  "reqwest 0.12.28",

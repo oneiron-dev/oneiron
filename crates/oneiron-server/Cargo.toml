@@ -34,6 +34,15 @@ oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync"] }
 # a framing bug cannot diverge between supervisor and engine. No wire reshape
 # and no CONTRACT_VERSION bump belongs on this side of the seam.
 oneiron-vault-contract = { version = "0.1.0", path = "../oneiron-vault-contract" }
+# The Dreamer's starter motor: the server owns the wake supervisor and the
+# workflow pump for its one vault (ARCH-0026: one Dreamer per vault, on the
+# primary node).
+oneiron-driver = { version = "0.1.0", path = "../oneiron-driver" }
+# Protocol mappers for the `[models]` provider kinds. Both own wire mapping
+# only; this crate supplies the HTTP transport (models/openai.rs and
+# models/anthropic.rs).
+oneiron-llm-anthropic = { version = "0.1.0", path = "../oneiron-llm-anthropic" }
+oneiron-llm-openai = { version = "0.1.0", path = "../oneiron-llm-openai" }
 loro = "1.10"
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }

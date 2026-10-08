@@ -51,9 +51,10 @@ pub use session::{
     SessionHintEffect, SessionLifecycleConfig, SessionLifecycleDriver, SessionTicks,
 };
 pub use supervisor::{
-    ConsolidationExecutorFactory, MAX_PASS_BUDGET_BASE_LEN, NowSeconds, PassExecutorFactory,
-    RestartBackoffConfig, ShutdownHandle, WakeSupervisor, WakeSupervisorConfig,
-    WakeSupervisorReport, WaveReadyDispatcher,
+    AttachedPassFuture, ConsolidationExecutorFactory, LinkedShutdown, MAX_PASS_BUDGET_BASE_LEN,
+    NowSeconds, PassAttachment, PassAttachmentSource, PassExecutorFactory, RestartBackoffConfig,
+    ShutdownHandle, WakePassFuture, WakeSupervisor, WakeSupervisorConfig, WakeSupervisorReport,
+    WaveReadyDispatcher,
 };
 pub use tick::{
     AttemptQueueDeadlines, CommitmentDeadline, CommitmentDueDeadlines, DeadlineSource, HintPusher,

@@ -12,11 +12,8 @@ use oneiron::{
 };
 use oneiron::{Vault, WavePlanner};
 use oneiron_llm_local::{LocalLlmBackend, LocalLlmRuntime};
-#[cfg(all(unix, feature = "voice"))]
-use oneiron_server::{
-    managed::ManagedShutdown,
-    voice_host::{VoiceHost, VoiceHostBindings, VoiceHostConfig, VoiceServeConnection},
-};
+
+use super::attachment::{LinkedShutdown, PassAttachment, PassAttachmentSource};
 
 /// Host-supplied consumer of the live ready TASK subset.
 pub type WaveReadyDispatcher =
@@ -59,22 +56,19 @@ pub trait PassExecutorFactory {
         ))
     }
 
-    /// Optional process-local attachment, after the supervisor creates its guard.
-    /// The default is inert, including for existing custom executor factories.
-    #[cfg(all(unix, feature = "voice"))]
-    fn voice_host(&self, _vault: &Vault, _guard: &BudgetGuard) -> Result<Option<VoiceHost>> {
+    /// Optional host attachment for one pass, asked after the supervisor
+    /// creates the pass meter. The default is inert, including for existing
+    /// custom executor factories.
+    fn pass_attachment(
+        &self,
+        _vault: &Vault,
+        _guard: &BudgetGuard,
+    ) -> Result<Option<Box<dyn PassAttachment>>> {
         Ok(None)
     }
 
-    /// Claims optional, owner-supplied serve bindings. No connection is invented.
-    #[cfg(all(unix, feature = "voice"))]
-    fn voice_serve_bindings(&self) -> Result<Option<VoiceServeConnection>> {
-        Ok(None)
-    }
-
-    /// The configured lifecycle signal, not another shutdown owner.
-    #[cfg(all(unix, feature = "voice"))]
-    fn voice_shutdown(&self) -> Option<ManagedShutdown> {
+    /// The attachment host's lifecycle signal, not another shutdown owner.
+    fn linked_shutdown(&self) -> Option<Arc<dyn LinkedShutdown>> {
         None
     }
 }
@@ -83,7 +77,7 @@ pub trait PassExecutorFactory {
 /// the [`LlmBackend`] the supervisor constructed at startup plus the
 /// promotion sink, and lends both to each pass.
 pub struct ConsolidationExecutorFactory {
-    pub(super) backend: Arc<dyn LlmBackend>,
+    backend: Arc<dyn LlmBackend>,
     strategy: DreamerClaimAuthoringStrategy,
     pub(super) actor: WriteActor,
     model: ModelId,
@@ -99,8 +93,7 @@ pub struct ConsolidationExecutorFactory {
     weave_recipe_runtime: Option<Box<dyn WeaveRecipeRuntime>>,
     wave_planner: Option<Arc<dyn WavePlanner + Send + Sync>>,
     wave_dispatch: Option<WaveReadyDispatcher>,
-    #[cfg(all(unix, feature = "voice"))]
-    pub(super) voice: Option<VoiceHostConfig>,
+    attachment: Option<Box<dyn PassAttachmentSource>>,
 }
 
 impl ConsolidationExecutorFactory {
@@ -127,18 +120,23 @@ impl ConsolidationExecutorFactory {
             weave_recipe_runtime: None,
             wave_planner: None,
             wave_dispatch: None,
-            #[cfg(all(unix, feature = "voice"))]
-            voice: None,
+            attachment: None,
         }
     }
 
-    /// Opts into a pass-scoped voice attachment. No provider or meter is built.
-    /// `new` and `with_local_runtime` both leave voice unconfigured by default.
-    #[cfg(all(unix, feature = "voice"))]
+    /// Opts into a pass-scoped host attachment (the server's voice host is
+    /// one). No provider or meter is built here; `new` and
+    /// `with_local_runtime` both leave it unconfigured.
     #[must_use]
-    pub fn with_voice(mut self, config: VoiceHostConfig) -> Self {
-        self.voice = Some(config);
+    pub fn with_pass_attachment(mut self, source: Box<dyn PassAttachmentSource>) -> Self {
+        self.attachment = Some(source);
         self
+    }
+
+    /// The backend this factory lends to every pass.
+    #[must_use]
+    pub fn backend(&self) -> &Arc<dyn LlmBackend> {
+        &self.backend
     }
 
     /// Opt-in CMT-3 (ONE-1540) proposal planner.
@@ -285,49 +283,20 @@ impl PassExecutorFactory for ConsolidationExecutorFactory {
         )
     }
 
-    #[cfg(all(unix, feature = "voice"))]
-    fn voice_host(&self, vault: &Vault, guard: &BudgetGuard) -> Result<Option<VoiceHost>> {
-        let Some(config) = &self.voice else {
-            return Ok(None);
-        };
-        if !std::ptr::eq(vault, config.vault.as_ref()) {
-            return Err(oneiron::Error::InvalidConfig(
-                "voice attachment must use the supervisor vault".into(),
-            ));
+    fn pass_attachment(
+        &self,
+        vault: &Vault,
+        guard: &BudgetGuard,
+    ) -> Result<Option<Box<dyn PassAttachment>>> {
+        match &self.attachment {
+            Some(source) => source.attach(vault, &self.backend, guard),
+            None => Ok(None),
         }
-        VoiceHost::new(
-            Arc::clone(&config.vault),
-            &config.runtime,
-            VoiceHostBindings {
-                backend: Arc::clone(&self.backend),
-                budget: guard.clone(),
-                extraction_prompt: config.extraction_prompt.clone(),
-                session: config.session.clone(),
-                shutdown: config.shutdown.clone(),
-            },
-        )
-        .map(Some)
-        .map_err(|error| {
-            oneiron::Error::InvalidConfig(format!("voice attachment refused: {error}"))
-        })
     }
 
-    #[cfg(all(unix, feature = "voice"))]
-    fn voice_serve_bindings(&self) -> Result<Option<VoiceServeConnection>> {
-        let Some(bindings) = self
-            .voice
+    fn linked_shutdown(&self) -> Option<Arc<dyn LinkedShutdown>> {
+        self.attachment
             .as_ref()
-            .and_then(|config| config.serve_bindings.as_ref())
-        else {
-            return Ok(None);
-        };
-        bindings.take().map_err(|error| {
-            oneiron::Error::InvalidConfig(format!("voice serve bindings refused: {error}"))
-        })
-    }
-
-    #[cfg(all(unix, feature = "voice"))]
-    fn voice_shutdown(&self) -> Option<ManagedShutdown> {
-        self.voice.as_ref().map(|config| config.shutdown.clone())
+            .and_then(|source| source.linked_shutdown())
     }
 }
