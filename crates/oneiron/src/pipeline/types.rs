@@ -37,14 +37,8 @@ pub(super) const DEFAULT_SIGMA_SECS: u64 = 86_400;
 pub(super) const MIN_WINDOW_RADIUS_SECS: u64 = 7 * 86_400;
 pub(super) const TEMPORAL_FLOOR: f64 = 0.05;
 
-/// A scored entity result.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ScoredEntity {
-    /// Entity identifier.
-    pub id: EntityId,
-    /// Ranking score.
-    pub score: f32,
-}
+/// A scored entity result. Defined in `oneiron-retrieval`, where fusion ranks it.
+pub use oneiron_retrieval::pipeline::ScoredEntity;
 
 /// Retrieval signal type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
