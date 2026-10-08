@@ -76,6 +76,38 @@ pub(crate) fn message_stream_finality_in_txn(
 ) -> Result<Option<(StreamFinality, EntityId)>> {
     Ok(receipt(vault, txn, *message)?.map(|done| (done.finality, done.generation)))
 }
+/// A finalized continuation changed the final words its TURN projects: re-put
+/// the TURN at a strictly newer `learned_at`, exactly as a new MESSAGE sibling
+/// re-dirties it on the witness door, so consolidation selects it again. A
+/// DAG record TURN is append-only and keeps its row: the continuation still
+/// commits, and the TURN is not selected again.
+pub(super) fn redirty_turn(vault: &Vault, txn: &mut heed::RwTxn<'_>, seed: &Seed) -> Result<()> {
+    use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+    if crate::conversation_dag::is_append_only_record(&vault.store, txn, &seed.turn)? {
+        return Ok(());
+    }
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &seed.turn)?
+        .ok_or(Error::EntityNotFound)?
+        .to_vec();
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("turn header"))?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_TURN {
+        return Err(Error::CorruptedIndex("stream turn kind"));
+    }
+    vault
+        .batch_in()
+        .put(
+            &seed.turn,
+            crate::registry::ENTITY_TYPE_TURN,
+            crate::temporal::TimeRange {
+                start: header.occurred_start,
+                end: header.occurred_end,
+            },
+            seed.occurred_at.max(header.learned_at.saturating_add(1)),
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        )
+        .apply(txn)?;
+    Ok(())
+}
 pub(super) fn finish(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

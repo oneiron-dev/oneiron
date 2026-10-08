@@ -1290,3 +1290,67 @@ fn stored_citation_names_its_message_version_through_a_later_edit() -> Result<()
     assert!(current(&vault, &claim)?, "an edit is not an erasure");
     Ok(())
 }
+
+/// A continuation that finalizes new words on an already consumed turn brings
+/// the turn back: the next scan selects it, and its new final text gets a new
+/// extraction attempt. A continuation still in flight changes nothing.
+#[cfg(feature = "sync")]
+#[test]
+fn a_finalized_continuation_brings_its_consumed_turn_back() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (turn, conversation, _, input) = stream_turn(&vault, 0x7b, "call me", "finalize")?;
+    let scope = DreamerConsolidationScope::Micro;
+    let dirty = |vault: &Vault| scan_dirty_turns(vault, scope, &read_watermark(vault, scope)?, 10);
+    let first = queue_micro(&vault)?;
+    let [consumed] = <[WorkingSetTurn; 1]>::try_from(dirty(&vault)?).expect("one dirty turn");
+    advance_watermark_to_turn(&vault, scope, &consumed)?;
+    assert!(dirty(&vault)?.is_empty(), "the round consumed the turn");
+    let writer = EntityId::from_bytes([0x7b; 16])?;
+    let memory = vault.memory(writer, EdgeActorClass::Human);
+    let handle = memory
+        .begin_message_stream(&input, Some(crate::memory::MessageWriteMode::Atomic))
+        .expect("continuation begins");
+    memory.append_to_stream(handle, " Oleksii").expect("append");
+    assert!(dirty(&vault)?.is_empty(), "words in flight are not final");
+    memory.finalize_stream(handle).expect("finalize");
+    let again: Vec<_> = dirty(&vault)?.into_iter().map(|t| t.turn_id).collect();
+    assert_eq!(again, vec![turn], "the finalized words re-dirty their turn");
+    let second = queue_micro(&vault)?;
+    assert_ne!(second, first, "the new final words get their own attempt");
+    let branch = BranchResources::open(
+        &vault,
+        vault.dreamer_authority()?,
+        partition_of(conversation),
+        &[turn],
+        second,
+        None,
+    )?;
+    assert_eq!(
+        branch.transcript(branch.scope(), &[turn])?,
+        format!("[{} user] call me Oleksii\n", turn.to_hex())
+    );
+    Ok(())
+}
+
+/// A conversation that adopted the DAG keeps its TURN rows append-only. A
+/// continuation there still finalizes its new words; it keeps the TURN row
+/// instead of re-dirtying it.
+#[cfg(feature = "sync")]
+#[test]
+fn a_continuation_in_a_dag_conversation_still_finalizes() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (_, conversation, message, input) = stream_turn(&vault, 0x81, "call me", "finalize")?;
+    assert!(
+        vault.migrate_conversation_dag(&conversation)?,
+        "the conversation adopts the DAG"
+    );
+    end_stream(
+        &vault,
+        EntityId::from_bytes([0x81; 16])?,
+        &input,
+        " Oleksii",
+        "finalize",
+    );
+    assert_eq!(content(&vault, &message)?, "call me Oleksii");
+    Ok(())
+}
