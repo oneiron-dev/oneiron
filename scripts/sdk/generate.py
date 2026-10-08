@@ -350,7 +350,7 @@ def outputs():
                 guard += f'facade_admit_readable_ref(&server.vault, &auth, &value, "{readable}")?;'
         # A server door runs the verb with the host's execution inputs, off the runtime.
         if r.get('server_door'):
-            result = f'facade_output(server.{r["server_door"]}(actor, class, facade_input(value)?).await?)?'
+            result = f'facade_output(server.{r["server_door"]}(actor, class, auth.verified_slip().cloned(), facade_input(value)?).await?)?'
         # The typed result path consumes facade_input; invoke decodes its own input.
         validation = (f'oneiron::task_verb::sdk::validate_input("{r["name"]}", &value)?;\n         '
                       if 'rows' in r.get('admission', {}).get('readable', []) or r.get('server_door') else '')

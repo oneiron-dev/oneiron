@@ -3,13 +3,14 @@
 //! One place builds recall's execution inputs, so the HTTP facade and the
 //! WebSocket read RPC run the same recall for the same request: above light
 //! effort the query is embedded whenever the vault's embedder is serving, and
-//! the caller's `as_of` rides along. Each door brings its own read lane: WS
-//! reads under the slip the caller presented, HTTP as the bound principal.
+//! the caller's `as_of` rides along. Both doors read as the bound principal
+//! under the slip it presented (ONE-1187-D6).
 //! A vault with no embedder, or one still loading its model, recalls on its
 //! sparse signals and says so (`sparse: true`).
 
 use std::sync::Arc;
 
+use oneiron::authority::VerifiedSlip;
 use oneiron::memory::{
     Effort, MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryPack, MemoryResult,
 };
@@ -38,16 +39,23 @@ impl SyncServer {
         })
     }
 
-    /// [`Self::recall`] for `actor`, on the blocking pool.
+    /// [`Self::recall`] for `actor` under the slip it presented, on the
+    /// blocking pool.
     pub(crate) async fn recall_off_runtime(
         self: &Arc<Self>,
         actor: EntityId,
         class: EdgeActorClass,
+        proof: Option<VerifiedSlip>,
         input: RecallRequest,
     ) -> MemoryResult<MemoryPack> {
         let server = Arc::clone(self);
         tokio::task::spawn_blocking(move || {
-            server.recall(&server.vault.memory(actor, class), input)
+            let memory = server.vault.memory(actor, class);
+            let memory = match &proof {
+                Some(proof) => memory.with_read_proof(proof),
+                None => memory,
+            };
+            server.recall(&memory, input)
         })
         .await
         .unwrap_or_else(|error| {
@@ -78,7 +86,8 @@ impl SyncServer {
 /// worker. On a multi-thread runtime worker the worker hands its other tasks
 /// to another thread first; inside a current-thread runtime the work runs on
 /// a thread of its own, outside the async context; anywhere else it simply
-/// runs. Not for use inside a `LocalSet`, which the server never runs.
+/// runs. Not for use inside a `LocalSet`; [`crate::build_app`] asks hosts
+/// not to serve from one.
 pub(crate) fn blocking<R: Send>(work: impl FnOnce() -> R + Send) -> R {
     match tokio::runtime::Handle::try_current().map(|handle| handle.runtime_flavor()) {
         Ok(tokio::runtime::RuntimeFlavor::MultiThread) => tokio::task::block_in_place(work),

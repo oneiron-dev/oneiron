@@ -153,7 +153,12 @@ async fn recall(
     let (actor, class) = facade_actor(&auth)?;
     Ok(Json(facade_output(
         server
-            .recall_off_runtime(actor, class, facade_input(value)?)
+            .recall_off_runtime(
+                actor,
+                class,
+                auth.verified_slip().cloned(),
+                facade_input(value)?,
+            )
             .await?,
     )?))
 }
