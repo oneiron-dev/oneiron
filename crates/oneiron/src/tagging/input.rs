@@ -341,7 +341,9 @@ fn context_message_in_txn(
 ///
 /// A turn with a DAG parent reads its retained ancestry (the `Parent` edge,
 /// or the parent an erasure pin kept), so a branch never reads another
-/// branch. A DAG record with no parent, or any turn of a conversation that
+/// branch. A legacy turn's ancestry is the order a room's adoption of the
+/// DAG gave it, by time and then id, so it keeps only the turns of an
+/// earlier second. A DAG record with no parent, or any turn of a conversation that
 /// adopted the DAG, is a root and reads alone, as is a turn whose `ChildOf`
 /// owner is not one live conversation, or one of whose turns carries DAG
 /// topology of its own (a received `Parent`, say). Only a conversation that
@@ -368,17 +370,35 @@ pub(super) fn earlier_turns_in_txn(
         return Ok(Vec::new());
     };
     if let Some(parent) = parent {
-        let mut ancestry = vec![parent];
-        let mut cursor = parent;
-        while ancestry.len() < limit {
-            let Ok(Some(next)) = retained_parent(store, txn, &cursor) else {
+        // A DAG record's parent existed when the append door wrote it, and
+        // adoption writes Parent edges only in a room with no DAG record yet,
+        // so its whole ancestry came first. Any other turn's Parent came from
+        // adoption, which orders one second's turns by id: through it only a
+        // turn of a strictly earlier second is earlier.
+        let since = match live_entity_row_in_txn(store, txn, turn)? {
+            LiveEntityRow::Live { body, .. } if matches!(record_kind(&body), Ok(Some(_))) => None,
+            LiveEntityRow::Live { .. } => match header_key(vault, txn, turn)? {
+                Some((at, _)) => Some(at),
+                None => return Ok(Vec::new()),
+            },
+            _ => return Ok(Vec::new()),
+        };
+        let mut walked = vec![*turn];
+        let mut ancestry = Vec::new();
+        let mut cursor = Some(parent);
+        for _ in 0..limit {
+            let Some(id) = cursor.filter(|id| !walked.contains(id)) else {
                 break;
             };
-            if next == *turn || ancestry.contains(&next) {
-                break;
+            walked.push(id);
+            let earlier = match since {
+                None => true,
+                Some(at) => header_key(vault, txn, &id)?.is_some_and(|(second, _)| second < at),
+            };
+            if earlier {
+                ancestry.push(id);
             }
-            ancestry.push(next);
-            cursor = next;
+            cursor = retained_parent(store, txn, &id).ok().flatten();
         }
         return Ok(ancestry);
     }

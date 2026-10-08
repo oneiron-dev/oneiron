@@ -2668,6 +2668,59 @@ fn a_later_turn_of_the_same_second_never_enters_an_earlier_turns_window() {
     assert_eq!(window(&input(&later)), vec![first]);
 }
 
+/// A room's adoption of the DAG orders its legacy turns by time and then
+/// id, so the ancestry it writes proves no more than time does: once the
+/// room adopts it, a later turn of the same second with the smaller id is
+/// still not in the earlier turn's window, and a turn of an earlier second
+/// is in both.
+#[test]
+fn a_same_second_turn_stays_out_of_the_window_after_the_room_adopts_the_dag() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    let before = witness_at(&vault, "Ada sailed north", NOW - 1);
+    let memory = vault.memory(speaker(&vault), EdgeActorClass::Human);
+    let witness_as = |turn_ref: &str, content: &str| {
+        receipt_turn(
+            &memory
+                .witness(&turn(Some(turn_ref.to_owned()), vec![message(0, content)]))
+                .expect("witness"),
+        )
+    };
+    let earlier = witness_as("7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a", "Grace stayed behind");
+    let later = witness_as("6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a", "they wrote letters");
+    let room = EntityId::from_hex(ROOM).expect("room id");
+    assert!(
+        vault
+            .migrate_conversation_dag(&room)
+            .expect("adopt the DAG")
+    );
+    {
+        let txn = vault.store.env.read_txn().expect("read txn");
+        assert_eq!(
+            crate::conversation_dag::retained_parent(&vault.store, &txn, &earlier).expect("parent"),
+            Some(later),
+            "adoption put the later turn behind the earlier one"
+        );
+    }
+    let tagger = Scripted::new(Answer::Good);
+    let pass = reconciler(&vault, &tagger)
+        .with_batch_size(3)
+        .drain_once()
+        .expect("drain");
+    assert_eq!(pass.traces.len(), 3);
+    let inputs = tagger.inputs.lock().expect("inputs").clone();
+    let input = |turn: &EntityId| {
+        inputs
+            .iter()
+            .find(|input| input.turn == turn.to_hex())
+            .expect("the turn was tagged")
+            .clone()
+    };
+    let first = (before.to_hex(), vec!["Ada sailed north".to_owned()]);
+    assert_eq!(window(&input(&earlier)), vec![first.clone()]);
+    assert_eq!(window(&input(&later)), vec![first]);
+}
+
 /// A same-second re-mark of a settled turn draws a new id: pruning the
 /// settled marker frees no id, so the old one never names the new pass, and
 /// the two passes' traces name distinct attempts.
