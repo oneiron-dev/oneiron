@@ -1,0 +1,30 @@
+[package]
+name = "oneiron-crypto-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Its own workspace: cargo-fuzz needs nightly and libFuzzer, so these targets stay out
+# of the stable gate. The gate runs the property fuzzing in `tests/parser_props.rs`.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+oneiron-crypto = { path = ".." }
+
+[[bin]]
+name = "envelope_parse"
+path = "fuzz_targets/envelope_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "record_parse"
+path = "fuzz_targets/record_parse.rs"
+test = false
+doc = false
+bench = false
