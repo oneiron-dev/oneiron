@@ -375,8 +375,11 @@ fn restore_refuses_a_changed_row_of_another_packs_kind_under_an_engine_prefix() 
 #[test]
 fn restore_refuses_to_return_a_stale_plugin_install_withdrawn_since() {
     use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
-    let root = tempfile::tempdir().unwrap();
-    let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    // No policy manifest, as the other restore regressions run: the write
+    // gate's criticality floor would park both the approved body and its
+    // retraction for an owner ceremony this fixture does not stage.
+    let (_dir, live) = crate::test_util::open_test_vault_with(VaultConfig::device());
+    let backups = tempfile::tempdir().unwrap();
     let hub = person(&live, b"hub");
     let mut install = ClaimBody::new(
         crate::context_board::PREDICATE_PLUGIN_SECTION_INSTALL,
@@ -400,11 +403,11 @@ fn restore_refuses_to_return_a_stale_plugin_install_withdrawn_since() {
             true
         )
     );
-    let image = root.path().join("backup");
+    let image = backups.path().join("backup");
     live.snapshot_checkpoint(&image, 100).unwrap();
     live.retract_claim(&claim, 10).unwrap();
 
-    let destination = root.path().join("restored");
+    let destination = backups.path().join("restored");
     let error = Vault::restore_checkpoint_keeping_authority(
         &image,
         &destination,
