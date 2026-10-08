@@ -41,7 +41,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-retrieval](codemap/oneiron-retrieval.md) | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion | 18 | 6 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 4 | 0 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 42 | 10 | 0 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 260 | 113 | 2 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 260 | 104 | 2 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | Definition-only UniFFI interface surface for the WIRE head contract | 6 | 0 | 0 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 12 | 1 | 0 |
 | [oneiron-xlsx-formula](codemap/oneiron-xlsx-formula.md) | In-process XLSX formula recalculation, the default of the edit round trip | 13 | 1 | 2 |
@@ -482,15 +482,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
 | `actions` | file | 1 | s | Host-bound UI and agent action executor over the engine's one verb registry |
-| `api` | dir | 166 | m | HTTP query routes for web dashboard access |
+| `api` | dir | 163 | m | HTTP query routes for web dashboard access |
 | `auth` | file+dir | 5 | m | HTTP authentication for log-backed version-two capability slips |
 | `broadcast` | file | 1 | s | Broadcast group for multi-device fan-out with echo suppression |
-| `cli` | file+dir | 3 | m | — |
-| `commands` | file+dir | 12 | m | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
+| `cli` | file+dir | 2 | m | — |
+| `commands` | file+dir | 11 | m | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
 | `config` | dir | 15 | m | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
 | `control_keys` | file+dir | 3 | s | Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every… |
 | `embedder` | dir | 15 | m | The embedder provider slot |
-| `error` | dir | 3 | m | Structured HTTP API errors and their schema catalog |
+| `error` | dir | 2 | m | Structured HTTP API errors and their schema catalog |
 | `feedback_delivery` | file+dir | 2 | s | Deployment-selected feedback transport |
 | `handler` | dir | 16 | m | WebSocket upgrade handler and connection lifecycle |
 | `idempotency` | file+dir | 2 | m | — |
@@ -503,10 +503,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `owner` | dir | 8 | m | The owner's own actions on his vault, shared by the CLI and `/v1/owner` |
 | `projection` | file+dir | 2 | m | — |
 | `protocol` | file | 1 | m | Custom Oneiron sync protocol — server-side extensions |
-| `runtime` | dir | 7 | m | — |
+| `runtime` | dir | 6 | m | — |
 | `server` | dir | 11 | m | Sync server state and maintenance jobs, split by concern |
 | `skills_pack` | file | 1 | s | — |
-| `test_credentials` | file | 1 | m | Request fixtures mint real logged slips before crossing the production router |
+| `test_credentials` | file | 1 | s | Request fixtures mint real logged slips before crossing the production router |
 | `usage` | dir | 7 | s | Provider-list metering and host-pushed vault budget limits |
 | `voice_host` | dir | 6 | m | Private voice request adapter, not an audio/provider scheduler |
 | `wire_telemetry` | file+dir | 2 | m | RC42 observation-only wire counters |
