@@ -52,5 +52,5 @@ fn token_count(value: &JsonValue) -> Option<u64> {
         _ => return None,
     };
     // A fractional limit allows its whole tokens.
-    (number.is_finite() && number >= 0.0).then(|| number as u64)
+    (number.is_finite() && number >= 0.0).then_some(number as u64)
 }
