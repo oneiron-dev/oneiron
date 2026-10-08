@@ -11,7 +11,9 @@ use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::sync::ingest::{EntityStep, IngestCtx, Residence, ingest_entity_in_savepoint};
+use crate::sync::ingest::{
+    EntityStep, IngestCtx, Residence, ingest_entity_in_savepoint, waits_for_sibling_row,
+};
 use crate::sync::pack_sync;
 use crate::sync::quarantine;
 use crate::vault::ReadMode;
@@ -64,14 +66,14 @@ pub(super) fn materialize_entities_with_changes(
     let mut revision_changes = Vec::new();
     let mut pending_companion_scrubs = Vec::new();
     let result = vault.with_write_txn(|wtxn| {
-        // One delta has no row order: an ask word or receipt must not reach
-        // its group check before a group or person carried by the same delta.
+        // One delta has no row order: an ask word, receipt or project home room
+        // must not reach its sibling check before the row it names.
         let mut updates: Vec<_> = delta.updated.iter().collect();
-        updates.sort_by_key(|(_, value)| {
+        updates.sort_by_cached_key(|(_, value)| {
             matches!(
                 value,
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob)))
-                    if crate::task_verb::waits_for_ask_group(blob)
+                    if waits_for_sibling_row(blob)
             )
         });
         for (key, new_val) in updates {
