@@ -836,7 +836,10 @@ fn the_direct_edge_delete_door_keeps_a_live_notes_facet_stamp() -> Result<()> {
         .expect_err("a live NOTE keeps its stamp");
 
     assert_eq!(err.kind(), ErrorKind::FacetStampImmutable);
-    assert_eq!(vault.targets(&note, EdgeKind::FacetOf, None)?, vec![default]);
+    assert_eq!(
+        vault.targets(&note, EdgeKind::FacetOf, None)?,
+        vec![default]
+    );
     Ok(())
 }
 

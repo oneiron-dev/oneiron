@@ -114,12 +114,21 @@ impl<'v> AccessContext<'v> {
         private: bool,
         record: &crate::federation::Scope,
     ) -> bool {
-        // A retained context must still check live expiry, and must not expose
-        // an observation that failed to reach the durable floor.
-        self.vault
-            .store
-            .authorization_now()
-            .is_ok_and(|now| self.allows_at(entity_type, space, private, record, now))
+        // A retained context answers for now: authority is resolved again in a
+        // fresh snapshot, so a later expiry, revocation or relationship delete
+        // applies, and an observation that failed to reach the durable floor
+        // is never exposed.
+        self.vault.store.authorization_now().is_ok()
+            && self
+                .vault
+                .store
+                .env
+                .read_txn()
+                .ok()
+                .and_then(|txn| Self::load(self.vault, &txn, self.principal).ok())
+                .is_some_and(|current| {
+                    current.allows_at_snapshot(entity_type, space, private, record)
+                })
     }
 
     pub(crate) fn allows_at_snapshot(
@@ -491,7 +500,13 @@ mod tests {
         let member = EntityId::now();
         let topic = EntityId::now();
         for person in [member, topic] {
-            vault.put_entity(&person, crate::registry::ENTITY_TYPE_PERSON, when, 1, b"person")?;
+            vault.put_entity(
+                &person,
+                crate::registry::ENTITY_TYPE_PERSON,
+                when,
+                1,
+                b"person",
+            )?;
         }
         let space = EntityId::now();
         vault.put_entity(
@@ -529,9 +544,27 @@ mod tests {
 
         assert!(!member_reads()?, "no membership yet, so no read");
         crate::federation::bind_member_person(&vault, space, member, when, 1)?;
-        assert!(member_reads()?, "a live relationship grants its member the read");
+        assert!(
+            member_reads()?,
+            "a live relationship grants its member the read"
+        );
+        let retained = vault.access_context(member)?;
+        let retained_allows = || {
+            retained.allows(
+                ENTITY_TYPE_CLAIM,
+                Some(space),
+                false,
+                &crate::federation::Scope::top(),
+            )
+        };
+        assert!(retained_allows());
+
         assert!(vault.delete_entity(&space)?);
         assert!(!member_reads()?, "a deleted relationship grants nothing");
+        assert!(
+            !retained_allows(),
+            "nor does a context loaded before the delete"
+        );
         Ok(())
     }
 }
