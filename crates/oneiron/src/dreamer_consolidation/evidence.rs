@@ -234,9 +234,12 @@ impl VerifiedEvidenceSet {
     }
     /// The citing write's dependencies on the MESSAGE words it names, in that
     /// write's own transaction: erasing a named MESSAGE stales `citing`
-    /// through the source-dependency index. The cited frontier is named in
-    /// the stored citation but not pinned against history purges: a citation
-    /// pin would make value-only canonical recovery refuse the document.
+    /// through the source-dependency index, and (with `sync`) each cited slice
+    /// records an EntityDoc citation floor at the frontier it names (the
+    /// MESSAGE's birth state when it had no document). While `citing` is live
+    /// an owner purge keeps that history, and a value-only recovery that
+    /// rebuilds the MESSAGE's document stales `citing`. Gap-queue rows are not
+    /// entities and record neither.
     pub(crate) fn record_message_dependencies_in_txn(
         &self,
         vault: &Vault,
@@ -245,6 +248,14 @@ impl VerifiedEvidenceSet {
     ) -> Result<()> {
         for span in self.rows.iter().flat_map(|row| &row.messages) {
             crate::ports::record_derived_edge_in_txn(&vault.store, txn, citing, &span.message)?;
+            #[cfg(feature = "sync")]
+            crate::entity_doc::record_citation_floor_in_txn(
+                &vault.store,
+                txn,
+                &span.message,
+                citing,
+                span.frontier.as_deref(),
+            )?;
         }
         Ok(())
     }

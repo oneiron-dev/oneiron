@@ -14,6 +14,7 @@ use heed::{RoTxn, RwTxn};
 fn guard(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId) -> Result<()> {
     // Existing causal bases, pinned quotes and receipts cannot be rebuilt from
     // a value-only snapshot. Refuse instead of discarding their authority.
+    // Citation floors do not refuse: `restore` stales their citers instead.
     if !super::forks::all_forks(&vault.store, txn, entity)?.is_empty() {
         return Err(invalid("entity document forks require causal recovery"));
     }
@@ -82,6 +83,10 @@ pub(crate) fn restore(
                 "entity document recovery conflicts with existing head",
             ));
         }
+        // The rebuild keeps no old operation and takes a fresh incarnation:
+        // every live record citing this document's history goes stale here,
+        // in this transaction, rather than naming a frontier that is gone.
+        super::citation_floor::invalidate_citers_in_txn(&vault.store, txn, &entity)?;
         vault
             .store
             .port_document_updates_delete(txn, DocumentSlot::of(document_id))?;

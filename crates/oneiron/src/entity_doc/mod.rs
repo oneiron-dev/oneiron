@@ -4,6 +4,7 @@
 //! commit CRDT operations; only indexed projections may materialize the text.
 //! Documents are loaded lazily, snapshot before ordered pending updates.
 
+mod citation_floor;
 mod document;
 mod forks;
 mod message_stream;
@@ -12,6 +13,7 @@ mod recovery;
 mod registry;
 mod side_keys;
 mod storage;
+pub(crate) use citation_floor::record_citation_floor_in_txn;
 pub(crate) use message_stream::{
     append_message_stream_in_txn, authorize_message_continuation_in_txn,
     birth_message_stream_in_txn,

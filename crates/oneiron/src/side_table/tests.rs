@@ -394,6 +394,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "DREAMER_WEAVE_RECIPE_RESULT",
         "EMERGENCY_ITEM",
         "EMERGENCY_PLAN",
+        "ENTITY_DOC_CITATION_FLOOR",
         "ENTITY_REVISION_PENDING_PHONETIC",
         "ENTITY_REVISION_VECTOR_REFILL",
         "ESIGN_CAPABILITY_TOKEN",

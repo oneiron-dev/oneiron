@@ -120,7 +120,6 @@ pub(crate) fn invalidate_source_in_txn(
     txn: &mut RwTxn<'_>,
     document: &EntityId,
 ) -> Result<()> {
-    use super::JobQueue;
     crate::claim::invalidate_weave_digest_source_in_txn(store, txn, document)?;
     let prefix = [DEP, document.as_bytes()].concat();
     let dependents = scan_dependents(store, txn, &prefix)?;
@@ -131,19 +130,32 @@ pub(crate) fn invalidate_source_in_txn(
         {
             continue;
         }
-        mark_stale_in_txn(store, txn, &dependent)?;
-        let payload = [document.as_bytes().as_slice(), dependent.as_bytes()].concat();
-        crate::attempt_queue::AttemptQueue::from_store(store).port_job_enqueue(
-            txn,
-            crate::attempt_queue::EnqueueAttempt {
-                kind: "derived.regenerate".into(),
-                payload,
-                dedupe_key: Some(format!("{}:{}", document.to_hex(), dependent.to_hex())),
-                run_id: None,
-                now: 0,
-            },
-        )?;
+        invalidate_dependent_in_txn(store, txn, document, &dependent)?;
     }
+    Ok(())
+}
+/// Stales one dependent of `source` and queues its regeneration, in the
+/// caller's transaction: what a source erasure does to each dependent, for a
+/// caller that loses the source's history without erasing it.
+pub(crate) fn invalidate_dependent_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    source: &EntityId,
+    dependent: &EntityId,
+) -> Result<()> {
+    use super::JobQueue;
+    mark_stale_in_txn(store, txn, dependent)?;
+    let payload = [source.as_bytes().as_slice(), dependent.as_bytes()].concat();
+    crate::attempt_queue::AttemptQueue::from_store(store).port_job_enqueue(
+        txn,
+        crate::attempt_queue::EnqueueAttempt {
+            kind: "derived.regenerate".into(),
+            payload,
+            dedupe_key: Some(format!("{}:{}", source.to_hex(), dependent.to_hex())),
+            run_id: None,
+            now: 0,
+        },
+    )?;
     Ok(())
 }
 /// DerivedFrom is dependent→source. This hook also serves session overlays.
