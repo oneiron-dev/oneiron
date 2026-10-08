@@ -107,6 +107,15 @@ impl LiveEntityRow {
     pub(crate) const fn is_live(&self) -> bool {
         matches!(self, Self::Live { .. })
     }
+
+    /// The type byte of a live row. An absent row and a deleted shell have
+    /// none, though the shell's header still carries the byte it had.
+    pub(crate) const fn live_type(&self) -> Option<u8> {
+        match self {
+            Self::Live { entity_type, .. } => Some(*entity_type),
+            Self::Absent | Self::DeletedShell => None,
+        }
+    }
 }
 
 pub(crate) fn require_key_len(key: &[u8], expected: usize, context: &'static str) -> Result<()> {
