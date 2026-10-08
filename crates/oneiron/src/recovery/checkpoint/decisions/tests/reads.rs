@@ -216,7 +216,7 @@ fn a_restore_never_hands_a_rebound_claim_back_to_a_verified_slip() -> Result<()>
     let root = vault.ensure_host_root_slip(&issuer)?;
     let proof = vault.verified_host_root_slip(&issuer)?;
     let holder = proof.claims().holder_ref.clone();
-    let mut elsewhere = root.claims.clone();
+    let mut elsewhere = root.claims;
     elsewhere.slip_id = [0xD4; 32];
     elsewhere.holder_ref = "sora".to_owned();
     elsewhere.scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(entity(0xD5))]));
