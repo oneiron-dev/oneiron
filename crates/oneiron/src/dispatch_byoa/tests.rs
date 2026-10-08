@@ -834,6 +834,8 @@ fn result_ref_shape_is_enforced_in_both_directions() {
 // result rows, and dedupe ownership unchanged, not merely return an error.
 type CustodyRows = Vec<(Vec<u8>, Vec<u8>)>;
 
+/// Every custody row. The store clock's floors are not custody: any committed
+/// write moves them once the wall clock crosses a second.
 fn custody_snapshot(vault: &Vault) -> [CustodyRows; 4] {
     let txn = vault.store.env.read_txn().expect("snapshot transaction");
     [
@@ -848,6 +850,10 @@ fn custody_snapshot(vault: &Vault) -> [CustodyRows; 4] {
             .map(|row| {
                 let (key, value) = row.expect("snapshot row");
                 (key.to_vec(), value.to_vec())
+            })
+            .filter(|(key, _)| {
+                key.as_slice() != crate::ports::CLOCK_FLOOR
+                    && key.as_slice() != crate::ports::ID_FLOOR
             })
             .collect()
     })

@@ -10,6 +10,7 @@ use super::{RematCtx, RematLedger};
 use crate::error::Result;
 use crate::sync::ingest::{
     EntityStep, IngestCtx, RefusalRetry, Residence, ingest_entity_in_savepoint,
+    waits_for_sibling_row,
 };
 
 /// Run the entity pass: iterate the window `entities` map, ingest each value in its own write
@@ -30,8 +31,8 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
     });
     let mut entity_error = None;
     let mut companion_scrubs = Vec::new();
-    // Ask words and receipts verify against their group: visit them last.
-    let later = crate::task_verb::waits_for_ask_group;
+    // Ask facts and project home rooms verify against a sibling row: visit them last.
+    let later = waits_for_sibling_row;
     map_for_each_value_bytes_deferring(&ctx.entities_map, later, |key, value| {
         if entity_error.is_some() {
             return;
