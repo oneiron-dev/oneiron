@@ -109,8 +109,10 @@ pub struct TaggingReconciler {
     /// starts by running it.
     stale_scanned: AtomicBool,
     /// Whether the trace history has been trimmed to the per-turn bound in
-    /// force; until it has, every pass starts by trimming it.
+    /// force; until it has, every pass starts by trimming the next part.
     history_trimmed: AtomicBool,
+    /// The turn the next trimming read starts from.
+    trim_from: Mutex<Option<[u8; 16]>>,
 }
 
 impl TaggingReconciler {
@@ -144,6 +146,7 @@ impl TaggingReconciler {
             unsettled: Mutex::new(Vec::new()),
             stale_scanned: AtomicBool::new(false),
             history_trimmed: AtomicBool::new(false),
+            trim_from: Mutex::new(None),
         })
     }
 
@@ -380,22 +383,30 @@ impl TaggingReconciler {
     }
 
     /// Trims history kept under a larger per-turn bound down to the one in
-    /// force, in bounded transactions, once per reconciler: the bound can
-    /// only have shrunk across a reopen.
+    /// force, one bounded read a pass until a read reaches the end, once per
+    /// reconciler: the bound can only have shrunk across a reopen. The excess
+    /// is found outside the writer and deleted in bounded transactions, so a
+    /// history within the bound commits nothing.
     fn trim_history(&self) -> Result<()> {
         if self.history_trimmed.load(Ordering::Acquire) {
             return Ok(());
         }
-        let mut from = None;
-        loop {
-            from = self
-                .vault
-                .try_with_write_txn(|txn| history::trim_per_turn_in_txn(&self.vault, txn, from))?;
-            if from.is_none() {
-                break;
-            }
+        let mut from = self
+            .trim_from
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let (excess, next) = {
+            let txn = self.vault.store.env.read_txn()?;
+            history::excess_per_turn_in_txn(&self.vault, &txn, *from)?
+        };
+        for chunk in excess.chunks(history::PRUNE_BUDGET) {
+            self.vault
+                .try_with_write_txn(|txn| history::delete_excess_in_txn(&self.vault, txn, chunk))?;
         }
-        self.history_trimmed.store(true, Ordering::Release);
+        match next {
+            Some(turn) => *from = Some(turn),
+            None => self.history_trimmed.store(true, Ordering::Release),
+        }
         Ok(())
     }
 

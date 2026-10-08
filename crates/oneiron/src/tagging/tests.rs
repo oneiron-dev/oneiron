@@ -3082,3 +3082,109 @@ fn a_message_body_is_walked_to_its_text_and_read_back_from_the_end() {
     )]));
     assert!(message_fields(&body[..body.len() - 1]).is_none());
 }
+
+/// Trimming history to the per-turn bound reads it outside the writer: a
+/// restart over a history within the bound commits no write, and history
+/// past a lowered bound, over more turns than one read covers, is trimmed a
+/// bounded read a pass, each turn keeping its newest traces.
+#[test]
+fn trimming_history_reads_outside_the_writer_a_bounded_part_a_pass() {
+    const TURNS: u32 = 5_000;
+    let dir = tempfile::tempdir().expect("dir");
+    let open_with = |per_turn: u32| {
+        let mut config = config(true);
+        config.tagging = Some(
+            TaggingMarkerConfig::new(CHECKPOINT)
+                .expect("checkpoint")
+                .with_trace_history(TaggingTraceHistory {
+                    per_turn,
+                    ..TaggingTraceHistory::default()
+                }),
+        );
+        Arc::new(Vault::open(dir.path(), config).expect("open vault"))
+    };
+    let turns: Vec<EntityId> = (0..TURNS)
+        .map(|n| {
+            let mut id = [0x7a; 16];
+            id[12..].copy_from_slice(&n.to_be_bytes());
+            EntityId::from_bytes(id).expect("turn id")
+        })
+        .collect();
+    let tries = |vault: &Vault, turn: &EntityId| -> Vec<u32> {
+        vault
+            .tagging_trace_history(Some(turn))
+            .expect("history")
+            .into_iter()
+            .map(|record| record.trace.try_number)
+            .collect()
+    };
+    {
+        let vault = open_with(3);
+        vault
+            .try_with_write_txn(|txn| {
+                for turn in &turns {
+                    for try_number in [1, 2] {
+                        let trace = TaggingTrace {
+                            attempt: String::new(),
+                            turn: Some(*turn),
+                            checkpoint: CHECKPOINT.into(),
+                            model: None,
+                            input_hash: None,
+                            try_number,
+                            call_micros: None,
+                            outcome: TaggingOutcome::Rekeyed,
+                        };
+                        super::history::record_in_txn(&vault, txn, &trace, NOW)?;
+                    }
+                }
+                Ok::<(), crate::Error>(())
+            })
+            .expect("a recorded history");
+    }
+    {
+        let vault = open_with(3);
+        let tagger = Scripted::new(Answer::Good);
+        // A write through the vault's door notifies the queue's observers.
+        #[cfg(feature = "sync")]
+        let mut commits = AttemptQueue::new(&vault).subscribe();
+        reconciler(&vault, &tagger).drain_once().expect("drain");
+        #[cfg(feature = "sync")]
+        assert!(
+            commits.try_recv().is_err(),
+            "a history within the bound commits no write"
+        );
+    }
+    let over_bound = || {
+        let vault = open_with(3);
+        turns
+            .iter()
+            .filter(|turn| tries(&vault, turn).len() > 1)
+            .count()
+    };
+    {
+        let vault = open_with(1);
+        let tagger = Scripted::new(Answer::Good);
+        let reconciler = reconciler(&vault, &tagger);
+        reconciler.drain_once().expect("drain");
+        drop(reconciler);
+        drop(vault);
+    }
+    let left = over_bound();
+    assert!(
+        left > 0 && left < TURNS as usize,
+        "one pass trims one bounded read: {left} turns left"
+    );
+    {
+        let vault = open_with(1);
+        let tagger = Scripted::new(Answer::Good);
+        let reconciler = reconciler(&vault, &tagger);
+        for _ in 0..4 {
+            reconciler.drain_once().expect("drain");
+        }
+    }
+    assert_eq!(over_bound(), 0);
+    let vault = open_with(3);
+    for turn in &turns {
+        assert_eq!(tries(&vault, turn), vec![2], "the newest trace is kept");
+    }
+}

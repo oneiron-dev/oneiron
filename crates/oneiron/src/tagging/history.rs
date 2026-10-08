@@ -6,9 +6,10 @@
 //! keeps its newest [`TaggingTraceHistory::per_turn`] traces, and every trace
 //! older than [`TaggingTraceHistory::max_age_secs`] is pruned when the worker
 //! next starts a pass, in transactions of a bounded size. A worker trims
-//! history kept under a larger per-turn bound once, before its first claim,
-//! and the reader never returns more than the bound in force. The rows are job state, kept under `vault_meta`'s `job:` family:
-//! derived, local, never synced, and in no content database.
+//! history kept under a larger per-turn bound in its first passes, one
+//! bounded read outside the writer a pass, and the reader never returns more
+//! than the bound in force. The rows are job state, kept under `vault_meta`'s
+//! `job:` family: derived, local, never synced, and in no content database.
 //!
 //! [`TaggingTraceHistory::per_turn`]: super::TaggingTraceHistory::per_turn
 //! [`TaggingTraceHistory::max_age_secs`]: super::TaggingTraceHistory::max_age_secs
@@ -31,7 +32,14 @@ const TRACES: SideTable<TraceKey, TaggingTraceRecord, Named> =
 const TRACE_AGE: SideTable<AgeKey, (), Raw> = SideTable::new(&side_table::TAGGING_TRACE_AGE);
 
 /// The most traces one pruning transaction deletes.
-const PRUNE_BUDGET: usize = 256;
+pub(super) const PRUNE_BUDGET: usize = 256;
+
+/// The trace rows one trimming read examines before it ends at the next turn.
+const TRIM_SCAN_ROWS: usize = 4096;
+
+/// A trace past the per-turn bound: its key, and the second it was recorded
+/// at, which names its age entry.
+pub(super) type Excess = (TraceKey, u64);
 
 /// One recorded trace.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -130,48 +138,65 @@ pub(super) fn prune_expired_in_txn(
     Ok(due.len())
 }
 
-/// Drops, turn by turn from `from` on, each turn's traces past the per-turn
-/// bound, oldest first, until about [`PRUNE_BUDGET`] are gone; returns the
-/// turn to resume from, or `None` once every turn is within the bound. History
-/// can outgrow the bound only when a vault reopens with a smaller one.
-pub(super) fn trim_per_turn_in_txn(
+/// The traces past the per-turn bound, each turn's oldest, of the turns from
+/// `from` on that one read of about [`TRIM_SCAN_ROWS`] rows covers; and the
+/// turn the next read starts from, `None` once this one reached the end. A
+/// read ends between two turns, so no turn is counted in part, and it takes
+/// no writer: a history within the bound costs a read. History can outgrow
+/// the bound only when a vault reopens with a smaller one.
+pub(super) fn excess_per_turn_in_txn(
     vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     from: Option<[u8; 16]>,
-) -> Result<Option<[u8; 16]>> {
+) -> Result<(Vec<Excess>, Option<[u8; 16]>)> {
     let Some(tagging) = vault.config.tagging.as_ref() else {
-        return Ok(None);
+        return Ok((Vec::new(), None));
     };
     let keep = usize::try_from(tagging.trace_history.per_turn).unwrap_or(usize::MAX);
     let start = from.map(|turn| (turn, 0_u64));
     let lower = start
         .as_ref()
         .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Included);
-    let mut doomed = Vec::new();
-    let mut group: Vec<(TraceKey, u64)> = Vec::new();
-    let mut resume = None;
-    for row in TRACES.iter_range(&vault.store, txn, lower, std::ops::Bound::Unbounded)? {
+    let mut excess = Vec::new();
+    let mut group: Vec<Excess> = Vec::new();
+    for (examined, row) in TRACES
+        .iter_range(&vault.store, txn, lower, std::ops::Bound::Unbounded)?
+        .enumerate()
+    {
         let ((turn, sequence), record) = row?;
         if group.first().is_some_and(|((held, _), _)| *held != turn) {
             let over = group.len().saturating_sub(keep);
-            doomed.extend(group.drain(..).take(over));
+            excess.extend(group.drain(..over));
             group.clear();
-            if doomed.len() >= PRUNE_BUDGET {
-                resume = Some(turn);
-                break;
+            if examined >= TRIM_SCAN_ROWS {
+                return Ok((excess, Some(turn)));
             }
         }
         group.push(((turn, sequence), record.recorded_at));
     }
-    if resume.is_none() {
-        let over = group.len().saturating_sub(keep);
-        doomed.extend(group.drain(..).take(over));
+    let over = group.len().saturating_sub(keep);
+    excess.extend(group.drain(..over));
+    Ok((excess, None))
+}
+
+/// Deletes the first [`PRUNE_BUDGET`] of `excess` that are still recorded as
+/// read, in the caller's transaction. A turn's sequence only grows, so a
+/// trace past the bound when read is past it still.
+pub(super) fn delete_excess_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    excess: &[Excess],
+) -> Result<()> {
+    for (key, recorded_at) in excess.iter().take(PRUNE_BUDGET) {
+        let recorded = TRACES
+            .get(&vault.store, txn, key)?
+            .is_some_and(|record| record.recorded_at == *recorded_at);
+        if recorded {
+            TRACES.delete(&vault.store, txn, key)?;
+            TRACE_AGE.delete(&vault.store, txn, &(*recorded_at, key.0, key.1))?;
+        }
     }
-    for ((turn, sequence), recorded_at) in doomed {
-        TRACES.delete(&vault.store, txn, &(turn, sequence))?;
-        TRACE_AGE.delete(&vault.store, txn, &(recorded_at, turn, sequence))?;
-    }
-    Ok(resume)
+    Ok(())
 }
 
 impl Vault {
