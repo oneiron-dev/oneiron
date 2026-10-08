@@ -5,6 +5,7 @@ use oneiron_crypto::{
     CheckpointRef, Error, RecordBody, SigPurpose, SignatureRecord, SigningKey, SuiteId,
     VerifyPolicy, VerifyingKey, sign,
 };
+use rand_core::{TryCryptoRng, TryRng};
 
 const SIGNER: &[u8] = b"root-1";
 const SUBJECT: &[u8] = b"release manifest v1: sha256 of artifacts";
@@ -58,6 +59,27 @@ fn sign_with(keys: &Keys, suite: SuiteId) -> SignatureRecord {
 fn verifying(keys: &Keys) -> [(&'static [u8], &VerifyingKey); 2] {
     [(ED_ID, &keys.ed_vk), (SLH_ID, &keys.slh_vk)]
 }
+
+/// Fails every draw after writing its first `fills` bytes: `fills: 0` is a dead
+/// generator, a nonzero `fills` one that dies partway through a draw.
+struct BrokenRng {
+    fills: usize,
+}
+impl TryRng for BrokenRng {
+    type Error = getrandom::Error;
+    fn try_next_u32(&mut self) -> Result<u32, getrandom::Error> {
+        Err(getrandom::Error::UNSUPPORTED)
+    }
+    fn try_next_u64(&mut self) -> Result<u64, getrandom::Error> {
+        Err(getrandom::Error::UNSUPPORTED)
+    }
+    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), getrandom::Error> {
+        let n = self.fills.min(dst.len());
+        dst[..n].fill(0x42);
+        Err(getrandom::Error::UNSUPPORTED)
+    }
+}
+impl TryCryptoRng for BrokenRng {}
 
 /// Offset of the body tag: magic 4, version 2, suite 2, purpose 2, epoch 8, signer lp8.
 fn body_at() -> usize {
@@ -291,6 +313,38 @@ fn signed_metadata_rewritten_to_match_the_policy_breaks_the_signature() {
             Err(Error::SignatureInvalid(name)),
             "signer"
         );
+    }
+}
+
+#[test]
+fn an_rng_failure_is_an_error_not_a_weaker_signature() {
+    let keys = keys();
+    let signing = [(ED_ID, &keys.ed), (SLH_ID, &keys.slh)];
+    for fills in [0, 16] {
+        assert_eq!(
+            SigningKey::generate_ed25519(&mut BrokenRng { fills }).err(),
+            Some(Error::Rng),
+            "ed25519 key, fills {fills}"
+        );
+        assert_eq!(
+            SigningKey::generate_slhdsa_sha2_256s(&mut BrokenRng { fills }).err(),
+            Some(Error::Rng),
+            "slh-dsa key, fills {fills}"
+        );
+        // Ed25519 signing draws nothing; the SLH-DSA randomizer draw fails, alone or
+        // after the dual record's Ed25519 component has signed.
+        for suite in [SLH, DUAL] {
+            let result = sign(
+                suite,
+                SigPurpose::ReleaseManifest,
+                2,
+                SIGNER,
+                SUBJECT,
+                &signing,
+                &mut BrokenRng { fills },
+            );
+            assert_eq!(result.err(), Some(Error::Rng), "{suite:?}, fills {fills}");
+        }
     }
 }
 
