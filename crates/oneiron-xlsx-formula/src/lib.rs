@@ -10,14 +10,18 @@
 //! and Excel's rich error tags change; the package keeps every other byte.
 //! The caller's [`RecalcClock`] gives NOW() and TODAY() their instant and
 //! local offset and RAND, RANDBETWEEN and RANDARRAY their seed, as Excel
-//! recalculating at edit time; OFFSET, INDIRECT and the workbook's CELL info
-//! types read the workbook alone, and a defined name evaluates for the formula
-//! that uses it. A call of a name outside Excel's function list, as the file
-//! spells it, is `#NAME?`, as in Excel.
+//! recalculating at edit time. The caller's [`DocumentLocation`], the folder
+//! and file name the workbook was opened from, gives CELL("filename") its
+//! text (`C:\Reports\[Budget.xlsx]Sheet1`) and CELL("address") of another
+//! sheet's cell its file name; without one, the location Excel last saved in
+//! the workbook's own CELL("filename") caches stands in. OFFSET, INDIRECT and
+//! the workbook's other CELL info types read the workbook alone, and a defined
+//! name evaluates for the formula that uses it. A call of a name outside
+//! Excel's function list, as the file spells it, is `#NAME?`, as in Excel.
 //! The core's edit round trip wraps every host session in this engine unless
 //! the host opts out, so this crate does not depend on the core.
 //!
-//! The corpus rule is met at fork rev `953fbbb1` (0.9.3-oneiron.11): through
+//! The corpus rule is met at fork rev `492b432a` (0.9.3-oneiron.12): through
 //! the writer, all 2,967 scored fresh-Excel SpreadsheetBench workbooks (Excel
 //! for Windows truth) are fully Excel-identical (LibreOffice 25.8 matched
 //! 2,648 of the 2,951 it was measured on), and all 811 pinned goldens (Excel
@@ -30,8 +34,10 @@
 //! workbooks only: the external links the engine cannot read as Excel does
 //! with the linked workbook closed (the others recalculate here from the
 //! values their links save; [`routing`] checks that the fallback keeps every
-//! link), formulas needing what only the host knows (INFO, and CELL's file
-//! path, active cell and formatting), INDIRECT text that names a workbook
+//! link), formulas needing what only the host knows (INFO's description of
+//! the application, CELL's active cell, the file's location when neither the
+//! caller nor the workbook's caches give it, and cell formatting the engine
+//! does not model), INDIRECT text that names a workbook
 //! (the writer refuses it as evaluation meets it), Excel functions the engine
 //! does not implement, calls an XLL add-in or the workbook's VBA project may
 //! resolve, workbook and linked-workbook names used as functions (LAMBDA
@@ -47,6 +53,7 @@ mod context;
 pub mod engine;
 pub mod error;
 mod links;
+mod location;
 pub mod measure;
 pub mod routing;
 pub mod workbook;
@@ -55,6 +62,7 @@ mod xml;
 pub use clock::RecalcClock;
 pub use engine::{CellValue, EngineId, RecalcEngine, RecalcReport};
 pub use error::{FormulaError, Result};
+pub use location::DocumentLocation;
 pub use measure::{CaseResult, CorpusReport, MeasureOptions, evaluate_case, read_corpus_cases};
 pub use oneiron_docedit::xlfn::{storage_form, ui_form};
 pub use routing::{RouteDecision, preserve_external_links, route_workbook};

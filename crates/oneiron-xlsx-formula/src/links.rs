@@ -56,8 +56,9 @@ const MAX_LINKED_CELLS: u64 = 4_000_000;
 const LINK_CONTENT_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml";
 
-/// `[0]` is the workbook itself (`[0]!Rate` is its own `Rate`), which the fork
-/// does not resolve that way.
+/// `[0]` is the workbook itself (`[0]!Rate` is its own `Rate`). The fork's
+/// parser reads it as the local name or reference, which this adapter has
+/// not checked against Excel's reading yet, so it stays the fallback's.
 const WORKBOOK_ITSELF: &str = "external reference to the workbook itself ([0])";
 
 const UNJOINED: &str = "external link list the edit gate cannot join";
@@ -227,7 +228,15 @@ impl LinkedBooks {
         while let Some((node, parent)) = pending.pop() {
             passed_on(node, &parent, names)?;
             match &node.node_type {
-                ASTNodeType::Reference { reference, .. } => {
+                ASTNodeType::Reference {
+                    original,
+                    reference,
+                } => {
+                    // The parser reads `[0]!Rate` and `[0]Sheet1!A1` as local;
+                    // only the written text still names the workbook itself.
+                    if original.trim_start_matches('\'').starts_with("[0]") {
+                        return Err(unsupported(WORKBOOK_ITSELF));
+                    }
                     // A name holding an expression over linked values is
                     // checked as if its formula were written here.
                     if let Some(expression) = self.reference(reference, &parent, names)? {

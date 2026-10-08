@@ -5,7 +5,7 @@ use std::io::{Cursor, Read, Write};
 
 use oneiron_docedit::retained_opc::{Limits, Package, XmlLimits};
 use oneiron_xlsx_formula::engine::FormualizerEngine;
-use oneiron_xlsx_formula::{FormulaError, RecalcClock, preserve_external_links};
+use oneiron_xlsx_formula::{DocumentLocation, FormulaError, RecalcClock, preserve_external_links};
 
 const MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const DOC_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
@@ -153,7 +153,25 @@ fn recalc_at(
     bytes: &[u8],
     clock: &RecalcClock,
 ) -> oneiron_xlsx_formula::Result<oneiron_xlsx_formula::WorkbookRecalc> {
-    FormualizerEngine::new().recalculate_xlsx(bytes, limits(), clock)
+    FormualizerEngine::new().recalculate_xlsx(bytes, limits(), clock, None)
+}
+fn recalc_located(
+    bytes: &[u8],
+    location: &DocumentLocation,
+) -> oneiron_xlsx_formula::Result<oneiron_xlsx_formula::WorkbookRecalc> {
+    FormualizerEngine::new().recalculate_xlsx(bytes, limits(), &tokyo(), Some(location))
+}
+/// Formula cells of the first row, `(cell, formula)`, each caching 0.
+fn formula_cells(formulas: &[(&str, &str)]) -> String {
+    formulas
+        .iter()
+        .map(|(cell, formula)| {
+            format!(
+                r#"<c r="{cell}"><f>{}</f><v>0</v></c>"#,
+                formula.replace('"', "&quot;")
+            )
+        })
+        .collect()
 }
 /// The fallback reason, or a panic when the workbook was not refused to it.
 fn fallback(bytes: &[u8]) -> String {
@@ -1133,6 +1151,161 @@ fn cached<'x>(xml: &'x str, cell: &str) -> &'x str {
 }
 
 #[test]
+fn cell_filename_and_address_name_the_callers_location() {
+    // Excel for Windows 16.0.20430 (ops/excel-hostinfo-probe-20261008.md):
+    // the folder and file before the sheet, the file before another sheet's
+    // address, the reference's sheet rather than the formula's.
+    let input = with_names(
+        &fixture(
+            r#"<c r="A1"><v>1</v></c>"#,
+            &formula_cells(&[
+                ("A1", r#"CELL("filename",A1)"#),
+                ("B1", r#"CELL("filename",Input!A1)"#),
+                (
+                    "C1",
+                    r#"MID(CELL("filename",A1),FIND("]",CELL("filename",A1))+1,255)"#,
+                ),
+                (
+                    "D1",
+                    r#"LEFT(CELL("filename",A1),FIND("[",CELL("filename",A1))-1)"#,
+                ),
+                ("E1", r#"CELL("address",Input!B2)"#),
+                ("F1", r#"CELL("address",Result!B2)"#),
+                ("G1", "book"),
+            ]),
+            false,
+        ),
+        r#"<definedName name="book">CELL(&quot;filename&quot;,Input!$A$1)</definedName>"#,
+    );
+    let location = DocumentLocation::from_path(r"C:\Reports\Budget.xlsx").expect("location");
+    let output = recalc_located(&input, &location).expect("native recalc");
+    let xml = part_text(&output.bytes, OUTPUT);
+    for (cell, value) in [
+        ("A1", r"C:\Reports\[Budget.xlsx]Result"),
+        ("B1", r"C:\Reports\[Budget.xlsx]Input"),
+        ("C1", "Result"),
+        ("D1", r"C:\Reports\"),
+        ("E1", "[Budget.xlsx]Input!$B$2"),
+        ("F1", "$B$2"),
+        ("G1", r"C:\Reports\[Budget.xlsx]Input"),
+    ] {
+        assert_eq!(cached(&xml, cell), value, "{cell}: {xml}");
+    }
+}
+
+#[test]
+fn without_a_location_cell_filename_reads_the_one_excel_saved() {
+    let saved = |cells: &str| fixture("", cells, false);
+    let filename = |cache: &str| {
+        format!(r#"<c r="A1" t="str"><f>CELL(&quot;filename&quot;,A1)</f><v>{cache}</v></c>"#)
+    };
+    let readers = formula_cells(&[
+        (
+            "B1",
+            r#"MID(CELL("filename",A1),FIND("]",CELL("filename",A1))+1,255)"#,
+        ),
+        ("C1", r#"CELL("address",Input!B2)"#),
+    ]);
+    // Excel last calculated the workbook as C:\Old\Book.xlsx.
+    let input = saved(&(filename(r"C:\Old\[Book.xlsx]Result") + &readers));
+    let xml = part_text(&recalc(&input).expect("native recalc").bytes, OUTPUT);
+    assert_eq!(cached(&xml, "A1"), r"C:\Old\[Book.xlsx]Result", "{xml}");
+    assert_eq!(cached(&xml, "B1"), "Result", "{xml}");
+    assert_eq!(cached(&xml, "C1"), "[Book.xlsx]Input!$B$2", "{xml}");
+    // The caller's location wins over the saved one.
+    let location = DocumentLocation::from_path(r"D:\New\Plan.xlsx").expect("location");
+    let xml = part_text(
+        &recalc_located(&input, &location).expect("native").bytes,
+        OUTPUT,
+    );
+    assert_eq!(cached(&xml, "A1"), r"D:\New\[Plan.xlsx]Result", "{xml}");
+    // A folder may hold a bracket: Excel opened C:\...\hi\a]b\Book.xlsx
+    // (ops/excel-hostinfo-probe-20261008.md).
+    let bracketed = saved(&filename(r"C:\a]b\[Book.xlsx]Result"));
+    let xml = part_text(&recalc(&bracketed).expect("native recalc").bytes, OUTPUT);
+    assert_eq!(cached(&xml, "A1"), r"C:\a]b\[Book.xlsx]Result", "{xml}");
+
+    let need = r#"formula needs host context: CELL("filename") reads the file's path; neither the caller nor a cached CELL("filename") value gives it"#;
+    // No cached path: the sheet-name formula of SpreadsheetBench 118-8 and
+    // 342-46 caches only the text after it, a never-saved workbook caches "",
+    // and LibreOffice caches its own form.
+    for cells in [
+        r#"<c r="A1" t="str"><f>MID(CELL(&quot;filename&quot;,A1),FIND(&quot;]&quot;,CELL(&quot;filename&quot;,A1))+1,255)</f><v>Result</v></c>"#.to_owned(),
+        filename(""),
+        filename("'file:///C:/Old/Book.xlsx'#$Result"),
+    ] {
+        assert_eq!(fallback(&saved(&cells)), need, "{cells}");
+    }
+}
+
+#[test]
+fn info_and_cell_answers_that_do_not_read_the_host_recalculate_natively() {
+    // Excel for Windows 16.0.20430 (ops/excel-hostinfo-probe-20261008.md):
+    // the retired memory types are #N/A, anything else outside INFO's and
+    // CELL's types #VALUE!, whatever the host.
+    let input = fixture(
+        r#"<c r="A1"><v>1</v></c>"#,
+        &formula_cells(&[
+            ("A1", r#"INFO("memavail")"#),
+            ("B1", r#"INFO("system ")"#),
+            ("C1", "INFO(TRUE)"),
+            ("D1", r#"CELL(" row",A1)"#),
+        ]),
+        false,
+    );
+    let xml = part_text(&recalc(&input).expect("native recalc").bytes, OUTPUT);
+    for (cell, value) in [
+        ("A1", "#N/A"),
+        ("B1", "#VALUE!"),
+        ("C1", "#VALUE!"),
+        ("D1", "#VALUE!"),
+    ] {
+        assert_eq!(cached(&xml, cell), value, "{cell}: {xml}");
+    }
+}
+
+#[test]
+fn native_measurement_cli_takes_the_workbooks_location() {
+    use std::process::Command;
+
+    let directory = tempfile::tempdir().expect("measurement directory");
+    let input = directory.path().join("input.xlsx");
+    let output = directory.path().join("output.xlsx");
+    std::fs::write(
+        &input,
+        fixture(
+            "",
+            &formula_cells(&[("A1", r#"CELL("filename",A1)"#)]),
+            false,
+        ),
+    )
+    .expect("input");
+    let run = |args: &[&std::ffi::OsStr]| {
+        Command::new(env!("CARGO_BIN_EXE_recalc_native"))
+            .args(args)
+            .output()
+            .expect("native measurement CLI")
+    };
+    // Without a location or a cached path, the precision fallback.
+    let refused = run(&[input.as_os_str(), output.as_os_str()]);
+    assert_eq!(refused.status.code(), Some(3));
+    assert!(!output.exists());
+    let located = run(&[
+        "--location".as_ref(),
+        r"C:\Reports\Budget.xlsx".as_ref(),
+        input.as_os_str(),
+        output.as_os_str(),
+    ]);
+    assert!(located.status.success(), "{located:?}");
+    let xml = part_text(&std::fs::read(&output).expect("native output"), OUTPUT);
+    assert_eq!(
+        cached(&xml, "A1"),
+        r"C:\Reports\[Budget.xlsx]Result",
+        "{xml}"
+    );
+}
+
+#[test]
 fn relative_references_in_a_name_read_the_calling_cell() {
     // Prev = INDIRECT("RC[-1]",FALSE) in B2 is A2, as Excel reads it (review
     // of #1295: the name was read from A1, whose previous column wraps to
@@ -1434,7 +1607,7 @@ fn native_measurement_cli_writes_recalc_and_refuses_overwrite_or_fallback() {
     assert_eq!(report["engine"]["engine"], "oneiron-xlsx-formula");
     assert_eq!(
         report["engine"]["version"],
-        "0.1.0+formualizer.0.9.3-oneiron.11"
+        "0.1.0+formualizer.0.9.3-oneiron.12"
     );
     assert_eq!(report["formulas"], 1);
     assert_eq!(report["precision_fallback"], false);

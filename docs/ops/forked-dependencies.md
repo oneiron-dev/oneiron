@@ -9,7 +9,7 @@ the fork.
 | crate | upstream base | fork branch | pinned rev | licence |
 |---|---|---|---|---|
 | `sudachi` 0.6.11 | [WorksApplications/sudachi.rs](https://github.com/WorksApplications/sudachi.rs) tag `v0.6.11`, `90fd6068c80c2fc3b63e0dbab0e341475bad4d8f` | [`oneiron/v0.6.11`](https://github.com/oneiron-dev/sudachi.rs/tree/oneiron/v0.6.11) | `d8cba3609521805ebf35bfc2b71d8099a13befef` | Apache-2.0 |
-| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `953fbbb1138ad2ccda9a188e67d2a3cf49570143` | MIT OR Apache-2.0 |
+| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `492b432abac720d0aa114313a601e5411c2a93a3` | MIT OR Apache-2.0 |
 
 ## Changing a forked crate
 
@@ -50,14 +50,14 @@ never landed). Its manifest keeps the exact `=0.9.3` and `=3.1.2` requirements; 
 
 ```toml
 [patch.crates-io]
-formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "953fbbb1138ad2ccda9a188e67d2a3cf49570143" }
-formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "953fbbb1138ad2ccda9a188e67d2a3cf49570143" }
-formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "953fbbb1138ad2ccda9a188e67d2a3cf49570143" }
-formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "953fbbb1138ad2ccda9a188e67d2a3cf49570143" }
-formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "953fbbb1138ad2ccda9a188e67d2a3cf49570143" }
+formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "492b432abac720d0aa114313a601e5411c2a93a3" }
+formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "492b432abac720d0aa114313a601e5411c2a93a3" }
+formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "492b432abac720d0aa114313a601e5411c2a93a3" }
+formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "492b432abac720d0aa114313a601e5411c2a93a3" }
+formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "492b432abac720d0aa114313a601e5411c2a93a3" }
 ```
 
-Fork branch `oneiron/parity` (0.9.3-oneiron.11), over `362becff`:
+Fork branch `oneiron/parity` (0.9.3-oneiron.12), over `362becff`:
 
 - `adc4743f` "Owned evaluator patch 0.9.3-oneiron.1" (the `oneiron/0.9.3` branch head):
   `formualizer-eval/src/interpreter.rs` propagates a typed error on either side of `&`, in both
@@ -271,11 +271,34 @@ Fork branch `oneiron/parity` (0.9.3-oneiron.11), over `362becff`:
   on another). `b65931ef` (lock-free repeated builtin loading) was picked and reverted
   (`08ae49a2`): no measured benefit, in a fresh process or over five recalculations in one.
   Still 2,967 of 2,967 and 811/811.
+- `953fbbb1..492b432a` (stage 2 wave 2, 2026-10-08): `3dc5603a` and `6aa7740c` (lane links2,
+  `ops/excel-links2-probe-20261008.md`) read `[0]` in a formula as the workbook itself (`[0]!Rate`,
+  `[0]Sheet1!A1`) and intersect a closed linked workbook's range that a function returns with a
+  legacy formula's cell as a written one; the adapter keeps refusing both forms until its own
+  change. `7ca652b8` (lane hostinfo, `ops/excel-hostinfo-probe-20261008.md`, Excel for Windows
+  16.0.20430, 202 cases on workbooks Excel opened from `C:\oracle\jobs\<job>\corpus\...`) adds
+  `EvalConfig::workbook_directory`: CELL("filename") prints the folder the workbook was opened
+  from before `[file]sheet` (`C:\Reports\[Budget.xlsx]Sheet1`; the file API takes the input's
+  folder), CELL("address") of a cell on another sheet names the file (`[Book1.xlsx]Other!$B$2`,
+  quoted when either name holds an ASCII character other than a letter, a digit, `_` or `.`, or
+  the sheet starts with a digit or `.`; any other character is plain), and INFO computes what does
+  not read the application (`memavail`, `memused`, `totmem` `#N/A`; other text, numbers, logicals
+  and blanks `#VALUE!`; errors propagate). 166 rows of `tests/xlsx_hostinfo_probes.rs`, 148 of them
+  off at `953fbbb1`. `a8dddb61` and `615a2ed2` (lane precision,
+  `ops/excel-precision-probe-20261008.md`) recalculate a workbook with "Set precision as
+  displayed" (`<calcPr fullPrecision="0"/>`) as Excel does, each formula result stored as its
+  cell's number format shows it, and show TEXT's fractions as Excel's continued-fraction
+  convergent; the adapter keeps refusing such workbooks until its own change. `492b432a` (lane
+  parse, `ops/excel-parse-probe-20261008.md`) parses `#REF!` as a reference operand, evaluates the
+  spill reference `A1#` (stored `_xlfn.ANCHORARRAY(A1)`) wherever a reference goes, gives
+  ERROR.TYPE Excel's codes for `#SPILL!` and `#CALC!`, and lets a host give evaluation threads a
+  larger stack (`EvalConfig::worker_stack_bytes`). Still 2,967 of 2,967 and 811/811 at each
+  landing.
 
 `deny.toml` allows `https://github.com/oneiron-dev/formualizer` in `allow-git`, and CC0-1.0
 (owner ruling 2026-09-26) for `tiny-keccak` 2.0.2, which `formualizer-eval` pulls in at build
 time through `arrow` → `ahash` → `const-random`. The engine stamps recalculated versions
-`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.11`.
+`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.12`.
 
 ## Licences and attribution
 

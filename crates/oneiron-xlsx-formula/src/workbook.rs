@@ -13,6 +13,7 @@ use oneiron_docedit::retained_opc::{Limits, Package};
 use crate::clock::RecalcClock;
 use crate::engine::{EngineId, FormualizerEngine};
 use crate::links::LinkedBooks;
+use crate::location::DocumentLocation;
 use crate::xml::{DOC_REL, MAIN, REL, Xml, invalid, parse_part, unsupported};
 use crate::{FormulaError, Result, route_workbook, storage_form};
 
@@ -37,6 +38,11 @@ struct Formulas {
     /// The package holds a VBA project, whose functions Excel calls once
     /// macros are enabled.
     vba_project: bool,
+    /// The worksheets' names, as the workbook spells them.
+    sheet_names: Vec<String>,
+    /// Each formula cell that may be a CELL("filename") call and caches text:
+    /// its formula (a shared formula's anchor text) and that text.
+    filename_caches: Vec<(String, String)>,
 }
 
 struct DefinedName {
@@ -54,7 +60,14 @@ impl FormualizerEngine {
     /// Excel saves with them change; every other byte of the package is kept.
     /// NOW() and TODAY() read `clock`'s instant at its local offset, and RAND,
     /// RANDBETWEEN and RANDARRAY draw from its seed, as Excel recalculating
-    /// at that moment would; OFFSET and INDIRECT follow the workbook alone,
+    /// at that moment would. CELL("filename") prints `location`, the folder
+    /// and file name the workbook was opened from
+    /// (`C:\Reports\[Budget.xlsx]Sheet1`), and CELL("address") of another
+    /// sheet's cell names its file (`[Budget.xlsx]Other!$B$2`); without a
+    /// location they read the one Excel last saved in the workbook's own
+    /// CELL("filename") caches, when each such cached text names a folder,
+    /// file and sheet of the workbook and they agree. OFFSET and INDIRECT
+    /// follow the workbook alone,
     /// and a defined name evaluates for the formula that uses it (its relative
     /// R1C1 text reads the calling cell, its random calls are that formula's
     /// draws). A call of a name outside Excel's function list as the file
@@ -62,8 +75,10 @@ impl FormualizerEngine {
     /// `UnsupportedWorkbook` is returned before bytes are emitted, so the
     /// caller's precision fallback recalculates, for: the external links the
     /// engine cannot read as Excel does with the linked workbook closed (see
-    /// `links.rs`), formulas needing what only the host knows (the file's
-    /// path, the active cell, the environment), INDIRECT text that names a
+    /// `links.rs`), formulas needing what only the host knows (the active
+    /// cell, the application's environment, cell formatting the engine does
+    /// not model, and the file's location when neither the caller nor the
+    /// workbook's caches give it), INDIRECT text that names a
     /// workbook (the writer refuses it as evaluation meets it), Excel
     /// functions the engine does not implement, a call Excel may resolve
     /// through an XLL add-in or the workbook's VBA project, a workbook or
@@ -86,15 +101,30 @@ impl FormualizerEngine {
         bytes: &[u8],
         limits: Limits,
         clock: &RecalcClock,
+        location: Option<&DocumentLocation>,
     ) -> Result<WorkbookRecalc> {
         let package = Package::open(bytes, limits)?;
         crate::links::external_targets(&package)?;
         // Malformed content is refused outright before any link is read.
         let formulas = Formulas::read(&package)?;
         let links = LinkedBooks::read(&package)?;
-        formulas.admit(&links)?;
-        let result =
-            recalculate_xlsx_bytes(bytes, options(limits, clock)).map_err(retained_writer_error)?;
+        let reads_location = formulas.admit(&links)?;
+        let saved;
+        let location = match (location, reads_location) {
+            (Some(location), _) => Some(location),
+            (None, Some(need)) => {
+                saved = formulas.saved_location()?.ok_or_else(|| {
+                    unsupported(format!(
+                        "formula needs host context: {need}; neither the caller nor a cached \
+                         CELL(\"filename\") value gives it"
+                    ))
+                })?;
+                Some(&saved)
+            }
+            (None, None) => None,
+        };
+        let result = recalculate_xlsx_bytes(bytes, options(limits, clock, location))
+            .map_err(retained_writer_error)?;
         if result.bytes != bytes {
             keep_gated_bytes(&package, &result.bytes, &formulas)?;
         }
@@ -116,8 +146,12 @@ impl FormualizerEngine {
 /// The host's ceilings over the writer's own defaults, the stricter of each.
 /// The output is a package the host reads back, so it fits the archive limit.
 /// The writer reads the clock once, at `clock`'s instant and offset, and
-/// seeds the random functions from it.
-fn options(limits: Limits, clock: &RecalcClock) -> XlsxRecalculateOptions {
+/// seeds the random functions from it; CELL names `location`.
+fn options(
+    limits: Limits,
+    clock: &RecalcClock,
+    location: Option<&DocumentLocation>,
+) -> XlsxRecalculateOptions {
     let own = XlsxRecalculateLimits::default();
     let mut options = XlsxRecalculateOptions {
         limits: XlsxRecalculateLimits {
@@ -136,6 +170,10 @@ fn options(limits: Limits, clock: &RecalcClock) -> XlsxRecalculateOptions {
         timezone: TimeZoneSpec::FixedOffsetSeconds(i32::from(clock.utc_offset_minutes()) * 60),
     };
     options.eval_config.workbook_seed = clock.seed();
+    if let Some(location) = location {
+        options.eval_config.workbook_directory = Some(location.directory().to_owned());
+        options.eval_config.workbook_file_name = Some(location.file_name().to_owned());
+    }
     options
 }
 
@@ -225,6 +263,8 @@ impl Formulas {
         let table_type = format!("{DOC_REL}/table");
         let mut sheets = BTreeMap::new();
         let mut sheet_names = BTreeSet::new();
+        let mut names_in_order = Vec::new();
+        let mut filename_caches = Vec::new();
         let mut sheet_ids = BTreeSet::new();
         let mut tables = BTreeSet::new();
         for (_, node) in workbook
@@ -237,6 +277,7 @@ impl Formulas {
             if !sheet_names.insert(name.to_lowercase()) {
                 return Err(invalid("duplicate sheet name"));
             }
+            names_in_order.push(name.to_owned());
             if escaped(name) {
                 refusal.get_or_insert_with(|| ESCAPED_TEXT.into());
             }
@@ -273,6 +314,7 @@ impl Formulas {
             if formulas.iter().any(|formula| escaped(formula)) {
                 refusal.get_or_insert_with(|| ESCAPED_TEXT.into());
             }
+            filename_caches.extend(text_caches(&xml, "CELL(")?);
             // The writer registers every table a worksheet relates, wherever
             // the part lives.
             let rels = rels_part(part);
@@ -303,7 +345,31 @@ impl Formulas {
             tables,
             refusal,
             vba_project: vba_project(package)?,
+            sheet_names: names_in_order,
+            filename_caches,
         })
+    }
+
+    /// The location Excel last calculated the workbook in, from its cached
+    /// CELL("filename") values (`C:\Reports\[Budget.xlsx]Sheet1`): `None`
+    /// unless there is one, each names a folder, a file and one of the
+    /// workbook's sheets, and they agree. Called once `admit` has bounded
+    /// every formula.
+    fn saved_location(&self) -> Result<Option<DocumentLocation>> {
+        let mut found = None;
+        for (formula, text) in &self.filename_caches {
+            if !crate::context::cell_filename(&crate::context::parse_bounded(formula)?) {
+                continue;
+            }
+            let Some(location) = saved_filename(text, &self.sheet_names) else {
+                return Ok(None);
+            };
+            if found.as_ref().is_some_and(|found| *found != location) {
+                return Ok(None);
+            }
+            found = Some(location);
+        }
+        Ok(found)
     }
 
     /// Whether the workbook names `name`: a defined name or a table.
@@ -314,8 +380,9 @@ impl Formulas {
             || self.tables.contains(&name.to_lowercase())
     }
 
-    /// Refuse what the engine must not evaluate natively, before it runs.
-    fn admit(&self, links: &LinkedBooks) -> Result<()> {
+    /// Refuse what the engine must not evaluate natively, before it runs, and
+    /// say why a formula reads the file's location, if one does.
+    fn admit(&self, links: &LinkedBooks) -> Result<Option<&'static str>> {
         if let Some(reason) = &self.refusal {
             return Err(unsupported(reason.clone()));
         }
@@ -328,11 +395,13 @@ impl Formulas {
             .names
             .iter()
             .map(|name| (&name.formula, Some(name.name.as_str())));
+        let mut reads_location = None;
         for (formula, defined) in cells.chain(names) {
             let inspection = crate::context::inspect_formula(formula)?;
             if let Some(need) = inspection.host_context {
                 return Err(unsupported(format!("formula needs host context: {need}")));
             }
+            reads_location = reads_location.or(inspection.location);
             // The engine does not resolve a workbook name to its LAMBDA yet:
             // MAP over one, or a call of one, would cache #NAME?.
             if let Some(name) = defined
@@ -403,7 +472,7 @@ impl Formulas {
                 links.admit_name(&crate::context::parse_bounded(&name.formula)?, &linked)?;
             }
         }
-        Ok(())
+        Ok(reads_location)
     }
 }
 
@@ -701,6 +770,63 @@ fn check_cells(xml: &Xml, strings: usize, refusal: &mut Option<Cow<'static, str>
         }
     }
     Ok(())
+}
+
+/// The formula and cached text of each formula cell of `xml` whose formula
+/// (a shared formula's anchor text for the cells sharing it) holds `call`,
+/// without case: Excel caches a formula's text result as `t="str"`. A cached
+/// text with an escape the reader does not decode is left out.
+fn text_caches(xml: &Xml, call: &str) -> Result<Vec<(String, String)>> {
+    let mut caches = Vec::new();
+    let Some((data, _)) = xml.child(0, MAIN, "sheetData")? else {
+        return Ok(caches);
+    };
+    let mut shared = BTreeMap::new();
+    for (row, _) in xml.children(data).filter(|(_, node)| node.is(MAIN, "row")) {
+        for (index, cell) in xml.children(row).filter(|(_, node)| node.is(MAIN, "c")) {
+            let Some((_, formula)) = xml.child(index, MAIN, "f")? else {
+                continue;
+            };
+            let group = formula
+                .attr("si")
+                .filter(|_| formula.attr("t") == Some("shared"));
+            let text = match (formula.text.is_empty(), group) {
+                (false, group) => {
+                    if let Some(group) = group {
+                        shared.insert(group, formula.text.as_str());
+                    }
+                    formula.text.as_str()
+                }
+                (true, Some(group)) => match shared.get(group) {
+                    Some(anchor) => anchor,
+                    None => continue,
+                },
+                (true, None) => continue,
+            };
+            if !text.to_ascii_uppercase().contains(call) || cell.attr("t") != Some("str") {
+                continue;
+            }
+            if let Some((_, value)) = xml.child(index, MAIN, "v")?
+                && !escaped(&value.text)
+            {
+                caches.push((text.to_owned(), value.text.clone()));
+            }
+        }
+    }
+    Ok(caches)
+}
+
+/// The location a cached CELL("filename") text names, `folder[file]sheet`
+/// with `sheet` one of `sheets`: a sheet's and a file's name hold no bracket,
+/// though a folder may.
+fn saved_filename(text: &str, sheets: &[String]) -> Option<DocumentLocation> {
+    let close = text.rfind(']')?;
+    let open = text[..close].rfind('[')?;
+    let sheet = &text[close + 1..];
+    if !sheets.iter().any(|name| name == sheet) {
+        return None;
+    }
+    DocumentLocation::new(&text[..open], &text[open + 1..close])
 }
 
 pub(crate) const ESCAPED_TEXT: &str = "escaped text the reader does not decode as Excel does";
