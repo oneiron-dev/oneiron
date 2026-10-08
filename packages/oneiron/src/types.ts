@@ -102,7 +102,7 @@ export type PackFormat = "json" | "yaml" | "toon" | "md" | "txt"
 export type RecallScope = {
   worldRef?: string
   facet?: string
-  /** Registry kinds to return (`MESSAGE`, `CLAIM`, `TURN`, ...). Unset returns every content kind, not turns, conversations or people. */
+  /** Registry kinds to return (`MESSAGE`, `CLAIM`, `PERSON`, ...). Unset returns every kind but turns, conversations, sessions, facets and worlds. */
   kinds?: string[]
 }
 

@@ -1242,7 +1242,7 @@ async fn recall_reads_time_words_without_refusing_and_resolves_them_as_of() {
 /// its witness receipt said `ms87:76`, so a client stripped the suffix to join
 /// them; and TURN, CONVERSATION and PERSON rows took recall `limit` slots.
 /// Recall now returns the receipt's short id with the revision beside it, and
-/// `limit` counts content unless the scope names other kinds.
+/// turns and conversations take no slot unless the scope names their kinds.
 #[tokio::test]
 async fn recall_returns_witness_short_ids_and_limit_counts_content() {
     let facade = OwnerFacade::new("facade-ids-and-slots-secret");
@@ -1292,5 +1292,40 @@ async fn recall_returns_witness_short_ids_and_limit_counts_content() {
     assert!(
         !found.is_empty() && found.iter().all(|(_, kind)| kind == "TURN"),
         "{found:?}"
+    );
+}
+
+/// Owner ruling (Wave 9a, 2026-10-08): people are memories, so an agent
+/// asking "who is Mika?" gets the person by default.
+#[tokio::test]
+async fn recall_returns_the_person_an_agent_asks_about() {
+    use oneiron::memory::{StructuralPutInput, TextIndexField};
+
+    let facade = OwnerFacade::new("facade-person-recall-secret");
+    let vault = facade.server.vault();
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let person = vault
+        .memory(owner, oneiron::EdgeActorClass::Human)
+        .put_structural(&StructuralPutInput {
+            id: None,
+            kind: "PERSON".into(),
+            body: json!({"name": "Mika Tanaka"}),
+            text_fields: Some(vec![TextIndexField {
+                field: "name".into(),
+                value: "Mika Tanaka".into(),
+            }]),
+            edges: None,
+            occurred_at: 1_767_225_600,
+            learned_at: None,
+        })
+        .expect("put person");
+
+    let (found, _) = facade
+        .recall(json!({"query": "who is Mika?", "limit": 5}))
+        .await;
+    assert!(
+        found.contains(&(person.entity_ref.clone(), "PERSON".to_owned())),
+        "{} in {found:?}",
+        person.entity_ref
     );
 }

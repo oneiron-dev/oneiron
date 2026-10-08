@@ -116,23 +116,24 @@ pub struct RecallScope {
     pub world_ref: Option<String>,
     /// Facet entity ref; strict facet narrowing when set.
     pub facet: Option<String>,
-    /// Registry kinds to return (`MESSAGE`, `CLAIM`, `TURN`, ...). Unset
-    /// returns every kind but the ones that organise memories rather than
-    /// hold them ([`CONTAINER_KINDS`]), so `limit` counts content.
+    /// Registry kinds to return (`MESSAGE`, `CLAIM`, `PERSON`, ...). Unset
+    /// returns every kind but the ones with no text of their own
+    /// ([`CONTAINER_KINDS`]), so `limit` slots go to rows that say something.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kinds: Option<Vec<String>>,
 }
 
-/// Kinds that organise memories rather than hold them: a conversation and its
-/// turns, the people and groups in it, and the worlds and facets that scope
-/// it. Recall returns them only when [`RecallScope::kinds`] names them.
-pub const CONTAINER_KINDS: [u8; 8] = [
+/// Kinds that hold no text of their own: conversations and sessions, and the
+/// worlds and facets that scope memories. Recall returns them only when
+/// [`RecallScope::kinds`] names them.
+///
+/// TURN is here only until turns are embedded: ARCH-0004 makes the turn the
+/// embedding unit, but today a turn's text repeats its messages, so a turn hit
+/// would take the slot of the message it copies.
+pub const CONTAINER_KINDS: [u8; 5] = [
     crate::registry::ENTITY_TYPE_TURN,
     crate::registry::ENTITY_TYPE_CONVERSATION,
     crate::registry::ENTITY_TYPE_SESSION,
-    crate::registry::ENTITY_TYPE_PERSON,
-    crate::registry::ENTITY_TYPE_ORG,
-    crate::registry::ENTITY_TYPE_RELATIONSHIP,
     crate::registry::ENTITY_TYPE_FACET,
     crate::registry::ENTITY_TYPE_WORLD,
 ];
@@ -149,7 +150,7 @@ fn recall_kinds(scope: &RecallScope) -> MemoryResult<Option<Vec<u8>>> {
                 "scope.kinds must name between 1 and {} registry kinds",
                 crate::registry::ENTITY_TYPE_REGISTRY.len()
             ),
-            &["Name each kind once, or omit kinds for every content kind."],
+            &["Name each kind once, or omit kinds for the default kinds."],
         ));
     }
     let mut types = kinds
@@ -304,8 +305,14 @@ impl Memory<'_> {
             let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
                 return Ok(false);
             };
-            if kind.is_some_and(|kind| kind_string_for_type(header.entity_type) != kind) {
-                return Ok(false);
+            match kind {
+                Some(kind) if kind_string_for_type(header.entity_type) != kind => return Ok(false),
+                // A view that names no kind takes the scope's kinds, which
+                // recall applies, or else the default kinds.
+                None if scope.kinds.is_none() && CONTAINER_KINDS.contains(&header.entity_type) => {
+                    return Ok(false);
+                }
+                _ => {}
             }
             if header.entity_type != ENTITY_TYPE_CLAIM {
                 return Ok(world.is_none() && predicate.is_none());
@@ -555,7 +562,7 @@ impl Memory<'_> {
                 return Ok(false);
             }
             // A caller's own filter already chose its kinds; otherwise the
-            // scope's kinds, or every content kind, decide.
+            // scope's kinds, or the default kinds, decide.
             if kinds.is_some() || candidate_filter.is_none() {
                 let Some(kind) = store
                     .port_entity_record(txn, id)?
