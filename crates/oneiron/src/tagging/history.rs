@@ -3,9 +3,9 @@
 //!
 //! Every attempt's trace is recorded in the transaction that settles or
 //! retries it, so a marker is pruned only once its trace is recorded. A turn
-//! keeps its newest [`TaggingTraceHistory::per_turn`] traces, and a trace
-//! older than [`TaggingTraceHistory::max_age_secs`] is pruned by the worker's
-//! next pass. The rows are job state, kept under `vault_meta`'s `job:` family:
+//! keeps its newest [`TaggingTraceHistory::per_turn`] traces, and every trace
+//! older than [`TaggingTraceHistory::max_age_secs`] is pruned when the worker
+//! next starts a pass, in transactions of a bounded size. The rows are job state, kept under `vault_meta`'s `job:` family:
 //! derived, local, never synced, and in no content database.
 //!
 //! [`TaggingTraceHistory::per_turn`]: super::TaggingTraceHistory::per_turn
@@ -129,13 +129,18 @@ pub(super) fn prune_expired_in_txn(
 }
 
 impl Vault {
-    /// The recorded tagging traces of `turn`, oldest first: at most the
-    /// configured number per turn, and none past the configured age once the
-    /// worker's next pass has pruned it.
-    pub fn tagging_trace_history(&self, turn: &EntityId) -> Result<Vec<TaggingTraceRecord>> {
+    /// The recorded tagging traces of `turn`, oldest first, or, for `None`,
+    /// those of markers whose payload named no turn: at most the configured
+    /// number per turn, and none past the configured age once the worker has
+    /// started a pass.
+    pub fn tagging_trace_history(
+        &self,
+        turn: Option<&EntityId>,
+    ) -> Result<Vec<TaggingTraceRecord>> {
         let txn = self.store.env.read_txn()?;
+        let key = turn.map_or([0; 16], |turn| *turn.as_bytes());
         Ok(TRACES
-            .scan_from(&self.store, &txn, turn.as_bytes())?
+            .scan_from(&self.store, &txn, &key)?
             .into_iter()
             .map(|(_, record)| record)
             .collect())

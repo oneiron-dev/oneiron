@@ -317,22 +317,28 @@ impl TaggingReconciler {
         Ok(Some(record))
     }
 
-    /// Prunes a bounded number of traces past the history's age. It reads
-    /// first, so a pass with nothing to prune commits nothing.
+    /// Prunes every trace past the history's age, in bounded transactions,
+    /// before the pass claims anything: a pass records its traces only after
+    /// this, so expiry keeps up with any batch size. Each round reads first,
+    /// so a pass with nothing to prune commits nothing.
     fn prune_expired_traces(&self) -> Result<()> {
-        let due = {
-            let txn = self.vault.store.env.read_txn()?;
-            let now = self.stamp_in_txn(&txn)?;
-            history::expired_in_txn(&self.vault, &txn, now)?
-        };
-        if !due {
-            return Ok(());
+        loop {
+            let due = {
+                let txn = self.vault.store.env.read_txn()?;
+                let now = self.stamp_in_txn(&txn)?;
+                history::expired_in_txn(&self.vault, &txn, now)?
+            };
+            if !due {
+                return Ok(());
+            }
+            let pruned = self.vault.try_with_write_txn(|txn| {
+                let now = self.stamp_in_txn(txn)?;
+                history::prune_expired_in_txn(&self.vault, txn, now)
+            })?;
+            if pruned == 0 {
+                return Ok(());
+            }
         }
-        self.vault.try_with_write_txn(|txn| -> Result<()> {
-            let now = self.stamp_in_txn(txn)?;
-            history::prune_expired_in_txn(&self.vault, txn, now)?;
-            Ok(())
-        })
     }
 
     /// Hands back each marker this reconciler holds, as an immediate retry.
@@ -374,21 +380,10 @@ impl TaggingReconciler {
         pass: &mut TaggingPass,
     ) -> Result<TaggingTrace> {
         let prior_retries = queue.retry_chain_depth(record.id)?;
-        let mut trace = TaggingTrace {
-            attempt: attempt_hex(&record.id),
-            turn: None,
-            checkpoint: String::new(),
-            model: None,
-            input_hash: None,
-            try_number: prior_retries.saturating_add(1),
-            call_micros: None,
-            outcome: TaggingOutcome::Unreadable,
-        };
+        let mut trace = unreadable_trace(record, prior_retries);
         let Some(payload) = MarkerPayload::decode(&record.payload) else {
-            self.vault.try_with_write_txn(|txn| -> Result<()> {
-                self.fail_unreadable_in_txn(txn, record)?;
-                self.record_in_txn(txn, &trace)
-            })?;
+            self.vault
+                .try_with_write_txn(|txn| self.fail_unreadable_in_txn(txn, record, &trace))?;
             return Ok(trace);
         };
         trace.turn = Some(payload.turn);
@@ -547,11 +542,14 @@ impl TaggingReconciler {
     }
 
     /// Fails a marker whose payload this build cannot read, since no pass
-    /// ever can, and prunes it from the job ledger with every try it retried.
+    /// ever can, records its trace, and prunes it from the job ledger with
+    /// every try it retried: the settlement every door that finds such a
+    /// payload makes.
     fn fail_unreadable_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         record: &AttemptRecord,
+        trace: &TaggingTrace,
     ) -> Result<()> {
         let queue = AttemptQueue::from_store(&self.vault.store);
         queue.fail_storage_in_txn(
@@ -564,6 +562,7 @@ impl TaggingReconciler {
                 now: self.stamp_in_txn(txn)?,
             },
         )?;
+        self.record_in_txn(txn, trace)?;
         queue.prune_settled_in_txn(txn, record.id)?;
         Ok(())
     }
@@ -626,7 +625,12 @@ impl TaggingReconciler {
             return Err(Error::MapFull);
         }
         if MarkerPayload::decode(&record.payload).is_none() {
-            return self.fail_unreadable_in_txn(txn, record);
+            // A hand-back of a payload no pass can read settles it as a pass
+            // would, its trace recorded before it leaves the ledger.
+            let prior_retries = AttemptQueue::from_store(&self.vault.store)
+                .retry_chain_depth_in_txn(txn, record.id)?;
+            let trace = unreadable_trace(record, prior_retries);
+            return self.fail_unreadable_in_txn(txn, record, &trace);
         }
         retry_marker_in_txn(
             &self.vault,
@@ -661,6 +665,21 @@ fn run_after_turn_read_hook() {
     let hook = AFTER_TURN_READ.with(|slot| slot.borrow_mut().take());
     if let Some(hook) = hook {
         hook();
+    }
+}
+
+/// The trace of an attempt on `record` before its payload is read: what a
+/// payload this build cannot read leaves.
+fn unreadable_trace(record: &AttemptRecord, prior_retries: u32) -> TaggingTrace {
+    TaggingTrace {
+        attempt: attempt_hex(&record.id),
+        turn: None,
+        checkpoint: String::new(),
+        model: None,
+        input_hash: None,
+        try_number: prior_retries.saturating_add(1),
+        call_micros: None,
+        outcome: TaggingOutcome::Unreadable,
     }
 }
 

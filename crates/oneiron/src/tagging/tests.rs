@@ -200,7 +200,7 @@ fn count(vault: &Vault, state: AttemptState) -> usize {
 /// The outcomes of the turn's recorded traces, oldest first.
 fn history(vault: &Vault, turn: &EntityId) -> Vec<TaggingOutcome> {
     vault
-        .tagging_trace_history(turn)
+        .tagging_trace_history(Some(turn))
         .expect("trace history")
         .into_iter()
         .map(|record| record.trace.outcome)
@@ -2205,7 +2205,7 @@ fn pruning_keeps_exactly_the_configured_trace_history() {
             .expect("more text");
         reconciler.drain_once().expect("drain");
     }
-    let kept = vault.tagging_trace_history(&busy).expect("history");
+    let kept = vault.tagging_trace_history(Some(&busy)).expect("history");
     assert_eq!(
         kept.iter()
             .map(|record| record.recorded_at)
@@ -2277,4 +2277,93 @@ fn a_tagging_backlog_past_the_cleanup_scan_leaves_cleanup_as_without_one() {
     );
     let other = complete_other_job(&vault);
     assert_eq!(cleanup_proposals(&vault, &clock), vec![*other.as_bytes()]);
+}
+
+/// A marker whose payload this build cannot read, left leased by a stopped
+/// worker, is settled by the restarted one as a pass settles it: failed, its
+/// trace recorded, then gone from the job ledger.
+#[test]
+fn an_unreadable_marker_a_stopped_worker_left_is_traced_before_it_leaves_the_ledger() {
+    let dir = tempfile::tempdir().expect("dir");
+    {
+        let vault = open(dir.path(), true);
+        witness(&vault, "Ada sailed north");
+        let ClaimOutcome::Claimed(mut leased) = AttemptQueue::new(&vault)
+            .claim_kind(
+                TAGGING_MARKER_KIND,
+                ClaimAttempt {
+                    lease_owner: "oneironer-tagging".into(),
+                    now: u64::MAX,
+                },
+            )
+            .expect("claim")
+        else {
+            panic!("the marker is ready");
+        };
+        // A payload a later build cannot read, under the stopped worker's lease.
+        leased.payload = b"not a marker payload".to_vec();
+        let encoded = crate::attempt_queue::encode_signal_record(&leased).expect("encode");
+        vault
+            .try_with_write_txn(|txn| {
+                vault
+                    .store
+                    .attempt_records
+                    .put(txn, leased.id.as_bytes(), &encoded)?;
+                Ok::<(), crate::Error>(())
+            })
+            .expect("unreadable payload");
+    }
+    let vault = open(dir.path(), true);
+    let tagger = Scripted::new(Answer::Good);
+    assert_eq!(
+        reconciler(&vault, &tagger)
+            .release_stale_leases()
+            .expect("release"),
+        1
+    );
+    assert!(markers(&vault).is_empty(), "the marker left the job ledger");
+    let traces = vault.tagging_trace_history(None).expect("history");
+    assert_eq!(traces.len(), 1, "its trace was recorded first");
+    assert!(matches!(
+        traces[0].trace.outcome,
+        TaggingOutcome::Unreadable
+    ));
+    assert_eq!(traces[0].trace.try_number, 1);
+    assert_eq!(tagger.calls(), 0);
+}
+
+/// A pass prunes every expired trace before it claims, however many: past
+/// the size of one prune transaction, none is left once a pass has started.
+#[test]
+fn a_pass_prunes_every_expired_trace_before_it_claims() {
+    const TURNS: u64 = 300;
+    let dir = tempfile::tempdir().expect("dir");
+    let clock = ManualClock::new(NOW);
+    let vault = {
+        let mut config = config(true);
+        config.store_clock = clock.bundle();
+        config.tagging = Some(
+            TaggingMarkerConfig::new(CHECKPOINT)
+                .expect("checkpoint")
+                .with_live_window_tokens(0)
+                .with_trace_history(TaggingTraceHistory {
+                    per_turn: 1,
+                    max_age_secs: 10,
+                }),
+        );
+        Arc::new(Vault::open(dir.path(), config).expect("open vault"))
+    };
+    let turns: Vec<EntityId> = (0..TURNS)
+        .map(|n| witness(&vault, &format!("turn {n} where Ada met Grace")))
+        .collect();
+    let tagger = Scripted::new(Answer::Good);
+    let reconciler = reconciler(&vault, &tagger).with_batch_size(TURNS as usize);
+    assert_eq!(
+        reconciler.drain_once().expect("drain").traces.len(),
+        turns.len()
+    );
+    assert!(turns.iter().all(|turn| history(&vault, turn).len() == 1));
+    clock.set(NOW + 11);
+    assert!(reconciler.drain_once().expect("drain").traces.is_empty());
+    assert!(turns.iter().all(|turn| history(&vault, turn).is_empty()));
 }

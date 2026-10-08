@@ -76,7 +76,7 @@ fn shadowed(server: &SyncServer) -> usize {
 /// The outcomes of the turn's recorded traces, oldest first.
 fn history(vault: &Vault, turn: &EntityId) -> Vec<TaggingOutcome> {
     vault
-        .tagging_trace_history(turn)
+        .tagging_trace_history(Some(turn))
         .expect("trace history")
         .into_iter()
         .map(|record| record.trace.outcome)
@@ -222,7 +222,7 @@ fn a_failing_slow_or_wrong_tagger_never_fails_the_write_and_is_retried() {
     // turn's newest traces stayed, the ones the worker logged.
     assert!(markers(&vault).is_empty());
     let recorded: Vec<_> = vault
-        .tagging_trace_history(&turn)
+        .tagging_trace_history(Some(&turn))
         .expect("trace history")
         .into_iter()
         .map(|record| record.trace)
