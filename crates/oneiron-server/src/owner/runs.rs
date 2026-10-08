@@ -100,7 +100,7 @@ fn review_of(bundle: GateConsentBundle, bodies: Vec<ClaimBody>) -> RunReview {
             oneiron::batch::export::redact_messagepack_credentials(&mut value);
             RunProposal {
                 claim_id: member.claim_id.to_hex(),
-                predicate: body.predicate,
+                predicate: redacted(body.predicate),
                 subject: match &body.subject {
                     ClaimSubject::Entity(id) => id.to_hex(),
                     ClaimSubject::Edge { source, target, .. } => {
@@ -120,6 +120,14 @@ fn review_of(bundle: GateConsentBundle, bodies: Vec<ClaimBody>) -> RunReview {
         agent_label: bundle.agent_label,
         proposals,
     }
+}
+
+/// A stored string as the release redaction serves it: a predicate is free
+/// text a proposer chose, so it is checked like the value.
+fn redacted(text: String) -> String {
+    let mut value = rmpv::Value::from(text);
+    oneiron::batch::export::redact_messagepack_credentials(&mut value);
+    value.as_str().unwrap_or_default().to_owned()
 }
 
 /// Approves or declines the whole reviewed run in one engine transaction.

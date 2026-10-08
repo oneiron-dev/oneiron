@@ -529,16 +529,34 @@ async fn run_review_redacts_stored_credentials_with_the_scan_off() {
                 .unwrap()
         })
         .collect();
+    // A proposer chooses its predicate too: a valid one can end in a token.
+    let predicate_token = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
+    let predicate = format!("core.opinion.{predicate_token}");
+    let named = vault
+        .park_run_proposal_with_predicate_for_test(
+            run,
+            agent,
+            oneiron::EntityId::now(),
+            &predicate,
+            "an innocuous value",
+        )
+        .unwrap();
     let leaks = |review: &Value| {
         let text = review.to_string();
         let hex: String = token.bytes().map(|byte| format!("{byte:02x}")).collect();
-        text.contains(token) || text.contains("hunter2") || text.contains(&hex)
+        text.contains(token)
+            || text.contains("hunter2")
+            || text.contains(&hex)
+            || text.contains(predicate_token)
     };
 
     let path = format!("/v1/owner/runs/review?run_id={run}");
     let (status, review) = call(&server, "GET", &path, owner.clone(), None).await;
     assert_eq!(status, StatusCode::OK, "{review}");
-    assert_eq!(review["proposals"].as_array().unwrap().len(), values.len());
+    assert_eq!(
+        review["proposals"].as_array().unwrap().len(),
+        values.len() + 1
+    );
     assert!(!leaks(&review), "{review}");
     assert!(
         review.to_string().contains("kept"),
@@ -560,4 +578,63 @@ async fn run_review_redacts_stored_credentials_with_the_scan_off() {
         assert_eq!(stored.approval, oneiron::ClaimApprovalStatus::Approved);
         assert_eq!(&stored.value, value, "the stored proposal is unchanged");
     }
+    let stored = vault.get_claim(&named).unwrap().unwrap();
+    assert_eq!(stored.approval, oneiron::ClaimApprovalStatus::Approved);
+    assert_eq!(
+        stored.predicate, predicate,
+        "the stored predicate is unchanged"
+    );
+}
+
+/// SOL-9A-2-R2 F2: a backup the owner door admitted, then queued behind a
+/// revocation of its slip, writes nothing and prunes nothing.
+#[tokio::test]
+async fn a_backup_queued_behind_a_slip_revocation_takes_and_prunes_nothing() {
+    use crate::owner::OwnerError;
+    let (_dir, _backups, server) = owner_host_server();
+    let vault = server.vault();
+    let host = Arc::clone(server.owner_host.as_ref().unwrap());
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
+    let recipe = format!("principal_ref={};actor_class=human", owner_id.to_hex());
+    let request = slip_credentials::bind_request(
+        &server,
+        core_request_with_authz("POST", "/v1/owner/backups", test_bearer(&recipe), None),
+    );
+    let auth = CoreAuth::from_headers(request.headers(), &server.config, vault.as_ref()).unwrap();
+    let admitted = crate::api::owner_routes::owner(&auth, &server).expect("the owner is admitted");
+    // keep = 2: two backups, so a third would prune the first.
+    for _ in 0..2 {
+        host.take(vault, Some(&admitted)).unwrap();
+    }
+    let before = crate::owner::backup::list(&host.backups).unwrap();
+
+    let (slip, _) = slip_credentials::credential(&server, &recipe);
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(
+        server.config.auth_secret.as_deref().unwrap().as_bytes(),
+    )
+    .unwrap();
+    vault
+        .revoke_capability_slip(&issuer, slip.claims.slip_id)
+        .unwrap();
+    match host.take(vault, Some(&admitted)) {
+        Err(OwnerError::Engine(error)) => assert_eq!(
+            error.kind(),
+            oneiron::ErrorKind::ConsentOwnerNotAuthenticated,
+            "{error}"
+        ),
+        other => panic!("the queued backup must be refused: {other:?}"),
+    }
+    assert_eq!(crate::owner::backup::list(&host.backups).unwrap(), before);
+    let partials = std::fs::read_dir(&host.backups.dir)
+        .unwrap()
+        .filter(|entry| {
+            entry
+                .as_ref()
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".partial")
+        })
+        .count();
+    assert_eq!(partials, 0, "no partial file is left behind");
 }

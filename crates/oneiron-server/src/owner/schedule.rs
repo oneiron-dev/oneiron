@@ -60,9 +60,21 @@ impl OwnerHost {
     }
 
     /// Takes a backup now, serialized with every other backup of this vault.
-    pub(crate) fn take(&self, vault: &oneiron::Vault) -> anyhow::Result<BackupOutcome> {
+    /// On an owner's request, `owner` is rechecked once the lock is held, in
+    /// the snapshot itself: a request queued behind a revocation or an
+    /// ownership change takes and prunes nothing.
+    pub(crate) fn take(
+        &self,
+        vault: &oneiron::Vault,
+        owner: Option<&oneiron::consent::AuthenticatedOwner>,
+    ) -> OwnerResult<BackupOutcome> {
         let _one_at_a_time = self.one_at_a_time();
-        backup::take(vault, &self.backups)
+        backup::take_as(vault, &self.backups, owner).map_err(|error| {
+            match error.downcast::<oneiron::Error>() {
+                Ok(engine) => OwnerError::from(engine),
+                Err(error) => OwnerError::Host(error),
+            }
+        })
     }
 
     /// Rehearses one of this vault's backups by its listed file name, the
@@ -139,7 +151,9 @@ impl SyncServer {
                         "scheduled backup taken"
                     ),
                     Ok(Ok(None)) => {}
-                    Ok(Err(error)) => tracing::warn!(error = %error, "scheduled backup failed"),
+                    Ok(Err(error)) => {
+                        tracing::warn!(error = %format!("{error:#}"), "scheduled backup failed");
+                    }
                     Err(error) => tracing::warn!(error = %error, "scheduled backup task failed"),
                 }
             }
@@ -219,7 +233,7 @@ mod tests {
     fn a_backup_waits_for_the_rehearsal_of_the_file_it_would_prune() {
         let (_dir, _backups, server) = scheduled_server(Duration::from_secs(3_600), 1);
         let host = Arc::clone(server.owner_host.as_ref().unwrap());
-        let only = host.take(server.vault()).unwrap().backup;
+        let only = host.take(server.vault(), None).unwrap().backup;
         let rehearsal = host
             .with_chosen(None, |chosen| {
                 assert_eq!(chosen.file, only.file);
@@ -227,7 +241,7 @@ mod tests {
                 // being rehearsed; it waits until the rehearsal is done.
                 let racing = {
                     let (host, server) = (Arc::clone(&host), Arc::clone(&server));
-                    std::thread::spawn(move || host.take(server.vault()).unwrap())
+                    std::thread::spawn(move || host.take(server.vault(), None).unwrap())
                 };
                 std::thread::sleep(Duration::from_millis(500));
                 assert!(!racing.is_finished(), "the backup waited");

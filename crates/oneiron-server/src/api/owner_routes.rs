@@ -154,10 +154,10 @@ async fn take_backup(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
 ) -> OwnerReply<backup::BackupOutcome> {
-    owner(&auth, &server)?;
+    let owner = owner(&auth, &server)?;
     let host = host(&server)?;
     Ok(Json(
-        blocking(move || Ok(host.take(server.vault())?)).await?,
+        blocking(move || host.take(server.vault(), Some(&owner))).await?,
     ))
 }
 

@@ -97,6 +97,18 @@ pub(crate) struct BackupOutcome {
 /// caller serializes backups of one vault (the writer lease, or the server's
 /// backup lock), so the next sequence number is this one's alone.
 pub(crate) fn take(vault: &oneiron::Vault, plan: &BackupPlan) -> anyhow::Result<BackupOutcome> {
+    take_as(vault, plan, None)
+}
+
+/// [`take`] on an owner's request: the snapshot rechecks `owner` in its own
+/// read transaction, so a request whose slip or ownership went away while it
+/// waited writes and prunes nothing. The engine's refusal stays the error's
+/// source.
+pub(crate) fn take_as(
+    vault: &oneiron::Vault,
+    plan: &BackupPlan,
+    owner: Option<&oneiron::consent::AuthenticatedOwner>,
+) -> anyhow::Result<BackupOutcome> {
     create_private_dir(&plan.dir)?;
     let sequence = list(plan)?
         .last()
@@ -107,11 +119,15 @@ pub(crate) fn take(vault: &oneiron::Vault, plan: &BackupPlan) -> anyhow::Result<
     let partial = plan
         .dir
         .join(format!(".{}-{stamp}{PARTIAL_SUFFIX}", plan.label));
-    let checkpoint_id = match vault.snapshot_checkpoint(&partial, vault.now_recorded_at()) {
+    let snapshot = match owner {
+        Some(owner) => vault.snapshot_checkpoint_as(owner, &partial, vault.now_recorded_at()),
+        None => vault.snapshot_checkpoint(&partial, vault.now_recorded_at()),
+    };
+    let checkpoint_id = match snapshot {
         Ok(id) => id,
         Err(error) => {
             let _ = std::fs::remove_file(&partial);
-            return Err(anyhow::anyhow!("backup failed: {error}"));
+            return Err(anyhow::Error::new(error).context("backup failed"));
         }
     };
     let id8 = checkpoint_id.get(..8).unwrap_or(&checkpoint_id);

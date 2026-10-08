@@ -106,8 +106,36 @@ fn read_image(path: &Path) -> Result<(CheckpointImage, String)> {
 impl Vault {
     /// Create-new output only. Checkpoint id hashes the entire canonical image.
     pub fn snapshot_checkpoint(&self, path: &Path, created_at: u64) -> Result<String> {
+        self.snapshot_checkpoint_checked(path, created_at, None)
+    }
+    /// [`Vault::snapshot_checkpoint`] on an owner's request. The proof is
+    /// rechecked in the snapshot's own read transaction, so an owner whose
+    /// person, credential or ownership went away while the request waited
+    /// writes no checkpoint.
+    ///
+    /// # Errors
+    /// As [`Vault::snapshot_checkpoint`], and
+    /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
+    /// when `owner` no longer holds.
+    pub fn snapshot_checkpoint_as(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        path: &Path,
+        created_at: u64,
+    ) -> Result<String> {
+        self.snapshot_checkpoint_checked(path, created_at, Some(owner))
+    }
+    fn snapshot_checkpoint_checked(
+        &self,
+        path: &Path,
+        created_at: u64,
+        owner: Option<&crate::consent::AuthenticatedOwner>,
+    ) -> Result<String> {
         let _custody = self.store.gate_custody_read_guard()?;
         let txn = self.store.env.read_txn()?;
+        if let Some(owner) = owner {
+            owner.revalidate_in_txn(self, &txn)?;
+        }
         // Refuse a checkpoint that cannot read CURRENT exterior custody; it
         // cannot package key bytes to paper over a missing/shredded key.
         self.store.for_each_gate_decision_in_txn(&txn, |_| Ok(()))?;
