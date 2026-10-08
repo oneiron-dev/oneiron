@@ -70,13 +70,7 @@ fn judged_receipt(outcome: &str, seq: u8) -> ReceiptRecord {
 /// the second type from becoming a fork.
 #[test]
 fn category_tracks_the_attribution_verdict_arm_for_arm() {
-    let verdicts = [
-        AttributionVerdict::SkillDefect,
-        AttributionVerdict::ExecutionLapse,
-        AttributionVerdict::Discovery,
-        AttributionVerdict::Environment,
-        AttributionVerdict::PreferenceShift,
-    ];
+    let verdicts = AttributionVerdict::ALL;
     assert_eq!(verdicts.len(), IssueCategory::ALL.len());
     for verdict in verdicts {
         let category = IssueCategory::from_verdict(verdict);

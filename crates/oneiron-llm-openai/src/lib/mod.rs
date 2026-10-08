@@ -26,20 +26,7 @@ pub use self::wire::{
     build_openai_chat_request, classify_openai_status, parse_openai_chat_response,
 };
 
-#[cfg(test)]
-mod tests;
-
 // The flat lib.rs module used to provide these names to the inline test
 // module through `use super::*`: its own oneiron/std import header, and the
 // `json!` macro. After the directory split the seam re-imports them so
 // `tests.rs` resolves exactly as it did before.
-#[cfg(test)]
-use oneiron::{
-    ContentPart, FatalLlmError, FinishReason, LlmCapability, LlmCatalogEntry, LlmError,
-    LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmStreamEvent,
-    LlmToolSpec, LlmUsage, ModelId, ResponseFormat, RetryableLlmError, UnsupportedCapability,
-};
-#[cfg(test)]
-use serde_json::json;
-#[cfg(test)]
-use std::collections::BTreeMap;

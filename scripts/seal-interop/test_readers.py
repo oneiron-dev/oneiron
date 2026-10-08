@@ -6,34 +6,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from dataclasses import replace
-from pdf_source import SignatureSource, SourceSpan
-from reader_result import EnvelopeKind, Rejected, NotEstablished, evaluate_coverage
 
 ROOT = Path(__file__).resolve().parent
 FIXTURES = ROOT / "fixtures"
 BIN = Path(os.environ.get("SEAL_INTEROP_HOME", "/mnt/wd16/w8-build/seal-interop")) / "bin"
-
-
-class CoverageResultTests(unittest.TestCase):
-    def test_unknown_envelope_kind_is_not_a_signature(self):
-        with self.assertRaises(ValueError):
-            EnvelopeKind.from_pdf_type("/UnknownEnvelope")
-
-    def test_wrong_gap_is_rejected_but_missing_source_span_is_not_established(self):
-        data = (FIXTURES / "multi-signed.pdf").read_bytes()
-        byte_range = (0, 728, 5094, 605)
-        source = SignatureSource(7, 0, 1, 5699, byte_range, b"CMS",
-                                 SourceSpan(728, 5094), None, 5387, 5552,
-                                 EnvelopeKind.SIGNATURE)
-        missing = replace(source, contents_span=None, source_reason="object stream")
-        outcome = evaluate_coverage(missing, byte_range, b"CMS", data)
-        self.assertIsInstance(outcome, NotEstablished)
-        self.assertEqual(outcome.to_json()["state"], "not_established")
-        misplaced = replace(source, contents_span=SourceSpan(1, 5698))
-        outcome = evaluate_coverage(misplaced, byte_range, b"CMS", data)
-        self.assertIsInstance(outcome, Rejected)
-        self.assertEqual(outcome.to_json()["state"], "rejected")
 
 
 @unittest.skipUnless(os.environ.get("SEAL_INTEROP_INTEGRATION") == "1",

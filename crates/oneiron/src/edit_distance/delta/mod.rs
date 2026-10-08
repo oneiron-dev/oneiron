@@ -21,9 +21,13 @@
 //!   structured payloads, where "the survivor field changed" beats "eleven
 //!   characters moved".
 //! * [`DeltaSource::Reconstructed`] — two endpoint TEXTS diffed line by line
+//!   and then by character inside changed lines
 //!   ([`crate::edit_distance::myers`], ED-02). The lane of last resort: it is
 //!   the only one that works when an edit arrived out of band, with no op log
-//!   and no structured body, and the only one that can report a MOVE.
+//!   and no structured body.
+//!
+//! Both text lanes measure whitespace-collapsed text, so a layout-only edit
+//! scores zero, and both charge a moved line at the move discount.
 //!
 //! [`capture_delta_best`] pins the precedence `recorded_ops > field_diff >
 //! reconstructed` HERE, so no caller hand-picks a lane.
