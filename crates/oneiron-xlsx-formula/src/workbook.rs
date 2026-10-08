@@ -783,6 +783,12 @@ fn check_cells(xml: &Xml, strings: usize, refusal: &mut Option<Cow<'static, str>
 /// result as `t="str"`. `None` for a cached text with an escape the reader
 /// does not decode.
 fn text_caches(xml: &Xml, call: &str) -> Result<Vec<(String, Option<String>)>> {
+    fn group(formula: &Node) -> Option<u32> {
+        formula
+            .attr("si")
+            .filter(|_| formula.attr("t") == Some("shared"))
+            .and_then(|index| index.parse().ok())
+    }
     let mut caches = Vec::new();
     let Some((data, _)) = xml.child(0, MAIN, "sheetData")? else {
         return Ok(caches);
@@ -795,19 +801,17 @@ fn text_caches(xml: &Xml, call: &str) -> Result<Vec<(String, Option<String>)>> {
             }
         }
     }
-    fn group(formula: &Node) -> Option<&str> {
-        formula
-            .attr("si")
-            .filter(|_| formula.attr("t") == Some("shared"))
-    }
+    // Grouped as the writer groups them: by the index's number (`si="00"` is
+    // group 0), a formula of blank text a member.
+    let member = |formula: &Node| formula.text.trim().is_empty();
     let shared: BTreeMap<_, _> = cells
         .iter()
-        .filter(|(_, _, formula)| !formula.text.is_empty())
+        .filter(|(_, _, formula)| !member(formula))
         .filter_map(|(_, _, formula)| Some((group(formula)?, formula.text.as_str())))
         .collect();
     for (index, cell, formula) in &cells {
-        let text = if formula.text.is_empty() {
-            match group(formula).and_then(|group| shared.get(group)) {
+        let text = if member(formula) {
+            match group(formula).and_then(|group| shared.get(&group)) {
                 Some(anchor) => anchor,
                 None => continue,
             }

@@ -1234,8 +1234,9 @@ fn without_a_location_cell_filename_reads_the_one_excel_saved() {
         filename(""),
         filename("'file:///C:/Old/Book.xlsx'#$Result"),
         // Caches that disagree (review of this change): a shared formula's
-        // member before its anchor, and a cache the reader cannot decode.
-        r#"<c r="A1" t="str"><f t="shared" si="0"/><v>C:\New\[Plan.xlsx]Result</v></c><c r="B1" t="str"><f t="shared" ref="A1:B1" si="0">CELL(&quot;filename&quot;,$A$1)</f><v>C:\Old\[Book.xlsx]Result</v></c>"#.to_owned(),
+        // member before its anchor (its index spelled `00`, group 0 to the
+        // writer), and a cache the reader cannot decode.
+        r#"<c r="A1" t="str"><f t="shared" si="00"/><v>C:\New\[Plan.xlsx]Result</v></c><c r="B1" t="str"><f t="shared" ref="A1:B1" si="0">CELL(&quot;filename&quot;,$A$1)</f><v>C:\Old\[Book.xlsx]Result</v></c>"#.to_owned(),
         filename(r"C:\Old\[Book.xlsx]Result")
             + r#"<c r="B1" t="str"><f>CELL(&quot;filename&quot;,A1)</f><v>C:\New\[Bo_x006F_k.xlsx]Result</v></c>"#,
     ] {
