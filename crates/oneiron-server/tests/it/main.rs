@@ -9,5 +9,6 @@ mod mcp_booking;
 mod mcp_oracle;
 mod owner_backup;
 mod remote_pairing;
+mod reopen_after_restart;
 mod skills_pack;
 mod ws_sync;
