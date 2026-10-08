@@ -51,8 +51,8 @@ pub struct SessionReadSet {
     #[serde(default)]
     delivery_generation: u64,
     /// Settled outcomes delivered from past the point a full watch stopped
-    /// the cursor, by proposal ref and receipt count. Each leaves once the
-    /// cursor passes it.
+    /// the cursor, by proposal ref and the newest receipt count the delivered
+    /// outcome covered. Each leaves once the cursor passes it.
     #[serde(default)]
     delivered_ahead: BTreeMap<String, u64>,
 }
@@ -115,7 +115,9 @@ pub enum ChangedEvent {
     Connector {
         id: String,
         change: ConnectorChange,
-        mount: Option<ConnectorMount>,
+        /// The mount after an install or change; for a removal, the mount the
+        /// prefix last carried, so the row names its key whole.
+        mount: ConnectorMount,
     },
 }
 
@@ -127,7 +129,8 @@ pub struct ChangedDelivery {
     pub(super) generation: u64,
     /// The actor's submission count the fold read through.
     pub(super) proposal_count: Option<u64>,
-    /// Submissions the fold read, by count, oldest first.
+    /// Submissions the fold read, by count, oldest first: each receipt, so an
+    /// id read twice appears at both counts.
     pub(super) opened: Vec<(u64, String)>,
     /// Own proposals whose outcome this line rendered.
     pub(super) settled: Vec<String>,
@@ -223,10 +226,13 @@ impl SessionReadSet {
         self.delivery_generation
     }
 
-    /// Whether this receipt, not merely this proposal id, was delivered
-    /// already: a later submission under the same id is owed again.
+    /// Whether a delivered outcome already covered this receipt. An outcome
+    /// covers every receipt of its proposal its fold read, so only a later
+    /// submission under the same id is owed again.
     pub(super) fn delivered_ahead(&self, proposal: &str, count: u64) -> bool {
-        self.delivered_ahead.get(proposal) == Some(&count)
+        self.delivered_ahead
+            .get(proposal)
+            .is_some_and(|covered| count <= *covered)
     }
 
     pub(super) fn prefix_connectors(&self) -> Option<&BTreeMap<String, ConnectorMount>> {
@@ -274,7 +280,8 @@ impl SessionReadSet {
         if let Some(stop) = through {
             for (count, id) in &delivery.opened {
                 if *count > stop && delivery.settled.contains(id) {
-                    self.delivered_ahead.insert(id.clone(), *count);
+                    let covered = self.delivered_ahead.entry(id.clone()).or_default();
+                    *covered = (*covered).max(*count);
                 }
             }
         }
@@ -360,13 +367,9 @@ impl ChangedEvent {
                     ConnectorChange::Changed => "changed",
                     ConnectorChange::Removed => "removed",
                 };
-                let mut row = format!("{}: connector {kind}", token(id));
-                if let Some(mount) = mount {
-                    row.push_str(&format!(
-                        " key={} terms={}",
-                        token(&mount.key),
-                        token(&mount.fingerprint)
-                    ));
+                let mut row = format!("{}: connector {kind} key={}", token(id), token(&mount.key));
+                if *change != ConnectorChange::Removed {
+                    row.push_str(&format!(" terms={}", token(&mount.fingerprint)));
                 }
                 row
             }

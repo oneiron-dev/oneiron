@@ -77,9 +77,8 @@ impl SessionReadSet {
                 if self.delivered_ahead(&id, at) {
                     continue;
                 }
-                if read.insert(id.clone()) {
-                    delivery.opened.push((at, id));
-                }
+                read.insert(id.clone());
+                delivery.opened.push((at, id));
             }
             for id in read
                 .iter()
@@ -129,8 +128,9 @@ impl SessionReadSet {
             if kept.len() < cap && fits(&event.line()) {
                 match &event {
                     ChangedEvent::Proposal { id, .. } => delivery.settled.push(id.clone()),
-                    ChangedEvent::Connector { id, mount, .. } => {
-                        delivery.connectors.push((id.clone(), mount.clone()));
+                    ChangedEvent::Connector { id, change, mount } => {
+                        let mount = (*change != ConnectorChange::Removed).then(|| mount.clone());
+                        delivery.connectors.push((id.clone(), mount));
                     }
                 }
                 kept.push(event);
@@ -394,14 +394,14 @@ fn connector_changes(
         events.push(ChangedEvent::Connector {
             id: connector.clone(),
             change,
-            mount: Some(mount.clone()),
+            mount: mount.clone(),
         });
     }
-    for connector in prefix.keys().filter(|id| !mounts.contains_key(*id)) {
+    for (connector, held) in prefix.iter().filter(|(id, _)| !mounts.contains_key(*id)) {
         events.push(ChangedEvent::Connector {
             id: connector.clone(),
             change: ConnectorChange::Removed,
-            mount: None,
+            mount: held.clone(),
         });
     }
     events

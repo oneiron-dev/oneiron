@@ -1087,3 +1087,40 @@ async fn a_connector_installed_mid_epoch_rides_the_tail_until_the_next_keyframe(
     let after = board_mcp_call(&server, "rider-mcp", agent, "setup_oneiron", json!({})).await;
     assert!(!keyframe(&after).contains("connector installed"));
 }
+
+/// A connector's removal names the key it ran under whole, so two connectors
+/// whose long names share every byte the row keeps are still told apart.
+#[tokio::test]
+async fn a_removed_connector_is_named_by_its_whole_key() {
+    let (_dir, server) = auth_test_server();
+    let agent = seeded_test_entity_id(0x1021_0005);
+    let stem = "rider_mail_".repeat(30);
+    let (kept, removed) = (oneiron::EntityId::now(), oneiron::EntityId::now());
+    for (key, tail) in [(kept, "a"), (removed, "b")] {
+        server
+            .vault
+            .register_connector_key(
+                &key,
+                oneiron::connector_key::ConnectorKeyRecord::active(
+                    format!("{stem}{tail}"),
+                    None,
+                    Vec::new(),
+                    1,
+                ),
+            )
+            .unwrap();
+    }
+    // The first read sets the baseline both connectors are in.
+    assert!(agent_board(&server, agent, "removal").await.is_empty());
+    server.vault.revoke_connector_key(&removed, 2).unwrap();
+    let tail = agent_board(&server, agent, "removal").await;
+    let removals: Vec<_> = tail
+        .iter()
+        .filter(|row| row.contains(": connector removed"))
+        .collect();
+    assert_eq!(removals.len(), 1, "{tail:?}");
+    assert!(
+        removals[0].ends_with(&format!("key={}", removed.to_hex())),
+        "{tail:?}"
+    );
+}

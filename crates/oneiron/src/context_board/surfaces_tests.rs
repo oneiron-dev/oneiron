@@ -399,3 +399,80 @@ fn a_refused_later_write_never_answers_for_a_settled_proposal() -> crate::Result
     );
     Ok(())
 }
+
+/// A full watch stops the submission cursor. An outcome delivered past it
+/// covers every receipt of its proposal that the fold read, so it rides once;
+/// a later submission under the same id is owed once more, and then never
+/// again.
+#[test]
+fn an_outcome_delivered_past_a_full_watch_rides_once_per_submission() -> crate::Result<()> {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    use crate::gate::proposal_observation::{ProposalPolicySource, observe_submission_in_txn};
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let actor = id(7);
+    vault.put_entity(
+        &id(0x32),
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"subject",
+    )?;
+    let (open, declined) = (id(0x33), id(0x34));
+    for (claim, approval) in [
+        (open, ClaimApprovalStatus::Proposed),
+        (declined, ClaimApprovalStatus::Rejected),
+    ] {
+        let body = ClaimBody::new(
+            "note.topic",
+            ClaimSubject::Entity(id(0x32)),
+            rmpv::Value::from("harbor"),
+            1.0,
+            approval,
+            ClaimLifecycleStatus::Active,
+        )?;
+        vault.put_claim(&claim, &body, crate::TimeRange { start: 1, end: 1 }, 1)?;
+    }
+    let submit = |claim: EntityId| {
+        vault.with_write_txn(|txn| {
+            observe_submission_in_txn(
+                &vault.store,
+                txn,
+                actor,
+                &format!("claim:{}", claim.to_hex()),
+                ProposalPolicySource {
+                    threshold: u64::MAX,
+                    deciding_row: None,
+                    precedence_row: None,
+                    shipped_default_precedence: true,
+                },
+                true,
+            )
+        })
+    };
+    let wake = |session: &mut SessionReadSet| -> crate::Result<usize> {
+        let mut line = ChangedLine::default();
+        session.fold_own_changes(&vault, Some(actor), &mut line, 16)?;
+        session.acknowledge(&line);
+        Ok(line.events.len())
+    };
+    let watched: Vec<String> = (0..1024).map(|n| format!("claim:held{n}")).collect();
+    let mut session: SessionReadSet = serde_json::from_value(serde_json::json!({
+        "rows": {},
+        "loaded_skills": {},
+        "proposal_count": 0,
+        "own_proposals": watched,
+    }))
+    .unwrap();
+    // The open proposal finds no room in the watch, so the cursor stops
+    // before it. The declined one, submitted twice past it, rides once.
+    submit(open)?;
+    submit(declined)?;
+    submit(declined)?;
+    assert_eq!(wake(&mut session)?, 1);
+    assert_eq!(wake(&mut session)?, 0);
+    submit(declined)?;
+    assert_eq!(wake(&mut session)?, 1);
+    assert_eq!(wake(&mut session)?, 0);
+    assert_eq!(wake(&mut session)?, 0);
+    Ok(())
+}
