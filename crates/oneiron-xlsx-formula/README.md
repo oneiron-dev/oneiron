@@ -169,7 +169,7 @@ the fork branch, the rev and the patches.
 Nothing of formualizer is vendored here.
 
 The corpus rule (default only at or above LibreOffice on the same corpus) is met at fork
-rev `468a333b`: through the writer, all 2,967 scored fresh-Excel SpreadsheetBench
+rev `c6f1aee7`: through the writer, all 2,967 scored fresh-Excel SpreadsheetBench
 workbooks (truth recorded on Excel for Windows 16.0.20430; cells downstream of NOW/TODAY/RAND
 skipped) are fully Excel-identical (LibreOffice 25.8 matched 2,648 of the 2,951 it was measured
 on), and all 811 pinned native Excel goldens (recorded on Excel for Windows 16.0.20430; the
@@ -177,7 +177,7 @@ goldens reader resolves Excel's rich-value error caches since 2026-10-03), again
 LibreOffice's 753 (the unchanged evaluator scored 754). The comparison uses a pinned UTC
 instant; the edit round trip uses the caller's clock (above).
 
-The shipped adapter on the same corpus (2026-10-08, fork rev `468a333b`, `recalc_native` over
+The shipped adapter on the same corpus (2026-10-08, fork rev `c6f1aee7`, `recalc_native` over
 the 5,455 saved originals, 3,040 of them with formulas; the retained OPC reader admits their ZIP
 directory entries): 2,994 of the 3,040 formula workbooks (98.5%) recalculate natively, none is
 refused outright and 46 fall back: 15 for precision-as-displayed, 8 for linked-workbook forms the
