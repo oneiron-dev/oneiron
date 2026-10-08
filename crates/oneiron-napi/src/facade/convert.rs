@@ -13,7 +13,8 @@ use super::dtos::{
     NapiCalendarEventView, NapiCalendarRange, NapiCalendarSel, NapiClaimView, NapiCommitReceipt,
     NapiEntityRefReceipt, NapiEntityView, NapiGateReceipt, NapiMemoryItem, NapiMemoryPack,
     NapiMemoryProvenance, NapiReadReceipt, NapiReadScope, NapiRecallScope, NapiRetrievalMeta,
-    NapiScopeHonesty, NapiStructuralPutInput, NapiWitnessReceipt, NapiWitnessTurn,
+    NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint, NapiWitnessReceipt,
+    NapiWitnessTurn,
 };
 
 // ── conversions ─────────────────────────────────────────────────────────
@@ -340,6 +341,25 @@ pub(super) fn memory_pack_from_engine(
             )?,
             deep_pending: pack.retrieval_meta.deep_pending,
             partial: pack.retrieval_meta.partial,
+            temporal_hints: pack
+                .retrieval_meta
+                .temporal_hints
+                .into_iter()
+                .map(|hint| {
+                    Ok(NapiTemporalHint {
+                        phrase: hint.phrase,
+                        status: hint.status.as_str().to_owned(),
+                        start: hint
+                            .start
+                            .map(|start| ts_from_engine(start, "temporal hint start"))
+                            .transpose()?,
+                        end: hint
+                            .end
+                            .map(|end| ts_from_engine(end, "temporal hint end"))
+                            .transpose()?,
+                    })
+                })
+                .collect::<BoundaryResult<_>>()?,
         },
         pack_version: pack.pack_version,
         rendered: pack.rendered,

@@ -67,7 +67,7 @@ pub fn check_query(query: &str) -> Result<(), MemoryError> {
 }
 
 /// Latest reference time a recall may name: 9999-12-31T23:59:59Z.
-pub const MAX_AS_OF_SECONDS: u64 = 253_402_300_799;
+pub const MAX_AS_OF_SECONDS: u64 = crate::temporal::TEMPORAL_MAX_REFERENCE_SECS;
 
 /// Rejects a reference time past the calendar the temporal parser resolves.
 pub fn check_as_of(as_of: Option<u64>) -> Result<(), MemoryError> {

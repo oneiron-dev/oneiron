@@ -18,6 +18,9 @@ const TEMPORAL_SECONDS_PER_DAY: u64 = 86_400;
 const TEMPORAL_RECENT_DAYS: u64 = 7;
 /// Largest count a quantity phrase resolves to; larger numbers clamp here.
 const TEMPORAL_MAX_COUNT: u32 = 10_000;
+/// Latest reference time query hints resolve against: 9999-12-31T23:59:59Z.
+/// Past it, every hint is reported unresolved rather than resolved.
+pub const TEMPORAL_MAX_REFERENCE_SECS: u64 = 253_402_300_799;
 
 /// A unit a temporal phrase counts in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -234,6 +237,18 @@ pub enum TemporalHintStatus {
     Future,
 }
 
+impl TemporalHintStatus {
+    /// The wire spelling: `used`, `unresolved` or `future`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Used => "used",
+            Self::Unresolved => "unresolved",
+            Self::Future => "future",
+        }
+    }
+}
+
 /// One temporal phrase read from a query.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TemporalHintReport {
@@ -261,7 +276,7 @@ pub struct QueryTemporalHints {
 /// Never fails: a phrase the parser cannot resolve, or one that points after
 /// `now`, is reported and left out of the window, so retrieval runs on its
 /// other signals. Two or more usable phrases widen the window to cover them
-/// all.
+/// all. A `now` past [`TEMPORAL_MAX_REFERENCE_SECS`] resolves nothing.
 #[must_use]
 pub fn temporal_hints_from_query(query: &str, now: u64) -> QueryTemporalHints {
     let tokens = temporal_query_tokens(query);
@@ -269,10 +284,15 @@ pub fn temporal_hints_from_query(query: &str, now: u64) -> QueryTemporalHints {
     let mut index = 0;
     while index < tokens.len() {
         let Some((end, expression)) = hint_at(&tokens, index) else {
-            index += 1;
+            // Never restart inside a count that read as no time: `half a
+            // year` must not become `a year`.
+            index =
+                quantity_at(&tokens, index).map_or(index + 1, |(_, after)| after.max(index + 1));
             continue;
         };
-        let resolved = expression.map(|expression| (expression, expression.resolve(now)));
+        let resolved = expression
+            .filter(|_| now <= TEMPORAL_MAX_REFERENCE_SECS)
+            .map(|expression| (expression, expression.resolve(now)));
         let status = match resolved {
             None => TemporalHintStatus::Unresolved,
             Some((expression, range)) if expression.looks_ahead(range, now) => {
@@ -423,6 +443,9 @@ fn quantity_at(tokens: &[String], index: usize) -> Option<(Quantity, usize)> {
             .map_or(TEMPORAL_MAX_COUNT, |count| count.min(TEMPORAL_MAX_COUNT));
         return Some((Quantity::Count(count), skip_of(tokens, index + 1)));
     }
+    if token == "half" && matches!(tokens.get(index + 1).map(String::as_str), Some("a" | "an")) {
+        return Some((Quantity::Vague, skip_of(tokens, index + 2)));
+    }
     if matches!(token, "a" | "an") {
         match tokens.get(index + 1).map(String::as_str) {
             Some("couple" | "few" | "dozen" | "half") => index += 1,
@@ -451,7 +474,8 @@ fn skip_of(tokens: &[String], index: usize) -> usize {
 }
 
 /// Spelled-out numbers, added word by word (`twenty four` is 24), with
-/// `hundred` and `thousand` multiplying what came before.
+/// `hundred` and `thousand` multiplying what came before and `and` joining
+/// them (`one hundred and two`).
 fn number_words_at(tokens: &[String], index: usize) -> Option<(u32, usize)> {
     let mut total: u64 = 0;
     let mut current: u64 = 0;
@@ -460,6 +484,11 @@ fn number_words_at(tokens: &[String], index: usize) -> Option<(u32, usize)> {
         match (number_word(token), token) {
             (Some(value), _) => current += u64::from(value),
             (None, "hundred") if end > index => current *= 100,
+            (None, "and")
+                if end > index
+                    && tokens
+                        .get(end + 1)
+                        .is_some_and(|next| number_word(next).is_some()) => {}
             (None, "thousand") if end > index => {
                 total += current * 1_000;
                 current = 0;
@@ -859,6 +888,12 @@ mod tests {
                 (1_710_201_600, 1_710_287_999),
             ),
             (
+                "one hundred and two days ago",
+                "one hundred and two days ago",
+                Used,
+                (1_701_648_000, 1_701_734_399),
+            ),
+            (
                 "plans for next 2 weeks",
                 "next 2 weeks",
                 Future,
@@ -886,10 +921,16 @@ mod tests {
 
     #[test]
     fn query_hints_skip_what_they_cannot_resolve_and_cover_the_rest() {
-        let hints = temporal_hints_from_query("notes from the last several weeks", FROZEN_NOW);
-        assert_eq!(hints.range, None);
-        assert_eq!(hints.hints[0].phrase, "last several weeks");
-        assert_eq!(hints.hints[0].status, Unresolved);
+        for (query, phrase) in [
+            ("notes from the last several weeks", "last several weeks"),
+            ("the agreement from half a year ago", "half a year ago"),
+        ] {
+            let hints = temporal_hints_from_query(query, FROZEN_NOW);
+            assert_eq!(hints.range, None, "{query}");
+            assert_eq!(hints.hints.len(), 1, "{query}");
+            assert_eq!(hints.hints[0].phrase, phrase);
+            assert_eq!(hints.hints[0].status, Unresolved);
+        }
 
         let hints = temporal_hints_from_query("recent notes from yesterday", FROZEN_NOW);
         assert_eq!(
@@ -937,6 +978,13 @@ mod tests {
                 "{query}"
             );
         }
+    }
+
+    #[test]
+    fn query_hints_past_the_calendar_resolve_nothing() {
+        let hints = temporal_hints_from_query("notes from last month", u64::MAX);
+        assert_eq!(hints.range, None);
+        assert_eq!(hints.hints[0].status, Unresolved);
     }
 
     #[test]

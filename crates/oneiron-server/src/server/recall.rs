@@ -68,13 +68,19 @@ impl SyncServer {
 }
 
 /// Runs blocking work from a synchronous caller that may sit on a runtime
-/// worker. On the multi-thread runtime the worker hands its other tasks to
-/// another thread first; anywhere else the work simply runs.
-pub(crate) fn blocking<R>(work: impl FnOnce() -> R) -> R {
-    match tokio::runtime::Handle::try_current() {
-        Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
-            tokio::task::block_in_place(work)
-        }
-        _ => work(),
+/// worker. On a multi-thread runtime worker the worker hands its other tasks
+/// to another thread first; inside a current-thread runtime the work runs on
+/// a thread of its own, outside the async context; anywhere else it simply
+/// runs. Not for use inside a `LocalSet`, which the server never runs.
+pub(crate) fn blocking<R: Send>(work: impl FnOnce() -> R + Send) -> R {
+    match tokio::runtime::Handle::try_current().map(|handle| handle.runtime_flavor()) {
+        Ok(tokio::runtime::RuntimeFlavor::MultiThread) => tokio::task::block_in_place(work),
+        Ok(_) => std::thread::scope(|scope| {
+            scope
+                .spawn(work)
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+        }),
+        Err(_) => work(),
     }
 }

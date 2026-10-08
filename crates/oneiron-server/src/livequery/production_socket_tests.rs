@@ -231,7 +231,14 @@ async fn production_socket_reads_and_subscribes_then_receives_materialized_engin
         .unwrap()
         .unwrap();
     let pinned_ref = format!("{}@{}", witnessed.message_short_ids[0], revision.to_hex());
-    assert_eq!(initial["result"][0]["short_id"], pinned_ref);
+    assert_eq!(
+        initial["result"][0]["short_id"],
+        witnessed.message_short_ids[0]
+    );
+    assert_eq!(
+        initial["result"][0]["source_revision_ref"],
+        revision.to_hex()
+    );
     send(
         &mut socket,
         TAG_RPC,

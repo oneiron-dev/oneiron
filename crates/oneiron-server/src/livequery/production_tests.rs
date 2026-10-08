@@ -706,7 +706,7 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
             .commit()
             .unwrap();
         let revision = server.vault().indexed_revision(&id).unwrap().unwrap();
-        expected.push(format!("{}@{}", receipt.claim_short_id, revision.to_hex()));
+        expected.push((receipt.claim_short_id, revision.to_hex()));
     }
     // More than 1,000 base-scope decoys outrank both targets even when
     // Light widens lexical admission for its temporal anchor and blends
@@ -725,7 +725,7 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
     assert!(
         !old.items
             .iter()
-            .any(|item| expected.contains(&item.short_id)),
+            .any(|item| expected.iter().any(|(id, _)| *id == item.short_id)),
         "unfiltered recall returned a filtered match among {} items ({} candidates)",
         old.items.len(),
         old.retrieval_meta.total_candidates,
@@ -749,14 +749,19 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
         let rows = derived.value.as_array().unwrap();
         let ids: Vec<_> = rows
             .iter()
-            .map(|row| row["short_id"].as_str().unwrap())
+            .map(|row| {
+                (
+                    row["short_id"].as_str().unwrap(),
+                    row["source_revision_ref"].as_str().unwrap(),
+                )
+            })
             .collect();
         assert_eq!(
             ids,
             expected
                 .iter()
                 .take(limit)
-                .map(String::as_str)
+                .map(|(id, revision)| (id.as_str(), revision.as_str()))
                 .collect::<Vec<_>>()
         );
         assert!(rows.iter().all(|row| row["world"].is_null()));

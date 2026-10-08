@@ -467,6 +467,7 @@ impl Memory<'_> {
         if limit == 0 {
             return Err(MemoryError::bad_request("recall limit must be at least 1"));
         }
+        crate::memory::caps::check_as_of(execution.as_of)?;
         if let Some(session) = session {
             // A session handle names a room in ONE store, and this facade's
             // vault is an independent borrow — nothing in the lifetimes ties

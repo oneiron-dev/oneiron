@@ -611,6 +611,21 @@ pub struct RetrievalMeta {
     pub deep_pending: Option<bool>,
     /// Retrieval ended before all requested stages completed.
     pub partial: bool,
+    /// Time phrases read from the query and what recall did with each.
+    pub temporal_hints: Vec<TemporalHint>,
+}
+
+/// One time phrase read from a recall query.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct TemporalHint {
+    /// The phrase, lowercased with punctuation dropped.
+    pub phrase: String,
+    /// `used` narrowed the window; `unresolved` and `future` were skipped.
+    pub status: String,
+    /// Inclusive Unix-second start, when the phrase resolved.
+    pub start: Option<u64>,
+    /// Inclusive Unix-second end, when the phrase resolved.
+    pub end: Option<u64>,
 }
 
 /// The versioned memory pack returned by `recall`.
