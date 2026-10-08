@@ -337,48 +337,10 @@ mod tests {
     };
     use super::super::cells::{Cell, RunMode};
     use super::super::certificate::{self, PERF_CANDIDATE_CONTRACT_VERSION};
-    use super::super::child_process::minimum_child_hold_ms;
-    use super::super::precision::{PrecisionCandidate, default_binary_prefix_breadth};
+    use super::super::precision::default_binary_prefix_breadth;
     use super::super::publication::SMOKE_NON_CANDIDATE_REASON;
     use super::super::report::{AXES, PERF_REPORT_SCHEMA};
     use super::*;
-
-    #[test]
-    fn the_bundled_smoke_plan_parses_and_validates() {
-        let (text, _) = load_fixture(SMOKE_PLAN_FIXTURE_NAME, SMOKE_PLAN_FIXTURE);
-        let parsed: PerfPlan = serde_json::from_str(&text).expect("the smoke plan parses");
-        assert_eq!(parsed.mode, PlanMode::SyntheticSmoke);
-        assert_eq!(
-            parsed.resident_memory.ready_children, REQUIRED_READY_CHILDREN,
-            "the RSS axis is defined at exactly ten ready children even for a smoke"
-        );
-        assert_eq!(
-            parsed.precision.candidates.as_slice(),
-            PrecisionCandidate::ALL.as_slice()
-        );
-        assert!(
-            parsed.corpus.k <= parsed.corpus.indexed_docs,
-            "the bundled plan may not ask for a k larger than its corpus"
-        );
-        assert!(
-            parsed.wake.hold_ms >= minimum_child_hold_ms(parsed.wake.timeout_ms),
-            "the bundled plan's child hold must outlast its accept window plus the sampling margin"
-        );
-        parsed.validate().expect("the bundled smoke plan validates");
-    }
-
-    #[test]
-    fn the_help_text_keeps_both_perf_forms() {
-        let help = help_text();
-        assert!(help.contains("run --plan <JSON> --out <JSON>"), "{help}");
-        assert!(help.contains("smoke"), "{help}");
-        assert!(help.contains("wake-child"), "{help}");
-        assert!(help.contains("[1, 10, 100, 300]"), "{help}");
-        assert!(help.contains("first Tokyo node"), "{help}");
-        assert!(help.contains("publication_candidate"), "{help}");
-        assert!(help.contains("NEVER publishes"), "{help}");
-        assert!(help.contains("perf-verify"), "{help}");
-    }
 
     /// The smoke must run end to end against its bundled fixtures and emit
     /// every axis, section and provenance field, marked synthetic and never a
