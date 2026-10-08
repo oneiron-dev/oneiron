@@ -12,6 +12,7 @@ mod counterparty;
 mod reads;
 mod skills;
 mod tasks;
+mod worlds;
 
 /// A write to the live vault since the backup.
 type Write = Box<dyn FnOnce(&Vault) -> Result<()>>;
@@ -81,6 +82,7 @@ const CASES: &[fn() -> Result<Case>] = &[
     consent::booking_publications,
     consent::principal_autonomy,
     consent::esign_ceremonies,
+    worlds::world_selection_authority,
 ];
 
 #[test]

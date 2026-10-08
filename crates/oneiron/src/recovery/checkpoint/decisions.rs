@@ -29,6 +29,7 @@ mod counterparty;
 mod reads;
 mod skills;
 mod tasks;
+mod worlds;
 
 /// One decision the engine makes from rows a restore can change.
 trait Decision {
@@ -132,6 +133,10 @@ const DECISIONS: &[(&str, Check)] = &[
     (
         "e-sign ceremony states",
         loosened::<consent::EsignCeremonies>,
+    ),
+    (
+        "world selection authority",
+        loosened::<worlds::WorldSelections>,
     ),
 ];
 
