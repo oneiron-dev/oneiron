@@ -168,28 +168,25 @@ pub(crate) fn submission_count_in_txn(
     Ok(read_row(COUNT.get(store, txn, &actor))?.map_or(0, |row| row.count))
 }
 
-/// This actor's submission count, and the distinct proposal refs it
-/// submitted at counts in `(after, after + limit]`, oldest first. The
-/// immutable history is the authority: only the envelope actor's own
-/// proposals were ever written under its key.
+/// The proposal refs this actor submitted at counts in `(after, after +
+/// limit]`, oldest first, each with its count. The immutable history is the
+/// authority: only the envelope actor's own proposals were written under its
+/// key. A changed body appears again at its new count.
 pub(crate) fn submissions_after_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
     after: u64,
     limit: usize,
-) -> Result<(u64, Vec<String>)> {
-    let count = submission_count_in_txn(store, txn, actor)?;
-    let last = count.min(after.saturating_add(limit as u64));
-    let mut refs = Vec::new();
-    for at in after.saturating_add(1)..=last {
-        let receipt = read_row(HISTORY.get(store, txn, &HistoryKey { actor, count: at }))?
-            .ok_or(Error::CorruptedIndex("proposal receipt history"))?;
-        if !refs.contains(&receipt.proposal_ref) {
-            refs.push(receipt.proposal_ref);
-        }
-    }
-    Ok((count, refs))
+) -> Result<Vec<(u64, String)>> {
+    let last = submission_count_in_txn(store, txn, actor)?.min(after.saturating_add(limit as u64));
+    (after.saturating_add(1)..=last)
+        .map(|count| {
+            read_row(HISTORY.get(store, txn, &HistoryKey { actor, count }))?
+                .map(|receipt| (count, receipt.proposal_ref))
+                .ok_or(Error::CorruptedIndex("proposal receipt history"))
+        })
+        .collect()
 }
 
 impl Vault {

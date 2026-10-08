@@ -886,36 +886,76 @@ async fn settle_run(server: &Arc<SyncServer>, run_id: &str, action: &str) {
 
 /// ARCH-0067: the changed line carries this agent's own proposals that moved,
 /// with the answer by reference, and a rejection arrives with its diagnostic
-/// on the next wake. Another agent's proposal never rides it.
+/// on the next wake, once. Another agent's proposal never rides it.
 #[tokio::test]
 async fn own_proposal_outcome_rides_the_next_board_read_once() {
     let (_dir, server) = auth_test_server();
     let agent = seeded_test_entity_id(0x1021_0001);
     let stranger = seeded_test_entity_id(0x1021_0002);
-    let own = server
-        .vault
-        .park_run_proposal_for_test("rider-own", agent, oneiron::EntityId::now(), "one")
-        .unwrap();
-    let foreign = server
-        .vault
-        .park_run_proposal_for_test("rider-foreign", stranger, oneiron::EntityId::now(), "two")
-        .unwrap();
-    // The first read sets this session's baseline while the proposal is open.
-    assert!(agent_board(&server, agent, "rider").await.is_empty());
+    let park = |run: &str, author: oneiron::EntityId, value: &str| {
+        server
+            .vault
+            .park_run_proposal_for_test(run, author, oneiron::EntityId::now(), value)
+            .unwrap()
+    };
+    // Settled before the session ever read a board: still owed to it.
+    let early = park("rider-early", agent, "zero");
+    settle_run(&server, "rider-early", "decline").await;
+    let own = park("rider-own", agent, "one");
+    let foreign = park("rider-foreign", stranger, "two");
+    let rejected =
+        |id: oneiron::EntityId| format!("claim:{}: rejected why=word:bundle:", id.to_hex());
+    let first = agent_board(&server, agent, "rider").await;
+    assert_eq!(first.len(), 2, "{first:?}");
+    assert!(first[1].starts_with(&rejected(early)), "{first:?}");
+    assert!(first[1].contains(" diagnostic="), "{first:?}");
     settle_run(&server, "rider-own", "decline").await;
     settle_run(&server, "rider-foreign", "decline").await;
     let changed = agent_board(&server, agent, "rider").await;
     assert_eq!(changed.len(), 2, "{changed:?}");
     assert_eq!(changed[0], "changed[1:]{id,to}:");
-    let row = &changed[1];
-    assert!(
-        row.starts_with(&format!("claim:{}: rejected why=", own.to_hex())),
-        "{row}"
-    );
-    assert!(row.contains(" diagnostic="), "{row}");
-    assert!(!row.contains(&foreign.to_hex()));
+    assert!(changed[1].starts_with(&rejected(own)), "{changed:?}");
+    assert!(changed[1].contains(" diagnostic="), "{changed:?}");
+    assert!(!changed.iter().any(|row| row.contains(&foreign.to_hex())));
     // Delivered once: the next wake has nothing new to say.
     assert!(agent_board(&server, agent, "rider").await.is_empty());
+}
+
+/// The epoch a keyframe returns stays the board's after its rider is
+/// delivered: delivering an outcome is not a change to the board.
+#[tokio::test]
+async fn delivering_an_outcome_keeps_the_returned_epoch_current() {
+    let (_dir, server) = auth_test_server();
+    let agent = seeded_test_entity_id(0x1021_0005);
+    register_mcp_actor(
+        &server,
+        "rider-epoch",
+        agent,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    board_mcp_call(&server, "rider-epoch", agent, "setup_oneiron", json!({})).await;
+    server
+        .vault
+        .park_run_proposal_for_test("rider-epoch", agent, oneiron::EntityId::now(), "one")
+        .unwrap();
+    board_mcp_call(&server, "rider-epoch", agent, "setup_oneiron", json!({})).await;
+    settle_run(&server, "rider-epoch", "decline").await;
+    let setup = board_mcp_call(&server, "rider-epoch", agent, "setup_oneiron", json!({})).await;
+    let board = &setup["result"]["structuredContent"]["board"];
+    assert!(
+        board["keyframe"].as_str().unwrap().contains(": rejected"),
+        "{board}"
+    );
+    let epoch = board["epoch"].as_u64().unwrap();
+    board_mcp_call(
+        &server,
+        "rider-epoch",
+        agent,
+        "board.expand",
+        json!({"key": "VERBS", "frame_epoch": epoch}),
+    )
+    .await;
 }
 
 /// A full cap of older outcomes cannot hold a rejection back, and whatever

@@ -294,7 +294,7 @@ fn a_restored_checkpoint_cannot_push_the_rider_past_the_row_byte_limit() {
     }))
     .unwrap();
     let mut line = ChangedLine {
-        rows: vec![(huge.clone(), ServedLifecycle::Superseded(huge.clone()))],
+        rows: vec![(huge.clone(), ServedLifecycle::Superseded(huge))],
         ..ChangedLine::default()
     };
     session
@@ -314,4 +314,88 @@ fn a_restored_checkpoint_cannot_push_the_rider_past_the_row_byte_limit() {
         panic!("delta")
     };
     assert!(delta[0].line.len() <= MAX_BOARD_ROW_BYTES);
+}
+
+/// A settled proposal is answered by the receipt that settled it. A later
+/// write under the same id that the gate refused leaves the body as it was,
+/// so its rule and diagnostic never ride as the answer.
+#[test]
+fn a_refused_later_write_never_answers_for_a_settled_proposal() -> crate::Result<()> {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    use crate::store::{GateDecisionId, GateDecisionRecord};
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let claim = id(0x21);
+    vault.put_entity(
+        &id(0x22),
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"subject",
+    )?;
+    let body = ClaimBody::new(
+        "note.topic",
+        ClaimSubject::Entity(id(0x22)),
+        rmpv::Value::from("harbor"),
+        1.0,
+        ClaimApprovalStatus::Rejected,
+        ClaimLifecycleStatus::Active,
+    )?;
+    vault.put_claim(&claim, &body, crate::TimeRange { start: 1, end: 1 }, 1)?;
+    let decision = |outcome: &str, reason: &str, grant: Option<&str>, row: Option<&str>| {
+        Ok::<_, crate::Error>(GateDecisionRecord {
+            version: 0,
+            decision_id: GateDecisionId::from_bytes(vault.store.clock.ulid()?),
+            created_at: 2,
+            outcome: outcome.to_owned(),
+            reason_codes: vec![reason.to_owned()],
+            receipt_reasons: row
+                .map(|row| format!("policy_row_{row}"))
+                .into_iter()
+                .collect(),
+            system_notices: Vec::new(),
+            actor_class: "agent".to_owned(),
+            actor_ref: Some(id(7).to_hex()),
+            content_kind: "claim".to_owned(),
+            policy_manifest_version: "v0".to_owned(),
+            claim_id: Some(*claim.as_bytes()),
+            grant_ref: grant.map(str::to_owned),
+            diff_handle: vec![0xA5],
+            read_frontier_hash: [0; 32],
+            redacted_at: None,
+        })
+    };
+    let declined = decision(
+        "rejected",
+        "gate.consent.bundle.reject",
+        Some("bundle:declined"),
+        None,
+    )?;
+    let refused = decision("deny", "gate.deny.actor_ceiling", None, Some("later"))?;
+    vault.with_write_txn(|wtxn| {
+        vault.store.append_gate_decision_in_txn(wtxn, &declined)?;
+        vault.store.append_gate_decision_in_txn(wtxn, &refused)
+    })?;
+
+    let session: SessionReadSet = serde_json::from_value(serde_json::json!({
+        "rows": {},
+        "loaded_skills": {},
+        "proposal_count": 0,
+        "own_proposals": [format!("claim:{}", claim.to_hex())],
+    }))
+    .unwrap();
+    let mut line = ChangedLine::default();
+    session.fold_own_changes(&vault, Some(id(7)), &mut line, 16)?;
+    let [ChangedEvent::Proposal { change, .. }] = line.events.as_slice() else {
+        panic!("one settled proposal rides: {:?}", line.events);
+    };
+    assert_eq!(change.to, "rejected");
+    assert_eq!(
+        change.reason,
+        Some(ProposalReason::PersonWord("bundle:declined".to_owned()))
+    );
+    assert_eq!(
+        change.diagnostic.as_deref(),
+        Some("gate.consent.bundle.reject")
+    );
+    Ok(())
 }

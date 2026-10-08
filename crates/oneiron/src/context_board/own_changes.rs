@@ -14,20 +14,29 @@ use crate::connector_key::ConnectorKeyStatus;
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONNECTOR_KEY};
 use crate::{EntityId, Result, Vault};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-/// Recent submissions a session's first fold scans for proposals still open.
+/// Recent submissions a session's first fold reads. Their outcomes are
+/// delivered too: a session never assumes it already knew one.
 const BASELINE_SUBMISSIONS: u64 = 64;
 /// New submissions one fold reads; later ones wait for the next fold.
 const SUBMISSIONS_PER_FOLD: usize = 256;
 /// The rider's header and overflow lines.
-const RIDER_FRAME_BYTES: usize = 64;
+const RIDER_FRAME_BYTES: usize = 128;
+
+/// A settled own proposal, before its answer is looked up.
+struct Settled {
+    id: String,
+    claim: EntityId,
+    to: &'static str,
+}
 
 impl SessionReadSet {
     /// Fold this session's own proposal outcomes and connector changes into
-    /// `line`. They render ahead of its lifecycle rows and share `cap` with
-    /// them, and every row of the rider stays inside the board row-byte limit.
-    /// The fold is read-only: what it delivers moves only on `acknowledge`.
+    /// `line`. One count cap covers them and the lifecycle rows, and the whole
+    /// rider, install receipts included, fits the one board row a STREAM
+    /// delta joins it into. Rejections come first. The fold is read-only:
+    /// what it delivers moves only on `acknowledge`.
     pub fn fold_own_changes(
         &self,
         vault: &Vault,
@@ -36,106 +45,112 @@ impl SessionReadSet {
         cap: usize,
     ) -> Result<()> {
         let txn = vault.store.env.read_txn()?;
-        let mut events = Vec::new();
-        let mut delivery = ChangedDelivery::default();
+        let mut delivery = ChangedDelivery {
+            generation: self.delivery_generation(),
+            ..ChangedDelivery::default()
+        };
+        let mut settled = Vec::new();
+        let mut connectors = Vec::new();
         if let Some(actor) = actor {
             let (seen, watched) = self.own_proposals();
-            let (count, fresh) = match seen {
-                // A session's first fold sets its baseline and only picks up
-                // the recent proposals still open, never old outcomes.
-                None => {
-                    let count = crate::gate::proposal_observation::submission_count_in_txn(
-                        &vault.store,
-                        &txn,
-                        actor,
-                    )?;
-                    crate::gate::proposal_observation::submissions_after_in_txn(
-                        &vault.store,
-                        &txn,
-                        actor,
-                        count.saturating_sub(BASELINE_SUBMISSIONS),
-                        BASELINE_SUBMISSIONS as usize,
-                    )?
-                }
-                Some(seen) => crate::gate::proposal_observation::submissions_after_in_txn(
+            let after = match seen {
+                Some(seen) => seen,
+                None => crate::gate::proposal_observation::submission_count_in_txn(
                     &vault.store,
                     &txn,
                     actor,
-                    seen,
-                    SUBMISSIONS_PER_FOLD,
-                )?,
+                )?
+                .saturating_sub(BASELINE_SUBMISSIONS),
             };
-            delivery.proposal_count = Some(match seen {
-                None => count,
-                Some(seen) => count.min(seen.saturating_add(SUBMISSIONS_PER_FOLD as u64)),
-            });
-            for id in &fresh {
-                match proposal_outcome(vault, &txn, id)? {
-                    Some(change) if seen.is_some() => {
-                        delivery.opened.push(id.clone());
-                        events.push(ChangedEvent::Proposal {
-                            id: id.clone(),
-                            change,
-                        });
-                    }
-                    Some(_) => {}
-                    None => delivery.opened.push(id.clone()),
+            let fresh = crate::gate::proposal_observation::submissions_after_in_txn(
+                &vault.store,
+                &txn,
+                actor,
+                after,
+                SUBMISSIONS_PER_FOLD,
+            )?;
+            delivery.proposal_count = Some(fresh.last().map_or(after, |(at, _)| *at));
+            let mut read = BTreeSet::new();
+            for (at, id) in fresh {
+                if read.insert(id.clone()) {
+                    delivery.opened.push((at, id));
                 }
             }
-            let fresh_ids: std::collections::BTreeSet<&String> = fresh.iter().collect();
-            for id in watched.iter().filter(|id| !fresh_ids.contains(id)) {
-                if let Some(change) = proposal_outcome(vault, &txn, id)? {
-                    events.push(ChangedEvent::Proposal {
+            for id in read
+                .iter()
+                .chain(watched.iter().filter(|id| !read.contains(*id)))
+            {
+                if let Some((claim, to)) = proposal_state(vault, &txn, id)? {
+                    settled.push(Settled {
                         id: id.clone(),
-                        change,
+                        claim,
+                        to,
                     });
                 }
             }
             let mounts = connector_mounts(vault, &txn, actor)?;
             if let Some(prefix) = self.prefix_connectors() {
-                events.extend(connector_changes(prefix, &mounts));
+                connectors = connector_changes(prefix, &mounts);
             }
             delivery.mounts = Some(mounts);
         }
-        events.sort_by_key(ChangedEvent::rank);
+        // Rejections first, so no tail of other outcomes keeps a diagnostic
+        // off the next wake. Answers are looked up only for what can ride.
+        settled.sort_by_key(|proposal| proposal.to != "rejected");
+        let mut held = settled.len().saturating_sub(cap);
+        settled.truncate(cap);
+        let mut events = settled
+            .into_iter()
+            .map(|proposal| {
+                Ok(ChangedEvent::Proposal {
+                    change: proposal_answer(vault, &txn, proposal.claim, proposal.to)?,
+                    id: proposal.id,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        events.extend(connectors);
 
-        // One count cap for the whole rider, and one row-byte budget: a STREAM
-        // delta joins every rendered line into a single row. Install receipts
-        // keep their own rows; the header and overflow lines are reserved.
-        let installs = ChangedLine {
-            install_rows: line.install_rows.clone(),
-            install_overflow: line.install_overflow,
-            ..ChangedLine::default()
+        let mut budget = MAX_BOARD_ROW_BYTES.saturating_sub(RIDER_FRAME_BYTES);
+        let mut fits = |row: &str| {
+            let size = row.len() + 1;
+            let fits = size <= budget;
+            if fits {
+                budget -= size;
+            }
+            fits
         };
-        let reserved = RIDER_FRAME_BYTES
-            + installs
-                .render()
-                .iter()
-                .map(|row| row.len() + 1)
-                .sum::<usize>();
-        let mut budget = MAX_BOARD_ROW_BYTES.saturating_sub(reserved);
-        let mut held = 0;
         let mut kept = Vec::new();
         for event in events {
-            let size = event.line().len() + 1;
-            if kept.len() < cap && size <= budget {
-                budget -= size;
+            if kept.len() < cap && fits(&event.line()) {
+                match &event {
+                    ChangedEvent::Proposal { id, .. } => delivery.settled.push(id.clone()),
+                    ChangedEvent::Connector { id, mount, .. } => {
+                        delivery.connectors.push((id.clone(), mount.clone()));
+                    }
+                }
                 kept.push(event);
             } else {
                 held += 1;
             }
         }
-        for event in &kept {
-            if let ChangedEvent::Proposal { id, .. } = event {
-                delivery.settled.push(id.clone());
+        // Install receipts keep their own rows and cap, inside the same row.
+        let mut installs = Vec::new();
+        for receipt in std::mem::take(&mut line.install_rows) {
+            let single = ChangedLine {
+                install_rows: vec![receipt.clone()],
+                ..ChangedLine::default()
+            };
+            if single.render().get(1).is_some_and(|row| fits(row)) {
+                installs.push(receipt);
+            } else {
+                line.install_overflow += 1;
             }
         }
+        line.install_rows = installs;
         let rows = cap.saturating_sub(kept.len());
         let mut fitted = Vec::new();
         for (id, state) in std::mem::take(&mut line.rows) {
-            let size = lifecycle_line(&id, &state).len() + 1;
-            if fitted.len() < rows && size <= budget {
-                budget -= size;
+            if fitted.len() < rows && fits(&lifecycle_line(&id, &state)) {
                 fitted.push((id, state));
             } else {
                 held += 1;
@@ -149,12 +164,12 @@ impl SessionReadSet {
     }
 }
 
-/// The settled outcome of one own proposal, or `None` while it is still open.
-fn proposal_outcome(
+/// An own proposal's settled state, or `None` while it is still open.
+fn proposal_state(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     proposal: &str,
-) -> Result<Option<ProposalChange>> {
+) -> Result<Option<(EntityId, &'static str)>> {
     // Only claim proposals carry submission receipts today.
     let Some(id) = proposal
         .strip_prefix("claim:")
@@ -162,34 +177,51 @@ fn proposal_outcome(
     else {
         return Ok(None);
     };
-    let erased = || ProposalChange {
-        to: "erased".to_owned(),
-        reason: None,
-        diagnostic: None,
+    let body = vault
+        .store
+        .port_entity_record(txn, &id)?
+        .filter(|record| record.entity_type == ENTITY_TYPE_CLAIM)
+        .and_then(|record| crate::claim::decode_claim_body(&record.body, true).ok());
+    let Some(body) = body else {
+        return Ok(Some((id, "erased")));
     };
-    let Some(record) = vault.store.port_entity_record(txn, &id)? else {
-        return Ok(Some(erased()));
-    };
-    if record.entity_type != ENTITY_TYPE_CLAIM {
-        return Ok(Some(erased()));
-    }
-    let Ok(body) = crate::claim::decode_claim_body(&record.body, true) else {
-        return Ok(Some(erased()));
-    };
-    let to = match (body.approval, body.lifecycle) {
-        (ClaimApprovalStatus::Rejected, _) => "rejected",
-        (_, ClaimLifecycleStatus::Retracted) => "retracted",
-        (_, ClaimLifecycleStatus::Superseded) => "superseded",
-        (ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto, _) => "approved",
-        (ClaimApprovalStatus::Proposed, ClaimLifecycleStatus::Active) => return Ok(None),
-    };
-    // The newest claim-bound receipt answered it: the policy row it cites,
-    // or the receipt itself, which names who decided.
+    Ok(Some((
+        id,
+        match (body.approval, body.lifecycle) {
+            (ClaimApprovalStatus::Rejected, _) => "rejected",
+            (_, ClaimLifecycleStatus::Retracted) => "retracted",
+            (_, ClaimLifecycleStatus::Superseded) => "superseded",
+            (ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto, _) => "approved",
+            (ClaimApprovalStatus::Proposed, ClaimLifecycleStatus::Active) => return Ok(None),
+        },
+    )))
+}
+
+/// Who or what answered a settled proposal, by reference: the owner's
+/// resolution when one decided it, the policy row it cites, or the receipt.
+/// The answer is the newest receipt that records this settlement. A later
+/// write under the same id that the gate refused or held leaves the body as
+/// it was, so its receipt never answers for it.
+fn proposal_answer(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    claim: EntityId,
+    to: &'static str,
+) -> Result<ProposalChange> {
     let decision = vault
         .store
-        .gate_decisions_for_claim_in_txn(txn, id.as_bytes())?
-        .pop();
+        .gate_decisions_for_claim_in_txn(txn, claim.as_bytes())?
+        .into_iter()
+        .rev()
+        .find(|decision| settles(&decision.outcome, to));
     let reason = decision.as_ref().map(|decision| {
+        if let Some(resolution) = decision
+            .grant_ref
+            .as_deref()
+            .filter(|grant| grant.starts_with("bundle:"))
+        {
+            return ProposalReason::PersonWord(resolution.to_owned());
+        }
         decision
             .receipt_reasons
             .iter()
@@ -202,70 +234,116 @@ fn proposal_outcome(
     let diagnostic = (to == "rejected").then(|| match &decision {
         Some(decision) if !decision.reason_codes.is_empty() => decision.reason_codes.join(","),
         Some(_) => "rejected with no reason code".to_owned(),
-        None => "rejected with no gate receipt".to_owned(),
+        None => "rejected with no settling receipt".to_owned(),
     });
-    Ok(Some(ProposalChange {
+    Ok(ProposalChange {
         to: to.to_owned(),
         reason,
         diagnostic,
-    }))
+    })
 }
 
-/// The live connector mounts that govern `actor`, by connector: an exact
-/// actor key wins over an actor-agnostic one, as in effect admission.
+/// Whether a receipt with `outcome` records a settlement to `to`. Approval
+/// is an admitted write or an owner's acceptance; rejection is only ever an
+/// owner's decline; a retraction or supersession is an admitted write.
+fn settles(outcome: &str, to: &str) -> bool {
+    match to {
+        "approved" => matches!(
+            outcome,
+            "allow" | "approved" | crate::edit_distance::delta::OUTCOME_APPROVED_AMENDED
+        ),
+        "rejected" => outcome == "rejected",
+        _ => outcome == "allow",
+    }
+}
+
+/// The live connector mounts that govern `actor`, by connector. Each
+/// connector resolves to its governing key exactly as effect admission does;
+/// it is a mount only while that key is active.
 fn connector_mounts(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
 ) -> Result<BTreeMap<String, ConnectorMount>> {
-    let mut mounts: BTreeMap<String, (bool, ConnectorMount)> = BTreeMap::new();
+    let mut connectors = BTreeSet::new();
     for row in vault
         .store
         .port_entity_ids_by_type(txn, ENTITY_TYPE_CONNECTOR_KEY, None)?
     {
-        let key = row?;
-        let Some(record) = vault.store.port_entity_record(txn, &key)? else {
+        let Some(record) = vault.store.port_entity_record(txn, &row?)? else {
             continue;
         };
-        let mut record = crate::connector_key::decode_connector_key_body(&record.body)?;
-        let exact = match record.actor_entity_ref {
-            Some(bound) if bound == actor => true,
-            Some(_) => continue,
-            None => false,
+        let record = crate::connector_key::decode_connector_key_body(&record.body)?;
+        if record.actor_entity_ref.is_none_or(|bound| bound == actor) {
+            connectors.insert(record.connector);
+        }
+    }
+    let mut mounts = BTreeMap::new();
+    for connector in connectors {
+        let Some((key, record)) = crate::connector_key::governing_connector_key(
+            &vault.store,
+            txn,
+            &connector,
+            Some(&actor),
+        )?
+        else {
+            continue;
         };
-        if record.status != ConnectorKeyStatus::Active
-            || mounts
-                .get(&record.connector)
-                .is_some_and(|(held, _)| *held && !exact)
-        {
+        if record.status != ConnectorKeyStatus::Active {
             continue;
         }
-        // The terms a call runs under, without bookkeeping that moves while
-        // they hold: status clocks, rotation, suggestions and pending stages.
-        record.status_changed_at = None;
-        record.suspended_reason = None;
-        record.key_generation = 0;
-        record.suggested_budgets.clear();
-        record.pending_charter = None;
-        record.pending_manifest = None;
-        record.consent_required = false;
-        let terms = crate::connector_key::encode_connector_key_body(&record)?;
-        let fingerprint = blake3::hash(&terms).to_hex()[..16].to_owned();
         mounts.insert(
-            record.connector.clone(),
-            (
-                exact,
-                ConnectorMount {
-                    key: key.to_hex(),
-                    fingerprint,
-                },
-            ),
+            connector,
+            ConnectorMount {
+                key: key.to_hex(),
+                fingerprint: connector_terms(vault, txn, record)?,
+            },
         );
     }
-    Ok(mounts
-        .into_iter()
-        .map(|(connector, (_, mount))| (connector, mount))
-        .collect())
+    Ok(mounts)
+}
+
+/// A fingerprint of the terms a call runs under: the retained manifest, any
+/// drift that holds tools for confirmation, the live slate, protocol and
+/// admission revisions, charter and budgets. Bookkeeping that cannot change
+/// a call (status clocks, custody rotation, suggestions, staged candidates)
+/// stays out.
+fn connector_terms(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    mut record: crate::connector_key::ConnectorKeyRecord,
+) -> Result<String> {
+    let drift = record
+        .pending_manifest
+        .take()
+        .map(|pending| serde_json::to_vec(&pending.drift))
+        .transpose()
+        .map_err(|_| crate::Error::InvalidConfig("connector drift encoding".into()))?;
+    let slate = record
+        .slate_ref
+        .map(|slate| crate::connector_key::read_connector_slate_in_txn(vault, txn, slate))
+        .transpose()?
+        .flatten()
+        .map(|slate| (slate.revision(), slate.manifest_hash()));
+    record.status_changed_at = None;
+    record.suspended_reason = None;
+    record.key_generation = 0;
+    record.secret_ref = None;
+    record.suggested_budgets.clear();
+    record.pending_charter = None;
+    record.consent_required = false;
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&crate::connector_key::encode_connector_key_body(&record)?);
+    if let Some(drift) = drift {
+        hasher.update(b"drift");
+        hasher.update(&drift);
+    }
+    if let Some((revision, manifest)) = slate {
+        hasher.update(b"slate");
+        hasher.update(&revision.to_be_bytes());
+        hasher.update(&manifest);
+    }
+    Ok(hasher.finalize().to_hex()[..16].to_owned())
 }
 
 /// Installs, changes and removals against the mounts the prefix carries.

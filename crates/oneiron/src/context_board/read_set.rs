@@ -1,6 +1,6 @@
 //! Session read-set tracking, separate from the stateless board renderer.
 
-use super::{BoardStreamFrame, DeltaRow, FrameKind, one_line_token};
+use super::{BoardStreamFrame, DeltaRow, FrameKind, MAX_BOARD_ROW_BYTES, one_line_token};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -46,6 +46,10 @@ pub struct SessionReadSet {
     /// A change against it rides the tail until the next keyframe.
     #[serde(default)]
     prefix_connectors: Option<BTreeMap<String, ConnectorMount>>,
+    /// Moves once per acknowledged delivery, so an older fold that finishes
+    /// late cannot replay outcomes or roll the prefix back.
+    #[serde(default)]
+    delivery_generation: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -66,6 +70,8 @@ pub struct ChangedLine {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProposalReason {
+    /// The person's own answer: the owner's resolution the decision rests on.
+    PersonWord(String),
     RuleRow(String),
     Receipt(String),
 }
@@ -112,14 +118,18 @@ pub enum ChangedEvent {
 /// host has actually returned the render that carried it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ChangedDelivery {
-    /// The actor's submission count the fold read.
+    /// The session generation the fold read.
+    pub(super) generation: u64,
+    /// The actor's submission count the fold read through.
     pub(super) proposal_count: Option<u64>,
-    /// Own proposals the fold found still open, to keep watching.
-    pub(super) opened: Vec<String>,
+    /// Submissions the fold read, by count, oldest first.
+    pub(super) opened: Vec<(u64, String)>,
     /// Own proposals whose outcome this line rendered.
     pub(super) settled: Vec<String>,
-    /// Connector mounts as the fold read them.
+    /// Connector mounts as the fold read them, for a first baseline.
     pub(super) mounts: Option<BTreeMap<String, ConnectorMount>>,
+    /// Connector changes this line rendered, for the next keyframe.
+    pub(super) connectors: Vec<(String, Option<ConnectorMount>)>,
 }
 
 impl SessionReadSet {
@@ -204,37 +214,70 @@ impl SessionReadSet {
         (self.proposal_count, &self.own_proposals)
     }
 
+    pub(super) fn delivery_generation(&self) -> u64 {
+        self.delivery_generation
+    }
+
     pub(super) fn prefix_connectors(&self) -> Option<&BTreeMap<String, ConnectorMount>> {
         self.prefix_connectors.as_ref()
     }
 
     /// Call once the render carrying `line` was returned to the session. Its
     /// settled outcomes leave the watch; anything the cap held back stays
-    /// owed, so a later rejection is delivered on a following wake.
+    /// owed, so a later rejection is delivered on a following wake. A fold
+    /// older than the last acknowledgement moves nothing: what it carried is
+    /// delivered again rather than lost.
     pub fn acknowledge(&mut self, line: &ChangedLine) {
+        self.deliver(line, false);
+    }
+
+    /// Call once a keyframe rendered from `line`'s fold was returned: the
+    /// connector changes it carried are now in the prefix, so the tail drops
+    /// those and only those.
+    pub fn keyframe_committed(&mut self, line: &ChangedLine) {
+        self.deliver(line, true);
+    }
+
+    fn deliver(&mut self, line: &ChangedLine, keyframe: bool) {
         let delivery = &line.delivery;
-        if let Some(count) = delivery.proposal_count {
-            self.proposal_count = Some(self.proposal_count.map_or(count, |seen| seen.max(count)));
+        if delivery.generation != self.delivery_generation {
+            return;
         }
-        for id in &delivery.opened {
-            if self.own_proposals.len() < MAX_OWN_PROPOSALS {
-                self.own_proposals.insert(id.clone());
-            }
-        }
+        self.delivery_generation += 1;
         for id in &delivery.settled {
             self.own_proposals.remove(id);
         }
-        if self.prefix_connectors.is_none() {
-            self.prefix_connectors.clone_from(&delivery.mounts);
+        // Watch every submission read, oldest first. When the watch is full
+        // the cursor stops there, so the rest are read again later.
+        let mut through = delivery.proposal_count;
+        for (count, id) in &delivery.opened {
+            if delivery.settled.contains(id) || self.own_proposals.contains(id) {
+                continue;
+            }
+            if self.own_proposals.len() >= MAX_OWN_PROPOSALS {
+                through = Some(count.saturating_sub(1));
+                break;
+            }
+            self.own_proposals.insert(id.clone());
         }
-    }
-
-    /// Call once a keyframe rendered from `line`'s fold was returned: its
-    /// connector state is now in the prefix, so the tail drops those changes.
-    pub fn keyframe_committed(&mut self, line: &ChangedLine) {
-        self.acknowledge(line);
-        if line.delivery.mounts.is_some() {
-            self.prefix_connectors.clone_from(&line.delivery.mounts);
+        if let Some(count) = through {
+            self.proposal_count = Some(self.proposal_count.map_or(count, |seen| seen.max(count)));
+        }
+        match &mut self.prefix_connectors {
+            None => self.prefix_connectors.clone_from(&delivery.mounts),
+            Some(prefix) if keyframe => {
+                for (connector, mount) in &delivery.connectors {
+                    match mount {
+                        Some(mount) => {
+                            prefix.insert(connector.clone(), mount.clone());
+                        }
+                        None => {
+                            prefix.remove(connector);
+                        }
+                    }
+                }
+            }
+            Some(_) => {}
         }
     }
 }
@@ -271,6 +314,9 @@ impl ChangedEvent {
             Self::Proposal { id, change } => {
                 let mut row = format!("{}: {}", token(id), token(&change.to));
                 match &change.reason {
+                    Some(ProposalReason::PersonWord(word)) => {
+                        row.push_str(&format!(" why=word:{}", token(word)));
+                    }
                     Some(ProposalReason::RuleRow(row_ref)) => {
                         row.push_str(&format!(" why=rule:{}", token(row_ref)));
                     }
@@ -303,16 +349,6 @@ impl ChangedEvent {
                 }
                 row
             }
-        }
-    }
-
-    /// Rejections ride first, so a long tail of other outcomes cannot keep a
-    /// diagnostic off the next wake.
-    pub(super) fn rank(&self) -> u8 {
-        match self {
-            Self::Proposal { change, .. } if change.to == "rejected" => 0,
-            Self::Proposal { .. } => 1,
-            Self::Connector { .. } => 2,
         }
     }
 }
@@ -384,6 +420,27 @@ impl ChangedLine {
             lines.push(format!("changed_install: +{}", self.install_overflow));
         }
         lines
+            .into_iter()
+            .map(|line| clip(&line, MAX_BOARD_ROW_BYTES).to_owned())
+            .collect()
+    }
+
+    /// The lines one STREAM delta row carries, joined inside the board's row
+    /// limit: lines past it are dropped and counted, never sent oversized.
+    fn delta_line(&self) -> String {
+        let mut lines = self.render();
+        let mut dropped = 0;
+        let joined = |lines: &[String], dropped: usize| {
+            let mut row = lines.join(" ");
+            if dropped > 0 {
+                row.push_str(&format!(" changed: +{dropped} past the row limit"));
+            }
+            row
+        };
+        while joined(&lines, dropped).len() > MAX_BOARD_ROW_BYTES && lines.pop().is_some() {
+            dropped += 1;
+        }
+        joined(&lines, dropped)
     }
 
     /// Adds a rider only to an already-produced frame. `None` stays `None`:
@@ -414,7 +471,7 @@ impl ChangedLine {
                         0,
                         DeltaRow {
                             key: "changed".to_owned(),
-                            line: lines.join(" "),
+                            line: self.delta_line(),
                         },
                     );
                 }

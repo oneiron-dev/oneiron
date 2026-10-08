@@ -199,7 +199,17 @@ pub(super) async fn mcp_current_board(
     );
     let scope_label = crate::mcp::mcp_effective_scope_label(&actor.scope);
     let mut state_rows = mcp_board_state_rows(&sections);
-    state_rows.extend(changes.render());
+    // Own outcomes and connector changes, and the count of those held back,
+    // are deliveries, not board state: acknowledging one must not make the
+    // epoch just returned stale.
+    state_rows.extend(
+        oneiron::context_board::ChangedLine {
+            events: Vec::new(),
+            overflow: 0,
+            ..changes.clone()
+        }
+        .render(),
+    );
     let state_hash = crate::mcp::mcp_board_state_hash(&scope_label, &state_rows);
     let epoch = {
         let mut registry = server.mcp_registry.lock().await;
