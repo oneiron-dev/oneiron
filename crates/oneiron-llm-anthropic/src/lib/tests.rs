@@ -821,3 +821,22 @@ fn schema_verdict_replaces_generating_seat_effort_on_final_anthropic_wire() {
         assert_eq!(seat.effort, ReasoningEffort::Low);
     }
 }
+
+#[test]
+fn catalog_wire_model_names_the_provider_model_and_config_needs_no_registry() {
+    let mut catalog = catalog_with([LlmCapability::Streaming]);
+    catalog.metadata.insert(
+        "wire_model".to_owned(),
+        json!("proxy-login/claude-family-latest"),
+    );
+    let config = AnthropicMessagesConfig::from_catalog([catalog]);
+    let request = sample_request();
+    let wire = build_anthropic_messages_request(&config, &request, false).unwrap();
+    assert_eq!(
+        wire.body["model"],
+        json!("proxy-login/claude-family-latest")
+    );
+    let plain = AnthropicMessagesConfig::from_catalog([catalog_with([LlmCapability::Streaming])]);
+    let wire = build_anthropic_messages_request(&plain, &request, false).unwrap();
+    assert_eq!(wire.body["model"], json!(request.model.name()));
+}
