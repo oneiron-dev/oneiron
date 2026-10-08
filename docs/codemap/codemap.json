@@ -15250,7 +15250,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/edit_distance/delta/tests.rs",
@@ -15611,9 +15611,10 @@
       "LineDiff"
      ],
      "path": "src/edit_distance/myers.rs",
-     "purpose": "ED-02 (ARCH-0056 §3, ruling r2 — ONE-1758): the reconstructed lane's measuring instrument, a two-pass line…",
+     "purpose": "ED-02 (ARCH-0056 §3, ruling r2 — ONE-1758): the reconstructed lane's measuring instrument, a word diff…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 2,
       "struct": 1
      }
