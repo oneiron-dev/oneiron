@@ -886,6 +886,224 @@ fn partition_of(conversation: EntityId) -> ConsolidationPartitionKey {
     }
 }
 
+fn field<'v>(map: &'v Value, key: &str) -> Option<&'v Value> {
+    let Value::Map(entries) = map else {
+        return None;
+    };
+    entries
+        .iter()
+        .find(|(name, _)| name.as_str() == Some(key))
+        .map(|(_, value)| value)
+}
+
+/// Whether `id` is still current: the readers that honour recorded source
+/// dependencies (current entity reads, active claims, retrieval) return it.
+fn current(vault: &Vault, id: &EntityId) -> Result<bool> {
+    Ok(vault.get(id)?.is_some())
+}
+
+/// The stored evidence envelope of a landed claim, or the generated evidence
+/// an attachment's provenance record stores.
+fn stored_evidence(vault: &Vault, id: &EntityId) -> Result<Value> {
+    let stored = vault.get_claim(id)?.expect("stored claim");
+    let (map, key) = if stored.predicate == crate::provenance::PREDICATE_EDGE_PROVENANCE {
+        (stored.scope.expect("wrapper scope"), "derived_evidence")
+    } else {
+        (
+            stored.evidence.expect("claim evidence"),
+            "candidate_evidence",
+        )
+    };
+    Ok(field(&map, key).expect("stored evidence").clone())
+}
+
+/// One MESSAGE slice a stored locator names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Named {
+    message: EntityId,
+    span: (u64, u64),
+    revision: Vec<u8>,
+    frontier: Option<Vec<u8>>,
+}
+
+/// What each stored locator names, in stored order: the MESSAGE slices behind
+/// a witnessed turn range (none for any other citation).
+fn named_messages(envelope: &Value) -> Vec<Vec<Named>> {
+    let Some(Value::Array(locators)) = field(envelope, "locators") else {
+        panic!("stored locators")
+    };
+    locators
+        .iter()
+        .map(|locator| {
+            let Some(Value::Array(slices)) = field(locator, "messages") else {
+                return Vec::new();
+            };
+            slices
+                .iter()
+                .map(|slice| {
+                    let Some(Value::Array(span)) = field(slice, "span") else {
+                        panic!("slice span")
+                    };
+                    let bytes = |key| match field(slice, key) {
+                        Some(Value::Binary(bytes)) => Some(bytes.clone()),
+                        None => None,
+                        Some(other) => panic!("slice {key}: {other:?}"),
+                    };
+                    Named {
+                        message: field(slice, "message")
+                            .and_then(entity_ref_from_value)
+                            .expect("slice message"),
+                        span: (
+                            span[0].as_u64().expect("span start"),
+                            span[1].as_u64().expect("span end"),
+                        ),
+                        revision: bytes("revision").expect("slice revision"),
+                        frontier: bytes("frontier"),
+                    }
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// The exact revision a reader of `message` sees now.
+fn revision(vault: &Vault, message: &EntityId) -> Result<Vec<u8>> {
+    Ok(swarm_evidence_content_hash(&vault.get(message)?.expect("message body")).to_vec())
+}
+
+/// The words a MESSAGE carries now.
+fn content(vault: &Vault, message: &EntityId) -> Result<String> {
+    let body = vault.get(message)?.expect("message body");
+    let value = rmpv::decode::read_value(&mut body.as_slice()).expect("message map");
+    Ok(field(&value, "content")
+        .and_then(Value::as_str)
+        .expect("message content")
+        .to_owned())
+}
+
+fn span_of((start, end): (usize, usize)) -> (u64, u64) {
+    (start as u64, end as u64)
+}
+
+/// Runs the queued micro attempt with `rows` as the model's candidates and
+/// returns the promotion outcome.
+fn land(
+    vault: &Vault,
+    rows: Vec<serde_json::Value>,
+    scope: impl FnOnce(
+        &crate::dreamer_runner::DreamerAdmittedAttempt,
+    ) -> Result<Option<crate::llm::Scope>>,
+) -> Result<crate::dreamer_promotion::PromotionOutcome> {
+    let actor = vault.dreamer_authority()?;
+    queue_micro(vault)?;
+    let admitted = admit(vault)?;
+    let scope = scope(&admitted)?;
+    let backend = ScriptedBackend::new(vec![Ok(text_response(
+        serde_json::json!({ "candidates": rows }).to_string(),
+    ))]);
+    let mut sink = PromotionWriterSink::new(vault, run_context(actor, &admitted));
+    assert!(matches!(
+        execute_direct(vault, &admitted, &backend, &mut sink, scope)?,
+        DreamerAttemptExecution::Completed { .. }
+    ));
+    Ok(sink.outcome)
+}
+
+fn nickname(subject: EntityId, turn: EntityId, range: (usize, usize)) -> serde_json::Value {
+    serde_json::json!({
+        "subject": subject.to_hex(), "predicate": "profile.nickname", "value": "Oleksii",
+        "confidence": 0.8, "evidence_refs": [cite(turn, range)],
+    })
+}
+
+/// A stored citation over a witnessed turn names the MESSAGE words it was
+/// taken from (the cited child, its own span, its exact revision) on the new
+/// claim and on an existing head's attachment alike. Deleting a prefix
+/// sibling after commit moves the turn's projected offsets, never what the
+/// citation names; erasing the cited child invalidates both citations through
+/// their recorded dependency.
+#[test]
+fn stored_citation_names_its_message_through_a_prefix_deletion() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let prefix = message(0, WitnessAuthor::User, "hi", true);
+    let words = message(1, WitnessAuthor::User, SAID, true);
+    let (prefix_id, cited) = (id_of(&prefix), id_of(&words));
+    let (turn, _) = witness(&vault, 0x71, vec![prefix, words]);
+    super::prior_heads::policy(&vault, vault.dreamer_authority()?.entity_ref(), true)?;
+    let subject = EntityId::now();
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    let head = put_head(&vault, subject)?;
+    let (start, end) = name_range();
+    let projected = (start + "hi\n".len(), end + "hi\n".len());
+    let mut name = nickname(subject, turn, projected);
+    name["predicate"] = "profile.name".into();
+    let outcome = land(
+        &vault,
+        vec![name, nickname(subject, turn, projected)],
+        |admitted| Ok(Some(head_scope(&vault, admitted, head)?.2)),
+    )?;
+    assert_eq!(outcome.landed.len(), 2, "{outcome:?}");
+    let [claim] = claims_with(&vault, "profile.nickname")?[..] else {
+        panic!("one new claim")
+    };
+    let [wrapper] = claims_with(&vault, crate::provenance::PREDICATE_EDGE_PROVENANCE)?[..] else {
+        panic!("one attachment")
+    };
+    let named = vec![vec![Named {
+        message: cited,
+        span: span_of(name_range()),
+        revision: revision(&vault, &cited)?,
+        frontier: None,
+    }]];
+    for citing in [claim, wrapper] {
+        assert_eq!(named_messages(&stored_evidence(&vault, &citing)?), named);
+    }
+    delete_message(&vault, prefix_id)?;
+    assert_eq!(&content(&vault, &cited)?[start..end], "Oleksii");
+    assert!(current(&vault, &claim)? && current(&vault, &wrapper)?);
+    delete_message(&vault, cited)?;
+    assert!(
+        !current(&vault, &claim)? && !current(&vault, &wrapper)?,
+        "the cited words' erasure invalidates every citation of them"
+    );
+    Ok(())
+}
+
+/// Two siblings carry the same words. The stored citation names the one it
+/// was taken from, so erasing that one invalidates the claim even though the
+/// turn's text at the saved offsets, and its quote hash, are unchanged.
+#[test]
+fn stored_citation_of_equal_words_names_the_sibling_it_was_taken_from() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let first = message(0, WitnessAuthor::User, "same quote", true);
+    let second = message(1, WitnessAuthor::User, "same quote", true);
+    let (cited, other) = (id_of(&first), id_of(&second));
+    let (turn, _) = witness(&vault, 0x73, vec![first, second]);
+    super::prior_heads::policy(&vault, vault.dreamer_authority()?.entity_ref(), true)?;
+    let subject = EntityId::now();
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    land(&vault, vec![nickname(subject, turn, (0, 10))], |_| Ok(None))?;
+    let [claim] = claims_with(&vault, "profile.nickname")?[..] else {
+        panic!("one landed claim")
+    };
+    assert_eq!(
+        named_messages(&stored_evidence(&vault, &claim)?),
+        vec![vec![Named {
+            message: cited,
+            span: (0, 10),
+            revision: revision(&vault, &cited)?,
+            frontier: None,
+        }]]
+    );
+    assert_ne!(cited, other);
+    delete_message(&vault, cited)?;
+    assert!(
+        !current(&vault, &claim)?,
+        "the cited sibling's erasure invalidates the claim"
+    );
+    Ok(())
+}
+
 /// One user MESSAGE written through the stream doors into a fresh turn and
 /// ended by `ending`: (turn, conversation, message, the stream's input).
 fn stream_turn(
@@ -1018,5 +1236,57 @@ fn a_cancelled_continuation_turns_its_final_message_into_audit_text() -> Result<
         reopened.transcript(reopened.scope(), &[turn])?,
         format!("[{} user] \n", turn.to_hex())
     );
+    Ok(())
+}
+
+/// The citation names the version it quoted. After commit the cited MESSAGE
+/// is edited by a finalized continuation: the stored citation still names
+/// that child at the revision and document frontier it was read at, that
+/// frontier still reads the quoted words, and an edit is not an erasure, so
+/// the claim stays current.
+#[cfg(feature = "sync")]
+#[test]
+fn stored_citation_names_its_message_version_through_a_later_edit() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (turn, _, cited, input) = stream_turn(&vault, 0x79, SAID, "finalize")?;
+    let quoted = revision(&vault, &cited)?;
+    let read_at = vault.entity_text_anchor(&cited, 0, 0)?.frontier().to_vec();
+    super::prior_heads::policy(&vault, vault.dreamer_authority()?.entity_ref(), true)?;
+    let subject = EntityId::now();
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    land(&vault, vec![nickname(subject, turn, name_range())], |_| {
+        Ok(None)
+    })?;
+    let [claim] = claims_with(&vault, "profile.nickname")?[..] else {
+        panic!("one landed claim")
+    };
+    let named = named_messages(&stored_evidence(&vault, &claim)?);
+    assert!(named.len() == 1 && named[0].len() == 1, "{named:?}");
+    let slice = &named[0][0];
+    assert_eq!(
+        (slice.message, slice.span, &slice.revision),
+        (cited, span_of(name_range()), &quoted)
+    );
+    assert!(
+        slice
+            .frontier
+            .as_ref()
+            .is_some_and(|stored| stored.ends_with(&read_at)),
+        "a document-backed child names the frontier it was read at"
+    );
+    end_stream(
+        &vault,
+        EntityId::from_bytes([0x79; 16])?,
+        &input,
+        ", thanks",
+        "finalize",
+    );
+    assert_ne!(revision(&vault, &cited)?, quoted, "the words were edited");
+    assert_eq!(
+        vault.entity_text_at(&cited, &read_at)?,
+        SAID,
+        "the named frontier still reads the quoted words"
+    );
+    assert!(current(&vault, &claim)?, "an edit is not an erasure");
     Ok(())
 }

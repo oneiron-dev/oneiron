@@ -16,7 +16,9 @@
 //! version, `AuthoredBy` targets, document frontier and stream finality. Later
 //! doors re-collect and compare against that pin; they never reinterpret
 //! frozen offsets against new text. An incomplete or unreadable child set
-//! refuses; a partial transcript is never assembled.
+//! refuses; a partial transcript is never assembled. A range cited over the
+//! text is persisted as the MESSAGE-local slices it covers ([`MessageSpan`]),
+//! so the citation names its words after the turn's other rows move.
 
 use std::collections::BTreeMap;
 
@@ -44,6 +46,8 @@ struct MessagePin {
     id: EntityId,
     learned_at: u64,
     version: ScopeResource,
+    /// Content hash of the logical body `version` names.
+    revision: [u8; 32],
     /// Exact `AuthoredBy` targets: one for a non-system row, none for system.
     authors: Vec<EntityId>,
     frontier: Option<Vec<u8>>,
@@ -51,18 +55,86 @@ struct MessagePin {
     stream: Option<(StreamFinality, EntityId)>,
 }
 
+/// One MESSAGE-local slice behind a range of a witnessed TURN's text: the
+/// child, the byte span within that child's own content, and the exact
+/// revision (plus the document frontier when the child has a document) it
+/// was read at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MessageSpan {
+    pub(super) message: EntityId,
+    pub(super) start: usize,
+    pub(super) end: usize,
+    pub(super) revision: [u8; 32],
+    pub(super) frontier: Option<Vec<u8>>,
+}
+
+impl MessageSpan {
+    /// Folds every field into an identity hash.
+    pub(crate) fn hash_into(&self, hasher: &mut blake3::Hasher) {
+        hasher.update(self.message.as_bytes());
+        hasher.update(&(self.start as u64).to_be_bytes());
+        hasher.update(&(self.end as u64).to_be_bytes());
+        hasher.update(&self.revision);
+        if let Some(frontier) = &self.frontier {
+            hasher.update(&[1]);
+            hasher.update(&(frontier.len() as u64).to_be_bytes());
+            hasher.update(frontier);
+        } else {
+            hasher.update(&[0]);
+        }
+    }
+}
+
 /// The frozen text of one TURN and every MESSAGE it was read from.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct TurnText {
+pub(crate) struct TurnText {
     text: Option<String>,
     /// `None` when the TURN carries its own text; otherwise the exact live
     /// MESSAGE child set, sorted by id (possibly empty).
     messages: Option<Vec<MessagePin>>,
+    /// Where each projected MESSAGE sits in `text`: `(id, offset, len)` in
+    /// projection order.
+    layout: Vec<(EntityId, usize, usize)>,
 }
 
 impl TurnText {
-    pub(super) fn text(&self) -> Option<&str> {
+    pub(crate) fn text(&self) -> Option<&str> {
         self.text.as_deref()
+    }
+
+    /// The MESSAGE-local slices a byte range of this text covers (the whole
+    /// text when `range` is `None`), each at the revision it was read at.
+    /// Inline TURN text has none. A range covering no MESSAGE byte (only the
+    /// `"\n"` joins) names no words and refuses.
+    pub(crate) fn spans(&self, range: Option<(usize, usize)>) -> Result<Vec<MessageSpan>> {
+        let Some(pins) = &self.messages else {
+            return Ok(Vec::new());
+        };
+        let (start, end) = range.unwrap_or((0, self.text.as_ref().map_or(0, String::len)));
+        let mut spans = Vec::new();
+        for &(message, offset, len) in &self.layout {
+            let (from, to) = (start.max(offset), end.min(offset + len));
+            if from >= to {
+                continue;
+            }
+            let pin = pins
+                .iter()
+                .find(|pin| pin.id == message)
+                .ok_or_else(|| invalid_consolidation("projected message is not pinned"))?;
+            spans.push(MessageSpan {
+                message,
+                start: from - offset,
+                end: to - offset,
+                revision: pin.revision,
+                frontier: pin.frontier.clone(),
+            });
+        }
+        if range.is_some() && spans.is_empty() {
+            return Err(invalid_consolidation(
+                "evidence range names no message text",
+            ));
+        }
+        Ok(spans)
     }
 
     pub(super) fn into_text(self) -> Option<String> {
@@ -145,6 +217,7 @@ pub(super) fn collect_in(
         return Ok(TurnText {
             text: facts.text,
             messages: None,
+            layout: Vec::new(),
         });
     }
     let bucket = match dreamer_turn_role(
@@ -158,6 +231,7 @@ pub(super) fn collect_in(
             return Ok(TurnText {
                 text: None,
                 messages: None,
+                layout: Vec::new(),
             });
         }
     };
@@ -227,15 +301,18 @@ pub(super) fn collect_in(
             id,
             learned_at,
             version: document_version(id, &body),
+            revision: super::swarm_evidence_content_hash(&body),
             authors,
             frontier,
             stream,
         });
         children.push((id, message, words));
     }
+    let (text, layout) = project(bucket, children)?;
     Ok(TurnText {
-        text: project(bucket, children)?,
+        text,
         messages: Some(messages),
+        layout,
     })
 }
 
@@ -264,17 +341,18 @@ pub(super) fn read_sources(
 }
 
 /// The projected text of one stored TURN in a caller's transaction, read as
-/// `reader`. The attachment door calls it after the branch fence proved the
-/// dependency set unchanged in this same transaction.
+/// `reader`, with the MESSAGE layout its ranges map onto. The attachment
+/// door calls it after the branch fence proved the dependency set unchanged
+/// in this same transaction.
 pub(crate) fn live_turn_text_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     reader: WriteActor,
     turn: &EntityId,
     turn_body: &[u8],
-) -> Result<Option<String>> {
+) -> Result<TurnText> {
     let read = vault.scoped_read(reader_key(reader)?);
-    Ok(collect_in(&read, txn, turn, turn_body, &mut 0)?.text)
+    collect_in(&read, txn, turn, turn_body, &mut 0)
 }
 
 /// The text of one TURN for the Dreamer's read-only side doors (gap scan,
@@ -287,6 +365,7 @@ pub(super) fn read_turn_text(vault: &Vault, id: &EntityId) -> Result<TurnText> {
         return Ok(TurnText {
             text: facts.text,
             messages: None,
+            layout: Vec::new(),
         });
     }
     let read = dreamer_read(vault)?;
@@ -300,6 +379,7 @@ pub(super) fn read_turn_text(vault: &Vault, id: &EntityId) -> Result<TurnText> {
         return Ok(TurnText {
             text: None,
             messages: None,
+            layout: Vec::new(),
         });
     };
     collect_in(&read, &txn, id, &body, &mut 0)
@@ -345,9 +425,15 @@ pub(crate) fn cited_evidence_bytes(
     Ok(bytes.to_vec())
 }
 
+type Layout = Vec<(EntityId, usize, usize)>;
+
 /// The projection over already-read children, each with whether its text is
-/// final. `bucket` is the TURN's own MESSAGE author string.
-fn project(bucket: &str, children: Vec<(EntityId, MessageText, bool)>) -> Result<Option<String>> {
+/// final, plus where each projected child sits in it. `bucket` is the TURN's
+/// own MESSAGE author string.
+fn project(
+    bucket: &str,
+    children: Vec<(EntityId, MessageText, bool)>,
+) -> Result<(Option<String>, Layout)> {
     let mut visible = Vec::new();
     for (id, message, words) in children {
         if message.author == WITNESS_AUTHOR_SYSTEM {
@@ -361,11 +447,19 @@ fn project(bucket: &str, children: Vec<(EntityId, MessageText, bool)>) -> Result
         }
     }
     if visible.is_empty() {
-        return Ok(None);
+        return Ok((None, Vec::new()));
     }
     visible.sort_unstable_by_key(|(order, id, _)| (*order, *id));
-    let lines: Vec<_> = visible.into_iter().map(|(_, _, content)| content).collect();
-    Ok(Some(lines.join("\n")))
+    let mut text = String::new();
+    let mut layout = Vec::with_capacity(visible.len());
+    for (index, (_, id, content)) in visible.into_iter().enumerate() {
+        if index != 0 {
+            text.push('\n');
+        }
+        layout.push((id, text.len(), content.len()));
+        text.push_str(&content);
+    }
+    Ok((Some(text), layout))
 }
 
 struct MessageText {

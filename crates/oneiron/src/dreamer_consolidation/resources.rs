@@ -17,7 +17,7 @@ mod write;
 use super::partition::ConsolidationPartitionKey;
 use super::provenance::{ConsolidationSink, PromotionCandidate};
 use super::support::invalid_consolidation;
-use super::turn_text::{TurnText, cited_evidence_bytes};
+use super::turn_text::{MessageSpan, TurnText, cited_evidence_bytes};
 use super::watermark::{TurnBodyFacts, decode_turn_body};
 use crate::attempt_queue::AttemptId;
 use crate::claim::{
@@ -407,6 +407,15 @@ impl<'a> BranchResources<'a> {
             ));
         }
         Ok(transcript)
+    }
+
+    /// The MESSAGE words a citation names: the slices a witnessed TURN range
+    /// covers, at the revisions this branch froze. Any other source has none.
+    pub(super) fn message_spans(&self, entry: &SwarmEvidenceRef) -> Result<Vec<MessageSpan>> {
+        match self.texts.get(&entry.source_id) {
+            Some(text) if entry.claim_id.is_none() => text.spans(entry.byte_range),
+            _ => Ok(Vec::new()),
+        }
     }
 
     /// Parent-only evidence accounting: one actor-scoped read transaction for

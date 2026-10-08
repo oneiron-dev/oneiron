@@ -144,7 +144,7 @@ fn attach_ref(
     if locators.is_empty()
         || locators
             .iter()
-            .any(|(locator, _)| locator.source_id != source)
+            .any(|(locator, _, _)| locator.source_id != source)
     {
         return Err(Error::InvalidClaimBody(
             "attachment locator source mismatch",
@@ -163,7 +163,13 @@ fn attach_ref(
     hash.update(head_hash.as_bytes());
     hash.update(source_hash.as_bytes());
     hash.update(evidence_meet.as_str().as_bytes());
-    for (locator, digest) in locators {
+    // A witnessed TURN's revision is its row plus the MESSAGE revisions the
+    // citation names; any other source keeps its row hash exactly.
+    let mut revision = blake3::Hasher::new();
+    revision.update(b"oneiron:dreamer-evidence-source-revision:v1");
+    revision.update(source_hash.as_bytes());
+    let mut named = false;
+    for (locator, digest, messages) in &locators {
         hash.update(&[u8::from(locator.claim_id.is_some())]);
         if let Some(claim) = locator.claim_id {
             hash.update(claim.as_bytes());
@@ -173,8 +179,18 @@ fn attach_ref(
             hash.update(&(start as u64).to_be_bytes());
             hash.update(&(end as u64).to_be_bytes());
         }
-        hash.update(&digest);
+        hash.update(digest);
+        for message in messages {
+            message.hash_into(&mut hash);
+            message.hash_into(&mut revision);
+            named = true;
+        }
     }
+    let source_revision = if named {
+        revision.finalize()
+    } else {
+        source_hash
+    };
     let mut id = [0_u8; 16];
     id.copy_from_slice(&hash.finalize().as_bytes()[..16]);
     let id =
@@ -190,7 +206,7 @@ fn attach_ref(
         SupersessionStatus::Confirmed,
     );
     record.source_revision_ref = Some(
-        source_hash.as_bytes()[..16]
+        source_revision.as_bytes()[..16]
             .try_into()
             .expect("hash prefix"),
     );
@@ -271,5 +287,6 @@ fn attach_ref(
             imported_evidence: None,
             generated_evidence: Some(derived_evidence),
         },
-    )
+    )?;
+    evidence.record_message_dependencies_in_txn(vault, txn, &id)
 }

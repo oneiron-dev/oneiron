@@ -123,7 +123,8 @@ pub(super) fn park_open_conflict(
                 },
                 now,
             )
-            .apply_recording_gate_decisions(txn)
+            .apply_recording_gate_decisions(txn)?;
+        verified.record_message_dependencies_in_txn(vault, txn, &id)
     })?;
     Ok(id)
 }

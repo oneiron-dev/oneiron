@@ -65,11 +65,12 @@ pub use partition::*;
 pub use persistence::close_persistent_conflict;
 pub use provenance::*;
 pub(crate) use provenance::{
-    decode_verified_locators, encode_consolidation_evidence_with_locators,
+    decode_verified_citations, decode_verified_locators,
+    encode_consolidation_evidence_with_locators,
 };
 pub use resources::ScopedConsolidationWrite;
 pub use support::*;
-pub(crate) use turn_text::{cited_evidence_bytes, live_turn_text_in};
+pub(crate) use turn_text::{TurnText, cited_evidence_bytes, live_turn_text_in};
 pub(crate) use wake_plan::AttemptPreparation;
 pub use wake_plan::{PreparedConsolidationAttempt, PreparedWake};
 pub use watermark::*;
