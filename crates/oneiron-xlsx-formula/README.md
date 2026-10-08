@@ -164,7 +164,7 @@ stage 2's linked workbooks and caller-context functions, and five commits picked
 Nothing of formualizer is vendored here.
 
 The corpus rule (default only at or above LibreOffice on the same corpus) is met at fork
-rev `6aa7740c`: through the writer, all 2,967 scored fresh-Excel SpreadsheetBench
+rev `f3fcbcde`: through the writer, all 2,967 scored fresh-Excel SpreadsheetBench
 workbooks (truth recorded on Excel for Windows 16.0.20430; cells downstream of NOW/TODAY/RAND
 skipped) are fully Excel-identical (LibreOffice 25.8 matched 2,648 of the 2,951 it was measured
 on), and all 811 pinned native Excel goldens (recorded on Excel for Windows 16.0.20430; the
@@ -172,30 +172,30 @@ goldens reader resolves Excel's rich-value error caches since 2026-10-03), again
 LibreOffice's 753 (the unchanged evaluator scored 754). The comparison uses a pinned UTC
 instant; the edit round trip uses the caller's clock (above).
 
-The shipped adapter on the same corpus (2026-10-08, `recalc_native` over the 5,455 saved
-originals, 3,040 of them with formulas; the retained OPC reader admits their ZIP directory
-entries): 3,000 of the 3,040 formula workbooks (98.7%) recalculate natively, none is refused
-outright and 40 fall back: 15 for precision-as-displayed, 12 for CELL("filename"), 5 for an Excel
-function the engine lacks (`_xlfn.ANCHORARRAY`), 5 over the token bound and 3 for an unreadable
-defined name. The 2,927 native workbooks with scored cells match Excel (none of their 1,142,427
-scored cells differs); the other 73 hold only cells downstream of NOW, TODAY and RAND, which the
-comparison skips. The 14 that fell back for a linked-workbook form at 0.9.3-oneiron.11 recalculate
-natively and match Excel on all 99,158 of their scored cells: 5 with a linked range INDEX selects
-at a computed row (444-14, 46444, 55965), 3 with an approximate VLOOKUP over an open linked range
-(59932, one on a sheet Excel could not refresh) and 6 with `[0]` in a defined name (31746). Of the 32 that fell back for an unregistered
-function before, 27 recalculate natively and match Excel on every scored cell, those calling the
-names too: 6 with `IMAGE` written without `_xlfn.` (`#NAME?`), 3 with the VBA function `ClrCnt`
-and no VBA project (`#NAME?`), 3 with `EOM` in a SUMIFS criterion (0), 6 with Google Sheets'
-`__xludf.DUMMYFUNCTION` and 3 with its `arrayformula`, inside IFERROR (IFERROR's value), and 6
-whose `TjDAY()` sits in an IF branch Excel does not take (`""`). Of the 279 formula workbooks with
-external links or external relationship targets, which all fell back before, 256 recalculate
-natively (none of the 620,769 scored cells of the 247 with scored cells differs from Excel) and 23
-meet another reason (12 precision-as-displayed, 6 CELL("filename"), 5 `_xlfn.ANCHORARRAY`); none
-falls back for a linked-workbook form. Of the 274 that fell back for caller context, 260
-recalculate natively (the 6 that read the workbook itself through `[0]` since 0.9.3-oneiron.12);
-12 read CELL("filename") and 2 pass the token bound. The checks
-for escaped names and formulas, related tables and malformed workbook metadata change no corpus
-workbook's decision or output bytes.
+The shipped adapter on the same corpus (2026-10-08, `recalc_native` over the 5,455 saved originals,
+3,040 of them with formulas; the retained OPC reader admits their ZIP directory entries): 3,008 of
+the 3,040 formula workbooks (98.9%) recalculate natively, none is refused outright and 32 fall back:
+15 for precision-as-displayed, 12 for CELL("filename") and 5 over the token bound. The 2,935 native
+workbooks with scored cells match Excel (none of their 1,142,727 scored cells differs); the other 73
+hold only cells downstream of NOW, TODAY and RAND, which the comparison skips. The 14 that fell back
+for a linked-workbook form at 0.9.3-oneiron.11 recalculate natively and match Excel on all 99,158 of
+their scored cells: 5 with a linked range INDEX selects at a computed row (444-14, 46444, 55965), 3
+with an approximate VLOOKUP over an open linked range (59932, one on a sheet Excel could not
+refresh) and 6 with `[0]` in a defined name (31746). The engine's `#REF!` reference operand and
+`_xlfn.ANCHORARRAY` (fork `492b432a`) bring 14207 (names written over deleted ranges) and 49667
+native too, all matching Excel. Of the 32 that fell back for an unregistered function before, 27
+recalculate natively and match Excel on every scored cell, those calling the names too: 6 with
+`IMAGE` written without `_xlfn.` (`#NAME?`), 3 with the VBA function `ClrCnt` and no VBA project
+(`#NAME?`), 3 with `EOM` in a SUMIFS criterion (0), 6 with Google Sheets' `__xludf.DUMMYFUNCTION`
+and 3 with its `arrayformula`, inside IFERROR (IFERROR's value), and 6 whose `TjDAY()` sits in an IF
+branch Excel does not take (`""`). Of the 279 formula workbooks with external links or external
+relationship targets, which all fell back before, 261 recalculate natively (none of the 621,009
+scored cells of the 252 with scored cells differs from Excel) and 18 meet another reason (12
+precision-as-displayed, 6 CELL("filename")); none falls back for a linked-workbook form. Of the 274
+that fell back for caller context, 260 recalculate natively (the 6 that read the workbook itself
+through `[0]` since 0.9.3-oneiron.12); 12 read CELL("filename") and 2 pass the token bound. The
+checks for escaped names and formulas, related tables and malformed workbook metadata change no
+corpus workbook's decision or output bytes.
 
 Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.12`.
 The corpus report separately identifies the evaluator (`ENGINE_STAMP`). A no-recalc
