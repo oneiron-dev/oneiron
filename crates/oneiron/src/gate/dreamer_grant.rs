@@ -6,14 +6,19 @@
 //! `Generated` output pending, so a stock vault's Dreamer can read nothing
 //! and land nothing: its attempts park on "prepared source not readable".
 //!
-//! The grant is an owner edit of the vault's own live policy manifest, in
-//! place: it adds three rows, each keyed to the vault's Dreamer authority —
-//! a vault-wide read-only scoped grant, an Auto actor ceiling, and the
-//! `Generated` permit its consolidation lineage needs — in the same narrow,
-//! actor-keyed shape as the shipped commitment-projector rows. Every other
-//! row, including the owner's earlier edits, is kept exactly as it was, so no
+//! The grant is an owner edit of one trusted policy pack, in place: it adds
+//! three rows, each keyed to the vault's Dreamer authority — a vault-wide
+//! read-only scoped grant, an Auto actor ceiling, and the `Generated` permit
+//! its consolidation lineage needs — in the same narrow, actor-keyed shape as
+//! the shipped commitment-projector rows. The pack edited is the vault's one
+//! owner-authored pack when there is one, so an untouched seeded default
+//! keeps its fallback standing; the seeded default itself only when it is
+//! the sole trusted pack. Every other row is kept exactly as it was, so no
 //! other present or future system actor, and no other `Generated` writer,
-//! inherits anything. Re-granting changes nothing.
+//! inherits anything. Like the retention door, the edit is checked in its
+//! own write transaction: it commits only if the Dreamer can then read and
+//! land, the policy still resolves open, and the retention and carry-forward
+//! policies resolve as before. Re-granting changes nothing.
 //!
 //! Reversal: the owner removes the three rows. Hosts that probe
 //! [`Vault::dreamer_weave_reach`] stop admitting passes; claims already landed
@@ -25,12 +30,13 @@ use super::constants::{
     POLICY_SCOPED_GRANTS_KEY, POLICY_SOURCE_TRUST_KEY, SCOPED_READ_EFFECTOR_CORE_READ,
     SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
 };
-use crate::Vault;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimSource, ScopedReadActorKey, UNSTAMPED_CLAIM_SENSITIVITY_BAND};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
+use crate::store::Store;
+use crate::{EntityId, Vault};
 
 const DREAMER_ACTOR_CLASS: &str = "system";
 
@@ -55,6 +61,58 @@ fn invalid(reason: &'static str) -> Error {
     Error::InvariantViolation(reason)
 }
 
+fn reach_in(
+    policy: &super::PolicyManifestResolution,
+    key: &ScopedReadActorKey,
+    actor_ref: &str,
+) -> DreamerWeaveReach {
+    DreamerWeaveReach {
+        reads: policy.reads_whole_vault(key),
+        lands_auto: policy.lands_generated_auto(DREAMER_ACTOR_CLASS, actor_ref),
+    }
+}
+
+/// The trusted pack the grant edits, and its body: the one owner-authored
+/// pack, else the seeded default, else (a vault with no trusted pack) the
+/// shipped default at its id.
+fn grant_target(store: &Store, txn: &heed::RoTxn<'_>) -> Result<(EntityId, Vec<u8>)> {
+    let default_id = super::default_policy_manifest_id()?;
+    let mut owner_packs = Vec::new();
+    let mut seeded = None;
+    for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
+        let id = index_entry?;
+        let Some(raw) = store.port_entity_record(txn, &id)? else {
+            continue;
+        };
+        if raw.entity_type != ENTITY_TYPE_POLICY_MANIFEST
+            || super::project_depth::is_project_depth_id(&id)
+            || super::project_depth::is_project_depth_contribution(&raw.body)
+            || super::manifest_authenticity::manifest_is_quarantined(store, txn, &id, &raw.body)?
+            || !super::manifest_authenticity::manifest_is_trusted(store, txn, &id, &raw.body)?
+        {
+            continue;
+        }
+        if super::manifest_authenticity::manifest_is_seeded_default(store, txn, &id, &raw.body)? {
+            seeded = Some((id, raw.body));
+        } else {
+            owner_packs.push((id, raw.body));
+        }
+    }
+    if owner_packs.len() > 1
+        && let Some(index) = owner_packs.iter().position(|(id, _)| *id == default_id)
+    {
+        return Ok(owner_packs.swap_remove(index));
+    }
+    match (owner_packs.len(), seeded) {
+        (1, _) => Ok(owner_packs.remove(0)),
+        (0, Some(seeded)) => Ok(seeded),
+        (0, None) => Ok((default_id, super::default_policy_manifest()?)),
+        _ => Err(Error::InvalidConfig(
+            "the Dreamer grant has no unique owner policy pack to edit".into(),
+        )),
+    }
+}
+
 impl Vault {
     /// Reads the folded policy once. Never writes beyond seeding the Dreamer
     /// principal, which `dreamer_authority` does on first use.
@@ -64,32 +122,38 @@ impl Vault {
             .ok_or_else(|| invalid("dreamer read key"))?;
         let txn = self.store.env.read_txn()?;
         let policy = super::resolve_policy_manifest(&self.store, &txn)?;
-        Ok(DreamerWeaveReach {
-            reads: policy.reads_whole_vault(&key),
-            lands_auto: policy.lands_generated_auto(DREAMER_ACTOR_CLASS, &actor_ref),
-        })
+        Ok(reach_in(&policy, &key, &actor_ref))
     }
 
-    /// Owner act: adds the Dreamer's three rows to the vault's live policy
-    /// manifest. Returns whether the manifest changed.
+    /// Owner act: adds the Dreamer's three rows to one trusted policy pack.
+    /// Returns whether the policy changed; refuses, changing nothing, when
+    /// the edit would not let the Dreamer work or would move other policy.
     pub fn grant_dreamer_weave(&self, owner: &AuthenticatedOwner, now: u64) -> Result<bool> {
         let actor_ref = self.dreamer_authority()?.entity_ref().to_hex();
-        let id = super::default_policy_manifest_id()?;
-        let live = match self.get_raw(&id)? {
-            Some(raw) => {
-                let header =
-                    EntityMetadataHeader::parse(&raw).ok_or_else(|| invalid("policy header"))?;
-                if header.entity_type != ENTITY_TYPE_POLICY_MANIFEST {
-                    return Err(invalid("policy id holds another type"));
-                }
-                raw[ENTITY_METADATA_HEADER_LEN..].to_vec()
-            }
-            None => super::default_policy_manifest()?,
-        };
-        let Some(data) = with_dreamer_rows(&live, &actor_ref)? else {
+        let key = ScopedReadActorKey::with_actor_class(actor_ref.clone(), DREAMER_ACTOR_CLASS)
+            .ok_or_else(|| invalid("dreamer read key"))?;
+        let mut txn = self.store.env.write_txn()?;
+        let (id, body) = grant_target(&self.store, &txn)?;
+        let Some(data) = with_dreamer_rows(&body, &actor_ref)? else {
             return Ok(false);
         };
-        self.install_owner_policy_manifest(owner, id, data, now)?;
+        let before = super::resolve_policy_manifest(&self.store, &txn)?;
+        let retention = super::resolve_gate_decision_retention(&self.store, &txn)?;
+        self.write_owner_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
+        let after = super::resolve_policy_manifest(&self.store, &txn)?;
+        let moved_other_policy = after.is_fail_closed()
+            || after.diagnostics().loaded_manifest_forces_fail_closed()
+            || after.carry_forward_confidence != before.carry_forward_confidence
+            || super::resolve_gate_decision_retention(&self.store, &txn)? != retention;
+        if moved_other_policy || !reach_in(&after, &key, &actor_ref).ready() {
+            // Dropping the transaction leaves the policy as it was.
+            return Err(Error::InvalidConfig(
+                "the Dreamer grant would not take without changing other policy; \
+                 the owner's policy rows keep the Dreamer out or conflict"
+                    .into(),
+            ));
+        }
+        txn.commit()?;
         Ok(true)
     }
 }

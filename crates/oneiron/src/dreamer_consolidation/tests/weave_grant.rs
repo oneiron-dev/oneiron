@@ -104,8 +104,12 @@ fn the_owner_grant_lets_a_stock_vaults_dreamer_land_its_consolidation() -> Resul
         true,
         crate::store::GateDecisionId::now(),
     )?;
+    // An earlier owner edit survives the grant: it edits the live policy in
+    // place, so no second retention vote makes the policy fail closed.
+    vault.set_gate_decision_retention_secs(&owner, Some(86_400))?;
     assert!(vault.grant_dreamer_weave(&owner, 30)?);
     assert!(vault.dreamer_weave_reach()?.ready());
+    assert_eq!(vault.gate_decision_retention_secs()?, Some(86_400));
     // Re-granting finds its rows and changes nothing.
     assert!(!vault.grant_dreamer_weave(&owner, 31)?);
     assert!(vault.dreamer_weave_reach()?.ready());
@@ -125,5 +129,41 @@ fn the_owner_grant_lets_a_stock_vaults_dreamer_land_its_consolidation() -> Resul
     assert_eq!(landed.len(), 1);
     assert_eq!(landed[0].approval, ClaimApprovalStatus::Auto);
     let _ = turn;
+    Ok(())
+}
+
+#[test]
+fn the_grant_edits_the_owners_own_pack_and_leaves_the_seeded_default_sealed() -> Result<()> {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    crate::test_util::provision_engine_machines(&vault);
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner = vault.authenticate_owner(
+        owner,
+        &owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let default_id = crate::gate::default_policy_manifest_id()?;
+    let seeded = vault.get_raw(&default_id)?;
+    // The owner's own trusted pack beside the untouched seeded default.
+    let shipped = crate::gate::default_policy_manifest()?;
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut shipped.as_slice()).expect("map")
+    else {
+        panic!("shipped policy is a map");
+    };
+    for (key, value) in &mut entries {
+        if key.as_str() == Some("pack_id") {
+            *value = Value::from("owner-pack");
+        }
+    }
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &Value::Map(entries)).expect("encode");
+    vault.install_owner_policy_manifest(&owner, EntityId::now(), data, 5)?;
+
+    assert!(vault.grant_dreamer_weave(&owner, 6)?);
+    assert!(vault.dreamer_weave_reach()?.ready());
+    // The seeded default keeps its fallback standing: not one byte moved.
+    assert_eq!(vault.get_raw(&default_id)?, seeded);
     Ok(())
 }

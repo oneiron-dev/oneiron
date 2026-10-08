@@ -27,8 +27,9 @@ impl PolicyManifestResolution {
             })
     }
 
-    /// An Auto actor ceiling and an actor-bound `Generated` permit that
-    /// reaches the band an unstamped consolidation claim carries.
+    /// An Auto actor ceiling and an actor-bound, receipted and warned
+    /// `Generated` permit that reaches the band an unstamped consolidation
+    /// claim carries.
     pub(in crate::gate) fn lands_generated_auto(&self, actor_class: &str, actor_ref: &str) -> bool {
         self.actor_ceiling(actor_class, Some(actor_ref)) == PolicyApprovalCeiling::Auto
             && !self.source_trust.malformed_manifest_seen
@@ -36,7 +37,11 @@ impl PolicyManifestResolution {
                 .source_trust
                 .row_for_actor(ClaimSource::Generated, Some(actor_ref))
                 .is_some_and(|row| {
+                    // Promotion admits Generated Auto only when receipted and
+                    // warned, at a band the claim reaches.
                     row.actor_ref.is_some()
+                        && row.receipted
+                        && row.warned
                         && row
                             .max_auto_sensitivity
                             .is_some_and(|band| band >= UNSTAMPED_CLAIM_SENSITIVITY_BAND)
