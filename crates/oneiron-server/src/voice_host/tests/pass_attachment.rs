@@ -273,10 +273,8 @@ fn branch_read_fixture_grants_only_the_named_actor_and_class() {
     let fx = fixture();
     let vault = &fx.vault;
     let conversation = seed_actor(vault, 0x72, oneiron::registry::ENTITY_TYPE_SESSION);
-    let actor = vault.dreamer_authority().unwrap();
-    let reader = |class: &str| {
-        oneiron::claim::ScopedReadActorKey::with_actor_class(actor.entity_ref().to_hex(), class)
-            .unwrap()
+    let key = |actor: oneiron::EntityId, class: &str| {
+        oneiron::claim::ScopedReadActorKey::with_actor_class(actor.to_hex(), class).unwrap()
     };
     let visible = |key| {
         vault
@@ -286,12 +284,19 @@ fn branch_read_fixture_grants_only_the_named_actor_and_class() {
             .single()
             .is_some()
     };
-    assert!(!visible(reader("agent")));
-    let wrong = WriteActor::new(actor.entity_ref(), oneiron::EdgeActorClass::Agent);
+    // ARCH-0026: the stock policy lets the Dreamer read, as System only.
+    let dreamer = vault.dreamer_authority().unwrap().entity_ref();
+    assert!(visible(key(dreamer, "system")));
+    assert!(!visible(key(dreamer, "agent")));
+    // The fixture grants a reader with no stock grant, by actor and class.
+    let reader = seed_actor(vault, 0x73, oneiron::registry::ENTITY_TYPE_PERSON);
+    let actor = WriteActor::new(reader, oneiron::EdgeActorClass::Agent);
+    assert!(!visible(key(reader, "agent")));
+    let wrong = WriteActor::new(reader, oneiron::EdgeActorClass::System);
     assert!(vault.install_read_permit_for_test(wrong).is_err());
     vault.install_read_permit_for_test(actor).unwrap();
-    assert!(visible(reader("system")));
-    assert!(!visible(reader("human")));
+    assert!(visible(key(reader, "agent")));
+    assert!(!visible(key(reader, "human")));
     assert!(!visible(
         oneiron::claim::ScopedReadActorKey::with_actor_class("other-reader", "agent").unwrap()
     ));
