@@ -2024,8 +2024,9 @@ fn anchor_subjected_verdict_stays_unforgeable_via_public_door() -> Result<()> {
 
 /// ASTRA-9A-2-R2 F3: a skill's scan verdicts restrict how its bytes activate.
 /// A refreshed scan with the same clean result supersedes the old verdict
-/// but changes no posture, so a restore over the vault goes ahead; a verdict
-/// that finds risk since the backup refuses it.
+/// but changes no posture, so a restore over the vault goes ahead, as it does
+/// past a risk found in bytes the backup does not hold; a verdict that finds
+/// risk in the backup's bytes since refuses it.
 #[test]
 fn a_restore_goes_ahead_past_a_clean_rescan_and_refuses_a_risk_found_since() -> Result<()> {
     let (_temp, vault) = open_vault();
@@ -2075,12 +2076,31 @@ fn a_restore_goes_ahead_past_a_clean_rescan_and_refuses_a_risk_found_since() -> 
     )?;
     drop(restore(&backups.path().join("first"))?);
 
+    // A risk found in another skill's bytes, imported since the backup,
+    // leaves with them (SOL-9A-2-R2 F26).
+    let other_entity = EntityId::now();
+    let other = package_with_content(
+        candidate("fixture.other-bytes"),
+        b"# other\n",
+        SkillCapabilitySurface::default(),
+    );
+    vault.import_skill_from_hub_with_id(&hub_ref(HubPin::None), &other, other_entity, t(9), 10)?;
+    let other_hash = canonical_skill_tree_hash([("SKILL.md", b"# other\n".as_slice())])?;
+    vault.ingest_skill_scan_verdict(
+        &other_entity,
+        other_hash,
+        &scan(11, ScanRiskLevel::Low)?,
+        t(11),
+        12,
+    )?;
+    drop(restore(&backups.path().join("other"))?);
+
     vault.ingest_skill_scan_verdict(
         &imported_entity,
         fixture_hash(),
-        &scan(9, ScanRiskLevel::High)?,
-        t(9),
-        10,
+        &scan(13, ScanRiskLevel::High)?,
+        t(13),
+        14,
     )?;
     let destination = backups.path().join("second");
     let error = restore(&destination)

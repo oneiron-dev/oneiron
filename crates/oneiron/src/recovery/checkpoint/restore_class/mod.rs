@@ -17,6 +17,7 @@ mod vault_meta_m_r;
 mod vault_meta_s_z;
 
 use crate::batch::EntityMetadataHeader;
+use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus};
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT,
     ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CHANNEL_IDENTITY,
@@ -92,16 +93,18 @@ pub(super) enum Projection {
     /// A claim's relationship scope and privacy, and the whole of a claim in
     /// an [`AUTHORITY_CLAIMS`] family. Such a claim only one vault holds
     /// counts as changed. Skill scan verdicts are compared as the activation
-    /// posture each skill's bytes take from them, not claim by claim, so a
-    /// refreshed scan with the same result changes nothing.
+    /// posture the bytes of each skill the image holds take from them, not
+    /// claim by claim, so a refreshed scan with the same result, or a scan of
+    /// bytes the image does not hold, changes nothing.
     Claim,
     /// A project's authority (parents, claims scope, slice, depth, leader,
     /// board), roster, role and budget.
     Project,
-    /// A TASK authority fact (owner, cancellation, acknowledgement, human
-    /// assignment), one added since the image to a task the image holds
-    /// counting as changed; or a task's owner, assignee and ask class, which
-    /// authorize the asks bound to it. The rest of a TASK body is content.
+    /// A TASK authority fact, one added since the image to a task the image
+    /// holds counting as changed unless it is an acknowledgement; or a task's
+    /// owner, assignee and ask class, which authorize the asks bound to it. A
+    /// TASK body that binds no ask compares equal to any other such body, and
+    /// differs from one that does. The rest of a TASK body is content.
     Task,
     /// Every outbound grant, without the stamp each use writes. One only one
     /// side holds counts as changed.
@@ -194,7 +197,6 @@ pub(super) const AUTHORITY_CLAIMS: &[(&str, &str)] = &[
     ),
     ("agent.resident", "resident agents"),
     ("booking.public_page", "public booking pages"),
-    ("booking.submission_quarantine", "booking quarantines"),
     ("campaign.member", "campaign enrollment"),
     ("comm.do_not_contact", "communication consent"),
     ("comm.opt_out", "communication consent"),
@@ -214,13 +216,24 @@ pub(super) const AUTHORITY_CLAIMS: &[(&str, &str)] = &[
     ("vault.default_facet", "the default facet"),
 ];
 
-/// The [`AUTHORITY_CLAIMS`] family `predicate` belongs to, by name.
-pub(super) fn authority_claim(predicate: &str) -> Option<&'static str> {
+/// [`AUTHORITY_CLAIMS`] families whose readers act only on an approved,
+/// active, fresh claim. One awaiting approval, rejected or retracted
+/// authorizes nothing, so it is content.
+const APPROVED_AUTHORITY_CLAIMS: &[&str] = &["plugin.section_install"];
+
+/// The [`AUTHORITY_CLAIMS`] family `claim` carries authority in, by name.
+pub(super) fn authority_claim(claim: &ClaimBody) -> Option<&'static str> {
+    let predicate = claim.predicate.as_str();
+    let in_effect = !APPROVED_AUTHORITY_CLAIMS.contains(&predicate)
+        || (claim.approval == ClaimApprovalStatus::Approved
+            && claim.lifecycle == ClaimLifecycleStatus::Active
+            && !claim.stale);
     AUTHORITY_CLAIMS
         .iter()
         .find(|(family, _)| {
             predicate == *family || (family.ends_with('.') && predicate.starts_with(family))
         })
+        .filter(|_| in_effect)
         .map(|(_, name)| *name)
 }
 

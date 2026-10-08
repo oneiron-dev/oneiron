@@ -1170,3 +1170,50 @@ fn a_restore_never_reverses_a_task_reassignment_made_since() {
     assert!(error.to_string().contains("task authority"), "{error}");
     assert!(!destination.exists());
 }
+
+/// SOL-9A-2-R2 F25: a task body replaced since the backup by one that binds
+/// no ask leaves the asks bound to the task stale. A restore over the vault
+/// that would bring the task's binding back is refused.
+#[test]
+fn a_restore_never_rebinds_a_task_whose_body_was_replaced_since() {
+    let (_dir, vault) = open_vault();
+    let owner = own_agent(&vault);
+    let agent = EntityId::from_bytes([0xE3; 16]).expect("agent id");
+    put_person(&vault, agent);
+    let task = vault
+        .memory(owner, EdgeActorClass::Human)
+        .tasks_create(&spec(120).with_assignee(TaskAssignee::Peer { actor_ref: agent }))
+        .expect("task")
+        .task_ref
+        .expect("task ref");
+    let backups = tempfile::tempdir().expect("backups");
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100).expect("backup");
+
+    let now = crate::unix_seconds_now() + 5;
+    vault
+        .put_entity(
+            &task,
+            crate::registry::ENTITY_TYPE_TASK,
+            crate::temporal::TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+            &crate::habit::task_body_for_test(TaskRole::Task),
+        )
+        .expect("replace the task body");
+
+    let destination = backups.path().join("restored");
+    let error = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &destination,
+        vault.config.clone(),
+        &vault,
+        200,
+    )
+    .err()
+    .expect("the restore must be refused");
+    assert!(error.to_string().contains("task authority"), "{error}");
+    assert!(!destination.exists());
+}

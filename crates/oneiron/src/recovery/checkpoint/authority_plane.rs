@@ -35,7 +35,7 @@ use crate::outbound_grant::StandingOutboundGrant;
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::skill::{SkillDependency, SkillGovernanceTier, SkillLifecycle};
 use crate::skill_hub::ScanRiskLevel;
-use crate::task_authority::TaskAuthorityFact;
+use crate::task_authority::{TaskAuthorityFact, TaskAuthorityFactKind};
 use crate::workspace_roster::{ProjectAuthority, ProjectBudgetShare, ProjectRecord, ProjectRole};
 use crate::{EntityId, Error, Result, Vault};
 use heed::types::Bytes;
@@ -204,6 +204,7 @@ fn authority_moved(
     let mut moved = BTreeSet::new();
     let mut held = BTreeSet::new();
     let mut image_verdicts = Vec::new();
+    let mut image_bytes = BTreeSet::new();
     for (key, value) in image {
         let (
             Class::Refuse {
@@ -218,6 +219,9 @@ fn authority_moved(
         let Some(authority) = project(projection, value) else {
             continue;
         };
+        if projection == Projection::Skill {
+            image_bytes.extend(skill_bytes(value));
+        }
         if let Compared::ScanVerdict(verdict) = authority {
             image_verdicts.push(verdict);
             continue;
@@ -245,7 +249,7 @@ fn authority_moved(
         Compared::ScanVerdict(verdict) => Some(verdict.clone()),
         _ => None,
     });
-    if scan_postures(image_verdicts) != scan_postures(live_verdicts) {
+    if scan_postures(image_verdicts, &image_bytes) != scan_postures(live_verdicts, &image_bytes) {
         moved.insert("skill scan verdicts");
     }
     moved
@@ -260,17 +264,31 @@ struct ScanVerdictFacts {
     partial: bool,
 }
 
-/// The activation posture each skill's bytes take from their active scan
-/// verdicts, as the activation gate folds them: the worst risk, and whether a
-/// dependency scan was partial. Bytes with no verdict, or only clean complete
-/// ones, are absent, so a refreshed scan with the same result changes nothing.
+/// The bytes a SKILL row activates, by the content hash its scan verdicts
+/// name.
+fn skill_bytes(raw: &[u8]) -> Option<String> {
+    let body = raw.get(ENTITY_METADATA_HEADER_LEN..)?;
+    let skill = crate::skill::decode_skill_record(body).ok()?;
+    Some(skill.content_hash?.to_hex())
+}
+
+/// The activation posture the bytes of each skill the image holds (`held`)
+/// take from their active scan verdicts, as the activation gate folds them:
+/// the worst risk, and whether a dependency scan was partial. Bytes with no
+/// verdict, or only clean complete ones, are absent, so a refreshed scan with
+/// the same result changes nothing; and bytes no skill of the image activates
+/// leave with the content they came with.
 fn scan_postures(
     verdicts: impl IntoIterator<Item = ScanVerdictFacts>,
-) -> BTreeMap<Option<String>, (ScanRiskLevel, bool)> {
+    held: &BTreeSet<String>,
+) -> BTreeMap<String, (ScanRiskLevel, bool)> {
     let mut postures: BTreeMap<_, (ScanRiskLevel, bool)> = BTreeMap::new();
     for verdict in verdicts {
+        let Some(bytes) = verdict.content_hash.filter(|bytes| held.contains(bytes)) else {
+            continue;
+        };
         let posture = postures
-            .entry(verdict.content_hash)
+            .entry(bytes)
             .or_insert((ScanRiskLevel::None, false));
         posture.0 = posture.0.max(verdict.risk);
         posture.1 |= verdict.partial;
@@ -282,8 +300,9 @@ fn scan_postures(
 /// Whether an entity only one vault holds (only the live one when
 /// `live_only`) still counts as changed: an outbound grant; a claim of an
 /// authority family; a contact that is revoked or opted out, whose absence
-/// would let a send through; and an authority fact added since the image to a
-/// task the image holds.
+/// would let a send through; and an owner, cancellation or human assignment
+/// fact added since the image to a task the image holds. An acknowledgement
+/// only takes a failed task off the board.
 fn presence_is_authority(
     projection: Projection,
     authority: &Compared,
@@ -295,7 +314,9 @@ fn presence_is_authority(
             status, opt_out, ..
         } => opt_out.is_some() || *status != CounterpartyContactStatus::Active,
         Compared::TaskFact(fact) => {
-            live_only && image_entities.contains(fact.task_ref.as_bytes().as_slice())
+            live_only
+                && fact.kind != TaskAuthorityFactKind::Acked
+                && image_entities.contains(fact.task_ref.as_bytes().as_slice())
         }
         _ => projection == Projection::OutboundGrant || authority.family().is_some(),
     }
@@ -351,6 +372,9 @@ enum Compared {
     TaskFact(TaskAuthorityFact),
     /// Who owns a task, whom it is assigned to, and its ask class.
     TaskBinding(crate::task_verb::TaskBinding),
+    /// Any other TASK body: it binds no ask, so one replacing a task the
+    /// image holds differs from it.
+    TaskUnbound,
     /// An active skill scan verdict, compared as a posture.
     ScanVerdict(ScanVerdictFacts),
 }
@@ -387,8 +411,7 @@ struct AgentBounds {
 }
 
 /// The authority `projection` reads in one entity row, or `None` for a row
-/// too short to hold a body, a note body that does not decode, or a TASK body
-/// that is neither an authority fact nor a task verb body.
+/// too short to hold a body or a note body that does not decode.
 fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
     let body = raw.get(ENTITY_METADATA_HEADER_LEN..)?;
     let whole = || Compared::Row(raw.to_vec());
@@ -476,7 +499,7 @@ fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
                     return scan_verdict(&claim);
                 }
                 let (space, private) = crate::claim::claim_access_axes(&claim);
-                let authority = super::restore_class::authority_claim(&claim.predicate)
+                let authority = super::restore_class::authority_claim(&claim)
                     .map(|family| (family, body.to_vec()));
                 Compared::Claim {
                     space,
@@ -487,7 +510,8 @@ fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
         ),
         Projection::Task => match crate::task_authority::decode_task_authority_fact_body(body) {
             Ok(fact) => Compared::TaskFact(fact),
-            Err(_) => Compared::TaskBinding(crate::task_verb::task_binding(body)?),
+            Err(_) => crate::task_verb::task_binding(body)
+                .map_or(Compared::TaskUnbound, Compared::TaskBinding),
         },
         Projection::OutboundGrant => {
             crate::outbound_grant::decode_standing_outbound_grant_body(body).map_or_else(
