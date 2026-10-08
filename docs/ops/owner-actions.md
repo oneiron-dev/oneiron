@@ -45,7 +45,9 @@ other's files. Each backup takes the next sequence number, and retention keeps t
 numbers, so a clock that steps back never makes a new backup look oldest, and the backup just
 taken is never the one pruned. A backup named before sequences (no `<sequence>` field) lists as
 older than every numbered one. The file is owner-only (`0600`) and sits in an owner-only directory (`0700`). A backup
-is written under a hidden partial name and renamed into place only once complete.
+is written under a hidden partial name and renamed into place only once complete. Backups are
+not encrypted yet and include device key material, so keep `--dir` on a local disk, not a synced
+or cloud folder (see *Limits*).
 
 `oneiron serve` can take backups on its own. The schedule is opt-in; turn it on in the config
 file or environment:
@@ -126,8 +128,8 @@ A restore refuses, and changes nothing, when:
   secret custody, connector keys, channel identities, outbound grants (using one is not a
   change), machine identities, published artifacts; for a room, skill, agent, contact, claim or
   task the backup holds: room roles and membership (who is in a room, their role, how far back
-  they read), a skill quarantine, an agent switched off or narrowed, a contact revoked or opted
-  out, a relationship membership retracted, a task cancelled, reassigned or its ask class
+  they read), a skill quarantine, an agent switched off or narrowed, a contact revoked, opted
+  out or rebound to another party, a relationship membership retracted, a task cancelled, reassigned or its ask class
   narrowed; or an e-sign ceremony the backup holds (a signature, rejection or void since). The
   refusal names what moved. Content edits do not block the
   restore, and a room, document or claim created after the backup is simply not in the restored
@@ -245,5 +247,6 @@ oneiron api raw POST /v1/owner/secret-scan --data '{"mode":"off"}'
 - To cut someone's access, revoke their slip; a revocation is authority and survives a restore.
   Deleting a person who is not a vault owner or member is content, and an older backup brings
   that person back.
-- Backups are not encrypted beyond your filesystem. Keep the backup directory on a disk you
-  trust.
+- Backups are not encrypted yet, and they include device key material. Keep `--dir` (and
+  `[backup] dir`) on a local disk, not a synced or cloud folder. Encryption comes with the vault
+  cipher work.
