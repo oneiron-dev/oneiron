@@ -205,8 +205,16 @@ async fn the_configured_output_ceiling_reaches_every_openai_compatible_call() {
         let mut wide = request(&seat.model, "wide");
         wide.params.insert("max_tokens".into(), json!(4_096));
         seat.backend.generate(wide, &lease).await.unwrap();
+        // Sol R2 #1304: a limit spelled as a float or a string was left on
+        // the wire beside the ceiling, and a lenient endpoint read it.
+        let mut loose = request(&seat.model, "loose");
+        loose
+            .params
+            .insert("max_completion_tokens".into(), json!(4_096.0));
+        loose.params.insert("max_tokens".into(), json!("4096"));
+        seat.backend.generate(loose, &lease).await.unwrap();
         let seen = fake.seen();
-        assert_eq!(seen.len(), before + 3);
+        assert_eq!(seen.len(), before + 4);
         for call in &seen[before..] {
             assert_eq!(call.body[field], json!(64), "{}", call.body);
             let other = if field == "max_tokens" {

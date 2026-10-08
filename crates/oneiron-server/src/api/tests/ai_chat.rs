@@ -322,7 +322,7 @@ async fn a_narrowed_vault_route_keeps_chat_and_workflow_steps_off_the_cloud() {
     let cloud = FakeLlm::start(vec![], Some(Reply::text("from the cloud"))).await;
     let local = FakeLlm::start(vec![], Some(Reply::text("from this server"))).await;
     let (_dir, server, host) = ai_server_with(Some(models_toml(&format!(
-        "cloud = \"cloud:big\"\nlocal = \"local:small\"\nprefer_local = false\n[dreamer]\nenabled = false\n[providers.cloud]\nkind = \"openai-compat\"\nbase_url = \"{}\"\n[providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n",
+        "cloud = \"cloud:big\"\nlocal = \"local:small\"\nprefer_local = false\nprompt = \"Answer from the vault.\"\n[dreamer]\nenabled = false\n[providers.cloud]\nkind = \"openai-compat\"\nbase_url = \"{}\"\n[providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n",
         cloud.base_url, local.base_url
     ))))
     .await;
@@ -382,5 +382,18 @@ async fn a_narrowed_vault_route_keeps_chat_and_workflow_steps_off_the_cloud() {
     let body: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(body["error"]["code"], json!("model_route_not_served"));
     assert_eq!((cloud.seen().len(), local.seen().len()), (1, 2));
+
+    // Sol R2 #1304: each model the manifest picked is a rung of the role's
+    // own ladder, so every call still carries that rung's prompt.
+    let (cloud_calls, local_calls) = (cloud.seen(), local.seen());
+    for call in cloud_calls.iter().chain(&local_calls) {
+        let first = &call.body["messages"][0];
+        assert_eq!(first["role"], json!("system"), "{}", call.body);
+        assert!(
+            first.to_string().contains("Answer from the vault."),
+            "{}",
+            call.body
+        );
+    }
     host.shutdown().await;
 }

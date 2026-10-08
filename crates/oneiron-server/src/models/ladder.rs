@@ -12,6 +12,7 @@ use super::served::served_receipt;
 
 /// One rung: a provider backend, the engine id of its model, and the
 /// instruction prepended to every call it serves.
+#[derive(Clone)]
 pub(super) struct LadderRung {
     pub(super) provider: String,
     pub(super) model: ModelId,

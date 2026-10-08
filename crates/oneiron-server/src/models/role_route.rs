@@ -109,6 +109,9 @@ impl ModelRuntime {
                 }
             }
         };
+        // A manifest-bound model on this role's own ladder answers as that
+        // rung, with its prompt; the bare provider behind it has none.
+        let backend = seat.rung(&model).unwrap_or(backend);
         request.model = model.clone();
         request.envelope.locality = locality;
         let request = vault

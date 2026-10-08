@@ -49,6 +49,16 @@ pub struct Seat {
     pub model: ModelId,
     pub locality: ModelLocality,
     pub backend: Arc<dyn LlmBackend>,
+    /// Each rung on its own, keyed by its engine model id, so a call the
+    /// vault's manifest binds to one rung's model keeps that rung's prompt.
+    rungs: BTreeMap<ModelId, Arc<dyn LlmBackend>>,
+}
+
+impl Seat {
+    /// The rung that serves `model`, alone and with its prompt.
+    fn rung(&self, model: &ModelId) -> Option<Arc<dyn LlmBackend>> {
+        self.rungs.get(model).cloned()
+    }
 }
 
 /// Every seat the config fills, plus a router over every configured model.
@@ -258,10 +268,17 @@ fn seat_for(role: ModelRole, locality: ModelLocality, rungs: Vec<LadderRung>) ->
     }
     let revision = &digest.finalize().to_hex()[..12];
     let model = ModelId::new(format!("seat/{}@{revision}", role_key(role))).ok()?;
+    let mut alone: BTreeMap<ModelId, Arc<dyn LlmBackend>> = BTreeMap::new();
+    for rung in &rungs {
+        alone.entry(rung.model.clone()).or_insert_with(|| {
+            Arc::new(LadderBackend::new(rung.model.clone(), vec![rung.clone()]))
+        });
+    }
     Some(Seat {
         role,
         model: model.clone(),
         locality,
         backend: Arc::new(LadderBackend::new(model, rungs)),
+        rungs: alone,
     })
 }

@@ -26,8 +26,9 @@ impl OutputCap {
         };
         let mut asked: Option<u64> = None;
         for key in LIMIT_KEYS {
-            if let Some(limit) = fields.get(key).and_then(JsonValue::as_u64) {
-                fields.remove(key);
+            // Every spelling leaves the wire, parsed or not: an endpoint that
+            // reads a spelling left behind would generate past the ceiling.
+            if let Some(limit) = fields.remove(key).as_ref().and_then(token_count) {
                 asked = Some(asked.map_or(limit, |seen| seen.min(limit)));
             }
         }
@@ -40,4 +41,16 @@ impl OutputCap {
             fields.insert(self.field.to_owned(), limit.into());
         }
     }
+}
+
+/// A limit as a token count, however the caller wrote the number: lenient
+/// endpoints accept `4096.0` and `"4096"` as well as `4096`.
+fn token_count(value: &JsonValue) -> Option<u64> {
+    let number = match value {
+        JsonValue::Number(number) => number.as_f64()?,
+        JsonValue::String(text) => text.trim().parse::<f64>().ok()?,
+        _ => return None,
+    };
+    // A fractional limit allows its whole tokens.
+    (number.is_finite() && number >= 0.0).then(|| number as u64)
 }
