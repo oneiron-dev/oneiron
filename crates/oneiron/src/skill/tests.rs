@@ -1321,3 +1321,53 @@ fn a_restore_never_lifts_a_quarantine_placed_since() -> Result<()> {
     assert!(!destination.exists());
     Ok(())
 }
+
+/// SOL-9A-2-R2 F9, F10: withdrawing a skill's approval stops it loading, and
+/// a governance tier keeps automation off it. A restore over the vault from
+/// before either is refused.
+#[test]
+fn a_restore_never_returns_a_withdrawn_approval_or_a_lifted_governance_tier() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let id = EntityId::now();
+    let candidate = human_skill("1.0.0");
+    vault.put_skill_record(&id, &candidate, TimeRange { start: 10, end: 10 }, 11)?;
+    let mut active = activate(&vault, &id, &candidate)?;
+    active.approval_status = ClaimApprovalStatus::Approved;
+    vault.update_skill_record(&id, &active, TimeRange { start: 21, end: 21 }, 22)?;
+    let backups = tempfile::tempdir()?;
+    let refused = |image: &std::path::Path, name: &str| {
+        let destination = backups.path().join(name);
+        let error = Vault::restore_checkpoint_keeping_authority(
+            image,
+            &destination,
+            embedding_test_config(),
+            &vault,
+            200,
+        )
+        .err()
+        .expect("the restore must be refused");
+        assert!(
+            error
+                .to_string()
+                .contains("skill approvals and quarantines"),
+            "{error}"
+        );
+        assert!(!destination.exists());
+    };
+
+    let before_withdrawal = backups.path().join("before-withdrawal");
+    vault.snapshot_checkpoint(&before_withdrawal, 100)?;
+    let mut withdrawn = active.clone();
+    withdrawn.approval_status = ClaimApprovalStatus::Proposed;
+    vault.update_skill_record(&id, &withdrawn, TimeRange { start: 30, end: 30 }, 31)?;
+    refused(&before_withdrawal, "after-withdrawal");
+
+    vault.update_skill_record(&id, &active, TimeRange { start: 32, end: 32 }, 33)?;
+    let before_governance = backups.path().join("before-governance");
+    vault.snapshot_checkpoint(&before_governance, 110)?;
+    let mut governed = active;
+    governed.governance_tier = Some(SkillGovernanceTier::Alignment);
+    vault.update_skill_record(&id, &governed, TimeRange { start: 34, end: 34 }, 35)?;
+    refused(&before_governance, "after-governance");
+    Ok(())
+}

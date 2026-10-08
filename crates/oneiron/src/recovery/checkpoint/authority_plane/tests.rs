@@ -2,7 +2,7 @@ use super::super::RestoreReason;
 use crate::authority::{CapabilitySlip, HostSlipIssuer};
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, GrantBound};
 use crate::federation::ScopeAxis;
-use crate::registry::ENTITY_TYPE_PERSON;
+use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 use crate::store::GateDecisionId;
 use crate::{EntityId, Vault, VaultConfig, temporal::TimeRange};
 use std::collections::BTreeSet;
@@ -247,4 +247,75 @@ fn restore_keeps_the_secret_scan_the_owner_switched_on_since() {
         "the scan refuses a credential-shaped write"
     );
     assert!(restored.get(&leak).unwrap().is_none());
+}
+
+/// SOL-9A-2-R2 F11: a relationship's participants decide who reads its
+/// scoped records. Removing one is a narrowing a restore over the vault from
+/// before it must not undo.
+#[test]
+fn restore_refuses_to_bring_back_a_relationship_participant_removed_since() {
+    let root = tempfile::tempdir().unwrap();
+    let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    let participant = person(&live, b"participant");
+    let relationship = EntityId::now();
+    let body = |participants: &[EntityId]| {
+        rmp_serde::to_vec_named(&serde_json::json!({
+            "participant_ids": participants,
+        }))
+        .unwrap()
+    };
+    let at = TimeRange { start: 1, end: 1 };
+    live.put_entity(
+        &relationship,
+        ENTITY_TYPE_RELATIONSHIP,
+        at,
+        1,
+        &body(&[participant]),
+    )
+    .unwrap();
+    let image = root.path().join("backup");
+    live.snapshot_checkpoint(&image, 100).unwrap();
+    live.put_entity(&relationship, ENTITY_TYPE_RELATIONSHIP, at, 2, &body(&[]))
+        .unwrap();
+
+    let destination = root.path().join("restored");
+    let Err(error) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &destination,
+        VaultConfig::device(),
+        &live,
+        200,
+    ) else {
+        panic!("the restore must be refused");
+    };
+    assert!(
+        error.to_string().contains("relationship participants"),
+        "{error}"
+    );
+    assert!(!destination.exists());
+}
+
+/// SOL-9A-2-R2 F18: every vault carries a PROJECT kind it registers at run
+/// time. An ordinary edit to a project, here its reason, is content and does
+/// not block a restore over the vault.
+#[test]
+fn restore_goes_ahead_past_an_ordinary_project_edit() {
+    let root = tempfile::tempdir().unwrap();
+    let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    let project = live.root_project().unwrap();
+    let image = root.path().join("backup");
+    live.snapshot_checkpoint(&image, 100).unwrap();
+    let mut record = live.project(project).unwrap().expect("the root project");
+    record.why = Some("the reason the owner wrote down".to_owned());
+    live.put_project(project, &record, 150).unwrap();
+
+    let (restored, _) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &root.path().join("restored"),
+        VaultConfig::device(),
+        &live,
+        200,
+    )
+    .unwrap();
+    assert_eq!(restored.project(project).unwrap().unwrap().why, None);
 }

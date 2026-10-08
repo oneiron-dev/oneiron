@@ -4003,10 +4003,10 @@ fn membership_scope_migration_never_ignores_a_carried_scope() -> Result<()> {
     Ok(())
 }
 
-/// SOL-9A-2-R2 F5: a relationship membership binding is access. A restore
-/// over the vault goes ahead past a binding made since the backup (it leaves
-/// with the restore), and is refused once a binding the backup holds was
-/// retracted.
+/// SOL-9A-2-R2 F5, F16: a relationship membership binding is access. A
+/// restore over the vault is refused once a binding the backup holds was
+/// retracted, and once a binding was made since: an authority claim only one
+/// vault holds is never restored or dropped silently.
 #[test]
 fn a_restore_never_brings_back_a_relationship_membership_retracted_since() -> Result<()> {
     let (_dir, vault) = relationship_vault();
@@ -4025,32 +4025,33 @@ fn a_restore_never_brings_back_a_relationship_membership_retracted_since() -> Re
     let shared = relationship(0xB1)?;
     let binding = bind_member_person(&vault, shared, person, relationship_time(), 1)?;
     let backups = tempfile::tempdir()?;
-    let image = backups.path().join("backup");
-    vault.snapshot_checkpoint(&image, 100)?;
-    let restore = |destination: &std::path::Path| {
-        Vault::restore_checkpoint_keeping_authority(
-            &image,
-            destination,
+    let refused = |image: &std::path::Path, name: &str| {
+        let destination = backups.path().join(name);
+        let error = Vault::restore_checkpoint_keeping_authority(
+            image,
+            &destination,
             VaultConfig::device(),
             &vault,
             200,
         )
-        .map(|(restored, _)| restored)
-    };
-
-    let later = relationship(0xB2)?;
-    bind_member_person(&vault, later, person, relationship_time(), 2)?;
-    drop(restore(&backups.path().join("first"))?);
-
-    vault.retract_claim(&binding, 10)?;
-    let destination = backups.path().join("second");
-    let error = restore(&destination)
         .err()
         .expect("the restore must be refused");
-    assert!(
-        error.to_string().contains("relationship membership"),
-        "{error}"
-    );
-    assert!(!destination.exists());
+        assert!(
+            error.to_string().contains("relationship membership"),
+            "{error}"
+        );
+        assert!(!destination.exists());
+    };
+
+    let before_retraction = backups.path().join("before-retraction");
+    vault.snapshot_checkpoint(&before_retraction, 100)?;
+    vault.retract_claim(&binding, 10)?;
+    refused(&before_retraction, "after-retraction");
+
+    let before_binding = backups.path().join("before-binding");
+    vault.snapshot_checkpoint(&before_binding, 110)?;
+    let later = relationship(0xB2)?;
+    bind_member_person(&vault, later, person, relationship_time(), 2)?;
+    refused(&before_binding, "after-binding");
     Ok(())
 }

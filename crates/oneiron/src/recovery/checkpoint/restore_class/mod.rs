@@ -73,9 +73,12 @@ pub(super) enum Scope {
 /// holds is content unless its absence is itself authority, as noted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Projection {
-    /// A room's members, roles and history default.
+    /// A room's members, roles and effective history default.
     Room,
-    /// Whether the owner quarantined or rejected a skill.
+    /// A relationship's participants, who read its scoped records.
+    Relationship,
+    /// A skill's approval, whether the owner quarantined it, and its
+    /// governance tier.
     Skill,
     /// What bounds an agent: approval, lifecycle, its on switch, ceiling,
     /// scope, connectors, tools, skills, model, memory and waking.
@@ -86,10 +89,13 @@ pub(super) enum Projection {
     /// A NOTE's kind, which decides who reads it, and its author. A body
     /// that does not decode is content.
     Note,
-    /// A claim's relationship scope and privacy, and the relationship
-    /// membership it binds. A binding the image holds and the live vault
-    /// deleted counts as changed.
+    /// A claim's relationship scope and privacy, and the whole of a claim in
+    /// an [`AUTHORITY_CLAIMS`] family. Such a claim only one vault holds
+    /// counts as changed.
     Claim,
+    /// A project's authority (parents, claims scope, slice, depth, leader,
+    /// board), roster, role and budget.
+    Project,
     /// Every outbound grant, without the stamp each use writes. One only one
     /// side holds counts as changed.
     OutboundGrant,
@@ -136,12 +142,20 @@ const ROOM_BODIES: Class = Class::Refuse {
     scope: Scope::Authority(Projection::Room),
 };
 const SKILLS: Class = Class::Refuse {
-    what: "skill quarantines and rejections",
+    what: "skill approvals and quarantines",
     scope: Scope::Authority(Projection::Skill),
 };
 const AGENT_DEFINITIONS: Class = Class::Refuse {
     what: "agent permissions",
     scope: Scope::Authority(Projection::Agent),
+};
+const RELATIONSHIPS: Class = Class::Refuse {
+    what: "relationship participants",
+    scope: Scope::Authority(Projection::Relationship),
+};
+const PROJECTS: Class = Class::Refuse {
+    what: "project authority",
+    scope: Scope::Authority(Projection::Project),
 };
 const CONTACTS: Class = Class::Refuse {
     what: "counterparty contacts and their consents",
@@ -152,9 +166,62 @@ const NOTES: Class = Class::Refuse {
     scope: Scope::Authority(Projection::Note),
 };
 const CLAIMS: Class = Class::Refuse {
-    what: "relationship membership and claim privacy",
+    what: "claim privacy",
     scope: Scope::Authority(Projection::Claim),
 };
+
+/// Claim families that carry authority, consent, disclosure, or a restriction
+/// on who is reached, what is served or what an agent may do: a predicate, or
+/// a namespace ending in `.`, with the name a refusal gives it. Each claim of
+/// one is compared whole; one only one vault holds counts as changed, so
+/// neither a permission withdrawn nor a restriction added since the image is
+/// undone. Every other claim is content.
+pub(super) const AUTHORITY_CLAIMS: &[(&str, &str)] = &[
+    (
+        "agent.connector_subscription",
+        "agent connector subscriptions",
+    ),
+    ("agent.resident", "resident agents"),
+    ("booking.public_page", "public booking pages"),
+    ("booking.submission_quarantine", "booking quarantines"),
+    ("campaign.member", "campaign enrollment"),
+    ("comm.do_not_contact", "communication consent"),
+    ("comm.opt_out", "communication consent"),
+    ("comm.send_override", "communication consent"),
+    (
+        "core.coreference.share_consent",
+        "coreference sharing consent",
+    ),
+    ("core.relationship.person_ref", "relationship membership"),
+    ("core.world_access.", "world access"),
+    ("crm.compliance.", "compliance evidence"),
+    ("delivery_window.", "delivery windows"),
+    ("disclosure.", "disclosure"),
+    ("federation.admin_ruling", "federation rulings"),
+    ("plugin.section_install", "board plugins"),
+    ("project.leader_chat", "leader chat rules"),
+    ("skill.scan_verdict", "skill scan verdicts"),
+    ("vault.default_facet", "the default facet"),
+];
+
+/// The [`AUTHORITY_CLAIMS`] family `predicate` belongs to, by name.
+pub(super) fn authority_claim(predicate: &str) -> Option<&'static str> {
+    AUTHORITY_CLAIMS
+        .iter()
+        .find(|(family, _)| {
+            predicate == *family || (family.ends_with('.') && predicate.starts_with(family))
+        })
+        .map(|(_, name)| *name)
+}
+
+/// Kinds a vault registers at run time, by their short-id prefix: the engine
+/// registers each of these itself. A registered kind not named here is
+/// refused when it differs.
+const RUNTIME_KINDS: &[(&str, Class)] = &[
+    (crate::workspace_roster::PROJECT_SHORT_ID_PREFIX, PROJECTS),
+    (crate::saved_query::SAVED_QUERY_SHORT_ID_PREFIX, CONTENT),
+    (crate::campaign::CAMPAIGN_SHORT_ID_PREFIX, CONTENT),
+];
 const ESIGN_CEREMONIES: Class = Class::Refuse {
     what: "e-sign ceremonies",
     scope: Scope::ImageEntities,
@@ -176,7 +243,7 @@ const ENTITY_KINDS: &[(u8, Class)] = &[
     (ENTITY_TYPE_CONVERSATION, ROOM_BODIES),
     (ENTITY_TYPE_SUMMARY, CONTENT),
     (ENTITY_TYPE_PERSON, CONTENT),
-    (ENTITY_TYPE_RELATIONSHIP, CONTENT),
+    (ENTITY_TYPE_RELATIONSHIP, RELATIONSHIPS),
     (ENTITY_TYPE_ORG, CONTENT),
     (ENTITY_TYPE_FACET, CONTENT),
     (ENTITY_TYPE_WORKFLOW, CONTENT),
@@ -288,7 +355,8 @@ pub(super) struct Classes {
 }
 
 impl Classes {
-    pub(super) fn new() -> Self {
+    /// The table, with the kinds `current` registered at run time.
+    pub(super) fn new(current: &crate::Vault) -> Self {
         let mut vault_meta = Vec::new();
         let mut sync_state = Vec::new();
         for (decl, class) in SIDE_TABLES.iter().copied().flatten() {
@@ -302,6 +370,16 @@ impl Classes {
         let mut kinds = [None; 256];
         for (kind, class) in ENTITY_KINDS {
             kinds[usize::from(*kind)] = Some(*class);
+        }
+        for registration in current.structural_kind_registrations() {
+            let class = RUNTIME_KINDS
+                .iter()
+                .find(|(prefix, _)| registration.short_id_prefix == *prefix)
+                .map(|(_, class)| *class);
+            let slot = &mut kinds[usize::from(registration.type_byte)];
+            if slot.is_none() {
+                *slot = class;
+            }
         }
         Self {
             vault_meta,

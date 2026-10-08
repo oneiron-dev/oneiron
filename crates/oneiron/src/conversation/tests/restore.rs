@@ -86,3 +86,43 @@ fn restore_refuses_to_reopen_room_history_narrowed_since() {
     );
     assert!(!destination.exists());
 }
+
+/// SOL-9A-2-R2 F13: narrowing a room's kind narrows the history a later
+/// member inherits. A restore over the vault from before it is refused.
+#[test]
+fn restore_refuses_to_widen_a_room_history_default_narrowed_since() {
+    let (_dir, vault, owner, _, _) = fixture();
+    let room = EntityId::now();
+    let group = ConversationBody {
+        kind: ConversationKind::Group,
+        ..ConversationBody::default()
+    };
+    vault.create_conversation(room, &group, owner, 1).unwrap();
+    let backups = tempfile::tempdir().unwrap();
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100).unwrap();
+    let mut direct = vault.conversation_body(room).unwrap();
+    direct.kind = ConversationKind::Direct;
+    vault
+        .batch()
+        .put(
+            &room,
+            ENTITY_TYPE_CONVERSATION,
+            TimeRange { start: 1, end: 1 },
+            2,
+            &direct.to_bytes().unwrap(),
+        )
+        .commit()
+        .unwrap();
+    assert!(!vault.conversation_body(room).unwrap().shares_history());
+
+    let destination = backups.path().join("restored");
+    let error = restore(&vault, &image, &destination)
+        .err()
+        .expect("the restore must be refused");
+    assert!(
+        error.to_string().contains("room roles and membership"),
+        "{error}"
+    );
+    assert!(!destination.exists());
+}

@@ -63,6 +63,8 @@ use std::collections::BTreeSet;
 /// Preferred slot in an otherwise empty compiled-pack registry. Existing
 /// vaults can assign another slot; use Vault::project_type_byte for the binding.
 pub const PROJECT_TYPE_BYTE: u8 = 103;
+/// The short-id prefix PROJECT is registered under at run time.
+pub(crate) const PROJECT_SHORT_ID_PREFIX: &str = "pj";
 const PACK: &str = "oneiron.project";
 
 /// The root project's entity id, seeded once at first boot. Key: ().
@@ -362,7 +364,7 @@ pub(super) fn record<T: for<'a> Deserialize<'a>>(
 pub(crate) fn is_project_type(store: &crate::store::Store, kind: u8) -> bool {
     store
         .structural_kind_registration(kind)
-        .is_some_and(|row| row.pack == PACK && row.short_id_prefix == "pj")
+        .is_some_and(|row| row.pack == PACK && row.short_id_prefix == PROJECT_SHORT_ID_PREFIX)
 }
 /// Check the dynamic compiled-pack kind through the persisted root binding.
 /// Unseeded test stores have no root and therefore no project hubs.
@@ -391,7 +393,7 @@ pub(super) fn project_type(store: &crate::store::Store) -> Option<u8> {
     store
         .structural_kind_registrations()
         .into_iter()
-        .find(|row| row.pack == PACK && row.short_id_prefix == "pj")
+        .find(|row| row.pack == PACK && row.short_id_prefix == PROJECT_SHORT_ID_PREFIX)
         .map(|row| row.type_byte)
 }
 impl Vault {
@@ -768,7 +770,12 @@ pub(crate) fn seed_root_project(vault: &Vault) -> Result<()> {
                     && vault.structural_kind_registration(*byte).is_none()
             })
             .ok_or_else(invalid)?;
-        vault.register_structural_kind(kind, "pj", TypeByteZone::CompiledProduct, PACK)?;
+        vault.register_structural_kind(
+            kind,
+            PROJECT_SHORT_ID_PREFIX,
+            TypeByteZone::CompiledProduct,
+            PACK,
+        )?;
         kind
     };
     let (leader, _) = vault

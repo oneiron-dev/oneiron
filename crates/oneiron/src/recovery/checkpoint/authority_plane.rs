@@ -26,14 +26,15 @@ use crate::agent_def::{
     AgentCeiling, AgentScope, AgentWakeCadence, DreamingMode, McpRef, MemoryProfile,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject};
+use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::conversation::{ConversationBody, RoomRole};
 use crate::counterparty_contact::{CounterpartyContactStatus, CounterpartyOptOut};
 use crate::llm::ModelTierRef;
 use crate::note::NoteKind;
 use crate::outbound_grant::StandingOutboundGrant;
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
-use crate::skill::{SkillDependency, SkillLifecycle};
+use crate::skill::{SkillDependency, SkillGovernanceTier, SkillLifecycle};
+use crate::workspace_roster::{ProjectAuthority, ProjectBudgetShare, ProjectRecord, ProjectRole};
 use crate::{EntityId, Error, Result, Vault};
 use heed::types::Bytes;
 use std::collections::{BTreeMap, BTreeSet};
@@ -47,7 +48,7 @@ pub(super) fn carry_current_authority(
     databases: &mut BTreeMap<String, CanonicalRows>,
     current: &Vault,
 ) -> Result<()> {
-    let classes = Classes::new();
+    let classes = Classes::new(current);
     let live = current_rows(current, &classes)?;
     // A store's random id, minted at its first open, names the vault even
     // before it has an authority log. Every image carries one; a missing or
@@ -184,9 +185,9 @@ fn current_rows(current: &Vault, classes: &Classes) -> Result<LiveRows> {
 
 /// The names of the projected classes whose authority the image would roll
 /// back: an entity both vaults hold whose authority differs; one the image
-/// holds and the live vault deleted, when that absence is itself authority
-/// (a membership binding, an outbound grant); and an outbound grant only the
-/// live vault holds. An entity only one side holds is otherwise content.
+/// holds and the live vault deleted, or one only the live vault holds, when
+/// that presence is itself authority (an outbound grant, a claim of an
+/// authority family). An entity only one side holds is otherwise content.
 fn authority_moved(
     classes: &Classes,
     image: &CanonicalRows,
@@ -209,30 +210,35 @@ fn authority_moved(
             continue;
         };
         held.insert(key.as_slice());
-        let changed = match live.get(key) {
-            Some((_, _, current)) => *current != authority,
-            None => match projection {
-                Projection::OutboundGrant => true,
-                Projection::Claim => matches!(
-                    authority,
-                    Compared::Claim {
-                        member: Some(_),
-                        ..
-                    }
-                ),
-                _ => false,
-            },
-        };
-        if changed {
-            moved.insert(what);
+        match live.get(key) {
+            Some((_, _, current)) if *current == authority => {}
+            Some((_, _, current)) => {
+                moved.insert(authority.family().or(current.family()).unwrap_or(what));
+            }
+            None if presence_is_authority(projection, &authority) => {
+                moved.insert(authority.family().unwrap_or(what));
+            }
+            None => {}
         }
     }
-    for (key, (what, projection, _)) in live {
-        if *projection == Projection::OutboundGrant && !held.contains(key.as_slice()) {
-            moved.insert(*what);
+    for (key, (what, projection, current)) in live {
+        if !held.contains(key.as_slice()) && presence_is_authority(*projection, current) {
+            moved.insert(current.family().unwrap_or(*what));
         }
     }
     moved
+}
+
+/// Whether an entity only one vault holds still counts as changed: an
+/// outbound grant, a claim of an authority family, and a contact that is
+/// revoked or opted out, whose absence would let a send through.
+fn presence_is_authority(projection: Projection, authority: &Compared) -> bool {
+    match authority {
+        Compared::Contact {
+            status, opt_out, ..
+        } => opt_out.is_some() || *status != CounterpartyContactStatus::Active,
+        _ => projection == Projection::OutboundGrant || authority.family().is_some(),
+    }
 }
 
 /// What one refused row or projected entity is compared by.
@@ -244,10 +250,16 @@ enum Compared {
     Room {
         members: BTreeSet<EntityId>,
         roles: BTreeMap<String, RoomRole>,
-        history_visible: Option<bool>,
+        shares_history: bool,
     },
-    /// Whether the owner took a skill out of use.
-    Skill { quarantined: bool, rejected: bool },
+    /// Who a relationship's participants are.
+    Relationship { participants: BTreeSet<EntityId> },
+    /// Whether a skill loads and what automation may do with it.
+    Skill {
+        approval: ClaimApprovalStatus,
+        quarantined: bool,
+        governance: Option<SkillGovernanceTier>,
+    },
     /// What bounds an agent.
     Agent(Box<AgentBounds>),
     /// Whether a counterparty contact is live, and the party's consents.
@@ -258,15 +270,36 @@ enum Compared {
     },
     /// A note's kind and author.
     Note { kind: NoteKind, author: EntityId },
-    /// A claim's read scope, and the relationship membership it binds, if
-    /// any: whose, of what, and whether it still binds.
+    /// A claim's read scope, and, for a claim of an authority family, the
+    /// family's name and the claim's whole body.
     Claim {
         space: Option<EntityId>,
         private: bool,
-        member: Option<(ClaimSubject, rmpv::Value, bool)>,
+        authority: Option<(&'static str, Vec<u8>)>,
+    },
+    /// What a project may do and spend, and who is in it.
+    Project {
+        authority: Box<ProjectAuthority>,
+        roster: Vec<String>,
+        role: ProjectRole,
+        budget: Option<String>,
+        budget_share: Option<ProjectBudgetShare>,
     },
     /// A grant as it authorizes, without its last use.
     OutboundGrant(Box<StandingOutboundGrant>),
+}
+
+impl Compared {
+    /// The authority family a claim belongs to, which names it in a refusal.
+    fn family(&self) -> Option<&'static str> {
+        match self {
+            Self::Claim {
+                authority: Some((family, _)),
+                ..
+            } => Some(*family),
+            _ => None,
+        }
+    }
 }
 
 /// Every field of an agent definition that bounds what the agent may do.
@@ -296,16 +329,41 @@ fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
         Projection::Room => ConversationBody::from_bytes(body).map_or_else(
             |_| whole(),
             |room| Compared::Room {
+                shares_history: room.shares_history(),
                 members: room.member_ids.into_iter().collect(),
                 roles: room.roles,
-                history_visible: room.history_visible,
+            },
+        ),
+        Projection::Relationship => {
+            // As the audience check reads it: a body that does not decode
+            // lists no participants.
+            let participants = rmp_serde::from_slice::<serde_json::Value>(body)
+                .ok()
+                .and_then(|value| value.get("participant_ids").cloned())
+                .map_or(Ok(Vec::new()), serde_json::from_value::<Vec<EntityId>>);
+            participants.map_or_else(
+                |_| whole(),
+                |participants| Compared::Relationship {
+                    participants: participants.into_iter().collect(),
+                },
+            )
+        }
+        Projection::Project => rmp_serde::from_slice::<ProjectRecord>(body).map_or_else(
+            |_| whole(),
+            |project| Compared::Project {
+                authority: Box::new(project.authority()),
+                roster: project.roster,
+                role: project.role,
+                budget: project.budget,
+                budget_share: project.budget_share,
             },
         ),
         Projection::Skill => crate::skill::decode_skill_record(body).map_or_else(
             |_| whole(),
             |skill| Compared::Skill {
+                approval: skill.approval_status,
                 quarantined: skill.lifecycle_status == SkillLifecycle::Quarantined,
-                rejected: skill.approval_status == ClaimApprovalStatus::Rejected,
+                governance: skill.governance_tier,
             },
         ),
         Projection::Agent => crate::agent_def::decode_agent_definition(body).map_or_else(
@@ -348,16 +406,12 @@ fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
             |_| whole(),
             |claim| {
                 let (space, private) = crate::claim::claim_access_axes(&claim);
-                let member = (claim.predicate
-                    == crate::federation::PREDICATE_RELATIONSHIP_PERSON_REF)
-                    .then(|| {
-                        let binds = crate::claim::claim_surfaceable(&claim);
-                        (claim.subject, claim.value, binds)
-                    });
+                let authority = super::restore_class::authority_claim(&claim.predicate)
+                    .map(|family| (family, body.to_vec()));
                 Compared::Claim {
                     space,
                     private,
-                    member,
+                    authority,
                 }
             },
         ),
