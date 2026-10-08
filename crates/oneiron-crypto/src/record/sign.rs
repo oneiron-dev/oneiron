@@ -18,18 +18,21 @@ use crate::suite::{Suite, SuiteId, SuiteKind, name_of};
 
 const LABEL: &[u8] = b"oneiron-crypto/v1/sig";
 const SLHDSA_N: usize = 32;
-/// Stack bytes wiped after an Ed25519 signature, measured by stack painting
-/// (`sign::tests`, x86_64 Linux, rustc 1.96, 2026-10-09): the signer reached 62,248 bytes
-/// below its caller in a release build and 152,728 in a dev build (this crate at
-/// opt-level 0), most of it [`SigningKey::sign_message_inner`]'s own frame; so about 2.1x
-/// and 1.7x that.
+// The wipe sizes come from stack painting (`sign::tests`, x86_64 Linux, rustc 1.96,
+// 2026-10-09), one per build: `debug_assertions` stands in for an unoptimized build, as
+// Cargo's dev and test profiles pair them. A profile that turns both off gets the release
+// size and only a partial wipe; the test's reach check fails when run under it.
+
+/// Stack bytes wiped after an Ed25519 signature: the signer reached 62,248 bytes below its
+/// caller in a release build and 152,728 in a dev build (this crate at opt-level 0), most
+/// of it [`SigningKey::sign_message_inner`]'s own frame; so about 2.1x and 1.7x that.
 const ED25519_STACK_WIPE: usize = if cfg!(debug_assertions) {
     256 * 1024
 } else {
     128 * 1024
 };
-/// Stack bytes wiped after an SLH-DSA signature, measured the same way: 188,056 bytes in
-/// a release build and 464,504 in a dev build, so about 1.7x and 1.4x that.
+/// Stack bytes wiped after an SLH-DSA signature: 188,056 bytes in a release build and
+/// 464,504 in a dev build, so about 1.7x and 1.4x that.
 const SLHDSA_STACK_WIPE: usize = if cfg!(debug_assertions) {
     640 * 1024
 } else {
