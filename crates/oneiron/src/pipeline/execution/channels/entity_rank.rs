@@ -44,44 +44,62 @@ pub(super) fn rank_unmatched_entities_below_matches(
     let Some(last_match) = scores.iter().rposition(|hit| direct(&hit.id)) else {
         return Ok(());
     };
+    // Every direct match sits at or before `last_match`, so the floor is
+    // whole by the time the rows after it are read. A row after it can still
+    // outscore the floor when a reranker set the order, so it is capped too.
     let mut floor = f32::INFINITY;
-    let mut demote = vec![false; last_match];
-    for (index, hit) in scores[..=last_match].iter().enumerate() {
+    let mut demote = vec![false; scores.len()];
+    for (index, hit) in scores.iter().enumerate() {
         if direct(&hit.id) {
             floor = floor.min(hit.score);
-            continue;
+        } else if index < last_match || hit.score >= floor {
+            let kind = metadata_cache
+                .get(store, rtxn, &hit.id)?
+                .map(|meta| meta.entity_type);
+            demote[index] = matches!(
+                kind,
+                Some(ENTITY_TYPE_PERSON | ENTITY_TYPE_ORG | ENTITY_TYPE_RELATIONSHIP)
+            );
         }
-        let kind = metadata_cache
-            .get(store, rtxn, &hit.id)?
-            .map(|meta| meta.entity_type);
-        demote[index] = matches!(
-            kind,
-            Some(ENTITY_TYPE_PERSON | ENTITY_TYPE_ORG | ENTITY_TYPE_RELATIONSHIP)
-        );
+    }
+    if !demote.contains(&true) {
+        return Ok(());
     }
     let mut moved = Vec::new();
     let mut index = 0;
     scores.retain(|hit| {
-        let keep = !demote.get(index).copied().unwrap_or(false);
+        let keep = index >= last_match || !demote[index];
         if !keep {
             moved.push(*hit);
         }
         index += 1;
         keep
     });
-    if moved.is_empty() {
-        return Ok(());
-    }
-    // A direct hit may score zero (a zero access factor); scores stay at or
-    // above it, where community selection expects them.
+    // Each capped score steps down from the one before it, so a later sort
+    // keeps their order. A direct hit may score zero (a zero access factor);
+    // scores stay at or above it, where community selection expects them.
     let mut cap = floor;
-    for hit in &mut moved {
+    let mut below = |score: f32| {
         if cap > 0.0 {
             cap = cap.next_down();
         }
-        hit.score = hit.score.min(cap);
+        cap = cap.min(score);
+        cap
+    };
+    for hit in &mut moved {
+        hit.score = below(hit.score);
     }
+    // Rows after `last_match` keep their indices: as many rows leave before
+    // it as come back in right after it.
     let at = last_match + 1 - moved.len();
     scores.splice(at..at, moved);
+    for (hit, _) in scores
+        .iter_mut()
+        .zip(&demote)
+        .skip(last_match + 1)
+        .filter(|(_, demoted)| **demoted)
+    {
+        hit.score = below(hit.score);
+    }
     Ok(())
 }
