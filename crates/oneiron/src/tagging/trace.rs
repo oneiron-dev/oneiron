@@ -69,8 +69,35 @@ pub enum TaggingOutcome {
     },
     /// A marker committed for another checkpoint, moved onto the active one.
     Rekeyed,
+    /// A try this worker held but never settled, handed back as an immediate
+    /// retry at `retry_at`: a stopped worker left it leased, or its settling
+    /// write failed. Any answer its call got was never settled.
+    HandedBack {
+        reason: HandBackReason,
+        retry_at: u64,
+    },
     /// A payload this build cannot read; the marker is failed for good.
     Unreadable,
+}
+
+/// Why a held try was handed back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HandBackReason {
+    /// A stopped worker left the try leased under this worker's name.
+    WorkerRestarted,
+    /// The write that would have settled the try failed.
+    SettlementFailed,
+}
+
+impl HandBackReason {
+    /// The retry reason the try's row records.
+    pub(super) const fn as_str(self) -> &'static str {
+        match self {
+            Self::WorkerRestarted => "worker_restarted",
+            Self::SettlementFailed => "settlement_failed",
+        }
+    }
 }
 
 /// Why a marker owed nothing.

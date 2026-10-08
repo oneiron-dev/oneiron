@@ -5,7 +5,9 @@
 //! retries it, so a marker is pruned only once its trace is recorded. A turn
 //! keeps its newest [`TaggingTraceHistory::per_turn`] traces, and every trace
 //! older than [`TaggingTraceHistory::max_age_secs`] is pruned when the worker
-//! next starts a pass, in transactions of a bounded size. The rows are job state, kept under `vault_meta`'s `job:` family:
+//! next starts a pass, in transactions of a bounded size. A worker trims
+//! history kept under a larger per-turn bound once, before its first claim,
+//! and the reader never returns more than the bound in force. The rows are job state, kept under `vault_meta`'s `job:` family:
 //! derived, local, never synced, and in no content database.
 //!
 //! [`TaggingTraceHistory::per_turn`]: super::TaggingTraceHistory::per_turn
@@ -28,7 +30,7 @@ const TRACES: SideTable<TraceKey, TaggingTraceRecord, Named> =
     SideTable::new(&side_table::TAGGING_TRACE);
 const TRACE_AGE: SideTable<AgeKey, (), Raw> = SideTable::new(&side_table::TAGGING_TRACE_AGE);
 
-/// The most expired traces one pass prunes.
+/// The most traces one pruning transaction deletes.
 const PRUNE_BUDGET: usize = 256;
 
 /// One recorded trace.
@@ -128,6 +130,50 @@ pub(super) fn prune_expired_in_txn(
     Ok(due.len())
 }
 
+/// Drops, turn by turn from `from` on, each turn's traces past the per-turn
+/// bound, oldest first, until about [`PRUNE_BUDGET`] are gone; returns the
+/// turn to resume from, or `None` once every turn is within the bound. History
+/// can outgrow the bound only when a vault reopens with a smaller one.
+pub(super) fn trim_per_turn_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    from: Option<[u8; 16]>,
+) -> Result<Option<[u8; 16]>> {
+    let Some(tagging) = vault.config.tagging.as_ref() else {
+        return Ok(None);
+    };
+    let keep = usize::try_from(tagging.trace_history.per_turn).unwrap_or(usize::MAX);
+    let start = from.map(|turn| (turn, 0_u64));
+    let lower = start
+        .as_ref()
+        .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Included);
+    let mut doomed = Vec::new();
+    let mut group: Vec<(TraceKey, u64)> = Vec::new();
+    let mut resume = None;
+    for row in TRACES.iter_range(&vault.store, txn, lower, std::ops::Bound::Unbounded)? {
+        let ((turn, sequence), record) = row?;
+        if group.first().is_some_and(|((held, _), _)| *held != turn) {
+            let over = group.len().saturating_sub(keep);
+            doomed.extend(group.drain(..).take(over));
+            group.clear();
+            if doomed.len() >= PRUNE_BUDGET {
+                resume = Some(turn);
+                break;
+            }
+        }
+        group.push(((turn, sequence), record.recorded_at));
+    }
+    if resume.is_none() {
+        let over = group.len().saturating_sub(keep);
+        doomed.extend(group.drain(..).take(over));
+    }
+    for ((turn, sequence), recorded_at) in doomed {
+        TRACES.delete(&vault.store, txn, &(turn, sequence))?;
+        TRACE_AGE.delete(&vault.store, txn, &(recorded_at, turn, sequence))?;
+    }
+    Ok(resume)
+}
+
 impl Vault {
     /// The recorded tagging traces of `turn`, oldest first, or, for `None`,
     /// those of markers whose payload named no turn: at most the configured
@@ -139,10 +185,18 @@ impl Vault {
     ) -> Result<Vec<TaggingTraceRecord>> {
         let txn = self.store.env.read_txn()?;
         let key = turn.map_or([0; 16], |turn| *turn.as_bytes());
-        Ok(TRACES
+        let keep = self.config.tagging.as_ref().map_or(0, |tagging| {
+            usize::try_from(tagging.trace_history.per_turn).unwrap_or(usize::MAX)
+        });
+        let mut records: Vec<TaggingTraceRecord> = TRACES
             .scan_from(&self.store, &txn, &key)?
             .into_iter()
             .map(|(_, record)| record)
-            .collect())
+            .collect();
+        // History kept under a larger bound reads within the bound in force
+        // until the worker has trimmed it.
+        let over = records.len().saturating_sub(keep);
+        records.drain(..over);
+        Ok(records)
     }
 }

@@ -13,7 +13,9 @@ use super::marker::{
     MarkerPayload, TAGGING_MARKER_KIND, enqueue_marker_in_txn, retry_marker_in_txn,
 };
 use super::output::{AnswerMood, check_output};
-use super::trace::{SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace, attempt_hex};
+use super::trace::{
+    HandBackReason, SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace, attempt_hex,
+};
 use crate::EntityId;
 use crate::Vault;
 use crate::attempt_queue::{
@@ -28,9 +30,6 @@ const DEFAULT_LEASE_OWNER: &str = "oneironer-tagging";
 const DEFAULT_BATCH_SIZE: usize = 16;
 /// Failure reason of a marker whose payload this build cannot read.
 const UNREADABLE_MARKER: &str = "unreadable_tagging_marker";
-/// Retry reasons of the markers a reconciler hands back.
-const WORKER_RESTARTED: &str = "worker_restarted";
-const SETTLEMENT_FAILED: &str = "settlement_failed";
 
 /// Retry backoff for a failed attempt, in store-clock seconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,10 +104,13 @@ pub struct TaggingReconciler {
     /// the reason it is handed back: a claim whose settling write failed, or
     /// a lease a stopped worker left. No claim, witness or publication
     /// reaches a leased marker, so only this reconciler can return it.
-    unsettled: Mutex<Vec<(AttemptRecord, &'static str)>>,
+    unsettled: Mutex<Vec<(AttemptRecord, HandBackReason)>>,
     /// Whether the scan for stale leases has run; until it has, every pass
     /// starts by running it.
     stale_scanned: AtomicBool,
+    /// Whether the trace history has been trimmed to the per-turn bound in
+    /// force; until it has, every pass starts by trimming it.
+    history_trimmed: AtomicBool,
 }
 
 impl TaggingReconciler {
@@ -141,6 +143,7 @@ impl TaggingReconciler {
             label_kinds: BTreeMap::new(),
             unsettled: Mutex::new(Vec::new()),
             stale_scanned: AtomicBool::new(false),
+            history_trimmed: AtomicBool::new(false),
         })
     }
 
@@ -231,7 +234,7 @@ impl TaggingReconciler {
                 .unwrap_or_else(PoisonError::into_inner);
             for record in stale {
                 if !unsettled.iter().any(|(held, _)| held.id == record.id) {
-                    unsettled.push((record, WORKER_RESTARTED));
+                    unsettled.push((record, HandBackReason::WorkerRestarted));
                 }
             }
         }
@@ -261,6 +264,7 @@ impl TaggingReconciler {
         } else {
             self.release_stale_leases()?;
         }
+        self.trim_history()?;
         self.prune_expired_traces()?;
         let queue = AttemptQueue::new(&self.vault);
         let mut pass = TaggingPass::default();
@@ -274,7 +278,7 @@ impl TaggingReconciler {
                     self.unsettled
                         .lock()
                         .unwrap_or_else(PoisonError::into_inner)
-                        .push((record, SETTLEMENT_FAILED));
+                        .push((record, HandBackReason::SettlementFailed));
                     return Err(error);
                 }
             };
@@ -317,6 +321,26 @@ impl TaggingReconciler {
         Ok(Some(record))
     }
 
+    /// Trims history kept under a larger per-turn bound down to the one in
+    /// force, in bounded transactions, once per reconciler: the bound can
+    /// only have shrunk across a reopen.
+    fn trim_history(&self) -> Result<()> {
+        if self.history_trimmed.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let mut from = None;
+        loop {
+            from = self
+                .vault
+                .try_with_write_txn(|txn| history::trim_per_turn_in_txn(&self.vault, txn, from))?;
+            if from.is_none() {
+                break;
+            }
+        }
+        self.history_trimmed.store(true, Ordering::Release);
+        Ok(())
+    }
+
     /// Prunes every trace past the history's age, in bounded transactions,
     /// before the pass claims anything: a pass records its traces only after
     /// this, so expiry keeps up with any batch size. Each round reads first,
@@ -341,10 +365,11 @@ impl TaggingReconciler {
         }
     }
 
-    /// Hands back each marker this reconciler holds, as an immediate retry.
-    /// One that is no longer leased under this owner at the held lease
-    /// generation was settled after all, and is let go. A failed hand-back
-    /// keeps the rest and fails the pass, so the next one tries again.
+    /// Hands back each marker this reconciler holds, as an immediate retry,
+    /// recording the trace of the try it finalizes. One that is no longer
+    /// leased under this owner at the held lease generation was settled after
+    /// all, and is let go. A failed hand-back keeps the rest and fails the
+    /// pass, so the next one tries again.
     fn return_unsettled(&self) -> Result<()> {
         let mut unsettled = self
             .unsettled
@@ -364,7 +389,7 @@ impl TaggingReconciler {
                         && current.attempt_count == record.attempt_count
                 });
                 if still_held {
-                    self.retry_in_txn(txn, record, 0, reason)?;
+                    self.hand_back_in_txn(txn, record, *reason)?;
                 }
                 Ok(())
             })?;
@@ -613,11 +638,40 @@ impl TaggingReconciler {
         })
     }
 
+    /// Hands a held marker back as an immediate retry and records the trace
+    /// of the try it finalizes. A payload no pass can read is settled as a
+    /// pass settles it.
+    fn hand_back_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        record: &AttemptRecord,
+        reason: HandBackReason,
+    ) -> Result<()> {
+        let prior_retries =
+            AttemptQueue::from_store(&self.vault.store).retry_chain_depth_in_txn(txn, record.id)?;
+        let unread = unreadable_trace(record, prior_retries);
+        let Some(payload) = MarkerPayload::decode(&record.payload) else {
+            return self.fail_unreadable_in_txn(txn, record, &unread);
+        };
+        let stamp = self.stamp_in_txn(txn)?;
+        self.retry_in_txn(txn, record, 0, reason.as_str())?;
+        let trace = TaggingTrace {
+            turn: Some(payload.turn),
+            checkpoint: payload.checkpoint,
+            outcome: TaggingOutcome::HandedBack {
+                reason,
+                retry_at: stamp,
+            },
+            ..unread
+        };
+        history::record_in_txn(&self.vault, txn, &trace, stamp)
+    }
+
     /// Retries a marker this owner holds, in the caller's transaction, with
-    /// its successor ready at `retry_at`. The successor's id is derived like
-    /// a new marker's, so no retry draws from the vault's id source and shadow
-    /// leaves every later write's entity ids as a run with no tagger leaves
-    /// them. A payload this build cannot read is failed, as a pass fails it.
+    /// its successor ready at `retry_at`. The successor's id is derived from
+    /// the try it retries, so no retry draws from the vault's id source and
+    /// shadow leaves every later write's entity ids as a run with no tagger
+    /// leaves them. Every caller has read the payload first.
     fn retry_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -628,14 +682,6 @@ impl TaggingReconciler {
         #[cfg(test)]
         if self.vault.test_hooks().take_fail_next_tagging_settlement() {
             return Err(Error::MapFull);
-        }
-        if MarkerPayload::decode(&record.payload).is_none() {
-            // A hand-back of a payload no pass can read settles it as a pass
-            // would, its trace recorded before it leaves the ledger.
-            let prior_retries = AttemptQueue::from_store(&self.vault.store)
-                .retry_chain_depth_in_txn(txn, record.id)?;
-            let trace = unreadable_trace(record, prior_retries);
-            return self.fail_unreadable_in_txn(txn, record, &trace);
         }
         retry_marker_in_txn(
             &self.vault,

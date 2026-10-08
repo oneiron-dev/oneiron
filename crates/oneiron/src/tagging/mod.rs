@@ -45,7 +45,7 @@ pub use marker::{
 };
 pub use output::{OutputRefusal, spans_only_answers_admitted};
 pub use reconciler::{TaggingBackoff, TaggingPass, TaggingReconciler};
-pub use trace::{SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace};
+pub use trace::{HandBackReason, SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace};
 
 #[cfg(feature = "sync")]
 pub(crate) use marker::text_entity_type_in_txn;

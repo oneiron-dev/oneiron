@@ -208,14 +208,16 @@ fn history(vault: &Vault, turn: &EntityId) -> Vec<TaggingOutcome> {
 }
 
 /// The turn's recorded traces that settled a marker: every outcome but a
-/// failed or superseded try.
+/// failed, superseded or handed-back try.
 fn settled(vault: &Vault, turn: &EntityId) -> usize {
     history(vault, turn)
         .iter()
         .filter(|outcome| {
             !matches!(
                 outcome,
-                TaggingOutcome::Failed { .. } | TaggingOutcome::Superseded { .. }
+                TaggingOutcome::Failed { .. }
+                    | TaggingOutcome::Superseded { .. }
+                    | TaggingOutcome::HandedBack { .. }
             )
         })
         .count()
@@ -561,8 +563,8 @@ fn shadow_leaves_every_content_database_as_a_run_with_no_tagger_leaves_it() {
         }
     )));
     // Every turn settled once, and its marker left the job ledger with the
-    // two retried tries and the restarted lease. The two failed calls and the
-    // three answers are the traces.
+    // two retried tries and the restarted lease. The two failed calls, the
+    // handed-back lease and the three answers are the traces.
     assert!(markers(&tagged).is_empty());
     assert!(turns.iter().all(|turn| settled(&tagged, turn) == 1));
     assert_eq!(
@@ -570,7 +572,7 @@ fn shadow_leaves_every_content_database_as_a_run_with_no_tagger_leaves_it() {
             .iter()
             .map(|turn| history(&tagged, turn).len())
             .sum::<usize>(),
-        5
+        6
     );
     arms.tick(NOW + 120);
     assert!(reconciler.drain_once().expect("drain").traces.is_empty());
@@ -2588,4 +2590,104 @@ fn a_landing_hand_off_of_a_tagging_marker_is_refused() {
     let rows = markers(&vault);
     assert_eq!(rows.len(), 1, "no successor was written");
     assert!(crate::attempt_queue::owner_retained_id(&rows[0].id));
+}
+
+/// A try a stopped worker left leased, and a try whose settling write
+/// failed, are each handed back with their trace recorded, so every try that
+/// leaves the job ledger has a trace.
+#[test]
+fn a_handed_back_try_is_traced_before_it_leaves_the_ledger() {
+    let dir = tempfile::tempdir().expect("dir");
+    let restarted = {
+        let vault = open(dir.path(), true);
+        let turn = witness(&vault, "Ada sailed north");
+        let claimed = AttemptQueue::new(&vault)
+            .claim_kind(
+                TAGGING_MARKER_KIND,
+                ClaimAttempt {
+                    lease_owner: "oneironer-tagging".into(),
+                    now: u64::MAX,
+                },
+            )
+            .expect("claim");
+        assert!(matches!(claimed, ClaimOutcome::Claimed(_)));
+        turn
+    };
+    let vault = open(dir.path(), true);
+    let tagger = Scripted::new(Answer::Good);
+    let reconciler = reconciler(&vault, &tagger);
+    reconciler.drain_once().expect("drain");
+    let failed = witness(&vault, "Grace stayed behind");
+    vault.test_hooks().arm_fail_next_tagging_settlement();
+    reconciler
+        .drain_once()
+        .expect_err("the settling write fails");
+    reconciler.drain_once().expect("drain");
+    assert!(markers(&vault).is_empty());
+    for (turn, reason) in [
+        (restarted, HandBackReason::WorkerRestarted),
+        (failed, HandBackReason::SettlementFailed),
+    ] {
+        let outcomes = history(&vault, &turn);
+        assert_eq!(outcomes.len(), 2, "{reason:?}: {outcomes:?}");
+        assert!(
+            matches!(outcomes[0], TaggingOutcome::HandedBack { reason: found, .. } if found == reason)
+        );
+        assert!(matches!(outcomes[1], TaggingOutcome::Shadowed { .. }));
+    }
+}
+
+/// History kept under a larger per-turn bound reads within a smaller one at
+/// once, and the next worker trims it to that bound before it claims.
+#[test]
+fn a_smaller_per_turn_bound_trims_the_history_kept_under_a_larger_one() {
+    let dir = tempfile::tempdir().expect("dir");
+    let open_with = |per_turn: u32| {
+        let mut config = config(true);
+        config.tagging = Some(
+            TaggingMarkerConfig::new(CHECKPOINT)
+                .expect("checkpoint")
+                .with_trace_history(TaggingTraceHistory {
+                    per_turn,
+                    ..TaggingTraceHistory::default()
+                }),
+        );
+        Arc::new(Vault::open(dir.path(), config).expect("open vault"))
+    };
+    let turn_ref = Some("73737373737373737373737373737373".to_owned());
+    let tagged = EntityId::from_hex(turn_ref.as_deref().expect("ref")).expect("turn id");
+    {
+        let vault = open_with(3);
+        let memory = vault.memory(speaker(&vault), EdgeActorClass::Human);
+        let tagger = Scripted::new(Answer::Good);
+        let reconciler = reconciler(&vault, &tagger);
+        for order in 0..3_u32 {
+            memory
+                .witness(&turn(
+                    turn_ref.clone(),
+                    vec![message(order, "Ada sailed north")],
+                ))
+                .expect("witness");
+            reconciler.drain_once().expect("drain");
+        }
+        assert_eq!(history(&vault, &tagged).len(), 3);
+    }
+    for (per_turn, kept) in [(1, 1), (0, 0)] {
+        let vault = open_with(per_turn);
+        assert_eq!(
+            history(&vault, &tagged).len(),
+            kept,
+            "read within {per_turn}"
+        );
+        let tagger = Scripted::new(Answer::Good);
+        reconciler(&vault, &tagger).drain_once().expect("drain");
+        drop(vault);
+        // What the trim left, read under the larger bound again.
+        let vault = open_with(3);
+        assert_eq!(
+            history(&vault, &tagged).len(),
+            kept,
+            "trimmed to {per_turn}"
+        );
+    }
 }
