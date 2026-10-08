@@ -1,43 +1,8 @@
 //! Resolved route decisions and redacted/full status views for health and discovery.
-use oneiron::Vault;
-use oneiron::agent_dispatch::AgentDispatchTarget;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::{RuntimeConfig, RuntimeMode, RuntimeProviderKind, RuntimeRole};
-
-/// Resolves a workspace roster route from STORED row state.
-///
-/// `None` means absorb into the primary agent: an unknown logical id or a
-/// disabled row is a routing miss, not an error. An EXPLICIT engine dispatch
-/// to a disabled row stays a typed engine error — only server route selection
-/// absorbs. Stored-row decode failures propagate.
-///
-/// ONE-1832/RUNTIME owner note: the pre-1890 turn-text absorb classifier
-/// (intimacy/erotic/repair phrases) was deleted with the branded roster. It
-/// had zero production callers and its policy input is orthogonal to
-/// row-state routing; any turn-content routing guard is a product decision
-/// ONE-1832 owns, not preserved here.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "row routing lands with 1890; ONE-1832/RUNTIME wires the production caller \
-                  (the deleted predecessors were equally test-only)"
-    )
-)]
-pub(crate) fn resolve_agent_route(
-    vault: &Vault,
-    logical_id: &str,
-) -> oneiron::Result<Option<AgentDispatchTarget>> {
-    match vault.get_seeded_agent_definition_by_logical_id(logical_id) {
-        Ok(Some((id, definition))) if definition.enabled => {
-            Ok(Some(AgentDispatchTarget::Custom(id)))
-        }
-        Ok(Some(_)) | Ok(None) => Ok(None),
-        Err(error) => Err(error),
-    }
-}
 
 /// Runtime routing status advertised by health and discovery responses.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]

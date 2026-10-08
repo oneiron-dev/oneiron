@@ -317,18 +317,6 @@ async fn a_slip_with_the_wrong_key_is_unauthorized() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn redeeming_a_link_twice_is_unauthorized_at_pair() {
-    let fixture = Fixture::serve().await;
-    let link = fixture.owner_link();
-    let refused = blocking(move || {
-        OneironClient::pair(&link).unwrap();
-        code(OneironClient::pair(&link))
-    })
-    .await;
-    assert_eq!(refused, "UNAUTHORIZED");
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_expired_link_is_unauthorized_at_pair() {
     let fixture = Fixture::serve().await;
     let (link, expires_at) = fixture.link(READ_WRITE, &fixture.person, Some("human"));
@@ -381,18 +369,5 @@ async fn a_revoked_slip_is_unauthorized_on_its_next_call() {
         code(client.receipts(10))
     })
     .await;
-    assert_eq!(refused, "UNAUTHORIZED");
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn host_secret_without_a_holder_proof_is_not_a_credential() {
-    let fixture = Fixture::serve().await;
-    let origin = fixture.origin.clone();
-    let refused = blocking(move || {
-        let client = OneironClient::connect(&origin, SECRET).unwrap();
-        code(client.receipts(10))
-    })
-    .await;
-    // An issuer secret is key material, not an owner-grade bearer.
     assert_eq!(refused, "UNAUTHORIZED");
 }

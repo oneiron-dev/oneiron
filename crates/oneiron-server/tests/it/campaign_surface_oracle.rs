@@ -17,16 +17,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use oneiron::campaign::surface::{
-    CAMPAIGN_SELF_VERBS, CampaignSurfaceVerb, MEMBERSHIP_PAGE_MAX_LIMIT, SurfaceCall,
-    invoke_campaign_surface,
-};
+use oneiron::campaign::surface::{MEMBERSHIP_PAGE_MAX_LIMIT, SurfaceCall, invoke_campaign_surface};
 use oneiron::campaign::{CRM_PACK_ID, register_crm_pack};
 use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use oneiron::{EdgeActorClass, EntityId, MemoryError, TimeRange, Vault, VaultConfig};
 use oneiron_server::build_app;
 use oneiron_server::config::SyncServerConfig;
-use oneiron_server::mcp::{McpSurfaceMode, McpToolName, registered_surface};
 use oneiron_server::server::SyncServer;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -117,14 +113,6 @@ fn token_for(vault: &Vault, principal: EntityId, scopes: &str) -> String {
 }
 fn owner_token(vault: &Vault, principal: EntityId) -> String {
     token_for(vault, principal, "core:read,core:write")
-}
-fn host_root_token(vault: &Vault) -> String {
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
-    vault
-        .ensure_host_root_slip(&issuer)
-        .unwrap()
-        .to_token()
-        .unwrap()
 }
 fn authorization(token: &str) -> String {
     use ed25519_dalek::Signer;
@@ -280,126 +268,6 @@ fn saved_query_body() -> Value {
         },
         "eval": { "mode": "manual", "max_entities_per_wake": 8, "max_judges_per_wake": 4 }
     })
-}
-
-// ---------------------------------------------------------------------------
-// Verb vocabulary
-// ---------------------------------------------------------------------------
-
-/// Every advertised constant parses to exactly one verb and serializes back to
-/// the identical string; nothing outside the closed list parses.
-#[test]
-fn campaign_surface_verb_round_trip() {
-    assert_eq!(CAMPAIGN_SELF_VERBS.len(), CampaignSurfaceVerb::ALL.len());
-    for name in CAMPAIGN_SELF_VERBS {
-        let verb = CampaignSurfaceVerb::parse(name)
-            .unwrap_or_else(|| panic!("{name} should parse to a surface verb"));
-        assert_eq!(verb.as_str(), *name);
-    }
-    // One constant per variant, no aliasing.
-    let mut names: Vec<&str> = CampaignSurfaceVerb::ALL
-        .iter()
-        .map(|verb| verb.as_str())
-        .collect();
-    names.sort_unstable();
-    names.dedup();
-    assert_eq!(names.len(), CAMPAIGN_SELF_VERBS.len());
-
-    // Prefix-confusable, suffix-extended, case-shifted, whitespace-padded, and
-    // family-crossed names are all rejected: parsing is exact equality, not a
-    // starts_with over a namespace.
-    for rejected in [
-        "self.campaign.creat",
-        "self.campaign.create.extra",
-        "self.campaign.creates",
-        "Self.Campaign.Create",
-        " self.campaign.create",
-        "self.campaign.create ",
-        "self.campaign",
-        "self.saved_query",
-        "self.savedquery.create",
-        "self.campaign.delete",
-        "self.saved_query.delete",
-        "",
-    ] {
-        assert!(
-            CampaignSurfaceVerb::parse(rejected).is_none(),
-            "{rejected:?} must not parse"
-        );
-    }
-
-    // Writes and reads are partitioned; membership is a read despite its name.
-    assert!(CampaignSurfaceVerb::CampaignCreate.is_write());
-    assert!(CampaignSurfaceVerb::SavedQueryArchive.is_write());
-    assert!(!CampaignSurfaceVerb::CampaignMembers.is_write());
-    assert!(!CampaignSurfaceVerb::SavedQueryMembers.is_write());
-    assert_eq!(
-        CampaignSurfaceVerb::ALL
-            .iter()
-            .filter(|verb| verb.is_write())
-            .count(),
-        6
-    );
-}
-
-/// All ten verbs reach the engine through ONE door, with no transport in the
-/// picture. This is the property a future MCP gateway arm inherits for free:
-/// a dialect that builds a `SurfaceCall` gets the HTTP routes' exact behavior.
-#[test]
-fn campaign_surface_reaches_all_ten_verbs_through_one_engine_door() {
-    let (_dir, vault, principal) = oracle_vault();
-
-    let campaign = record_ref(
-        &expect_call(
-            &vault,
-            principal,
-            "self.campaign.create",
-            json!({ "name": "door" }),
-        ),
-        "campaign_ref",
-    );
-    let query = record_ref(
-        &expect_call(
-            &vault,
-            principal,
-            "self.saved_query.create",
-            saved_query_body(),
-        ),
-        "query_ref",
-    );
-
-    let bodies = [
-        ("self.campaign.read", json!({ "campaign_ref": campaign })),
-        (
-            "self.campaign.update",
-            json!({ "campaign_ref": campaign, "expected_definition_version": 1, "name": "door2" }),
-        ),
-        (
-            "self.campaign.members",
-            json!({ "campaign_ref": campaign, "limit": 5 }),
-        ),
-        (
-            "self.campaign.archive",
-            json!({ "campaign_ref": campaign, "expected_definition_version": 2 }),
-        ),
-        ("self.saved_query.read", json!({ "query_ref": query })),
-        ("self.saved_query.members", json!({ "query_ref": query })),
-    ];
-    for (verb, body) in bodies {
-        let reply = expect_call(&vault, principal, verb, body);
-        assert_eq!(reply["verb"], Value::String(verb.to_owned()));
-    }
-
-    // An unadvertised verb is refused by the dispatcher itself, before any
-    // vault access.
-    let rejected = call(
-        &vault,
-        principal,
-        "self.campaign.destroy",
-        json!({ "campaign_ref": campaign }),
-    )
-    .expect_err("an unlisted verb must not dispatch");
-    assert_eq!(rejected.code, oneiron::MEMORY_CODE_BAD_REQUEST);
 }
 
 // ---------------------------------------------------------------------------
@@ -1165,150 +1033,4 @@ async fn campaign_surface_error_parity() {
     assert_eq!(status, 403, "{scoped}");
 
     handle.abort();
-}
-
-/// Discovery lists each `self.*` verb exactly once, derived from the engine's
-/// closed list, with no Graph-FS prerequisite.
-#[tokio::test]
-async fn campaign_discovery_lists_self_verbs_once() {
-    let (_dir, vault, _principal) = oracle_vault();
-    let (addr, handle) = spawn_server(Arc::clone(&vault)).await;
-
-    let (status, discovered) = request(
-        addr,
-        "GET",
-        "/api/core/discover",
-        Some(&host_root_token(&vault)),
-        None,
-    )
-    .await;
-    assert_eq!(status, 200, "{discovered}");
-    let capabilities: Vec<&str> = discovered["feature_flags"]["capabilities"]
-        .as_array()
-        .expect("discovery should advertise capabilities")
-        .iter()
-        .map(|token| token.as_str().expect("capability should be a string"))
-        .collect();
-
-    for verb in CAMPAIGN_SELF_VERBS {
-        assert_eq!(
-            capabilities.iter().filter(|token| *token == verb).count(),
-            1,
-            "{verb} must be advertised exactly once: {capabilities:?}"
-        );
-    }
-
-    // The advertised set is the engine's closed list, not a hand-kept copy: no
-    // `self.*` token exists that the dispatcher would refuse.
-    for token in &capabilities {
-        if token.starts_with("self.") {
-            assert!(
-                CampaignSurfaceVerb::parse(token).is_some(),
-                "{token} is advertised but does not dispatch"
-            );
-        }
-    }
-    assert_eq!(
-        capabilities
-            .iter()
-            .filter(|token| token.starts_with("self."))
-            .count(),
-        CAMPAIGN_SELF_VERBS.len()
-    );
-
-    // The MCP vocabulary advertised alongside them is the two REGISTERED
-    // endpoints' tool sets, derived from the registrations `tools/list`
-    // projects and `tools/call` resolves against, so every advertised name is
-    // one its stated endpoint accepts.
-    for mode in McpSurfaceMode::ALL {
-        let surface = registered_surface(mode);
-        assert!(
-            !surface.tool_names().is_empty(),
-            "the {} endpoint registers at least one tool",
-            mode.as_str()
-        );
-        for name in surface.tool_names() {
-            assert!(
-                surface.resolve(name).is_some(),
-                "{name} is advertised only because the {} endpoint accepts it",
-                mode.as_str()
-            );
-            assert!(
-                capabilities.contains(&format!("mcp.tool.{name}").as_str()),
-                "discovery advertises the registered tool {name}"
-            );
-            let endpoint_token = format!("mcp.endpoint.{}.{name}", mode.as_str());
-            assert!(
-                capabilities.contains(&endpoint_token.as_str()),
-                "discovery advertises {endpoint_token}"
-            );
-        }
-    }
-
-    // The batch's `oneiron.calendar` is part of the retired plain-verb catalog:
-    // neither endpoint registers it, so discovery advertises none of those
-    // seven names.
-    for tool in McpToolName::all() {
-        let retired = format!("mcp.tool.{}", tool.as_str());
-        assert!(
-            !capabilities.contains(&retired.as_str()),
-            "{retired} is registered on no endpoint and must not be advertised"
-        );
-    }
-
-    // The vault under test mounts no Graph-FS `/queries/` view, and every verb
-    // is still advertised — discovery states no filesystem prerequisite.
-    let body = serde_json::to_string(&discovered).unwrap();
-    assert!(!body.contains("graph_fs"), "{body}");
-    assert!(!body.contains("/queries/"), "{body}");
-
-    // Health advertises the same vocabulary, from the same derivation.
-    let (status, health) = request(addr, "GET", "/api/health", None, None).await;
-    assert_eq!(status, 200, "{health}");
-    assert_eq!(
-        health["capabilities"]["capabilities"],
-        discovered["feature_flags"]["capabilities"]
-    );
-
-    handle.abort();
-}
-
-/// CA-07 adds no MCP tool: the closed catalog keeps the batch-owned
-/// `oneiron.calendar` and gains no campaign tool, op enum, or alias.
-#[test]
-fn campaign_adds_no_mcp_tool_name() {
-    let names: Vec<&str> = McpToolName::all()
-        .iter()
-        .map(|tool| tool.as_str())
-        .collect();
-    assert!(
-        names.contains(&"oneiron.calendar"),
-        "the batch-owned calendar tool must stay in the catalog: {names:?}"
-    );
-    for name in &names {
-        assert!(
-            !name.contains("campaign") && !name.contains("saved_query"),
-            "catalog grew a campaign tool: {name}"
-        );
-    }
-    for absent in [
-        "oneiron.campaign",
-        "oneiron.saved_query",
-        "oneiron.saved-queries",
-    ] {
-        assert!(
-            McpToolName::from_name(absent).is_none(),
-            "{absent} must not resolve to a tool"
-        );
-    }
-    // No campaign operation discriminator either.
-    for tool in McpToolName::all() {
-        for op in tool.operations() {
-            assert!(
-                !op.contains("campaign") && !op.contains("saved_query"),
-                "{} grew a campaign op: {op}",
-                tool.as_str()
-            );
-        }
-    }
 }

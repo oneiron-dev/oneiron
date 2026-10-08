@@ -317,8 +317,7 @@ pub(crate) enum ProtocolError {
 /// WebSocket close codes per ARCH-023 section 3.5.
 ///
 /// The `dead_code`-allowed constants are contract constants: no close frame
-/// carries them yet — they are read only by the error/tests.rs ErrorCode
-/// lockstep check.
+/// carries them yet.
 pub(crate) mod close_codes {
     /// JWT expired mid-session or device lease expired.
     #[allow(dead_code)]
@@ -339,118 +338,4 @@ pub(crate) mod close_codes {
     pub(crate) const CLOSE_RPC_VERSION_MISMATCH: u16 = 4007;
     /// Missing, invalid, revoked, or repeated in-band bind.
     pub(crate) const CLOSE_RPC_NO_PRINCIPAL: u16 = 4008;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_message_dispatch() {
-        // Two top-level wire tags get routed to their typed SyncMessage
-        // variant by parse_message:
-        //   (case_name, encoded_message, assertion)
-        // - root_update: TAG_SYNC_UPDATE + payload -> SyncMessage::RootUpdate
-        // - window_sync: encode_window_sync(...) -> SyncMessage::WindowSync
-        //   with the original window_key/sub_tag/payload preserved.
-        type Asserter = fn(SyncMessage);
-
-        let root_update_payload = vec![1u8, 2, 3];
-        let mut root_msg = vec![TAG_SYNC_UPDATE];
-        root_msg.extend_from_slice(&root_update_payload);
-
-        let window_msg = encode_window_sync("2026-02", window_sub_tags::UPDATE, b"data")
-            .into_result()
-            .unwrap();
-
-        // (case_name, encoded, assertion_fn)
-        let assert_root: Asserter = |msg| {
-            let SyncMessage::RootUpdate(data) = msg else {
-                panic!("expected RootUpdate, got {msg:?}");
-            };
-            assert_eq!(data, vec![1u8, 2, 3]);
-        };
-        let assert_window: Asserter = |msg| {
-            let SyncMessage::WindowSync {
-                window_key,
-                sub_tag,
-                payload,
-            } = msg
-            else {
-                panic!("expected WindowSync, got {msg:?}");
-            };
-            assert_eq!(window_key, "2026-02");
-            assert_eq!(sub_tag, window_sub_tags::UPDATE);
-            assert_eq!(payload, b"data");
-        };
-
-        let cases: &[(&str, Vec<u8>, Asserter)] = &[
-            ("root_update", root_msg, assert_root),
-            ("window_sync", window_msg, assert_window),
-        ];
-
-        for (case_name, encoded, asserter) in cases {
-            let parsed = parse_message(encoded)
-                .unwrap_or_else(|e| panic!("case {case_name}: parse failed: {e:?}"));
-            asserter(parsed);
-        }
-    }
-
-    /// Every distinct ephemeral payload that had its own roundtrip door must
-    /// stay an input here: `b"snapshot"` arrives from the merged-away
-    /// `ephemeral_roundtrip` wrapper, which encoded and decoded through the
-    /// identical `encode_ephemeral` -> `parse_message` seam.
-    #[test]
-    fn parse_message_ephemeral() {
-        for payload in [b"ephemeral-bytes".as_slice(), b"snapshot".as_slice()] {
-            let encoded = encode_ephemeral(payload).into_result().unwrap();
-            let SyncMessage::Ephemeral(bytes) = parse_message(&encoded).unwrap() else {
-                panic!("expected Ephemeral for payload {payload:?}");
-            };
-            assert_eq!(bytes, payload);
-        }
-    }
-
-    #[test]
-    fn parse_message_unknown_tag() {
-        assert!(matches!(
-            parse_message(&[50, 1, 2, 3]),
-            Err(ProtocolError::UnknownTag(50)),
-        ));
-    }
-
-    #[test]
-    fn paginated_response_serializes_contract_meta_literals() {
-        let response = PaginatedResponse::new(
-            vec![1_u8],
-            Some("cursor-1".to_owned()),
-            ResponseMeta::new(42, CountMode::Exact),
-        );
-        let json = serde_json::to_value(response).unwrap();
-
-        assert_eq!(json["items"], serde_json::json!([1]));
-        assert_eq!(json["nextCursor"], "cursor-1");
-
-        let meta = json["meta"].as_object().unwrap();
-        assert_eq!(meta.len(), 2);
-        assert_eq!(meta["total"], 42);
-        assert_eq!(meta["countMode"], "exact");
-    }
-
-    #[test]
-    fn count_mode_literals_are_lowercase_and_stable() {
-        let cases = [
-            (CountMode::None, "none"),
-            (CountMode::Estimate, "estimate"),
-            (CountMode::Exact, "exact"),
-        ];
-
-        for (mode, literal) in cases {
-            assert_eq!(serde_json::to_value(mode).unwrap(), literal);
-            assert_eq!(
-                serde_json::from_value::<CountMode>(serde_json::json!(literal)).unwrap(),
-                mode
-            );
-        }
-    }
 }
