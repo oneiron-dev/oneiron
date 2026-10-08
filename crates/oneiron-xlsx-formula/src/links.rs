@@ -1024,15 +1024,28 @@ fn hands_on_a_link(node: &ASTNode, names: &BTreeMap<String, LinkedName>) -> bool
     }
 }
 
-/// The names a formula qualifies with the workbook itself (`[0]!Rate`),
-/// outside its strings and quoted sheet names. The fork reads `[0]!Rate` as
-/// `Rate`, which a formula on a sheet with its own `Rate` reads as that one,
-/// where Excel reads the workbook's (and, with none, one sheet's).
+/// The names a formula qualifies with the workbook itself (`[0]!Rate`, or
+/// `'[0]'!Rate`, which Excel saves back as `[0]!Rate`), outside its strings
+/// and quoted sheet names. The fork reads `[0]!Rate` as `Rate`, which a
+/// formula on a sheet with its own `Rate` reads as that one, where Excel reads
+/// the workbook's (and, with none, one sheet's).
 pub(crate) fn workbook_qualified_names(formula: &str) -> Vec<&str> {
     let bytes = formula.as_bytes();
     let mut found = Vec::new();
     let mut at = 0;
     while at < bytes.len() {
+        if let Some(qualifier) = ["[0]!", "'[0]'!"]
+            .into_iter()
+            .find(|qualifier| bytes[at..].starts_with(qualifier.as_bytes()))
+        {
+            let start = at + qualifier.len();
+            let end = formula[start..]
+                .find(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '.' | '\\' | '?')))
+                .map_or(formula.len(), |length| start + length);
+            found.push(&formula[start..end]);
+            at = end.max(start);
+            continue;
+        }
         match bytes[at] {
             quote @ (b'"' | b'\'') => {
                 // A doubled quote stands for one inside the quotes.
@@ -1048,14 +1061,6 @@ pub(crate) fn workbook_qualified_names(formula: &str) -> Vec<&str> {
                     at += 1;
                 }
                 at += 1;
-            }
-            b'[' if formula[at..].starts_with("[0]!") => {
-                let start = at + "[0]!".len();
-                let end = formula[start..]
-                    .find(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '.' | '\\' | '?')))
-                    .map_or(formula.len(), |length| start + length);
-                found.push(&formula[start..end]);
-                at = end.max(start);
             }
             _ => at += 1,
         }

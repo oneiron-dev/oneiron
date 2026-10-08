@@ -654,14 +654,21 @@ fn computed_index_positions_approximate_lookups_and_the_workbook_itself() {
         "external range returned or passed on as a reference"
     );
     // The engine reads `[0]!Rate` as `Rate`, the sheet's own where it has
-    // one; Excel reads the workbook's.
-    assert_eq!(
-        fallback(&with_names(
-            &fixture("", r#"<c r="A1"><f>[0]!Rate</f><v>0</v></c>"#, false),
-            r#"<definedName name="Rate">10</definedName><definedName name="Rate" localSheetId="0">20</definedName>"#,
-        )),
-        "workbook-qualified name with a sheet-level definition ([0]!Rate)"
-    );
+    // one; Excel reads the workbook's (10, not 20), quoted `'[0]'!Rate` too.
+    for formula in ["[0]!Rate", "'[0]'!Rate"] {
+        assert_eq!(
+            fallback(&with_names(
+                &fixture(
+                    "",
+                    &format!("<c r=\"A1\"><f>{formula}</f><v>0</v></c>"),
+                    false
+                ),
+                r#"<definedName name="Rate">10</definedName><definedName name="Rate" localSheetId="0">20</definedName>"#,
+            )),
+            "workbook-qualified name with a sheet-level definition ([0]!Rate)",
+            "{formula}"
+        );
+    }
 }
 
 /// `formula` in a cell of a workbook linking `FIVE`.
