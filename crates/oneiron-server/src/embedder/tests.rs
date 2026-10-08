@@ -1270,8 +1270,9 @@ fn busy_embedding_worker_publishes_due_staged_revisions_between_passes() {
 
 /// Wave 9 long-context A/B: the recall verb ran `RecallExecution::default()`,
 /// so a vault served with an embedder still recalled sparse, and a paraphrase
-/// that shares no word with its turn found nothing. Both server doors, the
-/// HTTP facade and the WebSocket read RPC, now embed the query.
+/// that shares no word with its memory found nothing. Both server doors, the
+/// HTTP facade and the WebSocket read RPC, now embed the query, so a claim
+/// written through the facade is found by a paraphrase.
 #[test]
 fn recall_doors_embed_the_query_when_the_vault_has_an_embedder() {
     use axum::body::{Body, to_bytes};
@@ -1283,8 +1284,6 @@ fn recall_doors_embed_the_query_when_the_vault_has_an_embedder() {
     let dir = tempfile::tempdir().unwrap();
     let vault = test_vault(dir.path());
     let owner = vault.ensure_embedded_owner_actor().unwrap();
-    // Witnessed messages publish their vectors at idle; publish at once.
-    vault.set_indexed_idle_delay_ms(0).unwrap();
     let config = EmbedderConfig {
         idle_interval_ms: 20,
         ..endpoint_config(&mock.base)
@@ -1332,38 +1331,43 @@ fn recall_doors_embed_the_query_when_the_vault_has_an_embedder() {
                 serde_json::from_slice::<Value>(&bytes).unwrap()
             }
         };
-        let receipt = post(
-            "witness",
-            json!({"conversation_ref": "41414141414141414141414141414141",
-                "occurred_at": 1_767_225_600_u64, "messages": [
-                {"author": "user", "message_type": "text", "is_visible": true, "order": 0,
-                 "content": "The mechanic says the automobile needs new brakes."},
-                {"author": "user", "message_type": "text", "is_visible": true, "order": 1,
-                 "content": "Lunch with Anna moved to Thursday at noon."}]}),
-        )
-        .await;
-        let target = receipt["message_short_ids"][0].as_str().unwrap().to_owned();
+        let mut claimed = Vec::new();
+        for (predicate, value) in [
+            (
+                "note.first",
+                "The mechanic says the automobile needs new brakes.",
+            ),
+            ("note.second", "Lunch with Anna moved to Thursday at noon."),
+        ] {
+            let receipt = post(
+                "claim_upsert",
+                json!({"predicate": predicate, "subject_ref": owner.to_hex(),
+                    "value": value, "confidence": 0.9, "source": "user_stated"}),
+            )
+            .await;
+            claimed.push(receipt["claim_short_id"].as_str().unwrap().to_owned());
+        }
+        let target = claimed[0].clone();
 
-        let first = |pack: &Value| -> (Value, String) {
+        let found = |pack: &Value| -> (Value, bool) {
+            let ids = pack["items"].as_array().into_iter().flatten();
+            let short_ids: Vec<&str> = ids.filter_map(|item| item["short_id"].as_str()).collect();
             (
                 pack["retrieval_meta"]["sparse"].clone(),
-                pack["items"][0]["short_id"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned(),
+                short_ids.contains(&target.as_str()),
             )
         };
-        // Wait until the vectors are published and the HTTP door answers.
+        // Wait until the claim vectors are filled and the HTTP door answers.
         let request = json!({"query": "car repair garage", "limit": 5});
         let mut http = Value::Null;
         for _ in 0..600 {
             http = post("recall", request.clone()).await;
-            if first(&http).1 == target {
+            if found(&http).1 {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
-        assert_eq!(first(&http), (json!(false), target.clone()), "{http}");
+        assert_eq!(found(&http), (json!(false), true), "{target}: {http}");
 
         let auth = crate::test_credentials::authenticate(&server, &recipe);
         let frames = crate::livequery::bound_rpc(
@@ -1377,7 +1381,7 @@ fn recall_doors_embed_the_query_when_the_vault_has_an_embedder() {
         )
         .unwrap();
         let ws = crate::livequery::test_wire::reply(&frames);
-        assert_eq!(first(&ws["result"]), (json!(false), target), "{ws}");
+        assert_eq!(found(&ws["result"]), (json!(false), true), "{target}: {ws}");
         worker.abort();
     });
     runtime.shutdown_background();
