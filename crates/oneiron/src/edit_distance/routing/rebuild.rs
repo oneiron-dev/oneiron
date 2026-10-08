@@ -44,8 +44,10 @@ pub fn rebuild_routing_projection(vault: &Vault) -> Result<()> {
                 continue;
             };
             let scope = RoutingScopeKey::new(row.model_version, judgment.scope.clone());
-            let fold = fold_of(judgment)?;
-            apply_fold(rebuilt.entry(aggregate_key(&scope)?).or_default(), fold)?;
+            // A judgment that holds keeps its binding and folds nothing.
+            if let Some(fold) = fold_of(judgment)? {
+                apply_fold(rebuilt.entry(aggregate_key(&scope)?).or_default(), fold)?;
+            }
         }
         for entry in AGGREGATE.iter_from(&vault.store, &rtxn, &[])? {
             let (key, _) = entry?;

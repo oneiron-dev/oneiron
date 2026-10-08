@@ -8,7 +8,12 @@ use super::codec::{
     next_evidence_sequence_in_txn, validate_evidence,
 };
 use super::judge::{AttributionJudge, RuleAttributionJudge, verdict_subject};
-use super::types::{AttributionJudgment, OutcomeEvidence, SkillEditProposal};
+use super::split::{classify_split, unclear_floor};
+use super::types::{
+    AttributionJudgment, AttributionLane, AttributionVerdict, JudgeRequest, OutcomeEvidence,
+    SkillEditProposal,
+};
+use super::unclear::{UnclearAttribution, delete_unclear_in_txn, put_unclear_in_txn};
 
 // ---------------------------------------------------------------------------
 // Evidence door + projector
@@ -69,19 +74,51 @@ pub fn run_attribution_projector(
 /// Abstained evidence is left unjudged but still ADVANCES the cursor: an
 /// abstention is a completed routing decision ("this evidence attributes to
 /// nobody"), not a retryable failure, so it must not re-enter every pass.
+///
+/// A failed attempt carries no edit, so the judge answers once and the split
+/// is one label at 100%. An `environment` answer blames nobody and leaves no
+/// row; an `unclear` one — the judge's own, a label held below the
+/// `attribution_unclear_floor` setting, or `preference_shift`, which this lane
+/// does not admit — leaves no judgment and files the evidence in the unclear
+/// ledger instead.
 pub fn run_attribution_projector_with_judge(
     vault: &Vault,
     since_cursor: u64,
     judge: &dyn AttributionJudge,
 ) -> Result<Vec<AttributionJudgment>> {
     let pending = evidence_after(vault, since_cursor)?;
+    let floor = unclear_floor(vault)?;
     let mut judgments = Vec::new();
+    let mut unclear = Vec::new();
     let mut highest = since_cursor;
     for (sequence, evidence) in pending {
         highest = highest.max(sequence);
-        let Some(verdict) = judge.judge(&evidence)? else {
+        let request = JudgeRequest {
+            lane: AttributionLane::Attempt,
+            evidence: &evidence,
+            hunks: &[],
+            floor,
+        };
+        let Some(split) = classify_split(judge, &request, &[])? else {
             continue;
         };
+        // One region, so one label holds the whole outcome.
+        let Some(verdict) = split.sole() else {
+            continue;
+        };
+        if verdict == AttributionVerdict::Unclear {
+            unclear.push((
+                sequence,
+                UnclearAttribution {
+                    lane: AttributionLane::Attempt,
+                    reference: sequence.to_string(),
+                    evidence_receipts: vec![evidence.receipt_ref.clone()],
+                    notes: split.unclear,
+                    at: evidence.at,
+                },
+            ));
+            continue;
+        }
         let Some(subject) = verdict_subject(verdict, &evidence) else {
             continue;
         };
@@ -95,6 +132,13 @@ pub fn run_attribution_projector_with_judge(
     }
 
     vault.with_write_txn(|wtxn| {
+        for (sequence, row) in &unclear {
+            // A sequence some earlier judge already routed keeps that verdict:
+            // judgments are never rescored, so a note must not contradict one.
+            if !JUDGMENT.contains(&vault.store, wtxn, sequence)? {
+                put_unclear_in_txn(vault, wtxn, row)?;
+            }
+        }
         for judgment in &judgments {
             if let Some(revision) = judge.judge_revision() {
                 super::judge_supersession::ensure_current_attribution_judge_in_txn(
@@ -120,6 +164,14 @@ pub fn run_attribution_projector_with_judge(
                 )?;
             }
             JUDGMENT.put(&vault.store, wtxn, &judgment.sequence, judgment)?;
+            // A replay that now settles what an earlier pass held: the outcome
+            // is judged, so it no longer waits in the unclear ledger.
+            delete_unclear_in_txn(
+                vault,
+                wtxn,
+                AttributionLane::Attempt,
+                &judgment.sequence.to_string(),
+            )?;
             if let Some(proposal) = edit_proposal_for(judgment) {
                 EDIT_PROPOSAL.put(&vault.store, wtxn, &proposal.judgment_sequence, &proposal)?;
             }

@@ -17,7 +17,9 @@
 //!   `put` / `get` / `multipart` at a `T1Leased` ceiling — no delete verb is
 //!   reachable through the custody contract, mirroring the least-privilege
 //!   provider policy the runbook specifies;
-//! * the read a caller gets back is the value-less metadata projection.
+//! * the read a caller gets back is the value-less metadata projection;
+//! * the credential answers to an `sc` handle, and the handle opens no value
+//!   read.
 //!
 //! The record declares no `read` scope: materializing the value for a running
 //! snapshot service is SECRET-02's door, not this registration's.
@@ -197,5 +199,40 @@ fn wasabi_snapshot_metadata_projection_carries_no_value() {
     assert!(
         !rendered.contains(dummy),
         "the value-less projection must never render the custody value bytes"
+    );
+}
+
+/// W-18 (ARCH-0069 #handles): a model reads `sc12` where a secret's value
+/// would print. The prefix resolves to the custody kind, the first secret a
+/// vault registers is minted `sc1`, and the handle opens no value read — the
+/// short-reference door refuses the custody body exactly as the raw id doors
+/// do, so naming a secret never hands its bytes to the caller.
+#[test]
+fn the_snapshot_credential_answers_to_an_sc_handle_that_holds_no_value() {
+    use oneiron::registry::{
+        ENTITY_TYPE_SECRET_CUSTODY, IdNamespaceTarget, id_namespace_for_prefix,
+    };
+
+    assert_eq!(
+        id_namespace_for_prefix("sc").map(|entry| entry.target),
+        Some(IdNamespaceTarget::EntityType(ENTITY_TYPE_SECRET_CUSTODY)),
+        "the sc prefix must resolve to the secret-custody kind"
+    );
+
+    let (_tmp, vault) = temp_vault();
+    let id = vault
+        .register_secret(snapshot_custody_record())
+        .expect("register the snapshot custody record");
+    let reference =
+        oneiron::retrieval_depth::short_ref_or_hex(&vault, &id).expect("read the short reference");
+    let (handle, hash) = reference
+        .split_once(':')
+        .expect("a registered secret carries a short reference, not a bare hex id");
+    assert_eq!(handle, "sc1", "the first registered secret is handle sc1");
+
+    let hash = u8::from_str_radix(hash, 16).expect("the content hash is one hex byte");
+    assert!(
+        vault.hydrate_short_id(handle, hash).is_err(),
+        "the handle must never hydrate the custody body that holds the value"
     );
 }

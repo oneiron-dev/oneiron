@@ -9,8 +9,14 @@
 //!   └─ projector ──> routed verdict
 //!        ├─ skill_defect    → judgment against the SKILL entity
 //!        ├─ execution_lapse → judgment against the ACTOR entity
-//!        └─ discovery       → a skill EDIT PROPOSAL, never a claim
+//!        ├─ discovery       → a skill EDIT PROPOSAL, never a claim
+//!        ├─ environment     → nothing: an outside fact blames nobody
+//!        └─ unclear         → a row in the unclear ledger, for the Dreamer
 //! ```
+//!
+//! A failed attempt carries no edit, so the judge answers once and its split
+//! is one label at 100% — the same split path the amendment lane takes hunk by
+//! hunk.
 //!
 //! **Layer scope (SK stack 1737 → 1738 → 1739).** This module ROUTES and
 //! PERSISTS judgments; it writes no claims. `skill.reliability` materializes in
@@ -37,7 +43,12 @@ mod judge_supersession;
 pub(crate) use judge_supersession::set_pre_writer_hook;
 pub(crate) use judge_supersession::{judgment_displaced, judgment_displaced_in_txn};
 mod projector;
+mod split;
+pub(crate) use self::split::{classify_split, unclear_floor};
 mod types;
+mod unclear;
+pub use self::unclear::{UnclearAttribution, unclear_attributions};
+pub(crate) use self::unclear::{delete_unclear_in_txn, put_unclear_in_txn};
 
 pub use self::audit::{
     AttributionAuditReport, AuditFixture, attribution_audit_reports, held_out_audit_fixtures,
@@ -51,8 +62,10 @@ pub use self::projector::{
     record_attribution_evidence, run_attribution_projector, run_attribution_projector_with_judge,
 };
 pub use self::types::{
-    AttemptOutcome, AttributionJudgment, AttributionVerdict, DeviationCause, FollowedState,
-    OutcomeEvidence, SKILL_ATTRIBUTION_SCHEMA_VERSION, SkillEditProposal,
+    AttemptOutcome, AttributionJudgment, AttributionLane, AttributionShare, AttributionSplit,
+    AttributionVerdict, DeviationCause, EditHunk, FollowedState, HunkVerdict, JudgeRequest,
+    OutcomeEvidence, SKILL_ATTRIBUTION_SCHEMA_VERSION, SkillEditProposal, UnclearNote,
+    UnclearReason,
 };
 
 #[cfg(test)]

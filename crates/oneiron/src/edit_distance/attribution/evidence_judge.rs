@@ -2,17 +2,21 @@
 
 use super::stored::{
     EVIDENCE, EVIDENCE_ROW_LABEL, JUDGMENT, JUDGMENT_ROW_LABEL, PREFERENCE, ROW_VERSION,
-    StoredEvidence, StoredJudgment, StoredPreference, hex_entity, invalid, normalized_scope,
+    StoredEvidence, StoredJudgment, StoredPreference, StoredShare, hex_entity, invalid,
+    normalized_scope,
 };
 use super::taxonomy::{
-    AmendmentCause, AmendmentClass, AmendmentEvidence, AmendmentJudgment, PreferenceProposal,
-    class_subject, classify_amendment, cost_predicate,
+    AmendmentCause, AmendmentClass, AmendmentEvidence, AmendmentJudgment, AmendmentShare,
+    PreferenceProposal, class_subject, classify_amendment, cost_predicate,
 };
 use crate::Vault;
 use crate::actor_claims::require_actor_entity;
 use crate::edit_distance::delta::amendment_delta;
 use crate::error::{Error, Result};
-use crate::skill_attribution::{AttributionJudge, RuleAttributionJudge};
+use crate::skill_attribution::{
+    AttributionJudge, AttributionLane, EditHunk, RuleAttributionJudge, UnclearAttribution,
+    delete_unclear_in_txn, put_unclear_in_txn, unclear_floor,
+};
 
 // ---------------------------------------------------------------------------
 // Evidence door
@@ -124,7 +128,32 @@ pub fn judge_amendment(vault: &Vault, receipt_id: &str) -> Result<Option<Amendme
 }
 
 /// [`judge_amendment`] with an explicit tier — the seam the model judge and the
-/// audit harness both use.
+/// audit harness both use. The amendment is judged as one region:
+/// [`judge_amendment_hunks`] with no hunks.
+///
+/// # Errors
+///
+/// Storage errors, and whatever `judge` returns.
+pub fn judge_amendment_with(
+    vault: &Vault,
+    receipt_id: &str,
+    judge: &dyn AttributionJudge,
+) -> Result<Option<AmendmentJudgment>> {
+    judge_amendment_hunks(vault, receipt_id, judge, &[])
+}
+
+/// Judges the amendment recorded against `receipt_id` hunk by hunk
+/// (ARCH-0056 §5 #attribution-split), persisting and returning its label +
+/// share split — or `None` when the judge abstains, no facts were recorded,
+/// or no Δ was measured.
+///
+/// `hunks` are the changed regions as the host that holds both texts cut
+/// them. Each weighs its own measured edit mass, so the split says which part
+/// of the edit each label explains; no hunks is one region, one class at 100%.
+/// Each route then takes only its share: a `preference_shift` share files a
+/// preference note carrying it, an `unclear` share files a row in the unclear
+/// ledger for the Dreamer, and [`project_edit_cost_claims`](crate::edit_distance::attribution::project_edit_cost_claims) charges the
+/// skill and the actor their shares alone.
 ///
 /// Re-judging OVERWRITES the receipt's judgment row rather than freezing the
 /// first answer. A deterministic judge re-derives the same row, so the pass is
@@ -141,10 +170,11 @@ pub fn judge_amendment(vault: &Vault, receipt_id: &str) -> Result<Option<Amendme
 /// # Errors
 ///
 /// Storage errors, and whatever `judge` returns.
-pub fn judge_amendment_with(
+pub fn judge_amendment_hunks(
     vault: &Vault,
     receipt_id: &str,
     judge: &dyn AttributionJudge,
+    hunks: &[EditHunk<'_>],
 ) -> Result<Option<AmendmentJudgment>> {
     let Some(evidence) = amendment_evidence(vault, receipt_id)? else {
         return Ok(None);
@@ -154,52 +184,88 @@ pub fn judge_amendment_with(
     let Some(delta) = amendment_delta(vault, receipt_id)? else {
         return withdraw_judgment(vault, receipt_id).map(|()| None);
     };
-    let Some(class) = classify_amendment(&evidence, judge)? else {
+    let floor = unclear_floor(vault)?;
+    let Some(split) = classify_amendment(&evidence, judge, hunks, floor)? else {
         return withdraw_judgment(vault, receipt_id).map(|()| None);
     };
+    let shares: Vec<AmendmentShare> = split
+        .shares
+        .iter()
+        .map(|share| AmendmentShare {
+            class: share.verdict,
+            share: share.share,
+            subject: class_subject(share.verdict, &evidence),
+        })
+        .collect();
+    // A class that charges somebody but names nobody is not a judgment, it is a
+    // routing bug wearing one. Recorded as an abstention rather than landed.
+    if shares
+        .iter()
+        .any(|share| cost_predicate(share.class).is_some() && share.subject.is_none())
+    {
+        return withdraw_judgment(vault, receipt_id).map(|()| None);
+    }
     let judgment = AmendmentJudgment {
         receipt_id: receipt_id.to_owned(),
-        class,
-        subject: class_subject(class, &evidence),
+        split: shares,
         scope: normalized_scope(&evidence.scope)?.to_owned(),
         evidence_receipts: vec![receipt_id.to_owned()],
         d_norm: delta.d_norm,
         at: evidence.at,
     };
-    // A class that charges somebody but names nobody is not a judgment, it is a
-    // routing bug wearing one. Recorded as an abstention rather than landed.
-    if cost_predicate(class).is_some() && judgment.subject.is_none() {
-        return withdraw_judgment(vault, receipt_id).map(|()| None);
-    }
 
     let row = StoredJudgment {
         v: ROW_VERSION,
-        class: class.as_str().to_owned(),
-        subject: judgment.subject.map(|id| id.to_hex()),
+        class: None,
+        subject: None,
+        split: judgment
+            .split
+            .iter()
+            .map(|share| StoredShare {
+                class: share.class.as_str().to_owned(),
+                share: share.share,
+                subject: share.subject.map(|id| id.to_hex()),
+            })
+            .collect(),
         scope: judgment.scope.clone(),
         evidence_receipts: judgment.evidence_receipts.clone(),
         d_norm: judgment.d_norm,
         at: judgment.at,
     };
-    let preference_row = (class == AmendmentClass::PreferenceShift).then(|| StoredPreference {
+    let preference_share = judgment.share_of(AmendmentClass::PreferenceShift);
+    let preference_row = (preference_share > 0.0).then(|| StoredPreference {
         v: ROW_VERSION,
         scope: judgment.scope.clone(),
         evidence_receipts: judgment.evidence_receipts.clone(),
+        share: preference_share,
+        at: judgment.at,
+    });
+    let unclear_row = (!split.unclear.is_empty()).then(|| UnclearAttribution {
+        lane: AttributionLane::Amendment,
+        reference: receipt_id.to_owned(),
+        evidence_receipts: judgment.evidence_receipts.clone(),
+        notes: split.unclear.clone(),
         at: judgment.at,
     });
 
     let receipt_id_owned = receipt_id.to_owned();
     vault.with_write_txn(|wtxn| {
         JUDGMENT.put(&vault.store, wtxn, &receipt_id_owned, &row)?;
+        // A note and the judgment that demanded it land together, and a
+        // re-judgment that no longer carries the share withdraws the note it
+        // no longer stands behind.
         match preference_row.as_ref() {
-            // A proposal and the judgment that demanded it land together, and a
-            // re-judgment that moved OFF preference_shift withdraws the
-            // proposal it no longer stands behind.
             Some(row) => {
                 PREFERENCE.put(&vault.store, wtxn, &receipt_id_owned, row)?;
             }
             None => {
                 PREFERENCE.delete(&vault.store, wtxn, &receipt_id_owned)?;
+            }
+        }
+        match unclear_row.as_ref() {
+            Some(row) => put_unclear_in_txn(vault, wtxn, row)?,
+            None => {
+                delete_unclear_in_txn(vault, wtxn, AttributionLane::Amendment, &receipt_id_owned)?;
             }
         }
         Ok(())
@@ -208,7 +274,7 @@ pub fn judge_amendment_with(
 }
 
 /// Deletes whatever a previous pass persisted for `receipt_id` — its judgment
-/// and, with it, any preference proposal that judgment minted.
+/// and, with it, any preference note or unclear row that judgment filed.
 ///
 /// The withdrawal is the whole correction on this side: the cost head the row
 /// was holding up loses its ledger support, and the next
@@ -218,6 +284,7 @@ fn withdraw_judgment(vault: &Vault, receipt_id: &str) -> Result<()> {
     {
         // A receipt that never landed an answer has none to withdraw, and an
         // abstention is the common case — it must not cost a write transaction.
+        // Every note rides its judgment, so no judgment means no note.
         let rtxn = vault.store.env.read_txn()?;
         if !JUDGMENT.contains(&vault.store, &rtxn, &receipt_id)?
             && !PREFERENCE.contains(&vault.store, &rtxn, &receipt_id)?
@@ -228,6 +295,7 @@ fn withdraw_judgment(vault: &Vault, receipt_id: &str) -> Result<()> {
     vault.with_write_txn(|wtxn| {
         JUDGMENT.delete(&vault.store, wtxn, &receipt_id)?;
         PREFERENCE.delete(&vault.store, wtxn, &receipt_id)?;
+        delete_unclear_in_txn(vault, wtxn, AttributionLane::Amendment, &receipt_id)?;
         Ok(())
     })
 }
@@ -243,13 +311,7 @@ pub fn amendment_judgments(vault: &Vault) -> Result<Vec<AmendmentJudgment>> {
     for (receipt_id, row) in JUDGMENT.scan(&vault.store, &rtxn)? {
         out.push(AmendmentJudgment {
             receipt_id,
-            class: AmendmentClass::parse(&row.class)
-                .ok_or(Error::CorruptedIndex(JUDGMENT_ROW_LABEL))?,
-            subject: row
-                .subject
-                .as_deref()
-                .map(|hex| hex_entity(hex, JUDGMENT_ROW_LABEL))
-                .transpose()?,
+            split: stored_split(&row)?,
             scope: row.scope,
             evidence_receipts: row.evidence_receipts,
             d_norm: row.d_norm,
@@ -257,6 +319,28 @@ pub fn amendment_judgments(vault: &Vault) -> Result<Vec<AmendmentJudgment>> {
         });
     }
     Ok(out)
+}
+
+/// A stored row's split; a row written before split verdicts reads back as
+/// its one class at 100%.
+fn stored_split(row: &StoredJudgment) -> Result<Vec<AmendmentShare>> {
+    let share = |class: &str, share: f32, subject: Option<&str>| -> Result<AmendmentShare> {
+        Ok(AmendmentShare {
+            class: AmendmentClass::parse(class).ok_or(Error::CorruptedIndex(JUDGMENT_ROW_LABEL))?,
+            share,
+            subject: subject
+                .map(|hex| hex_entity(hex, JUDGMENT_ROW_LABEL))
+                .transpose()?,
+        })
+    };
+    match (&row.split[..], row.class.as_deref()) {
+        ([], Some(class)) => Ok(vec![share(class, 1.0, row.subject.as_deref())?]),
+        ([], None) => Err(Error::CorruptedIndex(JUDGMENT_ROW_LABEL)),
+        (split, _) => split
+            .iter()
+            .map(|stored| share(&stored.class, stored.share, stored.subject.as_deref()))
+            .collect(),
+    }
 }
 
 /// Every preference proposal awaiting ED-04's miner, in receipt-id order.
@@ -272,6 +356,7 @@ pub fn pending_preference_proposals(vault: &Vault) -> Result<Vec<PreferencePropo
             receipt_id,
             scope: row.scope,
             evidence_receipts: row.evidence_receipts,
+            share: row.share,
             at: row.at,
         });
     }

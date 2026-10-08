@@ -1,10 +1,12 @@
 //! Amendment taxonomy: classes, causes, evidence and judgment types.
 
 use crate::claim::{PREDICATE_ACTOR_EDIT_COST, PREDICATE_SKILL_EDIT_COST};
+use crate::edit_distance::delta::delta_from_reconstructed;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::skill_attribution::{
-    AttemptOutcome, AttributionJudge, AttributionVerdict, OutcomeEvidence,
+    AttemptOutcome, AttributionJudge, AttributionLane, AttributionSplit, AttributionVerdict,
+    EditHunk, JudgeRequest, OutcomeEvidence, classify_split,
 };
 
 // ---------------------------------------------------------------------------
@@ -161,15 +163,27 @@ impl AmendmentEvidence {
     }
 }
 
-/// One routed amendment: the class, who owns it, and the Δ behind it.
+/// One class's share of a routed amendment, and who that share charges.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AmendmentShare {
+    pub class: AmendmentClass,
+    /// This class's share of the amendment's edit mass, in `0..=1`.
+    pub share: f32,
+    /// SKILL for a defect or a discovery, ACTOR for a lapse, `None` for the
+    /// classes that name no owner.
+    pub subject: Option<EntityId>,
+}
+
+/// One routed amendment: the label + share split, who each share charges,
+/// and the Δ behind it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AmendmentJudgment {
     /// The receipt this judgment routed.
     pub receipt_id: String,
-    pub class: AmendmentClass,
-    /// SKILL for a defect or a discovery, ACTOR for a lapse, `None` for the
-    /// two classes that name no owner.
-    pub subject: Option<EntityId>,
+    /// One entry per class the judge gave any changed hunk, shares summing to
+    /// one (ARCH-0056 §5 #attribution-split). A single verdict is one class at
+    /// `1.0`.
+    pub split: Vec<AmendmentShare>,
     /// The `(subject, scope)` axis the cost row is keyed on.
     pub scope: String,
     /// Receipt ids this verdict rests on (trace-or-derivation).
@@ -179,13 +193,43 @@ pub struct AmendmentJudgment {
     pub at: u64,
 }
 
+impl AmendmentJudgment {
+    /// The share `class` holds, `0` when it holds none.
+    #[must_use]
+    pub fn share_of(&self, class: AmendmentClass) -> f32 {
+        self.split
+            .iter()
+            .filter(|share| share.class == class)
+            .map(|share| share.share)
+            .sum()
+    }
+
+    /// The one class, when a single class holds the whole amendment.
+    #[must_use]
+    pub fn sole_class(&self) -> Option<AmendmentClass> {
+        match self.split.as_slice() {
+            [only] => Some(only.class),
+            _ => None,
+        }
+    }
+
+    /// Whether every share is `unclear`: nothing in this amendment may be
+    /// acted on until the Dreamer has clustered it.
+    #[must_use]
+    pub fn holds(&self) -> bool {
+        self.split
+            .iter()
+            .all(|share| share.class == AmendmentClass::Unclear)
+    }
+}
+
 /// One minted PREFERENCE proposal: the durable consequence of a
 /// [`AmendmentClass::PreferenceShift`], and ED-04's inlet.
 ///
 /// It names no subject deliberately. A preference shift says the proposal was
 /// not wrong — so there is nobody to charge, and the thing worth mining is the
 /// Δ itself, which the cited receipt resolves.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PreferenceProposal {
     /// The amendment receipt whose Δ carries the preference.
     pub receipt_id: String,
@@ -193,6 +237,9 @@ pub struct PreferenceProposal {
     pub scope: String,
     /// Receipt ids the originating judgment rested on.
     pub evidence_receipts: Vec<String>,
+    /// The `preference_shift` share of the amendment's edit mass: the part of
+    /// the edit this note speaks for.
+    pub share: f32,
     pub at: u64,
 }
 
@@ -200,20 +247,27 @@ pub struct PreferenceProposal {
 // Classification
 // ---------------------------------------------------------------------------
 
-/// Classifies one amendment, or ABSTAINS (`Ok(None)`) when the facts do not
-/// settle it.
+/// Classifies one amendment into a label + share split, or ABSTAINS
+/// (`Ok(None)`) when the facts do not settle it.
 ///
-/// | cause | followed skill | skill covered it | class |
-/// |---|---|---|---|
-/// | external change | — | — | `Environment` |
-/// | decider preference | — | — | `PreferenceShift` |
-/// | proposal wrong | | | *delegated to `judge`* |
-/// | unsettled | | | abstain |
+/// | cause | class of every hunk |
+/// |---|---|
+/// | external change | `Environment` |
+/// | decider preference | `PreferenceShift` |
+/// | proposal wrong | *the judge's, hunk by hunk* |
+/// | unsettled | abstain |
 ///
-/// The delegated arm is SK-04's table verbatim (lapse / defect / discovery),
-/// reached by handing it the same evidence in its own shape. `judge` is the
-/// tier seam: [`RuleAttributionJudge`](crate::skill_attribution::RuleAttributionJudge) for the deterministic pass, a
-/// host-supplied implementation for the model tier.
+/// `hunks` are the changed regions as the host cut them; each weighs its own
+/// edit mass, measured here with the pinned reconstructed-lane metric. With no
+/// hunks the amendment is one region and the split is one class at 100% — the
+/// same path, not a second one. A settled cause answers for every hunk; the
+/// `ProposalWrong` arm hands the judge SK-04's own evidence shape, and the
+/// judge may split it across any label the amendment lane admits.
+/// [`RuleAttributionJudge`](crate::skill_attribution::RuleAttributionJudge) is
+/// the deterministic pass; a host-supplied judge is the model tier.
+///
+/// Every answer then meets `floor` (the `attribution_unclear_floor` setting):
+/// a hunk held below it is `unclear`.
 ///
 /// # Errors
 ///
@@ -221,12 +275,42 @@ pub struct PreferenceProposal {
 pub fn classify_amendment(
     evidence: &AmendmentEvidence,
     judge: &dyn AttributionJudge,
-) -> Result<Option<AmendmentClass>> {
-    match evidence.cause {
-        None => Ok(None),
-        Some(AmendmentCause::ExternalChange) => Ok(Some(AmendmentClass::Environment)),
-        Some(AmendmentCause::DeciderPreference) => Ok(Some(AmendmentClass::PreferenceShift)),
-        Some(AmendmentCause::ProposalWrong) => judge.judge(&evidence.as_outcome_evidence()),
+    hunks: &[EditHunk<'_>],
+    floor: f32,
+) -> Result<Option<AttributionSplit>> {
+    let settled = match evidence.cause {
+        None => return Ok(None),
+        Some(AmendmentCause::ExternalChange) => Some(AmendmentClass::Environment),
+        Some(AmendmentCause::DeciderPreference) => Some(AmendmentClass::PreferenceShift),
+        Some(AmendmentCause::ProposalWrong) => None,
+    };
+    let masses: Vec<f64> = hunks
+        .iter()
+        .map(|hunk| {
+            delta_from_reconstructed(hunk.before, hunk.after)
+                .ops_summary
+                .edit_mass()
+        })
+        .collect();
+    let probe = evidence.as_outcome_evidence();
+    let request = JudgeRequest {
+        lane: AttributionLane::Amendment,
+        evidence: &probe,
+        hunks,
+        floor,
+    };
+    match settled {
+        Some(class) => classify_split(&SettledCause(class), &request, &masses),
+        None => classify_split(judge, &request, &masses),
+    }
+}
+
+/// The answer a settled cause gives: its class, certain, for every hunk.
+struct SettledCause(AmendmentClass);
+
+impl AttributionJudge for SettledCause {
+    fn judge(&self, _evidence: &OutcomeEvidence) -> Result<Option<AttributionVerdict>> {
+        Ok(Some(self.0))
     }
 }
 
@@ -238,7 +322,9 @@ pub(super) fn class_subject(
     match class {
         AmendmentClass::ExecutionLapse => Some(evidence.actor),
         AmendmentClass::SkillDefect | AmendmentClass::Discovery => evidence.skill,
-        AmendmentClass::Environment | AmendmentClass::PreferenceShift => None,
+        AmendmentClass::Environment | AmendmentClass::PreferenceShift | AmendmentClass::Unclear => {
+            None
+        }
     }
 }
 
@@ -253,6 +339,7 @@ pub(super) const fn cost_predicate(class: AmendmentClass) -> Option<&'static str
         AmendmentClass::SkillDefect => Some(PREDICATE_SKILL_EDIT_COST),
         AmendmentClass::Discovery
         | AmendmentClass::Environment
-        | AmendmentClass::PreferenceShift => None,
+        | AmendmentClass::PreferenceShift
+        | AmendmentClass::Unclear => None,
     }
 }
