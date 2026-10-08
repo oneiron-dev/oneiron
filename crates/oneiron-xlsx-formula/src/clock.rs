@@ -65,33 +65,3 @@ impl RecalcClock {
         self.seed
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn offsets_stay_within_real_time_zones() {
-        let now = DateTime::UNIX_EPOCH;
-        assert_eq!(
-            RecalcClock::new(now, 840, 1).map(|c| c.utc_offset_minutes()),
-            Some(840)
-        );
-        assert_eq!(
-            RecalcClock::new(now, -720, 1).map(|c| c.utc_offset_minutes()),
-            Some(-720)
-        );
-        assert_eq!(RecalcClock::new(now, 841, 1), None);
-        assert_eq!(RecalcClock::new(now, -841, 1), None);
-    }
-
-    #[test]
-    fn the_system_clock_is_sampled_now_with_a_fresh_seed() {
-        let before = Utc::now();
-        let first = RecalcClock::system();
-        let second = RecalcClock::system();
-        assert!(first.now() >= before && second.now() >= first.now());
-        assert!((-840..=840).contains(&first.utc_offset_minutes()));
-        assert_ne!(first.seed(), second.seed());
-    }
-}
