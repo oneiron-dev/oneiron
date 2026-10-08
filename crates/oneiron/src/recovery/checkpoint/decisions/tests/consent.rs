@@ -148,14 +148,31 @@ pub(super) fn shared_coreference() -> Result<Case> {
 /// A delivery-window restriction reaches a send through its claim's
 /// `claim_of` edge to the subject it names. One whose edge was put back
 /// since the backup, its body unchanged, is one a restore would lift off
-/// that subject's sends.
+/// that subject's sends; one that only repeats a restriction the backup
+/// already holds, under another source (Astra R4-6), lifts nothing.
 pub(super) fn delivery_windows() -> Result<Case> {
     let (dir, vault) = open_vault();
-    let sora = person(&vault, 0x72)?;
-    let quiet = entity(0x7A);
+    let (sora, rin) = (person(&vault, 0x72)?, person(&vault, 0x73)?);
+    let (stated, observed, quiet) = (entity(0x7A), entity(0x7B), entity(0x7C));
+    quiet_window(&vault, stated, sora, ClaimSource::UserStated)?;
+    quiet_window(&vault, observed, sora, ClaimSource::Observed)?;
+    quiet_window(&vault, quiet, rin, ClaimSource::UserStated)?;
+    vault.delete_edge(&observed, EdgeKind::ClaimOf, &sora)?;
+    vault.delete_edge(&quiet, EdgeKind::ClaimOf, &rin)?;
+    Case::after_backup(
+        "delivery-window restrictions",
+        (dir, vault),
+        move |vault| vault.put_edge(&observed, EdgeKind::ClaimOf, &sora, 1.0),
+        move |vault| vault.put_edge(&quiet, EdgeKind::ClaimOf, &rin, 1.0),
+    )
+}
+
+/// A quiet window from 22:00 to 08:00 on `subject`'s interrupts, from
+/// `source`.
+fn quiet_window(vault: &Vault, id: EntityId, subject: EntityId, source: ClaimSource) -> Result<()> {
     let mut body = ClaimBody::new(
         PREDICATE_DELIVERY_WINDOW_QUIET,
-        ClaimSubject::Entity(sora),
+        ClaimSubject::Entity(subject),
         Value::Map(vec![
             (
                 Value::from("schema_version"),
@@ -178,15 +195,8 @@ pub(super) fn delivery_windows() -> Result<Case> {
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
     )?;
-    body.source = Some(ClaimSource::UserStated);
-    vault.put_claim(&quiet, &body, AT, 1)?;
-    vault.delete_edge(&quiet, EdgeKind::ClaimOf, &sora)?;
-    Case::after_backup(
-        "delivery-window restrictions",
-        (dir, vault),
-        new_person,
-        move |vault| vault.put_edge(&quiet, EdgeKind::ClaimOf, &sora, 1.0),
-    )
+    body.source = Some(source);
+    vault.put_claim(&id, &body, AT, 1)
 }
 
 /// One event type's configuration, with `buffer` free minutes before each

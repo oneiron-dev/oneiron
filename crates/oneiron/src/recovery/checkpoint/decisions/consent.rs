@@ -106,8 +106,10 @@ impl Decision for SharedCoreference {
 /// names one subject: each `delivery_window.*` claim on the subject that its
 /// `claim_of` edge reaches (`stored_delivery_window_policy_claims`) and that
 /// restricts any send (`DeliveryWindowPolicyClaim::restricts`). One only
-/// ever holds or degrades a send, so a restriction the live door reads and
-/// the restored one does not is lifted.
+/// ever holds or degrades a send, so a restriction the live door reads is
+/// lifted when the restored door reads none with its reach: a duplicate
+/// that differs only in source or reason holds the same sends to the same
+/// retry.
 pub(super) struct DeliveryWindows;
 
 impl Decision for DeliveryWindows {
@@ -150,8 +152,11 @@ impl Decision for DeliveryWindows {
     }
 
     fn loosens(live: &Self::Answer, restored: &Self::Answer) -> bool {
-        live.iter()
-            .any(|restriction| !restored.contains(restriction))
+        live.iter().any(|restriction| {
+            !restored
+                .iter()
+                .any(|kept| kept.same_reach(restriction))
+        })
     }
 }
 

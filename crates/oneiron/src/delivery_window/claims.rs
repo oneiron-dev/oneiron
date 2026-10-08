@@ -98,6 +98,25 @@ impl DeliveryWindowPolicyClaim {
             && self.applies_to == DeliveryWindowAppliesTo::Interrupt
     }
 
+    /// Whether `other` restricts the same sends as this claim, to the same
+    /// retry: the same validity, channel, context and window. Of two such
+    /// claims, source and reason only pick which one a held send reports.
+    pub(crate) fn same_reach(&self, other: &Self) -> bool {
+        (
+            self.valid_from,
+            self.valid_to,
+            &self.channel,
+            self.context,
+            self.window,
+        ) == (
+            other.valid_from,
+            other.valid_to,
+            &other.channel,
+            other.context,
+            other.window,
+        )
+    }
+
     pub(super) fn restriction_at(
         &self,
         context: &DeliveryWindowEvaluationContext,
