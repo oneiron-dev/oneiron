@@ -812,3 +812,26 @@ fn real_workflow_leaves_can_spawn_and_wrapper_costs_no_depth() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn open_workflow_roots_lists_only_unfinished_saved_workflows() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let step = fixture(&vault, AgentCeiling::Proposed, "listed-step")?;
+    let id = EntityId::now();
+    vault.save_workflow(&id, &WorkflowDefinition::new("listed", vec![step])?, 2)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+    assert!(dispatcher.open_workflow_roots()?.is_empty());
+    let root = workflow(dispatcher.dispatch(request(AgentDispatchTarget::Workflow(id), None))?)
+        .attempt
+        .id;
+    // The wrapper is listed; its queued leaf is ordinary agent work, not a root.
+    assert_eq!(dispatcher.open_workflow_roots()?, vec![root]);
+    assert_eq!(
+        dispatcher.run_workflow_step(root, "host-a", 11, |_, _| {
+            AttemptResultRef::new("artifact:listed")
+        })?,
+        WorkflowProgress::Completed
+    );
+    assert!(dispatcher.open_workflow_roots()?.is_empty());
+    Ok(())
+}

@@ -43,6 +43,14 @@ pub(crate) struct ConsolidationFence {
     rules: crate::dreamer_consolidation::routing::PredicateKeyRules,
 }
 
+impl ConsolidationFence {
+    /// The executor's own actor and attempt: the only run this sealed write
+    /// may promote under (`validate_run` refuses any other).
+    pub(crate) fn run_identity(&self) -> (WriteActor, crate::attempt_queue::AttemptId) {
+        (self.actor, self.attempt)
+    }
+}
+
 impl BranchResources<'_> {
     pub(super) fn prepare_write_verified(
         &self,

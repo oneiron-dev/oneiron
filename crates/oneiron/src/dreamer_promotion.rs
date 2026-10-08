@@ -36,7 +36,12 @@
 
 use rmpv::Value;
 
+mod attempt_sink;
 mod scoped;
+/// What the live policy lets the vault's Dreamer do (see
+/// `Vault::dreamer_weave_reach` and the owner's `Vault::grant_dreamer_weave`).
+pub use crate::gate::DreamerWeaveReach;
+pub use attempt_sink::AttemptPromotionSink;
 pub use scoped::promote_scoped_consolidation;
 
 use crate::Vault;

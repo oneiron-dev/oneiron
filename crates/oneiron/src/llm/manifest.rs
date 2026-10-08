@@ -29,6 +29,10 @@ pub enum ModelRole {
     ExtractionEncoder,
     ExtractionTeacher,
     GenerativeReasoner,
+    /// The full-local default's reasoner: answers verdict and generate calls
+    /// through the LLM slot when the route is narrowed to the device or an
+    /// owned endpoint (ARCH-0036 r9 product pins).
+    LocalReasoner,
     Checker,
     DreamerCurrent,
     DreamerTarget,
@@ -38,12 +42,13 @@ pub enum ModelRole {
     AudioVad,
     TtsDeferred,
 }
-pub const MODEL_ROLES: [ModelRole; 13] = [
+pub const MODEL_ROLES: [ModelRole; 14] = [
     ModelRole::RetrievalEmbedder,
     ModelRole::Reranker,
     ModelRole::ExtractionEncoder,
     ModelRole::ExtractionTeacher,
     ModelRole::GenerativeReasoner,
+    ModelRole::LocalReasoner,
     ModelRole::Checker,
     ModelRole::DreamerCurrent,
     ModelRole::DreamerTarget,
@@ -182,7 +187,7 @@ impl ModelManifest {
                 .iter()
                 .any(|role| !self.roles.contains_key(role))
         {
-            return Err(invalid("manifest v2 requires all 13 roles"));
+            return Err(invalid("manifest v2 requires every role key"));
         }
         if [ModelSlot::Llm, ModelSlot::Embedder, ModelSlot::Oneironer]
             .iter()

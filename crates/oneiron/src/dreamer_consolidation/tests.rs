@@ -31,6 +31,7 @@ mod person_extraction;
 mod prior_heads;
 mod scope_enforcement;
 mod support;
+mod weave_grant;
 use support::ExpiringBackend;
 
 fn block_on_ready<F: Future>(future: F) -> F::Output {

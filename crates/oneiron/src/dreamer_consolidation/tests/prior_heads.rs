@@ -1475,3 +1475,28 @@ fn multiple_pinned_priors_remain_context_without_arbitrary_supersession() -> Res
     }
     Ok(())
 }
+
+#[test]
+fn owned_attempt_sink_promotes_under_the_executors_own_run() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let vault = std::sync::Arc::new(vault);
+    let fx = fixture(&vault)?;
+    let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Oleksii"))]);
+    // No run context is handed in: the sink reads it from the sealed write.
+    let mut sink = crate::dreamer_promotion::AttemptPromotionSink::new(vault.clone());
+    assert!(matches!(
+        execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?,
+        DreamerAttemptExecution::Completed { .. }
+    ));
+    assert_eq!(names(&vault, fx.subject)?, vec![fx.head]);
+    assert_eq!(
+        vault.sources(&fx.head, EdgeKind::Supports, None)?,
+        vec![fx.turn]
+    );
+    // Unsealed candidates name no run, so the owned sink refuses them.
+    assert!(matches!(
+        sink.accept(Vec::new()),
+        Err(crate::Error::InvalidClaimBody(_))
+    ));
+    Ok(())
+}
