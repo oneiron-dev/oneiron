@@ -6,14 +6,16 @@ use std::collections::BinaryHeap;
 
 use serde::Deserialize;
 
-use crate::batch::EntityMetadataHeader;
-use crate::conversation_dag::{keeps_dag_topology, record_kind, retained_parent};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::conversation_dag::{
+    keeps_dag_topology, record_has_dag_topology, record_kind, retained_parent,
+};
 use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::memory::extraction::{EncoderInput, EncoderMessage, EncoderTurn};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
-use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::vault::{LiveEntityRow, MAX_EDGE_QUERY_RESULTS, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 
@@ -23,6 +25,10 @@ use crate::{EntityId, Vault};
 /// window holds the runtime's K tokens whenever the conversation has them,
 /// and the runtime cuts it to K exactly.
 const WINDOW_CHARS_PER_TOKEN: usize = 16;
+
+/// The most MESSAGE children of one earlier turn the window reads: an earlier
+/// turn with more ends the window before it.
+const MAX_CONTEXT_MESSAGES: usize = 256;
 
 /// What a marker's turn reads as now.
 pub(super) enum TurnInput {
@@ -38,6 +44,16 @@ pub(super) enum TurnInput {
         hash: String,
         text_hash: String,
     },
+}
+
+/// The two MESSAGE-body keys that order a turn's messages, read from the
+/// stored row without copying its text.
+#[derive(Deserialize)]
+struct MessagePlace {
+    #[serde(default)]
+    is_visible: bool,
+    #[serde(default)]
+    order: u32,
 }
 
 /// The three MESSAGE-body keys the input needs; every other key is ignored.
@@ -168,10 +184,10 @@ fn turn_messages_in_txn(
 /// The live window: the conversation's earlier turns, oldest first, whole
 /// but for the oldest, which is cut from the left to fit. It holds at most
 /// `tokens` turns and `tokens` × [`WINDOW_CHARS_PER_TOKEN`] characters, and
-/// never a turn that comes after `turn`. Turns are read nearest first and the
-/// read stops once the window is full, so at most one turn's text is read
-/// past it. A turn with no earlier text, or with no single conversation,
-/// reads alone.
+/// never a turn that comes after `turn`. Turns are read nearest first, each
+/// through [`context_text_in_txn`], and the read stops once the window is
+/// full. A turn with no earlier text, or with no single conversation, reads
+/// alone.
 fn live_window_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -188,37 +204,100 @@ fn live_window_in_txn(
         if window.len() == max_turns || remaining == 0 {
             break;
         }
-        let Some(messages) = turn_messages_in_txn(vault, txn, &earlier)? else {
-            continue;
+        let Some((messages, used)) = context_text_in_txn(vault, txn, &earlier, remaining)? else {
+            break;
         };
-        let mut kept = Vec::new();
-        for message in messages.into_iter().rev() {
-            if remaining == 0 {
-                break;
-            }
-            let chars = message.text.chars().count();
-            let text = if chars <= remaining {
-                message.text
-            } else {
-                last_chars(&message.text, remaining).to_owned()
-            };
-            remaining = remaining.saturating_sub(chars);
-            kept.push(EncoderMessage {
-                id: message.id,
-                text,
-            });
-        }
-        if kept.is_empty() {
+        if messages.is_empty() {
             continue;
         }
-        kept.reverse();
+        remaining = remaining.saturating_sub(used);
         window.push(EncoderTurn {
             turn: earlier.to_hex(),
-            messages: kept,
+            messages,
         });
     }
     window.reverse();
     Ok(window)
+}
+
+/// An earlier turn's newest visible text, at most `budget` characters, oldest
+/// message first, and the characters it used. Its messages are ordered from
+/// their stored rows without copying any text, then read newest first only
+/// until the budget is spent, so a large earlier turn costs the window what
+/// it keeps of it. `None` for a turn with more than [`MAX_CONTEXT_MESSAGES`]
+/// messages: the window ends before it, and the current turn is still read.
+fn context_text_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+    budget: usize,
+) -> Result<Option<(Vec<EncoderMessage>, usize)>> {
+    let store = &vault.store;
+    match live_entity_row_in_txn(store, txn, turn)? {
+        LiveEntityRow::Live { entity_type, .. } if entity_type == ENTITY_TYPE_TURN => {}
+        _ => return Ok(Some((Vec::new(), 0))),
+    }
+    if vault.archive_tombstone_in_txn(txn, turn)?.is_some() {
+        return Ok(Some((Vec::new(), 0)));
+    }
+    let mut places = Vec::new();
+    for (examined, edge) in store
+        .port_edges(txn, turn, EdgeDirection::In, Some(EdgeKind::PartOf), None)?
+        .enumerate()
+    {
+        if examined >= MAX_CONTEXT_MESSAGES {
+            return Ok(None);
+        }
+        let id = edge?.target;
+        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+            continue;
+        };
+        if EntityMetadataHeader::parse(&raw)
+            .is_none_or(|header| header.entity_type != ENTITY_TYPE_MESSAGE)
+        {
+            continue;
+        }
+        let place = raw
+            .get(ENTITY_METADATA_HEADER_LEN..)
+            .and_then(|body| rmp_serde::from_slice::<MessagePlace>(body).ok());
+        if let Some(place) = place.filter(|place| place.is_visible) {
+            places.push((place.order, *id.as_bytes()));
+        }
+    }
+    places.sort_unstable_by_key(|place| Reverse(*place));
+    let mut remaining = budget;
+    let mut kept = Vec::new();
+    for (_, id) in places {
+        if remaining == 0 {
+            break;
+        }
+        let id = EntityId::from_bytes(id)?;
+        if vault.archive_tombstone_in_txn(txn, &id)?.is_some() {
+            continue;
+        }
+        let Some(body) = crate::ports::safe_read_text(vault, txn, &id)? else {
+            continue;
+        };
+        let Ok(message) = rmp_serde::from_slice::<MessageText>(&body) else {
+            continue;
+        };
+        if !message.is_visible || message.content.is_empty() {
+            continue;
+        }
+        let chars = message.content.chars().count();
+        let text = if chars <= remaining {
+            message.content
+        } else {
+            last_chars(&message.content, remaining).to_owned()
+        };
+        remaining = remaining.saturating_sub(chars);
+        kept.push(EncoderMessage {
+            id: id.to_hex(),
+            text,
+        });
+    }
+    kept.reverse();
+    Ok(Some((kept, budget - remaining)))
 }
 
 /// The last `count` characters of `text`.
@@ -235,13 +314,15 @@ fn last_chars(text: &str, count: usize) -> &str {
 /// A turn with a DAG parent reads its retained ancestry (the `Parent` edge,
 /// or the parent an erasure pin kept), so a branch never reads another
 /// branch. A DAG record with no parent, or any turn of a conversation that
-/// adopted the DAG, is a root and reads alone. Only a conversation that never
-/// adopted it is ordered by time: its `ChildOf` turns that come before `turn`,
-/// those of one second in id order. That read takes each turn's row header,
-/// never its body, keeps only the nearest `limit`, and reads alone past
-/// [`MAX_EDGE_QUERY_RESULTS`] turns. A topology the DAG readers refuse reads
-/// alone too: the window is context, and a refusal must not keep the marker
-/// from settling.
+/// adopted the DAG, is a root and reads alone, as is a turn whose `ChildOf`
+/// owner is not one live conversation, or one of whose turns carries DAG
+/// topology of its own (a received `Parent`, say). Only a conversation that
+/// never adopted it is ordered by time: its `ChildOf` turns that come before
+/// `turn`, those of one second in id order. That read takes each turn's row
+/// header, never its body, keeps only the nearest `limit`, and reads alone
+/// past [`MAX_EDGE_QUERY_RESULTS`] turns. A topology the DAG readers refuse
+/// reads alone too: the window is context, and a refusal must not keep the
+/// marker from settling.
 pub(super) fn earlier_turns_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -274,6 +355,14 @@ pub(super) fn earlier_turns_in_txn(
     let Some(conversation) = sole_peer(vault, txn, turn, EdgeKind::ChildOf)? else {
         return Ok(Vec::new());
     };
+    // Only a live conversation's turns are a window; a turn under another
+    // structural parent reads alone.
+    if !matches!(
+        live_entity_row_in_txn(store, txn, &conversation)?,
+        LiveEntityRow::Live { entity_type, .. } if entity_type == ENTITY_TYPE_CONVERSATION
+    ) {
+        return Ok(Vec::new());
+    }
     let dag_record = match live_entity_row_in_txn(store, txn, turn)? {
         LiveEntityRow::Live { body, .. } => !matches!(record_kind(&body), Ok(None)),
         _ => return Ok(Vec::new()),
@@ -303,6 +392,12 @@ pub(super) fn earlier_turns_in_txn(
         let Some(key) = header_key(vault, txn, &id)? else {
             continue;
         };
+        // A turn of the room with DAG topology of its own, a received one
+        // before this replica adopts the DAG among them, means time does not
+        // order the room: the turn reads alone.
+        if record_has_dag_topology(vault, txn, &id).unwrap_or(true) {
+            return Ok(Vec::new());
+        }
         if key >= at {
             continue;
         }

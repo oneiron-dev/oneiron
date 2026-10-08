@@ -30,7 +30,7 @@ const RETRY_ID_DOMAIN: &[u8] = b"oneiron.tagging.retry.v1\0";
 const MAX_RETRY_GENERATIONS: u32 = 16;
 
 /// The live window's default size in tagger tokens: the serving runtime's
-/// `LIVE_K`, the earlier context a live turn is tagged with.
+/// default `LIVE_K`.
 pub const DEFAULT_LIVE_WINDOW_TOKENS: u32 = 256;
 /// The largest live window: the serving runtime's whole input window.
 pub const MAX_LIVE_WINDOW_TOKENS: u32 = 2_048;
@@ -67,9 +67,13 @@ pub struct TaggingMarkerConfig {
     /// digits of the SHA-256 of its weights. Half of every marker's dedupe
     /// key, so a new checkpoint owes every turn a new pass.
     pub checkpoint: String,
-    /// The live window, in the tagger's tokens: a turn is tagged with up to
-    /// this much earlier text of its conversation, and never a later turn.
-    /// 0 sends the turn alone.
+    /// The live window, in the tagger's tokens: how much earlier text of its
+    /// conversation a turn is sent with, never a later turn; 0 sends the turn
+    /// alone. Set it to the tagger's own K. The engine cannot count the
+    /// tagger's tokens, so this bounds what it sends (at most this many
+    /// earlier turns and 16 characters per token); the tagger cuts the
+    /// window to its own K. A model card does not declare K yet, so the two
+    /// are not checked against each other.
     pub live_window_tokens: u32,
     /// The traces kept once their markers leave the job ledger.
     pub trace_history: TaggingTraceHistory,

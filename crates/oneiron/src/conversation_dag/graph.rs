@@ -34,6 +34,37 @@ pub(crate) fn keeps_dag_topology(
         || MIGRATED.get(store, txn, conversation)?.is_some())
 }
 
+/// Whether `record` carries DAG topology of its own: a `Parent` edge, a
+/// canonical mark, or, on a sync build, a received parent still waiting to
+/// resolve. A room holding such a record is not ordered by time alone, local
+/// adoption or not.
+pub(crate) fn record_has_dag_topology(
+    vault: &crate::Vault,
+    txn: &RoTxn<'_>,
+    record: &EntityId,
+) -> Result<bool> {
+    let store = &vault.store;
+    if store
+        .port_edges(
+            txn,
+            record,
+            EdgeDirection::Out,
+            Some(EdgeKind::Parent),
+            None,
+        )?
+        .next()
+        .is_some()
+        || read_id(store, txn, CANONICAL, record)?.is_some()
+    {
+        return Ok(true);
+    }
+    #[cfg(feature = "sync")]
+    if crate::sync::bridge::has_unresolved_parent_for_source_in_txn(vault, txn, record)? {
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 pub(super) fn invalid(reason: &'static str) -> Error {
     RecordError::InvalidConversationDag(reason).into()
 }

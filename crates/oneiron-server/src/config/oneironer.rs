@@ -129,8 +129,10 @@ pub struct OneironerConfig {
     /// Ceiling on the doubled retry delay.
     pub max_retry_backoff_secs: u64,
     /// The live window in the tagger's tokens: how much earlier text of its
-    /// conversation a turn is tagged with. Defaults to the serving runtime's
-    /// 256 (`LIVE_K`); 0 tags each turn alone; at most 2,048.
+    /// conversation a turn is sent with. Set it to the tagger's own K; it
+    /// defaults to the serving runtime's 256 (`LIVE_K`); 0 sends each turn
+    /// alone; at most 2,048. It bounds what the engine sends; the tagger cuts
+    /// the window to its own K, which its model card does not declare yet.
     pub live_window_tokens: u32,
     /// Traces kept per turn once a settled marker leaves the job ledger.
     /// Defaults to 4; 0 keeps none; at most 1,024.

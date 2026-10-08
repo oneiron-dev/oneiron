@@ -2691,3 +2691,97 @@ fn a_smaller_per_turn_bound_trims_the_history_kept_under_a_larger_one() {
         );
     }
 }
+
+/// A turn whose ChildOf owner is not a conversation reads alone, however
+/// many turns share that owner.
+#[test]
+fn a_turn_under_a_parent_that_is_not_a_conversation_reads_alone() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    let owner = speaker(&vault);
+    let body = rmp_serde::to_vec_named(&serde_json::json!({"speaker": "user"})).expect("body");
+    let mut turns = Vec::new();
+    for at in [NOW, NOW + 1] {
+        let turn = EntityId::now();
+        vault
+            .put_entity(
+                &turn,
+                crate::registry::ENTITY_TYPE_TURN,
+                TimeRange { start: at, end: at },
+                at,
+                &body,
+            )
+            .expect("turn");
+        vault
+            .put_edge(&turn, crate::edge::EdgeKind::ChildOf, &owner, 1.0)
+            .expect("owner");
+        turns.push(turn);
+    }
+    let txn = vault.store.env.read_txn().expect("read txn");
+    assert!(
+        super::input::earlier_turns_in_txn(&vault, &txn, &turns[1], 256)
+            .expect("earlier")
+            .is_empty()
+    );
+}
+
+/// An earlier turn with more messages than the window reads ends the window
+/// before it, rather than failing the later turn: that turn is read alone
+/// and its answer settles.
+#[test]
+fn an_earlier_turn_past_the_message_bound_ends_the_window_and_the_turn_settles() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    let messages = (0..=256_u32)
+        .map(|order| message(order, "a long run of short messages"))
+        .collect();
+    vault
+        .memory(speaker(&vault), EdgeActorClass::Human)
+        .witness(&turn(None, messages))
+        .expect("a long earlier turn");
+    let later = witness_at(&vault, "Grace stayed behind", NOW + 1);
+    let tagger = Scripted::new(Answer::Good);
+    let pass = reconciler(&vault, &tagger)
+        .with_batch_size(2)
+        .drain_once()
+        .expect("drain");
+    assert_eq!(pass.traces.len(), 2);
+    let input = tagger
+        .inputs
+        .lock()
+        .expect("inputs")
+        .iter()
+        .find(|input| input.turn == later.to_hex())
+        .expect("the later turn was tagged")
+        .clone();
+    assert!(
+        input.context.is_empty(),
+        "the window ends before the long turn"
+    );
+    assert_eq!(settled(&vault, &later), 1);
+}
+
+/// A room whose turns carry DAG topology this replica has not adopted, a
+/// received Parent among them, is not ordered by time: its root reads alone,
+/// not a descendant that occurred before it.
+#[test]
+fn a_received_dag_root_reads_alone_before_the_room_adopts_the_dag() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    let root = witness_at(&vault, "Ada sailed north", NOW + 100);
+    let descendant = witness_at(&vault, "and Grace followed", NOW + 10);
+    vault
+        .put_edge(&descendant, crate::edge::EdgeKind::Parent, &root, 1.0)
+        .expect("a received Parent");
+    let txn = vault.store.env.read_txn().expect("read txn");
+    assert!(
+        super::input::earlier_turns_in_txn(&vault, &txn, &root, 256)
+            .expect("earlier")
+            .is_empty()
+    );
+    assert_eq!(
+        super::input::earlier_turns_in_txn(&vault, &txn, &descendant, 256).expect("earlier"),
+        vec![root],
+        "the descendant reads its ancestry"
+    );
+}
