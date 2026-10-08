@@ -48,7 +48,18 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
     let (dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
     crate::test_util::provision_engine_machines(&vault);
     authorize_test_inference(&vault).expect("owner-pinned test egress");
+    install_shipped_policy(&vault).expect("shipped policy");
     (dir, vault)
+}
+
+/// `open_test_vault_with` clears the seeded policy. These passes run under
+/// the shipped one, whose Dreamer read row (ARCH-0026) they need.
+fn install_shipped_policy(vault: &Vault) -> Result<()> {
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &crate::gate::default_policy_manifest()?,
+    )
 }
 
 fn authorize_test_inference(vault: &Vault) -> Result<()> {

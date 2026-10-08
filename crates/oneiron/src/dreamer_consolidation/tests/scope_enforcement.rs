@@ -529,6 +529,7 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
             crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
         crate::test_util::provision_engine_machines(&vault);
         authorize_test_inference(&vault)?;
+        install_shipped_policy(&vault)?;
         let store = DreamerRunnerStore::new(&vault);
         let (attempt, turns, _) =
             admitted_attempt_fixture(&vault, &store, 0x46, &[("user", "two related facts")])?;
@@ -1285,7 +1286,6 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
 fn admitted_branch_does_not_infer_read_authority_from_its_queue() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
     authorize_test_inference(&vault)?;
-    crate::test_util::withhold_dreamer_read(&vault)?;
     let store = DreamerRunnerStore::new(&vault);
     let (attempt, turns, _) =
         admitted_attempt_fixture(&vault, &store, 0x49, &[("user", "read grant required")])?;
@@ -1301,12 +1301,7 @@ fn admitted_branch_does_not_infer_read_authority_from_its_queue() -> Result<()> 
         ),
         Err(Error::InvalidClaimBody(_))
     ));
-    // The owner restores the shipped read row.
-    crate::test_util::put_policy_manifest_bytes(
-        &vault,
-        crate::gate::default_policy_manifest_id()?,
-        &crate::gate::default_policy_manifest()?,
-    )?;
+    install_shipped_policy(&vault)?;
     let branch = BranchResources::open(
         &vault,
         vault.dreamer_authority()?,
