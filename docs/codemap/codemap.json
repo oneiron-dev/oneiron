@@ -39956,7 +39956,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "benches/materializer_mutex/contract_tests.rs",
@@ -40078,9 +40078,7 @@
      "notable": [],
      "path": "src/beam/chroma/tests/support.rs",
      "purpose": "—",
-     "surface": {
-      "crate-vis": 3
-     }
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -40138,10 +40136,7 @@
      "notable": [],
      "path": "src/beam/edit_path/tests.rs",
      "purpose": "—",
-     "surface": {
-      "fn": 2,
-      "mod": 1
-     }
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -40218,7 +40213,7 @@
      "path": "src/beam/mod.rs",
      "purpose": "BEAM scaffold and fixed scorer for EVAL-001/EVAL-002",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 6
      }
     },
     {
@@ -40340,23 +40335,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/beam/tests_community_eval004.rs",
      "purpose": "Community and EVAL-004 tests",
      "surface": {
-      "crate-vis": 19
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/beam/tests_gates.rs",
-     "purpose": "Gate tests",
-     "surface": {
-      "crate-vis": 1
+      "crate-vis": 7
      }
     },
     {
@@ -40370,7 +40355,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/beam/tests_judge_cost.rs",
@@ -40380,25 +40365,17 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/beam/tests_ppr_vad.rs",
      "purpose": "PPR-VAD tests",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 2
      }
     },
     {
      "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/beam/tests_rerank_sweep.rs",
-     "purpose": "Deterministic BEAM seam sweep; this is not a learned-model quality claim",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/beam/tests_smoke_manifest.rs",
@@ -40458,7 +40435,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/eval/tests.rs",
@@ -40604,17 +40581,17 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/interface_bench/tests_a.rs",
      "purpose": "Taskgen, config, and memo tests",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/interface_bench/tests_b.rs",
@@ -40661,14 +40638,6 @@
     },
     {
      "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/perf/acceptance/tests.rs",
-     "purpose": "Regressions for the ONE-1579 acceptance evidence",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/perf/axes.rs",
@@ -40706,7 +40675,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/perf/cache_events.rs",
@@ -40736,7 +40705,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/perf/certificate/tests.rs",
@@ -40754,7 +40723,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/perf/child_process/tests.rs",
@@ -40782,7 +40751,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/perf/gated_writes.rs",
@@ -40842,7 +40811,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/perf/plan/tests.rs",
@@ -40860,7 +40829,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/perf/precision/tests.rs",
@@ -40878,7 +40847,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/perf/provenance/tests.rs",
@@ -40894,14 +40863,6 @@
      "surface": {
       "crate-vis": 5
      }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/perf/publication/tests.rs",
-     "purpose": "ONE-1579 / ONE-1961 / ONE-1963 regressions over the candidacy predicate",
-     "surface": {}
     },
     {
      "bucket": "m",
@@ -40980,16 +40941,8 @@
      "path": "src/perf/trust.rs",
      "purpose": "ONE-1961 trust classes for publication evidence",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 14
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/perf/trust/tests.rs",
-     "purpose": "ONE-1961 regressions over the trust tables",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -41116,7 +41069,7 @@
    ],
    "modules": {
     "beam": {
-     "files": 41,
+     "files": 39,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -41151,7 +41104,7 @@
      "purpose": "Checkpoint-backed NER shadow proof beside an indexed fixture turn"
     },
     "perf": {
-     "files": 37,
+     "files": 34,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -41202,8 +41155,8 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 101,
-   "test_files": 21
+   "source_files": 99,
+   "test_files": 18
   },
   "oneiron-contracts": {
    "files": [
@@ -42258,7 +42211,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/xlfn.rs",
@@ -42284,7 +42237,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/identity.rs",
@@ -42326,7 +42279,7 @@
     "xlfn": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Excel's storage qualifiers for post-2007 worksheet functions"
     }
@@ -42369,7 +42322,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/session/tests.rs",
@@ -42597,7 +42550,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/tick/tests/tests_commitment.rs",
@@ -42606,14 +42559,6 @@
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/tick/tests/tests_policy.rs",
-     "purpose": "One-shot wake-policy timer: quiet expiry, inbound cancellation, and durable queue",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/tick/tests/tests_push.rs",
@@ -42693,7 +42638,7 @@
      "purpose": "The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps…"
     },
     "tick": {
-     "files": 10,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -42717,7 +42662,7 @@
    "over_bar": 0,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
    "source_files": 17,
-   "test_files": 11
+   "test_files": 10
   },
   "oneiron-ffi": {
    "files": [
@@ -42996,14 +42941,6 @@
       "fn": 1,
       "struct": 5
      }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/stub_server.rs",
-     "purpose": "Stub HTTP peer checks the actual ComfyUI wire rather than a mocked transport",
-     "surface": {}
     }
    ],
    "modules": {
@@ -43018,7 +42955,7 @@
    "over_bar": 0,
    "purpose": "Self-hosted ComfyUI image adapter",
    "source_files": 1,
-   "test_files": 1
+   "test_files": 0
   },
   "oneiron-image-openrouter": {
    "files": [
@@ -43063,14 +43000,6 @@
      "surface": {
       "fn": 3
      }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/recorded.rs",
-     "purpose": "Recorded OpenRouter Image API envelopes; no live API key or network",
-     "surface": {}
     }
    ],
    "modules": {
@@ -43092,7 +43021,7 @@
    "over_bar": 0,
    "purpose": "OpenRouter Image API adapter",
    "source_files": 3,
-   "test_files": 1
+   "test_files": 0
   },
   "oneiron-linear": {
    "files": [
@@ -43180,7 +43109,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/tests.rs",
@@ -43294,14 +43223,6 @@
      }
     },
     {
-     "bucket": "L",
-     "kind": "test",
-     "notable": [],
-     "path": "src/lib/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -43334,7 +43255,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 7,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -43344,7 +43265,7 @@
    "over_bar": 0,
    "purpose": "Anthropic Messages wire adapter for Oneiron's [`oneiron::LlmBackend`] seam",
    "source_files": 6,
-   "test_files": 1
+   "test_files": 0
   },
   "oneiron-llm-gemini": {
    "files": [
@@ -43371,14 +43292,6 @@
      "surface": {
       "crate-vis": 5
      }
-    },
-    {
-     "bucket": "L",
-     "kind": "test",
-     "notable": [],
-     "path": "src/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -43417,13 +43330,6 @@
      "layout": "file",
      "purpose": "Gemini typed stream decoding"
     },
-    "tests": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "—",
-     "layout": "file",
-     "purpose": "—"
-    },
     "transport": {
      "files": 1,
      "impl_vault": false,
@@ -43442,7 +43348,7 @@
    "over_bar": 0,
    "purpose": "Gemini wire adapter",
    "source_files": 4,
-   "test_files": 1
+   "test_files": 0
   },
   "oneiron-llm-local": {
    "files": [
@@ -43531,19 +43437,11 @@
      "surface": {
       "crate-vis": 2
      }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/lib/tests.rs",
-     "purpose": "Fixture runtime plus request-validation and event-stream behavior tests",
-     "surface": {}
     }
    ],
    "modules": {
     "lib": {
-     "files": 8,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -43553,7 +43451,7 @@
    "over_bar": 0,
    "purpose": "Local in-process adapter for Oneiron's `LlmBackend` seam",
    "source_files": 7,
-   "test_files": 1
+   "test_files": 0
   },
   "oneiron-llm-openai": {
    "files": [
@@ -43595,14 +43493,6 @@
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/lib/image/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/lib/mod.rs",
@@ -43641,14 +43531,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/lib/tests.rs",
-     "purpose": "Unit tests for wire mapping, classification, options round-trip, and accumulator abort behavior",
-     "surface": {}
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -43681,7 +43563,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 9,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -43691,7 +43573,7 @@
    "over_bar": 0,
    "purpose": "OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam",
    "source_files": 7,
-   "test_files": 2
+   "test_files": 0
   },
   "oneiron-llm-own-server": {
    "files": [
@@ -43710,7 +43592,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/tests.rs",
@@ -43718,7 +43600,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/remote_transport.rs",
@@ -43756,7 +43638,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/tests.rs",
@@ -44618,7 +44500,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/facade/tests.rs",
@@ -44683,7 +44565,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "re-export": 3
      }
     },
@@ -44912,7 +44794,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/remote/tests.rs",
@@ -44974,22 +44856,6 @@
      "path": "tests/retained_correctness.rs",
      "purpose": "Retained admission regressions through the actual shared SDK dispatcher",
      "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/same_pid_reopen.rs",
-     "purpose": "ONE-1441 §Test/Shared #3 — same-PID reopen opens one shared native vault",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/transport_ownership.rs",
-     "purpose": "ONE-1441 §Test/Shared #7 — `bindings_depend_on_one_http_stack`",
-     "surface": {}
     }
    ],
    "modules": {
@@ -45039,7 +44905,7 @@
    "over_bar": 0,
    "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
    "source_files": 11,
-   "test_files": 10
+   "test_files": 8
   },
   "oneiron-retrieval": {
    "files": [
@@ -45983,7 +45849,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/it/fetch_policy.rs",
@@ -46007,7 +45873,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/it/verify_vectors.rs",
@@ -46015,7 +45881,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/oracle.rs",
@@ -50194,14 +50060,6 @@
       "re-export": 2,
       "struct": 1
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/contract.rs",
-     "purpose": "External drift guard for the exported head-contract surface",
-     "surface": {}
     }
    ],
    "modules": {
@@ -50237,7 +50095,7 @@
    "over_bar": 0,
    "purpose": "Definition-only UniFFI interface surface for the WIRE head contract",
    "source_files": 6,
-   "test_files": 1
+   "test_files": 0
   },
   "oneiron-vault-contract": {
    "files": [
@@ -50320,22 +50178,6 @@
       "re-export": 1,
       "struct": 3
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/lib/host_adapters/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/lib/host_adapters/wasm_harness_tests.rs",
-     "purpose": "Actual WebAssembly capability fixture, using the host's preinstalled Node runtime",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -50438,7 +50280,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 15,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -50448,7 +50290,7 @@
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
    "source_files": 12,
-   "test_files": 3
+   "test_files": 1
   },
   "oneiron-xlsx-formula": {
    "files": [
@@ -50615,22 +50457,6 @@
      }
     },
     {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/corpus.rs",
-     "purpose": "Corpus honesty: every case emits exactly one row, probes never score",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/error_concat.rs",
-     "purpose": "Error operands remain typed errors across both owned evaluator paths",
-     "surface": {}
-    },
-    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -50714,7 +50540,7 @@
    "over_bar": 2,
    "purpose": "In-process XLSX formula recalculation, the default of the edit round trip",
    "source_files": 13,
-   "test_files": 3
+   "test_files": 1
   }
  }
 }
