@@ -105,6 +105,8 @@ pub(crate) use self::decision::{GateDecision, GateMetrics, GateOutcome, GateReas
 pub(crate) use self::decode::normalize_policy_manifest_scope;
 #[cfg(test)]
 pub(crate) use self::default_manifest::default_consult_fanout_approval_threshold;
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) use self::default_manifest::default_policy_manifest_with_scoped_grants;
 pub(crate) use self::default_manifest::{
     DEFAULT_POLICY_MANIFEST_TIMESTAMP, default_consult_fanout_policy, default_policy_manifest,
     default_policy_manifest_id, seeded_project_depth_default,

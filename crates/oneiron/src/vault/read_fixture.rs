@@ -44,39 +44,26 @@ impl Vault {
         }
         let id = crate::gate::default_policy_manifest_id()?;
         let default = crate::gate::default_policy_manifest()?;
-        let Value::Map(mut entries) = rmpv::decode::read_value(&mut default.as_slice())
-            .map_err(|_| Error::InvariantViolation("decode default test policy"))?
-        else {
-            return Err(Error::InvariantViolation(
-                "default test policy is not a map",
-            ));
-        };
         let scope = crate::federation::scope_codec::encode_scope_value(
             &crate::federation::scope_codec::read_preset(),
         )?;
-        entries.push((
-            "scoped_grants".into(),
-            Value::Array(
-                actors
-                    .iter()
-                    .map(|actor| {
-                        Value::Map(vec![
-                            ("actor_ref".into(), actor.entity_ref().to_hex().into()),
-                            (
-                                "actor_class".into(),
-                                actor.actor_class().gate_actor_class().into(),
-                            ),
-                            ("effector".into(), "core:read".into()),
-                            ("scope".into(), scope.clone()),
-                            ("receipt_required".into(), false.into()),
-                        ])
-                    })
-                    .collect(),
-            ),
-        ));
-        let mut data = Vec::new();
-        rmpv::encode::write_value(&mut data, &Value::Map(entries))
-            .map_err(|_| Error::InvariantViolation("encode read test policy"))?;
+        let data = crate::gate::default_policy_manifest_with_scoped_grants(
+            actors
+                .iter()
+                .map(|actor| {
+                    Value::Map(vec![
+                        ("actor_ref".into(), actor.entity_ref().to_hex().into()),
+                        (
+                            "actor_class".into(),
+                            actor.actor_class().gate_actor_class().into(),
+                        ),
+                        ("effector".into(), "core:read".into()),
+                        ("scope".into(), scope.clone()),
+                        ("receipt_required".into(), false.into()),
+                    ])
+                })
+                .collect(),
+        )?;
         self.with_write_txn(|txn| {
             for actor in actors {
                 let super::LiveEntityRow::Live { entity_type, .. } =

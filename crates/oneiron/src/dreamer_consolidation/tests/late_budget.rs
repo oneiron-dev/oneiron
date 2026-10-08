@@ -52,7 +52,6 @@ fn run_case(case: LateCall) -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(config);
     crate::test_util::provision_engine_machines(&vault);
     authorize_test_inference(&vault)?;
-    grant_fixture_reads(&vault)?;
     let store = DreamerRunnerStore::new(&vault);
     let node_id = crate::identity::load_or_mint_client_id(&vault)?;
     let conversation = seed_session(&vault, 0x7a, 1);

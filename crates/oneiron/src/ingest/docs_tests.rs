@@ -154,26 +154,17 @@ impl<F: Fn(&DocsSegment) -> Result<()>> DocsDeepExtractor for CallbackNer<F> {
 
 fn grant_core_read(vault: &crate::Vault, actor_ref: &str) -> Result<()> {
     use rmpv::Value;
-    let default = crate::gate::default_policy_manifest()?;
-    let Value::Map(mut entries) = rmpv::decode::read_value(&mut default.as_slice()).unwrap() else {
-        panic!("default policy manifest is a map");
-    };
-    entries.push((
-        Value::from("scoped_grants"),
-        Value::Array(vec![Value::Map(vec![
-            (Value::from("actor_ref"), Value::from(actor_ref)),
-            (Value::from("effector"), Value::from("core:read")),
-            (
-                Value::from("scope"),
-                crate::federation::scope_codec::encode_scope_value(
-                    &crate::federation::scope_codec::read_preset(),
-                )?,
-            ),
-            (Value::from("receipt_required"), Value::Boolean(false)),
-        ])]),
-    ));
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, &Value::Map(entries)).unwrap();
+    let bytes = crate::gate::default_policy_manifest_with_scoped_grants(vec![Value::Map(vec![
+        (Value::from("actor_ref"), Value::from(actor_ref)),
+        (Value::from("effector"), Value::from("core:read")),
+        (
+            Value::from("scope"),
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::read_preset(),
+            )?,
+        ),
+        (Value::from("receipt_required"), Value::Boolean(false)),
+    ])])?;
     crate::test_util::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id()?,
