@@ -81,6 +81,106 @@ fn delete_message(vault: &Vault, id: EntityId) -> Result<()> {
     Ok(())
 }
 
+/// The fixture vault on an injected clock at 50, so a grant can expire
+/// between preparation and a write with nothing else changing.
+fn open_clocked_vault() -> (
+    tempfile::TempDir,
+    Vault,
+    std::sync::Arc<crate::ports::ManualClock>,
+) {
+    let clock = crate::ports::ManualClock::new(50);
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let (dir, vault) = crate::test_util::open_test_vault_with(config);
+    crate::test_util::provision_engine_machines(&vault);
+    authorize_test_inference(&vault).expect("owner-pinned test egress");
+    grant_fixture_reads(&vault).expect("explicit consolidation read grant");
+    (dir, vault, clock)
+}
+
+/// The Dreamer's own `MessagesRead` grant on one relationship space.
+fn grant_messages(vault: &Vault, space: EntityId, expires_at: u64) -> Result<EntityId> {
+    let grant = EntityId::now();
+    vault.create_access_grant(
+        &grant,
+        &crate::access_grant::AccessGrant {
+            principal_ref: vault.dreamer_authority()?.entity_ref(),
+            scope: crate::access_grant::AccessGrantScope::Messages { space_ref: space },
+            capability: crate::access_grant::AccessGrantCapability::MessagesRead,
+            status: crate::access_grant::AccessGrantStatus::Active,
+            created_at: 1,
+            revoked_at: None,
+            expires_at: Some(expires_at),
+            authority_scope: crate::federation::scope_codec::read_preset(),
+        },
+    )?;
+    Ok(grant)
+}
+
+/// An owner-approved `profile.name = Oleksii` head on `subject`.
+fn put_head(vault: &Vault, subject: EntityId) -> Result<EntityId> {
+    let (owner, head) = (EntityId::now(), EntityId::now());
+    vault.put_entity(&owner, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(owner, EdgeActorClass::Human),
+        ClaimSource::UserStated,
+        WriteProvenance::new("owner statement".into())?,
+        ClaimApprovalStatus::Approved,
+    );
+    vault
+        .batch()
+        .claim_candidate(
+            &head,
+            ClaimCandidate::new(
+                "profile.name",
+                ClaimSubject::Entity(subject),
+                "Oleksii".into(),
+                0.9,
+            ),
+            &envelope,
+            occurred(2),
+            2,
+        )
+        .commit()?;
+    Ok(head)
+}
+
+/// The admitted branch's own exact scope plus the stored head, as a host
+/// grants it.
+fn head_scope(
+    vault: &Vault,
+    admitted: &crate::dreamer_runner::DreamerAdmittedAttempt,
+    head: EntityId,
+) -> Result<(ConsolidationPartitionKey, Vec<EntityId>, crate::llm::Scope)> {
+    let (partition, turns, _) = decode_partition_payload(&admitted.status.payload.input)?;
+    let mut scope = BranchResources::open(
+        vault,
+        vault.dreamer_authority()?,
+        partition,
+        &turns,
+        admitted.status.attempt.id,
+        None,
+    )?
+    .scope()
+    .clone();
+    let pin = document_version(head, &vault.get(&head)?.expect("head body"));
+    scope.readable.insert(pin.clone());
+    scope.writable.insert(pin);
+    Ok((partition, turns, scope))
+}
+
+fn run_context(
+    actor: WriteActor,
+    admitted: &crate::dreamer_runner::DreamerAdmittedAttempt,
+) -> DreamerRunContext {
+    DreamerRunContext {
+        run_id: "run-1".into(),
+        attempt_id: admitted.status.attempt.id,
+        agent_actor: actor,
+        now_ms: 21_000,
+    }
+}
+
 /// The fixture's Dreamer read grant plus the one permit for engine-voice
 /// `system` rows: an owner-authored `auto` ceiling bound to `writer`.
 fn allow_system_rows(vault: &Vault, writer: EntityId) -> Result<()> {
@@ -522,49 +622,13 @@ fn message_drift_after_preparation_refuses_new_claims_and_attachments() -> Resul
         };
         let actor = vault.dreamer_authority()?;
         super::prior_heads::policy(&vault, actor.entity_ref(), true)?;
-        let (subject, owner, head) = (EntityId::now(), EntityId::now(), EntityId::now());
-        for id in [subject, owner] {
-            vault.put_entity(&id, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
-        }
-        let envelope = WriteEnvelope::new(
-            WriteActor::new(owner, EdgeActorClass::Human),
-            ClaimSource::UserStated,
-            WriteProvenance::new("owner statement".into())?,
-            ClaimApprovalStatus::Approved,
-        );
-        vault
-            .batch()
-            .claim_candidate(
-                &head,
-                ClaimCandidate::new(
-                    "profile.name",
-                    ClaimSubject::Entity(subject),
-                    "Oleksii".into(),
-                    0.9,
-                ),
-                &envelope,
-                occurred(2),
-                2,
-            )
-            .commit()?;
+        let subject = EntityId::now();
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+        let head = put_head(&vault, subject)?;
         queue_micro(&vault)?;
         let admitted = admit(&vault)?;
-        // The host grants the branch's own exact scope plus the stored head.
-        let (partition, turns, _) = decode_partition_payload(&admitted.status.payload.input)?;
+        let (_, turns, scope) = head_scope(&vault, &admitted, head)?;
         assert_eq!(turns, vec![turn]);
-        let mut scope = BranchResources::open(
-            &vault,
-            actor,
-            partition,
-            &turns,
-            admitted.status.attempt.id,
-            None,
-        )?
-        .scope()
-        .clone();
-        let pin = document_version(head, &vault.get(&head)?.expect("head body"));
-        scope.readable.insert(pin.clone());
-        scope.writable.insert(pin);
         let row = |predicate: &str| {
             serde_json::json!({
                 "subject": subject.to_hex(), "predicate": predicate, "value": "Oleksii",
@@ -576,15 +640,7 @@ fn message_drift_after_preparation_refuses_new_claims_and_attachments() -> Resul
                 .to_string(),
         ))]);
         let mut sink = DriftSink {
-            inner: PromotionWriterSink::new(
-                &vault,
-                DreamerRunContext {
-                    run_id: "run-1".into(),
-                    attempt_id: admitted.status.attempt.id,
-                    agent_actor: actor,
-                    now_ms: 21_000,
-                },
-            ),
+            inner: PromotionWriterSink::new(&vault, run_context(actor, &admitted)),
             change,
         };
         let turn_before = vault.get_raw(&turn)?;
@@ -626,17 +682,19 @@ fn message_drift_after_preparation_refuses_new_claims_and_attachments() -> Resul
 
 /// MESSAGE privacy is a read gate: a private row, or a relationship row the
 /// Dreamer holds no live grant for, refuses its turn. No word reaches the
-/// model, and no claim or PERSON lands; a grant revoked after preparation
-/// refuses at the write fence the same way.
+/// model, and no claim or PERSON lands. A grant revoked, or one that simply
+/// expires on the clock, after preparation refuses at the write fence the
+/// same way, and so does a whole-TURN attachment sealed under the grant.
 #[test]
 fn private_or_ungranted_relationship_messages_never_reach_consolidation() -> Result<()> {
     let space = EntityId::now();
-    for case in ["private", "no grant", "revoked grant"] {
-        let (_dir, vault) = open_vault();
+    let related = || serde_json::json!({"rel": space.to_hex()});
+    for case in ["private", "no grant", "revoked grant", "expired grant"] {
+        let (_dir, vault, clock) = open_clocked_vault();
         let metadata = if case == "private" {
             serde_json::json!({"scope": {"private": true}})
         } else {
-            serde_json::json!({"rel": space.to_hex()})
+            related()
         };
         let (turn, _) = witness(
             &vault,
@@ -649,25 +707,19 @@ fn private_or_ungranted_relationship_messages_never_reach_consolidation() -> Res
         let actor = vault.dreamer_authority()?;
         super::prior_heads::policy(&vault, actor.entity_ref(), true)?;
         if case == "revoked grant" {
-            let grant = EntityId::now();
-            vault.create_access_grant(
-                &grant,
-                &crate::access_grant::AccessGrant {
-                    principal_ref: actor.entity_ref(),
-                    scope: crate::access_grant::AccessGrantScope::Messages { space_ref: space },
-                    capability: crate::access_grant::AccessGrantCapability::MessagesRead,
-                    status: crate::access_grant::AccessGrantStatus::Active,
-                    created_at: 1,
-                    revoked_at: None,
-                    expires_at: Some(u64::MAX),
-                    authority_scope: crate::federation::scope_codec::read_preset(),
-                },
-            )?;
+            let grant = grant_messages(&vault, space, u64::MAX)?;
             vault
                 .test_hooks()
                 .install_before_dreamer_person_mint(move |vault| {
                     vault.revoke_access_grant(&grant, 2).expect("revoke grant");
                 });
+        }
+        if case == "expired grant" {
+            grant_messages(&vault, space, 100)?;
+            let clock = std::sync::Arc::clone(&clock);
+            vault
+                .test_hooks()
+                .install_before_dreamer_person_mint(move |_| clock.set(200));
         }
         let (subject, named) = (EntityId::now(), EntityId::now());
         vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
@@ -683,61 +735,141 @@ fn private_or_ungranted_relationship_messages_never_reach_consolidation() -> Res
             })
             .to_string(),
         ))]);
-        let mut sink = PromotionWriterSink::new(
-            &vault,
-            DreamerRunContext {
-                run_id: "run-1".into(),
-                attempt_id: admitted.status.attempt.id,
-                agent_actor: actor,
-                now_ms: 21_000,
-            },
-        );
+        let mut sink = PromotionWriterSink::new(&vault, run_context(actor, &admitted));
         let result = execute_direct(&vault, &admitted, &backend, &mut sink, None);
         assert!(result.is_err(), "{case}: the turn is refused");
         // Only a grant that was live at preparation let the words out.
         assert_eq!(
             backend.inner.calls.load(Ordering::SeqCst),
-            usize::from(case == "revoked grant"),
+            usize::from(matches!(case, "revoked grant" | "expired grant")),
             "{case}"
         );
         assert!(sink.outcome.landed.is_empty(), "{case}");
         assert!(claims_with(&vault, "profile.name")?.is_empty(), "{case}");
         assert!(!vault.entity_exists(&named)?, "{case}: no PERSON");
     }
+    // A whole-TURN (no-range) attachment to an existing head, sealed while
+    // the grant was live, commits only if the grant still holds when written.
+    for expire in [false, true] {
+        let (_dir, vault, clock) = open_clocked_vault();
+        let (turn, _) = witness(
+            &vault,
+            0x6d,
+            vec![WitnessMessage {
+                metadata: Some(related()),
+                ..message(0, WitnessAuthor::User, SAID, true)
+            }],
+        );
+        let actor = vault.dreamer_authority()?;
+        super::prior_heads::policy(&vault, actor.entity_ref(), true)?;
+        grant_messages(&vault, space, 100)?;
+        let subject = EntityId::now();
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+        let head = put_head(&vault, subject)?;
+        queue_micro(&vault)?;
+        let admitted = admit(&vault)?;
+        let (partition, turns, scope) = head_scope(&vault, &admitted, head)?;
+        let branch = BranchResources::open(
+            &vault,
+            actor,
+            partition,
+            &turns,
+            admitted.status.attempt.id,
+            Some(&scope),
+        )?;
+        let mut whole = candidate(subject, "profile.name", "Oleksii", None);
+        whole.evidence_turn_refs = vec![turn];
+        let facts = super::super::conflict::candidate_facts(&whole.candidate)?;
+        whole.claim_id = super::super::conflict::deterministic_claim_id(
+            admitted.status.attempt.id,
+            facts.subject,
+            &facts.predicate,
+            &facts.value,
+            facts.world,
+            facts.facet,
+            facts.rel,
+            facts.topic.as_deref(),
+        )?;
+        let change: Option<Change> = expire.then(|| {
+            let clock = std::sync::Arc::clone(&clock);
+            Box::new(move |_: &Vault| {
+                clock.set(200);
+                Ok(())
+            }) as Change
+        });
+        let mut sink = DriftSink {
+            inner: PromotionWriterSink::new(&vault, run_context(actor, &admitted)),
+            change,
+        };
+        let result = branch.accept(branch.scope(), &mut sink, vec![whole]);
+        let supports = vault.sources(&head, EdgeKind::Supports, None)?;
+        let wrappers = claims_with(&vault, crate::provenance::PREDICATE_EDGE_PROVENANCE)?;
+        if expire {
+            assert!(result.is_err(), "an expired grant refuses the attachment");
+            assert!(supports.is_empty() && wrappers.is_empty());
+        } else {
+            result?;
+            assert_eq!((supports, wrappers.len()), (vec![turn], 1));
+        }
+    }
     Ok(())
 }
 
 /// A text-dependent reflection gap is written only while the words it was
-/// read from still stand: the user's message is deleted between the scan and
-/// the queue write, so the write stores nothing.
+/// read from still stand. Between the scan and the queue write the user's
+/// message is deleted, or the grant it was read under expires on the clock;
+/// the write then neither creates the new gap nor refreshes the queued one.
 #[test]
 fn gap_queue_refuses_a_text_gap_whose_message_changed_after_the_scan() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let said = message(0, WitnessAuthor::User, "I'll call Casey tomorrow", true);
-    let words = EntityId::from_hex(said.id.as_deref().expect("message id"))?;
-    let (turn, conversation) = witness(&vault, 0x6b, vec![said]);
-    let working_set = [WorkingSetTurn {
-        turn_id: turn,
-        role: DreamerTurnRole::User,
-        learned_at: 10,
-        conversation: Some(conversation),
-    }];
-    let kinds = |gaps: &[ReflectionGap]| gaps.iter().map(|gap| gap.kind).collect::<Vec<_>>();
-    let (gaps, texts) = super::super::gap::scan_with_texts(&vault, &working_set, 1_000)?;
-    assert_eq!(
-        kinds(&gaps),
-        vec![
-            ReflectionGapKind::UnresolvedThread,
-            ReflectionGapKind::StatedIntentWithoutAction
-        ]
-    );
-    delete_message(&vault, words)?;
-    assert!(super::super::gap::upsert_scanned_gap_queue(&vault, gaps, &texts, 1_000).is_err());
-    // A fresh scan no longer reads the intent; the refused write left nothing
-    // behind, so even the role-only gap is created now, not refreshed.
-    let (gaps, texts) = super::super::gap::scan_with_texts(&vault, &working_set, 2_000)?;
-    assert_eq!(kinds(&gaps), vec![ReflectionGapKind::UnresolvedThread]);
-    let delta = super::super::gap::upsert_scanned_gap_queue(&vault, gaps, &texts, 2_000)?;
-    assert_eq!((delta.created, delta.refreshed), (1, 0));
+    for case in ["deleted row", "expired grant"] {
+        let (_dir, vault, clock) = open_clocked_vault();
+        let space = EntityId::now();
+        let said = WitnessMessage {
+            metadata: (case == "expired grant").then(|| serde_json::json!({"rel": space.to_hex()})),
+            ..message(0, WitnessAuthor::User, "I'll call Casey tomorrow", true)
+        };
+        let words = EntityId::from_hex(said.id.as_deref().expect("message id"))?;
+        let (turn, conversation) = witness(&vault, 0x6b, vec![said]);
+        if case == "expired grant" {
+            grant_messages(&vault, space, 100)?;
+        }
+        let working_set = [WorkingSetTurn {
+            turn_id: turn,
+            role: DreamerTurnRole::User,
+            learned_at: 10,
+            conversation: Some(conversation),
+        }];
+        let (gaps, texts) = super::super::gap::scan_with_texts(&vault, &working_set, 2_000)?;
+        let [unresolved, intent] = <[ReflectionGap; 2]>::try_from(gaps.clone()).expect("two gaps");
+        assert_eq!(
+            (unresolved.kind, intent.kind),
+            (
+                ReflectionGapKind::UnresolvedThread,
+                ReflectionGapKind::StatedIntentWithoutAction
+            )
+        );
+        // The role-only gap is already queued from an earlier round.
+        assert_eq!(
+            upsert_gap_queue(&vault, vec![unresolved], 1_000)?.created,
+            1
+        );
+        if case == "deleted row" {
+            delete_message(&vault, words)?;
+        } else {
+            clock.set(200);
+        }
+        assert!(
+            super::super::gap::upsert_scanned_gap_queue(&vault, gaps, &texts, 2_000).is_err(),
+            "{case}"
+        );
+        // The intent gap is still new, and the queued gap still carries its
+        // first observation, so it decays on that schedule.
+        let delta = upsert_gap_queue(&vault, vec![intent], 1_000 + DREAMER_GAP_DECAY_MS)?;
+        assert_eq!(
+            (delta.created, delta.refreshed, delta.decayed),
+            (1, 0, 1),
+            "{case}"
+        );
+    }
     Ok(())
 }

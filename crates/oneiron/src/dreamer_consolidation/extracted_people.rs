@@ -99,9 +99,11 @@ pub(super) fn mint_extracted_people(
         }
         // A branch's names are checked against the text its model saw, so
         // the whole branch fence must still hold before the first mint.
+        // Grants are judged at this writer's own clock, never a stale floor.
         if let Some(fence) = fence
             && !people.is_empty()
         {
+            crate::ports::recorded_at_in_txn(&vault.store, txn)?;
             fence.validate_in_txn(vault, txn)?;
         }
         for person in people {

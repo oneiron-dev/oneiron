@@ -329,6 +329,8 @@ fn upsert_gap_projection<K: SideKey>(
     let mut observed: BTreeSet<Vec<u8>> = BTreeSet::new();
     let mut wtxn = vault.store.env.write_txn()?;
     if !texts.is_empty() {
+        // Grants are judged at this writer's own clock, never a stale floor.
+        crate::ports::recorded_at_in_txn(&vault.store, &mut wtxn)?;
         let read = super::turn_text::dreamer_read(vault)?;
         for (turn, text) in texts {
             text.check_live_in(&read, &wtxn, turn)?;

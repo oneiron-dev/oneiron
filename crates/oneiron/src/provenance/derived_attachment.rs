@@ -78,11 +78,9 @@ pub(super) fn verify(
         }
     };
     let locators = decode_verified_locators(evidence)?;
-    let text = if source_header.entity_type == ENTITY_TYPE_TURN
-        && locators
-            .iter()
-            .any(|(locator, _)| locator.byte_range.is_some())
-    {
+    // Every TURN source re-collects its MESSAGE text on the caller's writer,
+    // a whole-TURN locator included, so a moved or withheld row refuses here.
+    let text = if source_header.entity_type == ENTITY_TYPE_TURN {
         live_turn_text_in(vault, txn, reader, &subject.source, source_body)?
     } else {
         None

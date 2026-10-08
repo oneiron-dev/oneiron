@@ -77,6 +77,8 @@ fn attach_evidence(
     let refs: std::collections::BTreeSet<_> =
         candidate.evidence_turn_refs.iter().copied().collect();
     vault.with_write_txn(|txn| {
+        // Source grants are judged at this writer's own clock.
+        crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         fence.validate_in_txn(vault, txn)?;
         let original = vault
             .get_claim_in_txn(txn, &head)?
