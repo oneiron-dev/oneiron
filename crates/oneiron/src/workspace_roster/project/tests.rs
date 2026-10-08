@@ -1786,10 +1786,17 @@ fn a_project_whose_home_room_id_sorts_first_reimports() -> Result<()> {
 #[cfg(feature = "sync")]
 #[test]
 fn a_project_whose_home_room_id_sorts_first_replays_without_a_stuck_window() -> Result<()> {
-    // Window replay walks rows in key order and a live delta in hash order, so
-    // the home room can come before its project. Once the project's own write
-    // produces the room, the window must not stay flagged for rematerialization.
+    // Forward remat walks rows in key order, so this home room comes before its
+    // project; a live delta walks them in hash order, which may put either one
+    // first. Once the project's own write produces the room, the window must
+    // not stay flagged for rematerialization.
     let (_source_dir, source) = crate::test_util::open_test_vault_with(Default::default());
+    // Each peer is another device of this vault: the same root project, and
+    // none of the child's rows yet. A peer with its own root would hide the
+    // source root's subtree, room included.
+    let images = tempfile::tempdir()?;
+    let image = images.path().join("before-child");
+    source.snapshot_checkpoint(&image, 5)?;
     let (child_id, child) = child_project_whose_home_room_sorts_first(&source)?;
     source.put_project(child_id, &child, 10)?;
     let key = crate::sync::types::WindowKey::new("1970-01");
@@ -1797,7 +1804,16 @@ fn a_project_whose_home_room_id_sorts_first_replays_without_a_stuck_window() -> 
     crate::sync::window::reverse_rematerialize(&source, &doc, &key)?;
     let room_id = EntityId::from_hex(&child.home_room)?;
     for live in [true, false] {
-        let (_peer_dir, peer) = crate::test_util::open_test_vault_with(Default::default());
+        let peer_dir = tempfile::tempdir()?;
+        let (peer, _) = Vault::restore_checkpoint(
+            &image,
+            &peer_dir.path().join("peer"),
+            Default::default(),
+            crate::recovery::checkpoint::RestoreReason::Restore,
+            20,
+        )?;
+        assert_eq!(peer.root_project()?, source.root_project()?);
+        assert!(peer.project_room(room_id)?.is_none());
         let peer = std::sync::Arc::new(peer);
         let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
         if live {
@@ -1814,15 +1830,18 @@ fn a_project_whose_home_room_id_sorts_first_replays_without_a_stuck_window() -> 
         } else {
             crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key)?;
         }
+        let pending = crate::sync::quarantine::pending_remat_entities(&peer, key.as_str());
+        let room = peer.project_room(room_id)?;
         assert_eq!(
-            peer.project_room(room_id)?.expect("room").project_id,
-            child_id.to_hex()
+            room.map(|room| room.project_id),
+            Some(child_id.to_hex()),
+            "live={live}, project landed: {}, still pending: {pending:?}",
+            peer.project(child_id)?.is_some()
         );
         assert_eq!(
             crate::sync::pending_remat_windows(&peer)?,
             Vec::<String>::new(),
-            "live={live}, still pending: {:?}",
-            crate::sync::quarantine::pending_remat_entities(&peer, key.as_str())
+            "live={live}, still pending: {pending:?}"
         );
     }
     Ok(())
