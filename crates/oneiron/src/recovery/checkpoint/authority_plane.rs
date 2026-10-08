@@ -343,8 +343,11 @@ enum Compared {
     },
     /// What bounds an agent.
     Agent(Box<AgentBounds>),
-    /// Whether a counterparty contact is live, and the party's consents.
+    /// Which party on which identity a counterparty contact binds, whether it
+    /// is live, and the party's consents.
     Contact {
+        identity: EntityId,
+        party: String,
         status: CounterpartyContactStatus,
         opt_out: Option<CounterpartyOptOut>,
         promo_consent: bool,
@@ -480,6 +483,8 @@ fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
             .map_or_else(
                 |_| whole(),
                 |contact| Compared::Contact {
+                    identity: contact.identity_ref,
+                    party: contact.counterparty,
                     status: contact.status,
                     opt_out: contact.opt_out,
                     promo_consent: contact.promo_consent,

@@ -84,8 +84,9 @@ pub(super) enum Projection {
     /// What bounds an agent: approval, lifecycle, its on switch, ceiling,
     /// scope, connectors, tools, skills, model, memory and waking.
     Agent,
-    /// Whether a counterparty contact is live, and the party's opt-out and
-    /// promotional consent.
+    /// Which party on which identity a counterparty contact binds (the pair a
+    /// sender resolves to the contact and its disclosure standing), whether
+    /// it is live, and the party's opt-out and promotional consent.
     Contact,
     /// A NOTE's kind, which decides who reads it, and its author. A body
     /// that does not decode is content.

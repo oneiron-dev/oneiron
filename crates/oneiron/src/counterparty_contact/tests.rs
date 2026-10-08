@@ -624,3 +624,73 @@ fn a_restore_never_undoes_a_stop_or_a_contact_revocation_since() -> Result<()> {
     refused(&before_revocation, "after-revocation");
     Ok(())
 }
+
+/// SOL-9A-2-R3 F28: rebinding a contact to another party leaves the party it
+/// left unknown, without the contact's disclosure standing. A restore from
+/// before the rebinding is refused rather than hand that party the contact
+/// back, though its status and consents never changed.
+#[test]
+fn a_restore_never_rebinds_a_contact_to_the_party_it_left() -> Result<()> {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSubject};
+    let (_tmp, vault) = open_vault();
+    let identity = entity(0x7C);
+    let contact = entity(0x7D);
+    put_identity(&vault, identity, "email", "owner@example.com")?;
+    vault.create_counterparty_contact(
+        &contact,
+        &CounterpartyContactRecord::user_introduction(identity, "sora@example.com", 10)?,
+    )?;
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("before-rebinding");
+    vault.snapshot_checkpoint(&image, 100)?;
+
+    let old_head = vault
+        .claims_for_subject(&contact)?
+        .into_iter()
+        .find(|id| {
+            vault.get_claim(id).ok().flatten().is_some_and(|body| {
+                body.predicate == PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY
+                    && body.lifecycle == ClaimLifecycleStatus::Active
+            })
+        })
+        .expect("the contact's party head");
+    let new_head = entity(0x7E);
+    let rebound = ClaimBody::new(
+        PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
+        ClaimSubject::Entity(contact),
+        Value::from("rin@example.com"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    vault.put_claim(
+        &new_head,
+        &rebound,
+        crate::TimeRange { start: 20, end: 20 },
+        20,
+    )?;
+    vault.supersede_claim(&new_head, &old_head, 20)?;
+    let record = rematerialize_contact_cache(&vault, &contact)?;
+    assert_eq!(record.counterparty, "rin@example.com");
+    assert_eq!(record.status, CounterpartyContactStatus::Active);
+    assert!(record.opt_out.is_none());
+
+    let destination = backups.path().join("after-rebinding");
+    let error = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &destination,
+        vault.config.clone(),
+        &vault,
+        200,
+    )
+    .err()
+    .expect("the restore must be refused");
+    assert!(
+        error
+            .to_string()
+            .contains("counterparty contacts and their consents"),
+        "{error}"
+    );
+    assert!(!destination.exists());
+    Ok(())
+}
