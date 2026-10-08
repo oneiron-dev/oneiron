@@ -423,6 +423,18 @@ fn a_typo_in_a_long_line_reads_far_below_the_line_replaced_in_both_lanes() {
     }
 }
 
+/// A real rewrite still reads as one: two unrelated sentences share letters
+/// by chance, and the reconstructed lane still charges the line whole, as it
+/// did when it counted lines.
+#[test]
+fn a_rewritten_line_still_scores_a_full_rewrite() {
+    let delta = delta_from_reconstructed(
+        "The deploy runs at noon on Fridays and the team reviews the logs afterwards.",
+        "Please send the invoice to accounting before the end of the month, thanks.",
+    );
+    assert_eq!(delta.d_norm, 1.0);
+}
+
 /// Re-wrapping a paragraph, re-spacing it and adding blank lines changes no
 /// word, so it measures zero in both text lanes; one changed word does not.
 #[test]
