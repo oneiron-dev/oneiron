@@ -36,7 +36,7 @@ pub(crate) fn scoped_read_claim_allowed(
     claim_facets: &[EntityId],
 ) -> bool {
     scoped_read_claim_allowed_with_scope(
-        policy,
+        Some(policy),
         actor_key,
         body,
         claim_facets,
@@ -44,11 +44,13 @@ pub(crate) fn scoped_read_claim_allowed(
     )
 }
 
-/// What a key holding a proof of `explicit_scope` reads, as
+/// What a key holding a proof of `explicit_scope` reads under `policy`, as
 /// `scoped_read_claim_allowed` asks of the proof a key carries. The key's
-/// own proof, if any, is not read, and no proof is built.
+/// own proof, if any, is not read, and no proof is built. `None` asks under
+/// no manifest that narrows anything: nothing fails closed for want of one,
+/// and no grant narrows the proof's Scope.
 pub(crate) fn scoped_read_claim_allowed_with_scope(
-    policy: &PolicyManifestResolution,
+    policy: Option<&PolicyManifestResolution>,
     actor_key: &ScopedReadActorKey,
     body: &ClaimBody,
     claim_facets: &[EntityId],
@@ -71,11 +73,9 @@ pub(crate) fn scoped_read_claim_allowed_with_scope(
     if actor_key.vault_owner_ref().is_some() {
         return true;
     }
-    let diagnostics = policy.diagnostics();
-    if diagnostics.loaded_manifest_forces_fail_closed() {
-        return false;
-    }
-    if policy.is_fail_closed() {
+    if policy.is_some_and(|policy| {
+        policy.diagnostics().loaded_manifest_forces_fail_closed() || policy.is_fail_closed()
+    }) {
         return false;
     }
 
@@ -90,7 +90,8 @@ pub(crate) fn scoped_read_claim_allowed_with_scope(
     }
     let mut saw_core_read_grant = false;
     for grant in policy
-        .scoped_grants()
+        .map(PolicyManifestResolution::scoped_grants)
+        .unwrap_or_default()
         .iter()
         .filter(|grant| scoped_read_grant_has_read_effector(grant))
     {

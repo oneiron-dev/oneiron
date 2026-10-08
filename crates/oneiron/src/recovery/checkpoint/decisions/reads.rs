@@ -265,6 +265,15 @@ impl Decision for SlipClaimGrants {
         let Ok(policy) = crate::gate::resolve_policy_manifest(&vault.store, &txn) else {
             return Ok(vec![None; subjects.len()]);
         };
+        // A vault that loads no manifest is one its open gate seeds with the
+        // shipped default (`ensure_default_policy_manifest_on_open`), which
+        // carries no scoped grant: the restored vault is opened so, and the
+        // live one reads so once it is reopened. Neither fails closed for
+        // want of a manifest the restore does not bring back.
+        let diagnostics = policy.diagnostics();
+        let loaded = (diagnostics.manifest_count > 0
+            || diagnostics.loaded_manifest_forces_fail_closed())
+        .then_some(&policy);
         let fold = vault.authority_fold_readonly_in_txn(&txn)?;
         let mut held = BTreeSet::new();
         let mut readers: Option<(VaultInstant, Vec<SlipReader<'_>>)> = None;
@@ -291,7 +300,7 @@ impl Decision for SlipClaimGrants {
                                     crate::claim::claim_generic_readable(&body)
                                         && read.principal_admits(principal)
                                         && crate::gate::scoped_read_claim_allowed_with_scope(
-                                            &policy,
+                                            loaded,
                                             read.actor_key(),
                                             &body,
                                             &facets,
