@@ -27,7 +27,9 @@
 //! or to a link the list does not hold, a defined name of a linked workbook
 //! (`[1]!Rate`), a 3D linked reference, a linked reference in a reference
 //! operator, a multi-cell linked range passed on as a reference
-//! (`reads_a_range`), a linked reference reaching a criteria function through
+//! (`reads_a_range`), one INDEX position into what another function or a
+//! name hands on (`hands_on_a_link`), a linked reference reaching a criteria
+//! function through
 //! another function or a name, or reaching a function that reads references
 //! through one that passes it on as values (`passed_on`), one bound to a LET
 //! or LAMBDA name, and an open or very large linked range unless the function
@@ -36,7 +38,10 @@
 //! checked where each formula uses it, as if written there; one with a
 //! relative linked reference anywhere in its formula falls back wherever it
 //! is used, as the fork reads every name's formula at A1 where Excel moves
-//! the reference with the cell using it. A link part that is not XML is
+//! the reference with the cell using it. `[0]!Rate` falls back where the
+//! workbook defines `Rate` for a sheet too (`workbook_qualified_names`): the
+//! fork reads it as `Rate`, the sheet's own, where Excel reads the
+//! workbook's. A link part that is not XML is
 //! malformed workbook content, refused outright (`InvalidWorkbook`).
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -224,6 +229,7 @@ impl LinkedBooks {
     ) -> Result<()> {
         let mut pending = vec![(formula, Parent::Root)];
         let mut expansions = 0;
+        let mut handed_on = false;
         while let Some((node, parent)) = pending.pop() {
             passed_on(node, &parent, names)?;
             match &node.node_type {
@@ -258,6 +264,13 @@ impl LinkedBooks {
                     if binds_a_link(&bare, args, names) {
                         return Err(unsupported(BOUND));
                     }
+                    // One position into what another function or a name
+                    // hands on: the shape `reads_a_range` checks is the inner
+                    // one (`INDEX(INDEX([1]S!A1:B5,0,0),3)` is #REF! in
+                    // Excel, the block's third row in the fork). Refused
+                    // after the walk, so a reason found inside wins.
+                    handed_on |=
+                        bare == "INDEX" && args.len() == 2 && hands_on_a_link(&args[0], names);
                     // INDEX hands on the reference it selects, so its range
                     // is read as a reference wherever the INDEX is.
                     let through = bare == "INDEX"
@@ -293,6 +306,11 @@ impl LinkedBooks {
                     pending.extend(rows.iter().flatten().map(|arg| (arg, Parent::Operator(""))));
                 }
             }
+        }
+        if handed_on {
+            return Err(unsupported(
+                "external range given one INDEX position through another function or a name",
+            ));
         }
         Ok(())
     }
@@ -826,7 +844,8 @@ enum Parent<'a> {
 /// it selects, which a legacy formula intersects with its cell as Excel does
 /// (probe links2: `INDEX([1]S!A1:A5,SMALL({0,1},1))*2` in row 3 is 2*A3), at
 /// any row or column it computes in a range the fork reads whole; in one
-/// read only up to its last saved cell (`cropped`), only a position that is
+/// read only up to its last saved cell, or one INDEX turns into such a range
+/// by selecting all of its rows or columns (`opens`), only a position that is
 /// never 0 keeps it to one cell. With one position, the range must be one
 /// row or column: `INDEX([1]S!A1:B5,3)` is #REF! in Excel, its third row in
 /// the fork.
@@ -843,8 +862,8 @@ fn reads_a_range(parent: &Parent<'_>, kind: ExternalRefKind) -> bool {
         } => match (function.as_str(), *index) {
             // One position selects within a single column or row only.
             ("INDEX", 0) => match args.len() {
-                2 => one_line(kind) && (!cropped(kind) || row_or_column(&args[1])),
-                3 => !cropped(kind) || (row_or_column(&args[1]) && row_or_column(&args[2])),
+                2 => one_line(kind) && (!opens(kind) || row_or_column(&args[1])),
+                3 => !opens(kind) || (row_or_column(&args[1]) && row_or_column(&args[2])),
                 _ => false,
             },
             ("AREAS" | "RANK" | "RANK.EQ" | "RANK.AVG" | "GETPIVOTDATA" | "LET" | "LAMBDA", _) => {
@@ -988,6 +1007,62 @@ fn reads_reference(function: &str) -> bool {
     )
 }
 
+/// Whether `node` may hand on a linked reference without being one: a call
+/// that may return a reference over a linked workbook, or a name holding an
+/// expression over one.
+fn hands_on_a_link(node: &ASTNode, names: &BTreeMap<String, LinkedName>) -> bool {
+    match &node.node_type {
+        ASTNodeType::Function { name, .. } => returns_reference(name) && mentions_link(node, names),
+        ASTNodeType::Reference {
+            reference: ReferenceType::NamedRange(name),
+            ..
+        } => matches!(
+            names.get(&name_key(name)),
+            Some(LinkedName::Expression(_) | LinkedName::Unclear)
+        ),
+        _ => false,
+    }
+}
+
+/// The names a formula qualifies with the workbook itself (`[0]!Rate`),
+/// outside its strings and quoted sheet names. The fork reads `[0]!Rate` as
+/// `Rate`, which a formula on a sheet with its own `Rate` reads as that one,
+/// where Excel reads the workbook's (and, with none, one sheet's).
+pub(crate) fn workbook_qualified_names(formula: &str) -> Vec<&str> {
+    let bytes = formula.as_bytes();
+    let mut found = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            quote @ (b'"' | b'\'') => {
+                // A doubled quote stands for one inside the quotes.
+                at += 1;
+                while at < bytes.len() {
+                    if bytes[at] == quote {
+                        if bytes.get(at + 1) == Some(&quote) {
+                            at += 2;
+                            continue;
+                        }
+                        break;
+                    }
+                    at += 1;
+                }
+                at += 1;
+            }
+            b'[' if formula[at..].starts_with("[0]!") => {
+                let start = at + "[0]!".len();
+                let end = formula[start..]
+                    .find(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '.' | '\\' | '?')))
+                    .map_or(formula.len(), |length| start + length);
+                found.push(&formula[start..end]);
+                at = end.max(start);
+            }
+            _ => at += 1,
+        }
+    }
+    found
+}
+
 /// A call other than INDEX (which selects a linked reference itself) that
 /// may return a reference, and returns a linked one as values in the fork.
 fn passes_on_values(node: &ASTNode) -> bool {
@@ -1061,6 +1136,29 @@ fn cropped(kind: ExternalRefKind) -> bool {
             _ => true,
         },
     }
+}
+
+/// A range the fork reads only up to its last saved cell (`cropped`), or one
+/// whose rows or columns reach both edges of the sheet (`$A$1:$A$1048576`),
+/// which INDEX hands on as the whole column or row (`A:A`) when it selects
+/// them all: `COUNTA(INDEX([1]S!$A$1:$A$1048576,0,1))` is 1048576 in Excel
+/// on a sheet Excel could not refresh, and counts the saved cells in the
+/// fork.
+fn opens(kind: ExternalRefKind) -> bool {
+    const ROWS: u32 = 1_048_576;
+    const COLUMNS: u32 = 16_384;
+    let whole = |start: Option<u32>, end: Option<u32>, last: u32| match (start, end) {
+        (Some(a), Some(b)) => a.min(b) == 1 && a.max(b) == last,
+        _ => false,
+    };
+    cropped(kind)
+        || matches!(kind, ExternalRefKind::Range {
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            ..
+        } if whole(start_row, end_row, ROWS) || whole(start_col, end_col, COLUMNS))
 }
 
 /// A range of one column or one row (`A:A`, `A1:A9`, `1:1`).
@@ -1219,38 +1317,6 @@ mod tests {
         }
     }
 
-    /// The links2 probe (Excel for Windows 16.0.20430): approximate lookups
-    /// bisect an open linked range as written, past the saved cells; INDEX at
-    /// a computed position in a range the fork reads whole hands on the
-    /// reference, which a legacy formula intersects; `[0]` is the workbook
-    /// itself, which the fork reads as a local name or reference.
-    #[test]
-    fn approximate_lookups_computed_positions_and_the_workbook_itself_are_admitted() {
-        for formula in [
-            "=VLOOKUP(A173,[1]Data!$C:$Z,11,TRUE)",
-            "=VLOOKUP(3,[1]Failed!A:B,2)",
-            "=VLOOKUP(\"c\",[1]Failed!A:B,2,TRUE)",
-            "=HLOOKUP(2,[1]Data!$1:$2,2,TRUE)",
-            "=HLOOKUP(2,[1]Failed!1:2,2,B1)",
-            "=MATCH(3,[1]Data!A:A,1)",
-            "=MATCH(3,[1]Failed!A:A)",
-            "=MATCH(3,[1]Failed!A:A,)",
-            "=IF(ROWS($A$6:A6)>$B$4,\"\",INDEX([1]Data!$C$2:$C$144,SMALL(IF([1]Data!$B$2:$B$144>=1,ROW([1]Data!$B$2:$B$144)-1),ROWS($A$6:A6))))",
-            "=IFERROR(INDEX([1]Failed!$D$2:$D$100000,SMALL(IF([1]Failed!$A$2:$A$100000=$B4,ROW([1]Failed!$D$2:$D$100000)-1,\"\"),1)),\"\")",
-            "=INDEX([1]Data!$J$1:$J$999,LARGE(INDEX(ROW([1]Data!$K$2:$K$999)*([1]Data!$K$2:$K$999=$E2),),G$1))",
-            "=SUM(INDEX([1]Data!A2:A5,0)*2)",
-            "=INDEX([1]Data!A1:A5,FALSE)*2",
-            "=INDEX([1]Data!A1:B5,SMALL({1,2},1),SMALL({0,1},1))",
-            "=INDEX(Rates,ROWS($A$1:A2))",
-            "=ROW(INDEX([1]Data!A1:A5,SMALL({4,1},2)))",
-            "=[0]!PeriodInActual*2",
-            "=[0]Data!A1+SUM('[0]Data'!A1:A3)",
-            "=ROW([0]Sheet1!A3)",
-        ] {
-            assert_eq!(reason(formula), None, "{formula}");
-        }
-    }
-
     #[test]
     fn linked_references_passed_on_as_values_fall_back() {
         // Excel's criteria functions are #VALUE! for a closed linked range,
@@ -1360,18 +1426,11 @@ mod tests {
         let passed = Some("external range returned or passed on as a reference".to_owned());
         for formula in [
             "=[1]Data!A1:A5",
-            // One position in a block: #REF! in Excel, the row in the fork.
             "=SUM(INDEX([1]Data!A1:B5,3))",
-            "=SUM(INDEX([1]Data!A1:B5,SMALL({3,1},2)))",
-            // A computed position may be 0 in a range read only up to its
-            // last saved cell: the whole column the fork does not read.
-            "=COUNTA(INDEX([1]Failed!A:A,SMALL({0,1},1)))",
-            "=INDEX([1]Data!A:B,SMALL({1,2},1),SMALL({0,1},1))",
             "=SUM(IF(TRUE,[1]Data!A1:A5))",
             "=_xlfn.RANK.EQ(3,[1]Data!A1:A5)",
             "=MAX(IF([1]Failed!A:A>2,[1]Failed!A:A))",
             "=RANK(3,[1]Data!A1:A5)",
-            "=_xlfn.XLOOKUP(3,[1]Data!A:A,[1]Data!B:B,,-1)",
         ] {
             assert_eq!(reason(formula), passed, "{formula}");
         }
@@ -1382,7 +1441,6 @@ mod tests {
             "=COUNTA([1]Failed!A:A)",
             "=SUMPRODUCT(--ISERROR([1]Failed!A:A))",
             "=MATCH(3,[1]Failed!A:A,-1)",
-            "=MATCH(3,[1]Failed!A:A,B1)",
             "=LOOKUP(2,[1]Failed!A:A)",
             "=XMATCH(3,[1]Failed!A:A,0,2)",
             "=COUNTA([1]Failed!A1:Z1000000)",

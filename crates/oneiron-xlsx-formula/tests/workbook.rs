@@ -610,6 +610,60 @@ fn links_excel_reads_differently_fall_back_with_their_reason() {
 /// A linked sheet `S` whose saved cells A1:A5 hold 1 to 5.
 const FIVE: &str = r#"<externalBook r:id="rId1"><sheetNames><sheetName val="S"/></sheetNames><sheetDataSet><sheetData sheetId="0"><row r="1"><cell r="A1"><v>1</v></cell></row><row r="2"><cell r="A2"><v>2</v></cell></row><row r="3"><cell r="A3"><v>3</v></cell></row><row r="4"><cell r="A4"><v>4</v></cell></row><row r="5"><cell r="A5"><v>5</v></cell></row></sheetData></sheetDataSet></externalBook>"#;
 
+/// INDEX at a computed position into a linked range read whole hands on a
+/// reference a legacy formula intersects (row 1 is outside A2:A5), an
+/// approximate lookup over an open linked range bisects it as written, and
+/// `[0]` is the workbook itself: Excel for Windows 16.0.20430, the links2
+/// probe of the fork's ops/excel-links2-probe-20261008.md. What the engine
+/// would read otherwise falls back with its reason.
+#[test]
+fn computed_index_positions_approximate_lookups_and_the_workbook_itself() {
+    let input = with_names(
+        &linked_workbook(
+            FIVE,
+            r#"<c r="A1"><f>INDEX([1]S!$A$2:$A$5,SMALL({0,1},1))</f><v>0</v></c><c r="B1"><f>INDEX([1]S!$A$1:$A$5,SMALL({4,9},1))*10</f><v>0</v></c><c r="C1"><f>VLOOKUP(4.5,[1]S!$A:$A,1,TRUE)</f><v>0</v></c><c r="D1"><f>[0]!Rate*2</f><v>0</v></c><c r="E1"><f>MATCH(9,[1]S!$A:$A)</f><v>0</v></c>"#,
+        ),
+        r#"<definedName name="Rate">3</definedName>"#,
+    );
+    let report = recalc(&input).expect("the links2 forms recalculate natively");
+    let result = part_text(&report.bytes, OUTPUT);
+    for cell in [
+        r#"<c r="A1" t="e"><f>INDEX([1]S!$A$2:$A$5,SMALL({0,1},1))</f><v>#VALUE!</v></c>"#,
+        r#"<c r="B1"><f>INDEX([1]S!$A$1:$A$5,SMALL({4,9},1))*10</f><v>40</v></c>"#,
+        r#"<c r="C1"><f>VLOOKUP(4.5,[1]S!$A:$A,1,TRUE)</f><v>4</v></c>"#,
+        r#"<c r="D1"><f>[0]!Rate*2</f><v>6</v></c>"#,
+        r#"<c r="E1"><f>MATCH(9,[1]S!$A:$A)</f><v>5</v></c>"#,
+    ] {
+        assert!(result.contains(cell), "{cell} in {result}");
+    }
+    // One position into the block another INDEX hands on: #REF! in Excel.
+    assert_eq!(
+        fallback(&linked_workbook(
+            FIVE,
+            r#"<c r="A1"><f>SUM(INDEX(INDEX([1]S!$A$1:$B$5,0,0),3))</f><v>0</v></c>"#
+        )),
+        "external range given one INDEX position through another function or a name"
+    );
+    // INDEX hands on all rows of a range reaching both sheet edges as the
+    // open column the engine reads only up to its last saved cell.
+    assert_eq!(
+        fallback(&linked_workbook(
+            FIVE,
+            r#"<c r="A1"><f>COUNTA(INDEX([1]S!$A$1:$A$1048576,0,1))</f><v>0</v></c>"#
+        )),
+        "external range returned or passed on as a reference"
+    );
+    // The engine reads `[0]!Rate` as `Rate`, the sheet's own where it has
+    // one; Excel reads the workbook's.
+    assert_eq!(
+        fallback(&with_names(
+            &fixture("", r#"<c r="A1"><f>[0]!Rate</f><v>0</v></c>"#, false),
+            r#"<definedName name="Rate">10</definedName><definedName name="Rate" localSheetId="0">20</definedName>"#,
+        )),
+        "workbook-qualified name with a sheet-level definition ([0]!Rate)"
+    );
+}
+
 /// `formula` in a cell of a workbook linking `FIVE`.
 fn over_five(formula: &str) -> Vec<u8> {
     linked_workbook(FIVE, &format!("<c r=\"A1\"><f>{formula}</f><v>0</v></c>"))

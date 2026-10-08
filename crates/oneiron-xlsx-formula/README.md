@@ -116,8 +116,11 @@ workbook (`[1]!Rate`, `[1]Sheet1!Rate`); a 3D linked reference; a linked referen
 operator (`:`, intersection, union), directly, through INDEX or through a name; a multi-cell linked
 range passed on by a function that returns references (IF, CHOOSE, IFS, XLOOKUP, OFFSET, INDIRECT,
 LET), or given to AREAS, RANK or GETPIVOTDATA, or standing as the whole formula; INDEX with one
-position into a block (`INDEX([1]S!A1:B5,3)` is `#REF!` in Excel), or at a computed position that
-may be 0 in a range read only up to its last saved cell (below); a linked reference, one cell
+position into a block (`INDEX([1]S!A1:B5,3)` is `#REF!` in Excel), directly or into what another
+INDEX or a name hands on, or at a computed position that may be 0 in a range read only up to its
+last saved cell (below) or reaching both edges of the sheet (`$A$1:$A$1048576`, which INDEX hands
+on as the open `A:A`); `[0]!Rate` where the workbook defines `Rate` for a sheet too (the engine
+reads the sheet's, Excel the workbook's); a linked reference, one cell
 too, reaching a criteria function's range through INDEX, IF, CHOOSE, another function or a name
 (Excel's `#VALUE!`; the engine computes it), or reaching ROW, COLUMN, ROWS, COLUMNS, ISREF, AREAS,
 ISFORMULA, FORMULATEXT, SHEET or SHEETS through IF, CHOOSE or another function that hands it on as
