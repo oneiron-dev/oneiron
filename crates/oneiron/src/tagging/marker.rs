@@ -149,13 +149,15 @@ pub(super) fn dedupe_key(turn: &EntityId, checkpoint: &str) -> String {
     format!("{}@{checkpoint}", turn.to_hex())
 }
 
-/// The marker id is the store-clock second it was committed at, then a digest
-/// of what it names: a new marker's digest names its turn and checkpoint, a
-/// retry's names the try it retries, so a long retry history takes none of
-/// the ids a new marker of the turn needs. Committing either draws nothing
-/// from the vault's id source, so a write allocates the same entity ids with
-/// or without a tagger, and the readiness index still drains markers in
-/// commit order across seconds.
+/// The marker id is the owner-retained prefix, the low seven bytes of the
+/// store-clock second it was committed at, then a digest of what it names: a
+/// new marker's digest names its turn and checkpoint, a retry's names the try
+/// it retries, so a long retry history takes none of the ids a new marker of
+/// the turn needs. Committing either draws nothing from the vault's id
+/// source, so a write allocates the same entity ids with or without a tagger;
+/// the readiness index still drains markers in commit order across seconds;
+/// and every marker sits in the ledger's owner-retained range, which no scan
+/// of another job kind reads.
 fn derived_id(
     domain: &[u8],
     parts: &[&[u8]],
@@ -169,7 +171,8 @@ fn derived_id(
     }
     hasher.update(&generation.to_be_bytes());
     let mut bytes = [0_u8; 16];
-    bytes[..8].copy_from_slice(&recorded_at.to_be_bytes());
+    bytes[0] = crate::attempt_queue::OWNER_RETAINED_ID_PREFIX;
+    bytes[1..8].copy_from_slice(&recorded_at.to_be_bytes()[1..]);
     bytes[8..].copy_from_slice(&hasher.finalize().as_bytes()[..8]);
     AttemptId::from_bytes(&bytes)
 }

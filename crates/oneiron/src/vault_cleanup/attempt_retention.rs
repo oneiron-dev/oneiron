@@ -103,7 +103,11 @@ pub(super) fn scan(
     let lower = after_bytes
         .as_ref()
         .map_or(Bound::Unbounded, |bytes| Bound::Excluded(bytes.as_slice()));
-    let upper: Bound<&[u8]> = Bound::Unbounded;
+    // Owner-retained rows are job state at the top of the ledger's key
+    // order: the arm stops before them, so they take none of its budget and
+    // never become its cursor.
+    let upper: Bound<&[u8]> =
+        Bound::Excluded(&crate::attempt_queue::OWNER_RETAINED_RANGE_START[..]);
     let mut last = None;
     let mut exhausted = true;
     for (examined, row) in vault

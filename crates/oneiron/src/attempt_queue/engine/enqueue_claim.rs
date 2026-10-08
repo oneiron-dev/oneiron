@@ -189,6 +189,7 @@ impl<'a> AttemptQueue<'a> {
             Some(id) => id,
             None => AttemptId::from_bytes(&self.store.clock.ulid()?)?,
         };
+        crate::attempt_queue::check_owner_retained_range(&input.kind, &id)?;
         let record = AttemptRecord {
             id,
             kind: input.kind,

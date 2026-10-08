@@ -205,28 +205,31 @@ impl AttemptQueue<'_> {
 
     /// Complete kind view for a projection that must not silently truncate.
     ///
-    /// `max_scanned` caps the rows the view reads. A row of another kind whose
-    /// owner bounds it ([`crate::attempt_queue::owner_retained_kind`]) is
-    /// passed over uncounted, so a tagging backlog never fails another kind's
-    /// view closed.
+    /// `max_scanned` caps the rows the view reads, all of them counted. It
+    /// reads only its kind's side of the owner-retained boundary
+    /// ([`crate::attempt_queue::OWNER_RETAINED_ID_PREFIX`]), so a tagging
+    /// backlog of any size never costs another kind's view a row.
     pub(crate) fn list_kind_bounded(
         &self,
         kind: &str,
         max_scanned: usize,
     ) -> Result<Vec<AttemptRecord>> {
+        use std::ops::Bound;
         let txn = self.store.env.read_txn()?;
+        let boundary = &crate::attempt_queue::OWNER_RETAINED_RANGE_START[..];
+        let retained = crate::attempt_queue::owner_retained_kind(kind);
+        let range: (Bound<&[u8]>, Bound<&[u8]>) = if retained {
+            (Bound::Included(boundary), Bound::Unbounded)
+        } else {
+            (Bound::Unbounded, Bound::Excluded(boundary))
+        };
         let mut records = Vec::new();
-        let mut scanned = 0_usize;
-        for row in self.store.attempt_records.iter(&txn)? {
-            let (key, raw) = row?;
-            let record = decode_record(&raw, AttemptId::from_bytes(&key)?)?;
-            if record.kind != kind && crate::attempt_queue::owner_retained_kind(&record.kind) {
-                continue;
-            }
+        for (scanned, row) in self.store.attempt_records.range(&txn, &range)?.enumerate() {
             if scanned >= max_scanned {
                 return Err(Error::IndexOverflow("attempt kind projection"));
             }
-            scanned += 1;
+            let (key, raw) = row?;
+            let record = decode_record(&raw, AttemptId::from_bytes(&key)?)?;
             if record.kind == kind {
                 records.push(record);
             }

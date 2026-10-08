@@ -164,6 +164,7 @@ impl AttemptQueue<'_> {
         );
         source.updated_at = input.now;
 
+        crate::attempt_queue::check_owner_retained_range(&next.kind, &next.id)?;
         if self
             .store
             .attempt_records

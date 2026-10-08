@@ -1835,8 +1835,8 @@ fn plant_settled_markers(vault: &Vault, count: u64, settled_at: u64) {
         .expect("settled row");
     for n in 1..count {
         let mut row = template.clone();
-        let mut id = [0_u8; 16];
-        id[..8].copy_from_slice(&settled_at.to_be_bytes());
+        // The marker's own id layout: its range and second, then a count.
+        let mut id = *template.id.as_bytes();
         id[8..].copy_from_slice(&n.to_be_bytes());
         row.id = AttemptId::from_bytes(&id).expect("id");
         let encoded = crate::attempt_queue::encode_signal_record(&row).expect("encode");
@@ -1961,19 +1961,10 @@ fn a_vault_past_100k_settled_tagging_markers_still_serves_the_inbox_and_resident
     );
 }
 
-/// Settled tagging markers are job state: a cleanup pass past the retention
-/// horizon proposes none of them, so they mint no proposal id. A completed
-/// job of another kind beside them is still proposed.
-#[test]
-fn vault_cleanup_proposes_nothing_from_tagging_markers() {
-    use crate::attempt_queue::{AttemptId, CompleteAttempt, EnqueueAttempt};
-    let dir = tempfile::tempdir().expect("dir");
-    let clock = ManualClock::new(NOW);
-    let mut config = config(true);
-    config.store_clock = clock.bundle();
-    let vault = Vault::open(dir.path(), config).expect("open vault");
-    plant_settled_markers(&vault, 3, NOW);
-    let queue = AttemptQueue::new(&vault);
+/// Completes one job of another kind at `NOW`, as cleanup's own tests do.
+fn complete_other_job(vault: &Vault) -> crate::attempt_queue::AttemptId {
+    use crate::attempt_queue::{CompleteAttempt, EnqueueAttempt};
+    let queue = AttemptQueue::new(vault);
     queue
         .enqueue(EnqueueAttempt {
             kind: "test.retained".into(),
@@ -2003,21 +1994,43 @@ fn vault_cleanup_proposes_nothing_from_tagging_markers() {
             now: NOW,
         })
         .expect("complete");
+    other.id
+}
+
+/// A vault on `clock`, armed.
+fn open_on(path: &std::path::Path, clock: &Arc<ManualClock>) -> Arc<Vault> {
+    let mut config = config(true);
+    config.store_clock = clock.bundle();
+    Arc::new(Vault::open(path, config).expect("open vault"))
+}
+
+/// Runs a cleanup pass past the 90-day horizon and returns the ids it proposed.
+fn cleanup_proposals(vault: &Vault, clock: &ManualClock) -> Vec<[u8; 16]> {
     clock.set(NOW + 91 * 86_400);
     vault.set_task_retention_days(Some(90)).expect("retention");
-    let report =
-        crate::vault_cleanup::run_vault_cleanup(&vault, &AttemptId::now()).expect("cleanup");
-    let proposed: Vec<[u8; 16]> = report
+    crate::vault_cleanup::run_vault_cleanup(vault, &crate::attempt_queue::AttemptId::now())
+        .expect("cleanup")
         .candidates
         .iter()
         .map(|candidate| *candidate.entity.as_bytes())
-        .collect();
+        .collect()
+}
+
+/// Settled tagging markers are job state: a cleanup pass past the retention
+/// horizon proposes none of them, so they mint no proposal id. A completed
+/// job of another kind beside them is still proposed.
+#[test]
+fn vault_cleanup_proposes_nothing_from_tagging_markers() {
+    let dir = tempfile::tempdir().expect("dir");
+    let clock = ManualClock::new(NOW);
+    let vault = open_on(dir.path(), &clock);
+    plant_settled_markers(&vault, 3, NOW);
+    let other = complete_other_job(&vault);
     assert_eq!(
-        proposed,
-        vec![*other.id.as_bytes()],
+        cleanup_proposals(&vault, &clock),
+        vec![*other.as_bytes()],
         "only the other job is proposed"
     );
-    assert!(report.proposal.is_some());
 }
 
 /// Witnesses `content` as a fresh turn of the fixture room at `occurred_at`.
@@ -2125,10 +2138,18 @@ fn a_live_turn_reads_the_earlier_window_and_never_a_later_turn() {
             .map_err(crate::Error::from)
             .and_then(|txn| super::input::turn_input_in_txn(&vault, &txn, &third))
             .expect("read the third turn");
-        let super::input::TurnInput::Ready { input, .. } = read else {
+        let super::input::TurnInput::Ready {
+            input,
+            hash,
+            text_hash,
+        } = read
+        else {
             panic!("the third turn has text");
         };
         assert_eq!(window(&input), expected, "window of {tokens} tokens");
+        // The window enters the input's digest; the turn's own text has its
+        // own, the one a settlement compares.
+        assert_eq!(hash != text_hash, !expected.is_empty());
     }
 }
 
@@ -2210,4 +2231,50 @@ fn pruning_keeps_exactly_the_configured_trace_history() {
     clock.set(NOW + 154);
     reconciler.drain_once().expect("drain");
     assert!(history(&vault, &busy).is_empty());
+}
+
+/// A scan for another job kind never reads the tagging range: not a settled
+/// marker, not a live one, not even a row there it could not decode.
+#[test]
+fn a_scan_for_another_kind_never_reads_a_tagging_row() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    witness(&vault, "Ada sailed north");
+    plant_settled_markers(&vault, 3, NOW);
+    let mut undecodable = *markers(&vault)[0].id.as_bytes();
+    undecodable[8..].copy_from_slice(&u64::MAX.to_be_bytes());
+    undecodable[15] = 0xfe;
+    vault
+        .try_with_write_txn(|txn| {
+            vault
+                .store
+                .attempt_records
+                .put(txn, &undecodable, b"not an attempt record")?;
+            Ok::<(), crate::Error>(())
+        })
+        .expect("undecodable row");
+    let view = AttemptQueue::new(&vault)
+        .list_kind_bounded(crate::surface_event::SURFACE_EVENT_ATTEMPT_KIND, 1);
+    assert!(
+        view.as_ref().is_ok_and(Vec::is_empty),
+        "another kind's view reads no tagging row: {view:?}"
+    );
+}
+
+/// A tagging backlog larger than the cleanup arm's scan budget leaves
+/// cleanup as a vault with no tagger leaves it: the arm proposes another
+/// kind's completed job in the same pass, the backlog taking none of its
+/// budget.
+#[test]
+fn a_tagging_backlog_past_the_cleanup_scan_leaves_cleanup_as_without_one() {
+    let dir = tempfile::tempdir().expect("dir");
+    let clock = ManualClock::new(NOW);
+    let vault = open_on(dir.path(), &clock);
+    plant_settled_markers(
+        &vault,
+        crate::vault_cleanup::MAX_CLEANUP_SCAN_ROWS as u64 + 1,
+        NOW,
+    );
+    let other = complete_other_job(&vault);
+    assert_eq!(cleanup_proposals(&vault, &clock), vec![*other.as_bytes()]);
 }
