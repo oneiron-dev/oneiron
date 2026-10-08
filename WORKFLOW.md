@@ -159,7 +159,8 @@ Owner ruling, 2026-10-07. Each PR gets one bot review, not one per push.
    resolved, mark the PR ready **once**. CodeRabbit reviews automatically when a
    PR is marked ready; it skips drafts and does not re-review every push.
 5. Tag `@greptileai` only on high-risk PRs (about 50 a month on the free plan).
-   Post no other bot commands. Docs-only PRs skip bot review.
+   Post no other bot commands. A docs-only PR does not wait for CodeRabbit: it
+   merges once it is ready and any review that was run is resolved.
 6. One PR per finished outcome; no PR per small step. A wave keeps to about six
    ready PRs a day so CodeRabbit's included rate keeps up.
 7. Merge as soon as the gate is green on the head and every review (Sol, Astra
@@ -173,7 +174,7 @@ review threads.
 
 ## 6. Diff And Merge Checks
 
-Before publishing and again before auto-merge, inspect the PR surface:
+Before publishing and again before merge, inspect the PR surface:
 
 ```bash
 rtk git fetch origin main
@@ -191,15 +192,17 @@ rtk proxy git merge-tree --write-tree origin/main HEAD
 The merge gate is:
 
 - Local verification gate is green on the final branch tip.
-- GitHub CI is green.
+- The full gate (section 3) is green on the final branch tip; GitHub CI is
+  paused repo-wide (`CI_PAUSED`).
 - GitHub cloud-reviewer bot threads have no unresolved blocking coding
   comments.
 - Required `/fusion`, if any, has been triaged.
 - Required human review, if any, has resolved the blocker that required it.
 - Merge rehearsal against current `origin/main` is clean.
 
-When all merge-gate conditions are true, use GitHub auto-merge and let the
-normal repository integration delete the branch and update Linear.
+When all merge-gate conditions are true, squash-merge with an explicit body
+(section 5) and let the normal repository integration delete the branch and
+update Linear.
 
 ## 7. Blockers
 
