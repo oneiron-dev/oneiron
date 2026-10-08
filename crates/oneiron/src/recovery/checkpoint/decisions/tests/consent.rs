@@ -575,8 +575,8 @@ fn booker(vault: &Vault, id: EntityId, address: &str) -> Result<EntityId> {
 pub(super) fn calendar_invitation_consent() -> Result<Case> {
     let (dir, vault) = open_seeded()?;
     let owner = person(&vault, 0x86)?;
-    let (granted, ungranted) = (entity(0xA1), entity(0xA2));
-    for (page, claim) in [(granted, entity(0xA3)), (ungranted, entity(0xA4))] {
+    let (granted, ungranted) = (entity(0xB1), entity(0xB2));
+    for (page, claim) in [(granted, entity(0xB3)), (ungranted, entity(0xB4))] {
         vault.put_entity(&page, ENTITY_TYPE_ASSET, AT, 1, b"page")?;
         put_event_type(&vault, claim, page, event_type(0))?;
     }
@@ -584,14 +584,14 @@ pub(super) fn calendar_invitation_consent() -> Result<Case> {
         let runner = crate::DreamerRunnerStore::new(&vault);
         runner.elect_home_node(&[runner.local_home_node_candidate(true, true, true)?], 1)?;
     }
-    let ada = booker(&vault, entity(0xA5), ADA)?;
-    let ben = booker(&vault, entity(0xA6), BEN)?;
+    let ada = booker(&vault, entity(0xB5), ADA)?;
+    let ben = booker(&vault, entity(0xB6), BEN)?;
     let kept = book(&vault, granted, ada, NOW + 3_600)?;
     let spare = book(&vault, granted, ada, NOW + 7_200)?;
     let elsewhere = book(&vault, ungranted, ben, NOW + 10_800)?;
     // Minted after the bookings, so no confirm sends an invitation.
     vault.mint_booking_page_invite_outbound_grant(
-        &entity(0xA7),
+        &entity(0xB7),
         &BookingPageInviteGrantMintIntent {
             page_ref: granted,
             publisher_principal: owner,
