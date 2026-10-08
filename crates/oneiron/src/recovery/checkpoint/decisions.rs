@@ -47,6 +47,12 @@ trait Decision {
     ) -> Result<Vec<Option<Self::Answer>>>;
     /// Whether `restored` permits anything `live` does not.
     fn loosens(live: &Self::Answer, restored: &Self::Answer) -> bool;
+    /// The answer that permits nothing, which a reader that fails stands
+    /// for; `None` where no answer permits nothing, and every answer past a
+    /// failed read permits more.
+    fn refusal() -> Option<Self::Answer> {
+        None
+    }
 }
 
 /// Whether `D` permits more for any subject in the restored vault than in the
@@ -55,9 +61,12 @@ fn loosened<D: Decision>(current: &Vault, restored: &Vault) -> Result<bool> {
     let subjects = D::subjects([current, restored])?;
     let live = D::answers(current, &subjects)?;
     let restored = D::answers(restored, &subjects)?;
+    let refusal = D::refusal();
     Ok(live.iter().zip(&restored).any(|answers| match answers {
         (_, None) => false,
-        (None, Some(_)) => true,
+        (None, Some(restored)) => refusal
+            .as_ref()
+            .is_none_or(|refusal| D::loosens(refusal, restored)),
         (Some(live), Some(restored)) => D::loosens(live, restored),
     }))
 }
@@ -81,10 +90,6 @@ const DECISIONS: &[(&str, Check)] = &[
         loosened::<campaign::CampaignCompliance>,
     ),
     ("record audiences", loosened::<audience::RecordAudiences>),
-    (
-        "relationship memberships",
-        loosened::<audience::RelationshipMembers>,
-    ),
     ("disclosure clamps", loosened::<audience::DisclosureClamps>),
     ("disclosure tiers", loosened::<audience::DisclosureTiers>),
     ("leader chat admissions", loosened::<audience::LeaderChats>),
@@ -92,6 +97,7 @@ const DECISIONS: &[(&str, Check)] = &[
     ("relationship reads", loosened::<reads::RelationshipReads>),
     ("claim read grants", loosened::<reads::ClaimGrants>),
     ("private note reads", loosened::<reads::NoteReads>),
+    ("diary link reads", loosened::<reads::DiaryLinks>),
     ("record positions", loosened::<reads::RecordPositions>),
     (
         "task owners and cancellations",

@@ -89,15 +89,15 @@ impl Decision for SkillActivations {
     }
 }
 
-/// Whether `restored` asks less of an activation than `live`: no tap where
-/// live asks for one, or one for a lesser risk.
+/// Whether `restored` lets an activation in without the owner's tap where
+/// `live` asks for one. The risk a tap is asked for is what the ask shows:
+/// every risk past the dial asks the same tap (`approval_for`).
 fn asks_less(live: ActivationPosture, restored: ActivationPosture) -> bool {
-    match (live, restored) {
+    matches!(
+        (live, restored),
         (
-            ActivationPosture::ProposedRequired { risk: live },
-            ActivationPosture::ProposedRequired { risk: restored },
-        ) => restored < live,
-        (ActivationPosture::ProposedRequired { .. }, ActivationPosture::AutoEligible) => true,
-        (ActivationPosture::AutoEligible, _) => false,
-    }
+            ActivationPosture::ProposedRequired { .. },
+            ActivationPosture::AutoEligible
+        )
+    )
 }

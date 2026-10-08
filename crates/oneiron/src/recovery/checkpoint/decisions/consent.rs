@@ -40,6 +40,10 @@ impl Decision for MailReputation {
     fn loosens(live: &bool, restored: &bool) -> bool {
         !live && *restored
     }
+
+    fn refusal() -> Option<bool> {
+        Some(false)
+    }
 }
 
 /// Whether the coreference link between two people may be exported into one
@@ -92,11 +96,16 @@ impl Decision for SharedCoreference {
     fn loosens(live: &bool, restored: &bool) -> bool {
         !live && *restored
     }
+
+    fn refusal() -> Option<bool> {
+        Some(false)
+    }
 }
 
 /// The delivery-window restrictions the outbound door reads for a send that
 /// names one subject: each `delivery_window.*` claim on the subject that its
-/// `claim_of` edge reaches (`stored_delivery_window_policy_claims`). One only
+/// `claim_of` edge reaches (`stored_delivery_window_policy_claims`) and that
+/// restricts any send (`DeliveryWindowPolicyClaim::restricts`). One only
 /// ever holds or degrades a send, so a restriction the live door reads and
 /// the restored one does not is lifted.
 pub(super) struct DeliveryWindows;
@@ -130,6 +139,12 @@ impl Decision for DeliveryWindows {
                     std::slice::from_ref(subject),
                 )
                 .ok()
+                .map(|claims| {
+                    claims
+                        .into_iter()
+                        .filter(DeliveryWindowPolicyClaim::restricts)
+                        .collect()
+                })
             })
             .collect())
     }
@@ -200,6 +215,10 @@ impl Decision for BookingPublications {
 
     fn loosens(live: &bool, restored: &bool) -> bool {
         !live && *restored
+    }
+
+    fn refusal() -> Option<bool> {
+        Some(false)
     }
 }
 
@@ -276,7 +295,8 @@ impl Decision for PrincipalAutonomy {
 /// sends it only as a draft; a recipient reads its PDF once the ceremony is
 /// under way and the recipient's turn has come, and signs or declines only
 /// on its turn of an open ceremony, each until its deadline
-/// (`execute_signing_action`, `esign_pdf_for_capability`).
+/// (`execute_signing_action`, `esign_pdf_for_capability`), and only while it
+/// holds a capability no one revoked.
 pub(super) struct EsignCeremonies;
 
 /// What the ceremony gates decide on, by recipient.
@@ -288,7 +308,9 @@ pub(super) struct CeremonyPosture {
 }
 
 impl CeremonyPosture {
-    fn of(state: &EsignState) -> Self {
+    /// The posture `state` folds to for the recipients `holds` a capability
+    /// for; the rest read and do nothing.
+    fn of(state: &EsignState, holds: impl Fn(&str) -> bool) -> Self {
         let open = state.status == DocumentStatus::Pending;
         let under_way = !matches!(
             state.status,
@@ -301,6 +323,9 @@ impl CeremonyPosture {
             deadlines: BTreeMap::new(),
         };
         for (recipient, progress) in &state.recipients {
+            if !holds(recipient) {
+                continue;
+            }
             if under_way && !(open && progress.signing == SigningStatus::Waiting) {
                 posture.readers.insert(recipient.clone());
             }
@@ -327,13 +352,21 @@ impl Decision for EsignCeremonies {
         vault: &Vault,
         subjects: &BTreeSet<EntityId>,
     ) -> Result<Vec<Option<CeremonyPosture>>> {
+        // Each fold reads in its own transaction, so the capabilities are
+        // read after.
+        let states: Vec<Option<EsignState>> = subjects
+            .iter()
+            .map(|document| vault.esign_document(*document).ok())
+            .collect();
+        let txn = vault.store.env.read_txn()?;
         Ok(subjects
             .iter()
-            .map(|document| {
-                vault
-                    .esign_document(*document)
-                    .ok()
-                    .map(|state| CeremonyPosture::of(&state))
+            .zip(states)
+            .map(|(document, state)| {
+                Some(CeremonyPosture::of(&state?, |recipient| {
+                    esign::recipient_capability_unrevoked_in(vault, &txn, *document, recipient)
+                        .unwrap_or(false)
+                }))
             })
             .collect())
     }

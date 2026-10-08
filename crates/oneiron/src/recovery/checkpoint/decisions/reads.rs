@@ -1,7 +1,8 @@
 //! Who a read admits: the relationship reads a principal's memberships and
 //! grants decide, the policy grants a reader's key matches on a claim, the
-//! private notes a reader reaches through a diary link, and the position at
-//! which each record is read, selected and connected.
+//! private notes a reader reaches through a diary link, the diary links graph
+//! reads show, and the position at which each record is read, selected and
+//! connected.
 use super::{Decision, field, held_by_both};
 use crate::access_grant::{AccessContext, decode_access_grant_body};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -12,7 +13,7 @@ use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::federation::Scope;
 use crate::federation::record_scope::{disclosure_scope_for_stored_row, scope_for_blob};
 use crate::note::NoteKind;
-use crate::ports::{EdgeDirection, EntityStoreRead, TombstoneStoreRead};
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, TombstoneStoreRead};
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE,
     ENTITY_TYPE_SUMMARY,
@@ -108,6 +109,10 @@ impl Decision for RelationshipReads {
 
     fn loosens(live: &bool, restored: &bool) -> bool {
         !live && *restored
+    }
+
+    fn refusal() -> Option<bool> {
+        Some(false)
     }
 }
 
@@ -209,6 +214,10 @@ impl Decision for ClaimGrants {
 
     fn loosens(live: &bool, restored: &bool) -> bool {
         !live && *restored
+    }
+
+    fn refusal() -> Option<bool> {
+        Some(false)
     }
 }
 
@@ -324,6 +333,70 @@ impl Decision for NoteReads {
 
     fn loosens(live: &bool, restored: &bool) -> bool {
         !live && *restored
+    }
+
+    fn refusal() -> Option<bool> {
+        Some(false)
+    }
+}
+
+/// Whether a graph read shows a `SameAs` link between two diary notes
+/// (`note::diary_edge_access_in`, which the scoped graph door asks of each
+/// link it returns): the link stored, and both authors' grants on that very
+/// pair. A note readable through another shared link does not show this
+/// one.
+pub(super) struct DiaryLinks;
+
+impl Decision for DiaryLinks {
+    type Subject = (EntityId, EntityId);
+    type Answer = bool;
+
+    /// Every pair of notes both vaults keep that a `SameAs` link joins in
+    /// either; a pair joined in neither shows in neither.
+    fn subjects(vaults: [&Vault; 2]) -> Result<BTreeSet<Self::Subject>> {
+        let notes = kept(vaults, &[ENTITY_TYPE_NOTE])?;
+        let mut pairs = BTreeSet::new();
+        for vault in vaults {
+            let txn = vault.store.env.read_txn()?;
+            for note in &notes {
+                for direction in [EdgeDirection::Out, EdgeDirection::In] {
+                    for edge in vault.store.port_edges(
+                        &txn,
+                        note,
+                        direction,
+                        Some(EdgeKind::SameAs),
+                        None,
+                    )? {
+                        let other = edge?.target;
+                        if notes.contains(&other) {
+                            pairs.insert((*note.min(&other), *note.max(&other)));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(pairs)
+    }
+
+    fn answers(
+        vault: &Vault,
+        subjects: &BTreeSet<Self::Subject>,
+    ) -> Result<Vec<Option<Self::Answer>>> {
+        let txn = vault.store.env.read_txn()?;
+        Ok(subjects
+            .iter()
+            .map(|(left, right)| {
+                crate::note::diary_edge_access_in(vault, &txn, *left, EdgeKind::SameAs, *right).ok()
+            })
+            .collect())
+    }
+
+    fn loosens(live: &bool, restored: &bool) -> bool {
+        !live && *restored
+    }
+
+    fn refusal() -> Option<bool> {
+        Some(false)
     }
 }
 

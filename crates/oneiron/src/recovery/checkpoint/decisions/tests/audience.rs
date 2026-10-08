@@ -1,7 +1,6 @@
 //! Census cases for who reads or witnesses what.
 use super::Case;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
-use crate::deletion::DeleteEntityOptions;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 use crate::test_util::entity;
@@ -57,16 +56,7 @@ pub(super) fn record_audiences() -> Result<Case> {
     for person in [sora, rin] {
         vault.put_edge(&person, EdgeKind::ParticipatesIn, &relationship, 1.0)?;
     }
-    let mut fact = ClaimBody::new(
-        "event.headcount",
-        ClaimSubject::Entity(sora),
-        Value::from("12"),
-        1.0,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    )?;
-    fact.rel = Some(relationship);
-    vault.put_claim(&entity(0xB4), &fact, at(1), 1)?;
+    put_scoped_fact(&vault, entity(0xB4), sora, relationship)?;
     Case::after_backup("record audiences", (dir, vault), new_person, move |vault| {
         vault
             .delete_edge(&rin, EdgeKind::ParticipatesIn, &relationship)
@@ -74,25 +64,66 @@ pub(super) fn record_audiences() -> Result<Case> {
     })
 }
 
-/// A member binding makes its principal a member of the relationship it is
-/// about, while that relationship is there. One purged since the backup, its
-/// binding unchanged, is a membership a restore would bring back.
-pub(super) fn relationship_members() -> Result<Case> {
-    let (dir, vault) = open_vault();
-    let (member, relationship) = (entity(0xB5), entity(0xB6));
-    put_person(&vault, member)?;
+/// Puts claim `id` about `subject`, read only by `relationship`'s
+/// participants.
+fn put_scoped_fact(
+    vault: &Vault,
+    id: EntityId,
+    subject: EntityId,
+    relationship: EntityId,
+) -> Result<()> {
+    let mut fact = ClaimBody::new(
+        "event.headcount",
+        ClaimSubject::Entity(subject),
+        Value::from("12"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )?;
+    fact.rel = Some(relationship);
+    vault.put_claim(&id, &fact, at(1), 1)
+}
+
+/// The record-audience row refuses only a loosening. Records deleted since
+/// the backup, one kept as a shell and one purged, come back with the
+/// restore; no record's audience reads them, so no answer changes and the
+/// restore goes ahead.
+#[test]
+fn a_restore_over_records_deleted_since_the_backup_goes_ahead() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (sora, rin) = (entity(0xB1), entity(0xB2));
+    let relationship = entity(0xB3);
+    put_person(&vault, sora)?;
+    put_person(&vault, rin)?;
     put_relationship(&vault, relationship)?;
-    crate::federation::bind_member_person(&vault, relationship, member, at(1), 1)?;
-    Case::after_backup(
-        "relationship memberships",
-        (dir, vault),
-        new_person,
-        move |vault| {
-            vault
-                .delete_entity_with_options(&relationship, DeleteEntityOptions { purge: true })
-                .map(drop)
-        },
-    )
+    for person in [sora, rin] {
+        vault.put_edge(&person, EdgeKind::ParticipatesIn, &relationship, 1.0)?;
+    }
+    let (kept, shell, purged) = (entity(0xB4), entity(0xB7), entity(0xB8));
+    for id in [kept, shell, purged] {
+        put_scoped_fact(&vault, id, sora, relationship)?;
+    }
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100)?;
+    assert!(vault.delete_entity(&shell)?);
+    vault.delete_entity_with_options(
+        &purged,
+        crate::deletion::DeleteEntityOptions { purge: true },
+    )?;
+    if let Err(error) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &backups.path().join("restored"),
+        vault.config.clone(),
+        &vault,
+        1_000,
+    ) {
+        panic!(
+            "{error}{}",
+            super::unread(&vault, &image, &backups.path().join("unguarded"))
+        );
+    }
+    Ok(())
 }
 
 /// A voice session's roster as resolved from `segments`.
@@ -131,10 +162,10 @@ pub(super) fn disclosure_clamps() -> Result<Case> {
     })
 }
 
-/// A claim of `sensitivity` about `subject`.
-fn headcount(subject: EntityId, sensitivity: &str) -> Result<ClaimBody> {
+/// A public claim of `predicate` about `subject`.
+fn headcount(subject: EntityId, predicate: &str) -> Result<ClaimBody> {
     let mut fact = ClaimBody::new(
-        "event.headcount",
+        predicate,
         ClaimSubject::Entity(subject),
         Value::from("12"),
         1.0,
@@ -143,21 +174,22 @@ fn headcount(subject: EntityId, sensitivity: &str) -> Result<ClaimBody> {
     )?;
     fact.scope = Some(Value::Map(vec![(
         Value::from("sensitivity"),
-        Value::from(sensitivity),
+        Value::from("public"),
     )]));
     Ok(fact)
 }
 
-/// A public claim reaches a party the owner supervises; a sensitive one is
-/// held to tier A. One restamped sensitive since the backup, its read scope
-/// unchanged, is one a restore would disclose again.
+/// A public claim reaches a party the owner supervises; one whose predicate
+/// is an affect reading is held to tier A. One restated as an affect
+/// reading since the backup, its read scope unchanged, is one a restore
+/// would disclose again.
 pub(super) fn disclosure_tiers() -> Result<Case> {
     let (dir, vault) = open_vault();
     let (subject, fact) = (entity(0xB7), entity(0xB8));
     put_person(&vault, subject)?;
-    vault.put_claim(&fact, &headcount(subject, "public")?, at(1), 1)?;
+    vault.put_claim(&fact, &headcount(subject, "event.headcount")?, at(1), 1)?;
     Case::after_backup("disclosure tiers", (dir, vault), new_person, move |vault| {
-        vault.put_claim(&fact, &headcount(subject, "sensitive")?, at(1), 2)
+        vault.put_claim(&fact, &headcount(subject, "affect.headcount")?, at(1), 2)
     })
 }
 

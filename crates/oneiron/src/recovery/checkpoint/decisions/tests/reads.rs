@@ -1,13 +1,10 @@
 //! Census cases for who a read admits.
 use super::Case;
-use crate::access_grant::{
-    AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
-};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::memory::MemoryError;
 use crate::note::{NoteKind, NoteScope, NoteWriteEnvelope};
-use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY};
+use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
 use crate::test_util::entity;
 use crate::{EntityId, Error, Result, TimeRange, Vault, VaultConfig};
 
@@ -37,75 +34,68 @@ fn put_person(vault: &Vault, seed: u8) -> Result<EntityId> {
 
 /// A diary `author` writes, private to them, at the vault's default facet.
 fn diary(vault: &Vault, author: EntityId) -> Result<EntityId> {
+    diary_entry(vault, author, 0x7a)
+}
+
+/// Entry `revision` of `author`'s diary, private to them.
+fn diary_entry(vault: &Vault, author: EntityId, revision: u8) -> Result<EntityId> {
     let receipt = vault
         .memory(author, EdgeActorClass::Human)
         .author_note(&NoteWriteEnvelope {
             kind: NoteKind::Diary,
             scope: NoteScope::ActorPrivate { owner_ref: author },
-            markdown: "a private entry".into(),
-            source_revision_ref: [0x7a; 16],
+            markdown: format!("a private entry {revision}"),
+            source_revision_ref: [revision; 16],
             mask: None,
         })
         .map_err(memory)?;
     EntityId::from_hex(&receipt.id_hex)
 }
 
-/// Puts `summary` with the body `fields` describe.
-fn put_summary(vault: &Vault, summary: EntityId, fields: serde_json::Value) -> Result<()> {
-    let body = rmp_serde::to_vec_named(&fields).expect("summary body encodes");
+/// A member binding lets its principal read the claims of the relationship
+/// it is about, while that relationship is there. One purged since the
+/// backup, its binding and its claims unchanged, is a relationship whose
+/// claims a restore would open to the member again.
+pub(super) fn relationship_reads() -> Result<Case> {
+    let (dir, vault) = open_vault();
+    let (member, relationship) = (put_person(&vault, 0xC1)?, entity(0xC2));
+    let body = rmp_serde::to_vec_named(&serde_json::json!({ "participant_ids": [] }))
+        .map_err(|error| Error::InvalidConfig(error.to_string()))?;
     vault.put_entity(
-        &summary,
-        ENTITY_TYPE_SUMMARY,
+        &relationship,
+        ENTITY_TYPE_RELATIONSHIP,
         TimeRange { start: 1, end: 1 },
         1,
         &body,
-    )
-}
-
-/// A summary its principal's grant on the summary's relationship lets them
-/// read. Made private since the backup, its relationship unchanged, it is
-/// one a restore would open to them again.
-pub(super) fn relationship_reads() -> Result<Case> {
-    let (dir, vault) = open_vault();
-    let (principal, space, summary) = (entity(0xC1), entity(0xC2), entity(0xC3));
-    vault.create_access_grant(
-        &entity(0xC4),
-        &AccessGrant {
-            principal_ref: principal,
-            scope: AccessGrantScope::Summaries { space_ref: space },
-            capability: AccessGrantCapability::SummariesRead,
-            status: AccessGrantStatus::Active,
-            created_at: 1,
-            revoked_at: None,
-            expires_at: None,
-            authority_scope: crate::federation::scope_codec::read_preset(),
-        },
     )?;
-    let rel = space.to_hex();
-    put_summary(
+    crate::federation::bind_member_person(
         &vault,
-        summary,
-        serde_json::json!({"rel": rel, "text": "first"}),
+        relationship,
+        member,
+        TimeRange { start: 1, end: 1 },
+        1,
     )?;
+    let mut fact = ClaimBody::new(
+        "event.headcount",
+        ClaimSubject::Entity(member),
+        rmpv::Value::from("12"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )?;
+    fact.rel = Some(relationship);
+    vault.put_claim(&entity(0xC3), &fact, TimeRange { start: 1, end: 1 }, 1)?;
     Case::after_backup(
         "relationship reads",
         (dir, vault),
-        {
-            let rel = rel.clone();
-            move |vault: &Vault| {
-                put_summary(
-                    vault,
-                    summary,
-                    serde_json::json!({"rel": rel, "text": "restated"}),
-                )
-            }
-        },
+        |vault| put_person(vault, 0xC4).map(drop),
         move |vault| {
-            put_summary(
-                vault,
-                summary,
-                serde_json::json!({"rel": rel, "text": "restated", "scope": "private"}),
-            )
+            vault
+                .delete_entity_with_options(
+                    &relationship,
+                    crate::deletion::DeleteEntityOptions { purge: true },
+                )
+                .map(drop)
         },
     )
 }
@@ -133,7 +123,18 @@ fn put_fact(
             rmpv::Value::from(reader),
         )])
     });
-    vault.put_claim(&claim, &body, TimeRange { start: at, end: at }, at)
+    // The policy the case installs holds a public write of a predicate it
+    // does not class for the owner; the engine's own door writes it.
+    let mut txn = vault.store.env.write_txn()?;
+    vault.put_reserved_claim_in_txn(
+        &mut txn,
+        &claim,
+        &body,
+        TimeRange { start: at, end: at },
+        at,
+    )?;
+    txn.commit()?;
+    Ok(())
 }
 
 /// A claim the policy lets two readers read. Bound since the backup to one
@@ -179,6 +180,37 @@ pub(super) fn note_reads() -> Result<Case> {
         "private note reads",
         (dir, vault),
         move |vault| diary(vault, sora).map(drop),
+        move |vault| vault.delete_edge(&left, EdgeKind::SameAs, &right).map(drop),
+    )
+}
+
+/// A graph read shows a diary link only where both authors granted that very
+/// pair. Of three granted links between two authors' diaries, one taken away
+/// since the backup leaves every diary readable through the other two, and
+/// is one a restore would put back.
+pub(super) fn diary_links() -> Result<Case> {
+    let (dir, vault) = open_vault();
+    let (sora, rin) = (put_person(&vault, 0xC9)?, put_person(&vault, 0xCA)?);
+    let (first, second) = (diary_entry(&vault, sora, 1)?, diary_entry(&vault, sora, 2)?);
+    let (third, fourth) = (diary_entry(&vault, rin, 3)?, diary_entry(&vault, rin, 4)?);
+    {
+        let (author, reader) = (
+            vault.memory(sora, EdgeActorClass::Human),
+            vault.memory(rin, EdgeActorClass::Human),
+        );
+        for (own, other) in [(first, third), (first, fourth), (second, third)] {
+            author.link_diary_coreference(own, other).map_err(memory)?;
+            author.grant_diary_coreference(own, other).map_err(memory)?;
+            reader.grant_diary_coreference(other, own).map_err(memory)?;
+        }
+    }
+    let (sora_ref, rin_ref) = (sora.to_hex(), rin.to_hex());
+    crate::test_util::authorize_readers(&vault, &[sora_ref.as_str(), rin_ref.as_str()]);
+    let (left, right) = (first.min(third), first.max(third));
+    Case::after_backup(
+        "diary link reads",
+        (dir, vault),
+        move |vault| diary_entry(vault, sora, 5).map(drop),
         move |vault| vault.delete_edge(&left, EdgeKind::SameAs, &right).map(drop),
     )
 }

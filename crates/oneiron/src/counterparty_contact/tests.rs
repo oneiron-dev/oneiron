@@ -844,7 +844,7 @@ fn a_restore_drops_a_contact_the_send_gate_never_reads_first() -> Result<()> {
         &CounterpartyContactRecord::user_introduction(studio, "sora@example.com", 11)?,
     )?;
     vault.create_counterparty_contact(
-        &entity(0xA5),
+        &entity(0xA8),
         &CounterpartyContactRecord::user_introduction(desk, "rin@example.com", 12)?,
     )?;
     let backups = tempfile::tempdir()?;

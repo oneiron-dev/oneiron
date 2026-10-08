@@ -85,25 +85,24 @@ impl DeliveryWindowPolicyClaim {
         })
     }
 
+    /// Whether the claim restricts any send at all: an approved or owner-made,
+    /// active, fresh restriction on interrupts. Which sends it restricts its
+    /// validity, channel, context and window decide.
+    pub(crate) fn restricts(&self) -> bool {
+        matches!(
+            self.approval,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        ) && self.lifecycle == ClaimLifecycleStatus::Active
+            && !self.stale
+            && !(self.approval == ClaimApprovalStatus::Auto && self.generated_origin)
+            && self.applies_to == DeliveryWindowAppliesTo::Interrupt
+    }
+
     pub(super) fn restriction_at(
         &self,
         context: &DeliveryWindowEvaluationContext,
     ) -> Option<Restriction> {
-        if !matches!(
-            self.approval,
-            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-        ) || self.lifecycle != ClaimLifecycleStatus::Active
-            || self.stale
-        {
-            return None;
-        }
-        if self.approval == ClaimApprovalStatus::Auto && self.generated_origin {
-            return None;
-        }
-        if self.applies_to != DeliveryWindowAppliesTo::Interrupt {
-            return None;
-        }
-        if context.verb_class != DeliveryWindowVerbClass::Interrupt {
+        if !self.restricts() || context.verb_class != DeliveryWindowVerbClass::Interrupt {
             return None;
         }
         if let Some(valid_from) = self.valid_from

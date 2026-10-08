@@ -122,6 +122,10 @@ impl Decision for DispatchableAgents {
     fn loosens(live: &bool, restored: &bool) -> bool {
         !live && *restored
     }
+
+    fn refusal() -> Option<bool> {
+        Some(false)
+    }
 }
 
 /// What wakes an agent as a resident: its binding, which must name a home
@@ -169,6 +173,10 @@ impl Decision for ResidentWakes {
         live.is_none_or(|live| {
             live.inbox != restored.inbox || wakes_on(live.mode) < wakes_on(restored.mode)
         })
+    }
+
+    fn refusal() -> Option<Option<ResidentWake>> {
+        Some(None)
     }
 }
 
@@ -329,5 +337,9 @@ impl Decision for AskHolders {
 
     fn loosens(live: &BTreeSet<EntityId>, restored: &BTreeSet<EntityId>) -> bool {
         !restored.is_subset(live)
+    }
+
+    fn refusal() -> Option<BTreeSet<EntityId>> {
+        Some(BTreeSet::new())
     }
 }

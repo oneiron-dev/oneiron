@@ -1,15 +1,13 @@
-//! Who reads or witnesses what: a record's audience, the relationships a
-//! principal reads as a member, the disclosure clamp a conversation runs
-//! under and the tier it holds a record to, who may speak in a leader chat,
-//! and which projects the read fold lets anyone see.
+//! Who reads or witnesses what: a record's audience, the disclosure clamp a
+//! conversation runs under and the tier it holds a record to, who may speak
+//! in a leader chat, and which projects the read fold lets anyone see.
 use super::{Decision, held, held_by_both};
-use crate::access_grant::AccessContext;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::conversation::{AudienceCache, room_for_record_in};
 use crate::counterparty_contact::read_counterparty_contact_in_txn;
 use crate::disclosure::{DisclosureContext, DisclosureMode};
 use crate::edge::EdgeKind;
-use crate::federation::{PREDICATE_RELATIONSHIP_PERSON_REF, Scope};
+use crate::federation::Scope;
 use crate::interlocutor::{
     Interlocutor, InterlocutorPartyInput, InterlocutorResolutionInput, InterlocutorSet,
 };
@@ -55,13 +53,15 @@ impl Decision for RecordAudiences {
         vault: &Vault,
         subjects: &BTreeSet<Self::Subject>,
     ) -> Result<Vec<Option<Self::Answer>>> {
-        let txn = vault.store.env.read_txn()?;
+        // The room readers open their own transactions, so they read first.
         let rooms: BTreeMap<EntityId, BTreeSet<EntityId>> = held(vault, ENTITY_TYPE_CONVERSATION)?
             .into_iter()
             .map(|room| (room, room_people(vault, room)))
             .collect();
+        let relationships = held(vault, ENTITY_TYPE_RELATIONSHIP)?;
+        let txn = vault.store.env.read_txn()?;
         let mut named: BTreeSet<EntityId> = rooms.values().flatten().copied().collect();
-        for relationship in held(vault, ENTITY_TYPE_RELATIONSHIP)? {
+        for relationship in relationships {
             named.extend(participants(vault, &txn, relationship));
         }
         let mut cache = AudienceCache::default();
@@ -93,6 +93,10 @@ impl Decision for RecordAudiences {
             (Readers::Only(_), Readers::Everyone) => true,
             (Readers::Only(live), Readers::Only(restored)) => !restored.is_subset(live),
         }
+    }
+
+    fn refusal() -> Option<Readers> {
+        Some(Readers::Only(BTreeSet::new()))
     }
 }
 
@@ -131,54 +135,6 @@ fn participants(vault: &Vault, txn: &heed::RoTxn<'_>, relationship: EntityId) ->
         people.extend(ids);
     }
     people
-}
-
-/// Which relationships a principal reads as a member, as a relationship read
-/// decides it (`AccessContext::load`): each surfaceable member binding that
-/// names the principal and whose subject is a relationship. The grants it
-/// also reads are a refused family, compared whole before.
-pub(super) struct RelationshipMembers;
-
-impl Decision for RelationshipMembers {
-    type Subject = EntityId;
-    type Answer = BTreeSet<EntityId>;
-
-    fn subjects(vaults: [&Vault; 2]) -> Result<BTreeSet<Self::Subject>> {
-        let mut principals = BTreeSet::new();
-        for vault in vaults {
-            let txn = vault.store.env.read_txn()?;
-            for (_, binding) in
-                vault.claims_with_predicate_in_txn(&txn, PREDICATE_RELATIONSHIP_PERSON_REF)?
-            {
-                principals.extend(
-                    binding
-                        .value
-                        .as_str()
-                        .and_then(|value| EntityId::from_hex(value).ok()),
-                );
-            }
-        }
-        Ok(principals)
-    }
-
-    fn answers(
-        vault: &Vault,
-        subjects: &BTreeSet<Self::Subject>,
-    ) -> Result<Vec<Option<Self::Answer>>> {
-        let txn = vault.store.env.read_txn()?;
-        Ok(subjects
-            .iter()
-            .map(|principal| {
-                AccessContext::load(vault, &txn, Some(*principal))
-                    .ok()
-                    .map(|context| context.relationships().clone())
-            })
-            .collect())
-    }
-
-    fn loosens(live: &Self::Answer, restored: &Self::Answer) -> bool {
-        !restored.is_subset(live)
-    }
 }
 
 /// How a context assembly clamps what it discloses to the parties present
@@ -305,7 +261,7 @@ fn rosters(vault: &Vault) -> Result<BTreeMap<Vec<u8>, Option<String>>> {
         let (key, bytes) = row?;
         rosters.insert(
             key.to_vec(),
-            VoiceSessionRosterV1::from_raw(bytes)
+            VoiceSessionRosterV1::from_raw(&bytes)
                 .ok()
                 .map(|roster| roster.voice_session_ref),
         );
@@ -350,6 +306,10 @@ impl Decision for DisclosureTiers {
 
     fn loosens(live: &bool, restored: &bool) -> bool {
         !live && *restored
+    }
+
+    fn refusal() -> Option<bool> {
+        Some(false)
     }
 }
 
@@ -424,6 +384,10 @@ impl Decision for LeaderChats {
     fn loosens(live: &Self::Answer, restored: &Self::Answer) -> bool {
         restored.is_some() && live != restored
     }
+
+    fn refusal() -> Option<Self::Answer> {
+        Some(None)
+    }
 }
 
 /// The leader chat `room`'s body binds, where it binds one.
@@ -466,6 +430,10 @@ impl Decision for ProjectVerdicts {
 
     fn loosens(live: &bool, restored: &bool) -> bool {
         !live && *restored
+    }
+
+    fn refusal() -> Option<bool> {
+        Some(false)
     }
 }
 

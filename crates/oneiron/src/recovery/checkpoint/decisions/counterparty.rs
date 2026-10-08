@@ -135,6 +135,10 @@ impl Decision for DoNotContact {
     fn loosens(live: &bool, restored: &bool) -> bool {
         *live && !restored
     }
+
+    fn refusal() -> Option<bool> {
+        Some(true)
+    }
 }
 
 /// The owner's override a send to an opted-out party matches on one channel
@@ -179,6 +183,10 @@ impl Decision for SendOverrides {
 
     fn loosens(live: &Self::Answer, restored: &Self::Answer) -> bool {
         live.is_none() && restored.is_some()
+    }
+
+    fn refusal() -> Option<Self::Answer> {
+        Some(None)
     }
 }
 
