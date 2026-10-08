@@ -12,8 +12,13 @@ use crate::retrieval_quality::{
     ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality, RetrievalQualityReport,
 };
 
-use super::blend_tuning::validate_retrieval_blend_weights;
 use super::run_store::RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT;
+
+// The signal and blend-weight vocabulary is defined in `oneiron-contracts` (retrieval's
+// fusion scores with it); `From<Signal>` stays here with the pipeline's channel enum.
+pub use oneiron_contracts::retrieval_telemetry::{
+    RetrievalBlendSignal, RetrievalBlendWeights, RetrievalScoreComponent, RetrievalSignal,
+};
 
 pub(super) const RETRIEVAL_TELEMETRY_VERSION: u8 = 0;
 
@@ -66,47 +71,6 @@ pub enum RetrievalAction {
     Speculative,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RetrievalSignal {
-    Vector,
-    Text,
-    Phonetic,
-    Temporal,
-    Ppr,
-    Recency,
-    Salience,
-    Confidence,
-    Gravity,
-    /// RET-010 host-injected reranker component. Never a channel and never
-    /// a blend signal: the blend weight table must not train on reranker
-    /// output.
-    Rerank,
-    Hyde,
-    /// HyDE retry subquery channel, retained only in retrieval traces.
-    HydeRetry,
-}
-
-impl RetrievalSignal {
-    #[must_use]
-    pub fn as_blend_signal(self) -> Option<RetrievalBlendSignal> {
-        match self {
-            Self::Recency => Some(RetrievalBlendSignal::Recency),
-            Self::Salience => Some(RetrievalBlendSignal::Salience),
-            Self::Confidence => Some(RetrievalBlendSignal::Confidence),
-            Self::Gravity => Some(RetrievalBlendSignal::Gravity),
-            Self::Vector
-            | Self::Text
-            | Self::Phonetic
-            | Self::Temporal
-            | Self::Ppr
-            | Self::Rerank
-            | Self::Hyde
-            | Self::HydeRetry => None,
-        }
-    }
-}
-
 impl From<Signal> for RetrievalSignal {
     fn from(signal: Signal) -> Self {
         match signal {
@@ -117,70 +81,6 @@ impl From<Signal> for RetrievalSignal {
             Signal::Ppr => Self::Ppr,
             Signal::Hyde => Self::Hyde,
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RetrievalBlendSignal {
-    Recency,
-    Salience,
-    Confidence,
-    Gravity,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct RetrievalBlendWeights {
-    pub recency: f32,
-    pub salience: f32,
-    pub confidence: f32,
-    pub gravity: f32,
-}
-
-impl RetrievalBlendWeights {
-    #[must_use]
-    pub const fn bootstrap() -> Self {
-        Self {
-            recency: 0.35,
-            salience: 0.30,
-            confidence: 0.20,
-            gravity: 0.15,
-        }
-    }
-
-    #[must_use]
-    pub const fn new(recency: f32, salience: f32, confidence: f32, gravity: f32) -> Self {
-        Self {
-            recency,
-            salience,
-            confidence,
-            gravity,
-        }
-    }
-
-    #[must_use]
-    pub fn weight(self, signal: RetrievalBlendSignal) -> f32 {
-        match signal {
-            RetrievalBlendSignal::Recency => self.recency,
-            RetrievalBlendSignal::Salience => self.salience,
-            RetrievalBlendSignal::Confidence => self.confidence,
-            RetrievalBlendSignal::Gravity => self.gravity,
-        }
-    }
-
-    pub(crate) fn normalized(self) -> Result<Self> {
-        validate_retrieval_blend_weights(self).map_err(Error::InvalidConfig)?;
-        let sum = self.sum();
-        Ok(Self {
-            recency: self.recency / sum,
-            salience: self.salience / sum,
-            confidence: self.confidence / sum,
-            gravity: self.gravity / sum,
-        })
-    }
-
-    pub(super) fn sum(self) -> f32 {
-        self.recency + self.salience + self.confidence + self.gravity
     }
 }
 
@@ -238,13 +138,6 @@ impl Default for RetrievalBlendTuningConfig {
             min_reward_count: 1,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RetrievalScoreComponent {
-    pub signal: RetrievalSignal,
-    pub rank: u32,
-    pub score: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
