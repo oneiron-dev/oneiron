@@ -76,37 +76,30 @@ pub(crate) fn message_stream_finality_in_txn(
 ) -> Result<Option<(StreamFinality, EntityId)>> {
     Ok(receipt(vault, txn, *message)?.map(|done| (done.finality, done.generation)))
 }
-/// A finalized continuation changed the final words its TURN projects: re-put
-/// the TURN at a strictly newer `learned_at`, exactly as a new MESSAGE sibling
-/// re-dirties it on the witness door, so consolidation selects it again. A
-/// DAG record TURN is append-only and keeps its row: the continuation still
-/// commits, and the TURN is not selected again.
+/// A finalized continuation changed the final words its TURN projects:
+/// re-dirty the TURN in this commit so consolidation selects it again, past
+/// every scope cursor. The TURN row stays byte-identical, so a DAG record TURN
+/// keeps its append-only row and still comes back. The TURN's change-log entry
+/// is what wakes the Dreamer for it, as a re-put would.
 pub(super) fn redirty_turn(vault: &Vault, txn: &mut heed::RwTxn<'_>, seed: &Seed) -> Result<()> {
-    use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-    if crate::conversation_dag::is_append_only_record(&vault.store, txn, &seed.turn)? {
-        return Ok(());
-    }
-    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &seed.turn)?
-        .ok_or(Error::EntityNotFound)?
-        .to_vec();
-    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("turn header"))?;
-    if header.entity_type != crate::registry::ENTITY_TYPE_TURN {
-        return Err(Error::CorruptedIndex("stream turn kind"));
-    }
-    vault
-        .batch_in()
-        .put(
-            &seed.turn,
-            crate::registry::ENTITY_TYPE_TURN,
-            crate::temporal::TimeRange {
-                start: header.occurred_start,
-                end: header.occurred_end,
-            },
-            seed.occurred_at.max(header.learned_at.saturating_add(1)),
-            &raw[ENTITY_METADATA_HEADER_LEN..],
-        )
-        .apply(txn)?;
-    Ok(())
+    crate::dreamer_consolidation::redirty::redirty_turn_in_txn(
+        vault,
+        txn,
+        &seed.turn,
+        seed.occurred_at,
+    )?;
+    crate::ports::audit_mutation_in_txn(
+        &vault.store,
+        txn,
+        crate::ports::MutationAudit {
+            entity: seed.turn,
+            op: crate::ports::ChangeOp::Update,
+            actor_principal: Some(seed.actor),
+            occurred_at: seed.occurred_at,
+            input: seed.message_id.as_bytes(),
+            reason: Some("stream continuation finalized"),
+        },
+    )
 }
 pub(super) fn finish(
     vault: &Vault,

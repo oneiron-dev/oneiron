@@ -20,12 +20,15 @@
 //! of the cursor that depends on it: the watermark is a POSITION in the
 //! `learned_at` temporal index, so an entity that must be re-consolidated is
 //! re-stamped with a `learned_at` AHEAD of the cursor — never backdated behind
-//! it. A re-dirtied TURN takes its new position from `now`, which is how the
-//! append path returns it to the working set. A caller-supplied `learned_at`
-//! that lands behind the cursor is simply never selected again, exactly as it
-//! is under a seconds-only watermark: the temporal-index writers (the batch
-//! layer) own that contract; this module only reads the index and cannot
-//! enforce it.
+//! it. A caller-supplied `learned_at` that lands behind the cursor is simply
+//! never selected again, exactly as it is under a seconds-only watermark: the
+//! temporal-index writers (the batch layer) own that contract; this module only
+//! reads the index and cannot enforce it. A TURN whose final words changed
+//! (a finalized stream continuation, a new MESSAGE sibling) is also re-dirtied
+//! through [`redirty`]: a local position strictly past every scope cursor,
+//! which selection and the partition-round identity read in place of the
+//! row's `learned_at` when it is later. A continuation leaves the TURN row
+//! itself untouched.
 
 mod assembly;
 pub(crate) mod branch_scope;
@@ -46,6 +49,7 @@ mod open_conflict;
 mod partition;
 mod persistence;
 mod provenance;
+pub(crate) mod redirty;
 pub(crate) mod resources;
 pub mod routing;
 pub mod selection;

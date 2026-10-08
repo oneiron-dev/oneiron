@@ -420,8 +420,13 @@ const fn effective_dirty_turn_limit(scope: DreamerConsolidationScope, requested:
 
 /// The ONE seek/filter/cap body: every admissible TURN strictly after
 /// `watermark`'s compound position (unbounded below for a before-first rescan),
-/// in temporal-key `(learned_at, id)` order, through `upper_inclusive_second`
-/// (unbounded above when `None`), stopping at `limit`.
+/// in `(position, id)` order, through `upper_inclusive_second` (unbounded above
+/// when `None`), stopping at `limit`.
+///
+/// A TURN's position is its EFFECTIVE one: its temporal `learned_at` key, or
+/// the later re-dirty carrier a changed TURN took without moving its row
+/// (`super::redirty`), read in this same snapshot. Each TURN appears once, and
+/// the cursor, bound and cap all apply to that merged order.
 ///
 /// Selection ORDER and ADMISSIBILITY are scope-independent — type-filtered to
 /// TURN (claims NEVER enter the working set, GATE-11) and role-filtered by
@@ -452,14 +457,16 @@ fn enumerate_admissible_turns(
         },
         ..Default::default()
     };
+    let carriers = super::redirty::DirtyCarriers::read(vault, txn)?;
+    let timeline = vault.store.port_entity_timeline(txn, query)?;
     let mut admissible = Vec::new();
-    for entry in vault.store.port_entity_timeline(txn, query)? {
+    for entry in carriers.merge(timeline, watermark, upper_inclusive_second) {
         if admissible.len() >= limit {
             break;
         }
-        let time = entry?;
-        let learned_at = time.timestamp;
-        let turn_id = time.id;
+        let candidate = entry?;
+        let learned_at = candidate.position;
+        let turn_id = candidate.turn;
         let raw = match vault.store.port_entity_record(txn, &turn_id) {
             Ok(Some(raw)) => raw,
             // An unreadable TURN is not an admissible member. The close fence
@@ -469,7 +476,9 @@ fn enumerate_admissible_turns(
             Err(error) => return Err(error),
         };
 
-        if raw.entity_type != ENTITY_TYPE_TURN {
+        if raw.entity_type != ENTITY_TYPE_TURN
+            || !carriers.stands(vault, txn, &candidate, raw.learned_at)?
+        {
             continue;
         }
         let body = decode_turn_body(&raw.body);

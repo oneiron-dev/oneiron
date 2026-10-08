@@ -10,9 +10,8 @@ mod graph;
 pub(crate) use admission::{addressed_to_echo, addressed_to_echo_in_txn};
 pub(crate) mod topology;
 pub(crate) use admission::{
-    guard_record_put, guard_room_membership_delete, guard_room_turn_delete, is_append_only_record,
-    keep_membership_pin, pin_membership, pin_typed_record, room_turn_owner,
-    validate_local_membership,
+    guard_record_put, guard_room_membership_delete, guard_room_turn_delete, keep_membership_pin,
+    pin_membership, pin_typed_record, room_turn_owner, validate_local_membership,
 };
 #[cfg(feature = "sync")]
 pub(crate) use admission::{validate_received_edge, validate_received_parent_value};

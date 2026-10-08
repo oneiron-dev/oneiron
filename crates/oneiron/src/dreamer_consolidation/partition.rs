@@ -432,10 +432,14 @@ pub(crate) fn read_partition_turns_in_txn(
             .next()
             .transpose()?
             .map(|edge| edge.target);
+        // The effective dirty position the scan ordered this TURN by, so a
+        // re-dirtied TURN's round hashes to a new attempt identity.
+        let learned_at =
+            super::redirty::effective_learned_at_in_txn(vault, txn, turn_id, header.learned_at)?;
         turns.push(WorkingSetTurn {
             turn_id: *turn_id,
             role,
-            learned_at: header.learned_at,
+            learned_at,
             conversation,
         });
     }

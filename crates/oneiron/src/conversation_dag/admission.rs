@@ -150,7 +150,30 @@ pub(crate) fn guard_record_put(
     {
         return Err(invalid("room TURN author is immutable"));
     }
-    let Some(pin) = record_pin(store, txn, id, prior.as_ref())? else {
+    let stored_pin = BODY_PINS.get(store, txn, id)?;
+    let inferred_pin = if stored_pin.is_none() {
+        if let Some(row) = prior
+            .as_ref()
+            .filter(|row| row.entity_type == ENTITY_TYPE_TURN)
+        {
+            let owners = super::graph::edge_ids(store, txn, id, EdgeKind::ChildOf, false, 2)?;
+            let mut owned = false;
+            for owner in owners {
+                owned |= store
+                    .port_entity_record(txn, &owner)?
+                    .is_some_and(|row| row.entity_type == ENTITY_TYPE_CONVERSATION)
+                    && MIGRATED.get(store, txn, &owner)?.is_some();
+            }
+            (owned || record_kind(&row.body)?.is_some())
+                .then(|| body_pin(row.entity_type, row.occurred, row.learned_at, &row.body))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let pin = stored_pin.or(inferred_pin);
+    let Some(pin) = pin else {
         if kind == ENTITY_TYPE_TURN {
             record_kind(body)?;
         }
@@ -160,44 +183,6 @@ pub(crate) fn guard_record_put(
         return Err(invalid("DAG records are append-only"));
     }
     Ok(())
-}
-
-/// The append-only pin the TURN stored as `prior` at `id` is held to: its
-/// stored DAG body pin, or one inferred for a TURN under a migrated
-/// conversation or carrying a DAG record kind.
-fn record_pin(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-    prior: Option<&crate::ports::EntityRecord>,
-) -> Result<Option<[u8; 32]>> {
-    if let Some(pin) = BODY_PINS.get(store, txn, id)? {
-        return Ok(Some(pin));
-    }
-    let Some(row) = prior.filter(|row| row.entity_type == ENTITY_TYPE_TURN) else {
-        return Ok(None);
-    };
-    let owners = super::graph::edge_ids(store, txn, id, EdgeKind::ChildOf, false, 2)?;
-    let mut owned = false;
-    for owner in owners {
-        owned |= store
-            .port_entity_record(txn, &owner)?
-            .is_some_and(|row| row.entity_type == ENTITY_TYPE_CONVERSATION)
-            && MIGRATED.get(store, txn, &owner)?.is_some();
-    }
-    Ok((owned || record_kind(&row.body)?.is_some())
-        .then(|| body_pin(row.entity_type, row.occurred, row.learned_at, &row.body)))
-}
-
-/// Whether the TURN stored at `id` is an append-only DAG record, whose local
-/// re-put [`guard_record_put`] refuses.
-pub(crate) fn is_append_only_record(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> Result<bool> {
-    let prior = store.port_entity_record(txn, id)?;
-    Ok(record_pin(store, txn, id, prior.as_ref())?.is_some())
 }
 
 /// The pin of the TURN stored at `id` now, or `None` when `id` holds no TURN.

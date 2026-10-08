@@ -1333,8 +1333,7 @@ fn a_finalized_continuation_brings_its_consumed_turn_back() -> Result<()> {
 }
 
 /// A conversation that adopted the DAG keeps its TURN rows append-only. A
-/// continuation there still finalizes its new words; it keeps the TURN row
-/// instead of re-dirtying it.
+/// continuation there still finalizes its new words.
 #[cfg(feature = "sync")]
 #[test]
 fn a_continuation_in_a_dag_conversation_still_finalizes() -> Result<()> {
@@ -1518,3 +1517,5 @@ fn branch_gap_write_refuses_evidence_that_moved_after_the_read() -> Result<()> {
     }
     Ok(())
 }
+
+mod redirty;

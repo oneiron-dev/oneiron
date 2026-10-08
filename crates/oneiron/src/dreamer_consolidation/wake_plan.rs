@@ -305,6 +305,10 @@ impl PreparedWake {
                 if *kind != ENTITY_TYPE_TURN {
                     continue;
                 }
+                // Membership and order read the effective dirty position, as
+                // the scan did; the source pin keeps the row's own learned_at.
+                let learned_at =
+                    super::redirty::effective_learned_at_in_txn(vault, &txn, &id, *learned_at)?;
                 let facts = decode_turn_body(bytes);
                 let role = dreamer_turn_role(
                     facts.speaker.as_deref(),
@@ -313,9 +317,9 @@ impl PreparedWake {
                 if dreamer_extraction_role_admissible(role)
                     && facts.world_ref.or(parent.world_ref) == partition.world_ref
                     && facts.facet_ref.or(parent.facet_ref) == partition.facet_ref
-                    && (original.contains(&id) || *learned_at >= watermark)
+                    && (original.contains(&id) || learned_at >= watermark)
                 {
-                    turns.push((*learned_at, id));
+                    turns.push((learned_at, id));
                 }
             }
             turns.sort_unstable();
