@@ -93,11 +93,15 @@ values, and so does the engine: a saved cell is its value, a cell not saved is b
 link does not name is `#REF!`, and on a sheet Excel could not read at its last refresh
 (`refreshError`), or saved nothing for, every cell not saved is `#REF!`. ROW, COLUMN, ROWS,
 COLUMNS and INDEX go by the reference as written, and an ordinary formula intersects a linked range
-with its own cell. Such workbooks recalculate natively, and every link part, link relationship and
-link content type, and every relationship part with an external target, stays byte for byte (the
-edit gate checks the link join and the parts too). Evidence: probes 1 to 5 of the fork's
-`ops/excel-extlinks-probe-20261006.md` (Excel for Windows 16.0.20430, 216 cases) and the
-SpreadsheetBench workbooks with links (Excel truth recorded with links not updated).
+with its own cell, written or returned by INDEX at a computed row. An approximate VLOOKUP, HLOOKUP
+or MATCH bisects an open linked range as written (1,048,576 rows for `A:A`), passing over the
+unsaved cells, blank or `#REF!`. `[0]` is the workbook itself (`[0]!Rate` is its own `Rate`,
+`[0]Sheet1!A1` its `Sheet1!A1`). Such workbooks recalculate natively, and every link part, link
+relationship and link content type, and every relationship part with an external target, stays
+byte for byte (the edit gate checks the link join and the parts too). Evidence: probes 1 to 5 of
+the fork's `ops/excel-extlinks-probe-20261006.md` (Excel for Windows 16.0.20430, 216 cases), the
+links2 probes of `ops/excel-links2-probe-20261008.md` (167 cases) and the SpreadsheetBench
+workbooks with links (Excel truth recorded with links not updated).
 
 These forms keep the fallback, each with its own reason: a DDE or OLE link; a link part the check
 cannot read, or one that links nothing it knows; an external relationship other than a hyperlink, a
@@ -106,24 +110,27 @@ cannot join; link markup the engine's reader would read where Excel reads none (
 entry, the relationship, the cache's elements and their attributes by local name, so a vendor
 extension's look-alike `u:cell` would replace a saved value); an OOXML escape in a linked sheet name
 or a saved value (`a_x0001_b` is three characters to Excel, nine to the reader), or a saved value of
-a type the reader takes otherwise (`t="s"`, a number that is not one); a reference by file name, to
-`[0]` (the workbook itself) or to a link the list does not hold; a name defined in the linked
+a type the reader takes otherwise (`t="s"`, a number that is not one); a reference by file name or
+to a link the list does not hold; a name defined in the linked
 workbook (`[1]!Rate`, `[1]Sheet1!Rate`); a 3D linked reference; a linked reference in a reference
 operator (`:`, intersection, union), directly, through INDEX or through a name; a multi-cell linked
 range passed on by a function that returns references (IF, CHOOSE, IFS, XLOOKUP, OFFSET, INDIRECT,
-LET), by INDEX unless it narrows it to one cell, or given to AREAS, RANK or GETPIVOTDATA, or
-standing as the whole formula (the engine holds a linked range as values with no position, so
-intersection and the criteria functions' `#VALUE!` would not see it); a linked reference, one cell
+LET), or given to AREAS, RANK or GETPIVOTDATA, or standing as the whole formula; INDEX with one
+position into a block (`INDEX([1]S!A1:B5,3)` is `#REF!` in Excel), or at a computed position that
+may be 0 in a range read only up to its last saved cell (below); a linked reference, one cell
 too, reaching a criteria function's range through INDEX, IF, CHOOSE, another function or a name
 (Excel's `#VALUE!`; the engine computes it), or reaching ROW, COLUMN, ROWS, COLUMNS, ISREF, AREAS,
 ISFORMULA, FORMULATEXT, SHEET or SHEETS through IF, CHOOSE or another function that hands it on as
 values (INDEX hands on the reference); a linked reference bound to a LET name or a LAMBDA parameter;
 and an open or very large linked range, read only up to the last saved cell (plus one `#REF!` on a
 sheet with a refresh error), unless its function gives Excel's result from those cells: INDEX at one
-cell, ROWS, COLUMNS, exact MATCH, VLOOKUP and HLOOKUP, SUM, AVERAGE, MIN, MAX, PRODUCT, COUNT,
-CONCAT, the criteria functions' ranges (`#VALUE!` for any closed linked range), and COUNTA where the
-unsaved cells are blank. Counting the unsaved cells, pairing the range with one of another length,
-ROW over it and approximate searches stay the fallback's. A workbook name that reads a linked
+cell, ROWS, COLUMNS, MATCH (exact or match type 1), VLOOKUP and HLOOKUP, SUM, AVERAGE, MIN, MAX,
+PRODUCT, COUNT, CONCAT, the criteria functions' ranges (`#VALUE!` for any closed linked range), and
+COUNTA where the unsaved cells are blank. Counting the unsaved cells, pairing the range with one of
+another length, ROW over it, LOOKUP (which reads a result past the saved cells as blank where a
+sheet with a refresh error has `#REF!`), XLOOKUP and XMATCH, and a descending MATCH (`MATCH(3,
+[1]S!A:A,-1)` over 1 to 5 is `#N/A` in Excel, 5 in the engine, as over a local range) stay the
+fallback's. A workbook name that reads a linked
 workbook, itself or through another name, is checked where each formula uses it, as if its formula
 were written there (`ROW(Chosen)` with `Chosen` holding `IF(TRUE,[1]S!$A$3)` falls back as
 `ROW(IF(TRUE,[1]S!$A$3))` does). A name with a relative linked reference anywhere in its formula
@@ -146,7 +153,7 @@ depth limits, or the workbook fails outright. A relationship part that does not 
 fallback, as before: the link check fails closed.
 
 The evaluator is formualizer 0.9.3 from the org fork `oneiron-dev/formualizer`, pinned
-by rev in the root manifest (0.9.3-oneiron.11): upstream plus the owned patch that keeps
+by rev in the root manifest (0.9.3-oneiron.12): upstream plus the owned patch that keeps
 a typed error on either side of `&`, plus the Excel parity work on the fork's
 `oneiron/parity` branch (ONE-2700 parts 1 and 3, the third, fourth and fifth parity loops,
 stage 2's linked workbooks and caller-context functions, and five commits picked from upstream's
@@ -154,7 +161,7 @@ stage 2's linked workbooks and caller-context functions, and five commits picked
 Nothing of formualizer is vendored here.
 
 The corpus rule (default only at or above LibreOffice on the same corpus) is met at fork
-rev `953fbbb1`: through the writer, all 2,967 scored fresh-Excel SpreadsheetBench
+rev `6aa7740c`: through the writer, all 2,967 scored fresh-Excel SpreadsheetBench
 workbooks (truth recorded on Excel for Windows 16.0.20430; cells downstream of NOW/TODAY/RAND
 skipped) are fully Excel-identical (LibreOffice 25.8 matched 2,648 of the 2,951 it was measured
 on), and all 811 pinned native Excel goldens (recorded on Excel for Windows 16.0.20430; the
@@ -186,7 +193,7 @@ differs); 12 read CELL("filename"), 6 the workbook itself and 2 pass the token b
 for escaped names and formulas, related tables and malformed workbook metadata change no corpus
 workbook's decision or output bytes.
 
-Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.11`.
+Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.12`.
 The corpus report separately identifies the evaluator (`ENGINE_STAMP`). A no-recalc
 plan records no stamp; fallback runs record the fallback's own engine and version.
 
