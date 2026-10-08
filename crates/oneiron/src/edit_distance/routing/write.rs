@@ -90,10 +90,12 @@ pub(in crate::edit_distance) fn folded_model_version_in_txn(
         .map(|row| row.model_version))
 }
 
-/// One judgment's contribution: its edit mass, and how much of it was sound.
+/// One judgment's contribution: its edit mass, how much of it the judge could
+/// attribute, and how much of that was sound.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Fold {
     d_norm: f64,
+    judged: f64,
     sound: f64,
 }
 
@@ -104,9 +106,10 @@ pub(super) struct Fold {
 /// otherwise ([`AmendmentClass::PreferenceShift`]). Every other class routes
 /// from "the proposal was wrong on its own terms", including
 /// [`AmendmentClass::Discovery`], which charges nobody but does not mean the
-/// draft stood. A split counts the sound SHARE of what the judge could
-/// attribute: an `unclear` share is neither sound nor unsound, and a judgment
-/// that is unclear throughout holds and folds nothing.
+/// draft stood. A split folds its shares as they are: the sound share counts
+/// for the scope, the rest of the attributed share against it, and an
+/// `unclear` share for neither. A judgment that is unclear throughout holds
+/// and folds nothing.
 pub(super) fn fold_of(judgment: &AmendmentJudgment) -> Result<Option<Fold>> {
     let d_norm = f64::from(judgment.d_norm);
     if !d_norm.is_finite() || d_norm < 0.0 {
@@ -114,7 +117,7 @@ pub(super) fn fold_of(judgment: &AmendmentJudgment) -> Result<Option<Fold>> {
             "a routing fold needs a finite non-negative edit mass",
         ));
     }
-    let judged = 1.0 - f64::from(judgment.share_of(AmendmentClass::Unclear));
+    let judged = (1.0 - f64::from(judgment.share_of(AmendmentClass::Unclear))).clamp(0.0, 1.0);
     if judgment.holds() || judged <= 0.0 {
         return Ok(None);
     }
@@ -124,18 +127,22 @@ pub(super) fn fold_of(judgment: &AmendmentJudgment) -> Result<Option<Fold>> {
     );
     Ok(Some(Fold {
         d_norm,
-        sound: (sound / judged).clamp(0.0, 1.0),
+        judged,
+        sound: sound.clamp(0.0, judged),
     }))
 }
 
 pub(super) fn apply_fold(aggregate: &mut StoredAggregate, fold: Fold) -> Result<()> {
+    let judged = aggregate.judged_weight();
     aggregate.v = ROW_VERSION;
     aggregate.runs = aggregate
         .runs
         .checked_add(1)
         .ok_or(Error::ArithmeticOverflow("routing aggregate runs"))?;
     aggregate.d_norm_sum += fold.d_norm;
-    // `sound` sums a share of each run, so the bound above is its bound too.
+    // `sound` is a share of `judged`, which is a share of `runs`, so the bound
+    // above is the bound on both.
+    aggregate.judged = Some(judged + fold.judged);
     aggregate.sound += fold.sound;
     Ok(())
 }

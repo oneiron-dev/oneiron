@@ -39,12 +39,12 @@ pub(crate) fn unclear_floor(vault: &Vault) -> Result<f32> {
 /// # Errors
 ///
 /// Whatever the judge returns, and [`Error::InvalidClaimBody`] when it answers
-/// a different number of hunks than it was shown.
+/// a different number of hunks than it was shown, or leaves a hunk `unclear`
+/// without a note.
 pub(crate) fn classify_split(
     judge: &dyn AttributionJudge,
     request: &JudgeRequest<'_>,
     masses: &[f64],
-    floor: f32,
 ) -> Result<Option<AttributionSplit>> {
     if masses.len() != request.hunks.len() {
         return Err(Error::InvariantViolation("one edit mass per changed hunk"));
@@ -52,15 +52,27 @@ pub(crate) fn classify_split(
     let Some(answers) = judge.judge_hunks(request)? else {
         return Ok(None);
     };
-    split_from_answers(request.lane, masses, answers, floor).map(Some)
+    split_from_answers(request.lane, masses, answers, request.floor).map(Some)
 }
 
 /// Folds per-hunk answers into one label + share vector.
 ///
 /// Each hunk weighs its share of the edit mass; with no edit, or an edit that
 /// measures nothing, the regions weigh alike. A hunk lands `unclear` when the
-/// judge said so, named a label its lane does not admit, or held its label
-/// below `floor`, and keeps a note for the Dreamer either way.
+/// judge said so, held its label below `floor` — or gave no usable
+/// confidence at all, whatever the floor — or named a label its lane does
+/// not admit.
+///
+/// The first two are the judge's own doubt, and ARCH-0056 §5 has the judge
+/// say why every time: the note is what the Dreamer clusters, so a doubt
+/// without one is refused, not filed. A label outside its lane is the
+/// engine's rule, not the judge's doubt; it holds with its reason code and the
+/// label the judge named.
+///
+/// # Errors
+///
+/// [`Error::InvalidClaimBody`] when the judge answers a different number of
+/// hunks than it was shown, or doubts a hunk without a note.
 fn split_from_answers(
     lane: AttributionLane,
     masses: &[f64],
@@ -91,20 +103,33 @@ fn split_from_answers(
         if weight <= 0.0 {
             continue;
         }
-        let confidence = if answer.confidence.is_finite() {
+        // A confidence that is not a number is no confidence: it holds even
+        // under a floor the owner pinned at zero.
+        let measured = answer.confidence.is_finite();
+        let confidence = if measured {
             answer.confidence.clamp(0.0, 1.0)
         } else {
             0.0
         };
+        let note = bounded_note(answer.note);
         let reason = if answer.verdict == AttributionVerdict::Unclear {
             Some(UnclearReason::NoLabelFits)
         } else if !answer.verdict.valid_in(lane) {
             Some(UnclearReason::OutsideLane)
-        } else if confidence < floor {
+        } else if !measured || confidence < floor {
             Some(UnclearReason::BelowFloor)
         } else {
             None
         };
+        if matches!(
+            reason,
+            Some(UnclearReason::NoLabelFits | UnclearReason::BelowFloor)
+        ) && note.is_none()
+        {
+            return Err(Error::InvalidClaimBody(
+                "an unclear answer must carry a note saying why",
+            ));
+        }
         let label = if reason.is_some() {
             AttributionVerdict::Unclear
         } else {
@@ -121,7 +146,7 @@ fn split_from_answers(
                 leaning: (answer.verdict != AttributionVerdict::Unclear).then_some(answer.verdict),
                 confidence,
                 share: narrow(weight),
-                note: bounded_note(answer.note),
+                note,
             });
         }
     }

@@ -13,7 +13,7 @@ use super::types::{
     AttributionJudgment, AttributionLane, AttributionVerdict, JudgeRequest, OutcomeEvidence,
     SkillEditProposal,
 };
-use super::unclear::{UnclearAttribution, put_unclear_in_txn};
+use super::unclear::{UnclearAttribution, delete_unclear_in_txn, put_unclear_in_txn};
 
 // ---------------------------------------------------------------------------
 // Evidence door + projector
@@ -97,8 +97,9 @@ pub fn run_attribution_projector_with_judge(
             lane: AttributionLane::Attempt,
             evidence: &evidence,
             hunks: &[],
+            floor,
         };
-        let Some(split) = classify_split(judge, &request, &[], floor)? else {
+        let Some(split) = classify_split(judge, &request, &[])? else {
             continue;
         };
         // One region, so one label holds the whole outcome.
@@ -163,6 +164,14 @@ pub fn run_attribution_projector_with_judge(
                 )?;
             }
             JUDGMENT.put(&vault.store, wtxn, &judgment.sequence, judgment)?;
+            // A replay that now settles what an earlier pass held: the outcome
+            // is judged, so it no longer waits in the unclear ledger.
+            delete_unclear_in_txn(
+                vault,
+                wtxn,
+                AttributionLane::Attempt,
+                &judgment.sequence.to_string(),
+            )?;
             if let Some(proposal) = edit_proposal_for(judgment) {
                 EDIT_PROPOSAL.put(&vault.store, wtxn, &proposal.judgment_sequence, &proposal)?;
             }

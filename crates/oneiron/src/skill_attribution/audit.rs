@@ -101,8 +101,9 @@ pub fn run_attribution_audit_with_judge(
             lane: AttributionLane::Attempt,
             evidence: &fixture.evidence,
             hunks: &[],
+            floor,
         };
-        let answer = classify_split(judge, &request, &[], floor)?.and_then(|split| split.sole());
+        let answer = classify_split(judge, &request, &[])?.and_then(|split| split.sole());
         if answer.is_none() {
             abstained += 1;
         }

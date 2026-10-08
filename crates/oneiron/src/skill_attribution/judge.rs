@@ -35,10 +35,12 @@ pub trait AttributionJudge {
     ///
     /// Owes exactly [`JudgeRequest::regions`] answers, in hunk order: one per
     /// hunk, or one for an outcome with no edit. Each answer carries the
-    /// judge's confidence and, for `unclear`, a short note saying why. The
-    /// engine — not the judge — applies the `attribution_unclear_floor`
-    /// setting and the lane's labels to the answers, so a judge reports what
-    /// it believes and how sure it is.
+    /// judge's confidence. An answer that is `unclear`, or held below
+    /// [`JudgeRequest::floor`], MUST carry a short note saying why — the
+    /// engine refuses one without. That is why doubt is answered here and
+    /// never from [`Self::judge`], which has no note to give. The engine still
+    /// applies the floor and the lane's labels itself, so no judge can charge
+    /// past them.
     ///
     /// The default is [`Self::judge`]'s one verdict on every hunk, fully
     /// confident: a judge that cannot split gives the 100% case of the same

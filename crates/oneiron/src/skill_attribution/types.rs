@@ -172,6 +172,9 @@ pub struct JudgeRequest<'a> {
     /// edit (a failed attempt): the judge then answers once, for the whole
     /// outcome.
     pub hunks: &'a [EditHunk<'a>],
+    /// The `attribution_unclear_floor` in force. An answer held below it is
+    /// `unclear`, and like every `unclear` answer it must say why.
+    pub floor: f32,
 }
 
 impl JudgeRequest<'_> {

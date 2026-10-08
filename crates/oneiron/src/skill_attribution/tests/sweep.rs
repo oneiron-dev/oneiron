@@ -1020,18 +1020,20 @@ fn an_unclear_verdict_changes_no_reliability_and_files_one_note() -> Result<()> 
     );
     assert_eq!(filed[0].share(), 1.0, "the whole outcome holds");
 
-    put_setting_row(
-        &vault,
-        &SettingRow {
-            key: ATTRIBUTION_UNCLEAR_FLOOR.key.to_owned(),
-            mode: SettingMode::Pin,
-            value: 0.3,
-            weight_runs: None,
-            by: actor,
-            at: 200,
-            why: "this judge is calibrated low".to_owned(),
-        },
-    )?;
+    let pin = SettingRow {
+        key: ATTRIBUTION_UNCLEAR_FLOOR.key.to_owned(),
+        mode: SettingMode::Pin,
+        value: 0.3,
+        weight_runs: None,
+        at: 200,
+        why: "this judge is calibrated low".to_owned(),
+    };
+    // Seeds and pins are the owner's: an agent cannot move the floor.
+    let agent = crate::write_envelope::WriteActor::new(actor, crate::edge::EdgeActorClass::Agent);
+    assert!(put_setting_row(&vault, &agent, &pin).is_err());
+    assert_eq!(setting_value(&vault, &ATTRIBUTION_UNCLEAR_FLOOR)?, 0.6);
+    let owner = crate::write_envelope::WriteActor::new(actor, crate::edge::EdgeActorClass::Human);
+    put_setting_row(&vault, &owner, &pin)?;
     assert_eq!(setting_value(&vault, &ATTRIBUTION_UNCLEAR_FLOOR)?, 0.3);
     let prior = skill_reliability_prior(&vault, &skill)?;
     terminal(&vault, actor, true)?;
@@ -1048,6 +1050,13 @@ fn an_unclear_verdict_changes_no_reliability_and_files_one_note() -> Result<()> 
         1,
         "a counted verdict files no note"
     );
+
+    // Replaying the held evidence under the pinned floor settles it: the
+    // outcome is judged now, so its note leaves the unclear ledger (Sol review,
+    // 10-08: a replay used to leave both ledgers holding one outcome).
+    run_attribution_projector_with_judge(&vault, 0, &Unsure)?;
+    assert_eq!(attribution_judgments(&vault)?.len(), 2);
+    assert!(unclear_attributions(&vault)?.is_empty());
     Ok(())
 }
 

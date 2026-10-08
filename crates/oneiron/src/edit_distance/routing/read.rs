@@ -94,7 +94,14 @@ fn hint_of(own: StoredAggregate, peers: (f64, u64)) -> Option<WeightHint> {
     } else {
         1.0
     };
-    let outcome = own.sound / runs_as_f64(own.runs);
+    // The outcome is the sound share of what the judge could attribute: an
+    // unclear share holds, so it weighs neither for nor against the scope.
+    let judged = own.judged_weight();
+    let outcome = if judged > 0.0 {
+        own.sound / judged
+    } else {
+        0.0
+    };
     Some(WeightHint {
         relative_edit_cost: relative as f32,
         outcome_score: outcome as f32,

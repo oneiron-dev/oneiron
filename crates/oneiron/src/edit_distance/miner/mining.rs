@@ -19,7 +19,7 @@ use crate::edge::EdgeActorClass;
 use crate::edit_distance::FinalizedProposalText;
 use crate::edit_distance::PROPOSAL_ARTIFACT;
 use crate::edit_distance::attribution::{
-    AmendmentJudgment, amendment_evidence, amendment_judgments,
+    AmendmentClass, AmendmentJudgment, amendment_evidence, amendment_judgments,
 };
 use crate::edit_distance::delta::{DeltaSource, amendment_delta};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -266,9 +266,11 @@ fn clusters_from(
         .collect::<BTreeMap<_, _>>();
     let mut buckets: BTreeMap<ClusterKey, Bucket> = BTreeMap::new();
     for judgment in judgments {
-        // An amendment the judge could not attribute at all HOLDS: its notes
-        // wait in the unclear ledger, and nothing is mined from it until then.
-        if judgment.holds() {
+        // An unclear share HOLDS: its notes wait in the unclear ledger. The
+        // miner reads the whole corrected text and cannot tell an unclear
+        // hunk's substitutions from a clear one's, so any amendment with an
+        // unclear share is held whole until a re-judgment clears it.
+        if judgment.share_of(AmendmentClass::Unclear) > 0.0 {
             continue;
         }
         let Some(source) = amendment_source(vault, judgment, &artifacts)? else {

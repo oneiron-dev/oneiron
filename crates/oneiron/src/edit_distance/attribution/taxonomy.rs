@@ -297,10 +297,11 @@ pub fn classify_amendment(
         lane: AttributionLane::Amendment,
         evidence: &probe,
         hunks,
+        floor,
     };
     match settled {
-        Some(class) => classify_split(&SettledCause(class), &request, &masses, floor),
-        None => classify_split(judge, &request, &masses, floor),
+        Some(class) => classify_split(&SettledCause(class), &request, &masses),
+        None => classify_split(judge, &request, &masses),
     }
 }
 

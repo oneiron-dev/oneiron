@@ -1112,3 +1112,47 @@ fn an_unclear_hunk_charges_nobody_and_files_its_note() -> Result<()> {
     assert!(crate::skill_attribution::unclear_attributions(&vault)?.is_empty());
     Ok(())
 }
+
+/// Sol review, 10-08: a confidence that is not a number held a verdict only
+/// while the floor was above zero, and a doubted hunk with no note reached the
+/// ledger. A doubt holds at any floor, and must say why: one that does not is
+/// refused rather than filed (ARCH-0056 §5: the judge always adds a note).
+#[test]
+fn a_doubt_holds_at_any_floor_and_must_say_why() -> Result<()> {
+    struct Answers(HunkVerdict);
+    impl AttributionJudge for Answers {
+        fn judge(&self, _evidence: &OutcomeEvidence) -> Result<Option<AttributionVerdict>> {
+            Ok(None)
+        }
+        fn judge_hunks(&self, _request: &JudgeRequest<'_>) -> Result<Option<Vec<HunkVerdict>>> {
+            Ok(Some(vec![self.0.clone()]))
+        }
+    }
+    let evidence = AmendmentEvidence::new("r:1", EntityId::now(), "outbound")
+        .at(5)
+        .with_skill(EntityId::now())
+        .with_cause(AmendmentCause::ProposalWrong)
+        .with_routing_facts(true, true);
+
+    let unmeasured = Answers(
+        HunkVerdict::with_confidence(AttributionVerdict::SkillDefect, f32::NAN)
+            .with_note("the score came back empty"),
+    );
+    let split = classify_amendment(&evidence, &unmeasured, &[], 0.0)?.expect("an answer");
+    assert_eq!(split.sole(), Some(AttributionVerdict::Unclear));
+    assert_eq!(
+        split.unclear[0].reason,
+        crate::skill_attribution::UnclearReason::BelowFloor
+    );
+
+    for silent in [
+        HunkVerdict::certain(AttributionVerdict::Unclear).with_note("  "),
+        HunkVerdict::with_confidence(AttributionVerdict::SkillDefect, 0.2),
+    ] {
+        assert!(matches!(
+            classify_amendment(&evidence, &Answers(silent), &[], 0.6),
+            Err(Error::InvalidClaimBody(_))
+        ));
+    }
+    Ok(())
+}

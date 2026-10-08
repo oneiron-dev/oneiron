@@ -15,9 +15,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::write_envelope::WriteActor;
 
 /// One learned knob: its key, its bounds and the value it ships with.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -70,7 +70,8 @@ impl SettingMode {
     }
 }
 
-/// One owner seed or pin over a vault-scoped setting.
+/// One owner seed or pin over a vault-scoped setting. The setter is the owner
+/// who writes it ([`put_setting_row`]), never a field the caller fills in.
 ///
 /// Canon scopes a row `spawn | goal | project | vault`; every reader the
 /// engine has today asks at the vault, so the vault is the only scope stored.
@@ -82,11 +83,9 @@ pub struct SettingRow {
     pub value: f64,
     /// The seed's weight in runs; `None` for a pin, whose weight is unbounded.
     pub weight_runs: Option<f64>,
-    /// The actor who set the row.
-    pub by: EntityId,
     /// Unix seconds the row was set.
     pub at: u64,
-    /// The setter's own reason, kept as written.
+    /// The owner's own reason, kept as written.
     pub why: String,
 }
 
@@ -138,13 +137,17 @@ const fn invalid(reason: &'static str) -> Error {
 
 /// Records an owner seed or pin, replacing the row of the same key and mode.
 ///
+/// Seeds and pins are the owner's (ARCH-0003 #learning-settings): `owner` must
+/// pass the owner-write check in the transaction that writes the row, and the
+/// row records that owner as its setter.
+///
 /// # Errors
 ///
 /// [`Error::InvalidClaimBody`] for a key outside the catalog, a value outside
 /// the row's bounds, a pin carrying a weight or a seed without a positive one,
-/// a reason over 1 KiB, or a setter that is not an actor; storage
-/// errors.
-pub fn put_setting_row(vault: &Vault, row: &SettingRow) -> Result<()> {
+/// or a reason over 1 KiB; the owner-write refusal when `owner` is not the
+/// vault's owner; storage errors.
+pub fn put_setting_row(vault: &Vault, owner: &WriteActor, row: &SettingRow) -> Result<()> {
     let spec = setting_spec(&row.key).ok_or(invalid("no learned setting has this key"))?;
     if row.why.len() > MAX_WHY_BYTES {
         return Err(invalid(
@@ -165,29 +168,36 @@ pub fn put_setting_row(vault: &Vault, row: &SettingRow) -> Result<()> {
             ));
         }
     }
-    crate::actor_claims::require_actor_entity(vault, &row.by)?;
     let stored = StoredSettingRow {
         v: ROW_VERSION,
         value: row.value,
         weight_runs: row.weight_runs,
-        by: row.by.to_hex(),
+        by: owner.entity_ref().to_hex(),
         at: row.at,
         why: row.why.clone(),
     };
     vault.with_write_txn(|wtxn| {
+        vault.verify_owner_write_actor_in_txn(wtxn, owner)?;
         SETTING.put(&vault.store, wtxn, &row_key(spec.key, row.mode), &stored)?;
         Ok(())
     })
 }
 
 /// Withdraws the owner's seed or pin over `key`, returning the setting to
-/// whatever stands beneath it.
+/// whatever stands beneath it. Only the owner may.
 ///
 /// # Errors
 ///
-/// Storage errors.
-pub fn clear_setting_row(vault: &Vault, key: &str, mode: SettingMode) -> Result<()> {
+/// The owner-write refusal when `owner` is not the vault's owner; storage
+/// errors.
+pub fn clear_setting_row(
+    vault: &Vault,
+    owner: &WriteActor,
+    key: &str,
+    mode: SettingMode,
+) -> Result<()> {
     vault.with_write_txn(|wtxn| {
+        vault.verify_owner_write_actor_in_txn(wtxn, owner)?;
         SETTING.delete(&vault.store, wtxn, &row_key(key, mode))?;
         Ok(())
     })
