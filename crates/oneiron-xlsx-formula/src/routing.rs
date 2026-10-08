@@ -1,21 +1,20 @@
-//! External-link routing (step 25): linked workbooks stay off this engine.
+//! External links on the precision fallback's route.
 //!
-//! External-link workbooks require a link-preserving fallback session, never
-//! an unchecked openpyxl-to-LibreOffice round trip; the in-process engine has no linked-workbook resolver (the
-//! upstream `CalamineAdapter::external_link_target` needs the `calamine`
-//! feature this crate deliberately leaves off). Routing a workbook with
-//! external references into this engine would silently drop the links, so the
-//! decision is made before any evaluation:
+//! The in-process engine recalculates a linked workbook itself when it reads
+//! the link's saved values exactly as Excel does with the linked workbook
+//! closed (`crate::links`). Every other workbook with an external link goes to
+//! the host's fallback session, never an unchecked openpyxl-to-LibreOffice
+//! round trip: [`preserve_external_links`] refuses fallback output that alters
+//! or drops a link. [`route_workbook`] finds what is external:
 //!
 //! - any `xl/externalLinks/*.xml` part, or any `.rels` relationship whose
-//!   `TargetMode` is `External`, routes to the openpyxl path unchanged;
+//!   `TargetMode` is `External`;
 //! - any formula whose parsed AST contains `ReferenceType::External` (a
-//!   `[book]Sheet!A1` reference, quoted or bracket-pathed) routes the same way;
-//! - anything else may use the in-process engine.
+//!   `[book]Sheet!A1` reference, quoted or bracket-pathed);
+//! - anything else is local.
 //!
 //! The router only reads; it never rewrites parts and never discards unknown
-//! XML. Detection failures fail closed toward openpyxl.
-//! [`preserve_external_links`] checks the fallback's output the same way.
+//! XML. Detection failures fail closed toward the fallback.
 
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 

@@ -16,6 +16,7 @@ fn blend_input(
 ) -> RetrievalBlendInput {
     RetrievalBlendInput {
         id: EntityId::from_bytes_unchecked(id),
+        relevance: 0.0,
         recency,
         salience,
         confidence,
@@ -76,6 +77,7 @@ fn linear_log_blend_is_deterministic_for_fixed_inputs() {
     let inputs = vec![
         RetrievalBlendInput {
             id: EntityId::from_bytes_unchecked([1; 16]),
+            relevance: 0.0,
             recency: 0.2,
             salience: 0.9,
             confidence: 0.8,
@@ -84,6 +86,7 @@ fn linear_log_blend_is_deterministic_for_fixed_inputs() {
         },
         RetrievalBlendInput {
             id: EntityId::from_bytes_unchecked([2; 16]),
+            relevance: 0.0,
             recency: 0.8,
             salience: 0.1,
             confidence: 0.6,
@@ -191,6 +194,7 @@ fn recency_and_salience_co_reside_in_one_log_term() {
     let base = vec![
         RetrievalBlendInput {
             id: id_a,
+            relevance: 0.0,
             recency: 1.0,
             salience: 0.0,
             confidence: 0.0,
@@ -199,6 +203,7 @@ fn recency_and_salience_co_reside_in_one_log_term() {
         },
         RetrievalBlendInput {
             id: id_b,
+            relevance: 0.0,
             recency: 0.0,
             salience: 1.0,
             confidence: 0.0,
@@ -209,6 +214,7 @@ fn recency_and_salience_co_reside_in_one_log_term() {
     let swapped = vec![
         RetrievalBlendInput {
             id: id_b,
+            relevance: 0.0,
             recency: 0.0,
             salience: 1.0,
             confidence: 0.0,
@@ -217,6 +223,7 @@ fn recency_and_salience_co_reside_in_one_log_term() {
         },
         RetrievalBlendInput {
             id: id_a,
+            relevance: 0.0,
             recency: 1.0,
             salience: 0.0,
             confidence: 0.0,
@@ -357,4 +364,99 @@ fn ranked_list_candidates_missing_entities_tie_by_id() {
     assert_eq!(fused[0].score, fused[1].score);
     assert_eq!(fused[0].id, EntityId::from_bytes_unchecked([1; 16]));
     assert_eq!(fused[1].id, EntityId::from_bytes_unchecked([2; 16]));
+}
+
+#[test]
+fn channel_relevance_orders_candidates_the_four_signals_tie() {
+    let strong = [7; 16];
+    let middle = [1; 16];
+    let weak = [3; 16];
+    let inputs = retrieval_candidates_from_ranked_lists(&[vec![
+        scored(strong, 47.3),
+        scored(middle, 6.6),
+        scored(weak, 5.5),
+    ]]);
+    let ranked = linear_log_blend(&inputs);
+    assert_eq!(
+        ranked
+            .iter()
+            .map(|row| *row.id.as_bytes())
+            .collect::<Vec<_>>(),
+        vec![strong, middle, weak],
+        "relevance, not the id, orders tied modulators"
+    );
+    assert!(ranked[0].score > ranked[1].score && ranked[1].score > ranked[2].score);
+}
+
+#[test]
+fn a_candidate_one_channel_missed_takes_that_channel_floor() {
+    let both = [2; 16];
+    let text_only = [1; 16];
+    // Text z: text_only 0.84, both 0.56, [3] -1.40. Vector z: both 1.22,
+    // [4] 0.0, [5] -1.22 (the floor text_only takes).
+    let inputs = retrieval_candidates_from_ranked_lists(&[
+        vec![
+            scored(text_only, 9.0),
+            scored(both, 8.0),
+            scored([3; 16], 1.0),
+        ],
+        vec![
+            scored(both, 0.9),
+            scored([4; 16], 0.5),
+            scored([5; 16], 0.1),
+        ],
+    ]);
+    let relevance = |id: [u8; 16]| {
+        inputs
+            .iter()
+            .find(|input| *input.id.as_bytes() == id)
+            .unwrap()
+            .relevance
+    };
+    assert!(relevance(both) > relevance(text_only));
+}
+
+#[test]
+fn an_extreme_relevance_outlier_keeps_a_finite_ordered_score() {
+    // One outlier over 9,999 equal rows z-normalizes near 100, and exp(100)
+    // is past f32::MAX; two near outliers both pass the ceiling.
+    let ranked: Vec<ScoredEntity> = (0..10_000_u16)
+        .map(|n| {
+            let [high, low] = n.to_be_bytes();
+            let mut id = [0_u8; 16];
+            id[14] = high;
+            id[15] = low;
+            let score = match n {
+                0 => 1.0,
+                1 => 0.999,
+                _ => 0.0,
+            };
+            scored(id, score)
+        })
+        .collect();
+    let without_second: Vec<ScoredEntity> = ranked
+        .iter()
+        .filter(|row| row.id != ranked[1].id)
+        .copied()
+        .collect();
+    let one_outlier = linear_log_blend(&retrieval_candidates_from_ranked_lists(&[without_second]));
+    assert!(one_outlier.iter().all(|row| row.score.is_finite()));
+    assert_eq!(one_outlier[0].id, ranked[0].id);
+    assert_eq!(one_outlier[0].score, BLEND_SCORE_CEILING);
+    assert!(one_outlier[0].score > one_outlier[1].score);
+
+    let two_outliers = linear_log_blend(&retrieval_candidates_from_ranked_lists(
+        std::slice::from_ref(&ranked),
+    ));
+    assert_eq!(
+        [two_outliers[0].id, two_outliers[1].id],
+        [ranked[0].id, ranked[1].id]
+    );
+    assert!(two_outliers[0].score > two_outliers[1].score);
+    assert!(two_outliers[1].score > two_outliers[2].score);
+    assert!(
+        two_outliers
+            .iter()
+            .all(|row| row.score <= BLEND_SCORE_CEILING)
+    );
 }

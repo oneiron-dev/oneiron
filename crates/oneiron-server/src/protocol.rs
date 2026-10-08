@@ -396,14 +396,19 @@ mod tests {
         }
     }
 
+    /// Every distinct ephemeral payload that had its own roundtrip door must
+    /// stay an input here: `b"snapshot"` arrives from the merged-away
+    /// `ephemeral_roundtrip` wrapper, which encoded and decoded through the
+    /// identical `encode_ephemeral` -> `parse_message` seam.
     #[test]
     fn parse_message_ephemeral() {
-        let payload = b"ephemeral-bytes";
-        let encoded = encode_ephemeral(payload).into_result().unwrap();
-        let SyncMessage::Ephemeral(bytes) = parse_message(&encoded).unwrap() else {
-            panic!("expected Ephemeral");
-        };
-        assert_eq!(bytes, payload);
+        for payload in [b"ephemeral-bytes".as_slice(), b"snapshot".as_slice()] {
+            let encoded = encode_ephemeral(payload).into_result().unwrap();
+            let SyncMessage::Ephemeral(bytes) = parse_message(&encoded).unwrap() else {
+                panic!("expected Ephemeral for payload {payload:?}");
+            };
+            assert_eq!(bytes, payload);
+        }
     }
 
     #[test]
@@ -412,16 +417,6 @@ mod tests {
             parse_message(&[50, 1, 2, 3]),
             Err(ProtocolError::UnknownTag(50)),
         ));
-    }
-
-    #[test]
-    fn ephemeral_roundtrip() {
-        let encoded = encode_ephemeral(b"snapshot").into_result().unwrap();
-        let decoded = parse_message(&encoded).unwrap();
-        let SyncMessage::Ephemeral(bytes) = decoded else {
-            panic!("expected Ephemeral");
-        };
-        assert_eq!(bytes, b"snapshot");
     }
 
     #[test]

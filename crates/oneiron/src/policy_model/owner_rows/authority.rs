@@ -67,36 +67,36 @@ fn scope_covers(
     }
 }
 
-/// The same scope-and-target snapshot selects proposal recipients and authorizes
-/// rulings. Owners are unrestricted. Admins and Delegates require BOTH a live
-/// membership whose stored authority scope admits this row and an Owner-minted
-/// named action grant covering the exact target. That scope is the one the
-/// mint door resolved from the vault's grant rows (met with the parent for a
-/// Delegate), never a role preset, so a read-only Delegate cannot silently
-/// inherit policy-edit authority.
-pub(super) fn holders_for_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    _claimed_now: u64,
-    row_scope: &crate::gate::PolicyRowScope,
-    target: &str,
-) -> Result<Vec<EntityId>> {
+/// The live membership of a shared vault: its conferring grants and the
+/// Owner-role members among them.
+struct LiveMembers {
+    grants: Vec<crate::federation::FederationGrant>,
+    owners: BTreeSet<EntityId>,
+}
+
+/// A personal vault's one owner, the embedded owner actor, while it is a live
+/// person. A deleted or corrupted personal owner is not silently replaced.
+fn personal_owner_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<EntityId>> {
+    let owner = crate::vault::embedded_owner_actor_id()?;
+    Ok(
+        if vault.get_entity_type_in_txn(txn, &owner)? == Some(crate::registry::ENTITY_TYPE_PERSON)
+            && vault.entity_lifecycle_state_in_txn(txn, &owner)?
+                == crate::identity_topology::EntityLifecycleState::Active
+        {
+            vec![owner]
+        } else {
+            Vec::new()
+        },
+    )
+}
+
+/// `None` for a personal vault. A shared vault whose creating owner holds no
+/// live Owner grant fails closed.
+fn live_shared_members_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<LiveMembers>> {
     // Grant expiry is read from the vault clock, not a caller-chosen event time.
     let now = vault.store.clock.now_recorded_at();
     let Some(raw) = vault.store.vault_meta.get(txn, SHARED_CREATION_KEY)? else {
-        let owner = crate::vault::embedded_owner_actor_id()?;
-        // A deleted or corrupted personal owner is not silently replaced.
-        return Ok(
-            if vault.get_entity_type_in_txn(txn, &owner)?
-                == Some(crate::registry::ENTITY_TYPE_PERSON)
-                && vault.entity_lifecycle_state_in_txn(txn, &owner)?
-                    == crate::identity_topology::EntityLifecycleState::Active
-            {
-                vec![owner]
-            } else {
-                Vec::new()
-            },
-        );
+        return Ok(None);
     };
     let creation: crate::federation::SharedVaultCreation =
         serde_json::from_slice(&raw).map_err(|_| invalid())?;
@@ -141,6 +141,59 @@ pub(super) fn holders_for_in_txn(
     if !owners.contains(&EntityId::from_hex(&creation.owner_ref).map_err(|_| invalid())?) {
         return Err(invalid());
     }
+    Ok(Some(LiveMembers { grants, owners }))
+}
+
+impl Vault {
+    /// Whether `owner` is a live owner of this vault right now: the embedded
+    /// owner of a personal vault, or a live Owner-role member of a shared one.
+    /// An authenticated human is not by that alone an owner.
+    pub fn is_live_vault_owner(&self, owner: &crate::consent::AuthenticatedOwner) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        owner.revalidate_in_txn(self, &txn)?;
+        Ok(owners_in_txn(self, &txn)?.contains(&owner.actor()))
+    }
+
+    /// Everyone whose membership confers authority now: the embedded owner of
+    /// a personal vault, or every live member of a shared one, whatever role.
+    pub(crate) fn live_member_ids(&self) -> Result<BTreeSet<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(match live_shared_members_in_txn(self, &txn)? {
+            None => personal_owner_in_txn(self, &txn)?.into_iter().collect(),
+            Some(LiveMembers { grants, .. }) => {
+                grants.iter().map(|grant| grant.member_ref).collect()
+            }
+        })
+    }
+}
+
+/// The vault's live owners: the embedded owner of a personal vault, or every
+/// live Owner-role member of a shared one. An Admin or Delegate is no owner,
+/// whatever action grants it holds.
+pub(super) fn owners_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<EntityId>> {
+    match live_shared_members_in_txn(vault, txn)? {
+        None => personal_owner_in_txn(vault, txn),
+        Some(members) => Ok(members.owners.into_iter().collect()),
+    }
+}
+
+/// The same scope-and-target snapshot selects proposal recipients and authorizes
+/// rulings. Owners are unrestricted. Admins and Delegates require BOTH a live
+/// membership whose stored authority scope admits this row and an Owner-minted
+/// named action grant covering the exact target. That scope is the one the
+/// mint door resolved from the vault's grant rows (met with the parent for a
+/// Delegate), never a role preset, so a read-only Delegate cannot silently
+/// inherit policy-edit authority.
+pub(super) fn holders_for_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    _claimed_now: u64,
+    row_scope: &crate::gate::PolicyRowScope,
+    target: &str,
+) -> Result<Vec<EntityId>> {
+    let Some(LiveMembers { grants, owners }) = live_shared_members_in_txn(vault, txn)? else {
+        return personal_owner_in_txn(vault, txn);
+    };
     let class = ActionClass::new(POLICY_CHANGE_CLASS)?;
     // An unrepresentable target cannot authorize a non-owner. Owners still
     // retain their independent role authority.

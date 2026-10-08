@@ -131,4 +131,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vector/vector_report.rs` | src | s | 1 crate-vis | — | Vector bench text report rendering |
 | `src/vector/vector_run.rs` | src | m | 15 crate-vis | — | Vector bench execution, measurement, and gate evaluation |
 | `src/vector/vector_tests.rs` | test | s | — | — | Vector bench contract and end-to-end tests |
+| `tests/cleanup_retrieval.rs` | test | s | — | — | ANN recall corpus `ann_seed42.v1` (source: ec9cbdec92e7dbcc865b9958dd1ff8652714d6c7). rand 0.8.8 StdRng seed… |
 | `tests/teacher_probe_cli.rs` | test | s | — | — | Run the shipped binary, not only its Rust scoring function, against CI fixtures |

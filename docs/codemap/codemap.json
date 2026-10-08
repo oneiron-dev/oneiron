@@ -3431,22 +3431,33 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "SecretScanMode"
+     ],
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8,
+      "enum": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/secret_scan/shapes.rs",
      "purpose": "Credential-shape detection shared by write, serve, and export",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 8
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/batch/secret_scan/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -4157,7 +4168,7 @@
      "path": "src/bm25/codec.rs",
      "purpose": "Binary codecs, stat/total-docs accessors, corruption constructors, key validation",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -11294,7 +11305,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AuthenticatedOwner",
@@ -11303,7 +11314,7 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 15,
       "fn": 16,
       "struct": 2
      }
@@ -16415,7 +16426,7 @@
      "surface": {
       "crate-vis": 2,
       "mod": 2,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -16429,7 +16440,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/edit_roundtrip/native_recalc_tests.rs",
@@ -18285,7 +18296,7 @@
      "path": "src/fusion.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
@@ -19059,6 +19070,16 @@
      "surface": {
       "crate-vis": 9,
       "enum": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/run_proposal_fixture.rs",
+     "purpose": "Test-support seam: park one Dreamer-authored proposal on a run's consent lane, as a dream pass does, so a…",
+     "surface": {
       "fn": 1
      }
     },
@@ -20796,7 +20817,7 @@
      "path": "src/ingest/bulk_review.rs",
      "purpose": "One import-time human act for the exact set of imported claim candidates",
      "surface": {
-      "fn": 2,
+      "fn": 4,
       "struct": 3
      }
     },
@@ -23923,13 +23944,14 @@
      "kind": "src",
      "notable": [
       "ExportOptions",
+      "ExportReceipt",
       "MemoryExport"
      ],
      "path": "src/memory/export.rs",
      "purpose": "Full-vault memory export through the existing five-format pack writers",
      "surface": {
-      "fn": 3,
-      "struct": 2
+      "fn": 4,
+      "struct": 3
      }
     },
     {
@@ -27430,6 +27452,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/pipeline/tests/relevance_order.rs",
+     "purpose": "Channel relevance orders the result list (ONE-2702)",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -27673,7 +27703,7 @@
      "purpose": "Policy classification over two planes",
      "surface": {
       "crate-vis": 1,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -27693,7 +27723,8 @@
      "path": "src/policy_model/owner_rows/authority.rs",
      "purpose": "Live policy-power holders from shared membership and owner-stamped action grants",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4,
+      "fn": 1
      }
     },
     {
@@ -27708,7 +27739,7 @@
      "path": "src/policy_model/owner_rows/ledger.rs",
      "purpose": "Append-only row change history and proposal inbox",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 3,
       "struct": 3
@@ -27726,7 +27757,7 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 5,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -27754,6 +27785,27 @@
      "notable": [],
      "path": "src/policy_model/owner_rows/notify_tests.rs",
      "purpose": "Notification queue fairness, failure isolation, and recipient digest cadence",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SecretScanReceipt"
+     ],
+     "path": "src/policy_model/owner_rows/secret_scan_switch.rs",
+     "purpose": "The owner's `secrets: on | off` switch for the write-door secret scan",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/policy_model/owner_rows/secret_scan_switch/tests.rs",
+     "purpose": "—",
      "surface": {}
     },
     {
@@ -29484,6 +29536,24 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/authority_plane.rs",
+     "purpose": "A historical restore gives content as it stood, never authority as it stood",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/checkpoint/authority_plane/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "RestoreEpoch",
       "RestoreReason",
@@ -29493,7 +29563,7 @@
      "purpose": "Tier-C physical-row checkpoints and one restore/wake/migrate path",
      "surface": {
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "re-export": 1,
       "struct": 2
      }
@@ -36722,7 +36792,7 @@
      "path": "src/test_util/mod.rs",
      "purpose": "Shared test helpers",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -39559,7 +39629,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 95,
+     "files": 96,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39820,7 +39890,7 @@
     "consent": {
      "files": 17,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "DEC-0006 unified consent-mode — bounded standing grants"
     },
@@ -40105,7 +40175,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 130,
+     "files": 131,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40343,14 +40413,14 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 53,
+     "files": 54,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "—"
     },
     "policy_model": {
-     "files": 40,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40434,7 +40504,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 18,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -40805,10 +40875,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 21,
+   "over_bar": 22,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2426,
-   "test_files": 847
+   "source_files": 2429,
+   "test_files": 851
   },
   "oneiron-android": {
    "files": [
@@ -42003,6 +42073,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/cleanup_retrieval.rs",
+     "purpose": "ANN recall corpus `ann_seed42.v1` (source: ec9cbdec92e7dbcc865b9958dd1ff8652714d6c7). rand 0.8.8 StdRng seed…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/teacher_probe_cli.rs",
      "purpose": "Run the shipped binary, not only its Rust scoring function, against CI fixtures",
      "surface": {}
@@ -42097,7 +42175,7 @@
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
    "source_files": 101,
-   "test_files": 20
+   "test_files": 21
   },
   "oneiron-docedit": {
    "files": [
@@ -46197,14 +46275,6 @@
      }
     },
     {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/api/memory_reason/render_tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -46282,6 +46352,16 @@
      "purpose": "Owner-only setup and the Console's closed organization action list",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes.rs",
+     "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -46587,6 +46667,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/owner_routes.rs",
+     "purpose": "`/v1/owner`: one owner door, receipted acts, whole-batch and whole-run consent",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -46788,7 +46876,33 @@
      "surface": {
       "enum": 4,
       "fn": 2,
+      "re-export": 1,
       "struct": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BackupArgs",
+      "DoctorArgs",
+      "ExportArgs",
+      "ImportBatchArgs",
+      "ImportCommand",
+      "ImportDecisionArgs",
+      "RestoreArgs",
+      "RunArgs",
+      "RunDecisionArgs",
+      "RunsCommand",
+      "SecretScanArgs",
+      "SecretScanSwitch",
+      "ServeOnlyArgs"
+     ],
+     "path": "src/cli/owner_args.rs",
+     "purpose": "Flags for the owner's own commands: doctor, backup, restore, export, the secret scan switch, import consent…",
+     "surface": {
+      "enum": 3,
+      "struct": 10
      }
     },
     {
@@ -46809,8 +46923,9 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy",
      "surface": {
       "const": 1,
-      "fn": 10,
-      "re-export": 4,
+      "crate-vis": 1,
+      "fn": 9,
+      "re-export": 5,
       "struct": 1
      }
     },
@@ -46857,6 +46972,34 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/commands/msgpack_json.rs",
+     "purpose": "JSON renderings of MessagePack claim values for command output",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/owner.rs",
+     "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, export, the secret scan switch, import…",
+     "surface": {
+      "fn": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/commands/owner/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/commands/reembed.rs",
      "purpose": "`reembed`: moves a stopped vault to the configured embedding space",
      "surface": {
@@ -46887,6 +47030,21 @@
      "path": "src/commands/writer_lease_tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BackupConfig",
+      "BackupConfigOverride"
+     ],
+     "path": "src/config/backup.rs",
+     "purpose": "The `[backup]` section: where local backups go, whether `serve` takes them on its own, how often, and how…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2,
+      "struct": 2
+     }
     },
     {
      "bucket": "m",
@@ -46978,8 +47136,8 @@
      "path": "src/config/mod.rs",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
-      "mod": 5,
-      "re-export": 5
+      "mod": 6,
+      "re-export": 6
      }
     },
     {
@@ -48178,6 +48336,84 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup.rs",
+     "purpose": "Local backups of one vault: take, list, prune, rehearse and restore",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/owner/backup/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/imports.rs",
+     "purpose": "Bulk import consent: preview the exact batch, then approve or decline it whole (OF-202)",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/location.rs",
+     "purpose": "Where the owner's data lives: the vault path and size, the backups beside it, and the last time anything…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/mod.rs",
+     "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/runs.rs",
+     "purpose": "Agent-run batch consent: see what a run is waiting on, then approve or decline the whole run in one act…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/schedule.rs",
+     "purpose": "Scheduled backups for a running `serve`",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/stamp.rs",
+     "purpose": "UTC times for backup file names and reports, with no date library: `20261008T123456.789Z` in file names, RFC…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "InvalidView",
       "View"
@@ -48326,7 +48562,7 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 6,
       "struct": 1
      }
@@ -48710,6 +48946,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/owner_backup.rs",
+     "purpose": "The owner's backup loop through the shipped `oneiron` binary: back up, change the vault, rehearse (live…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -48775,7 +49019,7 @@
      "purpose": "Host-bound UI and agent action executor over the engine's one verb registry"
     },
     "api": {
-     "files": 165,
+     "files": 166,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -48796,21 +49040,21 @@
      "purpose": "Broadcast group for multi-device fan-out with echo suppression"
     },
     "cli": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "—"
     },
     "commands": {
-     "files": 9,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -48893,6 +49137,13 @@
      "layout": "file",
      "purpose": "ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1)"
     },
+    "owner": {
+     "files": 8,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`"
+    },
     "projection": {
      "files": 2,
      "impl_vault": false,
@@ -48959,8 +49210,8 @@
    },
    "over_bar": 2,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 244,
-   "test_files": 106
+   "source_files": 256,
+   "test_files": 109
   },
   "oneiron-uniffi": {
    "files": [
@@ -49352,16 +49603,6 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
-     "path": "src/cache.rs",
-     "purpose": "Typed formula caches as checked byte patches, preserving unmodelled XML",
-     "surface": {
-      "crate-vis": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [
       "CalcReport",
       "CalcSetup",
@@ -49382,15 +49623,28 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
-     "path": "src/context.rs",
-     "purpose": "Bound formula AST evaluation and keep ambient context out of native recalc",
+     "notable": [
+      "RecalcClock"
+     ],
+     "path": "src/clock.rs",
+     "purpose": "What one recalculation reads from its caller: the instant NOW() and TODAY() observe, the local UTC offset…",
      "surface": {
-      "crate-vis": 1
+      "fn": 5,
+      "struct": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context.rs",
+     "purpose": "Bound formula AST evaluation, keep what only the host knows out of native recalc and find the called names…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "FormualizerEngine"
@@ -49399,7 +49653,7 @@
      "purpose": "The owned formualizer engine behind the [`RecalcEngine`] seam",
      "surface": {
       "const": 6,
-      "crate-vis": 3,
+      "crate-vis": 1,
       "fn": 1,
       "re-export": 1,
       "struct": 1
@@ -49427,17 +49681,17 @@
      "purpose": "In-process XLSX formula recalculation, the default of the edit round trip",
      "surface": {
       "mod": 6,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
-     "bucket": "s",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
-     "path": "src/mac_parity.rs",
-     "purpose": "Workbook-local function masking for functions without recorded truth, never global overrides",
+     "path": "src/links.rs",
+     "purpose": "Linked workbooks: the external references the engine reads exactly as Excel for Windows reads them with the…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 7
      }
     },
     {
@@ -49462,22 +49716,22 @@
      "kind": "src",
      "notable": [],
      "path": "src/routing.rs",
-     "purpose": "External-link routing (step 25): linked workbooks stay off this engine",
+     "purpose": "External links on the precision fallback's route",
      "surface": {
       "fn": 2,
       "re-export": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "WorkbookRecalc"
      ],
      "path": "src/workbook.rs",
-     "purpose": "Load a bounded XLSX graph and update only formula XML and cached values",
+     "purpose": "Recalculate a local XLSX through the fork's retained cache writer",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 1
      }
@@ -49509,7 +49763,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "tests/workbook.rs",
@@ -49518,13 +49772,6 @@
     }
    ],
    "modules": {
-    "cache": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
-     "purpose": "Typed formula caches as checked byte patches, preserving unmodelled XML"
-    },
     "calc": {
      "files": 1,
      "impl_vault": false,
@@ -49532,17 +49779,24 @@
      "layout": "file",
      "purpose": "Storage-independent recalc seam: pure over cell maps, no vault, no filesystem, no clock"
     },
+    "clock": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "What one recalculation reads from its caller: the instant NOW() and TODAY() observe, the local UTC offset…"
+    },
     "context": {
      "files": 1,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "Bound formula AST evaluation and keep ambient context out of native recalc"
+     "purpose": "Bound formula AST evaluation, keep what only the host knows out of native recalc and find the called names…"
     },
     "engine": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "The owned formualizer engine behind the [`RecalcEngine`] seam"
     },
@@ -49553,12 +49807,12 @@
      "layout": "file",
      "purpose": "Typed failures for the formula crate"
     },
-    "mac_parity": {
+    "links": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "L",
      "layout": "file",
-     "purpose": "Workbook-local function masking for functions without recorded truth, never global overrides"
+     "purpose": "Linked workbooks: the external references the engine reads exactly as Excel for Windows reads them with the…"
     },
     "measure": {
      "files": 1,
@@ -49572,14 +49826,14 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "External-link routing (step 25): linked workbooks stay off this engine"
+     "purpose": "External links on the precision fallback's route"
     },
     "workbook": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
-     "purpose": "Load a bounded XLSX graph and update only formula XML and cached values"
+     "purpose": "Recalculate a local XLSX through the fork's retained cache writer"
     },
     "xml": {
      "files": 1,
@@ -49589,7 +49843,7 @@
      "purpose": "The document organ's namespace-aware reader, with this crate's errors"
     }
    },
-   "over_bar": 0,
+   "over_bar": 2,
    "purpose": "In-process XLSX formula recalculation, the default of the edit round trip",
    "source_files": 13,
    "test_files": 3

@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use oneiron::{HostingPrivacyPosture, VaultDataKeyCustody, VaultPrivacyConfig};
 
+use super::backup::BackupConfig;
 use super::embedder::EmbedderConfig;
 use super::lookup::{LEGACY_DEFAULT_VAULT_PATH, redacted_secret};
 use crate::runtime::RuntimeConfig;
@@ -222,6 +223,8 @@ pub struct ServeConfig {
     /// Absent means rung 0: no worker, no query door, vectors supplied by the
     /// client exactly as before this section existed.
     pub embedder: Option<EmbedderConfig>,
+    /// The `[backup]` section: local backup directory, schedule and retention.
+    pub backup: BackupConfig,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
     pub failure_signal_export: bool,
@@ -269,6 +272,7 @@ impl Default for ServeConfig {
             max_bulk_decompressed: server.max_bulk_decompressed,
             runtime: server.runtime,
             embedder: None,
+            backup: BackupConfig::default(),
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,
@@ -322,6 +326,7 @@ impl fmt::Debug for ServeConfig {
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
             .field("runtime", &self.runtime)
             .field("embedder", &self.embedder)
+            .field("backup", &self.backup)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",

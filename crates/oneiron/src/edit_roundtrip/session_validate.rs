@@ -4,6 +4,7 @@ use super::opc::{self, OpcPackage, PartClass};
 use super::{EditOp, EditWarning, OfficeFormat};
 use crate::blob_artifact::CalcEngineStamp;
 use crate::error::Result;
+use oneiron_xlsx_formula::RecalcClock;
 use serde::Serialize;
 use std::collections::BTreeSet;
 
@@ -72,7 +73,7 @@ pub struct AppliedEdit {
 pub enum RecalcPolicy {
     /// The default. The pipeline wraps the session so the in-process formula
     /// engine recalculates every workbook it admits. Only refused workbooks
-    /// (unsupported features, formulas needing caller context) and
+    /// (unsupported features, formulas needing what only the host knows) and
     /// external-link workbooks reach [`EditSession::recalc`], whose output
     /// must keep every external link.
     #[default]
@@ -112,6 +113,15 @@ pub trait EditSession {
     /// Stage-3 routing. Override only to opt out of in-process recalc.
     fn recalc_policy(&self) -> RecalcPolicy {
         RecalcPolicy::NativeFirst
+    }
+
+    /// The instant, local UTC offset and random seed the in-process recalc
+    /// gives NOW(), TODAY() and the random functions, as Excel recalculating
+    /// at edit time would. `None` (the default) samples the host's clock, its
+    /// local offset and a fresh seed when the recalc runs, as the host's own
+    /// recalc reads them.
+    fn recalc_clock(&self) -> Option<RecalcClock> {
+        None
     }
 }
 

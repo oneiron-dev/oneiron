@@ -1,11 +1,21 @@
 //! Measure the shipped retained XLSX adapter without a precision fallback.
+//! The recalculation reads this host's clock and local offset and a fresh
+//! random seed, as the edit round trip does without a session clock.
+//!
+//! Exit status: 0 recalculated natively; 3 the adapter refuses the workbook
+//! (`UnsupportedWorkbook`) and 4 the engine fails, both of which the edit
+//! round trip hands to the host's precision fallback; 2 the round trip
+//! refuses the package or workbook outright. No output is written unless the
+//! status is 0; stdout carries one JSON report either way.
 use std::error::Error;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::process::ExitCode;
 
 use oneiron_docedit::retained_opc::{Limits, XmlLimits};
 use oneiron_xlsx_formula::engine::FormualizerEngine;
+use oneiron_xlsx_formula::{FormulaError, RecalcClock};
 
 /// This measurement host's own ceilings. They equal the shipped document
 /// resource policy row; a vault host passes its resolved limits instead.
@@ -20,7 +30,7 @@ const LIMITS: Limits = Limits {
     },
 };
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> Result<ExitCode, Box<dyn Error>> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     if args.len() != 2 {
         return Err("usage: recalc_native INPUT.xlsx OUTPUT.xlsx".into());
@@ -32,7 +42,29 @@ fn main() -> Result<(), Box<dyn Error>> {
     if output.symlink_metadata().is_ok() {
         return Err(io::Error::new(io::ErrorKind::AlreadyExists, "output already exists").into());
     }
-    let report = FormualizerEngine::new().recalculate_xlsx(&fs::read(input)?, LIMITS)?;
+    let report = match FormualizerEngine::new().recalculate_xlsx(
+        &fs::read(input)?,
+        LIMITS,
+        &RecalcClock::system(),
+    ) {
+        Ok(report) => report,
+        Err(error) => {
+            let status = match error {
+                FormulaError::UnsupportedWorkbook(_) => 3,
+                FormulaError::Engine(_) => 4,
+                _ => 2,
+            };
+            serde_json::to_writer(
+                io::stdout().lock(),
+                &serde_json::json!({
+                    "code": error.code(),
+                    "reason": error.to_string(),
+                    "precision_fallback": status != 2,
+                }),
+            )?;
+            return Ok(ExitCode::from(status));
+        }
+    };
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -48,5 +80,5 @@ fn main() -> Result<(), Box<dyn Error>> {
             "precision_fallback": false,
         }),
     )?;
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }

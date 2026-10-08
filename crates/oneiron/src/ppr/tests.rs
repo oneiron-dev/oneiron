@@ -4924,12 +4924,19 @@ fn project_hub_membership_lambda_damps_both_directions() -> Result<()> {
         )?;
         vault.put_project_member(asset, project)?;
     }
+    let alpha = 0.15;
+    let expected_total = crate::workspace_roster::HUB_BELONGS_TO_LAMBDA * (1.0 - alpha);
+    let ordinary_total =
+        lambda_for_kind(EdgeKind::BelongsTo).expect("belongs_to is traversed") * (1.0 - alpha);
+    assert!(expected_total < ordinary_total);
+
     let txn = vault.store.env.read_txn()?;
-    let inbound = ppr_compute(&vault.store, &txn, &[project], 1, 0.15)?;
-    // Each member gets half the 0.05 budget, not half of ordinary λ=1.
-    assert!((score_for(&inbound, a) - 0.02125).abs() < 1e-6);
-    assert!((score_for(&inbound, b) - 0.02125).abs() < 1e-6);
-    let outbound = ppr_compute(&vault.store, &txn, &[a], 1, 0.15)?;
-    assert!((score_for(&outbound, project) - 0.0425).abs() < 1e-6);
+    // Same-kind normalization splits the hub budget between two members.
+    let inbound = ppr_compute(&vault.store, &txn, &[project], 1, alpha)?;
+    assert!((score_for(&inbound, a) - expected_total / 2.0).abs() < 1e-6);
+    assert!((score_for(&inbound, b) - expected_total / 2.0).abs() < 1e-6);
+    // The reverse walk has one edge, so the project receives the whole budget.
+    let outbound = ppr_compute(&vault.store, &txn, &[a], 1, alpha)?;
+    assert!((score_for(&outbound, project) - expected_total).abs() < 1e-6);
     Ok(())
 }

@@ -244,10 +244,11 @@ fn access_factor_applied_post_fusion() -> Result<()> {
         "decay changes rank, never survival"
     );
 
+    // ONE-2702: the PPR seed now leads on relevance; the twin claims still tie and order by id.
     assert_eq!(
-        baseline.first().map(|scored| scored.id),
-        Some(decayed),
-        "undecayed candidates tie and order by id, so the decayed claim leads"
+        baseline.iter().map(|scored| scored.id).collect::<Vec<_>>(),
+        vec![seed, decayed, control],
+        "undecayed, the decayed claim leads its identical twin"
     );
     assert_eq!(
         decayed_run.last().map(|scored| scored.id),
@@ -521,7 +522,15 @@ fn expand_ppr_implicit_seeds_ignore_access_decay() -> Result<()> {
         .with_access_factor_overrides(&overrides)
         .limit(10)
         .run()?;
-    let base = to_score_map(&undecayed)[&faded];
+    // ONE-2702: relevance depends on the pool, so the reference is the same expansion undecayed.
+    let expanded_undecayed = vault
+        .query()
+        .search_text(TEXT, 10)
+        .expand_ppr(&[], 2)
+        .with_temporal_now(DECAY_NOW)
+        .limit(10)
+        .run()?;
+    let base = to_score_map(&expanded_undecayed)[&faded];
     let applied = to_score_map(&expanded_wide)[&faded];
     assert!(
         approx_eq(applied, base * OVERRIDE, 1e-6),

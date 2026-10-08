@@ -486,6 +486,9 @@ fn fork_hash_scoring_constants(hasher: &mut Sha256, fast_dims: Option<u16>) {
     fork_hash_f64(hasher, ALPHA_TAU_SECS);
     fork_hash_f64(hasher, TEMPORAL_FLOOR);
     fork_hash_f32(hasher, COSINE_GHOST_VECTOR_THRESHOLD);
+    // Channel relevance entered the blend; replays keyed before it differ.
+    fork_hash_f64(hasher, crate::fusion::RELEVANCE_LOG_WEIGHT);
+    fork_hash_f32(hasher, crate::fusion::BLEND_SCORE_CEILING);
     // EMB-2: the funnel prefix changes vector-channel scoring space.
     fork_hash_u32(hasher, u32::from(fast_dims.unwrap_or(0)));
 }

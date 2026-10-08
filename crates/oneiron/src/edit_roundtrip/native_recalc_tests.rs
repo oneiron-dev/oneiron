@@ -13,11 +13,13 @@ use crate::error::{ArtifactError, Error, Result};
 const MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const DOC_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const REL: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+const TYPES: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
+const SPREADSHEET: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml";
 const INPUT: &str = "xl/worksheets/input.xml";
 const OUTPUT: &str = "xl/worksheets/result.xml";
 const OPAQUE: &str = "vendor/opaque.bin";
 const UNKNOWN: &[u8] = b"opaque vendor bytes\0\xff";
-const NATIVE_STAMP: &str = "oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.7";
+const NATIVE_STAMP: &str = "oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.11";
 
 fn build(parts: Vec<(&str, Vec<u8>)>) -> Vec<u8> {
     opc::write(&OpcPackage::from_parts(
@@ -48,7 +50,8 @@ fn sheet(cells: &str) -> String {
 /// plus one opaque vendor part the passthrough law must keep.
 fn workbook(inputs: &str, formulas: &str) -> Vec<u8> {
     build(vec![
-        ("[Content_Types].xml", br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/></Types>"#.to_vec()),
+        ("[Content_Types].xml", format!(r#"<Types xmlns="{TYPES}"><Default Extension="xml" ContentType="application/xml"/><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="bin" ContentType="application/octet-stream"/><Override PartName="/xl/workbook.xml" ContentType="{SPREADSHEET}.sheet.main+xml"/><Override PartName="/{OUTPUT}" ContentType="{SPREADSHEET}.worksheet+xml"/><Override PartName="/{INPUT}" ContentType="{SPREADSHEET}.worksheet+xml"/></Types>"#).into_bytes()),
+        ("_rels/.rels", format!(r#"<Relationships xmlns="{REL}"><Relationship Id="rId1" Type="{DOC_REL}/officeDocument" Target="xl/workbook.xml"/></Relationships>"#).into_bytes()),
         ("xl/workbook.xml", format!(r#"<workbook xmlns="{MAIN}" xmlns:r="{DOC_REL}"><sheets><sheet name="Result" sheetId="1" r:id="out"/><sheet name="Input" sheetId="2" r:id="in"/></sheets></workbook>"#).into_bytes()),
         ("xl/_rels/workbook.xml.rels", format!(r#"<Relationships xmlns="{REL}"><Relationship Id="out" Type="{DOC_REL}/worksheet" Target="worksheets/result.xml"/><Relationship Id="in" Type="{DOC_REL}/worksheet" Target="worksheets/input.xml"/></Relationships>"#).into_bytes()),
         (INPUT, sheet(inputs).into_bytes()),
@@ -68,6 +71,89 @@ fn external_workbook() -> Vec<u8> {
         "xl/externalLinks/_rels/externalLink1.xml.rels",
         format!(
             r#"<Relationships xmlns="{REL}"><Relationship Id="link" Type="{DOC_REL}/externalLinkPath" TargetMode="External" Target="file:///private/other.xlsx"/></Relationships>"#
+        ),
+    )
+}
+
+/// `workbook` whose `Result` formulas also read a closed linked workbook,
+/// listed as Excel lists it: the link part saves `Rates!A1` = 40 and keeps
+/// its path in its own relationships.
+fn linked_workbook(inputs: &str, formulas: &str) -> Vec<u8> {
+    let bytes = workbook(inputs, formulas);
+    let bytes = with_part(
+        &bytes,
+        "xl/workbook.xml",
+        part_text(&bytes, "xl/workbook.xml").replace(
+            "</sheets>",
+            r#"</sheets><externalReferences><externalReference r:id="link1"/></externalReferences>"#,
+        ),
+    );
+    let bytes = with_part(
+        &bytes,
+        "xl/_rels/workbook.xml.rels",
+        part_text(&bytes, "xl/_rels/workbook.xml.rels").replace(
+            "</Relationships>",
+            &format!(r#"<Relationship Id="link1" Type="{DOC_REL}/externalLink" Target="externalLinks/externalLink1.xml"/></Relationships>"#),
+        ),
+    );
+    let bytes = with_part(
+        &bytes,
+        "[Content_Types].xml",
+        part_text(&bytes, "[Content_Types].xml").replace(
+            "</Types>",
+            &format!(r#"<Override PartName="/xl/externalLinks/externalLink1.xml" ContentType="{SPREADSHEET}.externalLink+xml"/></Types>"#),
+        ),
+    );
+    let bytes = with_part(
+        &bytes,
+        "xl/externalLinks/externalLink1.xml",
+        format!(
+            r#"<externalLink xmlns="{MAIN}" xmlns:r="{DOC_REL}"><externalBook r:id="rId1"><sheetNames><sheetName val="Rates"/></sheetNames><sheetDataSet><sheetData sheetId="0"><row r="1"><cell r="A1"><v>40</v></cell></row></sheetData></sheetDataSet></externalBook></externalLink>"#
+        ),
+    );
+    with_part(
+        &bytes,
+        "xl/externalLinks/_rels/externalLink1.xml.rels",
+        format!(
+            r#"<Relationships xmlns="{REL}"><Relationship Id="rId1" Type="{DOC_REL}/externalLinkPath" TargetMode="External" Target="file:///private/rates.xlsx"/></Relationships>"#
+        ),
+    )
+}
+
+/// `workbook` plus the defined name `rate` (`Input!$A$1`) and the `Prices`
+/// table on `Input!A3:B5`; `Result!A1:A2` repeat one shared formula over both.
+fn names_tables_and_shared_formulas() -> Vec<u8> {
+    let inputs = r#"<c r="A1"><v>2</v></c></row><row r="3"><c r="A3" t="inlineStr"><is><t>Item</t></is></c><c r="B3" t="inlineStr"><is><t>Price</t></is></c></row><row r="4"><c r="A4" t="inlineStr"><is><t>tea</t></is></c><c r="B4"><v>3</v></c></row><row r="5"><c r="A5" t="inlineStr"><is><t>cake</t></is></c><c r="B5"><v>5</v></c>"#;
+    let formulas = r#"<c r="A1"><f t="shared" ref="A1:A2" si="0">Input!B4*rate</f><v>0</v></c><c r="B1"><f>SUM(Prices[Price])*rate</f><v>0</v></c></row><row r="2"><c r="A2"><f t="shared" si="0"/><v>0</v></c>"#;
+    let bytes = workbook(inputs, formulas);
+    let bytes = with_part(
+        &bytes,
+        "xl/workbook.xml",
+        part_text(&bytes, "xl/workbook.xml").replace(
+            "</sheets>",
+            r#"</sheets><definedNames><definedName name="rate">Input!$A$1</definedName></definedNames>"#,
+        ),
+    );
+    let bytes = with_part(
+        &bytes,
+        "[Content_Types].xml",
+        part_text(&bytes, "[Content_Types].xml").replace(
+            "</Types>",
+            &format!(r#"<Override PartName="/xl/tables/table1.xml" ContentType="{SPREADSHEET}.table+xml"/></Types>"#),
+        ),
+    );
+    let bytes = with_part(
+        &bytes,
+        "xl/worksheets/_rels/input.xml.rels",
+        format!(
+            r#"<Relationships xmlns="{REL}"><Relationship Id="t1" Type="{DOC_REL}/table" Target="../tables/table1.xml"/></Relationships>"#
+        ),
+    );
+    with_part(
+        &bytes,
+        "xl/tables/table1.xml",
+        format!(
+            r#"<table xmlns="{MAIN}" id="1" name="Prices" displayName="Prices" ref="A3:B5"><autoFilter ref="A3:B5"/><tableColumns count="2"><tableColumn id="1" name="Item"/><tableColumn id="2" name="Price"/></tableColumns></table>"#
         ),
     )
 }
@@ -221,6 +307,38 @@ fn supported_workbook_recalculates_natively_by_default_and_stamps_the_crate() {
 }
 
 #[test]
+fn shared_formulas_defined_names_and_tables_recalculate_natively_through_the_gate() {
+    let input = names_tables_and_shared_formulas();
+    let host = Host {
+        edit: true,
+        ..Host::default()
+    };
+    let proposal = proposed(run_edit_roundtrip(
+        &host,
+        &input,
+        OfficeFormat::Xlsx,
+        &set_input(),
+        "run:names-tables",
+    ));
+    assert!(proposal.validation.ok, "{:?}", proposal.validation);
+    assert_eq!(stamp(&proposal).as_deref(), Some(NATIVE_STAMP));
+    let xml = part_text(&proposal.new_bytes, OUTPUT);
+    assert!(
+        xml.contains(r#"<f t="shared" ref="A1:A2" si="0">Input!B4*rate</f><v>21</v>"#),
+        "{xml}"
+    );
+    assert!(xml.contains(r#"<f t="shared" si="0"/><v>35</v>"#), "{xml}");
+    assert!(
+        xml.contains("<f>SUM(Prices[Price])*rate</f><v>56</v>"),
+        "{xml}"
+    );
+    assert!(
+        host.seen.borrow().is_empty(),
+        "the host calculator never ran"
+    );
+}
+
+#[test]
 fn a_reused_host_does_not_stamp_an_old_engine_on_a_no_recalc_proposal() {
     let input = workbook("", r#"<c r="A1"><f>1+1</f><v>0</v></c>"#);
     let host = Host::default();
@@ -248,13 +366,17 @@ fn a_reused_host_does_not_stamp_an_old_engine_on_a_no_recalc_proposal() {
 fn refused_workbooks_reach_the_host_recalc_untouched() {
     let deep_chain = format!("<f>{}</f>", ["1"; 40].join("+"));
     let cases = [
-        r#"<f t="shared" si="0" ref="A1:A2">1+2</f>"#,
-        "<f>SEQUENCE(2,2)</f>",
-        "<f>NOW()</f>",
-        "<f>_xlfn.TODAY()</f>",
-        "<f>SUM(RAND(),1)</f>",
-        "<f>LAMBDA(x,NOW()+x)(2)</f>",
+        // What only the host knows: the environment, the file's path, the
+        // active cell.
+        "<f>INFO(&quot;osversion&quot;)</f>",
+        "<f>CELL(&quot;filename&quot;,A1)</f>",
+        "<f>LAMBDA(x,CELL(&quot;row&quot;)+x)(2)</f>",
         deep_chain.as_str(),
+        // An Excel function the engine lacks: it would cache #NAME? where
+        // Excel computes a value.
+        "<f>_xlfn.ANCHORARRAY(Input!A1)</f>",
+        // The edit gate requires the OOXML prefix in a recalculated sheet.
+        "<f>XLOOKUP(2,Input!A1:A1,Input!A1:A1)</f>",
     ];
     let mut inputs: Vec<Vec<u8>> = cases
         .iter()
@@ -270,9 +392,48 @@ fn refused_workbooks_reach_the_host_recalc_untouched() {
     inputs.push(with_part(
         &local,
         "xl/workbook.xml",
-        part_text(&local, "xl/workbook.xml").replace(
+        part_text(&local, "xl/workbook.xml")
+            .replace("</sheets>", r#"</sheets><calcPr fullPrecision="0"/>"#),
+    ));
+    // A function the workbook's VBA project may define, which Excel with
+    // macros enabled would call.
+    inputs.push(with_part(
+        &workbook(
+            r#"<c r="A1"><v>2</v></c>"#,
+            r#"<c r="A1"><f>ClrCnt(Input!A1,14)</f></c>"#,
+        ),
+        "xl/vbaProject.bin",
+        b"VBA project".to_vec(),
+    ));
+    // A workbook LAMBDA name, which the engine would resolve to #NAME?.
+    let named = workbook(
+        r#"<c r="A1"><v>2</v></c>"#,
+        r#"<c r="A1"><f>SUM(_xlfn.MAP(Input!A1:A1,AddDouble))</f></c>"#,
+    );
+    inputs.push(with_part(
+        &named,
+        "xl/workbook.xml",
+        part_text(&named, "xl/workbook.xml").replace(
             "</sheets>",
-            "</sheets><definedNames><definedName name=\"rate\">Input!$A$1</definedName></definedNames>",
+            r#"</sheets><definedNames><definedName name="AddDouble">_xlfn.LAMBDA(_xlpm.x,_xlpm.x*2)</definedName></definedNames>"#,
+        ),
+    ));
+    // An escape the engine's reader keeps as seven characters (`_x20AC_` is €),
+    // in a string and in a defined name.
+    inputs.push(workbook(
+        r#"<c r="A1"><v>2</v></c><c r="B1" t="inlineStr"><is><t>_x20AC_</t></is></c>"#,
+        r#"<c r="A1"><f>LEN(Input!B1)</f></c>"#,
+    ));
+    let escaped = workbook(
+        r#"<c r="A1"><v>2</v></c>"#,
+        r#"<c r="A1"><f>LEN(rate)</f></c>"#,
+    );
+    inputs.push(with_part(
+        &escaped,
+        "xl/workbook.xml",
+        part_text(&escaped, "xl/workbook.xml").replace(
+            "</sheets>",
+            r#"</sheets><definedNames><definedName name="rate">&quot;_x20AC_&quot;</definedName></definedNames>"#,
         ),
     ));
     for input in inputs {
@@ -296,6 +457,151 @@ fn refused_workbooks_reach_the_host_recalc_untouched() {
     }
 }
 
+/// [`Host`] with its own clock: 2026-10-06T20:00:00Z in Tokyo (UTC+9).
+struct Clocked(Host);
+impl EditSession for Clocked {
+    fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
+        self.0.apply_edits(doc, plan)
+    }
+    fn recalc(&self, doc: &OfficeDoc) -> Result<Vec<u8>> {
+        self.0.recalc(doc)
+    }
+    fn recalc_engine(&self) -> Option<CalcEngineStamp> {
+        self.0.recalc_engine()
+    }
+    fn recalc_clock(&self) -> Option<RecalcClock> {
+        let now = "2026-10-06T20:00:00Z".parse().expect("instant");
+        RecalcClock::new(now, 540, 7)
+    }
+}
+
+/// The cached value of `cell` in worksheet XML.
+fn cached(xml: &str, cell: &str) -> String {
+    let at = xml.find(&format!(r#"<c r="{cell}""#)).expect("cell");
+    let start = at + xml[at..].find("<v>").expect("cache") + 3;
+    xml[start..start + xml[start..].find("</v>").expect("cache end")].to_owned()
+}
+
+#[test]
+fn clock_functions_recalculate_natively_on_the_session_clock_or_the_hosts() {
+    let input = workbook(
+        "",
+        r#"<c r="A1"><f>TODAY()</f><v>0</v></c><c r="B1"><f>NOW()</f><v>0</v></c><c r="C1"><f>A1+1</f><v>0</v></c><c r="D1"><f>RANDBETWEEN(1,6)</f><v>0</v></c><c r="E1"><f>OFFSET(A1,0,2)</f><v>0</v></c>"#,
+    );
+    // The session's clock: Wednesday 7 October 2026, 05:00 in Tokyo.
+    let host = Clocked(Host::default());
+    let proposal = proposed(run_edit_roundtrip(
+        &host,
+        &input,
+        OfficeFormat::Xlsx,
+        &recalc_plan(),
+        "run:session-clock",
+    ));
+    assert!(proposal.validation.ok, "{:?}", proposal.validation);
+    assert_eq!(stamp(&proposal).as_deref(), Some(NATIVE_STAMP));
+    let xml = part_text(&proposal.new_bytes, OUTPUT);
+    assert_eq!(cached(&xml, "A1"), "46302", "{xml}");
+    let now: f64 = cached(&xml, "B1").parse().expect("serial");
+    assert!((now - (46302.0 + 5.0 / 24.0)).abs() < 1e-9, "{xml}");
+    assert_eq!(cached(&xml, "C1"), "46303", "{xml}");
+    assert_eq!(cached(&xml, "E1"), "46303", "{xml}");
+    let die: f64 = cached(&xml, "D1").parse().expect("draw");
+    assert!(die.fract() == 0.0 && (1.0..=6.0).contains(&die), "{xml}");
+    assert!(
+        host.0.seen.borrow().is_empty(),
+        "the host calculator never ran"
+    );
+    // Without a session clock, the host's clock at recalc time.
+    let host = Host::default();
+    let before = RecalcClock::system();
+    let proposal = proposed(run_edit_roundtrip(
+        &host,
+        &input,
+        OfficeFormat::Xlsx,
+        &recalc_plan(),
+        "run:host-clock",
+    ));
+    let today: f64 = cached(&part_text(&proposal.new_bytes, OUTPUT), "A1")
+        .parse()
+        .expect("serial");
+    let local = before.now().timestamp() + i64::from(before.utc_offset_minutes()) * 60;
+    // Days from 1899-12-30, Excel's serial epoch, to the local date.
+    let expected = (local.div_euclid(86_400) + 25_569) as f64;
+    assert!((today - expected).abs() <= 1.0, "{today} vs {expected}");
+    assert!(
+        host.seen.borrow().is_empty(),
+        "the host calculator never ran"
+    );
+}
+
+#[test]
+fn names_excel_does_not_know_recalculate_natively_to_name_errors() {
+    // Excel reads a called name outside its function list, as the file
+    // spells it, as an undefined name: #NAME?, which IFERROR sees.
+    let input = workbook(
+        r#"<c r="A1"><v>2</v></c>"#,
+        r#"<c r="A1"><f>IFERROR(EOM(Input!A1,0),5)</f><v>0</v></c><c r="B1"><f>ClrCnt(Input!A1,14)</f><v>0</v></c>"#,
+    );
+    let host = Host::default();
+    let proposal = proposed(run_edit_roundtrip(
+        &host,
+        &input,
+        OfficeFormat::Xlsx,
+        &recalc_plan(),
+        "run:unknown-names",
+    ));
+    assert!(proposal.validation.ok, "{:?}", proposal.validation);
+    assert_eq!(stamp(&proposal).as_deref(), Some(NATIVE_STAMP));
+    let xml = part_text(&proposal.new_bytes, OUTPUT);
+    assert_eq!(cached(&xml, "A1"), "5", "{xml}");
+    assert_eq!(cached(&xml, "B1"), "#NAME?", "{xml}");
+    assert!(
+        host.seen.borrow().is_empty(),
+        "the host calculator never ran"
+    );
+}
+
+#[test]
+fn malformed_workbooks_fail_outright_without_the_host_recalc() {
+    // Two sheets with one sheet ID (the fixture's are 1 and 2).
+    let local = workbook("", r#"<c r="A1"><f>1+1</f></c>"#);
+    let shared_id = with_part(
+        &local,
+        "xl/workbook.xml",
+        part_text(&local, "xl/workbook.xml").replace(r#"sheetId="2""#, r#"sheetId="1""#),
+    );
+    for (input, reason) in [
+        (
+            workbook("", r#"<c r="A1"><f>1+1</f></c><c r="A1"><f>9+9</f></c>"#),
+            "duplicate or out-of-grid cell",
+        ),
+        (
+            workbook(
+                r#"<c r="A1" t="b"><v>2</v></c>"#,
+                r#"<c r="A1"><f>Input!A1</f></c>"#,
+            ),
+            "invalid boolean",
+        ),
+        (shared_id, "duplicate sheet ID"),
+    ] {
+        let host = Host {
+            output: Some(Vec::new()),
+            ..Host::default()
+        };
+        assert_eq!(
+            refusal(run_edit_roundtrip(
+                &host,
+                &input,
+                OfficeFormat::Xlsx,
+                &recalc_plan(),
+                "run:malformed",
+            )),
+            reason
+        );
+        assert!(host.seen.borrow().is_empty());
+    }
+}
+
 #[test]
 fn a_host_without_a_calculator_still_recalculates_admitted_workbooks() {
     let host = NoCalculator(Host::default());
@@ -309,7 +615,10 @@ fn a_host_without_a_calculator_still_recalculates_admitted_workbooks() {
     ));
     assert_eq!(stamp(&proposal).as_deref(), Some(NATIVE_STAMP));
     assert!(part_text(&proposal.new_bytes, OUTPUT).contains("<v>42</v>"));
-    let refused = workbook("", r#"<c r="A1"><f>NOW()</f><v>0</v></c>"#);
+    let refused = workbook(
+        "",
+        r#"<c r="A1"><f>INFO(&quot;osversion&quot;)</f><v>0</v></c>"#,
+    );
     assert_eq!(
         refusal(run_edit_roundtrip(
             &host,
@@ -321,6 +630,48 @@ fn a_host_without_a_calculator_still_recalculates_admitted_workbooks() {
         "workbook needs a recalc-capable precision fallback"
     );
     assert!(host.0.seen.borrow().is_empty());
+}
+
+#[test]
+fn linked_workbooks_recalculate_natively_through_the_gate() {
+    // The engine reads a closed linked workbook from the values its link
+    // saves, as Excel does; the gate's link checks pass on the native output.
+    let input = linked_workbook(
+        r#"<c r="A1"><v>2</v></c>"#,
+        r#"<c r="A1"><f>[1]Rates!A1+Input!A1</f><v>0</v></c>"#,
+    );
+    let host = Host {
+        edit: true,
+        ..Host::default()
+    };
+    let proposal = proposed(run_edit_roundtrip(
+        &host,
+        &input,
+        OfficeFormat::Xlsx,
+        &set_input(),
+        "run:linked-native",
+    ));
+    assert!(proposal.validation.ok, "{:?}", proposal.validation);
+    assert_eq!(stamp(&proposal).as_deref(), Some(NATIVE_STAMP));
+    let xml = part_text(&proposal.new_bytes, OUTPUT);
+    assert!(
+        xml.contains("<f>[1]Rates!A1+Input!A1</f><v>47</v>"),
+        "{xml}"
+    );
+    for name in [
+        "xl/externalLinks/externalLink1.xml",
+        "xl/externalLinks/_rels/externalLink1.xml.rels",
+        "xl/_rels/workbook.xml.rels",
+    ] {
+        assert_eq!(
+            part_text(&proposal.new_bytes, name),
+            part_text(&input, name)
+        );
+    }
+    assert!(
+        host.seen.borrow().is_empty(),
+        "the host calculator never ran"
+    );
 }
 
 #[test]

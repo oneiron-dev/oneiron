@@ -938,6 +938,56 @@ fn rank_profile_default_lowers_to_contract_literals() -> Result<()> {
     Ok(())
 }
 
+/// Explicit active-channel overrides leave fixed scoring parameters and
+/// unsupported channel slots unchanged.
+#[test]
+fn rank_profile_overrides_lower_onto_the_fixed_scoring_frame() -> Result<()> {
+    let default = crate::config::Bm25RankProfile::default().to_bm25_config()?;
+
+    let overridden = crate::config::Bm25RankProfile::default()
+        .with_formula(Bm25Formula::Plus { delta: 1.0 })
+        .with_channel_weight(AnalyzerChannel::Surface, 0.25)
+        .with_channel_b(AnalyzerChannel::Surface, 0.10)
+        .with_channel_weight(AnalyzerChannel::Stem, 0.75)
+        .with_channel_b(AnalyzerChannel::Stem, 1.00)
+        .with_channel_weight(AnalyzerChannel::NormalizedOverlay, 0.0)
+        .with_channel_b(AnalyzerChannel::NormalizedOverlay, 0.50)
+        .with_channel_weight(AnalyzerChannel::CjkNgram, 2.00)
+        .with_channel_b(AnalyzerChannel::CjkNgram, 0.00)
+        .to_bm25_config()?;
+
+    assert_eq!(overridden.formula, Bm25Formula::Plus { delta: 1.0 });
+    for (channel, weight, b) in [
+        (AnalyzerChannel::Surface, 0.25, 0.10),
+        (AnalyzerChannel::Stem, 0.75, 1.00),
+        (AnalyzerChannel::NormalizedOverlay, 0.0, 0.50),
+        (AnalyzerChannel::CjkNgram, 2.00, 0.00),
+    ] {
+        let field = overridden.field(channel);
+        assert_eq!(field.weight, weight, "{channel:?} weight override");
+        assert_eq!(field.b, b, "{channel:?} b override");
+        assert_eq!(
+            field.length_policy,
+            default.field(channel).length_policy,
+            "{channel:?} length policy is not overridable"
+        );
+    }
+
+    assert_eq!(overridden.k1, default.k1);
+    for reserved in [
+        AnalyzerChannel::Shingle,
+        AnalyzerChannel::Synonym,
+        AnalyzerChannel::Phonetic,
+    ] {
+        assert_eq!(
+            overridden.field(reserved).weight,
+            0.0,
+            "{reserved:?} must stay disabled"
+        );
+    }
+    Ok(())
+}
+
 /// AC3: a `weight == 0.0` channel override excludes that channel from
 /// scoring through both public paths (`search_text_with_profile` and
 /// the pipeline's `rank_profile`). The query `running` reaches the
@@ -2117,5 +2167,63 @@ fn duplicate_entity_dup_items_fail_closed() -> Result<()> {
     let mut wtxn = vault.store.env.write_txn()?;
     let err = deindex_text(&vault.store, &mut wtxn, &id).unwrap_err();
     assert_matches!(err, Error::CorruptedIndex(_));
+    Ok(())
+}
+
+/// `len` characters of the base64 alphabet's letters and digits, from a fixed
+/// seed: one Unicode word, like a pasted key or image blob.
+fn synthetic_base64_word(seed: &str, len: usize) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let mut bytes = vec![0_u8; len];
+    blake3::Hasher::new()
+        .update(seed.as_bytes())
+        .finalize_xof()
+        .fill(&mut bytes);
+    bytes
+        .into_iter()
+        .map(|byte| char::from(ALPHABET[usize::from(byte) % ALPHABET.len()]))
+        .collect()
+}
+
+/// A pasted 1,583-character base64 word is one term over LMDB's 511-byte key
+/// limit. It indexes under a stable digest key, an exact query finds it, a
+/// same-head twin stays apart, and reindex and delete both remove it.
+#[test]
+fn a_1583_character_base64_term_round_trips_through_the_index() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let long = synthetic_base64_word("bm25-long-term", 1_583);
+    let mut tokens = Vec::new();
+    vault
+        .analyzer
+        .analyze(&long, &AnalyzerContext::for_index(), &mut tokens);
+    assert!(
+        tokens.iter().any(|token| token.term.len() > 511),
+        "the fixture must reach the index as one over-limit term"
+    );
+    // Same first 1,000 characters, different tail: a distinct term.
+    let twin = format!("{}{}", &long[..1_000], synthetic_base64_word("twin", 583));
+
+    let id = EntityId::now();
+    let twin_id = EntityId::now();
+    put_text_doc(&vault, &id, &format!("pasted blob {long} end"))?;
+    put_text_doc(&vault, &twin_id, &twin)?;
+    let hits = vault.search_text(&long, 10)?;
+    assert!(contains_id(&hits, &id));
+    assert!(!contains_id(&hits, &twin_id));
+    assert!(contains_id(&vault.search_text(&twin, 10)?, &twin_id));
+
+    vault
+        .batch()
+        .text(&id, &[("body", "replaced body")])
+        .commit()?;
+    assert!(!contains_id(&vault.search_text(&long, 10)?, &id));
+    assert!(contains_id(&vault.search_text("replaced", 10)?, &id));
+
+    assert!(vault.delete_entity_with_options(
+        &twin_id,
+        crate::deletion::DeleteEntityOptions { purge: true }
+    )?);
+    assert!(vault.search_text(&twin, 10)?.is_empty());
     Ok(())
 }
