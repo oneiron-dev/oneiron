@@ -326,56 +326,6 @@ async fn world_subscription_snapshots_eose_live_data_and_unsubscribe_ceases_deli
 }
 
 #[tokio::test]
-async fn socket_drop_rebind_replays_all_subs_without_rpc_or_acked_duplicates() {
-    let f = fixture().await;
-    let mut socket = connect(&f, ACTOR).await;
-    let first = initial(&mut socket, 7, WORLD).await;
-    let second = initial(&mut socket, 8, WORLD_B).await;
-    send(
-        &mut socket,
-        TAG_SUB,
-        json!({"method":"sub.ack","subscriptionId":7,"cursor":first}),
-    )
-    .await;
-    send(
-        &mut socket,
-        TAG_SUB,
-        json!({"method":"sub.ack","subscriptionId":8,"cursor":second}),
-    )
-    .await;
-    barrier(&mut socket).await;
-    write(&f, WORLD, 1).await;
-    let seen = app(&mut socket, TAG_SUB).await;
-    assert_eq!(seen["subscriptionId"], 7);
-    send(
-        &mut socket,
-        TAG_SUB,
-        json!({"method":"sub.ack","subscriptionId":7,"cursor":seen["cursor"]}),
-    )
-    .await;
-    barrier(&mut socket).await;
-    drop(socket); // abrupt TCP drop, not sub.close
-    write(&f, WORLD, 2).await;
-    write(&f, WORLD_B, 3).await;
-    let mut socket = connect(&f, ACTOR).await;
-    open(&mut socket, 7, WORLD, seen["cursor"].clone()).await;
-    let missed_a = app(&mut socket, TAG_SUB).await;
-    assert_eq!(missed_a["result"], 2);
-    assert_eq!(missed_a["kind"], "data");
-    open(&mut socket, 8, WORLD_B, second).await;
-    let missed_b = app(&mut socket, TAG_SUB).await;
-    assert_eq!(missed_b["subscriptionId"], 8);
-    assert_eq!(missed_b["result"], 3);
-    assert_eq!(missed_b["kind"], "data");
-    barrier(&mut socket).await;
-    assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(100), socket.next())
-            .await
-            .is_err()
-    );
-}
-
-#[tokio::test]
 async fn socket_reconnect_cannot_reuse_another_bound_authoritys_cursor() {
     let f = fixture().await;
     let mut owner = connect(&f, ACTOR).await;

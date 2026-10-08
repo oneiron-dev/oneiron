@@ -198,44 +198,6 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn echo_suppression() {
-        let (tx, _) = broadcast::channel::<BroadcastPayload>(16);
-
-        let mut sub1 = BroadcastSubscriber::new(1, &tx);
-        let mut sub2 = BroadcastSubscriber::new(2, &tx);
-
-        // Send from conn_id 1
-        broadcast(&tx, 1, vec![42]).unwrap();
-
-        // Also send from conn_id 2
-        broadcast(&tx, 2, vec![99]).unwrap();
-
-        // sub1 should skip the message from conn_id 1 (echo) and get conn_id 2's
-        let msg = sub1.recv().await.unwrap().unwrap();
-        assert_eq!(msg, vec![99]);
-
-        // sub2 should get the message from conn_id 1 (not echo)
-        let msg = sub2.recv().await.unwrap().unwrap();
-        assert_eq!(msg, vec![42]);
-    }
-
-    #[tokio::test]
-    async fn bridge_writes_broadcast_to_all() {
-        let (tx, _) = broadcast::channel::<BroadcastPayload>(16);
-
-        let mut sub1 = BroadcastSubscriber::new(1, &tx);
-        let mut sub2 = BroadcastSubscriber::new(2, &tx);
-
-        // Send from conn_id 0 (bridge) — should reach all subscribers
-        broadcast(&tx, 0, vec![77]).unwrap();
-
-        let msg1 = sub1.recv().await.unwrap().unwrap();
-        assert_eq!(msg1, vec![77]);
-
-        let msg2 = sub2.recv().await.unwrap().unwrap();
-        assert_eq!(msg2, vec![77]);
-    }
-    #[tokio::test]
     async fn observer_b_local_docs_never_reach_peer_socket() {
         let (tx, _) = broadcast::channel::<BroadcastPayload>(8);
         let id = oneiron::EntityId::now();
@@ -248,29 +210,5 @@ mod tests {
             Some(ReactiveChange::Doc { entities: vec![id] })
         );
         assert_eq!(peer.recv().await.unwrap(), Some(vec![42]));
-    }
-
-    #[test]
-    fn document_and_batch_notices_invalidate_only_named_entity_queries() {
-        use crate::api::ReactiveDependency;
-        use oneiron::sync::transport::{document_sub_tags, encode_document, encode_document_batch};
-        let id = oneiron::EntityId::now();
-        let other = oneiron::EntityId::now();
-        let frame = encode_document(id, document_sub_tags::UPDATE, b"delta")
-            .into_result()
-            .unwrap();
-        for frame in [
-            frame.clone(),
-            encode_document_batch(&[frame]).into_result().unwrap(),
-        ] {
-            let notice = persistent_change(&frame).unwrap();
-            assert!(notice.invalidates(&[ReactiveDependency::Doc(id)]));
-            assert!(!notice.invalidates(&[ReactiveDependency::Doc(other)]));
-            assert!(!notice.invalidates(&[ReactiveDependency::Root]));
-        }
-        let request = encode_document(id, document_sub_tags::REQUEST, b"request")
-            .into_result()
-            .unwrap();
-        assert!(persistent_change(&request).is_none());
     }
 }

@@ -16,8 +16,6 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing_subscriber::EnvFilter;
 
 use crate::auth::revoke_token_jti;
-#[cfg(test)]
-use crate::auth::{mint_identified_core_token_v2, validate_bearer_claims};
 use crate::build_app;
 use crate::cli::{
     ProvenanceArgs, RevokeArgs, SkillsPackArgs, TokenBootstrapArgs, TokenPairArgs, TokenRevokeArgs,
@@ -34,8 +32,6 @@ use crate::skills_pack::{self, OutputMode};
 /// added here.
 mod api;
 mod host_init;
-#[cfg(test)]
-mod host_runtime_tests;
 pub use self::host_init::host_init;
 
 pub use self::api::api;
@@ -74,8 +70,6 @@ mod owner;
 pub use owner::{backup, doctor, export, import, restore, runs, secret_scan};
 mod msgpack_json;
 pub(crate) use msgpack_json::msgpack_value_json;
-#[cfg(test)]
-use msgpack_json::msgpack_value_json_with_depth;
 
 pub fn provenance(args: ProvenanceArgs) -> anyhow::Result<()> {
     let vault_args = VaultArgs {

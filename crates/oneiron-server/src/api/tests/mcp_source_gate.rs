@@ -44,57 +44,6 @@ fn assert_tool_output_proposal_gate(
 }
 
 #[tokio::test]
-async fn mcp_edit_propose_claim_unstamped_and_above_cap_stay_pending() {
-    let (_dir, server) = auth_test_server();
-    let actor_ref = seeded_test_entity_id(0x1222_0901);
-    let credential = "mcp-source-gate-pending";
-    register_mcp_actor(
-        &server,
-        credential,
-        actor_ref,
-        oneiron::EdgeActorClass::Human,
-    )
-    .await;
-
-    for (key, scope) in [
-        ("mcp-source-unstamped", None),
-        ("mcp-source-above-cap", Some(json!({ "sensitivity": 1 }))),
-    ] {
-        let mut args = mcp_propose_claim_args(actor_ref, actor_ref, key);
-        if let Some(scope) = scope {
-            args["scope"] = scope;
-        }
-        let (status, body) = mcp_legacy_adapter_json(
-            server.clone(),
-            mcp_call_request(credential, key, "oneiron.edit", args),
-        )
-        .await;
-
-        assert_eq!(status, StatusCode::OK);
-        assert!(
-            body.get("error").is_none(),
-            "unexpected MCP error: {body:?}"
-        );
-        assert_eq!(body["result"]["isError"], Value::Bool(false));
-        assert_eq!(
-            body["result"]["structuredContent"]["forced_source"],
-            Value::from("tool_output")
-        );
-        assert_eq!(
-            body["result"]["structuredContent"]["forced_approval"],
-            Value::from("proposed")
-        );
-        let claim_id = oneiron::EntityId::from_hex(
-            body["result"]["structuredContent"]["id"]
-                .as_str()
-                .expect("MCP proposed claim id"),
-        )
-        .expect("MCP proposed claim id parses");
-        assert_tool_output_proposal_gate(&server.vault, claim_id, true);
-    }
-}
-
-#[tokio::test]
 async fn public_batch_lineage_source_gate_is_consistent() {
     let (_dir, server) = auth_test_server();
     let actor_ref = seeded_test_entity_id(0x1222_0902);

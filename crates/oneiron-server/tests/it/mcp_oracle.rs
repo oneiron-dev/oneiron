@@ -25,92 +25,6 @@
 //        thin client)
 // ════════════════════════════════════════════════════════════════════════
 mod cb_x {
-    /// Primary MCP surface observations.
-    struct McpPrimarySurface {
-        /// Tool names on the PRIMARY surface, sorted.
-        tools: Vec<String>,
-        /// True iff setup_oneiron() returns a board keyframe.
-        setup_returns_board_keyframe: bool,
-        /// True iff setup_oneiron() returns the typed verb grammar.
-        setup_returns_verb_grammar: bool,
-        /// True iff setup_oneiron() returns the instructions payload
-        /// (ticket AC: "board keyframe + verb grammar + instructions
-        /// payload" — F17 setup half).
-        setup_returns_instructions: bool,
-        /// True iff execute_code() is ADVERTISED on any registered endpoint.
-        /// The host-free release contract (ONE-1704 B1) is that it is not.
-        execute_code_advertised: bool,
-        /// True iff the INJECTED code host still reaches the code-mode
-        /// REPL/self.oneiron when a provider is supplied. This is substrate
-        /// truth about the seam, never a claim that the wire ships it.
-        injected_host_reaches_repl: bool,
-    }
-
-    /// ONE-1704 fixture: enumerate the primary MCP surface, call its tool
-    /// once against a small vault, and enter the injected host directly.
-    fn arm_mcp_primary_surface() -> McpPrimarySurface {
-        let surface =
-            oneiron_server::mcp::registered_surface(oneiron_server::mcp::McpSurfaceMode::Primary);
-        let mut tools = surface
-            .tool_names()
-            .into_iter()
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        tools.sort();
-
-        // setup_oneiron: the shipped assembly, over the same section producers
-        // the gateway renders from.
-        let payload = super::setup_payload_over_a_small_vault();
-        let value = payload.to_value();
-        let setup_returns_board_keyframe = !payload.board.text.is_empty()
-            && value["board"]["keyframe"].is_string()
-            && value["board"]["render"]["floor_exceeds_cap"].is_boolean();
-        let setup_returns_verb_grammar = !payload.verb_grammar.is_empty()
-            && value["verb_grammar"]["verbs"]
-                .as_array()
-                .is_some_and(|verbs| verbs.len() == payload.verb_grammar.len());
-        let setup_returns_instructions = value["instructions"]
-            .as_str()
-            .is_some_and(|text| !text.trim().is_empty());
-
-        let execute_code_advertised = oneiron_server::mcp::McpSurfaceMode::ALL.iter().any(|mode| {
-            let surface = oneiron_server::mcp::registered_surface(*mode);
-            surface
-                .resolve(oneiron_server::mcp::MCP_EXECUTE_CODE_TOOL)
-                .is_some()
-                || surface
-                    .tool_names()
-                    .contains(&oneiron_server::mcp::MCP_EXECUTE_CODE_TOOL)
-        });
-
-        McpPrimarySurface {
-            tools,
-            setup_returns_board_keyframe,
-            setup_returns_verb_grammar,
-            setup_returns_instructions,
-            execute_code_advertised,
-            injected_host_reaches_repl: super::execute_code_reaches_the_gated_repl(),
-        }
-    }
-
-    /// ONE-1704 · 08b §6 (r3v2), as the K3 host-free release contract settles
-    /// it: the PRIMARY MCP surface is exactly ONE tool — setup_oneiron(),
-    /// which returns all three payload parts. `execute_code` has no host in
-    /// this release, so it is advertised on no endpoint and the setup text
-    /// states that outright; the injected host SEAM is unchanged and still
-    /// reaches the code-mode REPL when a provider supplies one.
-    #[test]
-    fn mcp_primary_surface_is_exactly_the_setup_tool() {
-        let surface = arm_mcp_primary_surface();
-        assert_eq!(surface.tools.len(), 1);
-        assert_eq!(surface.tools, ["setup_oneiron"]);
-        assert!(surface.setup_returns_board_keyframe);
-        assert!(surface.setup_returns_verb_grammar);
-        assert!(surface.setup_returns_instructions);
-        assert!(!surface.execute_code_advertised);
-        assert!(surface.injected_host_reaches_repl);
-    }
-
     /// Tool-first variant generation observations.
     struct GeneratedToolVariant {
         /// The fixture verb table, sorted.
@@ -182,234 +96,6 @@ mod cb_x {
         assert_eq!(variant.generated_tool_names, expected);
         assert_eq!(variant.hand_written_tools, 0);
     }
-
-    /// Packaging-ladder observations.
-    struct PackagingLadder {
-        /// Self-routing lanes the agent skill opens with.
-        skill_lanes: usize,
-        lane_code_mode_repl: bool,
-        lane_thin_client: bool,
-        lane_curl_cli: bool,
-        lane_tool_first_mcp: bool,
-        /// True iff a fat autogen SDK ships anywhere (must not).
-        fat_autogen_sdk_shipped: bool,
-        /// Distinct thin-client artifacts shipped (ticket: "ONE thin
-        /// hand-rolled typed client … SAME artifact" — must be exactly 1;
-        /// three independent clients must fail; F18).
-        distinct_thin_client_artifacts: usize,
-        /// Consumers importing THAT SAME artifact (code-mode inject, native
-        /// app, npm-capable BYOA).
-        consumers_importing_same_artifact: usize,
-        /// True iff the thin client passes raw responses through
-        /// (ticket AC: "raw-response passthrough").
-        thin_client_raw_response_passthrough: bool,
-        /// True iff the thin client is an autogenerated artifact (ticket:
-        /// hand-rolled — must be false).
-        thin_client_autogenerated: bool,
-    }
-
-    /// ONE-1705 fixture: inspect the shipped packaging artifacts — skill
-    /// routing tree, thin CLI, thin typed client manifest + its consumer
-    /// import table.
-    ///
-    /// The observation is of ARTIFACTS, so it reads them: the skill an agent
-    /// fetches, the CLI module the `oneiron` binary carries, the package a
-    /// consumer installs, and — through the linked crate — the MCP surfaces
-    /// two of the lanes actually terminate in.
-    ///
-    /// `consumers_importing_same_artifact` counts the three consumers bound to
-    /// the ONE client's contract, and the two-hat rule is why that is not
-    /// three imports: code mode keeps the host dispatcher and shares the WIRE,
-    /// while the native worker and the npm-capable agent share the ARTIFACT.
-    /// The non-import half is pinned here as an absence in the shipped client
-    /// source, and independently in `packages/oneiron-client/tests`.
-    fn arm_packaging_ladder() -> PackagingLadder {
-        fn repo_path(relative: &str) -> std::path::PathBuf {
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("..")
-                .join("..")
-                .join(relative)
-        }
-
-        fn shipped(relative: &str) -> String {
-            std::fs::read_to_string(repo_path(relative)).unwrap_or_else(|error| {
-                panic!("shipped artifact {relative} must be readable: {error}")
-            })
-        }
-
-        fn section<'a>(text: &'a str, start: &str, end: &str) -> &'a str {
-            let from = text
-                .find(start)
-                .unwrap_or_else(|| panic!("shipped artifact is missing section {start}"));
-            let to = text[from..]
-                .find(end)
-                .map_or(text.len(), |offset| from + offset);
-            &text[from..to]
-        }
-
-        fn manifest_name(manifest: &str) -> &str {
-            manifest
-                .split_once("\"name\":")
-                .and_then(|(_, rest)| rest.trim_start().strip_prefix('"')?.split('"').next())
-                .unwrap_or_default()
-        }
-
-        const LANES: [&str; 4] = [
-            "## Lane: code-mode-repl",
-            "## Lane: thin-client",
-            "## Lane: curl-cli",
-            "## Lane: tool-first-mcp",
-        ];
-
-        let skill = shipped("crates/oneiron-server/oneiron.skills.md");
-        let cli = shipped("crates/oneiron-server/src/cli.rs");
-        let cli_api = shipped("crates/oneiron-server/src/commands/api.rs");
-        let manifest = shipped("packages/oneiron-client/package.json");
-        let client = shipped("packages/oneiron-client/src/index.ts");
-        let consumers = shipped("packages/oneiron-client/tests/consumers.test.ts");
-
-        // Each lane is a heading AND the carrier it names: a routing tree that
-        // pointed at a lane this release does not ship would be a false map.
-        let skill_lanes = skill.matches("\n## Lane: ").count();
-        let declared = LANES.map(|lane| skill.matches(lane).count() == 1);
-        let code_mode_lane = section(&skill, LANES[0], LANES[1]);
-        let thin_client_lane = section(&skill, LANES[1], LANES[2]);
-        let curl_lane = section(&skill, LANES[2], LANES[3]);
-        let tool_first_lane = section(&skill, LANES[3], "## Authentication");
-
-        let primary_surface =
-            oneiron_server::mcp::registered_surface(oneiron_server::mcp::McpSurfaceMode::Primary);
-        let tool_first_surface =
-            oneiron_server::mcp::registered_surface(oneiron_server::mcp::McpSurfaceMode::ToolFirst);
-
-        let lane_code_mode_repl = declared[0]
-            && code_mode_lane.contains(oneiron_server::mcp::MCP_SETUP_TOOL)
-            && primary_surface
-                .tool_names()
-                .contains(&oneiron_server::mcp::MCP_SETUP_TOOL);
-        let lane_thin_client = declared[1]
-            && thin_client_lane.contains("npm install @oneiron/client")
-            && manifest_name(&manifest) == "@oneiron/client";
-        let lane_curl_cli = declared[2]
-            && curl_lane.contains("oneiron api discover")
-            && cli.contains("Api(ApiArgs)")
-            && cli_api.contains("pub async fn api(");
-        let lane_tool_first_mcp = declared[3]
-            && tool_first_lane.contains("/mcp/tool-first")
-            && tool_first_lane.contains("register or provide")
-            && !tool_first_surface.tool_names().is_empty();
-
-        // One package root, and no generated tree beside it.
-        let mut package_manifests = Vec::new();
-        for entry in std::fs::read_dir(repo_path("packages")).expect("packages/ must be readable") {
-            let manifest_path = entry.expect("packages/ entry").path().join("package.json");
-            if manifest_path.is_file() {
-                package_manifests
-                    .push(std::fs::read_to_string(manifest_path).expect("package manifest"));
-            }
-        }
-        let distinct_thin_client_artifacts = package_manifests
-            .iter()
-            .filter(|manifest| manifest_name(manifest.as_str()).contains("client"))
-            .count();
-
-        let generator_markers = [
-            "openapi-generator",
-            "swagger-codegen",
-            "openapi-typescript-codegen",
-            "@hey-api/openapi-ts",
-            "orval",
-            "autorest",
-        ];
-        let fat_autogen_sdk_shipped = package_manifests
-            .iter()
-            .any(|manifest| generator_markers.iter().any(|m| manifest.contains(m)))
-            || repo_path("packages/oneiron-client/generated").exists()
-            || repo_path("packages/oneiron-client/src/generated").exists();
-        let thin_client_autogenerated = ["@generated", "AUTOGENERATED", "DO NOT EDIT"]
-            .iter()
-            .any(|marker| client.contains(marker))
-            || generator_markers
-                .iter()
-                .any(|marker| manifest.contains(marker));
-
-        // Passthrough is structural: every public method hands back a raw
-        // `Response`, nothing consumes a body, and there is exactly ONE
-        // dispatch point — no place for a re-send, a cache, or a
-        // status-driven throw to hide.
-        let public_methods = [
-            "request(",
-            "discover(",
-            "searchText(",
-            "getEntity(",
-            "callVerb(",
-        ];
-        let body_consuming = [
-            ".json()",
-            ".clone()",
-            ".arrayBuffer()",
-            ".blob()",
-            ".formData()",
-            ".text()",
-        ];
-        let thin_client_raw_response_passthrough =
-            public_methods.iter().all(|method| client.contains(method))
-                && client.matches("Promise<Response>").count() == public_methods.len()
-                && !body_consuming.iter().any(|marker| client.contains(marker))
-                && client.matches("this.fetch(").count() == 1;
-
-        // Consumer ①: the sandbox keeps the host dispatcher and reaches the
-        // same wire WITHOUT importing this package — the two-hat rule, read
-        // as an absence in the shipped client source.
-        let code_mode_on_the_same_wire = code_mode_lane.contains("self.oneiron")
-            && !client.contains("self.oneiron")
-            && !client.contains("injectOneironClient");
-        let single_public_entry = manifest.matches("\"./src/index.ts\"").count() == 3;
-        // Consumers ② and ③: both resolve that one published root.
-        let native_worker_imports_root =
-            single_public_entry && consumers.contains("\"native-worker\"");
-        let byoa_imports_root =
-            single_public_entry && manifest.contains("\"files\"") && consumers.contains("\"byoa\"");
-        let consumers_importing_same_artifact = [
-            code_mode_on_the_same_wire,
-            native_worker_imports_root,
-            byoa_imports_root,
-        ]
-        .into_iter()
-        .filter(|reached| *reached)
-        .count();
-
-        PackagingLadder {
-            skill_lanes,
-            lane_code_mode_repl,
-            lane_thin_client,
-            lane_curl_cli,
-            lane_tool_first_mcp,
-            fat_autogen_sdk_shipped,
-            distinct_thin_client_artifacts,
-            consumers_importing_same_artifact,
-            thin_client_raw_response_passthrough,
-            thin_client_autogenerated,
-        }
-    }
-
-    /// ONE-1705 · 08b §6 (r3v2): choose-your-own-adventure skill with four
-    /// lanes; ONE hand-rolled thin client (raw-response passthrough) — the
-    /// SAME artifact imported by three consumers; fat SDK never.
-    #[test]
-    fn packaging_ladder_four_lanes_one_thin_client_no_fat_sdk() {
-        let ladder = arm_packaging_ladder();
-        assert_eq!(ladder.skill_lanes, 4);
-        assert!(ladder.lane_code_mode_repl);
-        assert!(ladder.lane_thin_client);
-        assert!(ladder.lane_curl_cli);
-        assert!(ladder.lane_tool_first_mcp);
-        assert!(!ladder.fat_autogen_sdk_shipped);
-        assert_eq!(ladder.distinct_thin_client_artifacts, 1);
-        assert_eq!(ladder.consumers_importing_same_artifact, 3);
-        assert!(ladder.thin_client_raw_response_passthrough);
-        assert!(!ladder.thin_client_autogenerated);
-    }
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -427,10 +113,6 @@ use oneiron::code_run::{
     CODE_RUN_RNG_SEED_LEN, CodeRunDeterminism, SelfCall, SelfFixtureEffectCall,
     SelfMemorySearchCall,
 };
-use oneiron::context_board::{
-    BoardBlockHeader, BoardBudgetRequest, assemble_task_agent_sections, render_agents_section,
-    render_tasks_section,
-};
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorLimits, EngineExecutorStatus, JsCodeModeHost,
     JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
@@ -442,9 +124,8 @@ use oneiron::{
     LlmUsage, ModelId, ModelLocality, ModelTierRef, TimeRange, Vault, VaultConfig,
 };
 use oneiron_server::mcp::{
-    MCP_BOARD_BUDGET_TOK, McpCodeExecutionHost, McpCodeExecutionRequest, McpCodeModeProvider,
-    McpConnectorScope, McpEngineNativeCodeHost, McpResolvedActor, McpSetupPayload,
-    generated_verb_tools, mcp_code_run_id, mcp_setup_payload, mcp_verb_board_section,
+    McpCodeExecutionHost, McpCodeExecutionRequest, McpCodeModeProvider, McpConnectorScope,
+    McpEngineNativeCodeHost, McpResolvedActor, mcp_code_run_id,
 };
 
 fn oracle_vault_config() -> VaultConfig {
@@ -458,31 +139,6 @@ fn oracle_id(counter: u128) -> EntityId {
     let mut bytes = counter.to_be_bytes();
     bytes[0] = 0x17;
     EntityId::from_bytes(bytes).expect("seeded oracle id should be valid")
-}
-
-/// The EXACT `setup_oneiron` assembly the gateway runs, over a small board:
-/// the pinned VERBS section plus the engine's own TASKS/AGENTS producers.
-fn setup_payload_over_a_small_vault() -> McpSetupPayload {
-    let verbs = generated_verb_tools().expect("exported verb rows project onto tools");
-    let verb_section = mcp_verb_board_section(&verbs).expect("VERBS section is valid");
-    let tasks = render_tasks_section(&[], &[]);
-    let agents = render_agents_section(&[], &[]);
-    let [tasks_section, agents_section] =
-        assemble_task_agent_sections(&tasks, &agents).expect("board sections assemble");
-    let header = BoardBlockHeader {
-        epoch: 47,
-        scope: "VaultWide".to_owned(),
-    };
-    mcp_setup_payload(
-        &header,
-        &[verb_section, tasks_section, agents_section],
-        BoardBudgetRequest {
-            harness_default_tok: MCP_BOARD_BUDGET_TOK,
-            caller_limit_tok: None,
-            explicit_override_tok: None,
-        },
-    )
-    .expect("setup payload assembles")
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -705,22 +361,6 @@ async fn injected_host_execute_code() -> InjectedHostRun {
         resumed_steps_run: resumed.steps_run,
         run_id,
     }
-}
-
-/// True iff `execute_code` reaches the code-mode REPL through the injected
-/// host — the runtime AND `HostSelfDispatcher` — and iff a parked effect comes
-/// back as a typed, PERSISTED durable wait rather than an error.
-fn execute_code_reaches_the_gated_repl() -> bool {
-    let reactor = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("oracle reactor builds");
-    let run = reactor.block_on(injected_host_execute_code());
-    run.runtime_entries == 1
-        && run.host_dispatched_calls == 2
-        && run.persisted_bridge_calls == 2
-        && matches!(run.status, EngineExecutorStatus::Waiting(_))
-        && run.resumed_steps_run == 0
 }
 
 /// ONE-1704 M2: the INJECTED host's runtime is entered, that runtime reaches

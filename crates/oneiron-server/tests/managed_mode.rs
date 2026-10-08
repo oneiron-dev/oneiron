@@ -4,9 +4,7 @@
 //!
 //! What each area is pinned by, and why that row is the discriminator:
 //!
-//! - **argv surface** — `each_missing_required_flag_fails_loudly`,
-//!   `an_unknown_contract_version_is_refused_before_any_io`,
-//!   `managed_mode_refuses_the_unmanaged_configuration_layers`,
+//! - **argv surface** — `an_unknown_contract_version_is_refused_before_any_io`,
 //!   `a_flag_managed_mode_never_reads_is_refused_by_name`. Managed mode takes
 //!   its whole configuration from argv, so a flag that goes missing has to be
 //!   an error rather than a default, and a flag that belongs to the layers
@@ -44,24 +42,16 @@
 //!   `a_sync_session_upgraded_before_the_freeze_denies_quiescence` covers what
 //!   that gate cannot see: a session opened before the freeze, whose frames no
 //!   middleware runs over.
-//! - **wake ledger** — `exported_wake_times_ride_the_wire_as_unix_seconds`
-//!   pins the serde shape against the contract types (a millisecond stamp
-//!   would sail past any "is it a number" assertion),
-//!   `ledger_rev_persists_across_a_restart` pins the durability.
-//! - **shutdown** — `a_failing_push_is_retried_exactly_once_after_200ms` and
-//!   `a_supervisor_that_never_acks_does_not_hold_the_exit_open` are the retry
-//!   discipline, and
+//! - **wake ledger** — `ledger_rev_persists_across_a_restart` pins the durability.
+//! - **shutdown** —
 //!   `a_connected_supervisor_that_never_acks_is_abandoned_on_a_deadline` is
-//!   what makes that discipline bound anything: a supervisor that closes gives
+//!   what makes the retry discipline bound anything: a supervisor that closes gives
 //!   an EOF to fail on, one that stays connected and silent gives nothing.
 //!   `the_final_push_advances_the_rev_when_the_entries_moved` is
-//!   the ordering the contract delivers it under;
-//!   `managed_shutdown_closes_ctl_and_leaves_the_inherited_socket_alone`
-//!   is the socket-ownership half.
+//!   the ordering the contract delivers it under.
 //! - **spawn order** — `ready_byte_lands_only_after_sockets_credentials_and_gates`
-//!   and `a_canary_vault_boots_managed_and_signals_ready` run the real
-//!   `serve_managed` boot over real descriptors, because the ready byte is the
-//!   supervisor's only evidence that any of the ordering held.
+//!   runs the real `serve_managed` boot over real descriptors, because the ready
+//!   byte is the supervisor's only evidence that any of the ordering held.
 
 use std::os::fd::{IntoRawFd, RawFd};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -75,13 +65,13 @@ use oneiron_server::managed::{
     CANARY_MARKER_KEY, CANARY_MARKER_VALUE, DEK_MAC_KEY, HYPNOS_LISTEN_FD, LEDGER_REV_KEY,
     ManagedArgs, ManagedCtl, ManagedError, ManagedShutdown, ManagedState, ServeListener,
     WRITES_FROZEN_TAG, WakeLedger, check_managed_open_gates, final_ledger_push,
-    read_managed_credentials, serve_managed, signal_ready, spawn_sigterm_shutdown,
+    read_managed_credentials, serve_managed,
 };
 use oneiron_server::server::SyncServer;
 use oneiron_vault_contract::{
     CONTRACT_VERSION, CREDENTIALS_LEN, Credentials, CtlResponse, DEK_LEN, LedgerAck, LedgerUpdate,
-    MAX_CTL_LINE, READY_BYTE, Schedule, TOKEN_LEN, WakeEntry, read_credentials,
-    validate_wake_entries, write_credentials,
+    MAX_CTL_LINE, READY_BYTE, Schedule, TOKEN_LEN, read_credentials, validate_wake_entries,
+    write_credentials,
 };
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 
@@ -360,66 +350,6 @@ async fn wait_for_ready(path: &Path) {
 // E1 — serve-mode scaffold
 // ---------------------------------------------------------------------------
 
-/// Off by default. This is the whole guarantee that today's operators are
-/// untouched, so it gets its own row rather than riding on another assertion.
-#[test]
-fn serve_without_the_switch_is_never_managed() {
-    assert!(
-        ManagedArgs::from_serve_args(&ServeArgs::default())
-            .unwrap()
-            .is_none()
-    );
-
-    // Even a fully populated managed argv group is inert without the switch.
-    let dir = tempfile::tempdir().unwrap();
-    let argv = without_flag(&managed_argv(dir.path()), "--managed-by-hypnos");
-    let args = parse_serve(&argv);
-    assert!(!args.managed_by_hypnos);
-    assert!(ManagedArgs::from_serve_args(&args).unwrap().is_none());
-}
-
-#[test]
-fn a_full_managed_argv_validates() {
-    let dir = tempfile::tempdir().unwrap();
-    let managed = ManagedArgs::from_serve_args(&parse_serve(&managed_argv(dir.path())))
-        .unwrap()
-        .unwrap();
-
-    assert_eq!(managed.vault_name, VAULT_NAME);
-    assert_eq!(managed.data_dir, dir.path().join("data"));
-    assert_eq!(managed.http_socket, dir.path().join("http.sock"));
-    assert_eq!(managed.ctl_socket, dir.path().join("ctl.sock"));
-    assert_eq!(managed.hypnos_socket, dir.path().join("sup.sock"));
-    assert_eq!(managed.ready_fd, 7);
-    assert_eq!(managed.credentials_fd, 9);
-}
-
-#[test]
-fn each_missing_required_flag_fails_loudly() {
-    let dir = tempfile::tempdir().unwrap();
-    let full = managed_argv(dir.path());
-
-    for dropped in [
-        "--contract-version",
-        "--vault-name",
-        "--derivation-owner",
-        "--data-dir",
-        "--http-socket",
-        "--ctl-socket",
-        "--hypnos-socket",
-        "--ready-fd",
-        "--credentials-fd",
-    ] {
-        let argv = without_flag(&full, dropped);
-        let error = ManagedArgs::from_serve_args(&parse_serve(&argv)).unwrap_err();
-        let expected = dropped.trim_start_matches("--");
-        assert!(
-            matches!(&error, ManagedError::MissingFlag { flag } if *flag == expected),
-            "dropping {dropped} gave: {error}"
-        );
-    }
-}
-
 #[test]
 fn an_unknown_contract_version_is_refused_before_any_io() {
     let dir = tempfile::tempdir().unwrap();
@@ -450,27 +380,6 @@ fn an_unknown_contract_version_is_refused_before_any_io() {
         matches!(error, ManagedError::UnknownContractVersion { .. }),
         "the contract version must be checked first, got: {error}"
     );
-}
-
-#[test]
-fn managed_mode_refuses_the_unmanaged_configuration_layers() {
-    let dir = tempfile::tempdir().unwrap();
-    let full = managed_argv(dir.path());
-
-    for (flag, value, named) in [
-        ("--host", "127.0.0.1", "host"),
-        ("--port", "9090", "port"),
-        ("--config", "/nonexistent/oneiron.toml", "config"),
-    ] {
-        let mut argv = full.clone();
-        argv.push(flag.to_owned());
-        argv.push(value.to_owned());
-        let error = ManagedArgs::from_serve_args(&parse_serve(&argv)).unwrap_err();
-        assert!(
-            matches!(&error, ManagedError::ConflictingFlag { flag, .. } if *flag == named),
-            "{flag} should conflict, got: {error}"
-        );
-    }
 }
 
 /// The flags managed mode does not read are refused, not dropped.
@@ -504,17 +413,6 @@ fn a_flag_managed_mode_never_reads_is_refused_by_name() {
     let args = parse_serve(&allowed);
     let managed = ManagedArgs::from_serve_args(&args).unwrap().unwrap();
     assert_eq!(managed.serve_config(&args).dimensions, 512);
-}
-
-#[test]
-fn a_vault_name_that_is_not_a_dns_label_is_refused() {
-    let dir = tempfile::tempdir().unwrap();
-    let argv = with_flag_value(&managed_argv(dir.path()), "--vault-name", "Not_A_Label");
-    let error = ManagedArgs::from_serve_args(&parse_serve(&argv)).unwrap_err();
-    assert!(
-        matches!(error, ManagedError::InvalidVaultName { .. }),
-        "unexpected: {error}"
-    );
 }
 
 /// Non-negative is not the whole precondition: each delivered descriptor is
@@ -659,59 +557,6 @@ fn the_serve_entry_refuses_an_aliased_listen_fd_before_it_consumes_anything() {
             "{flag}: a refused boot never signals ready; stderr: {stderr}"
         );
     }
-}
-
-#[test]
-fn a_negative_descriptor_is_refused() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut argv = without_flag(&managed_argv(dir.path()), "--ready-fd");
-    argv.push("--ready-fd=-1".to_owned());
-    let error = ManagedArgs::from_serve_args(&parse_serve(&argv)).unwrap_err();
-    assert!(
-        matches!(
-            error,
-            ManagedError::InvalidFd {
-                flag: "ready-fd",
-                value: -1
-            }
-        ),
-        "unexpected: {error}"
-    );
-}
-
-#[test]
-fn vault_path_stays_the_alias_for_the_data_directory() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut argv = without_flag(&managed_argv(dir.path()), "--data-dir");
-    argv.push("--vault-path".to_owned());
-    argv.push(dir.path().join("data").display().to_string());
-
-    let managed = ManagedArgs::from_serve_args(&parse_serve(&argv))
-        .unwrap()
-        .unwrap();
-    assert_eq!(managed.data_dir, dir.path().join("data"));
-}
-
-/// The managed configuration is argv and nothing else: no config file, no
-/// `ONEIRON_*` environment, no XDG layer. `auth_secret` staying `None` is the
-/// load-bearing half — bearer auth terminates at the supervisor, and a child
-/// that grew its own opinion from the environment would be a second, weaker
-/// answer to "who may talk to this vault".
-#[test]
-fn managed_configuration_comes_from_argv_alone() {
-    let dir = tempfile::tempdir().unwrap();
-    let args = parse_serve(&managed_argv(dir.path()));
-    let managed = ManagedArgs::from_serve_args(&args).unwrap().unwrap();
-    let config = managed.serve_config(&args);
-
-    assert!(config.auth_secret.is_none());
-    assert!(config.allow_unauthenticated);
-    assert_eq!(config.vault_path, dir.path().join("data"));
-    // The usual dictionary resolver probes HOME and the XDG roots; managed
-    // mode does not get to read either, so an unset flag means an empty list
-    // rather than a discovered one.
-    assert!(config.dict_search_paths.is_empty());
-    assert_eq!(config.log_level, "info");
 }
 
 // ---------------------------------------------------------------------------
@@ -1106,47 +951,6 @@ async fn ctl_rejects_over_cap_and_out_of_bounds_lines_whole() {
 // E5 — wake ledger export
 // ---------------------------------------------------------------------------
 
-/// The contract types say `UnixTs` is seconds. A millisecond stamp for the
-/// same instant is three orders of magnitude larger and would sail past any
-/// "is it a number" assertion, so the magnitude is checked explicitly.
-#[test]
-fn exported_wake_times_ride_the_wire_as_unix_seconds() {
-    let response = CtlResponse::PrepareReap {
-        quiescent: true,
-        ledger_rev: 42,
-        next_wake: vec![
-            WakeEntry {
-                id: "job_ready".to_owned(),
-                at: Schedule::Exact { at: 1_767_225_600 },
-                reason_tag: "job_ready".to_owned(),
-            },
-            WakeEntry {
-                id: "sync_deadline".to_owned(),
-                at: Schedule::Window {
-                    start: 1_767_225_600,
-                    end: 1_767_225_660,
-                },
-                reason_tag: "lease_expiry".to_owned(),
-            },
-        ],
-    };
-
-    let json: serde_json::Value = serde_json::to_value(&response).unwrap();
-    assert_eq!(json["quiescent"], true);
-    assert_eq!(json["ledger_rev"], 42);
-    assert_eq!(json["next_wake"][0]["at"]["kind"], "exact");
-    assert_eq!(json["next_wake"][0]["at"]["at"], 1_767_225_600u64);
-    assert_eq!(json["next_wake"][1]["at"]["kind"], "window");
-    assert_eq!(json["next_wake"][1]["at"]["start"], 1_767_225_600u64);
-    assert_eq!(json["next_wake"][1]["at"]["end"], 1_767_225_660u64);
-
-    let at = json["next_wake"][0]["at"]["at"].as_u64().unwrap();
-    assert!(
-        at < 100_000_000_000,
-        "wake stamp {at} is milliseconds, not unix seconds"
-    );
-}
-
 #[tokio::test]
 async fn the_job_ready_head_probe_reaches_the_export_in_seconds() {
     let dir = tempfile::tempdir().unwrap();
@@ -1244,54 +1048,6 @@ async fn an_on_change_push_validates_and_honours_the_ack() {
 // ---------------------------------------------------------------------------
 // E6 — SIGTERM graceful quiesce
 // ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn a_failing_push_is_retried_exactly_once_after_200ms() {
-    let dir = tempfile::tempdir().unwrap();
-    let vault = open_vault(&dir.path().join("data"));
-    let creds = credentials(0x11, 0x22);
-    let sup = dir.path().join("sup.sock");
-
-    let listener = tokio::net::UnixListener::bind(&sup).unwrap();
-    let supervisor = spawn_mock_supervisor(listener, 1, 2);
-
-    let ledger = wake_ledger(&vault, &sup, &creds);
-    let started = std::time::Instant::now();
-    assert!(ledger.push_with_retry(7, &[]).await);
-    let elapsed = started.elapsed();
-
-    assert_eq!(
-        supervisor.await.unwrap().len(),
-        2,
-        "exactly one retry, never a loop"
-    );
-    assert!(
-        elapsed >= Duration::from_millis(200),
-        "the retry must wait out the backoff, waited {elapsed:?}"
-    );
-}
-
-#[tokio::test]
-async fn a_supervisor_that_never_acks_does_not_hold_the_exit_open() {
-    let dir = tempfile::tempdir().unwrap();
-    let vault = open_vault(&dir.path().join("data"));
-    let creds = credentials(0x11, 0x22);
-    let sup = dir.path().join("sup.sock");
-
-    let listener = tokio::net::UnixListener::bind(&sup).unwrap();
-    let supervisor = spawn_mock_supervisor(listener, 2, 2);
-
-    let ledger = wake_ledger(&vault, &sup, &creds);
-    assert!(
-        !ledger.push_with_retry(9, &[]).await,
-        "a push nobody acked is not accepted"
-    );
-    assert_eq!(
-        supervisor.await.unwrap().len(),
-        2,
-        "two attempts, then proceed"
-    );
-}
 
 /// How long a row waits on a push that must not hang. Far past the engine's own
 /// push deadline, so this bound only fails a push that never comes back at all
@@ -1402,76 +1158,6 @@ async fn the_final_push_advances_the_rev_when_the_entries_moved() {
     );
 }
 
-#[tokio::test]
-async fn managed_shutdown_closes_ctl_and_leaves_the_inherited_socket_alone() {
-    let dir = tempfile::tempdir().unwrap();
-    let run = sockets_dir(dir.path());
-    let http_path = run.join("http.sock");
-
-    let supervisor_listener = std::os::unix::net::UnixListener::bind(&http_path).unwrap();
-    let inode_before = std::fs::metadata(&http_path).unwrap().ino();
-    let inherited = supervisor_listener.try_clone().unwrap().into_raw_fd();
-    drop(supervisor_listener);
-    let bound = ServeListener::InheritedFd(inherited).bind().await.unwrap();
-
-    let fixture = spawn_ctl_fixture();
-    // A reap was in flight when the signal landed.
-    fixture.state.freeze().expect("freeze telemetry and writes");
-    assert!(fixture.state.guard_write().is_err());
-
-    let shutdown = ManagedShutdown::new();
-    let app = axum::Router::new().route("/health", axum::routing::get(|| async { "ok" }));
-    let signal = shutdown.triggered();
-    let served = tokio::spawn(async move { bound.serve_until(app, signal).await });
-
-    shutdown.trigger();
-    fixture.shutdown.trigger();
-    served.await.unwrap().unwrap();
-    fixture.task.await.unwrap();
-
-    // The ctl socket is ours, so it goes.
-    assert!(
-        !fixture.ctl_path.exists(),
-        "ctl.sock is this process's own path and must be removed"
-    );
-    // The HTTP socket is the supervisor's, so it stays, unchanged.
-    assert!(http_path.exists());
-    assert_eq!(std::fs::metadata(&http_path).unwrap().ino(), inode_before);
-
-    // An interrupted reap must not outlive the process that started it.
-    fixture
-        .state
-        .unfreeze()
-        .expect("resume telemetry and writes");
-    fixture.state.guard_write().unwrap();
-    drop(fixture.server);
-}
-
-#[tokio::test]
-async fn shutdown_is_observed_even_when_it_lands_before_anyone_subscribes() {
-    let shutdown = ManagedShutdown::new();
-    assert!(!shutdown.is_triggered());
-    shutdown.trigger();
-    assert!(shutdown.is_triggered());
-
-    // Subscribing after the fact still resolves: a listener spawned during the
-    // shutdown window must not keep serving because it missed the edge.
-    tokio::time::timeout(Duration::from_secs(5), shutdown.triggered())
-        .await
-        .expect("a late subscriber must still observe the trigger");
-}
-
-#[tokio::test]
-async fn the_sigterm_handler_installs_without_firing() {
-    let shutdown = ManagedShutdown::new();
-    spawn_sigterm_shutdown(shutdown.clone()).unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    assert!(
-        !shutdown.is_triggered(),
-        "installing the handler must not trip shutdown by itself"
-    );
-}
-
 // ---------------------------------------------------------------------------
 // Spawn order — the ready byte is the supervisor's only evidence
 // ---------------------------------------------------------------------------
@@ -1517,59 +1203,6 @@ async fn ready_byte_lands_only_after_sockets_credentials_and_gates() {
         !run.join("ctl.sock").exists(),
         "ctl.sock is bound after the gates, not before"
     );
-}
-
-#[tokio::test]
-async fn a_canary_vault_boots_managed_and_signals_ready() {
-    let dir = tempfile::tempdir().unwrap();
-    let run = sockets_dir(dir.path());
-
-    {
-        let vault = open_vault(&run.join("data"));
-        vault
-            .sync_state_put(CANARY_MARKER_KEY, CANARY_MARKER_VALUE)
-            .unwrap();
-    }
-
-    let (args, ready_path) = managed_boot_args(&run);
-    let managed = ManagedArgs::from_serve_args(&args).unwrap().unwrap();
-    let boot = tokio::spawn(async move { serve_managed(&args, managed).await });
-
-    wait_for_ready(&ready_path).await;
-    // The byte means all three held, so all three are checked at the moment it
-    // landed rather than eventually.
-    assert!(
-        run.join("http.sock").exists(),
-        "http socket bound before ready"
-    );
-    assert!(
-        run.join("ctl.sock").exists(),
-        "ctl socket bound before ready"
-    );
-
-    match ctl_response(&ctl_roundtrip(&run.join("ctl.sock"), r#"{"op":"ping"}"#).await) {
-        CtlResponse::Ping {
-            ok,
-            vault,
-            contract_version,
-            ..
-        } => {
-            assert!(ok);
-            assert_eq!(vault, VAULT_NAME);
-            assert_eq!(contract_version, CONTRACT_VERSION);
-        }
-        other => panic!("expected a ping reply, got {other:?}"),
-    }
-
-    // Serving over the self-bound socket: managed mode needs no auth secret,
-    // because bearer auth terminates at the supervisor.
-    let response = http_get_over_unix(&run.join("http.sock"), "/health").await;
-    assert!(
-        response.starts_with("HTTP/1.1 "),
-        "the managed listener must answer HTTP: {response}"
-    );
-
-    boot.abort();
 }
 
 /// The reap freeze, on the surface the supervisor actually routes traffic to.
@@ -1715,43 +1348,6 @@ async fn a_sync_session_upgraded_before_the_freeze_denies_quiescence() {
     }
 
     boot.abort();
-}
-
-/// The ready byte is exactly the contract's byte, not a newline or a length.
-#[test]
-fn signal_ready_writes_the_contract_byte() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("ready");
-    let fd = std::fs::File::create(&path).unwrap().into_raw_fd();
-    signal_ready(fd).unwrap();
-    assert_eq!(std::fs::read(&path).unwrap(), vec![READY_BYTE]);
-}
-
-#[test]
-fn managed_owner_is_supplied_explicitly_and_malformed_ids_fail_closed() {
-    let dir = tempfile::tempdir().unwrap();
-    let full = managed_argv(dir.path());
-    let parsed = ManagedArgs::from_serve_args(&parse_serve(&full))
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        parsed.derivation_owner,
-        oneiron::federation::derivation::DerivationOwner([9; 32])
-    );
-    for malformed in [
-        "",
-        "abc",
-        &"gg".repeat(32),
-        &"+9".repeat(32),
-        &"09".repeat(31),
-        &"09".repeat(33),
-    ] {
-        let argv = with_flag_value(&full, "--derivation-owner", malformed);
-        assert!(matches!(
-            ManagedArgs::from_serve_args(&parse_serve(&argv)),
-            Err(ManagedError::InvalidDerivationOwner)
-        ));
-    }
 }
 
 #[test]

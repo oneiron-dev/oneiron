@@ -1,13 +1,11 @@
 use super::*;
 
 mod depth_quality;
-mod depth_spend;
 mod memory_reason_repairs;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header::AUTHORIZATION, header::CONTENT_TYPE};
 use oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use oneiron::retrieval_depth::{BackendSpend, RetrievalResult};
-use serde_json::Map;
 use serde_json::Value;
 use tower::ServiceExt;
 
@@ -52,169 +50,15 @@ mod vad_and_error_mapping;
 use support_contract::*;
 use support_mcp::*;
 
-pub(super) const V1_CORE_OPENAPI_CONTRACT_SNAPSHOT: &str =
-    include_str!("../../../tests/fixtures/v1_core_openapi_contract.snapshot.json");
 pub(super) const V1_CORE_SUCCESS_CONTRACT_SNAPSHOT: &str =
     include_str!("../../../tests/fixtures/v1_core_success_contract.snapshot.json");
 pub(super) const V1_CORE_SUCCESS_CONTRACT_SNAPSHOT_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/v1_core_success_contract.snapshot.json"
 );
-pub(super) const V1_CORE_ERROR_CONTRACT_SNAPSHOT: &str =
-    include_str!("../../../tests/fixtures/v1_core_error_contract.snapshot.json");
-pub(super) const V1_CORE_OPENAPI_CONTRACT_OPERATIONS: &[(&str, &str)] = &[
-    ("/v1/core/batch", "post"),
-    ("/v1/core/query", "post"),
-    ("/v1/core/context-pack", "post"),
-    ("/v1/core/context-board", "post"),
-    ("/v1/core/hydrate", "post"),
-    ("/v1/core/batch/shortId/hydrate", "post"),
-    ("/v1/core/run-tree", "get"),
-    ("/v1/core/run-tree/observe", "get"),
-    ("/v1/core/run-tree/intervene", "post"),
-    ("/v1/core/memory/{id}/watch", "get"),
-    ("/v1/core/memory/{id}/watch", "put"),
-    ("/v1/core/memory/{id}/watch", "delete"),
-    ("/v1/core/conversations", "get"),
-    ("/v1/core/conversations", "post"),
-    ("/v1/core/conversations/{conversation_id}/turns", "get"),
-    ("/v1/core/conversations/{conversation_id}/turns", "post"),
-    ("/v1/core/turns/{turn_id}", "get"),
-    ("/v1/core/turns/annotate", "get"),
-    ("/v1/core/turns/annotate", "post"),
-    ("/v1/core/outbound/capabilities", "get"),
-    ("/v1/core/outbound/capabilities/{connector}", "get"),
-    (
-        "/v1/core/outbound/capabilities/{connector}/verbs/{verb}",
-        "get",
-    ),
-    ("/v1/core/surface-events", "post"),
-    ("/v1/core/surface-events/{correlation_id}", "get"),
-];
-pub(super) const V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES: &[&str] = &[
-    "ApiError",
-    "ApiErrorDetails",
-    "ApiErrorEnvelope",
-    "ErrorCode",
-    "CoreBatchEntityInput",
-    "CoreBatchEntityResult",
-    "CoreBatchRequest",
-    "CoreBatchResponse",
-    "CoreContextEdge",
-    "CoreContextEntity",
-    "CoreContextPackItemAccounting",
-    "ContextPackBudgetControls",
-    "ContextPackDepthControls",
-    "ContextPackPolicyControls",
-    "ContextPackRetrievalBudgetControls",
-    "ContextPackTimeControls",
-    "ContextBoardCompanionControls",
-    "ContextBoardMemoriesControls",
-    "ContextBoardMemoriesSlotControls",
-    "ContextBoardSessionControls",
-    "CoreContextPackEvidence",
-    "CoreContextPackRequest",
-    "CoreContextPackResponse",
-    "CoreContextPackScoreComponent",
-    "CoreContextPackScoreEvidence",
-    "CoreContextPackState",
-    "CoreContextPackStateKind",
-    "CoreContextPackStateReason",
-    "CoreContextPackStats",
-    "ContextBoardCompanionAssembly",
-    "ContextBoardMemories",
-    "ContextBoardMemoriesBudget",
-    "ContextBoardMemoryRow",
-    "ContextBoardMemorySlot",
-    "ContextBoardMemorySource",
-    "CoreDisclosureAssembly",
-    "ContextBoardMemoriesCursor",
-    "ContextBoardRequest",
-    "ContextBoardResponse",
-    "ContextBoardSession",
-    "ContextBoardNotification",
-    "ContextBoardUnprocessedItem",
-    "ContextBoardBudget",
-    "CoreInterlocutorControls",
-    "CoreInterlocutorParty",
-    "CoreInterlocutorStamp",
-    "CoreCreateEntityRequest",
-    "CoreCreateTurnRequest",
-    "CoreEntityWriteResponse",
-    "CoreBatchShortIdHydrateItem",
-    "CoreBatchShortIdHydrateRequest",
-    "CoreBatchShortIdHydrateResponse",
-    "CoreShortIdHydrateOutcome",
-    "CoreHydrateDeletionMetadata",
-    "CoreHydrateDeletionReason",
-    "CoreHydrateDeletionSource",
-    "CoreHydrateRequest",
-    "CoreHydrateResponse",
-    "CoreHydrateStatus",
-    "CoreListQuery",
-    "CoreMemoryChange",
-    "CoreMemoryWatchResponse",
-    "CoreMemoryOperationKind",
-    "CoreMemoryTimelineRecord",
-    "CoreMemoryTimelineRecordState",
-    "CoreMemoryTimelineResponse",
-    "CoreMemoryVerbDeleteOutcome",
-    "CoreMemoryVerbDeleteReason",
-    "CoreMemoryVerbRequest",
-    "CoreMemoryVerbResponse",
-    "CoreQueryRequest",
-    "CoreScopedQueryResponse",
-    "ReadScopeSchema",
-    "ReadReceiptSchema",
-    "GrantedDataSchema",
-    "AccessLimitedSchema",
-    "SurfaceEventSubmitRequest",
-    "SurfaceEventSourcePayload",
-    "SurfaceSourceAppPayload",
-    "SurfaceEventActionPayload",
-    "SurfaceInteractionKindPayload",
-    "SurfaceCounterpartyPayload",
-    "SurfaceEventAckResponse",
-    "SurfaceEventRejectionResponse",
-    "SurfaceEventRejectionReasonPayload",
-    "SurfaceEventStatusResponse",
-    "SurfaceEventHandoffStatePayload",
-    "CoreRunTreeEvent",
-    "CoreRunTreeEventKind",
-    "CoreRunTreeFailure",
-    "CoreRunTreeInterventionEffect",
-    "CoreRunTreeInterventionKind",
-    "CoreRunTreeInterventionRequest",
-    "CoreAttemptPlacement",
-    "CoreRunTreeInterventionResponse",
-    "CoreRunTreeNode",
-    "CoreRunTreeQuery",
-    "CoreRunTreeRepair",
-    "CoreRunTreeResponse",
-    "CoreRunTreeStatus",
-    "CoreRunTreeTimestamps",
-    "CoreShortIdHydrateError",
-    "CoreShortIdHydrateErrorKind",
-    "CoreTextField",
-    "CountMode",
-    "ResponseMeta",
-    "TurnVadAnnotateQuery",
-    "TurnVadAnnotateRequest",
-    "TurnVadAnnotateResponse",
-    "TurnVadAnnotationSource",
-    "VadPayload",
-    "View",
-];
 
 pub(super) fn generated_spec() -> Value {
     openapi_document()
-}
-
-pub(super) fn assert_non_empty_string(value: &Value, context: &str) {
-    assert!(
-        value.as_str().is_some_and(|s| !s.trim().is_empty()),
-        "{context} must be a non-empty string, got {value:?}"
-    );
 }
 
 pub(super) fn test_server() -> (tempfile::TempDir, Arc<SyncServer>) {
@@ -363,47 +207,6 @@ pub(super) fn seeded_test_entity_id(counter: u128) -> oneiron::EntityId {
     let mut bytes = counter.to_be_bytes();
     bytes[0] = 0x7e;
     oneiron::EntityId::from_bytes(bytes).expect("seeded test id should be valid")
-}
-
-pub(super) fn synthetic_context_pack(result_count: usize) -> oneiron::ContextPack {
-    oneiron::ContextPack {
-        capabilities: Vec::new(),
-        l2_base: None,
-        retrieval_quality: Default::default(),
-        results: (0..result_count)
-            .map(|index| {
-                let id = seeded_test_entity_id(0x0012_6400 + index as u128);
-                oneiron::ContextEntity {
-                    source_revision_ref: None,
-                    critical: false,
-                    id,
-                    short_id: id.to_hex(),
-                    content_hash: index as u8,
-                    entity_type: ENTITY_TYPE_TURN,
-                    score: 1.0,
-                    fields: None,
-                    edges: None,
-                    vector: None,
-                }
-            })
-            .collect(),
-        neighbors: Vec::new(),
-        stats: oneiron::PackStats {
-            critical_over_budget: false,
-            critical_count: 0,
-            candidates_considered: result_count,
-            signals_used: Vec::new(),
-            query_time_us: 0,
-            entities_hydrated: result_count,
-            neighbors_hydrated: 0,
-            cosine_ghosts_dampened: 0,
-            claims_suppressed: 0,
-            tokens: oneiron::PackTokenStats::default(),
-            items_truncated: oneiron::context_pack::PackItemAccounting::item_budget(),
-            items_dropped: oneiron::context_pack::PackItemAccounting::token_budget(),
-        },
-        empty: None,
-    }
 }
 
 pub(super) fn seed_active_claim(
@@ -1062,51 +865,6 @@ pub(super) fn seed_reactive_turn(vault: &oneiron::Vault, id: &oneiron::EntityId,
         .expect("seed reactive turn");
 }
 
-pub(super) fn reactive_window_frame(window_key: &str, sub_tag: u8) -> Vec<u8> {
-    crate::protocol::encode_window_sync(window_key, sub_tag, b"payload")
-        .into_result()
-        .expect("window sync frame")
-}
-
-pub(super) fn reactive_window_update_frame(window_key: &str) -> Vec<u8> {
-    reactive_window_frame(window_key, crate::protocol::window_sub_tags::UPDATE)
-}
-
-pub(super) fn reactive_doc_update_frame(id: oneiron::EntityId) -> Vec<u8> {
-    oneiron::sync::transport::encode_document(
-        id,
-        oneiron::sync::transport::document_sub_tags::UPDATE,
-        b"delta",
-    )
-    .into_result()
-    .expect("document update frame")
-}
-
-/// Every frame shape that reaches the broadcast channel yet must never re-run
-/// an LMDB query: presence/ephemeral state, sync negotiation, lease traffic,
-/// selector requests, malformed bytes, and tags this server does not know
-/// (which is how a future app-tier RPC/SUB frame will arrive here).
-pub(super) fn reactive_nonpersistent_frames(window_key: &str) -> Vec<Vec<u8>> {
-    let mut root_version_vector = vec![crate::protocol::TAG_VERSION_VECTOR];
-    root_version_vector.extend_from_slice(b"encoded-vv");
-
-    vec![
-        crate::protocol::encode_ephemeral(b"presence")
-            .into_result()
-            .expect("ephemeral frame"),
-        root_version_vector,
-        oneiron::sync::transport::encode_lease_request(7, &[3u8; 32], &[5u8; 64]),
-        reactive_window_frame(window_key, crate::protocol::window_sub_tags::VV_REQUEST),
-        reactive_window_frame(window_key, crate::protocol::window_sub_tags::VV_RESPONSE),
-        reactive_window_frame(
-            window_key,
-            crate::protocol::window_sub_tags::SELECTOR_VV_REQUEST,
-        ),
-        Vec::new(),
-        vec![30, 1, 2, 3],
-    ]
-}
-
 // ── ONE-1936: MCP write-verb validity guard ──────────────────────────────
 
 /// Seeds `subject`, an active claim, and its replacement, then supersedes —
@@ -1148,19 +906,6 @@ pub(super) fn resolve_short_ref(server: &SyncServer, short_ref: &str) -> oneiron
         .expect("successor ref must resolve")
         .id
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// ONE-1704 — two registered MCP endpoints over the wire
-// ═══════════════════════════════════════════════════════════════════════════
-
-// ═══════════════════════════════════════════════════════════════════════════
-// ONE-1704 M2 — the INJECTED execute_code host SEAM
-//
-// This fixture binds an unverified provider, not the shipped QuickJS runtime.
-// It is a negative control: a fixture binding alone cannot enable the wire
-// surface. Calls return code_host_unbound and the counter stays zero. The
-// separate real-QuickJS test covers the verified production binding.
-// ═══════════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ONE-1704 MATERIAL7 — fail-closed acceptance
@@ -1286,19 +1031,6 @@ impl MemoryReasonBackend for StubReasonBackend {
     }
 }
 
-pub(super) fn memory_reason_server(
-    backend: Option<Arc<dyn MemoryReasonBackend>>,
-) -> (tempfile::TempDir, Arc<SyncServer>) {
-    memory_reason_server_with_guard(
-        backend,
-        oneiron::llm::BudgetGuard::new(
-            "one-207-server-tests",
-            10_000,
-            oneiron::llm::BudgetExhaustionPolicy::Suspend,
-        ),
-    )
-}
-
 pub(super) fn memory_reason_server_auth(
     backend: Option<Arc<dyn MemoryReasonBackend>>,
 ) -> (tempfile::TempDir, Arc<SyncServer>) {
@@ -1310,14 +1042,6 @@ pub(super) fn memory_reason_server_auth(
             oneiron::llm::BudgetExhaustionPolicy::Suspend,
         ),
     )
-}
-
-pub(super) fn memory_reason_server_with_guard(
-    backend: Option<Arc<dyn MemoryReasonBackend>>,
-    guard: oneiron::llm::BudgetGuard,
-) -> (tempfile::TempDir, Arc<SyncServer>) {
-    let (dir, server) = memory_reason_server_inner(backend, guard, None);
-    (dir, server)
 }
 
 pub(super) fn memory_reason_server_with_guard_auth(

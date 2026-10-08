@@ -90,14 +90,12 @@ pub use self::tool_catalog::{
 mod tests;
 
 #[cfg(test)]
-use self::{codec::*, schema_parts::*, schema_tools::*, tool_catalog::*};
+use self::{codec::*, tool_catalog::*};
 
 #[cfg(test)]
-use oneiron::context_board::{BoardBlockHeader, BoardBudgetRequest, StreamConnectionId};
+use oneiron::context_board::StreamConnectionId;
 #[cfg(test)]
-use oneiron::context_pack::MCP_CONTEXT_PACK_REF_SCHEMA_VERSION;
-#[cfg(test)]
-use oneiron::{EdgeActorClass, EntityId, WriteActor};
+use oneiron::{EdgeActorClass, EntityId};
 #[cfg(test)]
 use serde_json::Value;
 #[cfg(test)]

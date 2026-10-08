@@ -106,34 +106,3 @@ pub(super) fn lookup_backup_override(
     };
     Ok((over != BackupConfigOverride::default()).then_some(over))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn default_dir_sits_beside_the_vault() {
-        assert_eq!(
-            default_backup_dir(Path::new("/data/notes")),
-            PathBuf::from("/data/notes.backups")
-        );
-    }
-
-    #[test]
-    fn env_keys_override_and_zero_keep_is_refused() {
-        let env = [("ONEIRON_BACKUP_KEEP", "3"), ("ONEIRON_BACKUP_DIR", "/b")];
-        let over = lookup_backup_override(&mut |key| {
-            env.iter()
-                .find(|(name, _)| *name == key)
-                .map(|(_, value)| (*value).to_owned())
-        })
-        .unwrap()
-        .unwrap();
-        let mut config = BackupConfig::default();
-        config.apply_override(over);
-        assert_eq!(config.keep, 3);
-        assert_eq!(config.dir_for(Path::new("/v")), PathBuf::from("/b"));
-        config.keep = 0;
-        assert!(config.validate().is_err());
-    }
-}

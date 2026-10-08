@@ -77,10 +77,6 @@ Three consumers share one wire contract; two of them share this artifact.
 3. **npm-capable external agent** — installs the published package and imports
    it through the same public `exports` map.
 
-`tests/consumers.test.ts` proves consumers 2 and 3 resolve the same package root
-and the same `HttpBaseClient` implementation: one artifact, not a fork per
-consumer.
-
 ## Development
 
 ```bash

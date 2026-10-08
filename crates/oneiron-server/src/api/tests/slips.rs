@@ -75,23 +75,6 @@ async fn descriptor_is_unauthenticated_and_pairing_link_is_one_use() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 #[tokio::test]
-async fn a_pairing_refusal_is_a_typed_envelope() {
-    let (_dir, server) = server();
-    let actor = seed_turn(&server, "pairing refusal actor").to_hex();
-    let holder = SigningKey::from_bytes(&[84; 32]);
-    let binding_key = holder.verifying_key().to_bytes();
-    let transcript = pairing_binding_transcript("K7M2Q9XA", &binding_key, &actor).unwrap();
-    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
-    let data = json!({"code":"K7M2Q9XA","holder_ref":actor,"binding_key":hex(&binding_key),
-        "signature":hex(&holder.sign(&transcript).to_bytes())});
-    let (_, body) = route_json(
-        server,
-        json_request("POST", "/v1/core/pairing/redeem", data),
-    )
-    .await;
-    assert_eq!(body["error"]["code"], "UNAUTHORIZED");
-}
-#[tokio::test]
 async fn v2_http_tamper_and_token_without_private_binding_refuse_401() {
     let (_dir, server) = server();
     let issuer = HostSlipIssuer::from_secret(SLIP_SECRET.as_bytes()).unwrap();

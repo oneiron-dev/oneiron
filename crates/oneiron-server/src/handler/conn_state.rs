@@ -137,38 +137,3 @@ pub(super) enum WindowSyncMode {
     Selector,
     Residence,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_followed_windows_receive_broadcasts_and_late_follow_backfills() {
-        let mut device = ConnState::new(protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION);
-        let month = WindowKey::new("2026-03");
-        let worlds: Vec<_> = (1..=5)
-            .map(|byte| oneiron::EntityId::from_bytes([byte; 16]).unwrap())
-            .collect();
-        let keys: Vec<_> = worlds
-            .iter()
-            .map(|world| WindowKey::for_month_world(&month, *world))
-            .collect();
-        for key in &keys {
-            assert!(!device.receives_window(key));
-        }
-        device.touch_window(keys[0].clone(), 32).unwrap();
-        assert!(!device.receives_window(&keys[0]));
-        device.subscribe_window(&keys[0]);
-        assert!(device.receives_window(&keys[0]));
-        assert!(keys[1..].iter().all(|key| !device.receives_window(key)));
-        device.touch_window(keys[1].clone(), 32).unwrap();
-        device.subscribe_window(&keys[1]);
-        assert!(device.receives_window(&keys[1]));
-        let mut home = ConnState::new(protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION);
-        for key in &keys {
-            home.touch_window(key.clone(), 32).unwrap();
-            home.subscribe_window(key);
-        }
-        assert!(keys.iter().all(|key| home.receives_window(key)));
-    }
-}

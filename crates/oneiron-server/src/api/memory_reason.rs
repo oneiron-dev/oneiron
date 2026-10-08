@@ -45,8 +45,6 @@ use oneiron::retrieval_depth::{
 use oneiron::retrieval_quality::{ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality};
 use oneiron::{Effort, EntityId};
 use serde::{Deserialize, Serialize};
-#[cfg(test)]
-use serde_json::json;
 use serde_json::{Map, Value};
 use utoipa::ToSchema;
 

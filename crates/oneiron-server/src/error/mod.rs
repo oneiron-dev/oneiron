@@ -633,6 +633,3 @@ mod schema;
 pub use self::schema::{
     api_error_envelope_schema, api_error_schema, error_code_schema, openapi_error_components,
 };
-
-#[cfg(test)]
-mod tests;

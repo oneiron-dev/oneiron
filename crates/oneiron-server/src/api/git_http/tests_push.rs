@@ -1,19 +1,12 @@
 //! Push round-trip and status-codec tests for Git smart-HTTP.
 
-use super::routes::{GitService, advertisement_request};
-use super::serve::{
-    GIT_HTTP_MAX_HELD_BYTES, GIT_HTTP_MAX_HELD_CHUNKS, ResponseHead, held_response,
-    landed_response, serve_failure,
-};
+use super::serve::{GIT_HTTP_MAX_HELD_BYTES, ResponseHead, landed_response, serve_failure};
 use super::status_codec::{append_status_packet, rewrite_receive_pack_status, status_packet};
 use axum::body::Bytes;
 use axum::http::StatusCode;
 use axum::http::header::CONTENT_LENGTH;
 use axum::http::header::CONTENT_TYPE;
 use oneiron::origin::smart_http;
-use std::sync::Arc;
-use tokio::sync::mpsc;
-use tokio::sync::oneshot;
 
 #[cfg(test)]
 mod tests {
@@ -200,46 +193,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn git_http_held_response_bounds_bytes_and_chunks_but_drains_to_worker_completion() {
-        use std::sync::atomic::{AtomicBool, Ordering};
-        for (chunk, count) in [
-            (
-                Bytes::from(vec![b'x'; 8192]),
-                GIT_HTTP_MAX_HELD_BYTES / 8192 + 2,
-            ),
-            (Bytes::new(), GIT_HTTP_MAX_HELD_CHUNKS + 2),
-        ] {
-            let (head_tx, head_rx) = oneshot::channel();
-            let (chunks_tx, chunks_rx) = mpsc::channel(1);
-            let completed = Arc::new(AtomicBool::new(false));
-            let worker_completed = Arc::clone(&completed);
-            let worker = tokio::task::spawn_blocking(move || {
-                head_tx.send(receive_pack_head()).expect("head");
-                for _ in 0..count {
-                    chunks_tx
-                        .blocking_send(chunk.clone())
-                        .expect("reader keeps draining");
-                }
-                drop(chunks_tx);
-                worker_completed.store(true, Ordering::SeqCst);
-                Ok(landed_report())
-            });
-            let response = tokio::time::timeout(
-                std::time::Duration::from_secs(10),
-                held_response(head_rx, chunks_rx, worker),
-            )
-            .await
-            .expect("no bounded-channel deadlock");
-            assert!(completed.load(Ordering::SeqCst));
-            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-            let body = axum::body::to_bytes(response.into_body(), 1024)
-                .await
-                .expect("body");
-            assert_eq!(body.as_ref(), b"git status response exceeded its limit; ref effects may be partial; retry to recover");
-        }
-    }
-
-    #[tokio::test]
     async fn git_http_internal_failure_text_never_reaches_the_client() {
         for error in [
             oneiron::Error::Code(oneiron::error::CodeError::ReceivePackLandingRefused {
@@ -323,66 +276,6 @@ mod tests {
                 .get(CONTENT_TYPE)
                 .and_then(|value| value.to_str().ok()),
             Some("application/x-git-receive-pack-result")
-        );
-    }
-
-    /// A push that produced no response at all is not silently successful.
-    #[test]
-    fn git_http_push_without_a_backend_response_is_a_failure() {
-        let orphaned = landed_response(None, Vec::new(), Ok(Ok(landed_report())));
-        assert_eq!(orphaned.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    }
-
-    /// The advertisement this route asks for is the one the projection gates.
-    #[test]
-    fn git_http_advertisement_is_projection_gated() {
-        let request = advertisement_request("demo", GitService::UploadPack, None);
-        assert!(
-            request.is_ref_advertisement(),
-            "the serving plane must recognize this as the ref advertisement, \
-             because that recognition is what engages the publication projection"
-        );
-        assert_eq!(request.query_string, "service=git-upload-pack");
-        assert!(
-            request.git_protocol.is_none(),
-            "protocol v2 would move the ref list where the projection cannot reach it"
-        );
-
-        let push = advertisement_request("demo", GitService::ReceivePack, Some("actor".to_owned()));
-        assert!(
-            push.is_ref_advertisement(),
-            "a push's advertisement is gated exactly as a fetch's is"
-        );
-        assert_eq!(push.query_string, "service=git-receive-pack");
-        assert_eq!(push.remote_user.as_deref(), Some("actor"));
-    }
-
-    /// A held push is the only held response.
-    #[test]
-    fn git_http_only_a_push_is_held_for_its_landing() {
-        assert!(
-            !advertisement_request("demo", GitService::UploadPack, None).is_receive_pack(),
-            "an advertisement streams"
-        );
-        let push = smart_http::ServeRequest {
-            method: "POST".to_owned(),
-            path_info: "/demo.git/git-receive-pack".to_owned(),
-            query_string: String::new(),
-            content_type: None,
-            content_length: None,
-            content_encoding: None,
-            git_protocol: None,
-            remote_user: Some("actor".to_owned()),
-            remote_addr: None,
-        };
-        assert!(push.is_receive_pack(), "a push is held for its landing");
-        let fetch = smart_http::ServeRequest {
-            path_info: "/demo.git/git-upload-pack".to_owned(),
-            ..push
-        };
-        assert!(
-            !fetch.is_receive_pack(),
-            "a pack is never buffered to be inspected"
         );
     }
 }

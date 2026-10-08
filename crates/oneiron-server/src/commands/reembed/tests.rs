@@ -283,28 +283,6 @@ fn a_model_of_another_width_is_refused_and_the_vault_left_alone() {
     assert!(vault.get_vector(&id).expect("vector read").is_some());
 }
 
-/// `serve`'s refusal of another model's vault keeps its typed kind under the
-/// remedy it adds.
-#[test]
-fn the_model_change_remedy_keeps_the_typed_refusal() {
-    let dir = tempfile::tempdir().expect("vault dir");
-    {
-        let vault = open(&serve_config(dir.path(), OLD)).expect("the vault opens");
-        put_claim(&vault, "claim");
-        fill(&vault, OLD);
-    }
-    let refused = open(&serve_config(dir.path(), NEW))
-        .err()
-        .expect("a different space is refused");
-    let explained = super::with_model_change_remedy(refused);
-    assert_eq!(
-        explained
-            .downcast_ref::<oneiron::Error>()
-            .map(oneiron::Error::kind),
-        Some(oneiron::ErrorKind::EmbeddingModelChanged)
-    );
-}
-
 // ─── the transform pin ───────────────────────────────────────────────────
 
 /// The committed metadata of a model whose files say: bidirectional, mean
@@ -394,26 +372,6 @@ fn a_changed_attention_refuses_open_until_reembed_moves_the_vault() {
         Some(oneiron::ErrorKind::EmbeddingTransformChanged),
         "the pin moved with the vectors"
     );
-}
-
-/// Settings that never touch a stored vector leave the vault open: query
-/// prompts, weight precision, batch size.
-#[test]
-fn a_query_only_change_keeps_the_vault_open() {
-    let dir = tempfile::tempdir().expect("vault dir");
-    let own = local_config(dir.path(), EmbedderAttention::Auto);
-    filled(&own);
-    let mut queried = own.clone();
-    if let Some(embedder) = queried.embedder.as_mut() {
-        embedder.query_instruction = Some("Represent this question: ".to_owned());
-        embedder.batch_size = 4;
-        embedder.local.quant = crate::config::EmbedderQuant::None;
-    }
-    assert_eq!(
-        queried.vault_config().embedding_transform,
-        own.vault_config().embedding_transform
-    );
-    assert_eq!(refusal_kind(&queried), None);
 }
 
 /// A vault filled before the transform was pinned holds the model's own

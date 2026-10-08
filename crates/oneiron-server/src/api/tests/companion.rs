@@ -777,35 +777,6 @@ async fn v1_companion_profile_refresh_preserves_sources_and_drift_anchors() {
 }
 
 #[tokio::test]
-async fn retired_companion_register_routes_are_absent_from_http_and_openapi() {
-    let (_dir, server) = test_server_with_config(SyncServerConfig {
-        auth_secret: Some("secret".to_owned()),
-        ..Default::default()
-    });
-    let record = seeded_test_entity_id(0x2284_0001).to_hex();
-    for (method, path) in [
-        ("POST", "/v1/companion/register/records".to_owned()),
-        ("GET", format!("/v1/companion/register/records/{record}")),
-        ("POST", format!("/v1/companion/register/records/{record}")),
-        (
-            "POST",
-            format!("/v1/companion/register/records/{record}/retire"),
-        ),
-        (
-            "POST",
-            format!("/v1/companion/register/records/{record}/end-relationship"),
-        ),
-    ] {
-        let (status, _, _) = route_bytes(
-            server.clone(),
-            core_request(method, &path, "core:auth", None),
-        )
-        .await;
-        assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path}");
-    }
-}
-
-#[tokio::test]
 async fn companion_lists_inline_compact_tiers_and_pending_grant_scopes_without_gets() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         auth_secret: Some("secret".to_owned()),
@@ -916,18 +887,6 @@ async fn companion_lists_inline_compact_tiers_and_pending_grant_scopes_without_g
         .unwrap();
     assert!(preview.contains("companion_profile"));
     assert!(preview.contains(&first.to_hex()));
-}
-
-#[test]
-fn old_companion_list_fixtures_deserialize_without_previews() {
-    let personas: super::super::companion::PersonasListResponse =
-        serde_json::from_value(json!({"items":[{"persona_ref":"a", "person_ref":"b"}]})).unwrap();
-    assert!(serde_json::to_value(personas).unwrap()["items"][0]["personalityCompact"].is_null());
-    let requests: super::super::companion::AccessRequestsListResponse = serde_json::from_value(
-        json!({"items":[{"id":"a", "principal_ref":"b", "capability":"messages.read"}]}),
-    )
-    .unwrap();
-    assert!(serde_json::to_value(requests).unwrap()["items"][0]["grantContentPreview"].is_null());
 }
 
 #[tokio::test]

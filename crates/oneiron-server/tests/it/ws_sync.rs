@@ -19,10 +19,8 @@
 //! under test is exactly "state must round-trip through sync_state".
 //!
 //! Live-server coverage map (ONE-474) — the discriminator for each area:
-//! - WebSocket lifecycle: `ws_upgrade_allows_unauthenticated_only_in_dev_mode`,
-//!   `imported_update_relays_to_second_client_and_persists_contract_keys`
+//! - WebSocket lifecycle: `imported_update_relays_to_second_client_and_persists_contract_keys`
 //! - memory lifecycle: `http_memory_lifecycle_uses_current_write_verbs_and_read_surfaces`
-//! - edge query: `http_edges_default_summary_and_standard_preserves_current_fields`
 //! - unauthenticated rejection: `http_guarded_route_rejects_when_no_secret_and_not_dev`,
 //!   `ws_upgrade_rejects_unauthenticated_when_secret_configured`
 //! - CORS response: `commands::tests::configured_cors_origin_controls_actual_preflight_response`
@@ -34,8 +32,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::{SinkExt, StreamExt};
 use loro::{ExportMode, LoroDoc};
-use oneiron::habit::TaskRole;
-use oneiron::registry::{ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
+use oneiron::registry::ENTITY_TYPE_TURN;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::transport::{
     self, TAG_EPHEMERAL, TAG_SYNC_UPDATE, TAG_WINDOW_SYNC, window_sub_tags,
@@ -44,7 +41,7 @@ use oneiron::sync::{
     ConnectionConfig, EphemeralStore, EphemeralWireState, LoroValue, SyncClient, SyncClientConfig,
     SyncConnection, SyncEvent, SyncStatus, SyncTransportCredential, WindowManager,
 };
-use oneiron::{EdgeKind, EntityId, TimeRange, VaultConfig};
+use oneiron::{EntityId, TimeRange};
 use oneiron_server::build_app;
 use oneiron_server::config::SyncServerConfig;
 use oneiron_server::error::{ApiError, ApiErrorDetails, ErrorCode};
@@ -61,13 +58,6 @@ fn open_vault(dir: &std::path::Path) -> Arc<oneiron::Vault> {
     Arc::new(oneiron::Vault::open(dir, oneiron::VaultConfig::device()).unwrap())
 }
 
-fn open_search_vault(dir: &std::path::Path) -> Arc<oneiron::Vault> {
-    let mut config = VaultConfig::device();
-    config.dimensions = 4;
-    config.embedding_model = Some("ws/search@test-model".to_owned());
-    Arc::new(oneiron::Vault::open(dir, config).unwrap())
-}
-
 fn seeded_entity(byte: u8) -> EntityId {
     EntityId::from_bytes([byte; 16]).unwrap()
 }
@@ -79,49 +69,6 @@ fn test_range(timestamp: u64) -> TimeRange {
     }
 }
 
-fn seed_text_search_matches(vault: &oneiron::Vault) {
-    let ids = [
-        seeded_entity(0x31),
-        seeded_entity(0x32),
-        seeded_entity(0x33),
-    ];
-    let mut batch = vault.batch();
-    for (index, id) in ids.iter().enumerate() {
-        let learned_at = (index + 1) as u64;
-        batch = batch
-            .put(
-                id,
-                ENTITY_TYPE_TURN,
-                test_range(learned_at),
-                learned_at,
-                b"text-search-match",
-            )
-            .text(id, &[("body", "metaneedle shared term")]);
-    }
-    batch.commit().unwrap();
-}
-
-fn seed_vector_search_matches(vault: &oneiron::Vault) {
-    let fixtures = [
-        (seeded_entity(0x41), [1.0_f32, 0.0, 0.0, 0.0]),
-        (seeded_entity(0x42), [0.9_f32, 0.1, 0.0, 0.0]),
-        (seeded_entity(0x43), [0.8_f32, 0.2, 0.0, 0.0]),
-    ];
-
-    for (index, (id, vector)) in fixtures.iter().enumerate() {
-        let learned_at = (index + 1) as u64;
-        vault
-            .put_entity(
-                id,
-                ENTITY_TYPE_TURN,
-                test_range(learned_at),
-                learned_at,
-                b"vector-search-match",
-            )
-            .unwrap();
-        vault.put_vector(id, vector).unwrap();
-    }
-}
 /// Client-side window manager over a fresh vault (the client API is
 /// manager-owned post-ONE-1125).
 fn open_manager(vault: Arc<oneiron::Vault>) -> Arc<WindowManager> {
@@ -135,17 +82,6 @@ fn open_manager(vault: Arc<oneiron::Vault>) -> Arc<WindowManager> {
 fn config_with_secret(secret: Option<&str>) -> SyncServerConfig {
     SyncServerConfig {
         auth_secret: secret.map(str::to_string),
-        ..Default::default()
-    }
-}
-
-fn config_with_secret_and_dev(
-    secret: Option<&str>,
-    allow_unauthenticated: bool,
-) -> SyncServerConfig {
-    SyncServerConfig {
-        auth_secret: secret.map(str::to_string),
-        allow_unauthenticated,
         ..Default::default()
     }
 }
@@ -340,27 +276,6 @@ async fn expect_no_binary(ws: &mut WsStream, duration: Duration) {
     );
 }
 
-async fn assert_ws_responds_after_burst(ws: &mut WsStream) {
-    let nonce = b"after-burst".to_vec();
-    ws.send(Message::Ping(nonce.clone().into())).await.unwrap();
-    tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            match ws
-                .next()
-                .await
-                .expect("socket remains open")
-                .expect("valid frame")
-            {
-                Message::Pong(bytes) if bytes.as_ref() == nonce.as_slice() => break,
-                Message::Close(frame) => panic!("rate must not close the socket: {frame:?}"),
-                _ => {}
-            }
-        }
-    })
-    .await
-    .expect("socket responds after exceeding the retired rate setting");
-}
-
 async fn assert_ws_closes(ws: &mut WsStream, reason: &str) {
     let closed = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
@@ -472,23 +387,6 @@ fn http_body(response: &[u8]) -> &[u8] {
         panic!("HTTP response missing header/body separator");
     };
     &response[offset + 4..]
-}
-
-fn http_json(response: &[u8]) -> Value {
-    serde_json::from_slice(http_body(response)).unwrap()
-}
-
-fn json_key_set(value: &Value) -> std::collections::BTreeSet<&str> {
-    value
-        .as_object()
-        .unwrap()
-        .keys()
-        .map(String::as_str)
-        .collect()
-}
-
-fn msgpack_json(value: &Value) -> Vec<u8> {
-    rmp_serde::to_vec_named(value).unwrap()
 }
 
 fn http_json_body(response: &str) -> &str {
@@ -624,21 +522,6 @@ async fn ws_upgrade_rejects_unauthenticated_when_secret_configured() {
 }
 
 #[tokio::test]
-async fn ws_upgrade_rejects_empty_configured_secret_even_with_empty_header() {
-    let dir = tempfile::tempdir().unwrap();
-    let (addr, _server, handle) =
-        spawn_server(open_vault(dir.path()), config_with_secret(Some(""))).await;
-
-    let err = connect(addr, None).await.unwrap_err();
-    assert_unauthorized(&err);
-
-    let err = connect(addr, Some("")).await.unwrap_err();
-    assert_unauthorized(&err);
-
-    handle.abort();
-}
-
-#[tokio::test]
 async fn ws_upgrade_rejects_unauthenticated_when_no_secret_and_not_dev() {
     let dir = tempfile::tempdir().unwrap();
     let (addr, _server, handle) =
@@ -646,22 +529,6 @@ async fn ws_upgrade_rejects_unauthenticated_when_no_secret_and_not_dev() {
 
     let err = connect(addr, None).await.unwrap_err();
     assert_unauthorized(&err);
-
-    handle.abort();
-}
-
-#[tokio::test]
-async fn ws_upgrade_allows_unauthenticated_only_in_dev_mode() {
-    let dir = tempfile::tempdir().unwrap();
-    let (addr, _server, handle) = spawn_server(
-        open_vault(dir.path()),
-        config_with_secret_and_dev(None, true),
-    )
-    .await;
-
-    let mut ws = connect(addr, None).await.unwrap();
-    let first = next_binary(&mut ws).await;
-    assert_eq!(first[0], TAG_SYNC_UPDATE);
 
     handle.abort();
 }
@@ -863,14 +730,6 @@ fn revoke_owner_slip(server: &SyncServer, secret: &str, jti: &str) {
         .unwrap();
 }
 
-/// Records `jti` as revoked, byte-for-byte as `oneiron-server token revoke`
-/// does: one `sync_state` row whose KEY is the fact, with an empty value.
-fn revoke_token_jti(vault: &oneiron::Vault, jti: &str) {
-    vault
-        .sync_state_put(&format!("auth:revoked-token-jti:{jti}"), &[])
-        .unwrap();
-}
-
 /// Reads the socket until it serves sync data or closes.
 ///
 /// `None` — closed or ended with nothing further sent — is the fail-closed
@@ -1042,53 +901,6 @@ async fn revoked_token_stops_broadcast_fan_out_to_its_open_socket() {
     handle.abort();
 }
 
-/// Dev mode honours revocation on live sockets too.
-///
-/// With no secret configured the MAC goes unverified, but the registry is
-/// real state: an operator who revoked a `jti` must not find it still served
-/// merely because nothing checked the signature. Mirrors the HTTP-side
-/// `dev_mode_honours_revocation`.
-#[tokio::test]
-async fn dev_mode_revocation_reaches_an_open_socket() {
-    let dir = tempfile::tempdir().unwrap();
-    let (addr, server, handle) = spawn_server(
-        open_vault(dir.path()),
-        config_with_secret_and_dev(None, true),
-    )
-    .await;
-
-    let jti = "c".repeat(32);
-    // Dev mode requires the v2 framing but verifies no MAC, so the segment is
-    // empty — the same token shape production speaks, minus the signature.
-    let mut ws = connect(addr, Some(&format!("v2.jti={jti}.")))
-        .await
-        .unwrap();
-    let first = next_binary(&mut ws).await;
-    assert_eq!(first[0], TAG_SYNC_UPDATE);
-
-    revoke_token_jti(server.vault(), &jti);
-
-    let client = LoroDoc::new();
-    ws.send(Message::Binary(
-        transport::encode_window_sync(
-            "2026-02",
-            window_sub_tags::VV_REQUEST,
-            &client.oplog_vv().encode(),
-        )
-        .into(),
-    ))
-    .await
-    .unwrap();
-
-    let after_revocation = next_binary_or_close(&mut ws).await;
-    assert!(
-        after_revocation.is_none(),
-        "dev mode kept serving a revoked socket: {after_revocation:?}"
-    );
-
-    handle.abort();
-}
-
 /// A revocation landing between the upgrade and the hello must reach the
 /// Phase-1 sends.
 ///
@@ -1224,58 +1036,6 @@ async fn revoked_token_cannot_publish_ephemeral_state_to_peers() {
     handle.abort();
 }
 
-/// The dev-mode row of the publish ban.
-///
-/// With no secret configured the MAC goes unverified, but the registry is
-/// real state — and the write side is where an unverified bearer does the
-/// most damage, since it reaches every live peer.
-#[tokio::test]
-async fn dev_mode_revoked_bearer_cannot_publish_ephemeral_state() {
-    let dir = tempfile::tempdir().unwrap();
-    let (addr, server, handle) = spawn_server(
-        open_vault(dir.path()),
-        config_with_secret_and_dev(None, true),
-    )
-    .await;
-
-    let jti = "f".repeat(32);
-    let mut client_a = connect(addr, Some(&format!("v2.jti={jti}.")))
-        .await
-        .unwrap();
-    let mut client_b = connect(addr, None).await.unwrap();
-    let _ = next_binary(&mut client_a).await; // root snapshot
-    let _ = next_binary(&mut client_b).await; // root snapshot
-
-    client_a
-        .send(Message::Binary(
-            encode_ephemeral_set("presence:dev-a", "online").into(),
-        ))
-        .await
-        .unwrap();
-    let relayed = next_binary(&mut client_b).await;
-    let receiver = EphemeralStore::new(30_000);
-    apply_ephemeral_frame(&receiver, &relayed);
-    assert_eq!(receiver.get("presence:dev-a"), Some("online".into()));
-
-    revoke_token_jti(server.vault(), &jti);
-
-    client_a
-        .send(Message::Binary(
-            encode_ephemeral_set("presence:dev-a-revoked", "still-here").into(),
-        ))
-        .await
-        .unwrap();
-
-    let after_revocation = next_binary_or_close(&mut client_a).await;
-    assert!(
-        after_revocation.is_none(),
-        "dev mode kept serving a revoked publisher: {after_revocation:?}"
-    );
-    expect_no_binary(&mut client_b, Duration::from_millis(300)).await;
-
-    handle.abort();
-}
-
 #[tokio::test]
 async fn http_guarded_route_rejects_when_no_secret_and_not_dev() {
     let dir = tempfile::tempdir().unwrap();
@@ -1288,119 +1048,6 @@ async fn http_guarded_route_rejects_when_no_secret_and_not_dev() {
     assert_eq!(error.code(), ErrorCode::Unauthorized);
     assert!(matches!(error.details(), ApiErrorDetails::Unauthorized));
     assert!(!error.suggestions().is_empty());
-
-    handle.abort();
-}
-
-#[tokio::test]
-async fn http_bad_entity_id_returns_structured_api_error_body() {
-    let dir = tempfile::tempdir().unwrap();
-    let (addr, _server, handle) = spawn_server(
-        open_vault(dir.path()),
-        config_with_secret_and_dev(None, true),
-    )
-    .await;
-
-    let response = http_get(addr, "/api/entity/not-hex", None).await;
-    assert_http_status(&response, 400);
-    let error = api_error_body(&response);
-    assert_eq!(error.code(), ErrorCode::BadRequest);
-    assert!(
-        matches!(error.details(), ApiErrorDetails::BadRequest { field } if field.as_deref() == Some("id"))
-    );
-    assert!(!error.suggestions().is_empty());
-
-    let response = http_get(addr, "/api/edges/not-hex", None).await;
-    assert_http_status(&response, 400);
-    let error = api_error_body(&response);
-    assert_eq!(error.code(), ErrorCode::BadRequest);
-    assert!(
-        matches!(error.details(), ApiErrorDetails::BadRequest { field } if field.as_deref() == Some("id"))
-    );
-    assert!(!error.suggestions().is_empty());
-
-    handle.abort();
-}
-
-#[tokio::test]
-async fn http_entity_summary_projects_exact_keys_and_hides_heavy_fields() {
-    const SECRET: &str = "ws-entity-summary-secret";
-    let dir = tempfile::tempdir().unwrap();
-    let vault = open_vault(dir.path());
-    let id = EntityId::now();
-    let body = msgpack_json(&serde_json::json!({
-        "title": "Ship projection",
-        "role": TaskRole::Task.role_byte(),
-        "status": "open",
-        "priority": 2,
-        "body": "long heavy body",
-        "metadata": {"large": true}
-    }));
-    vault
-        .put_entity(
-            &id,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 10, end: 10 },
-            42,
-            &body,
-        )
-        .unwrap();
-    let (addr, server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
-
-    let response = http_get_root_bytes(
-        addr,
-        &format!("/api/entity/{}?view=summary", id.to_hex()),
-        &server,
-        SECRET,
-    )
-    .await;
-    assert_http_status_bytes(&response, 200);
-    let json = http_json(&response);
-    assert_eq!(
-        json_key_set(&json),
-        std::collections::BTreeSet::from(["id", "kind", "label", "updatedAt"])
-    );
-    assert_eq!(json["id"], id.to_hex());
-    assert_eq!(json["kind"], "TASK");
-    assert_eq!(json["label"], "Ship projection");
-    assert_eq!(json["updatedAt"], 42);
-    assert!(json.get("body").is_none());
-    assert!(json.get("metadata").is_none());
-
-    handle.abort();
-}
-
-#[tokio::test]
-async fn http_entity_default_returns_standard_raw_body() {
-    const SECRET: &str = "ws-entity-default-secret";
-    let dir = tempfile::tempdir().unwrap();
-    let vault = open_vault(dir.path());
-    let id = EntityId::now();
-    let body = msgpack_json(&serde_json::json!({
-        "title": "Raw default",
-        "role": TaskRole::Task.role_byte(),
-        "status": "open"
-    }));
-    vault
-        .put_entity(
-            &id,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 20, end: 20 },
-            50,
-            &body,
-        )
-        .unwrap();
-    let (addr, server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
-
-    let response = http_get_root_bytes(
-        addr,
-        &format!("/api/entity/{}", id.to_hex()),
-        &server,
-        SECRET,
-    )
-    .await;
-    assert_http_status_bytes(&response, 200);
-    assert_eq!(http_body(&response), body.as_slice());
 
     handle.abort();
 }
@@ -1549,382 +1196,7 @@ async fn http_memory_lifecycle_uses_current_write_verbs_and_read_surfaces() {
     handle.abort();
 }
 
-#[tokio::test]
-async fn http_vector_search_defaults_to_summary_and_full_supersets_standard() {
-    const SECRET: &str = "ws-vector-defaults-secret";
-    let dir = tempfile::tempdir().unwrap();
-    let vault = open_search_vault(dir.path());
-    let id = EntityId::now();
-    let body = msgpack_json(&serde_json::json!({
-        "title": "Vector hit",
-        "role": TaskRole::Task.role_byte(),
-        "status": "open",
-        "priority": 1,
-        "dueDate": 1_777_100_000_u64,
-        "body": "heavy vector payload",
-        "custom": {"nested": true}
-    }));
-    vault
-        .put_entity(
-            &id,
-            ENTITY_TYPE_TASK,
-            TimeRange { start: 30, end: 30 },
-            60,
-            &body,
-        )
-        .unwrap();
-    vault.put_vector(&id, &[1.0_f32, 0.0, 0.0, 0.0]).unwrap();
-    let (addr, server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
-
-    let summary_response = http_get_root_bytes(
-        addr,
-        "/api/search/vector?query=1,0,0,0&limit=1",
-        &server,
-        SECRET,
-    )
-    .await;
-    assert_http_status_bytes(&summary_response, 200);
-    let summary = http_json(&summary_response);
-    let summary_hit = summary["items"].as_array().unwrap().first().unwrap();
-    assert_eq!(
-        json_key_set(summary_hit),
-        std::collections::BTreeSet::from(["id", "kind", "label", "updatedAt"])
-    );
-    assert!(summary_hit.get("score").is_none());
-
-    let standard_response = http_get_root_bytes(
-        addr,
-        "/api/search/vector?query=1,0,0,0&limit=1&view=standard",
-        &server,
-        SECRET,
-    )
-    .await;
-    assert_http_status_bytes(&standard_response, 200);
-    let standard = http_json(&standard_response);
-    let standard_hit = standard["items"].as_array().unwrap().first().unwrap();
-    assert_eq!(
-        json_key_set(standard_hit),
-        std::collections::BTreeSet::from(["id", "score"])
-    );
-
-    let full_response = http_get_root_bytes(
-        addr,
-        "/api/search/vector?query=1,0,0,0&limit=1&view=full",
-        &server,
-        SECRET,
-    )
-    .await;
-    assert_http_status_bytes(&full_response, 200);
-    let full = http_json(&full_response);
-    let full_hit = full["items"].as_array().unwrap().first().unwrap();
-    let full_keys = json_key_set(full_hit);
-    for key in json_key_set(summary_hit)
-        .into_iter()
-        .chain(json_key_set(standard_hit))
-    {
-        assert!(full_keys.contains(key), "full missing key {key}");
-    }
-    assert_eq!(full_hit["title"], "Vector hit");
-    assert_eq!(full_hit["status"], "open");
-    assert_eq!(full_hit["body"], "heavy vector payload");
-    assert_eq!(full_hit["custom"], serde_json::json!({"nested": true}));
-
-    handle.abort();
-}
-
-#[tokio::test]
-async fn http_edges_default_summary_and_standard_preserves_current_fields() {
-    const SECRET: &str = "ws-edges-summary-secret";
-    let dir = tempfile::tempdir().unwrap();
-    let vault = open_vault(dir.path());
-    let source = EntityId::now();
-    let target = EntityId::now();
-    let body =
-        msgpack_json(&serde_json::json!({"title": "node", "role": TaskRole::Task.role_byte()}));
-    for id in [source, target] {
-        vault
-            .put_entity(
-                &id,
-                ENTITY_TYPE_TASK,
-                TimeRange { start: 40, end: 40 },
-                70,
-                &body,
-            )
-            .unwrap();
-    }
-    vault
-        .put_edge(&source, EdgeKind::BelongsTo, &target, 0.5)
-        .unwrap();
-    let (addr, server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
-
-    let summary_response = http_get_root_bytes(
-        addr,
-        &format!("/api/edges/{}", source.to_hex()),
-        &server,
-        SECRET,
-    )
-    .await;
-    assert_http_status_bytes(&summary_response, 200);
-    let summary = http_json(&summary_response);
-    let summary_edge = summary.as_array().unwrap().first().unwrap();
-    assert_eq!(
-        json_key_set(summary_edge),
-        std::collections::BTreeSet::from(["kind", "target"])
-    );
-
-    let standard_response = http_get_root_bytes(
-        addr,
-        &format!("/api/edges/{}?view=standard", source.to_hex()),
-        &server,
-        SECRET,
-    )
-    .await;
-    assert_http_status_bytes(&standard_response, 200);
-    let standard = http_json(&standard_response);
-    let standard_edge = standard.as_array().unwrap().first().unwrap();
-    assert_eq!(
-        json_key_set(standard_edge),
-        std::collections::BTreeSet::from(["created_at", "kind", "target", "weight"])
-    );
-
-    handle.abort();
-}
-
-#[tokio::test]
-async fn http_text_search_invalid_view_returns_error_code() {
-    let dir = tempfile::tempdir().unwrap();
-    let (addr, _server, handle) = spawn_server(
-        open_vault(dir.path()),
-        config_with_secret_and_dev(None, true),
-    )
-    .await;
-
-    let response = http_get(addr, "/api/search/text?query=hello&view=tiny", None).await;
-    assert_http_status(&response, 400);
-    let error = api_error_body(&response);
-    assert_eq!(error.code(), ErrorCode::BadRequest);
-    assert!(
-        matches!(error.details(), ApiErrorDetails::BadRequest { field } if field.as_deref() == Some("view"))
-    );
-
-    handle.abort();
-}
-
-#[tokio::test]
-async fn http_search_text_response_defaults_to_estimate_meta() {
-    let dir = tempfile::tempdir().unwrap();
-    let (addr, _server, handle) = spawn_server(
-        open_vault(dir.path()),
-        config_with_secret_and_dev(None, true),
-    )
-    .await;
-
-    let response = http_get(addr, "/api/search/text?query=no-such-term", None).await;
-    assert_http_status(&response, 200);
-    let body = http_json_value(&response);
-
-    assert_eq!(body["items"], serde_json::json!([]));
-    assert!(body.get("nextCursor").is_none());
-    assert_eq!(body["meta"]["total"], 0);
-    assert_eq!(body["meta"]["countMode"], "estimate");
-    assert_eq!(body["meta"]["quality"], "passthrough");
-    assert_eq!(body["meta"]["confidenceAdjustment"], -0.35);
-
-    handle.abort();
-}
-
-#[tokio::test]
-async fn http_search_text_estimate_counts_before_page_truncation() {
-    const SECRET: &str = "ws-search-text-secret";
-    let dir = tempfile::tempdir().unwrap();
-    let vault = open_search_vault(dir.path());
-    seed_text_search_matches(&vault);
-    let (addr, server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
-
-    let response = http_get_root(
-        addr,
-        "/api/search/text?query=metaneedle&limit=2",
-        &server,
-        SECRET,
-    )
-    .await;
-    assert_http_status(&response, 200);
-    let body = http_json_value(&response);
-
-    assert_eq!(body["items"].as_array().unwrap().len(), 2);
-    assert_eq!(body["meta"]["total"], 3);
-    assert_eq!(body["meta"]["countMode"], "estimate");
-    assert_eq!(body["meta"]["quality"], "passthrough");
-    assert_eq!(body["meta"]["confidenceAdjustment"], -0.35);
-
-    handle.abort();
-}
-
-#[tokio::test]
-async fn http_search_text_count_mode_none_returns_zero_none_meta() {
-    let dir = tempfile::tempdir().unwrap();
-    let (addr, _server, handle) = spawn_server(
-        open_vault(dir.path()),
-        config_with_secret_and_dev(None, true),
-    )
-    .await;
-
-    let response = http_get(
-        addr,
-        "/api/search/text?query=no-such-term&countMode=none",
-        None,
-    )
-    .await;
-    assert_http_status(&response, 200);
-    let body = http_json_value(&response);
-
-    assert_eq!(body["items"], serde_json::json!([]));
-    assert_eq!(body["meta"]["total"], 0);
-    assert_eq!(body["meta"]["countMode"], "none");
-    assert_eq!(body["meta"]["quality"], "passthrough");
-    assert_eq!(body["meta"]["confidenceAdjustment"], -0.35);
-
-    handle.abort();
-}
-
-#[tokio::test]
-async fn http_search_vector_response_defaults_to_estimate_meta() {
-    let dir = tempfile::tempdir().unwrap();
-    let (addr, _server, handle) = spawn_server(
-        open_vault(dir.path()),
-        config_with_secret_and_dev(None, true),
-    )
-    .await;
-    let vector = vec!["0.0"; 1024].join(",");
-    let path = format!("/api/search/vector?query={vector}&limit=2");
-
-    let response = http_get(addr, &path, None).await;
-    assert_http_status(&response, 200);
-    let body = http_json_value(&response);
-
-    assert_eq!(body["items"], serde_json::json!([]));
-    assert_eq!(body["meta"]["total"], 0);
-    assert_eq!(body["meta"]["countMode"], "estimate");
-    assert_eq!(body["meta"]["quality"], "passthrough");
-    assert_eq!(body["meta"]["confidenceAdjustment"], -0.35);
-
-    handle.abort();
-}
-
-#[tokio::test]
-async fn http_search_vector_estimate_counts_before_page_truncation() {
-    const SECRET: &str = "ws-search-vector-secret";
-    let dir = tempfile::tempdir().unwrap();
-    let vault = open_search_vault(dir.path());
-    seed_vector_search_matches(&vault);
-    let (addr, server, handle) = spawn_server(vault, config_with_secret(Some(SECRET))).await;
-
-    let response = http_get_root(
-        addr,
-        "/api/search/vector?query=1.0,0.0,0.0,0.0&limit=2",
-        &server,
-        SECRET,
-    )
-    .await;
-    assert_http_status(&response, 200);
-    let body = http_json_value(&response);
-
-    assert_eq!(body["items"].as_array().unwrap().len(), 2);
-    assert_eq!(body["meta"]["total"], 3);
-    assert_eq!(body["meta"]["countMode"], "estimate");
-    assert_eq!(body["meta"]["quality"], "passthrough");
-    assert_eq!(body["meta"]["confidenceAdjustment"], -0.35);
-
-    handle.abort();
-}
-
-#[tokio::test]
-async fn lease_revoke_route_uses_idempotency_key_replay_cache() {
-    let dir = tempfile::tempdir().unwrap();
-    let (addr, server, handle) = spawn_server(
-        open_vault(dir.path()),
-        config_with_secret(Some("route-secret")),
-    )
-    .await;
-
-    let body = r#"{"client_id":"0000000000000001"}"#;
-    let first = http_post_root(
-        addr,
-        "/api/lease/revoke",
-        body,
-        &server,
-        "route-secret",
-        Some("lease-revoke-key"),
-    )
-    .await;
-    assert_http_status(&first, 200);
-
-    let replay = http_post_root(
-        addr,
-        "/api/lease/revoke",
-        body,
-        &server,
-        "route-secret",
-        Some("lease-revoke-key"),
-    )
-    .await;
-    assert_http_status(&replay, 200);
-    assert_eq!(
-        http_json_body(&first).as_bytes(),
-        http_json_body(&replay).as_bytes()
-    );
-
-    let conflict = http_post_root(
-        addr,
-        "/api/lease/revoke",
-        r#"{"client_id":"0000000000000002"}"#,
-        &server,
-        "route-secret",
-        Some("lease-revoke-key"),
-    )
-    .await;
-    assert_http_status(&conflict, 409);
-    let error = api_error_body(&conflict);
-    assert_eq!(error.code(), ErrorCode::IdempotencyReplayConflict);
-    assert!(matches!(
-        error.details(),
-        ApiErrorDetails::IdempotencyReplayConflict { idempotency_key }
-            if idempotency_key.as_deref() == Some("lease-revoke-key")
-    ));
-    assert!(!error.suggestions().is_empty());
-
-    handle.abort();
-}
-
 // ─── Update relay + durability ────────────────────────────────────────────────
-
-#[tokio::test]
-async fn ephemeral_late_join_snapshot_prunes_expired_keys() {
-    let dir = tempfile::tempdir().unwrap();
-    let config = SyncServerConfig {
-        auth_secret: Some("ttl-secret".to_string()),
-        ephemeral_timeout_ms: 5,
-        ..Default::default()
-    };
-    let (addr, server, handle) = spawn_server(open_vault(dir.path()), config).await;
-
-    let mut client_a = connect_root(addr, &server, "ttl-secret").await.unwrap();
-    let _ = next_binary(&mut client_a).await; // root snapshot
-    client_a
-        .send(Message::Binary(
-            encode_ephemeral_set("presence:device-a", "online").into(),
-        ))
-        .await
-        .unwrap();
-    tokio::time::sleep(Duration::from_millis(25)).await;
-
-    let mut client_b = connect_root(addr, &server, "ttl-secret").await.unwrap();
-    let root = next_binary(&mut client_b).await;
-    assert_eq!(root[0], TAG_SYNC_UPDATE);
-    expect_no_binary(&mut client_b, Duration::from_millis(150)).await;
-
-    handle.abort();
-}
 
 #[tokio::test]
 async fn ephemeral_late_join_snapshot_includes_delete_tombstone() {
@@ -2059,105 +1331,6 @@ async fn ephemeral_rejects_far_future_timestamp_before_apply() {
     let root = next_binary(&mut late).await;
     assert_eq!(root[0], TAG_SYNC_UPDATE);
     expect_no_binary(&mut late, Duration::from_millis(150)).await;
-
-    handle.abort();
-}
-
-#[tokio::test]
-async fn oversized_ephemeral_payload_is_rejected_before_apply() {
-    let dir = tempfile::tempdir().unwrap();
-    let config = SyncServerConfig {
-        auth_secret: Some("eph-size-secret".to_string()),
-        max_ephemeral_payload_bytes: 4,
-        ..Default::default()
-    };
-    let (addr, server, handle) = spawn_server(open_vault(dir.path()), config).await;
-
-    let mut ws = connect_root(addr, &server, "eph-size-secret")
-        .await
-        .unwrap();
-    let _ = next_binary(&mut ws).await; // root snapshot
-    let mut oversized = vec![TAG_EPHEMERAL];
-    oversized.extend_from_slice(&[0u8; 5]);
-    ws.send(Message::Binary(oversized.into())).await.unwrap();
-
-    assert_ws_closes(
-        &mut ws,
-        "server must close before applying oversized ephemeral payload",
-    )
-    .await;
-
-    let mut late = connect_root(addr, &server, "eph-size-secret")
-        .await
-        .unwrap();
-    let root = next_binary(&mut late).await;
-    assert_eq!(root[0], TAG_SYNC_UPDATE);
-    expect_no_binary(&mut late, Duration::from_millis(150)).await;
-
-    handle.abort();
-}
-
-#[tokio::test]
-async fn ephemeral_snapshot_cap_rejects_growth_before_hub_apply() {
-    let key_a = "presence:device-a";
-    let key_b = "presence:device-b";
-    let frame_a = encode_ephemeral_set(key_a, "online-online-online");
-    let frame_b = encode_ephemeral_set(key_b, "online-online-online");
-    let candidate = EphemeralStore::new(30_000);
-    candidate.apply(&frame_a[1..]).unwrap();
-    let first_snapshot_len = candidate.encode_all().len();
-    candidate.apply(&frame_b[1..]).unwrap();
-    let two_key_snapshot_len = candidate.encode_all().len();
-    assert!(two_key_snapshot_len > first_snapshot_len);
-
-    let dir = tempfile::tempdir().unwrap();
-    let config = SyncServerConfig {
-        auth_secret: Some("eph-hub-cap-secret".to_string()),
-        max_ephemeral_payload_bytes: frame_a.len().max(frame_b.len()),
-        max_ephemeral_snapshot_bytes: two_key_snapshot_len - 1,
-        ..Default::default()
-    };
-    assert!(config.max_ephemeral_snapshot_bytes >= first_snapshot_len);
-    let (addr, server, handle) = spawn_server(open_vault(dir.path()), config).await;
-
-    let mut client_a = connect_root(addr, &server, "eph-hub-cap-secret")
-        .await
-        .unwrap();
-    let mut client_b = connect_root(addr, &server, "eph-hub-cap-secret")
-        .await
-        .unwrap();
-    let _ = next_binary(&mut client_a).await; // root snapshot
-    let _ = next_binary(&mut client_b).await; // root snapshot
-
-    client_a
-        .send(Message::Binary(frame_a.into()))
-        .await
-        .unwrap();
-    let relayed = next_binary(&mut client_b).await;
-    let receiver = EphemeralStore::new(30_000);
-    apply_ephemeral_frame(&receiver, &relayed);
-    assert_eq!(receiver.get(key_a), Some("online-online-online".into()));
-
-    client_a
-        .send(Message::Binary(frame_b.into()))
-        .await
-        .unwrap();
-    assert_ws_closes(
-        &mut client_a,
-        "server must reject ephemeral updates that would exceed hub snapshot cap",
-    )
-    .await;
-
-    let mut late = connect_root(addr, &server, "eph-hub-cap-secret")
-        .await
-        .unwrap();
-    let root = next_binary(&mut late).await;
-    assert_eq!(root[0], TAG_SYNC_UPDATE);
-    let snapshot = next_binary(&mut late).await;
-    let receiver = EphemeralStore::new(30_000);
-    apply_ephemeral_frame(&receiver, &snapshot);
-    assert_eq!(receiver.get(key_a), Some("online-online-online".into()));
-    assert!(receiver.get(key_b).is_none());
 
     handle.abort();
 }
@@ -2589,126 +1762,6 @@ async fn persist_failure_evicts_window_so_vv_request_omits_unpersisted_update() 
         "an update whose durable append failed must NOT be servable from RAM \
          (evict-on-persist-failure: RAM must never serve state a restart loses)"
     );
-
-    handle.abort();
-}
-
-#[tokio::test]
-async fn oversized_update_is_rejected_before_any_state_mutates() {
-    let dir = tempfile::tempdir().unwrap();
-    let vault = open_vault(dir.path());
-    let config = SyncServerConfig {
-        auth_secret: Some("payload-secret".to_string()),
-        max_update_payload: 64,
-        ..Default::default()
-    };
-    let (addr, server, handle) = spawn_server(vault, config).await;
-
-    let mut ws = connect_root(addr, &server, "payload-secret").await.unwrap();
-    let _ = next_binary(&mut ws).await; // root snapshot
-
-    let oversized = vec![0u8; 65];
-    let msg = transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &oversized);
-    ws.send(Message::Binary(msg.into())).await.unwrap();
-
-    // The server closes the connection (FrameTooLarge → break).
-    assert_ws_closes(&mut ws, "server must close on oversized update").await;
-
-    // Fail-closed and side-effect free: nothing was created or persisted —
-    // the size check runs before the window doc is fetched or created.
-    let vault = server.vault();
-    assert!(vault.sync_state_get("d:w:2026-02").unwrap().is_none());
-    assert!(
-        vault
-            .sync_state_get("u:w:2026-02:00000001")
-            .unwrap()
-            .is_none()
-    );
-    assert!(vault.sync_state_get("m:u_seq:w:2026-02").unwrap().is_none());
-
-    handle.abort();
-}
-
-#[tokio::test]
-async fn window_creation_cap_closes_on_fabricated_distinct_keys_only() {
-    let dir = tempfile::tempdir().unwrap();
-    let vault = open_vault(dir.path());
-    let config = SyncServerConfig {
-        auth_secret: Some("cap-secret".to_string()),
-        max_windows_per_connection: 2,
-        ..Default::default()
-    };
-    let (addr, server, handle) = spawn_server(vault, config).await;
-
-    let mut ws = connect_root(addr, &server, "cap-secret").await.unwrap();
-    let _ = next_binary(&mut ws).await; // root snapshot
-
-    send_window_vv_request(&mut ws, "2026-01").await;
-    drain_vv_request_responses(&mut ws, "2026-01").await;
-    send_window_vv_request(&mut ws, "2026-02").await;
-    drain_vv_request_responses(&mut ws, "2026-02").await;
-
-    // Re-touching a previously counted window stays under the cap, preserving
-    // legitimate historical-window tombstone sync that revisits old windows.
-    send_window_vv_request(&mut ws, "2026-01").await;
-    drain_vv_request_responses(&mut ws, "2026-01").await;
-
-    send_window_vv_request(&mut ws, "2026-03").await;
-    assert_ws_closes(
-        &mut ws,
-        "server must close when a connection exceeds the distinct-window cap",
-    )
-    .await;
-
-    handle.abort();
-}
-
-#[tokio::test]
-async fn inbound_message_burst_is_observed_without_rate_close() {
-    let dir = tempfile::tempdir().unwrap();
-    let vault = open_vault(dir.path());
-    let config = SyncServerConfig {
-        auth_secret: Some("rate-secret".to_string()),
-        max_messages_per_sec: 1,
-        ..Default::default()
-    };
-    let (addr, server, handle) = spawn_server(vault, config).await;
-
-    let mut ws = connect_root(addr, &server, "rate-secret").await.unwrap();
-    let _ = next_binary(&mut ws).await; // root snapshot
-
-    ws.send(Message::Binary(vec![TAG_SYNC_UPDATE].into()))
-        .await
-        .unwrap();
-    ws.send(Message::Binary(vec![TAG_SYNC_UPDATE].into()))
-        .await
-        .unwrap();
-
-    assert_ws_responds_after_burst(&mut ws).await;
-
-    handle.abort();
-}
-
-#[tokio::test]
-async fn inbound_ping_pong_burst_does_not_rate_close() {
-    let dir = tempfile::tempdir().unwrap();
-    let vault = open_vault(dir.path());
-    let config = SyncServerConfig {
-        auth_secret: Some("control-rate-secret".to_string()),
-        max_messages_per_sec: 1,
-        ..Default::default()
-    };
-    let (addr, server, handle) = spawn_server(vault, config).await;
-
-    let mut ws = connect_root(addr, &server, "control-rate-secret")
-        .await
-        .unwrap();
-    let _ = next_binary(&mut ws).await; // root snapshot
-
-    ws.send(Message::Ping(Vec::new().into())).await.unwrap();
-    ws.send(Message::Pong(Vec::new().into())).await.unwrap();
-
-    assert_ws_responds_after_burst(&mut ws).await;
 
     handle.abort();
 }

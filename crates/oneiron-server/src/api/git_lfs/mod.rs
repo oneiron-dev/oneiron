@@ -47,4 +47,4 @@ pub(crate) use self::handlers::{lfs_batch, lfs_download, lfs_upload, lfs_verify}
 #[cfg(test)]
 use self::gate::{LfsAccess, authorize};
 #[cfg(test)]
-use self::support::{LFS_BATCH_NOT_FOUND, LFS_OBJECT_MEDIA_TYPE, declared_size};
+use self::support::{LFS_BATCH_NOT_FOUND, declared_size};

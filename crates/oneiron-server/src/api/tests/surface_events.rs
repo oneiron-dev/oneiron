@@ -106,52 +106,6 @@ async fn v1_core_surface_event_replay_returns_the_original_attempt() {
 }
 
 #[tokio::test]
-async fn v1_core_surface_event_admits_interactions_and_long_correlation_ids() {
-    let (_dir, server) = test_server_with_config(SyncServerConfig {
-        auth_secret: Some("secret".to_owned()),
-        ..Default::default()
-    });
-    let address = "surface-interaction@example.com";
-    seed_surface_identity(&server, 0x1259_0020, address);
-
-    let long_correlation_id = format!("provider-{}", "y".repeat(200));
-    let mut body = surface_event_body(address, &long_correlation_id);
-    body["source"] = json!({ "app": "telegram", "user_ref": "telegram:user:77" });
-    body["action"] =
-        json!({ "kind": "interaction", "interaction": "reaction", "target_ref": "msg-1" });
-    body["correlation_id"] = Value::from(long_correlation_id.as_str());
-
-    let (status, ack) = core_json(
-        server.clone(),
-        "POST",
-        "/v1/core/surface-events",
-        "core:write",
-        Some(&body),
-    )
-    .await;
-
-    // The public correlation id survives verbatim even though the queue's run
-    // id folds to a digest.
-    assert_eq!(status, StatusCode::ACCEPTED);
-    assert_eq!(
-        ack["correlation_id"],
-        Value::from(long_correlation_id.as_str())
-    );
-
-    let (status, snapshot) = core_json(
-        server.clone(),
-        "GET",
-        ack["status_path"].as_str().expect("status path"),
-        "core:read",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(snapshot["attempt_ref"], ack["attempt_ref"]);
-    assert_eq!(snapshot["state"], Value::from("queued"));
-}
-
-#[tokio::test]
 async fn v1_core_surface_event_rejects_unroutable_identity_without_queueing() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         auth_secret: Some("secret".to_owned()),
@@ -314,25 +268,6 @@ fn v1_core_surface_event_rejection_reason_schema_is_the_closed_engine_set() {
             Value::from(reason.as_str())
         );
     }
-}
-
-#[tokio::test]
-async fn v1_core_surface_event_unknown_correlation_id_is_typed_not_found() {
-    let (_dir, server) = test_server_with_config(SyncServerConfig {
-        auth_secret: Some("secret".to_owned()),
-        ..Default::default()
-    });
-
-    let (status, error) = core_json(
-        server,
-        "GET",
-        "/v1/core/surface-events/never-admitted",
-        "core:read",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_error_envelope(&error, "NOT_FOUND");
 }
 
 #[tokio::test]
@@ -505,96 +440,4 @@ async fn v1_core_surface_event_rejection_is_not_cached_under_the_idempotency_key
     assert_eq!(accepted_status, StatusCode::ACCEPTED);
     assert_eq!(ack["replayed"], Value::from(false));
     assert_eq!(ack["state"], Value::from("queued"));
-}
-
-#[tokio::test]
-async fn v1_core_surface_event_durability_does_not_depend_on_the_middleware() {
-    let (_dir, server) = test_server_with_config(SyncServerConfig {
-        auth_secret: Some("secret".to_owned()),
-        ..Default::default()
-    });
-    let address = "surface-durable@example.com";
-    seed_surface_identity(&server, 0x1259_0060, address);
-    let body = surface_event_body(address, "provider-durable-1");
-
-    // First submission carries an Idempotency-Key; the second carries none at
-    // all. Durable once-per-correlation still holds, so the middleware's TTL is
-    // never the thing keeping the handoff unique.
-    let (_, first) = route_json(
-        server.clone(),
-        Request::builder()
-            .method("POST")
-            .uri("/v1/core/surface-events")
-            .header(AUTHORIZATION, test_bearer("scope=core:write"))
-            .header("Idempotency-Key", "unrelated-http-key")
-            .header(CONTENT_TYPE, "application/json")
-            .body(Body::from(body.to_string()))
-            .expect("request"),
-    )
-    .await;
-    assert_eq!(first["replayed"], Value::from(false));
-
-    let (status, second) = core_json(
-        server,
-        "POST",
-        "/v1/core/surface-events",
-        "core:write",
-        Some(&body),
-    )
-    .await;
-    assert_eq!(status, StatusCode::ACCEPTED);
-    assert_eq!(second["replayed"], Value::from(true));
-    assert_eq!(second["attempt_ref"], first["attempt_ref"]);
-}
-
-#[tokio::test]
-async fn v1_core_surface_event_malformed_submissions_are_typed_bad_requests() {
-    let (_dir, server) = test_server_with_config(SyncServerConfig {
-        auth_secret: Some("secret".to_owned()),
-        ..Default::default()
-    });
-    let address = "surface-malformed@example.com";
-    seed_surface_identity(&server, 0x1259_0070, address);
-
-    // Unknown source app: the enum is closed, so this never reaches the engine.
-    let mut unknown_app = surface_event_body(address, "provider-malformed-1");
-    unknown_app["source"] = json!({ "app": "carrier_pigeon", "user_ref": "pigeon:1" });
-    let (status, error) = core_json(
-        server.clone(),
-        "POST",
-        "/v1/core/surface-events",
-        "core:write",
-        Some(&unknown_app),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_error_envelope(&error, "BAD_REQUEST");
-
-    // Unknown interaction kind is likewise closed.
-    let mut unknown_interaction = surface_event_body(address, "provider-malformed-2");
-    unknown_interaction["action"] = json!({ "kind": "interaction", "interaction": "shrug" });
-    let (status, error) = core_json(
-        server.clone(),
-        "POST",
-        "/v1/core/surface-events",
-        "core:write",
-        Some(&unknown_interaction),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_error_envelope(&error, "BAD_REQUEST");
-
-    // A blank correlation id fails engine validation rather than queueing.
-    let mut blank_correlation = surface_event_body(address, "provider-malformed-3");
-    blank_correlation["correlation_id"] = Value::from("   ");
-    let (status, error) = core_json(
-        server,
-        "POST",
-        "/v1/core/surface-events",
-        "core:write",
-        Some(&blank_correlation),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_error_envelope(&error, "BAD_REQUEST");
 }

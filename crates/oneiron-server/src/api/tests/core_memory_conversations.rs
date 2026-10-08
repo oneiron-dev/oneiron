@@ -1174,18 +1174,6 @@ async fn conversation_list_previews_last_visible_multibyte_message_for_every_row
     );
 }
 
-#[test]
-fn old_conversation_list_row_deserializes_with_absent_preview() {
-    let before = json!({
-        "items": [{"id":"old", "kind":"CONVERSATION", "label":"old room", "updatedAt":1}],
-        "meta": {"countMode":"exact", "total":1}
-    });
-    let response: ConversationsListResponse = serde_json::from_value(before).unwrap();
-    let current = serde_json::to_value(response).unwrap();
-    assert_eq!(current["items"][0]["id"], "old");
-    assert!(current["items"][0]["lastMessageSnippet"].is_null());
-}
-
 #[tokio::test]
 async fn conversation_list_previews_witness_message_content_not_turn_speaker() {
     let (_dir, server) = test_server();

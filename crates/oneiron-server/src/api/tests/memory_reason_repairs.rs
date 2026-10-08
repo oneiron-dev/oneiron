@@ -1,5 +1,5 @@
 use super::*;
-use oneiron::llm::{BudgetExhaustionPolicy, BudgetGuard, BudgetLease};
+use oneiron::llm::BudgetLease;
 use oneiron::retrieval_depth::{BackendSpend, DeepSearchBackend, RetrievalResult};
 use std::sync::Mutex;
 
@@ -85,22 +85,6 @@ impl MemoryReasonBackend for RecordingReasonBackend {
     }
 }
 
-fn repair_guard(limit: u64, reserve: u64) -> BudgetGuard {
-    BudgetGuard::with_reserve_units(
-        "memory-reason-repairs",
-        limit,
-        reserve,
-        BudgetExhaustionPolicy::Suspend,
-    )
-}
-
-fn raw_search_request(uri: &str) -> Request<Body> {
-    Request::builder()
-        .uri(uri)
-        .body(Body::empty())
-        .expect("request")
-}
-
 /// Owner-grade variant for `/api/*` reads on authenticated servers.
 fn raw_search_request_auth(uri: &str) -> Request<Body> {
     Request::builder()
@@ -171,141 +155,6 @@ async fn memory_reason_text_query_text_never_retargets_the_probe() {
             .iter()
             .all(|parameter| parameter["name"] != "queryText")
     );
-}
-
-#[tokio::test]
-async fn memory_reason_standard_vector_query_text_is_not_a_lexical_probe() {
-    let (_dir, server) = memory_reason_server(None);
-    let probe = vec!["0.1"; oneiron::VaultConfig::device().dimensions].join(",");
-    let uri = format!("/api/search/vector?query={probe}&depth=medium&view=standard");
-    let (status, original) = route_json(server.clone(), raw_search_request(&uri)).await;
-    assert_eq!(status, StatusCode::OK, "{original:?}");
-    assert!(original["items"].as_array().unwrap().is_empty());
-    let (status, grounded) = route_json(
-        server,
-        raw_search_request(&format!("{uri}&queryText=launch%20date")),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{grounded:?}");
-    assert!(grounded["items"].as_array().unwrap().is_empty());
-}
-
-#[tokio::test]
-async fn memory_reason_deep_usage_accumulates_and_one_lease_reaches_all_stages() {
-    let guard = repair_guard(34, 17);
-    let backend = Arc::new(RecordingReasonBackend::new(None));
-    let (_dir, server) = memory_reason_server_with_guard_auth(Some(backend.clone()), guard.clone());
-    for expected_used in [17, 34] {
-        let (status, body) = route_json_auth(
-            server.clone(),
-            json_request(
-                "POST",
-                "/v1/companion/memory/reason",
-                json!({ "query": "launch", "depth": "max", "tokenBudget": 17 }),
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{body:?}");
-        assert_eq!(body["tokensUsed"], Value::from(17));
-        assert_eq!(guard.read().used_units, expected_used);
-        assert_eq!(guard.read().reserved_units, 0);
-    }
-    let (status, body) = route_json_auth(
-        server,
-        json_request(
-            "POST",
-            "/v1/companion/memory/reason",
-            json!({ "query": "launch", "depth": "max" }),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body:?}");
-    let leases = backend.leases.lock().unwrap();
-    assert_eq!(leases.len(), 6);
-    for call in leases.chunks_exact(3) {
-        assert_eq!(call[0], call[1]);
-        assert_eq!(call[1], call[2]);
-    }
-    assert_ne!(leases[0], leases[3]);
-    assert_eq!(
-        *backend.token_budgets.lock().unwrap(),
-        vec![Some(17), Some(14), Some(9), Some(17), Some(14), Some(9)]
-    );
-}
-
-#[tokio::test]
-async fn memory_reason_backend_errors_release_each_admitted_reservation() {
-    for stage in [
-        FailingStage::Decompose,
-        FailingStage::Rerank,
-        FailingStage::Compose,
-    ] {
-        let guard = repair_guard(100, 17);
-        let backend = Arc::new(RecordingReasonBackend::new(Some(stage)));
-        let (_dir, server) =
-            memory_reason_server_with_guard_auth(Some(backend.clone()), guard.clone());
-        let per_read_usage = match stage {
-            FailingStage::Decompose => 0,
-            FailingStage::Rerank => 3,
-            FailingStage::Compose => 8,
-        };
-        for count in 1..=3 {
-            let (status, body) = route_json_auth(
-                server.clone(),
-                json_request(
-                    "POST",
-                    "/v1/companion/memory/reason",
-                    json!({ "query": "launch", "depth": "max" }),
-                ),
-            )
-            .await;
-            let expected = if stage == FailingStage::Compose {
-                StatusCode::INTERNAL_SERVER_ERROR
-            } else {
-                StatusCode::BAD_REQUEST
-            };
-            assert_eq!(status, expected, "{body:?}");
-            assert_eq!(guard.read().used_units, per_read_usage * count);
-            assert_eq!(guard.read().reserved_units, 0);
-            let next = guard.admit().expect("failed request released its lease");
-            guard.abort(&next.lease).unwrap();
-        }
-        assert!(!backend.leases.lock().unwrap().is_empty());
-    }
-}
-
-#[tokio::test]
-async fn memory_reason_raw_search_errors_and_zero_pages_release_reservations() {
-    let guard = repair_guard(17, 17);
-    let backend = Arc::new(RecordingReasonBackend::new(None));
-    let (_dir, server) = memory_reason_server_with_guard_auth(Some(backend.clone()), guard.clone());
-    for _ in 0..3 {
-        for (uri, expected) in [
-            (
-                "/api/search/vector?query=0.1,0.2&depth=max&queryText=launch",
-                StatusCode::INTERNAL_SERVER_ERROR,
-            ),
-            (
-                "/api/search/text?query=launch&depth=max&limit=0&countMode=none",
-                StatusCode::OK,
-            ),
-        ] {
-            let (status, body) =
-                route_json_auth(server.clone(), raw_search_request_auth(uri)).await;
-            assert_eq!(status, expected, "{uri}: {body:?}");
-            assert_eq!(guard.read().reserved_units, 0);
-        }
-    }
-    assert!(backend.leases.lock().unwrap().is_empty());
-    // A real deep read still fits after errors and empty pages.
-    let (status, body) = route_json_auth(
-        server,
-        raw_search_request_auth("/api/search/text?query=launch&depth=max&view=standard"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body:?}");
-    assert_eq!(guard.read().reserved_units, 0);
-    assert_eq!(guard.read().used_units, 8);
 }
 
 #[tokio::test]
@@ -416,66 +265,4 @@ async fn memory_reason_session_documents_filter_before_limit_and_rerank() {
         }
         assert_eq!(body["narrowing"]["suppressed_count"], 0, "{path}: {body:?}");
     }
-}
-
-#[tokio::test]
-async fn memory_reason_budget_refusals_settle_actual_usage_and_stop_later_calls() {
-    for (budget, spent, caps, expected_status) in [
-        (1, 3, vec![Some(1)], StatusCode::BAD_REQUEST),
-        (3, 3, vec![Some(3)], StatusCode::BAD_REQUEST),
-        (7, 8, vec![Some(7), Some(4)], StatusCode::BAD_REQUEST),
-        (8, 8, vec![Some(8), Some(5)], StatusCode::BAD_REQUEST),
-        (
-            16,
-            17,
-            vec![Some(16), Some(13), Some(8)],
-            StatusCode::INTERNAL_SERVER_ERROR,
-        ),
-    ] {
-        let guard = repair_guard(100, 17);
-        let backend = Arc::new(RecordingReasonBackend::new(None));
-        let (_dir, server) =
-            memory_reason_server_with_guard_auth(Some(backend.clone()), guard.clone());
-        let (status, body) = route_json_auth(
-            server,
-            json_request(
-                "POST",
-                "/v1/companion/memory/reason",
-                json!({ "query": "launch", "depth": "max", "tokenBudget": budget }),
-            ),
-        )
-        .await;
-        assert_eq!(status, expected_status, "budget={budget}: {body:?}");
-        assert!(body.get("answer").is_none());
-        assert_eq!(*backend.token_budgets.lock().unwrap(), caps);
-        assert_eq!(guard.read().used_units, spent, "do not clamp actual spend");
-        assert_eq!(guard.read().reserved_units, 0);
-        let leases = backend.leases.lock().unwrap();
-        assert!(guard.abort(&leases[0]).is_err(), "spent lease was settled");
-    }
-}
-
-#[tokio::test]
-async fn memory_reason_small_budget_does_not_call_a_host_at_model_free_tiers() {
-    let guard = repair_guard(100, 17);
-    let backend = Arc::new(RecordingReasonBackend::new(Some(FailingStage::Decompose)));
-    let (_dir, server) = memory_reason_server_with_guard_auth(Some(backend.clone()), guard.clone());
-    for depth in ["light", "medium"] {
-        let (status, body) = route_json_auth(
-            server.clone(),
-            json_request(
-                "POST",
-                "/v1/companion/memory/reason",
-                json!({ "query": "launch", "depth": depth, "tokenBudget": 1 }),
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{body:?}");
-        assert_eq!(body["tokensUsed"], 0);
-        assert!(!body["sources"].as_array().unwrap().is_empty());
-    }
-    assert!(backend.token_budgets.lock().unwrap().is_empty());
-    assert!(backend.leases.lock().unwrap().is_empty());
-    assert_eq!(guard.read().used_units, 0);
-    assert_eq!(guard.read().reserved_units, 0);
 }

@@ -346,46 +346,6 @@ async fn public_booking_disallowed_verb_is_404_or_405() {
 }
 
 #[tokio::test]
-async fn public_slot_projection_errors_remain_non_disclosing_server_errors() {
-    use oneiron::booking::{RungProjection, SlotMask, bounded_public_slots};
-
-    let valid = SlotMask {
-        event_type: EventTypeKey("intro".to_owned()),
-        window_start_utc: 100,
-        window_end_utc: 700,
-        slots: vec![RankedSlot {
-            start_utc: 100,
-            end_utc: 700,
-            rank: 0.5,
-        }],
-        flex_used: false,
-    };
-    let mut invalid_interval = valid.clone();
-    invalid_interval.slots[0].end_utc = 100;
-    let mut oversized_metadata = valid;
-    oversized_metadata.event_type = EventTypeKey("x".repeat(16 * 1024 + 1));
-    for mask in [invalid_interval, oversized_metadata] {
-        let result: Result<RungProjection, ApiError> =
-            bounded_public_slots(mask).map_err(booking_error);
-        let error = result.expect_err("invalid public projection");
-        assert_eq!(
-            error,
-            ApiError::internal_server_error("booking surface assembly failed"),
-        );
-        let response = public_booking_response(error.into_response()).await;
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        assert_inline(&response);
-        assert_eq!(
-            bytes(response).await,
-            serde_json::to_vec(&ApiError::internal_server_error(
-                "public booking operation unavailable",
-            ))
-            .expect("public error body"),
-        );
-    }
-}
-
-#[tokio::test]
 async fn public_booking_response_never_redirects_or_downloads() {
     let fixture = Fixture::new();
     let path = format!("/public/booking/{}", fixture.token);

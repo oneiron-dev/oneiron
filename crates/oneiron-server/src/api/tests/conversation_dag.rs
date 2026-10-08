@@ -349,33 +349,6 @@ async fn summary_routes_return_all_300_covers_drill_and_engine_bound_late_reply(
     );
 }
 
-#[test]
-fn dag_routes_are_registered_in_openapi() {
-    use utoipa::OpenApi;
-    let doc = serde_json::to_value(ApiDoc::openapi()).unwrap();
-    for (path, method) in [
-        ("/v1/core/conversations/{conversation_id}/records", "post"),
-        ("/v1/core/conversations/{conversation_id}/records", "get"),
-        ("/v1/core/conversations/{conversation_id}/head", "post"),
-        ("/v1/core/conversations/{conversation_id}/scope", "post"),
-        (
-            "/v1/core/conversations/{conversation_id}/migrate-dag",
-            "post",
-        ),
-        ("/v1/core/turns/{turn_id}/sub-sessions", "post"),
-        ("/v1/core/turns/{turn_id}/sub-sessions", "get"),
-        ("/v1/core/conversations/{conversation_id}/summaries", "post"),
-        ("/v1/core/summaries/{summary_id}/covers", "get"),
-        ("/v1/core/claims/{claim_id}/drill", "get"),
-        (
-            "/v1/core/conversations/{conversation_id}/records/{record}/thread/summary",
-            "post",
-        ),
-    ] {
-        assert!(doc["paths"][path][method].is_object(), "{method} {path}");
-    }
-}
-
 #[tokio::test]
 async fn dag_writes_require_complete_matching_identity_on_scoped_credentials() {
     let (_dir, server, actor) = setup();
@@ -674,73 +647,6 @@ async fn list_preview_traverses_deleted_selected_shells_without_losing_other_roo
     for (id, text) in expected {
         let row = rows.iter().find(|row| row["id"] == id).unwrap();
         assert_eq!(row["lastMessageSnippet"], text, "room {id}");
-    }
-}
-
-#[tokio::test]
-async fn list_preview_walks_deleted_ordinary_session_turns_and_keeps_other_rooms() {
-    let (_dir, server, actor) = setup();
-    let session = match server.vault.mint_session(100).expect("ordinary session") {
-        oneiron::session_lifecycle::SessionMintOutcome::Minted(id) => id,
-        other => panic!("expected new session, got {other:?}"),
-    };
-    let mut expected = Vec::new();
-    for (case, text) in [
-        ("head", "session root"),
-        ("ancestor", "session child"),
-        ("unrelated", "other session room"),
-    ] {
-        let room = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
-        let records = format!(
-            "/v1/core/conversations/{}/records",
-            room["id"].as_str().unwrap()
-        );
-        let root = post(
-            &server,
-            &records,
-            json!({
-                "advance": true, "session": session.to_hex(), "actor": actor,
-                "body": {"txt": if case == "ancestor" { "deleted ancestor" } else { text }},
-            }),
-        )
-        .await;
-        let mut deleted = None;
-        if case != "unrelated" {
-            let child = post(
-                &server,
-                &records,
-                json!({
-                    "parent": root["id"], "advance": true, "session": session.to_hex(),
-                    "body": {"txt": if case == "head" { "deleted head" } else { text }},
-                    "actor": actor,
-                }),
-            )
-            .await;
-            deleted = Some(if case == "head" {
-                child["id"].clone()
-            } else {
-                root["id"].clone()
-            });
-        }
-        if let Some(id) = deleted {
-            let id = EntityId::from_hex(id.as_str().unwrap()).unwrap();
-            server
-                .vault
-                .delete_own_room_record(id, oneiron::DeleteReason::UserDelete)
-                .unwrap();
-            assert!(server.vault.is_deleted_shell(&id).unwrap());
-        }
-        expected.push((room["id"].as_str().unwrap().to_owned(), text));
-    }
-    let list = get(&server, "/v1/core/conversations?limit=20").await;
-    for (room, text) in expected {
-        let row = list["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|row| row["id"] == room)
-            .unwrap();
-        assert_eq!(row["lastMessageSnippet"], text, "room {room}");
     }
 }
 

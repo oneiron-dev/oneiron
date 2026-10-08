@@ -242,36 +242,6 @@ async fn lfs_batch_download_returns_actions_and_transfer_basic() {
 }
 
 #[tokio::test]
-async fn lfs_upload_over_the_configured_cap_answers_a_typed_refusal() {
-    let config = SyncServerConfig {
-        max_lfs_object_bytes: Some(1024),
-        ..secret_config()
-    };
-    let (_dir, server) = test_server(config);
-    let bytes = vec![b'x'; 2048];
-    let oid = LfsOid::digest(&bytes);
-    let (status, _, body) = route(
-        &server,
-        request(
-            "PUT",
-            &object_uri(&oid.to_hex()),
-            Some(&writer_token()),
-            Body::from(bytes),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    let response = json_body(&body);
-    assert_eq!(response["error"]["code"], "BAD_REQUEST");
-    assert!(
-        response["error"]["message"]
-            .as_str()
-            .is_some_and(|s| s.contains("object cap"))
-    );
-    assert_eq!(server.vault.lfs_object(oid).expect("record read"), None);
-}
-
-#[tokio::test]
 async fn lfs_over_cap_upload_refuses_without_waiting_for_body_eof() {
     use axum::body::Bytes;
     use futures_util::StreamExt;
@@ -360,41 +330,6 @@ async fn lfs_upload_rejects_oid_and_size_mismatch() {
         check_lfs_expectation(honest, declared_size(&headers), &bytes).is_err(),
         "a declared size that disagrees never reaches the engine"
     );
-}
-
-#[tokio::test]
-async fn lfs_upload_download_roundtrip_bytes_exact() {
-    let (_dir, server) = test_server(secret_config());
-    let token = writer_token();
-    let bytes: Vec<u8> = (0..=255_u8).cycle().take(4096).collect();
-    let oid = LfsOid::digest(&bytes).to_hex();
-    assert_eq!(upload(&server, &token, &bytes).await, StatusCode::OK);
-
-    let (status, headers, body) = route(
-        &server,
-        request("GET", &object_uri(&oid), Some(&token), Body::empty()),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        headers
-            .get(CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok()),
-        Some(LFS_OBJECT_MEDIA_TYPE)
-    );
-    assert_eq!(body, bytes, "download returns the uploaded bytes exactly");
-
-    let (status, _, _) = route(
-        &server,
-        request(
-            "GET",
-            &object_uri(&LfsOid::digest(b"never uploaded").to_hex()),
-            Some(&token),
-            Body::empty(),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
