@@ -49,8 +49,9 @@ pub(crate) struct Returns {
 pub(crate) enum ProbeOutcome {
     /// The tagger answers and is the configured one.
     Ready(ModelCard),
-    /// The tagger could not be reached. Not fatal: writes land with their
-    /// markers, and the worker probes again before it drains.
+    /// The tagger could not be reached, or its card could not be read whole.
+    /// Not fatal: writes land with their markers, and the worker probes again
+    /// before it drains.
     Unreachable(String),
 }
 
@@ -175,10 +176,20 @@ impl HttpTagger {
                 ));
             }
         };
-        let card: ModelCard = bounded_body(response)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .ok_or(ProbeError::NoModelCard)?;
+        // A body that breaks off or times out is a tagger that could not be
+        // read, as a refused connection is: the worker backs off and probes
+        // again. A body past the cap, or one that is not a card, is refused.
+        let bytes = match bounded_body(response) {
+            Ok(bytes) => bytes,
+            Err(BodyError::TooLarge) => return Err(ProbeError::NoModelCard),
+            Err(BodyError::Read(class)) => {
+                return Ok(ProbeOutcome::Unreachable(format!(
+                    "GET /v1/model body read {class}"
+                )));
+            }
+        };
+        let card: ModelCard =
+            serde_json::from_slice(&bytes).map_err(|_| ProbeError::NoModelCard)?;
         // The card comes from a server that has read vault text, and a
         // refusal is logged: no refusal names what the tagger reported.
         if oneiron::tagging::TaggingMarkerConfig::new(card.checkpoint_sha16.as_str()).is_err() {
@@ -223,9 +234,13 @@ impl HttpTagger {
                 status_class(status)
             )));
         }
+        let bytes = bounded_body(response).map_err(|error| match error {
+            BodyError::TooLarge => failure("tagger response exceeds the body cap".to_owned()),
+            BodyError::Read(_) => failure("tagger response read failed".to_owned()),
+        })?;
         // A parse error names the failure only: serde's message can quote the
         // body, and the body is derived from vault text.
-        serde_json::from_slice(&bounded_body(response)?)
+        serde_json::from_slice(&bytes)
             .map_err(|_| failure("tagger extract response is not the contract".to_owned()))
     }
 }
@@ -291,21 +306,36 @@ fn transport_error(what: &str, error: &reqwest::Error) -> oneiron::Error {
     failure(format!("tagger {what} {class}"))
 }
 
-fn bounded_body(response: reqwest::blocking::Response) -> oneiron::Result<Vec<u8>> {
-    let too_large = || failure("tagger response exceeds the body cap".to_owned());
+/// Why a response body was not read whole.
+enum BodyError {
+    /// It declared or ran past the body cap.
+    TooLarge,
+    /// The read broke off or timed out; the class names which, never a byte
+    /// of what arrived.
+    Read(&'static str),
+}
+
+fn bounded_body(response: reqwest::blocking::Response) -> Result<Vec<u8>, BodyError> {
     if response
         .content_length()
         .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
     {
-        return Err(too_large());
+        return Err(BodyError::TooLarge);
     }
     let mut bytes = Vec::new();
     response
         .take(MAX_RESPONSE_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
-        .map_err(|_| failure("tagger response read failed".to_owned()))?;
+        .map_err(|error| {
+            let timed_out = error.kind() == std::io::ErrorKind::TimedOut
+                || error
+                    .get_ref()
+                    .and_then(|inner| inner.downcast_ref::<reqwest::Error>())
+                    .is_some_and(reqwest::Error::is_timeout);
+            BodyError::Read(if timed_out { "timed out" } else { "failed" })
+        })?;
     if bytes.len() > MAX_RESPONSE_BYTES {
-        return Err(too_large());
+        return Err(BodyError::TooLarge);
     }
     Ok(bytes)
 }

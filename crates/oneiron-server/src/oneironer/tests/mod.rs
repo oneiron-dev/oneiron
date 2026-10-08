@@ -300,6 +300,32 @@ fn the_probe_accepts_the_configured_tagger_and_refuses_another() {
     assert_eq!(tagger.probe(), Err(ProbeError::NoModelCard));
 }
 
+/// A card whose body breaks off is a tagger that could not be read, not a
+/// tagger with no card: the probe reports it unreachable, payload-free, and
+/// the next probe reads the card whole. A card that is not one is still
+/// refused.
+#[test]
+fn a_model_card_whose_body_breaks_off_is_an_unreachable_tagger() {
+    let stub = StubTagger::start(Answer::Good);
+    let tagger = HttpTagger::from_config(&stub.config()).expect("tagger");
+    stub.break_card_bodies(1);
+    let probed = tagger.probe();
+    assert_eq!(stub.card_bodies_broken(), 1);
+    let Ok(ProbeOutcome::Unreachable(reason)) = probed else {
+        panic!("a broken card body is an unreachable tagger, got {probed:?}");
+    };
+    assert_eq!(reason, "GET /v1/model body read failed");
+    assert!(matches!(tagger.probe(), Ok(ProbeOutcome::Ready(_))));
+    // At startup too: the slot is built and the worker probes again.
+    stub.break_card_bodies(1);
+    let slot = build_slot(Some(&stub.config()))
+        .expect("a broken card body still builds a slot")
+        .expect("slot");
+    assert!(slot.card().is_none());
+    stub.set_card(json!({"name": "something else"}));
+    assert_eq!(tagger.probe(), Err(ProbeError::NoModelCard));
+}
+
 #[test]
 fn an_unreachable_tagger_is_not_fatal() {
     let tagger = HttpTagger::from_config(&endpoint_config("http://127.0.0.1:1")).expect("tagger");

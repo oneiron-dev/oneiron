@@ -52,6 +52,10 @@ pub(super) struct StubState {
     swap: Mutex<Option<(usize, Value)>>,
     /// A status `GET /v1/model` answers with instead of the card.
     card_status: Mutex<Option<u16>>,
+    /// How many of the next `GET /v1/model` answers break off mid-body.
+    card_breaks: Mutex<usize>,
+    /// How many card answers broke off.
+    card_broken: Mutex<usize>,
 }
 
 pub(super) struct StubTagger {
@@ -86,6 +90,8 @@ impl StubTagger {
             extracts: Mutex::new(Vec::new()),
             swap: Mutex::new(None),
             card_status: Mutex::new(None),
+            card_breaks: Mutex::new(0),
+            card_broken: Mutex::new(0),
         });
         let app = Router::new()
             .route("/v1/model", get(stub_model))
@@ -123,6 +129,17 @@ impl StubTagger {
         *self.state.card_status.lock().expect("card status lock") = Some(status);
     }
 
+    /// The next `count` card answers send part of the card, then the
+    /// connection drops before the body ends.
+    pub(super) fn break_card_bodies(&self, count: usize) {
+        *self.state.card_breaks.lock().expect("card breaks lock") = count;
+    }
+
+    /// How many card answers broke off so far.
+    pub(super) fn card_bodies_broken(&self) -> usize {
+        *self.state.card_broken.lock().expect("card broken lock")
+    }
+
     /// From its `nth` extract on, the stub is another model serving `card`.
     pub(super) fn swap_card_at_extract(&self, nth: usize, card: Value) {
         *self.state.swap.lock().expect("swap lock") = Some((nth, card));
@@ -146,7 +163,39 @@ async fn stub_model(State(state): State<Arc<StubState>>) -> axum::response::Resp
             .expect("stub status")
             .into_response();
     }
-    axum::Json(state.card.lock().expect("card lock").clone()).into_response()
+    let card = state.card.lock().expect("card lock").clone();
+    let breaks = {
+        let mut breaks = state.card_breaks.lock().expect("card breaks lock");
+        let now = *breaks > 0;
+        *breaks = breaks.saturating_sub(1);
+        now
+    };
+    if breaks {
+        *state.card_broken.lock().expect("card broken lock") += 1;
+        // The headers and half the card, flushed while the stream waits,
+        // then a stream error: the server drops the connection before the
+        // chunked body ends, so the client's body read breaks off.
+        let bytes = serde_json::to_vec(&card).expect("card bytes");
+        let half = axum::body::Bytes::copy_from_slice(&bytes[..bytes.len() / 2]);
+        let body = futures_util::stream::unfold(0_u8, move |step| {
+            let half = half.clone();
+            async move {
+                match step {
+                    0 => Some((Ok(half), 1)),
+                    1 => {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        Some((Err(std::io::Error::other("stub card body broke off")), 2))
+                    }
+                    _ => None,
+                }
+            }
+        });
+        return axum::response::Response::builder()
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from_stream(body))
+            .expect("broken card response");
+    }
+    axum::Json(card).into_response()
 }
 
 async fn stub_extract(

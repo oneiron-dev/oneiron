@@ -223,6 +223,39 @@ fn a_failing_slow_or_wrong_tagger_never_fails_the_write_and_is_retried() {
     assert!(traces.len() >= 4);
 }
 
+/// A probe whose card body breaks off is an unreachable tagger, not a
+/// refused one: the worker backs off and probes again, and a turn witnessed
+/// after the broken read is tagged by the same worker, with no restart.
+#[test]
+fn a_card_read_that_breaks_off_leaves_the_worker_running() {
+    let stub = StubTagger::start(Answer::Good);
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open_vault(dir.path(), true, false);
+    let tagged = server(&vault, Some(&stub.config()));
+    let running = Running::start(&tagged);
+    witness(&vault, TEXTS[0]);
+    assert!(wait_until(|| shadowed(&tagged) == 1));
+    // The worker's next probe, after its idle wait, reads half a card.
+    stub.break_card_bodies(1);
+    assert!(
+        wait_until(|| stub.card_bodies_broken() == 1),
+        "the worker probes after its idle wait"
+    );
+    witness(&vault, TEXTS[1]);
+    assert!(
+        wait_until(|| shadowed(&tagged) == 2),
+        "the same worker tags a turn witnessed after the broken read"
+    );
+    assert!(
+        running
+            .worker
+            .as_ref()
+            .is_some_and(|worker| !worker.is_finished())
+    );
+    running.stop();
+    assert_eq!(stub.extracts().len(), 2);
+}
+
 /// Acceptance line 5: markers committed right before the process died are on
 /// disk; a restarted server tags each turn once, with no repair step.
 #[test]
