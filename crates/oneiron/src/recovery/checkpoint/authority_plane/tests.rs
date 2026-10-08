@@ -200,3 +200,75 @@ fn restore_refuses_to_revive_an_owner_deleted_since() {
     assert!(error.to_string().contains("vault owner"), "{error}");
     assert!(!destination.exists());
 }
+
+/// Review repro (access deletion fences): a grant whose delete was accepted
+/// but not applied since the checkpoint changed no byte of its row. Its fence
+/// still refuses an authority-keeping restore that would revive it.
+#[test]
+fn restore_refuses_to_revive_a_grant_deleted_since() {
+    let root = tempfile::tempdir().unwrap();
+    let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    let grant = EntityId::now();
+    live.create_access_grant(
+        &grant,
+        &crate::AccessGrant::companion_profile_read(
+            EntityId::now(),
+            EntityId::now(),
+            EntityId::now(),
+            10,
+        ),
+    )
+    .unwrap();
+    let image = root.path().join("backup");
+    live.snapshot_checkpoint(&image, 100).unwrap();
+    live.with_write_txn(|txn| live.fence_unapplied_delete_in_txn(txn, &grant))
+        .unwrap();
+    let destination = root.path().join("restored");
+    let Err(error) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &destination,
+        VaultConfig::device(),
+        &live,
+        200,
+    ) else {
+        panic!("the restore must be refused");
+    };
+    assert!(error.to_string().contains("access grants"), "{error}");
+    assert!(!destination.exists());
+}
+
+/// Review repro (access deletion fences): a relationship deleted since the
+/// checkpoint is membership authority, so an authority-keeping restore that
+/// would bring it back, and its members' reads with it, is refused.
+#[test]
+fn restore_refuses_to_revive_a_relationship_deleted_since() {
+    let root = tempfile::tempdir().unwrap();
+    let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    let relationship = EntityId::now();
+    live.put_entity(
+        &relationship,
+        crate::registry::ENTITY_TYPE_RELATIONSHIP,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"relationship",
+    )
+    .unwrap();
+    let image = root.path().join("backup");
+    live.snapshot_checkpoint(&image, 100).unwrap();
+    assert!(live.delete_entity(&relationship).unwrap());
+    let destination = root.path().join("restored");
+    let Err(error) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &destination,
+        VaultConfig::device(),
+        &live,
+        200,
+    ) else {
+        panic!("the restore must be refused");
+    };
+    assert!(
+        error.to_string().contains("relationship memberships"),
+        "{error}"
+    );
+    assert!(!destination.exists());
+}

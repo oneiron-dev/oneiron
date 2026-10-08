@@ -9,9 +9,12 @@
 //!   live vault no longer holds stays absent. This is the root, device and
 //!   slip plane, its freshness pins and clocks, exterior key custody, and
 //!   one-shot approvals, so nothing spent or revoked comes back.
-//! - **guarded**: grants, policy, consent, custody and machine identities.
+//! - **guarded**: grants, policy, consent, custody, machine identities, and
+//!   relationship memberships (relationships and their member bindings).
 //!   Their history is entangled with content, so a restore that would roll
-//!   one of them back is refused rather than half-applied.
+//!   one of them back is refused rather than half-applied. A guarded row's
+//!   deletion fence is part of it: a delete accepted but not yet applied
+//!   leaves the row's bytes unchanged.
 //!
 //! Membership is checked on the result: a restore may not make anyone an
 //! owner or member who is not one now, whether by reviving a deleted or
@@ -21,8 +24,9 @@ use super::CanonicalRows;
 use crate::batch::EntityMetadataHeader;
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CHANNEL_IDENTITY,
-    ENTITY_TYPE_CONNECTOR_KEY, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE,
-    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SECRET_CUSTODY,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONNECTOR_KEY, ENTITY_TYPE_FEDERATION_GRANT,
+    ENTITY_TYPE_MACHINE, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_POLICY_MANIFEST,
+    ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_SECRET_CUSTODY,
 };
 use crate::{Error, Result, Vault};
 use heed::types::Bytes;
@@ -38,10 +42,16 @@ enum Plane {
 enum Select {
     Prefix(&'static [u8]),
     Kind(u8),
+    /// CLAIM rows whose body carries this predicate. A deleted claim's shell
+    /// has no body, so its deletion reads as the row leaving the family.
+    Predicate(&'static str),
 }
 
 use Plane::{Carried, Guarded};
-use Select::{Kind, Prefix};
+use Select::{Kind, Predicate, Prefix};
+
+/// The `sync_state` prefix of a row's deletion fence (`deletion::ROW_DELETION_FENCE`).
+const ROW_DELETION_FENCE_PREFIX: &[u8] = b"df:";
 
 /// The `vault_meta` row holding a store's random id (`vault::identity`).
 const VAULT_STORE_ID: &[u8] = b"vault_identity:local:v1";
@@ -117,6 +127,16 @@ const FAMILIES: &[(&str, Select, Plane)] = &[
         "entities",
         Kind(ENTITY_TYPE_MACHINE),
         Guarded("machine identities"),
+    ),
+    (
+        "entities",
+        Kind(ENTITY_TYPE_RELATIONSHIP),
+        Guarded("relationship memberships"),
+    ),
+    (
+        "entities",
+        Predicate(crate::federation::PREDICATE_RELATIONSHIP_PERSON_REF),
+        Guarded("relationship memberships"),
     ),
     (
         "vault_meta",
@@ -214,6 +234,16 @@ fn plane_of(database: &str, key: &[u8], value: &[u8]) -> Option<Plane> {
                     Prefix(prefix) => key.starts_with(prefix),
                     Kind(kind) => EntityMetadataHeader::parse(value)
                         .is_some_and(|header| header.entity_type == *kind),
+                    Predicate(predicate) => {
+                        EntityMetadataHeader::parse(value)
+                            .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM)
+                            && value
+                                .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+                                .is_some_and(|body| {
+                                    crate::claim::decode_claim_body(body, true)
+                                        .is_ok_and(|claim| claim.predicate == *predicate)
+                                })
+                    }
                 }
         })
         .map(|(_, _, plane)| *plane)
@@ -260,22 +290,37 @@ pub(super) fn carry_current_authority(
                 .into(),
         ));
     }
+    // A guarded entity row's deletion fence travels with it: an accepted
+    // delete whose apply failed changes no byte of the row itself.
+    let fences = |sync: &CanonicalRows| -> BTreeSet<Vec<u8>> {
+        sync.iter()
+            .filter_map(|(key, _)| key.strip_prefix(ROW_DELETION_FENCE_PREFIX))
+            .map(<[u8]>::to_vec)
+            .collect()
+    };
+    let image_fences = fences(&databases["sync_state"]);
+    let live_fences = fences(&live["sync_state"]);
     let mut moved = BTreeSet::new();
     for database in planed_databases() {
-        let guarded = |rows: &CanonicalRows| -> BTreeMap<&'static str, CanonicalRows> {
+        let guarded = |rows: &CanonicalRows,
+                       fenced: &BTreeSet<Vec<u8>>|
+         -> BTreeMap<&'static str, CanonicalRows> {
             let mut families: BTreeMap<_, CanonicalRows> = BTreeMap::new();
             for (key, value) in rows {
                 if let Some(Guarded(name)) = plane_of(database, key, value) {
-                    families
-                        .entry(name)
-                        .or_default()
-                        .push((key.clone(), value.clone()));
+                    let family = families.entry(name).or_default();
+                    family.push((key.clone(), value.clone()));
+                    if database == "entities"
+                        && fenced.contains(crate::entity_id::bytes_to_hex_lower(key).as_bytes())
+                    {
+                        family.push((key.clone(), ROW_DELETION_FENCE_PREFIX.to_vec()));
+                    }
                 }
             }
             families
         };
-        let image = guarded(&databases[database]);
-        let current = guarded(&live[database]);
+        let image = guarded(&databases[database], &image_fences);
+        let current = guarded(&live[database], &live_fences);
         for name in image.keys().chain(current.keys()) {
             if image.get(name) != current.get(name) {
                 moved.insert(*name);
