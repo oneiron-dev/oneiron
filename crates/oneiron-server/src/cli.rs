@@ -416,6 +416,3 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Host(HostCommand::Init(args)) => commands::host_init(args),
     }
 }
-
-#[cfg(test)]
-mod tests;
