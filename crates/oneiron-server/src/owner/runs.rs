@@ -2,10 +2,13 @@
 //! decline the whole run in one act (OF-211).
 //!
 //! A run's pending proposals are one content-bound bundle. Review returns its
-//! id; resolve must present that id, and the engine re-hashes the live bundle
-//! inside the resolving transaction, so an approval never lands on proposals
-//! the owner did not see.
+//! id with the bodies read in the same transaction; resolve must present that
+//! id, and the engine re-hashes the live bundle inside the resolving
+//! transaction, so an approval never lands on proposals the owner did not see.
+//! Review shows each value through the release redaction, as every serve
+//! path does; the id stays bound to the stored body.
 
+use oneiron::claim::ClaimBody;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::edge::EdgeActorClass;
 use oneiron::run_tree::{GateConsentBundle, GateConsentBundleAction};
@@ -39,9 +42,10 @@ pub(crate) struct RunReview {
 #[derive(Debug, Serialize)]
 pub(crate) struct RunProposal {
     pub(crate) claim_id: String,
-    pub(crate) predicate: Option<String>,
-    pub(crate) subject: Option<String>,
-    pub(crate) value: Option<serde_json::Value>,
+    pub(crate) predicate: String,
+    pub(crate) subject: String,
+    /// The proposed value with credentials and sensitive fields redacted.
+    pub(crate) value: serde_json::Value,
     pub(crate) reason_codes: Vec<String>,
     pub(crate) created_at: u64,
 }
@@ -79,40 +83,43 @@ pub(crate) fn review(
     run_id: &str,
 ) -> OwnerResult<RunReview> {
     let actor = WriteActor::new(owner.actor(), EdgeActorClass::Human);
-    let bundle = vault.review_gate_consent_bundle(&actor, run_id)?;
-    review_of(vault, bundle)
+    let (bundle, bodies) = vault.review_gate_consent_bundle_with_bodies(&actor, run_id)?;
+    Ok(review_of(bundle, bodies))
 }
 
-fn review_of(vault: &Vault, bundle: GateConsentBundle) -> OwnerResult<RunReview> {
+fn review_of(bundle: GateConsentBundle, bodies: Vec<ClaimBody>) -> RunReview {
     let proposals = bundle
         .members
         .into_iter()
-        .map(|member| -> OwnerResult<RunProposal> {
-            let claim = vault.get_claim(&member.claim_id)?;
-            Ok(RunProposal {
+        .zip(bodies)
+        .map(|(member, body)| {
+            // Redact a copy of the stored MessagePack before projecting it:
+            // a value stored while the ingest scan was off is still never
+            // served, and binary is checked before it becomes hex.
+            let mut value = body.value;
+            oneiron::batch::export::redact_messagepack_credentials(&mut value);
+            RunProposal {
                 claim_id: member.claim_id.to_hex(),
-                predicate: claim.as_ref().map(|body| body.predicate.clone()),
-                subject: claim.as_ref().map(|body| match &body.subject {
+                predicate: body.predicate,
+                subject: match &body.subject {
                     ClaimSubject::Entity(id) => id.to_hex(),
                     ClaimSubject::Edge { source, target, .. } => {
                         format!("{}->{}", source.to_hex(), target.to_hex())
                     }
-                }),
-                value: claim
-                    .as_ref()
-                    .map(|body| crate::commands::msgpack_value_json(&body.value)),
+                },
+                value: crate::commands::msgpack_value_json(&value),
                 reason_codes: member.reason_codes,
                 created_at: member.created_at,
-            })
+            }
         })
-        .collect::<OwnerResult<Vec<_>>>()?;
-    Ok(RunReview {
+        .collect();
+    RunReview {
         bundle_id: hex(&bundle.bundle_id),
         name: bundle.name,
         run_id: bundle.dreamer_run_id,
         agent_label: bundle.agent_label,
         proposals,
-    })
+    }
 }
 
 /// Approves or declines the whole reviewed run in one engine transaction.
@@ -163,4 +170,44 @@ fn parse_bundle_id(value: &str) -> OwnerResult<[u8; 32]> {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `oneiron runs show`: the local owner's review redacts what the ingest
+    /// scan let through while it was off.
+    #[test]
+    fn runs_show_redacts_stored_credentials_with_the_scan_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open_owned(dir.path(), oneiron::VaultConfig::default()).unwrap();
+        let owner = super::super::local_owner(&vault).unwrap();
+        vault
+            .set_secret_scan_mode(
+                &owner,
+                oneiron::policy_model::SecretScanMode::Off,
+                vault.now_recorded_at(),
+            )
+            .unwrap();
+        let token = "ghp_0123456789abcdefghijklmnopqrstuvwxyzAB";
+        let agent = EntityId::now();
+        for value in [
+            rmpv::Value::from(format!("my token is {token}")),
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from("api_key"),
+                rmpv::Value::from("sk-not-for-display-0123456789"),
+            )]),
+            rmpv::Value::Binary(token.as_bytes().to_vec()),
+        ] {
+            vault
+                .park_run_proposal_for_test("cli-run", agent, EntityId::now(), value)
+                .unwrap();
+        }
+        let shown = serde_json::to_string(&review(&vault, &owner, "cli-run").unwrap()).unwrap();
+        let hex: String = token.bytes().map(|byte| format!("{byte:02x}")).collect();
+        assert!(!shown.contains(token), "{shown}");
+        assert!(!shown.contains(&hex), "{shown}");
+        assert!(!shown.contains("sk-not-for-display"), "{shown}");
+    }
 }

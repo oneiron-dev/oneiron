@@ -14,8 +14,9 @@ use crate::{EntityId, Error, Result, Vault};
 use super::constants::{DREAMER_PROVENANCE_RUN_ID_KEY, DREAMER_PROVENANCE_RUNNER_KEY};
 
 impl Vault {
-    /// Writes one Generated `profile.name` proposal from `agent` about
-    /// `subject` under `run_id` and requires the Gate to park it for consent.
+    /// Writes one Generated `profile.name` proposal of `value` from `agent`
+    /// about `subject` under `run_id` and requires the Gate to park it for
+    /// consent.
     ///
     /// # Errors
     /// Any write failure, or the live policy not parking the proposal.
@@ -24,7 +25,7 @@ impl Vault {
         run_id: &str,
         agent: EntityId,
         subject: EntityId,
-        value: &str,
+        value: impl Into<Value>,
     ) -> Result<EntityId> {
         let at = TimeRange { start: 1, end: 1 };
         for (id, body) in [(agent, b"run agent".as_slice()), (subject, b"run subject")] {
@@ -40,7 +41,7 @@ impl Vault {
         let candidate = ClaimCandidate::new(
             "profile.name",
             ClaimSubject::Entity(subject),
-            Value::from(value),
+            value.into(),
             1.0,
         )
         .with_evidence(evidence);

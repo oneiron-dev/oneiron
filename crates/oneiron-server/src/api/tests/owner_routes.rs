@@ -488,3 +488,76 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
     );
     assert_eq!(runs::pending(vault).unwrap()[0].run_id, run);
 }
+
+/// Review serves a stored proposal through the release redaction even with
+/// the ingest scan off, and approving the reviewed bundle id still acts on
+/// the stored, unredacted proposal. (`owner::runs::tests` covers the CLI.)
+#[tokio::test]
+async fn run_review_redacts_stored_credentials_with_the_scan_off() {
+    let (_dir, server) = auth_test_server();
+    let owner = owner_recipe(&server);
+    let vault = server.vault();
+    let (status, _) = call(
+        &server,
+        "POST",
+        "/v1/owner/secret-scan",
+        owner.clone(),
+        Some(&json!({ "mode": "off" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let token = "ghp_0123456789abcdefghijklmnopqrstuvwxyzAB";
+    let run = "owner-route-run-secrets";
+    let agent = oneiron::EntityId::now();
+    let values = [
+        rmpv::Value::from(format!("my token is {token}")),
+        rmpv::Value::Map(vec![
+            (
+                rmpv::Value::from("password"),
+                rmpv::Value::from("hunter2-hunter2"),
+            ),
+            (rmpv::Value::from("label"), rmpv::Value::from("kept")),
+        ]),
+        rmpv::Value::Binary(token.as_bytes().to_vec()),
+        rmpv::Value::Ext(7, token.as_bytes().to_vec()),
+    ];
+    let ids: Vec<_> = values
+        .iter()
+        .map(|value| {
+            vault
+                .park_run_proposal_for_test(run, agent, oneiron::EntityId::now(), value.clone())
+                .unwrap()
+        })
+        .collect();
+    let leaks = |review: &Value| {
+        let text = review.to_string();
+        let hex: String = token.bytes().map(|byte| format!("{byte:02x}")).collect();
+        text.contains(token) || text.contains("hunter2") || text.contains(&hex)
+    };
+
+    let path = format!("/v1/owner/runs/review?run_id={run}");
+    let (status, review) = call(&server, "GET", &path, owner.clone(), None).await;
+    assert_eq!(status, StatusCode::OK, "{review}");
+    assert_eq!(review["proposals"].as_array().unwrap().len(), values.len());
+    assert!(!leaks(&review), "{review}");
+    assert!(
+        review.to_string().contains("kept"),
+        "safe fields stay: {review}"
+    );
+
+    let decide = json!({ "run_id": run, "bundle_id": review["bundle_id"] });
+    let (status, resolved) = call(
+        &server,
+        "POST",
+        "/v1/owner/runs/approve",
+        owner,
+        Some(&decide),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resolved}");
+    for (id, value) in ids.iter().zip(&values) {
+        let stored = vault.get_claim(id).unwrap().unwrap();
+        assert_eq!(stored.approval, oneiron::ClaimApprovalStatus::Approved);
+        assert_eq!(&stored.value, value, "the stored proposal is unchanged");
+    }
+}
