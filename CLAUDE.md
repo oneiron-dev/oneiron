@@ -47,4 +47,7 @@ do not add new ones while it is pending.
 - Architecture docs and decisions live in the separate docs repo (bespoke Astro pages, compiled to
   markdown mirrors); this repo's `docs/` folder holds the generated code map, operational runbooks
   (`docs/ops/`), the checked-in architecture/deployment/storage diagrams, and a few research notes.
+- Tests carry outside truth only (owner ruling 2026-10-08): a real bug repro, done-means acceptance, an
+  oracle comparison, a substrate invariant, or an end-to-end user flow. No unit tests that restate the
+  code. See `AGENTS.md` → *What to test*.
 - Never commit secrets; the repo is public.

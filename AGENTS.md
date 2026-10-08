@@ -74,6 +74,24 @@ The distributed form (`scripts/verify-leg.sh`) still omits **five** commands (fe
 server-production clippy, featureless lib tests, rustdoc, and narrow sync full nextest).
 Do not report a distributed-only pass as the full gate.
 
+## What to test
+
+Owner ruling, 2026-10-08: no test by default. Write a test only when it carries truth from
+outside the code you just wrote, and prefer the end-to-end form ("serve starts with no model and
+answers", "a backup restores", "the Dreamer survives a kill"). The five kinds:
+
+1. A bug that really happened: a repro that fails before the fix.
+2. Owner or canon "done means" acceptance criteria.
+3. An oracle comparison: the Excel corpus against real Excel, the NER dial, the eval ladder.
+4. A substrate invariant: storage ABI, write gates, provenance, secrets.
+5. A few end-to-end user flows.
+
+Do not write unit tests that restate the implementation (the same formula, trivial round
+trips, near-duplicate variants). A PR reports the checks it adds, each tied to one of the five
+kinds above, not a test count. The rule governs new tests. Keep existing tests and their required
+feature coverage running; a refactor must not remove them. Pruning the existing suite is a
+separate, explicit task, and it keeps coverage of the five kinds.
+
 ## nextest tiers
 
 The dev-loop command runs the `default` profile, which skips the slow set pinned in
