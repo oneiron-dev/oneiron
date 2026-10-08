@@ -81,8 +81,13 @@ pub(in crate::batch) fn apply_put(
     let claim_gate_prechecked = options.decision.prechecked;
     // Delete wins over a peer: no replicated put brings back a row this vault
     // deleted, whatever the window's tombstone map now says. Refused before any
-    // effect is staged.
-    if replicated && crate::deletion::ROW_DELETION_FENCE.contains(store, wtxn, &HexId(id))? {
+    // effect is staged. A delete-protected record is never deleted: its own
+    // admission validates it and lifts a fence planted before it arrived.
+    if replicated
+        && !crate::registry::is_delete_protected_engine_record(entity_type)
+        && id != crate::dreamer_runner::authority::dreamer_actor_id()?
+        && crate::deletion::ROW_DELETION_FENCE.contains(store, wtxn, &HexId(id))?
+    {
         return Err(Error::InvariantViolation(
             "a replicated put cannot restore an entity deleted here",
         ));

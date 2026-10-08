@@ -458,7 +458,11 @@ fn forward_remat_tombstone_purge_failure_flags_rm_then_clears_on_success() {
 
     INJECT_PURGE_FAILURES.with(|cell| cell.set(1));
     forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
-    assert!(vault.get(&id).unwrap().is_some());
+    assert!(vault.get_raw(&id).unwrap().is_some());
+    assert!(
+        vault.get(&id).unwrap().is_none(),
+        "the accepted delete is fenced while its purge is pending"
+    );
     assert_eq!(
         pending_remat_windows(&vault).unwrap(),
         vec![WINDOW.to_string()],
@@ -466,7 +470,7 @@ fn forward_remat_tombstone_purge_failure_flags_rm_then_clears_on_success() {
     );
 
     forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
-    assert!(vault.get(&id).unwrap().is_none());
+    assert!(vault.get_raw(&id).unwrap().is_none());
     assert!(
         pending_remat_windows(&vault).unwrap().is_empty(),
         "marker cleared after the purge pass fully succeeds"
@@ -527,7 +531,8 @@ fn rm_drain_rebuilds_doc_from_pending_updates_when_snapshot_missing() {
     INJECT_PURGE_FAILURES.with(|cell| cell.set(1));
     map_insert_bytes(&window.doc.get_map("tombstones"), &id.to_hex(), b"1").unwrap();
     window.doc.commit();
-    assert!(vault.get(&id).unwrap().is_some());
+    assert!(vault.get_raw(&id).unwrap().is_some());
+    assert!(vault.get(&id).unwrap().is_none(), "fenced until the drain");
     assert_eq!(
         pending_remat_windows(&vault).unwrap(),
         vec![WINDOW.to_string()]
@@ -556,7 +561,7 @@ fn rm_drain_rebuilds_doc_from_pending_updates_when_snapshot_missing() {
     assert_eq!(report.drained, vec![WINDOW.to_string()]);
     assert!(report.still_pending.is_empty());
     assert!(
-        vault.get(&id).unwrap().is_none(),
+        vault.get_raw(&id).unwrap().is_none(),
         "hard-deleted entity purged via the rebuilt doc"
     );
     assert!(pending_remat_windows(&vault).unwrap().is_empty());

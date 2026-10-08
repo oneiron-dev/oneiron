@@ -16,10 +16,11 @@ impl Vault {
         HARD_DELETE_MARKER.contains(&self.store, txn, &HexId(*id))
     }
 
-    /// Removes a headerless tombstone replay's stale `dt:` poison once a
-    /// delete-protected engine row is successfully admitted. This is called
-    /// in the SAME transaction as protected-row materialization and tombstone
-    /// quarantine; such a marker never represented valid delete authority.
+    /// Removes a headerless tombstone replay's stale `dt:` and row-fence
+    /// poison once a delete-protected engine row is successfully admitted.
+    /// This is called in the SAME transaction as protected-row
+    /// materialization and tombstone quarantine; such a marker never
+    /// represented valid delete authority.
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(crate) fn neutralize_delete_protected_marker_in_txn(
         &self,
@@ -34,7 +35,29 @@ impl Vault {
                 "dt: poison neutralization requires a delete-protected engine record",
             ));
         }
-        HARD_DELETE_MARKER.delete(&self.store, wtxn, &HexId(*id))
+        let fenced = ROW_DELETION_FENCE.delete(&self.store, wtxn, &HexId(*id))?;
+        Ok(HARD_DELETE_MARKER.delete(&self.store, wtxn, &HexId(*id))? | fenced)
+    }
+
+    /// Fences the row of a validated peer tombstone this vault accepted but
+    /// could not apply. Its body may still be stored, and the window keeping
+    /// the tombstone may have no snapshot, so without the fence the row would
+    /// read live until the `rm:` retry lands. A delete-protected engine record
+    /// is never deleted, so it is never fenced.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    pub(crate) fn fence_unapplied_delete_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, id)?
+            && EntityMetadataHeader::parse(&raw).is_some_and(|header| {
+                crate::registry::is_delete_protected_engine_record(header.entity_type)
+            })
+        {
+            return Ok(());
+        }
+        ROW_DELETION_FENCE.put(&self.store, wtxn, &HexId(*id), &Vec::new())
     }
 
     /// One-time open backfill of [`ROW_DELETION_FENCE`]. A vault written

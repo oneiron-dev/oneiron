@@ -359,6 +359,7 @@ fn forward_with_recovery(
             // delete-safety provenance is not silently removed.
             for id in &tombstone_outcome.purge_failures {
                 quarantine::set_remat_marker_in_txn(vault, wtxn, window_key.as_str(), id)?;
+                vault.fence_unapplied_delete_in_txn(wtxn, id)?;
             }
             if !tombstone_outcome.receiver_scrub_candidates.is_empty() {
                 scrub_receiver_outbox_on_remote_hard_delete_in_txn(
@@ -386,6 +387,9 @@ fn forward_with_recovery(
                         .chain(tombstone_outcome.receiver_scrub_candidates.iter())
                     {
                         quarantine::set_remat_marker_in_txn(vault, wtxn, window_key.as_str(), id)?;
+                    }
+                    for id in &tombstone_outcome.purge_failures {
+                        vault.fence_unapplied_delete_in_txn(wtxn, id)?;
                     }
                     Ok(())
                 })?;

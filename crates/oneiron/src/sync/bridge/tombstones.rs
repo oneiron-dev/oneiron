@@ -205,23 +205,6 @@ pub(super) fn materialize_tombstones_from_delta(
     apply_tombstone_batch(vault, window_key, &staged)
 }
 
-/// Fences the row of a validated tombstone this vault accepted but could not
-/// apply. Its body may still be stored, and the window keeping the tombstone
-/// may have no snapshot, so without the fence it would read live until the
-/// `rm:` retry lands.
-fn fence_unapplied_delete_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
-) -> Result<()> {
-    crate::deletion::ROW_DELETION_FENCE.put(
-        &vault.store,
-        txn,
-        &crate::side_table::HexId(*id),
-        &Vec::new(),
-    )
-}
-
 /// One tombstone staged out of the delta, owned so the batch transaction can
 /// apply it without borrowing the Loro event.
 #[derive(Debug)]
@@ -315,7 +298,7 @@ fn apply_tombstone_batch(
                     "observer-b: CRITICAL — failed to set rm: marker after tombstone item failure"
                 );
             }
-            if let Err(fence_err) = fence_unapplied_delete_in_txn(vault, parent, &work.id) {
+            if let Err(fence_err) = vault.fence_unapplied_delete_in_txn(parent, &work.id) {
                 tracing::error!(
                     tombstone = %work.crdt_key,
                     window = %window_key,
@@ -368,7 +351,7 @@ fn apply_tombstone_batch(
         if let Err(error) = vault.with_write_txn(|txn| {
             for work in staged {
                 quarantine::set_remat_marker_in_txn(vault, txn, window_key, &work.id)?;
-                fence_unapplied_delete_in_txn(vault, txn, &work.id)?;
+                vault.fence_unapplied_delete_in_txn(txn, &work.id)?;
             }
             Ok(())
         }) {
