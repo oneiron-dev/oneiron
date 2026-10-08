@@ -10,8 +10,8 @@ use oneiron::tagging::{OutputRefusal, TaggingFailure, TaggingOutcome};
 use oneiron::{EntityId, Vault};
 
 use super::support::{
-    Answer, StubTagger, card, copy_dir, endpoint_config, markers, open_vault, server, speaker,
-    wait_until, witness,
+    Answer, NOW, StubTagger, card, copy_dir, endpoint_config, markers, open_vault, server, speaker,
+    wait_until, witness, witness_at,
 };
 use crate::server::SyncServer;
 
@@ -404,6 +404,55 @@ fn a_tagger_swapped_mid_backlog_settles_no_answer_under_the_configured_checkpoin
         backlog.difference(&completed).copied().collect(),
         "every turn the configured checkpoint did not answer still owes a pass"
     );
+}
+
+/// The extract carries the live window under the contract's `context` key:
+/// the conversation's earlier turns, oldest first, each with its messages,
+/// and never a later turn, even one witnessed before the worker read it.
+#[test]
+fn the_extract_carries_the_earlier_window_and_never_a_later_turn() {
+    let stub = StubTagger::start(Answer::Good);
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open_vault(dir.path(), true, false);
+    let turns: Vec<EntityId> = TEXTS
+        .iter()
+        .zip(0_u64..)
+        .map(|(text, at)| witness_at(&vault, text, NOW + at))
+        .collect();
+    let tagged = server(&vault, Some(&stub.config()));
+    let running = Running::start(&tagged);
+    assert!(wait_until(|| shadowed(&tagged) == TEXTS.len()));
+    running.stop();
+    let extracts = stub.extracts();
+    for (index, turn) in turns.iter().enumerate() {
+        let body = extracts
+            .iter()
+            .find(|body| body["turn"] == turn.to_hex())
+            .expect("the turn was tagged");
+        let context = body["context"].as_array().expect("a context array");
+        let earlier: Vec<(&str, &str)> = context
+            .iter()
+            .map(|entry| {
+                let messages = entry["messages"].as_array().expect("messages");
+                assert_eq!(messages.len(), 1);
+                (
+                    entry["turn"].as_str().expect("turn"),
+                    messages[0]["text"].as_str().expect("text"),
+                )
+            })
+            .collect();
+        let hexes: Vec<String> = turns[..index].iter().map(EntityId::to_hex).collect();
+        let expected: Vec<(&str, &str)> = hexes
+            .iter()
+            .map(String::as_str)
+            .zip(TEXTS[..index].iter().copied())
+            .collect();
+        assert_eq!(
+            earlier, expected,
+            "turn {index} reads exactly the turns before it"
+        );
+        assert_eq!(body["messages"][0]["text"], TEXTS[index]);
+    }
 }
 
 fn wait_until_long(mut done: impl FnMut() -> bool) -> bool {

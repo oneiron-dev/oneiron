@@ -9,11 +9,13 @@
 //! checkpoint. An edit that moves a turn's indexed frontier marks the turn
 //! again, whether its text is published at idle or written through an entity
 //! document. A host worker drains the markers through
-//! [`TaggingReconciler`]: it reads the turn's MESSAGE rows, calls the
-//! host-served tagger outside any write transaction, checks the answer and
-//! settles the marker. A failed call or a refused answer is a trace and a retry
-//! with backoff, never a failed write. An importer that already holds a turn's
-//! tags completes its marker with no tagger call
+//! [`TaggingReconciler`]: it reads the turn's MESSAGE rows with a bounded
+//! window of the conversation's earlier text (the live register, sized by
+//! [`TaggingMarkerConfig::live_window_tokens`]), calls the host-served tagger
+//! outside any write transaction, checks the answer and settles the marker. A
+//! failed call or a refused answer is a trace and a retry with backoff, never
+//! a failed write. An importer that already holds a turn's tags completes its
+//! marker with no tagger call
 //! ([`crate::Vault::complete_tagging_with_held_tags`]).
 //!
 //! Markers and their tries are job state. Each attempt's trace is recorded in
@@ -37,8 +39,9 @@ mod trace;
 pub use held::HeldTagsOutcome;
 pub use history::TaggingTraceRecord;
 pub use marker::{
-    DEFAULT_TRACE_MAX_AGE_SECS, DEFAULT_TRACES_PER_TURN, MAX_TRACES_PER_TURN, TAGGING_MARKER_KIND,
-    TaggingMarkerConfig, TaggingTraceHistory,
+    DEFAULT_LIVE_WINDOW_TOKENS, DEFAULT_TRACE_MAX_AGE_SECS, DEFAULT_TRACES_PER_TURN,
+    MAX_LIVE_WINDOW_TOKENS, MAX_TRACES_PER_TURN, TAGGING_MARKER_KIND, TaggingMarkerConfig,
+    TaggingTraceHistory,
 };
 pub use output::{OutputRefusal, spans_only_answers_admitted};
 pub use reconciler::{TaggingBackoff, TaggingPass, TaggingReconciler};

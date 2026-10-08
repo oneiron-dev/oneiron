@@ -38,6 +38,8 @@ struct Scripted {
     model: ModelId,
     answer: Mutex<Answer>,
     calls: AtomicUsize,
+    /// Every input the tagger was called with, in call order.
+    inputs: Mutex<Vec<EncoderInput>>,
     /// Runs inside the call, outside every write transaction.
     during_call: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
@@ -48,6 +50,7 @@ impl Scripted {
             model: "fixture/tagger@v1".parse().expect("model id"),
             answer: Mutex::new(answer),
             calls: AtomicUsize::new(0),
+            inputs: Mutex::new(Vec::new()),
             during_call: Mutex::new(None),
         })
     }
@@ -68,6 +71,7 @@ impl ExtractionEncoder for Scripted {
     }
     fn infer(&self, input: &EncoderInput) -> crate::Result<EncoderOutput> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        self.inputs.lock().expect("inputs lock").push(input.clone());
         if let Some(hook) = self.during_call.lock().expect("hook lock").take() {
             hook();
         }
@@ -2014,6 +2018,118 @@ fn vault_cleanup_proposes_nothing_from_tagging_markers() {
         "only the other job is proposed"
     );
     assert!(report.proposal.is_some());
+}
+
+/// Witnesses `content` as a fresh turn of the fixture room at `occurred_at`.
+fn witness_at(vault: &Vault, content: &str, occurred_at: u64) -> EntityId {
+    let receipt = vault
+        .memory(speaker(vault), EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            occurred_at,
+            ..turn(None, vec![message(0, content)])
+        })
+        .expect("witness");
+    receipt_turn(&receipt)
+}
+
+/// The turns of a window, each as its turn id and its message texts.
+fn window(input: &EncoderInput) -> Vec<(String, Vec<String>)> {
+    input
+        .context
+        .iter()
+        .map(|turn| {
+            (
+                turn.turn.clone(),
+                turn.messages
+                    .iter()
+                    .map(|message| message.text.clone())
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+/// A live turn is tagged with the earlier text of its conversation, oldest
+/// first, and never with a later turn, even one witnessed before the worker
+/// read it. The window is bounded by its configured size: past the bound
+/// the oldest text is cut from the left, and a size of zero sends the turn
+/// alone. The window enters the input digest.
+#[test]
+fn a_live_turn_reads_the_earlier_window_and_never_a_later_turn() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    let first = witness_at(&vault, "Ada sailed north", NOW);
+    let second = witness_at(&vault, "Grace stayed behind", NOW + 1);
+    let third = witness_at(&vault, "they wrote letters", NOW + 2);
+    let tagger = Scripted::new(Answer::Good);
+    let pass = reconciler(&vault, &tagger)
+        .with_batch_size(3)
+        .drain_once()
+        .expect("drain");
+    assert_eq!(pass.traces.len(), 3);
+    let inputs = tagger.inputs.lock().expect("inputs").clone();
+    let input = |turn: &EntityId| {
+        inputs
+            .iter()
+            .find(|input| input.turn == turn.to_hex())
+            .expect("the turn was tagged")
+            .clone()
+    };
+    let line = |turn: &EntityId, text: &str| (turn.to_hex(), vec![text.to_owned()]);
+    assert!(input(&first).context.is_empty());
+    assert_eq!(
+        window(&input(&second)),
+        vec![line(&first, "Ada sailed north")]
+    );
+    assert_eq!(
+        window(&input(&third)),
+        vec![
+            line(&first, "Ada sailed north"),
+            line(&second, "Grace stayed behind")
+        ]
+    );
+    for input in &inputs {
+        assert_eq!(input.messages.len(), 1, "a window's turns are not tagged");
+    }
+    let hashes: Vec<_> = pass
+        .traces
+        .iter()
+        .map(|trace| trace.input_hash.clone())
+        .collect();
+    assert!(hashes.iter().all(Option::is_some));
+    drop(vault);
+
+    // Two tokens' worth of window: the newest 32 characters of earlier text,
+    // the oldest turn cut from the left. Zero: the turn alone.
+    for (tokens, expected) in [
+        (
+            2,
+            vec![
+                line(&first, " sailed north"),
+                line(&second, "Grace stayed behind"),
+            ],
+        ),
+        (0, Vec::new()),
+    ] {
+        let mut config = config(true);
+        config.tagging = Some(
+            TaggingMarkerConfig::new(CHECKPOINT)
+                .expect("checkpoint")
+                .with_live_window_tokens(tokens),
+        );
+        let vault = Arc::new(Vault::open(dir.path(), config).expect("reopen"));
+        let read = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)
+            .and_then(|txn| super::input::turn_input_in_txn(&vault, &txn, &third))
+            .expect("read the third turn");
+        let super::input::TurnInput::Ready { input, .. } = read else {
+            panic!("the third turn has text");
+        };
+        assert_eq!(window(&input), expected, "window of {tokens} tokens");
+    }
 }
 
 /// The trace history keeps exactly what its bounds say: a turn's newest

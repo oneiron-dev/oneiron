@@ -30,6 +30,7 @@ fn input(text: &str) -> EncoderInput {
             id: "73737373737373737373737373737373".into(),
             text: text.into(),
         }],
+        context: Vec::new(),
     }
 }
 
@@ -83,6 +84,7 @@ mode = "shadow"
 url = "http://127.0.0.1:9100"
 checkpoint_sha16 = "0123456789abcdef"
 label_count = 53
+live_window_tokens = 128
 trace_history_per_turn = 9
 [oneironer.labels]
 PERSON = "PERSON"
@@ -116,6 +118,7 @@ PERSON = "PERSON"
     );
     let tagging = config.vault_config().tagging.expect("armed");
     assert_eq!(tagging.checkpoint, "0123456789abcdef");
+    assert_eq!(tagging.live_window_tokens, 128);
     assert_eq!(
         tagging.trace_history,
         oneiron::tagging::TaggingTraceHistory {
@@ -126,15 +129,20 @@ PERSON = "PERSON"
 }
 
 #[test]
-fn the_trace_history_rows_default_and_are_bounded() {
+fn the_live_window_and_trace_history_rows_default_and_are_bounded() {
     let base = "[oneironer]\nprovider = \"endpoint\"\nmode = \"shadow\"\nurl = \"http://127.0.0.1:9100\"\ncheckpoint_sha16 = \"0123456789abcdef\"\nlabel_count = 3\n";
     let config = resolve(base, &[], ServeArgs::default()).expect("resolve");
     let tagging = config.vault_config().tagging.expect("armed");
+    assert_eq!(
+        tagging.live_window_tokens,
+        oneiron::tagging::DEFAULT_LIVE_WINDOW_TOKENS
+    );
     assert_eq!(
         tagging.trace_history,
         oneiron::tagging::TaggingTraceHistory::default()
     );
     for row in [
+        "live_window_tokens = 2049",
         "trace_history_per_turn = 1025",
         "trace_history_max_age_secs = 0",
     ] {

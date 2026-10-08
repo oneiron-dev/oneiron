@@ -326,6 +326,11 @@ pub(super) fn speaker(vault: &Vault) -> EntityId {
 /// Witnesses one fresh turn through the engine's witness door, the door the
 /// `/v1/core/facade/witness` route calls, and returns the turn id.
 pub(super) fn witness(vault: &Vault, content: &str) -> EntityId {
+    witness_at(vault, content, NOW)
+}
+
+/// [`witness`], for a turn that occurred at `occurred_at`.
+pub(super) fn witness_at(vault: &Vault, content: &str, occurred_at: u64) -> EntityId {
     let receipt = vault
         .memory(speaker(vault), EdgeActorClass::Human)
         .witness(&WitnessTurn {
@@ -340,7 +345,7 @@ pub(super) fn witness(vault: &Vault, content: &str) -> EntityId {
                 is_visible: true,
                 order: 0,
             }],
-            occurred_at: NOW,
+            occurred_at,
         })
         .expect("witness");
     EntityId::from_hex(receipt.receipt_ref.trim_start_matches("witness:")).expect("turn id")

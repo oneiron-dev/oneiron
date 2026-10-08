@@ -128,6 +128,10 @@ pub struct OneironerConfig {
     pub retry_backoff_secs: u64,
     /// Ceiling on the doubled retry delay.
     pub max_retry_backoff_secs: u64,
+    /// The live window in the tagger's tokens: how much earlier text of its
+    /// conversation a turn is tagged with. Defaults to the serving runtime's
+    /// 256 (`LIVE_K`); 0 tags each turn alone; at most 2,048.
+    pub live_window_tokens: u32,
     /// Traces kept per turn once a settled marker leaves the job ledger.
     /// Defaults to 4; 0 keeps none; at most 1,024.
     pub trace_history_per_turn: u32,
@@ -149,6 +153,7 @@ impl Default for OneironerConfig {
             idle_interval_ms: DEFAULT_IDLE_INTERVAL_MS,
             retry_backoff_secs: DEFAULT_RETRY_BACKOFF_SECS,
             max_retry_backoff_secs: DEFAULT_MAX_RETRY_BACKOFF_SECS,
+            live_window_tokens: oneiron::tagging::DEFAULT_LIVE_WINDOW_TOKENS,
             trace_history_per_turn: oneiron::tagging::DEFAULT_TRACES_PER_TURN,
             trace_history_max_age_secs: oneiron::tagging::DEFAULT_TRACE_MAX_AGE_SECS,
         }
@@ -171,12 +176,13 @@ impl OneironerConfig {
             .flatten()
     }
 
-    /// The vault's marker configuration, when markers are on: the checkpoint
-    /// and the trace history.
+    /// The vault's marker configuration, when markers are on: the checkpoint,
+    /// the live window and the trace history.
     pub fn marker_config(&self) -> Option<oneiron::tagging::TaggingMarkerConfig> {
         let checkpoint = self.marker_checkpoint()?;
         Some(oneiron::tagging::TaggingMarkerConfig {
             checkpoint: checkpoint.to_owned(),
+            live_window_tokens: self.live_window_tokens,
             trace_history: self.trace_history(),
         })
     }
@@ -231,6 +237,9 @@ impl OneironerConfig {
         if let Some(value) = over.max_retry_backoff_secs {
             self.max_retry_backoff_secs = value;
         }
+        if let Some(value) = over.live_window_tokens {
+            self.live_window_tokens = value;
+        }
         if let Some(value) = over.trace_history_per_turn {
             self.trace_history_per_turn = value;
         }
@@ -243,6 +252,9 @@ impl OneironerConfig {
     /// provider and save mode pass here and are refused, typed, when the slot
     /// is built.
     pub fn validate(&self) -> anyhow::Result<()> {
+        if self.live_window_tokens > oneiron::tagging::MAX_LIVE_WINDOW_TOKENS {
+            anyhow::bail!("oneironer.live_window_tokens must be at most 2048");
+        }
         if self.trace_history_per_turn > oneiron::tagging::MAX_TRACES_PER_TURN {
             anyhow::bail!("oneironer.trace_history_per_turn must be at most 1024");
         }
@@ -316,6 +328,7 @@ pub struct OneironerConfigOverride {
     pub idle_interval_ms: Option<u64>,
     pub retry_backoff_secs: Option<u64>,
     pub max_retry_backoff_secs: Option<u64>,
+    pub live_window_tokens: Option<u32>,
     pub trace_history_per_turn: Option<u32>,
     pub trace_history_max_age_secs: Option<u64>,
 }
@@ -399,6 +412,7 @@ pub(super) fn lookup_oneironer_override(
         idle_interval_ms: lookup_parse(lookup, "ONEIRON_ONEIRONER_IDLE_INTERVAL_MS")?,
         retry_backoff_secs: lookup_parse(lookup, "ONEIRON_ONEIRONER_RETRY_BACKOFF_SECS")?,
         max_retry_backoff_secs: lookup_parse(lookup, "ONEIRON_ONEIRONER_MAX_RETRY_BACKOFF_SECS")?,
+        live_window_tokens: lookup_parse(lookup, "ONEIRON_ONEIRONER_LIVE_WINDOW_TOKENS")?,
         trace_history_per_turn: lookup_parse(lookup, "ONEIRON_ONEIRONER_TRACE_HISTORY_PER_TURN")?,
         trace_history_max_age_secs: lookup_parse(
             lookup,

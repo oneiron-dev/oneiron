@@ -23,6 +23,11 @@ const RETRY_ID_DOMAIN: &[u8] = b"oneiron.tagging.retry.v1\0";
 /// has one successor, so only a chance collision needs another.
 const MAX_RETRY_GENERATIONS: u32 = 16;
 
+/// The live window's default size in tagger tokens: the serving runtime's
+/// `LIVE_K`, the earlier context a live turn is tagged with.
+pub const DEFAULT_LIVE_WINDOW_TOKENS: u32 = 256;
+/// The largest live window: the serving runtime's whole input window.
+pub const MAX_LIVE_WINDOW_TOKENS: u32 = 2_048;
 /// Traces kept per turn by default: the turn's latest few attempts.
 pub const DEFAULT_TRACES_PER_TURN: u32 = 4;
 /// The most traces a turn may keep.
@@ -56,19 +61,31 @@ pub struct TaggingMarkerConfig {
     /// digits of the SHA-256 of its weights. Half of every marker's dedupe
     /// key, so a new checkpoint owes every turn a new pass.
     pub checkpoint: String,
+    /// The live window, in the tagger's tokens: a turn is tagged with up to
+    /// this much earlier text of its conversation, and never a later turn.
+    /// 0 sends the turn alone.
+    pub live_window_tokens: u32,
     /// The traces kept once their markers leave the job ledger.
     pub trace_history: TaggingTraceHistory,
 }
 
 impl TaggingMarkerConfig {
-    /// A validated marker configuration, with the default trace history.
+    /// A validated marker configuration, with the default live window and
+    /// trace history.
     pub fn new(checkpoint: impl Into<String>) -> Result<Self> {
         let config = Self {
             checkpoint: checkpoint.into(),
+            live_window_tokens: DEFAULT_LIVE_WINDOW_TOKENS,
             trace_history: TaggingTraceHistory::default(),
         };
         config.validate()?;
         Ok(config)
+    }
+
+    #[must_use]
+    pub fn with_live_window_tokens(mut self, tokens: u32) -> Self {
+        self.live_window_tokens = tokens;
+        self
     }
 
     #[must_use]
@@ -77,12 +94,16 @@ impl TaggingMarkerConfig {
         self
     }
 
-    /// Refuses a checkpoint that is not 16 lowercase hex digits, and a trace
-    /// history past its bounds or with no age.
+    /// Refuses a checkpoint that is not 16 lowercase hex digits, a live
+    /// window past the runtime's input window, and a trace history past its
+    /// bounds or with no age.
     pub fn validate(&self) -> Result<()> {
         let invalid = |reason: &str| Err(Error::InvalidConfig(reason.to_owned()));
         if !is_checkpoint(&self.checkpoint) {
             return invalid("tagging checkpoint must be 16 lowercase hex digits");
+        }
+        if self.live_window_tokens > MAX_LIVE_WINDOW_TOKENS {
+            return invalid("tagging live window must be at most 2048 tokens");
         }
         if self.trace_history.per_turn > MAX_TRACES_PER_TURN {
             return invalid("tagging trace history keeps at most 1024 traces per turn");
