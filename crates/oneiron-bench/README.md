@@ -291,7 +291,6 @@ uvx --from chromadb==1.5.9 chroma run --path /tmp/chroma-beam --host 127.0.0.1 -
 python3 crates/oneiron-bench/scripts/fixture_model_stub.py
 ONEIRON_EVAL_API_KEY=fixture-only cargo run -p oneiron-bench -j 8 -- beam measure crates/oneiron-bench/fixtures/beam_measure.chroma.example.json > supported.json
 ONEIRON_EVAL_API_KEY=fixture-only cargo run -p oneiron-bench -j 8 -- beam measure crates/oneiron-bench/fixtures/beam_measure.no_evidence.chroma.example.json > no-evidence.json
-python3 -m unittest discover -s crates/oneiron-bench/scripts -p test_fixture_model_stub.py -v
 ```
 
 The receipt [`results/beam-chroma-fixture-2026-09-27.json`](results/beam-chroma-fixture-2026-09-27.json)

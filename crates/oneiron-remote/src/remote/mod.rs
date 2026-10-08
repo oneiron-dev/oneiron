@@ -34,8 +34,6 @@ mod response;
 
 use self::origin::{bearer_header, normalize_origin};
 pub(crate) use self::pairing::{pair, parse_credential};
-#[cfg(test)]
-use self::response::parse_error_envelope;
 use self::response::{
     ReadFailure, describe_send_failure, read_capped, read_error_envelope, serialize_request,
 };

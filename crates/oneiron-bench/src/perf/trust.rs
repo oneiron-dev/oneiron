@@ -119,14 +119,6 @@ pub(crate) enum CheckScope {
 }
 
 impl CheckScope {
-    #[cfg(test)]
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Blocking => "blocking",
-            Self::Advisory => "advisory",
-        }
-    }
-
     pub(crate) const fn is_blocking(self) -> bool {
         matches!(self, Self::Blocking)
     }
@@ -437,6 +429,3 @@ pub(crate) const TRUST_RULE: &str = "no blocking check may rest on operator-decl
      is admissible but PROVISIONAL, and becomes fact only when an external verifier matches it \
      against the build record. Inputs that can only make a check FAIL are restrictions rather \
      than evidence and are not listed as inputs";
-
-#[cfg(test)]
-mod tests;

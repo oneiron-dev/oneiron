@@ -17,4 +17,3 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/error.rs` | src | s | 1 enum | OneironError | The single exported error type for the UniFFI head-contract surface |
 | `src/facade_generated.rs` | src | s | — | — | — |
 | `src/lib.rs` | src | s | 1 struct · 3 fn · 1 const · 2 re-export | Oneiron | Definition-only UniFFI interface surface for the WIRE head contract |
-| `tests/contract.rs` | test | s | — | — | External drift guard for the exported head-contract surface |

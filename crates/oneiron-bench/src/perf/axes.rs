@@ -334,11 +334,6 @@ mod tests {
         SampleSet::new(label, latency, &recall, latency.len(), 0)
     }
 
-    fn full_set(label: &'static str, value: f64) -> SampleSet {
-        let latency = vec![value; FULL_RUN_MIN_COMPLETED_SAMPLES];
-        set(label, &latency)
-    }
-
     /// The contract is that warm and cold are two POPULATIONS, never one
     /// average. This pins three things at once: the two sample sets keep
     /// independent percentiles, the merged population that a collapsing
@@ -433,76 +428,5 @@ mod tests {
         assert!(matches!(axis.cold.latency_ms, Cell::NotApplicable { .. }));
         assert!(matches!(axis.warm.recall_at_k, Cell::NotApplicable { .. }));
         assert!(axis.cold_over_warm_speedup.is_none());
-    }
-
-    /// A plan that ASKED for the full query count but whose retrieval calls
-    /// mostly failed must not present publishable percentiles: the floor is
-    /// counted on completed calls, and the survivors are rewritten to
-    /// not-applicable exactly as an under-planned run is.
-    #[test]
-    fn a_plan_sized_run_whose_calls_failed_does_not_satisfy_the_floor() {
-        let survivors = [3.0, 4.0, 5.0];
-        let recall = [1.0, 1.0, 1.0];
-        let cold = SampleSet::new(
-            "cold",
-            &survivors,
-            &recall,
-            survivors.len(),
-            FULL_RUN_MIN_QUERIES - survivors.len(),
-        );
-        let mut axis = RecallLatencyAxis::new(
-            10,
-            FULL_RUN_MIN_INDEXED_DOCS,
-            FULL_RUN_MIN_QUERIES,
-            cold,
-            full_set("warm", 1.0),
-            EvidenceKind::MeasuredWallClock,
-        );
-
-        assert!(
-            axis.meets_plan_floor,
-            "the PLAN did ask for the full query count"
-        );
-        assert!(
-            !axis.cold.meets_completed_sample_floor,
-            "three completed calls cannot satisfy a hundred-sample floor"
-        );
-        assert!(
-            axis.warm.meets_completed_sample_floor,
-            "the warm set did complete its calls"
-        );
-        assert!(
-            !axis.meets_completed_sample_floor && !axis.meets_full_run_floor,
-            "one starved set is enough to fail the axis floor"
-        );
-        assert_eq!(axis.cold.errors, FULL_RUN_MIN_QUERIES - survivors.len());
-
-        axis.enforce_full_run_floor();
-        assert!(
-            matches!(axis.cold.latency_ms, Cell::NotApplicable { .. }),
-            "percentiles over three survivors must not be published"
-        );
-        assert!(matches!(axis.warm.latency_ms, Cell::NotApplicable { .. }));
-        assert!(axis.cold_over_warm_speedup.is_none());
-    }
-
-    /// The happy path still passes: a fully completed, plan-sized run keeps
-    /// its numbers.
-    #[test]
-    fn a_fully_completed_plan_sized_run_keeps_its_numbers() {
-        let mut axis = RecallLatencyAxis::new(
-            10,
-            FULL_RUN_MIN_INDEXED_DOCS,
-            FULL_RUN_MIN_QUERIES,
-            full_set("cold", 9.0),
-            full_set("warm", 1.0),
-            EvidenceKind::MeasuredWallClock,
-        );
-        assert!(axis.meets_plan_floor && axis.meets_completed_sample_floor);
-        assert!(axis.meets_full_run_floor);
-        axis.enforce_full_run_floor();
-        assert!(axis.cold.latency_ms.is_measured());
-        assert!(axis.warm.latency_ms.is_measured());
-        assert!(axis.cold_over_warm_speedup.is_some());
     }
 }

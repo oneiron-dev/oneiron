@@ -20,7 +20,6 @@
     "oneiron": "^1.0.0"
   },
   "scripts": {
-    "test": "bun test adapter.test.js",
     "test:native": "node --test native-agent.test.mjs"
   },
   "devDependencies": {

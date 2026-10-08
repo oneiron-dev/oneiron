@@ -10687,7 +10687,7 @@
      "path": "src/connector_key/mod.rs",
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 2,
       "re-export": 9
      }
@@ -11507,6 +11507,16 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/context_board/own_changes.rs",
+     "purpose": "Read-time own-proposal outcomes and connector changes for one session",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "AdmittedPluginSection",
       "PackSectionRegistration",
@@ -11671,20 +11681,26 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "ChangedDelivery",
+      "ChangedEvent",
       "ChangedLine",
+      "ConnectorChange",
+      "ConnectorMount",
+      "ProposalChange",
+      "ProposalReason",
       "ServedLifecycle",
       "SessionReadSet"
      ],
      "path": "src/context_board/read_set.rs",
      "purpose": "Session read-set tracking, separate from the stateless board renderer",
      "surface": {
-      "crate-vis": 1,
-      "enum": 1,
-      "fn": 8,
-      "struct": 2
+      "crate-vis": 7,
+      "enum": 4,
+      "fn": 11,
+      "struct": 5
      }
     },
     {
@@ -11833,7 +11849,7 @@
      "path": "src/context_board/stream/registry.rs",
      "purpose": "The board stream registry: connections, subscriptions and event routing",
      "surface": {
-      "fn": 10,
+      "fn": 11,
       "struct": 2
      }
     },
@@ -11906,7 +11922,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/context_board/surfaces_tests.rs",
@@ -18137,7 +18153,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ProposalPolicySource",
@@ -18148,7 +18164,7 @@
      "purpose": "Actor-scoped, receipt-backed proposal observation; crossing only asks a question",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 3,
       "struct": 3
      }
@@ -38612,7 +38628,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 52,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39587,7 +39603,7 @@
    },
    "over_bar": 22,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2356,
+   "source_files": 2357,
    "test_files": 836
   },
   "oneiron-android": {
@@ -39956,7 +39972,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "benches/materializer_mutex/contract_tests.rs",
@@ -40078,9 +40094,7 @@
      "notable": [],
      "path": "src/beam/chroma/tests/support.rs",
      "purpose": "—",
-     "surface": {
-      "crate-vis": 3
-     }
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -40138,10 +40152,7 @@
      "notable": [],
      "path": "src/beam/edit_path/tests.rs",
      "purpose": "—",
-     "surface": {
-      "fn": 2,
-      "mod": 1
-     }
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -40218,7 +40229,7 @@
      "path": "src/beam/mod.rs",
      "purpose": "BEAM scaffold and fixed scorer for EVAL-001/EVAL-002",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 6
      }
     },
     {
@@ -40340,23 +40351,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/beam/tests_community_eval004.rs",
      "purpose": "Community and EVAL-004 tests",
      "surface": {
-      "crate-vis": 19
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/beam/tests_gates.rs",
-     "purpose": "Gate tests",
-     "surface": {
-      "crate-vis": 1
+      "crate-vis": 7
      }
     },
     {
@@ -40370,7 +40371,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/beam/tests_judge_cost.rs",
@@ -40380,25 +40381,17 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/beam/tests_ppr_vad.rs",
      "purpose": "PPR-VAD tests",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 2
      }
     },
     {
      "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/beam/tests_rerank_sweep.rs",
-     "purpose": "Deterministic BEAM seam sweep; this is not a learned-model quality claim",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/beam/tests_smoke_manifest.rs",
@@ -40458,7 +40451,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/eval/tests.rs",
@@ -40604,17 +40597,17 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/interface_bench/tests_a.rs",
      "purpose": "Taskgen, config, and memo tests",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/interface_bench/tests_b.rs",
@@ -40661,14 +40654,6 @@
     },
     {
      "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/perf/acceptance/tests.rs",
-     "purpose": "Regressions for the ONE-1579 acceptance evidence",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/perf/axes.rs",
@@ -40706,7 +40691,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/perf/cache_events.rs",
@@ -40736,7 +40721,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/perf/certificate/tests.rs",
@@ -40754,7 +40739,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/perf/child_process/tests.rs",
@@ -40782,7 +40767,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/perf/gated_writes.rs",
@@ -40842,7 +40827,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/perf/plan/tests.rs",
@@ -40860,7 +40845,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/perf/precision/tests.rs",
@@ -40878,7 +40863,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/perf/provenance/tests.rs",
@@ -40894,14 +40879,6 @@
      "surface": {
       "crate-vis": 5
      }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/perf/publication/tests.rs",
-     "purpose": "ONE-1579 / ONE-1961 / ONE-1963 regressions over the candidacy predicate",
-     "surface": {}
     },
     {
      "bucket": "m",
@@ -40980,16 +40957,8 @@
      "path": "src/perf/trust.rs",
      "purpose": "ONE-1961 trust classes for publication evidence",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 14
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/perf/trust/tests.rs",
-     "purpose": "ONE-1961 regressions over the trust tables",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -41116,7 +41085,7 @@
    ],
    "modules": {
     "beam": {
-     "files": 41,
+     "files": 39,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -41151,7 +41120,7 @@
      "purpose": "Checkpoint-backed NER shadow proof beside an indexed fixture turn"
     },
     "perf": {
-     "files": 37,
+     "files": 34,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -41202,8 +41171,8 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 101,
-   "test_files": 21
+   "source_files": 99,
+   "test_files": 18
   },
   "oneiron-contracts": {
    "files": [
@@ -42134,6 +42103,324 @@
    "source_files": 54,
    "test_files": 3
   },
+  "oneiron-crypto": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "fuzz/fuzz_targets/envelope_parse.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "fuzz/fuzz_targets/record_parse.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/codec.rs",
+     "purpose": "Canonical encoding primitives: big-endian integers, fixed-size fields and length-prefixed byte strings…",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/envelope/hybrid.rs",
+     "purpose": "The `kem-x25519-mlkem1024-v1` capsule: ML-KEM-1024 (FIPS 203) and X25519 (RFC 7748) combined with the…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/envelope/hybrid/tests.rs",
+     "purpose": "Every combiner input reaches the output: changing any one of them alone changes the wrap secret (the…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Envelope",
+      "Header",
+      "Kdf",
+      "Purpose",
+      "WrapParams",
+      "WrapType"
+     ],
+     "path": "src/envelope/mod.rs",
+     "purpose": "The sealed envelope: its typed header, the canonical encoding and the strict parser",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 4,
+      "fn": 3,
+      "re-export": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OpenKey",
+      "OpenPolicy",
+      "SealKey",
+      "SealParams"
+     ],
+     "path": "src/envelope/seal.rs",
+     "purpose": "Sealing and opening, and the one key schedule every wrap type shares:",
+     "surface": {
+      "enum": 2,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/envelope/seal/tests.rs",
+     "purpose": "The HKDF key schedule's stack wipe (RustCrypto/meta#38): the bare schedule leaves its secrets below its…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Error"
+     ],
+     "path": "src/error.rs",
+     "purpose": "The one error type",
+     "surface": {
+      "enum": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Argon2Cost",
+      "HybridPublicKey",
+      "HybridSecretKey",
+      "Kek",
+      "Passphrase",
+      "RecoverySecret"
+     ],
+     "path": "src/keys.rs",
+     "purpose": "Key material types",
+     "surface": {
+      "const": 11,
+      "crate-vis": 11,
+      "fn": 9,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table…",
+     "surface": {
+      "const": 3,
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NonceLedger"
+     ],
+     "path": "src/nonce.rs",
+     "purpose": "Duplicate-nonce detection where the caller can see it",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CheckpointRef",
+      "RecordBody",
+      "SigPurpose",
+      "SignatureEntry",
+      "SignatureRecord"
+     ],
+     "path": "src/record/mod.rs",
+     "purpose": "Signature records: the canonical encoding, the strict parser and the roster rules",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 8,
+      "re-export": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SigningKey",
+      "VerifyPolicy",
+      "VerifyingKey"
+     ],
+     "path": "src/record/sign.rs",
+     "purpose": "Signing and verifying records",
+     "surface": {
+      "enum": 2,
+      "fn": 8,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/record/sign/tests.rs",
+     "purpose": "Record signing's stack wipe (RustCrypto/meta#38): the bare SLH-DSA signer leaves its secrets below its…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/stack_probe.rs",
+     "purpose": "Test-only stack probe",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Suite",
+      "SuiteId",
+      "SuiteKind",
+      "SuiteStatus"
+     ],
+     "path": "src/suite.rs",
+     "purpose": "The suite table: every algorithm combination the format can name, its state and its minimum epoch",
+     "surface": {
+      "const": 11,
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/envelope.rs",
+     "purpose": "Envelope contract: round trips for every wrap type, fail-closed parsing, reader policy, AAD binding of every…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/kat.rs",
+     "purpose": "Published known-answer vectors for every primitive the crate uses, run against the exact pinned crates",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/parser_props.rs",
+     "purpose": "Bounded property fuzzing of both parsers (runs in the normal test gate): random bytes and mutations of valid…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/record.rs",
+     "purpose": "Signature-record contract: single and dual signatures, the roster rule, the signed transcript, fail-closed…",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "codec": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Canonical encoding primitives: big-endian integers, fixed-size fields and length-prefixed byte strings…"
+    },
+    "envelope": {
+     "files": 5,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "The sealed envelope: its typed header, the canonical encoding and the strict parser"
+    },
+    "error": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The one error type"
+    },
+    "keys": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Key material types"
+    },
+    "nonce": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Duplicate-nonce detection where the caller can see it"
+    },
+    "record": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Signature records: the canonical encoding, the strict parser and the roster rules"
+    },
+    "stack_probe": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Test-only stack probe"
+    },
+    "suite": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The suite table: every algorithm combination the format can name, its state and its minimum epoch"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table…",
+   "source_files": 14,
+   "test_files": 7
+  },
   "oneiron-docedit": {
    "files": [
     {
@@ -42258,7 +42545,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/xlfn.rs",
@@ -42284,7 +42571,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/identity.rs",
@@ -42326,7 +42613,7 @@
     "xlfn": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Excel's storage qualifiers for post-2007 worksheet functions"
     }
@@ -42369,7 +42656,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/session/tests.rs",
@@ -42597,7 +42884,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/tick/tests/tests_commitment.rs",
@@ -42606,14 +42893,6 @@
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/tick/tests/tests_policy.rs",
-     "purpose": "One-shot wake-policy timer: quiet expiry, inbound cancellation, and durable queue",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/tick/tests/tests_push.rs",
@@ -42693,7 +42972,7 @@
      "purpose": "The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps…"
     },
     "tick": {
-     "files": 10,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -42717,7 +42996,7 @@
    "over_bar": 0,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
    "source_files": 17,
-   "test_files": 11
+   "test_files": 10
   },
   "oneiron-ffi": {
    "files": [
@@ -42996,14 +43275,6 @@
       "fn": 1,
       "struct": 5
      }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/stub_server.rs",
-     "purpose": "Stub HTTP peer checks the actual ComfyUI wire rather than a mocked transport",
-     "surface": {}
     }
    ],
    "modules": {
@@ -43018,7 +43289,7 @@
    "over_bar": 0,
    "purpose": "Self-hosted ComfyUI image adapter",
    "source_files": 1,
-   "test_files": 1
+   "test_files": 0
   },
   "oneiron-image-openrouter": {
    "files": [
@@ -43063,14 +43334,6 @@
      "surface": {
       "fn": 3
      }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/recorded.rs",
-     "purpose": "Recorded OpenRouter Image API envelopes; no live API key or network",
-     "surface": {}
     }
    ],
    "modules": {
@@ -43092,7 +43355,7 @@
    "over_bar": 0,
    "purpose": "OpenRouter Image API adapter",
    "source_files": 3,
-   "test_files": 1
+   "test_files": 0
   },
   "oneiron-linear": {
    "files": [
@@ -43180,7 +43443,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/tests.rs",
@@ -43294,14 +43557,6 @@
      }
     },
     {
-     "bucket": "L",
-     "kind": "test",
-     "notable": [],
-     "path": "src/lib/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -43334,7 +43589,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 7,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -43344,7 +43599,7 @@
    "over_bar": 0,
    "purpose": "Anthropic Messages wire adapter for Oneiron's [`oneiron::LlmBackend`] seam",
    "source_files": 6,
-   "test_files": 1
+   "test_files": 0
   },
   "oneiron-llm-gemini": {
    "files": [
@@ -43371,14 +43626,6 @@
      "surface": {
       "crate-vis": 5
      }
-    },
-    {
-     "bucket": "L",
-     "kind": "test",
-     "notable": [],
-     "path": "src/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -43417,13 +43664,6 @@
      "layout": "file",
      "purpose": "Gemini typed stream decoding"
     },
-    "tests": {
-     "files": 1,
-     "impl_vault": false,
-     "largest_src_bucket": "—",
-     "layout": "file",
-     "purpose": "—"
-    },
     "transport": {
      "files": 1,
      "impl_vault": false,
@@ -43442,7 +43682,7 @@
    "over_bar": 0,
    "purpose": "Gemini wire adapter",
    "source_files": 4,
-   "test_files": 1
+   "test_files": 0
   },
   "oneiron-llm-local": {
    "files": [
@@ -43531,19 +43771,11 @@
      "surface": {
       "crate-vis": 2
      }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/lib/tests.rs",
-     "purpose": "Fixture runtime plus request-validation and event-stream behavior tests",
-     "surface": {}
     }
    ],
    "modules": {
     "lib": {
-     "files": 8,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -43553,7 +43785,7 @@
    "over_bar": 0,
    "purpose": "Local in-process adapter for Oneiron's `LlmBackend` seam",
    "source_files": 7,
-   "test_files": 1
+   "test_files": 0
   },
   "oneiron-llm-openai": {
    "files": [
@@ -43595,14 +43827,6 @@
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/lib/image/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/lib/mod.rs",
@@ -43641,14 +43865,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/lib/tests.rs",
-     "purpose": "Unit tests for wire mapping, classification, options round-trip, and accumulator abort behavior",
-     "surface": {}
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -43681,7 +43897,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 9,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -43691,7 +43907,7 @@
    "over_bar": 0,
    "purpose": "OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam",
    "source_files": 7,
-   "test_files": 2
+   "test_files": 0
   },
   "oneiron-llm-own-server": {
    "files": [
@@ -43710,7 +43926,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/tests.rs",
@@ -43718,7 +43934,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/remote_transport.rs",
@@ -43756,7 +43972,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/tests.rs",
@@ -44618,7 +44834,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/facade/tests.rs",
@@ -44683,7 +44899,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "re-export": 3
      }
     },
@@ -44912,7 +45128,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/remote/tests.rs",
@@ -44974,22 +45190,6 @@
      "path": "tests/retained_correctness.rs",
      "purpose": "Retained admission regressions through the actual shared SDK dispatcher",
      "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/same_pid_reopen.rs",
-     "purpose": "ONE-1441 §Test/Shared #3 — same-PID reopen opens one shared native vault",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/transport_ownership.rs",
-     "purpose": "ONE-1441 §Test/Shared #7 — `bindings_depend_on_one_http_stack`",
-     "surface": {}
     }
    ],
    "modules": {
@@ -45039,7 +45239,7 @@
    "over_bar": 0,
    "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
    "source_files": 11,
-   "test_files": 10
+   "test_files": 8
   },
   "oneiron-retrieval": {
    "files": [
@@ -45983,7 +46183,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/it/fetch_policy.rs",
@@ -46007,7 +46207,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/it/verify_vectors.rs",
@@ -46015,7 +46215,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/oracle.rs",
@@ -46427,7 +46627,7 @@
      "path": "src/api/context_board/cursor.rs",
      "purpose": "Server-owned MEMORIES cursors and session read sets, keyed by principal and session",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -46467,7 +46667,7 @@
      "path": "src/api/context_board/session.rs",
      "purpose": "Actor-bound session observations shared by core reads and board rendering",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -46947,7 +47147,7 @@
      "path": "src/api/mcp_gateway/board_observations.rs",
      "purpose": "Session-clock read observations and turn-local riders for MCP boards",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -50194,14 +50394,6 @@
       "re-export": 2,
       "struct": 1
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/contract.rs",
-     "purpose": "External drift guard for the exported head-contract surface",
-     "surface": {}
     }
    ],
    "modules": {
@@ -50237,7 +50429,7 @@
    "over_bar": 0,
    "purpose": "Definition-only UniFFI interface surface for the WIRE head contract",
    "source_files": 6,
-   "test_files": 1
+   "test_files": 0
   },
   "oneiron-vault-contract": {
    "files": [
@@ -50320,22 +50512,6 @@
       "re-export": 1,
       "struct": 3
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/lib/host_adapters/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/lib/host_adapters/wasm_harness_tests.rs",
-     "purpose": "Actual WebAssembly capability fixture, using the host's preinstalled Node runtime",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -50438,7 +50614,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 15,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -50448,7 +50624,7 @@
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
    "source_files": 12,
-   "test_files": 3
+   "test_files": 1
   },
   "oneiron-xlsx-formula": {
    "files": [
@@ -50615,22 +50791,6 @@
      }
     },
     {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/corpus.rs",
-     "purpose": "Corpus honesty: every case emits exactly one row, probes never score",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/error_concat.rs",
-     "purpose": "Error operands remain typed errors across both owned evaluator paths",
-     "surface": {}
-    },
-    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -50714,7 +50874,7 @@
    "over_bar": 2,
    "purpose": "In-process XLSX formula recalculation, the default of the edit round trip",
    "source_files": 13,
-   "test_files": 3
+   "test_files": 1
   }
  }
 }

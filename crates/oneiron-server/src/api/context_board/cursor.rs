@@ -37,6 +37,19 @@ impl MemoriesCursorStore {
         self.read_sets.entry(key).or_default()
     }
 
+    /// The session a request naming `session`, or none, reads. A request
+    /// resolves it once, so a later step never lands in another session that
+    /// became active meanwhile.
+    pub(crate) fn resolve_session(&mut self, scope: &str, session: Option<&str>) -> String {
+        match session {
+            Some(session) => session.to_owned(),
+            None => {
+                self.current_for_scope(scope.to_owned(), session_key(scope, scope), scope)
+                    .session_id
+            }
+        }
+    }
+
     pub(crate) fn current(&mut self, key: String, session_id: &str) -> oneiron::MemoriesCursor {
         if let Some(state) = self.entries.get(&key) {
             return state.clone();

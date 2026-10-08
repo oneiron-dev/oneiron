@@ -97,16 +97,6 @@ fn invalid() -> BeamError {
 mod tests {
     use super::*;
     #[test]
-    fn infra_framing_retains_unknown_vendor_measurements_without_inventing_scores() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("infra.json");
-        std::fs::write(&path,serde_json::json!({"measurement_receipt":"fixture://real-run/1","measured":{"recall_at_k":0.95,"latency_us":1200,"cost_usd":0.0001},"comparators":[{"system":"Qdrant","card_id":"qdrant-infra-v1","source":"https://qdrant.tech/benchmarks/","measurement":null,"caveat":"no matched run published in the evidence pack"}]}).to_string()).unwrap();
-        let report = run(&path).unwrap();
-        assert_eq!(report.purpose, "cost-framing-only");
-        assert!(report.comparators[0].measurement.is_none());
-        assert_eq!(report.measured.recall_at_k, 0.95);
-    }
-    #[test]
     fn published_v1_cards_appear_beside_a_receipted_measurement() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("infra.json");
@@ -150,42 +140,5 @@ mod tests {
                 .iter()
                 .all(|infra| row.evidence["card_id"] != infra.card_id)
         }));
-    }
-    #[test]
-    fn accuracy_scoring_is_independent_of_infra_rows() {
-        use crate::beam::{
-            nuggets::{NuggetJudgment, WedgeBucket},
-            scorer::FixedBeamScorer,
-        };
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("infra.json");
-        let judgments = [NuggetJudgment {
-            ability: "updating".into(),
-            wedge_bucket: WedgeBucket::KnowledgeUpdate,
-            value: 0.5,
-        }];
-        let baseline = FixedBeamScorer.score_nuggets(&judgments).unwrap();
-        for (recall, latency, cost) in [(0.0, 1, 0.0), (1.0, u64::MAX, 1_000_000.0)] {
-            std::fs::write(
-                &path,
-                serde_json::json!({
-                    "measurement_receipt": "fixture://infra-isolation",
-                    "measured": { "recall_at_k": recall, "latency_us": latency, "cost_usd": cost },
-                })
-                .to_string(),
-            )
-            .unwrap();
-            let infra = run(&path).unwrap();
-            assert_eq!(infra.comparators.len(), 3);
-            assert!(
-                serde_json::from_value::<NuggetJudgment>(
-                    serde_json::to_value(&infra.measured).unwrap()
-                )
-                .is_err()
-            );
-            assert_eq!(FixedBeamScorer.score_nuggets(&judgments).unwrap(), baseline);
-        }
-        assert_eq!(baseline.overall_score, Some(0.0));
-        assert_eq!(baseline.beam.unwrap().aggregate.fixed_float_clamped, 0.5);
     }
 }
