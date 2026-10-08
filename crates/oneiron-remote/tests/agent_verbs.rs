@@ -137,3 +137,71 @@ fn retired_task_verb_names_are_unknown() {
         assert_eq!(refusal.message, "unknown SDK agent verb", "{name}");
     }
 }
+
+/// ARCH-0067 §8 through the embedded client: the history read runs inside the
+/// Scope that `room_scope` returns for the room's roster, and a request cannot
+/// carry a roster of its own.
+#[test]
+fn embedded_room_history_reads_inside_the_rosters_scope() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = oneiron::EntityId::now();
+    let (room, owner, expected) = {
+        let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap();
+        let owner = vault.ensure_embedded_owner_actor().unwrap();
+        vault
+            .put_entity(
+                &agent,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"agent",
+            )
+            .unwrap();
+        let project = oneiron::EntityId::now();
+        let root = vault.root_project().unwrap();
+        let mut spec =
+            oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner)
+                .unwrap();
+        spec.roster.push(agent.to_hex());
+        vault.put_project(project, &spec, 1).unwrap();
+        let room = oneiron::EntityId::from_hex(&spec.home_room).unwrap();
+        let memory = vault.memory(owner, oneiron::EdgeActorClass::Human);
+        memory
+            .rooms_speak(&oneiron::memory::WitnessTurn {
+                conversation_ref: room.to_hex(),
+                turn_ref: Some(oneiron::EntityId::now().to_hex()),
+                messages: vec![oneiron::memory::WitnessMessage {
+                    id: Some(oneiron::EntityId::now().to_hex()),
+                    author: oneiron::memory::WitnessAuthor::User,
+                    message_type: "text".into(),
+                    content: "hello room".into(),
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                }],
+                occurred_at: 2,
+            })
+            .unwrap();
+        let roster = memory.room_roster(room).unwrap();
+        assert_eq!(roster.len(), 2);
+        (
+            room,
+            owner,
+            oneiron::context_board::room_scope(&roster).unwrap(),
+        )
+    };
+    let client = OneironClient::open(Some(dir.path()), &OpenOptions::default()).unwrap();
+    assert_eq!(client.actor_ref().unwrap(), owner.to_hex());
+    let history = serde_json::json!({"room_ref": room.to_hex()});
+    let page = client
+        .agent_verb("rooms.messages", history.clone())
+        .unwrap();
+    assert_eq!(page["rows"].as_array().unwrap().len(), 1);
+    let applied: oneiron::federation::Scope =
+        serde_json::from_value(page["scope"].clone()).unwrap();
+    assert_eq!(applied, expected);
+    let mut supplied = history;
+    supplied["roster"] = serde_json::json!([owner.to_hex()]);
+    let refusal = client.agent_verb("rooms.messages", supplied).unwrap_err();
+    assert_eq!(refusal.code, oneiron::memory::MEMORY_CODE_BAD_REQUEST);
+}

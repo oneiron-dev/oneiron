@@ -78,8 +78,12 @@ impl Memory<'_> {
     /// Bounded first trunk page: the original thread is a pointer card,
     /// followed by trunk turns. Thread replies never consume trunk slots.
     pub fn room_trunk(&self, room: EntityId) -> MemoryResult<Vec<RoomTrunkItem>> {
+        let scope = self.room_read_scope(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         let project_room = require_member(self.vault(), &txn, room, self.actor())?;
+        if !turns_readable(&scope) {
+            return Ok(Vec::new());
+        }
         let origin = project_room.origin;
         let mut entries = Vec::with_capacity(PAGE_LIMIT + usize::from(origin.is_some()));
         if let Some(origin) = origin {
@@ -109,8 +113,16 @@ impl Memory<'_> {
         if limit == 0 || limit > PAGE_LIMIT {
             return Err(MemoryError::from(invalid()));
         }
+        let scope = self.room_read_scope(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         require_member(self.vault(), &txn, room, self.actor())?;
+        if !turns_readable(&scope) {
+            return Ok(RoomPage {
+                rows: Vec::new(),
+                next_after: None,
+                scope,
+            });
+        }
         let start = if let Some(after) = after {
             let turn = turn_in(self.vault(), &txn, after)?;
             if turn.room_id != room.to_hex() {
@@ -139,12 +151,20 @@ impl Memory<'_> {
         } else {
             None
         };
-        Ok(RoomPage { rows, next_after })
+        Ok(RoomPage {
+            rows,
+            next_after,
+            scope,
+        })
     }
     /// Canonical HEAD is a room-local indexed read; branch turns are excluded.
     pub fn room_head(&self, room: EntityId) -> MemoryResult<Option<RoomTurn>> {
+        let scope = self.room_read_scope(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         require_member(self.vault(), &txn, room, self.actor())?;
+        if !turns_readable(&scope) {
+            return Ok(None);
+        }
         HEADS
             .iter_rev_from(&self.vault().store, &txn, room.as_bytes())?
             .next()
@@ -158,10 +178,15 @@ impl Memory<'_> {
 
 impl Memory<'_> {
     /// Complete snapshot for a room liveness fold; never silently truncates
-    /// the working-set census to the first `rooms.messages` page.
+    /// the working-set census to the first `rooms.messages` page. Empty when
+    /// the room Scope reads no turns.
     pub(super) fn room_turn_snapshot(&self, room: EntityId) -> MemoryResult<Vec<RoomTurn>> {
+        let scope = self.room_read_scope(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         require_member(self.vault(), &txn, room, self.actor())?;
+        if !turns_readable(&scope) {
+            return Ok(Vec::new());
+        }
         let mut turns = Vec::new();
         for row in HISTORY.iter_from(&self.vault().store, &txn, room.as_bytes())? {
             let (_, turn_id) = row?;
@@ -219,11 +244,15 @@ impl Memory<'_> {
     /// replay, without duplicating a result into a synthetic message or a
     /// local liveness cache. Task and result visibility use scoped reads.
     pub fn rooms_trunk(&self, room: EntityId, trunk: EntityId) -> MemoryResult<super::RoomTrunk> {
+        let scope = self.room_read_scope(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         let members = require_member(self.vault(), &txn, room, self.actor())?
             .member_ids
             .into_iter()
             .collect();
+        if !turns_readable(&scope) {
+            return Err(outside_scope());
+        }
         let turn = turn_in(self.vault(), &txn, trunk)?;
         if turn.room_id != room.to_hex() || turn.thread_of.is_some() {
             return Err(MemoryError::from(invalid()));

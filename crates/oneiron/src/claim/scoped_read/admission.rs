@@ -61,11 +61,37 @@ impl<'a> ScopedRead<'a> {
             .ledger_reads())
     }
 
+    /// The audience conjunct every admission path applies. A key bound to a
+    /// room turn adds the room's world ceiling and its whole roster as an
+    /// audience, so the turn reads inside the room's Scope (ARCH-0067 §8).
     pub(super) fn audience_readable_in(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
+        if let Some(room) = &self.actor_key.room_turn {
+            let Some(record) = self.entity_record_in(txn, id)? else {
+                return Ok(false);
+            };
+            let world = if record.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+                // An erased claim cannot prove its world, so it stays outside.
+                match crate::claim::decode_claim_body(&record.body, true) {
+                    Ok(body) => body.world,
+                    Err(_) => return Ok(false),
+                }
+            } else {
+                None
+            };
+            if !room.admits_world(world)
+                || !self
+                    .audience_cache
+                    .lock()
+                    .map_err(|_| Error::InvariantViolation("audience cache lock"))?
+                    .readable(self.vault, txn, *id, &room.roster)?
+            {
+                return Ok(false);
+            }
+        }
         let Some(audience) = &self.audience else {
             return Ok(true);
         };

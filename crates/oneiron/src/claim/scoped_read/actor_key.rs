@@ -14,6 +14,30 @@ pub struct ScopedReadActorKey {
     pub(super) proof: Option<crate::authority::VerifiedSlip>,
     /// Set only on the vault owner's own key; see [`Self::vault_owner`].
     owner: Option<EntityId>,
+    /// The room turn this key reads inside, when a host bound one.
+    pub(super) room_turn: Option<Box<RoomTurnCeiling>>,
+}
+
+/// A room turn's read ceiling (ARCH-0067 §8). It travels with the key, so
+/// every lane built from it reads inside the room's Scope and roster.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RoomTurnCeiling {
+    pub(crate) room: EntityId,
+    /// What `room_scope` returned for the roster when the turn opened.
+    pub(crate) scope: crate::federation::Scope,
+    /// The room's members, sorted and unique: each row must pass the
+    /// all-of-audience rule for every one of them (ARCH-0006a).
+    pub(crate) roster: Vec<EntityId>,
+}
+
+impl RoomTurnCeiling {
+    /// World membership of one ordinary record: a claim's world, else base
+    /// reality, which also holds every record that is not a claim.
+    pub(crate) fn admits_world(&self, world: Option<EntityId>) -> bool {
+        self.scope.worlds.contains(&crate::federation::ScopeId(
+            world.unwrap_or_else(crate::claim::base_world_id),
+        ))
+    }
 }
 
 impl ScopedReadActorKey {
@@ -43,6 +67,7 @@ impl ScopedReadActorKey {
             enforce_access_grants: false,
             proof: None,
             owner: None,
+            room_turn: None,
         })
     }
 
@@ -71,12 +96,21 @@ impl ScopedReadActorKey {
             enforce_access_grants: false,
             proof: None,
             owner: Some(owner),
+            room_turn: None,
         }
     }
 
     /// The owner this key was minted for, when it is the vault owner's key.
     pub(crate) fn vault_owner_ref(&self) -> Option<EntityId> {
         self.owner
+    }
+
+    /// Read inside a room turn. The ceiling only narrows: every check this key
+    /// already makes still runs.
+    #[must_use]
+    pub(crate) fn in_room_turn(mut self, ceiling: RoomTurnCeiling) -> Self {
+        self.room_turn = Some(Box::new(ceiling));
+        self
     }
 
     /// Attach the authenticated principal. An unbound delegated caller has no grants.

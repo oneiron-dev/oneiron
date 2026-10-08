@@ -164,6 +164,55 @@ pub(crate) fn resolve_world_authority(
     })
 }
 
+/// The worlds `actor` reads when a request names none (ARCH-0022): base plus
+/// the active world. An actor the owner granted world access reads its
+/// resolved DEFAULT-SUBSET, which a guest may write without base, or with no
+/// default, base reality when its grant holds base. Any other actor reads
+/// base reality.
+pub(crate) fn reading_default(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    actor: EntityId,
+    at: u64,
+) -> Result<WorldAuthoritySet> {
+    // The grant predicate's posting list is short, and most vaults hold none,
+    // so this check stays off the actor's whole claim adjacency.
+    let mut granted = false;
+    for id in crate::claim::claim_ids_for_predicate_in_txn(
+        store,
+        rtxn,
+        PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+    )? {
+        let Some(raw) = store.port_entity_record(rtxn, &id)? else {
+            continue;
+        };
+        if raw.entity_type != ENTITY_TYPE_CLAIM {
+            continue;
+        }
+        let body = crate::claim::decode_claim_body(&raw.body, true)?;
+        if body.subject == ClaimSubject::Entity(actor)
+            && claim_surfaceable(&body)
+            && world_access_row_in_force(&body, at)
+            && owner_granted_allowed_row(&body)
+        {
+            granted = true;
+            break;
+        }
+    }
+    if !granted {
+        return WorldAuthoritySet::new(true, []);
+    }
+    let selection = ActiveWorldSelection {
+        agent_ref: actor,
+        selected: None,
+    };
+    let resolved = resolve_world_authority(store, rtxn, &selection, at)?;
+    if resolved.default_claim_id.is_some() {
+        return Ok(resolved.default_subset);
+    }
+    WorldAuthoritySet::new(resolved.allowed_set.include_base(), [])
+}
+
 /// One world-access authority CLAIM row that is in force for this resolution.
 struct WorldAccessRow {
     id: EntityId,

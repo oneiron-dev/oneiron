@@ -2,19 +2,15 @@
 use super::*;
 
 impl Memory<'_> {
-    /// Scope honesty: worlds holding surfaceable claims outside the
-    /// requested world scope. Bounded scan (first
-    /// [`SCOPE_HONESTY_SCAN_CAP`] claims); unset scope excludes nothing.
+    /// Scope honesty: worlds holding surfaceable claims outside the worlds
+    /// this recall read. Bounded scan (first [`SCOPE_HONESTY_SCAN_CAP`]
+    /// claims) of rows the actor may read.
     pub(super) fn out_of_scope_worlds(
         &self,
         lane: &ScopedRead<'_>,
         receipt: &mut ScopedReadReceipt,
-        scope_world_ref: Option<&str>,
+        read: &crate::pipeline::WorldAuthoritySet,
     ) -> MemoryResult<Vec<String>> {
-        let Some(world_ref) = scope_world_ref else {
-            return Ok(Vec::new());
-        };
-        let scope_world = self.resolve_ref(world_ref)?;
         // Bounded page primitive, not `entities_by_type().take(cap)`: the
         // latter materializes the whole CLAIM index and errors with
         // IndexOverflow past MAX_TYPE_QUERY_RESULTS before `take` can run, so
@@ -34,7 +30,7 @@ impl Memory<'_> {
                     continue;
                 }
                 if let Some(world) = body.world
-                    && world != scope_world
+                    && !read.worlds().contains(&world)
                 {
                     worlds.insert(world.to_hex());
                 }

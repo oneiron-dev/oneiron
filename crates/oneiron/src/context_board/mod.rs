@@ -17,6 +17,7 @@ mod room_verbs_tests;
 mod worlds;
 pub use capabilities::{CapabilityHit, SkillsSection};
 pub use read_set::{ChangedLine, ServedLifecycle, SessionReadSet};
+pub(crate) use room::scope_worlds;
 pub use room::{RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, room_scope};
 pub use worlds::{WorldPresence, WorldsSection};
 mod frame;

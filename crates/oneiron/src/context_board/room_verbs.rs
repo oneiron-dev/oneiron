@@ -3,104 +3,87 @@
 use super::room::{RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, room_scope};
 use crate::EntityId;
 use crate::claim::PointRead;
-use crate::memory::{ClaimListFilter, EntityView, Memory, MemoryError, MemoryResult};
+use crate::federation::Scope;
+use crate::memory::{ClaimListFilter, Memory, MemoryError, MemoryResult};
+use crate::ports::EntityStoreRead;
 
 impl Memory<'_> {
-    /// Presence is host state, while membership, authority and rules are fresh
-    /// vault reads. No copy of the board or of posture is stored anywhere.
-    pub fn rooms_render(
-        &self,
-        room: EntityId,
-        presence: &[RoomPresence],
-    ) -> MemoryResult<RoomSection> {
-        let crate::claim::ScopedReadResult {
-            value: members,
-            receipt: room_receipt,
-        } = require_member(self, room)?;
-        let present: std::collections::BTreeSet<_> =
-            presence.iter().map(|entry| entry.actor).collect();
-        if !presence
-            .iter()
-            .any(|entry| entry.actor == self.actor() && entry.present)
-            || present.len() != presence.len()
-            || presence.iter().any(|entry| !members.contains(&entry.actor))
-        {
-            return Err(MemoryError::bad_request_with(
-                "room presence must name unique current members",
-                &[],
-            ));
-        }
-        let now = crate::unix_seconds_now();
+    /// The room's roster (ARCH-0067 §8): every `memberIds` entry of the
+    /// channel Conversation, each with the worlds that member reads by
+    /// default. The engine reads all of it; no request supplies any part.
+    /// Runtime presence is writable by any authenticated writer, so it never
+    /// takes a member out of the meet: every member counts as present.
+    pub fn room_roster(&self, room: EntityId) -> MemoryResult<Vec<RoomPresence>> {
         let txn = self
             .vault()
             .store
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        for member in presence.iter().filter(|member| member.present) {
-            let kind = self
-                .vault()
-                .get_entity_type_in_txn(&txn, &member.actor)?
-                .ok_or_else(|| MemoryError::bad_request_with("missing room actor", &[]))?;
-            let class = member.actor_class.ok_or_else(|| {
-                MemoryError::bad_request_with(
-                    "present room actor requires authenticated class",
-                    &[],
-                )
-            })?;
-            crate::provenance::validate_actor_class(kind, class)?;
-            if member.actor == self.actor() && class != self.actor_class() {
-                return Err(MemoryError::bad_request_with(
-                    "room actor class differs from bound caller",
-                    &[],
-                ));
-            }
-            crate::pipeline::resolve_world_authority(
-                &self.vault().store,
-                &txn,
-                &crate::pipeline::ActiveWorldSelection {
-                    agent_ref: member.actor,
-                    selected: Some(member.active_worlds.clone()),
-                },
-                now,
-            )?;
+        let members = stored_member_ids(self.vault(), &txn, room)?;
+        if !members.contains(&self.actor()) {
+            return Err(MemoryError::bad_request_with(
+                "room actor is not a member",
+                &[],
+            ));
         }
-        drop(txn);
-        let scope = room_scope(presence)?;
-        let mut roster = presence.to_vec();
-        for member in members {
-            if !present.contains(&member) {
-                roster.push(RoomPresence {
+        let now = crate::unix_seconds_now();
+        let mut roster = members
+            .into_iter()
+            .map(|member| {
+                Ok(RoomPresence {
                     actor: member,
-                    actor_class: None,
+                    actor_class: (member == self.actor()).then(|| self.actor_class()),
                     label: member.to_hex(),
-                    present: false,
-                    active_worlds: Default::default(),
-                });
-            }
-        }
+                    present: true,
+                    active_worlds: crate::pipeline::reading_default(
+                        &self.vault().store,
+                        &txn,
+                        member,
+                        now,
+                    )?,
+                })
+            })
+            .collect::<MemoryResult<Vec<_>>>()?;
         roster.sort_by_key(|member| member.actor);
+        Ok(roster)
+    }
+
+    /// The Scope every read of `room` runs inside. A handle bound to this
+    /// room's turn keeps the Scope the turn opened with, met with the current
+    /// roster: a grant added mid-turn cannot widen it, and a removal narrows it.
+    pub fn room_read_scope(&self, room: EntityId) -> MemoryResult<Scope> {
+        self.within_room_turn(room, room_scope(&self.room_roster(room)?)?)
+    }
+
+    /// Meets `current` with the turn this handle is bound to, if any. A turn
+    /// bound to another room refuses.
+    pub(crate) fn within_room_turn(&self, room: EntityId, current: Scope) -> MemoryResult<Scope> {
+        match self.room_turn() {
+            None => Ok(current),
+            Some(turn) if turn.room == room => Ok(turn.scope.meet(&current)),
+            Some(_) => Err(MemoryError::bad_request_with(
+                "room differs from the bound room turn",
+                &[],
+            )),
+        }
+    }
+
+    /// Roster, scope, posture and rules, all read fresh. No copy of the board
+    /// or of posture is stored anywhere.
+    pub fn rooms_render(&self, room: EntityId) -> MemoryResult<RoomSection> {
+        let roster = self.room_roster(room)?;
+        let scope = self.within_room_turn(room, room_scope(&roster)?)?;
         let read = self.read_lane(crate::claim::ClaimReadStatus::Surfaceable)?;
-        // The roster meets both world authority above and each participant's
-        // ordinary read grants here. A host label cannot widen a participant.
-        let peers: Vec<_> = presence
+        // Each rule must also pass every present peer's ordinary read. A peer
+        // key names no class, so only class-agnostic grants admit it.
+        let peers: Vec<_> = roster
             .iter()
             .filter(|member| member.present && member.actor != self.actor())
             .map(|member| {
-                crate::claim::ScopedReadActorKey::with_actor_class(
-                    member.actor.to_hex(),
-                    member
-                        .actor_class
-                        .ok_or_else(|| {
-                            MemoryError::bad_request_with(
-                                "present room actor requires authenticated class",
-                                &[],
-                            )
-                        })?
-                        .gate_actor_class(),
-                )
-                .map(|key| self.vault().scoped_read(key))
-                .ok_or_else(|| MemoryError::bad_request_with("invalid room actor", &[]))
+                crate::claim::ScopedReadActorKey::new(member.actor.to_hex())
+                    .map(|key| self.vault().scoped_read(key))
+                    .ok_or_else(|| MemoryError::bad_request_with("invalid room actor", &[]))
             })
             .collect::<MemoryResult<_>>()?;
         let crate::claim::ScopedReadResult {
@@ -119,7 +102,6 @@ impl Memory<'_> {
             .map(|claim| EntityId::from_hex(&claim.claim_ref).map(PointRead::id))
             .collect::<crate::Result<Vec<_>>>()?;
         let own = read.read(&reads, None)?;
-        receipt.restrict_with(&room_receipt);
         receipt.restrict_with(&own.receipt);
         let peer_rows = peers
             .iter()
@@ -129,13 +111,14 @@ impl Memory<'_> {
         let mut posture = RoomPosture::default();
         let mut has_bar = false;
         for (index, claim) in listed.into_iter().enumerate() {
+            let world = claim
+                .world_ref
+                .as_deref()
+                .map(EntityId::from_hex)
+                .transpose()?
+                .unwrap_or_else(crate::claim::base_world_id);
             if own.value[index].is_none()
-                || claim
-                    .world_ref
-                    .as_deref()
-                    .map_or(!scope.include_base(), |id| {
-                        EntityId::from_hex(id).map_or(true, |id| !scope.worlds().contains(&id))
-                    })
+                || !scope.worlds.contains(&crate::federation::ScopeId(world))
             {
                 continue;
             }
@@ -191,44 +174,29 @@ impl Memory<'_> {
     }
 }
 
-/// The room's members, read through the caller's lane, with that read's receipt.
-fn require_member(
-    memory: &Memory<'_>,
-    id: EntityId,
-) -> MemoryResult<crate::claim::ScopedReadResult<Vec<EntityId>>> {
-    let crate::claim::ScopedReadResult { value, receipt } = memory.get_entity(&id.to_hex())?;
-    let view = value.ok_or_else(|| MemoryError::bad_request_with("unknown room", &[]))?;
-    let members = member_ids(&view)?;
-    if !members.contains(&memory.actor()) {
-        return Err(MemoryError::bad_request_with(
-            "room actor is not a member",
-            &[],
-        ));
+/// A channel Conversation's `memberIds`, read from its stored body.
+fn stored_member_ids(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+) -> MemoryResult<Vec<EntityId>> {
+    let unknown = || MemoryError::bad_request_with("unknown room", &[]);
+    if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &room)?.is_live() {
+        return Err(unknown());
     }
-    Ok(crate::claim::ScopedReadResult {
-        value: members,
-        receipt,
-    })
-}
-fn member_ids(view: &EntityView) -> MemoryResult<Vec<EntityId>> {
-    if view.kind != "CONVERSATION"
-        || view
-            .body
-            .as_ref()
-            .and_then(|body| body.get("kind"))
-            .and_then(serde_json::Value::as_str)
-            != Some("channel")
-    {
-        return Err(MemoryError::bad_request_with(
-            "room must be a channel Conversation",
-            &[],
-        ));
-    }
-    let members = view
-        .body
-        .as_ref()
-        .and_then(|body| body.get("memberIds"))
-        .and_then(serde_json::Value::as_array)
+    let record = vault
+        .store
+        .port_entity_record(txn, &room)?
+        .ok_or_else(unknown)?;
+    let body = (record.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION)
+        .then(|| crate::conversation::ConversationBody::from_bytes(&record.body))
+        .transpose()?
+        .filter(|body| body.kind == crate::conversation::ConversationKind::Channel)
+        .ok_or_else(|| MemoryError::bad_request_with("room must be a channel Conversation", &[]))?;
+    let members = body
+        .extra
+        .get("memberIds")
+        .and_then(rmpv::Value::as_array)
         .ok_or_else(|| MemoryError::bad_request_with("channel memberIds must be an array", &[]))?;
     if members.len() > 1000 {
         return Err(MemoryError::bad_request_with(

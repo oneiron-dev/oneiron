@@ -23,6 +23,7 @@ pub(crate) fn thread_tasks(
         memory.actor().to_hex(),
         memory.actor_class().gate_actor_class(),
     )
+    .map(|key| memory.in_room_turn(key))
     .ok_or_else(|| crate::memory::MemoryError::bad_request("invalid room reader"))?;
     let audience = members
         .iter()

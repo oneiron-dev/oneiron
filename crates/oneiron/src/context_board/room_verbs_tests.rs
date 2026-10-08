@@ -1,5 +1,5 @@
 //! Room render reads: the caller's scoped read and every present peer's.
-use super::{RoomBar, RoomMode, RoomPresence};
+use super::{RoomBar, RoomMode};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
@@ -53,16 +53,6 @@ fn put_rule(
     Ok(id)
 }
 
-fn present(actor: EntityId) -> Result<RoomPresence> {
-    Ok(RoomPresence {
-        actor,
-        actor_class: Some(EdgeActorClass::Human),
-        label: actor.to_hex(),
-        present: true,
-        active_worlds: WorldAuthoritySet::new(true, [])?,
-    })
-}
-
 #[test]
 fn room_render_reads_return_their_receipt() -> Result<()> {
     let (_dir, vault) =
@@ -107,7 +97,7 @@ fn room_render_reads_return_their_receipt() -> Result<()> {
 
     let section = vault
         .memory(alice, EdgeActorClass::Human)
-        .rooms_render(room, &[present(alice)?, present(bob)?])
+        .rooms_render(room)
         .expect("both members render the room");
     assert_eq!(
         section

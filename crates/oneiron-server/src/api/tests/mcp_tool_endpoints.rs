@@ -606,6 +606,90 @@ async fn mcp_endpoint_tool_args_are_gated_before_execution() {
     assert_eq!(body["error"]["data"]["field"], Value::from("key"));
 }
 
+/// ARCH-0067 §8 over MCP: the history read runs inside the Scope that
+/// `room_scope` returns for the room's roster, and a tool call cannot carry a
+/// roster of its own.
+#[tokio::test]
+async fn mcp_room_history_reads_inside_the_rosters_scope() {
+    use oneiron::federation::Scope;
+    use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+    use oneiron::workspace_roster::ProjectRecord;
+
+    let (_dir, server) = auth_test_server();
+    let owner = seeded_test_entity_id(0x2511_0001);
+    let other = seeded_test_entity_id(0x2511_0002);
+    let credential = "mcp-room-scope-owner";
+    register_mcp_actor(&server, credential, owner, oneiron::EdgeActorClass::Human).await;
+    register_mcp_actor(
+        &server,
+        "mcp-room-scope-other",
+        other,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    let project = oneiron::EntityId::now();
+    let root = server.vault.root_project().expect("root");
+    let mut record = ProjectRecord::new(project, Some(root), root, owner).unwrap();
+    record.roster.push(other.to_hex());
+    bind_room_owner(&server, owner);
+    create_owned_project(&server, owner, project, &record);
+    let room = oneiron::EntityId::from_hex(&record.home_room).expect("room");
+    let memory = server.vault.memory(owner, oneiron::EdgeActorClass::Human);
+    memory
+        .rooms_speak(&WitnessTurn {
+            conversation_ref: room.to_hex(),
+            turn_ref: Some(oneiron::EntityId::now().to_hex()),
+            messages: vec![WitnessMessage {
+                id: Some(oneiron::EntityId::now().to_hex()),
+                author: WitnessAuthor::User,
+                message_type: "text".to_owned(),
+                content: "room message".to_owned(),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+            }],
+            occurred_at: 2,
+        })
+        .expect("speak");
+    let history = |id: &'static str, arguments: Value| {
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            id,
+            "rooms.messages",
+            mcp_merge_args(
+                mcp_endpoint_envelope(owner, "read_room"),
+                json!({ "arguments": arguments }),
+            ),
+        )
+    };
+    let (_, inside) = route_json(
+        server.clone(),
+        history("room-scope-inside", json!({"room_ref": room.to_hex()})),
+    )
+    .await;
+    assert!(inside.get("error").is_none(), "{inside}");
+    let output = &inside["result"]["structuredContent"]["output"];
+    assert_eq!(output["rows"].as_array().expect("rows").len(), 1);
+    let applied: Scope = serde_json::from_value(output["scope"].clone()).expect("typed scope");
+    let roster = memory.room_roster(room).expect("roster");
+    assert_eq!(roster.len(), 2);
+    assert_eq!(
+        applied,
+        oneiron::context_board::room_scope(&roster).expect("room scope")
+    );
+
+    let (_, supplied) = route_json(
+        server.clone(),
+        history(
+            "room-scope-supplied",
+            json!({"room_ref": room.to_hex(), "roster": [owner.to_hex()]}),
+        ),
+    )
+    .await;
+    assert!(supplied.get("error").is_some(), "{supplied}");
+}
+
 #[tokio::test]
 async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
     use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};

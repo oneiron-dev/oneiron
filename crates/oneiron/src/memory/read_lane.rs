@@ -26,7 +26,8 @@ impl Memory<'_> {
     /// under the owner's key: DEC-0005's own-device ceiling, all of the
     /// owner's vault. Every other actor reads under its grants. `claims` is
     /// the verb's contract: record verbs serve every claim status, retrieval
-    /// channels only surfaceable claims.
+    /// channels only surfaceable claims. A handle bound to a room turn reads
+    /// inside that room on every lane.
     pub(crate) fn read_lane(&self, claims: ClaimReadStatus) -> MemoryResult<ScopedRead<'_>> {
         let txn = self
             .vault
@@ -46,7 +47,10 @@ impl Memory<'_> {
                         &["Present a credential minted for this actor that carries the read verb."],
                     )
                 })?;
-            return Ok(self.vault.scoped_read(key).with_claim_status(claims));
+            return Ok(self
+                .vault
+                .scoped_read(self.in_room_turn(key))
+                .with_claim_status(claims));
         }
         let owner = if self.actor_class == crate::EdgeActorClass::Human
             && self.actor == crate::vault::embedded_owner_actor_id()?
@@ -79,7 +83,19 @@ impl Memory<'_> {
             })?
             .require_access_grants(Some(self.actor))
         };
-        Ok(self.vault.scoped_read(key).with_claim_status(claims))
+        Ok(self
+            .vault
+            .scoped_read(self.in_room_turn(key))
+            .with_claim_status(claims))
+    }
+
+    /// Carries a bound room turn onto a read key, so any lane built from the
+    /// key, here or deeper in retrieval, reads inside the room (ARCH-0067 §8).
+    pub(crate) fn in_room_turn(&self, key: ScopedReadActorKey) -> ScopedReadActorKey {
+        match &self.room_turn {
+            Some(turn) => key.in_room_turn(turn.clone()),
+            None => key,
+        }
     }
 
     /// Resolves a facade ref for a read on `lane`. A ref that resolves to

@@ -108,11 +108,12 @@ impl Effort {
     }
 }
 
-/// Recall scoping (S5): world/facet narrowing only — unset means the vault
-/// floor; the scope never widens beyond it.
+/// Recall scoping (S5): world/facet narrowing only; the scope never widens
+/// beyond the vault floor.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RecallScope {
-    /// WORLD entity ref; scopes to that world plus base reality.
+    /// WORLD entity ref; scopes to that world plus base reality. Unset reads
+    /// base plus the actor's active world (ARCH-0022), never every world.
     pub world_ref: Option<String>,
     /// Facet entity ref; strict facet narrowing when set.
     pub facet: Option<String>,
@@ -462,9 +463,11 @@ impl Memory<'_> {
         let (plan_filter, plan_policy) = lane.recall_plan()?;
         let effective = effort;
         let deep_pending = None;
-        let world_scope = match &scope.world_ref {
-            Some(world_ref) => WorldScope::World(self.resolve_ref(world_ref)?),
-            None => WorldScope::All,
+        let worlds = self.recall_worlds(scope)?;
+        let world_scope = if worlds.include_base() && worlds.worlds().is_empty() {
+            WorldScope::Base
+        } else {
+            WorldScope::WorldSet(worlds.clone())
         };
         let pack_format = format.map(parse_pack_format).transpose()?;
         if receipt.applied.deny_all {
@@ -700,11 +703,7 @@ impl Memory<'_> {
         let claims_returned = items.iter().filter(|item| item.kind == "CLAIM").count() as u64;
         Ok(MemoryPack {
             scope_honesty: ScopeHonesty {
-                out_of_scope_worlds: self.out_of_scope_worlds(
-                    &lane,
-                    &mut receipt,
-                    scope.world_ref.as_deref(),
-                )?,
+                out_of_scope_worlds: self.out_of_scope_worlds(&lane, &mut receipt, &worlds)?,
             },
             retrieval_meta: RetrievalMeta {
                 quality: retrieval_quality.quality,
@@ -722,6 +721,47 @@ impl Memory<'_> {
             pack_version: MEMORY_PACK_VERSION,
             rendered,
             narrowing: Box::new(receipt),
+        })
+    }
+}
+
+impl Memory<'_> {
+    /// The worlds one recall reads (ARCH-0022). A named world reads with base
+    /// reality; no name reads the actor's default, base plus its active world.
+    /// A handle bound to a room turn meets either with the room's Scope.
+    fn recall_worlds(
+        &self,
+        scope: &RecallScope,
+    ) -> MemoryResult<crate::pipeline::WorldAuthoritySet> {
+        let requested = match &scope.world_ref {
+            Some(world_ref) => {
+                crate::pipeline::WorldAuthoritySet::new(true, [self.resolve_ref(world_ref)?])?
+            }
+            None => {
+                let txn = self
+                    .vault
+                    .store
+                    .env
+                    .read_txn()
+                    .map_err(|error| MemoryError::from(crate::Error::from(error)))?;
+                crate::pipeline::reading_default(
+                    &self.vault.store,
+                    &txn,
+                    self.actor,
+                    crate::unix_seconds_now(),
+                )?
+            }
+        };
+        let room = match self.room_turn() {
+            Some(turn) => crate::context_board::scope_worlds(&turn.scope)?,
+            None => None,
+        };
+        Ok(match room {
+            Some(room) => crate::pipeline::WorldAuthoritySet::new(
+                requested.include_base() && room.include_base(),
+                requested.worlds().intersection(room.worlds()).copied(),
+            )?,
+            None => requested,
         })
     }
 }

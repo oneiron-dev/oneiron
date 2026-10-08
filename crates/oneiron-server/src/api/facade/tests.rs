@@ -274,32 +274,42 @@ async fn generated_agent_sdk_http_keeps_first_answer_and_durable_step_wait_seman
     }
 }
 
+async fn post_room_verb(
+    server: &Arc<SyncServer>,
+    authorization: &str,
+    verb: &str,
+    input: Value,
+) -> (StatusCode, Value) {
+    let response = crate::build_app(Arc::clone(server))
+        .oneshot(crate::test_credentials::bind_request(
+            server,
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/core/facade/{verb}"))
+                .header("Authorization", authorization)
+                .header("Content-Type", "application/json")
+                .body(Body::from(serde_json::to_vec(&input).unwrap()))
+                .unwrap(),
+        ))
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), 1_048_576).await.unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap())
+}
+
+fn room_token(actor: EntityId, class: &str) -> String {
+    format!(
+        "{}scope=core:read,core:write;principal_ref={};actor_class={class}",
+        crate::test_credentials::RECIPE_PREFIX,
+        actor.to_hex()
+    )
+}
+
 #[tokio::test]
 async fn rooms_http_routes_only_the_addressed_companion_and_requires_a_claim() {
-    async fn post(
-        server: &Arc<SyncServer>,
-        authorization: &str,
-        verb: &str,
-        input: Value,
-    ) -> (StatusCode, Value) {
-        let response = crate::build_app(Arc::clone(server))
-            .oneshot(crate::test_credentials::bind_request(
-                server,
-                Request::builder()
-                    .method("POST")
-                    .uri(format!("/v1/core/facade/{verb}"))
-                    .header("Authorization", authorization)
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(serde_json::to_vec(&input).unwrap()))
-                    .unwrap(),
-            ))
-            .await
-            .unwrap();
-        let status = response.status();
-        let bytes = to_bytes(response.into_body(), 1_048_576).await.unwrap();
-        (status, serde_json::from_slice(&bytes).unwrap())
-    }
     const SECRET: &str = "room-http-acceptance";
+    let post = post_room_verb;
     let dir = tempfile::tempdir().unwrap();
     let vault =
         Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
@@ -331,16 +341,9 @@ async fn rooms_http_routes_only_the_addressed_companion_and_requires_a_claim() {
     vault
         .bind_room_handle(room, "@addressed", addressed)
         .unwrap();
-    let token = |actor: EntityId, class: &str| {
-        format!(
-            "{}scope=core:read,core:write;principal_ref={};actor_class={class}",
-            crate::test_credentials::RECIPE_PREFIX,
-            actor.to_hex()
-        )
-    };
-    let owner_token = token(owner, "human");
-    let addressed_token = token(addressed, "agent");
-    let other_token = token(other, "agent");
+    let owner_token = room_token(owner, "human");
+    let addressed_token = room_token(addressed, "agent");
+    let other_token = room_token(other, "agent");
     let server = Arc::new(
         SyncServer::new(
             vault.clone(),
@@ -406,6 +409,76 @@ async fn rooms_http_routes_only_the_addressed_companion_and_requires_a_claim() {
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0]["addressed_agents"], json!([addressed.to_hex()]));
     assert_eq!(messages[1]["actor"], addressed.to_hex());
+}
+
+/// ARCH-0067 §8 over HTTP: the server reads the roster from the room, a
+/// request cannot carry one, and the history read runs inside the Scope that
+/// `room_scope` returns for that roster.
+#[tokio::test]
+async fn rooms_http_history_reads_inside_the_rosters_scope() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault =
+        Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let agent = EntityId::now();
+    vault
+        .put_entity(
+            &agent,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"agent",
+        )
+        .unwrap();
+    let project = EntityId::now();
+    let root = vault.root_project().unwrap();
+    let mut spec =
+        oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner).unwrap();
+    spec.roster.push(agent.to_hex());
+    vault.put_project(project, &spec, 1).unwrap();
+    let room = EntityId::from_hex(&spec.home_room).unwrap();
+    let server = Arc::new(
+        SyncServer::new(
+            vault.clone(),
+            crate::config::SyncServerConfig {
+                auth_secret: Some("room-scope-http".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let owner_token = room_token(owner, "human");
+    let agent_token = room_token(agent, "agent");
+    let spoken = json!({"conversation_ref":room.to_hex(),"turn_ref":EntityId::now().to_hex(),
+        "occurred_at":2,"messages":[{"author":"user","message_type":"text","content":"hello room",
+        "is_visible":true,"order":0}]});
+    let (status, body) = post_room_verb(&server, &owner_token, "rooms.speak", spoken).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let history = json!({"room_ref":room.to_hex()});
+    let (status, page) =
+        post_room_verb(&server, &agent_token, "rooms.messages", history.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(page["rows"].as_array().unwrap().len(), 1);
+    let roster = vault
+        .memory(agent, oneiron::EdgeActorClass::Agent)
+        .room_roster(room)
+        .unwrap();
+    assert_eq!(roster.len(), 2);
+    let applied: oneiron::federation::Scope =
+        serde_json::from_value(page["scope"].clone()).unwrap();
+    assert_eq!(
+        applied,
+        oneiron::context_board::room_scope(&roster).unwrap()
+    );
+
+    // The roster is the engine's read, never a request field.
+    for field in ["roster", "presence"] {
+        let mut supplied = history.clone();
+        supplied[field] = json!([{"actor": agent.to_hex(), "present": false}]);
+        let (status, body) =
+            post_room_verb(&server, &agent_token, "rooms.messages", supplied).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{field}: {body}");
+    }
 }
 
 #[tokio::test]
