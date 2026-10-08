@@ -345,52 +345,59 @@ impl Vault {
         owner: &AuthenticatedOwner,
         effect_digest: EffectDigest,
     ) -> Result<ConsentReceipt> {
-        let receipt = ConsentReceipt::Denied {
-            decision_id: crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?),
-            effect_digest,
-        };
         let mut wtxn = self.store.env.write_txn()?;
-        self.append_consent_receipt_in_txn(&mut wtxn, owner, &receipt)?;
+        let receipt = self.deny_consent_in_txn(&mut wtxn, owner, effect_digest)?;
         wtxn.commit()?;
         Ok(receipt)
     }
 
-    /// Denies one op as its terminal decision, in `wtxn`.
-    ///
-    /// Unlike [`Vault::deny_consent`], the refusal takes the digest's
-    /// approve-once slot, already spent, so the digest carries exactly one
-    /// decision: an earlier approval or denial refuses this one, and this one
-    /// refuses any later approval.
-    ///
-    /// # Errors
-    /// [`GateError::ConsentApproveOnceSpent`](crate::error::GateError::ConsentApproveOnceSpent)
-    /// when the digest was already approved or denied this way.
-    pub(crate) fn deny_once_in_txn(
+    /// Transaction-composable [`Vault::deny_consent`].
+    pub(crate) fn deny_consent_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         owner: &AuthenticatedOwner,
         effect_digest: EffectDigest,
     ) -> Result<ConsentReceipt> {
-        if APPROVE_ONCE_MARKERS
-            .get(&self.store, &*wtxn, effect_digest.as_bytes())?
-            .is_some()
-        {
-            return Err(Error::Gate(GateError::ConsentApproveOnceSpent(
-                "this op digest already carries an owner decision",
-            )));
-        }
-        let decision_id = crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?);
-        let marker = ApproveOnceMarker {
-            state: CONSENT_APPROVE_ONCE_SPENT,
-            decision_id,
-        };
-        APPROVE_ONCE_MARKERS.put(&self.store, wtxn, effect_digest.as_bytes(), &marker)?;
         let receipt = ConsentReceipt::Denied {
-            decision_id,
+            decision_id: crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?),
             effect_digest,
         };
         self.append_consent_receipt_in_txn(wtxn, owner, &receipt)?;
         Ok(receipt)
+    }
+
+    /// Takes the one owner-decision slot `slot` names, in `wtxn`, for the
+    /// decision `decision_id`.
+    ///
+    /// A slot is a 32-byte key the caller derives, domain-separated, from
+    /// what is being decided, independent of which owner decides, so the
+    /// first decision by any owner is the only one. It lives beside the
+    /// approve-once markers, already spent: no effect digest names it, so it
+    /// never authorizes anything, and a restore carries it with them.
+    ///
+    /// # Errors
+    /// [`GateError::ConsentApproveOnceSpent`](crate::error::GateError::ConsentApproveOnceSpent)
+    /// when the slot is already taken.
+    pub(crate) fn take_decision_slot_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        slot: &[u8; 32],
+        decision_id: GateDecisionId,
+    ) -> Result<()> {
+        if APPROVE_ONCE_MARKERS
+            .get(&self.store, &*wtxn, slot)?
+            .is_some()
+        {
+            return Err(Error::Gate(GateError::ConsentApproveOnceSpent(
+                "this already carries an owner decision",
+            )));
+        }
+        let marker = ApproveOnceMarker {
+            state: CONSENT_APPROVE_ONCE_SPENT,
+            decision_id,
+        };
+        APPROVE_ONCE_MARKERS.put(&self.store, wtxn, slot, &marker)?;
+        Ok(())
     }
 
     /// Revokes a standing grant. Revocation is immediate: the row flips to
@@ -759,6 +766,17 @@ pub(crate) fn approve_once_authorization_in_txn(
         ))),
         _ => Err(Error::CorruptedIndex("consent approve-once marker state")),
     }
+}
+
+/// The approving decision an approve-once marker names, read in `txn`.
+pub(crate) fn approve_once_decision_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    digest: &EffectDigest,
+) -> Result<Option<GateDecisionId>> {
+    Ok(APPROVE_ONCE_MARKERS
+        .get(store, txn, digest.as_bytes())?
+        .map(|marker| marker.decision_id))
 }
 
 /// Changes one store-attested approve-once marker to spent in `wtxn`.

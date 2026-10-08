@@ -165,9 +165,9 @@ oneiron import decline preview.json --digest <digest from preview>
 
 `approve` admits every claim of the previewed batch as approved, in one transaction, with one
 approval receipt. A batch that changed after preview is refused whole. `decline` writes one
-refusal receipt and admits nothing. A batch takes one decision: once it is approved or
-declined, a second approve or decline is refused (409, `already_decided`) and the first
-decision stands. Routes: `POST /v1/owner/imports/preview` with the batch, then
+refusal receipt and admits nothing. A batch takes one decision: once any owner approves or
+declines it, a second approve or decline, by any owner, is refused (409, `already_decided`)
+and the first decision stands. Routes: `POST /v1/owner/imports/preview` with the batch, then
 `/v1/owner/imports/approve` or `/decline` with `{"batch": <preview.batch>, "digest": "<digest>"}`.
 
 ## Approve or decline an agent run in one act

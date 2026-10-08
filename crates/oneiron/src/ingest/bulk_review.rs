@@ -56,26 +56,7 @@ impl Vault {
         batch: &ImportedClaimBatch,
     ) -> Result<ComposedEffect> {
         validate_batch(batch)?;
-        let content = serde_json::to_vec(
-            &batch
-                .entries
-                .iter()
-                .map(|entry| {
-                    (
-                        entry.claim_id.to_hex(),
-                        entry.subject.to_hex(),
-                        &entry.source_record_id,
-                        &entry.predicate,
-                        &entry.value,
-                        entry.occurred.start,
-                        entry.occurred.end,
-                        entry.learned_at,
-                    )
-                })
-                .collect::<Vec<_>>(),
-        )
-        .map_err(|_| Error::InvalidClaimBody("import batch encoding failed"))?;
-        let hash = blake3::hash(&content).to_hex();
+        let hash = content_hash(batch)?.to_hex();
         let bound = GrantBound::action(
             ActorBound::new(owner.actor().to_hex())?,
             ActionClass::new("claims.import.review")?,
@@ -114,7 +95,7 @@ impl Vault {
     /// # Errors
     /// As [`Vault::admit_imported_claim_batch`], plus
     /// [`GateError::ConsentApproveOnceSpent`](crate::error::GateError::ConsentApproveOnceSpent)
-    /// when this exact batch was already approved.
+    /// when any owner already approved or declined this exact batch.
     pub fn approve_imported_claim_batch(
         &self,
         owner: &AuthenticatedOwner,
@@ -129,21 +110,25 @@ impl Vault {
     }
 
     /// The owner's refusal of the whole batch: one denial receipt, nothing
-    /// admitted. It is the batch's terminal decision, like an approval.
+    /// admitted. Like a consented admission it takes the batch's one decision
+    /// slot, so it is final whichever owner made it.
     ///
     /// # Errors
     /// [`GateError::ConsentApproveOnceSpent`](crate::error::GateError::ConsentApproveOnceSpent)
-    /// when this exact batch was already approved or declined; the earlier
-    /// decision stands.
+    /// when any owner already approved or declined this exact batch; the
+    /// earlier decision stands.
     pub fn decline_imported_claim_batch(
         &self,
         owner: &AuthenticatedOwner,
         batch: &ImportedClaimBatch,
     ) -> Result<ConsentReceipt> {
         let digest = self.imported_claim_batch_effect(owner, batch)?.digest();
+        let slot = decision_slot(batch)?;
         self.with_write_txn(|txn| {
             owner.revalidate_in_txn(self, txn)?;
-            self.deny_once_in_txn(txn, owner, digest)
+            let receipt = self.deny_consent_in_txn(txn, owner, digest)?;
+            self.take_decision_slot_in_txn(txn, &slot, receipt.decision_id())?;
+            Ok(receipt)
         })
     }
 
@@ -158,6 +143,12 @@ impl Vault {
         let authorization =
             crate::consent::approve_once_authorization_in_txn(&self.store, txn, &digest)?;
         let approval = if authorization.is_some() {
+            // The approval is this batch's one decision, whichever owner
+            // made it; an earlier approval or decline refuses it first.
+            let approving =
+                crate::consent::approve_once_decision_in_txn(&self.store, txn, &digest)?
+                    .ok_or(Error::CorruptedIndex("consent approve-once marker"))?;
+            self.take_decision_slot_in_txn(txn, &decision_slot(batch)?, approving)?;
             ClaimApprovalStatus::Approved
         } else {
             ClaimApprovalStatus::Proposed
@@ -224,6 +215,45 @@ impl Vault {
             claim_ids: batch.entries.iter().map(|entry| entry.claim_id).collect(),
         })
     }
+}
+
+/// The batch's claims, hashed: every member, subject, value and time.
+fn content_hash(batch: &ImportedClaimBatch) -> Result<blake3::Hash> {
+    let content = serde_json::to_vec(
+        &batch
+            .entries
+            .iter()
+            .map(|entry| {
+                (
+                    entry.claim_id.to_hex(),
+                    entry.subject.to_hex(),
+                    &entry.source_record_id,
+                    &entry.predicate,
+                    &entry.value,
+                    entry.occurred.start,
+                    entry.occurred.end,
+                    entry.learned_at,
+                )
+            })
+            .collect::<Vec<_>>(),
+    )
+    .map_err(|_| Error::InvalidClaimBody("import batch encoding failed"))?;
+    Ok(blake3::hash(&content))
+}
+
+/// The batch's one decision slot: the exact batch, whichever owner decides.
+/// The consent digest also binds the deciding owner, so it cannot serve.
+fn decision_slot(batch: &ImportedClaimBatch) -> Result<[u8; 32]> {
+    let named = serde_json::to_vec(&(
+        batch.request_id.to_hex(),
+        &batch.source_id,
+        batch.entries.len(),
+        content_hash(batch)?.to_hex().as_str(),
+    ))
+    .map_err(|_| Error::InvalidClaimBody("import batch encoding failed"))?;
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron claims.import.review decision v1");
+    hasher.update(&named);
+    Ok(*hasher.finalize().as_bytes())
 }
 
 fn validate_batch(batch: &ImportedClaimBatch) -> Result<()> {

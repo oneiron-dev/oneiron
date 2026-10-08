@@ -191,16 +191,33 @@ fn decisions_for(
         .collect())
 }
 
+/// Another live owner of the same vault, as on a shared vault.
+fn second_owner(vault: &crate::Vault) -> Result<crate::consent::AuthenticatedOwner> {
+    let actor = EntityId::now();
+    let time = TimeRange { start: 1, end: 1 };
+    vault.put_entity(&actor, ENTITY_TYPE_PERSON, time, 1, b"second owner")?;
+    vault.authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())
+}
+
 #[test]
-fn a_batch_carries_one_decision_whichever_comes_first() -> Result<()> {
+fn a_batch_carries_one_decision_whichever_owner_comes_first() -> Result<()> {
     let spent = |error: crate::Error| error.kind() == crate::ErrorKind::ConsentApproveOnceSpent;
 
-    // Approved, then declined: the decline is refused and the approval stands.
+    // Approved, then declined or approved again by either owner: refused,
+    // and the approval stands.
     let (_dir, vault, owner, batch) = fixture()?;
+    let other = second_owner(&vault)?;
     let approved = vault.approve_imported_claim_batch(&owner, &batch)?;
+    for decider in [&owner, &other] {
+        assert!(spent(
+            vault
+                .decline_imported_claim_batch(decider, &batch)
+                .unwrap_err()
+        ));
+    }
     assert!(spent(
         vault
-            .decline_imported_claim_batch(&owner, &batch)
+            .approve_imported_claim_batch(&other, &batch)
             .unwrap_err()
     ));
     for id in &approved.claim_ids {
@@ -208,19 +225,31 @@ fn a_batch_carries_one_decision_whichever_comes_first() -> Result<()> {
         assert_eq!(claim.approval, ClaimApprovalStatus::Approved);
     }
     assert_eq!(decisions_for(&vault, &owner, &batch)?, ["approved"]);
+    assert!(decisions_for(&vault, &other, &batch)?.is_empty());
 
-    // Declined, then declined again or approved: both are refused.
+    // Declined, then declined again or approved by either owner, in one call
+    // or as approve_once then admit: refused, and nothing is admitted.
     let (_dir, vault, owner, batch) = fixture()?;
+    let other = second_owner(&vault)?;
     let denied = vault.decline_imported_claim_batch(&owner, &batch)?;
     assert_eq!(denied.gate_outcome(), "denied");
+    for decider in [&owner, &other] {
+        assert!(spent(
+            vault
+                .decline_imported_claim_batch(decider, &batch)
+                .unwrap_err()
+        ));
+        assert!(spent(
+            vault
+                .approve_imported_claim_batch(decider, &batch)
+                .unwrap_err()
+        ));
+    }
+    let digest = vault.imported_claim_batch_effect(&other, &batch)?.digest();
+    vault.approve_once(&other, digest)?;
     assert!(spent(
         vault
-            .decline_imported_claim_batch(&owner, &batch)
-            .unwrap_err()
-    ));
-    assert!(spent(
-        vault
-            .approve_imported_claim_batch(&owner, &batch)
+            .admit_imported_claim_batch(&other, &batch)
             .unwrap_err()
     ));
     for entry in &batch.entries {
