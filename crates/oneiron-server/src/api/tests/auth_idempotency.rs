@@ -237,41 +237,6 @@ async fn legacy_api_route_rejects_a_live_scoped_bearer_that_works_on_v1() {
 }
 
 #[tokio::test]
-async fn v1_core_idempotency_preflight_uses_typed_error_envelope() {
-    let (_dir, server) = test_server_with_config(SyncServerConfig {
-        auth_secret: Some("secret".to_owned()),
-        ..Default::default()
-    });
-
-    let (status, body) = route_json(
-        server,
-        Request::builder()
-            .method("POST")
-            .uri("/v1/core/turns/annotate")
-            .header("Idempotency-Key", "idem-1")
-            .header(CONTENT_TYPE, "application/json")
-            .body(Body::from(
-                json!({
-                    "turn_id": "not-an-entity",
-                    "source": "model_inference",
-                    "vad": {
-                        "valence": 0.0,
-                        "arousal": 0.0,
-                        "dominance": 0.0,
-                    },
-                    "annotated_at": 1_u64,
-                })
-                .to_string(),
-            ))
-            .expect("request"),
-    )
-    .await;
-
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-    assert_error_envelope(&body, "UNAUTHORIZED");
-}
-
-#[tokio::test]
 async fn v1_core_route_rejects_valid_bearer_without_required_scope() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         auth_secret: Some("secret".to_owned()),

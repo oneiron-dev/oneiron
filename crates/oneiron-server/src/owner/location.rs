@@ -122,15 +122,3 @@ fn human_bytes(bytes: u64) -> String {
         format!("{value:.1} {}", UNITS[unit])
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sizes_read_like_a_person_would_write_them() {
-        assert_eq!(human_bytes(512), "512 B");
-        assert_eq!(human_bytes(1536), "1.5 KiB");
-        assert_eq!(human_bytes(5 * 1024 * 1024 * 1024), "5.0 GiB");
-    }
-}

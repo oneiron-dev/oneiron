@@ -5,6 +5,7 @@ mod leases;
 mod lifecycle;
 mod message_stream;
 mod recall;
+mod tagging;
 mod windows;
 
 pub(crate) use self::core::BroadcastPayload;
@@ -31,6 +32,6 @@ use oneiron::sync::WindowKey;
 #[cfg(test)]
 use oneiron::sync::lease::{self, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP};
 #[cfg(test)]
-use oneiron::sync::schema::{read_window_list, schema_version_bytes};
+use oneiron::sync::schema::read_window_list;
 #[cfg(test)]
 use std::sync::Arc;

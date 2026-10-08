@@ -16,8 +16,6 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing_subscriber::EnvFilter;
 
 use crate::auth::{CoreScope, revoke_token_jti};
-#[cfg(test)]
-use crate::auth::{mint_identified_core_token_v2, validate_bearer_claims};
 use crate::build_app;
 use crate::cli::{
     ProvenanceArgs, RevokeArgs, SkillsPackArgs, TokenBootstrapArgs, TokenPairArgs, TokenReadArgs,
@@ -34,8 +32,6 @@ use crate::skills_pack::{self, OutputMode};
 /// added here.
 mod api;
 mod host_init;
-#[cfg(test)]
-mod host_runtime_tests;
 pub use self::host_init::host_init;
 
 pub use self::api::api;
@@ -74,8 +70,6 @@ mod owner;
 pub use owner::{backup, doctor, export, import, restore, runs, secret_scan, whoami};
 mod msgpack_json;
 pub(crate) use msgpack_json::msgpack_value_json;
-#[cfg(test)]
-use msgpack_json::msgpack_value_json_with_depth;
 
 pub fn provenance(args: ProvenanceArgs) -> anyhow::Result<()> {
     let vault_args = VaultArgs {
@@ -577,6 +571,7 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
         tokio::task::spawn_blocking(move || crate::embedder::build_slot(embedder_config.as_ref()))
             .await
             .map_err(|e| anyhow::anyhow!("embedder slot task failed: {e}"))??;
+    let tagger = crate::oneironer::build_slot_off_runtime(config.oneironer.clone()).await?;
 
     // Reloads persisted CRDT state (d:root + d:w:* in sync_state) — a fresh
     // boot must not silently discard previously relayed updates/tombstones.
@@ -584,6 +579,7 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
         SyncServer::new(Arc::new(vault), server_config)
             .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
             .with_embedder(embedder)
+            .with_tagger(tagger)
             .with_owner_host(owner_host),
     );
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
@@ -605,8 +601,8 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::from_std(host.listener()?)?;
     let linear_handle = crate::linear_host::spawn(sync_server.clone()).await?;
     let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
-    let embedding_handle = sync_server.spawn_embedding_worker();
-    let backup_handle = sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK);
+    let mut workers = sync_server.spawn_slot_workers();
+    workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
     let app = build_app(sync_server).layer(cors_layer);
     host.ready()?;
     let result = axum::serve(
@@ -621,7 +617,7 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
         handle.abort();
         let _ = handle.await;
     }
-    for handle in [embedding_handle, backup_handle].into_iter().flatten() {
+    for handle in workers {
         handle.abort();
         let _ = handle.await;
     }

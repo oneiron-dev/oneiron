@@ -256,10 +256,9 @@ impl NativeClient {
         };
         let limit = limit.unwrap_or(10);
 
-        // The receiver rides as a `PyRef` so the GIL token comes from it.
         let inner = &slf.inner;
-        let output = slf
-            .py()
+        let py = slf.py();
+        let output = py
             .detach(|| inner.recall(&query, effort, &scope_json, limit, format.as_deref(), as_of))
             .map_err(raise)?;
         encode_recall(&output)

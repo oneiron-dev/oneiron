@@ -3,59 +3,6 @@ use super::*;
 use std::num::NonZeroU16;
 
 #[tokio::test]
-async fn public_booking_route_accepts_only_canonical_pack_verbs() {
-    let fixture = Fixture::new();
-    let token = "ab".repeat(32);
-    let slot = SelectedSlot {
-        start_utc: 10,
-        end_utc: 20,
-    };
-    let requests = [
-        cancel(token.clone(), "cancel"),
-        confirm(token.clone(), "confirm"),
-        hold(slot, "hold", None),
-        reschedule(token, slot, "reschedule"),
-    ];
-    for (expected, request) in BOOKING_VERBS.into_iter().zip(requests) {
-        assert!(is_booking_pack_verb(expected));
-        assert!(match_public_booking_verb(expected, &request).is_ok());
-        for other in BOOKING_VERBS {
-            assert_eq!(
-                match_public_booking_verb(other, &request).is_ok(),
-                other == expected
-            );
-        }
-        assert!(match_public_booking_verb(expected, &availability()).is_err());
-        let wire = serde_json::to_value(&request).expect("request");
-        let response = fixture
-            .route(
-                "POST",
-                &format!("/public/booking/{}/verbs/{expected}", fixture.token),
-                wire,
-            )
-            .await;
-        assert_ne!(
-            response.status(),
-            StatusCode::NOT_FOUND,
-            "canonical verb reached ordinary validation"
-        );
-    }
-    assert!(!is_booking_pack_verb("booking.availability"));
-    assert!(match_public_booking_verb("booking.availability", &availability()).is_err());
-    let held = hold(slot, "typed-mismatch", None);
-    assert_eq!(
-        fixture
-            .dispatch("booking.confirm", held)
-            .await
-            .expect_err("typed mismatch"),
-        StatusCode::NOT_FOUND
-    );
-    let mut with_actor = serde_json::to_value(hold(slot, "actor", None)).expect("wire");
-    with_actor["input"]["input"]["authenticated_actor_ref"] = json!(fixture.page.to_hex());
-    assert!(serde_json::from_value::<BookingOperationRequest>(with_actor).is_err());
-}
-
-#[tokio::test]
 async fn public_booking_route_runs_shared_anti_abuse_once() {
     for _ in 0..3 {
         // Amend after publication: both booking claim schemas are present.

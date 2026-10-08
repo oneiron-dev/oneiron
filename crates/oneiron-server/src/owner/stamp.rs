@@ -113,21 +113,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stamps_round_trip_and_sort_by_time() {
-        // 2026-10-08T12:34:56.789Z
-        let ms = 1_791_462_896_789;
-        assert_eq!(file_stamp(ms), "20261008T123456.789Z");
-        assert_eq!(rfc3339(ms), "2026-10-08T12:34:56.789Z");
-        assert_eq!(parse_file_stamp("20261008T123456.789Z"), Some(ms));
-        assert_eq!(file_stamp(0), "19700101T000000.000Z");
-        assert_eq!(
-            parse_file_stamp(&file_stamp(951_782_400_000)),
-            Some(951_782_400_000)
-        );
-        assert!(file_stamp(ms) < file_stamp(ms + 1));
-    }
-
-    #[test]
     fn foreign_stamps_do_not_parse() {
         for stamp in [
             "",

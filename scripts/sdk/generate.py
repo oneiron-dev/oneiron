@@ -113,7 +113,10 @@ def native_boundary(row, language):
         declaration = ', '.join(names[a['name']] + ': ' + ARGUMENTS[a['kind']]['native_py'] for a in args)
         signature = ', '.join(names[a['name']] + ('=None' if ARGUMENTS[a['kind']]['native_py'].startswith('Option<') else '') for a in args)
         annotation = f'#[pyo3(signature = ({signature}))]' if '=None' in signature else ''
-        head = f"{annotation} fn {method}(&self, py: Python<'_>, {declaration}) -> PyResult<String> {{"
+        # Clippy caps a function at seven parameters: a long verb takes its
+        # receiver as a PyRef and its GIL token from it.
+        receiver = "slf: PyRef<'_, Self>" if len(args) > 5 else "&self, py: Python<'_>"
+        head = f"{annotation} fn {method}({receiver}, {declaration}) -> PyResult<String> {{"
     if typed:
         setup = '\n'.join(ARGUMENTS[a['kind']].get(language + '_convert', '').format(name=names[a['name']], default=json.dumps(a.get('default'))) for a in args)
         arguments = ', '.join(ARGUMENTS[a['kind']].get('borrow', '') + names[a['name']] + ARGUMENTS[a['kind']].get('suffix', '') for a in args)
@@ -130,6 +133,9 @@ def native_boundary(row, language):
         body = f'{setup} let output = {call}.map_err(facade_error)?; {tail}'
     else:
         encode_output = 'encode_recall(&output)' if row['name'] == 'recall' else 'encode(&output)'
+        if len(args) > 5:
+            setup += ' let inner = &slf.inner; let py = slf.py();'
+            call = call.replace('self.inner.', 'inner.', 1)
         body = f'{setup} let output = py.detach(|| {call}).map_err(raise)?; {encode_output}'
     return head + body + '}\n'
 

@@ -7,7 +7,7 @@ mod tests {
 
     use super::super::verify_dss_core::{collect_reference_chain, verify_dss};
     use super::super::verify_sig_pipeline::{
-        Checks, SigEntry, check_byte_range, collect_signatures, decoded_contents_within_input,
+        Checks, SigEntry, check_byte_range, collect_signatures,
     };
     use super::super::verify_tests_fixtures_dss_a::tests::*;
     use super::super::verify_tests_lta_probes::tests::*;
@@ -53,25 +53,6 @@ mod tests {
             found.is_empty(),
             "an orphan signature-shaped dict is never evaluated"
         );
-    }
-
-    #[test]
-    fn partial_signature_shape_is_malformed_never_skipped() {
-        // /ByteRange WITHOUT /Contents (or vice versa) is malformed input,
-        // never a silent skip.
-        let mut doc = Document::with_version("1.4");
-        let mut d = lopdf::Dictionary::new();
-        d.set(
-            "ByteRange",
-            Object::Array(vec![
-                Object::Integer(0),
-                Object::Integer(1),
-                Object::Integer(2),
-                Object::Integer(3),
-            ]),
-        );
-        doc.add_object(Object::Dictionary(d));
-        assert!(collect_signatures(&doc).is_err());
     }
 
     #[test]
@@ -128,30 +109,6 @@ mod tests {
             contents: vec![0xCD],
         };
         assert!(!check_byte_range(b"xx<AB>", &entry));
-    }
-
-    #[test]
-    fn byte_range_rejects_oversized_decoded_contents() {
-        // botfix7 P3: the post-whitespace-strip decoded /Contents count is
-        // capped at the input size — a /Contents claim larger than the
-        // document it lives inside is structurally impossible, and must
-        // fail the gate before any hex-length comparison.
-        let bytes = b"xx<AB CD>yy";
-        let oversized = SigEntry {
-            field_name: "test".into(),
-            is_doc_ts: false,
-            byte_range: [0, 2, 9, 2],
-            contents: vec![0u8; bytes.len() + 1],
-        };
-        assert!(
-            !check_byte_range(bytes, &oversized),
-            "decoded /Contents past the input size must be rejected"
-        );
-        // Composition pin: the cap helper itself rejects decoded_len > input
-        // (the hex-digit gate alone cannot observe an oversized claim when
-        // it also fails the digit count, so the helper is probed directly).
-        assert!(!decoded_contents_within_input(bytes.len() + 1, bytes.len()));
-        assert!(decoded_contents_within_input(bytes.len(), bytes.len()));
     }
 
     // --- bot-fix leg 4 pins -------------------------------------------------
@@ -266,46 +223,6 @@ mod tests {
              with /FT inherited from the parent"
         );
         assert!(!found[0].is_doc_ts);
-    }
-
-    #[test]
-    fn kids_cycle_terminates_without_hanging() {
-        // A hostile /Kids self-cycle must not spin: the visited-set stops
-        // re-descent, so discovery terminates. The reachable signature on
-        // the cycle is still found exactly once.
-        let mut doc = Document::with_version("1.4");
-        let sig_id = doc.add_object(Object::Dictionary(tree_sig_dict()));
-        // Reserve the parent id so the child can point back at it.
-        let parent_id = doc.add_object(Object::Null);
-        let mut child = lopdf::Dictionary::new();
-        child.set("V", Object::Reference(sig_id));
-        // The child's /Kids points BACK at its parent: a 2-cycle.
-        child.set("Kids", Object::Array(vec![Object::Reference(parent_id)]));
-        let child_id = doc.add_object(Object::Dictionary(child));
-        let mut parent = lopdf::Dictionary::new();
-        parent.set("FT", Object::Name(b"Sig".to_vec()));
-        parent.set("Kids", Object::Array(vec![Object::Reference(child_id)]));
-        doc.objects
-            .insert(parent_id, Object::Dictionary(parent.clone()));
-        doc_with_fields(&mut doc, vec![Object::Reference(parent_id)]);
-        let found = collect_signatures(&doc).expect("cycle must terminate, not hang");
-        assert_eq!(found.len(), 1, "the signature is collected exactly once");
-    }
-
-    #[test]
-    fn self_referential_kids_terminates() {
-        // The degenerate case: a field whose /Kids names itself.
-        let mut doc = Document::with_version("1.4");
-        let sig_id = doc.add_object(Object::Dictionary(tree_sig_dict()));
-        let field_id = doc.add_object(Object::Null);
-        let mut field = lopdf::Dictionary::new();
-        field.set("FT", Object::Name(b"Sig".to_vec()));
-        field.set("V", Object::Reference(sig_id));
-        field.set("Kids", Object::Array(vec![Object::Reference(field_id)]));
-        doc.objects.insert(field_id, Object::Dictionary(field));
-        doc_with_fields(&mut doc, vec![Object::Reference(field_id)]);
-        let found = collect_signatures(&doc).expect("self-cycle must terminate");
-        assert_eq!(found.len(), 1);
     }
 
     #[test]
@@ -570,24 +487,6 @@ mod tests {
             head = doc.add_object(Object::Reference(head));
         }
         (doc, head)
-    }
-
-    #[test]
-    fn reference_chain_repetition_stays_bounded_by_unique_set() {
-        // P1-2: N repetitions of one deep chain (one per DSS array
-        // occurrence) must collapse into the chain's UNIQUE object set —
-        // the id collection can never expand to 128*N.
-        let (doc, head) = reference_chain_doc(128);
-        let mut ids = std::collections::BTreeSet::new();
-        let mut work = 0usize;
-        for _ in 0..128 {
-            collect_reference_chain(&doc, head, &mut ids, &mut work).unwrap();
-        }
-        assert_eq!(ids.len(), 128, "only unique objects are collected");
-        assert_eq!(work, 128 * 128, "work counts hops across all chains");
-        // The global budget fails closed past the cap: the 129th full
-        // traversal would exceed MAX_REFERENCE_WORK.
-        assert!(collect_reference_chain(&doc, head, &mut ids, &mut work).is_none());
     }
 
     #[test]

@@ -21,9 +21,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/retained_opc/xml/mod.rs` | src | s | 1 re-export · 1 crate-vis | — | Bounded source-indexed XML part, with checked semantic patches |
 | `src/retained_opc/xml/patch.rs` | src | s | 2 crate-vis | — | Private checked edit authority |
 | `src/retained_opc/xml/retained.rs` | src | m | 1 struct · 4 crate-vis | XmlLimits | One authoritative parse |
-| `src/xlfn.rs` | src | m | 2 fn | — | Excel's storage qualifiers for post-2007 worksheet functions |
+| `src/xlfn.rs` | src | s | 2 fn | — | Excel's storage qualifiers for post-2007 worksheet functions |
 | `tests/adversarial.rs` | test | s | — | — | — |
 | `tests/breaker.rs` | test | s | — | — | — |
-| `tests/identity.rs` | test | m | — | — | — |
+| `tests/identity.rs` | test | s | — | — | — |
 | `tests/revisions.rs` | test | s | — | — | — |
 | `tests/stemma_reader.rs` | test | s | — | — | The stemma fork reads untrusted DOCX parts with quick-xml |

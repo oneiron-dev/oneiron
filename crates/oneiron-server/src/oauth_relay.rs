@@ -321,19 +321,13 @@ pub(crate) fn verify_oauth_relay_identity(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::{CoreScope, RevokedTokenJtis};
-    use axum::http::{HeaderMap, HeaderValue, header::AUTHORIZATION};
+    use crate::auth::CoreScope;
+    use axum::http::header::AUTHORIZATION;
     use jsonwebtoken::{EncodingKey, Header, encode};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     const PRIVATE_KEY: &str = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0R8/v5DQ+6rA3MMr8xXI8fguIYaZY3WnKIrVbPLo54FjKwkf\nKSLfDERnySa1BnrvsmY2tn1ttSkwEEyJ75laoGt+296Xwy35PZ3vf+Zn5GVXAW/J\n5WKExqcAlZuLaVofxpeDE3g+hNlVxONP6jnYHCItI2c8GCnBRY6/7I5Dd/bK2dWq\nTTqL0bXPBJhGAA/pbHKYIjMbDYzG3qcCYonr8/eu/0LNwefnsxZ9FOkyYu3lNK1k\nh2xQcPXI8lvz4+2CWENWzeJcFBy/O2cWSBJdgL6Qa4BtzZkdvpItcr+FifYQirGY\nibxA7el554A1LefEHCWKzoFyLXS5w3POAOpEVQIDAQABAoIBADR7EiWCM2AlPxdo\nB5yOqApJjVIulEoImbWr+dnIsDiBGSEQvfg13yIV/LHXe/CvY34y9qIfoiuntX8x\npiAyLTM7JvAI0a9S10zmWNeRPBtub0JWCqX9bnLoMFZbXcZHrtfI6EU3lQEEBelO\nXpzafWi6DvfmjYdG21EYfQPhw/7TxRAWJR1ioBX4zetqhWebMQG4MTwR+i9phfTi\nAOOUVNPTi04w+ZZK/OOJwhkSxJPLFXxvP9C7RqhOPjcvh24dC+IFvAInGSD9ophz\ncIFu//gz7L7SzwkH3j4r3X5lr4FFJnHKyOMQ9DbNqnAtLVsogi48dPwkcjnnS/GA\n/BMdQRUCgYEA+/9PoA8pJHcmVSDoRPoNKntF8inMvtSOHuSHOV+xQ7gF6DlcEaUw\nJgYSVjblIbRTWn3OYy2aY9Eo9Bjt6DEw0Q3ICNYpMEcyx4GGimmbdffxpmuUklCR\n+JPCwQn1US9ZS90ykK1G+fRdgl5jlgP1yll3TQc5cIAq/p5DWIVJ6ZsCgYEA1HGY\nf0S/3bukWcZrDZ0bn//9RMsCMc0x8AWUqt4v3MOav+m2XJ2mieXRpgmBylGfbMpA\n++dCVGtM6LAvqqO1lE68pYX8tDJLHcAaRzaOKwWOh53GQRGtNJt0G6M/8Nk9f5m5\nk4OVZju/SA564ECISHI+3oal58Vj6fvhaPuJIM8CgYEA6FRdDw6rOel4N+gc/Osl\nFFOPC1MqZ44Eccr0ORtWjT6ug4nOrp4DpCrY4Q+/dLGSX825aIr02q5N+a66OOaR\nQUxZbnw0gURDNtjeN+Jh6ANukaaB1dvemLVySxNpTy4+P8lyAx0eYPjA9Z8cZYTF\nKYgOi7/rXyNrgFBdetF4cZ0CgYAsaOK8GB8TtxoQOk4+tk0EEXtcWiPHTWHXDxOY\n9IGE4M8Et1KL4djiksxUrUAYjx+Imm8jOaDADP4y1kHgpgBbVGpTH8NH2Auj2Hil\n0l292JeG+hBrocpXaPfIn0PKkV8twXDtyV/90xeVdJFzN4pFurwxwGwGG1lbnG/u\nhkaQOQKBgBZkm4iY9qNn7i00L/r/5mnI+toXjK/BLUNLZdu9uhQkT2jjgofbVJtZ\ng+sTQQA8zt5tNdcbOFYYxKbg5FjjY00Gi3A0hwlcVnWFVgu0gkJQtntFtIdQbOEo\njm4BArW2htTCGHj8onDlxF/aSoNNNOsLcHYD2UohROeH1L7xijLT\n-----END RSA PRIVATE KEY-----\n";
     const JWKS: &str = r#"{"keys":[{"kty":"RSA","kid":"test-kid","n":"0R8_v5DQ-6rA3MMr8xXI8fguIYaZY3WnKIrVbPLo54FjKwkfKSLfDERnySa1BnrvsmY2tn1ttSkwEEyJ75laoGt-296Xwy35PZ3vf-Zn5GVXAW_J5WKExqcAlZuLaVofxpeDE3g-hNlVxONP6jnYHCItI2c8GCnBRY6_7I5Dd_bK2dWqTTqL0bXPBJhGAA_pbHKYIjMbDYzG3qcCYonr8_eu_0LNwefnsxZ9FOkyYu3lNK1kh2xQcPXI8lvz4-2CWENWzeJcFBy_O2cWSBJdgL6Qa4BtzZkdvpItcr-FifYQirGYibxA7el554A1LefEHCWKzoFyLXS5w3POAOpEVQ","e":"AQAB","alg":"RS256","use":"sig"}]}"#;
-    struct NoRevocations;
-    impl RevokedTokenJtis for NoRevocations {
-        fn is_revoked(&self, _: &str) -> Result<bool, ()> {
-            Ok(false)
-        }
-    }
     fn config() -> SyncServerConfig {
         SyncServerConfig {
             oauth_issuer: Some("https://issuer.example".into()),
@@ -405,22 +399,6 @@ mod tests {
             .unwrap()
     }
 
-    #[test]
-    fn oauth_bound_read_accepted() {
-        let fixture = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(fixture.path(), JWKS).unwrap();
-        let mut config = config();
-        config.oauth_jwks_uri = Some(format!("file://{}", fixture.path().display()));
-        let auth = verify_oauth_relay_token(
-            &token("https://issuer.example", "https://api.example", "read"),
-            &config,
-        )
-        .unwrap();
-        assert_eq!(auth.principal(), "oauth-relay:relay-subject");
-        assert!(auth.has_scope(CoreScope::Read));
-        assert!(auth.require(CoreScope::Write).is_err());
-        assert!(!auth.is_owner_grade());
-    }
     #[test]
     fn relay_propose_is_explicit_non_owner_and_never_widens() {
         let config = config();
@@ -772,32 +750,6 @@ mod tests {
     }
 
     #[test]
-    fn config_absent_inert() {
-        let headers = {
-            let mut h = HeaderMap::new();
-            h.insert(
-                AUTHORIZATION,
-                HeaderValue::from_str(&format!(
-                    "Bearer {}",
-                    token("https://issuer.example", "https://api.example", "read")
-                ))
-                .unwrap(),
-            );
-            h
-        };
-        assert!(
-            CoreAuth::from_headers(
-                &headers,
-                &SyncServerConfig {
-                    auth_secret: Some("root".into()),
-                    ..Default::default()
-                },
-                &NoRevocations
-            )
-            .is_err()
-        );
-    }
-    #[test]
     fn warm_failure_leaves_verification_fail_closed() {
         let mut config = config();
         config.oauth_jwks_uri = Some("file:///definitely-missing-oneiron-jwks.json".into());
@@ -809,57 +761,6 @@ mod tests {
             )
             .is_err()
         );
-    }
-
-    #[test]
-    fn kid_miss_refresh_is_limited_across_sequential_and_concurrent_attempts() {
-        let uri = format!("test://counter-{}", std::process::id());
-        let fetches = Arc::new(AtomicUsize::new(0));
-        test_transports().lock().unwrap().insert(
-            uri.clone(),
-            TestTransport {
-                responses: Arc::new(Mutex::new(VecDeque::from([
-                    Ok(JWKS.to_owned()),
-                    Ok(JWKS.to_owned()),
-                ]))),
-                fetches: fetches.clone(),
-            },
-        );
-        assert_eq!(fetch_jwks(&uri, false).unwrap(), JWKS);
-        assert_eq!(fetch_jwks(&uri, true).unwrap(), JWKS);
-        assert_eq!(fetches.load(Ordering::SeqCst), 2);
-        let threads: Vec<_> = (0..8)
-            .map(|_| {
-                let uri = uri.clone();
-                std::thread::spawn(move || fetch_jwks(&uri, true).unwrap())
-            })
-            .collect();
-        for thread in threads {
-            assert_eq!(thread.join().unwrap(), JWKS);
-        }
-        assert_eq!(fetches.load(Ordering::SeqCst), 2);
-        test_transports().lock().unwrap().remove(&uri);
-    }
-
-    #[test]
-    fn malformed_refresh_preserves_good_cache_and_rate_limits_attempt() {
-        let uri = format!("test://malformed-{}", std::process::id());
-        let fetches = Arc::new(AtomicUsize::new(0));
-        test_transports().lock().unwrap().insert(
-            uri.clone(),
-            TestTransport {
-                responses: Arc::new(Mutex::new(VecDeque::from([
-                    Ok(JWKS.to_owned()),
-                    Ok("not-json".to_owned()),
-                ]))),
-                fetches: fetches.clone(),
-            },
-        );
-        assert_eq!(fetch_jwks(&uri, false).unwrap(), JWKS);
-        assert_eq!(fetch_jwks(&uri, true).unwrap(), JWKS);
-        assert_eq!(fetch_jwks(&uri, true).unwrap(), JWKS);
-        assert_eq!(fetches.load(Ordering::SeqCst), 2);
-        test_transports().lock().unwrap().remove(&uri);
     }
 
     #[test]

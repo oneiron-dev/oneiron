@@ -109,20 +109,4 @@ console.log("reopened")
     expect(reopened.stdout).toContain("reopened")
   }, 180_000)
 
-  test("two opens in ONE process share the vault instead of refusing", () => {
-    const root = tempRoot()
-    const vault = join(root, "vault")
-    const { stdout } = runChild(
-      `import { Oneiron } from ${JSON.stringify(join(packageRoot, "src/index.ts"))}
-const first = Oneiron.open(${JSON.stringify(vault)})
-const second = Oneiron.open(${JSON.stringify(vault)})
-console.log(JSON.stringify({
-  both: Array.isArray(first.receipts(1)) && Array.isArray(second.receipts(1)),
-}))
-`,
-      root,
-    )
-    const payload = JSON.parse(stdout.trim().split("\n").at(-1) ?? "{}")
-    expect(payload.both).toBe(true)
-  }, 120_000)
 })

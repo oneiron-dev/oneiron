@@ -373,8 +373,8 @@ fn edge_record_error() -> crate::error::Error {
 /// class, its `ClaimSource` cleared, and acyclicity proven, and NONE of that
 /// is expressible through a raw builder edge. One arm here reserves BOTH
 /// generic doors — creation through [`validate_public_edge_creation_kind`]
-/// (which delegates here) and deletion through `Vault::delete_edge` (which
-/// calls this directly) — leaving `code_memory::insert_blocks_edge` /
+/// (which delegates here) and deletion through `Vault::delete_edge` (a
+/// one-op batch delete) — leaving `code_memory::insert_blocks_edge` /
 /// `remove_blocks_edge` as the sole write and retirement doors.
 ///
 /// The CMT-4 `fulfills` / `discharged_by` pair (ONE-1541) joins them on the
