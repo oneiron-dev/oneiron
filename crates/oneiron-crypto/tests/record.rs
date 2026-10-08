@@ -245,6 +245,56 @@ fn component_key_ids_and_policy_fields_are_enforced() {
 }
 
 #[test]
+fn signed_metadata_rewritten_to_match_the_policy_breaks_the_signature() {
+    // Purpose, epoch and signer are signed. Each is rewritten in place to a value the
+    // policy then accepts, so the record parses, every policy check passes, and only
+    // the signature can refuse it. Offsets as in `body_at`: purpose 8, epoch 10, the
+    // signer's bytes 19.
+    let keys = keys();
+    let vks = verifying(&keys);
+    for (suite, name) in [(ED, "sig-ed25519-v1"), (SLH, "sig-slhdsa-sha2-256s-v1")] {
+        let bytes = sign_with(&keys, suite).to_bytes();
+        let rewritten = |at: usize, new: &[u8]| {
+            let mut b = bytes.clone();
+            b[at..at + new.len()].copy_from_slice(new);
+            SignatureRecord::parse(&b).expect("parses")
+        };
+
+        let record = rewritten(8, &(SigPurpose::Receipt as u16).to_be_bytes());
+        assert_eq!(record.purpose(), SigPurpose::Receipt);
+        let receipt = VerifyPolicy {
+            purpose: SigPurpose::Receipt,
+            ..policy(suite)
+        };
+        assert_eq!(
+            record.verify(SUBJECT, &receipt, &vks),
+            Err(Error::SignatureInvalid(name)),
+            "purpose"
+        );
+
+        let record = rewritten(10, &3u64.to_be_bytes());
+        assert_eq!(record.epoch(), 3);
+        assert_eq!(
+            record.verify(SUBJECT, &policy(suite), &vks),
+            Err(Error::SignatureInvalid(name)),
+            "epoch"
+        );
+
+        let record = rewritten(19, b"R");
+        assert_eq!(record.signer(), b"Root-1".as_slice());
+        let other_signer = VerifyPolicy {
+            signer: b"Root-1",
+            ..policy(suite)
+        };
+        assert_eq!(
+            record.verify(SUBJECT, &other_signer, &vks),
+            Err(Error::SignatureInvalid(name)),
+            "signer"
+        );
+    }
+}
+
+#[test]
 fn record_parsing_fails_closed() {
     let keys = keys();
     let bytes = sign_with(&keys, ED).to_bytes();
