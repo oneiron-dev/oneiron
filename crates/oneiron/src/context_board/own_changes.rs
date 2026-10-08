@@ -74,7 +74,7 @@ impl SessionReadSet {
             for (at, id) in fresh {
                 // Delivered once already, from past a cursor the full watch
                 // stopped: reading its receipt again owes nothing.
-                if self.delivered_ahead(&id) {
+                if self.delivered_ahead(&id, at) {
                     continue;
                 }
                 if read.insert(id.clone()) {
@@ -204,13 +204,14 @@ fn proposal_state(
                 if vault.store.pending_gate_consent_in_txn(txn, &id)?.is_some() {
                     return Ok(None);
                 }
-                // A later write the gate refused left the claim as it was.
+                // A later write the gate refused or held without a consent
+                // row left the claim as it was.
                 let closed = vault
                     .store
                     .gate_decisions_for_claim_in_txn(txn, id.as_bytes())?
                     .into_iter()
                     .rev()
-                    .find(|decision| decision.outcome != "deny")
+                    .find(|decision| !matches!(decision.outcome.as_str(), "deny" | "pending"))
                     .map(|decision| decision.outcome);
                 match closed.as_deref() {
                     Some("rejected") => "rejected",

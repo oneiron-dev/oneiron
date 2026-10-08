@@ -76,8 +76,8 @@ pub(super) async fn state(
 
 /// The rider in `changed` was delivered on a frame of board `epoch`: move the
 /// session past it. A keyframe also moves the connector state into the
-/// prefix. A frame older than the board this connection was last given is
-/// one the receiver ignores, so its rider stays owed.
+/// prefix. A frame older than the last keyframe this connection's carrier
+/// took is one the receiver ignores, so its rider stays owed.
 pub(super) async fn delivered(
     server: &SyncServer,
     actor: &McpResolvedActor,
@@ -90,8 +90,9 @@ pub(super) async fn delivered(
         .mcp_registry
         .lock()
         .await
-        .board_snapshot(&actor.stream_connection)
-        .is_some_and(|board| board.epoch > epoch);
+        .streams_mut()
+        .carrier_epoch(&actor.stream_connection)
+        .is_some_and(|carrier| carrier > epoch);
     if superseded {
         return;
     }

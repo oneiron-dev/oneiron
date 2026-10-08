@@ -223,8 +223,10 @@ impl SessionReadSet {
         self.delivery_generation
     }
 
-    pub(super) fn delivered_ahead(&self, proposal: &str) -> bool {
-        self.delivered_ahead.contains_key(proposal)
+    /// Whether this receipt, not merely this proposal id, was delivered
+    /// already: a later submission under the same id is owed again.
+    pub(super) fn delivered_ahead(&self, proposal: &str, count: u64) -> bool {
+        self.delivered_ahead.get(proposal) == Some(&count)
     }
 
     pub(super) fn prefix_connectors(&self) -> Option<&BTreeMap<String, ConnectorMount>> {
