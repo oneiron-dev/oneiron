@@ -49765,6 +49765,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/reopen_after_restart.rs",
+     "purpose": "Text saved through `oneiron serve` survives a restart (prune e2e row 4): witness one invented line, stop the…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -50014,7 +50022,7 @@
    "over_bar": 2,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 256,
-   "test_files": 109
+   "test_files": 110
   },
   "oneiron-uniffi": {
    "files": [
