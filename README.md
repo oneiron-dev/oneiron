@@ -28,16 +28,18 @@ that applications can embed or run as a daemon.
   Standard daemon startup does not bind a Dreamer model or code executor.
 - **Models behind one seam.** Generative models plug in through the
   `LlmBackend` trait. Adapter crates cover a local in-process runtime,
-  OpenAI-compatible and Anthropic Messages APIs, Gemini, a self-hosted model
-  server, and the System One typed-decision service. The host loads the model or
-  holds the credentials; no adapter bundles model weights. Standard daemon
-  startup binds no generative model.
+  OpenAI-compatible and Anthropic Messages APIs, Gemini, and a self-hosted
+  model server. Typed decisions use a separate seat, `RemoteDecisionSeat`; the
+  System One adapter implements it. The host loads the model or holds the
+  credentials; no adapter bundles model weights. Standard daemon startup binds
+  no generative model.
 - **Optional embedding backends.** The daemon can run with no embedder,
   provision a local embedder, or use a configured endpoint.
-- **Owner actions.** The CLI and the `/v1/owner` routes cover where the vault
-  lives (`doctor`), backups, restore rehearsal, restore, export, the secret-scan
-  switch, and one-act approval of an import batch or an agent run. None of them
-  needs a model. See [docs/ops/owner-actions.md](./docs/ops/owner-actions.md).
+- **Owner actions.** The CLI covers where the vault lives (`doctor`), backups,
+  restore rehearsal, restore, export, the secret-scan switch, and one-act
+  approval of an import batch or an agent run. A running server offers the same
+  actions under `/v1/owner`, except two: restore is CLI-only, and export is
+  `POST /v1/core/facade/export`. None of them needs a model. See [docs/ops/owner-actions.md](./docs/ops/owner-actions.md).
 
 These are implemented APIs and components. Oneiron is pre-release.
 
@@ -111,8 +113,8 @@ published package or release binary.
 
 ## Crates
 
-The `oneiron` crate is being split into smaller crates behind the same facade.
-This table lists the crates on main today.
+A split of the `oneiron` crate into smaller crates is in progress. This table
+lists the crates on main today.
 
 | Crate | Role |
 |-------|------|
@@ -144,7 +146,8 @@ This table lists the crates on main today.
 | [oneiron-bench](./crates/oneiron-bench) | Benchmark and evaluation harness. |
 | [oneiron-macos](./apps/macos/src-tauri) | macOS menu-bar voice recorder embedding the vault. |
 
-The [code map](./docs/CODEMAP.md) links to each crate's modules and source files.
+The [code map](./docs/CODEMAP.md) links to the modules and source files of each
+crate under `crates/`. It does not cover the macOS app.
 
 ## Storage layout
 
