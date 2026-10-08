@@ -381,12 +381,10 @@ impl Decision for LeaderChats {
             .collect())
     }
 
+    /// A turn bound to another project. An opening the live vault refuses
+    /// fails its read, so any restored opening loosens it.
     fn loosens(live: &Self::Answer, restored: &Self::Answer) -> bool {
         restored.is_some() && live != restored
-    }
-
-    fn refusal() -> Option<Self::Answer> {
-        Some(None)
     }
 }
 
