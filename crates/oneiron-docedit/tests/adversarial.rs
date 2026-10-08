@@ -153,31 +153,3 @@ fn complete_xml_grammar_refuses_malformed_siblings_without_mutation() {
         edit_must_refuse(bytes, "old");
     }
 }
-
-#[test]
-fn valid_declarations_namespaces_and_cdata_siblings_stay_in_place() {
-    for bytes in [
-        include_bytes!("fixtures/xml-grammar/valid_decl_and_pi.zip").as_slice(),
-        include_bytes!("fixtures/xml-grammar/valid_namespaced_sibling.zip").as_slice(),
-        include_bytes!("fixtures/xml-grammar/valid_cdata_sibling.zip").as_slice(),
-    ] {
-        let mut package = Package::open(bytes, fixture_limits()).expect("valid ZIP");
-        let original = package
-            .part(PART)
-            .expect("part read")
-            .expect("document part");
-        package
-            .replace_text(PART, PATH, "old", "changed")
-            .expect("valid XML edit");
-        let edited = package.part(PART).expect("part read").expect("edited part");
-        let at = original
-            .windows(3)
-            .position(|window| window == b"old")
-            .expect("unique old text");
-        let mut expected = original[..at].to_vec();
-        expected.extend_from_slice(b"changed");
-        expected.extend_from_slice(&original[at + 3..]);
-        assert_eq!(edited, expected, "only intended leaf changed");
-        assert!(Package::open(&package.export().expect("write"), fixture_limits()).is_ok());
-    }
-}

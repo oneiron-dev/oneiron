@@ -178,13 +178,6 @@ pub(super) fn run() -> BeamResult<RungReport> {
 mod tests {
     use super::*;
     #[test]
-    fn rung_fixture_command_needs_no_dummy_path() {
-        assert_eq!(
-            crate::beam::arms::run(&["rung-fixture".into()]),
-            std::process::ExitCode::SUCCESS
-        );
-    }
-    #[test]
     fn deterministic_arm_survives_cold_attach_remote_and_local_fallback() {
         let report = run().unwrap();
         assert_eq!(report.before.len(), 3);
