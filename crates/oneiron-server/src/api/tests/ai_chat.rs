@@ -9,11 +9,19 @@ use tower::ServiceExt;
 
 use super::*;
 use crate::ai_host::AiHost;
-use crate::ai_host::test_support::{TEST_SECRET, models, rooted_vault};
+use crate::ai_host::test_support::{
+    TEST_SECRET, eventually, models, models_toml, rooted_vault, saved_agent,
+};
 use crate::fake_llm::{FakeLlm, Reply};
 use crate::server::{BroadcastPayload, SyncServer};
 
 async fn ai_server(base_url: Option<&str>) -> (tempfile::TempDir, Arc<SyncServer>, AiHost) {
+    ai_server_with(base_url.map(|url| models(url, ""))).await
+}
+
+async fn ai_server_with(
+    config: Option<crate::config::models::ModelsConfig>,
+) -> (tempfile::TempDir, Arc<SyncServer>, AiHost) {
     let (dir, vault) = rooted_vault();
     let server = SyncServer::new(
         vault,
@@ -23,7 +31,6 @@ async fn ai_server(base_url: Option<&str>) -> (tempfile::TempDir, Arc<SyncServer
         },
     )
     .unwrap();
-    let config = base_url.map(|url| models(url, ""));
     let (server, host) = AiHost::attach(server, config.as_ref()).await;
     (dir, Arc::new(server), host)
 }
@@ -129,6 +136,53 @@ async fn a_chat_turn_streams_deltas_to_subscribers_and_saves_its_terminal_once()
     host.shutdown().await;
 }
 
+/// Astra #1304 P1: a credential revoked while its turn waits on the model
+/// kept receiving the reply, and the reply still landed as a normal answer.
+#[tokio::test]
+async fn a_credential_revoked_mid_turn_sees_no_more_of_the_reply_and_it_is_not_finalized() {
+    let fake = FakeLlm::start(
+        vec![Reply::Hold {
+            text: "the held answer".into(),
+        }],
+        None,
+    )
+    .await;
+    let (_dir, server, host) = ai_server(Some(&fake.base_url)).await;
+    let recipe = "jti=chat-revoked-mid-turn";
+    let turn = tokio::spawn({
+        let server = Arc::clone(&server);
+        let request = core_request_with_authz(
+            "POST",
+            "/v1/ai/chat",
+            test_bearer(recipe),
+            Some(&json!({"conversation_ref": oneiron::EntityId::now().to_hex(), "text": "hi"})),
+        );
+        async move { send(&server, request).await }
+    });
+    fake.wait_holding().await;
+    slip_credentials::revoke(&server, recipe);
+    fake.release();
+    let (status, body) = turn.await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    let lines = lines(&body);
+    assert_eq!(lines[0]["type"], json!("accepted"));
+    assert!(
+        !String::from_utf8_lossy(&body).contains("held answer"),
+        "{lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .all(|line| !["delta", "done", "saved"].contains(&line["type"].as_str().unwrap())),
+        "{lines:?}"
+    );
+    // The model's words are not the vault's answer either.
+    let message = oneiron::EntityId::from_hex(lines[0]["message_id"].as_str().unwrap()).unwrap();
+    let stored = server.vault().get(&message).unwrap().unwrap_or_default();
+    assert!(!String::from_utf8_lossy(&stored).contains("held answer"));
+    host.shutdown().await;
+}
+
 #[tokio::test]
 async fn a_failed_model_call_cancels_the_message_and_reports_why() {
     let fake = FakeLlm::start(vec![], Some(Reply::Status(500))).await;
@@ -202,5 +256,131 @@ async fn without_a_model_chat_refuses_and_status_says_why() {
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED);
+    host.shutdown().await;
+}
+
+/// A manifest whose every role sits on the LLM slot, pinned to `cloud/big`
+/// at the widest route with narrower models for the vault to narrow to.
+fn install_route_manifest(vault: &oneiron::Vault) {
+    use oneiron::llm::manifest::{
+        MODEL_ROLES, ModelBinding, ModelManifest, ModelRole, ModelSlot, TeacherProbeApproval,
+    };
+    use oneiron::{ModelId, ModelLocality, ModelTierRef};
+    let model = |id: &str| ModelId::new(id).unwrap();
+    let manifest = ModelManifest {
+        version: 2,
+        roles: MODEL_ROLES
+            .into_iter()
+            .map(|role| {
+                (
+                    role,
+                    ModelBinding {
+                        model: model("cloud/big@live"),
+                        slot: ModelSlot::Llm,
+                        tier: ModelTierRef("chat".into()),
+                        // The teacher's pin is probe-approved as one model.
+                        route_models: if role == ModelRole::ExtractionTeacher {
+                            std::collections::BTreeMap::new()
+                        } else {
+                            std::collections::BTreeMap::from([
+                                (ModelLocality::OwnServer, model("local/small@live")),
+                                (ModelLocality::OnDevice, model("device/tiny@live")),
+                            ])
+                        },
+                    },
+                )
+            })
+            .collect(),
+        routes: [
+            (ModelSlot::Llm, ModelLocality::ThirdParty),
+            (ModelSlot::Embedder, ModelLocality::OnDevice),
+            (ModelSlot::Oneironer, ModelLocality::OnDevice),
+        ]
+        .into_iter()
+        .collect(),
+        verdict: None,
+        seat_policy: None,
+    };
+    let approval = TeacherProbeApproval::for_scored_checkpoint(
+        &manifest,
+        &vault.teacher_probe_policy(None).unwrap(),
+        1_000_000,
+    )
+    .unwrap();
+    vault
+        .set_model_manifest_with_teacher_approval(&manifest, &approval)
+        .unwrap();
+}
+
+/// Astra #1304 P1: chat and workflow steps took the raw-call exception, so a
+/// vault that narrowed its model route still sent them to a third party.
+#[tokio::test]
+async fn a_narrowed_vault_route_keeps_chat_and_workflow_steps_off_the_cloud() {
+    use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher, DispatchAgent};
+    use oneiron::llm::manifest::ModelSlot;
+    use oneiron::{EntityId, ModelLocality};
+    let cloud = FakeLlm::start(vec![], Some(Reply::text("from the cloud"))).await;
+    let local = FakeLlm::start(vec![], Some(Reply::text("from this server"))).await;
+    let (_dir, server, host) = ai_server_with(Some(models_toml(&format!(
+        "cloud = \"cloud:big\"\nlocal = \"local:small\"\nprefer_local = false\n[dreamer]\nenabled = false\n[providers.cloud]\nkind = \"openai-compat\"\nbase_url = \"{}\"\n[providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n",
+        cloud.base_url, local.base_url
+    ))))
+    .await;
+    let vault = Arc::clone(server.vault());
+    install_route_manifest(&vault);
+    let turn = || chat(json!({"conversation_ref": EntityId::now().to_hex(), "text": "hi"}));
+
+    // At the pin's widest route the manifest's cloud model answers.
+    let (status, body) = send(&server, turn()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(lines(&body).last().unwrap()["type"], json!("saved"));
+    assert_eq!((cloud.seen().len(), local.seen().len()), (1, 0));
+
+    // The vault narrows its LLM route to its own server: chat and a saved
+    // workflow's step both stay there.
+    vault
+        .set_model_route(ModelSlot::Llm, ModelLocality::OwnServer)
+        .unwrap();
+    let (status, body) = send(&server, turn()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(lines(&body).last().unwrap()["type"], json!("saved"));
+    let agent = saved_agent(&vault, "narrowed", "Say one word.");
+    let workflow = EntityId::now();
+    vault
+        .save_workflow(
+            &workflow,
+            &oneiron::agent_def::workflow::WorkflowDefinition::new("narrowed", vec![agent])
+                .unwrap(),
+            2,
+        )
+        .unwrap();
+    let dispatcher = AgentDispatcher::new(&vault);
+    dispatcher
+        .dispatch(DispatchAgent {
+            target: AgentDispatchTarget::Workflow(workflow),
+            parent_attempt: None,
+            dedupe_key: Some("narrowed".into()),
+            run_id: Some("narrowed".into()),
+            now: 10,
+        })
+        .unwrap();
+    assert!(
+        eventually(std::time::Duration::from_secs(20), || dispatcher
+            .open_workflow_roots()
+            .is_ok_and(|roots| roots.is_empty()))
+        .await
+    );
+    assert_eq!((cloud.seen().len(), local.seen().len()), (1, 2));
+
+    // Narrowed to the device, which this server cannot serve: refused before
+    // any call leaves.
+    vault
+        .set_model_route(ModelSlot::Llm, ModelLocality::OnDevice)
+        .unwrap();
+    let (status, body) = send(&server, turn()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["error"]["code"], json!("model_route_not_served"));
+    assert_eq!((cloud.seen().len(), local.seen().len()), (1, 2));
     host.shutdown().await;
 }

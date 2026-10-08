@@ -960,7 +960,9 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
             ])]),
         ),
     ];
-    encode_with_native_mail_policy(entries)
+    // ARCH-0026: the Dreamer is warm by default, so its three actor-keyed
+    // rows ship here (see `dreamer_grant`); the owner may narrow or remove them.
+    super::dreamer_grant::with_shipped_dreamer_rows(encode_with_native_mail_policy(entries)?)
 }
 
 /// The shipped native-mail dial is one vault row; hosts narrow it with their

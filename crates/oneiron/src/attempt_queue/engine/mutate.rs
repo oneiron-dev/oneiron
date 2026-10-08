@@ -391,6 +391,17 @@ impl AttemptQueue<'_> {
     /// invariant. Cleanup never assigns a replacement owner; reclaim still
     /// happens through [`Self::claim`]'s atomic admission step.
     pub fn cleanup_leases(&self, input: CleanupAttemptLeases) -> Result<AttemptQueueCleanupReport> {
+        self.cleanup_leases_except(input, &std::collections::HashSet::new())
+    }
+
+    /// [`Self::cleanup_leases`], leaving the leases in `held` as they are: a
+    /// host's restart keeps an attempt parked on a signal (a budget or consent
+    /// trap) leased until that signal resumes it.
+    pub fn cleanup_leases_except(
+        &self,
+        input: CleanupAttemptLeases,
+        held: &std::collections::HashSet<AttemptId>,
+    ) -> Result<AttemptQueueCleanupReport> {
         validate_cleanup_leases_input(&input)?;
 
         let rtxn = self.store.env.read_txn()?;
@@ -409,7 +420,8 @@ impl AttemptQueue<'_> {
                     }
                 }
                 AttemptState::Leased | AttemptState::Landing
-                    if lease_expired(&record, input.now, input.lease_timeout_secs) =>
+                    if !held.contains(&id)
+                        && lease_expired(&record, input.now, input.lease_timeout_secs) =>
                 {
                     report.running += 1;
                     expired_candidates.push(id);

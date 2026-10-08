@@ -83,8 +83,11 @@ pub enum Command {
 
 #[derive(Subcommand)]
 pub enum DreamerCommand {
-    /// Let the Dreamer read this vault and land routine consolidation (run
-    /// once, with the server stopped). Without it the Dreamer stays idle.
+    /// Give a vault created before the Dreamer's policy rows shipped the
+    /// rows a fresh vault seeds, so its Dreamer can read the vault and land
+    /// routine consolidation (run once, with the server stopped; a vault that
+    /// has them is left as it is). `--extraction-route` also routes the
+    /// vault's extraction defaults.
     Grant(Box<DreamerGrantArgs>),
 }
 

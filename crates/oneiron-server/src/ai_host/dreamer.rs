@@ -27,7 +27,7 @@ use crate::config::models::DreamerSettings;
 use crate::models::Seat;
 
 /// Stamped on every admission and park this server makes.
-const LEASE_OWNER: &str = "oneiron-server-dreamer";
+pub(super) const LEASE_OWNER: &str = "oneiron-server-dreamer";
 /// Base id of the per-pass durable budget rows (`dreamer:p<n>`).
 const BUDGET_ID: &str = "dreamer";
 

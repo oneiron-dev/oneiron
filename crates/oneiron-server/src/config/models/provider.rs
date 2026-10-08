@@ -57,6 +57,28 @@ impl ProviderKind {
     }
 }
 
+/// The request field an OpenAI-compatible endpoint reads its output limit
+/// from. Most servers (llama.cpp, vLLM, MLX, most proxies) read
+/// `max_tokens`; some hosted reasoning models accept only
+/// `max_completion_tokens`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputLimitField {
+    #[default]
+    MaxTokens,
+    MaxCompletionTokens,
+}
+
+impl OutputLimitField {
+    #[must_use]
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::MaxTokens => "max_tokens",
+            Self::MaxCompletionTokens => "max_completion_tokens",
+        }
+    }
+}
+
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 const DEFAULT_CONTEXT_TOKENS: u64 = 128_000;
 /// Headers that carry credentials. Keys arrive through `key_env`, never as a
@@ -80,6 +102,7 @@ pub(super) struct ProviderFile {
     timeout_secs: Option<u64>,
     context_tokens: Option<u64>,
     max_output_tokens: Option<u64>,
+    output_limit_field: Option<OutputLimitField>,
     capabilities: Option<Vec<LlmCapability>>,
     locality: Option<ModelLocality>,
     revision: Option<String>,
@@ -97,7 +120,11 @@ pub struct ProviderConfig {
     pub headers: BTreeMap<String, String>,
     pub timeout_secs: u64,
     pub context_tokens: u64,
+    /// The ceiling on every call's output: filled in when a caller names no
+    /// limit, and a larger one is cut to it.
     pub max_output_tokens: Option<u64>,
+    /// Where an OpenAI-compatible endpoint reads that limit.
+    pub output_limit_field: OutputLimitField,
     pub capabilities: Vec<LlmCapability>,
     /// Where calls to this provider run, for the engine's route checks.
     pub locality: ModelLocality,
@@ -139,6 +166,16 @@ impl ProviderFile {
         if context_tokens == 0 || self.max_output_tokens == Some(0) {
             anyhow::bail!("models.providers.{name} token limits must be greater than zero");
         }
+        if self.output_limit_field.is_some()
+            && !matches!(
+                kind,
+                ProviderKind::OpenaiCompat | ProviderKind::LocalOpenaiCompat
+            )
+        {
+            anyhow::bail!(
+                "models.providers.{name}.output_limit_field applies to OpenAI-compatible providers only"
+            );
+        }
         if self.locality == Some(ModelLocality::OnDevice) {
             anyhow::bail!(
                 "models.providers.{name}.locality: on_device names an in-process runtime; a model server reached over HTTP, even on this machine, is own_server"
@@ -158,6 +195,7 @@ impl ProviderFile {
             timeout_secs,
             context_tokens,
             max_output_tokens: self.max_output_tokens,
+            output_limit_field: self.output_limit_field.unwrap_or_default(),
             capabilities: self
                 .capabilities
                 .unwrap_or_else(|| kind.default_capabilities()),

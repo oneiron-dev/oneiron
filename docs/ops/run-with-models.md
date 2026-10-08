@@ -75,11 +75,18 @@ rest of the manifest list. The retrieval embedder stays in `[embedder]`, where
 Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
 `local-openai-compat`, `oneironer`), `base_url`, `key_env`, `headers`
 (non-credential only), `timeout_secs` (120), `context_tokens` (128000),
-`max_output_tokens`, `capabilities` (`streaming`, `json_response`,
-`tool_calling`, `tool_results`, `image_input`, `reasoning`), `locality`
-(`own_server` or `third_party`) and `revision` (`live`). Plain `http://` is
-accepted only for this machine, or for a `local-openai-compat` server on the
-private network.
+`max_output_tokens`, `output_limit_field`, `capabilities` (`streaming`,
+`json_response`, `tool_calling`, `tool_results`, `image_input`, `reasoning`),
+`locality` (`own_server` or `third_party`) and `revision` (`live`). Plain
+`http://` is accepted only for this machine, or for a `local-openai-compat`
+server on the private network.
+
+`max_output_tokens` is a ceiling on every call to that provider: it is sent
+when a call names no limit, and a larger limit is cut down to it. An
+OpenAI-compatible endpoint reads it from `max_tokens` unless
+`output_limit_field = "max_completion_tokens"` says otherwise (some hosted
+reasoning models accept only that one). An Anthropic-compatible call always
+carries `max_tokens`, 4096 when nothing else names it.
 
 A reply may name its model differently from the request (a proxy that strips a
 login prefix, say). The answer is kept, and the receipt records both names under
@@ -96,21 +103,25 @@ missing:
 | a rung on `dreamer_current` | `no_model_configured` |
 | `ONEIRON_AUTH_SECRET` set (host root, machine identity) | `no_host_authority` |
 | `extraction_egress = true` under `[models]`, for any model reached over HTTP | `extraction_egress_not_allowed` |
-| the owner's weave grant, made once with the server stopped: `oneiron dreamer grant --config …` | `needs_owner_grant` |
-| vault defaults that route extraction and consolidation to the seat's widest rung: add `--extraction-route own_server` (or `third_party`) to the grant, or `PUT /v1/llm/defaults` | `extraction_route_not_set` |
+| vault defaults that route extraction and consolidation to the seat's widest rung: `oneiron dreamer grant --extraction-route own_server` (or `third_party`), or `PUT /v1/llm/defaults` | `extraction_route_not_set` |
+| the Dreamer's three policy rows (a fresh vault ships them) | `needs_owner_grant` |
 
 ```bash
 # once, with the server stopped; ONEIRON_AUTH_SECRET set as for serve
 oneiron dreamer grant --config ~/.config/oneiron/oneiron.toml --extraction-route own_server
 ```
 
-The grant adds three rows to the vault's live policy, each keyed to the vault's
-own Dreamer: a read-only grant over the vault, an Auto ceiling, and the permit
-its generated claims need. Every other row stays as it was, and re-running it
-changes nothing. Extraction leaves the device only on both opt-ins (the
-`extraction_egress` key and the routed defaults), and then only to the
-Dreamer's own seat model. Boot reads the routing and never writes it, so a
-later tightening by the owner is never undone by a restart.
+The Dreamer is warm by default (ARCH-0026): a fresh vault's seeded policy
+already carries three rows, each keyed to the vault's own Dreamer: a read-only
+grant over the vault, an Auto ceiling, and the permit its generated claims
+need. No other system actor and no other generated writer gains anything. A
+vault created before these rows shipped has none, and the same command adds
+them to its live policy; on a vault that has them it changes nothing. The
+owner may narrow or remove the rows like any policy row. Extraction leaves the
+device only on both opt-ins (the `extraction_egress` key and the routed
+defaults), and then only to the Dreamer's own seat model. Boot reads the
+routing and never writes it, so a later tightening by the owner is never
+undone by a restart.
 
 A sitting ends, and its turns dream, on `POST /v1/ai/session {"event":"end"}`,
 after `models.dreamer.idle_floor_secs` (1200) without activity, or after
@@ -119,7 +130,9 @@ after `models.dreamer.idle_floor_secs` (1200) without activity, or after
 `models.dreamer.pass_budget_units` (400000), metered through the usual budget
 guard. If the server is killed mid-pass, the next start requeues the
 interrupted attempt and runs it once more; durable steps that already have a
-response are not paid for again. `SIGTERM` or Ctrl-C stops cleanly: a pass in
+response are not paid for again. A pass that ran out of budget is parked on a
+budget trap instead, and a restart leaves it parked: only the trap's resume
+signal lets it spend again. `SIGTERM` or Ctrl-C stops cleanly: a pass in
 flight reaches its attempt boundary first.
 
 ## 4. Chat
@@ -129,11 +142,22 @@ optional `history`) streams NDJSON: `accepted`, one `delta` per text chunk,
 `done`, then `saved` with the message receipt. The same deltas reach every
 owner socket on `/ws` as transient presence. Only the final message is written
 to the vault, once. The credential needs read and write scope, and must be
-able to read the answering agent's definition. The seeded default agent
-answers; an owner-grade credential may name another with `agent_ref`, which
-must be live, approved and enabled. A turn still running
+able to read the answering agent's definition. It is checked for the whole
+turn: once it is revoked or expires, the body sends one
+`{"type":"error","code":"credential_revoked"}` line and ends, the model call
+stops, and the message is cancelled rather than saved as an answer. The seeded
+default agent answers; an owner-grade credential may name another with
+`agent_ref`, which must be live, approved and enabled. A turn still running
 at shutdown gets a grace to finish, then its message is cancelled, not left
 open.
+
+Chat turns and workflow steps are calls of the `generative_reasoner` role. If
+the vault has a model manifest, its binding for that role at the vault's
+current route (the pin, narrowed by any resident route) picks the model, and
+the server must serve exactly that model there: one of your `[models]` models
+with the same engine id and locality. A route the server cannot serve is
+refused with `503 model_route_not_served` before anything is sent. Without a
+manifest the `[models]` ladder is the role's binding.
 
 ## 5. Saved workflows
 
@@ -146,8 +170,10 @@ call the provider answered with a retryable error is tried again after
 `models.workflows.retry_backoff_secs` (30) times the tries so far, up to five
 tries. Any other failure, or a fifth retryable one, ends the step for a
 person to look at, and its workflow stops. Spend per step:
-`models.workflows.step_budget_units` (64000). `models.workflows.enabled = false`
-turns the pump off.
+`models.workflows.step_budget_units` (64000), one budget for all of a step's
+tries: each failed try is charged its reservation, and a try the remainder
+cannot admit ends the step. `models.workflows.enabled = false` turns the pump
+off.
 
 ## 6. Raw calls
 

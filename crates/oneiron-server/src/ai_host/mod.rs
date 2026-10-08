@@ -4,15 +4,16 @@
 //! Nothing here is required. Without a model every model-free path works,
 //! and each piece reports why it is idle (`no_model_configured`, say) on
 //! `/api/health` and `GET /v1/ai/status`. Writes never wait on a model.
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use oneiron::attempt_queue::{AttemptQueue, AttemptState, CleanupAttemptLeases};
 use oneiron::llm::manifest::ModelRole;
-use oneiron::{ModelId, ModelLocality, Vault};
+use oneiron::{DreamerRunnerStore, ModelId, ModelLocality, Vault};
 use oneiron_driver::{HintPusher, SessionHint};
 
 use crate::config::models::{ChatSettings, ModelsConfig};
-use crate::models::{ModelRuntime, ModelsStatus, Seat};
+use crate::models::{ModelRuntime, ModelsStatus, RoleCall, RoleRefusal, Seat};
 use crate::server::SyncServer;
 
 mod dreamer;
@@ -40,7 +41,7 @@ use workflows::WorkflowPump;
 
 /// The seat each piece of AI work runs on.
 const DREAMER_ROLE: ModelRole = ModelRole::DreamerCurrent;
-const CHAT_ROLE: ModelRole = ModelRole::GenerativeReasoner;
+pub(crate) const CHAT_ROLE: ModelRole = ModelRole::GenerativeReasoner;
 /// How long shutdown lets running chat turns finish before stopping them.
 const TURN_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -104,6 +105,17 @@ impl AiHandle {
     #[must_use]
     pub fn chat_settings(&self) -> ChatSettings {
         self.chat
+    }
+
+    /// Admits a call of `role` against the vault's live model policy: its
+    /// manifest and route when it has one, the role's seat otherwise.
+    pub fn admit_role(
+        &self,
+        vault: &Vault,
+        role: ModelRole,
+        request: oneiron::LlmRequest,
+    ) -> Result<RoleCall, RoleRefusal> {
+        self.runtime.admit_role(vault, role, request)
     }
 
     /// Registers a running chat turn with shutdown.
@@ -233,30 +245,72 @@ impl Drop for AiHost {
 
 /// This process owns the vault exclusively, so every attempt lease at boot
 /// was held by a process that is gone. Requeue them: an interrupted pass or
-/// step runs again exactly once, from its durable checkpoints. Expiry is by
-/// age, so "now" is the later of the wall clock and one second past the
-/// youngest lease: every dead lease expires, even after the clock stepped
-/// back, and none waits.
+/// step runs again exactly once, from its durable checkpoints.
+///
+/// A parked attempt is requeued only when this server's Dreamer parked it
+/// itself (a pass cut at its deadline, an executor error): that park is its
+/// own checkpoint, cleared here. One parked on a signal (a budget or consent
+/// trap, a wait) stays leased: a restart is not its resume signal (runtime.md),
+/// and it resumes only when its signal is consumed. Expiry is by age, so "now"
+/// is the later of the wall clock and one second past the youngest lease:
+/// every dead lease expires, even after the clock stepped back, and none
+/// waits.
 fn recover_dead_leases(vault: &Vault) {
     let queue = AttemptQueue::new(vault);
-    let youngest = match queue.list() {
-        Ok(rows) => rows
-            .iter()
-            .filter(|row| matches!(row.state, AttemptState::Leased | AttemptState::Landing))
-            .map(|row| row.updated_at)
-            .max(),
+    let rows = match queue.list() {
+        Ok(rows) => rows,
         Err(error) => {
             tracing::warn!(%error, "boot lease recovery could not list attempts");
             return;
         }
     };
+    let runner = DreamerRunnerStore::new(vault);
+    let mut held = HashSet::new();
+    let mut youngest = None;
+    for row in rows
+        .iter()
+        .filter(|row| matches!(row.state, AttemptState::Leased | AttemptState::Landing))
+    {
+        let parked = match runner.parked_attempt(row.id) {
+            Ok(parked) => parked,
+            Err(error) => {
+                tracing::warn!(%error, attempt = ?row.id, "a parked attempt could not be read; its lease is kept");
+                held.insert(row.id);
+                continue;
+            }
+        };
+        match parked {
+            Some(park) if park.park_owner == dreamer::LEASE_OWNER => {
+                if let Err(error) = runner.resume_parked(row.id, &park.park_owner, unix_now()) {
+                    tracing::warn!(%error, attempt = ?row.id, "a checkpoint park was not cleared; its lease is kept");
+                    held.insert(row.id);
+                    continue;
+                }
+            }
+            Some(_) => {
+                held.insert(row.id);
+                continue;
+            }
+            None => {}
+        }
+        youngest = youngest.max(Some(row.updated_at));
+    }
+    if !held.is_empty() {
+        tracing::info!(
+            attempts = held.len(),
+            "attempts parked on a signal keep their leases"
+        );
+    }
     let Some(youngest) = youngest else {
         return;
     };
-    match queue.cleanup_leases(CleanupAttemptLeases {
-        now: unix_now().max(youngest.saturating_add(1)),
-        lease_timeout_secs: 1,
-    }) {
+    match queue.cleanup_leases_except(
+        CleanupAttemptLeases {
+            now: unix_now().max(youngest.saturating_add(1)),
+            lease_timeout_secs: 1,
+        },
+        &held,
+    ) {
         Ok(report) => tracing::info!(?report, "requeued attempt leases a stopped process held"),
         Err(error) => tracing::warn!(%error, "boot lease recovery failed"),
     }
@@ -286,7 +340,7 @@ async fn start_dreamer(
         return Err(IdleReason::NoHostAuthority);
     }
     // A pass the policy cannot serve would park its attempts for good; leave
-    // them queued until the owner grants the weave.
+    // them queued until the policy carries the Dreamer's rows again.
     match vault.dreamer_weave_reach() {
         Ok(reach) if reach.ready() => {}
         Ok(_) => return Err(IdleReason::NeedsOwnerGrant),
@@ -319,21 +373,20 @@ async fn start_dreamer(
 
 fn start_workflows(
     vault: &Arc<Vault>,
-    runtime: &ModelRuntime,
+    runtime: &Arc<ModelRuntime>,
     models: &ModelsConfig,
     status: &Arc<StatusCell>,
 ) -> Result<WorkflowPump, IdleReason> {
     if !models.workflows.enabled {
         return Err(IdleReason::Disabled);
     }
-    let seat = runtime
-        .seat(CHAT_ROLE)
-        .ok_or(IdleReason::NoModelConfigured)?
-        .clone();
+    if runtime.seat(CHAT_ROLE).is_none() {
+        return Err(IdleReason::NoModelConfigured);
+    }
     WorkflowPump::spawn(
         Arc::clone(vault),
         StepRunner {
-            seat,
+            models: Arc::clone(runtime),
             budget_units: models.workflows.step_budget_units,
             retry_backoff_secs: models.workflows.retry_backoff_secs,
         },

@@ -175,6 +175,50 @@ async fn anthropic_compatible_provider_generates_and_streams_through_a_seat() {
     assert_eq!(header(&seen[0], "authorization"), None);
 }
 
+/// Astra #1304 P2: a configured output ceiling never reached an
+/// OpenAI-compatible wire, so the provider generated to its own default.
+#[tokio::test]
+async fn the_configured_output_ceiling_reaches_every_openai_compatible_call() {
+    let fake = FakeLlm::start(vec![], Some(Reply::text("bounded"))).await;
+    let endpoints = [
+        ("openai-compat", "", "max_tokens"),
+        ("local-openai-compat", "", "max_tokens"),
+        (
+            "openai-compat",
+            "output_limit_field = \"max_completion_tokens\"\n",
+            "max_completion_tokens",
+        ),
+    ];
+    for (kind, field_line, field) in endpoints {
+        let before = fake.seen().len();
+        let runtime = ModelRuntime::build(Some(&config(&format!(
+            "default = \"p:m\"\n[providers.p]\nkind = \"{kind}\"\nbase_url = \"{}\"\nmax_output_tokens = 64\n{field_line}",
+            fake.base_url
+        ))));
+        let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
+        // A workflow step generates; a chat turn streams.
+        generate(seat, "step").await;
+        stream(seat, "turn").await;
+        // A caller asking for more is held to the ceiling.
+        let guard = BudgetGuard::new("models-test", 100_000, BudgetExhaustionPolicy::Suspend);
+        let lease = guard.admit().unwrap().lease;
+        let mut wide = request(&seat.model, "wide");
+        wide.params.insert("max_tokens".into(), json!(4_096));
+        seat.backend.generate(wide, &lease).await.unwrap();
+        let seen = fake.seen();
+        assert_eq!(seen.len(), before + 3);
+        for call in &seen[before..] {
+            assert_eq!(call.body[field], json!(64), "{}", call.body);
+            let other = if field == "max_tokens" {
+                "max_completion_tokens"
+            } else {
+                "max_tokens"
+            };
+            assert!(call.body.get(other).is_none(), "{}", call.body);
+        }
+    }
+}
+
 #[tokio::test]
 async fn local_openai_compatible_server_takes_a_v1_base_and_no_key() {
     let fake = FakeLlm::start(vec![Reply::text("local answer")], None).await;

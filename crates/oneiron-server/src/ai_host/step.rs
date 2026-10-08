@@ -7,22 +7,28 @@
 //! here; the output's raw bytes become the step's durable result.
 use std::collections::BTreeMap;
 
+use std::sync::Arc;
+
 use oneiron::agent_dispatch::{AgentDispatchStatus, agent_dispatch_actor};
+use oneiron::attempt_queue::AttemptQueue;
 use oneiron::compaction::output::restore_output;
 use oneiron::context_projection::ResolvedContextProjection;
-use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, Error, LlmMessage,
     LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
 };
 
-use crate::models::Seat;
+use super::CHAT_ROLE;
+use crate::models::ModelRuntime;
 
 /// The purpose a workflow step's calls are metered and routed under.
 const STEP_PURPOSE: &str = "workflow_step";
 
 pub(super) struct StepRunner {
-    pub(super) seat: Seat,
+    /// Steps run on the generative role, admitted against the vault's live
+    /// model policy like chat turns.
+    pub(super) models: Arc<ModelRuntime>,
+    /// One logical step's budget, shared by all its tries.
     pub(super) budget_units: u64,
     /// How long a failed step waits before its next try, times the tries.
     pub(super) retry_backoff_secs: u64,
@@ -84,11 +90,15 @@ impl StepRunner {
         if !messages.iter().any(|m| m.role == LlmMessageRole::User) {
             messages.push(message(LlmMessageRole::User, definition.desc.clone()));
         }
+        let seat = self
+            .models
+            .seat(CHAT_ROLE)
+            .ok_or_else(|| Error::InvalidConfig("no [models] rung serves workflow steps".into()))?;
         let purpose = CallPurpose::Other {
             name: STEP_PURPOSE.to_owned(),
         };
         let request = LlmRequest {
-            model: self.seat.model.clone(),
+            model: seat.model.clone(),
             envelope: CallEnvelope {
                 seat_effort: None,
                 scope: Default::default(),
@@ -102,33 +112,33 @@ impl StepRunner {
                 purpose,
                 class: CallClass::BestEffort,
                 response_format: ResponseFormat::Text,
-                locality: self.seat.locality,
+                locality: seat.locality,
             },
             messages,
             tools: Vec::new(),
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
         };
-        let request = vault
-            .authorize_raw_inference(
-                request,
-                &HostInferenceContext {
-                    binding: HostInferenceBinding::Advertised {
-                        model: self.seat.model.clone(),
-                        locality: self.seat.locality,
-                    },
-                    extraction_egress: None,
-                },
-            )?
-            .into_request();
-        // The agent pays: its live budget policy row, its own meter.
+        // A route the vault narrowed past what this server serves ends the
+        // step here, before any call leaves.
+        let call = self
+            .models
+            .admit_role(vault, CHAT_ROLE, request)
+            .map_err(|refusal| Error::InvalidConfig(format!("workflow step refused: {refusal}")))?;
+        let request = call.request;
+        // The agent pays: its live budget policy row, its own meter. Every
+        // earlier try of this step failed its model call and was charged its
+        // reservation, so this try gets what they left of the one budget.
+        let reserve = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS.min(self.budget_units);
+        let earlier = AttemptQueue::new(vault).retry_chain_depth(step.attempt.id)?;
         let guard = vault.policy_budget_guard(
             format!(
                 "workflow-step:{}",
                 oneiron::EntityId::from_bytes(*step.attempt.id.as_bytes())?.to_hex()
             ),
-            self.budget_units,
-            oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS.min(self.budget_units),
+            self.budget_units
+                .saturating_sub(u64::from(earlier).saturating_mul(reserve)),
+            reserve,
             BudgetExhaustionPolicy::Suspend,
             agent_dispatch_actor(&step.input)?,
         )?;
@@ -136,7 +146,7 @@ impl StepRunner {
             .admit_for_request(&request)
             .map_err(|denied| Error::InvalidConfig(format!("workflow step budget: {denied:?}")))?
             .lease;
-        let response = match runtime.block_on(self.seat.backend.generate(request, &lease)) {
+        let response = match runtime.block_on(call.backend.generate(request, &lease)) {
             Ok(response) => response,
             Err(error) => {
                 let _ = guard.settle_reserved(&lease);

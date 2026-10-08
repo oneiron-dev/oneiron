@@ -433,6 +433,10 @@ fn default_manifest_system_rows_pin_the_derived_engine_actors() {
         crate::reaction::conversation_mirror_actor_id()
             .unwrap()
             .to_hex(),
+        // ARCH-0026: the Dreamer is warm by default.
+        crate::dreamer_runner::authority::dreamer_actor_id()
+            .unwrap()
+            .to_hex(),
     ];
     let named = granting_system_rows
         .iter()
@@ -484,25 +488,35 @@ fn default_manifest_generated_source_trust_row_is_bound_to_the_projection_actor(
             (key.as_str() == Some(ClaimSource::Generated.as_str())).then_some(value)
         })
         .expect("the default manifest ships a generated source-trust row");
-    let Value::Map(fields) = generated else {
-        unreachable!("the generated row is a map");
+    let Value::Array(permits) = generated else {
+        unreachable!("the generated rows are a list, one per bound writer");
     };
 
     let derived_actor_ref = crate::commitment_schedule::commitment_projection_actor()?
         .entity_ref()
         .to_hex();
-    let bound = field(fields, ACTOR_REF_KEY);
-    assert_eq!(
-        bound.and_then(Value::as_str),
-        Some(derived_actor_ref.as_str()),
-        "the generated permit must name the derived commitment projection actor"
-    );
-    let cap = field(fields, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY);
-    assert_eq!(
-        cap.and_then(Value::as_u64),
-        Some(u64::from(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
-        "the cap stays parity with the minted band, with no headroom"
-    );
+    // The projector, and the Dreamer warm by default (ARCH-0026): each permit
+    // names exactly one derived engine actor, and none is class-wide.
+    let bound_to = [
+        derived_actor_ref.clone(),
+        crate::dreamer_runner::authority::dreamer_actor_id()?.to_hex(),
+    ];
+    assert_eq!(permits.len(), bound_to.len());
+    for (permit, actor_ref) in permits.iter().zip(&bound_to) {
+        let Value::Map(fields) = permit else {
+            unreachable!("each generated permit is a map");
+        };
+        assert_eq!(
+            field(fields, ACTOR_REF_KEY).and_then(Value::as_str),
+            Some(actor_ref.as_str()),
+            "each generated permit must name its derived engine actor"
+        );
+        assert_eq!(
+            field(fields, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY).and_then(Value::as_u64),
+            Some(u64::from(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
+            "the cap stays parity with the minted band, with no headroom"
+        );
+    }
 
     // And the binding is enforced, not merely recorded: the SAME `Generated`
     // write from any other actor pends on source trust.

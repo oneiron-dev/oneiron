@@ -24,6 +24,8 @@ mod catalog;
 mod http;
 mod ladder;
 mod openai;
+mod output_cap;
+mod role_route;
 mod router;
 mod served;
 mod sse;
@@ -31,11 +33,13 @@ mod status;
 #[cfg(test)]
 mod tests;
 
+pub use role_route::{RoleCall, RoleRefusal};
 pub use router::ModelRouter;
 pub use status::{ModelsStatus, ProviderStatus, RungStatus, SeatState, SeatStatus};
 
 use catalog::{catalog_entry, engine_model_id, locality_rank};
 use ladder::{LadderBackend, LadderRung};
+use output_cap::OutputCap;
 
 /// One filled seat: the ladder backend, the single model id the engine
 /// pins for it, and the widest route any of its rungs may take.
@@ -182,7 +186,14 @@ fn build_provider(
             let http = http::ProviderHttp::new(provider, http::KeyStyle::Bearer)?;
             Arc::new(OpenAiCompatBackend::new(
                 OpenAiCompatConfig::from_catalog(catalog),
-                openai::OpenAiHttp(http),
+                openai::OpenAiHttp {
+                    http,
+                    cap: OutputCap {
+                        field: provider.output_limit_field.key(),
+                        ceiling: provider.max_output_tokens,
+                        fallback: None,
+                    },
+                },
             ))
         }
         ProviderKind::AnthropicCompat => {
@@ -191,9 +202,11 @@ fn build_provider(
                 AnthropicMessagesConfig::from_catalog(catalog),
                 anthropic::AnthropicHttp {
                     http,
-                    max_output_tokens: provider
-                        .max_output_tokens
-                        .unwrap_or(anthropic::DEFAULT_MAX_OUTPUT_TOKENS),
+                    cap: OutputCap {
+                        field: "max_tokens",
+                        ceiling: provider.max_output_tokens,
+                        fallback: Some(anthropic::DEFAULT_MAX_OUTPUT_TOKENS),
+                    },
                 },
             ))
         }

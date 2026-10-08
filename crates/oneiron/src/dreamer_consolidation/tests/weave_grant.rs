@@ -1,6 +1,7 @@
-//! A stock vault's Dreamer reads nothing and lands nothing until the owner
-//! grants the weave; after the grant, one wake pass lands its claim Auto
-//! through the owned attempt sink.
+//! The Dreamer is warm by default (ARCH-0026): a fresh vault's wake pass
+//! lands its claim Auto through the owned attempt sink with no grant step. A
+//! vault seeded before the rows shipped reads nothing and lands nothing until
+//! the owner grants the weave.
 use super::*;
 use crate::dreamer_wake::{DreamerWakeDriver, RunWakePass, WakeCancellation, WakeTrigger};
 use std::future::Future;
@@ -57,18 +58,144 @@ fn pass(
     ))
 }
 
+/// The Dreamer's actor-keyed rows removed: the shipped manifest as a release
+/// before warm-by-default seeded it, or an owner pack written without them.
+fn without_dreamer_rows(manifest: &[u8]) -> Result<Vec<u8>> {
+    let dreamer = crate::dreamer_runner::authority::dreamer_actor_id()?.to_hex();
+    let names_dreamer = |row: &Value| {
+        row.as_map().is_some_and(|fields| {
+            fields.iter().any(|(key, value)| {
+                key.as_str() == Some("actor_ref") && value.as_str() == Some(&dreamer)
+            })
+        })
+    };
+    let strip = |rows: &mut Value| {
+        if let Value::Array(list) = rows {
+            list.retain(|row| !names_dreamer(row));
+            if list.len() == 1 {
+                *rows = list.remove(0);
+            }
+        }
+    };
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut &manifest[..]).expect("map") else {
+        panic!("policy manifest is a map");
+    };
+    entries.retain(|(key, value)| {
+        !(key.as_str() == Some("scoped_grants")
+            && value
+                .as_array()
+                .is_some_and(|rows| rows.iter().all(names_dreamer)))
+    });
+    for (key, value) in &mut entries {
+        match key.as_str() {
+            Some("actor_ceilings") => {
+                if let Value::Array(rows) = value {
+                    rows.retain(|row| !names_dreamer(row));
+                }
+            }
+            Some("source_trust") => {
+                if let Value::Map(sources) = value {
+                    for (source, rows) in sources.iter_mut() {
+                        if source.as_str() == Some("generated") {
+                            strip(rows);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &Value::Map(entries)).expect("encode");
+    Ok(data)
+}
+
+/// A vault seeded by a release before the Dreamer's rows shipped: its seeded
+/// default has none, and it is still the untouched seed.
+fn seeded_without_dreamer_rows(vault: &Vault) -> Result<()> {
+    let id = crate::gate::default_policy_manifest_id()?;
+    let old = without_dreamer_rows(&crate::gate::default_policy_manifest()?)?;
+    crate::test_util::put_policy_manifest_bytes(vault, id, &old)?;
+    vault.with_write_txn(|txn| {
+        vault.store.sync_state.put(
+            txn,
+            &crate::gate::seeded_manifest_key(&id),
+            blake3::hash(&old).as_bytes(),
+        )?;
+        Ok(())
+    })
+}
+
+fn enqueue_micro(vault: &Vault, run: &str, now: u64) -> Result<()> {
+    let watermark = read_watermark(vault, DreamerConsolidationScope::Micro)?;
+    let dirty = scan_dirty_turns(vault, DreamerConsolidationScope::Micro, &watermark, 10)?;
+    enqueue_partition_attempts(
+        vault,
+        DreamerConsolidationScope::Micro,
+        &dirty,
+        &watermark,
+        run,
+        now,
+    )?;
+    Ok(())
+}
+
+fn name_claims(vault: &Vault, subject: &EntityId) -> Result<Vec<ClaimBody>> {
+    Ok(vault
+        .claims_for_subject(subject)?
+        .into_iter()
+        .filter_map(|id| vault.get_claim(&id).ok().flatten())
+        .filter(|body| body.predicate == "profile.name")
+        .collect())
+}
+
 #[test]
-fn the_owner_grant_lets_a_stock_vaults_dreamer_land_its_consolidation() -> Result<()> {
-    // A stock vault: `Vault::open` seeds the shipped policy manifest, which
+fn a_fresh_vaults_dreamer_is_warm_and_lands_with_no_grant_step() -> Result<()> {
+    // A fresh vault: `Vault::open` seeds the shipped policy manifest, which
     // the legacy test opener clears.
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = std::sync::Arc::new(Vault::open(dir.path(), VaultConfig::device())?);
     crate::test_util::provision_engine_machines(&vault);
     authorize_test_inference(&vault)?;
+    assert!(vault.dreamer_weave_reach()?.ready());
+
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+    let conversation = seed_session(&vault, 0x6c, 1);
+    let turn = seed_turn(&vault, &conversation, "user", "call me Oleksii", 10);
+    let subject = EntityId::now();
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    enqueue_micro(&vault, "run-fresh", 20)?;
+    let backend = ScriptedBackend::new(vec![Ok(extraction_response(&subject, &turn))]);
+    let report = pass(&vault, &backend, node_id, 21)?;
+    assert_eq!(report.completed, 1, "{report:?}");
+    let landed = name_claims(&vault, &subject)?;
+    assert_eq!(landed.len(), 1);
+    assert_eq!(landed[0].approval, ClaimApprovalStatus::Auto);
+
+    // The rows are already there: the owner's grant finds nothing to add, and
+    // the seeded default keeps its standing.
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner = vault.authenticate_owner(
+        owner,
+        &owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    assert!(!vault.grant_dreamer_weave(&owner, 30)?);
+    Ok(())
+}
+
+#[test]
+fn the_owner_grant_lets_a_vault_seeded_without_the_rows_land_its_consolidation() -> Result<()> {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = std::sync::Arc::new(Vault::open(dir.path(), VaultConfig::device())?);
+    crate::test_util::provision_engine_machines(&vault);
+    authorize_test_inference(&vault)?;
+    seeded_without_dreamer_rows(&vault)?;
     let reach = vault.dreamer_weave_reach()?;
     assert!(
         !reach.reads && !reach.lands_auto,
-        "stock policy keeps the Dreamer out"
+        "a policy without the rows keeps the Dreamer out"
     );
 
     let node_id = crate::identity::load_or_mint_client_id(&vault)?;
@@ -76,20 +203,7 @@ fn the_owner_grant_lets_a_stock_vaults_dreamer_land_its_consolidation() -> Resul
     let turn = seed_turn(&vault, &conversation, "user", "call me Oleksii", 10);
     let subject = EntityId::now();
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
-    let enqueue = |run: &str, now: u64| -> Result<()> {
-        let watermark = read_watermark(&vault, DreamerConsolidationScope::Micro)?;
-        let dirty = scan_dirty_turns(&vault, DreamerConsolidationScope::Micro, &watermark, 10)?;
-        enqueue_partition_attempts(
-            &vault,
-            DreamerConsolidationScope::Micro,
-            &dirty,
-            &watermark,
-            run,
-            now,
-        )?;
-        Ok(())
-    };
-    enqueue("run-ungranted", 20)?;
+    enqueue_micro(&vault, "run-ungranted", 20)?;
     let refused = ScriptedBackend::new(Vec::new());
     let report = pass(&vault, &refused, node_id, 21)?;
     // Without a read grant the source is unreadable: the attempt parks and
@@ -116,16 +230,11 @@ fn the_owner_grant_lets_a_stock_vaults_dreamer_land_its_consolidation() -> Resul
 
     // A fresh turn after the grant dreams and lands.
     let later = seed_turn(&vault, &conversation, "user", "call me Oleksii", 40);
-    enqueue("run-granted", 41)?;
+    enqueue_micro(&vault, "run-granted", 41)?;
     let backend = ScriptedBackend::new(vec![Ok(extraction_response(&subject, &later))]);
     let report = pass(&vault, &backend, node_id, 42)?;
     assert_eq!(report.completed, 1, "{report:?}");
-    let landed: Vec<_> = vault
-        .claims_for_subject(&subject)?
-        .into_iter()
-        .filter_map(|id| vault.get_claim(&id).ok().flatten())
-        .filter(|body| body.predicate == "profile.name")
-        .collect();
+    let landed = name_claims(&vault, &subject)?;
     assert_eq!(landed.len(), 1);
     assert_eq!(landed[0].approval, ClaimApprovalStatus::Auto);
     let _ = turn;
@@ -144,10 +253,11 @@ fn the_grant_edits_the_owners_own_pack_and_leaves_the_seeded_default_sealed() ->
         true,
         crate::store::GateDecisionId::now(),
     )?;
+    seeded_without_dreamer_rows(&vault)?;
     let default_id = crate::gate::default_policy_manifest_id()?;
     let seeded = vault.get_raw(&default_id)?;
     // The owner's own trusted pack beside the untouched seeded default.
-    let shipped = crate::gate::default_policy_manifest()?;
+    let shipped = without_dreamer_rows(&crate::gate::default_policy_manifest()?)?;
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut shipped.as_slice()).expect("map")
     else {
         panic!("shipped policy is a map");

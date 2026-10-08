@@ -1,16 +1,20 @@
-//! The owner's weave grant to the vault's own Dreamer, and the read-only
-//! probe hosts check before they start passes.
+//! The Dreamer's weave rows, the owner's grant that adds them to a vault
+//! seeded without them, and the read-only probe hosts check before they start
+//! passes.
 //!
-//! ARCH-0026 has the Dreamer warm by default: routine reversible work runs
-//! automatically. The shipped manifest keeps class `system` default-deny and
-//! `Generated` output pending, so a stock vault's Dreamer can read nothing
-//! and land nothing: its attempts park on "prepared source not readable".
+//! ARCH-0026 has the Dreamer warm by default: it assumes the AI is in the
+//! user's corner, and routine reversible work runs automatically. So the
+//! shipped manifest a fresh vault seeds carries three rows, each keyed to the
+//! vault's Dreamer authority — a vault-wide read-only scoped grant, an Auto
+//! actor ceiling, and the `Generated` permit its consolidation lineage needs
+//! — in the same narrow, actor-keyed shape as the shipped commitment-projector
+//! rows. Class `system` as a whole keeps default-deny, and every other
+//! `Generated` writer keeps pending.
 //!
-//! The grant is an owner edit of one trusted policy pack, in place: it adds
-//! three rows, each keyed to the vault's Dreamer authority — a vault-wide
-//! read-only scoped grant, an Auto actor ceiling, and the `Generated` permit
-//! its consolidation lineage needs — in the same narrow, actor-keyed shape as
-//! the shipped commitment-projector rows. The pack edited is the vault's one
+//! A vault seeded before the rows shipped has none: its Dreamer reads nothing
+//! and lands nothing, and its attempts park on "prepared source not
+//! readable". The grant is the owner's edit of one trusted policy pack, in
+//! place, adding the same three rows. The pack edited is the vault's one
 //! owner-authored pack when there is one, so an untouched seeded default
 //! keeps its fallback standing; the seeded default itself only when it is
 //! the sole trusted pack. Every other row is kept exactly as it was, so no
@@ -20,7 +24,7 @@
 //! land, the policy still resolves open, and the retention and carry-forward
 //! policies resolve as before. Re-granting changes nothing.
 //!
-//! Reversal: the owner removes the three rows. Hosts that probe
+//! The owner may narrow or remove the rows, seeded or granted. Hosts that probe
 //! [`Vault::dreamer_weave_reach`] stop admitting passes; claims already landed
 //! stand as written history.
 use rmpv::Value;
@@ -196,6 +200,12 @@ fn push_unless_bound(list: &mut Value, actor_ref: &str, row: Value) -> Result<bo
     }
     *list = Value::Array(rows);
     Ok(added)
+}
+
+/// The shipped manifest with the Dreamer's rows: what a fresh vault seeds.
+pub(super) fn with_shipped_dreamer_rows(manifest: Vec<u8>) -> Result<Vec<u8>> {
+    let actor_ref = crate::dreamer_runner::authority::dreamer_actor_id()?.to_hex();
+    Ok(with_dreamer_rows(&manifest, &actor_ref)?.unwrap_or(manifest))
 }
 
 /// The live manifest with the Dreamer's rows added, or `None` when every

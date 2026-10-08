@@ -17,15 +17,15 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt;
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
-use oneiron::llm::{HostInferenceBinding, HostInferenceContext, LlmEventBus, TerminalSink};
+use oneiron::llm::{LlmEventBus, TerminalSink};
 use oneiron::memory::{
     MessageStreamHandle, MessageStreamReceipt, MessageWriteMode, StreamCadence, StreamCancelReason,
     StreamSyncVisibility, WitnessAuthor, WitnessMessage, WitnessTurn,
 };
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, CallClass, CallEnvelope, CallPurpose,
-    ContentPart, EdgeActorClass, EntityId, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse,
-    LlmStreamEvent, ModelTierRef, ResponseFormat, TierPrecedence, Vault, WriteActor,
+    ContentPart, EdgeActorClass, EntityId, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
+    LlmResponse, LlmStreamEvent, ModelTierRef, ResponseFormat, TierPrecedence, Vault, WriteActor,
 };
 use oneiron_driver::SessionHint;
 use serde::{Deserialize, Serialize};
@@ -38,9 +38,9 @@ type Refused = Box<Response>;
 fn refused(status: StatusCode, code: &str, message: impl Into<String>) -> Refused {
     Box::new(refusal(status, code, message))
 }
-use crate::ai_host::TurnGuard;
+use crate::ai_host::{CHAT_ROLE, TurnGuard};
 use crate::auth::{CoreAuth, CoreScope};
-use crate::models::Seat;
+use crate::models::{RoleRefusal, Seat};
 use crate::server::SyncServer;
 
 /// The seeded definition that speaks when a request names no agent.
@@ -106,6 +106,35 @@ fn line(value: &ChatLine) -> Vec<u8> {
     let mut bytes = serde_json::to_vec(value).unwrap_or_default();
     bytes.push(b'\n');
     bytes
+}
+
+/// The verified credential a turn was admitted under, held for the turn's
+/// whole life. Once it is revoked or expired the caller gets no more of the
+/// reply, and the reply is never saved as an answer.
+#[derive(Clone)]
+struct TurnCredential {
+    auth: CoreAuth,
+    vault: Arc<Vault>,
+}
+
+impl TurnCredential {
+    fn live(&self) -> bool {
+        self.auth.credential_is_live(&self.vault)
+    }
+
+    fn live_in(&self, txn: &heed::RwTxn<'_>) -> bool {
+        self.auth.credential_is_live_in_write_txn(&self.vault, txn)
+    }
+}
+
+/// Recorded on the assistant MESSAGE a revoked credential's turn leaves.
+const REVOKED: &str = "credential_revoked";
+
+fn revoked_line() -> Vec<u8> {
+    line(&ChatLine::Error {
+        code: REVOKED,
+        message: "the credential this turn was admitted under is no longer live".into(),
+    })
 }
 
 /// The writer of the user's turn: the slip's principal, or the vault's own
@@ -268,6 +297,42 @@ fn start_turn(
         refused(StatusCode::CONFLICT, "turn_refused", error.to_string())
     };
 
+    let mut messages: Vec<LlmMessage> = instructions
+        .into_iter()
+        .map(|text| text_message(LlmMessageRole::System, text))
+        .collect();
+    let skip = request.history.len().saturating_sub(settings.history_turns);
+    for earlier in request.history.into_iter().skip(skip) {
+        let role = match earlier.role {
+            HistoryRole::User => LlmMessageRole::User,
+            HistoryRole::Assistant => LlmMessageRole::Assistant,
+        };
+        messages.push(text_message(role, earlier.text));
+    }
+    messages.push(text_message(LlmMessageRole::User, request.text.clone()));
+    // Admitted through its role before anything is written: a vault route
+    // this server cannot serve refuses here, with no call made.
+    let admitted = server
+        .ai
+        .admit_role(&vault, CHAT_ROLE, chat_request(&seat, messages))
+        .map_err(|refusal| match refusal {
+            RoleRefusal::NoSeat => refused(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "no_model_configured",
+                refusal.to_string(),
+            ),
+            RoleRefusal::RouteNotServed { .. } => refused(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "model_route_not_served",
+                refusal.to_string(),
+            ),
+            RoleRefusal::Refused(_) => refused(
+                StatusCode::PAYMENT_REQUIRED,
+                "turn_not_admitted",
+                refusal.to_string(),
+            ),
+        })?;
+
     server.ai.session_hint(SessionHint::AppOpen);
     let at = vault.now_recorded_at();
     let user = vault
@@ -295,47 +360,23 @@ fn start_turn(
         )
         .map_err(|error| engine(&error))?;
 
-    let mut messages: Vec<LlmMessage> = instructions
-        .into_iter()
-        .map(|text| text_message(LlmMessageRole::System, text))
-        .collect();
-    let skip = request.history.len().saturating_sub(settings.history_turns);
-    for earlier in request.history.into_iter().skip(skip) {
-        let role = match earlier.role {
-            HistoryRole::User => LlmMessageRole::User,
-            HistoryRole::Assistant => LlmMessageRole::Assistant,
-        };
-        messages.push(text_message(role, earlier.text));
-    }
-    messages.push(text_message(LlmMessageRole::User, request.text));
-    let call = chat_request(&seat, messages);
-    let admitted = vault
-        .authorize_raw_inference(
-            call,
-            &HostInferenceContext {
-                binding: HostInferenceBinding::Advertised {
-                    model: seat.model.clone(),
-                    locality: seat.locality,
-                },
-                extraction_egress: None,
-            },
+    let call = admitted.request;
+    let metered = vault
+        .policy_budget_guard(
+            format!("chat:{}", handle.message_id().to_hex()),
+            settings.turn_budget_units,
+            oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS.min(settings.turn_budget_units),
+            BudgetExhaustionPolicy::Suspend,
+            WriteActor::new(actor, class),
         )
-        .map(oneiron::llm::AuthorizedInference::into_request)
-        .and_then(|call| {
-            let guard = vault.policy_budget_guard(
-                format!("chat:{}", handle.message_id().to_hex()),
-                settings.turn_budget_units,
-                oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS.min(settings.turn_budget_units),
-                BudgetExhaustionPolicy::Suspend,
-                WriteActor::new(actor, class),
-            )?;
+        .and_then(|guard| {
             let lease = guard.admit_for_request(&call).map_err(|denied| {
                 oneiron::Error::InvalidConfig(format!("chat budget: {denied:?}"))
             })?;
-            Ok((call, guard, lease.lease))
+            Ok((guard, lease.lease))
         });
-    let (call, guard, lease) = match admitted {
-        Ok(admitted) => admitted,
+    let (guard, lease) = match metered {
+        Ok(metered) => metered,
         Err(error) => {
             let _ = vault
                 .memory(agent, EdgeActorClass::Agent)
@@ -348,12 +389,17 @@ fn start_turn(
         }
     };
 
+    let credential = TurnCredential {
+        auth: auth.clone(),
+        vault: Arc::clone(&vault),
+    };
     let streamed = Arc::new(Mutex::new(String::new()));
     let saved = Arc::new(Mutex::new(None));
     let mut bus = LlmEventBus::new(Box::new(AssistantMessage {
         vault: Arc::clone(&vault),
         agent,
         handle,
+        credential: credential.clone(),
         streamed: Arc::clone(&streamed),
         saved: Arc::clone(&saved),
     }));
@@ -361,20 +407,21 @@ fn start_turn(
     let (finished, outcome) = tokio::sync::oneshot::channel();
     let ai = server.ai.clone();
     let turn = server.ai.enter_turn();
+    let producer = Producer {
+        bus,
+        backend: admitted.backend,
+        call,
+        guard,
+        lease,
+        vault,
+        agent,
+        handle,
+        credential: credential.clone(),
+        streamed,
+        turn,
+    };
     tokio::spawn(async move {
-        let result = produce(Producer {
-            bus,
-            seat,
-            call,
-            guard,
-            lease,
-            vault,
-            agent,
-            handle,
-            streamed,
-            turn,
-        })
-        .await;
+        let result = produce(producer).await;
         ai.session_hint(SessionHint::Activity);
         let line = match result {
             Ok(()) => match saved.lock().ok().and_then(|mut slot| slot.take()) {
@@ -423,7 +470,23 @@ fn start_turn(
             |line_value| line(&line_value),
         )
     });
-    let body = head.chain(events).chain(tail).map(Ok::<_, std::io::Error>);
+    // The response body is disclosure too: each line goes out only while the
+    // credential is live; the first line after it lapses says so and ends it.
+    let body = head
+        .chain(events)
+        .chain(tail)
+        .scan(true, move |open, bytes| {
+            let next = if !*open {
+                None
+            } else if credential.live() {
+                Some(bytes)
+            } else {
+                *open = false;
+                Some(revoked_line())
+            };
+            std::future::ready(next)
+        })
+        .map(Ok::<_, std::io::Error>);
     Ok((
         [(header::CONTENT_TYPE, "application/x-ndjson")],
         Body::from_stream(body),
@@ -467,6 +530,7 @@ struct AssistantMessage {
     vault: Arc<Vault>,
     agent: EntityId,
     handle: MessageStreamHandle,
+    credential: TurnCredential,
     /// What the producer appended to the presence plane so far.
     streamed: Arc<Mutex<String>>,
     saved: Arc<Mutex<Option<MessageStreamReceipt>>>,
@@ -474,6 +538,9 @@ struct AssistantMessage {
 
 impl TerminalSink for AssistantMessage {
     fn record(&mut self, terminal: &LlmResponse) -> oneiron::LlmResult<()> {
+        if !self.credential.live() {
+            return Err(oneiron::FatalLlmError::InvalidRequest.into());
+        }
         let memory = self.vault.memory(self.agent, EdgeActorClass::Agent);
         // The stream holds what was appended; a terminal carrying text the
         // deltas never did (a provider that sends it only at the end) is
@@ -491,10 +558,13 @@ impl TerminalSink for AssistantMessage {
                 .map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
         }
         // A cancelled terminal keeps its text but is recorded as cancelled.
+        // An answer commits only while the credential is live in its own
+        // write transaction.
         let receipt = if terminal.finish_reason == oneiron::FinishReason::Cancelled {
             memory.cancel_stream(self.handle, StreamCancelReason::ExternalSignal)
         } else {
-            memory.finalize_stream(self.handle)
+            let credential = &self.credential;
+            memory.finalize_stream_if(self.handle, |txn| credential.live_in(txn))
         }
         .map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
         if let Ok(mut slot) = self.saved.lock() {
@@ -506,40 +576,66 @@ impl TerminalSink for AssistantMessage {
 
 struct Producer {
     bus: LlmEventBus,
-    seat: Seat,
+    backend: Arc<dyn LlmBackend>,
     call: LlmRequest,
     guard: BudgetGuard,
     lease: BudgetLease,
     vault: Arc<Vault>,
     agent: EntityId,
     handle: MessageStreamHandle,
+    credential: TurnCredential,
     streamed: Arc<Mutex<String>>,
     turn: TurnGuard,
 }
 
+/// Charges what a terminal reports, or the reservation when it reports
+/// nothing.
+fn settle(
+    guard: &BudgetGuard,
+    lease: &BudgetLease,
+    usage: &oneiron::LlmUsage,
+) -> Result<(), String> {
+    if usage.input.total == 0 && usage.output.total == 0 {
+        guard.settle_reserved(lease).map(|_| ())
+    } else {
+        guard.settle_per_call(lease, usage).map(|_| ())
+    }
+    .map_err(|denied| format!("chat settlement: {denied:?}"))
+}
+
 /// Drives the model stream into the presence plane and the bus. Settles the
-/// turn's meter on every exit: honest usage on a terminal, the reservation
-/// otherwise.
+/// turn's meter on every exit: honest usage on a terminal (saved or not),
+/// the reservation otherwise. A credential that lapses mid-turn stops the
+/// call: nothing more reaches any plane, and the message is cancelled.
 async fn produce(producer: Producer) -> Result<(), String> {
     let Producer {
         mut bus,
-        seat,
+        backend,
         call,
         guard,
         lease,
         vault,
         agent,
         handle,
+        credential,
         streamed,
         mut turn,
     } = producer;
     let memory = vault.memory(agent, EdgeActorClass::Agent);
+    let cancel = |reason: StreamCancelReason| {
+        let _ = memory.cancel_stream(handle, reason);
+    };
     let fail = |reason: String| {
-        let _ = memory.cancel_stream(handle, StreamCancelReason::AgentAborted);
+        cancel(StreamCancelReason::AgentAborted);
         let _ = guard.settle_reserved(&lease);
         Err(reason)
     };
-    let mut stream = match seat.backend.stream(call, &lease) {
+    let revoked = || {
+        cancel(StreamCancelReason::Custom(REVOKED.into()));
+        let _ = guard.settle_reserved(&lease);
+        Err("the turn's credential was revoked".to_owned())
+    };
+    let mut stream = match backend.stream(call, &lease) {
         Ok(stream) => stream,
         Err(error) => return fail(format!("model stream did not start: {error:?}")),
     };
@@ -550,6 +646,9 @@ async fn produce(producer: Producer) -> Result<(), String> {
             item = stream.next() => item,
             () = turn.stopping() => return fail("the server is stopping".into()),
             _ = keepalive.tick() => {
+                if !credential.live() {
+                    return revoked();
+                }
                 if let Err(error) = memory.append_to_stream(handle, "") {
                     return fail(format!("message stream closed while waiting: {error}"));
                 }
@@ -563,6 +662,23 @@ async fn produce(producer: Producer) -> Result<(), String> {
             Ok(event) => event,
             Err(error) => return fail(format!("model stream failed: {error:?}")),
         };
+        if let LlmStreamEvent::Done { usage, .. } = &event {
+            // The provider spent this whether or not the answer is saved.
+            let usage = usage.clone();
+            if let Err(error) = bus.publish(event) {
+                if credential.live() {
+                    cancel(StreamCancelReason::AgentAborted);
+                } else {
+                    cancel(StreamCancelReason::Custom(REVOKED.into()));
+                }
+                let _ = settle(&guard, &lease, &usage);
+                return Err(format!("terminal message was not saved: {error:?}"));
+            }
+            return settle(&guard, &lease, &usage);
+        }
+        if !credential.live() {
+            return revoked();
+        }
         if let LlmStreamEvent::TextDelta { text, .. } = &event {
             if let Err(error) = memory.append_to_stream(handle, text) {
                 return fail(format!("message stream refused a delta: {error}"));
@@ -571,20 +687,8 @@ async fn produce(producer: Producer) -> Result<(), String> {
                 so_far.push_str(text);
             }
         }
-        let usage = match &event {
-            LlmStreamEvent::Done { usage, .. } => Some(usage.clone()),
-            _ => None,
-        };
         if let Err(error) = bus.publish(event) {
-            return fail(format!("terminal message was not saved: {error:?}"));
-        }
-        if let Some(usage) = usage {
-            let settled = if usage.input.total == 0 && usage.output.total == 0 {
-                guard.settle_reserved(&lease).map(|_| ())
-            } else {
-                guard.settle_per_call(&lease, &usage).map(|_| ())
-            };
-            return settled.map_err(|denied| format!("chat settlement: {denied:?}"));
+            return fail(format!("model event was not published: {error:?}"));
         }
     }
     fail("model stream ended without a terminal".into())

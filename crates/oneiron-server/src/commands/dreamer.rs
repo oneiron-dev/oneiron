@@ -1,4 +1,5 @@
-//! `oneiron dreamer grant`: the owner's one-time weave grant, made offline.
+//! `oneiron dreamer grant`: the owner's weave grant, made offline, for a
+//! vault created before the Dreamer's rows shipped in the seeded policy.
 //!
 //! Possession of the stopped vault and its configured host issuer is the
 //! admission, exactly as for `token bootstrap`: the vault's own embedded

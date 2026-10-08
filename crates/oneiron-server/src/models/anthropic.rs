@@ -9,25 +9,21 @@ use oneiron_llm_anthropic::{
 use serde_json::Value as JsonValue;
 
 use super::http::{HttpFailure, ProviderHttp, SseItem};
+use super::output_cap::OutputCap;
 use super::served::record_served_model;
 
 pub(super) struct AnthropicHttp {
     pub(super) http: ProviderHttp,
-    /// The Messages API requires `max_tokens`; this fills it when a caller
-    /// did not.
-    pub(super) max_output_tokens: u64,
+    pub(super) cap: OutputCap,
 }
 
-/// Used when neither the caller nor the provider entry names an output cap.
+/// The Messages API requires `max_tokens`; this is sent when neither the
+/// caller nor the provider entry names one.
 pub(super) const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 4_096;
 
 impl AnthropicHttp {
     fn with_output_cap(&self, mut body: JsonValue) -> JsonValue {
-        if let Some(body) = body.as_object_mut()
-            && !body.contains_key("max_tokens")
-        {
-            body.insert("max_tokens".into(), self.max_output_tokens.into());
-        }
+        self.cap.apply(&mut body);
         body
     }
 }

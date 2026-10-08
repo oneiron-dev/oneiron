@@ -6,8 +6,8 @@ use oneiron::{ClaimApprovalStatus, EntityId, TimeRange};
 use oneiron_driver::SessionHint;
 
 use super::test_support::{
-    capture_user_turn, eventually, extraction_reply, grant_dreamer, grant_dreamer_weave_only,
-    models, name_claims, rooted_vault,
+    capture_user_turn, eventually, extraction_reply, models, name_claims, rooted_vault,
+    route_extraction, saved_agent,
 };
 use super::*;
 use crate::fake_llm::FakeLlm;
@@ -16,28 +16,27 @@ use crate::fake_llm::FakeLlm;
 async fn the_dreamer_states_each_missing_prerequisite() {
     let fake = FakeLlm::start(vec![], None).await;
     let cases = [
-        (false, true, "", IdleReason::NoHostAuthority),
-        (true, false, "", IdleReason::NeedsOwnerGrant),
+        (false, "", Some(IdleReason::NoHostAuthority)),
+        // Warm by default (ARCH-0026): a fresh vault's Dreamer needs no
+        // grant step, only a model and the vault's route.
+        (true, "", None),
         (
             true,
-            true,
             "[dreamer]\nenabled = false",
-            IdleReason::Disabled,
+            Some(IdleReason::Disabled),
         ),
     ];
-    for (host_root, granted, extra, reason) in cases {
+    for (host_root, extra, reason) in cases {
         let (_dir, vault) = rooted_vault();
-        if granted {
-            grant_dreamer(&vault);
-        }
+        route_extraction(&vault);
         let host = AiHost::start(vault, Some(&models(&fake.base_url, extra)), host_root).await;
-        assert_eq!(host.handle().status().dreamer.reason, Some(reason));
+        assert_eq!(host.handle().status().dreamer.reason, reason);
         // Chat and workflows only need the generative seat.
         assert_eq!(host.handle().status().chat.state, WorkState::Waiting);
         host.shutdown().await;
     }
     let (_dir, vault) = rooted_vault();
-    grant_dreamer(&vault);
+    route_extraction(&vault);
     let mut config = models(&fake.base_url, "");
     config.extraction_egress = false;
     let host = AiHost::start(vault, Some(&config), true).await;
@@ -49,7 +48,6 @@ async fn the_dreamer_states_each_missing_prerequisite() {
     // Boot never routes extraction off the device by itself: the vault's
     // defaults are the owner's, and a restart leaves them as they are.
     let (_dir, vault) = rooted_vault();
-    grant_dreamer_weave_only(&vault);
     let before = vault.purpose_default_table().unwrap();
     let host = AiHost::start(vault.clone(), Some(&models(&fake.base_url, "")), true).await;
     assert_eq!(
@@ -63,8 +61,10 @@ async fn the_dreamer_states_each_missing_prerequisite() {
 #[tokio::test]
 async fn captured_turns_dream_on_session_end_and_land_through_the_promotion_writer() {
     let fake = FakeLlm::start(vec![], None).await;
+    // A fresh vault with a model route and no grant step: the Dreamer is
+    // warm by default (ARCH-0026).
     let (_dir, vault) = rooted_vault();
-    grant_dreamer(&vault);
+    route_extraction(&vault);
     let host = AiHost::start(
         vault.clone(),
         Some(&models(&fake.base_url, "[dreamer]\nidle_floor_secs = 600")),
@@ -116,22 +116,6 @@ async fn captured_turns_dream_on_session_end_and_land_through_the_promotion_writ
     assert_eq!(handle.status().dreamer.reason, Some(IdleReason::Stopped));
 }
 
-fn agent(vault: &oneiron::Vault, name: &str, instructions: &str) -> EntityId {
-    let (_, mut definition) = vault
-        .get_seeded_agent_definition_by_logical_id("sys.default")
-        .unwrap()
-        .expect("seeded default");
-    definition.logical_id = None;
-    definition.agent_id = format!("test.pump.{name}");
-    definition.instructions = Some(instructions.to_owned());
-    definition.skills.clear();
-    let id = EntityId::now();
-    vault
-        .put_agent_definition(&id, &definition, TimeRange { start: 1, end: 1 }, 1)
-        .unwrap();
-    id
-}
-
 #[tokio::test]
 async fn a_saved_workflow_advances_every_step_through_the_pump_without_a_call() {
     use oneiron::agent_dispatch::{
@@ -146,8 +130,8 @@ async fn a_saved_workflow_advances_every_step_through_the_pump_without_a_call() 
     )
     .await;
     let (_dir, vault) = rooted_vault();
-    let first = agent(&vault, "first", "Write one line about soil.");
-    let second = agent(&vault, "second", "Shorten the line you are given.");
+    let first = saved_agent(&vault, "first", "Write one line about soil.");
+    let second = saved_agent(&vault, "second", "Shorten the line you are given.");
     let workflow = EntityId::now();
     vault
         .save_workflow(
@@ -218,7 +202,7 @@ async fn a_failing_step_is_tried_five_times_then_its_workflow_stops() {
     use oneiron::attempt_queue::{AttemptQueue, AttemptState};
     let fake = FakeLlm::start(vec![], Some(crate::fake_llm::Reply::Status(500))).await;
     let (_dir, vault) = rooted_vault();
-    let only = agent(&vault, "always-failing", "Say one word.");
+    let only = saved_agent(&vault, "always-failing", "Say one word.");
     let workflow = EntityId::now();
     vault
         .save_workflow(
@@ -262,5 +246,119 @@ async fn a_failing_step_is_tried_five_times_then_its_workflow_stops() {
         !rows.iter().any(|row| row.state == AttemptState::Leased),
         "{rows:?}"
     );
+    host.shutdown().await;
+}
+
+/// Astra #1304 P1: every retry of a failing step got a fresh step budget,
+/// so the step's budget never bounded what its retries spent.
+#[tokio::test]
+async fn a_failing_steps_retries_spend_one_step_budget() {
+    use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher, DispatchAgent};
+    let fake = FakeLlm::start(vec![], Some(crate::fake_llm::Reply::Status(500))).await;
+    let (_dir, vault) = rooted_vault();
+    let only = saved_agent(&vault, "budget-bound", "Say one word.");
+    let workflow = EntityId::now();
+    vault
+        .save_workflow(
+            &workflow,
+            &oneiron::agent_def::workflow::WorkflowDefinition::new("bounded", vec![only]).unwrap(),
+            2,
+        )
+        .unwrap();
+    // Three calls' reservations (8,000 units each).
+    let host = AiHost::start(
+        vault.clone(),
+        Some(&models(
+            &fake.base_url,
+            "[dreamer]\nenabled = false\n[workflows]\nretry_backoff_secs = 0\nstep_budget_units = 24000",
+        )),
+        true,
+    )
+    .await;
+    let dispatcher = AgentDispatcher::new(&vault);
+    dispatcher
+        .dispatch(DispatchAgent {
+            target: AgentDispatchTarget::Workflow(workflow),
+            parent_attempt: None,
+            dedupe_key: Some("bounded-test".into()),
+            run_id: Some("bounded-test".into()),
+            now: 10,
+        })
+        .unwrap();
+    assert!(
+        eventually(Duration::from_secs(20), || dispatcher
+            .open_workflow_roots()
+            .is_ok_and(|roots| roots.is_empty()))
+        .await,
+        "the workflow never stopped; status {:?}",
+        host.handle().status().workflows
+    );
+    // Each failed try is charged its reservation, so three tries spend the
+    // step's budget and a fourth is never admitted.
+    assert_eq!(fake.seen().len(), 3);
+    host.shutdown().await;
+}
+
+/// Astra #1304 P1: boot lease recovery requeued an attempt parked on its
+/// budget trap, so a restart spent without the trap's resume signal.
+#[tokio::test]
+async fn a_budget_trapped_pass_stays_parked_across_a_restart() {
+    use oneiron::attempt_queue::{AttemptQueue, AttemptRecord, AttemptState};
+    let fake = FakeLlm::start(vec![], None).await;
+    let (_dir, vault) = rooted_vault();
+    route_extraction(&vault);
+    let subject = EntityId::now();
+    vault
+        .put_entity(
+            &subject,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )
+        .unwrap();
+    // A pass budget below one call's reservation: the first extraction step
+    // traps on its budget before any provider call.
+    let tight = models(
+        &fake.base_url,
+        "[dreamer]\nidle_floor_secs = 600\npass_budget_units = 8500\n[workflows]\nenabled = false",
+    );
+    let host = AiHost::start(vault.clone(), Some(&tight), true).await;
+    host.handle().session_hint(SessionHint::AppOpen);
+    capture_user_turn(&vault, "call me Oleksii");
+    host.handle().session_hint(SessionHint::ExplicitEnd);
+    let runner = oneiron::DreamerRunnerStore::new(&vault);
+    let trapped = || -> Option<AttemptRecord> {
+        AttemptQueue::new(&vault)
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|row| {
+                runner
+                    .parked_attempt(row.id)
+                    .unwrap()
+                    .is_some_and(|park| park.park_owner.starts_with("dreamer.trap:"))
+            })
+    };
+    assert!(
+        eventually(Duration::from_secs(30), || trapped().is_some()).await,
+        "no pass trapped; status {:?}",
+        host.handle().status().dreamer
+    );
+    host.shutdown().await;
+    assert!(fake.seen().is_empty());
+
+    // A restart with room to spend is not the trap's resume signal.
+    fake.push(extraction_reply(subject, "Oleksii"));
+    let roomy = models(
+        &fake.base_url,
+        "[dreamer]\nidle_floor_secs = 600\n[workflows]\nenabled = false",
+    );
+    let host = AiHost::start(vault.clone(), Some(&roomy), true).await;
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert!(fake.seen().is_empty(), "the trapped pass ran unsignalled");
+    let parked = trapped().expect("still parked on its trap");
+    assert_eq!(parked.state, AttemptState::Leased);
+    assert!(name_claims(&vault, &subject).is_empty());
     host.shutdown().await;
 }

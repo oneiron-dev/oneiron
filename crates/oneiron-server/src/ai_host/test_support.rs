@@ -22,33 +22,23 @@ pub(crate) fn rooted_vault() -> (tempfile::TempDir, Arc<Vault>) {
     (dir, vault)
 }
 
-/// The owner's one-time grant, as `oneiron dreamer grant --extraction-route
-/// own_server` makes it.
-pub(crate) fn grant_dreamer(vault: &Vault) {
-    grant_dreamer_weave_only(vault);
+/// The vault's model route for extraction, as the owner sets it
+/// (`oneiron dreamer grant --extraction-route own_server`, or
+/// `PUT /v1/llm/defaults`). Boot never writes it.
+pub(crate) fn route_extraction(vault: &Vault) {
     super::route_dreamer_extraction(vault, oneiron::ModelLocality::OwnServer).unwrap();
-}
-
-/// The weave grant alone, leaving the vault's inference defaults as shipped.
-pub(crate) fn grant_dreamer_weave_only(vault: &Vault) {
-    let owner = vault.ensure_embedded_owner_actor().unwrap();
-    let owner = vault
-        .authenticate_owner(
-            owner,
-            &owner.to_hex(),
-            true,
-            oneiron::store::GateDecisionId::now(),
-        )
-        .unwrap();
-    vault.grant_dreamer_weave(&owner, 1).unwrap();
 }
 
 /// HIGH-level config: one local model for every seat, egress opted in.
 pub(crate) fn models(base_url: &str, extra: &str) -> ModelsConfig {
-    let file: ModelsFile = toml::from_str(&format!(
+    models_toml(&format!(
         "default = \"local:test-model\"\nextraction_egress = true\n{extra}\n[providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{base_url}\"\n"
     ))
-    .unwrap();
+}
+
+/// `[models]` as written in `oneiron.toml`.
+pub(crate) fn models_toml(text: &str) -> ModelsConfig {
+    let file: ModelsFile = toml::from_str(text).unwrap();
     file.resolve(None).unwrap()
 }
 
@@ -112,6 +102,24 @@ pub(crate) fn extraction_reply(subject: EntityId, value: &str) -> Reply {
         }]})
         .to_string()
     }))
+}
+
+/// A custom agent definition the pump can dispatch: the seeded default's
+/// shape with its own instructions.
+pub(crate) fn saved_agent(vault: &Vault, name: &str, instructions: &str) -> EntityId {
+    let (_, mut definition) = vault
+        .get_seeded_agent_definition_by_logical_id("sys.default")
+        .unwrap()
+        .expect("seeded default");
+    definition.logical_id = None;
+    definition.agent_id = format!("test.pump.{name}");
+    definition.instructions = Some(instructions.to_owned());
+    definition.skills.clear();
+    let id = EntityId::now();
+    vault
+        .put_agent_definition(&id, &definition, TimeRange { start: 1, end: 1 }, 1)
+        .unwrap();
+    id
 }
 
 /// Polls `condition` until it holds or `timeout` passes.

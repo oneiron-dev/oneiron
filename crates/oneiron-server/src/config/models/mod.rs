@@ -24,7 +24,7 @@ mod provider;
 mod tests;
 
 pub use levels::{ModelRef, Rung, SHORTHAND_ROLES, role_key};
-pub use provider::{ProviderConfig, ProviderKind};
+pub use provider::{OutputLimitField, ProviderConfig, ProviderKind};
 
 use levels::{RoleFile, Shorthand};
 use provider::ProviderFile;

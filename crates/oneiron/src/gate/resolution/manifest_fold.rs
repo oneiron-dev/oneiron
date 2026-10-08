@@ -282,12 +282,14 @@ pub(crate) fn resolve_policy_manifest(
                     {
                         resolution.diagnostics.malformed_manifest_seen = true;
                     }
-                    // The seeded D7 row is a FALLBACK, not an owner vote.
-                    // Byte-exact matching avoids treating a later owner update
-                    // at that same ID as another copy of the seeded default.
+                    // The seeded D7 row is a FALLBACK, not an owner vote. The
+                    // seed marker, not today's shipped bytes, says so: any
+                    // local re-authoring at that ID clears it, and a vault
+                    // seeded by an earlier release keeps its standing.
                     if id == default_manifest_id
-                        && body.as_slice()
-                            == crate::gate::default_manifest::default_policy_manifest()?.as_slice()
+                        && crate::gate::manifest_authenticity::manifest_is_seeded_default(
+                            store, txn, &id, body,
+                        )?
                     {
                         default_retention = Some(retention);
                     } else {
@@ -744,7 +746,6 @@ pub(crate) fn retention_edit_target(
         "gate decision retention manifest missing".into(),
     ))?;
     let default_id = crate::gate::default_manifest::default_policy_manifest_id()?;
-    let seeded = crate::gate::default_manifest::default_policy_manifest()?;
     let mut owner_ids = Vec::new();
     let mut default_present = false;
     for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
@@ -765,7 +766,11 @@ pub(crate) fn retention_edit_target(
         if decoded.gate_decision_retention.is_none() {
             continue;
         }
-        if id == default_id && raw.body == seeded {
+        if id == default_id
+            && crate::gate::manifest_authenticity::manifest_is_seeded_default(
+                store, txn, &id, &raw.body,
+            )?
+        {
             default_present = true;
         } else {
             owner_ids.push(id);

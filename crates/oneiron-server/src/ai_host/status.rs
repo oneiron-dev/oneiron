@@ -16,8 +16,10 @@ pub enum IdleReason {
     /// The Dreamer's model is off the device and `models.extraction_egress`
     /// is not set.
     ExtractionEgressNotAllowed,
-    /// The vault's policy does not yet let its Dreamer read and land
-    /// consolidation (`oneiron dreamer grant`, once, with the server stopped).
+    /// The vault's policy does not let its Dreamer read and land
+    /// consolidation: a vault created before the rows shipped, or one whose
+    /// owner removed them (`oneiron dreamer grant`, once, with the server
+    /// stopped).
     NeedsOwnerGrant,
     /// The vault's extraction and consolidation defaults do not route to the
     /// Dreamer seat's widest rung (`oneiron dreamer grant --extraction-route`,

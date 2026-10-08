@@ -9,9 +9,13 @@ use oneiron_llm_openai::{
 use serde_json::Value as JsonValue;
 
 use super::http::{HttpFailure, ProviderHttp, SseItem};
+use super::output_cap::OutputCap;
 use super::served::record_served_model;
 
-pub(super) struct OpenAiHttp(pub(super) ProviderHttp);
+pub(super) struct OpenAiHttp {
+    pub(super) http: ProviderHttp,
+    pub(super) cap: OutputCap,
+}
 
 impl From<HttpFailure> for OpenAiCompatTransportError {
     fn from(failure: HttpFailure) -> Self {
@@ -31,9 +35,11 @@ impl OpenAiCompatTransport for OpenAiHttp {
         _lease: &'a BudgetLease,
     ) -> OpenAiCompatFuture<'a> {
         Box::pin(async move {
+            let mut body = request.body;
+            self.cap.apply(&mut body);
             let mut reply = self
-                .0
-                .post_json(&request.path, &request.headers, &request.body)
+                .http
+                .post_json(&request.path, &request.headers, &body)
                 .await?;
             // A proxy may answer under its own spelling of the model (a login
             // prefix stripped, say). Record what it said; never reject on it.
@@ -62,9 +68,9 @@ impl OpenAiCompatTransport for OpenAiHttp {
         request: OpenAiCompatHttpRequest,
         _lease: &'a BudgetLease,
     ) -> Result<OpenAiCompatProviderStream<'a>, OpenAiCompatTransportError> {
-        let events = self
-            .0
-            .post_sse(&request.path, &request.headers, &request.body);
+        let mut body = request.body;
+        self.cap.apply(&mut body);
+        let events = self.http.post_sse(&request.path, &request.headers, &body);
         let frames = futures_util::stream::unfold(
             Frames {
                 events: Box::pin(events),

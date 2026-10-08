@@ -36,6 +36,13 @@ impl ModelRouter {
     fn backend(&self, model: &ModelId) -> Option<&Arc<dyn LlmBackend>> {
         self.routes.get(model).map(|(_, backend)| backend)
     }
+
+    /// Where `model` runs and the backend that serves it.
+    pub(super) fn served(&self, model: &ModelId) -> Option<(ModelLocality, Arc<dyn LlmBackend>)> {
+        self.routes
+            .get(model)
+            .map(|(locality, backend)| (*locality, Arc::clone(backend)))
+    }
 }
 
 impl LlmBackend for ModelRouter {

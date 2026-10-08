@@ -86,7 +86,12 @@ pub(super) fn settle(
         }
     };
     let root_ref = as_entity(root)?;
-    let tries = tries_so_far(&queue, step.leaf)?;
+    // Which try of its step this was: a retry is a fresh row, so the try
+    // count is the lineage behind it.
+    let tries = queue
+        .retry_chain_depth(step.leaf)?
+        .saturating_add(1)
+        .min(u32::from(MAX_TRIES.get()));
     DreamerRunnerStore::new(vault).fail_agent_dispatch_with_evidence(
         HandleAttemptFailure {
             attempt_id: step.leaf,
@@ -109,18 +114,4 @@ pub(super) fn settle(
             healer_slot: HealerSlot::Reserved,
         },
     )
-}
-
-/// Which try of its step `leaf` is, for the backoff: one more than the
-/// retries behind it (a retry is a fresh row), read up to the limit.
-fn tries_so_far(queue: &AttemptQueue<'_>, leaf: AttemptId) -> oneiron::Result<u16> {
-    let mut tries = 1;
-    let mut cursor = queue.get(leaf)?.and_then(|row| row.retry_of);
-    while let Some(earlier) = cursor
-        && tries < MAX_TRIES.get()
-    {
-        tries += 1;
-        cursor = queue.get(earlier)?.and_then(|row| row.retry_of);
-    }
-    Ok(tries)
 }

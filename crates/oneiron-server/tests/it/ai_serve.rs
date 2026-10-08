@@ -189,7 +189,8 @@ async fn a_dream_pass_killed_mid_call_runs_again_exactly_once_after_restart() {
         &models_section(&fake.base_url),
     );
 
-    // Without the owner's grant the Dreamer waits and spends nothing.
+    // The owner routes the vault's extraction to its own server; the
+    // Dreamer's policy rows came with the fresh vault.
     let granted = oneiron(
         &config,
         &["dreamer", "grant", "--extraction-route", "own_server"],
