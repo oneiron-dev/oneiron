@@ -9,7 +9,7 @@ the fork.
 | crate | upstream base | fork branch | pinned rev | licence |
 |---|---|---|---|---|
 | `sudachi` 0.6.11 | [WorksApplications/sudachi.rs](https://github.com/WorksApplications/sudachi.rs) tag `v0.6.11`, `90fd6068c80c2fc3b63e0dbab0e341475bad4d8f` | [`oneiron/v0.6.11`](https://github.com/oneiron-dev/sudachi.rs/tree/oneiron/v0.6.11) | `d8cba3609521805ebf35bfc2b71d8099a13befef` | Apache-2.0 |
-| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `562f4863bf970f650a209ff92f42b4fef699ca99` | MIT OR Apache-2.0 |
+| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `953fbbb1138ad2ccda9a188e67d2a3cf49570143` | MIT OR Apache-2.0 |
 
 ## Changing a forked crate
 
@@ -51,14 +51,14 @@ never landed). Its manifest keeps the exact `=0.9.3` and `=3.1.2` requirements; 
 
 ```toml
 [patch.crates-io]
-formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "562f4863bf970f650a209ff92f42b4fef699ca99" }
-formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "562f4863bf970f650a209ff92f42b4fef699ca99" }
-formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "562f4863bf970f650a209ff92f42b4fef699ca99" }
-formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "562f4863bf970f650a209ff92f42b4fef699ca99" }
-formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "562f4863bf970f650a209ff92f42b4fef699ca99" }
+formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "953fbbb1138ad2ccda9a188e67d2a3cf49570143" }
+formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "953fbbb1138ad2ccda9a188e67d2a3cf49570143" }
+formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "953fbbb1138ad2ccda9a188e67d2a3cf49570143" }
+formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "953fbbb1138ad2ccda9a188e67d2a3cf49570143" }
+formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "953fbbb1138ad2ccda9a188e67d2a3cf49570143" }
 ```
 
-Fork branch `oneiron/parity` (0.9.3-oneiron.10), over `362becff`:
+Fork branch `oneiron/parity` (0.9.3-oneiron.11), over `362becff`:
 
 - `adc4743f` "Owned evaluator patch 0.9.3-oneiron.1" (the `oneiron/0.9.3` branch head):
   `formualizer-eval/src/interpreter.rs` propagates a typed error on either side of `&`, in both
@@ -243,11 +243,39 @@ Fork branch `oneiron/parity` (0.9.3-oneiron.10), over `362becff`:
   when the result is dropped, so `Pick+0` with `Pick = OFFSET(Sheet1!$C$1,RANDBETWEEN(0,1),0)`
   draws what `OFFSET(Sheet1!$C$1,RANDBETWEEN(0,1),0)+0` draws (20 for seed 7; it gave 10). Still
   2,967 of 2,967 and 811/811.
+- `562f4863..953fbbb1` (stage 2, upstream commits, 2026-10-08): six commits picked from upstream's
+  `main` (`a1425480`) with `git cherry-pick -x`, each kept only on Excel's values or a measured
+  benefit. Parity, against Excel for Windows 16.0.20430 (`ops/excel-upstream-picks-probe-20261008.md`
+  in the calc workspace, 201 cases; the fork before differed on 119): `2475598b` makes `^` group
+  left to right (`=2^3^2` is 64; it gave 512); `a3a5d796` refuses a ragged array literal
+  (`={1,2;3}`), as Excel refuses it as a formula and as a defined name; `c2c724d7` makes XLOOKUP
+  compare the lengths its lookup and return arrays declare before it searches, whatever
+  `if_not_found` says (`XLOOKUP(2,A1:A6,B1:B5)` is `#VALUE!` with A6 blank, and so is `A:A`
+  against `B1:B10`, through LET, LAMBDA, OFFSET and defined names alike). Where Excel disagrees
+  with `c2c724d7` the fork follows Excel (`f5080f0b`): a single-cell lookup array pairs with a
+  one-row or a one-column return array (`XLOOKUP(1,A1,B1:B2)` spills {10;20}; upstream gave
+  `#VALUE!`), and an error XLOOKUP gives is the result of a range operator built on it
+  (`SUM(XLOOKUP(2,A1:A3,B1:B4):B5)` is `#VALUE!`, not `#REF!`). A review of the pin added a third
+  probe (48 cases) and `faf71fdc`: a reference a function returns keeps the extent it declares
+  (`XLOOKUP(2,INDIRECT("A:A"),B:B)` is 20, and `#VALUE!` against `B1:B5`), an approximate match keeps
+  a single cell's pairing (`SUM(XLOOKUP(1,A1,B1:B2,,-1))` is 30), and the range operator over a
+  function that gives a value is that value's error or `#VALUE!` (`SUM(IF(TRUE,5):B5)`; it gave
+  `#REF!`), resolving the function once (`20ccd28e` and `25bce03f`, re-reviews: a branch IF selects,
+  or an argument INDEX read before declining, is not evaluated again for the value), a LET-bound
+  LAMBDA's call included (`953fbbb1`). Performance, release builds against `562f4863` on 20 large SpreadsheetBench workbooks
+  and filled-column stress cases (interleaved fresh-process runs timing load, first calculation,
+  an edit's recalculation and `recalculate_xlsx_bytes`, with peak memory): `e3ca8218` provisions the Arrow ingest lane
+  builders lazily (peak memory 15-42% lower on four of the twenty workbooks) and `6669bbcc`
+  finishes CoordHasher with a full avalanche (a filled column of 50,000 or 200,000 formulas loads
+  17-19% faster; first calculation 37% faster on one workbook, `recalculate_xlsx_bytes` 36% faster
+  on another). `b65931ef` (lock-free repeated builtin loading) was picked and reverted
+  (`08ae49a2`): no measured benefit, in a fresh process or over five recalculations in one.
+  Still 2,967 of 2,967 and 811/811.
 
 `deny.toml` allows `https://github.com/oneiron-dev/formualizer` in `allow-git`, and CC0-1.0
 (owner ruling 2026-09-26) for `tiny-keccak` 2.0.2, which `formualizer-eval` pulls in at build
 time through `arrow` → `ahash` → `const-random`. The engine stamps recalculated versions
-`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.10`.
+`oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.11`.
 
 ## Licences and attribution
 

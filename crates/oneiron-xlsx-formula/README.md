@@ -146,14 +146,15 @@ depth limits, or the workbook fails outright. A relationship part that does not 
 fallback, as before: the link check fails closed.
 
 The evaluator is formualizer 0.9.3 from the org fork `oneiron-dev/formualizer`, pinned
-by rev in the root manifest (0.9.3-oneiron.10): upstream plus the owned patch that keeps
+by rev in the root manifest (0.9.3-oneiron.11): upstream plus the owned patch that keeps
 a typed error on either side of `&`, plus the Excel parity work on the fork's
-`oneiron/parity` branch (ONE-2700 parts 1 and 3, the third, fourth and fifth parity loops, and
-stage 2's linked workbooks and caller-context functions). `docs/ops/forked-dependencies.md` records the
-fork branch, the rev and the patches. Nothing of formualizer is vendored here.
+`oneiron/parity` branch (ONE-2700 parts 1 and 3, the third, fourth and fifth parity loops,
+stage 2's linked workbooks and caller-context functions, and five commits picked from upstream's
+`main`). `docs/ops/forked-dependencies.md` records the fork branch, the rev and the patches.
+Nothing of formualizer is vendored here.
 
 The corpus rule (default only at or above LibreOffice on the same corpus) is met at fork
-rev `562f4863`: through the writer, all 2,967 scored fresh-Excel SpreadsheetBench
+rev `953fbbb1`: through the writer, all 2,967 scored fresh-Excel SpreadsheetBench
 workbooks (truth recorded on Excel for Windows 16.0.20430; cells downstream of NOW/TODAY/RAND
 skipped) are fully Excel-identical (LibreOffice 25.8 matched 2,648 of the 2,951 it was measured
 on), and all 811 pinned native Excel goldens (recorded on Excel for Windows 16.0.20430; the
@@ -185,7 +186,7 @@ differs); 12 read CELL("filename"), 6 the workbook itself and 2 pass the token b
 for escaped names and formulas, related tables and malformed workbook metadata change no corpus
 workbook's decision or output bytes.
 
-Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.10`.
+Recalculated versions stamp `oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.11`.
 The corpus report separately identifies the evaluator (`ENGINE_STAMP`). A no-recalc
 plan records no stamp; fallback runs record the fallback's own engine and version.
 
