@@ -2481,3 +2481,111 @@ fn the_window_keeps_the_nearest_earlier_turns() {
         vec![turns[3], turns[2]]
     );
 }
+
+/// A same-second re-mark of a settled turn draws a new id: pruning the
+/// settled marker frees no id, so the old one never names the new pass, and
+/// the two passes' traces name distinct attempts.
+#[test]
+fn a_settled_marker_s_id_is_never_drawn_again() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    let turn_ref = Some("72727272727272727272727272727272".to_owned());
+    let tagged = EntityId::from_hex(turn_ref.as_deref().expect("ref")).expect("turn id");
+    let memory = vault.memory(speaker(&vault), EdgeActorClass::Human);
+    memory
+        .witness(&turn(
+            turn_ref.clone(),
+            vec![message(0, "Ada sailed north")],
+        ))
+        .expect("witness");
+    let first = markers(&vault).remove(0).id;
+    let tagger = Scripted::new(Answer::Good);
+    let reconciler = reconciler(&vault, &tagger);
+    reconciler.drain_once().expect("drain");
+    // The same store-clock second: new text owes the turn a new pass.
+    memory
+        .witness(&turn(turn_ref, vec![message(1, "and then turned east")]))
+        .expect("more text");
+    let second = markers(&vault).remove(0).id;
+    assert_ne!(first, second, "a pruned marker's id is not drawn again");
+    assert!(
+        AttemptQueue::new(&vault)
+            .get(first)
+            .expect("read")
+            .is_none(),
+        "the old id names nothing"
+    );
+    reconciler.drain_once().expect("drain");
+    let attempts: Vec<String> = vault
+        .tagging_trace_history(Some(&tagged))
+        .expect("history")
+        .into_iter()
+        .map(|record| record.trace.attempt)
+        .collect();
+    assert_eq!(attempts.len(), 2);
+    assert_ne!(attempts[0], attempts[1]);
+}
+
+/// A tagging marker landed through the generic queue doors is not handed
+/// off: a minted successor would sit outside the tagging range, where other
+/// kinds' scans read. The hand-off is refused and writes no successor.
+#[test]
+fn a_landing_hand_off_of_a_tagging_marker_is_refused() {
+    use crate::attempt_queue::{
+        AcceptAttemptLanding, AttemptResumePoint, FinishAttemptLanding, LandingOutcome,
+        LandingTrigger, RecordAttemptResumePoint,
+    };
+    const OWNER: &str = "worker-a";
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    witness(&vault, "Ada sailed north");
+    let queue = AttemptQueue::new(&vault);
+    let ClaimOutcome::Claimed(leased) = queue
+        .claim_kind(
+            TAGGING_MARKER_KIND,
+            ClaimAttempt {
+                lease_owner: OWNER.into(),
+                now: NOW,
+            },
+        )
+        .expect("claim")
+    else {
+        panic!("the marker is ready");
+    };
+    let LandingOutcome::Landing(_) = queue
+        .accept_landing(AcceptAttemptLanding {
+            id: leased.id,
+            lease_owner: OWNER.into(),
+            attempt_count: leased.attempt_count,
+            trigger: LandingTrigger::BudgetWarning,
+            status: Some("landing".into()),
+            resume_point: None,
+            request_sequence: None,
+            now: NOW,
+        })
+        .expect("landing")
+    else {
+        panic!("a fresh landing");
+    };
+    queue
+        .record_resume_point(RecordAttemptResumePoint {
+            id: leased.id,
+            lease_owner: OWNER.into(),
+            attempt_count: leased.attempt_count,
+            resume_point: AttemptResumePoint::new("step-1", NOW),
+            now: NOW,
+        })
+        .expect("resume point");
+    let handed_off = queue.finish_landing(FinishAttemptLanding {
+        id: leased.id,
+        lease_owner: OWNER.into(),
+        attempt_count: leased.attempt_count,
+        hand_off: true,
+        scheduled_at: None,
+        now: NOW,
+    });
+    assert!(handed_off.is_err(), "the hand-off is refused");
+    let rows = markers(&vault);
+    assert_eq!(rows.len(), 1, "no successor was written");
+    assert!(crate::attempt_queue::owner_retained_id(&rows[0].id));
+}

@@ -8,16 +8,22 @@ use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::ports::EdgeDirection;
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Vault};
 
 /// Attempt kind of a tagging marker in the job tables.
 pub const TAGGING_MARKER_KIND: &str = "oneironer.tag_turn";
 
 const CHECKPOINT_HEX_LEN: usize = 16;
-const MARKER_ID_DOMAIN: &[u8] = b"oneiron.tagging.marker.v1\0";
-/// Probes for a free derived id: one per earlier marker of the same turn and
-/// checkpoint committed in the same second.
-const MAX_MARKER_GENERATIONS: u32 = 4096;
+const MARKER_ID_DOMAIN: &[u8] = b"oneiron.tagging.marker.v2\0";
+/// Probes for a free marker id: its digest names a sequence number no other
+/// marker drew, so only a chance collision needs another.
+const MAX_MARKER_GENERATIONS: u32 = 16;
+/// The sequence number the next marker draws: job state, never reset, so a
+/// marker id is never drawn twice, not even once a settled marker has left
+/// the job ledger.
+const MARKER_SEQUENCE: SideTable<(), u64, Raw> =
+    SideTable::new(&side_table::TAGGING_MARKER_SEQUENCE);
 const RETRY_ID_DOMAIN: &[u8] = b"oneiron.tagging.retry.v1\0";
 /// Probes for a free retry id: its digest names the try it retries, which
 /// has one successor, so only a chance collision needs another.
@@ -151,13 +157,15 @@ pub(super) fn dedupe_key(turn: &EntityId, checkpoint: &str) -> String {
 
 /// The marker id is the owner-retained prefix, the low seven bytes of the
 /// store-clock second it was committed at, then a digest of what it names: a
-/// new marker's digest names its turn and checkpoint, a retry's names the try
-/// it retries, so a long retry history takes none of the ids a new marker of
-/// the turn needs. Committing either draws nothing from the vault's id
-/// source, so a write allocates the same entity ids with or without a tagger;
-/// the readiness index still drains markers in commit order across seconds;
-/// and every marker sits in the ledger's owner-retained range, which no scan
-/// of another job kind reads.
+/// new marker's digest names its turn, checkpoint and the marker sequence
+/// number it drew, a retry's names the try it retries. No two markers draw
+/// one sequence number and a try has one successor, so no id is drawn twice,
+/// even after pruning, and a long retry history takes none of the ids a new
+/// marker needs. Committing either draws nothing from the vault's id source,
+/// so a write allocates the same entity ids with or without a tagger; the
+/// readiness index still drains markers in commit order across seconds; and
+/// every marker sits in the ledger's owner-retained range, which no scan of
+/// another job kind reads.
 fn derived_id(
     domain: &[u8],
     parts: &[&[u8]],
@@ -214,10 +222,25 @@ pub(super) fn enqueue_marker_in_txn(
     if let Some(live) = queue.pending_dedupe_in_txn(wtxn, TAGGING_MARKER_KIND, &key)? {
         return Ok(EnqueueOutcome::Existing(live));
     }
+    let sequence = MARKER_SEQUENCE
+        .get(&vault.store, wtxn, &())?
+        .unwrap_or_default();
+    MARKER_SEQUENCE.put(
+        &vault.store,
+        wtxn,
+        &(),
+        &sequence
+            .checked_add(1)
+            .ok_or(Error::IndexOverflow("tagging marker sequence"))?,
+    )?;
     let id = free_id(vault, wtxn, MAX_MARKER_GENERATIONS, |generation| {
         derived_id(
             MARKER_ID_DOMAIN,
-            &[turn.as_bytes(), checkpoint.as_bytes()],
+            &[
+                turn.as_bytes(),
+                checkpoint.as_bytes(),
+                &sequence.to_be_bytes(),
+            ],
             recorded_at,
             generation,
         )

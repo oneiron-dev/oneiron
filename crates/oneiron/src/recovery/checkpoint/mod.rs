@@ -228,6 +228,13 @@ impl Vault {
         }) {
             return Err(codec_error());
         }
+        // A job row of another kind in the owner-retained key range would
+        // hide from that kind's scans: refused before any destination exists.
+        if image.databases["job_records"].iter().any(|(key, value)| {
+            crate::attempt_queue::foreign_row_in_owner_retained_range(key, value)
+        }) {
+            return Err(codec_error());
+        }
         // Authenticate every ORCB row against LIVE exterior custody before
         // creating a destination. A checkpoint never carries a key copy.
         crate::store::preflight_checkpoint_rows(&image.databases["vault_meta"])?;

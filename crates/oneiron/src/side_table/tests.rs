@@ -541,6 +541,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "SYNC_RESIDENCE_ITEM_DOCUMENT",
         "SYNC_RESIDENCE_OPENED_ITEM",
         "SYNC_RESIDENCE_PROMOTED_WINDOW",
+        "TAGGING_MARKER_SEQUENCE",
         "TAGGING_TRACE",
         "TAGGING_TRACE_AGE",
         "TASK_ASK_BAND",

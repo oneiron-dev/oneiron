@@ -105,6 +105,18 @@ pub(crate) fn owner_retained_id(id: &AttemptId) -> bool {
 /// The first key of the owner-retained range, as a ledger scan bound.
 pub(crate) const OWNER_RETAINED_RANGE_START: [u8; 1] = [OWNER_RETAINED_ID_PREFIX];
 
+/// Whether a stored job row of another kind lies in the owner-retained
+/// range, where that kind's scans never read it: what a restore refuses. An
+/// owner-retained row below the range (one an earlier build wrote) stays
+/// readable; a row that does not decode is the decoder's to refuse.
+pub(crate) fn foreign_row_in_owner_retained_range(key: &[u8], value: &[u8]) -> bool {
+    let Ok(id) = AttemptId::from_bytes(key) else {
+        return false;
+    };
+    owner_retained_id(&id)
+        && decode_record(value, id).is_ok_and(|record| !owner_retained_kind(&record.kind))
+}
+
 /// Refuses a new row whose id lies in the other kinds' range: an
 /// owner-retained row outside its own, or any other row inside it.
 pub(crate) fn check_owner_retained_range(kind: &str, id: &AttemptId) -> crate::Result<()> {
