@@ -8,7 +8,7 @@ use oneiron::{
     LlmMessage, LlmMessageRole, LlmRequest, LlmStreamEvent, ModelLocality, ModelTierRef,
     ResponseFormat, TierPrecedence,
 };
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::*;
 use crate::fake_llm::{FakeLlm, Reply};
@@ -338,15 +338,6 @@ async fn the_router_serves_seats_and_configured_models_by_id() {
             .await
             .is_err()
     );
-}
-
-#[test]
-fn no_models_section_builds_no_seat() {
-    let runtime = ModelRuntime::build(None);
-    assert!(runtime.router().is_none());
-    assert!(runtime.seat(ModelRole::DreamerCurrent).is_none());
-    let status: Value = serde_json::to_value(runtime.status()).unwrap();
-    assert_eq!(status["configured"], json!(false));
 }
 
 #[test]

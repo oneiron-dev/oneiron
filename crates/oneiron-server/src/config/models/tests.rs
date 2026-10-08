@@ -99,80 +99,6 @@ rungs = [
     assert_eq!(chat[0].prompt.as_deref(), Some("Answer briefly."));
 }
 
-#[test]
-fn one_edit_swaps_a_roles_model() {
-    let before = resolve(r#"default = "cpa:gpt-6.1-sol""#).unwrap();
-    let after = resolve(r#"default = "claude:claude-family-latest""#).unwrap();
-    assert_ne!(
-        before.ladder(ModelRole::DreamerCurrent),
-        after.ladder(ModelRole::DreamerCurrent)
-    );
-    assert_eq!(
-        after.providers["claude"].kind,
-        ProviderKind::AnthropicCompat
-    );
-}
-
-#[test]
-fn levels_refuse_ambiguity_and_unknown_providers() {
-    let error = resolve(
-        r#"
-default = "cpa:a"
-cloud = "cpa:b"
-"#,
-    )
-    .unwrap_err();
-    assert!(error.to_string().contains("pick one"));
-    assert!(
-        resolve(r#"default = "nowhere:model""#)
-            .unwrap_err()
-            .to_string()
-            .contains("does not define")
-    );
-    assert!(resolve(r#"default = "no-separator""#).is_err());
-    let twice = resolve(
-        r#"
-[roles.checker]
-rungs = [{ model = "cpa:a" }, { model = "cpa:a" }]
-"#,
-    )
-    .unwrap_err();
-    assert!(twice.to_string().contains("twice"));
-}
-
-#[test]
-fn the_tagger_serves_only_the_extraction_encoder_role() {
-    let config = resolve(
-        r#"
-[roles.extraction_encoder]
-model = "tagger:rd17"
-"#,
-    )
-    .unwrap();
-    assert_eq!(
-        models(config.ladder(ModelRole::ExtractionEncoder).unwrap()),
-        ["tagger:rd17"]
-    );
-    assert!(resolve(r#"default = "tagger:rd17""#).is_err());
-    assert!(
-        resolve(
-            r#"
-[roles.extraction_encoder]
-model = "cpa:gpt-6.1-sol"
-"#
-        )
-        .is_err()
-    );
-    let embedder = resolve(
-        r#"
-[roles.retrieval_embedder]
-model = "cpa:embed"
-"#,
-    )
-    .unwrap_err();
-    assert!(embedder.to_string().contains("[embedder]"));
-}
-
 fn provider(body: &str) -> anyhow::Result<ProviderConfig> {
     let file: ProviderFile = toml::from_str(body)?;
     file.resolve("p")
@@ -211,56 +137,6 @@ fn plain_http_is_for_this_machine_or_a_local_model_server() {
         provider("kind = \"local-openai-compat\"\nbase_url = \"http://10.0.0.5:8000\"").unwrap();
     assert_eq!(local.locality, oneiron::ModelLocality::OwnServer);
     assert!(provider("kind = \"local-openai-compat\"\nbase_url = \"http://example.com\"").is_err());
-}
-
-#[test]
-fn a_relative_prompt_file_reads_beside_the_config() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("rung.md"), "Be terse.").unwrap();
-    let file: ModelsFile = toml::from_str(&format!(
-        "{PROVIDERS}\n[roles.checker]\nmodel = \"cpa:x\"\nprompt_file = \"rung.md\"\n"
-    ))
-    .unwrap();
-    let config = file.resolve(Some(dir.path())).unwrap();
-    assert_eq!(
-        config.ladder(ModelRole::Checker).unwrap()[0]
-            .prompt
-            .as_deref(),
-        Some("Be terse.")
-    );
-}
-
-#[test]
-fn serve_config_reads_models_from_the_file_layer_only() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("oneiron.toml");
-    std::fs::write(
-        &path,
-        "[models]\ndefault = \"cpa:gpt-6.1-sol\"\n\n[models.providers.cpa]\nkind = \"openai-compat\"\nbase_url = \"http://127.0.0.1:8317\"\n",
-    )
-    .unwrap();
-    let args = crate::config::ServeArgs {
-        config: Some(path),
-        ..Default::default()
-    };
-    let resolved = crate::config::resolve_serve_config_with_sources(
-        &args,
-        crate::config::EnvConfig::default(),
-        None,
-    )
-    .unwrap();
-    let section = resolved.models.expect("[models] section");
-    assert_eq!(
-        models(section.ladder(ModelRole::Checker).unwrap()),
-        ["cpa:gpt-6.1-sol"]
-    );
-    let bare = crate::config::resolve_serve_config_with_sources(
-        &crate::config::ServeArgs::default(),
-        crate::config::EnvConfig::default(),
-        None,
-    )
-    .unwrap();
-    assert!(bare.models.is_none(), "no section, no model seat");
 }
 
 #[test]

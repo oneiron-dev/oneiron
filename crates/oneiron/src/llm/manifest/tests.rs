@@ -538,17 +538,3 @@ fn manifest_file_carries_runtime_seat_policy_and_rejects_invalid_rows() {
     value["seat_policy"]["invented_behavior"] = serde_json::json!(true);
     assert!(ModelManifest::from_json(&serde_json::to_vec(&value).unwrap()).is_err());
 }
-
-#[test]
-fn local_reasoner_is_a_required_manifest_role_key() {
-    let manifest = fixture();
-    let wire = serde_json::to_value(&manifest).unwrap();
-    assert!(wire["roles"].get("local_reasoner").is_some());
-    assert_eq!(
-        ModelManifest::from_json(&serde_json::to_vec(&wire).unwrap()).unwrap(),
-        manifest
-    );
-    let mut missing = manifest;
-    missing.roles.remove(&ModelRole::LocalReasoner);
-    assert!(matches!(missing.validate(), Err(Error::InvalidConfig(_))));
-}

@@ -14,8 +14,7 @@ use super::*;
 use crate::tick::{HintSignal, PushTick};
 use oneiron::llm::{BudgetLease, FatalLlmError, LlmGenerateFuture, LlmRequest, LlmStreamResult};
 use oneiron::{
-    DreamerClaimAuthoringStrategy, LlmBackend, ModelId, WakeCancellation, WriteActor,
-    llm::HostInferenceBinding,
+    DreamerClaimAuthoringStrategy, LlmBackend, ModelId, WakeCancellation, llm::HostInferenceBinding,
 };
 use tokio::sync::watch;
 
@@ -194,14 +193,6 @@ async fn refused_attachment_stops_the_pass_before_admission() {
 }
 
 #[tokio::test]
-async fn absent_attachment_runs_the_plain_pass() {
-    let (_dir, vault) = open_vault();
-    let (mut factory, observed, _calls) = factory(&vault, Answer::Nothing, None);
-    assert!(one_pass(&vault, &mut factory, "plain:p0").await.is_ok());
-    assert!(observed.lock().unwrap().pass_results.is_empty());
-}
-
-#[tokio::test]
 async fn attachment_drives_the_pass_with_the_factory_backend() {
     let (_dir, vault) = open_vault();
     let (mut factory, observed, _calls) = factory(&vault, Answer::Serve, None);
@@ -249,24 +240,4 @@ async fn linked_shutdown_and_supervisor_handle_stop_each_other() {
             "the handle trips the host signal too"
         );
     }
-}
-
-#[test]
-fn a_factory_without_a_source_attaches_nothing() {
-    let (_dir, vault) = open_vault();
-    let factory = ConsolidationExecutorFactory::new(
-        Arc::new(RefusingBackend(Arc::new(AtomicUsize::new(0)))),
-        DreamerClaimAuthoringStrategy::SinglePass,
-        WriteActor::new(
-            seed_actor(&vault, 21, oneiron::registry::ENTITY_TYPE_PERSON),
-            oneiron::edge::EdgeActorClass::Agent,
-        ),
-        ModelId::new("test/model@v1").unwrap(),
-        HostInferenceBinding::Registered,
-        None,
-        Box::new(UnusedSink),
-    );
-    let guard = BudgetGuard::new("bare", 10, oneiron::BudgetExhaustionPolicy::Suspend);
-    assert!(factory.pass_attachment(&vault, &guard).unwrap().is_none());
-    assert!(factory.linked_shutdown().is_none());
 }

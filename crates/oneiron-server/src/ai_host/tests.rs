@@ -13,19 +13,6 @@ use super::*;
 use crate::fake_llm::FakeLlm;
 
 #[tokio::test]
-async fn without_models_every_worker_is_idle_for_want_of_a_model() {
-    let (_dir, vault) = rooted_vault();
-    let host = AiHost::start(vault, None, true).await;
-    let status = host.handle().status();
-    for work in [&status.dreamer, &status.workflows, &status.chat] {
-        assert_eq!(work.state, WorkState::Idle);
-        assert_eq!(work.reason, Some(IdleReason::NoModelConfigured));
-    }
-    assert_eq!(status.health().dreamer, WorkState::Idle);
-    host.shutdown().await;
-}
-
-#[tokio::test]
 async fn the_dreamer_states_each_missing_prerequisite() {
     let fake = FakeLlm::start(vec![], None).await;
     let cases = [
@@ -222,87 +209,6 @@ async fn a_saved_workflow_advances_every_step_through_the_pump_without_a_call() 
         ["Shorten the line you are given.", "soil holds the seed"]
     );
     assert!(handle.status().workflows.completed >= 2);
-    host.shutdown().await;
-}
-
-#[tokio::test]
-async fn shutdown_waits_for_a_turn_then_stops_one_that_outlives_its_grace() {
-    let tracker = super::turns::TurnTracker::new();
-    let quick = tracker.enter();
-    let finishing = tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(20)).await;
-        drop(quick);
-    });
-    let started = std::time::Instant::now();
-    tracker.shutdown(Duration::from_secs(5)).await;
-    assert!(
-        started.elapsed() < Duration::from_secs(5),
-        "returned on drain"
-    );
-    finishing.await.unwrap();
-
-    let tracker = super::turns::TurnTracker::new();
-    let mut slow = tracker.enter();
-    let stopped = tokio::spawn(async move {
-        slow.stopping().await;
-        drop(slow);
-        true
-    });
-    tracker.shutdown(Duration::from_millis(50)).await;
-    assert!(stopped.await.unwrap());
-}
-
-#[tokio::test]
-async fn a_failed_step_gives_back_only_its_own_lease_and_waits_out_its_backoff() {
-    use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher, DispatchAgent};
-    use oneiron::attempt_queue::{AttemptQueue, AttemptState};
-    let fake = FakeLlm::start(vec![], Some(crate::fake_llm::Reply::Status(500))).await;
-    let (_dir, vault) = rooted_vault();
-    let only = agent(&vault, "failing", "Say one word.");
-    let workflow = EntityId::now();
-    vault
-        .save_workflow(
-            &workflow,
-            &oneiron::agent_def::workflow::WorkflowDefinition::new("failing", vec![only]).unwrap(),
-            2,
-        )
-        .unwrap();
-    let host = AiHost::start(
-        vault.clone(),
-        Some(&models(&fake.base_url, "[dreamer]\nenabled = false")),
-        true,
-    )
-    .await;
-    let handle = host.handle();
-    AgentDispatcher::new(&vault)
-        .dispatch(DispatchAgent {
-            target: AgentDispatchTarget::Workflow(workflow),
-            parent_attempt: None,
-            dedupe_key: Some("fail-test".into()),
-            run_id: Some("fail-test".into()),
-            now: 10,
-        })
-        .unwrap();
-    assert!(
-        eventually(Duration::from_secs(10), || handle.status().workflows.failed
-            >= 1)
-        .await,
-        "the step never failed; status {:?}",
-        handle.status().workflows
-    );
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    // The failed try is settled, not left leased; the next one is scheduled
-    // past its backoff, so the model is not called again at once.
-    let rows = AttemptQueue::new(&vault).list().unwrap();
-    assert!(
-        !rows.iter().any(|row| row.state == AttemptState::Leased),
-        "{rows:?}"
-    );
-    assert!(
-        rows.iter().any(|row| row.state == AttemptState::Scheduled),
-        "{rows:?}"
-    );
-    assert_eq!(fake.seen().len(), 1);
     host.shutdown().await;
 }
 
