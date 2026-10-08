@@ -1246,16 +1246,17 @@ async fn recall_reads_time_words_without_refusing_and_resolves_them_as_of() {
 #[tokio::test]
 async fn recall_returns_witness_short_ids_and_limit_counts_content() {
     let facade = OwnerFacade::new("facade-ids-and-slots-secret");
+    let lines: Vec<String> = (0..7)
+        .map(|turn| format!("The tide table lists spring tide number {turn}."))
+        .collect();
+    let at = |turn: usize| 1_767_225_600 + 60 * turn as u64;
     let said = facade
         .witness(
             "71717171717171717171717171717171",
-            &(0..7)
-                .map(|turn| {
-                    (
-                        1_767_225_600 + 60 * turn,
-                        "The tide table lists a spring tide.",
-                    )
-                })
+            &lines
+                .iter()
+                .enumerate()
+                .map(|(turn, line)| (at(turn), line.as_str()))
                 .collect::<Vec<_>>(),
         )
         .await;
