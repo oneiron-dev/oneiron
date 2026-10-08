@@ -1,5 +1,7 @@
 //! The three delta capture lanes plus the precedence chooser; pure over inputs.
 
+use std::ops::Range;
+
 use rmpv::Value;
 
 use crate::edit_distance::FinalizedProposalText;
@@ -43,7 +45,10 @@ pub(super) const MAX_FIELD_DIFF_DEPTH: u32 = 64;
 /// the log itself typed, so a pair is capped at the proposal text the log
 /// removed and the typed text that survives to finalize. Text typed and then
 /// deleted is churn: it is in neither cap, so it keeps its full price however
-/// the log split it.
+/// the log split it. The caps are totals, not positions: where a move's line
+/// repeats the characters around it, the log can show less than the line,
+/// and a proposal character deleted and retyped there can still raise the
+/// move toward the line's weight.
 ///
 /// The per-change region is the span between the common prefix and the
 /// common suffix — one contiguous edit. A change that scatters edits across
@@ -114,13 +119,14 @@ impl LoggedMass {
                 .filter(|c| !c.is_whitespace())
                 .eq(after.chars().filter(|c| !c.is_whitespace()));
             let region = affix.prefix as usize..(affix.before_len - affix.suffix) as usize;
+            let added = affix.added() as usize;
+            let arrived: Vec<bool> = if layout_only {
+                carry_provenance(&before, &after, &typed, region.clone(), added)
+            } else {
+                vec![true; added]
+            };
             let removed_typed = typed[region.clone()].iter().filter(|t| **t).count();
-            typed
-                .splice(
-                    region,
-                    std::iter::repeat_n(!layout_only, affix.added() as usize),
-                )
-                .for_each(drop);
+            typed.splice(region, arrived).for_each(drop);
             if layout_only {
                 continue;
             }
@@ -132,6 +138,46 @@ impl LoggedMass {
         mass.churn_ins = mass.ins.saturating_sub(survived);
         mass
     }
+}
+
+/// The provenance of a layout-only change's arrived region: it moves no
+/// character, so each non-whitespace character keeps its flag, and a space
+/// keeps the flag of the space that stood between the same two characters
+/// (a new space is layout, not typed text).
+fn carry_provenance(
+    before: &str,
+    after: &str,
+    typed: &[bool],
+    region: Range<usize>,
+    added: usize,
+) -> Vec<bool> {
+    let start = region.start;
+    let mut letters: Vec<bool> = Vec::new();
+    let mut spaces: Vec<Option<bool>> = vec![None];
+    for (c, flag) in before.chars().skip(region.start).zip(&typed[region]) {
+        if c.is_whitespace() {
+            if let Some(gap) = spaces.last_mut() {
+                *gap = Some(*flag);
+            }
+        } else {
+            letters.push(*flag);
+            spaces.push(None);
+        }
+    }
+    let mut seen = 0;
+    after
+        .chars()
+        .skip(start)
+        .take(added)
+        .map(|c| {
+            if c.is_whitespace() {
+                spaces.get(seen).copied().flatten().unwrap_or(false)
+            } else {
+                seen += 1;
+                letters.get(seen - 1).copied().unwrap_or(false)
+            }
+        })
+        .collect()
 }
 
 /// Two strings split at their common prefix and suffix, in CHARACTERS —

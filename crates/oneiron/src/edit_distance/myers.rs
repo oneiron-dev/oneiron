@@ -24,9 +24,12 @@
 //! 2. **Move pairing** — a source line whose words all left, and whose text
 //!    reappears as a line whose words all arrived elsewhere, is one
 //!    relocation, not two edits, and is charged [`MOVE_DISCOUNT`] instead of
-//!    a fresh delete-plus-insert. The pair leaves `ins`/`del` entirely and
-//!    lands in [`OpsSummary::moved`]. Whole lines are the move unit, so a
-//!    common word deleted in one place and typed in another is not a move.
+//!    a fresh delete-plus-insert. A whole run of departed words that arrives
+//!    whole as a run elsewhere pairs the same way, so re-wrapping a moved
+//!    block keeps its discount. The pair leaves `ins`/`del` entirely and
+//!    lands in [`OpsSummary::moved`]. Whole lines and whole runs are the move
+//!    units, so a common word deleted inside one passage and typed inside
+//!    another is not a move.
 //! 3. **Characters inside each changed region** — the changed words are
 //!    diffed again character by character (the same Myers walk over
 //!    `char`s), so a one-character typo in a long line charges one character,
@@ -431,50 +434,87 @@ fn predecessor(trace: &[i32], d: i32, k: i32) -> (i32, i32) {
 // Pass 2 — move pairing
 // ---------------------------------------------------------------------------
 
-/// Pairs each line whose words all left against an identical line whose
-/// words all arrived, marks both `Moved`, and returns the paired weight.
+/// Pairs moved text, marks both sides `Moved`, and returns the paired
+/// weight: first each line whose words all left against an identical line
+/// whose words all arrived, then each remaining run of departed words that
+/// arrived whole as a run elsewhere, so a moved block that was also
+/// re-wrapped keeps its discount.
 ///
 /// Multiplicity is respected: three departed copies of one line against two
-/// arrived copies are two moves and one real deletion. A line the script
+/// arrived copies are two moves and one real deletion. A unit the script
 /// kept even one word of is not a candidate, so the discount can only ever
 /// apply to content that demonstrably went somewhere else whole.
 fn pair_moved_lines(words: &Words, fates: &mut Fates) -> u32 {
-    let wholly = |fates: &[Fate], line: &Range<usize>| {
-        fates[line.clone()]
+    let lines = pair_units(words, fates, &words.before.lines, &words.after.lines);
+    let before_runs = changed_runs(&fates.before);
+    let after_runs = changed_runs(&fates.after);
+    lines.saturating_add(pair_units(words, fates, &before_runs, &after_runs))
+}
+
+/// Pairs each `before` unit whose words all left against an identical
+/// `after` unit whose words all arrived.
+fn pair_units(
+    words: &Words,
+    fates: &mut Fates,
+    before: &[Range<usize>],
+    after: &[Range<usize>],
+) -> u32 {
+    let wholly = |fates: &[Fate], unit: &Range<usize>| {
+        fates[unit.clone()]
             .iter()
             .all(|fate| *fate == Fate::Changed)
     };
     let mut departed: HashMap<&[u32], u32> = HashMap::new();
-    for line in &words.before.lines {
-        if wholly(&fates.before, line) {
-            *departed.entry(&words.before.ids[line.clone()]).or_insert(0) += 1;
+    for unit in before {
+        if wholly(&fates.before, unit) {
+            *departed.entry(&words.before.ids[unit.clone()]).or_insert(0) += 1;
         }
     }
     let mut paired: HashMap<&[u32], u32> = HashMap::new();
     let mut moved: u32 = 0;
-    for line in &words.after.lines {
-        let text = &words.after.ids[line.clone()];
-        if !wholly(&fates.after, line) {
+    for unit in after {
+        let text = &words.after.ids[unit.clone()];
+        if !wholly(&fates.after, unit) {
             continue;
         }
         if let Some(left) = departed.get_mut(text).filter(|left| **left > 0) {
             *left -= 1;
             *paired.entry(text).or_insert(0) += 1;
-            fates.after[line.clone()].fill(Fate::Moved);
+            fates.after[unit.clone()].fill(Fate::Moved);
             moved = moved.saturating_add(words.weight_of(text));
         }
     }
-    for line in &words.before.lines {
-        let text = &words.before.ids[line.clone()];
-        if !wholly(&fates.before, line) {
+    for unit in before {
+        let text = &words.before.ids[unit.clone()];
+        if !wholly(&fates.before, unit) {
             continue;
         }
         if let Some(left) = paired.get_mut(text).filter(|left| **left > 0) {
             *left -= 1;
-            fates.before[line.clone()].fill(Fate::Moved);
+            fates.before[unit.clone()].fill(Fate::Moved);
         }
     }
     moved
+}
+
+/// The maximal runs of `Changed` words, as position ranges.
+fn changed_runs(fates: &[Fate]) -> Vec<Range<usize>> {
+    let mut runs = Vec::new();
+    let mut start = None;
+    for (at, fate) in fates.iter().enumerate() {
+        match (*fate == Fate::Changed, start) {
+            (true, None) => start = Some(at),
+            (false, Some(from)) => {
+                runs.push(from..at);
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(from) = start {
+        runs.push(from..fates.len());
+    }
+    runs
 }
 
 // ---------------------------------------------------------------------------

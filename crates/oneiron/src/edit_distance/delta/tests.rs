@@ -666,6 +666,40 @@ fn a_whitespace_edit_split_across_recorded_changes_measures_zero() {
     assert_eq!(delta_from_recorded_ops(&window).d_norm, 0.0);
 }
 
+/// Second review pass: a moved block that was also re-wrapped keeps its
+/// discount. Before the fix the re-wrapped move scored 0.5, ten times the
+/// same move with its line breaks kept.
+#[test]
+fn a_rewrapped_move_keeps_its_discount() {
+    let kept_breaks = delta_from_reconstructed("one\ntwo\nsix\nten", "six\nten\none\ntwo");
+    let rewrapped = delta_from_reconstructed("one\ntwo\nsix\nten", "six ten\none two");
+    assert_eq!(rewrapped.ops_summary, kept_breaks.ops_summary);
+    assert!(
+        (rewrapped.d_norm - 0.05).abs() < 1e-6,
+        "{}",
+        rewrapped.d_norm
+    );
+}
+
+/// Second review pass: whitespace-only changes recorded after a cut and
+/// paste do not raise the move's price. Before the fix they reset which
+/// characters the log had typed, and the move cost 0.35 instead of 0.05.
+#[test]
+fn layout_changes_after_a_recorded_move_keep_its_price() {
+    let recorded = |layout: &[(&str, &str)]| {
+        let mut window = one_change_window("aaa\n\naa", "aa\n\naaa");
+        window.ops_by_actor = vec![span("aaa\n\naa", "aaa"), span("aaa", "aa\n\naaa")];
+        window
+            .ops_by_actor
+            .extend(layout.iter().map(|(before, after)| span(before, after)));
+        delta_from_recorded_ops(&window)
+    };
+    let plain = recorded(&[]);
+    let relaid = recorded(&[("aa\n\naaa", "a a a aa"), ("a a a aa", "aa\n\naaa")]);
+    assert_eq!(relaid.ops_summary, plain.ops_summary);
+    assert!((relaid.d_norm - 0.05).abs() < 1e-6, "{}", relaid.d_norm);
+}
+
 fn rot13(text: &str) -> String {
     text.chars()
         .map(|c| match c {
