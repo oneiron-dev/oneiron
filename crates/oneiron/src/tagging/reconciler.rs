@@ -19,8 +19,9 @@ use super::trace::{
 use crate::EntityId;
 use crate::Vault;
 use crate::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
-    CompleteAttempt, FailAttempt, RetryAttempt, decode_record,
+    AttemptId, AttemptInterventionKind, AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt,
+    ClaimOutcome, CompleteAttempt, EnqueueOutcome, FailAttempt, InterveneAttempt, RetryAttempt,
+    decode_record,
 };
 use crate::embed::EmbedderLocality;
 use crate::error::{Error, Result};
@@ -208,14 +209,19 @@ impl TaggingReconciler {
     /// One pass over the job records keeps only this owner's leased markers;
     /// a row of any kind this build cannot decode is passed over, so no other
     /// job's row can stop the worker from starting. The same pass finds the
-    /// markers an earlier build left waiting below the owner-retained id
-    /// range, where claims never look, and moves each onto a new marker in
-    /// the range, as a marker of another checkpoint is moved.
+    /// markers an earlier build left waiting or paused below the
+    /// owner-retained id range, where claims never look, and moves each onto
+    /// a new marker in the range, as a marker of another checkpoint is moved;
+    /// and the ready markers in the range whose ready entry a fault left
+    /// stale, and puts the entry back, so a claim reaches each when its row
+    /// says it is ready.
     pub fn release_stale_leases(&self) -> Result<usize> {
-        let (stale, stranded) = {
+        let queue = AttemptQueue::from_store(&self.vault.store);
+        let (stale, stranded, unindexed) = {
             let txn = self.vault.store.env.read_txn()?;
             let mut stale = Vec::new();
             let mut stranded = Vec::new();
+            let mut unindexed = Vec::new();
             for row in self.vault.store.attempt_records.iter(&txn)? {
                 let (key, raw) = row?;
                 let Ok(id) = AttemptId::from_bytes(&key) else {
@@ -231,13 +237,18 @@ impl TaggingReconciler {
                     && record.lease_owner.as_deref() == Some(self.lease_owner.as_str())
                 {
                     stale.push(record);
-                } else if matches!(record.state, AttemptState::Queued | AttemptState::Scheduled)
-                    && !crate::attempt_queue::owner_retained_id(&id)
-                {
-                    stranded.push(id);
+                } else if !crate::attempt_queue::owner_retained_id(&id) {
+                    if matches!(
+                        record.state,
+                        AttemptState::Queued | AttemptState::Scheduled | AttemptState::Paused
+                    ) {
+                        stranded.push(id);
+                    }
+                } else if queue.owner_retained_ready_entry_missing(&txn, &record)? {
+                    unindexed.push(id);
                 }
             }
-            (stale, stranded)
+            (stale, stranded, unindexed)
         };
         let found = stale.len();
         {
@@ -256,6 +267,14 @@ impl TaggingReconciler {
             self.vault
                 .try_with_write_txn(|txn| self.rehome_in_txn(txn, id))?;
         }
+        for chunk in unindexed.chunks(history::PRUNE_BUDGET) {
+            self.vault.try_with_write_txn(|txn| {
+                for id in chunk {
+                    queue.restore_owner_retained_ready_entry_in_txn(txn, *id)?;
+                }
+                Ok::<(), Error>(())
+            })?;
+        }
         self.stale_scanned.store(true, Ordering::Release);
         Ok(found)
     }
@@ -266,11 +285,13 @@ impl TaggingReconciler {
     /// left the queue since the scan is let go.
     fn rehome_in_txn(&self, txn: &mut heed::RwTxn<'_>, id: AttemptId) -> Result<()> {
         let queue = AttemptQueue::from_store(&self.vault.store);
-        let waiting = queue.get_in_write_txn(txn, id)?.is_some_and(|record| {
-            matches!(record.state, AttemptState::Queued | AttemptState::Scheduled)
-        });
-        if !waiting {
+        let Some(found) = queue.get_in_write_txn(txn, id)? else {
             return Ok(());
+        };
+        match found.state {
+            AttemptState::Queued | AttemptState::Scheduled => {}
+            AttemptState::Paused => return self.rehome_paused_in_txn(txn, &found),
+            _ => return Ok(()),
         }
         let now = self.stamp_in_txn(txn)?;
         let ClaimOutcome::Claimed(record) = queue.claim_id_storage_in_txn(
@@ -299,6 +320,70 @@ impl TaggingReconciler {
         // Settled first, so its dedupe entry is free for the new marker.
         self.settle_in_txn(txn, &record, &trace)?;
         enqueue_marker_in_txn(&self.vault, txn, payload.turn, &self.checkpoint, now)?;
+        Ok(())
+    }
+
+    /// [`Self::rehome_in_txn`] for a paused marker, which stays paused: it is
+    /// cancelled, traced as rekeyed and pruned, and the new marker is paused
+    /// in the same transaction under the actor and note of the pause it
+    /// carried, so nothing becomes runnable that an operator held.
+    fn rehome_paused_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        paused: &AttemptRecord,
+    ) -> Result<()> {
+        let queue = AttemptQueue::from_store(&self.vault.store);
+        let now = self.stamp_in_txn(txn)?;
+        let (actor, note) = paused
+            .events
+            .iter()
+            .rev()
+            .find(|event| event.kind == AttemptInterventionKind::Pause)
+            .map_or_else(
+                || (self.lease_owner.clone(), None),
+                |event| (event.actor.clone(), event.note.clone()),
+            );
+        queue.intervene_in_txn(
+            txn,
+            InterveneAttempt {
+                id: paused.id,
+                kind: AttemptInterventionKind::Cancel,
+                actor: self.lease_owner.clone(),
+                note: None,
+                now,
+            },
+        )?;
+        let prior_retries = queue.retry_chain_depth_in_txn(txn, paused.id)?;
+        let unread = unreadable_trace(paused, prior_retries);
+        let payload = MarkerPayload::decode(&paused.payload);
+        let trace = match &payload {
+            Some(payload) => TaggingTrace {
+                turn: Some(payload.turn),
+                checkpoint: payload.checkpoint.clone(),
+                outcome: TaggingOutcome::Rekeyed,
+                ..unread
+            },
+            None => unread,
+        };
+        self.record_in_txn(txn, &trace)?;
+        queue.prune_settled_in_txn(txn, paused.id)?;
+        let Some(payload) = payload else {
+            return Ok(());
+        };
+        if let EnqueueOutcome::Enqueued(owed) =
+            enqueue_marker_in_txn(&self.vault, txn, payload.turn, &self.checkpoint, now)?
+        {
+            queue.intervene_in_txn(
+                txn,
+                InterveneAttempt {
+                    id: owed.id,
+                    kind: AttemptInterventionKind::Pause,
+                    actor,
+                    note,
+                    now,
+                },
+            )?;
+        }
         Ok(())
     }
 

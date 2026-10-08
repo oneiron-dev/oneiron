@@ -421,6 +421,53 @@ impl<'a> AttemptQueue<'a> {
         Ok(ClaimOutcome::Claimed(record))
     }
 
+    /// Whether a ready owner-retained row lacks the ready entry its own state
+    /// names. [`Self::claim_owner_retained_in_txn`] trusts an entry's instant
+    /// to stop its seek, so a ready row indexed only under a later instant,
+    /// or not at all, is not reached; its owner's recovery puts the entry
+    /// back. A row of another kind, outside the range or not ready lacks
+    /// nothing.
+    pub(crate) fn owner_retained_ready_entry_missing(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        record: &AttemptRecord,
+    ) -> Result<bool> {
+        if !crate::attempt_queue::owner_retained_kind(&record.kind)
+            || !crate::attempt_queue::owner_retained_id(&record.id)
+            || !record.state.is_ready_indexed()
+        {
+            return Ok(false);
+        }
+        Ok(self
+            .store
+            .attempt_ready
+            .get(txn, &ready_key(ready_at(record), record.id))?
+            .is_none_or(|value| *value != *record.id.as_bytes()))
+    }
+
+    /// Puts back the ready entry of the owner-retained row `id`, in the
+    /// caller's transaction, if the row still lacks it
+    /// ([`Self::owner_retained_ready_entry_missing`]); returns whether it
+    /// did. An entry under another instant is left for the claim to repair
+    /// when it reaches it.
+    pub(crate) fn restore_owner_retained_ready_entry_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: AttemptId,
+    ) -> Result<bool> {
+        let Some(raw) = self.store.attempt_records.get(wtxn, id.as_bytes())? else {
+            return Ok(false);
+        };
+        let record = decode_record(&raw, id)?;
+        if !self.owner_retained_ready_entry_missing(wtxn, &record)? {
+            return Ok(false);
+        }
+        self.store
+            .attempt_ready
+            .put(wtxn, &ready_key(ready_at(&record), id), id.as_bytes())?;
+        Ok(true)
+    }
+
     /// Repairs ready/dedupe rows while returning the oldest claimable attempt id of
     /// this kind, without leasing it.
     pub(crate) fn ready_kind_candidate_in_txn(

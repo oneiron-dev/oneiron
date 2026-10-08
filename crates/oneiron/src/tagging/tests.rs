@@ -2851,45 +2851,11 @@ fn a_tagging_claim_never_reads_another_kinds_ready_backlog() {
 /// when the worker starts, and its turn is tagged.
 #[test]
 fn a_marker_an_earlier_build_left_below_the_range_is_moved_into_it() {
-    use crate::attempt_queue::EnqueueAttempt;
     let dir = tempfile::tempdir().expect("dir");
     let turn = {
         let vault = open(dir.path(), false);
         let turn = witness(&vault, "Ada sailed north");
-        let queue = AttemptQueue::new(&vault);
-        queue
-            .enqueue(EnqueueAttempt {
-                kind: "test.legacy".into(),
-                payload: Vec::new(),
-                dedupe_key: None,
-                run_id: None,
-                now: NOW,
-            })
-            .expect("a row under a minted id");
-        // What an earlier build stored: a waiting marker under that id.
-        let mut row = queue
-            .list()
-            .expect("rows")
-            .into_iter()
-            .find(|row| row.kind == "test.legacy")
-            .expect("the row");
-        row.kind = TAGGING_MARKER_KIND.into();
-        row.payload = rmp_serde::to_vec_named(&super::marker::MarkerPayload {
-            turn,
-            checkpoint: CHECKPOINT.into(),
-        })
-        .expect("payload");
-        let encoded = crate::attempt_queue::encode_signal_record(&row).expect("encode");
-        vault
-            .try_with_write_txn(|txn| {
-                vault
-                    .store
-                    .attempt_records
-                    .put(txn, row.id.as_bytes(), &encoded)?;
-                Ok::<(), crate::Error>(())
-            })
-            .expect("an earlier build's marker");
-        assert!(!crate::attempt_queue::owner_retained_id(&row.id));
+        plant_low_range_marker(&vault, turn);
         turn
     };
     let vault = open(dir.path(), true);
@@ -3187,4 +3153,126 @@ fn trimming_history_reads_outside_the_writer_a_bounded_part_a_pass() {
     for turn in &turns {
         assert_eq!(tries(&vault, turn), vec![2], "the newest trace is kept");
     }
+}
+
+/// Stores what an earlier build left: a waiting marker for `turn` under an
+/// id below the owner-retained range, ready at once.
+fn plant_low_range_marker(vault: &Vault, turn: EntityId) -> AttemptRecord {
+    use crate::attempt_queue::EnqueueAttempt;
+    let queue = AttemptQueue::new(vault);
+    queue
+        .enqueue(EnqueueAttempt {
+            kind: "test.legacy".into(),
+            payload: Vec::new(),
+            dedupe_key: None,
+            run_id: None,
+            now: NOW,
+        })
+        .expect("a row under a minted id");
+    let mut row = queue
+        .list()
+        .expect("rows")
+        .into_iter()
+        .find(|row| row.kind == "test.legacy")
+        .expect("the row");
+    row.kind = TAGGING_MARKER_KIND.into();
+    row.payload = rmp_serde::to_vec_named(&super::marker::MarkerPayload {
+        turn,
+        checkpoint: CHECKPOINT.into(),
+    })
+    .expect("payload");
+    let encoded = crate::attempt_queue::encode_signal_record(&row).expect("encode");
+    vault
+        .try_with_write_txn(|txn| {
+            vault
+                .store
+                .attempt_records
+                .put(txn, row.id.as_bytes(), &encoded)?;
+            Ok::<(), crate::Error>(())
+        })
+        .expect("an earlier build's marker");
+    assert!(!crate::attempt_queue::owner_retained_id(&row.id));
+    row
+}
+
+/// A marker an earlier build left paused below the range is moved into it
+/// still paused, under the pause it carried: the worker runs nothing an
+/// operator held, and resuming the new marker gets its turn tagged.
+#[test]
+fn a_paused_marker_below_the_range_moves_into_it_still_paused() {
+    use crate::attempt_queue::{AttemptInterventionKind, InterveneAttempt};
+    const OPERATOR: &str = "operator:review";
+    let intervene = |vault: &Vault, id, kind| {
+        AttemptQueue::new(vault)
+            .intervene(InterveneAttempt {
+                id,
+                kind,
+                actor: OPERATOR.into(),
+                note: Some("held for review".into()),
+                now: NOW,
+            })
+            .expect("intervene")
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let turn = {
+        let vault = open(dir.path(), false);
+        let turn = witness(&vault, "Ada sailed north");
+        let planted = plant_low_range_marker(&vault, turn);
+        intervene(&vault, planted.id, AttemptInterventionKind::Pause);
+        turn
+    };
+    let vault = open(dir.path(), true);
+    let tagger = Scripted::new(Answer::Good);
+    let reconciler = reconciler(&vault, &tagger);
+    reconciler.drain_once().expect("drain");
+    assert_eq!(tagger.calls(), 0, "the worker runs nothing held");
+    let [moved] = markers(&vault).try_into().expect("one marker");
+    assert!(crate::attempt_queue::owner_retained_id(&moved.id));
+    assert_eq!(moved.state, AttemptState::Paused);
+    let pause = moved.events.last().expect("the carried pause");
+    assert_eq!(pause.kind, AttemptInterventionKind::Pause);
+    assert_eq!(pause.actor, OPERATOR);
+    assert_eq!(pause.note.as_deref(), Some("held for review"));
+    assert!(matches!(
+        history(&vault, &turn)[..],
+        [TaggingOutcome::Rekeyed]
+    ));
+
+    intervene(&vault, moved.id, AttemptInterventionKind::Resume);
+    reconciler.drain_once().expect("drain");
+    assert_eq!(tagger.calls(), 1);
+    assert!(markers(&vault).is_empty());
+    assert_eq!(settled(&vault, &turn), 2);
+}
+
+/// A ready marker whose ready entry a fault left under a later instant is
+/// indexed again when the worker starts, and is claimed when its row says
+/// it is ready, not when the stale entry does.
+#[test]
+fn a_ready_marker_indexed_only_under_a_later_instant_is_claimed_at_once() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    let turn = witness(&vault, "Ada sailed north");
+    let [marker] = markers(&vault).try_into().expect("one marker");
+    assert_eq!(marker.scheduled_at, None, "ready at once");
+    let key = |at: u64| [&at.to_be_bytes()[..], &marker.id.as_bytes()[..]].concat();
+    vault
+        .try_with_write_txn(|txn| {
+            assert!(vault.store.attempt_ready.delete(txn, &key(0))?);
+            vault
+                .store
+                .attempt_ready
+                .put(txn, &key(NOW + 86_400), marker.id.as_bytes())?;
+            Ok::<(), crate::Error>(())
+        })
+        .expect("a stale ready entry");
+    let tagger = Scripted::new(Answer::Good);
+    let pass = reconciler(&vault, &tagger).drain_once().expect("drain");
+    assert_eq!(pass.traces.len(), 1);
+    assert!(matches!(
+        pass.traces[0].outcome,
+        TaggingOutcome::Shadowed { .. }
+    ));
+    assert!(markers(&vault).is_empty());
+    assert_eq!(settled(&vault, &turn), 1);
 }
