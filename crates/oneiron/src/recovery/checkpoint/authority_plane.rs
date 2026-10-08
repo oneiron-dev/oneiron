@@ -350,7 +350,8 @@ pub(super) fn carry_current_authority(
     Ok(())
 }
 
-/// The live vault's canonical rows in any carried or guarded family.
+/// The live vault's canonical rows in any carried or guarded family, and its
+/// deletion fences.
 fn current_planed_rows(current: &Vault) -> Result<BTreeMap<&'static str, CanonicalRows>> {
     let txn = current.store.env.read_txn()?;
     let mut planed = BTreeMap::new();
@@ -363,8 +364,11 @@ fn current_planed_rows(current: &Vault) -> Result<BTreeMap<&'static str, Canonic
         let mut rows = Vec::new();
         for row in db.iter(&txn)? {
             let (key, value) = row?;
+            // Deletion fences ride along unplaned: compared with their guarded
+            // rows, never carried.
             if super::storage_tier(database, key) == super::StorageTier::Canonical
-                && plane_of(database, key, value).is_some()
+                && (plane_of(database, key, value).is_some()
+                    || (database == "sync_state" && key.starts_with(ROW_DELETION_FENCE_PREFIX)))
             {
                 rows.push((key.to_vec(), value.to_vec()));
             }
