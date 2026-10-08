@@ -35,7 +35,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use axum::Router;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::post;
 use serde::Serialize;
@@ -123,6 +123,58 @@ fn facade_actor(auth: &CoreAuth) -> Result<(EntityId, EdgeActorClass), FacadeApi
         }
     };
     Ok((actor, actor_class))
+}
+
+/// Names the room whose turn a request runs in (ARCH-0067 §8). It names only
+/// the room: the engine reads the roster and its Scope from the vault.
+pub(crate) const ROOM_TURN_HEADER: &str = "x-oneiron-room-turn";
+
+fn facade_room_turn(headers: &HeaderMap) -> Result<Option<EntityId>, FacadeApiError> {
+    let Some(value) = headers.get(ROOM_TURN_HEADER) else {
+        return Ok(None);
+    };
+    value
+        .to_str()
+        .ok()
+        .and_then(|room| EntityId::from_hex(room).ok())
+        .map(Some)
+        .ok_or_else(|| {
+            FacadeApiError::new(
+                StatusCode::BAD_REQUEST,
+                MEMORY_CODE_BAD_REQUEST,
+                "invalid room turn header",
+                ["Name the room as its 32-hex id."],
+            )
+        })
+}
+
+/// Runs one SDK verb, inside the named room turn when the request names one.
+fn facade_invoke(
+    server: &SyncServer,
+    headers: &HeaderMap,
+    actor: EntityId,
+    class: EdgeActorClass,
+    verb: &str,
+    value: serde_json::Value,
+) -> Result<serde_json::Value, FacadeApiError> {
+    let memory = server.vault.memory(actor, class);
+    Ok(match facade_room_turn(headers)? {
+        Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
+        None => oneiron::task_verb::sdk::invoke(&memory, verb, value)?,
+    })
+}
+
+/// A verb that reads around the read lane is not served inside a room turn.
+fn facade_outside_room_turn(headers: &HeaderMap, verb: &str) -> Result<(), FacadeApiError> {
+    if facade_room_turn(headers)?.is_some() {
+        return Err(FacadeApiError::new(
+            StatusCode::BAD_REQUEST,
+            MEMORY_CODE_BAD_REQUEST,
+            format!("{verb} is not served inside a room turn"),
+            ["Call it without the room turn header."],
+        ));
+    }
+    Ok(())
 }
 
 /// Decodes a facade request body, reporting a malformed one in the FACADE

@@ -205,3 +205,51 @@ fn embedded_room_history_reads_inside_the_rosters_scope() {
     let refusal = client.agent_verb("rooms.messages", supplied).unwrap_err();
     assert_eq!(refusal.code, oneiron::memory::MEMORY_CODE_BAD_REQUEST);
 }
+
+/// ARCH-0067 §8 through the embedded client: a handle opened in a room turn
+/// runs every verb inside the room, and refuses one that reads around it.
+#[test]
+fn embedded_room_turn_handle_runs_verbs_inside_the_room() {
+    let dir = tempfile::tempdir().unwrap();
+    let room = {
+        let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap();
+        let owner = vault.ensure_embedded_owner_actor().unwrap();
+        let project = oneiron::EntityId::now();
+        let root = vault.root_project().unwrap();
+        let spec = oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner)
+            .unwrap();
+        vault.put_project(project, &spec, 1).unwrap();
+        oneiron::EntityId::from_hex(&spec.home_room).unwrap()
+    };
+    let client = OneironClient::open(Some(dir.path()), &OpenOptions::default()).unwrap();
+    assert!(
+        client
+            .in_room_turn(&oneiron::EntityId::now().to_hex())
+            .is_err(),
+        "a turn opens only in the caller's room"
+    );
+    let turn = client.in_room_turn(&room.to_hex()).unwrap();
+    let page = turn
+        .agent_verb(
+            "rooms.messages",
+            serde_json::json!({"room_ref": room.to_hex()}),
+        )
+        .unwrap();
+    assert!(page["scope"].is_object());
+    for verb in ["export", "receipts"] {
+        let refusal = turn.agent_verb(verb, serde_json::json!({})).unwrap_err();
+        assert_eq!(
+            refusal.code,
+            oneiron::memory::MEMORY_CODE_BAD_REQUEST,
+            "{verb}"
+        );
+    }
+    // The turn cannot be shed by rebinding the same actor or moved to
+    // another room.
+    let owner = client.actor_ref().unwrap();
+    assert!(turn.as_actor(&format!("human:{owner}")).is_err());
+    assert!(
+        turn.in_room_turn(&oneiron::EntityId::now().to_hex())
+            .is_err()
+    );
+}

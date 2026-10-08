@@ -99,32 +99,50 @@ fn spoken(room: EntityId, turn: EntityId, at: u64) -> WitnessTurn {
     }
 }
 
-fn project_room(vault: &Vault, leader: EntityId, members: &[EntityId]) -> Result<EntityId> {
+fn project_room(
+    vault: &Vault,
+    leader: EntityId,
+    members: &[EntityId],
+) -> Result<(EntityId, ProjectRecord)> {
     let root = vault.root_project()?;
     let project = EntityId::now();
     let mut record = ProjectRecord::new(project, Some(root), root, leader)?;
     record.roster.extend(members.iter().map(EntityId::to_hex));
     vault.put_project(project, &record, 1)?;
-    EntityId::from_hex(&record.home_room)
+    Ok((project, record))
 }
 
 /// The owner reads the whole vault, so anything a room turn hides here is
-/// hidden by the room's Scope alone.
+/// hidden by the room's Scope, its audience, or a peer's own read.
 #[test]
 fn every_read_a_room_turn_makes_runs_inside_the_rosters_scope() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let agent = id(0x41);
-    vault.put_entity(
-        &agent,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"agent",
-    )?;
+    let stranger = id(0x44);
+    for person in [agent, stranger] {
+        vault.put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"agent",
+        )?;
+    }
     let fiction = id(0x42);
-    let room = project_room(&vault, owner, &[agent])?;
-    let elsewhere = project_room(&vault, owner, &[])?;
+    // The agent's grant holds base only, so the room reads base reality. The
+    // stranger, not yet a member, holds the fiction world alone.
+    grant(&vault, id(0x43), agent, WorldAuthoritySet::new(true, [])?)?;
+    grant(
+        &vault,
+        id(0x45),
+        stranger,
+        WorldAuthoritySet::new(false, [fiction])?,
+    )?;
+    crate::test_util::authorize_readers(&vault, &[&agent.to_hex(), &stranger.to_hex()]);
+    let (project, mut record) = project_room(&vault, owner, &[agent])?;
+    let room = EntityId::from_hex(&record.home_room)?;
+    let elsewhere = EntityId::from_hex(&project_room(&vault, owner, &[])?.1.home_room)?;
     let host = vault.memory(owner, EdgeActorClass::Human);
     let hex_of = |input: ClaimInput| {
         let receipt = host.claim_upsert(&input).expect("note");
@@ -136,54 +154,61 @@ fn every_read_a_room_turn_makes_runs_inside_the_rosters_scope() -> Result<()> {
     };
     let base_ref = hex_of(note(room, "lantern harbor", None));
     let fiction_ref = hex_of(note(room, "lantern dragon", Some(fiction)));
+    // Only the owner may read this one, so it is not the room's to read.
+    let mut private = note(room, "lantern ledger", None);
+    private.scope = Some(serde_json::json!({"typed_question_principal": owner.to_hex()}));
+    let private_ref = hex_of(private);
     host.rooms_speak(&spoken(room, EntityId::now(), 2))
         .expect("speak");
-    // The agent's grant holds base only, so the room reads base reality.
-    grant(&vault, id(0x43), agent, WorldAuthoritySet::new(true, [])?)?;
 
-    let notes = |memory: &crate::memory::Memory<'_>| -> Vec<String> {
-        memory
-            .claim_list(&ClaimListFilter {
-                subject_ref: Some(room.to_hex()),
-                predicate: Some("note.topic".into()),
-                lifecycle: None,
-                limit: 10,
-            })
+    let filter = ClaimListFilter {
+        subject_ref: Some(room.to_hex()),
+        predicate: Some("note.topic".into()),
+        lifecycle: None,
+        limit: 10,
+    };
+    let refs = |listed: crate::memory::MemoryResult<
+        crate::claim::ScopedReadResult<Vec<crate::memory::ClaimView>>,
+    >| {
+        let mut refs: Vec<_> = listed
             .expect("claim list")
             .value
             .into_iter()
             .map(|claim| claim.claim_ref)
-            .collect()
+            .collect();
+        refs.sort();
+        refs
     };
-    let mut outside = notes(&host);
-    outside.sort();
-    let mut both = vec![base_ref.clone(), fiction_ref.clone()];
-    both.sort();
-    assert_eq!(outside, both, "outside a room the owner lists both notes");
+    let mut all = vec![base_ref.clone(), fiction_ref.clone(), private_ref.clone()];
+    all.sort();
+    assert_eq!(refs(host.claim_list(&filter)), all, "outside a room");
 
     let roster = host.room_roster(room).expect("roster");
+    let mut members = vec![owner, agent];
+    members.sort();
     assert_eq!(
         roster.iter().map(|member| member.actor).collect::<Vec<_>>(),
-        {
-            let mut ids = vec![owner, agent];
-            ids.sort();
-            ids
-        }
+        members
     );
     let expected = room_scope(&roster)?;
     assert_eq!(
         expected.worlds,
         ScopeAxis::Some(BTreeSet::from([ScopeId(crate::claim::base_world_id())]))
     );
-    let turn = host.for_room_turn(room).expect("bind room turn");
-    assert_eq!(notes(&turn), vec![base_ref], "ordinary claim read");
-    assert!(
-        turn.get_entity(&fiction_ref)
-            .expect("entity read")
-            .value
-            .is_none(),
-        "ordinary entity read"
+    let turn = host.for_room_turn(room).expect("open room turn");
+    assert_eq!(
+        refs(turn.claim_list(&filter)),
+        vec![base_ref],
+        "a world outside the room and a row private to the caller stay out"
     );
+    for hidden in [&fiction_ref, &private_ref] {
+        assert!(
+            turn.get_entity(hidden)
+                .expect("entity read")
+                .value
+                .is_none()
+        );
+    }
     let named = turn
         .recall(
             "lantern",
@@ -204,40 +229,89 @@ fn every_read_a_room_turn_makes_runs_inside_the_rosters_scope() -> Result<()> {
             .all(|item| item.world.as_deref() != Some(fiction.to_hex().as_str())),
         "naming a world cannot reach past the room"
     );
-    let page = crate::task_verb::sdk::invoke(
-        &turn,
-        "rooms.messages",
-        serde_json::json!({"room_ref": room.to_hex()}),
-    )
-    .expect("room history");
+    let page = turn
+        .invoke(
+            "rooms.messages",
+            serde_json::json!({"room_ref": room.to_hex()}),
+        )
+        .expect("room history");
     assert_eq!(page["rows"].as_array().unwrap().len(), 1);
     let applied: Scope = serde_json::from_value(page["scope"].clone()).unwrap();
     assert_eq!(applied, expected, "the history read ran inside room_scope");
+    let other = serde_json::json!({"room_ref": elsewhere.to_hex()});
     assert!(
-        turn.rooms_messages(elsewhere).is_err(),
+        turn.invoke("rooms.messages", other).is_err(),
         "a turn in one room reads no other room"
     );
+    for verb in ["export", "key_value_get", "receipts", "describe"] {
+        assert!(
+            turn.invoke(verb, serde_json::json!({})).is_err(),
+            "{verb} reads around the room, so a turn refuses it"
+        );
+    }
 
-    // A second owner grant meets the first, leaving the agent no world. The
-    // room now reads nothing, and an open turn narrows with it.
-    grant(
-        &vault,
-        id(0x44),
-        agent,
-        WorldAuthoritySet::new(false, [fiction])?,
-    )?;
+    // The stranger joins. The meet leaves the room no world, so the room now
+    // reads nothing, and the turn already open narrows with it.
+    record.roster.push(stranger.to_hex());
+    vault.put_project(project, &record, 2)?;
     let page = host
         .rooms_messages_page(room, None, 256)
         .expect("history outside a turn");
     assert!(page.rows.is_empty());
     assert_eq!(page.scope.worlds, ScopeAxis::Bottom);
-    assert!(turn.rooms_messages(room).expect("narrowed turn").is_empty());
-    let narrow = host.for_room_turn(room).expect("bind narrowed turn");
-    assert!(notes(&narrow).is_empty());
-    assert!(
-        narrow
-            .rooms_speak(&spoken(room, EntityId::now(), 3))
-            .is_err()
+    assert!(turn.rooms_messages().expect("narrowed turn").is_empty());
+    assert!(refs(turn.claim_list(&filter)).is_empty(), "the open turn");
+    assert!(turn.rooms_speak(&spoken(room, EntityId::now(), 3)).is_err());
+    Ok(())
+}
+
+/// The roster is the channel's own membership: an ordinary channel's ledger,
+/// never an unchecked field a body carries beside it.
+#[test]
+fn the_roster_is_the_channels_own_membership() -> Result<()> {
+    use crate::conversation::{ConversationBody, ConversationKind};
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let agent = id(0x51);
+    vault.put_entity(
+        &agent,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"agent",
+    )?;
+    let actor = crate::WriteActor::new(owner, EdgeActorClass::Human);
+    let channel = |extra: Option<serde_json::Value>| -> Result<EntityId> {
+        let id = EntityId::now();
+        let mut body = ConversationBody {
+            kind: ConversationKind::Channel,
+            member_ids: vec![owner, agent],
+            ..ConversationBody::default()
+        };
+        if let Some(extra) = extra {
+            body.extra.insert(
+                "memberIds".into(),
+                crate::companion::companion_value_from_json(&extra)?,
+            );
+        }
+        vault.create_conversation(id, &body, actor, 2)?;
+        Ok(id)
+    };
+    let host = vault.memory(owner, EdgeActorClass::Human);
+    let mut members = vec![owner, agent];
+    members.sort();
+    let ordinary = channel(None)?;
+    let roster = host.room_roster(ordinary).expect("ordinary channel roster");
+    assert_eq!(
+        roster.iter().map(|member| member.actor).collect::<Vec<_>>(),
+        members
     );
+    // A body naming a narrower roster in an unchecked field never narrows
+    // the meet: the room either reads its real members or refuses.
+    if let Ok(forged) = channel(Some(serde_json::json!([owner.to_hex()]))) {
+        assert!(host.room_roster(forged).map_or(true, |roster| {
+            roster.iter().any(|member| member.actor == agent)
+        }));
+    }
     Ok(())
 }

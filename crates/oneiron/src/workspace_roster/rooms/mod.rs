@@ -197,10 +197,11 @@ pub(crate) fn project_room_audience_in(
         return Ok(None);
     }
     let room = room_in(vault, txn, room)?;
+    let members: BTreeSet<&str> = room.member_ids.iter().map(String::as_str).collect();
     Ok(Some(
         audience
             .iter()
-            .all(|actor| room.member_ids.contains(&actor.to_hex())),
+            .all(|actor| members.contains(actor.to_hex().as_str())),
     ))
 }
 
@@ -253,23 +254,21 @@ impl Vault {
     }
 }
 impl Memory<'_> {
-    /// The caller's rooms. Inside a room turn, only that room, and only when
-    /// its Scope reads base reality, where room records live.
+    /// The caller's rooms whose Scope reads base reality, where room records
+    /// live. Inside a room turn, only that room.
     pub fn rooms_list(&self) -> MemoryResult<Vec<(EntityId, ProjectRoom)>> {
-        let bound = match self.room_turn() {
-            Some(turn) => Some((turn.room, self.room_read_scope(turn.room)?)),
-            None => None,
-        };
-        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-        if let Some((room, scope)) = bound {
-            if !turns_readable(&scope) {
+        if let Some(turn) = self.room_turn() {
+            let room = turn.room;
+            if !turns_readable(&self.room_read_scope(room)?) {
                 return Ok(Vec::new());
             }
+            let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             return Ok(vec![(
                 room,
                 require_member(self.vault(), &txn, room, self.actor())?,
             )]);
         }
+        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         let mut result = Vec::new();
         for row in self
             .vault()
@@ -285,7 +284,14 @@ impl Memory<'_> {
                 result.push((id, room));
             }
         }
-        Ok(result)
+        drop(txn);
+        let mut readable = Vec::with_capacity(result.len());
+        for (id, room) in result {
+            if turns_readable(&self.room_read_scope(id)?) {
+                readable.push((id, room));
+            }
+        }
+        Ok(readable)
     }
     pub fn rooms_claim(
         &self,

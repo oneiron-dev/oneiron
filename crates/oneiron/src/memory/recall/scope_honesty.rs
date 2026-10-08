@@ -3,14 +3,15 @@ use super::*;
 
 impl Memory<'_> {
     /// Scope honesty: worlds holding surfaceable claims outside the worlds
-    /// this recall read. Bounded scan (first [`SCOPE_HONESTY_SCAN_CAP`]
-    /// claims) of rows the actor may read.
+    /// this recall read, base reality included under its reserved id. The
+    /// census reads the first [`SCOPE_HONESTY_SCAN_CAP`] claims the actor may
+    /// read and says when it stopped there.
     pub(super) fn out_of_scope_worlds(
         &self,
         lane: &ScopedRead<'_>,
         receipt: &mut ScopedReadReceipt,
         read: &crate::pipeline::WorldAuthoritySet,
-    ) -> MemoryResult<Vec<String>> {
+    ) -> MemoryResult<ScopeHonesty> {
         // Bounded page primitive, not `entities_by_type().take(cap)`: the
         // latter materializes the whole CLAIM index and errors with
         // IndexOverflow past MAX_TYPE_QUERY_RESULTS before `take` can run, so
@@ -29,13 +30,18 @@ impl Memory<'_> {
                 if !claim_surfaceable(&body) {
                     continue;
                 }
-                if let Some(world) = body.world
-                    && !read.worlds().contains(&world)
-                {
-                    worlds.insert(world.to_hex());
+                if !read.admits(body.world) {
+                    worlds.insert(
+                        body.world
+                            .unwrap_or_else(crate::claim::base_world_id)
+                            .to_hex(),
+                    );
                 }
             }
         }
-        Ok(worlds.into_iter().collect())
+        Ok(ScopeHonesty {
+            out_of_scope_worlds: worlds.into_iter().collect(),
+            census_capped: ids.len() >= SCOPE_HONESTY_SCAN_CAP,
+        })
     }
 }

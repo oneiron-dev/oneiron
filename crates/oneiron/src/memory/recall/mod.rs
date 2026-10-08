@@ -166,6 +166,13 @@ pub struct MemoryItem {
 pub struct ScopeHonesty {
     /// Worlds holding surfaceable claims outside the requested scope.
     pub out_of_scope_worlds: Vec<String>,
+    /// The census stopped at its scan cap, so a world past it may be missing.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub census_capped: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// Retrieval accounting (S6).
@@ -702,9 +709,7 @@ impl Memory<'_> {
 
         let claims_returned = items.iter().filter(|item| item.kind == "CLAIM").count() as u64;
         Ok(MemoryPack {
-            scope_honesty: ScopeHonesty {
-                out_of_scope_worlds: self.out_of_scope_worlds(&lane, &mut receipt, &worlds)?,
-            },
+            scope_honesty: self.out_of_scope_worlds(&lane, &mut receipt, &worlds)?,
             retrieval_meta: RetrievalMeta {
                 quality: retrieval_quality.quality,
                 degradation: retrieval_quality.degradation,
@@ -737,22 +742,12 @@ impl Memory<'_> {
             Some(world_ref) => {
                 crate::pipeline::WorldAuthoritySet::new(true, [self.resolve_ref(world_ref)?])?
             }
-            None => {
-                let txn = self
-                    .vault
-                    .store
-                    .env
-                    .read_txn()
-                    .map_err(|error| MemoryError::from(crate::Error::from(error)))?;
-                crate::pipeline::reading_default(
-                    &self.vault.store,
-                    &txn,
-                    self.actor,
-                    crate::unix_seconds_now(),
-                )?
-            }
+            None => self
+                .reading_defaults(&[self.actor])?
+                .pop()
+                .expect("one default per actor"),
         };
-        let room = match self.room_turn() {
+        let room = match self.room_turn_now()? {
             Some(turn) => crate::context_board::scope_worlds(&turn.scope)?,
             None => None,
         };

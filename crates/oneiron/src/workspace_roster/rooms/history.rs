@@ -222,7 +222,13 @@ impl Memory<'_> {
             .member_ids
             .into_iter()
             .collect();
-        let tasks = crate::task_verb::room_thread_tasks(self, &roots, &members, policy.now)?;
+        // Task and result reads run inside the room too, on every transport.
+        let tasks = crate::task_verb::room_thread_tasks(
+            self.for_room_turn(room)?.memory(),
+            &roots,
+            &members,
+            policy.now,
+        )?;
         Ok(super::liveness::project_in_room(
             &turns, &tasks, policy, room,
         )?)
@@ -272,8 +278,12 @@ impl Memory<'_> {
             .into_iter()
             .filter(|(_, root)| root_ids.contains(root))
             .collect();
-        let tasks =
-            crate::task_verb::room_thread_tasks(self, &roots, &members, crate::unix_seconds_now())?;
+        let tasks = crate::task_verb::room_thread_tasks(
+            self.for_room_turn(room)?.memory(),
+            &roots,
+            &members,
+            crate::unix_seconds_now(),
+        )?;
         let mut headers = tasks
             .into_iter()
             .filter_map(|task| {
@@ -359,7 +369,12 @@ impl Memory<'_> {
             .into_iter()
             .filter(|(_, root)| *root == handle)
             .collect();
-        let tasks = crate::task_verb::room_thread_tasks(self, &selected, &members, now)?;
+        let tasks = crate::task_verb::room_thread_tasks(
+            self.for_room_turn(room)?.memory(),
+            &selected,
+            &members,
+            now,
+        )?;
         Ok(super::liveness::project_target(
             &turns, &tasks, handle, now,
         )?)

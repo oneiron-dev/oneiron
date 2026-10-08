@@ -280,14 +280,28 @@ async fn post_room_verb(
     verb: &str,
     input: Value,
 ) -> (StatusCode, Value) {
+    post_in_room_turn(server, authorization, verb, input, None).await
+}
+
+async fn post_in_room_turn(
+    server: &Arc<SyncServer>,
+    authorization: &str,
+    verb: &str,
+    input: Value,
+    room_turn: Option<EntityId>,
+) -> (StatusCode, Value) {
+    let mut request = Request::builder()
+        .method("POST")
+        .uri(format!("/v1/core/facade/{verb}"))
+        .header("Authorization", authorization)
+        .header("Content-Type", "application/json");
+    if let Some(room) = room_turn {
+        request = request.header(super::ROOM_TURN_HEADER, room.to_hex());
+    }
     let response = crate::build_app(Arc::clone(server))
         .oneshot(crate::test_credentials::bind_request(
             server,
-            Request::builder()
-                .method("POST")
-                .uri(format!("/v1/core/facade/{verb}"))
-                .header("Authorization", authorization)
-                .header("Content-Type", "application/json")
+            request
                 .body(Body::from(serde_json::to_vec(&input).unwrap()))
                 .unwrap(),
         ))
@@ -479,6 +493,97 @@ async fn rooms_http_history_reads_inside_the_rosters_scope() {
             post_room_verb(&server, &agent_token, "rooms.messages", supplied).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{field}: {body}");
     }
+}
+
+/// ARCH-0067 §8: every read a room turn makes runs inside the room. A host
+/// names the turn's room in a header; the engine resolves the rest, and a
+/// verb that would read around the room is refused inside the turn.
+#[tokio::test]
+async fn http_room_turn_header_keeps_ordinary_reads_inside_the_room() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault =
+        Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let agent = EntityId::now();
+    vault
+        .put_entity(
+            &agent,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"agent",
+        )
+        .unwrap();
+    let project = EntityId::now();
+    let root = vault.root_project().unwrap();
+    let mut spec =
+        oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner).unwrap();
+    spec.roster.push(agent.to_hex());
+    vault.put_project(project, &spec, 1).unwrap();
+    let room = EntityId::from_hex(&spec.home_room).unwrap();
+    let lone = EntityId::now();
+    let fiction = EntityId::now();
+    vault
+        .memory(owner, oneiron::EdgeActorClass::Human)
+        .claim_upsert(&oneiron::memory::ClaimInput {
+            id: None,
+            predicate: "note.topic".into(),
+            subject_ref: room.to_hex(),
+            value: json!("lantern dragon"),
+            confidence: 1.0,
+            source: "user_stated".into(),
+            world_ref: Some(fiction.to_hex()),
+            relationship_ref: None,
+            scope: None,
+            valid_from: None,
+            valid_to: None,
+            occurred_at: None,
+            learned_at: None,
+            salience: None,
+        })
+        .unwrap();
+    let server = Arc::new(
+        SyncServer::new(
+            vault.clone(),
+            crate::config::SyncServerConfig {
+                auth_secret: Some("room-turn-http".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let owner_token = room_token(owner, "human");
+    let recall = json!({"query": "lantern dragon", "effort": "light",
+        "scope": {"world_ref": fiction.to_hex()}, "limit": 10});
+    let fiction_items = |pack: &Value| {
+        pack["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["world"] == json!(fiction.to_hex()))
+            .count()
+    };
+    let (status, open) =
+        post_in_room_turn(&server, &owner_token, "recall", recall.clone(), None).await;
+    assert_eq!(status, StatusCode::OK, "{open}");
+    assert_eq!(fiction_items(&open), 1, "outside a room the owner reads it");
+    let (status, inside) =
+        post_in_room_turn(&server, &owner_token, "recall", recall, Some(room)).await;
+    assert_eq!(status, StatusCode::OK, "{inside}");
+    assert_eq!(
+        fiction_items(&inside),
+        0,
+        "the room's Scope holds no fiction"
+    );
+    for verb in ["export", "key_value_get", "receipts", "describe"] {
+        let (status, body) =
+            post_in_room_turn(&server, &owner_token, verb, json!({}), Some(room)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{verb}: {body}");
+    }
+    // A turn opens only in a room the caller belongs to.
+    let (status, body) =
+        post_in_room_turn(&server, &owner_token, "rooms.list", json!({}), Some(lone)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 }
 
 #[tokio::test]

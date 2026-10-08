@@ -28,6 +28,9 @@ pub(crate) struct RoomTurnCeiling {
     /// The room's members, sorted and unique: each row must pass the
     /// all-of-audience rule for every one of them (ARCH-0006a).
     pub(crate) roster: Vec<EntityId>,
+    /// Every other member's read key: a row the room reads must be one each
+    /// of them may read too, private principal rows and NOTEs included.
+    pub(crate) peers: Vec<ScopedReadActorKey>,
 }
 
 impl RoomTurnCeiling {

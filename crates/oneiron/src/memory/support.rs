@@ -427,27 +427,42 @@ impl Vault {
 }
 
 impl<'v> Memory<'v> {
-    /// Binds this actor's turn in `room` (ARCH-0067 §8). The engine reads the
-    /// roster from the room's `memberIds` and each member's grants; the caller
-    /// supplies only the room. Every read through the returned handle runs
-    /// inside `room_scope(roster)` and passes the all-of-audience rule for the
-    /// whole roster. The binding only narrows: every check the actor's reads
-    /// already make still runs.
-    pub fn for_room_turn(&self, room: EntityId) -> MemoryResult<Memory<'v>> {
+    /// Opens this actor's turn in `room` (ARCH-0067 §8). The engine reads the
+    /// roster from the room's own record and each member's grants; the caller
+    /// supplies only the room. Every read through the returned turn runs
+    /// inside `room_scope(roster)` for the current roster and passes the
+    /// all-of-audience rule and every member's own read. The turn only
+    /// narrows: every check the actor's reads already make still runs.
+    pub fn for_room_turn(&self, room: EntityId) -> MemoryResult<super::RoomTurnHandle<'v>> {
         self.verified_actor_class()?;
-        let roster = self.room_roster(room)?;
-        let scope = self.within_room_turn(room, crate::context_board::room_scope(&roster)?)?;
-        Ok(Memory {
-            vault: self.vault,
-            actor: self.actor,
-            actor_class: self.actor_class,
-            machine_signer: self.machine_signer,
-            read_proof: self.read_proof.clone(),
-            room_turn: Some(crate::claim::RoomTurnCeiling {
-                room,
-                scope,
-                roster: roster.into_iter().map(|member| member.actor).collect(),
-            }),
+        let ceiling = match self.room_turn_now()? {
+            Some(now) if now.room == room => now,
+            Some(_) => {
+                return Err(MemoryError::bad_request_with(
+                    "room differs from the bound room turn",
+                    &[],
+                ));
+            }
+            None => {
+                let roster = self.room_roster(room)?;
+                let members: Vec<_> = roster.iter().map(|member| member.actor).collect();
+                crate::claim::RoomTurnCeiling {
+                    room,
+                    scope: crate::context_board::room_scope(&roster)?,
+                    peers: self.peer_read_keys(&members)?,
+                    roster: members,
+                }
+            }
+        };
+        Ok(super::RoomTurnHandle {
+            memory: Memory {
+                vault: self.vault,
+                actor: self.actor,
+                actor_class: self.actor_class,
+                machine_signer: self.machine_signer,
+                read_proof: self.read_proof.clone(),
+                room_turn: Some(ceiling),
+            },
         })
     }
 }

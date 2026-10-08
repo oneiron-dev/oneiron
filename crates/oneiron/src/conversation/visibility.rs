@@ -30,6 +30,23 @@ impl AudienceCache {
     ) -> Result<bool> {
         self.readable_at_depth(vault, txn, id, audience, 0)
     }
+    /// [`Self::readable`] over the exact revision being served, which for a
+    /// pinned or indexed read may be older than the current row.
+    pub(crate) fn readable_raw(
+        &mut self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        raw: &[u8],
+        audience: &[EntityId],
+    ) -> Result<bool> {
+        if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live()
+            || vault.archive_tombstone_in_txn(txn, &id)?.is_some()
+        {
+            return Ok(false);
+        }
+        self.readable_raw_at_depth(vault, txn, id, raw, audience, 0)
+    }
     fn covers_readable(
         &mut self,
         vault: &Vault,
@@ -77,8 +94,18 @@ impl AudienceCache {
         else {
             return Ok(false);
         };
-        let h =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("audience header"))?;
+        self.readable_raw_at_depth(vault, txn, id, &raw, audience, depth)
+    }
+    fn readable_raw_at_depth(
+        &mut self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        raw: &[u8],
+        audience: &[EntityId],
+        depth: usize,
+    ) -> Result<bool> {
+        let h = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("audience header"))?;
         let room = match room_for_record_in(vault, txn, id) {
             Ok(room) => room,
             // Missing ancestry denies this candidate, not unrelated query hits.

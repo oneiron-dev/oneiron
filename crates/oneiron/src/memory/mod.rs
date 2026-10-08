@@ -48,6 +48,7 @@ mod outbound;
 mod read_lane;
 mod reads;
 mod recall;
+mod room_turn;
 mod structural;
 mod subscriptions;
 mod support;
@@ -104,6 +105,7 @@ pub use recall::{
     Effort, MEMORY_PACK_VERSION, MemoryItem, MemoryPack, MemoryProvenance, RecallScope,
     RetrievalMeta, ScopeHonesty,
 };
+pub use room_turn::RoomTurnHandle;
 pub use skill_authoring::SkillAuthoringReceipt;
 pub(crate) use skill_authoring::skill_author_proof_is_live_in_txn;
 pub use structural::{

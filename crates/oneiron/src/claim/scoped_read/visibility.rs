@@ -98,7 +98,7 @@ impl ScopedRead<'_> {
         if !self.relationship_raw_allowed_in(rtxn, id, raw)? {
             return Ok(false);
         }
-        if !self.audience_readable_in(rtxn, id)? {
+        if !self.audience_readable_raw_in(rtxn, id, raw)? {
             return Ok(false);
         }
         if !self.credential_allows_id(id) || !self.proof_live_in(rtxn)? {

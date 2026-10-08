@@ -4,7 +4,7 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 use crate::pipeline::{PREDICATE_WORLD_ACCESS_ALLOWED_SET, WorldAuthoritySet};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use crate::{EdgeActorClass, EdgeKind, EntityId, Result, TimeRange, Vault};
 use rmpv::Value;
 
@@ -72,22 +72,16 @@ fn room_render_reads_return_their_receipt() -> Result<()> {
         vault.put_claim(&EntityId::now(), &access, at(1), 1)?;
     }
     let room = EntityId::now();
-    let mut body = Vec::new();
-    rmpv::encode::write_value(
-        &mut body,
-        &Value::Map(vec![
-            (Value::from("kind"), Value::from("channel")),
-            (
-                Value::from("memberIds"),
-                Value::Array(vec![Value::from(alice.to_hex()), Value::from(bob.to_hex())]),
-            ),
-        ]),
-    )
-    .map_err(|_| crate::Error::InvalidClaimBody("room body"))?;
-    vault
-        .batch()
-        .put_replicated(&room, ENTITY_TYPE_CONVERSATION, at(1), 1, &body)
-        .commit()?;
+    vault.create_conversation(
+        room,
+        &crate::conversation::ConversationBody {
+            kind: crate::conversation::ConversationKind::Channel,
+            member_ids: vec![alice, bob],
+            ..crate::conversation::ConversationBody::default()
+        },
+        crate::WriteActor::new(alice, EdgeActorClass::Human),
+        1,
+    )?;
     let shared = put_rule(&vault, room, "room.posture.mode", "silent", None)?;
     // Alice may read this rule, her peer may not: the room withholds it.
     put_rule(&vault, room, "room.posture.bar", "high", Some(alice))?;

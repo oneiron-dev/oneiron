@@ -29,6 +29,17 @@ impl Memory<'_> {
     /// channels only surfaceable claims. A handle bound to a room turn reads
     /// inside that room on every lane.
     pub(crate) fn read_lane(&self, claims: ClaimReadStatus) -> MemoryResult<ScopedRead<'_>> {
+        // The room resolver opens its own snapshots, so it runs only once the
+        // verification snapshot here has closed: LMDB allows one per thread.
+        let key = self.actor_read_key()?;
+        Ok(self
+            .vault
+            .scoped_read(self.in_room_turn(key)?)
+            .with_claim_status(claims))
+    }
+
+    /// The bound actor's read key, verified in one snapshot.
+    fn actor_read_key(&self) -> MemoryResult<ScopedReadActorKey> {
         let txn = self
             .vault
             .store
@@ -47,10 +58,7 @@ impl Memory<'_> {
                         &["Present a credential minted for this actor that carries the read verb."],
                     )
                 })?;
-            return Ok(self
-                .vault
-                .scoped_read(self.in_room_turn(key))
-                .with_claim_status(claims));
+            return Ok(key);
         }
         let owner = if self.actor_class == crate::EdgeActorClass::Human
             && self.actor == crate::vault::embedded_owner_actor_id()?
@@ -83,19 +91,17 @@ impl Memory<'_> {
             })?
             .require_access_grants(Some(self.actor))
         };
-        Ok(self
-            .vault
-            .scoped_read(self.in_room_turn(key))
-            .with_claim_status(claims))
+        Ok(key)
     }
 
     /// Carries a bound room turn onto a read key, so any lane built from the
     /// key, here or deeper in retrieval, reads inside the room (ARCH-0067 §8).
-    pub(crate) fn in_room_turn(&self, key: ScopedReadActorKey) -> ScopedReadActorKey {
-        match &self.room_turn {
-            Some(turn) => key.in_room_turn(turn.clone()),
+    /// The ceiling is the room's as of this read, never only as it opened.
+    pub(crate) fn in_room_turn(&self, key: ScopedReadActorKey) -> MemoryResult<ScopedReadActorKey> {
+        Ok(match self.room_turn_now()? {
+            Some(turn) => key.in_room_turn(turn),
             None => key,
-        }
+        })
     }
 
     /// Resolves a facade ref for a read on `lane`. A ref that resolves to

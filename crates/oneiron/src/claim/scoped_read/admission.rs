@@ -61,23 +61,43 @@ impl<'a> ScopedRead<'a> {
             .ledger_reads())
     }
 
-    /// The audience conjunct every admission path applies. A key bound to a
-    /// room turn adds the room's world ceiling and its whole roster as an
-    /// audience, so the turn reads inside the room's Scope (ARCH-0067 §8).
+    /// The audience conjunct every admission path applies, over the current
+    /// row. Paths that serve a known revision use [`Self::audience_readable_raw_in`].
     pub(super) fn audience_readable_in(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
+        if self.actor_key.room_turn.is_none() && self.audience.is_none() {
+            return Ok(true);
+        }
+        let Some(record) = self.entity_record_in(txn, id)? else {
+            return Ok(false);
+        };
+        self.audience_readable_raw_in(txn, id, &record.encode())
+    }
+
+    /// The audience conjunct over the exact revision `raw` being served. A
+    /// key bound to a room turn adds the room's world ceiling, its whole
+    /// roster as an audience, and every other member's own read of that same
+    /// revision, so the turn reads inside the room's Scope (ARCH-0067 §8).
+    pub(super) fn audience_readable_raw_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+    ) -> Result<bool> {
         if let Some(room) = &self.actor_key.room_turn {
-            let Some(record) = self.entity_record_in(txn, id)? else {
-                return Ok(false);
-            };
-            let world = if record.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+            let header =
+                EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            let world = if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
                 // An erased claim cannot prove its world, so it stays outside.
-                match crate::claim::decode_claim_body(&record.body, true) {
-                    Ok(body) => body.world,
-                    Err(_) => return Ok(false),
+                match raw
+                    .get(ENTITY_METADATA_HEADER_LEN..)
+                    .map(|body| crate::claim::decode_claim_body(body, true))
+                {
+                    Some(Ok(body)) => body.world,
+                    _ => return Ok(false),
                 }
             } else {
                 None
@@ -87,9 +107,26 @@ impl<'a> ScopedRead<'a> {
                     .audience_cache
                     .lock()
                     .map_err(|_| Error::InvariantViolation("audience cache lock"))?
-                    .readable(self.vault, txn, *id, &room.roster)?
+                    .readable_raw(self.vault, txn, *id, raw, &room.roster)?
             {
                 return Ok(false);
+            }
+            // The room reads only what every member may read: a row private
+            // to the caller is not the room's. Each peer reads this revision
+            // under this read's claim-status contract.
+            for peer in &room.peers {
+                let peer = self
+                    .vault
+                    .scoped_read(peer.clone())
+                    .with_claim_status(self.claim_status);
+                let policy = peer.policy_manifest_in(txn)?;
+                let filter = crate::gate::narrow_retrieval_filter(
+                    &policy.retrieval_floor_for_actor(Some(&peer.actor_key)),
+                    None,
+                )?;
+                if !peer.is_entity_raw_readable_with_filter_in(txn, &policy, id, raw, &filter)? {
+                    return Ok(false);
+                }
             }
         }
         let Some(audience) = &self.audience else {
@@ -98,7 +135,7 @@ impl<'a> ScopedRead<'a> {
         self.audience_cache
             .lock()
             .map_err(|_| Error::InvariantViolation("audience cache lock"))?
-            .readable(self.vault, txn, *id, audience)
+            .readable_raw(self.vault, txn, *id, raw, audience)
     }
 
     pub(super) fn credential_allows_id(&self, id: &EntityId) -> bool {
@@ -239,7 +276,11 @@ impl ScopedRead<'_> {
         let Some(row) = self.entity_record_in(txn, id)? else {
             return Ok(ReadAdmission::OpaqueAbsent);
         };
-        if crate::note::countable_read_suppression(row.entity_type, &row.body) {
+        // Inside a room turn a withheld row may be another room's or a peer's
+        // private one; its count would say it exists, so it reads as absent.
+        if self.actor_key.room_turn.is_none()
+            && crate::note::countable_read_suppression(row.entity_type, &row.body)
+        {
             Ok(ReadAdmission::Suppressed)
         } else {
             Ok(ReadAdmission::OpaqueAbsent)
