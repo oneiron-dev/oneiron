@@ -123,12 +123,14 @@ A restore refuses, and changes nothing, when:
   open);
 - something that holds authority together with content changed since the backup, since
   restoring it would roll a permission back: grants, policy manifests, standing consent grants,
-  secret custody, connector keys, channel identities, outbound grants, machine identities, room
-  roles and membership (who is in a room, their role, how far back they read) of a room the
-  backup holds, or an e-sign ceremony the backup holds (a signature, rejection or void since).
-  The refusal names what moved. A room or document created after the backup does not block
-  the restore; it is not in the restored vault. Rehearse with `--scratch` to read the old
-  content beside the vault instead;
+  secret custody, connector keys, channel identities, outbound grants (using one is not a
+  change), machine identities, published artifacts; for a room, skill, agent, contact or claim
+  the backup holds: room roles and membership (who is in a room, their role, how far back they
+  read), a skill quarantine, an agent switched off or narrowed, a contact revoked or opted out,
+  a relationship membership retracted; or an e-sign ceremony the backup holds (a signature,
+  rejection or void since). The refusal names what moved. Content edits do not block the
+  restore, and a room, document or claim created after the backup is simply not in the restored
+  vault. Rehearse with `--scratch` to read the old content beside the vault instead;
 - the restored vault would make someone an owner or member who is not one now: a person
   deleted, merged away or removed from a shared vault since the backup does not get their
   authority back;
