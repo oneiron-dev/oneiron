@@ -3637,6 +3637,23 @@ fn seed_pact_for_grant(vault: &Vault, grant_id: EntityId, status: PactSeedStatus
     }
 }
 
+/// Review repro (access deletion fences): a FederationGrant whose delete was
+/// accepted but not applied keeps its body. It authorizes no selector.
+#[test]
+fn a_grant_deleted_here_authorizes_no_selector() {
+    let member = entity_id(0x35);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    authorize_sync_selector(&vault, test_selector_scope(), &selector)
+        .expect("a live grant authorizes");
+    vault
+        .with_write_txn(|txn| vault.fence_unapplied_delete_in_txn(txn, &grant_id))
+        .unwrap();
+    assert!(vault.get_raw(&grant_id).unwrap().is_some());
+    authorize_sync_selector(&vault, test_selector_scope(), &selector)
+        .expect_err("a grant deleted here authorizes nothing");
+}
+
 #[test]
 fn selector_authorization_gates_on_pact_activation() {
     let member = entity_id(0x34);

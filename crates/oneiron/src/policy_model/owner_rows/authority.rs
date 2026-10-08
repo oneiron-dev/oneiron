@@ -119,6 +119,13 @@ fn live_shared_members_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Op
         {
             return Err(invalid());
         }
+        // A deleted grant is no membership: its shell is skipped here, and a
+        // stored body counts only while its row is live, checked last.
+        if raw.len() == ENTITY_METADATA_HEADER_LEN
+            && !crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live()
+        {
+            continue;
+        }
         let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
         if grant.scope == FederationGrantScope::vault(creation.vault_id)
             && grant.confers_at(now)
@@ -129,6 +136,7 @@ fn live_shared_members_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Op
                 == Some(crate::registry::ENTITY_TYPE_PERSON)
             && vault.entity_lifecycle_state_in_txn(txn, &grant.member_ref)?
                 == crate::identity_topology::EntityLifecycleState::Active
+            && crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live()
         {
             grants.push(grant);
         }

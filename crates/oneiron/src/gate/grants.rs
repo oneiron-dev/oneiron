@@ -414,29 +414,36 @@ pub(crate) fn companion_profile_access_grant(
 ) -> Result<Option<EntityId>> {
     for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_ACCESS_GRANT, None)? {
         let id = index_entry?;
-        // Authority is a live grant row: a deleted one grants nothing, even
-        // while an unapplied delete leaves its body stored.
-        let body = match crate::vault::live_entity_row_in_txn(store, txn, &id)? {
-            crate::vault::LiveEntityRow::DeletedShell => continue,
-            crate::vault::LiveEntityRow::Absent => {
-                return Err(Error::CorruptedIndex("access grant entity row"));
-            }
-            crate::vault::LiveEntityRow::Live {
-                entity_type: ENTITY_TYPE_ACCESS_GRANT,
-                body,
-            } => body,
-            crate::vault::LiveEntityRow::Live { .. } => {
-                return Err(Error::CorruptedIndex("access grant entity type"));
-            }
+        let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode()) else {
+            return Err(Error::CorruptedIndex("access grant entity row"));
         };
+        let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
+            return Err(Error::CorruptedIndex("access grant entity header"));
+        };
+        if header.entity_type != ENTITY_TYPE_ACCESS_GRANT {
+            return Err(Error::CorruptedIndex("access grant entity type"));
+        }
+        // Authority is a live grant row: a deleted one grants nothing, even
+        // while an unapplied delete leaves its body stored. Its shell is
+        // skipped here; a stored body is checked last, once it matches.
+        let live = || -> Result<bool> {
+            Ok(crate::vault::live_entity_row_in_txn(store, txn, &id)?.is_live())
+        };
+        if raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN && !live()? {
+            continue;
+        }
 
-        let grant = match crate::access_grant::decode_access_grant_body(&body) {
+        let grant = match crate::access_grant::decode_access_grant_body(
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        ) {
             Ok(grant) => grant,
             Err(_) => {
                 return Err(Error::CorruptedIndex("access grant body"));
             }
         };
-        if grant.allows_companion_profile_read(principal_ref, person_ref, persona_ref, now) {
+        if grant.allows_companion_profile_read(principal_ref, person_ref, persona_ref, now)
+            && live()?
+        {
             return Ok(Some(id));
         }
     }
