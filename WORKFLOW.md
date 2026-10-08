@@ -52,8 +52,8 @@ logs, GitHub checks, and resolved review threads are the evidence that wins.
 - Claim the Linear ticket and move it to `In Progress` before implementation.
 - Maintain one Linear workpad comment with plan, PR link, gate results, review
   status, and blockers. Avoid routine per-step status comments.
-- When publication is authorized, open the PR ready for review (never draft)
-  so CI and cloud-reviewer bots run. Link it from Linear.
+- When publication is authorized, open the PR as a draft and mark it ready once,
+  after the gate passes (section 5). Link it from Linear.
 - When the local gate and GitHub checks are green, required review policy has
   been satisfied, and blocking comments are resolved, move the ticket to
   `In Review` with the PR link and gate summary.
@@ -144,21 +144,28 @@ an irreversible production effect.
 
 ## 5. PR Flow
 
+Owner ruling, 2026-10-07. Each PR gets one bot review, not one per push.
+
 1. Commit the scoped change with a normal area-prefixed message such as
-   `docs: update workflow policy`.
-2. When publication is authorized, push the branch and open a ready-for-review
-   (non-draft) PR with `## Summary` and `## Test plan`. Do not use `--draft`:
-   draft PRs do not trigger the required CI and cloud-reviewer bots.
-3. Keep the PR ready for review while local gate, GitHub CI, required
-   cloud-reviewer bot checks, and required `/fusion` review converge. Ready
-   status starts review; it is not permission to merge.
-4. Fix or explicitly resolve blocking comments and wait for the local gate,
-   GitHub checks, and required reviews to pass on the final branch tip. Do not
-   enable auto-merge while any merge-gate condition is unresolved.
-5. Before merge, rehearse mergeability against current `origin/main` without
-   touching `main`.
-6. Enable GitHub auto-merge once the merge rehearsal is clean and the PR remains
-   green.
+   `docs: update workflow policy`. Signed commits; no AI attribution lines.
+2. Review the branch with Sol before any PR is ready:
+   `sol --tools -t xhigh -C <worktree>`. Fix what it finds. For high-risk
+   changes (auth, consent, restore, deletion, crypto, owner data), add Astra as
+   a second review.
+3. Open the PR as a **draft**, with `## Summary` and `## Test plan`. CI is
+   paused repo-wide (`CI_PAUSED`), so the full gate in section 3, run locally
+   or through the fleet, is the gate.
+4. When the full gate is green on the branch tip and Sol's findings are
+   resolved, mark the PR ready **once**. CodeRabbit reviews automatically when a
+   PR is marked ready; it skips drafts and does not re-review every push.
+5. Tag `@greptileai` only on high-risk PRs (about 50 a month on the free plan).
+   Post no other bot commands. Docs-only PRs skip bot review.
+6. One PR per finished outcome; no PR per small step. A wave keeps to about six
+   ready PRs a day so CodeRabbit's included rate keeps up.
+7. Merge as soon as the gate is green on the head and every review (Sol, Astra
+   where used, CodeRabbit, Greptile where tagged) is resolved. Squash-merge with
+   an explicit body, so no branch commit trailer reaches `main`. Ready status
+   starts review; it is not permission to merge with open findings.
 
 Do not force-push a published branch, skip hooks, amend a published commit, run
 interactive rebase, merge locally into `main`, or merge with unresolved blocking
