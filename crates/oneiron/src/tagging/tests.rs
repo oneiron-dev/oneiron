@@ -2770,8 +2770,22 @@ fn a_received_dag_root_reads_alone_before_the_room_adopts_the_dag() {
     let vault = open(dir.path(), true);
     let root = witness_at(&vault, "Ada sailed north", NOW + 100);
     let descendant = witness_at(&vault, "and Grace followed", NOW + 10);
+    // The replicated edge shape a sync peer's Parent lands in; the public
+    // edge door refuses the kind.
     vault
-        .put_edge(&descendant, crate::edge::EdgeKind::Parent, &root, 1.0)
+        .batch_in()
+        .edge_with_value_fields(
+            &descendant,
+            crate::edge::EdgeKind::Parent,
+            &root,
+            crate::batch::EdgeValueFields {
+                weight: 1.0,
+                created_at: NOW,
+                vad: crate::affect::Vad::NEUTRAL,
+                provenance: None,
+            },
+        )
+        .commit()
         .expect("a received Parent");
     let txn = vault.store.env.read_txn().expect("read txn");
     assert!(
