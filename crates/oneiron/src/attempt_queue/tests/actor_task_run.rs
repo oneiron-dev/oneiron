@@ -291,7 +291,6 @@ mod one_1876_tests {
             claimed_at: None,
             scheduled_at: None,
             retry_of: None,
-            folded_retries: 0,
             backoff_until: None,
             last_error: None,
             task_ref: Some("tk_legacy".to_owned()),

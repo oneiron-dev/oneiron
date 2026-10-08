@@ -2275,7 +2275,12 @@ fn a_turn_that_keeps_failing_keeps_a_bounded_lineage_and_still_backs_off() {
         let TaggingOutcome::Failed { retry_at, .. } = pass.traces[0].outcome else {
             panic!("the call failed");
         };
-        assert_eq!(retry_at - at, 1 << failed, "try {} backs off", failed + 1);
+        assert_eq!(
+            retry_at - at,
+            1_u64 << failed,
+            "try {} backs off",
+            failed + 1
+        );
         let rows = markers(&vault);
         assert!(
             rows.len() <= PER_TURN + 1,
@@ -2308,6 +2313,62 @@ fn a_turn_that_keeps_failing_keeps_a_bounded_lineage_and_still_backs_off() {
     ));
     assert!(markers(&vault).is_empty());
     assert_eq!(settled(&vault, &turn), 1);
+}
+
+/// The failed tries a retrying marker keeps are the ones its trace history
+/// keeps, each judged on its own stamp: after the clock runs back, an
+/// expired try between two kept ones goes, and the older one within the age
+/// stays. The try numbers still count every try.
+#[test]
+fn a_retry_after_the_clock_ran_back_keeps_the_failed_tries_the_history_keeps() {
+    let dir = tempfile::tempdir().expect("dir");
+    let clock = ManualClock::new(NOW);
+    let vault = {
+        let mut config = config(true);
+        config.store_clock = clock.bundle();
+        config.tagging = Some(
+            TaggingMarkerConfig::new(CHECKPOINT)
+                .expect("checkpoint")
+                .with_trace_history(TaggingTraceHistory {
+                    per_turn: 2,
+                    max_age_secs: 15,
+                }),
+        );
+        Arc::new(Vault::open(dir.path(), config).expect("open vault"))
+    };
+    let turn = witness(&vault, "Ada sailed north");
+    let tagger = Scripted::new(Answer::Fail);
+    let reconciler = reconciler(&vault, &tagger);
+    for at in [NOW + 100, NOW + 10, NOW + 30] {
+        clock.set(at);
+        let pass = reconciler.drain_once().expect("drain");
+        assert!(matches!(
+            pass.traces[0].outcome,
+            TaggingOutcome::Failed { .. }
+        ));
+    }
+    let mut failed: Vec<u64> = markers(&vault)
+        .iter()
+        .filter(|row| row.state == AttemptState::Failed)
+        .map(|row| row.updated_at)
+        .collect();
+    failed.sort_unstable();
+    let mut traced: Vec<u64> = vault
+        .tagging_trace_history(Some(&turn))
+        .expect("history")
+        .iter()
+        .map(|record| record.recorded_at)
+        .collect();
+    traced.sort_unstable();
+    assert_eq!(traced, vec![NOW + 30, NOW + 100]);
+    assert_eq!(
+        failed, traced,
+        "the ledger keeps the tries the history keeps"
+    );
+    tagger.set(Answer::Good);
+    let pass = reconciler.drain_once().expect("drain");
+    assert_eq!(pass.traces[0].try_number, 4);
+    assert!(markers(&vault).is_empty());
 }
 
 /// A scan for another job kind never reads the tagging range: not a settled

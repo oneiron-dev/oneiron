@@ -336,10 +336,9 @@ pub struct AttemptRecord {
     /// [`crate::attempt_queue::AttemptQueue::retry`].
     #[serde(default)]
     pub retry_of: Option<AttemptId>,
-    /// Earlier tries of this row's lineage that a compaction deleted
-    /// ([`crate::attempt_queue::AttemptQueue::compact_retry_chain_in_txn`]),
-    /// carried by the oldest row the lineage keeps, whose `retry_of` it
-    /// cleared. The lineage depth counts each as a hop, so backoff reads as
+    /// Tries of this row's lineage that a compaction deleted between this row
+    /// and the one it retries (`retry_of`), or before it when it retries
+    /// none. The lineage depth counts each as a hop, so backoff reads as
     /// before. Absent from the encoded row while zero.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub folded_retries: u32,

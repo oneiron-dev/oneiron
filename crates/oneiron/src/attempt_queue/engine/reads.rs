@@ -73,8 +73,8 @@ impl AttemptQueue<'_> {
     /// Counts the retries that precede `id` by walking its `retry_of` lineage.
     ///
     /// A first try is depth 0 and every `retry_of` hop adds one, as does each
-    /// try a compaction folded into the oldest stored row
-    /// ([`AttemptRecord::folded_retries`]). [`Self::retry`]
+    /// try a compaction deleted from the lineage, which the row behind it
+    /// counts ([`AttemptRecord::folded_retries`]). [`Self::retry`]
     /// mints a NEW row whose `attempt_count` restarts at zero, so the lineage
     /// is the only honest logical retry counter: a caller spacing retries must
     /// read the depth here rather than infer one from a per-row lease counter.
@@ -108,7 +108,8 @@ impl AttemptQueue<'_> {
     ) -> Result<u32> {
         let mut visited = HashSet::from([id]);
         let mut child = self.retry_chain_record_in_txn(rtxn, id)?;
-        let mut depth = 0_u32;
+        // Every row counts the tries a compaction deleted behind it.
+        let mut depth = child.folded_retries;
         while let Some(parent_id) = child.retry_of {
             // A revisit is a CYCLE before it is anything else: a row already on
             // the walk trivially matches itself on identity, so the field
@@ -124,16 +125,15 @@ impl AttemptQueue<'_> {
                     ERR_RETRY_CHAIN_MISMATCH,
                 )));
             }
-            depth = depth.saturating_add(1);
+            depth = depth
+                .saturating_add(1)
+                .saturating_add(parent.folded_retries);
             if depth >= RETRY_CHAIN_DEPTH_LIMIT {
                 return Ok(RETRY_CHAIN_DEPTH_LIMIT);
             }
             child = parent;
         }
-        // The oldest stored row counts the tries a compaction deleted.
-        Ok(depth
-            .saturating_add(child.folded_retries)
-            .min(RETRY_CHAIN_DEPTH_LIMIT))
+        Ok(depth.min(RETRY_CHAIN_DEPTH_LIMIT))
     }
 
     /// One row of the lineage walk: it must exist, or the chain is broken.

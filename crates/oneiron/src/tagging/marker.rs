@@ -273,9 +273,9 @@ pub(super) fn enqueue_marker_in_txn(
 ///
 /// The failed tries the trace history would keep stay in the ledger behind
 /// the new one: the newest [`TaggingTraceHistory::per_turn`], none older
-/// than [`TaggingTraceHistory::max_age_secs`]. Older tries are deleted and
-/// counted into the oldest one kept, so backoff and try numbers read on, a
-/// turn that keeps failing holds a bounded lineage, and its settlement
+/// than [`TaggingTraceHistory::max_age_secs`]. The others are deleted and
+/// counted by the kept try behind them, so backoff and try numbers read on,
+/// a turn that keeps failing holds a bounded lineage, and its settlement
 /// prunes a bounded one.
 pub(super) fn retry_marker_in_txn(
     vault: &Vault,
