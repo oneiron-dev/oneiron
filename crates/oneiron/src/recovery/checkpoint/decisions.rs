@@ -135,6 +135,10 @@ const DECISIONS: &[(&str, Check)] = &[
         loosened::<consent::EsignCeremonies>,
     ),
     (
+        "calendar invitation consent",
+        loosened::<consent::CalendarInviteConsent>,
+    ),
+    (
         "world selection authority",
         loosened::<worlds::WorldSelections>,
     ),

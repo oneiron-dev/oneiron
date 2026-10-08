@@ -173,7 +173,7 @@ pub(super) fn hydrate_calendar_invite_hygiene(
 }
 
 /// Prior thread first, then a verified standing grant. Never minted here.
-fn resolve_consent_basis(
+pub(crate) fn resolve_consent_basis(
     vault: &Vault,
     recipient: &str,
 ) -> Result<Option<CalendarInviteConsentBasis>, CalendarError> {

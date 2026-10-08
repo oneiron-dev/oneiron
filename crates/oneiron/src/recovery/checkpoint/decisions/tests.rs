@@ -82,6 +82,7 @@ const CASES: &[fn() -> Result<Case>] = &[
     consent::booking_publications,
     consent::principal_autonomy,
     consent::esign_ceremonies,
+    consent::calendar_invitation_consent,
     worlds::world_selection_authority,
 ];
 

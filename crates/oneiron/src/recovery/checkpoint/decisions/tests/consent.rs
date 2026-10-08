@@ -8,14 +8,19 @@ use crate::blob_artifact::esign::{
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use crate::booking::{
     BOOKING_EVENT_TYPE_PREDICATE, BOOKING_EVENT_TYPE_SCHEMA_VERSION, BOOKING_PUBLIC_PAGE_PREDICATE,
-    BOOKING_PUBLIC_PAGE_SCHEMA_VERSION, BookingEventTypeClaimValue, BookingLandingContent,
-    BookingPagePublication, ConstraintFieldConfig, EventTypeCard, EventTypeConfig, EventTypeKey,
-    HostAvailabilityConfig, PublicBookingAvailability, RoutingMode, ThemeTokens, WeeklyWallWindow,
-    booking_config_hash, encode_event_type_claim_value,
+    BOOKING_PUBLIC_PAGE_SCHEMA_VERSION, BookingError, BookingEventTypeClaimValue,
+    BookingLandingContent, BookingLifecycleConsumerInput, BookingLifecycleTurn,
+    BookingPagePublication, BookingVerbReceipt, BookingVerbRequest, CancelSpec, ConfirmReceipt,
+    ConfirmSpec, ConstraintFieldConfig, EventTypeCard, EventTypeConfig, EventTypeKey,
+    HoldLeaseSpec, HoldSpec, HostAvailabilityConfig, PublicBookingAvailability, RankedSlot,
+    RoutingMode, SessionKey, SlotHostBinding, SlotOracle, SolveRequest, SolveResult, ThemeTokens,
+    WeeklyWallWindow, booking_config_hash, encode_event_type_claim_value, enqueue_booking_verb,
+    run_booking_lifecycle_once,
 };
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
+use crate::comm::CommClaimValue;
 use crate::delivery_window::{
     DELIVERY_WINDOW_SCHEMA_VERSION, DeliveryWindowAppliesTo, PREDICATE_DELIVERY_WINDOW_QUIET,
 };
@@ -28,6 +33,7 @@ use crate::identity_reputation::{
 use crate::identity_topology::{
     IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
 };
+use crate::outbound_grant::BookingPageInviteGrantMintIntent;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
 use crate::test_util::entity;
 use crate::write_envelope::WriteActor;
@@ -440,4 +446,226 @@ pub(super) fn esign_ceremonies() -> Result<Case> {
         new_person,
         move |vault| vault.put_edge(&expiry, EdgeKind::ClaimOf, &document, 1.0),
     )
+}
+
+/// The census row for whom a calendar invitation may reach.
+const INVITATION_CONSENT: &str = "calendar invitation consent";
+
+/// When the invitation cases book, cancel and touch, in seconds.
+const NOW: u64 = 1_772_409_600;
+
+/// Two recipients' addresses.
+const ADA: &str = "ada@example.test";
+const BEN: &str = "ben@example.test";
+
+/// Fails unless `vault` holds a consent basis for a calendar invitation to
+/// `recipient` exactly when `expected`.
+fn invitable(vault: &Vault, recipient: &str, expected: bool) -> Result<()> {
+    let basis =
+        crate::calendar::invite::resolve_consent_basis(vault, recipient).map_err(invalid)?;
+    if basis.is_some() == expected {
+        return Ok(());
+    }
+    Err(Error::InvalidConfig(format!(
+        "{recipient} has invitation consent {basis:?}"
+    )))
+}
+
+/// The one slot a booking page offers, on the host `event_type` names: only
+/// the availability answer is a fixture, and the booking lifecycle writes
+/// the EVENT, its claims, tokens and passport.
+struct Offered(TimeRange);
+
+impl SlotOracle for Offered {
+    fn solve(&self, _: &SolveRequest) -> std::result::Result<SolveResult, BookingError> {
+        Ok(SolveResult {
+            slots: vec![RankedSlot {
+                start_utc: self.0.start,
+                end_utc: self.0.end,
+                rank: 1.0,
+            }],
+            flex_used: false,
+            host_bindings: vec![SlotHostBinding {
+                start_utc: self.0.start,
+                end_utc: self.0.end,
+                host_refs: vec![entity(0x86).to_hex()],
+                host_zones: vec!["UTC".to_owned()],
+            }],
+        })
+    }
+}
+
+/// Runs `request` through the booking lifecycle on this node, the home node.
+fn turn(vault: &Vault, request: BookingVerbRequest, slot: TimeRange) -> Result<BookingVerbReceipt> {
+    enqueue_booking_verb(vault, request, NOW).map_err(invalid)?;
+    let consumer = BookingLifecycleConsumerInput {
+        local_node_id: crate::identity::load_or_mint_client_id(vault)?,
+        lease_owner: "census".to_owned(),
+        now_utc: NOW,
+    };
+    match run_booking_lifecycle_once(vault, |_| Ok(Offered(slot)), &consumer).map_err(invalid)? {
+        BookingLifecycleTurn::Executed(receipt) => Ok(receipt),
+        other => Err(invalid(other)),
+    }
+}
+
+/// A booking of the half hour from `start` on `page`, held and confirmed by
+/// `booker`.
+fn book(vault: &Vault, page: EntityId, booker: EntityId, start: u64) -> Result<ConfirmReceipt> {
+    let slot = TimeRange {
+        start,
+        end: start + 1_800,
+    };
+    let session = SessionKey::derive(&start.to_be_bytes());
+    let hold = HoldSpec {
+        page_ref: page,
+        event_type: EventTypeKey("intro".to_owned()),
+        slot,
+        session_key: session,
+        visitor_tz: "UTC".to_owned(),
+        constraint: None,
+        lease: HoldLeaseSpec::Ordinary,
+        idempotency_key: None,
+    };
+    let held = match turn(vault, BookingVerbRequest::Hold(hold), slot)? {
+        BookingVerbReceipt::Held(held) => held,
+        other => return Err(invalid(other)),
+    };
+    let confirm = ConfirmSpec {
+        hold_token: held.token,
+        session_key: session,
+        booker_contact: booker,
+        intake: Vec::new(),
+        idempotency_key: None,
+    };
+    match turn(vault, BookingVerbRequest::Confirm(confirm), slot)? {
+        BookingVerbReceipt::Confirmed(confirmed) => Ok(confirmed),
+        other => Err(invalid(other)),
+    }
+}
+
+/// Cancels `booking` with its own cancel token, keeping its EVENT.
+fn cancel(vault: &Vault, booking: &ConfirmReceipt) -> Result<()> {
+    crate::booking::lifecycle::execute_cancel(
+        vault,
+        &CancelSpec {
+            token: booking.cancel_token.clone(),
+            idempotency_key: None,
+        },
+        NOW + 60,
+        None,
+    )
+    .map(drop)
+    .map_err(invalid)
+}
+
+/// A booker `id` whose person row carries `address`, as a booking page's
+/// booker's does.
+fn booker(vault: &Vault, id: EntityId, address: &str) -> Result<EntityId> {
+    vault.put_entity(&id, ENTITY_TYPE_PERSON, AT, 1, address.as_bytes())?;
+    Ok(id)
+}
+
+/// A booking page grant lets a calendar invitation reach whoever booked a
+/// confirmed booking on its page. A booking cancelled since the backup, its
+/// booker holding no other on the page, is one a restore would confirm
+/// again, letting the invitation through (Astra R4-4); one cancelled on a
+/// page no grant covers, or beside another the same booker holds on the
+/// granted page, lets no one through.
+pub(super) fn calendar_invitation_consent() -> Result<Case> {
+    let (dir, vault) = open_seeded()?;
+    let owner = person(&vault, 0x86)?;
+    let (granted, ungranted) = (entity(0xA1), entity(0xA2));
+    for (page, claim) in [(granted, entity(0xA3)), (ungranted, entity(0xA4))] {
+        vault.put_entity(&page, ENTITY_TYPE_ASSET, AT, 1, b"page")?;
+        put_event_type(&vault, claim, page, event_type(0))?;
+    }
+    {
+        let runner = crate::DreamerRunnerStore::new(&vault);
+        runner.elect_home_node(&[runner.local_home_node_candidate(true, true, true)?], 1)?;
+    }
+    let ada = booker(&vault, entity(0xA5), ADA)?;
+    let ben = booker(&vault, entity(0xA6), BEN)?;
+    let kept = book(&vault, granted, ada, NOW + 3_600)?;
+    let spare = book(&vault, granted, ada, NOW + 7_200)?;
+    let elsewhere = book(&vault, ungranted, ben, NOW + 10_800)?;
+    // Minted after the bookings, so no confirm sends an invitation.
+    vault.mint_booking_page_invite_outbound_grant(
+        &entity(0xA7),
+        &BookingPageInviteGrantMintIntent {
+            page_ref: granted,
+            publisher_principal: owner,
+        },
+        NOW,
+    )?;
+    invitable(&vault, ADA, true)?;
+    invitable(&vault, BEN, false)?;
+    Case::after_backup(
+        INVITATION_CONSENT,
+        (dir, vault),
+        move |vault| {
+            cancel(vault, &elsewhere)?;
+            cancel(vault, &spare)?;
+            invitable(vault, ADA, true)?;
+            invitable(vault, BEN, false)
+        },
+        move |vault| {
+            cancel(vault, &kept)?;
+            invitable(vault, ADA, false)
+        },
+    )
+}
+
+/// A standing `comm.last_touch` `id` with `party` on `channel_class`.
+fn last_touch(vault: &Vault, id: EntityId, party: EntityId, channel_class: &str) -> Result<()> {
+    let body = CommClaimValue::LastTouch {
+        party_ref: party,
+        channel_class: channel_class.to_owned(),
+        occurred_at: NOW,
+    }
+    .claim_body()?;
+    vault.put_claim(
+        &id,
+        &body,
+        TimeRange {
+            start: NOW,
+            end: NOW,
+        },
+        NOW,
+    )
+}
+
+/// A prior thread lets a calendar invitation reach a recipient no grant
+/// covers. A last touch on email whose `claim_of` edge was deleted since the
+/// backup, its body and party left in place, is one a restore would reach
+/// again; a touch since on a channel an invitation does not ride changes
+/// nothing.
+fn prior_thread() -> Result<Case> {
+    let (dir, vault) = open_vault();
+    let party = crate::comm::resolve_or_create_comm_party(&vault, ADA).map_err(invalid)?;
+    let touch = entity(0xC1);
+    last_touch(&vault, touch, party, "email")?;
+    invitable(&vault, ADA, true)?;
+    Case::after_backup(
+        INVITATION_CONSENT,
+        (dir, vault),
+        move |vault| {
+            last_touch(vault, entity(0xC2), party, "telegram")?;
+            invitable(vault, ADA, true)
+        },
+        move |vault| {
+            if !vault.delete_edge(&touch, EdgeKind::ClaimOf, &party)? {
+                return Err(Error::EntityNotFound);
+            }
+            invitable(vault, ADA, false)
+        },
+    )
+}
+
+/// Astra R4-4: a prior thread a cold calendar invitation stood on, its last
+/// touch's `claim_of` edge deleted since the backup, came back with a
+/// restore that kept live authority.
+#[test]
+fn a_restore_does_not_reattach_a_prior_thread_an_invitation_stands_on() {
+    assert_eq!(super::run(prior_thread), Ok(INVITATION_CONSENT));
 }

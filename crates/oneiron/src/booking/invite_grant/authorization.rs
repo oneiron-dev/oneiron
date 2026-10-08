@@ -168,7 +168,7 @@ pub(super) fn confirmed_booking_binding(
 
 /// The identity string one recorded booker contact carries, read from the
 /// stored PERSON row and nothing else.
-pub(in crate::booking) fn booker_identity(
+pub(crate) fn booker_identity(
     vault: &Vault,
     contact_ref: &EntityId,
 ) -> Result<Option<String>, BookingError> {
@@ -229,7 +229,7 @@ fn identities_match(stored: &str, requested: &str) -> bool {
     normalize_identity(stored) == normalize_identity(requested)
 }
 
-fn normalize_identity(value: &str) -> String {
+pub(crate) fn normalize_identity(value: &str) -> String {
     let trimmed = value.trim();
     trimmed
         .strip_prefix("mailto:")
