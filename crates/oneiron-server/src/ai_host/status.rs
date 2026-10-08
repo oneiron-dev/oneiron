@@ -19,6 +19,10 @@ pub enum IdleReason {
     /// The vault's policy does not yet let its Dreamer read and land
     /// consolidation (`oneiron dreamer grant`, once, with the server stopped).
     NeedsOwnerGrant,
+    /// The vault's extraction and consolidation defaults do not route to the
+    /// Dreamer seat's widest rung (`oneiron dreamer grant --extraction-route`,
+    /// or `PUT /v1/llm/defaults`).
+    ExtractionRouteNotSet,
     /// Turned off in `[models]`.
     Disabled,
     /// The worker failed to start; the server log has the cause.

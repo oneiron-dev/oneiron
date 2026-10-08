@@ -83,17 +83,11 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
         .with_embedder(embedder)
         .with_owner_host(owner_host);
-    // Model seats, the Dreamer and the workflow pump, from `[models]`. With
-    // no section every seat stays empty and the model-free server is whole.
-    let (sync_server, ai) =
-        crate::ai_host::AiHost::attach(sync_server, config.models.as_ref()).await;
-    let sync_server = Arc::new(sync_server);
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
-    tracing::info!(%addr, "listening");
-
     // Same bind, named through the listener enum managed mode also uses.
     // `Tcp` is the only variant this path can produce, so unmanaged serve
-    // still binds host:port and nothing else.
+    // still binds host:port and nothing else. Bound before any worker
+    // starts, so a refused bind leaves nothing running.
     let listener = ServeListener::Tcp(addr).bind().await?;
     let managed::BoundServeListener::Tcp(listener) = listener else {
         anyhow::bail!("unmanaged serve requires a TCP listener");
@@ -105,6 +99,13 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
         || Ok(()),
     );
     let listener = tokio::net::TcpListener::from_std(host.listener()?)?;
+    tracing::info!(%addr, "listening");
+    // Model seats, the Dreamer and the workflow pump, from `[models]`. With
+    // no section every seat stays empty and the model-free server is whole.
+    // A startup error below drops `ai`, which tells its workers to stop.
+    let (sync_server, ai) =
+        crate::ai_host::AiHost::attach(sync_server, config.models.as_ref()).await;
+    let sync_server = Arc::new(sync_server);
     let linear_handle = crate::linear_host::spawn(sync_server.clone()).await?;
     let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
     let embedding_handle = sync_server.spawn_embedding_worker();

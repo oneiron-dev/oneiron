@@ -206,6 +206,23 @@ fn validate_ladders(
     providers: &BTreeMap<String, ProviderConfig>,
     roles: &BTreeMap<ModelRole, Vec<Rung>>,
 ) -> anyhow::Result<()> {
+    // Two provider spellings that map to one engine id would share one
+    // catalog row: one of them would silently run as the other.
+    let mut engine_ids: BTreeMap<oneiron::ModelId, &ModelRef> = BTreeMap::new();
+    for rung in roles.values().flatten() {
+        let Some(provider) = providers.get(&rung.model.provider) else {
+            continue;
+        };
+        let id = rung.model.engine_id(&provider.revision)?;
+        if let Some(other) = engine_ids.insert(id.clone(), &rung.model)
+            && other != &rung.model
+        {
+            anyhow::bail!(
+                "models {other} and {} both become engine id {id}; rename one",
+                rung.model
+            );
+        }
+    }
     for (role, ladder) in roles {
         let key = role_key(*role);
         if *role == ModelRole::RetrievalEmbedder {

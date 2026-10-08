@@ -147,6 +147,26 @@ async fn a_failed_model_call_cancels_the_message_and_reports_why() {
 }
 
 #[tokio::test]
+async fn a_named_agent_must_be_dispatchable_and_no_model_is_called() {
+    let fake = FakeLlm::start(vec![], Some(Reply::Status(500))).await;
+    let (_dir, server, host) = ai_server(Some(&fake.base_url)).await;
+    let (status, body) = send(
+        &server,
+        chat(json!({
+            "conversation_ref": oneiron::EntityId::now().to_hex(),
+            "text": "hi",
+            "agent_ref": oneiron::EntityId::now().to_hex(),
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["error"]["code"], json!("agent_not_dispatchable"));
+    assert!(fake.seen().is_empty());
+    host.shutdown().await;
+}
+
+#[tokio::test]
 async fn without_a_model_chat_refuses_and_status_says_why() {
     let (_dir, server, host) = ai_server(None).await;
     let (status, body) = send(

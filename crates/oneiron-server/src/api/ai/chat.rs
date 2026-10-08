@@ -16,6 +16,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt;
+use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext, LlmEventBus, TerminalSink};
 use oneiron::memory::{
     MessageStreamHandle, MessageStreamReceipt, MessageWriteMode, StreamCadence, StreamCancelReason,
@@ -30,6 +31,7 @@ use oneiron_driver::SessionHint;
 use serde::{Deserialize, Serialize};
 
 use super::refusal;
+use crate::ai_host::TurnGuard;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::models::Seat;
 use crate::server::SyncServer;
@@ -37,6 +39,9 @@ use crate::server::SyncServer;
 /// The seeded definition that speaks when a request names no agent.
 const DEFAULT_AGENT: &str = "sys.default";
 const MESSAGE_TYPE: &str = "text";
+/// Under the engine's idle finalization (30 s), so a model that thinks in
+/// silence does not have its message closed under it.
+const KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -121,7 +126,11 @@ fn principal(auth: &CoreAuth, vault: &Vault) -> Result<(EntityId, EdgeActorClass
     Ok((actor, class))
 }
 
+/// The agent that answers: the seeded default, or one an owner-grade
+/// credential names. Either way it must pass the dispatch predicate (live,
+/// active, approved, enabled), as a dispatched agent would.
 fn assistant(
+    auth: &CoreAuth,
     vault: &Vault,
     agent_ref: Option<&str>,
 ) -> Result<(EntityId, Option<String>), Response> {
@@ -132,27 +141,32 @@ fn assistant(
             "agent_ref names no agent definition in this vault",
         )
     };
-    let failed = |_| {
-        refusal(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "agent_unreadable",
-            "agent read failed",
-        )
-    };
-    let (id, definition) = match agent_ref {
-        Some(reference) => {
-            let id = EntityId::from_hex(reference).map_err(|_| unknown())?;
-            let definition = vault
-                .get_agent_definition(&id)
-                .map_err(failed)?
-                .ok_or_else(unknown)?;
-            (id, definition)
+    let id = match agent_ref {
+        Some(_) if !auth.is_owner_grade() => {
+            return Err(refusal(
+                StatusCode::FORBIDDEN,
+                "agent_ref_requires_owner",
+                "only an owner-grade credential picks the answering agent",
+            ));
         }
-        None => vault
-            .get_seeded_agent_definition_by_logical_id(DEFAULT_AGENT)
-            .map_err(failed)?
-            .ok_or_else(unknown)?,
+        Some(reference) => EntityId::from_hex(reference).map_err(|_| unknown())?,
+        None => {
+            vault
+                .get_seeded_agent_definition_by_logical_id(DEFAULT_AGENT)
+                .map_err(|_| unknown())?
+                .ok_or_else(unknown)?
+                .0
+        }
     };
+    let definition = AgentDispatcher::new(vault)
+        .dispatchable_definition(&AgentDispatchTarget::Custom(id))
+        .map_err(|error| {
+            refusal(
+                StatusCode::BAD_REQUEST,
+                "agent_not_dispatchable",
+                error.to_string(),
+            )
+        })?;
     Ok((
         id,
         definition
@@ -203,8 +217,10 @@ fn start_turn(
     server: &Arc<SyncServer>,
     payload: Result<Json<ChatTurnRequest>, JsonRejection>,
 ) -> Result<Response, Response> {
-    auth.require(CoreScope::Write)
-        .map_err(IntoResponse::into_response)?;
+    // A turn reads the agent and the conversation, and writes both turns.
+    for scope in [CoreScope::Read, CoreScope::Write] {
+        auth.require(scope).map_err(IntoResponse::into_response)?;
+    }
     let Json(request) = payload.map_err(|rejection| {
         refusal(
             StatusCode::BAD_REQUEST,
@@ -228,7 +244,7 @@ fn start_turn(
     })?;
     let vault = Arc::clone(server.vault());
     let (actor, class) = principal(auth, &vault)?;
-    let (agent, instructions) = assistant(&vault, request.agent_ref.as_deref())?;
+    let (agent, instructions) = assistant(auth, &vault, request.agent_ref.as_deref())?;
     let settings = server.ai.chat_settings();
     let engine = |error: &dyn std::fmt::Display| {
         refusal(StatusCode::CONFLICT, "turn_refused", error.to_string())
@@ -326,6 +342,7 @@ fn start_turn(
     let subscription = bus.subscribe();
     let (finished, outcome) = tokio::sync::oneshot::channel();
     let ai = server.ai.clone();
+    let turn = server.ai.enter_turn();
     tokio::spawn(async move {
         let result = produce(Producer {
             bus,
@@ -337,6 +354,7 @@ fn start_turn(
             agent,
             handle,
             streamed,
+            turn,
         })
         .await;
         ai.session_hint(SessionHint::Activity);
@@ -454,9 +472,13 @@ impl TerminalSink for AssistantMessage {
                 .append_to_stream(self.handle, rest)
                 .map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
         }
-        let receipt = memory
-            .finalize_stream(self.handle)
-            .map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
+        // A cancelled terminal keeps its text but is recorded as cancelled.
+        let receipt = if terminal.finish_reason == oneiron::FinishReason::Cancelled {
+            memory.cancel_stream(self.handle, StreamCancelReason::ExternalSignal)
+        } else {
+            memory.finalize_stream(self.handle)
+        }
+        .map_err(|_| oneiron::FatalLlmError::InvalidRequest)?;
         if let Ok(mut slot) = self.saved.lock() {
             *slot = Some(receipt);
         }
@@ -474,6 +496,7 @@ struct Producer {
     agent: EntityId,
     handle: MessageStreamHandle,
     streamed: Arc<Mutex<String>>,
+    turn: TurnGuard,
 }
 
 /// Drives the model stream into the presence plane and the bus. Settles the
@@ -490,6 +513,7 @@ async fn produce(producer: Producer) -> Result<(), String> {
         agent,
         handle,
         streamed,
+        mut turn,
     } = producer;
     let memory = vault.memory(agent, EdgeActorClass::Agent);
     let fail = |reason: String| {
@@ -501,7 +525,22 @@ async fn produce(producer: Producer) -> Result<(), String> {
         Ok(stream) => stream,
         Err(error) => return fail(format!("model stream did not start: {error:?}")),
     };
-    while let Some(item) = stream.next().await {
+    let mut keepalive = tokio::time::interval(KEEPALIVE);
+    keepalive.reset();
+    loop {
+        let item = tokio::select! {
+            item = stream.next() => item,
+            () = turn.stopping() => return fail("the server is stopping".into()),
+            _ = keepalive.tick() => {
+                if let Err(error) = memory.append_to_stream(handle, "") {
+                    return fail(format!("message stream closed while waiting: {error}"));
+                }
+                continue;
+            }
+        };
+        let Some(item) = item else {
+            break;
+        };
         let event = match item {
             Ok(event) => event,
             Err(error) => return fail(format!("model stream failed: {error:?}")),

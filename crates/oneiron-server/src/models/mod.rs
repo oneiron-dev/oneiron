@@ -26,6 +26,7 @@ mod ladder;
 mod openai;
 mod router;
 mod served;
+mod sse;
 mod status;
 #[cfg(test)]
 mod tests;

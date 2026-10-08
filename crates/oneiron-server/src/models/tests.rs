@@ -320,14 +320,27 @@ fn no_models_section_builds_no_seat() {
 }
 
 #[test]
-fn sse_frames_split_across_reads_and_crlf() {
-    let mut buffer = b"event: a\ndata: {\"x\":1}\n\ndata: par".to_vec();
-    let first = http::split_events(&mut buffer);
-    assert_eq!(first.len(), 1);
+fn sse_events_decode_across_reads_and_every_line_end() {
+    use super::sse::SseDecoder;
+    let datas = |events: Vec<super::sse::SseEvent>| -> Vec<String> {
+        events.into_iter().map(|event| event.data).collect()
+    };
+    // LF framing, an event split across reads, and a leading BOM.
+    let mut decoder = SseDecoder::default();
+    assert!(decoder.push(b"\xEF\xBB").is_empty());
+    let first = decoder.push(b"\xBF\nevent: a\ndata: {\"x\":1}\n\ndata: par");
     assert_eq!(first[0].event.as_deref(), Some("a"));
-    buffer.extend_from_slice(b"tial\r\n\r\n: comment\n\n");
-    let rest = http::split_events(&mut buffer);
-    assert_eq!(rest.len(), 1);
-    assert_eq!(rest[0].data, "partial");
-    assert!(buffer.is_empty());
+    assert_eq!(datas(first), [r#"{"x":1}"#]);
+    // A CRLF pair split across two reads, and a comment.
+    assert!(decoder.push(b"tial\r").is_empty());
+    assert_eq!(datas(decoder.push(b"\n\r\n: comment\n\n")), ["partial"]);
+    // Lone-CR framing. A CR ending a read may still pair with an LF, so the
+    // event it closes waits for the next byte.
+    assert_eq!(datas(decoder.push(b"data: one\r\rdata: two\r\r")), ["one"]);
+    // Multi-line data, and a last event the stream ends without closing.
+    assert_eq!(
+        datas(decoder.push(b"data: a\ndata: b\n\ndata: tail")),
+        ["two", "a\nb"]
+    );
+    assert_eq!(datas(decoder.finish()), ["tail"]);
 }

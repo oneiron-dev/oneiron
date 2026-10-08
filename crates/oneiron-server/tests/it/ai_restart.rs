@@ -9,7 +9,8 @@ use std::time::{Duration, Instant};
 use oneiron::dreamer_consolidation::{
     enqueue_partition_attempts, read_watermark, scan_dirty_turns,
 };
-use oneiron::{DreamerConsolidationScope, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
+use oneiron::{DreamerConsolidationScope, EntityId, TimeRange, Vault, VaultConfig};
 
 use crate::fake_llm::{FakeLlm, Reply};
 
@@ -73,29 +74,35 @@ fn vault_config() -> VaultConfig {
     config
 }
 
-/// One witnessed turn and a queued consolidation round over it, written
-/// while the server is stopped. Returns the TURN and the subject.
+/// One captured user turn (the core turn door's shape: text in the TURN
+/// body, a child of its conversation) and a queued consolidation round over
+/// it, written while the server is stopped. Returns the TURN and the subject.
 fn seed(vault_path: &Path) -> (EntityId, EntityId) {
     let vault = Vault::open_owned(vault_path, vault_config()).unwrap();
-    let owner = vault.ensure_embedded_owner_actor().unwrap();
-    let receipt = vault
-        .memory(owner, EdgeActorClass::Human)
-        .witness(&oneiron::memory::WitnessTurn {
-            conversation_ref: EntityId::now().to_hex(),
-            turn_ref: None,
-            messages: vec![oneiron::memory::WitnessMessage {
-                id: None,
-                author: oneiron::memory::WitnessAuthor::User,
-                message_type: "text".into(),
-                content: "call me Oleksii".into(),
-                metadata: None,
-                is_visible: true,
-                order: 0,
-            }],
-            occurred_at: vault.now_recorded_at(),
-        })
+    let conversation = EntityId::now();
+    let turn = EntityId::now();
+    let at = vault.now_recorded_at();
+    let when = TimeRange { start: at, end: at };
+    let encode = |body: serde_json::Value| rmp_serde::to_vec_named(&body).unwrap();
+    vault
+        .batch()
+        .put(
+            &conversation,
+            ENTITY_TYPE_CONVERSATION,
+            when,
+            at,
+            &encode(serde_json::json!({"title": "restart"})),
+        )
+        .put(
+            &turn,
+            ENTITY_TYPE_TURN,
+            when,
+            at,
+            &encode(serde_json::json!({"txt": "call me Oleksii", "spkr": "user", "at": at})),
+        )
+        .edge_checked(&turn, &conversation, 1.0)
+        .commit()
         .unwrap();
-    let turn = oneiron::memory::resolve_entity_ref(&vault, &receipt.turn_short_id).unwrap();
     let subject = EntityId::now();
     vault
         .put_entity(
@@ -109,7 +116,7 @@ fn seed(vault_path: &Path) -> (EntityId, EntityId) {
     let scope = DreamerConsolidationScope::Micro;
     let watermark = read_watermark(&vault, scope).unwrap();
     let dirty = scan_dirty_turns(&vault, scope, &watermark, 16).unwrap();
-    assert!(!dirty.is_empty(), "the witnessed turn is dirty");
+    assert!(!dirty.is_empty(), "the captured turn is dirty");
     enqueue_partition_attempts(&vault, scope, &dirty, &watermark, "restart-run", 1).unwrap();
     (turn, subject)
 }
@@ -173,7 +180,12 @@ async fn a_dream_pass_killed_mid_call_runs_again_exactly_once_after_restart() {
     let config = write_config(dir.path(), &vault_path, free_port(), &fake.base_url);
 
     // Without the owner's grant the Dreamer waits and spends nothing.
-    let granted = oneiron(&config, &["dreamer", "grant"]).output().unwrap();
+    let granted = oneiron(
+        &config,
+        &["dreamer", "grant", "--extraction-route", "own_server"],
+    )
+    .output()
+    .unwrap();
     assert!(
         granted.status.success(),
         "grant: {}",

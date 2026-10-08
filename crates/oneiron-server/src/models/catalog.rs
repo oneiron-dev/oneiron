@@ -10,26 +10,12 @@ use serde_json::Value as JsonValue;
 
 use crate::config::models::{ModelRef, ProviderConfig};
 
-/// The engine identity of a configured model. Characters outside the id
-/// grammar become `.`; the provider's own spelling stays in the catalog.
+/// The engine identity of a configured model (see [`ModelRef::engine_id`]).
 pub(super) fn engine_model_id(
     model: &ModelRef,
     provider: &ProviderConfig,
 ) -> anyhow::Result<ModelId> {
-    let name: String = model
-        .model
-        .bytes()
-        .map(|byte| {
-            if byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_') {
-                byte as char
-            } else {
-                '.'
-            }
-        })
-        .collect();
-    let name = name.trim_matches('.');
-    ModelId::new(format!("{}/{name}@{}", model.provider, provider.revision))
-        .map_err(|error| anyhow::anyhow!("model {model}: {error}"))
+    model.engine_id(&provider.revision)
 }
 
 pub(super) fn catalog_entry(

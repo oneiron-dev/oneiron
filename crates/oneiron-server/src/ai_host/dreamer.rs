@@ -22,7 +22,7 @@ use oneiron_driver::{
     ShutdownHandle, TimerTick, WakeSupervisor, WakeSupervisorConfig, WakeSupervisorReport,
 };
 
-use super::status::{StatusCell, WorkState};
+use super::status::{StatusCell, WorkState, WorkStatus};
 use crate::config::models::DreamerSettings;
 use crate::models::Seat;
 
@@ -74,10 +74,15 @@ impl DreamerHost {
         Arc::clone(&self.hints)
     }
 
+    /// Asks the supervisor to stop at its next boundary, without waiting.
+    pub(super) fn signal_stop(&self) {
+        self.shutdown.shutdown();
+    }
+
     /// Cooperative stop: a pass in flight reaches its attempt boundary,
     /// parks and refunds what it admitted, and only then does the thread end.
     pub(super) async fn stop(self) -> Option<WakeSupervisorReport> {
-        self.shutdown.shutdown();
+        self.signal_stop();
         tokio::task::spawn_blocking(move || self.thread.join().ok())
             .await
             .ok()
@@ -159,13 +164,14 @@ async fn supervise(start: DreamerStart, ready: Ready) -> WakeSupervisorReport {
         },
         config,
     );
+    // Waiting before the starter returns, so its first status read is live.
+    status.update(|status| status.dreamer = WorkStatus::waiting());
     if ready
         .send(Ok((supervisor.shutdown_handle(), hints)))
         .is_err()
     {
         return WakeSupervisorReport::default();
     }
-    status.update(|status| status.dreamer.state = WorkState::Waiting);
     let report = supervisor.run().await;
     tracing::info!(?report, "dreamer supervisor stopped");
     report

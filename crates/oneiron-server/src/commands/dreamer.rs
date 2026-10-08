@@ -7,9 +7,11 @@
 use std::io::Write;
 
 use super::{ensure_existing_vault_for_revoke, init_tracing};
-use crate::config::{ServeArgs, resolve_serve_config};
+use crate::cli::DreamerGrantArgs;
+use crate::config::resolve_serve_config;
 
-pub fn dreamer_grant(args: ServeArgs) -> anyhow::Result<()> {
+pub fn dreamer_grant(grant: DreamerGrantArgs) -> anyhow::Result<()> {
+    let args = grant.serve;
     anyhow::ensure!(
         !args.managed_by_hypnos,
         "managed vaults take policy from their supervisor; this grant is self-host only"
@@ -37,13 +39,24 @@ pub fn dreamer_grant(args: ServeArgs) -> anyhow::Result<()> {
         true,
         oneiron::store::GateDecisionId::now(),
     )?;
-    vault.grant_dreamer_weave(&owner, vault.now_recorded_at())?;
+    let granted = vault.grant_dreamer_weave(&owner, vault.now_recorded_at())?;
     let reach = vault.dreamer_weave_reach()?;
-    anyhow::ensure!(reach.ready(), "the grant did not take: {reach:?}");
+    anyhow::ensure!(
+        reach.ready(),
+        "the vault's policy still keeps the Dreamer out ({reach:?}); an owner row naming the Dreamer may narrow it"
+    );
+    let routed = match grant.extraction_route {
+        Some(locality) => crate::ai_host::route_dreamer_extraction(&vault, locality)?,
+        None => false,
+    };
     writeln!(
         std::io::stdout().lock(),
         "{}",
-        serde_json::json!({"dreamer": "granted"})
+        serde_json::json!({
+            "dreamer": "granted",
+            "policy_changed": granted,
+            "extraction_route_changed": routed,
+        })
     )?;
     Ok(())
 }

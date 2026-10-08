@@ -23,19 +23,25 @@ mod step;
 pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
+mod turns;
 mod workflows;
 
+pub(crate) use policy::route_dreamer_extraction;
 pub use status::{AiHealth, AiStatus, IdleReason, WorkState, WorkStatus};
 
 use dreamer::{DreamerHost, DreamerStart};
 use policy::DreamerRoute;
 use status::StatusCell;
 use step::StepRunner;
+pub(crate) use turns::TurnGuard;
+use turns::TurnTracker;
 use workflows::WorkflowPump;
 
 /// The seat each piece of AI work runs on.
 const DREAMER_ROLE: ModelRole = ModelRole::DreamerCurrent;
 const CHAT_ROLE: ModelRole = ModelRole::GenerativeReasoner;
+/// How long shutdown lets running chat turns finish before stopping them.
+const TURN_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// What request handlers need: seats, status and the session-hint producer.
 /// Cheap to clone; inert when nothing is configured.
@@ -46,6 +52,7 @@ pub struct AiHandle {
     hints: Option<Arc<HintPusher>>,
     chat: ChatSettings,
     raw_budget_units: Option<u64>,
+    turns: TurnTracker,
 }
 
 impl AiHandle {
@@ -78,6 +85,7 @@ impl AiHandle {
                 |models| models.chat,
             ),
             raw_budget_units: models.map(|models| models.raw_budget_units),
+            turns: TurnTracker::new(),
         }
     }
 
@@ -95,6 +103,11 @@ impl AiHandle {
     #[must_use]
     pub fn chat_settings(&self) -> ChatSettings {
         self.chat
+    }
+
+    /// Registers a running chat turn with shutdown.
+    pub(crate) fn enter_turn(&self) -> TurnGuard {
+        self.turns.enter()
     }
 
     /// Where a configured model runs: the host's attestation for raw calls.
@@ -149,7 +162,7 @@ impl AiHost {
     }
 
     pub async fn start(vault: Arc<Vault>, models: Option<&ModelsConfig>, host_root: bool) -> Self {
-        recover_dead_leases(&vault).await;
+        recover_dead_leases(&vault);
         let runtime = Arc::new(ModelRuntime::build(models));
         let mut handle = AiHandle::unstarted(Arc::clone(&runtime), models);
         let mut host = Self {
@@ -181,12 +194,14 @@ impl AiHost {
         self.handle.clone()
     }
 
-    /// Stops both workers cooperatively and waits for them.
-    pub async fn shutdown(self) {
-        if let Some(pump) = self.workflows {
+    /// Lets running chat turns end, then stops both workers cooperatively
+    /// and waits for them.
+    pub async fn shutdown(mut self) {
+        self.handle.turns.shutdown(TURN_GRACE).await;
+        if let Some(pump) = self.workflows.take() {
             pump.stop().await;
         }
-        if let Some(dreamer) = self.dreamer {
+        if let Some(dreamer) = self.dreamer.take() {
             dreamer.stop().await;
         }
         self.handle.status.update(|status| {
@@ -200,11 +215,28 @@ impl AiHost {
     }
 }
 
+/// A host dropped without [`AiHost::shutdown`] (an embedding process whose
+/// startup failed after attach, say) still tells every worker to stop; it
+/// cannot wait for them here.
+impl Drop for AiHost {
+    fn drop(&mut self) {
+        self.handle.turns.stop_now();
+        if let Some(pump) = &self.workflows {
+            pump.signal_stop();
+        }
+        if let Some(dreamer) = &self.dreamer {
+            dreamer.signal_stop();
+        }
+    }
+}
+
 /// This process owns the vault exclusively, so every attempt lease at boot
 /// was held by a process that is gone. Requeue them: an interrupted pass or
 /// step runs again exactly once, from its durable checkpoints. Expiry is by
-/// age, so a lease taken in the last second waits that second out first.
-async fn recover_dead_leases(vault: &Vault) {
+/// age, so "now" is the later of the wall clock and one second past the
+/// youngest lease: every dead lease expires, even after the clock stepped
+/// back, and none waits.
+fn recover_dead_leases(vault: &Vault) {
     let queue = AttemptQueue::new(vault);
     let youngest = match queue.list() {
         Ok(rows) => rows
@@ -220,12 +252,8 @@ async fn recover_dead_leases(vault: &Vault) {
     let Some(youngest) = youngest else {
         return;
     };
-    let wait = youngest.saturating_add(1).saturating_sub(unix_now());
-    if wait > 0 {
-        tokio::time::sleep(std::time::Duration::from_secs(wait.min(5))).await;
-    }
     match queue.cleanup_leases(CleanupAttemptLeases {
-        now: unix_now(),
+        now: unix_now().max(youngest.saturating_add(1)),
         lease_timeout_secs: 1,
     }) {
         Ok(report) => tracing::info!(?report, "requeued attempt leases a stopped process held"),
@@ -266,7 +294,7 @@ async fn start_dreamer(
             return Err(IdleReason::StartFailed);
         }
     }
-    let egress = match policy::align_dreamer_route(vault, &seat, models.extraction_egress) {
+    let egress = match policy::dreamer_route(vault, &seat, models.extraction_egress) {
         Ok(DreamerRoute::Ready(egress)) => egress,
         Ok(DreamerRoute::Blocked(reason)) => return Err(reason),
         Err(error) => {

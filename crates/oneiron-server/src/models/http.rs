@@ -6,6 +6,7 @@ use std::time::Duration;
 use futures_util::Stream;
 use serde_json::Value as JsonValue;
 
+use super::sse::{SseDecoder, SseEvent};
 use crate::config::models::ProviderConfig;
 
 /// How a provider expects its key.
@@ -171,18 +172,11 @@ pub(super) enum SseItem {
     Event(SseEvent),
 }
 
-/// One server-sent event: its optional `event:` name and its joined data.
-#[derive(Debug, PartialEq, Eq)]
-pub(super) struct SseEvent {
-    pub(super) event: Option<String>,
-    pub(super) data: String,
-}
-
 enum SseState {
     Start(reqwest::RequestBuilder),
     Reading {
         response: reqwest::Response,
-        buffer: Vec<u8>,
+        decoder: SseDecoder,
         ready: VecDeque<SseEvent>,
     },
     Done,
@@ -216,14 +210,14 @@ async fn next_sse(state: SseState) -> Option<(Result<SseItem, HttpFailure>, SseS
             }
             Box::pin(next_sse(SseState::Reading {
                 response,
-                buffer: Vec::new(),
+                decoder: SseDecoder::default(),
                 ready: VecDeque::new(),
             }))
             .await
         }
         SseState::Reading {
             mut response,
-            mut buffer,
+            mut decoder,
             mut ready,
         } => loop {
             if let Some(event) = ready.pop_front() {
@@ -231,30 +225,21 @@ async fn next_sse(state: SseState) -> Option<(Result<SseItem, HttpFailure>, SseS
                     Ok(SseItem::Event(event)),
                     SseState::Reading {
                         response,
-                        buffer,
+                        decoder,
                         ready,
                     },
                 ));
             }
             match response.chunk().await {
-                Ok(Some(chunk)) => {
-                    buffer.extend_from_slice(&chunk);
-                    ready.extend(split_events(&mut buffer));
-                }
+                Ok(Some(chunk)) => ready.extend(decoder.push(&chunk)),
                 Ok(None) => {
-                    // A final event without its blank line still counts.
-                    buffer.extend_from_slice(b"\n\n");
-                    let tail = split_events(&mut buffer);
-                    if tail.is_empty() {
-                        return None;
-                    }
-                    ready.extend(tail);
+                    ready.extend(decoder.finish());
                     let event = ready.pop_front()?;
                     return Some((
                         Ok(SseItem::Event(event)),
                         SseState::Reading {
                             response,
-                            buffer,
+                            decoder,
                             ready,
                         },
                     ));
@@ -262,40 +247,5 @@ async fn next_sse(state: SseState) -> Option<(Result<SseItem, HttpFailure>, SseS
                 Err(error) => return Some((Err(error.into()), SseState::Done)),
             }
         },
-    }
-}
-
-/// Removes every complete event (a block ending in a blank line) from
-/// `buffer`. Comments and fields other than `event` and `data` are dropped.
-pub(super) fn split_events(buffer: &mut Vec<u8>) -> Vec<SseEvent> {
-    let mut events = Vec::new();
-    loop {
-        let normalized = buffer.windows(2).position(|pair| pair == b"\n\n");
-        let crlf = buffer.windows(4).position(|quad| quad == b"\r\n\r\n");
-        let (end, skip) = match (normalized, crlf) {
-            (Some(lf), Some(cr)) if cr < lf => (cr, 4),
-            (Some(lf), _) => (lf, 2),
-            (None, Some(cr)) => (cr, 4),
-            (None, None) => return events,
-        };
-        let block: Vec<u8> = buffer.drain(..end + skip).take(end).collect();
-        let block = String::from_utf8_lossy(&block);
-        let mut event = None;
-        let mut data: Vec<&str> = Vec::new();
-        for line in block.lines() {
-            let (field, value) = line.split_once(':').unwrap_or((line, ""));
-            let value = value.strip_prefix(' ').unwrap_or(value);
-            match field {
-                "event" => event = Some(value.to_owned()),
-                "data" => data.push(value),
-                _ => {}
-            }
-        }
-        if !data.is_empty() {
-            events.push(SseEvent {
-                event,
-                data: data.join("\n"),
-            });
-        }
     }
 }

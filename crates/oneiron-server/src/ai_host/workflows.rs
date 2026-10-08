@@ -10,17 +10,19 @@ use std::time::Duration;
 
 use oneiron::Vault;
 use oneiron::agent_dispatch::{AgentDispatcher, WorkflowProgress};
-use oneiron::attempt_queue::{AttemptQueue, CleanupAttemptLeases};
+use oneiron::attempt_queue::{AttemptId, AttemptQueue, FailAttempt, RetryAttempt};
 use tokio::sync::{broadcast, watch};
 
-use super::status::{StatusCell, WorkState};
+use super::status::{IdleReason, StatusCell, WorkState, WorkStatus};
 use super::step::StepRunner;
 
 const LEASE_OWNER: &str = "oneiron-server-workflows";
 /// How often an open-but-waiting workflow is looked at again.
 const WAITING_RECHECK: Duration = Duration::from_secs(30);
-/// A leaf lease older than this belongs to a step that died mid-call.
-const STUCK_LEASE_SECS: u64 = 15 * 60;
+/// Tries of one step before its workflow stops.
+const MAX_STEP_TRIES: u32 = 5;
+/// Backoff before a failed step's next try, times the tries so far.
+const STEP_RETRY_SECS: u64 = 30;
 
 pub(super) struct WorkflowPump {
     stop: watch::Sender<bool>,
@@ -34,6 +36,9 @@ impl WorkflowPump {
         status: Arc<StatusCell>,
     ) -> std::io::Result<Self> {
         let (stop, stopped) = watch::channel(false);
+        // Waiting from the moment the pump exists, so a status read right
+        // after start never sees the pre-start state.
+        status.update(|status| status.workflows = WorkStatus::waiting());
         let thread = std::thread::Builder::new()
             .name("oneiron-workflows".into())
             .spawn(move || {
@@ -44,6 +49,9 @@ impl WorkflowPump {
                     Ok(runtime) => runtime,
                     Err(error) => {
                         tracing::error!(%error, "workflow pump runtime failed to start");
+                        status.update(|status| {
+                            status.workflows = WorkStatus::idle(IdleReason::StartFailed);
+                        });
                         return;
                     }
                 };
@@ -52,9 +60,14 @@ impl WorkflowPump {
         Ok(Self { stop, thread })
     }
 
+    /// Asks the pump to stop between steps, without waiting.
+    pub(super) fn signal_stop(&self) {
+        let _ = self.stop.send(true);
+    }
+
     /// Stops between steps; a step in flight finishes first.
     pub(super) async fn stop(self) {
-        let _ = self.stop.send(true);
+        self.signal_stop();
         let _ = tokio::task::spawn_blocking(move || self.thread.join()).await;
     }
 }
@@ -67,7 +80,6 @@ fn pump(
     mut stopped: watch::Receiver<bool>,
 ) {
     let mut signals = AttemptQueue::new(vault).subscribe();
-    status.update(|status| status.workflows.state = WorkState::Waiting);
     loop {
         if *stopped.borrow() {
             return;
@@ -105,11 +117,6 @@ fn pump_once(
     status: &StatusCell,
     stopped: &watch::Receiver<bool>,
 ) -> oneiron::Result<bool> {
-    let now = now_secs();
-    AttemptQueue::new(vault).cleanup_leases(CleanupAttemptLeases {
-        now,
-        lease_timeout_secs: STUCK_LEASE_SECS,
-    })?;
     let dispatcher = AgentDispatcher::new(vault);
     let roots = dispatcher.open_workflow_roots()?;
     for root in &roots {
@@ -117,13 +124,13 @@ fn pump_once(
             if *stopped.borrow() {
                 return Ok(true);
             }
-            let mut ran = false;
+            let mut claimed: Option<(AttemptId, u32)> = None;
             let progress = dispatcher.run_workflow_step_output(
                 *root,
                 LEASE_OWNER,
                 now_secs(),
                 |step, context| {
-                    ran = true;
+                    claimed = Some((step.attempt.id, step.attempt.attempt_count));
                     status.update(|status| {
                         status.workflows.state = WorkState::Working;
                         status.workflows.started += 1;
@@ -134,10 +141,10 @@ fn pump_once(
             status.update(|status| {
                 status.workflows.state = WorkState::Waiting;
                 match &progress {
-                    Ok(_) if ran => status.workflows.completed += 1,
+                    Ok(_) if claimed.is_some() => status.workflows.completed += 1,
                     Ok(_) => {}
                     Err(error) => {
-                        status.workflows.failed += u64::from(ran);
+                        status.workflows.failed += u64::from(claimed.is_some());
                         status.workflows.last_error = Some(error.to_string());
                     }
                 }
@@ -147,12 +154,49 @@ fn pump_once(
                 Ok(_) => break,
                 Err(error) => {
                     tracing::warn!(%error, ?root, "workflow step did not complete");
+                    if let Some((leaf, tries)) = claimed
+                        && let Err(release) = give_back(vault, leaf, tries, &error)
+                    {
+                        tracing::error!(%release, ?leaf, "failed step's lease was not given back");
+                    }
                     break;
                 }
             }
         }
     }
     Ok(!dispatcher.open_workflow_roots()?.is_empty())
+}
+
+/// Releases a failed step's lease this pump holds: a later try with backoff,
+/// or a failed leaf (and so a stopped workflow) once the tries are spent.
+fn give_back(
+    vault: &Vault,
+    leaf: AttemptId,
+    tries: u32,
+    error: &oneiron::Error,
+) -> oneiron::Result<()> {
+    let queue = AttemptQueue::new(vault);
+    let now = now_secs();
+    if tries >= MAX_STEP_TRIES {
+        queue.fail(FailAttempt {
+            id: leaf,
+            lease_owner: LEASE_OWNER.to_owned(),
+            attempt_count: tries,
+            reason: "workflow_step_failed".to_owned(),
+            now,
+        })?;
+    } else {
+        queue.retry(RetryAttempt {
+            id: leaf,
+            lease_owner: LEASE_OWNER.to_owned(),
+            attempt_count: tries,
+            backoff_until: now
+                .saturating_add(STEP_RETRY_SECS.saturating_mul(u64::from(tries.max(1)))),
+            last_error: Some(error.to_string()),
+            now,
+        })?;
+    }
+    Ok(())
 }
 
 fn now_secs() -> u64 {

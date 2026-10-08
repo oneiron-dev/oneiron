@@ -262,3 +262,18 @@ fn serve_config_reads_models_from_the_file_layer_only() {
     .unwrap();
     assert!(bare.models.is_none(), "no section, no model seat");
 }
+
+#[test]
+fn two_spellings_that_meet_on_one_engine_id_are_refused() {
+    let error = resolve(
+        r#"
+[roles.checker]
+rungs = [{ model = "cpa:org/model" }, { model = "cpa:org.model" }]
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("both become engine id"),
+        "{error}"
+    );
+}

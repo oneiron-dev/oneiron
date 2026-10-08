@@ -3,7 +3,8 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
+use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use serde_json::{Value, json};
 
 use crate::config::models::{ModelsConfig, ModelsFile};
@@ -21,8 +22,15 @@ pub(crate) fn rooted_vault() -> (tempfile::TempDir, Arc<Vault>) {
     (dir, vault)
 }
 
-/// The owner's one-time weave grant, as `oneiron dreamer grant` makes it.
+/// The owner's one-time grant, as `oneiron dreamer grant --extraction-route
+/// own_server` makes it.
 pub(crate) fn grant_dreamer(vault: &Vault) {
+    grant_dreamer_weave_only(vault);
+    super::route_dreamer_extraction(vault, oneiron::ModelLocality::OwnServer).unwrap();
+}
+
+/// The weave grant alone, leaving the vault's inference defaults as shipped.
+pub(crate) fn grant_dreamer_weave_only(vault: &Vault) {
     let owner = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault
         .authenticate_owner(
@@ -44,27 +52,38 @@ pub(crate) fn models(base_url: &str, extra: &str) -> ModelsConfig {
     file.resolve(None).unwrap()
 }
 
-/// Witnesses one user turn as the vault owner; returns the TURN id.
-pub(crate) fn witness_user_turn(vault: &Vault, conversation: &EntityId, text: &str) -> EntityId {
-    let owner = vault.ensure_embedded_owner_actor().unwrap();
-    let receipt = vault
-        .memory(owner, EdgeActorClass::Human)
-        .witness(&oneiron::memory::WitnessTurn {
-            conversation_ref: conversation.to_hex(),
-            turn_ref: None,
-            messages: vec![oneiron::memory::WitnessMessage {
-                id: None,
-                author: oneiron::memory::WitnessAuthor::User,
-                message_type: "text".into(),
-                content: text.into(),
-                metadata: None,
-                is_visible: true,
-                order: 0,
-            }],
-            occurred_at: vault.now_recorded_at(),
-        })
+/// Captures one user turn the way the core turn door does
+/// (`POST /v1/core/conversations/{id}/turns`): the text in the TURN body,
+/// the TURN a child of a fresh conversation. Returns the TURN id.
+///
+/// Not through `Memory::witness`: a witnessed TURN keeps its text in MESSAGE
+/// children, which the Dreamer does not read yet.
+pub(crate) fn capture_user_turn(vault: &Vault, text: &str) -> EntityId {
+    let conversation = EntityId::now();
+    let turn = EntityId::now();
+    let at = vault.now_recorded_at();
+    let when = TimeRange { start: at, end: at };
+    let encode = |body: Value| rmp_serde::to_vec_named(&body).unwrap();
+    vault
+        .batch()
+        .put(
+            &conversation,
+            ENTITY_TYPE_CONVERSATION,
+            when,
+            at,
+            &encode(json!({"title": "test"})),
+        )
+        .put(
+            &turn,
+            ENTITY_TYPE_TURN,
+            when,
+            at,
+            &encode(json!({"txt": text, "spkr": "user", "at": at})),
+        )
+        .edge_checked(&turn, &conversation, 1.0)
+        .commit()
         .unwrap();
-    oneiron::memory::resolve_entity_ref(vault, &receipt.turn_short_id).unwrap()
+    turn
 }
 
 /// An extraction answer citing the first turn the transcript shows, as a

@@ -97,10 +97,20 @@ missing:
 | `ONEIRON_AUTH_SECRET` set (host root, machine identity) | `no_host_authority` |
 | `extraction_egress = true` under `[models]`, for any model reached over HTTP | `extraction_egress_not_allowed` |
 | the owner's weave grant, made once with the server stopped: `oneiron dreamer grant --config …` | `needs_owner_grant` |
+| vault defaults that route extraction and consolidation to the seat's widest rung: add `--extraction-route own_server` (or `third_party`) to the grant, or `PUT /v1/llm/defaults` | `extraction_route_not_set` |
 
-Extraction leaves the device only on that explicit opt-in. With it, the vault's
-extraction and consolidation defaults are aligned to the Dreamer seat's widest
-rung, and only the Dreamer's own seat model is admitted.
+```bash
+# once, with the server stopped; ONEIRON_AUTH_SECRET set as for serve
+oneiron dreamer grant --config ~/.config/oneiron/oneiron.toml --extraction-route own_server
+```
+
+The grant adds three rows to the vault's live policy, each keyed to the vault's
+own Dreamer: a read-only grant over the vault, an Auto ceiling, and the permit
+its generated claims need. Every other row stays as it was, and re-running it
+changes nothing. Extraction leaves the device only on both opt-ins (the
+`extraction_egress` key and the routed defaults), and then only to the
+Dreamer's own seat model. Boot reads the routing and never writes it, so a
+later tightening by the owner is never undone by a restart.
 
 A sitting ends, and its turns dream, on `POST /v1/ai/session {"event":"end"}`,
 after `models.dreamer.idle_floor_secs` (1200) without activity, or after
@@ -115,16 +125,23 @@ flight reaches its attempt boundary first.
 ## 4. Chat
 
 `POST /v1/ai/chat` with `{"conversation_ref": "<32-hex>", "text": "…"}` (plus
-optional `history` and `agent_ref`) streams NDJSON: `accepted`, one `delta` per
-text chunk, `done`, then `saved` with the message receipt. The same deltas
-reach every owner socket on `/ws` as transient presence. Only the final
-message is written to the vault, once.
+optional `history`) streams NDJSON: `accepted`, one `delta` per text chunk,
+`done`, then `saved` with the message receipt. The same deltas reach every
+owner socket on `/ws` as transient presence. Only the final message is written
+to the vault, once. The credential needs read and write scope. The seeded
+default agent answers; an owner-grade credential may name another with
+`agent_ref`, which must be live, approved and enabled. A turn still running
+at shutdown gets a grace to finish, then its message is cancelled, not left
+open.
 
 ## 5. Saved workflows
 
 A dispatched saved workflow runs its steps on the `generative_reasoner` seat
 with no further call. Each step's system message is the agent definition's
-`instructions`; each later step sees the earlier steps' outputs. Spend per step:
+`instructions`; each step sees its briefing and the earlier steps' outputs.
+Memory and chat sections a definition selects are not yet rendered into the
+step's prompt. A step that fails is retried with backoff, and its workflow
+stops after five tries. Spend per step:
 `models.workflows.step_budget_units` (64000). `models.workflows.enabled = false`
 turns the pump off.
 

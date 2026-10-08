@@ -42,6 +42,31 @@ impl ModelRef {
     }
 }
 
+impl ModelRef {
+    /// The engine's `provider/name@revision` for this model. Characters
+    /// outside the id grammar become `.`, so distinct provider spellings can
+    /// meet; config resolution refuses such a meeting.
+    pub fn engine_id(&self, revision: &str) -> anyhow::Result<oneiron::ModelId> {
+        let name: String = self
+            .model
+            .bytes()
+            .map(|byte| {
+                if byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_') {
+                    byte as char
+                } else {
+                    '.'
+                }
+            })
+            .collect();
+        oneiron::ModelId::new(format!(
+            "{}/{}@{revision}",
+            self.provider,
+            name.trim_matches('.')
+        ))
+        .map_err(|error| anyhow::anyhow!("model {self}: {error}"))
+    }
+}
+
 impl fmt::Display for ModelRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}", self.provider, self.model)

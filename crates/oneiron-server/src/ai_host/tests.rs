@@ -6,8 +6,8 @@ use oneiron::{ClaimApprovalStatus, EntityId, TimeRange};
 use oneiron_driver::SessionHint;
 
 use super::test_support::{
-    eventually, extraction_reply, grant_dreamer, models, name_claims, rooted_vault,
-    witness_user_turn,
+    capture_user_turn, eventually, extraction_reply, grant_dreamer, grant_dreamer_weave_only,
+    models, name_claims, rooted_vault,
 };
 use super::*;
 use crate::fake_llm::FakeLlm;
@@ -59,10 +59,22 @@ async fn the_dreamer_states_each_missing_prerequisite() {
         Some(IdleReason::ExtractionEgressNotAllowed)
     );
     host.shutdown().await;
+    // Boot never routes extraction off the device by itself: the vault's
+    // defaults are the owner's, and a restart leaves them as they are.
+    let (_dir, vault) = rooted_vault();
+    grant_dreamer_weave_only(&vault);
+    let before = vault.purpose_default_table().unwrap();
+    let host = AiHost::start(vault.clone(), Some(&models(&fake.base_url, "")), true).await;
+    assert_eq!(
+        host.handle().status().dreamer.reason,
+        Some(IdleReason::ExtractionRouteNotSet)
+    );
+    assert_eq!(vault.purpose_default_table().unwrap(), before);
+    host.shutdown().await;
 }
 
 #[tokio::test]
-async fn witnessed_turns_dream_on_session_end_and_land_through_the_promotion_writer() {
+async fn captured_turns_dream_on_session_end_and_land_through_the_promotion_writer() {
     let fake = FakeLlm::start(vec![], None).await;
     let (_dir, vault) = rooted_vault();
     grant_dreamer(&vault);
@@ -87,7 +99,7 @@ async fn witnessed_turns_dream_on_session_end_and_land_through_the_promotion_wri
         .unwrap();
     fake.push(extraction_reply(subject, "Oleksii"));
     handle.session_hint(SessionHint::AppOpen);
-    witness_user_turn(&vault, &EntityId::now(), "call me Oleksii");
+    capture_user_turn(&vault, "call me Oleksii");
     // No call is made while the sitting is open: the end is the trigger.
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(fake.seen().is_empty());
@@ -211,4 +223,31 @@ async fn a_saved_workflow_advances_every_step_through_the_pump_without_a_call() 
     );
     assert!(handle.status().workflows.completed >= 2);
     host.shutdown().await;
+}
+
+#[tokio::test]
+async fn shutdown_waits_for_a_turn_then_stops_one_that_outlives_its_grace() {
+    let tracker = super::turns::TurnTracker::new();
+    let quick = tracker.enter();
+    let finishing = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        drop(quick);
+    });
+    let started = std::time::Instant::now();
+    tracker.shutdown(Duration::from_secs(5)).await;
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "returned on drain"
+    );
+    finishing.await.unwrap();
+
+    let tracker = super::turns::TurnTracker::new();
+    let mut slow = tracker.enter();
+    let stopped = tokio::spawn(async move {
+        slow.stopping().await;
+        drop(slow);
+        true
+    });
+    tracker.shutdown(Duration::from_millis(50)).await;
+    assert!(stopped.await.unwrap());
 }

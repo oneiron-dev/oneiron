@@ -85,7 +85,28 @@ pub enum Command {
 pub enum DreamerCommand {
     /// Let the Dreamer read this vault and land routine consolidation (run
     /// once, with the server stopped). Without it the Dreamer stays idle.
-    Grant(Box<ServeArgs>),
+    Grant(Box<DreamerGrantArgs>),
+}
+
+#[derive(Args, Clone)]
+pub struct DreamerGrantArgs {
+    /// Also route the vault's extraction and consolidation defaults to this
+    /// locality (`own_server` for a model server you run, `third_party` for a
+    /// hosted API), raising the extraction bound to it if lower. Omit to leave
+    /// the vault's inference defaults as they are.
+    #[arg(long, value_parser = parse_route)]
+    pub extraction_route: Option<oneiron::ModelLocality>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+fn parse_route(value: &str) -> Result<oneiron::ModelLocality, String> {
+    match value {
+        "own_server" => Ok(oneiron::ModelLocality::OwnServer),
+        "third_party" => Ok(oneiron::ModelLocality::ThirdParty),
+        other => Err(format!("{other:?} is not own_server or third_party")),
+    }
 }
 
 #[derive(Subcommand)]
