@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use super::history;
-use super::input::{TurnInput, turn_input_in_txn};
+use super::input::{TurnInput, turn_input_in_txn, turn_text_in_txn};
 use super::marker::{
     MarkerPayload, TAGGING_MARKER_KIND, enqueue_marker_in_txn, retry_marker_in_txn,
 };
@@ -404,16 +404,20 @@ impl TaggingReconciler {
         };
         #[cfg(test)]
         run_after_turn_read_hook();
-        let (input, hash) = match read {
+        let (input, hash, text_hash) = match read {
             TurnInput::Gone => {
                 return self.skip(record, &payload.turn, SkipReason::TurnGone, trace);
             }
             TurnInput::Empty => {
                 return self.skip(record, &payload.turn, SkipReason::NoText, trace);
             }
-            TurnInput::Ready { input, hash } => (input, hash),
+            TurnInput::Ready {
+                input,
+                hash,
+                text_hash,
+            } => (input, hash, text_hash),
         };
-        trace.input_hash = Some(hash.clone());
+        trace.input_hash = Some(hash);
         trace.model = Some(self.encoder.model_id().as_str().to_owned());
         pass.calls += 1;
         let started = Instant::now();
@@ -437,13 +441,14 @@ impl TaggingReconciler {
             let failure = TaggingFailure::Refused { refusal };
             return self.retry(record, prior_retries, failure, trace);
         }
-        // The answer stands only for the text it read: settle against the turn
-        // as the settling transaction sees it.
+        // The answer stands only for the text it tagged: settle against the
+        // turn's own text as the settling transaction sees it. The window was
+        // context; the settling write never reads it.
         trace.outcome = self.shadowed(&output);
         let settled = self.vault.try_with_write_txn(|txn| -> Result<bool> {
             let current = matches!(
-                turn_input_in_txn(&self.vault, txn, &payload.turn)?,
-                TurnInput::Ready { hash: ref now, .. } if *now == hash
+                turn_text_in_txn(&self.vault, txn, &payload.turn)?,
+                TurnInput::Ready { text_hash: ref now, .. } if *now == text_hash
             );
             if current {
                 self.settle_in_txn(txn, record, &trace)?;
@@ -474,7 +479,7 @@ impl TaggingReconciler {
         trace.outcome = TaggingOutcome::Skipped { reason };
         let settled = self.vault.try_with_write_txn(|txn| -> Result<bool> {
             let owes_nothing = !matches!(
-                turn_input_in_txn(&self.vault, txn, turn)?,
+                turn_text_in_txn(&self.vault, txn, turn)?,
                 TurnInput::Ready { .. }
             );
             if owes_nothing {

@@ -2367,3 +2367,117 @@ fn a_pass_prunes_every_expired_trace_before_it_claims() {
     assert!(reconciler.drain_once().expect("drain").traces.is_empty());
     assert!(turns.iter().all(|turn| history(&vault, turn).is_empty()));
 }
+
+/// A DAG turn reads its retained ancestry, even once a hard erasure took its
+/// own Parent edge, and never a turn of another branch. A DAG root reads
+/// alone, even beside a descendant that occurred before it.
+#[test]
+fn a_dag_turn_reads_its_retained_ancestry_and_a_root_reads_alone() {
+    use crate::WriteActor;
+    use crate::conversation_dag::AppendRecord;
+    use crate::conversation_dag::fixtures::{grant, input};
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    let actor = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
+    vault
+        .put_entity(
+            &actor.entity_ref(),
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &rmp_serde::to_vec_named(&serde_json::json!({"name": "fixture author"}))
+                .expect("author body"),
+        )
+        .expect("author");
+    grant(&vault, actor, true);
+    let room = EntityId::now();
+    vault
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody {
+                member_ids: vec![actor.entity_ref()],
+                ..Default::default()
+            },
+            actor,
+            1,
+        )
+        .expect("room");
+    let append = |record: AppendRecord| vault.append_dag_record(&record).expect("append").id;
+    let root = append(input(room, None, true, actor));
+    let fork = append(input(room, Some(root), false, actor));
+    let trunk = append(input(room, Some(root), true, actor));
+    let tip = append(input(room, Some(trunk), true, actor));
+    append(AppendRecord {
+        occurred: TimeRange { start: 10, end: 10 },
+        learned_at: 10,
+        ..input(room, Some(tip), true, actor)
+    });
+    let earlier = |turn: &EntityId| {
+        let txn = vault.store.env.read_txn().expect("read txn");
+        super::input::earlier_turns_in_txn(&vault, &txn, turn, 256).expect("earlier turns")
+    };
+    assert_eq!(earlier(&tip), vec![trunk, root]);
+    assert!(earlier(&root).is_empty(), "a root reads alone");
+    vault
+        .delete_room_record(room, trunk, actor, crate::DeleteReason::PolicyDelete)
+        .expect("erase");
+    assert!(vault.get(&trunk).expect("read").is_none());
+    assert_eq!(
+        earlier(&tip),
+        vec![trunk, root],
+        "the erasure pin keeps the ancestry, and no other branch enters"
+    );
+    assert!(!earlier(&tip).contains(&fork));
+}
+
+/// The settling write reads the turn's own text, never its window: an
+/// earlier turn edited while the tagger reads a later one leaves that
+/// answer standing.
+#[test]
+fn an_earlier_turn_edited_during_the_call_leaves_the_answer_standing() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    let first_ref = Some("70707070707070707070707070707070".to_owned());
+    vault
+        .memory(speaker(&vault), EdgeActorClass::Human)
+        .witness(&turn(
+            first_ref.clone(),
+            vec![message(0, "Ada sailed north")],
+        ))
+        .expect("first");
+    let tagger = Scripted::new(Answer::Good);
+    let reconciler = reconciler(&vault, &tagger).with_batch_size(1);
+    reconciler.drain_once().expect("the first turn");
+    let second = witness_at(&vault, "Grace stayed behind", NOW + 1);
+    let writer = Arc::clone(&vault);
+    *tagger.during_call.lock().expect("hook") = Some(Box::new(move || {
+        writer
+            .memory(speaker(&writer), EdgeActorClass::Human)
+            .witness(&turn(first_ref, vec![message(1, "and then turned east")]))
+            .expect("the earlier turn gains text during the call");
+    }));
+    let pass = reconciler.drain_once().expect("the second turn");
+    assert_eq!(pass.traces.len(), 1);
+    assert_eq!(pass.traces[0].turn, Some(second));
+    assert!(
+        matches!(pass.traces[0].outcome, TaggingOutcome::Shadowed { .. }),
+        "the answer stands: {:?}",
+        pass.traces[0].outcome
+    );
+}
+
+/// The window keeps the nearest earlier turns when the conversation holds
+/// more than it takes.
+#[test]
+fn the_window_keeps_the_nearest_earlier_turns() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    let turns: Vec<EntityId> = (0..5_u64)
+        .map(|at| witness_at(&vault, "Ada sailed north", NOW + at))
+        .collect();
+    let txn = vault.store.env.read_txn().expect("read txn");
+    assert_eq!(
+        super::input::earlier_turns_in_txn(&vault, &txn, &turns[4], 2).expect("earlier"),
+        vec![turns[3], turns[2]]
+    );
+}

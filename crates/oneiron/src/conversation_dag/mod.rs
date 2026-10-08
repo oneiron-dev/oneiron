@@ -32,7 +32,8 @@ mod writes;
 
 pub(crate) use branch_scope::{prove_branch_anchor, prove_branch_span};
 pub(crate) use graph::{
-    actor_in_txn, conversation_of, edge_ids, is_sub_session_record, require_type,
+    actor_in_txn, conversation_of, edge_ids, is_sub_session_record, keeps_dag_topology,
+    parent as retained_parent, require_type,
 };
 pub(crate) use redacted::{capture_before_erase, read as redacted_record_pin};
 pub use reply::{ReplyStrip, Thread, ThreadMeta};

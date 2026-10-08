@@ -1,15 +1,20 @@
 //! The tagger's input for one turn: the turn's MESSAGE rows, and the live
 //! register's bounded window of earlier text in the same conversation.
 
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
+
 use serde::Deserialize;
 
+use crate::batch::EntityMetadataHeader;
+use crate::conversation_dag::{keeps_dag_topology, record_kind, retained_parent};
 use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::memory::extraction::{EncoderInput, EncoderMessage, EncoderTurn};
-use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
+use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
-use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use crate::vault::{LiveEntityRow, MAX_EDGE_QUERY_RESULTS, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 
 /// Characters of earlier text the window carries per tagger token. The engine
@@ -25,8 +30,14 @@ pub(super) enum TurnInput {
     Gone,
     /// The turn holds no visible text.
     Empty,
-    /// The input the tagger reads, and its digest.
-    Ready { input: EncoderInput, hash: String },
+    /// The input the tagger reads; the digest of the whole input, window
+    /// included; and the digest of the turn's own text, which is all an
+    /// answer's spans index.
+    Ready {
+        input: EncoderInput,
+        hash: String,
+        text_hash: String,
+    },
 }
 
 /// The three MESSAGE-body keys the input needs; every other key is ignored.
@@ -41,16 +52,41 @@ struct MessageText {
 }
 
 /// Reads the turn's visible, non-empty MESSAGE children in message order,
-/// with the earlier text of its conversation the live window holds.
+/// with the earlier text of its conversation the live window holds: the
+/// input a tagger call sends.
 ///
 /// The text is the hydrated body, so an edited message reads as edited. A
 /// body this build cannot decode is skipped, never guessed at. The window
-/// enters the digest, so an answer settles only against the text and the
-/// window it read.
+/// enters the input's digest, which the trace records.
 pub(super) fn turn_input_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
+) -> Result<TurnInput> {
+    let tokens = vault
+        .config
+        .tagging
+        .as_ref()
+        .map_or(0, |tagging| tagging.live_window_tokens);
+    read_in_txn(vault, txn, turn, tokens)
+}
+
+/// [`turn_input_in_txn`] with no window: the turn's own text, the one thing
+/// an answer's spans index, so an answer settles against the text it tagged.
+/// A settling write reads only this, so no write waits on a window.
+pub(super) fn turn_text_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+) -> Result<TurnInput> {
+    read_in_txn(vault, txn, turn, 0)
+}
+
+fn read_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+    tokens: u32,
 ) -> Result<TurnInput> {
     let Some(messages) = turn_messages_in_txn(vault, txn, turn)? else {
         return Ok(TurnInput::Gone);
@@ -58,18 +94,23 @@ pub(super) fn turn_input_in_txn(
     if messages.is_empty() {
         return Ok(TurnInput::Empty);
     }
-    let tokens = vault
-        .config
-        .tagging
-        .as_ref()
-        .map_or(0, |tagging| tagging.live_window_tokens);
-    let input = EncoderInput {
+    let mut input = EncoderInput {
         turn: turn.to_hex(),
         messages,
-        context: live_window_in_txn(vault, txn, turn, tokens)?,
+        context: Vec::new(),
     };
-    let hash = input_hash(&input);
-    Ok(TurnInput::Ready { input, hash })
+    let text_hash = input_hash(&input);
+    input.context = live_window_in_txn(vault, txn, turn, tokens)?;
+    let hash = if input.context.is_empty() {
+        text_hash.clone()
+    } else {
+        input_hash(&input)
+    };
+    Ok(TurnInput::Ready {
+        input,
+        hash,
+        text_hash,
+    })
 }
 
 /// A live TURN's visible, non-empty messages in message order; `None` for a
@@ -127,8 +168,10 @@ fn turn_messages_in_txn(
 /// The live window: the conversation's earlier turns, oldest first, whole
 /// but for the oldest, which is cut from the left to fit. It holds at most
 /// `tokens` turns and `tokens` × [`WINDOW_CHARS_PER_TOKEN`] characters, and
-/// never a turn that comes after `turn`. A turn with no earlier text, or with
-/// no single conversation, reads alone.
+/// never a turn that comes after `turn`. Turns are read nearest first and the
+/// read stops once the window is full, so at most one turn's text is read
+/// past it. A turn with no earlier text, or with no single conversation,
+/// reads alone.
 fn live_window_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -189,11 +232,17 @@ fn last_chars(text: &str, count: usize) -> &str {
 
 /// Up to `limit` turns before `turn` in its conversation, nearest first.
 ///
-/// A turn on a conversation DAG reads its `Parent` ancestry, so a branch
-/// never reads another branch. Any other turn reads its conversation's
-/// `ChildOf` turns that come before it in time, those of one second in id
-/// order.
-fn earlier_turns_in_txn(
+/// A turn with a DAG parent reads its retained ancestry (the `Parent` edge,
+/// or the parent an erasure pin kept), so a branch never reads another
+/// branch. A DAG record with no parent, or any turn of a conversation that
+/// adopted the DAG, is a root and reads alone. Only a conversation that never
+/// adopted it is ordered by time: its `ChildOf` turns that come before `turn`,
+/// those of one second in id order. That read takes each turn's row header,
+/// never its body, keeps only the nearest `limit`, and reads alone past
+/// [`MAX_EDGE_QUERY_RESULTS`] turns. A topology the DAG readers refuse reads
+/// alone too: the window is context, and a refusal must not keep the marker
+/// from settling.
+pub(super) fn earlier_turns_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
@@ -201,11 +250,17 @@ fn earlier_turns_in_txn(
 ) -> Result<Vec<EntityId>> {
     let store = &vault.store;
     let limit = limit.min(MAX_ANCESTOR_DEPTH);
-    if let Some(parent) = sole_peer(vault, txn, turn, EdgeKind::Parent)? {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    let Ok(parent) = retained_parent(store, txn, turn) else {
+        return Ok(Vec::new());
+    };
+    if let Some(parent) = parent {
         let mut ancestry = vec![parent];
         let mut cursor = parent;
         while ancestry.len() < limit {
-            let Some(next) = sole_peer(vault, txn, &cursor, EdgeKind::Parent)? else {
+            let Ok(Some(next)) = retained_parent(store, txn, &cursor) else {
                 break;
             };
             if next == *turn || ancestry.contains(&next) {
@@ -219,29 +274,64 @@ fn earlier_turns_in_txn(
     let Some(conversation) = sole_peer(vault, txn, turn, EdgeKind::ChildOf)? else {
         return Ok(Vec::new());
     };
-    let Some(current) = store.port_entity_record(txn, turn)? else {
+    let dag_record = match live_entity_row_in_txn(store, txn, turn)? {
+        LiveEntityRow::Live { body, .. } => !matches!(record_kind(&body), Ok(None)),
+        _ => return Ok(Vec::new()),
+    };
+    if dag_record || keeps_dag_topology(store, txn, &conversation).unwrap_or(true) {
+        return Ok(Vec::new());
+    }
+    let Some(at) = header_key(vault, txn, turn)? else {
         return Ok(Vec::new());
     };
-    let at = (current.occurred.start, *turn.as_bytes());
-    let mut earlier = Vec::new();
-    for edge in store.port_edges(
-        txn,
-        &conversation,
-        EdgeDirection::In,
-        Some(EdgeKind::ChildOf),
-        None,
-    )? {
+    // The nearest `limit` earlier turns, the farthest of them on top.
+    let mut nearest: BinaryHeap<Reverse<(u64, [u8; 16])>> = BinaryHeap::new();
+    for (examined, edge) in store
+        .port_edges(
+            txn,
+            &conversation,
+            EdgeDirection::In,
+            Some(EdgeKind::ChildOf),
+            None,
+        )?
+        .enumerate()
+    {
+        if examined >= MAX_EDGE_QUERY_RESULTS {
+            return Ok(Vec::new());
+        }
         let id = edge?.target;
-        let Some(record) = store.port_entity_record(txn, &id)? else {
+        let Some(key) = header_key(vault, txn, &id)? else {
             continue;
         };
-        let key = (record.occurred.start, *id.as_bytes());
-        if record.entity_type == ENTITY_TYPE_TURN && key < at {
-            earlier.push((key, id));
+        if key >= at {
+            continue;
+        }
+        nearest.push(Reverse(key));
+        if nearest.len() > limit {
+            nearest.pop();
         }
     }
-    earlier.sort_unstable_by_key(|(key, _)| std::cmp::Reverse(*key));
-    Ok(earlier.into_iter().take(limit).map(|(_, id)| id).collect())
+    let mut earlier: Vec<(u64, [u8; 16])> = nearest.into_iter().map(|Reverse(key)| key).collect();
+    earlier.sort_unstable_by_key(|key| Reverse(*key));
+    earlier
+        .into_iter()
+        .map(|(_, id)| EntityId::from_bytes(id))
+        .collect()
+}
+
+/// A TURN's place in time, read from its row header: its occurred second,
+/// then its id. `None` for a row that is absent or not a TURN.
+fn header_key(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<(u64, [u8; 16])>> {
+    let Some(raw) = vault.store.entities.get(txn, id.as_bytes())? else {
+        return Ok(None);
+    };
+    Ok(EntityMetadataHeader::parse(&raw)
+        .filter(|header| header.entity_type == ENTITY_TYPE_TURN)
+        .map(|header| (header.occurred_start, *id.as_bytes())))
 }
 
 /// The one entity `id` points at through `kind`; `None` when it points at

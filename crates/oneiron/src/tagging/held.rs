@@ -2,7 +2,7 @@
 //! tagger call.
 
 use super::history::record_in_txn;
-use super::input::{TurnInput, turn_input_in_txn};
+use super::input::{TurnInput, turn_text_in_txn};
 use super::marker::{TAGGING_MARKER_KIND, dedupe_key};
 use super::output::{AnswerMood, OutputRefusal, check_output};
 use super::trace::{SkipReason, TaggingOutcome, TaggingTrace, attempt_hex};
@@ -65,7 +65,10 @@ impl Vault {
                     _ => HeldTagsOutcome::NoMarker,
                 });
             }
-            let (outcome, input_hash) = match turn_input_in_txn(self, txn, turn)? {
+            // Held tags were made from the turn's own text, not from this
+            // vault's window, so they are checked against it and its digest
+            // names it.
+            let (outcome, input_hash) = match turn_text_in_txn(self, txn, turn)? {
                 TurnInput::Gone => (
                     TaggingOutcome::Skipped {
                         reason: SkipReason::TurnGone,
@@ -78,7 +81,7 @@ impl Vault {
                     },
                     None,
                 ),
-                TurnInput::Ready { input, hash } => {
+                TurnInput::Ready { input, hash, .. } => {
                     if let Err(refusal) = check_output(&input, tags) {
                         return Ok(HeldTagsOutcome::Refused(refusal));
                     }
