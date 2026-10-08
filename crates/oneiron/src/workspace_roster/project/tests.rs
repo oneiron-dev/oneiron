@@ -1737,14 +1737,12 @@ fn updating_project_cannot_recreate_its_soft_deleted_home_room() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn a_project_whose_home_room_id_sorts_first_reimports() -> Result<()> {
-    // The home-room id is derived (T50), so it can sort before its project's
-    // id; the whole-vault import resolves the project first either way.
-    let (_source_dir, source) = crate::test_util::open_test_vault_with(Default::default());
+/// A child of the root project whose derived home-room id (T50) sorts before
+/// the project's own id.
+fn child_project_whose_home_room_sorts_first(source: &Vault) -> Result<(EntityId, ProjectRecord)> {
     let root_id = source.root_project()?;
     let leader = EntityId::from_hex(&source.project(root_id)?.expect("root").leader)?;
-    let (child_id, child) = (1u64..)
+    (1u64..)
         .map(|n| -> Result<_> {
             let mut bytes = [0xF0; 16];
             bytes[8..].copy_from_slice(&n.to_be_bytes());
@@ -1756,7 +1754,15 @@ fn a_project_whose_home_room_id_sorts_first_reimports() -> Result<()> {
                 .as_ref()
                 .map_or(true, |(id, record)| record.home_room < id.to_hex())
         })
-        .expect("the search is unbounded")?;
+        .expect("the search is unbounded")
+}
+
+#[test]
+fn a_project_whose_home_room_id_sorts_first_reimports() -> Result<()> {
+    // The whole-vault import resolves the project first either way.
+    let (_source_dir, source) = crate::test_util::open_test_vault_with(Default::default());
+    let root_id = source.root_project()?;
+    let (child_id, child) = child_project_whose_home_room_sorts_first(&source)?;
     source.put_project(child_id, &child, 10)?;
     let artifact = source.export_whole_vault(crate::context_pack::PackFormat::Json)?;
     let (_destination_dir, destination) =
@@ -1773,6 +1779,35 @@ fn a_project_whose_home_room_id_sorts_first_reimports() -> Result<()> {
     assert_eq!(
         destination.project_room(room_id)?.expect("room").project_id,
         child_id.to_hex()
+    );
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn a_project_whose_home_room_id_sorts_first_replays_without_a_stuck_window() -> Result<()> {
+    // Window replay walks rows in key order, so the home room comes before its
+    // project. Once the project's own write produces the room, the window must
+    // not stay flagged for rematerialization.
+    let (_source_dir, source) = crate::test_util::open_test_vault_with(Default::default());
+    let (child_id, child) = child_project_whose_home_room_sorts_first(&source)?;
+    source.put_project(child_id, &child, 10)?;
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("home-room-first", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key)?;
+    let (_peer_dir, peer) = crate::test_util::open_test_vault_with(Default::default());
+    let materializer = crate::sync::bridge::Materializer::new();
+    crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key)?;
+    let room_id = EntityId::from_hex(&child.home_room)?;
+    assert_eq!(
+        peer.project_room(room_id)?.expect("room").project_id,
+        child_id.to_hex()
+    );
+    assert_eq!(
+        crate::sync::pending_remat_windows(&peer)?,
+        Vec::<String>::new(),
+        "still pending: {:?}",
+        crate::sync::quarantine::pending_remat_entities(&peer, key.as_str())
     );
     Ok(())
 }

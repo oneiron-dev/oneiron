@@ -2506,7 +2506,9 @@ fn malformed_parent_replacement_retires_exact_pending_work() {
     assert!(
         !crate::sync::pending_remat_windows(&peer)
             .unwrap()
-            .contains(&key.as_str().to_owned())
+            .contains(&key.as_str().to_owned()),
+        "still pending: {:?}",
+        crate::sync::quarantine::pending_remat_entities(&peer, key.as_str())
     );
     crate::sync::loro_support::map_insert_bytes(&entities, &root.to_hex(), &root_body).unwrap();
     crate::sync::loro_support::map_insert_bytes(&edges, &childof, &membership).unwrap();
@@ -2804,7 +2806,9 @@ fn ready_parent_budget_continues_after_reopen_without_other_traffic() {
     assert!(
         !crate::sync::pending_remat_windows(&peer)
             .unwrap()
-            .contains(&key.as_str().to_owned())
+            .contains(&key.as_str().to_owned()),
+        "still pending: {:?}",
+        crate::sync::quarantine::pending_remat_entities(&peer, key.as_str())
     );
 }
 
