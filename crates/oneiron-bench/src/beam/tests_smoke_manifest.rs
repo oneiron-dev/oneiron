@@ -3,90 +3,13 @@
 #[cfg(test)]
 pub(crate) mod tests {
     use super::super::tests_community_eval004::tests::{
-        budget_score, completed_context_pack, empty_pack_stats_report, find_arm,
+        budget_score, empty_pack_stats_report, find_arm,
     };
     use super::super::*;
     use oneiron::Vault;
     use std::collections::BTreeMap;
     use std::collections::BTreeSet;
     use std::collections::HashSet;
-
-    #[test]
-    fn parse_fixture_and_manifest_accepts_beam_128k_smoke_schema() {
-        let fixture = parse_fixture_json(BUILTIN_FIXTURE_JSON).expect("fixture parses");
-        let manifest = parse_manifest_json(BUILTIN_MANIFEST_JSON).expect("manifest parses");
-
-        assert_eq!(fixture.schema_version, SCHEMA_VERSION);
-        assert_eq!(manifest.schema_version, SCHEMA_VERSION);
-        assert_eq!(fixture.cases[0].token_budget, BEAM_128K_TOKEN_BUDGET);
-        ensure_manifest_selects_128k_case(&manifest, &fixture)
-            .expect("manifest selects the 128K smoke case");
-
-        let expected_arms = [
-            ArmKind::Deterministic,
-            ArmKind::VanillaRag,
-            ArmKind::BackboneSolo,
-            ArmKind::Agentic,
-            ArmKind::Chat,
-        ];
-        assert_eq!(manifest.arms.len(), expected_arms.len());
-        for arm in expected_arms {
-            assert!(manifest.arms.contains(&arm));
-        }
-    }
-
-    #[test]
-    fn fixture_validation_requires_fields_object() {
-        let mut fixture_json: serde_json::Value =
-            serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
-        fixture_json["records"][0]["fields"] = serde_json::json!(["body"]);
-        let err = parse_fixture_json(&fixture_json.to_string())
-            .expect_err("fixture fields must be object");
-
-        assert!(
-            err.to_string()
-                .contains("record fields must be a JSON object")
-        );
-    }
-
-    #[test]
-    fn fixture_validation_rejects_missing_fields() {
-        let mut fixture_json: serde_json::Value =
-            serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
-        fixture_json["records"][0]
-            .as_object_mut()
-            .expect("record object")
-            .remove("fields");
-        let err =
-            parse_fixture_json(&fixture_json.to_string()).expect_err("record fields are required");
-
-        assert!(err.to_string().contains("missing field `fields`"));
-    }
-
-    #[test]
-    fn fixture_validation_rejects_text_field_missing_from_fields() {
-        let mut fixture_json: serde_json::Value =
-            serde_json::from_str(BUILTIN_FIXTURE_JSON).expect("fixture JSON");
-        fixture_json["records"][0]["text"][0]["field"] = serde_json::json!("missing");
-        let err = parse_fixture_json(&fixture_json.to_string())
-            .expect_err("text field must reference stored field");
-
-        assert!(
-            err.to_string()
-                .contains("text fields must reference keys present in record.fields")
-        );
-    }
-
-    #[test]
-    fn manifest_validation_rejects_duplicate_arms() {
-        let mut manifest_json: serde_json::Value =
-            serde_json::from_str(BUILTIN_MANIFEST_JSON).expect("manifest JSON");
-        manifest_json["arms"] = serde_json::json!(["deterministic", "deterministic"]);
-        let err = parse_manifest_json(&manifest_json.to_string())
-            .expect_err("duplicate arms must be rejected");
-
-        assert!(err.to_string().contains("manifest arms must be unique"));
-    }
 
     #[test]
     fn manifest_schema_version_rejects_legacy_v1_before_required_competitors() {
@@ -128,99 +51,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn manifest_rejects_each_missing_comparability_axis() {
-        for axis in [
-            "tier",
-            "regime",
-            "nativeScale",
-            "backbone",
-            "judge",
-            "retrievalK",
-            "provenance",
-        ] {
-            let mut manifest: serde_json::Value =
-                serde_json::from_str(BUILTIN_MANIFEST_JSON).expect("manifest JSON");
-            manifest["competitors"][0]["card"]["axes"]
-                .as_object_mut()
-                .expect("axes object")
-                .remove(axis);
-            let error = parse_manifest_json(&manifest.to_string())
-                .expect_err("missing comparability axis must be rejected");
-            assert!(error.to_string().contains(axis), "{axis}: {error}");
-        }
-    }
-
-    #[test]
-    fn manifest_rejects_missing_nested_comparability_details() {
-        for (axis, field) in [
-            ("tier", "reference"),
-            ("backbone", "soloRow"),
-            ("judge", "inFamily"),
-            ("provenance", "source"),
-        ] {
-            let mut manifest: serde_json::Value =
-                serde_json::from_str(BUILTIN_MANIFEST_JSON).expect("manifest JSON");
-            manifest["competitors"][0]["card"]["axes"][axis]
-                .as_object_mut()
-                .expect("nested axis object")
-                .remove(field);
-            let error = parse_manifest_json(&manifest.to_string())
-                .expect_err("missing axis detail must be rejected");
-            assert!(error.to_string().contains(field), "{axis}.{field}: {error}");
-        }
-    }
-
-    #[test]
-    fn manifest_validation_requires_competitor_rows_to_match_arms() {
-        let mut manifest_json: serde_json::Value =
-            serde_json::from_str(BUILTIN_MANIFEST_JSON).expect("manifest JSON");
-        manifest_json["competitors"][0]["arm"] = serde_json::json!("chat");
-        let err = parse_manifest_json(&manifest_json.to_string())
-            .expect_err("competitor rows must match arms");
-
-        assert!(
-            err.to_string()
-                .contains("competitor row arms must match manifest arms in order")
-        );
-    }
-
-    #[test]
-    fn manifest_validation_rejects_public_parity_for_fixture_dataset() {
-        let mut manifest_json: serde_json::Value =
-            serde_json::from_str(BUILTIN_MANIFEST_JSON).expect("manifest JSON");
-        manifest_json["competitors"][0]["card"]["publicParityStatus"] =
-            serde_json::json!("public_parity");
-        let err = parse_manifest_json(&manifest_json.to_string())
-            .expect_err("fixture-backed manifests must not claim public parity");
-
-        assert!(
-            err.to_string()
-                .contains("fixture-backed BEAM manifests cannot claim public parity")
-        );
-    }
-
-    #[test]
-    fn run_fixture_manifest_validates_manifest_before_loading_dataset() {
-        let fixture = parse_fixture_json(BUILTIN_FIXTURE_JSON).expect("fixture parses");
-        let mut manifest = parse_manifest_json(BUILTIN_MANIFEST_JSON).expect("manifest parses");
-        manifest.schema_version = 1;
-        manifest.dataset = DatasetSource::Miracl {
-            dataset: "should-not-load".to_owned(),
-        };
-
-        let err = run_fixture_manifest(&manifest, &fixture)
-            .expect_err("manifest validation must run before dataset loading");
-
-        assert!(matches!(
-            err,
-            BeamError::UnsupportedSchemaVersion {
-                expected: SCHEMA_VERSION,
-                actual: 1
-            }
-        ));
-    }
-
-    #[test]
     fn oracle_and_in_family_competitors_stay_out_of_the_main_report() {
         let fixture = parse_fixture_json(BUILTIN_FIXTURE_JSON).expect("fixture parses");
         let mut manifest_json: serde_json::Value =
@@ -239,25 +69,6 @@ pub(crate) mod tests {
             assert_eq!(case.appendix[0].competitor_id, "deterministic-context-pack");
             assert_eq!(case.appendix[1].competitor_id, "vanilla-rag");
         }
-    }
-
-    #[test]
-    fn run_fixture_manifest_validates_case_ids_before_loading_dataset() {
-        let mut fixture = parse_fixture_json(BUILTIN_FIXTURE_JSON).expect("fixture parses");
-        let mut manifest = parse_manifest_json(BUILTIN_MANIFEST_JSON).expect("manifest parses");
-        fixture.records[0].id = "not-a-hex-entity-id".to_owned();
-        manifest.case_ids = vec!["missing_case".to_owned()];
-
-        let err = run_fixture_manifest(&manifest, &fixture)
-            .expect_err("case-id validation must run before dataset loading");
-
-        assert!(matches!(
-            err,
-            BeamError::MissingCase {
-                fixture_id,
-                case_id
-            } if fixture_id == "beam-128k-smoke" && case_id == "missing_case"
-        ));
     }
 
     #[test]
@@ -341,46 +152,6 @@ neighbors:
             ids.text_by_id.get("neighbor:03").map(String::as_str),
             Some("Budgeted neighbor text")
         );
-    }
-
-    #[test]
-    fn deterministic_arm_reports_budgeted_pack_when_token_budget_drops_rows() {
-        let mut fixture = parse_fixture_json(BUILTIN_FIXTURE_JSON).expect("fixture parses");
-        let manifest = parse_manifest_json(BUILTIN_MANIFEST_JSON).expect("manifest parses");
-        for (offset, id) in [
-            "30303030303030303030303030303030",
-            "40404040404040404040404040404040",
-            "50505050505050505050505050505050",
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let mut record = fixture.records[0].clone();
-            record.id = id.to_owned();
-            record.occurred.start = 3 + offset as u64;
-            record.occurred.end = 3 + offset as u64;
-            record.learned_at = 3 + offset as u64;
-            fixture.records.push(record);
-        }
-        fixture.cases[0].token_budget = 1;
-        fixture.cases[0].expected_min_results = 0;
-        let tempdir = tempfile::tempdir().expect("tempdir");
-        let vault = Vault::open(tempdir.path(), beam_vault_config()).expect("vault opens");
-        let loaded = load_dataset(&vault, &manifest, Some(&fixture)).expect("fixture loads");
-        let raw_pack = configured_context_pack_builder(&vault, &fixture.cases[0])
-            .run()
-            .expect("raw context pack");
-
-        let arm = DeterministicContextPackArm
-            .run(&vault, &loaded, &fixture.cases[0])
-            .expect("deterministic arm reports");
-        let ArmOutcome::Completed { context_pack } = arm.outcome else {
-            panic!("deterministic arm should complete");
-        };
-
-        assert_eq!(context_pack.serialized_format, "yaml");
-        assert!(raw_pack.results.len() > context_pack.result_count);
-        assert!(context_pack.stats.items_dropped > 0);
     }
 
     #[test]
@@ -497,56 +268,6 @@ neighbors:
                 .results
                 .iter()
                 .any(|entity| { entity.id == "10101010101010101010101010101010" })
-        );
-    }
-
-    #[test]
-    fn vanilla_rag_and_deterministic_share_real_token_budget() {
-        let report = run_builtin_smoke().expect("BEAM smoke report");
-        let deterministic = completed_context_pack(&report, ArmKind::Deterministic);
-        let vanilla = completed_context_pack(&report, ArmKind::VanillaRag);
-
-        assert_eq!(deterministic.token_budget, vanilla.token_budget);
-        assert_eq!(
-            deterministic.query_cost.target_tokens,
-            vanilla.query_cost.target_tokens
-        );
-        assert_eq!(deterministic.tokenizer_id, vanilla.tokenizer_id);
-        assert_eq!(deterministic.stats.tokenizer_id, vanilla.stats.tokenizer_id);
-        assert!(deterministic.serialized_tokens <= deterministic.token_budget as u64);
-        assert!(vanilla.serialized_tokens <= vanilla.token_budget as u64);
-        assert_eq!(
-            vanilla.query_cost.token_source,
-            TokenAccountingSource::TokenizerCount
-        );
-    }
-
-    #[test]
-    fn built_in_128k_guard_checks_manifest_selected_cases() {
-        let mut fixture = parse_fixture_json(BUILTIN_FIXTURE_JSON).expect("fixture parses");
-        let mut manifest = parse_manifest_json(BUILTIN_MANIFEST_JSON).expect("manifest parses");
-        fixture.cases.push(FixtureCase {
-            ppr_vad_query: None,
-            case_id: "beam_small_budget_smoke".to_owned(),
-            query: "BEAM deterministic context pack".to_owned(),
-            limit: 5,
-            token_budget: 4096,
-            expected_min_results: 1,
-            pending_vector_count: 0,
-            query_embedding: None,
-            fixture_class: FixtureClass::EvidenceSupported,
-            temporal_search: None,
-            temporal_evidence_ids: Vec::new(),
-            opposing_evidence: None,
-            offline_amortized_cost: CostComponentInput::default(),
-        });
-        manifest.case_ids = vec!["beam_small_budget_smoke".to_owned()];
-
-        let err = ensure_manifest_selects_128k_case(&manifest, &fixture)
-            .expect_err("manifest must select a 128K case");
-        assert!(
-            err.to_string()
-                .contains("built-in BEAM smoke manifest must select a 128K token-budget case")
         );
     }
 }

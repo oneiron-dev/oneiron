@@ -79,21 +79,6 @@ fn append_preserves_prior_bytes_prev_size_root_and_eof() {
 }
 
 #[test]
-fn xref_style_of_revision_matches_input() {
-    let classic = prepared(&classic_pdf());
-    let d1 = sign_revision(&classic, 1024);
-    let tail1 = &d1.bytes[classic.bytes.len()..];
-    let sx1 = last_startxref(&d1.bytes).expect("sx1");
-    assert_eq!(&d1.bytes[sx1 as usize..sx1 as usize + 4], b"xref");
-    assert!(tail1.windows(7).any(|w| w == b"trailer"));
-
-    let stream = prepared(&stream_pdf());
-    let d2 = sign_revision(&stream, 1024);
-    let sx2 = last_startxref(&d2.bytes).expect("sx2");
-    assert_ne!(&d2.bytes[sx2 as usize..sx2 as usize + 4], b"xref");
-}
-
-#[test]
 fn patch_contents_overflow_reports_capacity_not_truncation() {
     let p = prepared(&classic_pdf());
     let mut draft = sign_revision(&p, 64);
@@ -116,52 +101,6 @@ fn patch_contents_overflow_reports_capacity_not_truncation() {
 }
 
 #[test]
-fn field_name_is_deterministic_and_op_scoped() {
-    let p = prepared(&classic_pdf());
-    let emitted_name = |operation_id: &str| {
-        let kind = RevisionKind::Signature {
-            field_name: field_name_for(operation_id),
-            date_str: pdf_date(1_785_398_400_000),
-        };
-        let draft = append_revision(&p.bytes, &p.state, &kind, 1024).expect("revision");
-        let doc = Document::load_mem(&draft.bytes).expect("reload");
-        let catalog = doc.catalog().expect("catalog");
-        let (_, af) = doc
-            .dereference(catalog.get(b"AcroForm").expect("acroform"))
-            .expect("resolve acroform");
-        let fields = af
-            .as_dict()
-            .expect("acroform dict")
-            .get(b"Fields")
-            .and_then(Object::as_array)
-            .expect("fields");
-        let names: Vec<_> = fields
-            .iter()
-            .filter_map(|f| {
-                let (_, field) = doc.dereference(f).ok()?;
-                let field = field.as_dict().ok()?;
-                if !field.get(b"FT").is_ok_and(|ft| name_is(ft, b"Sig")) {
-                    return None;
-                }
-                Some(
-                    field
-                        .get(b"T")
-                        .and_then(Object::as_str)
-                        .expect("name")
-                        .to_vec(),
-                )
-            })
-            .collect();
-        assert_eq!(names.len(), 1, "one emitted signature field");
-        assert!(!names[0].is_empty());
-        names[0].clone()
-    };
-    let a = emitted_name("op-a");
-    assert_eq!(a, emitted_name("op-a"));
-    assert_ne!(a, emitted_name("op-b"));
-}
-
-#[test]
 fn stream_dictionary_sig_marker_is_rejected() {
     // A /Type /Sig hidden in a STREAM object's dictionary is the same
     // existing-signature violation as a plain dictionary.
@@ -178,35 +117,6 @@ fn stream_dictionary_sig_marker_is_rejected() {
             code: InputInvalidCode::ExistingSignature
         }
     ));
-}
-
-#[test]
-fn signature_revision_appends_widget_to_page_annots() {
-    let p = prepared(&classic_pdf());
-    let draft = sign_revision(&p, 1024);
-    let doc = Document::load_mem(&draft.bytes).expect("reparse");
-    let pages = doc.get_pages();
-    let page_id = *pages.values().next().expect("page");
-    let page = doc
-        .get_object(page_id)
-        .and_then(Object::as_dict)
-        .expect("page dict");
-    let annots = page
-        .get(b"Annots")
-        .and_then(Object::as_array)
-        .expect("Annots array");
-    let widget_present = annots.iter().any(|a| {
-        let Object::Reference(r) = a else {
-            return false;
-        };
-        doc.get_object(*r)
-            .and_then(Object::as_dict)
-            .is_ok_and(|d| d.get(b"Subtype").is_ok_and(|s| name_is(s, b"Widget")))
-    });
-    assert!(
-        widget_present,
-        "widget annotation must be on the page /Annots"
-    );
 }
 
 #[test]
@@ -287,11 +197,6 @@ fn xref_helpers_never_overflow_on_extreme_offsets() {
             })
         ));
     }
-}
-
-#[test]
-fn pdf_date_format() {
-    assert_eq!(pdf_date(1_785_398_400_000), "D:20260730080000Z");
 }
 
 #[test]

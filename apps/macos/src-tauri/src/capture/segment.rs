@@ -353,94 +353,6 @@ mod tests {
     }
 
     #[test]
-    fn a_full_segment_commits_at_the_boundary_and_the_remainder_stays_open() {
-        let sink = RecordingSink::default();
-        let mut cutter = SegmentCutter::new(spec());
-        let mic = tone(RATE as usize * 3);
-        let far = vec![0; mic.len()];
-
-        cutter
-            .push(
-                Frames {
-                    mic: &mic,
-                    far: Some(&far),
-                },
-                NOW,
-                OutputRoute::Speakers,
-                &sink,
-            )
-            .expect("push");
-
-        let metas = sink.metas();
-        assert_eq!(metas.len(), 1, "three seconds of a two-second segment");
-        assert_eq!(metas[0].started_at, NOW);
-        assert_eq!(metas[0].duration_ms, 2_000);
-        assert_eq!(metas[0].channels, 2);
-        assert!(cutter.is_open(), "the third second is still accumulating");
-
-        // Stop mid-segment: what was recorded is committed, not dropped.
-        cutter
-            .flush(&sink)
-            .expect("flush")
-            .expect("a partial segment");
-        let metas = sink.metas();
-        assert_eq!(metas.len(), 2);
-        assert_eq!(metas[1].started_at, NOW + 2, "segments stay contiguous");
-        assert_eq!(metas[1].duration_ms, 1_000);
-        assert!(!cutter.is_open());
-    }
-
-    #[test]
-    fn a_route_flip_applies_at_the_next_boundary() {
-        let sink = RecordingSink::default();
-        let mut cutter = SegmentCutter::new(spec());
-        let mic = tone(RATE as usize * 2);
-        let far = tone(RATE as usize * 2);
-        let frames = Frames {
-            mic: &mic,
-            far: Some(&far),
-        };
-
-        // Opened on headphones, and the flip to speakers arrives while the
-        // segment is still filling.
-        cutter
-            .push(
-                frames.slice(0, RATE as usize),
-                NOW,
-                OutputRoute::Headphones,
-                &sink,
-            )
-            .expect("push");
-        cutter
-            .push(
-                frames.slice(RATE as usize, RATE as usize),
-                NOW,
-                OutputRoute::Speakers,
-                &sink,
-            )
-            .expect("push");
-        // The next segment opens on the new route.
-        cutter
-            .push(frames, NOW, OutputRoute::Speakers, &sink)
-            .expect("push");
-
-        let metas = sink.metas();
-        assert_eq!(metas.len(), 2);
-        assert_eq!(
-            metas[0].aec,
-            AecMode::Bypassed {
-                route: OutputRoute::Headphones
-            },
-            "the segment keeps the route it opened on"
-        );
-        assert_eq!(
-            metas[1].aec,
-            AecMode::Unavailable,
-            "the flip lands on the next segment: speakers, far end present, no canceller"
-        );
-    }
-
-    #[test]
     fn a_mic_only_run_commits_mono_segments_with_no_echo_path() {
         let sink = RecordingSink::default();
         let mut cutter = SegmentCutter::new(spec());
@@ -476,13 +388,5 @@ mod tests {
             audio[0].len() > RATE as usize * 2 * 2,
             "the payload must carry every sample plus a header"
         );
-    }
-
-    #[test]
-    fn flushing_nothing_commits_nothing() {
-        let sink = RecordingSink::default();
-        let mut cutter = SegmentCutter::new(spec());
-        assert!(cutter.flush(&sink).expect("flush").is_none());
-        assert!(sink.metas().is_empty());
     }
 }

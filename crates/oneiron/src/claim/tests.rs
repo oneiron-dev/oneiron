@@ -4632,7 +4632,7 @@ fn scoped_read_search_with_effort_retrieval_depth_is_the_existing_text_door()
 }
 
 #[test]
-fn relationship_candidate_stamps_and_rejects_unknown_or_wrong_kind() -> Result<()> {
+fn relationship_candidate_stamps_and_rejects_unknown_deleted_or_wrong_kind() -> Result<()> {
     let (_temp, vault, subject, human, _) = expression_preference_fixture();
     let relationship = EntityId::now();
     let occurred = TimeRange { start: 2, end: 2 };
@@ -4669,7 +4669,16 @@ fn relationship_candidate_stamps_and_rejects_unknown_or_wrong_kind() -> Result<(
         )
         .commit()?;
     assert_eq!(vault.get_claim(&id)?.unwrap().rel, Some(relationship));
-    for invalid in [EntityId::now(), subject] {
+    let deleted = EntityId::now();
+    vault.put_entity(
+        &deleted,
+        crate::registry::ENTITY_TYPE_RELATIONSHIP,
+        occurred,
+        2,
+        b"relationship",
+    )?;
+    assert!(vault.delete_entity(&deleted)?);
+    for invalid in [EntityId::now(), subject, deleted] {
         let rejected = EntityId::now();
         let error = vault
             .batch()

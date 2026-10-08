@@ -264,7 +264,18 @@ impl Vault {
             if wrote_vector || !embeddable {
                 vector_refill::clear(&self.store, &mut txn, &input.entity)?;
             }
+            // A moved frontier of a turn's text owes the tagger a pass again,
+            // committed with the frontier (ARCH-0036).
+            crate::tagging::mark_on_publication_in_txn(
+                self,
+                &mut txn,
+                &input.entity,
+                input.entity_type,
+            )?;
             txn.commit()?;
+            if self.config.tagging.is_some() {
+                self.store.notify_attempt_observers();
+            }
             published(IndexedPublication {
                 entity: input.entity,
                 previous_indexed,
