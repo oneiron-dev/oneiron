@@ -23,6 +23,20 @@ impl AttemptQueue<'_> {
         let cutoff = input.now;
         input.now = crate::ports::recorded_at_in_txn(self.store, txn)?;
         let cutoff = cutoff.min(input.now);
+        self.claim_id_storage_in_txn(txn, id, input, cutoff)
+    }
+
+    /// [`Self::claim_id_in_txn`] stamped at the caller's `input.now`, ready by
+    /// `cutoff`: it persists no clock floor, so the claim writes nothing
+    /// outside the job tables.
+    pub(crate) fn claim_id_storage_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: AttemptId,
+        input: ClaimAttempt,
+        cutoff: u64,
+    ) -> Result<ClaimOutcome> {
+        validate_lease_owner(&input.lease_owner)?;
         let mut row = self
             .get_in_write_txn(txn, id)?
             .ok_or_else(|| invalid_transition("claim_id", "missing"))?;

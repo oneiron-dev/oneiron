@@ -159,6 +159,36 @@ pub(crate) fn observe_submission_in_txn(
     Ok(())
 }
 
+/// How many proposal submissions this actor has made.
+pub(crate) fn submission_count_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+) -> Result<u64> {
+    Ok(read_row(COUNT.get(store, txn, &actor))?.map_or(0, |row| row.count))
+}
+
+/// The proposal refs this actor submitted at counts in `(after, after +
+/// limit]`, oldest first, each with its count. The immutable history is the
+/// authority: only the envelope actor's own proposals were written under its
+/// key. A changed body appears again at its new count.
+pub(crate) fn submissions_after_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    after: u64,
+    limit: usize,
+) -> Result<Vec<(u64, String)>> {
+    let last = submission_count_in_txn(store, txn, actor)?.min(after.saturating_add(limit as u64));
+    (after.saturating_add(1)..=last)
+        .map(|count| {
+            read_row(HISTORY.get(store, txn, &HistoryKey { actor, count }))?
+                .map(|receipt| (count, receipt.proposal_ref))
+                .ok_or(Error::CorruptedIndex("proposal receipt history"))
+        })
+        .collect()
+}
+
 impl Vault {
     /// The first typed OF-520 crossing for this actor, if any. Observation is
     /// local-only; it never travels on the replicated claim path.
