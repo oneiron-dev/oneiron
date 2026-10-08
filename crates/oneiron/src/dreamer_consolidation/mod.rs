@@ -25,10 +25,11 @@
 //! temporal-index writers (the batch layer) own that contract; this module only
 //! reads the index and cannot enforce it. A TURN whose final words changed
 //! (a finalized stream continuation, a new MESSAGE sibling) is also re-dirtied
-//! through [`redirty`]: a local position strictly past every scope cursor,
-//! which selection and the partition-round identity read in place of the
-//! row's `learned_at` when it is later. A continuation leaves the TURN row
-//! itself untouched.
+//! through `redirty`: a carrier pending for each scope until a round of that
+//! scope consumes it, selected wherever the scope cursor stands and never
+//! moving it. Selection, settlement and the partition-round identity read
+//! its key in place of the row's `learned_at` while it keys the TURN. A
+//! continuation leaves the TURN row itself untouched.
 
 mod assembly;
 pub(crate) mod branch_scope;

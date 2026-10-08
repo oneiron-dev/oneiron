@@ -428,7 +428,6 @@ impl Memory<'_> {
                 self.vault,
                 wtxn,
                 &plan.turn_id,
-                plan.turn.occurred_at,
             )?;
         }
         let text_ops: Vec<BatchOp> = plan

@@ -299,16 +299,16 @@ impl PreparedWake {
             let original: BTreeSet<_> = original.into_iter().collect();
             let mut turns = Vec::new();
             for id in peers {
-                let Some((kind, learned_at, bytes)) = sources.get(&id) else {
+                let Some((kind, stored, bytes)) = sources.get(&id) else {
                     continue;
                 };
                 if *kind != ENTITY_TYPE_TURN {
                     continue;
                 }
-                // Membership and order read the effective dirty position, as
-                // the scan did; the source pin keeps the row's own learned_at.
-                let learned_at =
-                    super::redirty::effective_learned_at_in_txn(vault, &txn, &id, *learned_at)?;
+                // Membership and order read the effective selection key, as
+                // the scan does; the source pin keeps the row's own learned_at.
+                let (learned_at, key) =
+                    super::redirty::effective_key_in_txn(vault, &txn, &id, *stored)?;
                 let facts = decode_turn_body(bytes);
                 let role = dreamer_turn_role(
                     facts.speaker.as_deref(),
@@ -319,7 +319,7 @@ impl PreparedWake {
                     && facts.facet_ref.or(parent.facet_ref) == partition.facet_ref
                     && (original.contains(&id) || learned_at >= watermark)
                 {
-                    turns.push((learned_at, id));
+                    turns.push((learned_at, key, id));
                 }
             }
             turns.sort_unstable();
@@ -333,7 +333,7 @@ impl PreparedWake {
             if turns.len() > limit
                 || !original
                     .iter()
-                    .all(|id| turns.iter().any(|(_, got)| got == id))
+                    .all(|id| turns.iter().any(|(_, _, got)| got == id))
             {
                 preparations.insert(
                     attempt,
@@ -346,7 +346,7 @@ impl PreparedWake {
             }
             let working_set: Vec<super::WorkingSetTurn> = turns
                 .into_iter()
-                .map(|(learned_at, turn_id)| {
+                .map(|(learned_at, _, turn_id)| {
                     let facts = decode_turn_body(&sources[&turn_id].2);
                     super::WorkingSetTurn {
                         turn_id,

@@ -82,12 +82,7 @@ pub(crate) fn message_stream_finality_in_txn(
 /// keeps its append-only row and still comes back. The TURN's change-log entry
 /// is what wakes the Dreamer for it, as a re-put would.
 pub(super) fn redirty_turn(vault: &Vault, txn: &mut heed::RwTxn<'_>, seed: &Seed) -> Result<()> {
-    crate::dreamer_consolidation::redirty::redirty_turn_in_txn(
-        vault,
-        txn,
-        &seed.turn,
-        seed.occurred_at,
-    )?;
+    crate::dreamer_consolidation::redirty::redirty_turn_in_txn(vault, txn, &seed.turn)?;
     crate::ports::audit_mutation_in_txn(
         &vault.store,
         txn,

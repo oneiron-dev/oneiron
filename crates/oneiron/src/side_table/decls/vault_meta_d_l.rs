@@ -121,8 +121,9 @@ side_tables! {
     /// Private binding of a Budget/Consent trap anchor claim to its owning step. Key: id16(anchor
     /// claim).
     DREAMER_TRAP_BINDING: VaultMeta b"dreamer:trap_binding:v1:" Raw;
-    /// Latest consolidation dirty position (u64) of a TURN re-dirtied without moving its row; its
-    /// effective selection position is the later of this and its learned_at. Key: id16(turn).
+    /// Latest consolidation carrier of a TURN re-dirtied without moving its row: second, a
+    /// store-minted order id, the row learned_at it was taken against and the scopes that consumed
+    /// it. Key: id16(turn).
     DREAMER_TURN_REDIRTY: VaultMeta b"dreamer:turn-redirty:v1:" Named;
     /// Coalesced recipe input for one wake recipe. Key: u8(recipe).
     DREAMER_WAKE_RECIPE_INPUT: VaultMeta b"dreamer:wake-policy:recipe-input:v1:" LegacyJson;

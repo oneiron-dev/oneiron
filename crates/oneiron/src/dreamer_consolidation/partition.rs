@@ -275,12 +275,24 @@ fn partition_screened_turns_in_txn(
 /// count is hashed so a batch can never be a prefix-ambiguous concatenation of
 /// another.
 pub(crate) fn partition_round_hash(turns: &[WorkingSetTurn]) -> [u8; 32] {
+    keyed_partition_round_hash(turns, &BTreeMap::new())
+}
+
+/// [`partition_round_hash`] over each TURN's selection key: a TURN in
+/// `carried` stood at its re-dirty carrier, whose id replaces the TURN id in
+/// the preimage. Every other TURN hashes byte-identically, and a TURN changed
+/// again, even in the same second, takes a new carrier id and a new round.
+fn keyed_partition_round_hash(
+    turns: &[WorkingSetTurn],
+    carried: &BTreeMap<EntityId, EntityId>,
+) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(DREAMER_PARTITION_ROUND_HASH_DOMAIN);
     hasher.update(&(turns.len() as u64).to_be_bytes());
     for turn in turns {
+        let id = carried.get(&turn.turn_id).unwrap_or(&turn.turn_id);
         hasher.update(&turn.learned_at.to_be_bytes());
-        hasher.update(turn.turn_id.as_bytes());
+        hasher.update(id.as_bytes());
     }
     *hasher.finalize().as_bytes()
 }
@@ -300,13 +312,14 @@ pub(crate) fn partition_round_hash(turns: &[WorkingSetTurn]) -> [u8; 32] {
 fn partition_attempt_input(
     scope: DreamerConsolidationScope,
     plan: &ConsolidationPartitionPlan,
+    carried: &BTreeMap<EntityId, EntityId>,
     run_id: Option<String>,
     now: u64,
 ) -> EnqueueDreamerConsolidationAttempt {
     let dedupe_key = format!(
         "{}:{}",
         bytes_to_hex_lower(&plan.key.partition_hash()),
-        bytes_to_hex_lower(&partition_round_hash(&plan.turns)),
+        bytes_to_hex_lower(&keyed_partition_round_hash(&plan.turns, carried)),
     );
     EnqueueDreamerConsolidationAttempt {
         scope,
@@ -371,12 +384,13 @@ pub(crate) fn enqueue_partition_attempts_in_txn(
     }
     let screen = prefilter_partition_input_in_txn(vault, wtxn, &turns)?;
     let plans = partition_screened_turns_in_txn(vault, wtxn, &screen.kept, watermark)?;
+    let carried = super::redirty::carried_orders_in_txn(vault, wtxn, &turns)?;
     let store = DreamerRunnerStore::new(vault);
     let mut outcomes = Vec::with_capacity(plans.len());
     for plan in &plans {
         outcomes.push(store.enqueue_consolidation_in_txn(
             wtxn,
-            partition_attempt_input(scope, plan, run_id.map(str::to_owned), now),
+            partition_attempt_input(scope, plan, &carried, run_id.map(str::to_owned), now),
         )?);
     }
     write_prefilter_receipts_in_txn(vault, wtxn, scope, &turns, &screen, now)?;
