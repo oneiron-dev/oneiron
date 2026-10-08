@@ -395,6 +395,12 @@ pub(super) fn filter_window_doc(
             custody_withheld.insert(id);
         }
     }
+    // A delete a peer withdrew stays withheld, as at window egress.
+    custody_withheld.extend(
+        crate::sync::window::withdrawn_delete_carriers(vault, &rtxn, source)?
+            .into_iter()
+            .map(|(_, id)| id),
+    );
     let mut candidates = BTreeSet::<EntityId>::new();
     let mut kept = BTreeSet::<EntityId>::new();
     let mut seeds = BTreeSet::<EntityId>::new();

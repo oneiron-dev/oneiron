@@ -627,6 +627,91 @@ fn a_peer_cleanup_archive_tombstone_deletes_and_fences_nothing() -> Result<()> {
     Ok(())
 }
 
+/// Bug repro (Astra access follow-ups finding 4): a peer's soft tombstone
+/// fences an authority record's id before the record arrives. Once the
+/// tombstone is withdrawn, the explicit-tier replay door admits the valid
+/// record, and it reads live: a delete-protected record is never deleted.
+#[test]
+fn an_authority_row_replayed_over_a_planted_fence_reads_live() -> Result<()> {
+    let vault = test_vault();
+    let owner = authority_test_key(47);
+    let genesis = authority_genesis_fixture(47);
+    let vault_id = crate::authority::genesis_vault_id(&genesis)?;
+    vault.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
+    let bind = authority_bind_owner_fixture(
+        vault_id,
+        &genesis,
+        &owner,
+        EntityId::from_bytes_unchecked([48; 16]),
+        1,
+    );
+    let id = crate::authority::authority_log_entity_id(&bind)?;
+    let mut soft = vec![1u8];
+    soft.extend_from_slice(&1_771_027_200u64.to_le_bytes());
+    soft.extend_from_slice(&[0x5A; 16]);
+    vault.with_write_txn(|wtxn| {
+        vault
+            .apply_replayed_tombstone_in_txn(wtxn, &id, &soft)
+            .map(|_| ())
+    })?;
+
+    crate::sync::replay::replay_entity(
+        &vault,
+        crate::sync::replay::ReplicatedEntity {
+            id,
+            entity_type: crate::registry::ENTITY_TYPE_AUTHORITY_LOG,
+            occurred: TimeRange { start: 2, end: 2 },
+            learned_at: 2,
+            body: &crate::authority::encode_authority_log_entry_body(&bind)?,
+        },
+        crate::sync::client::ImportTier::OwnDevice,
+    )?;
+    assert!(vault.live_entity_row(&id)?.is_live());
+    assert_eq!(vault.get_authority_log_entry(&id)?, Some(bind));
+    Ok(())
+}
+
+/// Bug repro (Astra access follow-ups finding 5): a peer's cleanup-archive
+/// tombstone for a live authority record is refused, and while it stays
+/// published in the record's snapshot-backed window the record still reads
+/// live. A refused delete is no delete at read time either.
+#[test]
+fn a_refused_tombstone_left_published_deletes_no_authority_row() -> Result<()> {
+    let vault = test_vault();
+    let genesis = authority_genesis_fixture(49);
+    vault.put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)?;
+    let id = crate::authority::authority_log_entity_id(&genesis)?;
+    let window = crate::deletion::window_label_from_timestamp(1);
+
+    let peer = LoroDoc::new();
+    let mut archive = vec![5u8];
+    archive.extend_from_slice(&1_771_027_200u64.to_le_bytes());
+    archive.extend_from_slice(&[0x5A; 16]);
+    map_insert_bytes(&peer.get_map("tombstones"), &id.to_hex(), &archive)?;
+    peer.commit();
+    let loaded = crate::sync::window::LoadedWindow::new(
+        "local",
+        crate::sync::WindowKey::try_new(&window).expect("a window key"),
+        &vault,
+        &Arc::new(Materializer::new()),
+    );
+    import_doc(
+        &loaded.doc,
+        &export_updates_since(&peer, &loro::VersionVector::default().encode())?,
+    )?;
+    loaded.persist_state(&vault)?;
+    assert!(
+        crate::sync::loro_support::tombstone_map_contains_id(
+            &loaded.doc.get_map("tombstones"),
+            &id
+        ),
+        "the refused tombstone stays published"
+    );
+    assert!(vault.live_entity_row(&id)?.is_live());
+    assert_eq!(vault.get_authority_log_entry(&id)?, Some(genesis));
+    Ok(())
+}
+
 /// ONE-1604-D1 (fix-leg 1, P2-a — adversarial revocation survival): the
 /// content-derived store key lives in the caller-chosen GLOBAL entity
 /// namespace, and revocation bodies are predictable under deterministic

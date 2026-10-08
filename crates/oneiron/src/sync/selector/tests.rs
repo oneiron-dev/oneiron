@@ -3647,7 +3647,7 @@ fn a_grant_deleted_here_authorizes_no_selector() {
     authorize_sync_selector(&vault, test_selector_scope(), &selector)
         .expect("a live grant authorizes");
     vault
-        .with_write_txn(|txn| vault.fence_unapplied_delete_in_txn(txn, &grant_id))
+        .with_write_txn(|txn| vault.fence_unapplied_delete_in_txn(txn, &grant_id, &[1; 25]))
         .unwrap();
     assert!(vault.get_raw(&grant_id).unwrap().is_some());
     authorize_sync_selector(&vault, test_selector_scope(), &selector)

@@ -1389,10 +1389,9 @@ fn persist_received_turn_tombstone(vault: &crate::Vault, turn: EntityId, raw_val
             crate::sync::window::persist_window_doc_in_txn(vault, txn, &key, &snapshot, &vv)
         })
         .unwrap();
-    assert!(vault.is_deleted_shell(&turn).unwrap());
     assert!(
         vault.get_raw_unsealed(&turn).unwrap().is_some(),
-        "window visibility precedes active-store scrub"
+        "a persisted tombstone scrubs nothing before its replay"
     );
 }
 

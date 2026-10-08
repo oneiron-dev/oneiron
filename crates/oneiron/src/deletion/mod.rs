@@ -40,7 +40,9 @@ pub(crate) use sweep_queue::{
     HARD_ERASE_SWEEP_PREFIX, HardEraseSweepJob, decode_hard_erase_sweep_job,
     decode_hard_erase_sweep_seq, encode_hard_erase_sweep_job_value,
 };
-pub(crate) use timeline::deletion_window_for_row;
+pub(crate) use timeline::{deletion_window_for_row, row_deletion_marked};
+#[cfg(all(test, feature = "sync"))]
+pub(crate) use tombstone::ROW_DELETION_FENCE_BACKFILLED;
 pub(crate) use tombstone::{
     ARCHIVE_TOMBSTONE_PREFIX, HARD_DELETE_MARKER, IDENTITY_SOFT_DELETE_MARKER,
     LOCAL_HARD_DELETE_PREFIX, PENDING_TOMBSTONE, ROW_DELETION_FENCE, archive_tombstone_key,

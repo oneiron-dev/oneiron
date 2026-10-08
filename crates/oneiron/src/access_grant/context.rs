@@ -806,26 +806,21 @@ mod tests {
         Ok(())
     }
 
-    /// Bug repro (Astra #1322 finding 1): a peer that withdraws a soft delete,
-    /// dropping the tombstone and putting the relationship's original body
-    /// back, restores nothing. Delete wins here, whatever the window's
-    /// tombstone map and the payload length now say, and through every door
-    /// that takes a peer's row: the window's ingest and the explicit-tier
-    /// replay alike.
+    /// A peer soft-deletes the relationship of `share` in its base window,
+    /// which this vault applies, then withdraws the delete from a fork of the
+    /// causally complete window: the tombstone dropped and the original body
+    /// put back. Returns the loaded window and that original row.
     #[cfg(feature = "sync")]
-    #[test]
-    fn a_peer_cannot_withdraw_a_relationship_delete() -> Result<()> {
+    fn withdraw_a_peer_relationship_delete(
+        vault: &std::sync::Arc<Vault>,
+        share: &RelationshipShare,
+    ) -> Result<(crate::sync::window::LoadedWindow, Vec<u8>)> {
         use crate::sync::bridge::Materializer;
         use crate::sync::loro_support::{
             doc_from_snapshot, doc_version_vector, export_all_updates, export_snapshot,
             export_updates_since, import_doc, map_insert_bytes,
         };
-        use std::sync::Arc;
 
-        let (_dir, vault) =
-            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-        let vault = Arc::new(vault);
-        let share = RelationshipShare::new(&vault);
         let original = {
             let txn = vault.store.env.read_txn()?;
             crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &share.space)?
@@ -840,21 +835,20 @@ mod tests {
             &peer_soft_tombstone(),
         )?;
         peer.commit();
-        let window = base_window(&vault, &share.space)?;
+        let window = base_window(vault, &share.space)?;
         let loaded = crate::sync::window::LoadedWindow::new(
             "local",
             crate::sync::WindowKey::try_new(&window).expect("a window key"),
-            &vault,
-            &Arc::new(Materializer::new()),
+            vault,
+            &std::sync::Arc::new(Materializer::new()),
         );
         import_doc(&loaded.doc, &export_all_updates(&peer)?)?;
-        loaded.persist_state(&vault)?;
+        loaded.persist_state(vault)?;
         assert!(
-            !share.reads_as(&vault, share.member)?,
+            !share.reads_as(vault, share.member)?,
             "the peer's delete applied"
         );
 
-        // A fork of the causally complete window withdraws the delete.
         let fork = doc_from_snapshot(&export_snapshot(&loaded.doc)?)?;
         fork.get_map("tombstones")
             .delete(&share.space.to_hex())
@@ -865,7 +859,24 @@ mod tests {
             &loaded.doc,
             &export_updates_since(&fork, &doc_version_vector(&loaded.doc))?,
         )?;
-        loaded.persist_state(&vault)?;
+        loaded.persist_state(vault)?;
+        Ok((loaded, original))
+    }
+
+    /// Bug repro (Astra #1322 finding 1): a peer that withdraws a soft delete,
+    /// dropping the tombstone and putting the relationship's original body
+    /// back, restores nothing. Delete wins here, whatever the window's
+    /// tombstone map and the payload length now say, and through every door
+    /// that takes a peer's row: the window's ingest and the explicit-tier
+    /// replay alike.
+    #[cfg(feature = "sync")]
+    #[test]
+    fn a_peer_cannot_withdraw_a_relationship_delete() -> Result<()> {
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let vault = std::sync::Arc::new(vault);
+        let share = RelationshipShare::new(&vault);
+        let (_loaded, original) = withdraw_a_peer_relationship_delete(&vault, &share)?;
         assert!(
             !share.reads_as(&vault, share.member)?,
             "a withdrawn delete restores no membership"
@@ -889,6 +900,56 @@ mod tests {
             "a replayed body restores no membership"
         );
         assert!(replayed.is_err(), "the replicated put is refused");
+        Ok(())
+    }
+
+    /// Bug repro (Astra access follow-ups finding 3): a relationship delete a
+    /// peer withdrew, which this vault refused to undo, is not handed on by
+    /// this vault's window export either. A second vault that never saw the
+    /// delete and syncs the window from here does not get the relationship.
+    #[cfg(feature = "sync")]
+    #[test]
+    fn a_withdrawn_relationship_delete_is_not_exported_live() -> Result<()> {
+        use crate::sync::bridge::Materializer;
+        use crate::sync::loro_support::import_doc;
+
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let vault = std::sync::Arc::new(vault);
+        let share = RelationshipShare::new(&vault);
+        let (loaded, _) = withdraw_a_peer_relationship_delete(&vault, &share)?;
+        let key = crate::sync::WindowKey::try_new(&base_window(&vault, &share.space)?)
+            .expect("a window key");
+        let exported = crate::sync::window::export_window_updates_since(
+            &vault,
+            &key,
+            &loaded.doc,
+            &loro::VersionVector::default().encode(),
+        )?;
+
+        let (_receiver_dir, receiver) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let receiver = std::sync::Arc::new(receiver);
+        let received = crate::sync::window::LoadedWindow::new(
+            "receiver",
+            key,
+            &receiver,
+            &std::sync::Arc::new(Materializer::new()),
+        );
+        import_doc(&received.doc, &exported)?;
+        received.persist_state(&receiver)?;
+        assert!(
+            !receiver.live_entity_row(&share.space)?.is_live(),
+            "the receiver holds no live relationship"
+        );
+        assert!(
+            received
+                .doc
+                .get_map("entities")
+                .get(&share.space.to_hex())
+                .is_none(),
+            "the export carries no relationship body"
+        );
         Ok(())
     }
 
@@ -972,16 +1033,18 @@ mod tests {
         Ok(())
     }
 
-    /// Substrate check (Astra #1322 finding 4): the deletion resolver reads a
-    /// world-scoped binding's published tombstone from the binding's world
-    /// window, with no local apply to lean on, never from its base month.
+    /// Substrate check (Astra #1322 finding 4, and the marker-only read
+    /// path): a vault whose reads used to replay window documents may hold a
+    /// world-scoped binding's published delete that no marker records. The
+    /// first open of this build fences it from the binding's world window,
+    /// never its base month, so the binding keeps reading deleted.
     #[cfg(feature = "sync")]
     #[test]
-    fn a_world_window_delete_is_read_from_the_bindings_world() -> Result<()> {
+    fn a_world_window_delete_published_before_upgrade_still_deletes() -> Result<()> {
         use crate::sync::loro_support::{doc_version_vector, export_snapshot, map_insert_bytes};
 
-        let (_dir, vault) =
-            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let config = crate::test_util::embedding_test_config();
+        let (dir, vault) = crate::test_util::open_test_vault_with(config.clone());
         let world = EntityId::now();
         let share = RelationshipShare::with_binding_world(&vault, Some(world));
         assert!(share.reads_as(&vault, share.member)?);
@@ -1006,8 +1069,14 @@ mod tests {
                 &key,
                 &export_snapshot(&state)?,
                 &doc_version_vector(&state),
-            )
+            )?;
+            // As a vault written before the backfill existed.
+            crate::deletion::ROW_DELETION_FENCE_BACKFILLED.delete(&vault.store, txn, &())?;
+            Ok(())
         })?;
+        drop(vault);
+
+        let vault = Vault::open(dir.path(), config)?;
         assert!(has_body(&vault, &share.binding)?);
         assert!(
             !share.reads_as(&vault, share.member)?,

@@ -1745,7 +1745,8 @@ fn canonical_capture_refuses_a_deleted_row_without_its_tombstone() -> Result<()>
     doc.commit();
     capture_canonical_window(&vault, "2026-02", &doc)?;
 
-    vault.with_write_txn(|txn| vault.fence_unapplied_delete_in_txn(txn, &relationship))?;
+    vault
+        .with_write_txn(|txn| vault.fence_unapplied_delete_in_txn(txn, &relationship, &[1; 25]))?;
     assert!(
         capture_canonical_window(&vault, "2026-02", &doc).is_err(),
         "a withdrawn delete is not exported as a live row"

@@ -66,36 +66,9 @@ impl Vault {
         id: &EntityId,
         raw_value: &[u8],
     ) -> Result<(ReplayedTombstoneOutcome, Vec<EntityId>)> {
-        crate::dreamer_runner::authority::guard_actor_delete(id)?;
-        crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
-        crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
-        crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, wtxn, id)?;
-        let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
         let decoded = decode_tombstone_value(raw_value);
-        guard_topology_delete_request_in_txn(&self.store, wtxn, id, &decoded)?;
-        let settled = match decoded.request_id.as_ref() {
-            Some(request) => settled_topology_delete_in_txn(&self.store, wtxn, id, request)?,
-            None => false,
-        };
-        if decoded.is_hard() && !settled {
-            self.guard_active_merge_hard_delete_in_txn(wtxn, id)?;
-        }
-        self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
-        // Cleanup is local visibility, never a replicated deletion intent.
-        // Accepting byte 5 here would irreversibly scrub a retained archive
-        // (or an unrelated row) without the cleanup predicate or owner decision.
-        if decoded.reason == Some(super::tombstone::TombstoneReason::ArchivedByCleanup) {
-            return Err(Error::InvariantViolation(
-                "cleanup archives cannot be replayed as deletion intent",
-            ));
-        }
-        if let Some(header) = self.read_entity_header_in_txn(wtxn, id)?
-            && crate::registry::is_delete_protected_engine_record(header.entity_type)
-        {
-            return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
-                header.entity_type,
-            )));
-        }
+        self.replayed_tombstone_protection_in_txn(wtxn, id, &decoded)?;
+        let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
         // Receiver-only room MESSAGE content must be erased before the TURN
         // loses its PartOf edges, even when the host never held the child.
         crate::conversation::replay_room_message_tombstone(self, wtxn, *id, raw_value)?;
@@ -293,6 +266,49 @@ impl Vault {
         raw_value: &[u8],
     ) -> Result<ReplayedTombstoneOutcome> {
         self.apply_replayed_tombstone(id, raw_value)
+    }
+
+    /// The protection gates a replayed tombstone must pass before it may
+    /// delete anything here: custody guards, the current pack-map carrier,
+    /// cleanup's local-only reason and delete-protected engine records. An
+    /// `Err` is a refusal of this delete, or a failure to read the state that
+    /// decides it. Read-only.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    pub(crate) fn replayed_tombstone_protection_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        decoded: &DecodedTombstoneValue,
+    ) -> Result<()> {
+        crate::dreamer_runner::authority::guard_actor_delete(id)?;
+        crate::federation::reject_ruling_delete(&self.store, txn, id)?;
+        crate::blob_artifact::esign::reject_event_delete(&self.store, txn, id)?;
+        crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, txn, id)?;
+        guard_topology_delete_request_in_txn(&self.store, txn, id, decoded)?;
+        let settled = match decoded.request_id.as_ref() {
+            Some(request) => settled_topology_delete_in_txn(&self.store, txn, id, request)?,
+            None => false,
+        };
+        if decoded.is_hard() && !settled {
+            self.guard_active_merge_hard_delete_in_txn(txn, id)?;
+        }
+        self.store.guard_pack_map_carrier_delete_in_txn(txn, id)?;
+        // Cleanup is local visibility, never a replicated deletion intent.
+        // Accepting byte 5 here would irreversibly scrub a retained archive
+        // (or an unrelated row) without the cleanup predicate or owner decision.
+        if decoded.reason == Some(super::tombstone::TombstoneReason::ArchivedByCleanup) {
+            return Err(Error::InvariantViolation(
+                "cleanup archives cannot be replayed as deletion intent",
+            ));
+        }
+        if let Some(header) = self.read_entity_header_in_txn(txn, id)?
+            && crate::registry::is_delete_protected_engine_record(header.entity_type)
+        {
+            return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
+                header.entity_type,
+            )));
+        }
+        Ok(())
     }
 
     /// [`Vault::read_entity_header`](crate::Vault::read_entity_header) against

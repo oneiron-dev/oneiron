@@ -79,19 +79,6 @@ pub(in crate::batch) fn apply_put(
     } = options.replication;
     let hub_sync_imported = options.hub.sync_imported;
     let claim_gate_prechecked = options.decision.prechecked;
-    // Delete wins over a peer: no replicated put brings back a row this vault
-    // deleted, whatever the window's tombstone map now says. Refused before any
-    // effect is staged. A delete-protected record is never deleted: its own
-    // admission validates it and lifts a fence planted before it arrived.
-    if replicated
-        && !crate::registry::is_delete_protected_engine_record(entity_type)
-        && id != crate::dreamer_runner::authority::dreamer_actor_id()?
-        && crate::deletion::ROW_DELETION_FENCE.contains(store, wtxn, &HexId(id))?
-    {
-        return Err(Error::InvariantViolation(
-            "a replicated put cannot restore an entity deleted here",
-        ));
-    }
     crate::dreamer_runner::authority::guard_actor_put(id, entity_type, data, occurred, learned_at)?;
     super::super::person_substrate::validate_scope_identity(id)?;
     // Normalize before body comparison, short-id hashing and scope stamping so
@@ -362,6 +349,21 @@ pub(in crate::batch) fn apply_put(
     // between here and the write is LOCAL-class (storage/overflow), which
     // aborts the whole batch instead of committing — so it cannot strand this
     // mutation either.
+    // Delete wins over a peer: no replicated put brings back a row this vault
+    // deleted, whatever the window's tombstone map now says. Checked once the
+    // body has passed its own validation, so a refused body still reports its
+    // own error. The refusal is local-class: the batch aborts, and nothing
+    // staged above survives it. A delete-protected record is never deleted, so
+    // a fence planted at its id before it arrived refuses nothing.
+    if replicated
+        && !crate::registry::is_delete_protected_engine_record(entity_type)
+        && id != crate::dreamer_runner::authority::dreamer_actor_id()?
+        && crate::deletion::ROW_DELETION_FENCE.contains(store, wtxn, &HexId(id))?
+    {
+        return Err(Error::InvariantViolation(
+            "a replicated put cannot restore an entity deleted here",
+        ));
+    }
     let evicted_shell_sources = if authority_dominates_key_squatter {
         evict_authority_log_store_key_squatter(store, wtxn, &id)?
     } else {

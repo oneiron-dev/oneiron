@@ -298,7 +298,7 @@ fn apply_tombstone_batch(
                     "observer-b: CRITICAL — failed to set rm: marker after tombstone item failure"
                 );
             }
-            if let Err(fence_err) = vault.fence_unapplied_delete_in_txn(parent, &work.id) {
+            if let Err(fence_err) = vault.fence_unapplied_delete_in_txn(parent, &work.id, &work.raw_value) {
                 tracing::error!(
                     tombstone = %work.crdt_key,
                     window = %window_key,
@@ -351,7 +351,7 @@ fn apply_tombstone_batch(
         if let Err(error) = vault.with_write_txn(|txn| {
             for work in staged {
                 quarantine::set_remat_marker_in_txn(vault, txn, window_key, &work.id)?;
-                vault.fence_unapplied_delete_in_txn(txn, &work.id)?;
+                vault.fence_unapplied_delete_in_txn(txn, &work.id, &work.raw_value)?;
             }
             Ok(())
         }) {

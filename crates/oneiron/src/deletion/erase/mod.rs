@@ -32,6 +32,7 @@ use crate::store::GateDecisionId;
 use super::receipt::{RedactionReceiptInput, RedactionScope};
 use super::sweep_queue::HardEraseSweepExtras;
 use super::tombstone;
+use super::tombstone::DecodedTombstoneValue;
 use super::tombstone::{
     HARD_DELETE_MARKER, IDENTITY_SOFT_DELETE_MARKER, ROW_DELETION_FENCE,
     ROW_DELETION_FENCE_BACKFILLED, ReplayedTombstoneOutcome, decode_tombstone_value,

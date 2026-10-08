@@ -40,30 +40,38 @@ impl Vault {
     }
 
     /// Fences the row of a validated peer tombstone this vault accepted but
-    /// could not apply. Its body may still be stored, and the window keeping
-    /// the tombstone may have no snapshot, so without the fence the row would
-    /// read live until the `rm:` retry lands. A delete-protected engine record
-    /// is never deleted, so it is never fenced.
+    /// could not apply. Its body may still be stored, so without the fence
+    /// the row would read live until the `rm:` retry lands. Only a delete the
+    /// replay's protection gates admit is fenced, the gates re-run here
+    /// against the state the failed apply saw: a delete they refuse (a custody
+    /// guard, the current pack-map carrier, a delete-protected record) never
+    /// applies, so the row stays as it was. A gate that fails to read its
+    /// state fences, failing closed.
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(crate) fn fence_unapplied_delete_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
+        raw_value: &[u8],
     ) -> Result<()> {
-        if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, id)?
-            && EntityMetadataHeader::parse(&raw).is_some_and(|header| {
-                crate::registry::is_delete_protected_engine_record(header.entity_type)
-            })
-        {
-            return Ok(());
+        match self.replayed_tombstone_protection_in_txn(
+            wtxn,
+            id,
+            &decode_tombstone_value(raw_value),
+        ) {
+            Ok(()) | Err(Error::Storage(_) | Error::Io(_) | Error::MapFull) => {
+                ROW_DELETION_FENCE.put(&self.store, wtxn, &HexId(*id), &Vec::new())
+            }
+            Err(_) => Ok(()),
         }
-        ROW_DELETION_FENCE.put(&self.store, wtxn, &HexId(*id), &Vec::new())
     }
 
     /// One-time open backfill of [`ROW_DELETION_FENCE`]. A vault written
     /// before the fence existed records its applied soft deletes only in the
     /// identity marker; each header-only row under that marker is fenced, so
-    /// the deletes it records keep reading deleted.
+    /// the deletes it records keep reading deleted. Its reads also replayed
+    /// each row's window for published tombstones; see
+    /// [`Self::backfill_published_delete_fences_in_txn`].
     pub(crate) fn backfill_row_deletion_fences_on_open(&self) -> Result<()> {
         if ROW_DELETION_FENCE_BACKFILLED.contains(&self.store, &self.store.env.read_txn()?, &())? {
             return Ok(());
@@ -79,8 +87,67 @@ impl Vault {
                     ROW_DELETION_FENCE.put(&self.store, wtxn, &HexId(id), &Vec::new())?;
                 }
             }
+            #[cfg(feature = "sync")]
+            self.backfill_published_delete_fences_in_txn(wtxn)?;
             ROW_DELETION_FENCE_BACKFILLED.put(&self.store, wtxn, &(), &b"1".to_vec())
         })
+    }
+
+    /// Reads used to answer a row's deletion by replaying the row's own window
+    /// document for a published tombstone, which a delete accepted here but
+    /// never applied (or a hard delete published before its purge) relied on.
+    /// Reads now go by markers alone, so each stored row such a tombstone
+    /// still deletes, as the replay's protection gates admit it, is fenced
+    /// once here and keeps reading deleted.
+    #[cfg(feature = "sync")]
+    fn backfill_published_delete_fences_in_txn(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<()> {
+        use crate::sync::loro_support::{
+            doc_from_snapshot, import_doc, map_for_each_tombstone_value,
+        };
+
+        let mut windows = Vec::new();
+        for row in self.store.sync_state.prefix_iter(wtxn, "d:w:")? {
+            windows.push(row?.0["d:w:".len()..].to_owned());
+        }
+        for window in windows {
+            let Some(snapshot) = self.store.sync_state.get(wtxn, &format!("d:w:{window}"))? else {
+                continue;
+            };
+            let doc = doc_from_snapshot(&snapshot)?;
+            for row in self
+                .store
+                .sync_state
+                .prefix_iter(wtxn, &format!("u:w:{window}:"))?
+            {
+                let (_, update) = row?;
+                import_doc(&doc, &update)?;
+            }
+            let mut tombstones = Vec::new();
+            map_for_each_tombstone_value(&doc.get_map("tombstones"), |key, value| {
+                if let Ok(id) = EntityId::from_hex(key) {
+                    tombstones.push((id, value.to_vec()));
+                }
+            });
+            for (id, value) in tombstones {
+                let Some(raw) =
+                    crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, &id)?
+                else {
+                    continue;
+                };
+                if crate::deletion::row_deletion_marked(&self.store, wtxn, &id, Some(&raw))?
+                    || super::super::timeline::residence_window_for_row(
+                        &self.store,
+                        wtxn,
+                        &id,
+                        &raw,
+                    )? != window
+                {
+                    continue;
+                }
+                self.fence_unapplied_delete_in_txn(wtxn, &id, &value)?;
+            }
+        }
+        Ok(())
     }
 
     pub(in crate::deletion) fn active_delete_scope_exists_in_txn(

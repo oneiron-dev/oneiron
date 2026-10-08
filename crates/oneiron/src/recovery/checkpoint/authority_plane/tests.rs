@@ -221,7 +221,7 @@ fn restore_refuses_to_revive_a_grant_deleted_since() {
     .unwrap();
     let image = root.path().join("backup");
     live.snapshot_checkpoint(&image, 100).unwrap();
-    live.with_write_txn(|txn| live.fence_unapplied_delete_in_txn(txn, &grant))
+    live.with_write_txn(|txn| live.fence_unapplied_delete_in_txn(txn, &grant, &[1; 25]))
         .unwrap();
     let destination = root.path().join("restored");
     let Err(error) = Vault::restore_checkpoint_keeping_authority(

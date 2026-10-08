@@ -929,7 +929,7 @@ fn autonomy_mode_rejects_a_read_grant_deleted_here() {
     };
     assert!(resolve().is_ok());
     vault
-        .with_write_txn(|txn| vault.fence_unapplied_delete_in_txn(txn, &reference))
+        .with_write_txn(|txn| vault.fence_unapplied_delete_in_txn(txn, &reference, &[1; 25]))
         .unwrap();
     assert!(vault.get_access_grant(&reference).unwrap().is_some());
     assert!(resolve().is_err(), "a deleted read grant backs no mode");

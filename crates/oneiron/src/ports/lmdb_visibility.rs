@@ -33,67 +33,28 @@ impl<T: ManifestDbs> TombstoneStoreRead for T {
             .sync_state()
             .get(txn, crate::deletion::archive_tombstone_key(id).as_str())?
             .is_some();
+        let stale = super::integrity::stale_in_txn(self, txn, id)?;
+        let raw = self.entities().get(txn, id.as_bytes())?;
+        // Every answer is an indexed marker; no window document is decoded.
+        // The row's own deletion, applied here or accepted and awaiting its
+        // retry, is its `df:` fence (or `dt:` once hard), whatever the payload
+        // length or a window's mutable tombstone map say.
         let deleted = archived
-            || self
-                .sync_state()
-                .get(txn, crate::deletion::local_hard_delete_key(id).as_str())?
-                .is_some()
-            // The current row's own deletion, applied here or accepted and
-            // awaiting its retry, whatever the payload length or a window's
-            // mutable tombstone map say.
-            || crate::deletion::ROW_DELETION_FENCE.contains(
-                self,
-                txn,
-                &crate::side_table::HexId(*id),
-            )?
+            || crate::deletion::row_deletion_marked(self, txn, id, raw.as_deref())?
             || self
                 .vault_meta()
                 .get(txn, &super::integrity::tombstone_key(id))?
-                .is_some();
-        let stale = super::integrity::stale_in_txn(self, txn, id)?;
-        if deleted {
-            return Ok(DeletionState {
-                archived,
-                deleted,
-                stale,
-            });
-        }
-        let Some(raw) = self.entities().get(txn, id.as_bytes())? else {
-            return Ok(DeletionState {
-                archived,
-                deleted,
-                stale,
-            });
-        };
-        let window = crate::deletion::deletion_window_for_row(self, txn, id, &raw)?;
-        let key = crate::deletion::pending_tombstone_key(&window, id);
-        if self.sync_state().get(txn, &key)?.is_some() {
-            return Ok(DeletionState {
-                archived,
-                deleted: true,
-                stale,
-            });
-        }
-        #[cfg(feature = "sync")]
-        let deleted = {
-            use crate::sync::loro_support::{
-                doc_from_snapshot, import_doc, tombstone_map_contains_id,
-            };
-            let key = format!("d:w:{window}");
-            if let Some(snapshot) = self.sync_state().get(txn, &key)? {
-                let doc = doc_from_snapshot(&snapshot)?;
-                for entry in self
-                    .sync_state()
-                    .prefix_iter(txn, &format!("u:w:{window}:"))?
-                {
-                    let (_, update) = entry?;
-                    import_doc(&doc, &update)?;
+                .is_some()
+            || match raw {
+                // A local delete whose publication is pending.
+                Some(raw) => {
+                    let window = crate::deletion::deletion_window_for_row(self, txn, id, &raw)?;
+                    self.sync_state()
+                        .get(txn, &crate::deletion::pending_tombstone_key(&window, id))?
+                        .is_some()
                 }
-                tombstone_map_contains_id(&doc.get_map("tombstones"), id)
-            } else {
-                false
-            }
-        };
+                None => false,
+            };
         Ok(DeletionState {
             archived,
             deleted,

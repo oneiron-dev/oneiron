@@ -146,7 +146,7 @@ pub(super) fn map_for_each_value_bytes_deferring(
 /// malformed remote tombstone must never be invisible to replay.
 /// Entities/edges maps use [`map_for_each_value_bytes`], which surfaces
 /// non-Binary values as `None` for quarantine instead (ONE-1157).
-pub(super) fn map_for_each_tombstone_value(map: &LoroMap, mut f: impl FnMut(&str, &[u8])) {
+pub(crate) fn map_for_each_tombstone_value(map: &LoroMap, mut f: impl FnMut(&str, &[u8])) {
     map.for_each(|key, value| match value {
         ValueOrContainer::Value(LoroValue::Binary(bytes)) => f(key, &bytes),
         _ => f(key, &[]),

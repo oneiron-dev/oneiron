@@ -41,21 +41,42 @@ pub(in crate::deletion) fn deletion_window_label(
     Ok(window_label_from_timestamp(learned_at))
 }
 
-/// The sync window that holds the pending or published deletion of the row
-/// `raw` stored under `id`: the window the row resides in. A CLAIM body names
-/// its world, a CLAIM shell has lost its body so its preserved deletion
-/// address answers, and every other row lives in the base month of its
-/// learned-at. A CLAIM body that does not decode names no world, which is
-/// also where sync places it.
+/// The sync window that holds the pending deletion of the row `raw` stored
+/// under `id`: the window the row resides in. A CLAIM body names its world, a
+/// CLAIM shell has lost its body so its preserved deletion address answers,
+/// and every other row lives in the base month of its learned-at. A CLAIM body
+/// that does not decode names no world, which is also where sync places it.
 ///
-/// A body is decoded only while some world window of its month holds
-/// deletion state at all: with none, every row of that month is answered from
-/// its base month, so ordinary reads pay no extra decode.
+/// A body is decoded only while some world window of its month holds a
+/// pending deletion at all: with none, every row of that month is answered
+/// from its base month, so ordinary reads pay no extra decode.
 pub(crate) fn deletion_window_for_row(
     dbs: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     raw: &[u8],
+) -> Result<String> {
+    row_window(dbs, txn, id, raw, false)
+}
+
+/// [`deletion_window_for_row`] that always decodes a CLAIM body for its
+/// world, for a one-time pass that has no pending marker to go by.
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
+pub(in crate::deletion) fn residence_window_for_row(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<String> {
+    row_window(dbs, txn, id, raw, true)
+}
+
+fn row_window(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+    always_decode: bool,
 ) -> Result<String> {
     let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
     let mut label = window_label_from_timestamp(header.learned_at);
@@ -65,7 +86,7 @@ pub(crate) fn deletion_window_for_row(
     if raw.len() == ENTITY_METADATA_HEADER_LEN {
         return deletion_window_label(dbs, txn, id, header.learned_at);
     }
-    if !world_deletion_state_exists(dbs, txn, &label)? {
+    if !always_decode && !world_pending_tombstone_exists(dbs, txn, &label)? {
         return Ok(label);
     }
     if let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
@@ -77,25 +98,40 @@ pub(crate) fn deletion_window_for_row(
     Ok(label)
 }
 
-/// Whether any world window of `month` holds a pending tombstone marker or a
-/// snapshot whose published tombstones the resolver replays.
-fn world_deletion_state_exists(
+/// Whether this vault's own durable markers delete the row `raw` stored under
+/// `id`, if any: the `df:` fence of a delete applied here or accepted and
+/// awaiting its retry, or the permanent `dt:` of a hard one. A
+/// delete-protected record is never deleted, so the markers a peer's
+/// tombstone can plant at its id before it arrives say nothing about the
+/// record stored there.
+pub(crate) fn row_deletion_marked(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: Option<&[u8]>,
+) -> Result<bool> {
+    if !super::tombstone::HARD_DELETE_MARKER.contains(dbs, txn, &HexId(*id))?
+        && !super::tombstone::ROW_DELETION_FENCE.contains(dbs, txn, &HexId(*id))?
+    {
+        return Ok(false);
+    }
+    let Some(raw) = raw else {
+        return Ok(true);
+    };
+    Ok(!(EntityMetadataHeader::parse(raw).is_some_and(|header| {
+        crate::registry::is_delete_protected_engine_record(header.entity_type)
+    }) || *id == crate::dreamer_runner::authority::dreamer_actor_id()?))
+}
+
+/// Whether any world window of `month` holds a pending tombstone marker.
+fn world_pending_tombstone_exists(
     dbs: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     month: &str,
 ) -> Result<bool> {
     let worlds = format!("{month}@");
-    if PENDING_TOMBSTONE
+    Ok(PENDING_TOMBSTONE
         .iter_from(dbs, txn, worlds.as_bytes())?
-        .next()
-        .transpose()?
-        .is_some()
-    {
-        return Ok(true);
-    }
-    Ok(dbs
-        .sync_state()
-        .prefix_iter(txn, &format!("d:w:{worlds}"))?
         .next()
         .transpose()?
         .is_some())
