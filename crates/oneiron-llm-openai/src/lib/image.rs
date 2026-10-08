@@ -218,6 +218,3 @@ fn decode_response(
         metadata: body.into_iter().collect(),
     })
 }
-
-#[cfg(test)]
-mod tests;

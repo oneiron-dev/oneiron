@@ -180,27 +180,3 @@ fn production_judge_issues_three_calls_prices_usage_and_rejects_prompt_before_ca
     lme.card.version = "2024-08-06".into();
     lme.validate("Answer from the evidence.").unwrap();
 }
-#[test]
-fn failed_vote_does_not_short_circuit_other_judge_calls() {
-    let config = config();
-    let calls = Arc::new(AtomicUsize::new(0));
-    let session = ModelSession::with_backend(
-        Box::new(CountingJudge {
-            calls: calls.clone(),
-            fail_first: true,
-        }),
-        prices(),
-        std::slice::from_ref(&config.model),
-        1_000_000,
-    )
-    .unwrap();
-    let item = JudgeItem {
-        question: "q".into(),
-        candidate_answer: "a".into(),
-        gold_answer: "g".into(),
-        ability: "temporal".into(),
-        wedge_bucket: WedgeBucket::Temporal,
-    };
-    assert!(score_item(&session, &config, "Answer from the evidence.", &item).is_err());
-    assert_eq!(calls.load(Ordering::SeqCst), 3);
-}

@@ -19,6 +19,12 @@ categories.workspace = true
 doctest = true
 
 [dependencies]
+# Lower engine crates split out of this one. This crate re-exports each moved
+# module at its old `oneiron::<module>` path.
+oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
+oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
+oneiron-model = { version = "0.1.0", path = "../oneiron-model" }
+oneiron-retrieval = { version = "0.1.0", path = "../oneiron-retrieval" }
 oneiron-sandbox-contract = { path = "../oneiron-sandbox-contract" }
 oneiron-seal = { version = "0.1.0", path = "../oneiron-seal" }
 # Native DOCX revisions: organ crate remains independent of the vault engine.
@@ -76,11 +82,7 @@ tree-sitter = "0.26.10"
 tree-sitter-rust = "0.24.2"
 tree-sitter-python = "=0.25.0"
 icu_normalizer = { version = "2.2", default-features = false, features = ["compiled_data"] }
-icu_casemap = { version = "2.2", default-features = false, features = ["compiled_data"] }
-icu_segmenter = { version = "2.2", default-features = false, features = ["compiled_data", "auto"] }
-icu_properties = { version = "2.2", default-features = false, features = ["compiled_data"] }
 unicode-script = "0.5"
-unicode-segmentation = "1"
 loro = "1.10"
 tokio = { version = "1", features = ["sync"] }
 tokio-tungstenite = { version = "0.26", optional = true }
@@ -89,11 +91,6 @@ futures-util = { version = "0.3", optional = true }
 zstd = "0.13"
 tracing = { version = "0.1" }
 whichlang = "0.1.1"
-rust-stemmers = "1.2.0"
-# Upstream v0.6.11 plus fork branch oneiron/v0.6.11: Android plugin-loader name, reasoned allows.
-sudachi = { git = "https://github.com/oneiron-dev/sudachi.rs", rev = "d8cba3609521805ebf35bfc2b71d8099a13befef" }
-jieba-rs = { version = "0.9", default-features = false }
-lindera = { version = "3.0", default-features = false }
 kamadak-exif = "0.5"
 ocrs = { version = "0.10", optional = true }
 rten = { version = "0.21", optional = true }
@@ -191,6 +188,7 @@ microvm-firecracker = []
 # ever hand it to a release build when this feature is explicitly on.
 microvm-dev = []
 sync = [
+    "oneiron-contracts/sync",
     "tokio/net",
     "tokio/time",
     "tokio/rt",
@@ -204,13 +202,14 @@ sync = [
 # mirror-failure hook for ONE-1140's root-snapshot/`ls:`-mirror atomicity
 # test in `oneiron-server`). No production effect; enabled only by
 # downstream crates' dev-dependencies.
-test-hooks = []
+test-hooks = ["oneiron-model/test-hooks"]
 # Compiles in `Vault::open_unseeded_for_test` — the only way to open a vault
 # without seeding the default policy manifest (the effect-spine oracle needs
 # it). Enabled only via the self dev-dependency below. Even under
 # `--all-features` the production `Vault::open` path always seeds; the unseeded
 # opener is an explicit test-named function, not a silent config field.
-test-support = []
+# Also turns on the lower crates' test-only constructors this crate's tests use.
+test-support = ["oneiron-contracts/test-support", "oneiron-model/test-support"]
 
 [dev-dependencies]
 wat = "1"

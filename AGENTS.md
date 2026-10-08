@@ -139,11 +139,6 @@ For a narrow lookup, use `rg -n 'gate/evaluate|GateError' docs/codemap/oneiron.m
 matching path under `crates/oneiron/`. Read only matching rows or a narrow line range;
 do not load large crate maps (especially `docs/codemap/oneiron.md`) whole.
 
-The generator and verification CLI have dependency-free fixture tests (no Cargo builds):
-
-    python3 -m unittest discover -s scripts/tests -p test_codemap.py -v
-    python3 -m unittest discover -s scripts/tests -p test_verify.py -v
-
 Size and dependency questions without `tokei` / `cargo-modules` (`rg` is present):
 
     rg --files -g '*.rs' crates/oneiron/src | xargs wc -l | sort -n | tail -20      # biggest files
@@ -292,6 +287,13 @@ gate gets a fix PR. The workflows below describe what runs when the variable is 
 - Fork PRs from outside collaborators need approval before they run (repo setting, already set).
 
 ## Where new code goes
+
+The core is being split into lower engine crates below `oneiron` (2026-10 crate split).
+`crates/oneiron-contracts` is the lowest: shared value vocabulary that depends on nothing in
+`oneiron`. A moved module keeps its `oneiron::<module>` path through a facade file in
+`crates/oneiron/src/` that re-exports it; edit the definition in the lower crate. A
+`#[non_exhaustive]` enum that `oneiron` matches exhaustively stays in `oneiron` (the attribute
+only allows exhaustive matches inside the defining crate).
 
 The monolith files are gone. `store`, `gate`, `task_verb`, `batch` and the fifteen 2026-08
 wave-6 wells were the first to go; the 2026-09 hygiene pass (ONE-1992) split 106 more over-bar

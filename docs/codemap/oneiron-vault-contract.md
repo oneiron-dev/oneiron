@@ -16,8 +16,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/host.rs` | src | s | 1 struct · 1 trait · 2 fn · 2 type | Host, HostLimits | One vault-hosting contract |
 | `src/lib/host_adapters.rs` | src | s | 2 struct · 2 trait · 2 re-export | EdgeBackend, MicroVmHost, SandboxBackend, WasmHost | Host adapters |
 | `src/lib/host_adapters/native.rs` | src | s | 3 struct · 8 fn · 1 re-export | InProcessHost, LaunchdHost, SystemdHost | Native socket ownership, secret lookup, and cooperative idle wakeup |
-| `src/lib/host_adapters/tests.rs` | test | s | — | — | — |
-| `src/lib/host_adapters/wasm_harness_tests.rs` | test | s | — | — | Actual WebAssembly capability fixture, using the host's preinstalled Node runtime |
 | `src/lib/ledger.rs` | src | s | 2 struct · 1 fn | LedgerAck, LedgerUpdate | Vault-to-supervisor ledger push and ack wire types |
 | `src/lib/limits.rs` | src | s | 8 const | — | Wire limit constants and ready byte |
 | `src/lib/managed_holder.rs` | src | s | 1 struct · 2 fn | ManagedWidenAction | Host-attested account action for one managed widen request |

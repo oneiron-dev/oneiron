@@ -61,12 +61,6 @@ pub fn project_edit_cost_claims(
     retract_unsupported_targets(vault, &persisted)?;
     let mut targets: Vec<(&'static str, EntityId, String)> = Vec::new();
     for judgment in judgments {
-        let Some(predicate) = cost_predicate(judgment.class) else {
-            continue;
-        };
-        let Some(subject) = judgment.subject else {
-            continue;
-        };
         // Grounded is not authorization: this row must also BE the row this
         // module routed for that receipt.
         if !persisted
@@ -75,9 +69,17 @@ pub fn project_edit_cost_claims(
         {
             continue;
         }
-        let target = (predicate, subject, judgment.scope.clone());
-        if !targets.contains(&target) {
-            targets.push(target);
+        for share in &judgment.split {
+            let Some(predicate) = cost_predicate(share.class) else {
+                continue;
+            };
+            let Some(subject) = share.subject else {
+                continue;
+            };
+            let target = (predicate, subject, judgment.scope.clone());
+            if !targets.contains(&target) {
+                targets.push(target);
+            }
         }
     }
 
@@ -286,32 +288,43 @@ struct CostAggregate {
 
 /// Folds every persisted judgment charging `(predicate, subject, scope)`.
 ///
-/// The mean is the aggregate, and it is taken over the CLASS that earns this
-/// predicate only: a `discovery` names the same SKILL a `skill_defect` does,
-/// and folding both would charge a skill for content it never claimed to have.
+/// Each judgment charges only its SHARE of the edit: the class that earns this
+/// predicate holds `share` of the amendment, so the subject's charge is
+/// `share · d_norm`, and a single verdict (share 1) charges the whole edit.
+/// The mean of those charges is the aggregate, taken over the CLASS that earns
+/// this predicate only: a `discovery` names the same SKILL a `skill_defect`
+/// does, and folding both would charge a skill for content it never claimed
+/// to have.
 fn aggregate_for(
     persisted: &[AmendmentJudgment],
     predicate: &'static str,
     subject: EntityId,
     scope: &str,
 ) -> Option<CostAggregate> {
-    let mut rows: Vec<&AmendmentJudgment> = persisted
+    let mut rows: Vec<(&AmendmentJudgment, f64)> = persisted
         .iter()
-        .filter(|row| {
-            row.subject == Some(subject)
-                && row.scope == scope
-                && cost_predicate(row.class) == Some(predicate)
+        .filter(|row| row.scope == scope)
+        .filter_map(|row| {
+            let share: f32 = row
+                .split
+                .iter()
+                .filter(|share| {
+                    share.subject == Some(subject) && cost_predicate(share.class) == Some(predicate)
+                })
+                .map(|share| share.share)
+                .sum();
+            (share > 0.0).then(|| (row, f64::from(share) * f64::from(row.d_norm)))
         })
         .collect();
     if rows.is_empty() {
         return None;
     }
-    rows.sort_by(|left, right| {
+    rows.sort_by(|(left, _), (right, _)| {
         left.at
             .cmp(&right.at)
             .then_with(|| left.receipt_id.cmp(&right.receipt_id))
     });
-    let total: f64 = rows.iter().map(|row| f64::from(row.d_norm)).sum();
+    let total: f64 = rows.iter().map(|(_, charge)| charge).sum();
     // Precision loss is intended: this is a reported estimate over a bounded
     // unit-interval fold, not an accumulator.
     #[expect(
@@ -319,13 +332,13 @@ fn aggregate_for(
         reason = "reported aggregate over unit-interval judgments"
     )]
     let mean = (total / rows.len() as f64).clamp(0.0, 1.0) as f32;
-    let at = rows.last().map_or(0, |row| row.at);
+    let at = rows.last().map_or(0, |(row, _)| row.at);
     // The NEWEST citations survive the bound: a row's trace should point at the
     // evidence nearest the estimate it carries.
     let first = rows.len().saturating_sub(MAX_CITED_RECEIPTS);
     let receipts = rows[first..]
         .iter()
-        .flat_map(|row| row.evidence_receipts.iter().cloned())
+        .flat_map(|(row, _)| row.evidence_receipts.iter().cloned())
         .take(MAX_CITED_RECEIPTS)
         .collect();
     Some(CostAggregate {

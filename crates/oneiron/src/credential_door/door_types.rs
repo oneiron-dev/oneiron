@@ -2,6 +2,12 @@
 
 use crate::codebase::RepoRef;
 
+// The one-shot lifetime ceiling and the floor-name predicate are defined in
+// `oneiron-authority`: the authority log's slip checks apply the same bounds.
+#[cfg(test)]
+pub(crate) use oneiron_authority::credential_door::DOOR_ONE_SHOT_MAX_LIFETIME_SECS;
+pub(crate) use oneiron_authority::credential_door::names_a_floor;
+
 /// The pre-receive scan is unconditional. Not a dial, not a policy row, not a
 /// slip caveat: a catastrophe-class guard has no "off".
 pub(super) const DOOR_SCAN_ALWAYS_ON: bool = true;
@@ -9,9 +15,6 @@ pub(super) const DOOR_SCAN_ALWAYS_ON: bool = true;
 /// The hard ceiling on any lease this door issues, in seconds. A dial may
 /// narrow it; nothing may raise it.
 pub(super) const DOOR_MAX_LEASE_TTL_SECS: u64 = 3600;
-
-/// The hard ceiling on a one-shot credential's lifetime, in seconds.
-pub(crate) const DOOR_ONE_SHOT_MAX_LIFETIME_SECS: u64 = 300;
 
 /// The receive-pack door's effector — the scope every door-issued lease and
 /// door injection is bound to by default.
@@ -37,26 +40,6 @@ pub(super) const DOOR_MAX_OID_BYTES: usize = 64;
 /// What an error names when the path itself is the malformed field. The raw
 /// bytes never reach a message.
 pub(super) const UNUSABLE_PATH: &str = "<unusable-path>";
-
-/// Floor names, lowercased. A policy row, verb, record, or channel that names
-/// one of these is trying to reach a floor from inside the lattice.
-const DOOR_FLOOR_NAMES: [&str; 3] = [
-    "door_scan_always_on",
-    "door_max_lease_ttl_secs",
-    "door_one_shot_max_lifetime_secs",
-];
-
-/// Reserved policy-key prefixes, lowercased: the floor namespace and the scan
-/// namespace are not dial space.
-const DOOR_FLOOR_KEY_PREFIXES: [&str; 2] = ["secret.door.floor.", "secret.door.scan"];
-
-/// True when `token` names a catastrophe floor.
-pub(crate) fn names_a_floor(token: &str) -> bool {
-    let lower = token.to_ascii_lowercase();
-    let mut names = DOOR_FLOOR_NAMES.iter();
-    let mut prefixes = DOOR_FLOOR_KEY_PREFIXES.iter();
-    names.any(|name| lower.contains(name)) || prefixes.any(|p| lower.starts_with(p))
-}
 
 /// A landed storage/custody refusal, as a door error.
 pub(super) fn custody<E: Into<crate::error::Error>>(err: E) -> CredentialDoorError {

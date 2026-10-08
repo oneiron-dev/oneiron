@@ -18,12 +18,11 @@ the fork.
 2. Push the branch and move the `rev` in the manifest to the new branch head.
 3. Update the table above. `deny.toml` allows each fork URL in `[sources] allow-git`;
    `unknown-git` stays `deny`.
-4. `python3 -m unittest discover -s scripts/ci -p 'test_vendor_pins.py'` and
-   `cargo-deny --locked check` must pass.
+4. `cargo-deny --locked check` must pass.
 
 ## sudachi
 
-`crates/oneiron/Cargo.toml`:
+`crates/oneiron-retrieval/Cargo.toml` (the multilingual analyzer's crate):
 
 ```toml
 sudachi = { git = "https://github.com/oneiron-dev/sudachi.rs", rev = "d8cba3609521805ebf35bfc2b71d8099a13befef" }
@@ -63,7 +62,8 @@ Fork branch `oneiron/parity` (0.9.3-oneiron.11), over `362becff`:
 - `adc4743f` "Owned evaluator patch 0.9.3-oneiron.1" (the `oneiron/0.9.3` branch head):
   `formualizer-eval/src/interpreter.rs` propagates a typed error on either side of `&`, in both
   the AST and the arena paths, before text coercion. Literal text `"#N/A"` stays text.
-  `crates/oneiron-xlsx-formula/tests/error_concat.rs` pins it.
+  `crates/oneiron-xlsx-formula/tests/workbook.rs`
+  (`concatenation_preserves_error_values_for_iferror_in_retained_xlsx`) pins it.
 - `adc4743f..57a7f6cb`, 68 commits (ONE-2700 part 1, the Excel parity loop, September 2026):
   Excel semantics in general, never a per-case answer, each kept only when neither score
   dropped. At `57a7f6cb` the fork matches Excel 16.112 on 809 of the 811 pinned cases (754 at

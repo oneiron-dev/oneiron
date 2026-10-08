@@ -420,6 +420,9 @@ side_tables! {
     TAGGING_TRACE_AGE: VaultMeta b"job:tagging_trace_age:v1:" Raw;
     /// Vault-scoped structural-kind registration. Key: u8.
     STRUCTURAL_KIND_REGISTRY: VaultMeta b"kind_reg:" Raw;
+    /// Owner seed or pin over one learned-setting catalog row (value, weight in runs, setter, why).
+    /// Key: string (setting key "\0" mode).
+    LEARNING_SETTING: VaultMeta b"learning:setting:v1:" Raw;
     /// Vault-scoped authored lens prompt keyed by the lens entity id16.
     LENS_INTENT: VaultMeta b"lens/intent/v1\0" Named;
     /// Tracker issue id to task id. Key: string.

@@ -21,71 +21,7 @@ use super::store_entity_helpers::{
 };
 use super::stored_event::StoredIdentityOpAction;
 
-/// Entity lifecycle state derived from the identity-topology op log.
-///
-/// `Merged` / `Split` are REDIRECT-SHELL states, not tombstones: the entity
-/// body stays fully readable forever and no `TombstoneReason` exists for
-/// them (merge-away is not deletion — ARCH-0055 §10 vs ARCH-0038).
-///
-/// The derive order is the pinned CRDT join precedence
-/// (`Active < Merged < Split`); see [`merge_lifecycle_states`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum EntityLifecycleState {
-    /// Live identity — the default; every op may target it.
-    Active,
-    /// Redirect shell left behind by a merge (r1): resolves to exactly one
-    /// surviving head through the `merged_into` edge.
-    Merged,
-    /// Redirect shell left behind by a split (r2): resolves to its head SET
-    /// through `split_into` edges (Senzing 0/1/N stable-id semantics).
-    Split,
-}
-
-impl EntityLifecycleState {
-    /// The pinned on-disk / wire string for this state.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Active => "active",
-            Self::Merged => "merged",
-            Self::Split => "split",
-        }
-    }
-
-    /// Parses the pinned wire string back into a state.
-    #[must_use]
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "active" => Some(Self::Active),
-            "merged" => Some(Self::Merged),
-            "split" => Some(Self::Split),
-            _ => None,
-        }
-    }
-
-    /// `true` for the redirect-shell states (`Merged` / `Split`).
-    #[must_use]
-    pub const fn is_redirect_shell(self) -> bool {
-        matches!(self, Self::Merged | Self::Split)
-    }
-
-    /// Legal DIRECT transitions (the `ChannelIdentityState` house shape):
-    /// `Active → Merged` (merge source), `Active → Split` (split original),
-    /// and each shell back to `Active` (undo counter-event). Shells never
-    /// transition into each other without passing through `Active` — an
-    /// undo-then-reapply, both on the ledger. [`evaluate_transition`](super::evaluate_transition) and
-    /// the fold's undo arm produce exactly these moves.
-    #[must_use]
-    pub const fn can_transition_to(self, next: Self) -> bool {
-        matches!(
-            (self, next),
-            (Self::Active, Self::Merged)
-                | (Self::Active, Self::Split)
-                | (Self::Merged, Self::Active)
-                | (Self::Split, Self::Active)
-        )
-    }
-}
+pub use oneiron_contracts::identity_topology::EntityLifecycleState;
 
 /// Commutative, associative, idempotent join of two concurrently folded
 /// lifecycle states (the `merge_pact_states` analogue for this family).
