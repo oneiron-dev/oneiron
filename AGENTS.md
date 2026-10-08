@@ -87,9 +87,10 @@ answers", "a backup restores", "the Dreamer survives a kill"). The five kinds:
 5. A few end-to-end user flows.
 
 Do not write unit tests that restate the implementation (the same formula, trivial round
-trips, near-duplicate variants). A PR reports the end-to-end checks it adds, each tied to a
-done-means line or a real bug, not a test count. Keep existing tests running: a refactor must
-not silently drop one. The existing suite is being pruned to the same rule.
+trips, near-duplicate variants). A PR reports the checks it adds, each tied to one of the five
+kinds above, not a test count. The rule governs new tests. Keep existing tests and their required
+feature coverage running; a refactor must not remove them. Pruning the existing suite is a
+separate, explicit task, and it keeps coverage of the five kinds.
 
 ## nextest tiers
 
