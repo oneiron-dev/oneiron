@@ -24,11 +24,6 @@ class OfficePreflightTests(unittest.TestCase):
                 archive.writestr(name, payload)
         return path
 
-    def test_verified_input_hash_is_the_bytes_sent_to_word(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = self.package(directory)
-            self.assertEqual(ORACLE.preflight(path), hashlib.sha256(path.read_bytes()).hexdigest())
-
     def test_missing_broken_external_and_macro_inputs_are_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(ValueError):

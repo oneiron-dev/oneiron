@@ -28,4 +28,4 @@ pub(crate) use self::dss::build_dss_objects;
 // bare. After the directory split the seam re-imports them so `tests.rs`
 // resolves exactly as it did before.
 #[cfg(test)]
-use self::{assembly::*, dss::*, material::*};
+use self::material::*;

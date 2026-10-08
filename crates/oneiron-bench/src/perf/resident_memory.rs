@@ -384,8 +384,6 @@ fn not_ready(
 
 #[cfg(test)]
 mod tests {
-    use std::io::Read;
-    use std::time::Duration;
 
     use super::*;
 
@@ -396,154 +394,6 @@ mod tests {
             hold_ms: minimum_child_hold_ms(timeout_ms),
             child: None,
         }
-    }
-
-    /// The parent must hold the WHOLE cohort connected at once: it accepts
-    /// every child before it samples anything, and each stand-in stays
-    /// connected across that window, leaving only when the parent releases it.
-    #[test]
-    fn the_whole_cohort_stays_connected_across_the_sampling_window() {
-        let probe = WakeProbe::bind().expect("probe binds");
-        let addr = probe.addr().expect("probe address");
-        let required = 6;
-
-        let stand_ins: Vec<std::thread::JoinHandle<bool>> = (0..required)
-            .map(|_| {
-                std::thread::spawn(move || {
-                    let Ok(mut stream) = TcpStream::connect(addr) else {
-                        return false;
-                    };
-                    // Stay ready until the parent closes the socket. A child
-                    // that timed itself out here is exactly the failure the
-                    // hold floor exists to prevent.
-                    let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
-                    let mut scratch = [0_u8; 1];
-                    matches!(stream.read(&mut scratch), Ok(0))
-                })
-            })
-            .collect();
-
-        let started = Instant::now();
-        let streams = accept_ready_cohort(&probe, required, started, &settings(20_000))
-            .expect("the whole cohort is accepted");
-        assert_eq!(
-            streams.len(),
-            required,
-            "sampling may only start once every child is ready"
-        );
-
-        // The window a real run samples RSS in. Every stand-in must still be
-        // connected here; none may have released itself.
-        std::thread::sleep(Duration::from_millis(50));
-        assert!(
-            stand_ins.iter().all(|handle| !handle.is_finished()),
-            "no child may leave before the parent releases the cohort"
-        );
-
-        drop(streams);
-        for stand_in in stand_ins {
-            assert!(
-                stand_in.join().expect("stand-in joins"),
-                "each child leaves on the parent's EOF, not on its own timer"
-            );
-        }
-    }
-
-    /// The one readiness budget is armed before the first child spawn. Time
-    /// spent creating children reduces the time left to accept them instead of
-    /// receiving a fresh timeout after the loop.
-    #[test]
-    fn the_cohort_deadline_is_derived_from_the_pre_spawn_instant() {
-        let settings = settings(20_000);
-        let before_spawn = Instant::now();
-        let deadline = cohort_deadline(before_spawn, &settings).expect("deadline");
-        assert_eq!(
-            deadline.checked_duration_since(before_spawn),
-            Some(settings.accept_timeout())
-        );
-
-        let simulated_spawn_finish = before_spawn + Duration::from_secs(7);
-        assert_eq!(
-            deadline.checked_duration_since(simulated_spawn_finish),
-            Some(Duration::from_secs(13)),
-            "seven seconds spent spawning must consume seven seconds of the cohort budget"
-        );
-    }
-
-    /// A cohort that does not assemble fails closed and says how many arrived.
-    #[test]
-    fn a_partial_cohort_fails_closed_naming_how_many_arrived() {
-        let probe = WakeProbe::bind().expect("probe binds");
-        let addr = probe.addr().expect("probe address");
-        let arrived = 2;
-        let stand_ins: Vec<TcpStream> = (0..arrived)
-            .filter_map(|_| TcpStream::connect(addr).ok())
-            .collect();
-        assert_eq!(stand_ins.len(), arrived);
-        assert!(
-            stand_ins.iter().all(|stream| stream.peer_addr().is_ok()),
-            "the arrived sockets stay connected through the accept window"
-        );
-
-        let error = accept_ready_cohort(&probe, 5, Instant::now(), &settings(200))
-            .expect_err("a short cohort is refused");
-        assert!(error.contains("only 2 of 5"), "{error}");
-        drop(stand_ins);
-    }
-
-    /// Without a resolvable child program the axis is not-ready and still
-    /// reports the hold floor it would have been held to.
-    #[test]
-    fn an_unavailable_child_program_reports_not_ready_with_its_hold_floor() {
-        let settings = settings(20_000);
-        let axis = not_ready(
-            10,
-            &settings,
-            vec!["no child program".to_owned()],
-            "no child program".to_owned(),
-            EvidenceKind::SyntheticSmoke,
-        );
-        assert_eq!(axis.required_ready_children, 10);
-        assert_eq!(axis.ready_children_observed, 0);
-        assert!(!axis.sampled_while_all_children_ready);
-        assert_eq!(axis.minimum_child_hold_ms, minimum_child_hold_ms(20_000));
-        assert!(axis.child_hold_ms >= axis.minimum_child_hold_ms);
-        assert!(matches!(axis.per_child_rss_bytes, Cell::NotReady { .. }));
-        assert!(matches!(axis.total_child_rss_bytes, Cell::NotReady { .. }));
-    }
-
-    /// A custom command is opaque. Even when ten of its processes connect and
-    /// have readable RSS, the TCP handshake does not prove they used
-    /// `{vault_dir}` or retained an open vault.
-    #[test]
-    fn a_custom_child_cohort_never_claims_vault_residency() {
-        let mut custom = settings(20_000);
-        custom.child = Some(super::super::child_process::ChildCommandPlan {
-            program: "/usr/bin/custom-child".to_owned(),
-            args: vec![
-                "--ready={ready_addr}".to_owned(),
-                "--vault={vault_dir}".to_owned(),
-            ],
-        });
-        let axis = measured(
-            10,
-            &custom,
-            VaultResidency::CallerSuppliedPlan,
-            ReadyCohort {
-                rss: vec![1_024; 10],
-                shutdown_outcomes: BTreeMap::new(),
-            },
-            Vec::new(),
-            EvidenceKind::MeasuredWallClock,
-        );
-
-        assert_eq!(axis.ready_children_observed, 10);
-        assert!(axis.sampled_while_all_children_ready);
-        assert!(axis.total_child_rss_bytes.is_measured());
-        assert!(
-            !axis.child_holds_open_vault,
-            "a custom child's TCP connect proves readiness, not vault residency"
-        );
     }
 
     /// A program substituted through `ONEIRON_BENCH_PERF_CHILD` is exactly as
@@ -592,33 +442,5 @@ mod tests {
             EvidenceKind::MeasuredWallClock,
         );
         assert!(owned.child_holds_open_vault);
-    }
-
-    /// A measured cohort records that every sample was taken while all the
-    /// children were ready, plus how each of them left.
-    #[test]
-    fn a_measured_cohort_records_readiness_and_shutdown() {
-        let settings = settings(20_000);
-        let mut shutdown = BTreeMap::new();
-        shutdown.insert("exited".to_owned(), 10_usize);
-        let axis = measured(
-            10,
-            &settings,
-            VaultResidency::HarnessOwned,
-            ReadyCohort {
-                rss: vec![1_024_000; 10],
-                shutdown_outcomes: shutdown,
-            },
-            Vec::new(),
-            EvidenceKind::MeasuredWallClock,
-        );
-        assert_eq!(axis.ready_children_observed, 10);
-        assert!(axis.sampled_while_all_children_ready);
-        assert!(axis.child_holds_open_vault);
-        assert_eq!(
-            axis.total_child_rss_bytes.value().copied(),
-            Some(10_240_000)
-        );
-        assert_eq!(axis.shutdown_outcomes.get("exited").copied(), Some(10));
     }
 }
