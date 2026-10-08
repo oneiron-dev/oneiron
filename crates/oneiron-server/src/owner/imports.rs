@@ -5,7 +5,8 @@
 //! preview fills any missing ids and returns the exact batch plus its digest,
 //! and approve or decline must present that same batch and digest. Approve is
 //! one engine transaction (the approve-once receipt and the admission of every
-//! claim); decline writes a refusal receipt and admits nothing.
+//! claim); decline writes a refusal receipt and admits nothing. Either one is
+//! the batch's only decision: a second approve or decline is refused.
 
 use oneiron::consent::{AuthenticatedOwner, EffectDigest};
 use oneiron::ingest::{ImportedClaimBatch, ImportedClaimBatchEntry};
@@ -118,15 +119,16 @@ pub(crate) fn approve(
     })
 }
 
-/// Refuses the whole previewed batch with one receipt; admits nothing.
+/// Refuses the whole previewed batch with one receipt; admits nothing. A
+/// batch already approved or declined is refused and its decision stands.
 pub(crate) fn decline(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     batch: &ImportBatch,
     digest: &str,
 ) -> OwnerResult<ImportDeclined> {
-    let (_, effect) = previewed(vault, owner, batch, digest)?;
-    let receipt = vault.deny_consent(owner, effect)?;
+    let (exact, effect) = previewed(vault, owner, batch, digest)?;
+    let receipt = vault.decline_imported_claim_batch(owner, &exact)?;
     Ok(ImportDeclined {
         digest: effect.to_hex(),
         decision_id: receipt.decision_id().to_hex(),

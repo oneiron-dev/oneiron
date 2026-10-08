@@ -161,6 +161,16 @@ async fn import_preview_approve_and_decline_act_on_the_exact_batch() {
     .await;
     assert_eq!(status, StatusCode::OK, "{declined}");
     assert_eq!(declined["admitted"], 0);
+    // A declined batch takes no second decision, decline or approve.
+    for route in ["/v1/owner/imports/decline", "/v1/owner/imports/approve"] {
+        let (status, body) = call(&server, "POST", route, owner.clone(), Some(&decision)).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{route}: {body}");
+        assert_eq!(
+            error_envelope(&body)["details"]["state"],
+            "already_decided",
+            "{body}"
+        );
+    }
     for id in claim_ids(&declined_preview) {
         assert!(server.vault().get_raw(&id).unwrap().is_none());
     }
@@ -205,15 +215,20 @@ async fn import_preview_approve_and_decline_act_on_the_exact_batch() {
         let claim = server.vault().get_claim(&id).unwrap().unwrap();
         assert_eq!(claim.approval, oneiron::ClaimApprovalStatus::Approved);
     }
-    let (status, _) = call(
-        &server,
-        "POST",
-        "/v1/owner/imports/approve",
-        owner,
-        Some(&decision),
-    )
-    .await;
-    assert_ne!(status, StatusCode::OK, "one approval admits one batch once");
+    // An approved batch takes no second decision either; the approval stands.
+    for route in ["/v1/owner/imports/approve", "/v1/owner/imports/decline"] {
+        let (status, body) = call(&server, "POST", route, owner.clone(), Some(&decision)).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{route}: {body}");
+        assert_eq!(
+            error_envelope(&body)["details"]["state"],
+            "already_decided",
+            "{body}"
+        );
+    }
+    for id in claim_ids(&preview) {
+        let claim = server.vault().get_claim(&id).unwrap().unwrap();
+        assert_eq!(claim.approval, oneiron::ClaimApprovalStatus::Approved);
+    }
 }
 
 #[tokio::test]

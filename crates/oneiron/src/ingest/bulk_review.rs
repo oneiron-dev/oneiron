@@ -8,8 +8,8 @@ use super::admission::{imported_candidate, json_to_msgpack_value};
 use super::{INGEST_SOURCE_REGISTRY, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution};
 use crate::claim::ClaimApprovalStatus;
 use crate::consent::{
-    ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ComposedEffect, EffectFacts,
-    GrantBound,
+    ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ComposedEffect, ConsentReceipt,
+    EffectFacts, GrantBound,
 };
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
@@ -125,6 +125,25 @@ impl Vault {
             owner.revalidate_in_txn(self, txn)?;
             self.approve_once_in_txn(txn, owner, digest)?;
             self.admit_imported_claim_batch_in_txn(txn, owner, batch, digest)
+        })
+    }
+
+    /// The owner's refusal of the whole batch: one denial receipt, nothing
+    /// admitted. It is the batch's terminal decision, like an approval.
+    ///
+    /// # Errors
+    /// [`GateError::ConsentApproveOnceSpent`](crate::error::GateError::ConsentApproveOnceSpent)
+    /// when this exact batch was already approved or declined; the earlier
+    /// decision stands.
+    pub fn decline_imported_claim_batch(
+        &self,
+        owner: &AuthenticatedOwner,
+        batch: &ImportedClaimBatch,
+    ) -> Result<ConsentReceipt> {
+        let digest = self.imported_claim_batch_effect(owner, batch)?.digest();
+        self.with_write_txn(|txn| {
+            owner.revalidate_in_txn(self, txn)?;
+            self.deny_once_in_txn(txn, owner, digest)
         })
     }
 

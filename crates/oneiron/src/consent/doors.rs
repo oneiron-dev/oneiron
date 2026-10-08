@@ -355,6 +355,44 @@ impl Vault {
         Ok(receipt)
     }
 
+    /// Denies one op as its terminal decision, in `wtxn`.
+    ///
+    /// Unlike [`Vault::deny_consent`], the refusal takes the digest's
+    /// approve-once slot, already spent, so the digest carries exactly one
+    /// decision: an earlier approval or denial refuses this one, and this one
+    /// refuses any later approval.
+    ///
+    /// # Errors
+    /// [`GateError::ConsentApproveOnceSpent`](crate::error::GateError::ConsentApproveOnceSpent)
+    /// when the digest was already approved or denied this way.
+    pub(crate) fn deny_once_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        effect_digest: EffectDigest,
+    ) -> Result<ConsentReceipt> {
+        if APPROVE_ONCE_MARKERS
+            .get(&self.store, &*wtxn, effect_digest.as_bytes())?
+            .is_some()
+        {
+            return Err(Error::Gate(GateError::ConsentApproveOnceSpent(
+                "this op digest already carries an owner decision",
+            )));
+        }
+        let decision_id = crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?);
+        let marker = ApproveOnceMarker {
+            state: CONSENT_APPROVE_ONCE_SPENT,
+            decision_id,
+        };
+        APPROVE_ONCE_MARKERS.put(&self.store, wtxn, effect_digest.as_bytes(), &marker)?;
+        let receipt = ConsentReceipt::Denied {
+            decision_id,
+            effect_digest,
+        };
+        self.append_consent_receipt_in_txn(wtxn, owner, &receipt)?;
+        Ok(receipt)
+    }
+
     /// Revokes a standing grant. Revocation is immediate: the row flips to
     /// [`ConsentGrantStatus::Revoked`] in the same transaction as its receipt,
     /// so no in-flight read can observe a revoked row as live.

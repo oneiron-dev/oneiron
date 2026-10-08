@@ -98,7 +98,7 @@ fn owner_error(error: OwnerError) -> ApiError {
         OwnerError::Engine(error) => match error.kind() {
             oneiron::ErrorKind::ConsentOwnerNotAuthenticated => ApiError::forbidden_scope("owner"),
             oneiron::ErrorKind::ConsentApproveOnceSpent => {
-                ApiError::invalid_state(Some("already_approved"))
+                ApiError::invalid_state(Some("already_decided"))
             }
             _ => core_engine_error("owner action failed", *error),
         },

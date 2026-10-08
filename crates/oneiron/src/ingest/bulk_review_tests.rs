@@ -175,3 +175,57 @@ fn failed_approve_call_leaves_neither_claims_nor_an_approval() -> Result<()> {
     vault.approve_once(&owner, digest)?;
     Ok(())
 }
+
+/// The consent receipts the ledger holds for `batch`'s digest, by outcome.
+fn decisions_for(
+    vault: &crate::Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    batch: &ImportedClaimBatch,
+) -> Result<Vec<String>> {
+    let digest = vault.imported_claim_batch_effect(owner, batch)?.digest();
+    Ok(vault
+        .gate_decisions(1_000)?
+        .into_iter()
+        .filter(|record| record.diff_handle == digest.as_bytes().to_vec())
+        .map(|record| record.outcome)
+        .collect())
+}
+
+#[test]
+fn a_batch_carries_one_decision_whichever_comes_first() -> Result<()> {
+    let spent = |error: crate::Error| error.kind() == crate::ErrorKind::ConsentApproveOnceSpent;
+
+    // Approved, then declined: the decline is refused and the approval stands.
+    let (_dir, vault, owner, batch) = fixture()?;
+    let approved = vault.approve_imported_claim_batch(&owner, &batch)?;
+    assert!(spent(
+        vault
+            .decline_imported_claim_batch(&owner, &batch)
+            .unwrap_err()
+    ));
+    for id in &approved.claim_ids {
+        let claim = vault.get_claim(id)?.expect("approved imported claim");
+        assert_eq!(claim.approval, ClaimApprovalStatus::Approved);
+    }
+    assert_eq!(decisions_for(&vault, &owner, &batch)?, ["approved"]);
+
+    // Declined, then declined again or approved: both are refused.
+    let (_dir, vault, owner, batch) = fixture()?;
+    let denied = vault.decline_imported_claim_batch(&owner, &batch)?;
+    assert_eq!(denied.gate_outcome(), "denied");
+    assert!(spent(
+        vault
+            .decline_imported_claim_batch(&owner, &batch)
+            .unwrap_err()
+    ));
+    assert!(spent(
+        vault
+            .approve_imported_claim_batch(&owner, &batch)
+            .unwrap_err()
+    ));
+    for entry in &batch.entries {
+        assert!(vault.get_raw(&entry.claim_id)?.is_none());
+    }
+    assert_eq!(decisions_for(&vault, &owner, &batch)?, ["denied"]);
+    Ok(())
+}
