@@ -1208,6 +1208,61 @@ fn a_turn_edited_during_the_call_is_tagged_again_on_its_new_text() {
     assert_eq!(count(&vault, AttemptState::Completed), 1);
 }
 
+/// A retry owed at once is ready at once: superseded text is tagged again in
+/// the same pass, even when the clock reads earlier at the next claim than it
+/// did when the retry was scheduled.
+#[test]
+fn a_superseded_retry_is_ready_at_once_after_the_clock_rolls_back() {
+    let dir = tempfile::tempdir().expect("dir");
+    let clock = ManualClock::new(NOW);
+    let vault = {
+        let mut config = config(true);
+        config.store_clock = clock.bundle();
+        Arc::new(Vault::open(dir.path(), config).expect("open vault"))
+    };
+    let turn_ref = Some("6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d".to_owned());
+    vault
+        .memory(speaker(&vault), EdgeActorClass::Human)
+        .witness(&turn(
+            turn_ref.clone(),
+            vec![message(0, "Ada sailed north")],
+        ))
+        .expect("witness");
+    let tagger = Scripted::new(Answer::Good);
+    {
+        let writer = Arc::clone(&vault);
+        let clock = Arc::clone(&clock);
+        *tagger.during_call.lock().expect("hook") = Some(Box::new(move || {
+            writer
+                .memory(speaker(&writer), EdgeActorClass::Human)
+                .witness(&turn(turn_ref, vec![message(1, "then Grace followed")]))
+                .expect("append during the call");
+            // The clock moves on before the retry is scheduled.
+            clock.set(NOW + 30);
+        }));
+    }
+    let reconciler = reconciler(&vault, &tagger);
+    let rollback = Arc::clone(&clock);
+    let pass = reconciler
+        .drain_once_with(|trace| {
+            // And reads earlier again before the next claim.
+            if matches!(trace.outcome, TaggingOutcome::Superseded { .. }) {
+                rollback.set(NOW + 10);
+            }
+        })
+        .expect("drain");
+    assert_eq!(pass.traces.len(), 2);
+    assert!(matches!(
+        pass.traces[0].outcome,
+        TaggingOutcome::Superseded { .. }
+    ));
+    assert!(matches!(
+        pass.traces[1].outcome,
+        TaggingOutcome::Shadowed { .. }
+    ));
+    assert_eq!(count(&vault, AttemptState::Completed), 1);
+}
+
 #[test]
 fn text_that_appears_after_an_empty_read_is_tagged_before_the_marker_settles() {
     let dir = tempfile::tempdir().expect("dir");

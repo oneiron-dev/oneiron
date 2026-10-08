@@ -540,7 +540,10 @@ impl TaggingReconciler {
     fn retry_at(&self, record: &AttemptRecord, delay_secs: u64, reason: &str) -> Result<u64> {
         self.vault.try_with_write_txn(|txn| {
             let retry_at = self.stamp_in_txn(txn)?.saturating_add(delay_secs);
-            self.retry_in_txn(txn, record, retry_at, reason)?;
+            // A retry owed at once is ready at once, whatever the clock reads
+            // at the next claim; a backoff counts from this stamp.
+            let ready_at = if delay_secs == 0 { 0 } else { retry_at };
+            self.retry_in_txn(txn, record, ready_at, reason)?;
             Ok(retry_at)
         })
     }
