@@ -251,13 +251,20 @@ pub(crate) async fn context_board_hydrate(
         .map(|row| (row.pack_name, row.content_hash))
         .collect();
     let read = super::scoped_read_for_core_auth(&server.vault, &auth)?;
-    let reads = session_read_set(
+    // The rider is folded from, and acknowledged into, this one session.
+    let session_id = resolved_session_id(
         &server,
         caller,
         req.session.as_ref().and_then(|s| s.session_id.as_deref()),
     )
     .await?;
-    let changed = reads
+    let reads = session_read_set(&server, caller, session_id.as_deref()).await?;
+    // The authenticated principal's own proposal outcomes and connector
+    // changes ride the same line; this route already refuses narrowed slips.
+    let own = auth
+        .principal_ref()
+        .and_then(|reference| oneiron::EntityId::from_hex(reference).ok());
+    let changed_line = reads
         .as_deref()
         .map(|reads| {
             let mut changed = reads.refresh(&read, 16)?;
@@ -267,12 +274,13 @@ pub(crate) async fn context_board_hydrate(
             );
             changed.rows.extend(installs.rows);
             changed.overflow += installs.overflow;
+            reads.fold_own_changes(&server.vault, own, &mut changed, 16)?;
             Ok::<_, oneiron::Error>(changed)
         })
         .transpose()
         .map_err(|error| super::core_engine_error("board lifecycle resolution failed", error))?
-        .unwrap_or_default()
-        .render();
+        .unwrap_or_default();
+    let changed = changed_line.render();
     let empty = oneiron::context_board::SessionReadSet::default();
     let hits = pack
         .as_ref()
@@ -385,6 +393,7 @@ pub(crate) async fn context_board_hydrate(
             .into());
         }
     }
+    let prefix_committed = staged_prefix.is_some();
     if let Some((key, render, epoch)) = staged_prefix {
         let run = runs
             .get_mut(&key)
@@ -393,16 +402,15 @@ pub(crate) async fn context_board_hydrate(
         run.emitted_epoch = Some(epoch);
     }
     drop(runs);
-    if let Some(mut reads) = session_read_set(
-        &server,
-        caller,
-        req.session
-            .as_ref()
-            .and_then(|session| session.session_id.as_deref()),
-    )
-    .await?
-    {
+    if let Some(mut reads) = session_read_set(&server, caller, session_id.as_deref()).await? {
         reads.observe_pack_inventory(&installed_packs);
+        // The response is final: the rider it carries is delivered, and a
+        // committed prefix now holds the current connector state.
+        if prefix_committed {
+            reads.keyframe_committed(&changed_line);
+        } else {
+            reads.acknowledge(&changed_line);
+        }
     }
     Ok(Json(response))
 }

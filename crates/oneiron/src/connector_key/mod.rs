@@ -61,6 +61,7 @@ pub(crate) use self::meter::{
 pub(crate) use self::record::{
     ScopedCapabilityProvenance, canonical_scoped_server_segment, normalize_connector_key,
 };
+pub(crate) use self::slate::read_connector_slate_in_txn;
 pub(crate) use self::txn::{governing_connector_key, suspend_connector_key_in_txn};
 
 // Crate-visible paths whose only live consumers are the test modules of sibling

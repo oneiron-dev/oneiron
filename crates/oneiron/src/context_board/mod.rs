@@ -9,6 +9,7 @@ mod capabilities;
 mod observations;
 #[cfg(test)]
 mod observations_tests;
+mod own_changes;
 mod read_set;
 mod room;
 mod room_verbs;
@@ -16,7 +17,10 @@ mod room_verbs;
 mod room_verbs_tests;
 mod worlds;
 pub use capabilities::{CapabilityHit, SkillsSection};
-pub use read_set::{ChangedLine, ServedLifecycle, SessionReadSet};
+pub use read_set::{
+    ChangedDelivery, ChangedEvent, ChangedLine, ConnectorChange, ConnectorMount, ProposalChange,
+    ProposalReason, ServedLifecycle, SessionReadSet,
+};
 pub use room::{RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, room_scope};
 pub use worlds::{WorldPresence, WorldsSection};
 mod frame;

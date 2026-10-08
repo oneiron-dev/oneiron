@@ -423,7 +423,7 @@ pub(in crate::connector_key) fn bind_connector_slate_in_txn(
     SLATE_BINDING.put(&vault.store, txn, &slate_id, key_id)
 }
 
-pub(in crate::connector_key) fn read_connector_slate_in_txn(
+pub(crate) fn read_connector_slate_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
