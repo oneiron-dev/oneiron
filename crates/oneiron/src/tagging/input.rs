@@ -14,7 +14,7 @@ use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::memory::extraction::{EncoderInput, EncoderMessage, EncoderTurn};
-use crate::ports::{EdgeDirection, EdgeStoreRead};
+use crate::ports::{EdgeDirection, EdgeStoreRead, TombstoneStore};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::vault::{LiveEntityRow, MAX_EDGE_QUERY_RESULTS, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
@@ -46,14 +46,16 @@ pub(super) enum TurnInput {
     },
 }
 
-/// The two MESSAGE-body keys that order a turn's messages, read from the
-/// stored row without copying its text.
-#[derive(Deserialize)]
-struct MessagePlace {
-    #[serde(default)]
-    is_visible: bool,
-    #[serde(default)]
-    order: u32,
+/// What an earlier message gives the window.
+enum ContextText {
+    /// No visible text: absent, deleted, archived, stale or undecodable.
+    Nothing,
+    /// Its text lives in an entity document, which only a whole-document read
+    /// can give: the window ends here.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    Unbounded,
+    /// The newest characters of its text that fit, and how many.
+    Text(String, usize),
 }
 
 /// The three MESSAGE-body keys the input needs; every other key is ignored.
@@ -186,8 +188,9 @@ fn turn_messages_in_txn(
 /// `tokens` turns and `tokens` × [`WINDOW_CHARS_PER_TOKEN`] characters, and
 /// never a turn that comes after `turn`. Turns are read nearest first, each
 /// through [`context_text_in_txn`], and the read stops once the window is
-/// full. A turn with no earlier text, or with no single conversation, reads
-/// alone.
+/// full. A message whose text lives in an entity document ends the window
+/// with it: only a whole-document read gives that text. A turn with no
+/// earlier text, or with no single conversation, reads alone.
 fn live_window_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -204,26 +207,30 @@ fn live_window_in_txn(
         if window.len() == max_turns || remaining == 0 {
             break;
         }
-        let Some((messages, used)) = context_text_in_txn(vault, txn, &earlier, remaining)? else {
+        let Some((messages, used, ends)) = context_text_in_txn(vault, txn, &earlier, remaining)?
+        else {
             break;
         };
-        if messages.is_empty() {
-            continue;
-        }
         remaining = remaining.saturating_sub(used);
-        window.push(EncoderTurn {
-            turn: earlier.to_hex(),
-            messages,
-        });
+        if !messages.is_empty() {
+            window.push(EncoderTurn {
+                turn: earlier.to_hex(),
+                messages,
+            });
+        }
+        if ends {
+            break;
+        }
     }
     window.reverse();
     Ok(window)
 }
 
 /// An earlier turn's newest visible text, at most `budget` characters, oldest
-/// message first, and the characters it used. Its messages are ordered from
-/// their stored rows without copying any text, then read newest first only
-/// until the budget is spent, so a large earlier turn costs the window what
+/// message first; the characters it used; and whether the window ends with
+/// it. Its messages are ordered from their stored rows without copying any
+/// text, then read newest first only until the budget is spent, each through
+/// [`context_message_in_txn`], so a large earlier turn costs the window what
 /// it keeps of it. `None` for a turn with more than [`MAX_CONTEXT_MESSAGES`]
 /// messages: the window ends before it, and the current turn is still read.
 fn context_text_in_txn(
@@ -231,14 +238,14 @@ fn context_text_in_txn(
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
     budget: usize,
-) -> Result<Option<(Vec<EncoderMessage>, usize)>> {
+) -> Result<Option<(Vec<EncoderMessage>, usize, bool)>> {
     let store = &vault.store;
     match live_entity_row_in_txn(store, txn, turn)? {
         LiveEntityRow::Live { entity_type, .. } if entity_type == ENTITY_TYPE_TURN => {}
-        _ => return Ok(Some((Vec::new(), 0))),
+        _ => return Ok(Some((Vec::new(), 0, false))),
     }
     if vault.archive_tombstone_in_txn(txn, turn)?.is_some() {
-        return Ok(Some((Vec::new(), 0)));
+        return Ok(Some((Vec::new(), 0, false)));
     }
     let mut places = Vec::new();
     for (examined, edge) in store
@@ -259,7 +266,7 @@ fn context_text_in_txn(
         }
         let place = raw
             .get(ENTITY_METADATA_HEADER_LEN..)
-            .and_then(|body| rmp_serde::from_slice::<MessagePlace>(body).ok());
+            .and_then(super::body::message_fields);
         if let Some(place) = place.filter(|place| place.is_visible) {
             places.push((place.order, *id.as_bytes()));
         }
@@ -267,46 +274,67 @@ fn context_text_in_txn(
     places.sort_unstable_by_key(|place| Reverse(*place));
     let mut remaining = budget;
     let mut kept = Vec::new();
+    let mut ends = false;
     for (_, id) in places {
         if remaining == 0 {
             break;
         }
         let id = EntityId::from_bytes(id)?;
-        if vault.archive_tombstone_in_txn(txn, &id)?.is_some() {
-            continue;
+        match context_message_in_txn(vault, txn, &id, remaining)? {
+            ContextText::Nothing => {}
+            ContextText::Unbounded => {
+                ends = true;
+                break;
+            }
+            ContextText::Text(text, chars) => {
+                remaining = remaining.saturating_sub(chars);
+                kept.push(EncoderMessage {
+                    id: id.to_hex(),
+                    text,
+                });
+            }
         }
-        let Some(body) = crate::ports::safe_read_text(vault, txn, &id)? else {
-            continue;
-        };
-        let Ok(message) = rmp_serde::from_slice::<MessageText>(&body) else {
-            continue;
-        };
-        if !message.is_visible || message.content.is_empty() {
-            continue;
-        }
-        let chars = message.content.chars().count();
-        let text = if chars <= remaining {
-            message.content
-        } else {
-            last_chars(&message.content, remaining).to_owned()
-        };
-        remaining = remaining.saturating_sub(chars);
-        kept.push(EncoderMessage {
-            id: id.to_hex(),
-            text,
-        });
     }
     kept.reverse();
-    Ok(Some((kept, budget - remaining)))
+    Ok(Some((kept, budget - remaining, ends)))
 }
 
-/// The last `count` characters of `text`.
-fn last_chars(text: &str, count: usize) -> &str {
-    let Some(last) = count.checked_sub(1) else {
-        return "";
+/// An earlier MESSAGE's newest `budget` characters, read from its stored row
+/// through [`super::body`]: the work and the copy are bounded by what the
+/// window keeps, not by the message.
+fn context_message_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    budget: usize,
+) -> Result<ContextText> {
+    let store = &vault.store;
+    if vault.archive_tombstone_in_txn(txn, id)?.is_some()
+        || vault.port_tombstone_is_deleted(txn, id)?
+        || crate::ports::stale_in_txn(store, txn, id)?
+    {
+        return Ok(ContextText::Nothing);
+    }
+    #[cfg(feature = "sync")]
+    if crate::entity_doc::has_record_head(store, txn, id)? {
+        return Ok(ContextText::Unbounded);
+    }
+    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        return Ok(ContextText::Nothing);
     };
-    let start = text.char_indices().rev().nth(last).map_or(0, |(at, _)| at);
-    &text[start..]
+    let Some(message) = raw
+        .get(ENTITY_METADATA_HEADER_LEN..)
+        .and_then(super::body::message_fields)
+    else {
+        return Ok(ContextText::Nothing);
+    };
+    if message.stale || !message.is_visible || message.content.is_empty() {
+        return Ok(ContextText::Nothing);
+    }
+    Ok(match super::body::newest_chars(message.content, budget) {
+        Some((text, chars)) => ContextText::Text(text.to_owned(), chars),
+        None => ContextText::Nothing,
+    })
 }
 
 /// Up to `limit` turns before `turn` in its conversation, nearest first.

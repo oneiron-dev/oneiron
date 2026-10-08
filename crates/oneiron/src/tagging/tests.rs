@@ -2901,3 +2901,184 @@ fn a_marker_an_earlier_build_left_below_the_range_is_moved_into_it() {
     assert!(matches!(outcomes[1], TaggingOutcome::Shadowed { .. }));
     assert_eq!(tagger.calls(), 1);
 }
+
+/// An earlier message is read only as far as the window keeps it, from its
+/// end: with the first byte of a long message made unreadable, a reader that
+/// decoded the whole text would drop the message, and the window still holds
+/// its newest characters.
+#[test]
+fn an_earlier_message_is_read_only_as_far_as_the_window_keeps() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut config = config(true);
+    config.tagging = Some(
+        TaggingMarkerConfig::new(CHECKPOINT)
+            .expect("checkpoint")
+            .with_live_window_tokens(2),
+    );
+    let vault = Arc::new(Vault::open(dir.path(), config).expect("open vault"));
+    // Within the 64 KiB entity payload cap.
+    let text = format!("{}Ada sailed north", "ab ".repeat(20_000));
+    let mut long = message(0, &text);
+    long.id = Some("67676767676767676767676767676767".into());
+    let earlier = receipt_turn(
+        &vault
+            .memory(speaker(&vault), EdgeActorClass::Human)
+            .witness(&turn(None, vec![long.clone()]))
+            .expect("a long earlier message"),
+    );
+    let later = witness_at(&vault, "Grace stayed behind", NOW + 1);
+    let id = EntityId::from_hex(long.id.as_deref().expect("id")).expect("message id");
+    vault
+        .try_with_write_txn(|txn| {
+            let mut raw = vault
+                .store
+                .entities
+                .get(txn, id.as_bytes())?
+                .expect("the message row")
+                .to_vec();
+            let at = raw
+                .windows(9)
+                .position(|bytes| bytes == b"ab ab ab ")
+                .expect("the long text");
+            raw[at] = 0xff;
+            vault.store.entities.put(txn, id.as_bytes(), &raw)?;
+            Ok::<(), crate::Error>(())
+        })
+        .expect("an unreadable first byte");
+    let read = vault
+        .store
+        .env
+        .read_txn()
+        .map_err(crate::Error::from)
+        .and_then(|txn| super::input::turn_input_in_txn(&vault, &txn, &later))
+        .expect("read the later turn");
+    let super::input::TurnInput::Ready { input, .. } = read else {
+        panic!("the later turn has text");
+    };
+    let newest: String = text.chars().skip(text.chars().count() - 32).collect();
+    assert_eq!(window(&input), vec![(earlier.to_hex(), vec![newest])]);
+}
+
+/// A message whose text lives in an entity document ends the window with it:
+/// the nearer turns' text is kept, and nothing older than the document is
+/// read.
+#[cfg(feature = "sync")]
+#[test]
+fn an_earlier_message_in_an_entity_document_ends_the_window() {
+    use crate::entity_doc::{DocAuthorization, TextField};
+    use crate::write_envelope::WriteActor;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    let writer = speaker(&vault);
+    let mut first = message(0, "Ada sailed north");
+    first.id = Some("68686868686868686868686868686868".into());
+    vault
+        .memory(writer, EdgeActorClass::Human)
+        .witness(&turn(None, vec![first.clone()]))
+        .expect("witness");
+    let second = witness_at(&vault, "Grace stayed behind", NOW + 1);
+    let third = witness_at(&vault, "they wrote letters", NOW + 2);
+    let owner = vault
+        .authenticate_owner(
+            writer,
+            "principal:tagging-test",
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("owner");
+    vault
+        .migrate_entity_text(
+            &EntityId::from_hex(first.id.as_deref().expect("id")).expect("message id"),
+            &TextField::MapField("content".into()),
+            WriteActor::new(writer, EdgeActorClass::Human),
+            &DocAuthorization::Owner(&owner),
+        )
+        .expect("migrate");
+    let read = vault
+        .store
+        .env
+        .read_txn()
+        .map_err(crate::Error::from)
+        .and_then(|txn| super::input::turn_input_in_txn(&vault, &txn, &third))
+        .expect("read the third turn");
+    let super::input::TurnInput::Ready { input, .. } = read else {
+        panic!("the third turn has text");
+    };
+    assert_eq!(
+        window(&input),
+        vec![(second.to_hex(), vec!["Grace stayed behind".to_owned()])]
+    );
+}
+
+/// A MESSAGE body is walked to its keys without decoding any string, and its
+/// text is read back from the end only as far as it is kept.
+#[test]
+fn a_message_body_is_walked_to_its_text_and_read_back_from_the_end() {
+    use super::body::{message_fields, newest_chars};
+    use rmpv::Value;
+    let encode = |value: &Value| {
+        let mut out = Vec::new();
+        rmpv::encode::write_value(&mut out, value).expect("encode");
+        out
+    };
+    for len in [5, 100, 300, 70_000] {
+        let text = format!("{}Ada", "x".repeat(len));
+        let body = encode(&Value::Map(vec![
+            (Value::from("role"), Value::from("user")),
+            (
+                Value::from("metadata"),
+                Value::Map(vec![(
+                    Value::from("tags"),
+                    Value::Array(vec![
+                        Value::from(1),
+                        Value::from(-40),
+                        Value::from(2.5),
+                        Value::Nil,
+                        Value::Binary(vec![0; 300]),
+                        Value::Ext(7, vec![1, 2, 3]),
+                        Value::Ext(8, vec![0; 4]),
+                    ]),
+                )]),
+            ),
+            (Value::from(9), Value::from(u64::MAX)),
+            (Value::from("content"), Value::from(text.as_str())),
+            (Value::from("is_visible"), Value::from(true)),
+            (Value::from("stale"), Value::from("no")),
+            (Value::from("order"), Value::from(7)),
+        ]));
+        let fields = message_fields(&body).expect("a map");
+        assert_eq!(fields.content, text.as_bytes());
+        assert!(fields.is_visible);
+        assert!(!fields.stale);
+        assert_eq!(fields.order, 7);
+        assert_eq!(newest_chars(fields.content, 4), Some(("xAda", 4)));
+    }
+    assert_eq!(newest_chars("añ日本🎉".as_bytes(), 3), Some(("日本🎉", 3)));
+    assert_eq!(newest_chars("añ".as_bytes(), 10), Some(("añ", 2)));
+    assert_eq!(newest_chars(b"\xffAda", 3), Some(("Ada", 3)));
+    assert_eq!(newest_chars(b"Ad\xff", 3), None);
+    let stale = encode(&Value::Map(vec![(Value::from("stale"), Value::from(true))]));
+    assert!(message_fields(&stale).expect("a map").stale);
+    let visibility = encode(&Value::Map(vec![(
+        Value::from("is_visible"),
+        Value::from(1),
+    )]));
+    assert!(message_fields(&visibility).is_none());
+    for (order, read) in [
+        (Value::from(70_000), Some(70_000)),
+        (Value::from(i64::from(u32::MAX)), Some(u32::MAX)),
+        (Value::from(u64::from(u32::MAX) + 1), None),
+        (Value::from(-1), None),
+        (Value::from("7"), None),
+    ] {
+        let body = encode(&Value::Map(vec![(Value::from("order"), order)]));
+        assert_eq!(message_fields(&body).map(|fields| fields.order), read);
+    }
+    assert!(message_fields(&encode(&Value::Array(Vec::new()))).is_none());
+    let body = encode(&Value::Map(vec![(
+        Value::from("content"),
+        Value::from("Ada"),
+    )]));
+    assert!(message_fields(&body[..body.len() - 1]).is_none());
+}

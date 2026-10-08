@@ -28,6 +28,7 @@
 //! This build settles in shadow: a checked answer completes its marker and
 //! nothing else is written. Saving the tags lands with ONE-2167.
 
+mod body;
 mod held;
 mod history;
 mod input;
