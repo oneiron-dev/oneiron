@@ -345,14 +345,72 @@ impl Vault {
         owner: &AuthenticatedOwner,
         effect_digest: EffectDigest,
     ) -> Result<ConsentReceipt> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let receipt = self.deny_consent_in_txn(&mut wtxn, owner, effect_digest)?;
+        wtxn.commit()?;
+        Ok(receipt)
+    }
+
+    /// Transaction-composable [`Vault::deny_consent`].
+    pub(crate) fn deny_consent_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        effect_digest: EffectDigest,
+    ) -> Result<ConsentReceipt> {
         let receipt = ConsentReceipt::Denied {
             decision_id: crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?),
             effect_digest,
         };
-        let mut wtxn = self.store.env.write_txn()?;
-        self.append_consent_receipt_in_txn(&mut wtxn, owner, &receipt)?;
-        wtxn.commit()?;
+        self.append_consent_receipt_in_txn(wtxn, owner, &receipt)?;
         Ok(receipt)
+    }
+
+    /// Takes the one owner-decision slot `slot` names, in `wtxn`, for the
+    /// decision `decision_id`.
+    ///
+    /// A slot is a 32-byte key the caller derives, domain-separated, from
+    /// what is being decided, independent of which owner decides, so the
+    /// first decision by any owner is the only one. It lives beside the
+    /// approve-once markers, already spent: no effect digest names it, so it
+    /// never authorizes anything, and a restore carries it with them.
+    ///
+    /// # Errors
+    /// [`GateError::ConsentApproveOnceSpent`](crate::error::GateError::ConsentApproveOnceSpent)
+    /// when the slot is already taken.
+    pub(crate) fn take_decision_slot_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        slot: &[u8; 32],
+        decision_id: GateDecisionId,
+    ) -> Result<()> {
+        self.ensure_decision_slot_open_in_txn(wtxn, slot)?;
+        let marker = ApproveOnceMarker {
+            state: CONSENT_APPROVE_ONCE_SPENT,
+            decision_id,
+        };
+        APPROVE_ONCE_MARKERS.put(&self.store, wtxn, slot, &marker)?;
+        Ok(())
+    }
+
+    /// Refuses, without taking it, when the decision slot `slot` names is
+    /// already taken: a path that decides nothing still must not act on
+    /// something an owner already decided.
+    ///
+    /// # Errors
+    /// [`GateError::ConsentApproveOnceSpent`](crate::error::GateError::ConsentApproveOnceSpent)
+    /// when the slot is taken.
+    pub(crate) fn ensure_decision_slot_open_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        slot: &[u8; 32],
+    ) -> Result<()> {
+        if APPROVE_ONCE_MARKERS.get(&self.store, txn, slot)?.is_some() {
+            return Err(Error::Gate(GateError::ConsentApproveOnceSpent(
+                "this already carries an owner decision",
+            )));
+        }
+        Ok(())
     }
 
     /// Revokes a standing grant. Revocation is immediate: the row flips to
@@ -721,6 +779,17 @@ pub(crate) fn approve_once_authorization_in_txn(
         ))),
         _ => Err(Error::CorruptedIndex("consent approve-once marker state")),
     }
+}
+
+/// The approving decision an approve-once marker names, read in `txn`.
+pub(crate) fn approve_once_decision_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    digest: &EffectDigest,
+) -> Result<Option<GateDecisionId>> {
+    Ok(APPROVE_ONCE_MARKERS
+        .get(store, txn, digest.as_bytes())?
+        .map(|marker| marker.decision_id))
 }
 
 /// Changes one store-attested approve-once marker to spent in `wtxn`.

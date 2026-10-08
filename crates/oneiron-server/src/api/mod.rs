@@ -117,6 +117,9 @@ mod memory;
 pub(crate) mod memory_reason;
 mod openapi;
 mod openapi_registry;
+// OF-559/OF-202/OF-211/OF-296: the owner's own actions — backups, the secret
+// scan switch, whole-batch import consent and whole-run agent consent.
+mod owner_routes;
 mod params;
 // ONE-1437: in-process local reactive read contract. No HTTP surface by design
 // (the ONE-1925 client-framework binding and the ONE-1495 cloud carrier are its
@@ -383,6 +386,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // limit stays a property of this nest alone.
         .nest("/v1/core/facade", self::facade::facade_routes())
         .nest("/v1/companion", companion_routes)
+        .nest("/v1/owner", self::owner_routes::routes())
         .route("/v1/usage/events", post(record_usage_event))
         .route(
             "/v1/usage/owners/{owner}/vaults/{vault_id}/rollup",
