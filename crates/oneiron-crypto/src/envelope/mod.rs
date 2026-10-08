@@ -349,7 +349,7 @@ impl Header {
     }
 }
 
-/// A parsed or freshly sealed envelope. Only [`Envelope::parse`] and [`seal`] build
+/// A parsed or freshly sealed envelope. Only [`Envelope::parse`] and [`fn@seal`] build
 /// one, so its header has passed every key-free check.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Envelope {
@@ -364,7 +364,10 @@ impl Envelope {
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         let mut r = Reader::new(bytes);
         let header = Header::decode(&mut r)?;
-        let header_bytes = bytes[..r.position()].to_vec();
+        let header_bytes = header.encode();
+        if header_bytes[..] != bytes[..r.position()] {
+            return Err(Error::NonCanonical);
+        }
         let ciphertext = r
             .take(header.ciphertext_len as usize, "ciphertext")?
             .to_vec();

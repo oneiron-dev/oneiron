@@ -10,7 +10,7 @@
 //! AES-256-GCM's random 96-bit nonce never repeats under one key in practice.
 
 use aes_gcm::Aes256Gcm;
-use argon2::{Algorithm, Argon2, Params, Version};
+use argon2::{Algorithm, Argon2, Block, Params, Version};
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use hkdf::Hkdf;
@@ -89,6 +89,9 @@ pub struct OpenPolicy<'a> {
     pub kem_suites: &'a [SuiteId],
     /// The reader's minimum accepted epoch (rollback floor).
     pub min_epoch: u64,
+    /// The most Argon2id work this reader will do for a passphrase envelope; a header
+    /// asking for more is refused before Argon2 runs.
+    pub argon2_max: Argon2Cost,
 }
 
 /// Seals `plaintext` under `key`. Salt and nonce come from `rng`; an RNG failure is
@@ -248,6 +251,7 @@ impl Envelope {
                 copy(secret.expose())
             }
             (OpenKey::Passphrase(passphrase), Kdf::Argon2idHkdfSha256 { cost, salt }, _) => {
+                cost.check_budget(&policy.argon2_max)?;
                 argon2id(passphrase, cost, salt)?
             }
             (
@@ -280,7 +284,8 @@ fn copy(bytes: &[u8; 32]) -> Zeroizing<[u8; 32]> {
     Zeroizing::new(*bytes)
 }
 
-/// Argon2id v0x13, 32-byte output. The caller has bounded `cost`.
+/// Argon2id v0x13, 32-byte output. The caller has bounded `cost`. The work memory is
+/// allocated here, fallibly, and wiped on drop (the provider frees its own unwiped).
 fn argon2id(
     passphrase: &Passphrase,
     cost: &Argon2Cost,
@@ -288,9 +293,14 @@ fn argon2id(
 ) -> Result<Zeroizing<[u8; 32]>> {
     let params = Params::new(cost.m_kib, cost.t, u32::from(cost.p), Some(32))
         .map_err(|_| Error::Primitive("argon2id parameters"))?;
+    let mut memory: Zeroizing<Vec<Block>> = Zeroizing::new(Vec::new());
+    memory
+        .try_reserve_exact(params.block_count())
+        .map_err(|_| Error::OutOfMemory)?;
+    memory.resize(params.block_count(), Block::default());
     let mut out = Zeroizing::new([0u8; 32]);
     Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
-        .hash_password_into(passphrase.expose(), salt, &mut *out)
+        .hash_password_into_with_memory(passphrase.expose(), salt, &mut *out, memory.as_mut_slice())
         .map_err(|_| Error::Primitive("argon2id"))?;
     Ok(out)
 }

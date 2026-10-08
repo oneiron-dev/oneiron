@@ -86,8 +86,8 @@ impl Passphrase {
     }
 }
 
-/// Argon2id cost parameters (RFC 9106), bounded on both sides so a hostile header
-/// can neither weaken the KDF nor exhaust the opener's memory.
+/// Argon2id cost parameters (RFC 9106). The format bounds them on both sides; a reader
+/// also states its own budget in `OpenPolicy::argon2_max`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Argon2Cost {
     /// Memory in KiB.
@@ -133,6 +133,17 @@ impl Argon2Cost {
             Self::MIN_P.into(),
             Self::MAX_P.into(),
         )
+    }
+
+    /// Refuses a cost above the reader's budget in any dimension.
+    pub(crate) fn check_budget(&self, max: &Argon2Cost) -> Result<()> {
+        if self.m_kib > max.m_kib || self.t > max.t || self.p > max.p {
+            return Err(Error::Argon2OverBudget {
+                requested: *self,
+                budget: *max,
+            });
+        }
+        Ok(())
     }
 }
 

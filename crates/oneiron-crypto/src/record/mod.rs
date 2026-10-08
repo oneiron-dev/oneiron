@@ -71,7 +71,7 @@ pub enum RecordBody {
     Checkpoint(CheckpointRef),
 }
 
-/// A signature record. Only [`SignatureRecord::parse`], [`sign`] and
+/// A signature record. Only [`SignatureRecord::parse`], [`fn@sign`] and
 /// [`SignatureRecord::checkpoint_ref`] build one, so it has passed every
 /// structural check.
 #[derive(Clone, Debug, PartialEq, Eq)]

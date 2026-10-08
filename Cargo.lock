@@ -914,6 +914,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
 dependencies = [
  "hybrid-array",
+ "zeroize",
 ]
 
 [[package]]
@@ -2615,6 +2616,7 @@ dependencies = [
  "const-oid 0.10.2",
  "crypto-common 0.2.2",
  "ctutils",
+ "zeroize",
 ]
 
 [[package]]
@@ -7971,7 +7973,9 @@ dependencies = [
  "getrandom 0.4.3",
  "hex",
  "hkdf",
+ "hmac 0.13.0",
  "ml-kem",
+ "poly1305",
  "proptest",
  "rand_core 0.10.1",
  "serde_json",
@@ -9024,6 +9028,7 @@ checksum = "6e2d0073b297041425c7c3df6eb4792d598a15323fe63346852b092eca02904c"
 dependencies = [
  "cpufeatures 0.3.1",
  "universal-hash 0.6.1",
+ "zeroize",
 ]
 
 [[package]]

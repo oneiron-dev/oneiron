@@ -55,7 +55,7 @@ fn sign_with(keys: &Keys, suite: SuiteId) -> SignatureRecord {
     .expect("sign")
 }
 
-fn verifying<'a>(keys: &'a Keys) -> [(&'static [u8], &'a VerifyingKey); 2] {
+fn verifying(keys: &Keys) -> [(&'static [u8], &VerifyingKey); 2] {
     [(ED_ID, &keys.ed_vk), (SLH_ID, &keys.slh_vk)]
 }
 

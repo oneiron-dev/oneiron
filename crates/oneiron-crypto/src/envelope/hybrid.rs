@@ -109,3 +109,6 @@ fn combine(
     digest.as_mut_slice().zeroize();
     out
 }
+
+#[cfg(test)]
+mod tests;

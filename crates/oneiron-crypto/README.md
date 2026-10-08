@@ -94,7 +94,10 @@ ciphertext   ct_len bytes (tag last)
 `H` is every byte from `magic` through `ct_len`. The KDF/wrap pairs are a closed table:
 passphrase wraps use `argon2id-hkdf-sha256-v1`, every other wrap uses `hkdf-sha256-v1`.
 Argon2id costs are bounded on both sides (19 MiB..=2 GiB, 1..=64 passes, 1..=16 lanes)
-and checked before Argon2 runs. Shamir parameters must satisfy 2 <= threshold <= shares <= 16.
+and checked before Argon2 runs; a reader also sets its own budget
+(`OpenPolicy::argon2_max`), and a header over it is refused before Argon2 runs. Shamir
+parameters must satisfy 2 <= threshold <= shares <= 16. After decoding, the parser
+re-encodes the header and refuses input that is not that exact encoding.
 
 ### Key schedule
 
@@ -143,6 +146,24 @@ not X-Wing (which is defined for ML-KEM-768 only).
   X25519 result is refused (`KemKeyRejected` when sealing, `OpenFailed` when opening).
 - ML-KEM decapsulation rejects implicitly, so a tampered ciphertext shows up only as
   `OpenFailed`.
+
+## Secret hygiene
+
+- Key types (`Kek`, `RecoverySecret`, `Passphrase`, `HybridSecretKey`, `SigningKey`)
+  zeroize on drop and print as `redacted`. The wrap secret, the payload key and returned
+  plaintext are `Zeroizing`. Errors carry ids, names and lengths, never key or plaintext
+  bytes.
+- Argon2id runs in work memory this crate allocates (fallibly) and wipes; the provider
+  frees its own buffer without wiping it.
+- The providers' own wiping is turned on: the AEAD ciphers, Poly1305, GHASH, HMAC and the
+  SHA-2/SHA-3 states, ML-KEM, SLH-DSA and the dalek keys. ML-KEM shared-key arrays are
+  wiped by hand.
+- Residual, accepted for E0: `hkdf 0.13.0` keeps its PRK and its last expand block (here
+  the whole payload key) in plain stack values, and `hmac 0.13.0` keeps the padded key
+  block (PRK XOR pad) in a plain buffer; none of them is wiped. Stack copies made by the
+  compiler cannot be guaranteed wiped either. Recovering any of them needs a memory
+  disclosure of this process. Closing it needs upstream changes to both providers; a local
+  HKDF over `hmac` would not close it.
 
 ## Signature record encoding v1
 

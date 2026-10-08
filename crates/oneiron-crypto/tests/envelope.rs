@@ -89,6 +89,7 @@ fn policy() -> OpenPolicy<'static> {
         aead_suites: AEADS,
         kem_suites: KEMS,
         min_epoch: 1,
+        argon2_max: Argon2Cost::RFC9106_SECOND,
     }
 }
 
@@ -461,7 +462,7 @@ fn truncated_oversized_and_trailing_input_is_refused() {
     ));
     // A ciphertext length above the plaintext bound is refused before any read.
     let ct_len_at = bytes.len() - PLAINTEXT.len() - 16 - 4;
-    let mut b = bytes.clone();
+    let mut b = bytes;
     let over = u32::try_from(MAX_PLAINTEXT_LEN + 17).expect("u32");
     b[ct_len_at..ct_len_at + 4].copy_from_slice(&over.to_be_bytes());
     assert!(matches!(
@@ -512,7 +513,7 @@ fn unknown_codes_kdf_mismatch_and_hostile_costs_are_refused() {
     b[l.kdf] = 9;
     assert_eq!(Envelope::parse(&b), Err(Error::UnknownKdf(9)));
     // A passphrase wrap relabelled onto the HKDF-only path (and back) is refused.
-    let mut b = bytes.clone();
+    let mut b = bytes;
     b[8] = WrapType::Passphrase as u8;
     assert!(matches!(
         Envelope::parse(&b),
@@ -538,7 +539,7 @@ fn unknown_codes_kdf_mismatch_and_hostile_costs_are_refused() {
             matches!(Envelope::parse(&b), Err(Error::KdfParamOutOfRange { param: p, .. }) if p == param)
         );
     }
-    let mut b = pass.clone();
+    let mut b = pass;
     b[pl.kdf + 9] = 0;
     assert!(matches!(
         Envelope::parse(&b),
@@ -653,6 +654,7 @@ fn every_header_field_is_bound_into_the_aead() {
         "argon2id m_kib",
     );
     assert_bound(&pass, |b| b[pl.kdf + 8] = 2, key(), &policy(), "argon2id t");
+    assert_bound(&pass, |b| b[pl.kdf + 9] = 2, key(), &policy(), "argon2id p");
 
     let shamir = sealed(
         &keys,
@@ -664,6 +666,13 @@ fn every_header_field_is_bound_into_the_aead() {
     assert_bound(&shamir, |b| b[at] = 3, key(), &policy(), "shamir threshold");
     assert_bound(
         &shamir,
+        |b| b[at + 1] = 4,
+        key(),
+        &policy(),
+        "shamir shares",
+    );
+    assert_bound(
+        &shamir,
         |b| b[at + 2] ^= 1,
         key(),
         &policy(),
@@ -672,7 +681,7 @@ fn every_header_field_is_bound_into_the_aead() {
 
     // The two AEAD suites have different nonce lengths, so relabelling between them
     // cannot even parse; the version byte is refused as unsupported.
-    let mut b = bytes.clone();
+    let mut b = bytes;
     b[6..8].copy_from_slice(&SuiteId::AES256GCM_V1.0.to_be_bytes());
     assert!(Envelope::parse(&b).is_err(), "suite relabel");
 }
@@ -872,4 +881,120 @@ fn bad_recipient_public_keys_are_refused() {
         HybridPublicKey::from_bytes(&pk[..100]),
         Err(Error::FieldLength { .. })
     ));
+}
+
+#[test]
+fn sealed_bytes_match_an_independent_implementation_of_the_spec() {
+    // tests/vectors/golden_envelopes.py builds these from README.md with OpenSSL,
+    // libsodium and the reference Argon2, every random byte 0x42 as FixedRng gives.
+    let golden: serde_json::Value =
+        serde_json::from_str(include_str!("vectors/golden_envelopes.json")).expect("golden json");
+    let keys = keys();
+    let cases = [
+        (
+            "aes256gcm_symmetric_kek",
+            SuiteId::AES256GCM_V1,
+            WrapType::SymmetricKek,
+        ),
+        (
+            "xchacha20poly1305_symmetric_kek",
+            SuiteId::XCHACHA20POLY1305_V1,
+            WrapType::SymmetricKek,
+        ),
+        (
+            "xchacha20poly1305_shamir_2_of_3",
+            SuiteId::XCHACHA20POLY1305_V1,
+            WrapType::ShamirRecovery,
+        ),
+        (
+            "aes256gcm_passphrase_argon2id",
+            SuiteId::AES256GCM_V1,
+            WrapType::Passphrase,
+        ),
+    ];
+    for (name, suite, wrap) in cases {
+        let expected = hex::decode(golden[name].as_str().expect("hex")).expect("hex");
+        let sealed = seal(
+            &params(suite),
+            seal_key(&keys, wrap),
+            PLAINTEXT,
+            &mut FixedRng,
+        )
+        .expect("seal");
+        assert_eq!(sealed.to_bytes(), expected, "{name}");
+        assert_eq!(
+            open_bytes(&expected, open_key(&keys, wrap), &policy()).expect("opens"),
+            PLAINTEXT,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn an_argon2_cost_over_the_reader_budget_is_refused_before_argon2_runs() {
+    let keys = keys();
+    let pass = sealed(&keys, SuiteId::AES256GCM_V1, WrapType::Passphrase);
+    let at = layout(&pass).kdf;
+    let mut b = pass.clone();
+    b[at + 1..at + 5].copy_from_slice(&Argon2Cost::MAX_M_KIB.to_be_bytes());
+    b[at + 5..at + 9].copy_from_slice(&Argon2Cost::MAX_T.to_be_bytes());
+    let requested = Argon2Cost {
+        m_kib: Argon2Cost::MAX_M_KIB,
+        t: Argon2Cost::MAX_T,
+        p: 1,
+    };
+    assert_eq!(
+        open_bytes(&b, OpenKey::Passphrase(&keys.passphrase), &policy()),
+        Err(Error::Argon2OverBudget {
+            requested,
+            budget: Argon2Cost::RFC9106_SECOND
+        })
+    );
+    let tight = OpenPolicy {
+        argon2_max: Argon2Cost {
+            m_kib: Argon2Cost::MIN_M_KIB,
+            t: 1,
+            p: 1,
+        },
+        ..policy()
+    };
+    assert_eq!(
+        open_bytes(&pass, OpenKey::Passphrase(&keys.passphrase), &tight).expect("within budget"),
+        PLAINTEXT
+    );
+}
+
+#[test]
+fn the_recipient_x25519_public_key_bytes_are_bound_into_the_combiner() {
+    // X25519 ignores the top bit of the u-coordinate (RFC 7748), so this alias gives the
+    // same shared secret while its bytes differ. Only the combiner's binding of the
+    // serialized recipient key can make the capsule fail for the real recipient.
+    let keys = keys();
+    let mut alias = keys.hybrid.public_key().to_bytes();
+    alias[HYBRID_PUBLIC_KEY_LEN - 1] |= 0x80;
+    let real_x: [u8; 32] = keys.hybrid.public_key().to_bytes()[HYBRID_PUBLIC_KEY_LEN - 32..]
+        .try_into()
+        .expect("32");
+    let alias_x: [u8; 32] = alias[HYBRID_PUBLIC_KEY_LEN - 32..].try_into().expect("32");
+    assert_eq!(
+        x25519_dalek::x25519([5; 32], real_x),
+        x25519_dalek::x25519([5; 32], alias_x)
+    );
+    let alias = HybridPublicKey::from_bytes(&alias).expect("valid encoding");
+    let key = SealKey::Hybrid {
+        recipient: &alias,
+        kem_suite: SuiteId::KEM_X25519_MLKEM1024_V1,
+    };
+    let env = seal(
+        &params(SuiteId::XCHACHA20POLY1305_V1),
+        key,
+        PLAINTEXT,
+        &mut rng(),
+    )
+    .expect("seal");
+    assert_eq!(
+        env.open(OpenKey::Hybrid(&keys.hybrid), &policy())
+            .map(|p| p.to_vec()),
+        Err(Error::OpenFailed)
+    );
 }

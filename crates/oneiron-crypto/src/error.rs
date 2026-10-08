@@ -2,6 +2,7 @@
 //! cryptographic failure on open is the single opaque [`Error::OpenFailed`].
 
 use crate::envelope::{Purpose, WrapType};
+use crate::keys::Argon2Cost;
 use crate::record::SigPurpose;
 use crate::suite::SuiteKind;
 
@@ -148,6 +149,18 @@ pub enum Error {
     /// it needs a separately verified checkpoint and inclusion proof (E4).
     #[error("checkpoint references need checkpoint verification, which v1 does not perform")]
     CheckpointRefUnverified,
+    /// The Argon2id cost in the header is above the reader's budget.
+    #[error("argon2id cost {requested:?} is above the reader's budget {budget:?}")]
+    Argon2OverBudget {
+        requested: Argon2Cost,
+        budget: Argon2Cost,
+    },
+    /// The KDF work memory could not be allocated.
+    #[error("could not allocate the KDF work memory")]
+    OutOfMemory,
+    /// The header parsed, but its bytes are not the one canonical encoding.
+    #[error("header is not in canonical encoding")]
+    NonCanonical,
     /// The random number generator failed.
     #[error("random number generator failed")]
     Rng,
