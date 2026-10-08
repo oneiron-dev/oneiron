@@ -193,10 +193,7 @@ mod tests {
         };
         assert!(host(&config).every.is_none(), "the schedule is opt-in");
         config.backup.enabled = true;
-        assert_eq!(
-            host(&config).every,
-            Some(Duration::from_secs(24 * 3_600))
-        );
+        assert_eq!(host(&config).every, Some(Duration::from_secs(24 * 3_600)));
         config.privacy_posture = oneiron::HostingPrivacyPosture::Hosted;
         assert!(host(&config).every.is_none());
     }
