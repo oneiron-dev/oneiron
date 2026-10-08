@@ -1,0 +1,143 @@
+//! An importer completes a turn's marker with tags it already holds: no
+//! tagger call.
+
+use super::history::record_in_txn;
+use super::input::{TurnInput, turn_text_in_txn};
+use super::marker::{TAGGING_MARKER_KIND, dedupe_key};
+use super::output::{AnswerMood, OutputRefusal, check_output};
+use super::trace::{SkipReason, TaggingOutcome, TaggingTrace, attempt_hex};
+use crate::attempt_queue::{
+    AttemptQueue, AttemptState, ClaimAttempt, ClaimOutcome, CompleteAttempt,
+};
+use crate::error::{Error, Result};
+use crate::memory::extraction::EncoderOutput;
+use crate::{EntityId, Vault};
+
+const IMPORT_LEASE_OWNER: &str = "oneironer-import";
+
+/// What an importer's held tags did to a turn's marker.
+#[derive(Debug, Clone, PartialEq)]
+pub enum HeldTagsOutcome {
+    /// The marker completed with no tagger call.
+    Completed(TaggingTrace),
+    /// The tags break a contract rule for the turn's current text; nothing
+    /// changed and the marker still waits for the tagger.
+    Refused(OutputRefusal),
+    /// No live marker is owed for the turn under the active checkpoint.
+    NoMarker,
+    /// The worker holds the marker's lease or has scheduled its retry; its own
+    /// pass settles it.
+    WorkerOwned,
+}
+
+impl Vault {
+    /// Completes the turn's tagging marker with tags the importer already
+    /// holds, in one write transaction and with no tagger call.
+    ///
+    /// The tags are checked against the turn's current text exactly as a
+    /// tagger's answer is. This build settles in shadow: the marker completes,
+    /// its trace is recorded and the marker leaves the job ledger, and
+    /// nothing else is written; saving the tags lands with ONE-2167.
+    pub fn complete_tagging_with_held_tags(
+        &self,
+        turn: &EntityId,
+        tags: &EncoderOutput,
+    ) -> Result<HeldTagsOutcome> {
+        let checkpoint = self
+            .config
+            .tagging
+            .as_ref()
+            .map(|tagging| tagging.checkpoint.clone())
+            .ok_or_else(|| {
+                Error::InvalidConfig("tagging markers are not armed on this vault".to_owned())
+            })?;
+        let queue = AttemptQueue::from_store(&self.store);
+        self.try_with_write_txn(|txn| -> Result<HeldTagsOutcome> {
+            let key = dedupe_key(turn, &checkpoint);
+            let Some(record) = queue.pending_dedupe_in_txn(txn, TAGGING_MARKER_KIND, &key)? else {
+                return Ok(HeldTagsOutcome::NoMarker);
+            };
+            if record.state != AttemptState::Queued {
+                return Ok(match record.state {
+                    AttemptState::Leased | AttemptState::Landing | AttemptState::Scheduled => {
+                        HeldTagsOutcome::WorkerOwned
+                    }
+                    _ => HeldTagsOutcome::NoMarker,
+                });
+            }
+            // Held tags were made from the turn's own text, not from this
+            // vault's window, so they are checked against it and its digest
+            // names it.
+            let (outcome, input_hash) = match turn_text_in_txn(self, txn, turn)? {
+                TurnInput::Gone => (
+                    TaggingOutcome::Skipped {
+                        reason: SkipReason::TurnGone,
+                    },
+                    None,
+                ),
+                TurnInput::Empty => (
+                    TaggingOutcome::Skipped {
+                        reason: SkipReason::NoText,
+                    },
+                    None,
+                ),
+                TurnInput::Ready { input, hash, .. } => {
+                    if let Err(refusal) = check_output(&input, tags) {
+                        return Ok(HeldTagsOutcome::Refused(refusal));
+                    }
+                    (
+                        TaggingOutcome::Imported {
+                            spans: tags.spans.len(),
+                            links: tags.links.len(),
+                            mood: tags.vad.present(),
+                        },
+                        Some(hash),
+                    )
+                }
+            };
+            // Stamped from the store clock without persisting its floor, as
+            // the worker's settlements are: shadow writes only job state.
+            let now = crate::ports::job_recorded_at_in_txn(&self.store, txn)?;
+            let claimed = queue.claim_id_storage_in_txn(
+                txn,
+                record.id,
+                ClaimAttempt {
+                    lease_owner: IMPORT_LEASE_OWNER.to_owned(),
+                    now,
+                },
+                now,
+            )?;
+            let ClaimOutcome::Claimed(leased) = claimed else {
+                return Ok(HeldTagsOutcome::WorkerOwned);
+            };
+            // A retry the worker scheduled, or a lease it lost, is a later try.
+            let try_number = queue
+                .retry_chain_depth_in_txn(txn, leased.id)?
+                .saturating_add(1);
+            queue.complete_storage_in_txn(
+                txn,
+                CompleteAttempt {
+                    id: leased.id,
+                    lease_owner: IMPORT_LEASE_OWNER.to_owned(),
+                    attempt_count: leased.attempt_count,
+                    now,
+                },
+            )?;
+            let trace = TaggingTrace {
+                attempt: attempt_hex(&leased.id),
+                turn: Some(*turn),
+                checkpoint: checkpoint.clone(),
+                model: None,
+                input_hash,
+                try_number,
+                call_micros: None,
+                outcome,
+            };
+            // As a worker's settlement: the trace is recorded and the marker
+            // leaves the job ledger with every try it retried.
+            record_in_txn(self, txn, &trace, now)?;
+            queue.prune_settled_in_txn(txn, leased.id)?;
+            Ok(HeldTagsOutcome::Completed(trace))
+        })
+    }
+}

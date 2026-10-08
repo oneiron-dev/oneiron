@@ -8,6 +8,7 @@ use oneiron::HostingPrivacyPosture;
 
 use super::embedder::EmbedderArgs;
 use super::lookup::redacted_secret;
+use super::oneironer::OneironerArgs;
 use crate::runtime::{
     RuntimeConfigOverride, RuntimeMode, RuntimeProviderKind, RuntimeRole, RuntimeRoleTargetOverride,
 };
@@ -29,6 +30,10 @@ pub struct ServeArgs {
     /// of one optional section stay in the file that owns the section.
     #[command(flatten)]
     pub embedder: EmbedderArgs,
+
+    /// `--oneironer-*` flags: the tagger slot's section.
+    #[command(flatten)]
+    pub oneironer: OneironerArgs,
 
     /// Path to the LMDB vault directory.
     #[arg(long)]
@@ -348,6 +353,7 @@ impl fmt::Debug for ServeArgs {
             )
             .field("runtime_summarizer_model", &self.runtime_summarizer_model)
             .field("embedder", &self.embedder)
+            .field("oneironer", &self.oneironer)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",

@@ -336,6 +336,12 @@ pub struct AttemptRecord {
     /// [`crate::attempt_queue::AttemptQueue::retry`].
     #[serde(default)]
     pub retry_of: Option<AttemptId>,
+    /// Tries of this row's lineage that a compaction deleted between this row
+    /// and the one it retries (`retry_of`), or before it when it retries
+    /// none. The lineage depth counts each as a hop, so backoff reads as
+    /// before. Absent from the encoded row while zero.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub folded_retries: u32,
     /// Legacy read compatibility only. Rows written before ONE-1795 carry their
     /// readiness instant here; new retry rows use `scheduled_at`.
     #[serde(default)]
@@ -760,4 +766,14 @@ pub(crate) fn attempt_record_order(
     left.created_at
         .cmp(&right.created_at)
         .then_with(|| left.id.as_bytes().cmp(right.id.as_bytes()))
+}
+
+/// Serde skip predicate: a lineage no compaction touched says so by omission,
+/// so its rows encode as they did before the field existed.
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if hands the field by reference"
+)]
+fn is_zero(value: &u32) -> bool {
+    *value == 0
 }

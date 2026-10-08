@@ -8,6 +8,7 @@ use oneiron::{HostingPrivacyPosture, VaultDataKeyCustody, VaultPrivacyConfig};
 use super::backup::BackupConfig;
 use super::embedder::EmbedderConfig;
 use super::lookup::{LEGACY_DEFAULT_VAULT_PATH, redacted_secret};
+use super::oneironer::OneironerConfig;
 use crate::runtime::RuntimeConfig;
 use crate::usage::UsageMode;
 
@@ -223,6 +224,9 @@ pub struct ServeConfig {
     /// Absent means rung 0: no worker, no query door, vectors supplied by the
     /// client exactly as before this section existed.
     pub embedder: Option<EmbedderConfig>,
+    /// The `[oneironer]` tagger slot, absent until some layer names a key in
+    /// it. Absent means no tagger and no tagging marker.
+    pub oneironer: Option<OneironerConfig>,
     /// The `[backup]` section: local backup directory, schedule and retention.
     pub backup: BackupConfig,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
@@ -272,6 +276,7 @@ impl Default for ServeConfig {
             max_bulk_decompressed: server.max_bulk_decompressed,
             runtime: server.runtime,
             embedder: None,
+            oneironer: None,
             backup: BackupConfig::default(),
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
@@ -326,6 +331,7 @@ impl fmt::Debug for ServeConfig {
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
             .field("runtime", &self.runtime)
             .field("embedder", &self.embedder)
+            .field("oneironer", &self.oneironer)
             .field("backup", &self.backup)
             .field("privacy_posture", &self.privacy_posture)
             .field(
@@ -399,6 +405,12 @@ impl ServeConfig {
         // Beside it, how the embedder turns that model's output into stored
         // vectors, when the section says so before the provider loads.
         config.embedding_transform = embedder.and_then(crate::embedder::declared_transform);
+        // An active tagger arms the outbox marker: every witnessed turn owes
+        // it a pass, committed with the turn (ARCH-0036, serving the tagger).
+        config.tagging = self
+            .oneironer
+            .as_ref()
+            .and_then(OneironerConfig::marker_config);
         config
     }
 

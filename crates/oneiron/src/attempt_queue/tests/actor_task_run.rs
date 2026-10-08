@@ -354,6 +354,7 @@ mod one_1695_tests {
             claimed_at: None,
             scheduled_at: None,
             retry_of: None,
+            folded_retries: 0,
             backoff_until: None,
             last_error: None,
             task_ref: task_ref.map(str::to_owned),

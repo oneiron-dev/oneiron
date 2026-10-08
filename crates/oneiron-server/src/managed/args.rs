@@ -550,6 +550,42 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.runtime_summarizer_model.is_some(),
         ArgvUse::Refused(NO_TUNING_LAYER_REASON),
     ),
+    // The tagger slot's section: a managed child serves no tagger.
+    (
+        "oneironer-provider",
+        |args| args.oneironer.oneironer_provider.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "oneironer-mode",
+        |args| args.oneironer.oneironer_mode.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "oneironer-url",
+        |args| args.oneironer.oneironer_url.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "oneironer-checkpoint-sha16",
+        |args| args.oneironer.oneironer_checkpoint_sha16.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "oneironer-label-count",
+        |args| args.oneironer.oneironer_label_count.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "oneironer-labels",
+        |args| args.oneironer.oneironer_labels.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
+    (
+        "oneironer-timeout-ms",
+        |args| args.oneironer.oneironer_timeout_ms.is_some(),
+        ArgvUse::Refused(NO_TUNING_LAYER_REASON),
+    ),
 ];
 
 /// Managed mode takes its whole configuration from argv, and reads only part

@@ -85,7 +85,7 @@ pub const CLEANUP_PHASE: &str = "cleanup";
 /// unbounded time. Stopping early is safe in a way that stopping early on a
 /// deletion never is: the rows not examined are simply not archived this run,
 /// and the next run starts over.
-pub(super) const MAX_CLEANUP_SCAN_ROWS: usize = 50_000;
+pub(crate) const MAX_CLEANUP_SCAN_ROWS: usize = 50_000;
 
 // ---------------------------------------------------------------------------
 // Types

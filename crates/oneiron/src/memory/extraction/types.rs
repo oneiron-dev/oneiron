@@ -10,10 +10,20 @@ pub struct EncoderMessage {
     pub id: String,
     pub text: String,
 }
+/// One earlier turn the tagger reads for context and tags nothing in.
+#[derive(Debug, Clone, Serialize)]
+pub struct EncoderTurn {
+    pub turn: String,
+    pub messages: Vec<EncoderMessage>,
+}
 #[derive(Debug, Clone, Serialize)]
 pub struct EncoderInput {
     pub turn: String,
     pub messages: Vec<EncoderMessage>,
+    /// Earlier turns of the same conversation, oldest first: the live
+    /// register's window. Never a later turn; empty for a turn read alone.
+    /// Spans index `messages` only.
+    pub context: Vec<EncoderTurn>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

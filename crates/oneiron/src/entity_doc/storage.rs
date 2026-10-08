@@ -108,6 +108,13 @@ pub(super) fn persist(
     before: Option<&loro::VersionVector>,
 ) -> Result<()> {
     let store = &vault.store;
+    // On an armed vault a MESSAGE or TURN whose text changes owes its turn a
+    // tag pass, committed with the text (ARCH-0036). A write that leaves the
+    // text as it was (a birth, a migration, a compaction) owes nothing.
+    let retag = match crate::tagging::text_entity_type_in_txn(vault, txn, entity)? {
+        Some(entity_type) => text_changed(store, txn, entity, doc)?.then_some(entity_type),
+        None => None,
+    };
     crate::batch::secret_scan::scan_metadata_field(&doc.text())?;
     vault.ensure_text_index_trusted()?;
     crate::vault::ensure_text_index_manifest_matches_wtxn(store, txn, &vault.analyzer)?;
@@ -143,7 +150,28 @@ pub(super) fn persist(
     }
     store.port_document_state_vector_put(txn, slot, &doc.doc.oplog_vv().encode())?;
     ENTITY_DOC_HEAD.put(store, txn, &HexId(*entity), h)?;
+    if let Some(entity_type) = retag {
+        crate::tagging::mark_on_publication_in_txn(vault, txn, entity, entity_type)?;
+    }
     Ok(())
+}
+
+/// Whether `doc` holds other text than the document stored for `entity`.
+/// With no stored document (a birth, a migration) the text was admitted
+/// before, so it is unchanged. A stored document that no longer loads counts
+/// as changed: a missed tag pass costs more than an extra one.
+fn text_changed(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+    doc: &EntityDoc,
+) -> Result<bool> {
+    let Some(stored) = ENTITY_DOC_HEAD.get(store, txn, &HexId(*entity))? else {
+        return Ok(false);
+    };
+    Ok(load(store, txn, &stored)
+        .ok()
+        .is_none_or(|old| old.text() != doc.text()))
 }
 
 impl Vault {

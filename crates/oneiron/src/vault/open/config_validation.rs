@@ -24,5 +24,8 @@ pub(super) fn validate_open_config(config: &VaultConfig) -> Result<()> {
             "map_size must be at least {MIN_MAP_SIZE_BYTES} bytes"
         )));
     }
+    if let Some(tagging) = &config.tagging {
+        tagging.validate()?;
+    }
     Ok(())
 }

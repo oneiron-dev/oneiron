@@ -323,10 +323,13 @@ impl Vault {
             self.store.notify_proactivity_changes();
         }
         // Approval is durable now. The canonical consolidator opens its own
-        // writer; its failure is returned without rolling back Approved.
-        let now = self.store.clock.now_recorded_at();
-        for id in approved_vad_ids {
-            self.consolidate_claim_vad_now(&id, now)?;
+        // writer; its failure is returned without rolling back Approved. The
+        // clock is observed only when there is an approval to consolidate.
+        if !approved_vad_ids.is_empty() {
+            let now = self.store.clock.now_recorded_at();
+            for id in approved_vad_ids {
+                self.consolidate_claim_vad_now(&id, now)?;
+            }
         }
         Ok(result)
     }

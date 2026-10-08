@@ -50,6 +50,27 @@ pub(crate) fn attempt_is_archived(
         .is_some_and(|marker| marker == *blake3::hash(raw).as_bytes()))
 }
 
+/// Drops the archive markers of an attempt row that left the ledger, so no
+/// marker outlives the row it archived.
+pub(crate) fn forget_archived_attempt_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    record: &AttemptRecord,
+) -> Result<()> {
+    ARCHIVE.delete(store, txn, record.id.as_bytes())?;
+    if let Some(task) = &record.task_ref {
+        TASK_ARCHIVE.delete(
+            store,
+            txn,
+            &TaskAttemptKey {
+                task: task.clone(),
+                attempt: *record.id.as_bytes(),
+            },
+        )?;
+    }
+    Ok(())
+}
+
 fn eligible(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -61,6 +82,11 @@ fn eligible(
         return Ok(None);
     }
     let record = decode_record(raw, id)?;
+    // A job row whose owner prunes and bounds it is job state: cleanup never
+    // proposes it, so it never mints a proposal id.
+    if crate::attempt_queue::owner_retained_kind(&record.kind) {
+        return Ok(None);
+    }
     Ok((record.state == AttemptState::Completed
         && vault.now_recorded_at().saturating_sub(record.updated_at) > days.saturating_mul(86_400))
     .then_some(record))
@@ -77,7 +103,11 @@ pub(super) fn scan(
     let lower = after_bytes
         .as_ref()
         .map_or(Bound::Unbounded, |bytes| Bound::Excluded(bytes.as_slice()));
-    let upper: Bound<&[u8]> = Bound::Unbounded;
+    // Owner-retained rows are job state at the top of the ledger's key
+    // order: the arm stops before them, so they take none of its budget and
+    // never become its cursor.
+    let upper: Bound<&[u8]> =
+        Bound::Excluded(&crate::attempt_queue::OWNER_RETAINED_RANGE_START[..]);
     let mut last = None;
     let mut exhausted = true;
     for (examined, row) in vault

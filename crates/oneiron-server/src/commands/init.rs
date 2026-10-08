@@ -1,7 +1,8 @@
-//! First-run embedder choice, using the same config and provider as serve.
+//! First-run embedder and tagger choices, using the same config and providers as serve.
 use crate::cli::InitArgs;
 use crate::config::{
-    EmbedderConfig, EmbedderLocality, EmbedderProvider, EnvConfig, ServeArgs, ServeConfig,
+    EmbedderConfig, EmbedderLocality, EmbedderProvider, EnvConfig, OneironerMode,
+    OneironerProvider, ServeArgs, ServeConfig,
 };
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -44,6 +45,9 @@ fn init_with_env(
     {
         ask_remote_options(&mut args, &mut input, &mut output)?;
     }
+    if args.oneironer.is_none() && input.is_terminal() {
+        ask_tagger(&mut args, &mut input, &mut output)?;
+    }
     let path = args
         .config
         .clone()
@@ -55,6 +59,10 @@ fn init_with_env(
     let staged = stage_config(&path, &config_text)?;
     let result = (|| {
         let config = read_config(&staged, env)?;
+        // The same slot serve builds: the local provider and save mode are
+        // refused by name, and a reachable tagger must be the configured one.
+        // Checked first, so a refusal comes before the local model download.
+        crate::oneironer::build_slot(config.oneironer.as_ref())?;
         let device = match config.embedder.as_ref().filter(|c| c.is_active()) {
             Some(embedder) if embedder.provider == EmbedderProvider::Local => {
                 crate::embedder::prepare_local(embedder)?.to_owned()
@@ -86,6 +94,14 @@ fn init_with_env(
                 embedder.dimensions
             )?;
         }
+        if let Some(tagger) = config.oneironer.as_ref().filter(|t| t.is_active()) {
+            writeln!(
+                output,
+                "tagger: provider={} mode={}",
+                tagger.provider.as_str(),
+                tagger.mode.as_str()
+            )?;
+        }
         writeln!(output, "Embedder guide: {EMBEDDER_DOCS}")?;
         if choice == EmbedderProvider::Endpoint {
             writeln!(
@@ -99,6 +115,93 @@ fn init_with_env(
         let _ = std::fs::remove_file(staged);
     }
     result
+}
+
+/// Asks for the tagger the way the embedder is asked for. The local tagger is
+/// not built yet, so the default is none; save mode is not built yet either,
+/// so the mode defaults to shadow.
+fn ask_tagger(
+    args: &mut InitArgs,
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+) -> anyhow::Result<()> {
+    let mut ask = |prompt: &str| -> anyhow::Result<String> {
+        write!(output, "{prompt}")?;
+        output.flush()?;
+        let mut line = String::new();
+        input.read_line(&mut line)?;
+        Ok(line.trim().to_owned())
+    };
+    let choice = ask("Tagger local | endpoint | none [none]: ")?;
+    let choice: OneironerProvider = if choice.is_empty() {
+        OneironerProvider::None
+    } else {
+        choice.parse().map_err(anyhow::Error::msg)?
+    };
+    args.oneironer = Some(choice);
+    if choice != OneironerProvider::Endpoint {
+        return Ok(());
+    }
+    if args.oneironer_url.is_none() {
+        args.oneironer_url = Some(ask("Tagger server URL on this machine: ")?);
+    }
+    if args.oneironer_checkpoint_sha16.is_none() {
+        args.oneironer_checkpoint_sha16 = Some(ask("Tagger checkpoint (16 hex digits): ")?);
+    }
+    if args.oneironer_label_count.is_none() {
+        args.oneironer_label_count = Some(ask("Tagger label count: ")?.parse()?);
+    }
+    if args.oneironer_mode.is_none() {
+        let mode = ask("Tagger mode shadow | save (save is not available yet) [shadow]: ")?;
+        args.oneironer_mode = Some(if mode.is_empty() {
+            OneironerMode::Shadow
+        } else {
+            mode.parse().map_err(anyhow::Error::msg)?
+        });
+    }
+    Ok(())
+}
+
+/// The `[oneironer]` table init writes: the provider always, so a rerun with
+/// `none` turns an old tagger off; the endpoint keys for an endpoint.
+fn tagger_table(args: &InitArgs) -> anyhow::Result<toml::Table> {
+    let choice = args.oneironer.unwrap_or(OneironerProvider::None);
+    let endpoint_options = args.oneironer_url.is_some()
+        || args.oneironer_checkpoint_sha16.is_some()
+        || args.oneironer_label_count.is_some();
+    if choice != OneironerProvider::Endpoint && endpoint_options {
+        anyhow::bail!("tagger endpoint options require --oneironer endpoint");
+    }
+    let mut table = toml::Table::new();
+    table.insert("provider".into(), choice.as_str().into());
+    // An endpoint without a stated mode runs in shadow, as the interactive
+    // default does, while save is not built.
+    let mode = match (choice, args.oneironer_mode) {
+        (_, Some(mode)) => Some(mode),
+        (OneironerProvider::Endpoint, None) => Some(OneironerMode::Shadow),
+        _ => None,
+    };
+    if let Some(mode) = mode {
+        table.insert("mode".into(), mode.as_str().into());
+    }
+    if choice == OneironerProvider::Endpoint {
+        let missing = |flag: &str| anyhow::anyhow!("--oneironer endpoint requires {flag}");
+        let url = args
+            .oneironer_url
+            .clone()
+            .ok_or_else(|| missing("--oneironer-url"))?;
+        let checkpoint = args
+            .oneironer_checkpoint_sha16
+            .clone()
+            .ok_or_else(|| missing("--oneironer-checkpoint-sha16"))?;
+        let labels = args
+            .oneironer_label_count
+            .ok_or_else(|| missing("--oneironer-label-count"))?;
+        table.insert("url".into(), url.into());
+        table.insert("checkpoint_sha16".into(), checkpoint.into());
+        table.insert("label_count".into(), i64::from(labels).into());
+    }
+    Ok(table)
 }
 
 fn ask_choice(
@@ -331,6 +434,16 @@ fn config_text(args: &InitArgs, choice: EmbedderProvider, path: &Path) -> anyhow
         table.insert("dict_search_paths".into(), toml::Value::Array(paths));
     }
     table.insert("embedder".into(), toml::Value::Table(embedder));
+    // An existing label table survives a rerun; init never writes one.
+    let labels = table
+        .get("oneironer")
+        .and_then(|section| section.get("labels"))
+        .cloned();
+    let mut tagger = tagger_table(args)?;
+    if let Some(labels) = labels {
+        tagger.insert("labels".into(), labels);
+    }
+    table.insert("oneironer".into(), toml::Value::Table(tagger));
     Ok(toml::to_string_pretty(&table)?)
 }
 
@@ -496,6 +609,99 @@ provider = "local"
         crate::embedder::build_remote_rung(&config).unwrap();
         assert!(!path.exists());
         assert!(!args.path.exists());
+    }
+
+    #[test]
+    fn the_interactive_tagger_question_defaults_to_none() {
+        let mut args = InitArgs::default();
+        ask_tagger(&mut args, &mut "\n".as_bytes(), &mut Vec::new()).unwrap();
+        assert_eq!(args.oneironer, Some(OneironerProvider::None));
+        let mut args = InitArgs::default();
+        ask_tagger(
+            &mut args,
+            &mut "endpoint\nhttp://127.0.0.1:9100\n0123456789abcdef\n3\nshadow\n".as_bytes(),
+            &mut Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(args.oneironer, Some(OneironerProvider::Endpoint));
+        assert_eq!(args.oneironer_label_count, Some(3));
+        assert_eq!(
+            args.oneironer_mode,
+            Some(crate::config::OneironerMode::Shadow)
+        );
+        assert!(
+            tagger_table(&InitArgs {
+                oneironer_url: Some("http://127.0.0.1:9100".into()),
+                ..InitArgs::default()
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn the_interactive_tagger_mode_defaults_to_shadow_while_save_is_not_built() {
+        let mut args = InitArgs::default();
+        let mut shown = Vec::new();
+        ask_tagger(
+            &mut args,
+            &mut "endpoint\nhttp://127.0.0.1:9100\n0123456789abcdef\n3\n\n".as_bytes(),
+            &mut shown,
+        )
+        .unwrap();
+        assert_eq!(args.oneironer_mode, Some(OneironerMode::Shadow));
+        let shown = String::from_utf8(shown).unwrap();
+        assert!(
+            shown.contains("save is not available yet) [shadow]"),
+            "{shown}"
+        );
+        let table = tagger_table(&args).unwrap();
+        assert_eq!(
+            table.get("mode").and_then(toml::Value::as_str),
+            Some("shadow")
+        );
+    }
+
+    #[test]
+    fn a_non_interactive_endpoint_init_without_a_mode_writes_shadow() {
+        let args = InitArgs {
+            oneironer: Some(OneironerProvider::Endpoint),
+            oneironer_url: Some("http://127.0.0.1:9100".into()),
+            oneironer_checkpoint_sha16: Some("0123456789abcdef".into()),
+            oneironer_label_count: Some(3),
+            ..InitArgs::default()
+        };
+        let table = tagger_table(&args).unwrap();
+        assert_eq!(
+            table.get("mode").and_then(toml::Value::as_str),
+            Some("shadow")
+        );
+        let none = tagger_table(&InitArgs::default()).unwrap();
+        assert!(none.get("mode").is_none());
+    }
+
+    #[test]
+    fn a_tagger_refusal_comes_before_the_local_embedder_setup() {
+        let dir = tempfile::tempdir().unwrap();
+        let args = InitArgs {
+            path: dir.path().join("vault"),
+            config: Some(dir.path().join("oneiron.toml")),
+            embedder: Some(EmbedderProvider::Local),
+            oneironer: Some(OneironerProvider::Local),
+            map_size: 64 * 1024 * 1024,
+            ..Default::default()
+        };
+        // CUDA is not built into this crate on any host: were the local
+        // embedder prepared first, its device refusal would come back instead,
+        // and with a device that resolved, its model download would start.
+        let env = EnvConfig::from_pairs([("ONEIRON_EMBEDDER_DEVICE", "cuda")]).unwrap();
+        let refused = init_with_env(args.clone(), env, None).unwrap_err();
+        assert_eq!(
+            refused.downcast_ref::<crate::oneironer::TaggerNotBuilt>(),
+            Some(&crate::oneironer::TaggerNotBuilt::LocalProvider),
+            "{refused}"
+        );
+        assert!(!args.path.exists());
+        assert!(!dir.path().join("oneiron.toml").exists());
     }
 
     #[test]

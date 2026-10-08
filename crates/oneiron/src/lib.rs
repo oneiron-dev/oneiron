@@ -60,6 +60,7 @@ pub mod retrieval_quality;
 pub mod saved_query;
 pub mod serialize;
 pub mod speculative;
+pub mod tagging;
 pub mod tokenizer;
 // ===== Knowledge model ===== typed record families: claims, provenance, corpus, affect, people
 pub mod actor_claims;

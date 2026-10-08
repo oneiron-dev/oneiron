@@ -3,6 +3,7 @@
 //! edge-record helpers kept for Vault-facing compatibility.
 
 mod actors_memory;
+mod database_digests;
 mod doctor_manifest;
 mod edges;
 mod entities;
@@ -29,6 +30,8 @@ use crate::store::Store;
 pub use crate::store::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWriterLease};
 
 pub use self::actors_memory::ActorBound;
+#[cfg(test)]
+pub(crate) use self::database_digests::{mask_embed_job_stamps, mask_unrepeatable_stamps};
 pub use self::doctor_manifest::{
     TextIndexStatus, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState,
     VaultDoctorHnswReport, VaultDoctorReport,

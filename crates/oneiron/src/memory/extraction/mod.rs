@@ -2,9 +2,10 @@
 mod persist;
 mod shadow;
 mod types;
+pub(crate) use shadow::hash_input;
 pub use types::{
     CorefLink, EncoderGolden, EncoderInput, EncoderMessage, EncoderOutput, EncoderParity,
-    ExtractionEncoder, ExtractionReceipt, NerSpan, ShadowTrace, WitnessWithShadow,
+    EncoderTurn, ExtractionEncoder, ExtractionReceipt, NerSpan, ShadowTrace, WitnessWithShadow,
 };
 #[cfg(test)]
 mod tests;
