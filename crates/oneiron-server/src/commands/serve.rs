@@ -76,12 +76,14 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
         tokio::task::spawn_blocking(move || crate::embedder::build_slot(embedder_config.as_ref()))
             .await
             .map_err(|e| anyhow::anyhow!("embedder slot task failed: {e}"))??;
+    let tagger = crate::oneironer::build_slot_off_runtime(config.oneironer.clone()).await?;
 
     // Reloads persisted CRDT state (d:root + d:w:* in sync_state) — a fresh
     // boot must not silently discard previously relayed updates/tombstones.
     let sync_server = SyncServer::new(Arc::new(vault), server_config)
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
         .with_embedder(embedder)
+        .with_tagger(tagger)
         .with_owner_host(owner_host);
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
     // Same bind, named through the listener enum managed mode also uses.
@@ -108,8 +110,8 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
     let sync_server = Arc::new(sync_server);
     let linear_handle = crate::linear_host::spawn(sync_server.clone()).await?;
     let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
-    let embedding_handle = sync_server.spawn_embedding_worker();
-    let backup_handle = sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK);
+    let mut workers = sync_server.spawn_slot_workers();
+    workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
     let app = build_app(sync_server).layer(cors_layer);
     host.ready()?;
     // Open sockets may never close by themselves, so the drain is bounded.
@@ -141,7 +143,7 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
         handle.abort();
         let _ = handle.await;
     }
-    for handle in [embedding_handle, backup_handle].into_iter().flatten() {
+    for handle in workers {
         handle.abort();
         let _ = handle.await;
     }

@@ -21,6 +21,7 @@ use crate::api::DeepRetrievalHost;
 use crate::config::SyncServerConfig;
 use crate::embedder::EmbedderSlot;
 use crate::mcp::{McpConnectorActorRegistry, McpCredentialHashKey};
+use crate::oneironer::TaggerSlot;
 use crate::usage::UsageLedger;
 
 use super::lifecycle::{LifecycleJobKey, NEXT_LIFECYCLE_SESSION_ID};
@@ -106,6 +107,9 @@ pub struct SyncServer {
     /// construction, the same way the deep-retrieval host is: `Self::new` pins
     /// no model and downloads nothing.
     pub(crate) embedder: Option<EmbedderSlot>,
+    /// The `[oneironer]` tagger slot, `None` when no tagger is configured.
+    /// Attached by the serve path after construction, like the embedder.
+    pub(crate) tagger: Option<TaggerSlot>,
     pub(crate) llm: Option<(Arc<dyn oneiron::LlmBackend>, oneiron::BudgetGuard)>,
     /// Model seats, background AI status and the Dreamer's session hints.
     /// Inert unless the serve path attaches a configured host.
@@ -251,6 +255,7 @@ impl SyncServer {
             self_brief_sessions: Mutex::new(BTreeMap::new()),
             deep_retrieval: None,
             embedder: None,
+            tagger: None,
             llm: None,
             ai: crate::ai_host::AiHandle::inert(),
             extraction_egress: None,
@@ -378,6 +383,13 @@ impl SyncServer {
     /// which is what every deployment did before this ticket.
     pub(crate) fn with_embedder(mut self, embedder: Option<EmbedderSlot>) -> Self {
         self.embedder = embedder;
+        self
+    }
+
+    /// Attaches the tagger slot resolved from configuration. Its worker
+    /// drains the tagging markers every witnessed turn commits.
+    pub(crate) fn with_tagger(mut self, tagger: Option<TaggerSlot>) -> Self {
+        self.tagger = tagger;
         self
     }
 

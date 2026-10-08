@@ -351,6 +351,21 @@ pub struct InitArgs {
     pub map_size: usize,
     #[arg(long = "dict-search-paths", value_delimiter = ',', num_args = 1..)]
     pub dict_search_paths: Option<Vec<PathBuf>>,
+    /// Tagger: local, endpoint, or none. Noninteractive omission selects none.
+    #[arg(long)]
+    pub oneironer: Option<crate::config::OneironerProvider>,
+    /// Base URL of a loopback tagger server.
+    #[arg(long)]
+    pub oneironer_url: Option<String>,
+    /// The checkpoint the tagger must report (16 lowercase hex digits).
+    #[arg(long)]
+    pub oneironer_checkpoint_sha16: Option<String>,
+    /// How many labels the tagger must report.
+    #[arg(long)]
+    pub oneironer_label_count: Option<u32>,
+    /// `save` (the default) or `shadow`.
+    #[arg(long)]
+    pub oneironer_mode: Option<crate::config::OneironerMode>,
 }
 
 #[derive(Args, Clone, Debug)]

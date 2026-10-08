@@ -314,6 +314,10 @@ pub struct VaultConfig {
     /// refused (`EmbeddingTransformChanged`), and a vault that has none
     /// adopts it. `None` checks nothing.
     pub embedding_transform: Option<String>,
+    /// Arms the tagging marker (ARCH-0036, serving the tagger): a base witness
+    /// commits one marker per touched turn inside its own transaction, keyed
+    /// by the turn and this tagger checkpoint. `None` commits none.
+    pub tagging: Option<crate::tagging::TaggingMarkerConfig>,
     /// LMDB map size in bytes.
     pub map_size: usize,
     /// Maximum LMDB reader slots.
@@ -558,6 +562,7 @@ impl VaultConfig {
             fast_dims: None,
             embedding_model: None,
             embedding_transform: None,
+            tagging: None,
             privacy: VaultPrivacyConfig::default(),
             map_size: 1 << 30,
             max_readers: 126,
@@ -584,6 +589,7 @@ impl VaultConfig {
             fast_dims: None,
             embedding_model: None,
             embedding_transform: None,
+            tagging: None,
             // The server preset is still self-host/local by default: running a
             // server does not by itself mean a third party hosts the vault.
             privacy: VaultPrivacyConfig::default(),
