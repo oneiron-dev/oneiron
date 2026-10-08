@@ -136,7 +136,11 @@ W = SHA3-256(ss_MLKEM || ss_X25519 || ct_MLKEM || ct_X25519 || ek_MLKEM || pk_X2
 `ct_X25519` is the ephemeral public key and `pk_X25519` the recipient's static key;
 all inputs have fixed lengths. The envelope key schedule then binds the recipient id,
 vault id, purpose, both suites, the epoch and both encapsulations through `H`. This is
-not X-Wing (which is defined for ML-KEM-768 only).
+not X-Wing (which is defined for ML-KEM-768 only). Where it differs from the draft's
+framework text: the recipient key is two independent seeds (an ML-KEM seed and an X25519
+secret) rather than one PRG-expanded seed; the two encapsulations sit in separate header
+fields rather than one concatenated ciphertext; and the label is ours, not a registered
+one. None of these changes the combiner's inputs or their order.
 
 - The recipient's public keys are bound from the recipient's own key on open, never read
   from the wire. Recipient public keys must come from authenticated metadata.
