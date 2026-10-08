@@ -47,12 +47,12 @@ slow-timeout = { period = "60s", terminate-after = 60 }
 
 # The 10,001-record budget test held a gate for 38+ min before its setup
 # stopped committing once per record. It still takes 170-240 s on mel, 400 s
-# alone on sel and over 12 min inside a loaded sel gate: each source turn
+# alone on sel and 1,271-1,319 s inside a full sel gate: each source turn
 # syncs its own custody key, and each entity read during the wake decodes the
-# whole persisted window. 30 min until those costs drop.
+# whole persisted window. 60 min until those costs drop.
 [[profile.default.overrides]]
 filter = 'package(oneiron) & test(=conversation_dag::tests::replay::ready_parent_budget_continues_after_reopen_without_other_traffic)'
-slow-timeout = { period = "60s", terminate-after = 30 }
+slow-timeout = { period = "60s", terminate-after = 60 }
 
 # The other conversation_dag replay tests finish in seconds.
 [[profile.default.overrides]]
