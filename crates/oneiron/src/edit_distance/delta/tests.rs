@@ -695,9 +695,15 @@ fn layout_changes_after_a_recorded_move_keep_its_price() {
         delta_from_recorded_ops(&window)
     };
     let plain = recorded(&[]);
-    let relaid = recorded(&[("aa\n\naaa", "a a a aa"), ("a a a aa", "aa\n\naaa")]);
-    assert_eq!(relaid.ops_summary, plain.ops_summary);
-    assert!((relaid.d_norm - 0.05).abs() < 1e-6, "{}", relaid.d_norm);
+    for layout in [
+        [("aa\n\naaa", "a a a aa"), ("a a a aa", "aa\n\naaa")],
+        // The separator removed, then put back.
+        [("aa\n\naaa", "aaaaa"), ("aaaaa", "aa\n\naaa")],
+    ] {
+        let relaid = recorded(&layout);
+        assert_eq!(relaid.ops_summary, plain.ops_summary, "{layout:?}");
+        assert!((relaid.d_norm - 0.05).abs() < 1e-6, "{}", relaid.d_norm);
+    }
 }
 
 fn rot13(text: &str) -> String {

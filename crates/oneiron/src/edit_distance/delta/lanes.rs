@@ -42,10 +42,10 @@ pub(super) const MAX_FIELD_DIFF_DEPTH: u32 = 64;
 /// at another must have been removed and added somewhere in the op log, so
 /// its characters come out of `del` and `ins` once each and are charged in
 /// `moved` at the move discount instead. The replay tracks which characters
-/// the log itself typed, so a pair is capped at the proposal text the log
-/// removed and the typed text that survives to finalize. Text typed and then
-/// deleted is churn: it is in neither cap, so it keeps its full price however
-/// the log split it. The caps are totals, not positions: where a move's line
+/// the log itself typed, so a pair is capped at what the log added and
+/// removed less its churn: text typed and then deleted again. Churn is in
+/// neither cap, so it keeps its full price however the log split it. It is
+/// counted in non-whitespace characters, because whitespace is layout. The caps are totals, not positions: where a move's line
 /// repeats the characters around it, the log can show less than the line,
 /// and a proposal character deleted and retyped there can still raise the
 /// move toward the line's weight.
@@ -64,8 +64,8 @@ pub fn delta_from_recorded_ops(finalized: &FinalizedProposalText) -> AmendmentDe
     let endpoints = myers_line_diff(&finalized.proposed_text, &finalized.final_text).ops;
     let moved = endpoints
         .moved
-        .min(log.ins - log.churn_ins)
-        .min(log.del - log.churn_del);
+        .min(log.ins - log.churn)
+        .min(log.del - log.churn);
     let ops_summary = OpsSummary {
         ins: log.ins - moved,
         del: log.del - moved,
@@ -83,15 +83,16 @@ pub fn delta_from_recorded_ops(finalized: &FinalizedProposalText) -> AmendmentDe
     }
 }
 
-/// What the op log removed and added, and how much of each was churn: text
-/// the log typed and then removed again.
+/// What the op log removed and added, and how much of it was churn: text
+/// the log typed and then removed again, counted on both sides.
 struct LoggedMass {
     ins: u32,
     del: u32,
-    /// Typed characters that do not survive to the last change.
-    churn_ins: u32,
-    /// Removed characters that the log itself had typed.
-    churn_del: u32,
+    /// Typed non-whitespace characters that a later change removed. Each was
+    /// added once and removed once, so it is churn in `ins` and in `del`.
+    /// Whitespace is layout: a typed space can come and go with a re-wrap, so
+    /// it is never counted here.
+    churn: u32,
 }
 
 impl LoggedMass {
@@ -99,8 +100,7 @@ impl LoggedMass {
         let mut mass = Self {
             ins: 0,
             del: 0,
-            churn_ins: 0,
-            churn_del: 0,
+            churn: 0,
         };
         // `typed[i]`: whether character `i` of the current collapsed text was
         // typed by a recorded change rather than proposed.
@@ -121,30 +121,32 @@ impl LoggedMass {
             let region = affix.prefix as usize..(affix.before_len - affix.suffix) as usize;
             let added = affix.added() as usize;
             let arrived: Vec<bool> = if layout_only {
-                carry_provenance(&before, &after, &typed, region.clone(), added)
+                carry_typed(&before, &after, &typed, region.clone(), added)
             } else {
                 vec![true; added]
             };
-            let removed_typed = typed[region.clone()].iter().filter(|t| **t).count();
+            let removed_typed = before
+                .chars()
+                .skip(region.start)
+                .zip(&typed[region.clone()])
+                .filter(|(c, flag)| **flag && !c.is_whitespace())
+                .count();
             typed.splice(region, arrived).for_each(drop);
             if layout_only {
                 continue;
             }
             mass.del = mass.del.saturating_add(affix.removed());
             mass.ins = mass.ins.saturating_add(affix.added());
-            mass.churn_del = mass.churn_del.saturating_add(u32_saturating(removed_typed));
+            mass.churn = mass.churn.saturating_add(u32_saturating(removed_typed));
         }
-        let survived = u32_saturating(typed.iter().filter(|t| **t).count());
-        mass.churn_ins = mass.ins.saturating_sub(survived);
         mass
     }
 }
 
-/// The provenance of a layout-only change's arrived region: it moves no
-/// character, so each non-whitespace character keeps its flag, and a space
-/// keeps the flag of the space that stood between the same two characters
-/// (a new space is layout, not typed text).
-fn carry_provenance(
+/// The typed flags of a layout-only change's arrived region: it moves no
+/// character, so each non-whitespace character keeps its flag. Whitespace is
+/// layout and is never churn, so its flag is not read.
+fn carry_typed(
     before: &str,
     after: &str,
     typed: &[bool],
@@ -152,31 +154,17 @@ fn carry_provenance(
     added: usize,
 ) -> Vec<bool> {
     let start = region.start;
-    let mut letters: Vec<bool> = Vec::new();
-    let mut spaces: Vec<Option<bool>> = vec![None];
-    for (c, flag) in before.chars().skip(region.start).zip(&typed[region]) {
-        if c.is_whitespace() {
-            if let Some(gap) = spaces.last_mut() {
-                *gap = Some(*flag);
-            }
-        } else {
-            letters.push(*flag);
-            spaces.push(None);
-        }
-    }
-    let mut seen = 0;
+    let mut carried = before
+        .chars()
+        .skip(start)
+        .zip(&typed[region])
+        .filter(|(c, _)| !c.is_whitespace())
+        .map(|(_, flag)| *flag);
     after
         .chars()
         .skip(start)
         .take(added)
-        .map(|c| {
-            if c.is_whitespace() {
-                spaces.get(seen).copied().flatten().unwrap_or(false)
-            } else {
-                seen += 1;
-                letters.get(seen - 1).copied().unwrap_or(false)
-            }
-        })
+        .map(|c| !c.is_whitespace() && carried.next().unwrap_or(false))
         .collect()
 }
 
