@@ -48,6 +48,7 @@ mod terminal_state;
 mod verb_kind;
 mod wave_port;
 mod wire_decode;
+pub(crate) use wire_decode::task_binding;
 mod wire_encode;
 
 #[cfg(test)]

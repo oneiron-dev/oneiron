@@ -99,9 +99,10 @@ pub(super) enum Projection {
     /// board), roster, role and budget.
     Project,
     /// A TASK authority fact (owner, cancellation, acknowledgement, human
-    /// assignment). One added since the image to a task the image holds counts
-    /// as changed; every other TASK body is content.
-    TaskFact,
+    /// assignment), one added since the image to a task the image holds
+    /// counting as changed; or a task's owner and assignee, which authorize the
+    /// asks bound to it. The rest of a TASK body is content.
+    Task,
     /// Every outbound grant, without the stamp each use writes. One only one
     /// side holds counts as changed.
     OutboundGrant,
@@ -165,7 +166,7 @@ const PROJECTS: Class = Class::Refuse {
 };
 const TASKS: Class = Class::Refuse {
     what: "task authority",
-    scope: Scope::Authority(Projection::TaskFact),
+    scope: Scope::Authority(Projection::Task),
 };
 const CONTACTS: Class = Class::Refuse {
     what: "counterparty contacts and their consents",

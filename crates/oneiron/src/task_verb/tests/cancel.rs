@@ -1117,3 +1117,56 @@ fn a_restore_never_drops_a_cancellation_made_since() {
     assert!(error.to_string().contains("task authority"), "{error}");
     assert!(!destination.exists());
 }
+
+/// ASTRA-9A-2-R2 F7: whom a task is assigned to authorizes the asks bound to
+/// it. A restore over the vault from before a reassignment of a task the
+/// backup holds is refused.
+#[test]
+fn a_restore_never_reverses_a_task_reassignment_made_since() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let first = EntityId::from_bytes([0xE3; 16]).expect("first id");
+    let second = EntityId::from_bytes([0xE4; 16]).expect("second id");
+    put_person(&vault, first);
+    put_person(&vault, second);
+    let task = vault
+        .memory(own, EdgeActorClass::Agent)
+        .tasks_create(&spec(120).with_assignee(TaskAssignee::Peer { actor_ref: first }))
+        .expect("task")
+        .task_ref
+        .expect("task ref");
+    let backups = tempfile::tempdir().expect("backups");
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100).expect("backup");
+
+    let mut reassigned = crate::task_verb::wire_decode::task_verb_body(&vault, task)
+        .expect("task body")
+        .expect("typed task body");
+    reassigned.assignee = Some(TaskAssignee::Peer { actor_ref: second });
+    let now = crate::unix_seconds_now() + 5;
+    vault
+        .put_entity(
+            &task,
+            crate::registry::ENTITY_TYPE_TASK,
+            crate::temporal::TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+            &crate::task_verb::wire_encode::encode_task_verb_body(reassigned),
+        )
+        .expect("reassign");
+
+    let destination = backups.path().join("restored");
+    let error = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &destination,
+        vault.config.clone(),
+        &vault,
+        200,
+    )
+    .err()
+    .expect("the restore must be refused");
+    assert!(error.to_string().contains("task authority"), "{error}");
+    assert!(!destination.exists());
+}

@@ -603,6 +603,22 @@ pub(super) fn task_body_field<'a>(entries: &'a [(Value, Value)], name: &str) -> 
     Ok(value)
 }
 
+/// Who a TASK body says owns the task and whom it is assigned to: the binding
+/// an ask on the task is authorized by. `None` for a body that is not a task
+/// verb body.
+pub(crate) fn task_binding(body: &[u8]) -> Option<(String, Option<EntityId>)> {
+    if !task_body_has_typed_subkind(body).ok()? {
+        return None;
+    }
+    let body = decode_task_verb_body(body).ok()?;
+    (body.role == TaskRole::Task.role_byte()).then(|| {
+        (
+            body.owner_ref,
+            body.assignee.and_then(TaskAssignee::entity_ref),
+        )
+    })
+}
+
 pub(super) fn task_body_has_typed_subkind(body: &[u8]) -> Result<bool> {
     let mut cursor = body;
     let value = rmpv::decode::read_value(&mut cursor)
