@@ -241,8 +241,7 @@ impl NativeClient {
     }
     #[pyo3(signature = (query, effort=None, scope_json=None, limit=None, format=None, as_of=None))]
     fn recall(
-        &self,
-        py: Python<'_>,
+        slf: PyRef<'_, Self>,
         query: String,
         effort: Option<&str>,
         scope_json: Option<&str>,
@@ -257,11 +256,11 @@ impl NativeClient {
         };
         let limit = limit.unwrap_or(10);
 
-        let output = py
-            .detach(|| {
-                self.inner
-                    .recall(&query, effort, &scope_json, limit, format.as_deref(), as_of)
-            })
+        // The receiver rides as a `PyRef` so the GIL token comes from it.
+        let inner = &slf.inner;
+        let output = slf
+            .py()
+            .detach(|| inner.recall(&query, effort, &scope_json, limit, format.as_deref(), as_of))
             .map_err(raise)?;
         encode_recall(&output)
     }

@@ -1365,11 +1365,10 @@ fn recall_doors_embed_the_query_when_the_vault_has_an_embedder() {
         let target = claimed[0].clone();
 
         let found = |pack: &Value| -> (Value, bool) {
-            let ids = pack["items"].as_array().into_iter().flatten();
-            let short_ids: Vec<&str> = ids.filter_map(|item| item["short_id"].as_str()).collect();
+            let mut ids = pack["items"].as_array().into_iter().flatten();
             (
                 pack["retrieval_meta"]["sparse"].clone(),
-                short_ids.contains(&target.as_str()),
+                ids.any(|item| item["short_id"].as_str() == Some(target.as_str())),
             )
         };
         // Wait until the claim vectors are filled and the HTTP door answers.

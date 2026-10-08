@@ -402,13 +402,12 @@ async fn a_paired_core_read_slip_recalls_over_the_websocket() {
         CoreAuth::from_headers(request.headers(), &server.config, server.vault().as_ref()).unwrap();
 
     let pack = rpc(&server, &auth, "recall", json!({"query": "solar panel"}))["result"].clone();
-    let found: Vec<&str> = pack["items"]
+    let found = pack["items"]
         .as_array()
         .unwrap()
         .iter()
-        .filter_map(|item| item["short_id"].as_str())
-        .collect();
-    assert!(found.contains(&said.as_str()), "{said}: {pack}");
+        .any(|item| item["short_id"].as_str() == Some(said.as_str()));
+    assert!(found, "{said}: {pack}");
 }
 
 #[tokio::test]
