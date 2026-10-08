@@ -2785,3 +2785,105 @@ fn a_received_dag_root_reads_alone_before_the_room_adopts_the_dag() {
         "the descendant reads its ancestry"
     );
 }
+
+/// A tagging claim never reads another kind's ready backlog: ordinary jobs
+/// ready at the same instant, one of them a row this build cannot decode,
+/// stand before the marker in the readiness index, and the marker is
+/// claimed and settled all the same.
+#[test]
+fn a_tagging_claim_never_reads_another_kinds_ready_backlog() {
+    use crate::attempt_queue::EnqueueAttempt;
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    let queue = AttemptQueue::new(&vault);
+    for n in 0..50_u8 {
+        queue
+            .enqueue(EnqueueAttempt {
+                kind: "test.backlog".into(),
+                payload: vec![n],
+                dedupe_key: None,
+                run_id: None,
+                now: NOW,
+            })
+            .expect("an ordinary ready job");
+    }
+    // A ready row of another kind that no build can decode, ready at once.
+    let id = [0x10_u8; 16];
+    let mut ready = [0_u8; 24];
+    ready[8..].copy_from_slice(&id);
+    vault
+        .try_with_write_txn(|txn| {
+            vault
+                .store
+                .attempt_records
+                .put(txn, &id, b"not an attempt record")?;
+            vault.store.attempt_ready.put(txn, &ready, &id)?;
+            Ok::<(), crate::Error>(())
+        })
+        .expect("an undecodable ready row");
+    let turn = witness(&vault, "Ada sailed north");
+    let tagger = Scripted::new(Answer::Good);
+    let pass = reconciler(&vault, &tagger).drain_once().expect("drain");
+    assert_eq!(pass.traces.len(), 1);
+    assert_eq!(pass.traces[0].turn, Some(turn));
+    assert!(matches!(
+        pass.traces[0].outcome,
+        TaggingOutcome::Shadowed { .. }
+    ));
+}
+
+/// A marker an earlier build left waiting below the id range markers now
+/// take, where claims never look, is moved onto a new marker in the range
+/// when the worker starts, and its turn is tagged.
+#[test]
+fn a_marker_an_earlier_build_left_below_the_range_is_moved_into_it() {
+    use crate::attempt_queue::EnqueueAttempt;
+    let dir = tempfile::tempdir().expect("dir");
+    let turn = {
+        let vault = open(dir.path(), false);
+        let turn = witness(&vault, "Ada sailed north");
+        let queue = AttemptQueue::new(&vault);
+        queue
+            .enqueue(EnqueueAttempt {
+                kind: "test.legacy".into(),
+                payload: Vec::new(),
+                dedupe_key: None,
+                run_id: None,
+                now: NOW,
+            })
+            .expect("a row under a minted id");
+        // What an earlier build stored: a waiting marker under that id.
+        let mut row = queue
+            .list()
+            .expect("rows")
+            .into_iter()
+            .find(|row| row.kind == "test.legacy")
+            .expect("the row");
+        row.kind = TAGGING_MARKER_KIND.into();
+        row.payload = rmp_serde::to_vec_named(&super::marker::MarkerPayload {
+            turn,
+            checkpoint: CHECKPOINT.into(),
+        })
+        .expect("payload");
+        let encoded = crate::attempt_queue::encode_signal_record(&row).expect("encode");
+        vault
+            .try_with_write_txn(|txn| {
+                vault
+                    .store
+                    .attempt_records
+                    .put(txn, row.id.as_bytes(), &encoded)?;
+                Ok::<(), crate::Error>(())
+            })
+            .expect("an earlier build's marker");
+        assert!(!crate::attempt_queue::owner_retained_id(&row.id));
+        turn
+    };
+    let vault = open(dir.path(), true);
+    let tagger = Scripted::new(Answer::Good);
+    reconciler(&vault, &tagger).drain_once().expect("drain");
+    assert!(markers(&vault).is_empty(), "the old marker left the ledger");
+    let outcomes = history(&vault, &turn);
+    assert!(matches!(outcomes[0], TaggingOutcome::Rekeyed));
+    assert!(matches!(outcomes[1], TaggingOutcome::Shadowed { .. }));
+    assert_eq!(tagger.calls(), 1);
+}

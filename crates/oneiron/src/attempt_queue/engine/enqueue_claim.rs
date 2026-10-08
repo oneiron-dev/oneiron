@@ -286,6 +286,141 @@ impl<'a> AttemptQueue<'a> {
         self.claim_matching_in_txn(wtxn, input, kind, cutoff)
     }
 
+    /// [`Self::claim_kind_storage_in_txn`] for an owner-retained kind, reading
+    /// only the owner-retained entries of the readiness index.
+    ///
+    /// Within one ready instant every other kind's entries sort before the
+    /// owner-retained range, so one seek per instant passes over them without
+    /// reading their rows: the work under the writer never grows with another
+    /// kind's ready backlog, and a row of another kind that does not decode
+    /// never stops the claim. Those entries are left for their own kind's
+    /// claim to repair; an owner-retained entry gets the generic claim's
+    /// checks and repairs.
+    pub(crate) fn claim_owner_retained_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        kind: &str,
+        input: ClaimAttempt,
+        cutoff: u64,
+    ) -> Result<ClaimOutcome> {
+        validate_kind(kind)?;
+        validate_lease_owner(&input.lease_owner)?;
+        if !crate::attempt_queue::owner_retained_kind(kind) {
+            return Err(crate::error::Error::InvariantViolation(
+                "an owner-retained claim names another kind",
+            ));
+        }
+        let floor = |ready: u64| {
+            let mut key = [0_u8; READY_KEY_LEN];
+            key[..8].copy_from_slice(&ready.to_be_bytes());
+            key[8] = crate::attempt_queue::OWNER_RETAINED_ID_PREFIX;
+            key.to_vec()
+        };
+        let after = |key: &[u8]| [key, &[0][..]].concat();
+        let mut lower = floor(0);
+        let mut stale_ready_keys = Vec::new();
+        let mut ready_replacements = Vec::new();
+        let mut stale_missing_record_ids = HashSet::new();
+        let mut claimed = None;
+        loop {
+            let next = self
+                .store
+                .attempt_ready
+                .range(
+                    &*wtxn,
+                    &(
+                        std::ops::Bound::Included(&lower[..]),
+                        std::ops::Bound::Unbounded,
+                    ),
+                )?
+                .next()
+                .transpose()?
+                .map(|(key, value)| (key.to_vec(), value.to_vec()));
+            let Some((key, value)) = next else {
+                break;
+            };
+            let Ok((key_ready_at, key_id)) = decode_ready_key(&key) else {
+                lower = after(&key);
+                continue;
+            };
+            if key_ready_at > cutoff {
+                break;
+            }
+            if !crate::attempt_queue::owner_retained_id(&key_id) {
+                lower = floor(key_ready_at);
+                continue;
+            }
+            lower = after(&key);
+            let Ok(id) = AttemptId::from_bytes(&value) else {
+                stale_ready_keys.push(key);
+                continue;
+            };
+            if id != key_id {
+                stale_ready_keys.push(key);
+                continue;
+            }
+            let Some(raw_record) = self.store.attempt_records.get(&*wtxn, id.as_bytes())? else {
+                stale_missing_record_ids.insert(id);
+                stale_ready_keys.push(key);
+                continue;
+            };
+            let mut record = decode_record(&raw_record, id)?;
+            if !record.state.is_ready_indexed() {
+                stale_ready_keys.push(key);
+                continue;
+            }
+            let record_ready_at = ready_at(&record);
+            if record_ready_at != key_ready_at {
+                stale_ready_keys.push(key.clone());
+                if record_ready_at > cutoff {
+                    ready_replacements.push((ready_key(record_ready_at, id), id));
+                    continue;
+                }
+            }
+            if record.kind != kind || !record.accepts_worker(&input.lease_owner) {
+                if record_ready_at != key_ready_at {
+                    ready_replacements.push((ready_key(record_ready_at, id), id));
+                }
+                continue;
+            }
+            if !crate::task_verb::task_dispatch_ready(
+                self.store,
+                &*wtxn,
+                record.task_ref.as_deref(),
+                input.now,
+            )? {
+                continue;
+            }
+            lease_claimed_record(&mut record, &input.lease_owner, input.now)?;
+            claimed = Some((key, id, record));
+            break;
+        }
+
+        self.delete_dedupe_entries_for_ids(wtxn, &stale_missing_record_ids)?;
+        for key in stale_ready_keys {
+            self.store.attempt_ready.delete(wtxn, &key)?;
+        }
+        for (key, id) in ready_replacements {
+            self.store.attempt_ready.put(wtxn, &key, id.as_bytes())?;
+        }
+
+        let Some((ready_key, id, record)) = claimed else {
+            return Ok(ClaimOutcome::Empty);
+        };
+        crate::task_verb::acquire_task_symbols(
+            self.store,
+            wtxn,
+            record.task_ref.as_deref(),
+            input.now,
+        )?;
+        self.store.attempt_ready.delete(wtxn, &ready_key)?;
+        let encoded = encode_record(&record)?;
+        self.store
+            .attempt_records
+            .put(wtxn, id.as_bytes(), &encoded)?;
+        Ok(ClaimOutcome::Claimed(record))
+    }
+
     /// Repairs ready/dedupe rows while returning the oldest claimable attempt id of
     /// this kind, without leasing it.
     pub(crate) fn ready_kind_candidate_in_txn(

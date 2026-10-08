@@ -67,7 +67,9 @@ pub enum TaggingOutcome {
         failure: TaggingFailure,
         retry_at: u64,
     },
-    /// A marker committed for another checkpoint, moved onto the active one.
+    /// A marker moved onto a new one that owes the turn its pass: committed
+    /// for another checkpoint, or by an earlier build below the id range
+    /// markers now take.
     Rekeyed,
     /// A try this worker held but never settled, handed back as an immediate
     /// retry at `retry_at`: a stopped worker left it leased, or its settling

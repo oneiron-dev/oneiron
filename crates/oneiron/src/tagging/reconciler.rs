@@ -204,11 +204,15 @@ impl TaggingReconciler {
     ///
     /// One pass over the job records keeps only this owner's leased markers;
     /// a row of any kind this build cannot decode is passed over, so no other
-    /// job's row can stop the worker from starting.
+    /// job's row can stop the worker from starting. The same pass finds the
+    /// markers an earlier build left waiting below the owner-retained id
+    /// range, where claims never look, and moves each onto a new marker in
+    /// the range, as a marker of another checkpoint is moved.
     pub fn release_stale_leases(&self) -> Result<usize> {
-        let stale = {
+        let (stale, stranded) = {
             let txn = self.vault.store.env.read_txn()?;
             let mut stale = Vec::new();
+            let mut stranded = Vec::new();
             for row in self.vault.store.attempt_records.iter(&txn)? {
                 let (key, raw) = row?;
                 let Ok(id) = AttemptId::from_bytes(&key) else {
@@ -217,14 +221,20 @@ impl TaggingReconciler {
                 let Ok(record) = decode_record(&raw, id) else {
                     continue;
                 };
-                if record.kind == TAGGING_MARKER_KIND
-                    && record.state == AttemptState::Leased
+                if record.kind != TAGGING_MARKER_KIND {
+                    continue;
+                }
+                if record.state == AttemptState::Leased
                     && record.lease_owner.as_deref() == Some(self.lease_owner.as_str())
                 {
                     stale.push(record);
+                } else if matches!(record.state, AttemptState::Queued | AttemptState::Scheduled)
+                    && !crate::attempt_queue::owner_retained_id(&id)
+                {
+                    stranded.push(id);
                 }
             }
-            stale
+            (stale, stranded)
         };
         let found = stale.len();
         {
@@ -238,9 +248,55 @@ impl TaggingReconciler {
                 }
             }
         }
-        self.stale_scanned.store(true, Ordering::Release);
         self.return_unsettled()?;
+        for id in stranded {
+            self.vault
+                .try_with_write_txn(|txn| self.rehome_in_txn(txn, id))?;
+        }
+        self.stale_scanned.store(true, Ordering::Release);
         Ok(found)
+    }
+
+    /// Moves a marker an earlier build left waiting below the owner-retained
+    /// range onto a new marker in it: leased, settled as rekeyed with its
+    /// trace and pruned, then owed again under a derived id. One that has
+    /// left the queue since the scan is let go.
+    fn rehome_in_txn(&self, txn: &mut heed::RwTxn<'_>, id: AttemptId) -> Result<()> {
+        let queue = AttemptQueue::from_store(&self.vault.store);
+        let waiting = queue.get_in_write_txn(txn, id)?.is_some_and(|record| {
+            matches!(record.state, AttemptState::Queued | AttemptState::Scheduled)
+        });
+        if !waiting {
+            return Ok(());
+        }
+        let now = self.stamp_in_txn(txn)?;
+        let ClaimOutcome::Claimed(record) = queue.claim_id_storage_in_txn(
+            txn,
+            id,
+            ClaimAttempt {
+                lease_owner: self.lease_owner.clone(),
+                now,
+            },
+            u64::MAX,
+        )?
+        else {
+            return Ok(());
+        };
+        let prior_retries = queue.retry_chain_depth_in_txn(txn, record.id)?;
+        let unread = unreadable_trace(&record, prior_retries);
+        let Some(payload) = MarkerPayload::decode(&record.payload) else {
+            return self.fail_unreadable_in_txn(txn, &record, &unread);
+        };
+        let trace = TaggingTrace {
+            turn: Some(payload.turn),
+            checkpoint: payload.checkpoint,
+            outcome: TaggingOutcome::Rekeyed,
+            ..unread
+        };
+        // Settled first, so its dedupe entry is free for the new marker.
+        self.settle_in_txn(txn, &record, &trace)?;
+        enqueue_marker_in_txn(&self.vault, txn, payload.turn, &self.checkpoint, now)?;
+        Ok(())
     }
 
     /// Claims and settles up to the batch size of ready markers, after
@@ -292,7 +348,9 @@ impl TaggingReconciler {
         Ok(pass)
     }
 
-    /// Leases the next ready marker.
+    /// Leases the next ready marker, reading only the owner-retained entries
+    /// of the readiness index, so another kind's ready backlog costs the
+    /// writer nothing.
     ///
     /// Every job row this reconciler writes is stamped from the store clock
     /// without persisting its floor, and a claim that finds nothing commits
@@ -304,9 +362,9 @@ impl TaggingReconciler {
         #[cfg(test)]
         self.vault.test_hooks().run_after_tagging_claim_writer();
         let now = self.stamp_in_txn(&txn)?;
-        let claimed = AttemptQueue::from_store(&self.vault.store).claim_kind_storage_in_txn(
+        let claimed = AttemptQueue::from_store(&self.vault.store).claim_owner_retained_in_txn(
             &mut txn,
-            Some(TAGGING_MARKER_KIND),
+            TAGGING_MARKER_KIND,
             ClaimAttempt {
                 lease_owner: self.lease_owner.clone(),
                 now,
