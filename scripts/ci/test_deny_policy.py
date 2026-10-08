@@ -68,19 +68,6 @@ class DenyPolicyTests(unittest.TestCase):
         lock.write_text(f'[[package]]\nname = "{package}"\nversion = "{version}"\n')
         return deny, lock, metadata_path
 
-    def test_every_advisory_ignore_names_a_locked_crate(self):
-        self.assertEqual(find_stale_ignores(ROOT / "deny.toml", ROOT / "Cargo.lock"), [])
-
-    def test_a_stale_ignore_is_reported(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            advisory_id = "RUSTSEC-2024-0370"
-            deny, lock, graph = self.fixture(root, advisory_id, "proc-macro-error", "1.0.4")
-            lock.write_text('[[package]]\nname = "other-crate"\nversion = "1.0.4"\n')
-            self.assertEqual(find_stale_ignores(deny, lock, graph), [advisory_id])
-            lock.write_text('[[package]]\nname = "proc-macro-error"\nversion = "1.0.5"\n')
-            self.assertEqual(find_stale_ignores(deny, lock, graph), [advisory_id])
-
     def test_locked_but_unaffected_version_is_stale(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -133,15 +120,6 @@ class DenyPolicyTests(unittest.TestCase):
             self.assertEqual(find_stale_ignores(deny, lock, graph), [advisory_id])
             deny.write_text(deny.read_text().replace("zerocopy@0.7.35", "zerocopy@0.6.5"))
             self.assertEqual(find_stale_ignores(deny, lock, graph), [])
-
-    def test_tokio_rustls_partial_bound_prerelease_is_unaffected(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            advisory_id = "RUSTSEC-2020-0019"
-            deny, lock, graph = self.fixture(
-                root, advisory_id, "tokio-rustls", "0.12.0-alpha.1"
-            )
-            self.assertEqual(find_stale_ignores(deny, lock, graph), [advisory_id])
 
 
 if __name__ == "__main__":

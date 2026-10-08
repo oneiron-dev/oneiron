@@ -14,7 +14,4 @@ mod wire_and_scoring;
 pub(crate) use self::cli_and_pinned_config::run;
 
 #[cfg(test)]
-use self::{
-    cli_and_pinned_config::*, config_types::*, eval_run::*, reports_and_fixture_helpers::*,
-    taskgen::*, wire_and_scoring::*,
-};
+use self::{cli_and_pinned_config::*, config_types::*, wire_and_scoring::*};

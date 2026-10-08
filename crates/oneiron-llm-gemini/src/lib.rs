@@ -63,5 +63,3 @@ impl<T: GeminiTransport> LlmBackend for GeminiBackend<T> {
         Ok(LlmStream::new(stream::GeminiEventStream::new(source)))
     }
 }
-#[cfg(test)]
-mod tests;

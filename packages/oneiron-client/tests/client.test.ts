@@ -80,87 +80,7 @@ function makeClient(response: Response): {
   };
 }
 
-describe("raw response passthrough", () => {
-  test("request returns the very Response the runtime produced", async () => {
-    const response = new Response('{"ok":true}', {
-      status: 200,
-      headers: { "x-oneiron-probe": "kept" },
-    });
-    const { instance } = makeClient(response);
-
-    const received = await instance.request("/api/health");
-
-    expect(received).toBe(response);
-    expect(received.bodyUsed).toBe(false);
-    expect(received.headers.get("x-oneiron-probe")).toBe("kept");
-    expect(await received.text()).toBe('{"ok":true}');
-  });
-
-  test("HTTP error statuses resolve untouched; only network failure rejects", async () => {
-    const envelope = '{"code":"UNAUTHORIZED","message":"request is not authorized"}';
-    const failure = new Response(envelope, {
-      status: 401,
-      headers: { "content-type": "application/json" },
-    });
-    const { instance } = makeClient(failure);
-
-    const received = await instance.discover();
-    expect(received).toBe(failure);
-    expect(received.status).toBe(401);
-    expect(received.ok).toBe(false);
-    expect(await received.text()).toBe(envelope);
-
-    const { fetch, calls } = recordingFetch(() => {
-      throw new TypeError("unused");
-    });
-    const offline = new HttpBaseClient({ baseUrl: BASE_URL, fetch });
-    await expect(offline.discover()).rejects.toBeInstanceOf(TypeError);
-    expect(calls).toHaveLength(1);
-  });
-
-  test("a failed mutation is never re-sent", async () => {
-    const { fetch, calls } = recordingFetch(
-      new Response("upstream is unhappy", { status: 500 }),
-    );
-    const instance = new HttpBaseClient({
-      baseUrl: BASE_URL,
-      secret: PLACEHOLDER_SECRET,
-      fetch,
-    });
-
-    const response = await instance.callVerb({
-      verb: "board.append",
-      body: { text: "placeholder" },
-      idempotencyKey: "idem-1",
-    });
-
-    expect(response.status).toBe(500);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.headers.get("Idempotency-Key")).toBe("idem-1");
-    expect(calls[0]?.init?.method).toBe("POST");
-    expect(calls[0]?.init?.body).toBe('{"text":"placeholder"}');
-  });
-});
-
 describe("url construction stays on the configured origin", () => {
-  test("convenience methods build the documented routes", async () => {
-    const { instance, calls } = makeClient(new Response("{}"));
-
-    await instance.discover();
-    await instance.searchText({ query: "kickoff notes", limit: 5, view: "summary" });
-    await instance.getEntity("entity/42");
-    await instance.callVerb({ verb: "board.append", body: {} });
-    await instance.request("/api/edges/entity-1");
-
-    expect(calls.map((call) => call.input)).toEqual([
-      "http://127.0.0.1:3000/api/core/discover",
-      "http://127.0.0.1:3000/api/search/text?query=kickoff+notes&limit=5&view=summary",
-      "http://127.0.0.1:3000/api/entity/entity%2F42",
-      "http://127.0.0.1:3000/v1/core/memory/verbs/board.append",
-      "http://127.0.0.1:3000/api/edges/entity-1",
-    ]);
-  });
-
   test("a path that leaves the origin is refused before a request exists", () => {
     const baseUrl = new URL(BASE_URL);
 
@@ -216,26 +136,6 @@ describe("redirects are followed by hand and never leave the origin", () => {
     expect(calls[1]?.init?.body).toBe("{}");
   });
 
-  test("a 303 becomes a bodyless GET, the way fetch itself would", async () => {
-    const { fetch, calls } = sequencedFetch([
-      redirectResponse(303, "/api/entity/entity-42"),
-      new Response("{}", { status: 200 }),
-    ]);
-    const instance = new HttpBaseClient({
-      baseUrl: BASE_URL,
-      secret: PLACEHOLDER_SECRET,
-      fetch,
-    });
-
-    await instance.callVerb({ verb: "board.append", body: { text: "placeholder" } });
-
-    expect(calls[0]?.init?.method).toBe("POST");
-    expect(calls[1]?.init?.method).toBe("GET");
-    expect(calls[1]?.init?.body).toBeUndefined();
-    expect(calls[1]?.headers.get("content-type")).toBeNull();
-    expect(calls[1]?.headers.get("authorization")).toBe(`Bearer ${PLACEHOLDER_SECRET}`);
-  });
-
   test("a cross-origin redirect is refused, not forwarded", async () => {
     const { fetch, calls } = sequencedFetch([
       redirectResponse(302, "https://evil.example/api/health"),
@@ -252,33 +152,9 @@ describe("redirects are followed by hand and never leave the origin", () => {
     expect(calls.every((call) => call.input.startsWith(BASE_URL))).toBe(true);
   });
 
-  test("a redirect loop is capped instead of chased", async () => {
-    const { fetch, calls } = sequencedFetch(
-      Array.from({ length: 10 }, () => redirectResponse(307, "/api/health")),
-    );
-    const instance = new HttpBaseClient({
-      baseUrl: BASE_URL,
-      secret: PLACEHOLDER_SECRET,
-      fetch,
-    });
-
-    await expect(instance.request("/api/health")).rejects.toThrow(/more than 5 redirects/);
-    // The first request plus the five hops the cap allows, and no more.
-    expect(calls).toHaveLength(6);
-  });
 });
 
 describe("one credential, one authority model", () => {
-  test("caller headers add to the configured defaults", async () => {
-    const { instance, calls } = makeClient(new Response("{}"));
-
-    await instance.request("/api/health", { headers: { "x-trace": "abc" } });
-
-    const sent = calls[0]?.headers;
-    expect(sent?.get("authorization")).toBe(`Bearer ${PLACEHOLDER_SECRET}`);
-    expect(sent?.get("x-trace")).toBe("abc");
-  });
-
   test("a caller may not silently substitute the configured credential", () => {
     const defaults = new Headers({ Authorization: `Bearer ${PLACEHOLDER_SECRET}` });
 

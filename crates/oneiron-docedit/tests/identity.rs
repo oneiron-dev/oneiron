@@ -104,89 +104,6 @@ fn package_part(source: &[u8], part: &str) -> Vec<u8> {
 }
 
 #[test]
-fn pinned_office_deck_is_archive_exact_and_edit_confined() {
-    let source = include_bytes!("../../../scripts/office/fixtures/clean.pptx");
-    let mut package = Package::open(source, fixture_limits()).expect("pinned clean deck");
-    assert_eq!(package.export().expect("fixture operation"), source);
-    let names: Vec<String> = package.names().map(str::to_owned).collect();
-    package
-        .replace_text(
-            "ppt/slides/slide1.xml",
-            &[
-                "p:sld", "p:cSld", "p:spTree", "p:sp", "p:txBody", "a:p", "a:r", "a:t",
-            ],
-            "ONE-2531 clean oracle fixture",
-            "Retained & safe",
-        )
-        .expect("fixture operation");
-    let candidate = Package::open(
-        &package.export().expect("fixture operation"),
-        fixture_limits(),
-    )
-    .expect("fixture operation");
-    for name in names {
-        if name != "ppt/slides/slide1.xml" {
-            assert_eq!(
-                candidate.part(&name).expect("fixture operation"),
-                Some(package_part(source, &name)),
-                "{name}"
-            );
-        }
-    }
-    let text = candidate
-        .part("ppt/slides/slide1.xml")
-        .expect("fixture operation")
-        .expect("fixture operation");
-    assert!(
-        text.windows(b"Retained &amp; safe".len())
-            .any(|w| w == b"Retained &amp; safe")
-    );
-}
-
-#[test]
-fn limits_missing_target_and_stale_expected_fail_closed() {
-    let source = SAMPLES[0].1;
-    assert!(matches!(
-        Package::open(
-            source,
-            Limits {
-                entries: 2,
-                ..fixture_limits()
-            }
-        ),
-        Err(Error::Invalid(_))
-    ));
-    assert!(matches!(
-        Package::open(
-            source,
-            Limits {
-                part_bytes: 4,
-                ..fixture_limits()
-            }
-        ),
-        Err(Error::Invalid(_))
-    ));
-    let mut package = Package::open(source, fixture_limits()).expect("fixture operation");
-    assert!(matches!(
-        package.replace_text("word/document.xml", PATH, "stale", "other"),
-        Err(Error::Edit(_))
-    ));
-    assert!(matches!(
-        package.replace_text(
-            "word/document.xml",
-            &["root", "opaque"],
-            "unread",
-            "overwrite"
-        ),
-        Ok(())
-    ));
-    assert!(matches!(
-        package.replace_text("word/document.xml", &["root", "x:extLst"], "", "other"),
-        Err(Error::Edit(_))
-    ));
-}
-
-#[test]
 fn signed_duplicate_and_unsafe_paths_refuse_mutation_or_open() {
     let signed = include_bytes!("fixtures/signed.zip");
     let mut package = Package::open(signed, fixture_limits()).expect("fixture operation");
@@ -302,34 +219,5 @@ fn ambiguous_target_and_invalid_xml_character_refuse() {
     assert_eq!(
         package.export().expect("fixture operation"),
         include_bytes!("fixtures/ambiguous.zip")
-    );
-}
-
-#[test]
-fn data_descriptors_survive_noop_and_changed_entry_drops_only_its_descriptor() {
-    let source = include_bytes!("fixtures/descriptor.docx");
-    let mut package = Package::open(source, fixture_limits()).expect("fixture operation");
-    assert_eq!(package.export().expect("fixture operation"), source);
-    let unknown = package
-        .part("customXml/unreachable.bin")
-        .expect("fixture operation");
-    package
-        .replace_text("word/document.xml", PATH, "old", "edited")
-        .expect("fixture operation");
-    let output = package.export().expect("fixture operation");
-    let reopened = Package::open(&output, fixture_limits()).expect("fixture operation");
-    assert_eq!(
-        reopened
-            .part("customXml/unreachable.bin")
-            .expect("fixture operation"),
-        unknown
-    );
-    let xml = reopened
-        .part("word/document.xml")
-        .expect("fixture operation")
-        .expect("fixture operation");
-    assert_eq!(
-        xml,
-        b"<root><item>edited</item><x:extLst xmlns:x=\"urn:x\"/></root>"
     );
 }

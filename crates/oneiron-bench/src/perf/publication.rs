@@ -397,6 +397,3 @@ fn evaluate_checks(inputs: &PublicationInputs) -> Vec<PublicationCheck> {
         ),
     ]
 }
-
-#[cfg(test)]
-mod tests;

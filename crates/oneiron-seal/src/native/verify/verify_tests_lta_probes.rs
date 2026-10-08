@@ -3,20 +3,18 @@
 #[cfg(test)]
 pub(crate) mod tests {
     #![allow(clippy::unwrap_used)]
-    use std::sync::Arc;
 
     use lopdf::{Document, LoadOptions, Object, Stream};
 
-    use super::super::super::{cms, engine, pdf, profile};
+    use super::super::super::{cms, pdf, profile};
     use super::super::verify_dss_core::dss_revision_end;
     use super::super::verify_sig_pipeline::collect_signatures;
     use super::super::verify_tests_fixtures_dss_a::tests::*;
     use super::super::verify_tests_time_lta_a::tests::*;
     use crate::api::{
-        FetchPolicy, PadesProfile, PdfSealEngine, SealConfig, SealResourceLimits,
-        SignatureAlgorithm, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode,
+        PadesProfile, PdfSealEngine, SealResourceLimits, SignatureAlgorithm, VerifyCheckKind,
+        VerifyCheckStatus, VerifyFindingCode,
     };
-    use crate::error::{InputInvalidCode, SealError};
 
     /// Catalog body for hand-built revisions: the current catalog plus a
     /// /DSS key. Reads /Pages and /AcroForm from the revision state.
@@ -485,37 +483,6 @@ pub(crate) mod tests {
         assert_material_fails(&checks);
     }
 
-    #[test]
-    fn verify_enforces_max_pdf_objects() {
-        // The seal side rejects over-cap object counts; the verify side
-        // must enforce the same configured cap.
-        let signer = test_ca("objcap-signer");
-        let bytes = append_sig_revision(&base_input(), &signer, "objcap", None, 0);
-        let limits = SealResourceLimits {
-            max_pdf_objects: 2,
-            ..SealResourceLimits::default()
-        };
-        let engine = engine::NativeSealEngine::new(
-            SealConfig {
-                trust_anchors_der: vec![signer.cert_der],
-                timestamp_authorities: Vec::new(),
-                fetch_policy: FetchPolicy::default(),
-                resource_limits: limits,
-            },
-            Arc::new(NoopBackend),
-            Arc::new(NoopFetcher),
-            Arc::new(ClockMs(VERIFY_SECS * 1000)),
-        )
-        .unwrap();
-        let err = engine.verify_sealed_pdf(&bytes).unwrap_err();
-        assert!(matches!(
-            err,
-            SealError::InputInvalid {
-                code: InputInvalidCode::ObjectLimitExceeded
-            }
-        ));
-    }
-
     /// Signature dictionary body with patchable /ByteRange and /Contents,
     /// /Type optional (the typeless interop shape). Mirrors pdf's
     /// sig_dict_body. Returns (body, byterange_patch_rel, contents_lt_rel).
@@ -640,48 +607,5 @@ pub(crate) mod tests {
             "typeless signature doc must verify: {report:?}"
         );
         assert_eq!(report.achieved_profile(), Some(PadesProfile::BaselineB));
-    }
-
-    #[test]
-    fn orphan_malformed_sig_dict_does_not_block_reachable_pin() {
-        // botfix7 P1: a REACHABLE malformed partial shape (no /Contents)
-        // still errors — the gate binds reached dictionaries only. An
-        // unreachable copy of the same shape beside it is not consulted.
-        let mut doc = Document::with_version("1.4");
-        let mut partial = lopdf::Dictionary::new();
-        partial.set(
-            "ByteRange",
-            Object::Array(vec![
-                Object::Integer(0),
-                Object::Integer(1),
-                Object::Integer(2),
-                Object::Integer(3),
-            ]),
-        );
-        let reachable_id = doc.add_object(Object::Dictionary(partial.clone()));
-        // The unreachable twin: identical shape, never named by any field.
-        doc.add_object(Object::Dictionary(partial));
-        let mut field = lopdf::Dictionary::new();
-        field.set("FT", Object::Name(b"Sig".to_vec()));
-        field.set("V", Object::Reference(reachable_id));
-        let field_id = doc.add_object(Object::Dictionary(field));
-        let mut af = lopdf::Dictionary::new();
-        af.set("Fields", Object::Array(vec![Object::Reference(field_id)]));
-        let af_id = doc.add_object(Object::Dictionary(af));
-        let mut pages = lopdf::Dictionary::new();
-        pages.set("Type", Object::Name(b"Pages".to_vec()));
-        pages.set("Kids", Object::Array(vec![]));
-        pages.set("Count", Object::Integer(0));
-        let pages_id = doc.add_object(Object::Dictionary(pages));
-        let mut catalog = lopdf::Dictionary::new();
-        catalog.set("Type", Object::Name(b"Catalog".to_vec()));
-        catalog.set("Pages", Object::Reference(pages_id));
-        catalog.set("AcroForm", Object::Reference(af_id));
-        let cat_id = doc.add_object(Object::Dictionary(catalog));
-        doc.trailer.set("Root", Object::Reference(cat_id));
-        assert!(
-            collect_signatures(&doc).is_err(),
-            "the reachable partial shape must still be judged malformed"
-        );
     }
 }

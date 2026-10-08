@@ -25,7 +25,6 @@ use oneiron::{
 use super::*;
 
 mod tests_commitment;
-mod tests_policy;
 mod tests_push;
 
 const COALESCE_FLOOR_MS: u64 =

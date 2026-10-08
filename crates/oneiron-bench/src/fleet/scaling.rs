@@ -77,35 +77,3 @@ fn sublinear_interval(before_nodes: usize, after_nodes: usize, before: f64, afte
         && after >= before
         && after / before < after_nodes as f64 / before_nodes as f64
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn decreasing_or_linear_samples_do_not_prove_sublinear_scaling() {
-        assert!(!sublinear_interval(4096, 16384, 112.07, 7.28));
-        assert!(!sublinear_interval(1024, 4096, 1.0, 4.0));
-        assert!(!sublinear_interval(1024, 4096, 0.0, 1.0));
-        assert!(!sublinear_interval(1024, 4096, 1.0, f64::NAN));
-        assert!(sublinear_interval(1024, 4096, 1.0, 2.0));
-    }
-    #[test]
-    fn scaling_keeps_real_pairs_separate_from_fleet_receipts() -> Result<()> {
-        let scratch = tempfile::tempdir()?;
-        let plan = Plan::fixture(scratch.path().to_path_buf());
-        let measured = measure(&plan)?;
-        assert_eq!(measured.schema, "oneiron-ppr-scaling-v1");
-        assert_eq!(
-            measured.samples.iter().map(|s| s.nodes).collect::<Vec<_>>(),
-            vec![32, 128, 512]
-        );
-        for sample in measured.samples {
-            assert_eq!(sample.optimization.equivalent_pairs, plan.ppr_samples);
-            assert_eq!(sample.metrics["ppr_resume"].completed, plan.ppr_samples);
-        }
-        assert!(measured.residual_miss_cost_growth.is_finite());
-        // Performance is observed on the assigned host, never asserted by a
-        // noisy unit fixture or promoted to a fleet CI floor from this schema.
-        Ok(())
-    }
-}

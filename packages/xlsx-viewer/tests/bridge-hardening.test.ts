@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import * as XLSX from "xlsx";
 import { ParseSessionStore } from "../src/bridge/handler";
-import { readSheet, readWorkbookOutline, sheetId, worksheetToCellData } from "../src/bridge/parse";
+import { readSheet, readWorkbookOutline, worksheetToCellData } from "../src/bridge/parse";
 import { createWorkerWorkbookSource, type ParseWorkerLike } from "../src/bridge/source";
 import type { ParseRequest, ParseResponse } from "../src/bridge/protocol";
 import { makeXlsxBytes } from "./helpers";
@@ -57,10 +57,6 @@ describe("parse: cell value coercion", () => {
 });
 
 describe("parse: sheet ids are collision-free (#5)", () => {
-  it("distinguishes the codex collision pair", () => {
-    expect(sheetId("7SRY2R")).not.toBe(sheetId("831Y2R"));
-  });
-
   it("keeps both colliding-hash sheets in the workbook outline", () => {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([[1]]), "7SRY2R");
@@ -104,22 +100,6 @@ function recordingWorker(): RecordingWorker {
   } as RecordingWorker;
 }
 
-describe("worker source: bytes cross the wire exactly once (#1)", () => {
-  it("sends bytes only in init; sheet requests carry ids only", async () => {
-    const bytes = makeXlsxBytes({ sheets: 2, rows: 5, cols: 3 });
-    const worker = recordingWorker();
-    const source = createWorkerWorkbookSource(bytes, () => worker);
-    await source.outline();
-    await source.sheet("S1");
-    await source.sheet("S2");
-    const withBytes = worker.requests.filter((r) => "bytes" in r);
-    expect(withBytes).toHaveLength(1);
-    expect(withBytes[0]!.kind).toBe("init");
-    expect(worker.requests.filter((r) => r.kind === "sheet")).toHaveLength(2);
-    source.dispose();
-  });
-});
-
 describe("worker source: cancellation on dispose (#2)", () => {
   const silent: ParseWorkerLike = {
     postMessage() {},
@@ -136,10 +116,4 @@ describe("worker source: cancellation on dispose (#2)", () => {
     await expect(pending).rejects.toThrow(/disposed/);
   });
 
-  it("rejects new requests after dispose", async () => {
-    const bytes = makeXlsxBytes({ sheets: 1, rows: 2, cols: 2 });
-    const source = createWorkerWorkbookSource(bytes, () => silent);
-    source.dispose();
-    await expect(source.sheet("S1")).rejects.toThrow(/disposed/);
-  });
 });

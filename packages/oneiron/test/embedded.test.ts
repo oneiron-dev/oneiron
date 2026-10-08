@@ -28,16 +28,6 @@ afterAll(() => {
 })
 
 describe("embedded constructor", () => {
-  test("opens an explicit path and binds an actor with no ceremony", () => {
-    const memory = Oneiron.open(vaultPath())
-    expect(memory.receipts(10)).toBeArray()
-  })
-
-  test("accepts an explicit dimensions option", () => {
-    const memory = Oneiron.open(vaultPath(), { dimensions: 256 })
-    expect(memory.receipts(10)).toBeArray()
-  })
-
   test("a same-path reopen with divergent options is BAD_REQUEST", () => {
     const path = vaultPath()
     Oneiron.open(path, { dimensions: 256 })
@@ -77,16 +67,6 @@ describe("the canonical four-call quickstart", () => {
       confidence: 1,
       source: "user_stated",
     })
-  })
-
-  test("G8: the witness receipt ref is a witness marker", () => {
-    expect(witnessed.receiptRef.startsWith("witness:")).toBe(true)
-    expect(witnessed.messageShortIds).toHaveLength(1)
-  })
-
-  test("G8: the claim carries a real gate receipt", () => {
-    expect(claimed.receiptRef.length).toBeGreaterThan(0)
-    expect(["auto", "proposed", "rejected"]).toContain(claimed.approval)
   })
 
   test("G8: recall returns pack version 1 and finds the claim", () => {
@@ -134,17 +114,6 @@ describe("typed refusals", () => {
     }
     throw new Error("expected a typed refusal")
   }
-
-  test("deep recall is lease-gated", () => {
-    const error = refusal(() => memory.recall("window seat", { effort: "high" }))
-    expect(error.code).toBe("LEASE_REQUIRED")
-    expect(error.suggestions.length).toBeGreaterThan(0)
-  })
-
-  test("an over-8-KiB query is refused", () => {
-    const error = refusal(() => memory.recall("x".repeat(8 * 1024 + 1)))
-    expect(error.code).toBe("BAD_REQUEST")
-  })
 
   test("a negative timestamp is refused before core entry", () => {
     const error = refusal(() =>

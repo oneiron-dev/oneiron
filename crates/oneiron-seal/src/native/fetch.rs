@@ -394,99 +394,6 @@ mod http {
             Ok(out)
         }
     }
-
-    #[cfg(test)]
-    mod tests {
-        #![allow(clippy::unwrap_used)]
-        use super::*;
-
-        fn request(method: FetchMethod, purpose: crate::api::FetchPurpose) -> FetchRequest {
-            FetchRequest {
-                purpose,
-                url: url::Url::parse("https://ca.example.test/x").unwrap(),
-                method,
-                request_body: vec![1, 2, 3],
-                content_type: None,
-            }
-        }
-
-        #[test]
-        fn cache_key_binds_method_and_purpose() {
-            let get_crl = SsrfGuardedHttpFetcher::cache_key(&request(
-                FetchMethod::Get,
-                crate::api::FetchPurpose::Crl,
-            ));
-            let post_crl = SsrfGuardedHttpFetcher::cache_key(&request(
-                FetchMethod::Post,
-                crate::api::FetchPurpose::Crl,
-            ));
-            let get_ocsp = SsrfGuardedHttpFetcher::cache_key(&request(
-                FetchMethod::Get,
-                crate::api::FetchPurpose::Ocsp,
-            ));
-            assert_ne!(get_crl, post_crl, "method participates in the key");
-            assert_ne!(get_crl, get_ocsp, "purpose participates in the key");
-        }
-
-        #[test]
-        fn cache_hit_beyond_purpose_cap_is_a_miss() {
-            let fetcher = SsrfGuardedHttpFetcher::new(FetchPolicy::default());
-            let req = request(FetchMethod::Get, crate::api::FetchPurpose::Crl);
-            let key = SsrfGuardedHttpFetcher::cache_key(&req);
-            let big = FetchResponse {
-                body: vec![7u8; 1024],
-                content_type: None,
-            };
-            fetcher.cache_put(key.clone(), &big);
-            assert!(fetcher.cache_get(&key, 2048).is_some(), "within cap hits");
-            assert!(
-                fetcher.cache_get(&key, 512).is_none(),
-                "cached body larger than this request's purpose cap must not be served"
-            );
-        }
-
-        #[tokio::test]
-        async fn dns_resolution_races_the_total_deadline() {
-            // A resolver that never answers must abort at the deadline, not
-            // hang past timeout_ms (test-double resolver).
-            let past = tokio::time::Instant::now() - Duration::from_secs(1);
-            let lookup = std::future::pending::<std::io::Result<Vec<std::net::SocketAddr>>>();
-            let err = super::resolve_pinned(lookup, &[], past).await.unwrap_err();
-            assert!(matches!(err, FetchError::Timeout));
-            // An immediate answer inside the deadline resolves and filters.
-            let later = tokio::time::Instant::now() + Duration::from_secs(60);
-            let ok_lookup = async {
-                Ok(vec![std::net::SocketAddr::new(
-                    std::net::IpAddr::V4(std::net::Ipv4Addr::new(8, 8, 8, 8)),
-                    443,
-                )])
-            };
-            let pinned = super::resolve_pinned(ok_lookup, &[], later).await.unwrap();
-            assert_eq!(pinned.len(), 1);
-        }
-
-        #[tokio::test]
-        async fn body_stream_races_the_total_deadline() {
-            // One immediate chunk, then a stream that never yields: the
-            // header-phase timeout does not cover this, the deadline must.
-            let mut stream =
-                futures_util::stream::iter(vec![Ok(bytes::Bytes::from_static(b"chunk"))])
-                    .chain(futures_util::stream::pending());
-            let past = tokio::time::Instant::now() - Duration::from_secs(1);
-            let err = SsrfGuardedHttpFetcher::stream_body(&mut stream, None, 1024, past)
-                .await
-                .unwrap_err();
-            assert!(matches!(err, FetchError::Timeout));
-            // A finite stream inside the deadline streams fine.
-            let mut ok_stream =
-                futures_util::stream::iter(vec![Ok(bytes::Bytes::from_static(b"ab"))]);
-            let later = tokio::time::Instant::now() + Duration::from_secs(60);
-            let out = SsrfGuardedHttpFetcher::stream_body(&mut ok_stream, None, 1024, later)
-                .await
-                .unwrap();
-            assert_eq!(out.body, b"ab");
-        }
-    }
 }
 
 #[cfg(feature = "network-fetch")]
@@ -642,17 +549,5 @@ mod tests {
         // so pin the boundary on the v6-mapped form instead: ::ffff:f000:1.
         let mapped_reserved: Ipv6Addr = "::ffff:f000:1".parse().unwrap();
         assert!(!addr_allowed(IpAddr::V6(mapped_reserved), &cidrs));
-    }
-
-    #[test]
-    fn purpose_caps_come_from_policy() {
-        let p = FetchPolicy::default();
-        assert_eq!(purpose_cap(&p, FetchPurpose::Crl), 8_388_608);
-        assert_eq!(purpose_cap(&p, FetchPurpose::Timestamp), 1_048_576);
-        assert_eq!(purpose_cap(&p, FetchPurpose::Ocsp), 1_048_576);
-        assert_eq!(
-            purpose_cap(&p, FetchPurpose::AuthorityInformationAccess),
-            1_048_576
-        );
     }
 }

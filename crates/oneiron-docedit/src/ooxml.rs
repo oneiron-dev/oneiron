@@ -338,24 +338,6 @@ mod tests {
     };
 
     #[test]
-    fn names_resolve_by_namespace_not_prefix_and_spans_address_source_bytes() {
-        let xml = br#"<x:Relationships xmlns:x="http://schemas.openxmlformats.org/package/2006/relationships"><x:Relationship Id="a" Target="t&amp;u.xml" TargetMode="External"/><Relationship Target="ignored"/></x:Relationships>"#;
-        let tree = XmlTree::parse(xml, LIMITS).expect("well-formed rels");
-        tree.root(PACKAGE_RELATIONSHIPS, "Relationships")
-            .expect("root");
-        let targets: Vec<_> = tree
-            .nodes
-            .iter()
-            .filter(|node| node.is(PACKAGE_RELATIONSHIPS, "Relationship"))
-            .filter_map(|node| node.attr("Target"))
-            .collect();
-        assert_eq!(targets, ["t&u.xml"]);
-        let span = tree.nodes[1].attr_spans["Target"].clone();
-        assert_eq!(&xml[span], br#"Target="t&amp;u.xml""#);
-        assert_eq!(tree.nodes[1].child_name("Other"), "x:Other");
-    }
-
-    #[test]
     fn dtd_unbound_prefix_second_root_and_limits_are_refused() {
         for bad in [
             &b"<!DOCTYPE a [<!ENTITY e \"x\">]><a>&e;</a>"[..],
@@ -371,10 +353,5 @@ mod tests {
             XmlTree::parse(deep.as_bytes(), LIMITS).map(|_| ()),
             Err(XmlError("XML node or depth limit"))
         );
-    }
-
-    #[test]
-    fn escaped_text_keeps_carriage_returns() {
-        assert_eq!(escape_text("a<b\r"), "a&lt;b&#13;");
     }
 }

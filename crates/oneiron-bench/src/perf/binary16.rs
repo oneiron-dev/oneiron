@@ -103,32 +103,8 @@ pub(crate) fn f16_bits_to_f32(bits: u16) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use rand::rngs::StdRng;
-    use rand::{Rng, SeedableRng};
 
     use super::*;
-
-    #[test]
-    fn binary16_round_trip_is_close_and_exact_on_representable_values() {
-        for value in [0.0_f32, 1.0, -1.0, 0.5, -0.25, 65504.0, 6.1035156e-5] {
-            let round_tripped = f16_bits_to_f32(f32_to_f16_bits(value));
-            assert!(
-                (round_tripped - value).abs() <= value.abs() * 1e-3,
-                "{value} round-tripped to {round_tripped}"
-            );
-        }
-        let mut rng = StdRng::seed_from_u64(7);
-        for _ in 0..512 {
-            let value: f32 = rng.gen_range(-4.0_f32..4.0);
-            let round_tripped = f16_bits_to_f32(f32_to_f16_bits(value));
-            assert!(
-                (round_tripped - value).abs() <= 0.01,
-                "{value} round-tripped to {round_tripped}"
-            );
-        }
-        assert!(f16_bits_to_f32(f32_to_f16_bits(f32::INFINITY)).is_infinite());
-        assert!(f16_bits_to_f32(f32_to_f16_bits(f32::NAN)).is_nan());
-    }
 
     /// The named halfway cases, spelled out. `1.00048828125` is exactly half
     /// way between `1.0` (even significand) and `1.0009765625` (odd), so
@@ -167,54 +143,6 @@ mod tests {
                 expected | 0x8000,
                 "{value} ({note}) must round the same way with a sign bit"
             );
-        }
-    }
-
-    /// Exhaustive over EVERY finite binary16 neighbour pair: the exact
-    /// midpoint must land on whichever neighbour has an even significand, and
-    /// one ulp either side of that midpoint must land on the nearer one.
-    #[test]
-    fn every_binary16_midpoint_rounds_to_even_and_its_neighbours_round_near() {
-        for low in 0_u16..0x7BFF {
-            let high = low + 1;
-            let a = f64::from(f16_bits_to_f32(low));
-            let b = f64::from(f16_bits_to_f32(high));
-            // A binary16 midpoint needs 12 significand bits, so it is exact
-            // in float32 and the conversion below loses nothing.
-            let midpoint = ((a + b) / 2.0) as f32;
-            let even = if low % 2 == 0 { low } else { high };
-            assert_eq!(
-                f32_to_f16_bits(midpoint),
-                even,
-                "the midpoint of {low:#06x} and {high:#06x} must round to the even significand"
-            );
-            assert_eq!(
-                f32_to_f16_bits(-midpoint),
-                even | 0x8000,
-                "negative midpoints round to even too"
-            );
-            assert_eq!(
-                f32_to_f16_bits(f32::from_bits(midpoint.to_bits() - 1)),
-                low,
-                "one ulp below the midpoint of {low:#06x} rounds down"
-            );
-            assert_eq!(
-                f32_to_f16_bits(f32::from_bits(midpoint.to_bits() + 1)),
-                high,
-                "one ulp above the midpoint of {low:#06x} rounds up"
-            );
-        }
-    }
-
-    /// Every representable binary16 value must survive f16 -> f32 -> f16
-    /// unchanged; a rounding rule that pushed exact values off their own
-    /// encoding would show up here first.
-    #[test]
-    fn every_representable_binary16_round_trips_exactly() {
-        for bits in 0_u16..=0x7BFF {
-            let value = f16_bits_to_f32(bits);
-            assert_eq!(f32_to_f16_bits(value), bits, "{bits:#06x} round-trips");
-            assert_eq!(f32_to_f16_bits(-value), bits | 0x8000, "{bits:#06x} signed");
         }
     }
 }

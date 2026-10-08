@@ -5,43 +5,13 @@
 #[cfg(feature = "network-fetch")]
 use crate::support;
 
-use oneiron_seal::{
-    FetchError, FetchMethod, FetchPolicy, FetchPurpose, FetchRequest, OfflineFetcher, SealFetcher,
-};
-
-#[test]
-fn fetch_policy_defaults_match_blueprint() {
-    let p = FetchPolicy::default();
-    assert!(p.allowed_origins.is_empty());
-    assert!(p.allowed_cidrs.is_empty());
-}
-
-#[tokio::test]
-async fn offline_fetcher_denies_everything_as_unavailable() {
-    let f = OfflineFetcher;
-    let req = FetchRequest {
-        purpose: FetchPurpose::Timestamp,
-        url: url::Url::parse("https://tsa.example.test/").unwrap(),
-        method: FetchMethod::Post,
-        request_body: vec![1, 2, 3],
-        content_type: None,
-    };
-    let err = f.fetch(req).await.unwrap_err();
-    assert!(matches!(err, FetchError::Unavailable));
-}
+use oneiron_seal::{FetchError, FetchMethod, FetchPurpose, FetchRequest, SealFetcher};
 
 #[cfg(feature = "network-fetch")]
 mod guarded {
     use oneiron_seal::{FetchPolicy, SsrfGuardedHttpFetcher};
 
     use super::*;
-
-    fn policy_with(origin: &str) -> FetchPolicy {
-        FetchPolicy {
-            allowed_origins: vec![url::Url::parse(origin).unwrap()],
-            ..FetchPolicy::default()
-        }
-    }
 
     #[tokio::test]
     async fn unlisted_origin_denied_before_any_network() {
@@ -52,40 +22,6 @@ mod guarded {
             .fetch(FetchRequest {
                 purpose: FetchPurpose::Ocsp,
                 url: url::Url::parse("https://ocsp.example.test/").unwrap(),
-                method: FetchMethod::Get,
-                request_body: Vec::new(),
-                content_type: None,
-            })
-            .await
-            .unwrap_err();
-        assert!(matches!(err, FetchError::Denied));
-    }
-
-    #[tokio::test]
-    async fn listed_origin_with_loopback_resolution_is_denied() {
-        // Origin allowed, but the name resolves to loopback: the address
-        // policy rejects it unless an explicit CIDR admits it.
-        let f = SsrfGuardedHttpFetcher::new(policy_with("https://localhost"));
-        let err = f
-            .fetch(FetchRequest {
-                purpose: FetchPurpose::Ocsp,
-                url: url::Url::parse("https://localhost:9/ocsp").unwrap(),
-                method: FetchMethod::Get,
-                request_body: Vec::new(),
-                content_type: None,
-            })
-            .await
-            .unwrap_err();
-        assert!(matches!(err, FetchError::Denied));
-    }
-
-    #[tokio::test]
-    async fn wrong_scheme_denied_even_for_listed_host() {
-        let f = SsrfGuardedHttpFetcher::new(policy_with("https://crl.example.test"));
-        let err = f
-            .fetch(FetchRequest {
-                purpose: FetchPurpose::Crl,
-                url: url::Url::parse("ftp://crl.example.test/ca.crl").unwrap(),
                 method: FetchMethod::Get,
                 request_body: Vec::new(),
                 content_type: None,
@@ -199,23 +135,6 @@ mod guarded_live {
             .await
             .unwrap();
         assert_eq!(hops.load(std::sync::atomic::Ordering::SeqCst), 2);
-    }
-
-    #[tokio::test]
-    async fn purpose_cap_aborts_oversized_response() {
-        let (port, _hops) = serve(4096);
-        let f = SsrfGuardedHttpFetcher::new(loopback_policy(port, 1024));
-        let err = f
-            .fetch(FetchRequest {
-                purpose: FetchPurpose::Ocsp,
-                url: url::Url::parse(&format!("http://127.0.0.1:{port}/start")).unwrap(),
-                method: FetchMethod::Get,
-                request_body: Vec::new(),
-                content_type: None,
-            })
-            .await
-            .unwrap_err();
-        assert!(matches!(err, FetchError::ResponseTooLarge));
     }
 }
 

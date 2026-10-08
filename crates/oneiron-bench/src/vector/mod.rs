@@ -43,21 +43,11 @@ pub(crate) use self::vector_config::{
     MENTIONS_EDGE_WEIGHT, SEARCH_LIMIT, TARGET_INSERT_P50_MS, TARGET_RECALL_AT_10,
     TARGET_SEARCH_TOP10_P50_MS, parse_args,
 };
-pub(crate) use self::vector_run::{LatencyStats, RamReport, SearchMeasure, VectorBenchReport, run};
 #[cfg(test)]
-pub(crate) use self::vector_run::{
-    brute_force_top_k, churn_count, cosine_distance_f32, percentile, run_bench,
-};
+pub(crate) use self::vector_run::run_bench;
+pub(crate) use self::vector_run::{LatencyStats, RamReport, SearchMeasure, VectorBenchReport, run};
 
 // The flat `vector.rs` module used to provide these names to the inline test
 // module through `use super::*`: the private helpers the tests name bare
 // plus the private crate/std imports they rely on. After the directory split
 // the seam re-imports them so `vector_tests.rs` resolves exactly as before.
-#[cfg(test)]
-use self::vector_run::{bench_config, gen_corpus, gen_queries, select_churn_ids};
-#[cfg(test)]
-use oneiron::EntityId;
-#[cfg(test)]
-use rand::{SeedableRng, rngs::StdRng};
-#[cfg(test)]
-use std::collections::BTreeMap;

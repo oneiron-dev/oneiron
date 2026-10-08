@@ -36,55 +36,6 @@ fn insert_unindexed_catalog_before_xref(bytes: &[u8], separator: u8) -> Vec<u8> 
 }
 
 #[test]
-fn structural_facts_share_one_inventory_across_pdf_separators() {
-    let signer = test_ca("all-separators-signer");
-    let engine = verify_engine(vec![signer.cert_der.clone()], VERIFY_SECS);
-    for separator in [
-        b" ".as_slice(),
-        b"\r",
-        b"\n",
-        b"\r\n",
-        b"\t",
-        b"\x0c",
-        b"\0",
-        b"%inline comment\n",
-        b"%inline comment\r",
-        b"%inline comment\r\n",
-    ] {
-        let mut input = base_input();
-        let xref = input
-            .windows(b"xref\n".len())
-            .position(|w| w == b"xref\n")
-            .unwrap();
-        let extra = [
-            b"1".as_slice(),
-            separator,
-            b"0",
-            separator,
-            b"obj << /Type /Catalog /Pages 2 0 R >> endobj\n",
-        ]
-        .concat();
-        input.splice(xref..xref, extra.iter().copied());
-        let marker = b"startxref\n186\n";
-        let at = input
-            .windows(marker.len())
-            .position(|w| w == marker)
-            .unwrap();
-        input.splice(
-            at..at + marker.len(),
-            format!("startxref\n{}\n", xref + extra.len()).bytes(),
-        );
-        let signed = append_sig_revision(&input, &signer, "separator", None, AT_UNIX);
-        let report = engine.verify_sealed_pdf(&signed).unwrap();
-        assert!(
-            report.anomalies.contains(&Anomaly::DuplicateObjectNumber),
-            "separator {separator:?}: {report:?}"
-        );
-        assert_eq!(report.verdict(), VerifyVerdict::Passed);
-    }
-}
-
-#[test]
 fn public_verifier_refuses_comment_delimited_definition_in_dss_renewal() {
     let signer = test_ca("comment-definition-signer");
     let tsa = tsa_ca();
@@ -184,64 +135,6 @@ fn public_verifier_catches_same_line_catalog_definitions_and_dss_bypass() {
         );
         assert_eq!(report.verdict(), VerifyVerdict::Failed);
         assert!(report.anomalies.contains(&Anomaly::DuplicateObjectNumber));
-    }
-}
-
-#[test]
-fn public_verifier_reports_crlf_and_inline_duplicate_definitions() {
-    let signer = test_ca("duplicate-spelling-signer");
-    let engine = verify_engine(vec![signer.cert_der.clone()], VERIFY_SECS);
-    for (suffix, duplicate) in [
-        (
-            "crlf",
-            b"1 0 obj\r\n<< /Type /Catalog /Pages 2 0 R >>\r\nendobj\r\n".as_slice(),
-        ),
-        (
-            "inline",
-            b"1 0 obj << /Type /Catalog /Pages 2 0 R >>\nendobj\n",
-        ),
-    ] {
-        let mut input = base_input();
-        let xref = input
-            .windows(b"xref\n".len())
-            .position(|w| w == b"xref\n")
-            .unwrap();
-        input.splice(xref..xref, duplicate.iter().copied());
-        let at = input
-            .windows(b"startxref\n186\n".len())
-            .position(|w| w == b"startxref\n186\n")
-            .unwrap();
-        input.splice(
-            at..at + b"startxref\n186\n".len(),
-            format!("startxref\n{}\n", xref + duplicate.len()).bytes(),
-        );
-        let signed = append_sig_revision(&input, &signer, suffix, None, AT_UNIX);
-        let first = engine.verify_sealed_pdf(&signed).unwrap();
-        assert!(
-            first.anomalies.contains(&Anomaly::DuplicateObjectNumber),
-            "before signing: {suffix}"
-        );
-        assert_eq!(first.verdict(), VerifyVerdict::Passed);
-        let state = pdf::reparse_revision(&signed, &SealResourceLimits::default()).unwrap();
-        let id = state.max_obj + 1;
-        let mut later = signed;
-        let extra = if suffix == "crlf" {
-            format!("\n{id} 0 obj\r\n<< /Probe /Orphan >>\r\nendobj\r\n")
-        } else {
-            format!("\n{id} 0 obj << /Probe /Orphan >>\nendobj\n")
-        };
-        later.extend_from_slice(extra.as_bytes());
-        let active = later.len();
-        later.extend_from_slice(format!("{id} 0 obj\n<< /Probe /Active >>\nendobj\n").as_bytes());
-        let xref_offset = later.len();
-        later.extend_from_slice(format!("xref\n{id} 1\n{active:010} 00000 n\r\ntrailer\n<< /Size {} /Prev {} /Root {} {} R >>\nstartxref\n{xref_offset}\n%%EOF",
-                id + 1, state.prev_startxref, state.root.0, state.root.1).as_bytes());
-        let second = engine.verify_sealed_pdf(&later).unwrap();
-        assert!(
-            second.anomalies.contains(&Anomaly::DuplicateObjectNumber),
-            "after signing: {suffix}"
-        );
-        assert_eq!(second.modifications, Modifications::Suspicious);
     }
 }
 

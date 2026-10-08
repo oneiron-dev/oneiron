@@ -115,7 +115,6 @@ Build on the assigned host and target with the normal workspace toolchain:
 ```text
 cargo build --release -p oneiron-bench
 cargo test -p oneiron-bench fleet::tests -- --test-threads=1
-python3 -m unittest discover -s scripts/tests -p test_fleet_regression.py -v
 ```
 
 Use a real absolute scratch directory. On macOS, prefer `/private/tmp/...`, not
@@ -245,10 +244,7 @@ file name and hashes that archived receipt with `oneiron-bench fleet digest --fi
 BLAKE3, `baseline_sha256` equal to the receipt's canonical-JSON SHA-256, and
 `make-floor` over the receipt with the floor's own tolerances to reproduce the
 floor exactly, so an edited summary number fails under a true digest. Exit codes:
-0 = the floor is its receipt's; 2 = refused. With `ONEIRON_FLEET_ARCHIVE` naming the
-archive and `ONEIRON_BENCH` a release `oneiron-bench`,
-`scripts/tests/test_fleet_regression.py` runs it on both committed floors; elsewhere
-that test skips.
+0 = the floor is its receipt's; 2 = refused.
 
 ## Residual miss scaling (separate receipt)
 

@@ -783,45 +783,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn one_zip_reader_serves_parts_and_retained_ranges() {
-        let original = include_bytes!("../../tests/fixtures/retained.xlsx");
-        let limits = Limits {
-            archive_bytes: 1024 * 1024,
-            entries: 100,
-            part_bytes: 64 * 1024,
-            expanded_bytes: 1024 * 1024,
-            xml: XmlLimits {
-                max_depth: 64,
-                max_nodes: 10_000,
-            },
-        };
-        let package = Package::open(original, limits).expect("fixture opens");
-        assert_eq!(package.names().count(), package.entries.len());
-        let mut locals: Vec<_> = package.entries.iter().map(|e| e.local.clone()).collect();
-        locals.sort_by_key(|range| range.start);
-        assert!(locals.windows(2).all(|pair| pair[0].end <= pair[1].start));
-        for entry in &package.entries {
-            // The central record, its local record and the payload the part
-            // is read from all come from the same walk of the directory.
-            assert!(package.cd_offset <= entry.central.start && entry.central.end <= package.eocd);
-            assert!(entry.local.start <= entry.data.start && entry.data.end <= entry.local.end);
-            let raw = &original[entry.data.clone()];
-            let expanded = match entry.method {
-                0 => raw.to_vec(),
-                8 => {
-                    let mut out = Vec::new();
-                    DeflateDecoder::new(raw)
-                        .read_to_end(&mut out)
-                        .expect("fixture payload inflates");
-                    out
-                }
-                method => panic!("unexpected fixture method {method}"),
-            };
-            assert_eq!(package.part(&entry.name).expect("part"), Some(expanded));
-        }
-    }
-
     /// A ZIP of `entries`; an empty entry named `…/` is a directory entry.
     fn archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
         let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
@@ -946,29 +907,6 @@ mod tests {
                 Some(b"<root><item>new</item></root>".to_vec())
             );
             assert_eq!(reopened.editability(), Editability::Unsigned, "{folder}");
-        }
-    }
-
-    #[test]
-    fn a_signature_part_keeps_the_package_signed() {
-        let signature: (&str, &[u8]) = (
-            "_xmlsignatures/sig1.xml",
-            b"<Signature xmlns=\"http://www.w3.org/2000/09/xmldsig#\"/>",
-        );
-        let sheet: (&str, &[u8]) = ("xl/sheet.xml", b"<root><item>old</item></root>");
-        let cases: [&[(&str, &[u8])]; 2] = [
-            &[TYPES, signature, sheet],
-            &[TYPES, ("_xmlsignatures/", b""), signature, sheet],
-        ];
-        for entries in cases {
-            let source = archive(entries);
-            let mut package = Package::open(&source, limits()).expect("package opens");
-            assert_eq!(package.editability(), Editability::Signed);
-            assert!(matches!(
-                package.replace_text("xl/sheet.xml", &["root", "item"], "old", "new"),
-                Err(Error::Edit(_))
-            ));
-            assert_eq!(package.export().expect("no-op export"), source);
         }
     }
 

@@ -77,6 +77,6 @@ bun run check          # typecheck + test
 ## License
 
 Apache-2.0. Every runtime dependency is Apache/MIT-class — see
-`scripts/license-audit.ts` (enforced by `tests/license-audit.test.ts`). Per
+`scripts/license-audit.ts`. Per
 OF-368 D10, no literal or structurally-copied code from non-Apache/MIT sources
 (OnlyOffice/Collabora etc.) lives here.

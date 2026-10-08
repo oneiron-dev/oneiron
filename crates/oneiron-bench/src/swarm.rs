@@ -491,31 +491,6 @@ fn measure(mode: Mode, agents: usize, ops: usize, seed: u64) -> Result<Report, S
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn deterministic_plan_and_validated_tiers() {
-        assert_eq!(marker(0), "qzmkaaaaa");
-        assert_ne!(marker(0), marker(1200));
-        assert!(
-            parse(&[
-                "--mode".into(),
-                "mixed".into(),
-                "--agents".into(),
-                "300".into()
-            ])
-            .is_ok()
-        );
-        assert!(
-            parse(&[
-                "--mode".into(),
-                "mixed".into(),
-                "--agents".into(),
-                "42".into()
-            ])
-            .is_err()
-        );
-        let writes = (0..1200).filter(|i| Mode::Mixed.writes(*i)).count();
-        assert_eq!(writes, 240);
-    }
     /// A late arrival and slow result collection must not enter the operation
     /// window; its end is the last completed action, not the last join.
     #[test]

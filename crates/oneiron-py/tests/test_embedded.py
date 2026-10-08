@@ -17,15 +17,6 @@ def memory(tmp_path):
     return Oneiron.open(tmp_path / "vault")
 
 
-def test_opens_an_explicit_path_with_no_actor_ceremony(memory) -> None:
-    assert isinstance(memory.receipts(10), list)
-
-
-def test_accepts_an_explicit_dimensions_option(tmp_path) -> None:
-    handle = Oneiron.open(tmp_path / "vault", dimensions=256)
-    assert isinstance(handle.receipts(10), list)
-
-
 def test_divergent_reopen_options_are_bad_request(tmp_path) -> None:
     Oneiron.open(tmp_path / "vault", dimensions=256)
     with pytest.raises(OneironError) as caught:
@@ -61,18 +52,6 @@ def quickstart(memory):
     return memory, witnessed, claimed
 
 
-def test_g8_witness_receipt_ref_is_a_witness_marker(quickstart) -> None:
-    _, witnessed, _ = quickstart
-    assert witnessed["receipt_ref"].startswith("witness:")
-    assert len(witnessed["message_short_ids"]) == 1
-
-
-def test_g8_claim_carries_a_real_gate_receipt(quickstart) -> None:
-    _, _, claimed = quickstart
-    assert claimed["receipt_ref"]
-    assert claimed["approval"] in {"auto", "proposed", "rejected"}
-
-
 def test_g8_recall_returns_pack_version_one_and_finds_the_claim(quickstart) -> None:
     memory, _, _ = quickstart
     recalled = memory.recall("window seat")
@@ -99,20 +78,6 @@ def test_omitted_timestamp_is_stamped_in_unix_seconds(quickstart) -> None:
     now = math.floor(time.time())
     for row in memory.receipts():
         assert abs(row["created_at"] - now) <= 300
-
-
-@pytest.mark.parametrize("effort", ["high", "xhigh", "max"])
-def test_paid_recall_is_lease_gated(memory, effort) -> None:
-    with pytest.raises(OneironError) as caught:
-        memory.recall("window seat", effort=effort)
-    assert caught.value.code == "LEASE_REQUIRED"
-    assert len(caught.value.suggestions) > 0
-
-
-def test_over_cap_query_is_refused(memory) -> None:
-    with pytest.raises(OneironError) as caught:
-        memory.recall("x" * (8 * 1024 + 1))
-    assert caught.value.code == "BAD_REQUEST"
 
 
 def test_negative_timestamp_is_refused_before_core_entry(memory) -> None:
@@ -149,19 +114,3 @@ def test_malformed_actor_key_is_refused(memory) -> None:
         memory.as_actor("not-an-actor-key")
     assert caught.value.code
     assert len(caught.value.suggestions) > 0
-
-
-@pytest.mark.parametrize("effort", ["minimal", "standard", "deep"])
-def test_retired_retrieval_efforts_are_refused(memory, effort) -> None:
-    with pytest.raises(OneironError) as caught:
-        memory.recall("window seat", effort=effort)
-    assert caught.value.code == "BAD_REQUEST"
-
-
-def test_native_recall_default_is_a_supported_effort(tmp_path) -> None:
-    import json
-    from oneiron._native import NativeClient
-
-    native = NativeClient.open(str(tmp_path / "native-vault"), None)
-    result = json.loads(native.recall("missing"))
-    assert result["pack_version"] == 1

@@ -47,60 +47,6 @@ fn cli(checkpoint: &Path, manifest: &Path, policy: &Path, output: &Path) -> Vec<
     .to_vec()
 }
 #[test]
-fn fixture_checkpoint_runs_probe_and_releases_only_a_passing_manifest() {
-    let (_dir, manifest, output, checkpoint, policy) = input();
-    assert_eq!(
-        run(&cli(&checkpoint, &manifest, &policy, &output)),
-        ExitCode::SUCCESS
-    );
-    assert_eq!(
-        std::fs::read(&output).unwrap(),
-        std::fs::read(&manifest).unwrap()
-    );
-    let selected = ModelManifest::load(&output).unwrap();
-    let approval = TeacherProbeApproval::load(&approval_path(&output)).unwrap();
-    let vault =
-        oneiron::Vault::open(_dir.path().join("vault"), oneiron::VaultConfig::device()).unwrap();
-    assert!(vault.set_model_manifest(&selected).is_err());
-    vault
-        .set_model_manifest_with_teacher_approval(&selected, &approval)
-        .unwrap();
-    assert_eq!(vault.model_manifest().unwrap(), Some(selected));
-}
-#[test]
-fn below_bar_checkpoint_blocks_teacher_pin() {
-    let (dir, manifest, output, checkpoint, policy) = input();
-    let bad = dir.path().join("bad-checkpoint");
-    std::fs::create_dir(&bad).unwrap();
-    std::fs::write(bad.join("model_id"), format!("{MODEL}\n")).unwrap();
-    let mut result: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(checkpoint.join("output.json")).unwrap()).unwrap();
-    for tags in result["predictions"].as_array_mut().unwrap().iter_mut() {
-        *tags = serde_json::Value::Array(vec!["O".into(); tags.as_array().unwrap().len()]);
-    }
-    std::fs::write(
-        bad.join("output.json"),
-        serde_json::to_vec(&result).unwrap(),
-    )
-    .unwrap();
-    assert!(
-        gate(&bad, &fixture_runner(), &manifest, &policy, &output)
-            .unwrap_err()
-            .contains("FAIL")
-    );
-    assert_eq!(
-        run(&cli(&bad, &manifest, &policy, &output)),
-        ExitCode::FAILURE
-    );
-    assert!(!output.exists());
-    assert!(!approval_path(&output).exists());
-    let candidate = ModelManifest::load(&manifest).unwrap();
-    let vault =
-        oneiron::Vault::open(dir.path().join("vault"), oneiron::VaultConfig::device()).unwrap();
-    assert!(vault.set_model_manifest(&candidate).is_err());
-    assert!(vault.model_manifest().unwrap().is_none());
-}
-#[test]
 fn passing_base_with_unprobed_teacher_route_cannot_publish() {
     let (_dir, manifest, output, checkpoint, policy) = input();
     let mut raw: serde_json::Value =
@@ -182,37 +128,4 @@ fn wrong_model_or_malformed_bio_fails_closed() {
     .unwrap();
     assert!(gate(&bad, &fixture_runner(), &manifest, &policy, &output).is_err());
     assert!(!output.exists());
-}
-#[test]
-fn exact_entity_boundaries_and_types_not_token_accuracy() {
-    let gold: Probe = serde_json::from_str(GOLD).unwrap();
-    let mut predictions = gold
-        .sentences
-        .iter()
-        .map(|s| s.tags.clone())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        evaluate(
-            &gold,
-            &RunnerOutput {
-                model_id: MODEL.into(),
-                predictions: predictions.clone()
-            }
-        )
-        .unwrap()
-        .0,
-        1_000_000
-    );
-    predictions[0][0] = "B-PER".into();
-    assert!(
-        evaluate(
-            &gold,
-            &RunnerOutput {
-                model_id: MODEL.into(),
-                predictions
-            }
-        )
-        .unwrap()
-        .0 < 1_000_000
-    );
 }

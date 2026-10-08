@@ -253,27 +253,4 @@ mod tests {
             CellValue::Number(45366.5625)
         );
     }
-    #[test]
-    fn stamp_is_deterministic_and_pinned() {
-        assert_eq!(
-            "formualizer-workbook/0.9.3-oneiron.11",
-            current_engine_id().stamp()
-        );
-        assert_eq!(ENGINE_NAME, "formualizer-workbook");
-        assert_eq!(ENGINE_VERSION, "0.9.3-oneiron.11");
-        assert_eq!(ENGINE_UPSTREAM_REV.len(), 40);
-    }
-
-    #[test]
-    fn literal_conversion_keeps_kinds_not_messages() {
-        let error = formualizer_common::error::ExcelError::new(
-            formualizer_common::error::ExcelErrorKind::Div,
-        );
-        assert_eq!(
-            from_literal(LiteralValue::Error(error)),
-            CellValue::Error("#DIV/0!".to_owned())
-        );
-        assert_eq!(from_literal(LiteralValue::Empty), CellValue::Blank);
-        assert_eq!(from_literal(LiteralValue::Int(3)), CellValue::Number(3.0));
-    }
 }

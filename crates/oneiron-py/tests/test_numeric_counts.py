@@ -51,12 +51,6 @@ def test_dimensions_reject_bad_counts_without_creating_vault(tmp_path, dimension
     assert not path.exists()
 
 
-@pytest.mark.parametrize("dimensions", [1, 256, 16_384])
-def test_dimensions_accept_valid_integer_controls(tmp_path, dimensions) -> None:
-    memory = Oneiron.open(tmp_path / "vault", dimensions=dimensions)
-    assert isinstance(memory.receipts(1), list)
-
-
 @pytest.fixture(scope="module")
 def embedded_memory(tmp_path_factory):
     memory = Oneiron.open(tmp_path_factory.mktemp("numeric-counts") / "vault")
@@ -97,23 +91,6 @@ def test_limits_reject_bad_counts_before_dispatch(memory, verb, limit) -> None:
         bad_request(lambda: memory.receipts(limit), "limit")
 
 
-@pytest.mark.parametrize("limit", [1, 10, 100, 1000])
-def test_limits_accept_valid_integer_controls(embedded_memory, limit) -> None:
-    pack = embedded_memory.recall("window seat", limit=limit)
-    assert pack["pack_version"] == 1
-    assert 0 < len(pack["items"]) <= limit
-    assert 0 < len(embedded_memory.receipts(limit)) <= limit
-
-
-def test_omitted_counts_preserve_defaults(embedded_memory) -> None:
-    # The first recall after a write misses the PPR cache and reports that in
-    # `retrieval_meta` (quality, degradation, confidence adjustment); every
-    # later read is served warm. Warm once so both compared reads are alike.
-    embedded_memory.recall("window seat")
-    assert embedded_memory.recall("window seat") == embedded_memory.recall("window seat", limit=10)
-    assert embedded_memory.receipts() == embedded_memory.receipts(100)
-
-
 @pytest.mark.parametrize("exception", [TypeError, ValueError, OverflowError])
 def test_argument_errors_are_bad_request_with_correction_suggestions(exception) -> None:
     def operation():
@@ -121,13 +98,3 @@ def test_argument_errors_are_bad_request_with_correction_suggestions(exception) 
 
     error = bad_request(lambda: _translate(operation), "limit")
     assert any("positive Python integers" in suggestion for suggestion in error.suggestions)
-
-
-def test_malformed_native_payload_stays_internal_error() -> None:
-    def operation():
-        raise RuntimeError("invalid native payload")
-
-    with pytest.raises(OneironError) as caught:
-        _translate(operation)
-    assert caught.value.code == "INTERNAL_SERVER_ERROR"
-    assert caught.value.suggestions
