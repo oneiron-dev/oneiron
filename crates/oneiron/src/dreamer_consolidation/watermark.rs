@@ -575,6 +575,9 @@ pub(crate) struct TurnBodyFacts {
     pub(crate) text: Option<String>,
     pub(crate) world_ref: Option<EntityId>,
     pub(crate) facet_ref: Option<EntityId>,
+    /// The turn is from an imported transcript (ARCH-0027): its evidence is
+    /// `Imported` whatever its speaker.
+    pub(crate) imported: bool,
 }
 
 /// The ONE turn-body decoder. In-crate planners (the ONE-1685 session-close
@@ -587,6 +590,7 @@ pub(crate) fn decode_turn_body(raw: &[u8]) -> TurnBodyFacts {
         text: None,
         world_ref: None,
         facet_ref: None,
+        imported: false,
     };
     let Ok(value) = rmpv::decode::read_value(&mut Cursor::new(raw)) else {
         return facts;
@@ -608,6 +612,9 @@ pub(crate) fn decode_turn_body(raw: &[u8]) -> TurnBodyFacts {
             }
             Some(TURN_BODY_WORLD_REF_KEY) => facts.world_ref = entity_ref_from_value(&value),
             Some(TURN_BODY_FACET_REF_KEY) => facts.facet_ref = entity_ref_from_value(&value),
+            // Present at all, whatever its value: a malformed stamp fails toward
+            // the lower trust class, never up.
+            Some(crate::memory::IMPORTED_SOURCE_KEY) => facts.imported = true,
             _ => {}
         }
     }
@@ -640,6 +647,7 @@ pub(super) fn read_turn_facts(vault: &Vault, id: &EntityId) -> Result<TurnBodyFa
             text: None,
             world_ref: None,
             facet_ref: None,
+            imported: false,
         });
     };
     Ok(decode_turn_body(

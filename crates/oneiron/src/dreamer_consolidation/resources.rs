@@ -188,7 +188,7 @@ impl<'a> BranchResources<'a> {
                             facts.speaker.as_deref(),
                             &vault.config.assistant_display_names,
                         ),
-                        false,
+                        facts.imported,
                     )
                 })
                 .flatten();
@@ -455,7 +455,7 @@ impl<'a> BranchResources<'a> {
                         facts.speaker.as_deref(),
                         &self.read.vault().config.assistant_display_names,
                     );
-                    turn_trust_class(role, false)
+                    turn_trust_class(role, facts.imported)
                         .ok_or_else(|| invalid_consolidation("inadmissible branch evidence role"))?
                 };
                 let bytes = cited_evidence_bytes(*entry, &body)?;
@@ -667,7 +667,7 @@ pub(crate) fn native_turn_source(vault: &Vault, body: &[u8]) -> Result<crate::cl
         facts.speaker.as_deref(),
         &vault.config.assistant_display_names,
     );
-    turn_trust_class(role, false)
+    turn_trust_class(role, facts.imported)
         .ok_or_else(|| invalid_consolidation("inadmissible evidence turn role"))
 }
 

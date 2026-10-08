@@ -83,6 +83,9 @@ zeroize = "1"
 # Already in the tree through the engine's f16 vector rows; named explicitly
 # because the numerics guard rounds every component through `f16` itself.
 half = "2"
+# `oneiron import` reads an export's conversations out of its zip. The version
+# the workspace already builds; DEFLATE is what ChatGPT and Claude.ai exports use.
+zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 
 # Metal is the default embedder device on Apple silicon, expressed as a
 # target-gated feature activation rather than a cargo feature: a cargo feature
@@ -90,6 +93,12 @@ half = "2"
 # reference runner where the Metal kernels do not build.
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
+
+# `oneiron import` walks a history folder relative to the folders it has
+# open, never through a link: descriptor-relative opens. The version the
+# workspace already builds.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1", features = ["fs"] }
 
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
 candle-core = { version = "=0.11.0", features = ["metal"] }

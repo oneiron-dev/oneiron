@@ -8,8 +8,8 @@ use crate::config::ServeArgs;
 mod owner_args;
 pub use owner_args::{
     BackupArgs, DoctorArgs, ExportArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs,
-    RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand, SecretScanArgs, SecretScanSwitch,
-    ServeOnlyArgs,
+    ImportSourceArgs, RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand, SecretScanArgs,
+    SecretScanSwitch, ServeOnlyArgs,
 };
 
 const DEFAULT_SERVER_DIMENSIONS: usize = 4096;
@@ -57,7 +57,9 @@ pub enum Command {
     Export(Box<ExportArgs>),
     /// Turn the write-door secret scan on or off, or show it.
     SecretScan(Box<SecretScanArgs>),
-    /// Preview, approve or decline one whole import batch.
+    /// Import your own history into a stopped vault (ChatGPT and Claude.ai
+    /// exports, Claude Code and Codex sessions), or preview, approve or
+    /// decline one whole import batch.
     #[command(subcommand)]
     Import(ImportCommand),
     /// Agent runs waiting for consent: list, review, approve or decline whole.

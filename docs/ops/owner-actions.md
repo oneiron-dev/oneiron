@@ -141,6 +141,10 @@ setting. Only a live owner of the vault can switch it.
 
 ## Approve an import in one act
 
+To bring your ChatGPT, Claude, Claude Code or Codex history itself in, use
+`oneiron import <source> <path>`: see [Import your history](import-history.md). The batch
+below is for claims that already exist as a batch.
+
 An import batch is a JSON file:
 
 ```json

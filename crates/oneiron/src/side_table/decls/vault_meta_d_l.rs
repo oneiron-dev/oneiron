@@ -388,6 +388,10 @@ side_tables! {
     /// Per-actor per-run healer receipt: submitted proposals and reversal state. Key: id16 + bytes32
     /// (actor then blake3 hash of run name).
     SELF_HEAL_HEALER_RUN: VaultMeta b"healer:run:" Named;
+    /// The history import ledger: one row per imported source message (the conversation it landed
+    /// in, its MESSAGE and TURN ids, the hash of what was imported, its revision). Key: string
+    /// (`source:native message id`).
+    INGEST_HISTORY_LEDGER: VaultMeta b"history-import:v1:" Named;
     /// Follow-up reminder/escalation cursor state for one human task. Key: id16.
     HUMAN_TASK_FOLLOWUP: VaultMeta b"human_task.followup.v1\0" Raw;
     /// Idempotency marker recording which signal/surface-event a wait's response already produced.
