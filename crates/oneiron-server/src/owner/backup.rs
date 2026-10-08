@@ -328,6 +328,8 @@ pub(crate) fn restore_over(
     vault_path: &Path,
     config: oneiron::VaultConfig,
 ) -> anyhow::Result<Restored> {
+    // Absolute from here on: a bare `vault` has an empty parent to sync.
+    let vault_path = &std::path::absolute(vault_path)?;
     anyhow::ensure!(
         vault_path.join("data.mdb").is_file(),
         "vault {} does not exist; nothing to restore over",
@@ -477,6 +479,12 @@ fn create_private_dir(dir: &Path) -> anyhow::Result<()> {
 }
 
 fn sync_dir(dir: &Path) -> anyhow::Result<()> {
+    // `Path::parent` of a one-component relative path is the empty path.
+    let dir = if dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        dir
+    };
     #[cfg(unix)]
     std::fs::File::open(dir)?.sync_all()?;
     #[cfg(not(unix))]
