@@ -164,7 +164,7 @@ pub struct TokenPairArgs {
 /// comes from the config or `ONEIRON_AUTH_SECRET`, never argv.
 #[derive(Args, Clone, Debug)]
 pub struct TokenReadArgs {
-    /// The principal the credential reads as, 32 lowercase hex characters.
+    /// The principal the credential reads as: a 32-hex id or a short ref.
     /// Defaults to the vault's owner (`oneiron whoami`).
     #[arg(long = "principal-ref")]
     pub principal_ref: Option<String>,

@@ -211,14 +211,19 @@ pub fn token_read(args: TokenReadArgs) -> anyhow::Result<()> {
     let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
     let vault = oneiron::Vault::open_owned(&config.vault_path, config.vault_config())?;
     let owner = vault.ensure_embedded_owner_actor()?;
-    let principal = args.principal_ref.unwrap_or_else(|| owner.to_hex());
-    // Pairing names an existing actor; it never manufactures one.
-    anyhow::ensure!(
-        vault
-            .get(&oneiron::EntityId::from_hex(&principal)?)?
-            .is_some(),
-        "principal {principal} is not in this vault"
-    );
+    let principal_ref = args.principal_ref.unwrap_or_else(|| owner.to_hex());
+    // Pairing names an existing actor whose kind can act as the class asked
+    // for; it never manufactures one. Checked before the vault is rooted.
+    let (principal, _) =
+        oneiron::memory::parse_actor_key(&vault, &format!("{}:{principal_ref}", args.actor_class))
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "{principal_ref} cannot hold a {} credential: {}",
+                    args.actor_class,
+                    error.message
+                )
+            })?;
+    let principal = principal.to_hex();
     vault.ensure_host_root_slip(&issuer)?;
     let mut scope = oneiron::federation::Scope::top();
     scope.verbs = oneiron::federation::ScopeAxis::Some(
