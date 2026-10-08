@@ -9,7 +9,7 @@ the fork.
 | crate | upstream base | fork branch | pinned rev | licence |
 |---|---|---|---|---|
 | `sudachi` 0.6.11 | [WorksApplications/sudachi.rs](https://github.com/WorksApplications/sudachi.rs) tag `v0.6.11`, `90fd6068c80c2fc3b63e0dbab0e341475bad4d8f` | [`oneiron/v0.6.11`](https://github.com/oneiron-dev/sudachi.rs/tree/oneiron/v0.6.11) | `d8cba3609521805ebf35bfc2b71d8099a13befef` | Apache-2.0 |
-| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `c6f1aee7b99f65dd626afd61a152668281c34887` | MIT OR Apache-2.0 |
+| `formualizer-common`, `-parse` 3.1.2; `formualizer-eval`, `-macros`, `-workbook` 0.9.3 | [psu3d0/formualizer](https://github.com/psu3d0/formualizer) `362becffa029d8f77349c2c477fc39eff7fc52d5` (the commit the five crates.io archives name; tag `v0.9.3` is an annotated tag on it) | [`oneiron/parity`](https://github.com/oneiron-dev/formualizer/tree/oneiron/parity) | `d890db6debb9cf3579d47dc21e71e8c98fece477` | MIT OR Apache-2.0 |
 
 ## Changing a forked crate
 
@@ -50,11 +50,11 @@ never landed). Its manifest keeps the exact `=0.9.3` and `=3.1.2` requirements; 
 
 ```toml
 [patch.crates-io]
-formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "c6f1aee7b99f65dd626afd61a152668281c34887" }
-formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "c6f1aee7b99f65dd626afd61a152668281c34887" }
-formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "c6f1aee7b99f65dd626afd61a152668281c34887" }
-formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "c6f1aee7b99f65dd626afd61a152668281c34887" }
-formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "c6f1aee7b99f65dd626afd61a152668281c34887" }
+formualizer-common = { git = "https://github.com/oneiron-dev/formualizer", rev = "d890db6debb9cf3579d47dc21e71e8c98fece477" }
+formualizer-eval = { git = "https://github.com/oneiron-dev/formualizer", rev = "d890db6debb9cf3579d47dc21e71e8c98fece477" }
+formualizer-macros = { git = "https://github.com/oneiron-dev/formualizer", rev = "d890db6debb9cf3579d47dc21e71e8c98fece477" }
+formualizer-parse = { git = "https://github.com/oneiron-dev/formualizer", rev = "d890db6debb9cf3579d47dc21e71e8c98fece477" }
+formualizer-workbook = { git = "https://github.com/oneiron-dev/formualizer", rev = "d890db6debb9cf3579d47dc21e71e8c98fece477" }
 ```
 
 Fork branch `oneiron/parity` (0.9.3-oneiron.12), over `362becff`:
@@ -271,7 +271,7 @@ Fork branch `oneiron/parity` (0.9.3-oneiron.12), over `362becff`:
   on another). `b65931ef` (lock-free repeated builtin loading) was picked and reverted
   (`08ae49a2`): no measured benefit, in a fresh process or over five recalculations in one.
   Still 2,967 of 2,967 and 811/811.
-- `953fbbb1..c6f1aee7` (stage 2 wave 2, 2026-10-08): `3dc5603a` and `6aa7740c` (lane links2,
+- `953fbbb1..d890db6d` (stage 2 wave 2, 2026-10-08): `3dc5603a` and `6aa7740c` (lane links2,
   `ops/excel-links2-probe-20261008.md`) read `[0]` in a formula as the workbook itself (`[0]!Rate`,
   `[0]Sheet1!A1`) and intersect a closed linked workbook's range that a function returns with a
   legacy formula's cell as a written one; the adapter keeps refusing both forms until its own
@@ -305,8 +305,9 @@ Fork branch `oneiron/parity` (0.9.3-oneiron.12), over `362becff`:
   circular reference and a number format Excel will not open a workbook with; `c6f1aee7` (parse)
   keeps the first 32,767 characters of a longer `&` or CONCATENATE join without an error (CONCAT
   and TEXTJOIN past it `#CALC!`), reads INDIRECT text ending in `#` as Excel does, and refuses a
-  workbook whose live cycle runs through a spill reference. Still 2,967 of 2,967 and 811/811 at
-  each landing.
+  workbook whose live cycle runs through a spill reference; `d890db6d` (precision) reads a
+  fraction's denominator as typed (quoted or escaped digits are text) and refuses the formats
+  Excel will not open that the re-review found. Still 2,967 of 2,967 and 811/811 at each landing.
 
 `deny.toml` allows `https://github.com/oneiron-dev/formualizer` in `allow-git`, and CC0-1.0
 (owner ruling 2026-09-26) for `tiny-keccak` 2.0.2, which `formualizer-eval` pulls in at build
