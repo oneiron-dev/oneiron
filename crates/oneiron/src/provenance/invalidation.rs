@@ -9,6 +9,8 @@ use super::{
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimLifecycleStatus, ClaimSubject};
+#[cfg(feature = "sync")]
+use crate::edge::{EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN};
 use crate::edge::{
     EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout,
     edge_value_layout_for_kind,
@@ -150,6 +152,55 @@ pub(crate) fn withdraw_replayed_support_in_txn(
     txn: &mut RwTxn<'_>,
     subject: &EdgeRef,
 ) -> Result<()> {
+    let Some(flags) = withdrawn_support(store, txn, subject)? else {
+        return Ok(());
+    };
+    let Some(edge) = store.port_edge_get(txn, &subject.source, subject.kind, &subject.target)?
+    else {
+        return Ok(());
+    };
+    stamp_in_txn(store, txn, subject, edge.provenance, flags)
+}
+
+/// Whether `stored` is `image` of `subject` as the replay guard lands it over
+/// local withdrawal ([`withdraw_replayed_support_in_txn`]): the image's own
+/// value bytes under the retracted stamp the local cohort decides. Recovery
+/// completion accepts that projection in place of the image's bytes. An
+/// image that asserts no support (structural, or already retracted) is never
+/// projected.
+#[cfg(feature = "sync")]
+pub(crate) fn holds_withdrawn_image(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    subject: &EdgeRef,
+    image: &[u8],
+    stored: &[u8],
+) -> Result<bool> {
+    let retracted = EdgeConfirmationStatus::Retracted as u8;
+    if !matches!(
+        image.len(),
+        EDGE_VALUE_SEMANTIC_LEN | EDGE_VALUE_SEMANTIC_PROVENANCED_LEN
+    ) || image.get(EDGE_VALUE_SEMANTIC_LEN) == Some(&retracted)
+        || stored.len() != EDGE_VALUE_SEMANTIC_PROVENANCED_LEN
+        || image[..EDGE_VALUE_SEMANTIC_LEN] != stored[..EDGE_VALUE_SEMANTIC_LEN]
+    {
+        return Ok(false);
+    }
+    let Some(flags) = withdrawn_support(store, txn, subject)? else {
+        return Ok(false);
+    };
+    Ok(stored[EDGE_VALUE_SEMANTIC_LEN..]
+        == [flags.confirmation_status as u8, flags.actor_class as u8])
+}
+
+/// The retracted stamp `subject` takes when local `edge.provenance` wrappers
+/// for it exist and none is live, with the D14 winner's persisted actor
+/// class; `None` when a wrapper is live or there is none.
+fn withdrawn_support(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    subject: &EdgeRef,
+) -> Result<Option<EdgeProvenanceFlags>> {
     let mut live = false;
     let mut withdrawn = Vec::new();
     walk_edge_provenance_cohort_in_txn(
@@ -173,24 +224,16 @@ pub(crate) fn withdraw_replayed_support_in_txn(
         },
     )?;
     if live {
-        return Ok(());
+        return Ok(None);
     }
     let precedence: Vec<ProvenancePrecedence> = withdrawn
         .iter()
         .map(StoredProvenanceClaim::precedence)
         .collect();
-    let Some(index) = winner_index(&precedence) else {
-        return Ok(());
-    };
-    let Some(edge) = store.port_edge_get(txn, &subject.source, subject.kind, &subject.target)?
-    else {
-        return Ok(());
-    };
-    let flags = EdgeProvenanceFlags {
+    Ok(winner_index(&precedence).map(|index| EdgeProvenanceFlags {
         confirmation_status: EdgeConfirmationStatus::Retracted,
         actor_class: withdrawn[index].actor_class,
-    };
-    stamp_in_txn(store, txn, subject, edge.provenance, flags)
+    }))
 }
 
 /// Restamps `subject` when its `current` flags differ from `flags`, then

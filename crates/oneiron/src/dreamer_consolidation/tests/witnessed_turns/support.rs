@@ -1,7 +1,8 @@
 //! An attachment's Supports edge follows the MESSAGE words that justify it.
 //! Erasing the cited words withdraws that support from fresh graph reads, and
 //! so from PPR, which skips a retracted edge. The TURN and the approved head
-//! stay, and another live attachment of the same edge keeps the support.
+//! stay, and another live attachment of the same edge keeps the support. A
+//! replay or a canonical recovery of an older image keeps it withdrawn.
 use super::*;
 use crate::edge::EdgeConfirmationStatus::{self, Confirmed, Retracted};
 use crate::provenance::{
@@ -177,6 +178,55 @@ fn a_bare_image_after_edge_removal_keeps_the_withdrawn_support_retracted() -> Re
         support_status(&vault, fixture.turn, fixture.head)?,
         [Some(Retracted); 2],
         "a bare image never supports the head undampened"
+    );
+    Ok(())
+}
+
+/// A canonical window captured while the attachment stood carries the TURN ->
+/// head edge Confirmed. Once the cited words are erased, recovering that
+/// window in place completes: the edge it lands is the image under the
+/// retracted stamp local withdrawal decides, so a fresh graph read still finds
+/// the support withdrawn.
+#[cfg(feature = "sync")]
+#[test]
+fn recovering_a_window_over_withdrawn_support_completes_retracted() -> Result<()> {
+    let (dir, vault) = open_vault();
+    let fixture = attached(&vault)?;
+    let image = {
+        let txn = vault.store.env.read_txn()?;
+        crate::ports::EdgeStoreStaging::port_edge_encoded(
+            &vault.store,
+            &txn,
+            &fixture.turn,
+            EdgeKind::Supports,
+            &fixture.head,
+        )?
+        .expect("the stored edge image")
+    };
+    let window = loro::LoroDoc::new();
+    let key = format!(
+        "{}:{:02}:{}",
+        fixture.turn.to_hex(),
+        EdgeKind::Supports as u8,
+        fixture.head.to_hex()
+    );
+    window
+        .get_map("edges")
+        .insert(&key, image.as_slice())
+        .expect("window edge");
+    let snapshot = crate::recovery::capture_canonical_window(&vault, "2026-09", &window)?;
+    delete_message(&vault, fixture.cited)?;
+    crate::recovery::recover_vault_window(
+        &vault,
+        &crate::sync::bridge::Materializer::new(),
+        dir.path().join("support.manifest"),
+        &snapshot,
+        crate::recovery::RecoveryBudget::default(),
+    )?;
+    assert_eq!(
+        support_status(&vault, fixture.turn, fixture.head)?,
+        [Some(Retracted); 2],
+        "the recovered edge keeps the withdrawn support retracted"
     );
     Ok(())
 }

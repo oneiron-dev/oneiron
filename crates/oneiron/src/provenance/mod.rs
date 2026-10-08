@@ -149,6 +149,8 @@ mod edge_ref;
 mod entity_ref_wire;
 mod imported;
 mod invalidation;
+#[cfg(feature = "sync")]
+pub(crate) use invalidation::holds_withdrawn_image;
 pub(crate) use invalidation::{
     refresh_stale_wrapper_in_txn, replay_needs_cohort_check, withdraw_replayed_support_in_txn,
 };
