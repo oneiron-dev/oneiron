@@ -94,7 +94,7 @@ fn init_with_env(
                 embedder.dimensions
             )?;
         }
-        if let Some(tagger) = config.oneironer.as_ref() {
+        if let Some(tagger) = config.oneironer.as_ref().filter(|t| t.is_active()) {
             writeln!(
                 output,
                 "tagger: provider={} mode={}",
@@ -174,7 +174,14 @@ fn tagger_table(args: &InitArgs) -> anyhow::Result<toml::Table> {
     }
     let mut table = toml::Table::new();
     table.insert("provider".into(), choice.as_str().into());
-    if let Some(mode) = args.oneironer_mode {
+    // An endpoint without a stated mode runs in shadow, as the interactive
+    // default does, while save is not built.
+    let mode = match (choice, args.oneironer_mode) {
+        (_, Some(mode)) => Some(mode),
+        (OneironerProvider::Endpoint, None) => Some(OneironerMode::Shadow),
+        _ => None,
+    };
+    if let Some(mode) = mode {
         table.insert("mode".into(), mode.as_str().into());
     }
     if choice == OneironerProvider::Endpoint {
@@ -652,6 +659,24 @@ provider = "local"
             table.get("mode").and_then(toml::Value::as_str),
             Some("shadow")
         );
+    }
+
+    #[test]
+    fn a_non_interactive_endpoint_init_without_a_mode_writes_shadow() {
+        let args = InitArgs {
+            oneironer: Some(OneironerProvider::Endpoint),
+            oneironer_url: Some("http://127.0.0.1:9100".into()),
+            oneironer_checkpoint_sha16: Some("0123456789abcdef".into()),
+            oneironer_label_count: Some(3),
+            ..InitArgs::default()
+        };
+        let table = tagger_table(&args).unwrap();
+        assert_eq!(
+            table.get("mode").and_then(toml::Value::as_str),
+            Some("shadow")
+        );
+        let none = tagger_table(&InitArgs::default()).unwrap();
+        assert!(none.get("mode").is_none());
     }
 
     #[test]
