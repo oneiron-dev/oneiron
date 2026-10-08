@@ -32,6 +32,7 @@ pub mod managed;
 pub mod mcp;
 mod oauth_relay;
 mod oneironer;
+mod owner;
 pub mod projection;
 mod protocol;
 pub mod runtime;

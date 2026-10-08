@@ -3,6 +3,7 @@
 //! Images encode raw database keys/values from ONE LMDB read transaction. They
 //! never copy free pages, locks, index pages, telemetry or process leases. This
 //! is distinct from the logical export's entity/claim transformation format.
+mod authority_plane;
 mod rebuild;
 mod tiers;
 use crate::side_table::{self, Named, SideTable};
@@ -60,6 +61,46 @@ pub struct RestoreReport {
 }
 fn codec_error() -> Error {
     Error::CorruptedIndex("canonical checkpoint image")
+}
+/// Reads and structurally checks one image; returns it with its checkpoint id.
+fn read_image(path: &Path) -> Result<(CheckpointImage, String)> {
+    let mut file = std::fs::File::open(path)?;
+    let mut header = [0; 41];
+    file.read_exact(&mut header)?;
+    if &header[..9] != b"ONEIRONC1" {
+        return Err(codec_error());
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    let digest = blake3::hash(&bytes);
+    if digest.as_bytes() != &header[9..] {
+        return Err(codec_error());
+    }
+    let image: CheckpointImage = rmp_serde::from_slice(&bytes).map_err(|_| codec_error())?;
+    if image.version != 1
+        || image.databases.len() != DB_MANIFEST.len()
+        || DB_MANIFEST
+            .iter()
+            .any(|e| !image.databases.contains_key(e.name))
+    {
+        return Err(codec_error());
+    }
+    for (name, rows) in &image.databases {
+        if rows.windows(2).any(|w| w[0].0 >= w[1].0)
+            || rows
+                .iter()
+                .any(|(k, _)| storage_tier(name, k) != StorageTier::Canonical)
+        {
+            return Err(codec_error());
+        }
+    }
+    if image.databases["entities"].iter().any(|(_, value)| {
+        crate::batch::EntityMetadataHeader::parse(value)
+            .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC)
+    }) {
+        return Err(codec_error());
+    }
+    Ok((image, digest.to_hex().to_string()))
 }
 impl Vault {
     /// Create-new output only. Checkpoint id hashes the entire canonical image.
@@ -193,41 +234,57 @@ impl Vault {
         reason: RestoreReason,
         restored_at: u64,
     ) -> Result<(Self, RestoreReport)> {
-        let mut file = std::fs::File::open(path)?;
-        let mut header = [0; 41];
-        file.read_exact(&mut header)?;
-        if &header[..9] != b"ONEIRONC1" {
-            return Err(codec_error());
+        let (image, checkpoint_id) = read_image(path)?;
+        Self::restore_image(
+            image,
+            checkpoint_id,
+            destination,
+            config,
+            reason,
+            restored_at,
+        )
+    }
+    /// Historical content restore beside a live vault: the image's content
+    /// with `current`'s authority plane — its AUTHORITY_LOG, slip, pairing,
+    /// replay, freshness and authority-checkpoint rows. Refuses before
+    /// creating `destination` when the image is another vault's, or when a
+    /// grant, policy, custody or machine identity moved since the checkpoint,
+    /// rather than roll it back (ARCH-0038, RD-20); refuses and removes
+    /// `destination` when the result would make someone an owner or member
+    /// who is not one of `current` now.
+    pub fn restore_checkpoint_keeping_authority(
+        path: &Path,
+        destination: &Path,
+        config: VaultConfig,
+        current: &Self,
+        restored_at: u64,
+    ) -> Result<(Self, RestoreReport)> {
+        let (mut image, checkpoint_id) = read_image(path)?;
+        authority_plane::carry_current_authority(&mut image.databases, current)?;
+        let (vault, report) = Self::restore_image(
+            image,
+            checkpoint_id,
+            destination,
+            config,
+            RestoreReason::Restore,
+            restored_at,
+        )?;
+        if let Err(error) = authority_plane::refuse_new_members(current, &vault) {
+            drop(vault);
+            // This call created the destination; nothing else is in it.
+            let _ = std::fs::remove_dir_all(destination);
+            return Err(error);
         }
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)?;
-        if blake3::hash(&bytes).as_bytes() != &header[9..] {
-            return Err(codec_error());
-        }
-        let image: CheckpointImage = rmp_serde::from_slice(&bytes).map_err(|_| codec_error())?;
-        if image.version != 1
-            || image.databases.len() != DB_MANIFEST.len()
-            || DB_MANIFEST
-                .iter()
-                .any(|e| !image.databases.contains_key(e.name))
-        {
-            return Err(codec_error());
-        }
-        for (name, rows) in &image.databases {
-            if rows.windows(2).any(|w| w[0].0 >= w[1].0)
-                || rows
-                    .iter()
-                    .any(|(k, _)| storage_tier(name, k) != StorageTier::Canonical)
-            {
-                return Err(codec_error());
-            }
-        }
-        if image.databases["entities"].iter().any(|(_, value)| {
-            crate::batch::EntityMetadataHeader::parse(value)
-                .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC)
-        }) {
-            return Err(codec_error());
-        }
+        Ok((vault, report))
+    }
+    fn restore_image(
+        image: CheckpointImage,
+        checkpoint_id: String,
+        destination: &Path,
+        config: VaultConfig,
+        reason: RestoreReason,
+        restored_at: u64,
+    ) -> Result<(Self, RestoreReport)> {
         // A job row of another kind in the owner-retained key range would
         // hide from that kind's scans: refused before any destination exists.
         if image.databases["job_records"].iter().any(|(key, value)| {
@@ -291,7 +348,7 @@ impl Vault {
             rebuild::rebuild(&vault)?;
         rebuild::rebuild_auxiliary(&vault, image.created_at)?;
         let epoch = RestoreEpoch {
-            checkpoint_id: blake3::hash(&bytes).to_hex().to_string(),
+            checkpoint_id,
             restored_at,
             reason,
         };

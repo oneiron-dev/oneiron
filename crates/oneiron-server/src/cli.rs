@@ -5,6 +5,13 @@ use clap::{Args, Parser, Subcommand};
 use crate::commands;
 use crate::config::ServeArgs;
 
+mod owner_args;
+pub use owner_args::{
+    BackupArgs, DoctorArgs, ExportArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs,
+    RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand, SecretScanArgs, SecretScanSwitch,
+    ServeOnlyArgs,
+};
+
 const DEFAULT_SERVER_DIMENSIONS: usize = 4096;
 const DEFAULT_SERVER_MAP_SIZE: usize = 1 << 33;
 
@@ -38,8 +45,24 @@ pub enum Command {
     SkillsPack(SkillsPackArgs),
     /// Create a vault and print its doctor report.
     Init(InitArgs),
-    /// Open a vault and print its doctor report.
-    Doctor(VaultArgs),
+    /// Open a vault and print its doctor report, with where its data lives:
+    /// path, size on disk, last backup and last export.
+    Doctor(DoctorArgs),
+    /// Back up a stopped vault now (`--list` shows its backups).
+    Backup(Box<BackupArgs>),
+    /// Restore a backup over a stopped vault, or `--rehearse` it in a
+    /// scratch copy without touching the vault.
+    Restore(Box<RestoreArgs>),
+    /// Export the whole vault in one of five formats.
+    Export(Box<ExportArgs>),
+    /// Turn the write-door secret scan on or off, or show it.
+    SecretScan(Box<SecretScanArgs>),
+    /// Preview, approve or decline one whole import batch.
+    #[command(subcommand)]
+    Import(ImportCommand),
+    /// Agent runs waiting for consent: list, review, approve or decline whole.
+    #[command(subcommand)]
+    Runs(RunsCommand),
     /// Move a stopped vault to the configured embedding model: repin it and
     /// queue every record to be embedded again, which the next `serve` does.
     Reembed(Box<ReembedArgs>),
@@ -393,6 +416,12 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::SkillsPack(args) => commands::skills_pack(args),
         Command::Init(args) => tokio::task::spawn_blocking(move || commands::init(args)).await?,
         Command::Doctor(args) => commands::doctor(args),
+        Command::Backup(args) => commands::backup(*args),
+        Command::Restore(args) => commands::restore(*args),
+        Command::Export(args) => commands::export(*args),
+        Command::SecretScan(args) => commands::secret_scan(*args),
+        Command::Import(command) => commands::import(command),
+        Command::Runs(command) => commands::runs(command),
         Command::Reembed(args) => commands::reembed(*args),
         Command::Provenance(args) => commands::provenance(*args),
         Command::Token(TokenCommand::Bootstrap(args)) => commands::token_bootstrap(*args),

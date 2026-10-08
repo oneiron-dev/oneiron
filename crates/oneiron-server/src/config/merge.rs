@@ -8,6 +8,7 @@ use anyhow::Context;
 use oneiron::{HostingPrivacyPosture, SyncConfigField, SyncProtocolValidation};
 use serde::Deserialize;
 
+use super::backup::{BackupConfigOverride, lookup_backup_override};
 use super::embedder::{EmbedderConfig, EmbedderProvider};
 use super::embedder::{EmbedderConfigOverride, lookup_embedder_override};
 use super::lookup::{
@@ -105,6 +106,7 @@ impl EnvConfig {
         values.runtime = lookup_runtime_override(&mut lookup)?;
         values.embedder = lookup_embedder_override(&mut lookup)?;
         values.oneironer = lookup_oneironer_override(&mut lookup)?;
+        values.backup = lookup_backup_override(&mut lookup)?;
         values.privacy_posture = lookup_parse(&mut lookup, "ONEIRON_PRIVACY_POSTURE")?;
         values.failure_signal_export = lookup_bool(&mut lookup, "ONEIRON_FAILURE_SIGNAL_EXPORT")?;
         values.failure_signal_training =
@@ -223,6 +225,7 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     if let Some(oneironer) = &config.oneironer {
         oneironer.validate()?;
     }
+    config.backup.validate()?;
     // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
     // refused while it is still a config error with an operator-facing
     // remedy, not only at open time.
@@ -393,6 +396,7 @@ struct FileServeConfig {
     runtime: Option<RuntimeConfigOverride>,
     embedder: Option<EmbedderConfigOverride>,
     oneironer: Option<OneironerConfigOverride>,
+    backup: Option<BackupConfigOverride>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -434,6 +438,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             runtime: value.runtime,
             embedder: value.embedder,
             oneironer: value.oneironer,
+            backup: value.backup,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,
@@ -476,6 +481,7 @@ struct PartialServeConfig {
     runtime: Option<RuntimeConfigOverride>,
     embedder: Option<EmbedderConfigOverride>,
     oneironer: Option<OneironerConfigOverride>,
+    backup: Option<BackupConfigOverride>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -529,6 +535,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("runtime", &self.runtime)
             .field("embedder", &self.embedder)
             .field("oneironer", &self.oneironer)
+            .field("backup", &self.backup)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
@@ -645,6 +652,9 @@ impl PartialServeConfig {
                 .get_or_insert_with(OneironerConfig::default)
                 .apply_override(value);
         }
+        if let Some(value) = self.backup {
+            resolved.backup.apply_override(value);
+        }
         if let Some(value) = self.failure_signal_export {
             resolved.failure_signal_export = value;
         }
@@ -702,6 +712,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             embedder: embedder_override_from_args(value),
             oneironer: Some(OneironerConfigOverride::from(&value.oneironer))
                 .filter(|over| !over.is_empty()),
+            backup: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,

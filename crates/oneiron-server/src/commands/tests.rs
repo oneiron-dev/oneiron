@@ -203,7 +203,11 @@ fn doctor_opens_existing_vault() {
         ..Default::default()
     })
     .unwrap();
-    doctor(args).unwrap();
+    doctor(crate::cli::DoctorArgs {
+        vault: args,
+        config: Some(dir.path().join("oneiron.toml")),
+    })
+    .unwrap();
 }
 
 #[tokio::test]

@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::http::HeaderValue;
+#[cfg(test)]
 use rmpv::Value as MsgpackValue;
 use serde_json::{Value as JsonValue, json};
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -40,7 +41,6 @@ pub use self::host_init::host_init;
 pub use self::api::api;
 
 pub const NO_CJK_DICT_WARNING: &str = "NO CJK DICTIONARY FOUND: Japanese, Chinese, and Korean text will use portable n-gram tokenization. Install dictionaries under an XDG oneiron dict root or set --dict-search-paths.";
-const MAX_MSGPACK_JSON_DEPTH: usize = 32;
 /// Below this the auth secret is weak MAC key material; warn, do not refuse.
 const MIN_RECOMMENDED_AUTH_SECRET_BYTES: usize = 16;
 
@@ -70,11 +70,12 @@ mod init;
 pub use init::init;
 mod reembed;
 pub use reembed::reembed;
-
-pub fn doctor(args: VaultArgs) -> anyhow::Result<()> {
-    let vault = open_vault_for_command(&args)?;
-    print_doctor_report(&vault)
-}
+mod owner;
+pub use owner::{backup, doctor, export, import, restore, runs, secret_scan};
+mod msgpack_json;
+pub(crate) use msgpack_json::msgpack_value_json;
+#[cfg(test)]
+use msgpack_json::msgpack_value_json_with_depth;
 
 pub fn provenance(args: ProvenanceArgs) -> anyhow::Result<()> {
     let vault_args = VaultArgs {
@@ -417,89 +418,6 @@ fn claim_subject_json(subject: &oneiron::ClaimSubject) -> JsonValue {
     }
 }
 
-fn msgpack_value_json(value: &MsgpackValue) -> JsonValue {
-    msgpack_value_json_with_depth(value, MAX_MSGPACK_JSON_DEPTH)
-}
-
-fn msgpack_value_json_with_depth(value: &MsgpackValue, remaining_depth: usize) -> JsonValue {
-    match value {
-        MsgpackValue::Nil => JsonValue::Null,
-        MsgpackValue::Boolean(value) => json!(value),
-        MsgpackValue::Integer(value) => value
-            .as_i64()
-            .map_or_else(|| json!(value.as_u64()), |value| json!(value)),
-        MsgpackValue::F32(value) => json!(value),
-        MsgpackValue::F64(value) => json!(value),
-        MsgpackValue::String(value) => value.as_str().map_or_else(
-            || json!({ "string": value.to_string() }),
-            |value| json!(value),
-        ),
-        MsgpackValue::Binary(value) => json!({ "binary_hex": hex_bytes(value) }),
-        MsgpackValue::Array(_) | MsgpackValue::Map(_) if remaining_depth == 0 => {
-            json!({ "truncated": "max_depth" })
-        }
-        MsgpackValue::Array(values) => JsonValue::Array(
-            values
-                .iter()
-                .map(|value| msgpack_value_json_with_depth(value, remaining_depth - 1))
-                .collect(),
-        ),
-        MsgpackValue::Map(values) => {
-            let mut map = serde_json::Map::new();
-            for (key, value) in values {
-                insert_json_map_value(
-                    &mut map,
-                    msgpack_map_key(key, remaining_depth - 1),
-                    msgpack_value_json_with_depth(value, remaining_depth - 1),
-                );
-            }
-            JsonValue::Object(map)
-        }
-        MsgpackValue::Ext(tag, value) => json!({
-            "ext_type": tag,
-            "data_hex": hex_bytes(value),
-        }),
-    }
-}
-
-fn msgpack_map_key(value: &MsgpackValue, remaining_depth: usize) -> String {
-    match value {
-        MsgpackValue::String(value) => value
-            .as_str()
-            .map_or_else(|| value.to_string(), std::borrow::ToOwned::to_owned),
-        _ => serde_json::to_string(&msgpack_value_json_with_depth(value, remaining_depth))
-            .unwrap_or_else(|_| format!("{value:?}")),
-    }
-}
-
-fn insert_json_map_value(
-    map: &mut serde_json::Map<String, JsonValue>,
-    key: String,
-    value: JsonValue,
-) {
-    if !map.contains_key(&key) {
-        map.insert(key, value);
-        return;
-    }
-    for index in 2.. {
-        let candidate = format!("{key}#{index}");
-        if !map.contains_key(&candidate) {
-            map.insert(candidate, value);
-            return;
-        }
-    }
-}
-
-fn hex_bytes(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
-}
-
 async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
     use oneiron_vault_contract::host::{Host, HostLimits};
 
@@ -518,6 +436,7 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
 
     let mut vault_config = config.vault_config();
     vault_config.dict_search_paths = dicts.paths;
+    let owner_host = crate::owner::schedule::OwnerHost::from_config(&config, vault_config.clone());
     let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
         .map_err(reembed::with_model_change_remedy)?;
 
@@ -567,7 +486,8 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
         SyncServer::new(Arc::new(vault), server_config)
             .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
             .with_embedder(embedder)
-            .with_tagger(tagger),
+            .with_tagger(tagger)
+            .with_owner_host(owner_host),
     );
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
     tracing::info!(%addr, "listening");
@@ -588,7 +508,8 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::from_std(host.listener()?)?;
     let linear_handle = crate::linear_host::spawn(sync_server.clone()).await?;
     let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
-    let workers = sync_server.spawn_slot_workers();
+    let mut workers = sync_server.spawn_slot_workers();
+    workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
     let app = build_app(sync_server).layer(cors_layer);
     host.ready()?;
     let result = axum::serve(
