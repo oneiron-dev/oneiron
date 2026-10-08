@@ -54,11 +54,16 @@ pub fn record_judged_amendment(vault: &Vault, delta_receipt: &str) -> Result<()>
         if MEMBER.contains(&vault.store, &*wtxn, &member_key)? {
             return Ok(());
         }
-        let mut aggregate = AGGREGATE
-            .get(&vault.store, &*wtxn, &scope_row_key)?
-            .unwrap_or_default();
-        apply_fold(&mut aggregate, fold)?;
-        AGGREGATE.put(&vault.store, wtxn, &scope_row_key, &aggregate)?;
+        // A judgment that is unclear throughout HOLDS: it binds its generation,
+        // so a later re-judgment folds against the model that produced it, but
+        // weighs nothing until then.
+        if let Some(fold) = fold {
+            let mut aggregate = AGGREGATE
+                .get(&vault.store, &*wtxn, &scope_row_key)?
+                .unwrap_or_default();
+            apply_fold(&mut aggregate, fold)?;
+            AGGREGATE.put(&vault.store, wtxn, &scope_row_key, &aggregate)?;
+        }
         MEMBER.put(&vault.store, wtxn, &member_key, &member)?;
         Ok(())
     })
@@ -85,35 +90,42 @@ pub(in crate::edit_distance) fn folded_model_version_in_txn(
         .map(|row| row.model_version))
 }
 
-/// One judgment's contribution: its edit mass, and whether it was sound.
+/// One judgment's contribution: its edit mass, and how much of it was sound.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Fold {
     d_norm: f64,
-    sound: bool,
+    sound: f64,
 }
 
-/// What one judgment contributes.
+/// What one judgment contributes, or `None` when it holds.
 ///
-/// A proposal is SOUND when the amendment says nothing was wrong with it — the
+/// A proposal is SOUND where the amendment says nothing was wrong with it — the
 /// world moved ([`AmendmentClass::Environment`]) or the decider wanted it
 /// otherwise ([`AmendmentClass::PreferenceShift`]). Every other class routes
 /// from "the proposal was wrong on its own terms", including
 /// [`AmendmentClass::Discovery`], which charges nobody but does not mean the
-/// draft stood.
-pub(super) fn fold_of(judgment: &AmendmentJudgment) -> Result<Fold> {
+/// draft stood. A split counts the sound SHARE of what the judge could
+/// attribute: an `unclear` share is neither sound nor unsound, and a judgment
+/// that is unclear throughout holds and folds nothing.
+pub(super) fn fold_of(judgment: &AmendmentJudgment) -> Result<Option<Fold>> {
     let d_norm = f64::from(judgment.d_norm);
     if !d_norm.is_finite() || d_norm < 0.0 {
         return Err(invalid(
             "a routing fold needs a finite non-negative edit mass",
         ));
     }
-    Ok(Fold {
+    let judged = 1.0 - f64::from(judgment.share_of(AmendmentClass::Unclear));
+    if judgment.holds() || judged <= 0.0 {
+        return Ok(None);
+    }
+    let sound = f64::from(
+        judgment.share_of(AmendmentClass::Environment)
+            + judgment.share_of(AmendmentClass::PreferenceShift),
+    );
+    Ok(Some(Fold {
         d_norm,
-        sound: matches!(
-            judgment.class,
-            AmendmentClass::Environment | AmendmentClass::PreferenceShift
-        ),
-    })
+        sound: (sound / judged).clamp(0.0, 1.0),
+    }))
 }
 
 pub(super) fn apply_fold(aggregate: &mut StoredAggregate, fold: Fold) -> Result<()> {
@@ -123,8 +135,8 @@ pub(super) fn apply_fold(aggregate: &mut StoredAggregate, fold: Fold) -> Result<
         .checked_add(1)
         .ok_or(Error::ArithmeticOverflow("routing aggregate runs"))?;
     aggregate.d_norm_sum += fold.d_norm;
-    // `sound` counts a subset of `runs`, so the bound above is its bound too.
-    aggregate.sound += u64::from(fold.sound);
+    // `sound` sums a share of each run, so the bound above is its bound too.
+    aggregate.sound += fold.sound;
     Ok(())
 }
 

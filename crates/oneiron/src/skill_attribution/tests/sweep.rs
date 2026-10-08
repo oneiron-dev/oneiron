@@ -949,3 +949,171 @@ fn callable_sweep_projects_pair_claim_and_shared_selection_from_real_invocations
     );
     Ok(())
 }
+
+/// ARCH-0056 §5 #unclear (owner, 2026-10-08): a verdict the judge holds below
+/// the `attribution_unclear_floor` setting (seeded at 0.6) is `unclear`. It
+/// changes no reliability row and files exactly one row in the unclear ledger,
+/// with the judge's note, for the Dreamer to cluster. The floor is a setting
+/// row: once the owner pins it lower, the same confidence counts.
+#[test]
+fn an_unclear_verdict_changes_no_reliability_and_files_one_note() -> Result<()> {
+    use crate::learning_setting::{
+        ATTRIBUTION_UNCLEAR_FLOOR, SettingMode, SettingRow, put_setting_row, setting_value,
+    };
+
+    struct Source {
+        actor: EntityId,
+        skill: EntityId,
+    }
+    impl ReceiptAttributionSource for Source {
+        fn facts(&self, _: &ReceiptRecord) -> Result<Option<Vec<ReceiptAttributionFacts>>> {
+            Ok(Some(vec![ReceiptAttributionFacts {
+                actor: self.actor,
+                skill: Some(self.skill),
+                followed_state: FollowedState::Followed,
+                skill_covered_step: true,
+            }]))
+        }
+    }
+    /// Leans to the skill's defect, but only at 0.4.
+    struct Unsure;
+    impl AttributionJudge for Unsure {
+        fn judge(&self, _: &OutcomeEvidence) -> Result<Option<AttributionVerdict>> {
+            Ok(Some(AttributionVerdict::SkillDefect))
+        }
+        fn judge_hunks(&self, request: &JudgeRequest<'_>) -> Result<Option<Vec<HunkVerdict>>> {
+            assert!(request.hunks.is_empty(), "a failed attempt carries no edit");
+            Ok(Some(vec![
+                HunkVerdict::with_confidence(AttributionVerdict::SkillDefect, 0.4)
+                    .with_note("the upstream API may have failed, not the skill"),
+            ]))
+        }
+    }
+
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let actor = put_actor(&vault, EntityId::now())?;
+    let skill = put_skill(&vault, EntityId::now(), FIXTURE_SKILL_ID)?;
+    let source = Source { actor, skill };
+    assert_eq!(setting_value(&vault, &ATTRIBUTION_UNCLEAR_FLOOR)?, 0.6);
+
+    let receipt = terminal(&vault, actor, true)?;
+    let report = run_task_attribution_sweep_with_judge(&vault, 16, &source, &Unsure)?;
+    assert_eq!(report.captured_evidence, 1);
+    assert_eq!(report.judgments, 0, "an unclear verdict charges nobody");
+    assert!(attribution_judgments(&vault)?.is_empty());
+    assert_eq!(
+        skill_reliability_posterior_for_executor(&vault, &skill, "fixture/model@1")?,
+        None,
+        "no reliability row moves"
+    );
+    let filed = unclear_attributions(&vault)?;
+    assert_eq!(filed.len(), 1, "one row in the unclear ledger");
+    assert_eq!(filed[0].lane, AttributionLane::Attempt);
+    assert_eq!(filed[0].evidence_receipts, vec![receipt]);
+    assert_eq!(filed[0].notes.len(), 1);
+    let note = &filed[0].notes[0];
+    assert_eq!(note.reason, UnclearReason::BelowFloor);
+    assert_eq!(note.leaning, Some(AttributionVerdict::SkillDefect));
+    assert_eq!(
+        note.note.as_deref(),
+        Some("the upstream API may have failed, not the skill")
+    );
+    assert_eq!(filed[0].share(), 1.0, "the whole outcome holds");
+
+    put_setting_row(
+        &vault,
+        &SettingRow {
+            key: ATTRIBUTION_UNCLEAR_FLOOR.key.to_owned(),
+            mode: SettingMode::Pin,
+            value: 0.3,
+            weight_runs: None,
+            by: actor,
+            at: 200,
+            why: "this judge is calibrated low".to_owned(),
+        },
+    )?;
+    assert_eq!(setting_value(&vault, &ATTRIBUTION_UNCLEAR_FLOOR)?, 0.3);
+    let prior = skill_reliability_prior(&vault, &skill)?;
+    terminal(&vault, actor, true)?;
+    let report = run_task_attribution_sweep_with_judge(&vault, 16, &source, &Unsure)?;
+    assert_eq!(
+        report.judgments, 1,
+        "above the pinned floor the defect counts"
+    );
+    let after =
+        skill_reliability_posterior_for_executor(&vault, &skill, "fixture/model@1")?.unwrap();
+    assert_eq!(after.beta, prior.beta + 1.0);
+    assert_eq!(
+        unclear_attributions(&vault)?.len(),
+        1,
+        "a counted verdict files no note"
+    );
+    Ok(())
+}
+
+/// ARCH-0056 §5 #label-lanes: an outside fact can break an attempt, so
+/// `environment` is a valid attempt-lane answer — it blames nobody and files
+/// nothing. `preference_shift` is amendment-only: on a failed attempt it does
+/// not fit, so it holds as `unclear` and leaves a note saying so.
+#[test]
+fn environment_fits_a_failed_attempt_and_taste_does_not() -> Result<()> {
+    struct Source {
+        actor: EntityId,
+        skill: EntityId,
+    }
+    impl ReceiptAttributionSource for Source {
+        fn facts(&self, _: &ReceiptRecord) -> Result<Option<Vec<ReceiptAttributionFacts>>> {
+            Ok(Some(vec![ReceiptAttributionFacts {
+                actor: self.actor,
+                skill: Some(self.skill),
+                followed_state: FollowedState::Followed,
+                skill_covered_step: true,
+            }]))
+        }
+    }
+    struct Says(AttributionVerdict);
+    impl AttributionJudge for Says {
+        fn judge(&self, _: &OutcomeEvidence) -> Result<Option<AttributionVerdict>> {
+            Ok(Some(self.0))
+        }
+    }
+
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let actor = put_actor(&vault, EntityId::now())?;
+    let skill = put_skill(&vault, EntityId::now(), FIXTURE_SKILL_ID)?;
+    let source = Source { actor, skill };
+
+    terminal(&vault, actor, true)?;
+    let report = run_task_attribution_sweep_with_judge(
+        &vault,
+        16,
+        &source,
+        &Says(AttributionVerdict::Environment),
+    )?;
+    assert_eq!(report.judgments, 0, "an outside fact blames nobody");
+    assert!(
+        unclear_attributions(&vault)?.is_empty(),
+        "and is not unclear"
+    );
+    assert_eq!(
+        skill_reliability_posterior_for_executor(&vault, &skill, "fixture/model@1")?,
+        None
+    );
+
+    terminal(&vault, actor, true)?;
+    let report = run_task_attribution_sweep_with_judge(
+        &vault,
+        16,
+        &source,
+        &Says(AttributionVerdict::PreferenceShift),
+    )?;
+    assert_eq!(report.judgments, 0);
+    let filed = unclear_attributions(&vault)?;
+    assert_eq!(filed.len(), 1);
+    assert_eq!(filed[0].notes[0].reason, UnclearReason::OutsideLane);
+    assert_eq!(
+        filed[0].notes[0].leaning,
+        Some(AttributionVerdict::PreferenceShift)
+    );
+    Ok(())
+}

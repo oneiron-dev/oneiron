@@ -115,11 +115,18 @@ pub(super) struct StoredEvidence {
     pub(super) at: u64,
 }
 
+/// One judged amendment. A row carries its label + share `split`; a row
+/// written before split verdicts carries one `class` and `subject` instead,
+/// and reads back as that class at 100%.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct StoredJudgment {
     pub(super) v: u8,
-    pub(super) class: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) class: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) subject: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) split: Vec<StoredShare>,
     pub(super) scope: String,
     pub(super) evidence_receipts: Vec<String>,
     pub(super) d_norm: f32,
@@ -127,11 +134,25 @@ pub(super) struct StoredJudgment {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct StoredShare {
+    pub(super) class: String,
+    pub(super) share: f32,
+    pub(super) subject: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct StoredPreference {
     pub(super) v: u8,
     pub(super) scope: String,
     pub(super) evidence_receipts: Vec<String>,
+    /// A row written before split verdicts spoke for the whole amendment.
+    #[serde(default = "whole_share")]
+    pub(super) share: f32,
     pub(super) at: u64,
+}
+
+const fn whole_share() -> f32 {
+    1.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

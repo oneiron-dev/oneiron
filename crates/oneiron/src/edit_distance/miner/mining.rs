@@ -266,6 +266,11 @@ fn clusters_from(
         .collect::<BTreeMap<_, _>>();
     let mut buckets: BTreeMap<ClusterKey, Bucket> = BTreeMap::new();
     for judgment in judgments {
+        // An amendment the judge could not attribute at all HOLDS: its notes
+        // wait in the unclear ledger, and nothing is mined from it until then.
+        if judgment.holds() {
+            continue;
+        }
         let Some(source) = amendment_source(vault, judgment, &artifacts)? else {
             continue;
         };

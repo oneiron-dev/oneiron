@@ -128,6 +128,20 @@ impl AttributionJudge for AlwaysDefectJudge {
     }
 }
 
+/// The whole-amendment class, at the shipped floor: the split of one region
+/// is one class at 100%.
+fn whole(
+    evidence: &AmendmentEvidence,
+    judge: &dyn AttributionJudge,
+) -> Result<Option<AmendmentClass>> {
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "the unit-interval seed narrowed to the judge's f32 confidence"
+    )]
+    let floor = crate::learning_setting::ATTRIBUTION_UNCLEAR_FLOOR.seed as f32;
+    Ok(classify_amendment(evidence, judge, &[], floor)?.and_then(|split| split.sole()))
+}
+
 // ─── classification ─────────────────────────────────────────────────────
 
 #[test]
@@ -142,28 +156,28 @@ fn the_two_amendment_causes_short_circuit_the_ladder() -> Result<()> {
         .with_routing_facts(true, true);
 
     assert_eq!(
-        classify_amendment(
+        whole(
             &base.clone().with_cause(AmendmentCause::ExternalChange),
             &RuleAttributionJudge
         )?,
         Some(AmendmentClass::Environment)
     );
     assert_eq!(
-        classify_amendment(
+        whole(
             &base.clone().with_cause(AmendmentCause::DeciderPreference),
             &RuleAttributionJudge
         )?,
         Some(AmendmentClass::PreferenceShift)
     );
     assert_eq!(
-        classify_amendment(
+        whole(
             &base.clone().with_cause(AmendmentCause::ProposalWrong),
             &RuleAttributionJudge
         )?,
         Some(AmendmentClass::SkillDefect)
     );
     // No cause settled: the honest answer is silence, not the nearest class.
-    assert_eq!(classify_amendment(&base, &RuleAttributionJudge)?, None);
+    assert_eq!(whole(&base, &RuleAttributionJudge)?, None);
     Ok(())
 }
 
@@ -179,11 +193,11 @@ fn the_wrong_proposal_arm_is_sk04s_table_verbatim() -> Result<()> {
             .with_routing_facts(followed, covered)
     };
     assert_eq!(
-        classify_amendment(&wrong(false, true), &RuleAttributionJudge)?,
+        whole(&wrong(false, true), &RuleAttributionJudge)?,
         Some(AmendmentClass::ExecutionLapse)
     );
     assert_eq!(
-        classify_amendment(&wrong(true, false), &RuleAttributionJudge)?,
+        whole(&wrong(true, false), &RuleAttributionJudge)?,
         Some(AmendmentClass::Discovery)
     );
     // A skill-routed verdict with no skill in the evidence abstains rather than
@@ -192,10 +206,7 @@ fn the_wrong_proposal_arm_is_sk04s_table_verbatim() -> Result<()> {
         .at(5)
         .with_cause(AmendmentCause::ProposalWrong)
         .with_routing_facts(true, true);
-    assert_eq!(
-        classify_amendment(&skill_less, &RuleAttributionJudge)?,
-        None
-    );
+    assert_eq!(whole(&skill_less, &RuleAttributionJudge)?, None);
     Ok(())
 }
 
@@ -274,8 +285,8 @@ fn a_skill_defect_charges_the_skill_and_a_lapse_charges_the_actor() -> Result<()
         "the skill was wrong so do it that way",
     )?
     .expect("a settled amendment routes");
-    assert_eq!(defect.class, AmendmentClass::SkillDefect);
-    assert_eq!(defect.subject, Some(skill));
+    assert_eq!(defect.sole_class(), Some(AmendmentClass::SkillDefect));
+    assert_eq!(defect.split[0].subject, Some(skill));
 
     let lapse = judged(
         &vault,
@@ -289,8 +300,8 @@ fn a_skill_defect_charges_the_skill_and_a_lapse_charges_the_actor() -> Result<()
         "so do it this way",
     )?
     .expect("a settled amendment routes");
-    assert_eq!(lapse.class, AmendmentClass::ExecutionLapse);
-    assert_eq!(lapse.subject, Some(actor));
+    assert_eq!(lapse.sole_class(), Some(AmendmentClass::ExecutionLapse));
+    assert_eq!(lapse.split[0].subject, Some(actor));
 
     let landed = project_edit_cost_claims(&vault, &[defect, lapse])?;
     assert_eq!(landed.len(), 2, "one row per charged subject");
@@ -326,8 +337,11 @@ fn environment_charges_nobody_and_preference_mints_a_proposal() -> Result<()> {
         "meet at five",
     )?
     .expect("an external change is a class, not an abstention");
-    assert_eq!(environment.class, AmendmentClass::Environment);
-    assert_eq!(environment.subject, None, "there is nobody to blame");
+    assert_eq!(environment.sole_class(), Some(AmendmentClass::Environment));
+    assert_eq!(
+        environment.split[0].subject, None,
+        "there is nobody to blame"
+    );
 
     let preference = judged(
         &vault,
@@ -340,7 +354,10 @@ fn environment_charges_nobody_and_preference_mints_a_proposal() -> Result<()> {
         "best",
     )?
     .expect("a preference is a class, not an abstention");
-    assert_eq!(preference.class, AmendmentClass::PreferenceShift);
+    assert_eq!(
+        preference.sole_class(),
+        Some(AmendmentClass::PreferenceShift)
+    );
 
     assert!(
         project_edit_cost_claims(&vault, &[environment, preference])?.is_empty(),
@@ -374,8 +391,12 @@ fn a_discovery_earns_no_cost_row() -> Result<()> {
         "nothing here covered the case, so add this",
     )?
     .expect("a settled amendment routes");
-    assert_eq!(discovery.class, AmendmentClass::Discovery);
-    assert_eq!(discovery.subject, Some(skill), "the gap is the skill's");
+    assert_eq!(discovery.sole_class(), Some(AmendmentClass::Discovery));
+    assert_eq!(
+        discovery.split[0].subject,
+        Some(skill),
+        "the gap is the skill's"
+    );
     assert!(
         project_edit_cost_claims(&vault, &[discovery])?.is_empty(),
         "missing content is SK-04's edit proposal, not a cost"
@@ -396,8 +417,11 @@ fn a_forged_judgment_lands_nothing() -> Result<()> {
     // Never routed by this module: a caller-built row asserting its own class.
     let forged = AmendmentJudgment {
         receipt_id: "receipt:forged".to_owned(),
-        class: AmendmentClass::SkillDefect,
-        subject: Some(skill),
+        split: vec![AmendmentShare {
+            class: AmendmentClass::SkillDefect,
+            share: 1.0,
+            subject: Some(skill),
+        }],
         scope: "outbound".to_owned(),
         evidence_receipts: vec!["receipt:forged".to_owned()],
         d_norm: 1.0,
@@ -534,7 +558,7 @@ fn re_judging_withdraws_the_proposal_it_no_longer_stands_behind() -> Result<()> 
             .with_routing_facts(true, true),
     )?;
     let rejudged = judge_amendment(&vault, "receipt:rejudge")?.expect("a settled amendment routes");
-    assert_eq!(rejudged.class, AmendmentClass::SkillDefect);
+    assert_eq!(rejudged.sole_class(), Some(AmendmentClass::SkillDefect));
     assert!(
         pending_preference_proposals(&vault)?.is_empty(),
         "the stale proposal is withdrawn with the verdict that minted it"
@@ -578,7 +602,7 @@ fn a_reclassified_receipt_retracts_the_head_it_orphaned() -> Result<()> {
             .with_cause(AmendmentCause::ExternalChange),
     )?;
     let rejudged = judge_amendment(&vault, "receipt:moved")?.expect("a settled amendment routes");
-    assert_eq!(rejudged.class, AmendmentClass::Environment);
+    assert_eq!(rejudged.sole_class(), Some(AmendmentClass::Environment));
     project_edit_cost_claims(&vault, &[rejudged])?;
 
     assert!(
@@ -616,7 +640,10 @@ fn an_abstaining_re_judgment_withdraws_the_answer_it_replaced() -> Result<()> {
         "best",
     )?
     .expect("a settled amendment routes");
-    assert_eq!(preference.class, AmendmentClass::PreferenceShift);
+    assert_eq!(
+        preference.sole_class(),
+        Some(AmendmentClass::PreferenceShift)
+    );
     assert_eq!(pending_preference_proposals(&vault)?.len(), 1);
 
     // The same door, re-read: the cause it thought it had does not hold up.
@@ -915,5 +942,173 @@ fn archived_amendment_costs_are_inert_and_not_projector_history() -> Result<()> 
     for (id, before) in ids.iter().zip(preserved) {
         assert_eq!(target.get_claim(id)?, Some(before));
     }
+    Ok(())
+}
+
+// ─── split verdicts and unclear (ARCH-0056 §5, owner 2026-10-08) ──────────
+
+/// Labels the first hunk the skill's defect and the second the executor's
+/// lapse, both above the floor.
+struct DefectThenLapse;
+
+impl AttributionJudge for DefectThenLapse {
+    fn judge(&self, _evidence: &OutcomeEvidence) -> Result<Option<AttributionVerdict>> {
+        Ok(None)
+    }
+
+    fn judge_hunks(&self, request: &JudgeRequest<'_>) -> Result<Option<Vec<HunkVerdict>>> {
+        assert_eq!(request.hunks.len(), 2, "the judge sees every changed hunk");
+        Ok(Some(vec![
+            HunkVerdict::with_confidence(AttributionVerdict::SkillDefect, 0.9),
+            HunkVerdict::with_confidence(AttributionVerdict::ExecutionLapse, 0.8),
+        ]))
+    }
+}
+
+/// A verdict is a label + % split by hunk, and each route takes only its
+/// share. One amendment whose first hunk is the skill's defect and whose
+/// second is the executor's lapse charges the skill and the actor each their
+/// hunk's share of the edit — weighted by the hunk's own measured edit mass —
+/// and the two charges together are the whole edit.
+#[test]
+fn a_two_hunk_edit_charges_each_route_only_its_share() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = put_actor(&vault)?;
+    let skill = put_skill(&vault, "ed03.split")?;
+    let receipt = "receipt:split";
+    let hunks = [
+        EditHunk {
+            before: "Dear team,",
+            after: "Hello team,",
+        },
+        EditHunk {
+            before: "the launch moves to Friday.",
+            after: "the launch moves to Monday.\nThe review comes first.\nBring the numbers.",
+        },
+    ];
+    let d_norm = measure_amendment(
+        &vault,
+        receipt,
+        "Dear team,\nthe launch moves to Friday.\nRegards",
+        "Hello team,\nthe launch moves to Monday.\nThe review comes first.\nBring the numbers.\nRegards",
+    )?;
+    record_amendment_evidence(
+        &vault,
+        &AmendmentEvidence::new(receipt, actor, "outbound")
+            .at(70)
+            .with_skill(skill)
+            .with_cause(AmendmentCause::ProposalWrong)
+            .with_routing_facts(true, true),
+    )?;
+
+    let judgment = judge_amendment_hunks(&vault, receipt, &DefectThenLapse, &hunks)?
+        .expect("a split amendment routes");
+    // Each hunk weighs what the pinned ED metric measures for it.
+    let mass = |hunk: &EditHunk<'_>| {
+        delta_from_reconstructed(hunk.before, hunk.after)
+            .ops_summary
+            .edit_mass()
+    };
+    let defect_share = mass(&hunks[0]) / (mass(&hunks[0]) + mass(&hunks[1]));
+    assert!(
+        defect_share > 0.0 && defect_share < 0.5,
+        "the bigger hunk carries the bigger share"
+    );
+    assert!(
+        (f64::from(judgment.share_of(AmendmentClass::SkillDefect)) - defect_share).abs() < 1e-6
+    );
+    assert!(
+        (f64::from(judgment.share_of(AmendmentClass::ExecutionLapse)) - (1.0 - defect_share)).abs()
+            < 1e-6
+    );
+
+    project_edit_cost_claims(&vault, std::slice::from_ref(&judgment))?;
+    let skill_cost = f64::from(
+        edit_cost_for(&vault, &skill, "outbound")?.expect("the skill is charged its share"),
+    );
+    let actor_cost = f64::from(
+        edit_cost_for(&vault, &actor, "outbound")?.expect("the actor is charged its share"),
+    );
+    let d_norm = f64::from(d_norm);
+    assert!((skill_cost - defect_share * d_norm).abs() < 1e-5);
+    assert!((actor_cost - (1.0 - defect_share) * d_norm).abs() < 1e-5);
+    assert!(
+        (skill_cost + actor_cost - d_norm).abs() < 1e-5,
+        "the shares together are the whole edit, charged once"
+    );
+    Ok(())
+}
+
+/// An `unclear` hunk holds: it charges nobody, and its note lands in the
+/// unclear ledger. The clear hunk beside it is charged its own share alone,
+/// and a re-judgment that clears the doubt withdraws the note.
+#[test]
+fn an_unclear_hunk_charges_nobody_and_files_its_note() -> Result<()> {
+    struct DefectThenUnsure;
+    impl AttributionJudge for DefectThenUnsure {
+        fn judge(&self, _evidence: &OutcomeEvidence) -> Result<Option<AttributionVerdict>> {
+            Ok(None)
+        }
+        fn judge_hunks(&self, _request: &JudgeRequest<'_>) -> Result<Option<Vec<HunkVerdict>>> {
+            Ok(Some(vec![
+                HunkVerdict::with_confidence(AttributionVerdict::SkillDefect, 0.9),
+                HunkVerdict::with_confidence(AttributionVerdict::Unclear, 0.7)
+                    .with_note("a new date with no stated reason"),
+            ]))
+        }
+    }
+
+    let (_tmp, vault) = temp_vault();
+    let actor = put_actor(&vault)?;
+    let skill = put_skill(&vault, "ed03.unclear")?;
+    let receipt = "receipt:unclear";
+    let hunks = [
+        EditHunk {
+            before: "alpha",
+            after: "omega",
+        },
+        EditHunk {
+            before: "beta",
+            after: "gamma",
+        },
+    ];
+    let d_norm = measure_amendment(&vault, receipt, "alpha\nbeta\n", "omega\ngamma\n")?;
+    record_amendment_evidence(
+        &vault,
+        &AmendmentEvidence::new(receipt, actor, "outbound")
+            .at(80)
+            .with_skill(skill)
+            .with_cause(AmendmentCause::ProposalWrong)
+            .with_routing_facts(true, true),
+    )?;
+
+    let judgment = judge_amendment_hunks(&vault, receipt, &DefectThenUnsure, &hunks)?
+        .expect("a partly clear amendment routes");
+    let unclear_share = judgment.share_of(AmendmentClass::Unclear);
+    assert!(unclear_share > 0.0 && unclear_share < 1.0);
+    project_edit_cost_claims(&vault, std::slice::from_ref(&judgment))?;
+    let skill_cost = edit_cost_for(&vault, &skill, "outbound")?.expect("the clear hunk charges");
+    assert!(
+        (f64::from(skill_cost) - f64::from(1.0 - unclear_share) * f64::from(d_norm)).abs() < 1e-5,
+        "the skill carries the clear hunk's share alone"
+    );
+    assert!(
+        active_rows(&vault, &actor, PREDICATE_ACTOR_EDIT_COST)?.is_empty(),
+        "the unclear hunk charges nobody"
+    );
+
+    let filed = crate::skill_attribution::unclear_attributions(&vault)?;
+    assert_eq!(filed.len(), 1);
+    assert_eq!(filed[0].reference, receipt);
+    assert_eq!(
+        filed[0].notes[0].note.as_deref(),
+        Some("a new date with no stated reason")
+    );
+    assert!((filed[0].share() - unclear_share).abs() < 1e-6);
+
+    // Re-judged as one region by the rule tier: nothing is unclear any more,
+    // so the note it no longer stands behind is withdrawn.
+    judge_amendment(&vault, receipt)?.expect("the rule tier routes it");
+    assert!(crate::skill_attribution::unclear_attributions(&vault)?.is_empty());
     Ok(())
 }

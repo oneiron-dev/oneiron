@@ -94,7 +94,7 @@ fn hint_of(own: StoredAggregate, peers: (f64, u64)) -> Option<WeightHint> {
     } else {
         1.0
     };
-    let outcome = runs_as_f64(own.sound) / runs_as_f64(own.runs);
+    let outcome = own.sound / runs_as_f64(own.runs);
     Some(WeightHint {
         relative_edit_cost: relative as f32,
         outcome_score: outcome as f32,

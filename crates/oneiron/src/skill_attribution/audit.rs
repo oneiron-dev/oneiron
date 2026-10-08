@@ -6,7 +6,10 @@ use crate::error::Result;
 
 use super::codec::{AUDIT, next_evidence_sequence_in_txn};
 use super::judge::{AttributionJudge, RuleAttributionJudge};
-use super::types::{AttemptOutcome, AttributionVerdict, OutcomeEvidence};
+use super::split::{classify_split, unclear_floor};
+use super::types::{
+    AttemptOutcome, AttributionLane, AttributionVerdict, JudgeRequest, OutcomeEvidence,
+};
 
 // ---------------------------------------------------------------------------
 // Defect-injection audit (Blind Curator guard)
@@ -88,10 +91,18 @@ pub fn run_attribution_audit_with_judge(
     judge: &dyn AttributionJudge,
     at: u64,
 ) -> Result<AttributionAuditReport> {
+    let floor = unclear_floor(vault)?;
     let mut passed = 0;
     let mut abstained = 0;
     for fixture in fixtures {
-        let answer = judge.judge(&fixture.evidence)?;
+        // The audit asks through the same split path production routes
+        // through, so a verdict the floor would hold scores as `unclear`.
+        let request = JudgeRequest {
+            lane: AttributionLane::Attempt,
+            evidence: &fixture.evidence,
+            hunks: &[],
+        };
+        let answer = classify_split(judge, &request, &[], floor)?.and_then(|split| split.sole());
         if answer.is_none() {
             abstained += 1;
         }

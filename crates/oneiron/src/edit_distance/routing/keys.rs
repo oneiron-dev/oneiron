@@ -95,8 +95,10 @@ pub(super) struct StoredAggregate {
     /// Total edit mass, in `f64` because a sum of thousands of `f32` masses is
     /// not the number any of them were.
     pub(super) d_norm_sum: f64,
-    /// How many of `runs` were judged sound.
-    pub(super) sound: u64,
+    /// How much of `runs` was judged sound: each run adds its sound share,
+    /// so a single-verdict run adds 0 or 1. An integer row written before
+    /// split verdicts reads back as the same count.
+    pub(super) sound: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

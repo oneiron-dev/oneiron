@@ -84,7 +84,8 @@ impl OpsSummary {
     /// The edit mass `d_norm` normalizes. A relocated unit costs
     /// `2 · MOVE_DISCOUNT` where the delete-plus-insert it stands in for
     /// would cost `2`.
-    fn edit_mass(self) -> f64 {
+    #[must_use]
+    pub fn edit_mass(self) -> f64 {
         let relocated = f64::from(2.0 * MOVE_DISCOUNT) * f64::from(self.moved);
         f64::from(self.ins) + f64::from(self.del) + relocated
     }
