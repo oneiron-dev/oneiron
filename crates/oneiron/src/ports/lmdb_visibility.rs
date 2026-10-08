@@ -65,7 +65,7 @@ impl<T: ManifestDbs> TombstoneStoreRead for T {
                 stale,
             });
         };
-        let window = crate::deletion::residence_window_label(self, txn, id, &raw)?;
+        let window = crate::deletion::deletion_window_for_row(self, txn, id, &raw)?;
         let key = crate::deletion::pending_tombstone_key(&window, id);
         if self.sync_state().get(txn, &key)?.is_some() {
             return Ok(DeletionState {

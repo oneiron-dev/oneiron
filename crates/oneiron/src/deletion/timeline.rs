@@ -41,26 +41,33 @@ pub(in crate::deletion) fn deletion_window_label(
     Ok(window_label_from_timestamp(learned_at))
 }
 
-/// The sync window the row `raw` stored under `id` resides in, so the one
-/// holding its pending or published deletion. A CLAIM body names its world,
-/// a CLAIM shell has lost its body so its preserved deletion address
-/// answers, and every other row lives in the base month of its learned-at.
-/// A CLAIM body that does not decode names no world, which is also where
-/// sync places it.
-pub(crate) fn residence_window_label(
+/// The sync window that holds the pending or published deletion of the row
+/// `raw` stored under `id`: the window the row resides in. A CLAIM body names
+/// its world, a CLAIM shell has lost its body so its preserved deletion
+/// address answers, and every other row lives in the base month of its
+/// learned-at. A CLAIM body that does not decode names no world, which is
+/// also where sync places it.
+///
+/// A body is decoded only while some world window of its month holds
+/// deletion state at all: with none, every row of that month is answered from
+/// its base month, so ordinary reads pay no extra decode.
+pub(crate) fn deletion_window_for_row(
     dbs: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     raw: &[u8],
 ) -> Result<String> {
     let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    let mut label = window_label_from_timestamp(header.learned_at);
     if header.entity_type != ENTITY_TYPE_CLAIM {
-        return Ok(window_label_from_timestamp(header.learned_at));
+        return Ok(label);
     }
     if raw.len() == ENTITY_METADATA_HEADER_LEN {
         return deletion_window_label(dbs, txn, id, header.learned_at);
     }
-    let mut label = window_label_from_timestamp(header.learned_at);
+    if !world_deletion_state_exists(dbs, txn, &label)? {
+        return Ok(label);
+    }
     if let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
         && let Some(world) = body.world
     {
@@ -68,6 +75,30 @@ pub(crate) fn residence_window_label(
         label.push_str(&world.to_hex());
     }
     Ok(label)
+}
+
+/// Whether any world window of `month` holds a pending tombstone marker or a
+/// snapshot whose published tombstones the resolver replays.
+fn world_deletion_state_exists(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    month: &str,
+) -> Result<bool> {
+    let worlds = format!("{month}@");
+    if PENDING_TOMBSTONE
+        .iter_from(dbs, txn, worlds.as_bytes())?
+        .next()
+        .transpose()?
+        .is_some()
+    {
+        return Ok(true);
+    }
+    Ok(dbs
+        .sync_state()
+        .prefix_iter(txn, &format!("d:w:{worlds}"))?
+        .next()
+        .transpose()?
+        .is_some())
 }
 
 /// Stable deletion reason surfaced by short-id hydrate.

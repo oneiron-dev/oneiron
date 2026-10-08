@@ -502,6 +502,7 @@ mod tests {
     struct RelationshipShare {
         space: EntityId,
         member: EntityId,
+        #[cfg_attr(not(feature = "sync"), allow(dead_code))]
         binding: EntityId,
         shared: EntityId,
     }
@@ -808,7 +809,9 @@ mod tests {
     /// Bug repro (Astra #1322 finding 1): a peer that withdraws a soft delete,
     /// dropping the tombstone and putting the relationship's original body
     /// back, restores nothing. Delete wins here, whatever the window's
-    /// tombstone map and the payload length now say.
+    /// tombstone map and the payload length now say, and through every door
+    /// that takes a peer's row: the window's ingest and the explicit-tier
+    /// replay alike.
     #[cfg(feature = "sync")]
     #[test]
     fn a_peer_cannot_withdraw_a_relationship_delete() -> Result<()> {
@@ -867,6 +870,25 @@ mod tests {
             !share.reads_as(&vault, share.member)?,
             "a withdrawn delete restores no membership"
         );
+
+        // Nor does the explicit-tier import door, which replays a peer's row
+        // without the window's ingest ladder.
+        let replayed = crate::sync::replay::replay_entity(
+            &vault,
+            crate::sync::replay::ReplicatedEntity {
+                id: share.space,
+                entity_type: crate::registry::ENTITY_TYPE_RELATIONSHIP,
+                occurred: crate::TimeRange { start: 1, end: 1 },
+                learned_at: 1,
+                body: &original[ENTITY_METADATA_HEADER_LEN..],
+            },
+            crate::sync::client::ImportTier::OwnDevice,
+        );
+        assert!(
+            !share.reads_as(&vault, share.member)?,
+            "a replayed body restores no membership"
+        );
+        assert!(replayed.is_err(), "the replicated put is refused");
         Ok(())
     }
 
