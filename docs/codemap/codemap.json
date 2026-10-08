@@ -42103,6 +42103,324 @@
    "source_files": 54,
    "test_files": 3
   },
+  "oneiron-crypto": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "fuzz/fuzz_targets/envelope_parse.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "fuzz/fuzz_targets/record_parse.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/codec.rs",
+     "purpose": "Canonical encoding primitives: big-endian integers, fixed-size fields and length-prefixed byte strings…",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/envelope/hybrid.rs",
+     "purpose": "The `kem-x25519-mlkem1024-v1` capsule: ML-KEM-1024 (FIPS 203) and X25519 (RFC 7748) combined with the…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/envelope/hybrid/tests.rs",
+     "purpose": "Every combiner input reaches the output: changing any one of them alone changes the wrap secret (the…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Envelope",
+      "Header",
+      "Kdf",
+      "Purpose",
+      "WrapParams",
+      "WrapType"
+     ],
+     "path": "src/envelope/mod.rs",
+     "purpose": "The sealed envelope: its typed header, the canonical encoding and the strict parser",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 4,
+      "fn": 3,
+      "re-export": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OpenKey",
+      "OpenPolicy",
+      "SealKey",
+      "SealParams"
+     ],
+     "path": "src/envelope/seal.rs",
+     "purpose": "Sealing and opening, and the one key schedule every wrap type shares:",
+     "surface": {
+      "enum": 2,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/envelope/seal/tests.rs",
+     "purpose": "The HKDF key schedule's stack wipe (RustCrypto/meta#38): the bare schedule leaves its secrets below its…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Error"
+     ],
+     "path": "src/error.rs",
+     "purpose": "The one error type",
+     "surface": {
+      "enum": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Argon2Cost",
+      "HybridPublicKey",
+      "HybridSecretKey",
+      "Kek",
+      "Passphrase",
+      "RecoverySecret"
+     ],
+     "path": "src/keys.rs",
+     "purpose": "Key material types",
+     "surface": {
+      "const": 11,
+      "crate-vis": 11,
+      "fn": 9,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table…",
+     "surface": {
+      "const": 3,
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NonceLedger"
+     ],
+     "path": "src/nonce.rs",
+     "purpose": "Duplicate-nonce detection where the caller can see it",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CheckpointRef",
+      "RecordBody",
+      "SigPurpose",
+      "SignatureEntry",
+      "SignatureRecord"
+     ],
+     "path": "src/record/mod.rs",
+     "purpose": "Signature records: the canonical encoding, the strict parser and the roster rules",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 8,
+      "re-export": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SigningKey",
+      "VerifyPolicy",
+      "VerifyingKey"
+     ],
+     "path": "src/record/sign.rs",
+     "purpose": "Signing and verifying records",
+     "surface": {
+      "enum": 2,
+      "fn": 8,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/record/sign/tests.rs",
+     "purpose": "Record signing's stack wipe (RustCrypto/meta#38): the bare SLH-DSA signer leaves its secrets below its…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/stack_probe.rs",
+     "purpose": "Test-only stack probe",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Suite",
+      "SuiteId",
+      "SuiteKind",
+      "SuiteStatus"
+     ],
+     "path": "src/suite.rs",
+     "purpose": "The suite table: every algorithm combination the format can name, its state and its minimum epoch",
+     "surface": {
+      "const": 11,
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/envelope.rs",
+     "purpose": "Envelope contract: round trips for every wrap type, fail-closed parsing, reader policy, AAD binding of every…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/kat.rs",
+     "purpose": "Published known-answer vectors for every primitive the crate uses, run against the exact pinned crates",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/parser_props.rs",
+     "purpose": "Bounded property fuzzing of both parsers (runs in the normal test gate): random bytes and mutations of valid…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/record.rs",
+     "purpose": "Signature-record contract: single and dual signatures, the roster rule, the signed transcript, fail-closed…",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "codec": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Canonical encoding primitives: big-endian integers, fixed-size fields and length-prefixed byte strings…"
+    },
+    "envelope": {
+     "files": 5,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "The sealed envelope: its typed header, the canonical encoding and the strict parser"
+    },
+    "error": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The one error type"
+    },
+    "keys": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Key material types"
+    },
+    "nonce": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Duplicate-nonce detection where the caller can see it"
+    },
+    "record": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Signature records: the canonical encoding, the strict parser and the roster rules"
+    },
+    "stack_probe": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Test-only stack probe"
+    },
+    "suite": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The suite table: every algorithm combination the format can name, its state and its minimum epoch"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table…",
+   "source_files": 14,
+   "test_files": 7
+  },
   "oneiron-docedit": {
    "files": [
     {

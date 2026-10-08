@@ -19,6 +19,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs and… | 20 | 2 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 99 | 18 | 0 |
 | [oneiron-contracts](codemap/oneiron-contracts.md) | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… | 54 | 3 | 0 |
+| [oneiron-crypto](codemap/oneiron-crypto.md) | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… | 14 | 7 | 0 |
 | [oneiron-docedit](codemap/oneiron-docedit.md) | Native document editing organ crate: the retained OPC substrate and native Word revisions over a pinned… | 11 | 5 | 1 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 17 | 10 | 0 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 8 | 1 | 0 |
@@ -299,6 +300,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `serialize` | file+dir | 2 | s | Serde adapters shared by the engine crates' serialized envelopes |
 | `temporal` | file | 1 | m | `TimeRange`, temporal expressions/parsing, granularity |
 | `write_envelope` | file | 1 | s | The write actor every write path stamps |
+
+## oneiron-crypto
+
+| module | layout | files | largest src bucket | purpose |
+|---|---|---|---|---|
+| `codec` | file | 1 | s | Canonical encoding primitives: big-endian integers, fixed-size fields and length-prefixed byte strings… |
+| `envelope` | dir | 5 | m | The sealed envelope: its typed header, the canonical encoding and the strict parser |
+| `error` | file | 1 | s | The one error type |
+| `keys` | file | 1 | s | Key material types |
+| `nonce` | file | 1 | s | Duplicate-nonce detection where the caller can see it |
+| `record` | dir | 3 | m | Signature records: the canonical encoding, the strict parser and the roster rules |
+| `stack_probe` | file | 1 | s | Test-only stack probe |
+| `suite` | file | 1 | s | The suite table: every algorithm combination the format can name, its state and its minimum epoch |
 
 ## oneiron-docedit
 
