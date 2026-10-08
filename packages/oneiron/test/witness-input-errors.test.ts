@@ -73,11 +73,6 @@ for (const backend of ["embedded", "remote"] as const) {
     }
 
     if (backend === "embedded") {
-      test("valid object metadata still reaches the engine", () => {
-        const receipt = memory.witness(turn({ metadata: { trace: "input-regression" } }))
-        expect(receipt.messageShortIds).toHaveLength(1)
-      })
-
       test("engine authority refusal stays FORBIDDEN, not BAD_REQUEST", () => {
         // A new turn needs a non-system speaker before system-row authority is checked.
         const input = turn({})

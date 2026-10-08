@@ -95,8 +95,26 @@ pub(super) struct StoredAggregate {
     /// Total edit mass, in `f64` because a sum of thousands of `f32` masses is
     /// not the number any of them were.
     pub(super) d_norm_sum: f64,
-    /// How many of `runs` were judged sound.
-    pub(super) sound: u64,
+    /// The sound share of every run summed: a single-verdict run adds 0 or 1.
+    /// An integer row written before split verdicts reads back as the same
+    /// count.
+    pub(super) sound: f64,
+    /// The attributed share of every run summed — what the judge could
+    /// label, with each `unclear` share held out. `None` on a row written
+    /// before split verdicts, whose runs were each judged whole.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) judged: Option<f64>,
+}
+
+impl StoredAggregate {
+    /// The attributed weight the outcome score divides by.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "run counts live far below f64's exact-integer range"
+    )]
+    pub(super) fn judged_weight(&self) -> f64 {
+        self.judged.unwrap_or(self.runs as f64)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

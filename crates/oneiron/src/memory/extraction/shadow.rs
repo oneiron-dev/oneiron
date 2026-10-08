@@ -29,6 +29,7 @@ impl Memory<'_> {
             Ok(EncoderInput {
                 turn: turn_id.to_hex(),
                 messages,
+                context: Vec::new(),
             })
         })();
         let input = match input_result {
@@ -37,6 +38,7 @@ impl Memory<'_> {
                 let input = EncoderInput {
                     turn: witness.turn_short_id.clone(),
                     messages: Vec::new(),
+                    context: Vec::new(),
                 };
                 return Ok(WitnessWithShadow {
                     witness,
@@ -83,13 +85,31 @@ impl Memory<'_> {
         })
     }
 }
-pub(super) fn hash_input(input: &EncoderInput) -> String {
+/// The input digest: the turn, then each message's id, length and text. A
+/// window folds in after them only when it holds a turn, so a turn read
+/// alone digests as it always has; a NUL cannot begin a message id, so the
+/// window never reads as one more message.
+pub(crate) fn hash_input(input: &EncoderInput) -> String {
     let mut hash = Sha256::new();
     hash.update(input.turn.as_bytes());
-    for message in &input.messages {
+    let message = |hash: &mut Sha256, message: &EncoderMessage| {
         hash.update(message.id.as_bytes());
         hash.update((message.text.len() as u64).to_le_bytes());
         hash.update(message.text.as_bytes());
+    };
+    for each in &input.messages {
+        message(&mut hash, each);
+    }
+    if !input.context.is_empty() {
+        hash.update(b"\0context");
+        hash.update((input.context.len() as u64).to_le_bytes());
+        for turn in &input.context {
+            hash.update(turn.turn.as_bytes());
+            hash.update((turn.messages.len() as u64).to_le_bytes());
+            for each in &turn.messages {
+                message(&mut hash, each);
+            }
+        }
     }
     format!("{:x}", hash.finalize())
 }

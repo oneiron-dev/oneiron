@@ -22,6 +22,49 @@ pub(super) const CANONICAL: SideTable<EntityId, EntityId, Raw> =
 pub(super) const MIGRATED: SideTable<EntityId, [u8; 1], Raw> =
     SideTable::new(&side_table::CONVERSATION_DAG_MIGRATED);
 
+/// Whether `conversation` has adopted the DAG record model: a selected HEAD
+/// or the migration marker. Its records are ordered by their ancestry, never
+/// by time alone.
+pub(crate) fn keeps_dag_topology(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    conversation: &EntityId,
+) -> Result<bool> {
+    Ok(read_id(store, txn, HEAD, conversation)?.is_some()
+        || MIGRATED.get(store, txn, conversation)?.is_some())
+}
+
+/// Whether `record` carries DAG topology of its own: a `Parent` edge, a
+/// canonical mark, or, on a sync build, a received parent still waiting to
+/// resolve. A room holding such a record is not ordered by time alone, local
+/// adoption or not.
+pub(crate) fn record_has_dag_topology(
+    vault: &crate::Vault,
+    txn: &RoTxn<'_>,
+    record: &EntityId,
+) -> Result<bool> {
+    let store = &vault.store;
+    if store
+        .port_edges(
+            txn,
+            record,
+            EdgeDirection::Out,
+            Some(EdgeKind::Parent),
+            None,
+        )?
+        .next()
+        .is_some()
+        || read_id(store, txn, CANONICAL, record)?.is_some()
+    {
+        return Ok(true);
+    }
+    #[cfg(feature = "sync")]
+    if crate::sync::bridge::has_unresolved_parent_for_source_in_txn(vault, txn, record)? {
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 pub(super) fn invalid(reason: &'static str) -> Error {
     RecordError::InvalidConversationDag(reason).into()
 }
@@ -131,7 +174,9 @@ pub(super) fn require_member(
     Ok(())
 }
 
-pub(super) fn parent(
+/// The parent a record keeps: its `Parent` edge, or, once a purged ancestor
+/// took the edge, the parent its erasure pin kept.
+pub(crate) fn parent(
     store: &Store,
     txn: &RoTxn<'_>,
     record: &EntityId,

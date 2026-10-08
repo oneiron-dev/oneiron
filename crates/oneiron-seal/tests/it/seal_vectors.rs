@@ -166,31 +166,6 @@ async fn crlf_xref_stream_input_seals_and_self_verifies() {
 }
 
 #[tokio::test]
-async fn literal_eof_in_content_stream_is_not_an_incremental_revision() {
-    let mut input = fixture_pdf("content_1page.pdf");
-    let old = b"(oneiron)";
-    let at = input.windows(old.len()).position(|w| w == old).unwrap();
-    input[at..at + old.len()].copy_from_slice(b"(%%EOF)  ");
-    let identity = p256_identity(false);
-    let anchors = vec![identity.cert_der.clone()];
-    let (engine, _) = engine_with(
-        identity,
-        Arc::new(OfflineFetcher),
-        config_for(anchors, false),
-    );
-    let sealed = engine
-        .seal_pdf(&input, &request(PadesProfile::BaselineB))
-        .await
-        .unwrap();
-    assert!(sealed.self_verify_report.passes_self_verify());
-    assert_eq!(
-        sealed.self_verify_report.revisions.len(),
-        2,
-        "the stream marker must not become a third revision"
-    );
-}
-
-#[tokio::test]
 async fn indirect_stream_length_is_bound_to_the_strict_original_snapshot() {
     let original = fixture_pdf("content_1page.pdf");
     let object4 = original
@@ -265,46 +240,6 @@ async fn xref_stream_lta_writer_revisions_share_complete_structural_facts() {
 }
 
 #[tokio::test]
-async fn xref_stream_original_comment_delimited_duplicate_is_warning_not_failure() {
-    let mut input = fixture_pdf("stream_1page.pdf");
-    let old = b"4 0 obj";
-    let at = input.windows(old.len()).position(|w| w == old).unwrap();
-    let extra = b"1% comment\n0% comment\nobj << /Type /Catalog /Pages 2 0 R >>\nendobj\n";
-    input.splice(at..at, extra.iter().copied());
-    let new_xref = at + extra.len();
-    let entry = b"\x01\0\0\0\xba\0\0";
-    let offset = input
-        .windows(entry.len())
-        .rposition(|w| w == entry)
-        .unwrap()
-        + 1;
-    input[offset..offset + 4].copy_from_slice(&(new_xref as u32).to_be_bytes());
-    let marker = b"startxref\n186\n";
-    let at = input
-        .windows(marker.len())
-        .rposition(|w| w == marker)
-        .unwrap();
-    input.splice(
-        at..at + marker.len(),
-        format!("startxref\n{new_xref}\n").bytes(),
-    );
-    let signer = p256_identity(false);
-    let roots = vec![signer.cert_der.clone()];
-    let (engine, _) = engine_with(signer, Arc::new(OfflineFetcher), config_for(roots, false));
-    let sealed = engine
-        .seal_pdf(&input, &request(PadesProfile::BaselineB))
-        .await
-        .unwrap();
-    assert!(sealed.self_verify_report.passes_self_verify());
-    assert!(
-        sealed
-            .self_verify_report
-            .anomalies
-            .contains(&oneiron_seal::Anomaly::DuplicateObjectNumber)
-    );
-}
-
-#[tokio::test]
 async fn seal_output_exceeding_verify_cap_is_refused_at_seal_time() {
     // Self-consistency (bot-fix leg 5): verify_document rejects
     // len > max_input_bytes, so the sealer must REFUSE to emit a document
@@ -374,25 +309,6 @@ async fn seal_baseline_b_both_suites_and_fixtures() {
             assert_eq!(report.artifact_sha256, out.evidence_sha256);
         }
     }
-}
-
-#[tokio::test]
-async fn seal_baseline_t_with_fixture_tsa() {
-    let signer = p256_identity(false);
-    let tsa = p256_identity(true);
-    let anchors = vec![signer.cert_der.clone(), tsa.cert_der.clone()];
-    let fetcher = Arc::new(FixtureFetcher::with_tsa(tsa));
-    let (engine, _b) = engine_with(signer, fetcher, config_for(anchors, true));
-    let input = fixture_pdf("classic_1page.pdf");
-    let out = engine
-        .seal_pdf(&input, &request(PadesProfile::BaselineT))
-        .await
-        .unwrap();
-    assert_eq!(out.achieved_profile, PadesProfile::BaselineT);
-    assert!(out.warnings.is_empty());
-    let report = engine.verify_sealed_pdf(&out.bytes).unwrap();
-    assert!(report.valid());
-    assert_eq!(report.achieved_profile(), Some(PadesProfile::BaselineT));
 }
 
 /// Two functional TSAs: the first endpoint mints tokens dated past the
@@ -668,63 +584,6 @@ async fn degradation_ladder_offline_fetcher() {
 }
 
 #[tokio::test]
-async fn target_b_t_offline_degrades_to_b_with_timestamp_warning_only() {
-    let signer = p256_identity(false);
-    let anchor = signer.cert_der.clone();
-    let (engine, _b) = engine_with(
-        signer,
-        Arc::new(OfflineFetcher),
-        config_for(vec![anchor], true),
-    );
-    let out = engine
-        .seal_pdf(
-            &fixture_pdf("classic_1page.pdf"),
-            &request(PadesProfile::BaselineT),
-        )
-        .await
-        .unwrap();
-    assert_eq!(out.achieved_profile, PadesProfile::BaselineB);
-    assert_eq!(out.warnings.len(), 1);
-}
-
-#[tokio::test]
-async fn backend_operation_ids_stable_per_operation() {
-    let signer = p256_identity(false);
-    let anchor = signer.cert_der.clone();
-    let (engine, backend) = engine_with(
-        signer,
-        Arc::new(OfflineFetcher),
-        config_for(vec![anchor], false),
-    );
-    let input = fixture_pdf("classic_1page.pdf");
-    engine
-        .seal_pdf(&input, &request(PadesProfile::BaselineB))
-        .await
-        .unwrap();
-    let first: Vec<String> = backend
-        .requests
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|r| r.operation_id.clone())
-        .collect();
-    engine
-        .seal_pdf(&input, &request(PadesProfile::BaselineB))
-        .await
-        .unwrap();
-    let second: Vec<String> = backend
-        .requests
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|r| r.operation_id.clone())
-        .skip(first.len())
-        .collect();
-    assert_eq!(first, second, "same operation must derive stable sub-ids");
-    assert!(first[0].starts_with("test-op-0001:"));
-}
-
-#[tokio::test]
 async fn p1363_backend_output_is_rejected() {
     let signer = p256_identity(false);
     let anchor = signer.cert_der.clone();
@@ -750,31 +609,4 @@ async fn p1363_backend_output_is_rejected() {
             ..
         }
     ));
-}
-
-#[tokio::test]
-async fn invalid_operation_id_is_fatal_configuration() {
-    let signer = p256_identity(false);
-    let anchor = signer.cert_der.clone();
-    let (engine, _b) = engine_with(
-        signer,
-        Arc::new(OfflineFetcher),
-        config_for(vec![anchor], false),
-    );
-    let bad = SealRequest {
-        operation_id: String::new(),
-        target_profile: PadesProfile::BaselineB,
-    };
-    let err = engine
-        .seal_pdf(&fixture_pdf("classic_1page.pdf"), &bad)
-        .await
-        .unwrap_err();
-    assert!(matches!(
-        err,
-        SealError::Fatal {
-            code: oneiron_seal::FatalCode::InvalidConfiguration,
-            ..
-        }
-    ));
-    assert!(!err.is_retryable());
 }

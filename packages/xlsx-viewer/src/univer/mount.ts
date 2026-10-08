@@ -7,7 +7,7 @@
  *
  *  - No export path. There is no import of `@univerjs-pro/*`; the xlsx export
  *    tax is avoided because round-tripping happens agent-side on the original
- *    blob (OF-368 D5). The automated `tests/no-pro-imports.test.ts` guards this.
+ *    blob (OF-368 D5).
  *  - No client-side recalculation. The bridge emits cells carrying cached
  *    values only (never a live `f`), so the formula engine — present for the
  *    formula bar per D8 — has nothing to recompute.

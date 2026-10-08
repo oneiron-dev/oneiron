@@ -412,8 +412,20 @@ side_tables! {
     INGEST_FINGERPRINT: VaultMeta b"ingest-fingerprint:v1:" LegacyJson;
     /// Run id to queued attempt ids. Key: u64be len + string + id16.
     ATTEMPT_RUN_INDEX: VaultMeta b"job:run_index:v1:" Raw;
+    /// The next tagging marker's sequence number, a part of its derived id, so no marker id is
+    /// ever drawn twice, even once a settled marker has left the job ledger. Key: (). Value: u64be.
+    TAGGING_MARKER_SEQUENCE: VaultMeta b"job:tagging_marker_seq:v1" Raw;
+    /// A turn's recorded tagging traces, oldest first: job state, never synced. Key: turn id16
+    /// (sixteen zero bytes for a marker whose payload named no turn) + u64be sequence.
+    TAGGING_TRACE: VaultMeta b"job:tagging_trace:v1:" Named;
+    /// Empty-marker age index over the tagging traces. Key: u64be recorded-at + turn id16 + u64be
+    /// sequence.
+    TAGGING_TRACE_AGE: VaultMeta b"job:tagging_trace_age:v1:" Raw;
     /// Vault-scoped structural-kind registration. Key: u8.
     STRUCTURAL_KIND_REGISTRY: VaultMeta b"kind_reg:" Raw;
+    /// Owner seed or pin over one learned-setting catalog row (value, weight in runs, setter, why).
+    /// Key: string (setting key "\0" mode).
+    LEARNING_SETTING: VaultMeta b"learning:setting:v1:" Raw;
     /// Vault-scoped authored lens prompt keyed by the lens entity id16.
     LENS_INTENT: VaultMeta b"lens/intent/v1\0" Named;
     /// Tracker issue id to task id. Key: string.

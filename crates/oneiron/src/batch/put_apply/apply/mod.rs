@@ -409,11 +409,13 @@ pub(in crate::batch) fn apply_put(
     let authority_first_seen_key = authority_entry_hash_pin
         .as_ref()
         .map(crate::authority::authority_first_seen_sidecar_key);
-    // Maintenance-classified kinds (REDACTION_AUDIT) carry no short ID (static
+    // Most maintenance-classified kinds (REDACTION_AUDIT) carry no short ID (static
     // registry `short_id_prefix: None`), matching the engine's direct receipt writer.
-    // Only the internal sync path reaches here with such a kind (public puts are
-    // rejected in `apply_ops`); skip short-id planning, which would otherwise
-    // fail with `InvalidEntityType` on the missing prefix.
+    // SECRET_CUSTODY is the exception: its `sc` handle names a secret without
+    // holding it. Only engine doors and the internal sync path reach here with a
+    // maintenance kind (public puts are rejected in `apply_ops`); skip short-id
+    // planning for a kind with no prefix, which would otherwise fail with
+    // `InvalidEntityType` on the missing prefix.
     let short_id_prefix = if is_lexical_query_hint_claim {
         None
     } else if crate::registry::zone_of(entity_type) == crate::registry::TypeByteZone::PackHandle {
