@@ -225,6 +225,10 @@ pub struct ServeConfig {
     pub embedder: Option<EmbedderConfig>,
     /// The `[backup]` section: local backup directory, schedule and retention.
     pub backup: BackupConfig,
+    /// The `[models]` section, absent until the config file names it.
+    /// Absent means no model seat is filled: every model-free path runs and
+    /// the Dreamer reports idle for want of a model.
+    pub models: Option<super::ModelsConfig>,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
     pub failure_signal_export: bool,
@@ -273,6 +277,7 @@ impl Default for ServeConfig {
             runtime: server.runtime,
             embedder: None,
             backup: BackupConfig::default(),
+            models: None,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,
@@ -327,6 +332,7 @@ impl fmt::Debug for ServeConfig {
             .field("runtime", &self.runtime)
             .field("embedder", &self.embedder)
             .field("backup", &self.backup)
+            .field("models", &self.models)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",

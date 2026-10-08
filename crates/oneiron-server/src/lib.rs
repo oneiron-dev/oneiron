@@ -14,6 +14,7 @@
 //! nothing in this crate behaves differently.
 
 pub mod actions;
+pub mod ai_host;
 mod api;
 mod auth;
 mod broadcast;
@@ -30,6 +31,7 @@ mod linear_host;
 mod livequery;
 pub mod managed;
 pub mod mcp;
+pub mod models;
 mod oauth_relay;
 mod owner;
 pub mod projection;
@@ -67,5 +69,8 @@ pub fn build_app(server: Arc<SyncServer>) -> Router {
         .merge(api::api_routes(server))
 }
 
+#[cfg(test)]
+#[path = "../tests/support/fake_llm.rs"]
+mod fake_llm;
 #[cfg(test)]
 mod test_credentials;

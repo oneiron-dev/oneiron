@@ -70,6 +70,7 @@ use axum::extract::Query;
 #[cfg(test)]
 use axum::http::HeaderMap;
 
+mod ai;
 mod artifacts;
 // ONE-1819 [BK-08]: the agent-readable booking surface. Its shared executor is
 // the sole consumer of the ONE-1817 guards below and the sole door into the
@@ -378,6 +379,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // every route streams through one `git http-backend` child.
         .merge(self::git_http::git_http_routes())
         .nest("/v1/llm", self::llm::routes())
+        .nest("/v1/ai", self::ai::routes())
         .nest("/v1/core", core_routes)
         // ONE-1441: the facade projection is its own nest, not an arm inside
         // `core_routes`. Nesting expands each row into a concrete
@@ -445,6 +447,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
                     "mode": "local_free",
                     "oneironSpendMetered": false,
                     "state": "available"
+                },
+                "ai": {
+                    "dreamer": "idle",
+                    "dreamer_reason": "no_model_configured"
                 }
             })
         )
@@ -458,6 +464,7 @@ async fn health(State(server): State<Arc<SyncServer>>) -> impl IntoResponse {
         formats: supported_formats(),
         rate_limit: rate_limit_status(&server.config),
         runtime: runtime_health_status_for_config(&server.config),
+        ai: server.ai.status().health(),
     })
 }
 
@@ -481,6 +488,8 @@ struct HealthResponse {
     rate_limit: RateLimitStatus,
     /// Redacted aggregate runtime availability for unauthenticated health.
     runtime: RuntimeHealthStatus,
+    /// Background AI state, redacted: states and reasons, never model names.
+    ai: crate::ai_host::AiHealth,
 }
 
 // ─── Companion v1 profile access ─────────────────────────────────────────────

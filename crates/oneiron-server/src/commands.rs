@@ -4,7 +4,7 @@
 //! trusted local network should place it behind a TLS-terminating reverse proxy.
 
 use std::io::{self, Write};
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -18,13 +18,14 @@ use tracing_subscriber::EnvFilter;
 use crate::auth::revoke_token_jti;
 #[cfg(test)]
 use crate::auth::{mint_identified_core_token_v2, validate_bearer_claims};
-use crate::build_app;
 use crate::cli::{
     ProvenanceArgs, RevokeArgs, SkillsPackArgs, TokenBootstrapArgs, TokenPairArgs, TokenRevokeArgs,
     VaultArgs,
 };
-use crate::config::{ServeArgs, ServeConfig, SyncServerConfig, resolve_serve_config};
-use crate::managed::{self, ServeListener};
+#[cfg(test)]
+use crate::config::ServeConfig;
+use crate::config::{ServeArgs, SyncServerConfig, resolve_serve_config};
+use crate::managed;
 use crate::server::SyncServer;
 use crate::skills_pack::{self, OutputMode};
 
@@ -70,6 +71,10 @@ mod init;
 pub use init::init;
 mod reembed;
 pub use reembed::reembed;
+mod serve;
+use self::serve::serve_with_config;
+mod dreamer;
+pub use self::dreamer::dreamer_grant;
 mod owner;
 pub use owner::{backup, doctor, export, import, restore, runs, secret_scan};
 mod msgpack_json;
@@ -416,119 +421,6 @@ fn claim_subject_json(subject: &oneiron::ClaimSubject) -> JsonValue {
             "target": target.to_hex(),
         }),
     }
-}
-
-async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
-    use oneiron_vault_contract::host::{Host, HostLimits};
-
-    tracing::info!(
-        vault_path = %config.vault_path.display(),
-        dimensions = config.dimensions,
-        "starting oneiron sync server"
-    );
-
-    let dicts = resolve_dict_search_paths(&config.dict_search_paths);
-    if let Some(warning) = dicts.warning {
-        tracing::warn!(dict_paths = ?dicts.paths, "{warning}");
-    } else {
-        tracing::info!(dict_paths = ?dicts.paths, "using CJK dictionary search paths");
-    }
-
-    let mut vault_config = config.vault_config();
-    vault_config.dict_search_paths = dicts.paths;
-    let owner_host = crate::owner::schedule::OwnerHost::from_config(&config, vault_config.clone());
-    let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
-        .map_err(reembed::with_model_change_remedy)?;
-
-    let server_config = config.sync_server_config();
-    match server_config.auth_secret.as_deref() {
-        None if !server_config.allow_unauthenticated => {
-            tracing::warn!(
-                "server started with no auth_secret and allow_unauthenticated=false; refusing all requests; set ONEIRON_AUTH_SECRET or pass --insecure-allow-unauthenticated for local dev"
-            );
-            if should_warn_public_bind_without_auth(
-                server_config.auth_secret.as_deref(),
-                server_config.allow_unauthenticated,
-                &config.host,
-            ) {
-                tracing::warn!(
-                    host = %config.host,
-                    "server listener is network-exposed while refusing unauthenticated requests"
-                );
-            }
-        }
-        // A nudge, not a wall: short dev secrets keep working.
-        Some(secret) => {
-            if let Some(warning) = weak_auth_secret_warning(secret) {
-                tracing::warn!("{warning}");
-            }
-        }
-        None => {}
-    }
-    let cors_layer = build_cors_layer(&server_config)?;
-
-    // Built before the listener binds: a reachable endpoint that serves the
-    // wrong embedding space must stop serve rather than fill a vault from two
-    // spaces. The local provider downloads nothing here — that is the worker's.
-    //
-    // On a blocking thread because the endpoint probe is a blocking HTTP call,
-    // which must not run on a runtime worker.
-    let embedder_config = config.embedder.clone();
-    let embedder =
-        tokio::task::spawn_blocking(move || crate::embedder::build_slot(embedder_config.as_ref()))
-            .await
-            .map_err(|e| anyhow::anyhow!("embedder slot task failed: {e}"))??;
-
-    // Reloads persisted CRDT state (d:root + d:w:* in sync_state) — a fresh
-    // boot must not silently discard previously relayed updates/tombstones.
-    let sync_server = Arc::new(
-        SyncServer::new(Arc::new(vault), server_config)
-            .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
-            .with_embedder(embedder)
-            .with_owner_host(owner_host),
-    );
-    let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
-    tracing::info!(%addr, "listening");
-
-    // Same bind, named through the listener enum managed mode also uses.
-    // `Tcp` is the only variant this path can produce, so unmanaged serve
-    // still binds host:port and nothing else.
-    let listener = ServeListener::Tcp(addr).bind().await?;
-    let managed::BoundServeListener::Tcp(listener) = listener else {
-        anyhow::bail!("unmanaged serve requires a TCP listener");
-    };
-    let mut host = oneiron_vault_contract::host_adapters::InProcessHost::new(
-        listener.into_std()?,
-        HostLimits::unbounded(),
-        || Ok(()),
-        || Ok(()),
-    );
-    let listener = tokio::net::TcpListener::from_std(host.listener()?)?;
-    let linear_handle = crate::linear_host::spawn(sync_server.clone()).await?;
-    let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
-    let embedding_handle = sync_server.spawn_embedding_worker();
-    let backup_handle = sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK);
-    let app = build_app(sync_server).layer(cors_layer);
-    host.ready()?;
-    let result = axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await;
-    host.on_stop()?;
-    lifecycle_handle.abort();
-    let _ = lifecycle_handle.await;
-    if let Some(handle) = linear_handle {
-        handle.abort();
-        let _ = handle.await;
-    }
-    for handle in [embedding_handle, backup_handle].into_iter().flatten() {
-        handle.abort();
-        let _ = handle.await;
-    }
-    result?;
-
-    Ok(())
 }
 
 pub async fn revoke(args: RevokeArgs) -> anyhow::Result<()> {

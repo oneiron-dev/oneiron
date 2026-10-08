@@ -1,5 +1,6 @@
 use super::*;
 
+mod ai_chat;
 mod depth_quality;
 mod depth_spend;
 mod memory_reason_repairs;

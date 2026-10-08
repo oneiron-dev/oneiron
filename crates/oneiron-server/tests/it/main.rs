@@ -1,9 +1,12 @@
 //! Consolidated integration-test binary: five former standalone
 //! `tests/*.rs` Cargo targets compiled and linked once.
 
+mod ai_restart;
 mod booking_agent_api;
 mod campaign_surface_oracle;
 mod core_discover;
+#[path = "../support/fake_llm.rs"]
+mod fake_llm;
 mod first_owner_bootstrap;
 mod mcp_booking;
 mod mcp_oracle;

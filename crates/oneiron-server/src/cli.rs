@@ -76,6 +76,16 @@ pub enum Command {
     /// Scaffold a self-host node from the shipped deployment templates.
     #[command(subcommand)]
     Host(HostCommand),
+    /// Owner acts for the vault's Dreamer.
+    #[command(subcommand)]
+    Dreamer(DreamerCommand),
+}
+
+#[derive(Subcommand)]
+pub enum DreamerCommand {
+    /// Let the Dreamer read this vault and land routine consolidation (run
+    /// once, with the server stopped). Without it the Dreamer stays idle.
+    Grant(Box<ServeArgs>),
 }
 
 #[derive(Subcommand)]
@@ -414,6 +424,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Token(TokenCommand::Revoke(args)) => commands::token_revoke(*args),
         Command::Api(args) => commands::api(args).await,
         Command::Host(HostCommand::Init(args)) => commands::host_init(args),
+        Command::Dreamer(DreamerCommand::Grant(args)) => commands::dreamer_grant(*args),
     }
 }
 
