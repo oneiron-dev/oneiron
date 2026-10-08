@@ -136,6 +136,10 @@ impl AttemptQueue<'_> {
             return Ok(FinishLandingOutcome::Landed(record));
         };
 
+        // A minted successor never lies in the owner-retained range, so an
+        // owner-retained kind, whose owner derives its rows' ids, is not
+        // handed off here.
+        crate::attempt_queue::check_owner_retained_range(&successor.kind, &successor.id)?;
         if self
             .store
             .attempt_records
@@ -548,6 +552,7 @@ fn landing_successor(
         claimed_at: None,
         scheduled_at,
         retry_of: Some(source.id),
+        folded_retries: 0,
         backoff_until: None,
         last_error: None,
         task_ref: source.task_ref.clone(),

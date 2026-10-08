@@ -182,8 +182,9 @@ impl FloorWrites<'_> {
     /// Everything durable this promotion does lands in the caller's `wtxn`:
     /// the ordinary subgraph replay (through the standard write door, with the
     /// standard gates, validators, index maintenance, counters, and decision
-    /// receipts), the [`OffRecordPromoteReceipt`], and the deduplicated `pm:`
-    /// pickup markers. There is no migration transaction, no index-copy
+    /// receipts), the turn's tagging marker on an armed vault, the
+    /// [`OffRecordPromoteReceipt`], and the deduplicated `pm:` pickup
+    /// markers. There is no migration transaction, no index-copy
     /// transaction, and no receipt-after-commit transaction — a crash either
     /// leaves the whole promotion or none of it.
     ///
@@ -229,6 +230,11 @@ impl FloorWrites<'_> {
         let replay_ops = plan.ops.clone();
         BatchBuilder::promotion_replay(vault, replay_ops, &grant)
             .apply_recording_gate_decisions(wtxn)?;
+        // The outbox rule (write-path hub; ARCH-0036): the promoted turn is
+        // base text now, so it owes the vault's tagger a pass, committed with
+        // the promotion. The receipt above answers a retry first, so a retry
+        // owes nothing more.
+        crate::tagging::mark_turn_in_txn(vault, wtxn, turn)?;
 
         let mut short_id_mapping = Vec::with_capacity(plan.temporary_short_ids.len());
         for (id, temporary) in &plan.temporary_short_ids {

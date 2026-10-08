@@ -459,3 +459,74 @@ fn checkpoint_requeues_nonempty_summary_vectors_for_embedding() {
     assert_eq!(report.pending_embeddings, seeded_claims + 1);
     assert!(restored.get_vector(&id).unwrap().is_none());
 }
+
+/// A restore refuses a job row of another kind in the owner-retained key
+/// range, where that kind's scans would never read it, before any
+/// destination exists; an owner-retained row an earlier build wrote below
+/// the range restores readable.
+#[test]
+fn restore_refuses_another_kinds_job_row_in_the_owner_retained_range() {
+    use crate::attempt_queue::{AttemptId, AttemptQueue, EnqueueAttempt};
+    let root = tempfile::tempdir().unwrap();
+    let vault = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    AttemptQueue::new(&vault)
+        .enqueue(EnqueueAttempt {
+            kind: "test.retained".into(),
+            payload: vec![1, 2, 3],
+            dedupe_key: None,
+            run_id: None,
+            now: 1,
+        })
+        .unwrap();
+    let template = AttemptQueue::new(&vault).list().unwrap().remove(0);
+    let image = root.path().join("checkpoint");
+    vault.snapshot_checkpoint(&image, 1).unwrap();
+    let bytes = std::fs::read(&image).unwrap();
+    let base: CheckpointImage = rmp_serde::from_slice(&bytes[41..]).unwrap();
+    for (n, (first, kind, restores)) in [
+        (0xff_u8, "test.retained", false),
+        (0x00, crate::tagging::TAGGING_MARKER_KIND, true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut id = [0x5a_u8; 16];
+        id[0] = first;
+        let mut row = template.clone();
+        row.id = AttemptId::from_bytes(&id).unwrap();
+        row.kind = kind.into();
+        let mut crafted = base.clone();
+        let rows = crafted.databases.get_mut("job_records").unwrap();
+        rows.push((
+            id.to_vec(),
+            crate::attempt_queue::encode_signal_record(&row).unwrap(),
+        ));
+        rows.sort();
+        let body = rmp_serde::to_vec_named(&crafted).unwrap();
+        let mut file = b"ONEIRONC1".to_vec();
+        file.extend_from_slice(blake3::hash(&body).as_bytes());
+        file.extend_from_slice(&body);
+        let crafted_path = root.path().join(format!("crafted-{n}"));
+        std::fs::write(&crafted_path, file).unwrap();
+        let destination = root.path().join(format!("restored-{n}"));
+        let restored = Vault::restore_checkpoint(
+            &crafted_path,
+            &destination,
+            VaultConfig::device(),
+            RestoreReason::Restore,
+            2,
+        );
+        assert_eq!(restored.is_ok(), restores, "{kind} row under {first:#04x}");
+        if restores {
+            let (vault, _) = restored.unwrap();
+            assert!(
+                AttemptQueue::new(&vault)
+                    .get(row.id)
+                    .unwrap()
+                    .is_some_and(|stored| stored.kind == kind)
+            );
+        } else {
+            assert!(!destination.exists(), "refused before the destination");
+        }
+    }
+}
