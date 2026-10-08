@@ -36065,7 +36065,7 @@
      "path": "src/vault/entities.rs",
      "purpose": "Vault entity, vector, short-id and type-index reads and writes",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 17,
       "struct": 1
      }
