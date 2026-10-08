@@ -6,43 +6,40 @@
 //! `Generated` output pending, so a stock vault's Dreamer can read nothing
 //! and land nothing: its attempts park on "prepared source not readable".
 //!
-//! The grant is one owner-installed trusted pack: a copy of the shipped
-//! manifest whose only additions are keyed to the vault's Dreamer authority —
-//! a read-only scoped grant, an Auto actor ceiling, and the `Generated`
-//! permit its consolidation lineage needs — the same narrow, actor-keyed
-//! shape as the shipped commitment-projector rows. Every copied row equals
-//! its shipped twin, so the fold narrows nothing else; no other present or
-//! future system actor, and no other `Generated` writer, inherits anything.
+//! The grant is an owner edit of the vault's own live policy manifest, in
+//! place: it adds three rows, each keyed to the vault's Dreamer authority —
+//! a vault-wide read-only scoped grant, an Auto actor ceiling, and the
+//! `Generated` permit its consolidation lineage needs — in the same narrow,
+//! actor-keyed shape as the shipped commitment-projector rows. Every other
+//! row, including the owner's earlier edits, is kept exactly as it was, so no
+//! other present or future system actor, and no other `Generated` writer,
+//! inherits anything. Re-granting changes nothing.
 //!
-//! Reversal: the owner replaces or removes the pack. Hosts that probe
+//! Reversal: the owner removes the three rows. Hosts that probe
 //! [`Vault::dreamer_weave_reach`] stop admitting passes; claims already landed
 //! stand as written history.
 use rmpv::Value;
 
-use super::PolicyApprovalCeiling;
 use super::constants::{
     ACTOR_CEILING_KEY, ACTOR_CLASS_KEY, ACTOR_REF_KEY, POLICY_ACTOR_CEILINGS_KEY,
-    POLICY_PACK_ID_KEY, POLICY_SCOPED_GRANTS_KEY, POLICY_SOURCE_TRUST_KEY,
-    SCOPED_READ_EFFECTOR_CORE_READ,
+    POLICY_SCOPED_GRANTS_KEY, POLICY_SOURCE_TRUST_KEY, SCOPED_READ_EFFECTOR_CORE_READ,
+    SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
 };
-use super::grants::{scoped_read_actor_matches, scoped_read_grant_has_read_effector};
 use crate::Vault;
-use crate::claim::{ClaimSource, ScopedReadActorKey};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::{ClaimSource, ScopedReadActorKey, UNSTAMPED_CLAIM_SENSITIVITY_BAND};
 use crate::consent::AuthenticatedOwner;
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
+use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 
-/// The grant pack's one stable id: re-granting replaces it in place.
-const DREAMER_WEAVE_GRANT_ID: [u8; ENTITY_ID_LEN] = [0xD8; ENTITY_ID_LEN];
-const DREAMER_WEAVE_GRANT_PACK_ID: &str = "dreamer-weave-grant";
 const DREAMER_ACTOR_CLASS: &str = "system";
 
 /// What the live policy lets the vault's Dreamer do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DreamerWeaveReach {
-    /// A receipt-free read grant covers the Dreamer's own key.
+    /// A receipt-free read grant covering every record names the Dreamer.
     pub reads: bool,
-    /// The Dreamer's actor ceiling resolves to Auto.
+    /// An Auto actor ceiling plus the Dreamer-bound `Generated` permit.
     pub lands_auto: bool,
 }
 
@@ -67,95 +64,148 @@ impl Vault {
             .ok_or_else(|| invalid("dreamer read key"))?;
         let txn = self.store.env.read_txn()?;
         let policy = super::resolve_policy_manifest(&self.store, &txn)?;
-        let reads = !policy.is_fail_closed()
-            && policy.scoped_grants().iter().any(|grant| {
-                scoped_read_grant_has_read_effector(grant)
-                    && scoped_read_actor_matches(grant, &key)
-                    && !grant.receipt_required
-                    && grant.budget.is_none()
-            });
-        let lands_auto = policy.actor_ceiling(DREAMER_ACTOR_CLASS, Some(&actor_ref))
-            == PolicyApprovalCeiling::Auto;
-        Ok(DreamerWeaveReach { reads, lands_auto })
+        Ok(DreamerWeaveReach {
+            reads: policy.reads_whole_vault(&key),
+            lands_auto: policy.lands_generated_auto(DREAMER_ACTOR_CLASS, &actor_ref),
+        })
     }
 
-    /// Owner act: installs (or refreshes) the Dreamer's weave grant pack.
-    /// Returns the pack's id.
-    pub fn grant_dreamer_weave(&self, owner: &AuthenticatedOwner, now: u64) -> Result<EntityId> {
+    /// Owner act: adds the Dreamer's three rows to the vault's live policy
+    /// manifest. Returns whether the manifest changed.
+    pub fn grant_dreamer_weave(&self, owner: &AuthenticatedOwner, now: u64) -> Result<bool> {
         let actor_ref = self.dreamer_authority()?.entity_ref().to_hex();
-        let id = EntityId::from_bytes(DREAMER_WEAVE_GRANT_ID)?;
-        let data = dreamer_weave_pack(&actor_ref)?;
+        let id = super::default_policy_manifest_id()?;
+        let live = match self.get_raw(&id)? {
+            Some(raw) => {
+                let header =
+                    EntityMetadataHeader::parse(&raw).ok_or_else(|| invalid("policy header"))?;
+                if header.entity_type != ENTITY_TYPE_POLICY_MANIFEST {
+                    return Err(invalid("policy id holds another type"));
+                }
+                raw[ENTITY_METADATA_HEADER_LEN..].to_vec()
+            }
+            None => super::default_policy_manifest()?,
+        };
+        let Some(data) = with_dreamer_rows(&live, &actor_ref)? else {
+            return Ok(false);
+        };
         self.install_owner_policy_manifest(owner, id, data, now)?;
-        Ok(id)
+        Ok(true)
     }
 }
 
-fn entry_mut<'a>(entries: &'a mut [(Value, Value)], key: &str) -> Option<&'a mut Value> {
-    entries
-        .iter_mut()
-        .find_map(|(name, value)| (name.as_str() == Some(key)).then_some(value))
+/// The value under `key`, inserted as `Nil` when absent.
+fn entry_mut<'a>(entries: &'a mut Vec<(Value, Value)>, key: &str) -> &'a mut Value {
+    let index = match entries
+        .iter()
+        .position(|(name, _)| name.as_str() == Some(key))
+    {
+        Some(index) => index,
+        None => {
+            entries.push((Value::from(key), Value::Nil));
+            entries.len() - 1
+        }
+    };
+    &mut entries[index].1
 }
 
-/// The shipped manifest with the Dreamer-keyed additions and nothing else.
-fn dreamer_weave_pack(actor_ref: &str) -> Result<Vec<u8>> {
-    let shipped = super::default_policy_manifest()?;
-    let Value::Map(mut entries) = rmpv::decode::read_value(&mut shipped.as_slice())
-        .map_err(|_| invalid("decode shipped policy"))?
+fn names_actor(row: &Value, actor_ref: &str) -> bool {
+    row.as_map().is_some_and(|fields| {
+        fields.iter().any(|(name, field)| {
+            name.as_str() == Some(ACTOR_REF_KEY) && field.as_str() == Some(actor_ref)
+        })
+    })
+}
+
+/// Adds `row` to the list (a lone row becomes a one-row list) unless a row
+/// already names the Dreamer. Returns whether it added.
+fn push_unless_bound(list: &mut Value, actor_ref: &str, row: Value) -> Result<bool> {
+    let mut rows = match std::mem::replace(list, Value::Nil) {
+        Value::Nil => Vec::new(),
+        Value::Array(rows) => rows,
+        single @ Value::Map(_) => vec![single],
+        _ => return Err(invalid("policy rows are not a list")),
+    };
+    let added = !rows.iter().any(|existing| names_actor(existing, actor_ref));
+    if added {
+        rows.push(row);
+    }
+    *list = Value::Array(rows);
+    Ok(added)
+}
+
+/// The live manifest with the Dreamer's rows added, or `None` when every
+/// one is already there.
+fn with_dreamer_rows(live: &[u8], actor_ref: &str) -> Result<Option<Vec<u8>>> {
+    let Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut &live[..]).map_err(|_| invalid("decode live policy"))?
     else {
-        return Err(invalid("shipped policy is not a map"));
+        return Err(invalid("live policy is not a map"));
     };
-    *entry_mut(&mut entries, POLICY_PACK_ID_KEY).ok_or_else(|| invalid("shipped pack id"))? =
-        Value::from(DREAMER_WEAVE_GRANT_PACK_ID);
-    let Some(Value::Array(ceilings)) = entry_mut(&mut entries, POLICY_ACTOR_CEILINGS_KEY) else {
-        return Err(invalid("shipped actor ceilings"));
+    let mut changed = push_unless_bound(
+        entry_mut(&mut entries, POLICY_ACTOR_CEILINGS_KEY),
+        actor_ref,
+        Value::Map(vec![
+            (
+                Value::from(ACTOR_CLASS_KEY),
+                Value::from(DREAMER_ACTOR_CLASS),
+            ),
+            (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
+            (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
+        ]),
+    )?;
+    changed |= push_unless_bound(
+        entry_mut(&mut entries, POLICY_SCOPED_GRANTS_KEY),
+        actor_ref,
+        Value::Map(vec![
+            (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
+            (
+                Value::from(ACTOR_CLASS_KEY),
+                Value::from(DREAMER_ACTOR_CLASS),
+            ),
+            (
+                Value::from("effector"),
+                Value::from(SCOPED_READ_EFFECTOR_CORE_READ),
+            ),
+            (
+                Value::from("scope"),
+                crate::federation::scope_codec::encode_scope_value(
+                    &crate::federation::scope_codec::read_preset(),
+                )?,
+            ),
+            (Value::from("receipt_required"), Value::Boolean(false)),
+        ]),
+    )?;
+    let sources = entry_mut(&mut entries, POLICY_SOURCE_TRUST_KEY);
+    if matches!(sources, Value::Nil) {
+        *sources = Value::Map(Vec::new());
+    }
+    let Value::Map(sources) = sources else {
+        return Err(invalid("live source trust is not a map"));
     };
-    ceilings.push(Value::Map(vec![
-        (
-            Value::from(ACTOR_CLASS_KEY),
-            Value::from(DREAMER_ACTOR_CLASS),
-        ),
-        (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
-        (Value::from(ACTOR_CEILING_KEY), Value::from("auto")),
-    ]));
-    // The shipped `Generated` row is bound to one other derived writer; this
-    // copy rebinds it to the Dreamer. The fold keeps distinct bindings in
-    // disjoint slots, so each writer keeps exactly its own permit.
-    let Some(Value::Map(sources)) = entry_mut(&mut entries, POLICY_SOURCE_TRUST_KEY) else {
-        return Err(invalid("shipped source trust"));
-    };
-    let Some(Value::Map(generated)) = entry_mut(sources, ClaimSource::Generated.as_str()) else {
-        return Err(invalid("shipped generated permit"));
-    };
-    *entry_mut(generated, ACTOR_REF_KEY).ok_or_else(|| invalid("generated permit binding"))? =
-        Value::from(actor_ref);
-    let read_grant = Value::Map(vec![
-        (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
-        (
-            Value::from(ACTOR_CLASS_KEY),
-            Value::from(DREAMER_ACTOR_CLASS),
-        ),
-        (
-            Value::from("effector"),
-            Value::from(SCOPED_READ_EFFECTOR_CORE_READ),
-        ),
-        (
-            Value::from("scope"),
-            crate::federation::scope_codec::encode_scope_value(
-                &crate::federation::scope_codec::read_preset(),
-            )?,
-        ),
-        (Value::from("receipt_required"), Value::Boolean(false)),
-    ]);
-    match entry_mut(&mut entries, POLICY_SCOPED_GRANTS_KEY) {
-        Some(Value::Array(grants)) => grants.push(read_grant),
-        Some(_) => return Err(invalid("shipped scoped grants")),
-        None => entries.push((
-            Value::from(POLICY_SCOPED_GRANTS_KEY),
-            Value::Array(vec![read_grant]),
-        )),
+    // The Dreamer's permit sits beside any row already bound to another
+    // writer; decode keeps each binding in its own slot.
+    changed |= push_unless_bound(
+        entry_mut(sources, ClaimSource::Generated.as_str()),
+        actor_ref,
+        Value::Map(vec![
+            (Value::from(ACTOR_REF_KEY), Value::from(actor_ref)),
+            (
+                Value::from(SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY),
+                Value::from(u64::from(UNSTAMPED_CLAIM_SENSITIVITY_BAND)),
+            ),
+            (
+                Value::from(SOURCE_TRUST_RECEIPTED_KEY),
+                Value::Boolean(true),
+            ),
+            (Value::from(SOURCE_TRUST_WARNED_KEY), Value::Boolean(true)),
+        ]),
+    )?;
+    if !changed {
+        return Ok(None);
     }
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &Value::Map(entries))
         .map_err(|_| invalid("encode dreamer weave grant"))?;
-    Ok(data)
+    Ok(Some(data))
 }

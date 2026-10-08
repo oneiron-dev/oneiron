@@ -835,3 +835,25 @@ fn open_workflow_roots_lists_only_unfinished_saved_workflows() -> Result<()> {
     assert!(dispatcher.open_workflow_roots()?.is_empty());
     Ok(())
 }
+
+#[cfg(feature = "sync")]
+#[test]
+fn dispatching_and_settling_a_workflow_wake_attempt_observers() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let step = fixture(&vault, AgentCeiling::Proposed, "signalled-step")?;
+    let id = EntityId::now();
+    vault.save_workflow(&id, &WorkflowDefinition::new("signalled", vec![step])?, 2)?;
+    let mut updates = crate::attempt_queue::AttemptQueue::new(&vault).subscribe();
+    let dispatcher = AgentDispatcher::new(&vault);
+    let root = workflow(dispatcher.dispatch(request(AgentDispatchTarget::Workflow(id), None))?)
+        .attempt
+        .id;
+    // A host waiting on the queue's signal hears the new workflow.
+    assert!(updates.try_recv().is_ok());
+    while updates.try_recv().is_ok() {}
+    dispatcher.run_workflow_step(root, "host-a", 11, |_, _| {
+        AttemptResultRef::new("artifact:signalled")
+    })?;
+    assert!(updates.try_recv().is_ok());
+    Ok(())
+}

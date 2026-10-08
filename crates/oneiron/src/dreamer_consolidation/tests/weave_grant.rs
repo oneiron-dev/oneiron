@@ -59,8 +59,10 @@ fn pass(
 
 #[test]
 fn the_owner_grant_lets_a_stock_vaults_dreamer_land_its_consolidation() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
-    let vault = std::sync::Arc::new(vault);
+    // A stock vault: `Vault::open` seeds the shipped policy manifest, which
+    // the legacy test opener clears.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = std::sync::Arc::new(Vault::open(dir.path(), VaultConfig::device())?);
     crate::test_util::provision_engine_machines(&vault);
     authorize_test_inference(&vault)?;
     let reach = vault.dreamer_weave_reach()?;
@@ -102,10 +104,10 @@ fn the_owner_grant_lets_a_stock_vaults_dreamer_land_its_consolidation() -> Resul
         true,
         crate::store::GateDecisionId::now(),
     )?;
-    vault.grant_dreamer_weave(&owner, 30)?;
+    assert!(vault.grant_dreamer_weave(&owner, 30)?);
     assert!(vault.dreamer_weave_reach()?.ready());
-    // Re-granting replaces the pack in place.
-    vault.grant_dreamer_weave(&owner, 31)?;
+    // Re-granting finds its rows and changes nothing.
+    assert!(!vault.grant_dreamer_weave(&owner, 31)?);
     assert!(vault.dreamer_weave_reach()?.ready());
 
     // A fresh turn after the grant dreams and lands.

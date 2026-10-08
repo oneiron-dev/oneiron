@@ -29,8 +29,16 @@ pub(super) fn parse_source_trust(value: &Value) -> Option<SourceTrustCeiling> {
     let mut ceiling = SourceTrustCeiling::default();
     for (source_key, row_value) in source_rows {
         let source = source_key.as_str().and_then(ClaimSource::parse)?;
-        let row = parse_source_trust_row(row_value)?;
-        ceiling.set_row(source, row);
+        // One manifest may bind one source to several writers, each in its
+        // own actor-keyed row; the fold keeps distinct bindings disjoint.
+        let rows = match row_value {
+            Value::Array(rows) if !rows.is_empty() => rows.as_slice(),
+            Value::Array(_) => return None,
+            row => std::slice::from_ref(row),
+        };
+        for row in rows {
+            ceiling.set_row(source, parse_source_trust_row(row)?);
+        }
     }
     Some(ceiling)
 }
