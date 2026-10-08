@@ -1241,8 +1241,10 @@ async fn recall_reads_time_words_without_refusing_and_resolves_them_as_of() {
 /// Wave 9 long-context A/B: recall named a message `ms87:76@<revision>` where
 /// its witness receipt said `ms87:76`, so a client stripped the suffix to join
 /// them; and TURN, CONVERSATION and PERSON rows took recall `limit` slots.
-/// Recall now returns the receipt's short id with the revision beside it, and
-/// turns and conversations take no slot unless the scope names their kinds.
+/// Recall now returns the receipt's short id with the revision beside it,
+/// turns and conversations take no slot unless the scope names their kinds,
+/// and the author every message points at ranks below the messages that
+/// matched.
 #[tokio::test]
 async fn recall_returns_witness_short_ids_and_limit_counts_content() {
     let facade = OwnerFacade::new("facade-ids-and-slots-secret");
@@ -1283,6 +1285,14 @@ async fn recall_returns_witness_short_ids_and_limit_counts_content() {
             "{item}"
         );
     }
+
+    // People stay in recall: the author comes after every matching message.
+    let (found, _) = facade
+        .recall(json!({"query": "tide table spring tide", "limit": 10}))
+        .await;
+    let kinds: Vec<&str> = found.iter().map(|(_, kind)| kind.as_str()).collect();
+    assert_eq!(kinds[..7], ["MESSAGE"; 7], "{found:?}");
+    assert!(kinds[7..].contains(&"PERSON"), "{found:?}");
 
     // Containers come back when the scope names them.
     let (found, _) = facade
