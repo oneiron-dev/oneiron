@@ -191,8 +191,7 @@ rtk proxy git merge-tree --write-tree origin/main HEAD
 
 The merge gate is:
 
-- Local verification gate is green on the final branch tip.
-- The full gate (section 3) is green on the final branch tip; GitHub CI is
+- The full gate (section 3) is green on the final branch tip. GitHub CI is
   paused repo-wide (`CI_PAUSED`).
 - GitHub cloud-reviewer bot threads have no unresolved blocking coding
   comments.
