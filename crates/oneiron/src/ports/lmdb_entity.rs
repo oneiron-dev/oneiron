@@ -249,16 +249,13 @@ impl EdgeStore for Vault {
         kind: EdgeKind,
         dst: &EntityId,
     ) -> Result<bool> {
-        crate::edge::validate_public_edge_kind(kind)?;
-        crate::workspace_roster::validate_project_edge_delete(&self.store, txn, *src, kind, *dst)?;
-        let out = Store::encode_edge_key(src, kind, dst);
-        let incoming = Store::encode_edge_key(dst, kind, src);
-        let existed = self.store.edges_out.delete(txn, &out)?;
-        self.store.edges_in.delete(txn, &incoming)?;
-        if existed {
-            crate::ppr::invalidate_ppr_for_edge(&self.store, txn, src, dst)?;
-            crate::ppr::increment_graph_version(&self.store, txn)?;
-        }
+        // One delete door: the batch arm owns every edge-delete guard.
+        let existed = self
+            .store
+            .edges_out
+            .get(txn, &Store::encode_edge_key(src, kind, dst))?
+            .is_some();
+        self.batch_in().delete_edge(src, kind, dst).apply(txn)?;
         Ok(existed)
     }
     fn port_edge_neighbors(

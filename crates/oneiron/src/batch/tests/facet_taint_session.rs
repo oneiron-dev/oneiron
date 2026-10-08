@@ -825,6 +825,24 @@ fn deleting_a_live_notes_facet_stamp_is_refused() -> Result<()> {
     Ok(())
 }
 
+/// Bug repro (#1307 census): `Vault::delete_edge` is a second door to the
+/// same edge row, so it must refuse what the batch door refuses.
+#[test]
+fn the_direct_edge_delete_door_keeps_a_live_notes_facet_stamp() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let (note, default) = note_under_default(&vault)?;
+    let err = vault
+        .delete_edge(&note, EdgeKind::FacetOf, &default)
+        .expect_err("a live NOTE keeps its stamp");
+
+    assert_eq!(err.kind(), ErrorKind::FacetStampImmutable);
+    assert_eq!(
+        vault.targets(&note, EdgeKind::FacetOf, None)?,
+        vec![default]
+    );
+    Ok(())
+}
+
 #[test]
 fn a_claim_put_that_changes_its_facet_is_refused() -> Result<()> {
     let (_dir, vault) = open_test_vault();

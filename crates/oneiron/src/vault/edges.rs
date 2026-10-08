@@ -203,7 +203,8 @@ impl Vault {
         self.batch().set_edge_vad(src, kind, tgt, vad).commit()
     }
 
-    /// Deletes a directed edge and its reverse index entry.
+    /// Deletes a directed edge and its reverse index entry, behind the same
+    /// guards as [`BatchBuilder::delete_edge`](crate::BatchBuilder::delete_edge).
     pub fn delete_edge(&self, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Result<bool> {
         self.with_write_txn(|txn| {
             crate::ports::EdgeStore::port_edge_delete(self, txn, src, kind, tgt)

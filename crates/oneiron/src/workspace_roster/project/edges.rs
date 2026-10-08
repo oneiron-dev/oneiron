@@ -103,7 +103,7 @@ pub(crate) fn validate_project_edge_put(
     Ok(())
 }
 
-/// The public direct `port_edge_delete` door does not run the batch projector.
+/// Checked on every edge delete, in the batch's `apply_delete_edge` arm.
 /// A combined body update + edge delete remains legal through the batch path,
 /// whose final-state validation runs after the projector.
 pub(crate) fn validate_project_edge_delete(

@@ -85,6 +85,13 @@ fn surfaced_failure_card_rejects_duplicate_authored_by_binding() -> Result<()> {
     Ok(())
 }
 
+/// Fault injection: removes an edge's paired rows past the delete door's room
+/// guards, to build membership shapes the card must still judge.
+fn tear_edge(vault: &crate::Vault, src: &EntityId, kind: EdgeKind, tgt: &EntityId) -> Result<bool> {
+    use crate::ports::EdgeStoreStaging;
+    vault.with_write_txn(|txn| vault.store.port_remove_edge_rows(txn, src, kind, tgt))
+}
+
 #[test]
 fn surfaced_failure_card_accepts_canonical_witness_membership() -> Result<()> {
     use crate::edge::EdgeActorClass;
@@ -140,12 +147,17 @@ fn surfaced_failure_card_accepts_canonical_witness_membership() -> Result<()> {
     assert!(matches!(card_for(foreign), Err(Error::InvalidConfig(_))));
 
     // Isolate the writer's direct MESSAGE --BelongsTo--> CONVERSATION edge.
-    assert!(vault.delete_edge(&turn, EdgeKind::ChildOf, &conversation)?);
+    assert!(tear_edge(&vault, &turn, EdgeKind::ChildOf, &conversation)?);
     assert!(card_for(conversation).is_ok());
     vault.put_edge(&turn, EdgeKind::ChildOf, &conversation, 1.0)?;
 
     // Without the direct edge, the writer's PartOf -> ChildOf path still binds.
-    assert!(vault.delete_edge(&message, EdgeKind::BelongsTo, &conversation)?);
+    assert!(tear_edge(
+        &vault,
+        &message,
+        EdgeKind::BelongsTo,
+        &conversation
+    )?);
     assert!(card_for(conversation).is_ok());
     assert!(
         card_for(turn).is_ok(),
@@ -157,7 +169,7 @@ fn surfaced_failure_card_accepts_canonical_witness_membership() -> Result<()> {
     assert!(matches!(card_for(outer), Err(Error::InvalidConfig(_))));
 
     // A witnessed author alone cannot substitute for a membership path.
-    assert!(vault.delete_edge(&message, EdgeKind::PartOf, &turn)?);
+    assert!(tear_edge(&vault, &message, EdgeKind::PartOf, &turn)?);
     assert!(matches!(
         card_for(conversation),
         Err(Error::InvalidConfig(_))
