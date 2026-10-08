@@ -493,7 +493,8 @@ fn a_moved_paragraph_costs_a_tenth_of_a_replaced_one_in_both_lanes() {
 }
 
 /// Text typed and then deleted is churn, not a move: it is in neither
-/// endpoint, so the recorded lane charges it in full.
+/// endpoint, so the recorded lane charges it in full, alone or next to a
+/// real move.
 #[test]
 fn recorded_churn_never_pairs_as_a_move() {
     let mut window = one_change_window("keep this line", "keep this line");
@@ -504,6 +505,25 @@ fn recorded_churn_never_pairs_as_a_move() {
     let delta = delta_from_recorded_ops(&window);
     assert_eq!(delta.ops_summary.moved, 0);
     assert_eq!((delta.ops_summary.ins, delta.ops_summary.del), (9, 9));
+
+    // Review repro: a move whose line weighs more than the region the op log
+    // shows must not soak up churn typed and deleted in the same window.
+    let swap = |churn: &[(&str, &str)]| {
+        let mut window = one_change_window("aaa\naa", "aa\naaa");
+        window
+            .ops_by_actor
+            .extend(churn.iter().map(|(before, after)| span(before, after)));
+        delta_from_recorded_ops(&window)
+    };
+    let plain = swap(&[]);
+    let churned = swap(&[("aa\naaa", "aa\naaaq"), ("aa\naaaq", "aa\naaa")]);
+    // The `q` in and out: two characters over 6 + 6, at full price.
+    assert!(
+        (churned.d_norm - plain.d_norm - 2.0 / 12.0).abs() < 1e-6,
+        "churn {} over move {} is not full price",
+        churned.d_norm,
+        plain.d_norm
+    );
 }
 
 fn rot13(text: &str) -> String {

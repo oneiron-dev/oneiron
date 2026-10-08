@@ -39,7 +39,8 @@ pub(super) const MAX_FIELD_DIFF_DEPTH: u32 = 64;
 /// its characters come out of `del` and `ins` once each and are charged in
 /// `moved` at the move discount instead. Text typed and then deleted is in
 /// neither endpoint, so it can never pair, and churn keeps its full price.
-/// A pair is capped at what the log actually removed and added.
+/// A pair is capped at the net change between the endpoints and at what the
+/// log removed and added, so a move can never absorb the churn around it.
 ///
 /// The per-change region is the span between the common prefix and the
 /// common suffix — one contiguous edit. A change that scatters edits across
@@ -62,7 +63,12 @@ pub fn delta_from_recorded_ops(finalized: &FinalizedProposalText) -> AmendmentDe
         &collapse_whitespace(&finalized.final_text),
     );
     let endpoints = myers_line_diff(&finalized.proposed_text, &finalized.final_text).ops;
-    let moved = endpoints.moved.min(ins).min(del);
+    let moved = endpoints
+        .moved
+        .min(window.removed())
+        .min(window.added())
+        .min(ins)
+        .min(del);
     let ops_summary = OpsSummary {
         ins: ins - moved,
         del: del - moved,
