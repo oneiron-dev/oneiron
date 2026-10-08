@@ -96,6 +96,10 @@ pub(super) enum Projection {
     /// A project's authority (parents, claims scope, slice, depth, leader,
     /// board), roster, role and budget.
     Project,
+    /// A TASK authority fact (owner, cancellation, acknowledgement, human
+    /// assignment). One added since the image to a task the image holds counts
+    /// as changed; every other TASK body is content.
+    TaskFact,
     /// Every outbound grant, without the stamp each use writes. One only one
     /// side holds counts as changed.
     OutboundGrant,
@@ -156,6 +160,10 @@ const RELATIONSHIPS: Class = Class::Refuse {
 const PROJECTS: Class = Class::Refuse {
     what: "project authority",
     scope: Scope::Authority(Projection::Project),
+};
+const TASKS: Class = Class::Refuse {
+    what: "task authority",
+    scope: Scope::Authority(Projection::TaskFact),
 };
 const CONTACTS: Class = Class::Refuse {
     what: "counterparty contacts and their consents",
@@ -278,7 +286,7 @@ const ENTITY_KINDS: &[(u8, Class)] = &[
     (ENTITY_TYPE_SKILL_CONTENT_ANCHOR, CONTENT),
     (ENTITY_TYPE_PSYCH_PROFILE, CONTENT),
     (ENTITY_TYPE_TASK_LIST, CONTENT),
-    (ENTITY_TYPE_TASK, CONTENT),
+    (ENTITY_TYPE_TASK, TASKS),
     (ENTITY_TYPE_MACHINE, MACHINE_IDENTITIES),
     (ENTITY_TYPE_CODE_ARTIFACT, CONTENT),
     (ENTITY_TYPE_CODE_SYMBOL, CONTENT),

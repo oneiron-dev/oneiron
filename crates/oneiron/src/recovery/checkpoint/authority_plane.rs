@@ -34,6 +34,7 @@ use crate::note::NoteKind;
 use crate::outbound_grant::StandingOutboundGrant;
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::skill::{SkillDependency, SkillGovernanceTier, SkillLifecycle};
+use crate::task_authority::TaskAuthorityFact;
 use crate::workspace_roster::{ProjectAuthority, ProjectBudgetShare, ProjectRecord, ProjectRole};
 use crate::{EntityId, Error, Result, Vault};
 use heed::types::Bytes;
@@ -85,7 +86,12 @@ pub(super) fn carry_current_authority(
         .iter()
         .map(|(key, _)| key.as_slice())
         .collect();
-    let mut moved = authority_moved(&classes, &databases["entities"], &live.authority);
+    let mut moved = authority_moved(
+        &classes,
+        &databases["entities"],
+        &image_entities,
+        &live.authority,
+    );
     for (database, live_rows) in &live.rows {
         let scoped = |rows| refused(&classes, database, rows, &image_entities);
         let image = scoped(&databases[*database]);
@@ -191,6 +197,7 @@ fn current_rows(current: &Vault, classes: &Classes) -> Result<LiveRows> {
 fn authority_moved(
     classes: &Classes,
     image: &CanonicalRows,
+    image_entities: &BTreeSet<&[u8]>,
     live: &Projected,
 ) -> BTreeSet<&'static str> {
     let mut moved = BTreeSet::new();
@@ -215,28 +222,40 @@ fn authority_moved(
             Some((_, _, current)) => {
                 moved.insert(authority.family().or(current.family()).unwrap_or(what));
             }
-            None if presence_is_authority(projection, &authority) => {
+            None if presence_is_authority(projection, &authority, image_entities, false) => {
                 moved.insert(authority.family().unwrap_or(what));
             }
             None => {}
         }
     }
     for (key, (what, projection, current)) in live {
-        if !held.contains(key.as_slice()) && presence_is_authority(*projection, current) {
+        if !held.contains(key.as_slice())
+            && presence_is_authority(*projection, current, image_entities, true)
+        {
             moved.insert(current.family().unwrap_or(*what));
         }
     }
     moved
 }
 
-/// Whether an entity only one vault holds still counts as changed: an
-/// outbound grant, a claim of an authority family, and a contact that is
-/// revoked or opted out, whose absence would let a send through.
-fn presence_is_authority(projection: Projection, authority: &Compared) -> bool {
+/// Whether an entity only one vault holds (only the live one when
+/// `live_only`) still counts as changed: an outbound grant; a claim of an
+/// authority family; a contact that is revoked or opted out, whose absence
+/// would let a send through; and an authority fact added since the image to a
+/// task the image holds.
+fn presence_is_authority(
+    projection: Projection,
+    authority: &Compared,
+    image_entities: &BTreeSet<&[u8]>,
+    live_only: bool,
+) -> bool {
     match authority {
         Compared::Contact {
             status, opt_out, ..
         } => opt_out.is_some() || *status != CounterpartyContactStatus::Active,
+        Compared::TaskFact(fact) => {
+            live_only && image_entities.contains(fact.task_ref.as_bytes().as_slice())
+        }
         _ => projection == Projection::OutboundGrant || authority.family().is_some(),
     }
 }
@@ -287,6 +306,8 @@ enum Compared {
     },
     /// A grant as it authorizes, without its last use.
     OutboundGrant(Box<StandingOutboundGrant>),
+    /// An authority fact about a task.
+    TaskFact(TaskAuthorityFact),
 }
 
 impl Compared {
@@ -321,7 +342,8 @@ struct AgentBounds {
 }
 
 /// The authority `projection` reads in one entity row, or `None` for a row
-/// too short to hold a body, or a note body that does not decode.
+/// too short to hold a body, a note body that does not decode, or a TASK body
+/// that is not an authority fact.
 fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
     let body = raw.get(ENTITY_METADATA_HEADER_LEN..)?;
     let whole = || Compared::Row(raw.to_vec());
@@ -415,6 +437,9 @@ fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
                 }
             },
         ),
+        Projection::TaskFact => {
+            Compared::TaskFact(crate::task_authority::decode_task_authority_fact_body(body).ok()?)
+        }
         Projection::OutboundGrant => {
             crate::outbound_grant::decode_standing_outbound_grant_body(body).map_or_else(
                 |_| whole(),

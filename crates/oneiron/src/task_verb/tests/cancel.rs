@@ -1073,3 +1073,47 @@ fn repeated_refusal_surfaces_on_the_owner_board_and_ordinary_rows_are_unchanged(
         "a settled attempt is history, not an open decision"
     );
 }
+
+/// SOL-9A-2-R2 F23: a cancellation is an authority fact of its task. A
+/// restore over the vault goes ahead past a task created since the backup,
+/// and is refused once a task the backup holds was cancelled.
+#[test]
+fn a_restore_never_drops_a_cancellation_made_since() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    grant_cancel(&vault, own, 0xD1);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
+    let task = facade
+        .tasks_create(&spec(120))
+        .expect("task")
+        .task_ref
+        .expect("task ref");
+    let backups = tempfile::tempdir().expect("backups");
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100).expect("backup");
+    let restore = |destination: &std::path::Path| {
+        Vault::restore_checkpoint_keeping_authority(
+            &image,
+            destination,
+            vault.config.clone(),
+            &vault,
+            200,
+        )
+    };
+
+    facade.tasks_create(&spec(130)).expect("a later task");
+    drop(restore(&backups.path().join("first")).expect("restored"));
+
+    assert!(
+        facade
+            .cancel(TaskCancelTarget::Task(task))
+            .expect("cancel")
+            .effected
+    );
+    let destination = backups.path().join("second");
+    let error = restore(&destination)
+        .err()
+        .expect("the restore must be refused");
+    assert!(error.to_string().contains("task authority"), "{error}");
+    assert!(!destination.exists());
+}
