@@ -42,7 +42,8 @@ impl Memory<'_> {
     ) -> MemoryResult<Vec<crate::pipeline::WorldAuthoritySet>> {
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        // Folded once, and only when the vault holds a world-access grant.
+        let grants = crate::pipeline::WorldGrantIndex::read(&vault.store, &txn)?;
+        // Folded once, and only when some member is under world-access law.
         let fold = std::cell::OnceCell::new();
         let admit = |id: &EntityId, body: &crate::claim::ClaimBody| -> crate::Result<bool> {
             if fold.get().is_none() {
@@ -51,7 +52,6 @@ impl Memory<'_> {
             let fold = fold.get().expect("authority fold was just set");
             crate::authority::claim_causal_admitted(&vault.store, &txn, fold, id, body)
         };
-        let grants = crate::pipeline::WorldGrantIndex::read(&vault.store, &txn, &admit)?;
         let now = crate::unix_seconds_now();
         actors
             .iter()

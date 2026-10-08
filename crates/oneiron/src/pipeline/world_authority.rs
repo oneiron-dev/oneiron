@@ -184,9 +184,8 @@ const GRANT_POSTING_SCAN: usize = 10_000;
 
 /// Which actors world-access law governs. An owner's ALLOWED-SET grant about
 /// an actor puts it under that law, and the actor stays under it after the
-/// grant closes: losing a grant never falls back to base reality. A row the
-/// owner never granted, or one the authority snapshot quarantines, governs
-/// nobody.
+/// grant closes or loses its authority: losing a grant never falls back to
+/// base reality. A row the owner never granted governs nobody.
 pub(crate) struct WorldGrantIndex {
     /// `None` when the vault holds more grant rows than one pass reads.
     governed: Option<std::collections::BTreeSet<EntityId>>,
@@ -194,7 +193,7 @@ pub(crate) struct WorldGrantIndex {
 
 impl WorldGrantIndex {
     /// One pass over the grant predicate's postings.
-    pub(crate) fn read(store: &Store, rtxn: &RoTxn<'_>, admit: &RowAdmission<'_>) -> Result<Self> {
+    pub(crate) fn read(store: &Store, rtxn: &RoTxn<'_>) -> Result<Self> {
         let ids = match crate::claim::claim_ids_for_predicate_bounded_in_txn(
             store,
             rtxn,
@@ -207,7 +206,7 @@ impl WorldGrantIndex {
         };
         let mut governed = std::collections::BTreeSet::new();
         for id in ids {
-            if let Some(subject) = grant_subject(store, rtxn, admit, &id)? {
+            if let Some(subject) = grant_subject(store, rtxn, &id)? {
                 governed.insert(subject);
             }
         }
@@ -216,13 +215,7 @@ impl WorldGrantIndex {
         })
     }
 
-    fn governs(
-        &self,
-        store: &Store,
-        rtxn: &RoTxn<'_>,
-        admit: &RowAdmission<'_>,
-        actor: EntityId,
-    ) -> Result<bool> {
+    fn governs(&self, store: &Store, rtxn: &RoTxn<'_>, actor: EntityId) -> Result<bool> {
         if let Some(governed) = &self.governed {
             return Ok(governed.contains(&actor));
         }
@@ -239,7 +232,7 @@ impl WorldGrantIndex {
             if scanned >= MAX_EDGE_QUERY_RESULTS {
                 return Err(Error::IndexOverflow("world access authority claims"));
             }
-            if grant_subject(store, rtxn, admit, &entry?.target)? == Some(actor) {
+            if grant_subject(store, rtxn, &entry?.target)? == Some(actor) {
                 return Ok(true);
             }
         }
@@ -247,14 +240,9 @@ impl WorldGrantIndex {
     }
 }
 
-/// The subject of an owner's ALLOWED-SET grant, open or closed, that `admit`
-/// keeps.
-fn grant_subject(
-    store: &Store,
-    rtxn: &RoTxn<'_>,
-    admit: &RowAdmission<'_>,
-    id: &EntityId,
-) -> Result<Option<EntityId>> {
+/// The subject of an owner's ALLOWED-SET grant, open, closed or since
+/// stripped of its authority.
+fn grant_subject(store: &Store, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityId>> {
     let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Ok(None);
     };
@@ -265,10 +253,7 @@ fn grant_subject(
     let ClaimSubject::Entity(subject) = body.subject else {
         return Ok(None);
     };
-    if body.predicate != PREDICATE_WORLD_ACCESS_ALLOWED_SET
-        || !owner_granted_allowed_row(&body)
-        || !admit(id, &body)?
-    {
+    if body.predicate != PREDICATE_WORLD_ACCESS_ALLOWED_SET || !owner_granted_allowed_row(&body) {
         return Ok(None);
     }
     Ok(Some(subject))
@@ -288,7 +273,7 @@ pub(crate) fn reading_default(
     actor: EntityId,
     at: u64,
 ) -> Result<WorldAuthoritySet> {
-    if !grants.governs(store, rtxn, admit, actor)? {
+    if !grants.governs(store, rtxn, actor)? {
         return WorldAuthoritySet::new(true, []);
     }
     let selection = ActiveWorldSelection {
