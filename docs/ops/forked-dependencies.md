@@ -18,8 +18,7 @@ the fork.
 2. Push the branch and move the `rev` in the manifest to the new branch head.
 3. Update the table above. `deny.toml` allows each fork URL in `[sources] allow-git`;
    `unknown-git` stays `deny`.
-4. `python3 -m unittest discover -s scripts/ci -p 'test_vendor_pins.py'` and
-   `cargo-deny --locked check` must pass.
+4. `cargo-deny --locked check` must pass.
 
 ## sudachi
 

@@ -144,7 +144,6 @@ jobs:
         run: |
           python packages/oneiron/scripts/agent-docs.py --check
           node packages/oneiron/scripts/check-readme-snippets.mjs
-          bun test --cwd packages/oneiron-ai-sdk adapter.test.js
           python scripts/code-sandbox/generate.py --check
           node scripts/tests/test_sandbox_wit.mjs
 

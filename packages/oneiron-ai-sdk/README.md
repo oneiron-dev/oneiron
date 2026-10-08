@@ -35,5 +35,4 @@ After building `packages/oneiron`, run `bun install --frozen-lockfile` and
 `bun run test:native` here. This executes the real `generateText` tool loop in Node, the shipped SDK runtime,
 against an actual native vault. A deterministic AI SDK model supplies tool
 calls, so CI needs no external provider key. Memory, schemas, tool dispatch,
-recall and receipts are not mocked. The separate `bun test adapter.test.js`
-checks only argument adaptation and error identity.
+recall and receipts are not mocked.
