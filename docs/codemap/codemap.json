@@ -1193,7 +1193,7 @@
      "path": "src/attempt_queue/engine/enqueue_claim.rs",
      "purpose": "Enqueue doors plus kind-scoped claim machinery and read-repair scans",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 12,
       "fn": 5
      }
     },
@@ -1217,8 +1217,18 @@
      "path": "src/attempt_queue/engine/mutate.rs",
      "purpose": "Retry/intervene/manifest append plus lease-cleanup mutation doors",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/engine/prune.rs",
+     "purpose": "The doors an owner-retained kind's tries leave the ledger by: a settled attempt with every try it retried…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -1228,7 +1238,7 @@
      "path": "src/attempt_queue/engine/reads.rs",
      "purpose": "Point/list/dedupe reads plus retry-chain and dreamer-root walks",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 22,
       "fn": 4
      }
     },
@@ -1249,7 +1259,7 @@
      "path": "src/attempt_queue/engine/workflow.rs",
      "purpose": "Transactional point-claim and retry lineage reads for ordered host composition",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -1270,7 +1280,7 @@
      "path": "src/attempt_queue/mod.rs",
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 16,
       "re-export": 4
      }
     },
@@ -12644,7 +12654,7 @@
      "path": "src/conversation_dag/graph.rs",
      "purpose": "Strict transactional graph reads and shared guards",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {
@@ -21268,7 +21278,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 19,
-      "mod": 171,
+      "mod": 172,
       "re-export": 72
      }
     },
@@ -22810,6 +22820,7 @@
      "path": "src/memory/extraction/mod.rs",
      "purpose": "Host-served extraction beside witness, followed by separately authorized atomic persistence",
      "surface": {
+      "crate-vis": 1,
       "re-export": 1
      }
     },
@@ -22852,6 +22863,7 @@
       "EncoderMessage",
       "EncoderOutput",
       "EncoderParity",
+      "EncoderTurn",
       "ExtractionEncoder",
       "ExtractionReceipt",
       "NerSpan",
@@ -22862,7 +22874,7 @@
      "purpose": "Typed serving payloads and observable extraction receipts",
      "surface": {
       "fn": 5,
-      "struct": 10,
+      "struct": 11,
       "trait": 1
      }
     },
@@ -27323,11 +27335,19 @@
      "path": "src/ports/time.rs",
      "purpose": "Per-store clock and id source",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "fn": 6,
       "struct": 1,
       "trait": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/ports/time/tests.rs",
+     "purpose": "The store clock's reads, observed through what a caller gets back",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -32943,7 +32963,7 @@
      "path": "src/store/test_hooks.rs",
      "purpose": "The test seams one open vault owns, plus the two path-keyed LMDB open hooks that necessarily predate it",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 29
      }
     },
     {
@@ -34594,6 +34614,136 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/tagging/body.rs",
+     "purpose": "An earlier MESSAGE's text, read from its stored MessagePack row as far as the live window keeps it and no…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HeldTagsOutcome"
+     ],
+     "path": "src/tagging/held.rs",
+     "purpose": "An importer completes a turn's marker with tags it already holds: no tagger call",
+     "surface": {
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TaggingTraceRecord"
+     ],
+     "path": "src/tagging/history.rs",
+     "purpose": "The trace history: what stays of a turn's tagging once its settled marker has left the job ledger",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/tagging/input.rs",
+     "purpose": "The tagger's input for one turn: the turn's MESSAGE rows, and the live register's bounded window of earlier…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TaggingMarkerConfig",
+      "TaggingTraceHistory"
+     ],
+     "path": "src/tagging/marker.rs",
+     "purpose": "The marker row: its kind, payload, dedupe key, derived id and the in-transaction doors that commit it",
+     "surface": {
+      "const": 6,
+      "crate-vis": 9,
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/tagging/mod.rs",
+     "purpose": "The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036…",
+     "surface": {
+      "crate-vis": 2,
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OutputRefusal"
+     ],
+     "path": "src/tagging/output.rs",
+     "purpose": "What a tagger's answer must satisfy before a marker settles on it",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "TaggingBackoff",
+      "TaggingPass",
+      "TaggingReconciler"
+     ],
+     "path": "src/tagging/reconciler.rs",
+     "purpose": "The drain pass a host worker drives: claim ready markers, read each turn, call the tagger outside any write…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 10,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "XL",
+     "kind": "test",
+     "notable": [],
+     "path": "src/tagging/tests.rs",
+     "purpose": "Laws of the tagging marker and its drain, observed through the job tables, the traces and the vault's stored…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HandBackReason",
+      "SkipReason",
+      "TaggingFailure",
+      "TaggingOutcome",
+      "TaggingTrace"
+     ],
+     "path": "src/tagging/trace.rs",
+     "purpose": "One trace per settled marker attempt",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 4,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -35866,6 +36016,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/database_digests.rs",
+     "purpose": "One BLAKE3 digest per named database: the comparison two vaults given the same writes can be held to…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -36041,7 +36202,7 @@
      "path": "src/vault/mod.rs",
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 5,
       "struct": 1
      }
@@ -36132,7 +36293,7 @@
      "path": "src/vault_cleanup/attempt_retention.rs",
      "purpose": "Reversible retention for private queue records; the serialized attempt is never changed",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -36189,7 +36350,7 @@
      "path": "src/vault_cleanup/mod.rs",
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 4
      }
     },
@@ -38327,7 +38488,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 37,
+     "files": 38,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39153,7 +39314,7 @@
      "purpose": "Policy classification over two planes"
     },
     "ports": {
-     "files": 36,
+     "files": 37,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39474,6 +39635,13 @@
      "layout": "dir",
      "purpose": "CRDT sync layer for Oneiron"
     },
+    "tagging": {
+     "files": 10,
+     "impl_vault": true,
+     "largest_src_bucket": "L",
+     "layout": "dir",
+     "purpose": "The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036…"
+    },
     "task_authority": {
      "files": 2,
      "impl_vault": true,
@@ -39538,7 +39706,7 @@
      "purpose": "—"
     },
     "vault": {
-     "files": 24,
+     "files": 25,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39601,10 +39769,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 22,
+   "over_bar": 23,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2357,
-   "test_files": 836
+   "source_files": 2368,
+   "test_files": 838
   },
   "oneiron-android": {
    "files": [
@@ -48023,7 +48191,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/commands/init.rs",
-     "purpose": "First-run embedder choice, using the same config and provider as serve",
+     "purpose": "First-run embedder and tagger choices, using the same config and providers as serve",
      "surface": {
       "fn": 1
      }
@@ -48196,8 +48364,27 @@
      "path": "src/config/mod.rs",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
-      "mod": 6,
-      "re-export": 6
+      "mod": 7,
+      "re-export": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OneironerArgs",
+      "OneironerConfig",
+      "OneironerConfigOverride",
+      "OneironerMode",
+      "OneironerProvider"
+     ],
+     "path": "src/config/oneironer.rs",
+     "purpose": "The `[oneironer]` section: the tagger slot's provider, mode, endpoint identity and label table",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 8,
+      "struct": 3
      }
     },
     {
@@ -49397,6 +49584,52 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/oneironer/endpoint.rs",
+     "purpose": "The `endpoint` provider: a tagger server on this machine that speaks the slot's contract",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/mod.rs",
+     "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/oneironer/tests/mod.rs",
+     "purpose": "The slot's laws: configuration, the endpoint's wire and identity probe, the typed refusals, `init`, and the…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/oneironer/tests/support.rs",
+     "purpose": "A stub tagger server inside the test process, and the vaults and servers the slot's tests share",
+     "surface": {
+      "crate-vis": 26
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/oneironer/tests/worker.rs",
+     "purpose": "The worker against the stub tagger: shadow writes nothing but the job tables, a failing tagger never fails a…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/owner/backup.rs",
      "purpose": "Local backups of one vault: take, list, prune, rehearse and restore",
      "surface": {
@@ -49622,7 +49855,7 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 6,
       "struct": 1
      }
@@ -49685,6 +49918,16 @@
      "path": "src/server/slip_transport_tests.rs",
      "purpose": "Slip-only transport admission with a historical receipt-key registry row",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/tagging.rs",
+     "purpose": "The tagging worker: the one thing that drives the engine's tagging reconciler",
+     "surface": {
+      "crate-vis": 2
+     }
     },
     {
      "bucket": "L",
@@ -50122,7 +50365,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 14,
+     "files": 15,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -50205,6 +50448,13 @@
      "layout": "file",
      "purpose": "ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1)"
     },
+    "oneironer": {
+     "files": 5,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
+    },
     "owner": {
      "files": 8,
      "impl_vault": false,
@@ -50234,7 +50484,7 @@
      "purpose": "—"
     },
     "server": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -50278,8 +50528,8 @@
    },
    "over_bar": 2,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 256,
-   "test_files": 110
+   "source_files": 260,
+   "test_files": 113
   },
   "oneiron-uniffi": {
    "files": [
