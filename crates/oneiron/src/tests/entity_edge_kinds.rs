@@ -518,7 +518,7 @@ fn all_entity_type_prefixes() {
         (
             "SECRET_CUSTODY",
             68,
-            None,
+            Some("sc"),
             EntityClassification::Maintenance,
             TypeByteZone::System,
         ),

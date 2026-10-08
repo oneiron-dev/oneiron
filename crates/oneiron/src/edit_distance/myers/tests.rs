@@ -51,18 +51,21 @@ fn a_known_edit_script_counts_arrivals_departures_and_survivors() {
         "alpha\nbravo\ncharlie\ndelta",
         "alpha\nBRAVO\ncharlie\ndelta\necho",
     );
+    // Counted in characters, a terminator per line. `bravo` -> `BRAVO`
+    // shares no letter, so its line is charged whole: 6 out, 6 in, plus the
+    // 5 of `echo`; `alpha`, `charlie` and `delta` survive (6 + 8 + 6).
     assert_eq!(
         diff.ops,
         OpsSummary {
-            ins: 2,
-            del: 1,
-            kept: 3,
+            ins: 11,
+            del: 6,
+            kept: 20,
             moved: 0,
             approx: false,
         }
     );
-    // 3 / (4 + 5).
-    assert!((diff.d_norm - 1.0 / 3.0).abs() < 1e-6, "{}", diff.d_norm);
+    // 17 / (26 + 31).
+    assert!((diff.d_norm - 17.0 / 57.0).abs() < 1e-6, "{}", diff.d_norm);
 }
 
 /// A repeated run must not let the head and tail trim claim the same line
@@ -73,9 +76,9 @@ fn a_repeated_run_does_not_double_count_its_survivors() {
     assert_eq!(
         diff.ops,
         OpsSummary {
-            ins: 2,
+            ins: 8,
             del: 0,
-            kept: 3,
+            kept: 12,
             moved: 0,
             approx: false,
         }
@@ -101,16 +104,18 @@ fn a_trailing_newline_is_not_an_edit() {
 /// replaces.
 #[test]
 fn a_relocated_block_costs_the_discount_of_a_replaced_one() {
-    let relocated = myers_line_diff("one\ntwo\nthree\nfour", "three\nfour\none\ntwo");
-    let replaced = myers_line_diff("one\ntwo\nthree\nfour", "three\nfour\nfive\nsix");
+    // Equal-length lines, so the price does not depend on which pair the
+    // script keeps.
+    let relocated = myers_line_diff("one\ntwo\nsix\nten", "six\nten\none\ntwo");
+    let replaced = myers_line_diff("one\ntwo\nsix\nten", "six\nten\nfox\nbee");
 
     assert_eq!(
         relocated.ops,
         OpsSummary {
             ins: 0,
             del: 0,
-            kept: 2,
-            moved: 2,
+            kept: 8,
+            moved: 8,
             approx: false,
         },
         "a paired line leaves ins/del entirely"
@@ -118,9 +123,9 @@ fn a_relocated_block_costs_the_discount_of_a_replaced_one() {
     assert_eq!(
         replaced.ops,
         OpsSummary {
-            ins: 2,
-            del: 2,
-            kept: 2,
+            ins: 8,
+            del: 8,
+            kept: 8,
             moved: 0,
             approx: false,
         }
@@ -141,18 +146,20 @@ fn move_pairing_respects_multiplicity() {
     // The longer anchor forces the repeated lines into the unmatched regions.
     let before = "repeat\nrepeat\nrepeat\nanchor-a\nanchor-b\nanchor-c\nanchor-d\n";
     let after = "anchor-a\nanchor-b\nanchor-c\nanchor-d\nrepeat\nrepeat\n";
-    let expected_score = (1.0 + 4.0 * MOVE_DISCOUNT) / 13.0;
+    // `repeat` weighs 7 with its terminator, an anchor 9: two pairs move
+    // (14), one `repeat` is deleted (7), over 57 + 50 characters.
+    let expected_score = (7.0 + 2.0 * 14.0 * MOVE_DISCOUNT) / 107.0;
 
     let forward = myers_line_diff(before, after);
-    assert_eq!(forward.ops.moved, 2);
-    assert_eq!(forward.ops.del, 1);
+    assert_eq!(forward.ops.moved, 14);
+    assert_eq!(forward.ops.del, 7);
     assert_eq!(forward.ops.ins, 0);
     assert!((forward.d_norm - expected_score).abs() < 1e-6);
 
     let reverse = myers_line_diff(after, before);
-    assert_eq!(reverse.ops.moved, 2);
+    assert_eq!(reverse.ops.moved, 14);
     assert_eq!(reverse.ops.del, 0);
-    assert_eq!(reverse.ops.ins, 1);
+    assert_eq!(reverse.ops.ins, 7);
     assert!((reverse.d_norm - expected_score).abs() < 1e-6);
 }
 
@@ -178,7 +185,11 @@ fn a_script_past_the_cap_returns_marked_approximate() {
     // the fallback charges a replacement, and pass 2 takes it back.
     let shuffled = myers_line_diff(&before, &wall_reversed(&before));
     assert!(shuffled.approximate());
-    assert_eq!(shuffled.ops.moved, u32_saturating(MAX_EDIT_SCRIPT));
+    assert_eq!(
+        (shuffled.ops.ins, shuffled.ops.del),
+        (0, 0),
+        "every line pairs"
+    );
     assert!(shuffled.d_norm < 0.2, "{}", shuffled.d_norm);
 }
 
@@ -199,19 +210,30 @@ fn a_small_edit_in_a_large_artifact_stays_exact() {
     assert_eq!(
         diff.ops,
         OpsSummary {
-            ins: 1,
-            del: 1,
-            kept: 9_999,
+            ins: 8,
+            del: 0,
+            kept: 58_890,
             moved: 0,
             approx: false,
-        }
+        },
+        "the character pass charges `-amended`, not the line"
     );
+}
+
+/// The accounting reference: characters of the normalized lines, a
+/// terminator each, blank lines dropped.
+fn normalized_len(text: &str) -> u32 {
+    text.lines()
+        .map(collapse_whitespace)
+        .filter(|line| !line.is_empty())
+        .map(|line| u32_saturating(line.chars().count() + 1))
+        .sum()
 }
 
 // ─── invariants across every shape ──────────────────────────────────────
 
 /// Three properties that must hold whatever the input: the score is a
-/// fraction, every line is accounted for exactly once on each side, and the
+/// fraction, every character is accounted for exactly once on each side, and the
 /// measurement does not depend on which text was called `before`.
 #[test]
 fn every_shape_is_bounded_accounted_for_and_symmetric() {
@@ -226,14 +248,14 @@ fn every_shape_is_bounded_accounted_for_and_symmetric() {
             diff.d_norm
         );
         assert_eq!(
-            u32_saturating(before.lines().count()),
+            normalized_len(before),
             ops.del + ops.moved + ops.kept,
-            "{before:?} -> {after:?} loses lines on the before side"
+            "{before:?} -> {after:?} loses characters on the before side"
         );
         assert_eq!(
-            u32_saturating(after.lines().count()),
+            normalized_len(after),
             ops.ins + ops.moved + ops.kept,
-            "{before:?} -> {after:?} loses lines on the after side"
+            "{before:?} -> {after:?} loses characters on the after side"
         );
         assert_eq!(
             diff.d_norm, reversed.d_norm,
