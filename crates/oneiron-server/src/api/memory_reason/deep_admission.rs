@@ -126,6 +126,3 @@ pub(crate) fn admit_deep_retrieval(
         tokens_used: Cell::new(0),
     }))
 }
-
-#[cfg(test)]
-mod tests;

@@ -114,17 +114,6 @@ pub(super) fn mcp_consent_json(purpose: &str, require_human_approval: bool) -> V
     })
 }
 
-pub(super) fn mcp_context_pack_json(result_id: oneiron::EntityId) -> Value {
-    json!({
-        "schema_version": "context_pack_ref.v1",
-        "context_version": "v4",
-        "pack_ref": "context-pack:one-1222",
-        "retrieval_run_id": "retrieval:one-1222",
-        "result_ids": [result_id.to_hex()],
-        "budget_ref": "budget:standard",
-    })
-}
-
 pub(super) fn mcp_propose_claim_args(
     actor_ref: oneiron::EntityId,
     subject_ref: oneiron::EntityId,
