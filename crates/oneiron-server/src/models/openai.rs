@@ -37,15 +37,16 @@ impl OpenAiCompatTransport for OpenAiHttp {
                 .await?;
             // A proxy may answer under its own spelling of the model (a login
             // prefix stripped, say). Record what it said; never reject on it.
-            // A reply without usage gets one carrying only that name; the
+            // A reply without usage (or with a null one) gets one carrying only
+            // that name; the
             // adapter reads its absent counts as zero, as it would anyway.
             let served = reply.body.get("model").cloned();
             if (200..300).contains(&reply.status)
                 && served.is_some()
                 && let Some(body) = reply.body.as_object_mut()
+                && body.get("usage").is_none_or(JsonValue::is_null)
             {
-                body.entry("usage")
-                    .or_insert_with(|| JsonValue::Object(Default::default()));
+                body.insert("usage".into(), JsonValue::Object(Default::default()));
             }
             record_served_model(reply.body.get_mut("usage"), served);
             Ok(OpenAiCompatHttpResponse {
@@ -64,40 +65,96 @@ impl OpenAiCompatTransport for OpenAiHttp {
         let events = self
             .0
             .post_sse(&request.path, &request.headers, &request.body);
-        let frames = events
-            .take_while(|item| {
-                let done =
-                    matches!(item, Ok(SseItem::Event(event)) if event.data.trim() == "[DONE]");
-                std::future::ready(!done)
-            })
-            // The usage chunk may omit `model`; it takes the last one named.
-            // Only chunks that already carry usage are stamped: usage on a
-            // chunk without choices is the adapter's end of stream.
-            .scan(None::<JsonValue>, |served, item| {
-                std::future::ready(Some(frame(item, served)))
-            });
+        let frames = futures_util::stream::unfold(
+            Frames {
+                events: Box::pin(events),
+                served: None,
+                saw_usage: false,
+                finished: false,
+                closed: false,
+            },
+            Frames::next,
+        );
         Ok(Box::pin(frames))
     }
 }
 
-fn frame(
-    item: Result<SseItem, HttpFailure>,
-    served: &mut Option<JsonValue>,
-) -> Result<OpenAiCompatStreamFrame, OpenAiCompatTransportError> {
-    match item? {
-        SseItem::Status(reply) => Ok(OpenAiCompatStreamFrame::Status(OpenAiCompatHttpResponse {
-            status: reply.status,
-            headers: reply.headers,
-            body: reply.body,
-        })),
-        SseItem::Event(event) => {
-            let mut chunk: JsonValue = serde_json::from_str(&event.data)
-                .map_err(|_| OpenAiCompatTransportError::StreamCut)?;
-            if let Some(model) = chunk.get("model") {
-                *served = Some(model.clone());
-            }
-            record_served_model(chunk.get_mut("usage"), served.clone());
-            Ok(OpenAiCompatStreamFrame::Chunk(chunk))
+/// The stream as the adapter reads it, with the served model on its usage.
+///
+/// A usage chunk may omit `model`, so it takes the last one named. A stream
+/// that finished but sent no usage at all gets one choices-free chunk
+/// carrying only that name at `[DONE]` or EOF: the adapter's own end of
+/// stream, with the counts it would read as zero anyway. A stream cut before
+/// any finish gets nothing, so it still ends as a cut.
+struct Frames<S> {
+    events: std::pin::Pin<Box<S>>,
+    served: Option<JsonValue>,
+    saw_usage: bool,
+    finished: bool,
+    closed: bool,
+}
+
+type Frame = Result<OpenAiCompatStreamFrame, OpenAiCompatTransportError>;
+
+impl<S> Frames<S>
+where
+    S: futures_util::Stream<Item = Result<SseItem, HttpFailure>>,
+{
+    async fn next(mut self) -> Option<(Frame, Self)> {
+        if self.closed {
+            return None;
         }
+        let item = match self.events.next().await {
+            Some(Ok(SseItem::Event(event))) if event.data.trim() == "[DONE]" => None,
+            other => other,
+        };
+        let Some(item) = item else {
+            self.closed = true;
+            let carrier = self.carrier()?;
+            return Some((Ok(carrier), self));
+        };
+        let frame = self.frame(item);
+        Some((frame, self))
+    }
+
+    fn frame(&mut self, item: Result<SseItem, HttpFailure>) -> Frame {
+        match item? {
+            SseItem::Status(reply) => {
+                Ok(OpenAiCompatStreamFrame::Status(OpenAiCompatHttpResponse {
+                    status: reply.status,
+                    headers: reply.headers,
+                    body: reply.body,
+                }))
+            }
+            SseItem::Event(event) => {
+                let mut chunk: JsonValue = serde_json::from_str(&event.data)
+                    .map_err(|_| OpenAiCompatTransportError::StreamCut)?;
+                if let Some(model) = chunk.get("model") {
+                    self.served = Some(model.clone());
+                }
+                self.saw_usage |= chunk.get("usage").is_some_and(JsonValue::is_object);
+                self.finished |= chunk
+                    .get("choices")
+                    .and_then(JsonValue::as_array)
+                    .is_some_and(|choices| {
+                        choices
+                            .iter()
+                            .any(|choice| !choice["finish_reason"].is_null())
+                    });
+                record_served_model(chunk.get_mut("usage"), self.served.clone());
+                Ok(OpenAiCompatStreamFrame::Chunk(chunk))
+            }
+        }
+    }
+
+    fn carrier(&self) -> Option<OpenAiCompatStreamFrame> {
+        if !self.finished || self.saw_usage {
+            return None;
+        }
+        let mut usage = JsonValue::Object(serde_json::Map::new());
+        record_served_model(Some(&mut usage), Some(self.served.clone()?));
+        Some(OpenAiCompatStreamFrame::Chunk(
+            serde_json::json!({"choices": [], "usage": usage}),
+        ))
     }
 }

@@ -86,7 +86,7 @@ impl PassAttachmentSource for Source {
         guard: &BudgetGuard,
     ) -> Result<Option<Box<dyn PassAttachment>>> {
         let mut observed = self.observed.lock().unwrap();
-        observed.guard_ids.push(guard.read().attempt_id.clone());
+        observed.guard_ids.push(guard.read().attempt_id);
         observed.backends.push(Arc::clone(backend));
         drop(observed);
         match self.answer {

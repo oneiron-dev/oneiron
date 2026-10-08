@@ -128,9 +128,10 @@ flight reaches its attempt boundary first.
 optional `history`) streams NDJSON: `accepted`, one `delta` per text chunk,
 `done`, then `saved` with the message receipt. The same deltas reach every
 owner socket on `/ws` as transient presence. Only the final message is written
-to the vault, once. The credential needs read and write scope. The seeded
-default agent answers; an owner-grade credential may name another with
-`agent_ref`, which must be live, approved and enabled. A turn still running
+to the vault, once. The credential needs read and write scope, and must be
+able to read the answering agent's definition. The seeded default agent
+answers; an owner-grade credential may name another with `agent_ref`, which
+must be live, approved and enabled. A turn still running
 at shutdown gets a grace to finish, then its message is cancelled, not left
 open.
 
@@ -140,8 +141,11 @@ A dispatched saved workflow runs its steps on the `generative_reasoner` seat
 with no further call. Each step's system message is the agent definition's
 `instructions`; each step sees its briefing and the earlier steps' outputs.
 Memory and chat sections a definition selects are not yet rendered into the
-step's prompt. A step that fails is retried with backoff, and its workflow
-stops after five tries. Spend per step:
+step's prompt. A failed step goes to the engine's failure ladder. A model
+call the provider answered with a retryable error is tried again after
+`models.workflows.retry_backoff_secs` (30) times the tries so far, up to five
+tries. Any other failure, or a fifth retryable one, ends the step for a
+person to look at, and its workflow stops. Spend per step:
 `models.workflows.step_budget_units` (64000). `models.workflows.enabled = false`
 turns the pump off.
 

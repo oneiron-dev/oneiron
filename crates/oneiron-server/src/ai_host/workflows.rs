@@ -5,24 +5,23 @@
 //! (recovery). A step whose leaf is scheduled or backing off has no signal
 //! of its own, so while any workflow is open but waiting the pump also
 //! re-checks on a slow timer; with nothing open it only waits for a signal.
+//! A failed step goes to the engine's failure ladder ([`super::step_failure`]).
 use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::Vault;
 use oneiron::agent_dispatch::{AgentDispatcher, WorkflowProgress};
-use oneiron::attempt_queue::{AttemptId, AttemptQueue, FailAttempt, RetryAttempt};
+use oneiron::attempt_queue::{AttemptId, AttemptQueue};
+use oneiron::failure_ladder::FailureLadderOutcome;
 use tokio::sync::{broadcast, watch};
 
 use super::status::{IdleReason, StatusCell, WorkState, WorkStatus};
 use super::step::StepRunner;
+use super::step_failure::{FailedStep, held_leases, settle};
 
 const LEASE_OWNER: &str = "oneiron-server-workflows";
 /// How often an open-but-waiting workflow is looked at again.
 const WAITING_RECHECK: Duration = Duration::from_secs(30);
-/// Tries of one step before its workflow stops.
-const MAX_STEP_TRIES: u32 = 5;
-/// Backoff before a failed step's next try, times the tries so far.
-const STEP_RETRY_SECS: u64 = 30;
 
 pub(super) struct WorkflowPump {
     stop: watch::Sender<bool>,
@@ -125,6 +124,7 @@ fn pump_once(
                 return Ok(true);
             }
             let mut claimed: Option<(AttemptId, u32)> = None;
+            let mut retryable = false;
             let progress = dispatcher.run_workflow_step_output(
                 *root,
                 LEASE_OWNER,
@@ -135,7 +135,10 @@ fn pump_once(
                         status.workflows.state = WorkState::Working;
                         status.workflows.started += 1;
                     });
-                    runner.run(runtime, vault, step, context)
+                    runner.run(runtime, vault, step, context).map_err(|fault| {
+                        retryable = fault.retryable;
+                        fault.error
+                    })
                 },
             );
             status.update(|status| {
@@ -154,10 +157,38 @@ fn pump_once(
                 Ok(_) => break,
                 Err(error) => {
                     tracing::warn!(%error, ?root, "workflow step did not complete");
-                    if let Some((leaf, tries)) = claimed
-                        && let Err(release) = give_back(vault, leaf, tries, &error)
-                    {
-                        tracing::error!(%release, ?leaf, "failed step's lease was not given back");
+                    // The claim may have committed before the step's context
+                    // failed to resolve: then the callback never ran, and the
+                    // lease is found by owner. Nothing else runs on this pump.
+                    let failed = match claimed {
+                        Some((leaf, lease_count)) => vec![FailedStep {
+                            leaf,
+                            lease_count,
+                            retryable,
+                        }],
+                        None => held_leases(vault, LEASE_OWNER).unwrap_or_else(|list| {
+                            tracing::error!(%list, "held workflow leases could not be listed");
+                            Vec::new()
+                        }),
+                    };
+                    let mut released = !failed.is_empty();
+                    for step in &failed {
+                        let backoff = runner.retry_backoff_secs;
+                        match settle(vault, *root, step, LEASE_OWNER, backoff, now_secs()) {
+                            Ok(FailureLadderOutcome::Retried { .. }) => {}
+                            Ok(_) => {
+                                tracing::warn!(?root, "a workflow step ended; its workflow stops");
+                            }
+                            Err(settlement) => {
+                                tracing::error!(%settlement, leaf = ?step.leaf, "failed step was not settled");
+                                released = false;
+                            }
+                        }
+                    }
+                    // Look at the workflow again now: a retry due at once runs,
+                    // a spent leaf stops it. A later retry reads as Waiting.
+                    if released {
+                        continue;
                     }
                     break;
                 }
@@ -165,38 +196,6 @@ fn pump_once(
         }
     }
     Ok(!dispatcher.open_workflow_roots()?.is_empty())
-}
-
-/// Releases a failed step's lease this pump holds: a later try with backoff,
-/// or a failed leaf (and so a stopped workflow) once the tries are spent.
-fn give_back(
-    vault: &Vault,
-    leaf: AttemptId,
-    tries: u32,
-    error: &oneiron::Error,
-) -> oneiron::Result<()> {
-    let queue = AttemptQueue::new(vault);
-    let now = now_secs();
-    if tries >= MAX_STEP_TRIES {
-        queue.fail(FailAttempt {
-            id: leaf,
-            lease_owner: LEASE_OWNER.to_owned(),
-            attempt_count: tries,
-            reason: "workflow_step_failed".to_owned(),
-            now,
-        })?;
-    } else {
-        queue.retry(RetryAttempt {
-            id: leaf,
-            lease_owner: LEASE_OWNER.to_owned(),
-            attempt_count: tries,
-            backoff_until: now
-                .saturating_add(STEP_RETRY_SECS.saturating_mul(u64::from(tries.max(1)))),
-            last_error: Some(error.to_string()),
-            now,
-        })?;
-    }
-    Ok(())
 }
 
 fn now_secs() -> u64 {

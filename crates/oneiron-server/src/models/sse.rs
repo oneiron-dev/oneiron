@@ -17,6 +17,8 @@ pub(super) struct SseDecoder {
     started: bool,
     event: Option<String>,
     data: Vec<String>,
+    /// The last read ended on a CR: an LF opening the next read is its pair.
+    skip_lf: bool,
 }
 
 const BOM: &[u8] = b"\xEF\xBB\xBF";
@@ -38,21 +40,22 @@ impl SseDecoder {
         let mut start = 0;
         let mut index = 0;
         while index < self.pending.len() {
-            let end = match self.pending[index] {
-                b'\n' => index + 1,
-                // A CR at the end of this read may be the first half of CRLF.
-                b'\r' if index + 1 == self.pending.len() => break,
-                b'\r' if self.pending[index + 1] == b'\n' => index + 2,
-                b'\r' => index + 1,
-                _ => {
-                    index += 1;
-                    continue;
-                }
-            };
+            let byte = self.pending[index];
+            // A CR ends its line at once; an LF right after it is its pair.
+            if std::mem::take(&mut self.skip_lf) && byte == b'\n' {
+                index += 1;
+                start = index;
+                continue;
+            }
+            if byte != b'\n' && byte != b'\r' {
+                index += 1;
+                continue;
+            }
             let line = String::from_utf8_lossy(&self.pending[start..index]).into_owned();
             self.line(&line, &mut events);
-            start = end;
-            index = end;
+            self.skip_lf = byte == b'\r';
+            index += 1;
+            start = index;
         }
         self.pending.drain(..start);
         events
@@ -63,7 +66,7 @@ impl SseDecoder {
     pub(super) fn finish(&mut self) -> Vec<SseEvent> {
         let mut events = Vec::new();
         let rest = std::mem::take(&mut self.pending);
-        let line = String::from_utf8_lossy(rest.strip_suffix(b"\r").unwrap_or(&rest)).into_owned();
+        let line = String::from_utf8_lossy(&rest).into_owned();
         if !line.is_empty() {
             self.line(&line, &mut events);
         }

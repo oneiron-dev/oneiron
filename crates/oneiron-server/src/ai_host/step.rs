@@ -24,6 +24,25 @@ const STEP_PURPOSE: &str = "workflow_step";
 pub(super) struct StepRunner {
     pub(super) seat: Seat,
     pub(super) budget_units: u64,
+    /// How long a failed step waits before its next try, times the tries.
+    pub(super) retry_backoff_secs: u64,
+}
+
+/// Why a step did not produce its output, and whether a later try of the
+/// same call may succeed (a model call the provider answered with a
+/// retryable error).
+pub(super) struct StepFault {
+    pub(super) retryable: bool,
+    pub(super) error: Error,
+}
+
+impl From<Error> for StepFault {
+    fn from(error: Error) -> Self {
+        Self {
+            retryable: false,
+            error,
+        }
+    }
 }
 
 fn message(role: LlmMessageRole, text: String) -> LlmMessage {
@@ -42,7 +61,7 @@ impl StepRunner {
         vault: &Vault,
         step: &AgentDispatchStatus,
         context: ResolvedContextProjection,
-    ) -> oneiron::Result<Vec<u8>> {
+    ) -> Result<Vec<u8>, StepFault> {
         let definition = &step.input.definition;
         let mut messages = Vec::new();
         if let Some(instructions) = definition
@@ -121,9 +140,12 @@ impl StepRunner {
             Ok(response) => response,
             Err(error) => {
                 let _ = guard.settle_reserved(&lease);
-                return Err(Error::InvalidConfig(format!(
-                    "workflow step model call failed: {error}"
-                )));
+                return Err(StepFault {
+                    retryable: matches!(error, oneiron::llm::LlmError::Retryable(_)),
+                    error: Error::InvalidConfig(format!(
+                        "workflow step model call failed: {error}"
+                    )),
+                });
             }
         };
         guard

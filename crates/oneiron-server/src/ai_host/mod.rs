@@ -19,6 +19,7 @@ mod dreamer;
 mod policy;
 mod status;
 mod step;
+mod step_failure;
 #[cfg(test)]
 pub(crate) mod test_support;
 #[cfg(test)]
@@ -334,6 +335,7 @@ fn start_workflows(
         StepRunner {
             seat,
             budget_units: models.workflows.step_budget_units,
+            retry_backoff_secs: models.workflows.retry_backoff_secs,
         },
         Arc::clone(status),
     )

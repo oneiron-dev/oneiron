@@ -74,6 +74,7 @@ struct ChatFile {
 struct WorkflowFile {
     enabled: Option<bool>,
     step_budget_units: Option<u64>,
+    retry_backoff_secs: Option<u64>,
 }
 
 /// The resolved `[models]` section: providers plus one ladder per role.
@@ -114,12 +115,15 @@ pub struct ChatSettings {
 pub struct WorkflowSettings {
     pub enabled: bool,
     pub step_budget_units: u64,
+    /// Wait before a failed step's next try, times the tries so far.
+    pub retry_backoff_secs: u64,
 }
 
 const DEFAULT_SESSION_CEILING_SECS: u64 = 12 * 60 * 60;
 const DEFAULT_PASS_BUDGET_UNITS: u64 = 400_000;
 const DEFAULT_TURN_BUDGET_UNITS: u64 = 64_000;
 const DEFAULT_STEP_BUDGET_UNITS: u64 = 64_000;
+const DEFAULT_STEP_RETRY_BACKOFF_SECS: u64 = 30;
 const DEFAULT_RAW_BUDGET_UNITS: u64 = 10_000_000;
 const DEFAULT_HISTORY_TURNS: usize = 24;
 
@@ -178,6 +182,10 @@ impl ModelsFile {
                 .workflows
                 .step_budget_units
                 .unwrap_or(DEFAULT_STEP_BUDGET_UNITS),
+            retry_backoff_secs: self
+                .workflows
+                .retry_backoff_secs
+                .unwrap_or(DEFAULT_STEP_RETRY_BACKOFF_SECS),
         };
         let raw_budget_units = self.raw_budget_units.unwrap_or(DEFAULT_RAW_BUDGET_UNITS);
         if [

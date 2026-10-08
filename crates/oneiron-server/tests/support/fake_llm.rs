@@ -31,6 +31,9 @@ pub(crate) enum Reply {
     /// Answer with these deltas as a stream (or their concatenation when
     /// the request did not stream).
     Deltas { deltas: Vec<String>, model: String },
+    /// Like `Deltas`, but with no usage: an OpenAI-compatible stream sends
+    /// no usage chunk, and a plain reply carries `"usage": null`.
+    NoUsage { deltas: Vec<String>, model: String },
     /// An HTTP error status with a protocol-shaped body.
     Status(u16),
     /// Never answer until [`FakeLlm::release`] is called; then answer `text`.
@@ -158,6 +161,7 @@ async fn answer(
         Some(reply) => reply,
         None => Reply::Status(500),
     };
+    let usage = !matches!(reply, Reply::NoUsage { .. });
     let (deltas, model) = match reply {
         Reply::Status(status) => {
             let body = if anthropic {
@@ -168,14 +172,26 @@ async fn answer(
             return (StatusCode::from_u16(status).unwrap(), axum::Json(body)).into_response();
         }
         Reply::Text { text, model } => (vec![text], model),
-        Reply::Deltas { deltas, model } => (deltas, model),
+        Reply::Deltas { deltas, model } | Reply::NoUsage { deltas, model } => (deltas, model),
         Reply::Computed(compute) => (vec![compute(&body)], "fake-model".to_owned()),
         Reply::Hold { .. } => unreachable!("resolved above"),
     };
     match (anthropic, stream) {
-        (false, false) => axum::Json(openai_json(&deltas.concat(), &model)).into_response(),
+        (false, false) => {
+            let mut reply = openai_json(&deltas.concat(), &model);
+            if !usage {
+                reply["usage"] = Value::Null;
+            }
+            axum::Json(reply).into_response()
+        }
         (true, false) => axum::Json(anthropic_json(&deltas.concat(), &model)).into_response(),
-        (false, true) => sse(openai_events(&deltas, &model)),
+        (false, true) => {
+            let mut events = openai_events(&deltas, &model);
+            if !usage {
+                events.pop();
+            }
+            sse(events)
+        }
         (true, true) => sse(anthropic_events(&deltas, &model)),
     }
 }

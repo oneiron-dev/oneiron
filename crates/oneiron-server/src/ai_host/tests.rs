@@ -251,3 +251,110 @@ async fn shutdown_waits_for_a_turn_then_stops_one_that_outlives_its_grace() {
     tracker.shutdown(Duration::from_millis(50)).await;
     assert!(stopped.await.unwrap());
 }
+
+#[tokio::test]
+async fn a_failed_step_gives_back_only_its_own_lease_and_waits_out_its_backoff() {
+    use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher, DispatchAgent};
+    use oneiron::attempt_queue::{AttemptQueue, AttemptState};
+    let fake = FakeLlm::start(vec![], Some(crate::fake_llm::Reply::Status(500))).await;
+    let (_dir, vault) = rooted_vault();
+    let only = agent(&vault, "failing", "Say one word.");
+    let workflow = EntityId::now();
+    vault
+        .save_workflow(
+            &workflow,
+            &oneiron::agent_def::workflow::WorkflowDefinition::new("failing", vec![only]).unwrap(),
+            2,
+        )
+        .unwrap();
+    let host = AiHost::start(
+        vault.clone(),
+        Some(&models(&fake.base_url, "[dreamer]\nenabled = false")),
+        true,
+    )
+    .await;
+    let handle = host.handle();
+    AgentDispatcher::new(&vault)
+        .dispatch(DispatchAgent {
+            target: AgentDispatchTarget::Workflow(workflow),
+            parent_attempt: None,
+            dedupe_key: Some("fail-test".into()),
+            run_id: Some("fail-test".into()),
+            now: 10,
+        })
+        .unwrap();
+    assert!(
+        eventually(Duration::from_secs(10), || handle.status().workflows.failed
+            >= 1)
+        .await,
+        "the step never failed; status {:?}",
+        handle.status().workflows
+    );
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    // The failed try is settled, not left leased; the next one is scheduled
+    // past its backoff, so the model is not called again at once.
+    let rows = AttemptQueue::new(&vault).list().unwrap();
+    assert!(
+        !rows.iter().any(|row| row.state == AttemptState::Leased),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter().any(|row| row.state == AttemptState::Scheduled),
+        "{rows:?}"
+    );
+    assert_eq!(fake.seen().len(), 1);
+    host.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_failing_step_is_tried_five_times_then_its_workflow_stops() {
+    use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher, DispatchAgent};
+    use oneiron::attempt_queue::{AttemptQueue, AttemptState};
+    let fake = FakeLlm::start(vec![], Some(crate::fake_llm::Reply::Status(500))).await;
+    let (_dir, vault) = rooted_vault();
+    let only = agent(&vault, "always-failing", "Say one word.");
+    let workflow = EntityId::now();
+    vault
+        .save_workflow(
+            &workflow,
+            &oneiron::agent_def::workflow::WorkflowDefinition::new("spent", vec![only]).unwrap(),
+            2,
+        )
+        .unwrap();
+    let host = AiHost::start(
+        vault.clone(),
+        Some(&models(
+            &fake.base_url,
+            "[dreamer]\nenabled = false\n[workflows]\nretry_backoff_secs = 0",
+        )),
+        true,
+    )
+    .await;
+    let dispatcher = AgentDispatcher::new(&vault);
+    dispatcher
+        .dispatch(DispatchAgent {
+            target: AgentDispatchTarget::Workflow(workflow),
+            parent_attempt: None,
+            dedupe_key: Some("spent-test".into()),
+            run_id: Some("spent-test".into()),
+            now: 10,
+        })
+        .unwrap();
+    assert!(
+        eventually(Duration::from_secs(20), || dispatcher
+            .open_workflow_roots()
+            .is_ok_and(|roots| roots.is_empty()))
+        .await,
+        "the workflow never stopped; status {:?}",
+        host.handle().status().workflows
+    );
+    // Each retry is a fresh row; the tries are counted along the lineage.
+    assert_eq!(fake.seen().len(), 5);
+    assert_eq!(host.handle().status().workflows.failed, 5);
+    let rows = AttemptQueue::new(&vault).list().unwrap();
+    assert!(
+        !rows.iter().any(|row| row.state == AttemptState::Leased),
+        "{rows:?}"
+    );
+    host.shutdown().await;
+}

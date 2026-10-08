@@ -31,6 +31,13 @@ use oneiron_driver::SessionHint;
 use serde::{Deserialize, Serialize};
 
 use super::refusal;
+
+/// A refusal answer, boxed: a `Response` is too large to travel as an error.
+type Refused = Box<Response>;
+
+fn refused(status: StatusCode, code: &str, message: impl Into<String>) -> Refused {
+    Box::new(refusal(status, code, message))
+}
 use crate::ai_host::TurnGuard;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::models::Seat;
@@ -103,20 +110,20 @@ fn line(value: &ChatLine) -> Vec<u8> {
 
 /// The writer of the user's turn: the slip's principal, or the vault's own
 /// owner for an owner-grade credential that names none.
-fn principal(auth: &CoreAuth, vault: &Vault) -> Result<(EntityId, EdgeActorClass), Response> {
-    let refused = || {
-        refusal(
+fn principal(auth: &CoreAuth, vault: &Vault) -> Result<(EntityId, EdgeActorClass), Refused> {
+    let denied = || {
+        refused(
             StatusCode::FORBIDDEN,
             "principal_required",
             "a chat turn is written by an authenticated principal",
         )
     };
     let actor = match auth.principal_ref() {
-        Some(reference) => EntityId::from_hex(reference).map_err(|_| refused())?,
+        Some(reference) => EntityId::from_hex(reference).map_err(|_| denied())?,
         None if auth.is_owner_grade() => {
-            vault.ensure_embedded_owner_actor().map_err(|_| refused())?
+            vault.ensure_embedded_owner_actor().map_err(|_| denied())?
         }
-        None => return Err(refused()),
+        None => return Err(denied()),
     };
     let class = match auth.actor_class() {
         Some("agent") => EdgeActorClass::Agent,
@@ -127,15 +134,16 @@ fn principal(auth: &CoreAuth, vault: &Vault) -> Result<(EntityId, EdgeActorClass
 }
 
 /// The agent that answers: the seeded default, or one an owner-grade
-/// credential names. Either way it must pass the dispatch predicate (live,
-/// active, approved, enabled), as a dispatched agent would.
+/// credential names. Either way the caller must be able to read it, and it
+/// must pass the dispatch predicate (live, active, approved, enabled), as a
+/// dispatched agent would.
 fn assistant(
     auth: &CoreAuth,
     vault: &Vault,
     agent_ref: Option<&str>,
-) -> Result<(EntityId, Option<String>), Response> {
+) -> Result<(EntityId, Option<String>), Refused> {
     let unknown = || {
-        refusal(
+        refused(
             StatusCode::BAD_REQUEST,
             "agent_unknown",
             "agent_ref names no agent definition in this vault",
@@ -143,7 +151,7 @@ fn assistant(
     };
     let id = match agent_ref {
         Some(_) if !auth.is_owner_grade() => {
-            return Err(refusal(
+            return Err(refused(
                 StatusCode::FORBIDDEN,
                 "agent_ref_requires_owner",
                 "only an owner-grade credential picks the answering agent",
@@ -161,12 +169,21 @@ fn assistant(
     let definition = AgentDispatcher::new(vault)
         .dispatchable_definition(&AgentDispatchTarget::Custom(id))
         .map_err(|error| {
-            refusal(
+            refused(
                 StatusCode::BAD_REQUEST,
                 "agent_not_dispatchable",
                 error.to_string(),
             )
         })?;
+    // Its instructions go to the model, so the caller must be able to read
+    // the definition itself: the Read verb alone is not that.
+    if !auth.can_read_entity(vault, &id).unwrap_or(false) {
+        return Err(refused(
+            StatusCode::FORBIDDEN,
+            "agent_not_readable",
+            "the answering agent's definition is not readable by this credential",
+        ));
+    }
     Ok((
         id,
         definition
@@ -209,34 +226,35 @@ pub(super) async fn chat_turn(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<ChatTurnRequest>, JsonRejection>,
 ) -> Response {
-    start_turn(&auth, &server, payload).unwrap_or_else(|refused| refused)
+    start_turn(&auth, &server, payload).unwrap_or_else(|refused| *refused)
 }
 
 fn start_turn(
     auth: &CoreAuth,
     server: &Arc<SyncServer>,
     payload: Result<Json<ChatTurnRequest>, JsonRejection>,
-) -> Result<Response, Response> {
+) -> Result<Response, Refused> {
     // A turn reads the agent and the conversation, and writes both turns.
     for scope in [CoreScope::Read, CoreScope::Write] {
-        auth.require(scope).map_err(IntoResponse::into_response)?;
+        auth.require(scope)
+            .map_err(|error| Box::new(error.into_response()))?;
     }
     let Json(request) = payload.map_err(|rejection| {
-        refusal(
+        refused(
             StatusCode::BAD_REQUEST,
             "invalid_request",
             rejection.body_text(),
         )
     })?;
     if request.text.trim().is_empty() {
-        return Err(refusal(
+        return Err(refused(
             StatusCode::BAD_REQUEST,
             "invalid_request",
             "text is empty",
         ));
     }
     let seat = server.ai.chat_seat().cloned().ok_or_else(|| {
-        refusal(
+        refused(
             StatusCode::SERVICE_UNAVAILABLE,
             "no_model_configured",
             "no [models] rung serves generative_reasoner",
@@ -247,7 +265,7 @@ fn start_turn(
     let (agent, instructions) = assistant(auth, &vault, request.agent_ref.as_deref())?;
     let settings = server.ai.chat_settings();
     let engine = |error: &dyn std::fmt::Display| {
-        refusal(StatusCode::CONFLICT, "turn_refused", error.to_string())
+        refused(StatusCode::CONFLICT, "turn_refused", error.to_string())
     };
 
     server.ai.session_hint(SessionHint::AppOpen);
@@ -322,7 +340,7 @@ fn start_turn(
             let _ = vault
                 .memory(agent, EdgeActorClass::Agent)
                 .cancel_stream(handle, StreamCancelReason::AgentAborted);
-            return Err(refusal(
+            return Err(refused(
                 StatusCode::PAYMENT_REQUIRED,
                 "turn_not_admitted",
                 error.to_string(),

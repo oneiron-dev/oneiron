@@ -192,6 +192,36 @@ async fn local_openai_compatible_server_takes_a_v1_base_and_no_key() {
 }
 
 #[tokio::test]
+async fn a_reply_without_usage_still_names_the_model_that_served_it() {
+    let served = || Reply::NoUsage {
+        deltas: vec!["one ".into(), "two".into()],
+        model: "served-under-another-name".into(),
+    };
+    let fake = FakeLlm::start(vec![served(), served()], None).await;
+    let runtime = ModelRuntime::build(Some(&config(&format!(
+        "local = \"llama:qwen3:8b\"\n[providers.llama]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n",
+        fake.base_url
+    ))));
+    let seat = runtime.seat(ModelRole::LocalReasoner).expect("local seat");
+    // `"usage": null` on a plain reply.
+    let response = generate(seat, "hi").await;
+    assert_eq!(text_of(&response.message), "one two");
+    assert_eq!(
+        response.usage.raw_provider["reported_model"],
+        json!("served-under-another-name")
+    );
+    // A finished stream that never sends a usage chunk.
+    let (deltas, usage, text) = stream(seat, "again").await;
+    assert_eq!(deltas, ["one ", "two"]);
+    assert_eq!(text, "one two");
+    assert_eq!(usage.input.total, 0);
+    assert_eq!(
+        usage.raw_provider["reported_model"],
+        json!("served-under-another-name")
+    );
+}
+
+#[tokio::test]
 async fn a_failing_rung_hands_the_call_to_the_next_with_its_prompt() {
     let down = FakeLlm::start(vec![], Some(Reply::Status(503))).await;
     let up = FakeLlm::start(vec![], Some(Reply::text("rescued"))).await;
@@ -334,13 +364,17 @@ fn sse_events_decode_across_reads_and_every_line_end() {
     // A CRLF pair split across two reads, and a comment.
     assert!(decoder.push(b"tial\r").is_empty());
     assert_eq!(datas(decoder.push(b"\n\r\n: comment\n\n")), ["partial"]);
-    // Lone-CR framing. A CR ending a read may still pair with an LF, so the
-    // event it closes waits for the next byte.
-    assert_eq!(datas(decoder.push(b"data: one\r\rdata: two\r\r")), ["one"]);
-    // Multi-line data, and a last event the stream ends without closing.
+    // Lone-CR framing: a CR ends its line at once, so an event closed by a
+    // read's last CR dispatches without waiting for another byte.
     assert_eq!(
-        datas(decoder.push(b"data: a\ndata: b\n\ndata: tail")),
-        ["two", "a\nb"]
+        datas(decoder.push(b"data: one\r\rdata: two\r\r")),
+        ["one", "two"]
+    );
+    // An LF opening the next read pairs with that CR; multi-line data; a last
+    // event the stream ends without closing.
+    assert_eq!(
+        datas(decoder.push(b"\ndata: a\ndata: b\n\ndata: tail")),
+        ["a\nb"]
     );
     assert_eq!(datas(decoder.finish()), ["tail"]);
 }
