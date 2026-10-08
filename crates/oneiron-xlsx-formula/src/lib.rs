@@ -17,12 +17,12 @@
 //! The core's edit round trip wraps every host session in this engine unless
 //! the host opts out, so this crate does not depend on the core.
 //!
-//! The corpus rule is met at fork rev `953fbbb1` (0.9.3-oneiron.11): through
+//! The corpus rule is met at fork rev `f01d8eff` (0.9.3-oneiron.12): through
 //! the writer, all 2,967 scored fresh-Excel SpreadsheetBench workbooks (Excel
 //! for Windows truth) are fully Excel-identical (LibreOffice 25.8 matched
 //! 2,648 of the 2,951 it was measured on), and all 811 pinned goldens (Excel
 //! for Windows 16.0.20430, rich-value error caches resolved) against
-//! LibreOffice's 753. Through this adapter, 2,986 of the corpus's 3,040
+//! LibreOffice's 753. Through this adapter, 2,999 of the corpus's 3,040
 //! formula workbooks recalculate natively as saved, ZIP directory entries and
 //! closed linked workbooks included (see the README), and all of them match
 //! Excel on their scored cells. The

@@ -9,13 +9,44 @@ use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 use crate::Result;
 use crate::xml::unsupported;
 
-// The upstream evaluator recursively walks expressions on worker threads. Real
-// FUSE inputs with about 200 chained additions overflow that stack in debug
-// builds. Bound tokens before constructing a recursive AST (including its Drop)
-// and bound evaluation depth independently of the parser's own nesting guard.
+// The evaluator recurses through a formula's operators and calls, so the stack
+// it runs on bounds the formulas it evaluates. On the 2 MiB stack rayon gives
+// its workers by default, chained operators (`A1+A1+...`, `IF(..)+IF(..)+...`,
+// `A1&A1&...`) overflow at about 100 terms in a debug build and 600 in release,
+// so the writer evaluates on threads with `EVAL_STACK_BYTES`: 64 MiB in release,
+// where 16 such formulas of 16,384 terms evaluate at once (7 s, the stack they
+// recurse into resident), and 256 MiB in debug, whose frames are about six
+// times larger, where they evaluate to 12,800 terms. Nested calls and
+// parentheses stop at the parser's own bound (72 frames) first, and parsing and
+// dropping a formula on the caller's 2 MiB stack holds to 9,216 chained IF
+// terms in either build. Excel saves at most 8,192 characters, so at most 8,192
+// tokens and 4,096 chained operators: the bounds admit every formula Excel
+// saves, at no more than a third of the depth either build evaluates, and
+// refuse a longer one before its recursive AST is built.
 const MAX_FORMULA_BYTES: usize = 32 * 1024;
-const MAX_FORMULA_TOKENS: usize = 256;
-const MAX_EVALUATION_DEPTH: usize = 32;
+const MAX_FORMULA_TOKENS: usize = 8 * 1024;
+const MAX_EVALUATION_DEPTH: usize = 4 * 1024;
+
+/// The stack of every thread the writer evaluates on (see the bounds above).
+pub(crate) const EVAL_STACK_BYTES: usize = if cfg!(debug_assertions) {
+    256 << 20
+} else {
+    64 << 20
+};
+
+/// Run `work` on a thread with [`EVAL_STACK_BYTES`] of stack, as the writer
+/// evaluates, whatever stack the caller's thread has.
+pub(crate) fn on_eval_stack<T: Send>(work: impl FnOnce() -> Result<T> + Send) -> Result<T> {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("xlsx-formula-eval".into())
+            .stack_size(EVAL_STACK_BYTES)
+            .spawn_scoped(scope, work)
+            .map_err(|error| crate::FormulaError::Engine(format!("evaluation thread: {error}")))?
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    })
+}
 
 /// What one bounded formula needs from its caller and from the engine.
 pub(super) struct Inspection {

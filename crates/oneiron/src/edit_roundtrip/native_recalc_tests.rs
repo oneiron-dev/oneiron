@@ -19,7 +19,7 @@ const INPUT: &str = "xl/worksheets/input.xml";
 const OUTPUT: &str = "xl/worksheets/result.xml";
 const OPAQUE: &str = "vendor/opaque.bin";
 const UNKNOWN: &[u8] = b"opaque vendor bytes\0\xff";
-const NATIVE_STAMP: &str = "oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.11";
+const NATIVE_STAMP: &str = "oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.12";
 
 fn build(parts: Vec<(&str, Vec<u8>)>) -> Vec<u8> {
     opc::write(&OpcPackage::from_parts(
@@ -364,7 +364,8 @@ fn a_reused_host_does_not_stamp_an_old_engine_on_a_no_recalc_proposal() {
 
 #[test]
 fn refused_workbooks_reach_the_host_recalc_untouched() {
-    let deep_chain = format!("<f>{}</f>", ["1"; 40].join("+"));
+    // Longer than the 8,192 characters Excel saves.
+    let deep_chain = format!("<f>{}</f>", ["1"; 10_000].join("+"));
     let cases = [
         // What only the host knows: the environment, the file's path, the
         // active cell.
@@ -374,7 +375,7 @@ fn refused_workbooks_reach_the_host_recalc_untouched() {
         deep_chain.as_str(),
         // An Excel function the engine lacks: it would cache #NAME? where
         // Excel computes a value.
-        "<f>_xlfn.ANCHORARRAY(Input!A1)</f>",
+        "<f>_xlfn.STOCKHISTORY(Input!A1,0)</f>",
         // The edit gate requires the OOXML prefix in a recalculated sheet.
         "<f>XLOOKUP(2,Input!A1:A1,Input!A1:A1)</f>",
     ];

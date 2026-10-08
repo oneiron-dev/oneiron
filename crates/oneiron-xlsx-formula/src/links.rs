@@ -227,6 +227,12 @@ impl LinkedBooks {
         while let Some((node, parent)) = pending.pop() {
             passed_on(node, &parent, names)?;
             match &node.node_type {
+                // `[0]` is the workbook itself: the fork reads `[0]Sheet1!A1`
+                // as Sheet1!A1 and `[0]!Rate` as its own Rate, so the written
+                // reference tells such a formula, which goes to the fallback.
+                ASTNodeType::Reference { original, .. } if workbook_itself(original) => {
+                    return Err(unsupported(WORKBOOK_ITSELF));
+                }
                 ASTNodeType::Reference { reference, .. } => {
                     // A name holding an expression over linked values is
                     // checked as if its formula were written here.
@@ -1084,6 +1090,12 @@ fn one_cell(kind: ExternalRefKind) -> bool {
                 && start_col == end_col
         }
     }
+}
+
+/// A reference written with the workbook itself as its book (`[0]Sheet1!A1`,
+/// `'[0]My Sheet'!A1`, `[0]!Rate`).
+fn workbook_itself(original: &str) -> bool {
+    original.trim_start_matches('\'').starts_with("[0]")
 }
 
 /// `[n]`, the 1-based place of a link in the workbook's list (`[0]` is the
