@@ -1124,13 +1124,13 @@ fn a_restore_never_drops_a_cancellation_made_since() {
 #[test]
 fn a_restore_never_reverses_a_task_reassignment_made_since() {
     let (_dir, vault) = open_vault();
-    let own = own_agent(&vault);
+    let owner = own_agent(&vault);
     let first = EntityId::from_bytes([0xE3; 16]).expect("first id");
     let second = EntityId::from_bytes([0xE4; 16]).expect("second id");
     put_person(&vault, first);
     put_person(&vault, second);
     let task = vault
-        .memory(own, EdgeActorClass::Agent)
+        .memory(owner, EdgeActorClass::Human)
         .tasks_create(&spec(120).with_assignee(TaskAssignee::Peer { actor_ref: first }))
         .expect("task")
         .task_ref
