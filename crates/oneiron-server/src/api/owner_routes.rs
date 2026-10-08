@@ -177,21 +177,7 @@ async fn rehearse_backup(
     owner(&auth, &server)?;
     let host = host(&server)?;
     let request = json_payload(payload)?;
-    let rehearsal = blocking(move || {
-        let backups = backup::list(&host.backups)?;
-        // Only a file this vault's listing names: never a caller-built path.
-        let chosen = match request.file.as_deref() {
-            Some(file) => backups.into_iter().find(|record| record.file == file),
-            None => backups.into_iter().last(),
-        }
-        .ok_or_else(|| OwnerError::Invalid("no such backup for this vault".into()))?;
-        Ok(backup::rehearse(
-            &chosen.path,
-            host.vault_config.clone(),
-            None,
-        )?)
-    })
-    .await?;
+    let rehearsal = blocking(move || host.rehearse(request.file.as_deref())).await?;
     Ok(Json(rehearsal))
 }
 

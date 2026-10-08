@@ -5,7 +5,9 @@
 //! written under a hidden partial name and renamed into place, so a listing
 //! never shows a half-written file. File names carry the vault's directory
 //! name and a hash of its full path, so vaults sharing one backup directory
-//! never list or prune each other's files.
+//! never list or prune each other's files, then a sequence number one past
+//! the highest already there. Retention orders by that number, never by the
+//! clock, so a clock that steps back cannot make a new backup look oldest.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -72,6 +74,8 @@ fn vault_label(vault_path: &Path) -> String {
 pub(crate) struct BackupRecord {
     pub(crate) file: String,
     pub(crate) path: PathBuf,
+    /// Position among this vault's backups: each new one takes the next.
+    pub(crate) sequence: u64,
     pub(crate) bytes: u64,
     /// RFC 3339 UTC time the backup was taken.
     pub(crate) taken: String,
@@ -89,9 +93,15 @@ pub(crate) struct BackupOutcome {
     pub(crate) pruned: Vec<String>,
 }
 
-/// Takes one backup of `vault` and prunes older ones beyond `plan.keep`.
+/// Takes one backup of `vault` and prunes older ones beyond `plan.keep`. The
+/// caller serializes backups of one vault (the writer lease, or the server's
+/// backup lock), so the next sequence number is this one's alone.
 pub(crate) fn take(vault: &oneiron::Vault, plan: &BackupPlan) -> anyhow::Result<BackupOutcome> {
     create_private_dir(&plan.dir)?;
+    let sequence = list(plan)?
+        .last()
+        .map_or(Some(1), |newest| newest.sequence.checked_add(1))
+        .ok_or_else(|| anyhow::anyhow!("backup sequence exhausted in {}", plan.dir.display()))?;
     let taken_ms = now_unix_ms();
     let stamp = file_stamp(taken_ms);
     let partial = plan
@@ -105,16 +115,20 @@ pub(crate) fn take(vault: &oneiron::Vault, plan: &BackupPlan) -> anyhow::Result<
         }
     };
     let id8 = checkpoint_id.get(..8).unwrap_or(&checkpoint_id);
-    let file = format!("{}-{stamp}-{id8}{FILE_SUFFIX}", plan.label);
+    let file = format!(
+        "{}-{sequence:0SEQUENCE_WIDTH$}-{stamp}-{id8}{FILE_SUFFIX}",
+        plan.label
+    );
     let path = plan.dir.join(&file);
     std::fs::rename(&partial, &path)?;
     sync_dir(&plan.dir)?;
     let bytes = std::fs::metadata(&path)?.len();
-    let pruned = prune(plan)?;
+    let pruned = prune(plan, &file)?;
     Ok(BackupOutcome {
         backup: BackupRecord {
             file,
             path,
+            sequence,
             bytes,
             taken: rfc3339(taken_ms),
             taken_ms,
@@ -136,16 +150,19 @@ pub(crate) fn list(plan: &BackupPlan) -> anyhow::Result<Vec<BackupRecord>> {
     for entry in entries {
         let entry = entry?;
         let file = entry.file_name().to_string_lossy().into_owned();
-        // `<label>-<stamp>-<id8>.oneiron-backup`
-        let Some(stamp) = file
+        // `<label>-<sequence>-<stamp>-<id8>.oneiron-backup`. A backup named
+        // before sequences, `<label>-<stamp>-<id8>`, lists as sequence 0:
+        // older than every sequenced one.
+        let Some((sequence, stamp)) = file
             .strip_prefix(&prefix)
             .and_then(|rest| rest.strip_suffix(FILE_SUFFIX))
             .and_then(|rest| rest.rsplit_once('-'))
-            .map(|(stamp, _)| stamp)
+            .map(|(rest, _)| rest.split_once('-').unwrap_or(("0", rest)))
         else {
             continue;
         };
-        let Some(taken_ms) = parse_file_stamp(stamp) else {
+        let (Some(sequence), Some(taken_ms)) = (parse_sequence(sequence), parse_file_stamp(stamp))
+        else {
             continue;
         };
         // Retention may delete a file between the listing and this read.
@@ -158,19 +175,35 @@ pub(crate) fn list(plan: &BackupPlan) -> anyhow::Result<Vec<BackupRecord>> {
         records.push(BackupRecord {
             path: entry.path(),
             file,
+            sequence,
             bytes: metadata.len(),
             taken: rfc3339(taken_ms),
             taken_ms,
         });
     }
-    records.sort_by(|a, b| (a.taken_ms, &a.file).cmp(&(b.taken_ms, &b.file)));
+    records.sort_by(|a, b| (a.sequence, &a.file).cmp(&(b.sequence, &b.file)));
     Ok(records)
 }
 
-/// Deletes this vault's oldest backups beyond `plan.keep`; returns their names.
-pub(crate) fn prune(plan: &BackupPlan) -> anyhow::Result<Vec<String>> {
-    let records = list(plan)?;
-    let excess = records.len().saturating_sub(plan.keep.max(1));
+/// Digits a sequence number is padded to, so names also sort in order.
+const SEQUENCE_WIDTH: usize = 10;
+
+/// A sequence field `take` wrote: ASCII digits only.
+fn parse_sequence(field: &str) -> Option<u64> {
+    if field.is_empty() || !field.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    field.parse().ok()
+}
+
+/// Deletes this vault's oldest backups beyond `plan.keep`, never `spared` (the
+/// backup a `take` just wrote, which counts as one kept); returns their names.
+fn prune(plan: &BackupPlan, spared: &str) -> anyhow::Result<Vec<String>> {
+    let records: Vec<_> = list(plan)?
+        .into_iter()
+        .filter(|record| record.file != spared)
+        .collect();
+    let excess = records.len().saturating_sub(plan.keep.max(1) - 1);
     let mut pruned = Vec::new();
     for record in records.into_iter().take(excess) {
         match std::fs::remove_file(&record.path) {
