@@ -534,6 +534,52 @@ fn time_words_a_query_cannot_use_never_fail_the_run() -> Result<()> {
     Ok(())
 }
 
+/// A quantity hint `main` refused now bounds the text channel: the row inside
+/// the window is found and the row outside it is not.
+fn quantity_hint_bounds_text_retrieval(query: &str, inside: u64, outside: u64) -> Result<()> {
+    const NOW: u64 = 1_710_504_000;
+    let (_dir, vault) = open_test_vault();
+    let (kept, dropped) = (entity_id(0x16), entity_id(0x26));
+    for (id, ago) in [(kept, inside), (dropped, outside)] {
+        let at = NOW - ago;
+        put_text_with_time(
+            &vault,
+            id,
+            "quantitybounds",
+            TimeRange { start: at, end: at },
+            at,
+        )?;
+    }
+
+    let results = vault
+        .query()
+        .search_text(&format!("{query} quantitybounds"), 10)
+        .with_temporal_now(NOW)
+        .run()?;
+
+    let ids: Vec<EntityId> = results.iter().map(|hit| hit.id).collect();
+    assert_eq!(ids, [kept], "{query}");
+    Ok(())
+}
+
+#[test]
+fn last_two_weeks_query_bounds_text_retrieval() -> Result<()> {
+    quantity_hint_bounds_text_retrieval("last 2 weeks", 3 * 86_400, 30 * 86_400)
+}
+
+#[test]
+fn last_spelled_quantity_query_bounds_text_retrieval() -> Result<()> {
+    quantity_hint_bounds_text_retrieval("last two weeks", 3 * 86_400, 30 * 86_400)
+}
+
+#[test]
+fn last_subday_quantity_query_bounds_text_retrieval() -> Result<()> {
+    for query in ["last 24 hours", "last twenty four hours"] {
+        quantity_hint_bounds_text_retrieval(query, 3_600, 2 * 86_400)?;
+    }
+    Ok(())
+}
+
 #[test]
 fn exact_other_facet_text_hit_does_not_suppress_strict_facet_prefix() -> Result<()> {
     let (_dir, vault) = open_test_vault();
