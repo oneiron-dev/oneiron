@@ -876,7 +876,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/connector_key/lifecycle/status.rs` | src | s | 6 fn | — | Key state machine: suspend/resume, terminal revoke/remove, custody rotation and generation log |
 | `src/connector_key/manifest_drift.rs` | src | m | 3 struct · 1 enum · 7 fn · 2 crate-vis | ConnectorDriftKind, ConnectorManifestDrift, ConnectorToolSchema, ResolvedConnectorManifest | Resolved connector-schema snapshots and conservative, typed drift classification |
 | `src/connector_key/meter.rs` | src | m | 5 struct · 5 const · 19 crate-vis | ConnectorDispatchTelemetry, ConnectorKeyDispatchTally, EffectorBudgetCharge, EffectorBudgetRead, EffectorBudgetRowRead | — |
-| `src/connector_key/mod.rs` | src | s | 2 mod · 9 re-export · 8 crate-vis | — | Connector-key registry records with effector budgets for OF-277 GOV-01 |
+| `src/connector_key/mod.rs` | src | s | 2 mod · 9 re-export · 9 crate-vis | — | Connector-key registry records with effector budgets for OF-277 GOV-01 |
 | `src/connector_key/qualification.rs` | src | m | 10 struct · 3 enum · 3 trait · 2 fn · 2 crate-vis | GroundingOracle, ProbeCitation, ProbeDisposition, ProbeReply, ProbeRequest, ProbeTool, ProbeTraceEvent, ProbeTraceKind +8 | Connector qualification probes |
 | `src/connector_key/qualification/tests.rs` | test | L | 1 crate-vis | — | — |
 | `src/connector_key/qualification/tests/support.rs` | test | s | 1 crate-vis | — | Shared host stub for cross-module connector admission tests |
@@ -934,6 +934,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_board/mod.rs` | src | s | 17 re-export · 6 crate-vis | — | Typed Context Board render projections |
 | `src/context_board/observations.rs` | src | s | 4 fn | — | Read-time lifecycle observations over the same scoped bytes served to a session |
 | `src/context_board/observations_tests.rs` | test | s | — | — | Real ledger lifecycle and skill-body observations for the session board |
+| `src/context_board/own_changes.rs` | src | m | 1 fn | — | Read-time own-proposal outcomes and connector changes for one session |
 | `src/context_board/plugin/admission.rs` | src | m | 3 struct · 1 enum · 11 fn · 2 crate-vis | AdmittedPluginSection, PackSectionRegistration, PluginSectionAdmission, PluginSectionRegistry | Post-consent execution and the live registry projection |
 | `src/context_board/plugin/claim.rs` | src | m | 2 struct · 4 fn · 2 const · 1 crate-vis | PluginInstallClaimPayload, PluginSectionInstallProposal | Install claim payload and the pre-consent proposal path |
 | `src/context_board/plugin/codec.rs` | src | s | 1 struct · 8 fn · 1 crate-vis | PluginSuggestionKey | Canonical manifest codec, digest, and suggestion key |
@@ -945,7 +946,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_board/plugin/state.rs` | src | m | 2 struct · 2 enum · 3 fn | BoardBlockKind, BoardBlockRecord, BoardBlockScope, BoardBlockWriteEnvelope | Durable actor-scoped state for admitted Context Board plugin blocks |
 | `src/context_board/plugin/tests.rs` | test | L | — | — | — |
 | `src/context_board/plugin/validate.rs` | src | s | 2 fn · 1 const · 3 crate-vis | — | Bounded-shape checks and the two-phase validation gate |
-| `src/context_board/read_set.rs` | src | s | 2 struct · 1 enum · 8 fn · 1 crate-vis | ChangedLine, ServedLifecycle, SessionReadSet | Session read-set tracking, separate from the stateless board renderer |
+| `src/context_board/read_set.rs` | src | m | 5 struct · 4 enum · 11 fn · 7 crate-vis | ChangedDelivery, ChangedEvent, ChangedLine, ConnectorChange, ConnectorMount, ProposalChange, ProposalReason, ServedLifecycle +1 | Session read-set tracking, separate from the stateless board renderer |
 | `src/context_board/room.rs` | src | s | 3 struct · 2 enum · 3 fn | RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection | Stateless ROOM projection and ordinary world-scope intersection |
 | `src/context_board/room_verbs.rs` | src | s | 1 fn | — | The rooms.* facade family delegates to existing reads, witness and claim gates |
 | `src/context_board/room_verbs_tests.rs` | test | s | — | — | Room render reads: the caller's scoped read and every present peer's |
@@ -955,14 +956,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_board/stream/frames.rs` | src | s | 6 struct · 5 enum · 6 fn | AppliedStreamState, BoardRenderMode, BoardSnapshot, BoardStreamFrame, CarrierCoalesceBuffer, CoalesceOutcome, DeltaRow, FrameApplyOutcome +3 | Board stream frames, snapshots and carrier coalescing |
 | `src/context_board/stream/mod.rs` | src | s | 4 re-export | — | Board streaming frames and harness wake dispatch |
 | `src/context_board/stream/provenance.rs` | src | s | 2 struct · 13 crate-vis | ChildEvent, VerifiedOwnTaskEvent | Verified own-task and child event minting for routed board events |
-| `src/context_board/stream/registry.rs` | src | s | 2 struct · 10 fn | BoardStreamRegistry, StreamConnectionState | The board stream registry: connections, subscriptions and event routing |
+| `src/context_board/stream/registry.rs` | src | s | 2 struct · 11 fn | BoardStreamRegistry, StreamConnectionState | The board stream registry: connections, subscriptions and event routing |
 | `src/context_board/stream/routing_tests.rs` | test | m | — | — | Event classification, provenance minting and route_event admission tests |
 | `src/context_board/stream/tests.rs` | test | m | 1 crate-vis | — | Frame, snapshot, coalescing and subscription-lifecycle tests |
 | `src/context_board/stream/wake.rs` | src | s | 5 struct · 5 enum · 3 fn · 5 crate-vis | BindInstanceError, HarnessInstanceKey, InstanceBindingReceipt, WakeAdapterKind, WakeDeliveryOutcome, WakeDeliveryReportError, WakeDispatch, WakeDispatchObservations +2 | Wake envelopes, harness instance keys and the adapter dispatch ladder |
 | `src/context_board/stream/wake_adapter_tests.rs` | test | m | — | — | Durable-mailbox adapter-install scenario tests |
 | `src/context_board/stream/wake_dispatch.rs` | src | s | 5 fn | — | The registry's wake half: binding, dispatch, reporting and fallback |
 | `src/context_board/stream/wake_tests.rs` | test | m | — | — | Instance binding, dispatch fallback and delivery-report fencing tests |
-| `src/context_board/surfaces_tests.rs` | test | s | — | — | Acceptance fixtures for scope, read-set freshness, and capability shedding |
+| `src/context_board/surfaces_tests.rs` | test | m | — | — | Acceptance fixtures for scope, read-set freshness, and capability shedding |
 | `src/context_board/tasks/authority_state.rs` | src | s | 6 crate-vis | — | The ack/cancel render-state door: reads the TASK authority facts and appends them inside a caller transaction |
 | `src/context_board/tasks/mod.rs` | src | s | 2 re-export · 1 crate-vis | — | TASKS section projections — intent rows, realizing jobs, and the render-tier ack/cancel state helpers behind… |
 | `src/context_board/tasks/projection.rs` | src | m | 6 struct · 1 enum · 11 fn · 1 const · 9 crate-vis | CancelRejectionPathology, JobPresence, TaskBoardStatus, TaskIntentPresence, TaskRow, TasksOverflow, TasksSection | Typed TASKS state: board status, intent and job presence, the ladder projection, and the overflow footer |
@@ -1474,7 +1475,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/project_depth/mod.rs` | src | s | 6 crate-vis | — | Immutable project-scoped policy-manifest contributions |
 | `src/gate/project_depth/tests.rs` | test | m | 1 crate-vis | — | — |
 | `src/gate/project_depth/write.rs` | src | m | 1 fn · 4 crate-vis | — | Transaction-bound project-policy birth and owner edit doors |
-| `src/gate/proposal_observation.rs` | src | s | 3 struct · 3 fn · 1 const · 1 crate-vis | ProposalPolicySource, ProposalSubmissionCheck, ProposalSubmissionReceipt | Actor-scoped, receipt-backed proposal observation; crossing only asks a question |
+| `src/gate/proposal_observation.rs` | src | m | 3 struct · 3 fn · 1 const · 3 crate-vis | ProposalPolicySource, ProposalSubmissionCheck, ProposalSubmissionReceipt | Actor-scoped, receipt-backed proposal observation; crossing only asks a question |
 | `src/gate/repair.rs` | src | s | 3 crate-vis | — | Pure, per-proposal consent recomputation |
 | `src/gate/repair_tests.rs` | test | m | — | — | ONE-1395 repair-only tests, kept separate from the existing Gate write-door tests |
 | `src/gate/resolution/accessors.rs` | src | L | 65 crate-vis | — | Read-only resolved-field accessors plus the frontier-hash entry |

@@ -47,11 +47,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/companion/mod.rs` | src | s | 6 crate-vis | — | Companion control-plane surface: access grants and psych-mirror profiles |
 | `src/api/companion/profiles.rs` | src | m | 24 crate-vis | — | Companion profile routes, DTOs, and state builders |
 | `src/api/consumer_usage.rs` | src | s | 4 crate-vis | — | Per-vault usage facts |
-| `src/api/context_board/cursor.rs` | src | s | 12 crate-vis | — | Server-owned MEMORIES cursors and session read sets, keyed by principal and session |
+| `src/api/context_board/cursor.rs` | src | s | 13 crate-vis | — | Server-owned MEMORIES cursors and session read sets, keyed by principal and session |
 | `src/api/context_board/memories.rs` | src | m | 19 crate-vis | — | MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly |
 | `src/api/context_board/mod.rs` | src | m | 12 crate-vis | — | The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional… |
 | `src/api/context_board/prefix.rs` | src | s | 10 crate-vis | — | Session prefix material: entity counts, latest activity, pending notifications, unprocessed work, token meter |
-| `src/api/context_board/session.rs` | src | s | 1 crate-vis | — | Actor-bound session observations shared by core reads and board rendering |
+| `src/api/context_board/session.rs` | src | s | 2 crate-vis | — | Actor-bound session observations shared by core reads and board rendering |
 | `src/api/context_board/standing.rs` | src | s | 3 crate-vis | — | Standing blocks are pinned before Context Board retrieval can fill the session |
 | `src/api/context_pack/companion_assembly.rs` | src | s | 1 crate-vis | — | Companion scope-resolution authorization for context-pack assembly |
 | `src/api/context_pack/controls.rs` | src | m | 15 crate-vis | — | Request DTOs, control structs, and shared limit constants for context-pack assembly |
@@ -100,7 +100,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/llm/tests.rs` | test | m | — | — | — |
 | `src/api/mcp_gateway/actor_dispatch.rs` | src | m | 9 crate-vis | — | Tool execution dispatch across actors |
 | `src/api/mcp_gateway/admission.rs` | src | s | 5 crate-vis | — | Scoped-call admission and actor resolution |
-| `src/api/mcp_gateway/board_observations.rs` | src | s | 3 crate-vis | — | Session-clock read observations and turn-local riders for MCP boards |
+| `src/api/mcp_gateway/board_observations.rs` | src | s | 4 crate-vis | — | Session-clock read observations and turn-local riders for MCP boards |
 | `src/api/mcp_gateway/board_setup.rs` | src | m | 16 crate-vis | — | Board state, setup grammar, and page preflight |
 | `src/api/mcp_gateway/envelope.rs` | src | s | 14 crate-vis | — | JSON-RPC envelope types and request dispatch |
 | `src/api/mcp_gateway/exec_board_verbs.rs` | src | m | 6 crate-vis | — | Execute-code and board-verb executors |
