@@ -23,7 +23,7 @@ the fork.
 
 ## sudachi
 
-`crates/oneiron/Cargo.toml`:
+`crates/oneiron-retrieval/Cargo.toml` (the multilingual analyzer's crate):
 
 ```toml
 sudachi = { git = "https://github.com/oneiron-dev/sudachi.rs", rev = "d8cba3609521805ebf35bfc2b71d8099a13befef" }

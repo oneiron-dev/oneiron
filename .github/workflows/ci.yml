@@ -214,11 +214,11 @@ jobs:
       - name: Featureless oneiron library tests
         env:
           RUSTC_WRAPPER: sccache
-        run: cargo test --locked -p oneiron --lib --no-default-features
+        run: cargo test --locked -p oneiron -p oneiron-contracts -p oneiron-retrieval -p oneiron-model -p oneiron-authority --lib --no-default-features
       - name: Featureless oneiron library tests (nextest, no retries)
         env:
           RUSTC_WRAPPER: sccache
-        run: cargo nextest run --locked -p oneiron --lib --no-default-features --profile featureless --no-fail-fast --retries 0
+        run: cargo nextest run --locked -p oneiron -p oneiron-contracts -p oneiron-retrieval -p oneiron-model -p oneiron-authority --lib --no-default-features --profile featureless --no-fail-fast --retries 0
       - name: Compiler cache stats
         if: always() && steps.sccache.outcome == 'success'
         run: sccache --show-stats
@@ -297,6 +297,7 @@ jobs:
       CARGO_PROFILE_DEV_INCREMENTAL: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
       CARGO_PROFILE_TEST_INCREMENTAL: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
       SCOPE_FULL: ${{ needs.changes.outputs.full || 'true' }}
+      SCOPE_PACKAGES: ${{ needs.changes.outputs.packages }}
       SCOPE_ONEIRON: ${{ needs.changes.outputs.oneiron }}
       SCOPE_MODULES: ${{ needs.changes.outputs.modules }}
     steps:
