@@ -190,7 +190,7 @@ pub(super) async fn mcp_current_board(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
 ) -> Result<McpBoardState, McpGatewayError> {
-    let (observations, changes) = super::board_observations::state(server, actor).await?;
+    let (observations, changes, board) = super::board_observations::state(server, actor).await?;
     let (mut sections, omissions) = mcp_board_sections(server, actor)?;
     sections.push(
         oneiron::context_board::SkillsSection::project(&[], &observations)
@@ -199,17 +199,10 @@ pub(super) async fn mcp_current_board(
     );
     let scope_label = crate::mcp::mcp_effective_scope_label(&actor.scope);
     let mut state_rows = mcp_board_state_rows(&sections);
-    // Own outcomes and connector changes, and the count of those held back,
-    // are deliveries, not board state: acknowledging one must not make the
-    // epoch just returned stale.
-    state_rows.extend(
-        oneiron::context_board::ChangedLine {
-            events: Vec::new(),
-            overflow: 0,
-            ..changes.clone()
-        }
-        .render(),
-    );
+    // Own outcomes and connector changes are deliveries, not board state:
+    // the epoch hashes the line before they were fitted in, so acknowledging
+    // one never makes the epoch just returned stale.
+    state_rows.extend(board.render());
     let state_hash = crate::mcp::mcp_board_state_hash(&scope_label, &state_rows);
     let epoch = {
         let mut registry = server.mcp_registry.lock().await;
@@ -737,7 +730,7 @@ pub(crate) async fn execute_mcp_setup(
             health,
             keyframe: Some(keyframe.clone()),
         };
-        rider = Some(board.changes);
+        rider = Some((board.changes, board.epoch));
         (structured, keyframe, health, snapshot, Some(board.epoch))
     };
     dispatch.producer_epoch = producer_epoch;
@@ -779,8 +772,8 @@ pub(crate) async fn execute_mcp_setup(
     };
     // Page one returns the keyframe it rendered, rider and connector state
     // included; a continuation restates it and moves nothing.
-    if let Some(rider) = &rider {
-        super::board_observations::delivered(server, actor, rider, true).await;
+    if let Some((rider, epoch)) = &rider {
+        super::board_observations::delivered(server, actor, rider, true, *epoch).await;
     }
     Ok(mcp_endpoint_result(
         server,

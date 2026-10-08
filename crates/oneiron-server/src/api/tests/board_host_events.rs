@@ -921,6 +921,46 @@ async fn own_proposal_outcome_rides_the_next_board_read_once() {
     assert!(agent_board(&server, agent, "rider").await.is_empty());
 }
 
+/// An outcome reaches the rider through every door that closes a proposal:
+/// the owner's inbox reject, which leaves the claim as proposed and records
+/// the person's word on its closing receipt, and a retraction, answered by
+/// its own receipt.
+#[tokio::test]
+async fn every_door_that_closes_a_proposal_reaches_the_rider() {
+    let (_dir, server) = auth_test_server();
+    let agent = seeded_test_entity_id(0x1021_0006);
+    let park = |run: &str, value: &str| {
+        server
+            .vault
+            .park_run_proposal_for_test(run, agent, oneiron::EntityId::now(), value)
+            .unwrap()
+    };
+    let declined = park("rider-inbox", "one");
+    let retracted = park("rider-retract", "two");
+    assert!(agent_board(&server, agent, "rider-doors").await.is_empty());
+    server
+        .vault
+        .resolve_inbox_group("rider-inbox", oneiron::inbox::InboxBulkVerb::RejectAll)
+        .unwrap();
+    server.vault.retract_claim(&retracted, 10_000).unwrap();
+    let changed = agent_board(&server, agent, "rider-doors").await;
+    assert_eq!(changed[0], "changed[2:]{id,to}:", "{changed:?}");
+    let word = format!(
+        "claim:{}: rejected why=word:bundle:dreamer_run:rider-inbox diagnostic=",
+        declined.to_hex()
+    );
+    assert!(
+        changed.iter().any(|row| row.starts_with(&word)),
+        "{changed:?}"
+    );
+    let receipt = format!("claim:{}: retracted why=receipt:gate:", retracted.to_hex());
+    assert!(
+        changed.iter().any(|row| row.starts_with(&receipt)),
+        "{changed:?}"
+    );
+    assert!(agent_board(&server, agent, "rider-doors").await.is_empty());
+}
+
 /// The epoch a keyframe returns stays the board's after its rider is
 /// delivered: delivering an outcome is not a change to the board.
 #[tokio::test]

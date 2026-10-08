@@ -5,8 +5,8 @@
 //! claim; a board read folds both. Hosts acknowledge only what they deliver.
 
 use super::read_set::{
-    ChangedDelivery, ChangedEvent, ConnectorChange, ConnectorMount, ProposalChange, ProposalReason,
-    lifecycle_line,
+    ChangedDelivery, ChangedEvent, ConnectorChange, ConnectorMount, MAX_EVENT_REF_BYTES,
+    ProposalChange, ProposalReason, lifecycle_line,
 };
 use super::{ChangedLine, MAX_BOARD_ROW_BYTES, SessionReadSet};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
@@ -72,6 +72,11 @@ impl SessionReadSet {
             delivery.proposal_count = Some(fresh.last().map_or(after, |(at, _)| *at));
             let mut read = BTreeSet::new();
             for (at, id) in fresh {
+                // Delivered once already, from past a cursor the full watch
+                // stopped: reading its receipt again owes nothing.
+                if self.delivered_ahead(&id) {
+                    continue;
+                }
                 if read.insert(id.clone()) {
                     delivery.opened.push((at, id));
                 }
@@ -192,7 +197,28 @@ fn proposal_state(
             (_, ClaimLifecycleStatus::Retracted) => "retracted",
             (_, ClaimLifecycleStatus::Superseded) => "superseded",
             (ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto, _) => "approved",
-            (ClaimApprovalStatus::Proposed, ClaimLifecycleStatus::Active) => return Ok(None),
+            (ClaimApprovalStatus::Proposed, ClaimLifecycleStatus::Active) => {
+                // A consent can close without the claim being rewritten: the
+                // inbox's reject, a lapse, a replicated overwrite. Its closing
+                // receipt is then the only record that the proposal moved.
+                if vault.store.pending_gate_consent_in_txn(txn, &id)?.is_some() {
+                    return Ok(None);
+                }
+                // A later write the gate refused left the claim as it was.
+                let closed = vault
+                    .store
+                    .gate_decisions_for_claim_in_txn(txn, id.as_bytes())?
+                    .into_iter()
+                    .rev()
+                    .find(|decision| decision.outcome != "deny")
+                    .map(|decision| decision.outcome);
+                match closed.as_deref() {
+                    Some("rejected") => "rejected",
+                    Some("let_go") => "lapsed",
+                    Some("invalidated") => "invalidated",
+                    _ => return Ok(None),
+                }
+            }
         },
     )))
 }
@@ -215,10 +241,11 @@ fn proposal_answer(
         .rev()
         .find(|decision| settles(&decision.outcome, to));
     let reason = decision.as_ref().map(|decision| {
+        // A person's word too long to name whole is named by its receipt.
         if let Some(resolution) = decision
             .grant_ref
             .as_deref()
-            .filter(|grant| grant.starts_with("bundle:"))
+            .filter(|grant| grant.starts_with("bundle:") && grant.len() <= MAX_EVENT_REF_BYTES)
         {
             return ProposalReason::PersonWord(resolution.to_owned());
         }
@@ -245,7 +272,8 @@ fn proposal_answer(
 
 /// Whether a receipt with `outcome` records a settlement to `to`. Approval
 /// is an admitted write or an owner's acceptance; rejection is only ever an
-/// owner's decline; a retraction or supersession is an admitted write.
+/// owner's decline; a retraction or supersession is its own closing receipt
+/// or an admitted write; a lapse or invalidation is its closing receipt.
 fn settles(outcome: &str, to: &str) -> bool {
     match to {
         "approved" => matches!(
@@ -253,7 +281,11 @@ fn settles(outcome: &str, to: &str) -> bool {
             "allow" | "approved" | crate::edit_distance::delta::OUTCOME_APPROVED_AMENDED
         ),
         "rejected" => outcome == "rejected",
-        _ => outcome == "allow",
+        "retracted" => matches!(outcome, "retracted" | "allow"),
+        "superseded" => matches!(outcome, "superseded" | "allow"),
+        "lapsed" => outcome == "let_go",
+        "invalidated" => outcome == "invalidated",
+        _ => false,
     }
 }
 

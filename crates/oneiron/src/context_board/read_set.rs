@@ -10,7 +10,7 @@ const MAX_OWN_PROPOSALS: usize = 1024;
 /// Byte ceilings for the free-text parts of one changed event, so one event
 /// row stays far inside the board's row-byte limit whatever the stored or
 /// deserialized inputs hold.
-const MAX_EVENT_REF_BYTES: usize = 128;
+pub(super) const MAX_EVENT_REF_BYTES: usize = 256;
 const MAX_EVENT_DIAGNOSTIC_BYTES: usize = 1024;
 
 /// Lifecycle version served to a caller. The claim lifecycle chain is the
@@ -50,6 +50,11 @@ pub struct SessionReadSet {
     /// late cannot replay outcomes or roll the prefix back.
     #[serde(default)]
     delivery_generation: u64,
+    /// Settled outcomes delivered from past the point a full watch stopped
+    /// the cursor, by proposal ref and receipt count. Each leaves once the
+    /// cursor passes it.
+    #[serde(default)]
+    delivered_ahead: BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -218,6 +223,10 @@ impl SessionReadSet {
         self.delivery_generation
     }
 
+    pub(super) fn delivered_ahead(&self, proposal: &str) -> bool {
+        self.delivered_ahead.contains_key(proposal)
+    }
+
     pub(super) fn prefix_connectors(&self) -> Option<&BTreeMap<String, ConnectorMount>> {
         self.prefix_connectors.as_ref()
     }
@@ -260,8 +269,18 @@ impl SessionReadSet {
             }
             self.own_proposals.insert(id.clone());
         }
+        if let Some(stop) = through {
+            for (count, id) in &delivery.opened {
+                if *count > stop && delivery.settled.contains(id) {
+                    self.delivered_ahead.insert(id.clone(), *count);
+                }
+            }
+        }
         if let Some(count) = through {
             self.proposal_count = Some(self.proposal_count.map_or(count, |seen| seen.max(count)));
+        }
+        if let Some(seen) = self.proposal_count {
+            self.delivered_ahead.retain(|_, count| *count > seen);
         }
         match &mut self.prefix_connectors {
             None => self.prefix_connectors.clone_from(&delivery.mounts),
@@ -426,21 +445,25 @@ impl ChangedLine {
     }
 
     /// The lines one STREAM delta row carries, joined inside the board's row
-    /// limit: lines past it are dropped and counted, never sent oversized.
+    /// limit. Rows past it are dropped whole and counted in the overflow, so
+    /// every table header still counts the rows that follow it: install
+    /// receipts first, then lifecycle rows, then events from the end, which
+    /// keeps rejections, ranked first, the last to go.
     fn delta_line(&self) -> String {
-        let mut lines = self.render();
-        let mut dropped = 0;
-        let joined = |lines: &[String], dropped: usize| {
-            let mut row = lines.join(" ");
-            if dropped > 0 {
-                row.push_str(&format!(" changed: +{dropped} past the row limit"));
+        let mut line = self.clone();
+        loop {
+            let joined = line.render().join(" ");
+            if joined.len() <= MAX_BOARD_ROW_BYTES {
+                return joined;
             }
-            row
-        };
-        while joined(&lines, dropped).len() > MAX_BOARD_ROW_BYTES && lines.pop().is_some() {
-            dropped += 1;
+            if line.install_rows.pop().is_some() {
+                line.install_overflow += 1;
+            } else if line.rows.pop().is_some() || line.events.pop().is_some() {
+                line.overflow += 1;
+            } else {
+                return clip(&joined, MAX_BOARD_ROW_BYTES).to_owned();
+            }
         }
-        joined(&lines, dropped)
     }
 
     /// Adds a rider only to an already-produced frame. `None` stays `None`:

@@ -32,10 +32,13 @@ pub(super) async fn read_set<'a>(
     MutexGuard::map(store, |store| store.read_sets.entry(key).or_default())
 }
 
+/// The session's read state, the changed line with this session's own
+/// deliveries fitted in, and the same line before they were: board state an
+/// epoch hashes never depends on what a delivery displaced.
 pub(super) async fn state(
     server: &SyncServer,
     actor: &McpResolvedActor,
-) -> Result<(SessionReadSet, ChangedLine), McpGatewayError> {
+) -> Result<(SessionReadSet, ChangedLine, ChangedLine), McpGatewayError> {
     let packs = super::board_setup::mcp_visible_pack_inventory(server, actor)?;
     let observations = read_set(server, actor).await.clone();
     let read = mcp_scoped_read(&server.vault, actor)?;
@@ -64,21 +67,34 @@ pub(super) async fn state(
     // connection, the same ceiling the carrier rider keeps.
     let own = (!actor.scope.is_narrow() && actor.has_unrestricted_record_scope())
         .then_some(actor.actor_ref);
+    let board = changed.clone();
     observations
         .fold_own_changes(&server.vault, own, &mut changed, 16)
         .map_err(|error| mcp_engine_error("mcp session refresh failed", error))?;
-    Ok((observations, changed))
+    Ok((observations, changed, board))
 }
 
-/// The rider in `changed` was delivered: move the session past it. A keyframe
-/// also moves the connector state into the prefix.
+/// The rider in `changed` was delivered on a frame of board `epoch`: move the
+/// session past it. A keyframe also moves the connector state into the
+/// prefix. A frame older than the board this connection was last given is
+/// one the receiver ignores, so its rider stays owed.
 pub(super) async fn delivered(
     server: &SyncServer,
     actor: &McpResolvedActor,
     changed: &ChangedLine,
     keyframe: bool,
+    epoch: u64,
 ) {
     let mut reads = read_set(server, actor).await;
+    let superseded = server
+        .mcp_registry
+        .lock()
+        .await
+        .board_snapshot(&actor.stream_connection)
+        .is_some_and(|board| board.epoch > epoch);
+    if superseded {
+        return;
+    }
     if keyframe {
         reads.keyframe_committed(changed);
     } else {
@@ -100,12 +116,12 @@ pub(super) async fn ride(
     if let FrameKind::Delta(rows) = &mut frame.kind {
         rows.retain(|row| !matches!(row.key.as_str(), "changed" | "SKILLS" | "AGENTS:cand"));
     }
-    let (observations, changed) = state(server, actor).await?;
+    let (observations, changed, _) = state(server, actor).await?;
     let frame = changed
         .ride(Some(frame))
         .expect("rider preserves an existing frame");
     let frame = ride_capabilities(frame, hits, &observations)?;
-    delivered(server, actor, &changed, false).await;
+    delivered(server, actor, &changed, false, frame.epoch).await;
     Ok(Some(frame))
 }
 

@@ -403,7 +403,14 @@ pub(super) async fn execute_mcp_board_verb(
                 .ride(Some(frame))
                 .expect("rider preserves an existing frame");
             let keyframe = matches!(frame.kind, oneiron::context_board::FrameKind::Keyframe(_));
-            super::board_observations::delivered(server, actor, &board.changes, keyframe).await;
+            super::board_observations::delivered(
+                server,
+                actor,
+                &board.changes,
+                keyframe,
+                frame.epoch,
+            )
+            .await;
             oneiron::board_verb::BoardVerbOutput::Frame(frame)
         }
         other => other,
