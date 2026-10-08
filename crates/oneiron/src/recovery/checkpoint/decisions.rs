@@ -22,7 +22,13 @@ use crate::ports::EntityStoreRead;
 use crate::{EntityId, Error, Result, Vault};
 use std::collections::BTreeSet;
 
+mod audience;
+mod campaign;
+mod consent;
 mod counterparty;
+mod reads;
+mod skills;
+mod tasks;
 
 /// One decision the engine makes from rows a restore can change.
 trait Decision {
@@ -70,6 +76,57 @@ const DECISIONS: &[(&str, Check)] = &[
         loosened::<counterparty::DoNotContact>,
     ),
     ("send overrides", loosened::<counterparty::SendOverrides>),
+    (
+        "campaign compliance rules",
+        loosened::<campaign::CampaignCompliance>,
+    ),
+    ("record audiences", loosened::<audience::RecordAudiences>),
+    (
+        "relationship memberships",
+        loosened::<audience::RelationshipMembers>,
+    ),
+    ("disclosure clamps", loosened::<audience::DisclosureClamps>),
+    ("disclosure tiers", loosened::<audience::DisclosureTiers>),
+    ("leader chat admissions", loosened::<audience::LeaderChats>),
+    ("project verdicts", loosened::<audience::ProjectVerdicts>),
+    ("relationship reads", loosened::<reads::RelationshipReads>),
+    ("claim read grants", loosened::<reads::ClaimGrants>),
+    ("private note reads", loosened::<reads::NoteReads>),
+    ("record positions", loosened::<reads::RecordPositions>),
+    (
+        "task owners and cancellations",
+        loosened::<tasks::TaskAuthority>,
+    ),
+    ("stale task asks", loosened::<tasks::StaleAsks>),
+    ("dispatchable agents", loosened::<tasks::DispatchableAgents>),
+    ("resident agent wakes", loosened::<tasks::ResidentWakes>),
+    ("agent approval ceilings", loosened::<tasks::AgentCeilings>),
+    ("ask authority holders", loosened::<tasks::AskHolders>),
+    ("skill activations", loosened::<skills::SkillActivations>),
+    (
+        "sender reputation offers",
+        loosened::<consent::MailReputation>,
+    ),
+    (
+        "shared coreference links",
+        loosened::<consent::SharedCoreference>,
+    ),
+    (
+        "delivery-window restrictions",
+        loosened::<consent::DeliveryWindows>,
+    ),
+    (
+        "public booking publications",
+        loosened::<consent::BookingPublications>,
+    ),
+    (
+        "signing principal autonomy",
+        loosened::<consent::PrincipalAutonomy>,
+    ),
+    (
+        "e-sign ceremony states",
+        loosened::<consent::EsignCeremonies>,
+    ),
 ];
 
 /// Refuses a restored vault in which a decision permits more than it does in

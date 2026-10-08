@@ -5,6 +5,7 @@ use crate::edge::EdgeKind;
 use rmpv::Value;
 
 use super::*;
+pub(crate) use authority::spawn_signed as spawn_signed_project_for_test;
 #[cfg(feature = "sync")]
 pub(crate) use support::signed_birth as create_project_signed_for_test;
 pub(crate) use support::signed_depth as set_project_depth_signed_for_test;

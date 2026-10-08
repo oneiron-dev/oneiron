@@ -169,7 +169,7 @@ pub(crate) use ask_option_link::{
 #[cfg(feature = "sync")]
 pub(crate) use ask_record::waits_for_ask_group;
 pub(crate) use ask_record::{ask_notice_at_in, guard_ask_fact_put};
-pub(crate) use ask_settlement::settle_ask_if_due;
+pub(crate) use ask_settlement::{AskStanding, ask_standing_in, settle_ask_if_due};
 
 pub use ask_option_link::{TaskAskOptionLink, TaskAskOptionLinkView};
 

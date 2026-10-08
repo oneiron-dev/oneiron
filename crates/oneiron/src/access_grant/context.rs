@@ -109,6 +109,12 @@ impl<'v> AccessContext<'v> {
         Ok(context)
     }
 
+    /// The relationships whose member bindings name this context's
+    /// principal: their records it reads without a grant.
+    pub(crate) fn relationships(&self) -> &BTreeSet<EntityId> {
+        &self.relationships
+    }
+
     /// Applies the C1-C3 matrix. Private rows cannot be shared by an AccessGrant.
     pub fn allows(
         &self,

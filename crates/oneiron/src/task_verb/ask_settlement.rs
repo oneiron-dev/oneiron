@@ -322,6 +322,32 @@ pub(super) fn is_stale(vault: &Vault, txn: &heed::RoTxn<'_>, group: &AskGroup) -
     Ok(false)
 }
 
+/// Where an ask group stands for the cut [`settle_in`] makes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AskStanding {
+    /// A settlement already closes the ask, whatever it would read now.
+    pub(crate) settled: bool,
+    /// [`is_stale`] holds it: it settles as stale, with no decision.
+    pub(crate) stale: bool,
+}
+
+/// How the ask group `id` stands, read through the readers [`settle_in`]
+/// calls before it cuts, without cutting; `None` when `id` names no ask
+/// group. A pure read, for a caller holding no write transaction.
+pub(crate) fn ask_standing_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Option<AskStanding>> {
+    let Some(group) = ask_record::read_group(vault, txn, id)? else {
+        return Ok(None);
+    };
+    Ok(Some(AskStanding {
+        settled: read_result(vault, txn, id)?.is_some(),
+        stale: is_stale(vault, txn, &group)?,
+    }))
+}
+
 fn reduce(
     spec: &TaskAskSpec,
     who: &BTreeSet<EntityId>,

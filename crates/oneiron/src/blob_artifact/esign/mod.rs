@@ -24,6 +24,7 @@ mod principals;
 pub use capability::EsignCapability;
 pub use ceremony::{ESIGN_SEAL_ATTEMPT_KIND, SigningAction, SigningOutcome, SigningPage};
 pub use principals::{SigningAutonomy, SigningPrincipal};
+pub(crate) use principals::{automated_outbound_allowed, automated_signing_allowed};
 
 mod outbound;
 pub use outbound::{EsignOutboundCommand, EsignOutboundVerb};

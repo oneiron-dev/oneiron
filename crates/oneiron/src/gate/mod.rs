@@ -107,9 +107,11 @@ pub(crate) use self::default_manifest::{
     DEFAULT_POLICY_MANIFEST_TIMESTAMP, default_consult_fanout_policy, default_policy_manifest,
     default_policy_manifest_id, seeded_project_depth_default,
 };
-pub(crate) use self::definition_ceiling::agent_definition_ceiling_for_actor;
 #[cfg(test)]
 pub(crate) use self::definition_ceiling::first_party_connector_actor_ref;
+pub(crate) use self::definition_ceiling::{
+    agent_definition_ceiling_for_actor, definition_only_ceiling_for_actor,
+};
 #[cfg(feature = "sync")]
 pub(crate) use self::doors::check_federated_claim_admission;
 pub(crate) use self::doors::{
@@ -117,6 +119,9 @@ pub(crate) use self::doors::{
     check_claim_policy_for_write_with_preflight_decision, check_claim_policy_for_write_with_record,
     check_edge_provenance_claim_policy, check_reserved_claim_policy, claim_consent_binding_parts,
     standing_outbound_grant_binding_parts, validate_write_envelope,
+};
+pub(crate) use self::foreign_agent::{
+    introduced_foreign_agents, resolve as resolve_foreign_agent_ceiling,
 };
 pub use self::pack_install_policy::PackInstallPolicyOverride;
 pub(crate) use self::pack_install_policy::{

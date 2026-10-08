@@ -44,7 +44,7 @@ pub use weave_report::{
 };
 
 mod access_gate;
-pub(crate) use access_gate::claim_access_axes;
+pub(crate) use access_gate::{RelationshipRead, claim_access_axes, relationship_read};
 mod actor_key;
 pub use actor_key::ScopedReadActorKey;
 

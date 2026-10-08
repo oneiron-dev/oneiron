@@ -143,7 +143,8 @@ fn child_body(
     Ok(body)
 }
 
-fn spawn_signed(
+/// A child of `parent_id` spawned by `actor` under its signed slip.
+pub(crate) fn spawn_signed(
     vault: &Vault,
     parent_id: EntityId,
     child_id: EntityId,
