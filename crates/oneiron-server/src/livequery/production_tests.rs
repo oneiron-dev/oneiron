@@ -8,7 +8,10 @@ use crate::server::SyncServer;
 use oneiron::access_grant::{
     AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
 };
-use oneiron::memory::{ClaimInput, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
+use oneiron::memory::{
+    ClaimInput, ClaimListFilter, NeighborOpts, WitnessAuthor, WitnessMessage, WitnessReceipt,
+    WitnessTurn,
+};
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 use std::sync::Arc;
 
@@ -255,6 +258,229 @@ async fn verified_actor_classes_are_mapped_exactly_and_missing_class_is_forbidde
 }
 
 #[tokio::test]
+async fn all_eight_production_rpc_reads_return_the_engine_dtos() {
+    let (_dir, server) = server();
+    let witnessed = witness(&server, "solar panel maintenance");
+    let committed = claim(&server);
+    let auth = auth(&server, "human");
+    // The engine side of each case reads under the same credential the RPC
+    // presents, so both answers carry the same receipt.
+    let memory = server
+        .vault()
+        .memory(EntityId::from_hex(ACTOR).unwrap(), EdgeActorClass::Human)
+        .with_read_proof(auth.verified_slip().unwrap());
+    let refs = witnessed.message_short_ids;
+    let filter = ClaimListFilter {
+        subject_ref: Some(ACTOR.to_owned()),
+        predicate: None,
+        lifecycle: None,
+        limit: 100,
+    };
+    let opts = NeighborOpts {
+        limit: 100,
+        ..Default::default()
+    };
+    let expected_pending = serde_json::to_value(memory.pending_writes(100).unwrap()).unwrap();
+    assert!(!expected_pending.as_array().unwrap().is_empty());
+    // The first recall observes a PPR cache miss and reports it in
+    // retrieval_meta. Warm the shared cache once so the snapshot below and the
+    // RPC read observe the same execution report.
+    memory
+        .recall(
+            "solar",
+            Effort::Medium,
+            &RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+        .unwrap();
+    let cases = [
+        (
+            "hydrate",
+            json!({"refs": refs}),
+            serde_json::to_value(memory.hydrate(&refs).unwrap()).unwrap(),
+        ),
+        (
+            "queryBm25",
+            json!({"query":"solar","limit":10}),
+            serde_json::to_value(memory.query_bm25("solar", 10).unwrap()).unwrap(),
+        ),
+        (
+            "neighbors",
+            json!({"entityRef":ACTOR,"opts":opts}),
+            serde_json::to_value(memory.neighbors(ACTOR, &opts).unwrap()).unwrap(),
+        ),
+        ("pendingWrites", json!({"limit":100}), expected_pending),
+        (
+            "receipts",
+            json!({}),
+            serde_json::to_value(memory.receipts(100).unwrap()).unwrap(),
+        ),
+        (
+            "claimList",
+            serde_json::to_value(&filter).unwrap(),
+            serde_json::to_value(memory.claim_list(&filter).unwrap()).unwrap(),
+        ),
+        (
+            "claimHistory",
+            json!({"claimRef":committed.claim_short_id}),
+            serde_json::to_value(memory.claim_history(&committed.claim_short_id).unwrap()).unwrap(),
+        ),
+        (
+            "recall",
+            json!({"query":"solar"}),
+            serde_json::to_value(
+                memory
+                    .recall(
+                        "solar",
+                        Effort::Medium,
+                        &RecallScope::default(),
+                        10,
+                        None,
+                        None,
+                    )
+                    .unwrap(),
+            )
+            .unwrap(),
+        ),
+    ];
+    for (method, params, expected) in cases {
+        let reply = rpc(&server, &auth, method, params);
+        assert!(reply.get("error").is_none(), "{method}: {reply}");
+        assert_eq!(reply["result"], expected, "{method}");
+    }
+}
+
+#[tokio::test]
+async fn http_recall_and_receipts_defaults_limits_and_error_order_are_preserved() {
+    let (_dir, server) = server();
+    let auth = auth(&server, "human");
+    for value in [
+        json!({"query":"solar"}),
+        json!({"query":"solar","effort":null,"scope":null,
+        "limit":null,"format":null,"ignored":true}),
+    ] {
+        let reply = rpc(&server, &auth, "recall", value);
+        assert_eq!(reply["result"]["pack_version"], 1);
+        assert!(reply.get("error").is_none());
+    }
+    for value in [
+        json!({}),
+        json!({"limit":null,"ignored":true}),
+        json!({"limit":1000}),
+    ] {
+        assert_eq!(rpc(&server, &auth, "receipts", value)["result"], json!([]));
+    }
+    for method in ["recall", "receipts"] {
+        for limit in [0, 1001] {
+            let reply = rpc(
+                &server,
+                &auth,
+                method,
+                json!({"query":"solar","limit":limit}),
+            );
+            assert_error(&reply, "BAD_REQUEST");
+            assert_eq!(
+                reply["error"]["message"],
+                "limit must be between 1 and 1000"
+            );
+            assert_eq!(
+                reply["error"]["suggestions"],
+                json!(["Request a smaller page and paginate."])
+            );
+        }
+    }
+    for value in [
+        Value::Null,
+        json!({}),
+        json!({"query":3}),
+        json!({"query":"x","limit":-1}),
+    ] {
+        let reply = rpc(&server, &auth, "recall", value);
+        assert_error(&reply, "BAD_REQUEST");
+        assert_eq!(reply["error"]["message"], "invalid JSON request body");
+        assert_eq!(
+            reply["error"]["suggestions"],
+            json!(["Send a JSON body matching this verb's documented input."])
+        );
+    }
+    let classless = crate::test_credentials::authenticate(
+        &server,
+        &format!("scope=core:read;principal_ref={ACTOR}"),
+    );
+    assert_error(
+        &rpc(&server, &classless, "recall", json!({})),
+        "BAD_REQUEST",
+    );
+    let write_only = crate::test_credentials::authenticate(
+        &server,
+        &format!("scope=core:write;principal_ref={ACTOR};actor_class=human"),
+    );
+    assert_error(&rpc(&server, &write_only, "recall", json!({})), "FORBIDDEN");
+}
+
+#[tokio::test]
+async fn rpc_engine_failures_keep_exact_codes_messages_and_suggestions() {
+    let (_dir, server) = server();
+    let auth = auth(&server, "human");
+    let memory = server
+        .vault()
+        .memory(EntityId::from_hex(ACTOR).unwrap(), EdgeActorClass::Human);
+    let missing = "ffffffffffffffffffffffffffffffff".to_owned();
+    let cases = [
+        (
+            "recall",
+            json!({"query":"solar","effort":"high"}),
+            memory
+                .recall(
+                    "solar",
+                    Effort::High,
+                    &RecallScope::default(),
+                    10,
+                    None,
+                    None,
+                )
+                .unwrap_err(),
+        ),
+        (
+            "hydrate",
+            json!({"refs":[missing]}),
+            memory.hydrate(&[missing]).unwrap_err(),
+        ),
+        (
+            "neighbors",
+            json!({"entityRef":ACTOR,"opts":{"limit":1,"edge_kind":"not-a-kind"}}),
+            memory
+                .neighbors(
+                    ACTOR,
+                    &NeighborOpts {
+                        limit: 1,
+                        edge_kind: Some("not-a-kind".to_owned()),
+                        min_weight: None,
+                    },
+                )
+                .unwrap_err(),
+        ),
+    ];
+    for (method, params, expected) in cases {
+        let reply = rpc(&server, &auth, method, params);
+        assert_error(&reply, &expected.code);
+        assert_eq!(reply["error"]["message"], expected.message);
+        assert_eq!(reply["error"]["suggestions"], json!(expected.suggestions));
+    }
+    // Future engine codes are forwarded, not collapsed into a closed server enum.
+    let future: oneiron::memory::MemoryError = serde_json::from_value(json!({
+        "code":"FUTURE_ENGINE_REFUSAL","message":"future refusal","suggestions":["retry later"]
+    }))
+    .unwrap();
+    let body = error_body(future.into());
+    assert_eq!(body["code"], "FUTURE_ENGINE_REFUSAL");
+    assert_eq!(body["message"], "future refusal");
+    assert_eq!(body["suggestions"], json!(["retry later"]));
+}
+
+#[tokio::test]
 async fn production_source_derives_real_channels_and_rechecks_revocation_before_resume() {
     let (_dir, server) = server();
     witness(&server, "solar panel source snapshot");
@@ -327,6 +553,213 @@ async fn production_source_derives_real_channels_and_rechecks_revocation_before_
         error_body(source.can_resume(&derived.cursor).unwrap_err())["code"],
         "UNAUTHORIZED"
     );
+}
+
+#[tokio::test]
+async fn receipt_limit_is_applied_after_actor_scoping() {
+    let (_dir, server) = server();
+    claim(&server);
+    let other = EntityId::from_hex("55555555555555555555555555555555").unwrap();
+    server
+        .vault()
+        .put_entity(
+            &other,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::temporal::TimeRange { start: AT, end: AT },
+            AT,
+            b"fixture actor",
+        )
+        .unwrap();
+    server
+        .vault()
+        .memory(other, EdgeActorClass::Human)
+        .claim_upsert(&ClaimInput {
+            id: None,
+            predicate: "profile.name".to_owned(),
+            subject_ref: other.to_hex(),
+            value: json!("Newer unrelated actor"),
+            confidence: 1.0,
+            source: "imported".to_owned(),
+            world_ref: None,
+            relationship_ref: None,
+            scope: None,
+            valid_from: None,
+            valid_to: None,
+            occurred_at: Some(AT),
+            learned_at: Some(AT),
+            salience: None,
+        })
+        .unwrap();
+    let source = BoundSource::new(
+        Arc::downgrade(&server),
+        auth(&server, "human"),
+        "fixture".into(),
+    );
+    let derived = source
+        .derive(
+            &ScopedView {
+                filter: Some(json!({"limit":1})),
+                ..Default::default()
+            },
+            Channel::Receipts,
+        )
+        .unwrap();
+    let rows = derived.value.as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["actor_ref"], ACTOR);
+}
+
+#[tokio::test]
+async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
+    let (_dir, server) = server();
+    let memory = server
+        .vault()
+        .memory(EntityId::from_hex(ACTOR).unwrap(), EdgeActorClass::Human);
+    let other_world = "66666666666666666666666666666666";
+    let make_id = |n: u64| {
+        let mut bytes = [0x71; 16];
+        bytes[8..].copy_from_slice(&n.to_be_bytes());
+        EntityId::from_bytes(bytes).unwrap()
+    };
+    for n in 0..1030 {
+        let subject = make_id(n);
+        server
+            .vault()
+            .put_entity(
+                &subject,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                oneiron::temporal::TimeRange { start: AT, end: AT },
+                AT,
+                &rmp_serde::to_vec_named(&json!({"name":"fixture subject"})).unwrap(),
+            )
+            .unwrap();
+        let id = if n % 3 == 0 {
+            subject
+        } else {
+            let id = make_id(2000 + n);
+            let receipt = memory
+                .claim_upsert(&ClaimInput {
+                    id: Some(id.to_hex()),
+                    predicate: if n == 2 { "view.target" } else { "view.other" }.into(),
+                    subject_ref: subject.to_hex(),
+                    value: json!("unrelated"),
+                    confidence: 1.0,
+                    source: "user_stated".into(),
+                    world_ref: (n == 2).then(|| other_world.into()),
+                    relationship_ref: None,
+                    scope: None,
+                    valid_from: None,
+                    valid_to: None,
+                    occurred_at: Some(AT),
+                    learned_at: Some(AT),
+                    salience: Some(0.9),
+                })
+                .unwrap();
+            assert_eq!(receipt.approval, "auto");
+            id
+        };
+        server
+            .vault()
+            .batch()
+            .text(&id, &[("body", "viewneedle")])
+            .commit()
+            .unwrap();
+    }
+    let mut expected = Vec::new();
+    for (n, subject, text) in [
+        (
+            5000,
+            ACTOR,
+            "viewneedle extra words make this result less relevant",
+        ),
+        (
+            5001,
+            MACHINE,
+            "viewneedle extra words make this result much less relevant than the first",
+        ),
+    ] {
+        let id = make_id(n);
+        let receipt = memory
+            .claim_upsert(&ClaimInput {
+                id: Some(id.to_hex()),
+                predicate: "view.target".into(),
+                subject_ref: subject.into(),
+                value: json!(text),
+                confidence: 1.0,
+                source: "user_stated".into(),
+                world_ref: None,
+                relationship_ref: None,
+                scope: None,
+                valid_from: None,
+                valid_to: None,
+                occurred_at: Some(AT),
+                learned_at: Some(AT),
+                salience: None,
+            })
+            .unwrap();
+        assert_eq!(receipt.approval, "auto");
+        server
+            .vault()
+            .batch()
+            .text(&id, &[("body", text)])
+            .commit()
+            .unwrap();
+        let revision = server.vault().indexed_revision(&id).unwrap().unwrap();
+        expected.push(format!("{}@{}", receipt.claim_short_id, revision.to_hex()));
+    }
+    // More than 1,000 base-scope decoys outrank both targets even when
+    // Light widens lexical admission for its temporal anchor and blends
+    // recency, salience and confidence. One world-scoped target-predicate
+    // decoy separately proves that the filtered view excludes other worlds.
+    let old = memory
+        .recall(
+            "viewneedle",
+            Effort::Light,
+            &RecallScope::default(),
+            1000,
+            None,
+            None,
+        )
+        .unwrap();
+    assert!(
+        !old.items
+            .iter()
+            .any(|item| expected.contains(&item.short_id)),
+        "unfiltered recall returned a filtered match among {} items ({} candidates)",
+        old.items.len(),
+        old.retrieval_meta.total_candidates,
+    );
+    let source = BoundSource::new(
+        Arc::downgrade(&server),
+        auth(&server, "human"),
+        "scoped-top-k".into(),
+    );
+    for limit in [1, 2, 10] {
+        let derived = source
+            .derive(
+                &ScopedView {
+                    query: Some("viewneedle".into()),
+                    filter: Some(json!({"kind":"CLAIM", "predicate":"view.target", "limit":limit})),
+                    ..Default::default()
+                },
+                Channel::View,
+            )
+            .unwrap();
+        let rows = derived.value.as_array().unwrap();
+        let ids: Vec<_> = rows
+            .iter()
+            .map(|row| row["short_id"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            ids,
+            expected
+                .iter()
+                .take(limit)
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+        );
+        assert!(rows.iter().all(|row| row["world"].is_null()));
+    }
 }
 
 #[tokio::test]
@@ -566,6 +999,90 @@ async fn subscription_resumes_at_indexed_position_while_editor_reads_live() {
     let after = source.derive(&view, Channel::View).unwrap();
     assert_eq!(after.value[0]["value_text"], before.value[0]["value_text"]);
     assert_ne!(after.cursor.version_vector, before.cursor.version_vector);
+}
+
+#[tokio::test]
+async fn indexed_publication_wakes_an_open_entity_subscription() {
+    use oneiron::sync::bridge::{LiveQueryTee, MaterializedDiffSummary, OriginMark};
+
+    let (_dir, server) = server();
+    let id = EntityId::from_hex("cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd").unwrap();
+    let put = |text: &str| {
+        server
+            .vault()
+            .batch()
+            .put(
+                &id,
+                oneiron::registry::ENTITY_TYPE_ASSET_TEXT,
+                oneiron::temporal::TimeRange { start: AT, end: AT },
+                AT,
+                &rmp_serde::to_vec_named(&json!({"content": text})).unwrap(),
+            )
+            .text(&id, &[("content", text)])
+            .commit()
+            .unwrap();
+    };
+    put("indexwake old");
+    let indexed = server.vault().indexed_revision(&id).unwrap().unwrap();
+    let hub = connection::Hub::for_server(&server);
+    let source = Arc::new(BoundSource::new(
+        Arc::downgrade(&server),
+        auth(&server, "human"),
+        "indexed-wake".into(),
+    ));
+    let queries = hub.install_source(auth(&server, "human"), "indexed-wake".into(), source);
+    let tee: Arc<dyn LiveQueryTee> = queries.clone();
+    server
+        .reassert_manager
+        .materializer()
+        .attach_live_query_tee(&tee);
+    let view = ScopedView {
+        query: Some("indexwake".into()),
+        ..Default::default()
+    };
+    let opened = queries.open(7, view, Channel::View, None, None).unwrap();
+    let cursor = opened[0].cursor.clone();
+    queries.ack(7, &cursor).unwrap();
+
+    put("indexwake new");
+    assert_eq!(server.vault().indexed_revision(&id).unwrap(), Some(indexed));
+    let path = format!("e:{}", id.to_hex());
+    tee.on_materialized(
+        &path,
+        &MaterializedDiffSummary {
+            containers: vec![path.clone()],
+            bytes: 0,
+
+            revision_events: vec![revision_event(&server, id, Some(indexed))],
+        },
+        &OriginMark::default(),
+    );
+    queries.refresh().unwrap();
+    assert!(
+        queries.pending(7).unwrap().is_empty(),
+        "live-only edit cannot push"
+    );
+
+    server.vault().set_indexed_idle_delay_ms(0).unwrap();
+    let report = server
+        .vault()
+        .refresh_staged_indexed_at_idle(u64::MAX)
+        .unwrap();
+    assert!(report.refreshed.iter().any(|(entity, _)| *entity == id));
+    publish_indexed(&hub, &report, id, indexed);
+    queries.refresh().unwrap();
+    let pending = queries.pending(7).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].kind, "data");
+    assert_ne!(pending[0].cursor.version_vector, cursor.version_vector);
+    assert!(
+        pending[0]
+            .result
+            .as_ref()
+            .unwrap()
+            .to_string()
+            .contains("indexwake new")
+    );
 }
 
 #[tokio::test]
@@ -893,6 +1410,178 @@ async fn delayed_index_publication_filters_own_echo_but_delivers_foreign_and_mix
                 .contains("originwake foreign")
         );
     }
+}
+
+#[tokio::test]
+async fn settled_out_of_view_births_do_not_exhaust_lag_origin_retention() {
+    use oneiron::sync::bridge::{LiveQueryTee, MaterializedDiffSummary, OriginMark};
+
+    let (_dir, server) = server();
+    let hub = connection::Hub::for_server(&server);
+    let source = Arc::new(BoundSource::new(
+        Arc::downgrade(&server),
+        auth(&server, "human"),
+        "bounded-lag-origins".into(),
+    ));
+    let queries = hub.install_source(auth(&server, "human"), "bounded-lag-origins".into(), source);
+    let watched = EntityId::from_hex("dededededededededededededededede").unwrap();
+    let put = |id: EntityId, text: &str| {
+        server
+            .vault()
+            .batch()
+            .put(
+                &id,
+                oneiron::registry::ENTITY_TYPE_ASSET_TEXT,
+                oneiron::temporal::TimeRange { start: AT, end: AT },
+                AT,
+                &rmp_serde::to_vec_named(&json!({"content": text})).unwrap(),
+            )
+            .text(&id, &[("content", text)])
+            .commit()
+            .unwrap();
+    };
+    put(watched, "lagcachemarker first");
+    let opened = queries
+        .open(
+            9,
+            ScopedView {
+                query: Some("lagcachemarker".into()),
+                ..Default::default()
+            },
+            Channel::View,
+            None,
+            None,
+        )
+        .unwrap();
+    queries.ack(9, &opened[0].cursor).unwrap();
+    for number in 0_u64..700 {
+        let mut bytes = [0x73_u8; 16];
+        bytes[8..].copy_from_slice(&number.to_be_bytes());
+        let id = EntityId::from_bytes(bytes).unwrap();
+        put(id, "unrelated birth");
+        assert!(server.vault().indexed_revision(&id).unwrap().is_some());
+        let path = format!("e:{}", id.to_hex());
+        queries.on_materialized(
+            &path,
+            &MaterializedDiffSummary {
+                containers: vec![path.clone()],
+                bytes: 0,
+
+                revision_events: Vec::new(),
+            },
+            &OriginMark {
+                conn_id: Some(1),
+                origin: Some("conn:1".into()),
+            },
+        );
+        queries.refresh().unwrap();
+        assert!(
+            queries.pending(9).unwrap().is_empty(),
+            "unrelated settled birth {number} caused a gap"
+        );
+    }
+    let prior = server.vault().indexed_revision(&watched).unwrap().unwrap();
+    put(watched, "lagcachemarker second");
+    let path = format!("e:{}", watched.to_hex());
+    queries.on_materialized(
+        &path,
+        &MaterializedDiffSummary {
+            containers: vec![path.clone()],
+            bytes: 0,
+
+            revision_events: vec![revision_event(&server, watched, Some(prior))],
+        },
+        &OriginMark::default(),
+    );
+    queries.refresh().unwrap();
+    // Until idle publication, the indexed view is unchanged.
+    assert!(queries.pending(9).unwrap().is_empty());
+    server.vault().set_indexed_idle_delay_ms(0).unwrap();
+    let previous_indexed = server.vault().indexed_revision(&watched).unwrap().unwrap();
+    let report = server
+        .vault()
+        .refresh_staged_indexed_at_idle(u64::MAX)
+        .unwrap();
+    publish_indexed(&hub, &report, watched, previous_indexed);
+    queries.refresh().unwrap();
+    let tail = queries.pending(9).unwrap();
+    assert_eq!(tail.len(), 1);
+    assert_eq!(tail[0].kind, "data");
+    assert!(
+        tail[0]
+            .result
+            .as_ref()
+            .unwrap()
+            .to_string()
+            .contains("lagcachemarker second")
+    );
+}
+
+#[tokio::test]
+async fn a_session_opened_after_live_edit_resyncs_when_its_missing_revision_is_indexed() {
+    let (_dir, server) = server();
+    let id = EntityId::from_hex("edededededededededededededededed").unwrap();
+    let put = |text: &str| {
+        server
+            .vault()
+            .batch()
+            .put(
+                &id,
+                oneiron::registry::ENTITY_TYPE_ASSET_TEXT,
+                oneiron::temporal::TimeRange { start: AT, end: AT },
+                AT,
+                &rmp_serde::to_vec_named(&json!({"content": text})).unwrap(),
+            )
+            .text(&id, &[("content", text)])
+            .commit()
+            .unwrap();
+    };
+    put("latejoincursor old");
+    let indexed = server.vault().indexed_revision(&id).unwrap().unwrap();
+    put("latejoincursor new"); // the subscription owner does not exist yet
+    assert_eq!(server.vault().indexed_revision(&id).unwrap(), Some(indexed));
+    let hub = connection::Hub::for_server(&server);
+    let source = Arc::new(BoundSource::new(
+        Arc::downgrade(&server),
+        auth(&server, "human"),
+        "latejoin".into(),
+    ));
+    let queries = hub.install_source(auth(&server, "human"), "latejoin".into(), source);
+    let view = ScopedView {
+        query: Some("latejoincursor".into()),
+        ..Default::default()
+    };
+    let opened = queries
+        .open(7, view.clone(), Channel::View, None, None)
+        .unwrap();
+    assert!(
+        opened[0]
+            .result
+            .as_ref()
+            .unwrap()
+            .to_string()
+            .contains("old")
+    );
+    let old_cursor = opened[0].cursor.clone();
+    queries.ack(7, &old_cursor).unwrap();
+    server.vault().set_indexed_idle_delay_ms(0).unwrap();
+    let report = server
+        .vault()
+        .refresh_staged_indexed_at_idle(u64::MAX)
+        .unwrap();
+    publish_indexed(&hub, &report, id, indexed);
+    queries.refresh().unwrap();
+    let gap = queries.pending(7).unwrap();
+    assert_eq!(gap.len(), 1);
+    assert_eq!(gap[0].kind, "gap");
+    let replay = queries
+        .open(7, view, Channel::View, Some(&old_cursor), None)
+        .unwrap();
+    assert!(replay.iter().any(|push| {
+        push.result
+            .as_ref()
+            .is_some_and(|value| value.to_string().contains("new"))
+    }));
 }
 
 #[tokio::test]
@@ -1232,4 +1921,137 @@ async fn owner_feed_uses_persisted_watches_and_refuses_agent_subscribers() {
             .value,
         json!([])
     );
+}
+
+#[tokio::test]
+async fn owner_feed_socket_delivers_two_local_changes_without_reopen_or_poll() {
+    let (_dir, server, actor, anchor, owner) = owner_feed_fixture();
+    let hub = connection::Hub::for_server(&server);
+    let mut socket = connection::Connection::new(hub, 31);
+    let opened = socket
+        .control(
+            &owner,
+            SubRequest::Open {
+                subscription_id: 9,
+                scoped_view: ScopedView::default(),
+                channel: Channel::OwnerFeed,
+                cursor: None,
+                origin: None,
+            },
+        )
+        .unwrap();
+    let snapshot = test_wire::reply(&opened);
+    assert_eq!(snapshot["result"], json!([]));
+    socket
+        .control(
+            &owner,
+            SubRequest::Ack {
+                subscription_id: 9,
+                cursor: serde_json::from_value(snapshot["cursor"].clone()).unwrap(),
+            },
+        )
+        .unwrap();
+
+    // No forced owner_feed_poll_now() and no materializer notification:
+    // delivery happens before the one-second synthetic poll can run.
+    oneiron::saved_query::set_memory_watch(server.vault(), actor, anchor, true, AT + 1).unwrap();
+    let first = test_wire::reply(&socket.delivery().unwrap());
+    assert_eq!(first["kind"], "data", "{first:#}");
+    assert_eq!(
+        first["result"][0]["timeline"]["records"][0]["item"]["val"],
+        "Original name"
+    );
+
+    let mut changed = server.vault().get_claim(&anchor).unwrap().unwrap();
+    changed.value = rmpv::Value::from("Second name");
+    server
+        .vault()
+        .put_claim(
+            &anchor,
+            &changed,
+            oneiron::TimeRange { start: AT, end: AT },
+            AT,
+        )
+        .unwrap();
+    let second = test_wire::reply(&socket.delivery().unwrap());
+    assert_eq!(second["kind"], "data", "{second:#}");
+    assert_eq!(
+        second["result"][0]["timeline"]["records"][0]["item"]["val"],
+        "Second name"
+    );
+
+    // C1's body was coalesced away by C2, but its delayed ACK is still
+    // valid and must not consume C2. Replay after transport lag is the
+    // observable proof that C2 remains pending.
+    let c1: Cursor = serde_json::from_value(first["cursor"].clone()).unwrap();
+    let c2: Cursor = serde_json::from_value(second["cursor"].clone()).unwrap();
+    assert!(
+        socket
+            .control(
+                &owner,
+                SubRequest::Ack {
+                    subscription_id: 9,
+                    cursor: c1,
+                }
+            )
+            .unwrap()
+            .is_empty()
+    );
+    socket.replay_after_lag();
+    let pending = test_wire::reply(&socket.delivery().unwrap());
+    assert_eq!(pending["cursor"], second["cursor"]);
+    assert_eq!(pending["result"], second["result"]);
+    assert!(
+        socket
+            .control(
+                &owner,
+                SubRequest::Ack {
+                    subscription_id: 9,
+                    cursor: c2.clone(),
+                }
+            )
+            .unwrap()
+            .is_empty()
+    );
+    let mut invented = c2;
+    invented.batch += 1_000;
+    let refused = socket
+        .control(
+            &owner,
+            SubRequest::Ack {
+                subscription_id: 9,
+                cursor: invented,
+            },
+        )
+        .unwrap();
+    assert_eq!(test_wire::reply(&refused)["error"]["code"], "BAD_REQUEST");
+
+    let next = EntityId::now();
+    changed.value = rmpv::Value::from("Third name");
+    server
+        .vault()
+        .put_claim(
+            &next,
+            &changed,
+            oneiron::TimeRange {
+                start: AT + 2,
+                end: AT + 2,
+            },
+            AT + 2,
+        )
+        .unwrap();
+    server
+        .vault()
+        .supersede_claim(&next, &anchor, AT + 3)
+        .unwrap();
+    let third = test_wire::reply(&socket.delivery().unwrap());
+    assert_eq!(third["kind"], "data", "{third:#}");
+    assert_eq!(
+        third["result"][0]["timeline"]["records"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(socket.has_active_subscriptions());
 }

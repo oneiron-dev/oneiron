@@ -10,7 +10,7 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use serde_json::{Value, json};
 
-use super::endpoint::ProbeError;
+use super::endpoint::{ProbeError, ProbeOutcome};
 use super::*;
 use crate::config::{EmbedderConfig, EmbedderProvider, EndpointEmbedderConfig};
 
@@ -25,6 +25,20 @@ fn common() -> EmbedderCommon {
 }
 
 // ─── numerics ────────────────────────────────────────────────────────────
+
+#[test]
+fn a_vector_of_the_wrong_width_is_refused() {
+    let error = common()
+        .finish_vector(vec![1.0; DIMS + 1])
+        .expect_err("a wrong width is refused");
+    assert!(matches!(
+        error,
+        oneiron::Error::DimensionMismatch {
+            expected: DIMS,
+            got: 9
+        }
+    ));
+}
 
 #[test]
 fn a_non_finite_component_is_refused_with_its_index() {
@@ -47,6 +61,14 @@ fn a_zero_vector_is_refused_rather_than_normalised() {
         .finish_vector(vec![0.0; DIMS])
         .expect_err("a zero vector has no direction");
     assert!(matches!(error, oneiron::Error::InvalidVector { .. }));
+}
+
+#[test]
+fn the_finished_vector_is_unit_norm() {
+    let raw: Vec<f32> = (1..=DIMS).map(|n| n as f32).collect();
+    let finished = common().finish_vector(raw).expect("finished");
+    let norm = finished.iter().map(|v| v * v).sum::<f32>().sqrt();
+    assert!((norm - 1.0).abs() < 1e-3, "norm was {norm}");
 }
 
 /// The live probe that motivated the guard returned a component of `-5.8e-38`,
@@ -84,6 +106,35 @@ fn endpoint_config(endpoint: &str) -> EmbedderConfig {
         },
         ..EmbedderConfig::default()
     }
+}
+
+#[test]
+fn a_none_provider_builds_no_slot() {
+    let config = EmbedderConfig {
+        provider: EmbedderProvider::None,
+        ..EmbedderConfig::default()
+    };
+    assert!(
+        EmbedderSlot::from_config(&config)
+            .expect("none resolves")
+            .is_none()
+    );
+}
+
+#[test]
+fn a_query_against_an_unready_slot_is_refused_as_not_ready() {
+    let config = EmbedderConfig {
+        provider: EmbedderProvider::Local,
+        ..EmbedderConfig::default()
+    };
+    let slot = EmbedderSlot::from_config(&config)
+        .expect("local resolves")
+        .expect("a local slot exists");
+    assert!(slot.ready().is_none(), "a local slot loads in the worker");
+    assert_eq!(
+        slot.embed_query("anything"),
+        Err(EmbedQueryRefusal::NotReady)
+    );
 }
 
 // ─── endpoint provider against a real server ─────────────────────────────
@@ -176,6 +227,14 @@ impl MockEndpoint {
         *self.state.behaviour.lock().expect("mock behaviour lock") = behaviour;
     }
 
+    fn requests(&self) -> Vec<Value> {
+        self.state
+            .requests
+            .lock()
+            .expect("mock requests lock")
+            .clone()
+    }
+
     fn embedder(&self) -> Arc<endpoint::HttpEmbedder> {
         endpoint::HttpEmbedder::from_config(&endpoint_config(&self.base)).expect("http embedder")
     }
@@ -252,6 +311,57 @@ fn summary_input(text: &str) -> oneiron::embed::PendingEmbeddingInput {
 }
 
 #[test]
+fn the_request_carries_the_model_key_and_the_projected_documents_in_order() {
+    let mock = MockEndpoint::start(MockBehaviour::Ok);
+    let embedder = mock.embedder();
+    let inputs = [summary_input("first text"), summary_input("second text")];
+    let vectors = oneiron::embed::Embedder::embed(embedder.as_ref(), &inputs).expect("embedded");
+    assert_eq!(vectors.len(), 2);
+    let requests = mock.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["model"], json!(MODEL_KEY));
+    assert_eq!(
+        requests[0]["input"],
+        json!(["first text", "second text"]),
+        "documents carry no instruction prefix and keep input order"
+    );
+}
+
+/// An endpoint has no model files to read a prompt from: a query carries
+/// exactly the configured instruction, and nothing when none is configured,
+/// whichever model the space names.
+#[test]
+fn a_query_carries_exactly_the_configured_instruction() {
+    let mock = MockEndpoint::start(MockBehaviour::Ok);
+    for (model_id, configured) in [
+        (
+            "microsoft/harrier-oss-v1-0.6b@f9b9dc8d367d443f2479d27aa5d8d2850c0774ee",
+            None,
+        ),
+        (crate::config::embedder::DEFAULT_MODEL_ID, None),
+        ("test/model@rev", Some("Represent this question: ")),
+    ] {
+        let config = EmbedderConfig {
+            model_id: model_id.to_owned(),
+            query_instruction: configured.map(str::to_owned),
+            ..endpoint_config(&mock.base)
+        };
+        endpoint::HttpEmbedder::from_config(&config)
+            .expect("http embedder")
+            .embed_query("what did we decide")
+            .expect("embedded");
+        assert_eq!(
+            mock.requests().last().expect("a request")["input"],
+            json!([format!(
+                "{}what did we decide",
+                configured.unwrap_or_default()
+            )]),
+            "{model_id}: a query carries exactly its instruction and nothing else"
+        );
+    }
+}
+
+#[test]
 fn rows_returned_out_of_order_are_placed_by_their_own_index() {
     let ordered = MockEndpoint::start(MockBehaviour::Ok);
     let reversed = MockEndpoint::start(MockBehaviour::Reversed);
@@ -265,6 +375,66 @@ fn rows_returned_out_of_order_are_placed_by_their_own_index() {
     let shuffled =
         oneiron::embed::Embedder::embed(reversed.embedder().as_ref(), &inputs).expect("embedded");
     assert_eq!(straight, shuffled, "index decides placement, not row order");
+}
+
+#[test]
+fn an_http_failure_returns_an_error_after_one_attempt() {
+    let mock = MockEndpoint::start(MockBehaviour::ServerError);
+    let embedder = mock.embedder();
+    let error = oneiron::embed::Embedder::embed(embedder.as_ref(), &[summary_input("text")])
+        .expect_err("a 500 fails closed");
+    assert!(
+        matches!(error, oneiron::Error::UpstreamToolFailure { .. }),
+        "{error:?}"
+    );
+    assert_eq!(
+        mock.requests().len(),
+        1,
+        "the client makes one attempt; the worker loop is the retry"
+    );
+}
+
+#[test]
+fn an_unreachable_endpoint_fails_closed_without_a_vector() {
+    // Port 1 on loopback: nothing listens, so this is a connect failure rather
+    // than a slow one, and the test needs no timeout to prove it.
+    let embedder = endpoint::HttpEmbedder::from_config(&endpoint_config("http://127.0.0.1:1/v1"))
+        .expect("built");
+    let error = oneiron::embed::Embedder::embed(embedder.as_ref(), &[summary_input("text")])
+        .expect_err("an unreachable endpoint fails closed");
+    assert!(
+        matches!(error, oneiron::Error::UpstreamToolFailure { .. }),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn an_over_long_input_is_shortened_and_counted() {
+    let mock = MockEndpoint::start(MockBehaviour::Ok);
+    let embedder = mock.embedder();
+    let config = endpoint_config(&mock.base);
+    let cap = config.max_input_tokens * 4;
+    let long = "x".repeat(cap * 2);
+    oneiron::embed::Embedder::embed(embedder.as_ref(), &[summary_input(&long)]).expect("embedded");
+    let sent = mock.requests()[0]["input"][0]
+        .as_str()
+        .expect("input text")
+        .len();
+    assert!(sent <= cap, "sent {sent} bytes for a cap of {cap}");
+    assert_eq!(
+        QueryEmbedder::truncations(embedder.as_ref()),
+        1,
+        "the truncation is counted"
+    );
+}
+
+#[test]
+fn a_probe_against_a_reachable_endpoint_of_the_right_width_is_ready() {
+    let mock = MockEndpoint::start(MockBehaviour::Ok);
+    assert_eq!(
+        endpoint::probe_endpoint(mock.embedder().as_ref()),
+        Ok(ProbeOutcome::Ready)
+    );
 }
 
 #[test]
@@ -287,6 +457,34 @@ fn a_probe_refuses_an_endpoint_that_does_not_serve_the_model_key() {
     assert!(
         matches!(error, ProbeError::ModelKeyMissing { ref model_key, .. } if model_key == MODEL_KEY),
         "{error:?}"
+    );
+}
+
+#[test]
+fn a_probe_against_an_unreachable_endpoint_is_not_fatal() {
+    let embedder = endpoint::HttpEmbedder::from_config(&endpoint_config("http://127.0.0.1:1/v1"))
+        .expect("built");
+    assert!(matches!(
+        endpoint::probe_endpoint(embedder.as_ref()),
+        Ok(ProbeOutcome::Unreachable(_))
+    ));
+}
+
+/// A pending row that projects to nothing is refused rather than embedded: the
+/// alternative is a vector with no meaning that retrieval would then rank.
+#[test]
+fn an_empty_projection_is_refused() {
+    let mock = MockEndpoint::start(MockBehaviour::Ok);
+    let embedder = mock.embedder();
+    let error = oneiron::embed::Embedder::embed(embedder.as_ref(), &[summary_input("   ")])
+        .expect_err("empty text is refused");
+    assert!(
+        matches!(error, oneiron::Error::InvariantViolation(_)),
+        "{error:?}"
+    );
+    assert!(
+        mock.requests().is_empty(),
+        "the refusal happens before the wire"
     );
 }
 
@@ -652,6 +850,67 @@ fn the_semantic_door_refuses_oversized_text_with_413() {
     assert_eq!(body["details"]["field"], json!("text"));
 }
 
+/// The worker recovers on its own: a provider that fails its first pass and then
+/// starts answering fills the queue with no restart.
+#[test]
+fn a_provider_that_comes_up_later_fills_without_a_restart() {
+    let mock = MockEndpoint::start(MockBehaviour::ServerError);
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = test_vault(dir.path());
+    let id = put_claim(&vault, 0xC0, "late provider claim");
+    // A short lease on purpose: the failed pass holds the row until its lease
+    // expires, which is the engine protecting one row from two embedders. The
+    // default 30 s window is longer than this row should wait.
+    let slot = EmbedderSlot::from_config(&EmbedderConfig {
+        lease_ms: 500,
+        idle_interval_ms: 100,
+        ..endpoint_config(&mock.base)
+    })
+    .expect("slot resolves")
+    .expect("an endpoint slot exists");
+    let server = Arc::new(
+        crate::server::SyncServer::new(
+            Arc::clone(&vault),
+            crate::config::SyncServerConfig {
+                allow_unauthenticated: true,
+                ..Default::default()
+            },
+        )
+        .expect("sync server")
+        .with_embedder(Some(slot)),
+    );
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("worker runtime");
+    let filled = runtime.block_on(async {
+        let worker = server
+            .spawn_embedding_worker()
+            .expect("a configured slot starts a worker");
+        // Wait for the first pass to fail before the provider starts answering,
+        // so the row proves recovery rather than a lucky first attempt.
+        for _ in 0..100 {
+            if !mock.requests().is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert!(
+            vault.get_vector(&id).expect("vector read").is_none(),
+            "nothing filled while the provider was failing"
+        );
+        mock.set_behaviour(MockBehaviour::Ok);
+        let filled = wait_for_vectors(&vault, std::slice::from_ref(&id)).await;
+        worker.abort();
+        filled
+    });
+    runtime.shutdown_background();
+    assert!(
+        filled,
+        "the worker filled the row after the provider came up"
+    );
+}
+
 /// A local provider whose artifacts cannot be fetched does not stop the server.
 ///
 /// The vault is already open: writes land, lexical reads answer, and the worker
@@ -901,4 +1160,73 @@ fn remote_endpoint_init_config_drives_egress_and_semantic_queries_without_manual
     let query = slot.embed_query("remote onboarding claim").unwrap();
     let hits = vault.search_vector(&query, 2 + seeded).unwrap();
     assert!(hits.iter().any(|hit| hit.id == id));
+}
+
+#[test]
+fn busy_embedding_worker_publishes_due_staged_revisions_between_passes() {
+    let mock = MockEndpoint::start(MockBehaviour::Ok);
+    let dir = tempfile::tempdir().unwrap();
+    let vault = test_vault(dir.path());
+    let mut config = endpoint_config(&mock.base);
+    config.batch_size = 1;
+    let slot = EmbedderSlot::from_config(&config).unwrap().unwrap();
+    slot.ensure_ready(|_| Ok(())).unwrap();
+    vault.set_indexed_idle_delay_ms(0).unwrap();
+    let document = oneiron::EntityId::now();
+    let vector = mock_vector("staged revision", DIMS);
+    for content in ["original indexed text", "staged revised text"] {
+        let body = rmp_serde::to_vec_named(&json!({"content": content})).unwrap();
+        vault
+            .batch()
+            .put(
+                &document,
+                oneiron::registry::ENTITY_TYPE_ASSET_TEXT,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                &body,
+            )
+            .text(&document, &[("content", content)])
+            .vector(&document, &vector)
+            .commit()
+            .unwrap();
+    }
+    let expected = vault.pin_entity_revision(&document).unwrap();
+    assert_ne!(vault.indexed_revision(&document).unwrap(), Some(expected));
+    let backlog = [
+        put_claim(&vault, 0xD1, "first pending"),
+        put_claim(&vault, 0xD2, "second pending"),
+    ];
+    let pause = Arc::new(EmbeddingPause {
+        request: mock.requests().len() + 2,
+        entered: tokio::sync::Notify::new(),
+        release: tokio::sync::Notify::new(),
+    });
+    *mock.state.pause.lock().unwrap() = Some(pause.clone());
+    let server = Arc::new(
+        crate::server::SyncServer::new(vault.clone(), Default::default())
+            .unwrap()
+            .with_embedder(Some(slot)),
+    );
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let worker = server.spawn_embedding_worker().unwrap();
+        let paused =
+            tokio::time::timeout(std::time::Duration::from_secs(10), pause.entered.notified())
+                .await;
+        // Read the public result while the second leased request is paused.
+        let indexed = vault.indexed_revision(&document).unwrap();
+        let pending = backlog
+            .iter()
+            .any(|id| vault.get_vector(id).unwrap().is_none());
+        pause.release.notify_one();
+        worker.abort();
+        let _ = worker.await;
+        assert!(paused.is_ok(), "worker must reach its second nonempty pass");
+        assert!(pending, "the global queue was not empty at publication");
+        assert_eq!(indexed, Some(expected));
+    });
+    runtime.shutdown_background();
 }
