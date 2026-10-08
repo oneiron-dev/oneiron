@@ -159,7 +159,7 @@ fn expect_answered(response: ChatResponse) -> Answered {
             gaps,
             tokens_used,
             depth,
-            retrieval,
+            retrieval: *retrieval,
         },
         other => panic!("expected an answered response, got {other:?}"),
     }

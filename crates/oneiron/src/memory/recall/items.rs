@@ -73,7 +73,7 @@ impl Memory<'_> {
             let value_json = companion_value_to_json(&body.value);
             Ok(Some(MemoryItem {
                 short_id,
-                source_revision_ref: source_revision_ref.clone(),
+                source_revision_ref,
                 kind,
                 predicate: Some(body.predicate.clone()),
                 value_text: truncate_text(&value_text_of(&value_json), DEFAULT_MAX_FIELD_CHARS),

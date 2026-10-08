@@ -177,7 +177,7 @@ pub enum ChatResponse {
         /// The depth that priced this call.
         depth: ChatDepth,
         /// The retrieval this answer stands on.
-        retrieval: MemoryPack,
+        retrieval: Box<MemoryPack>,
     },
     /// A refusal to answer, typed rather than empty.
     Abstained {
@@ -352,7 +352,7 @@ impl Memory<'_> {
             gaps,
             tokens_used,
             depth,
-            retrieval: pack,
+            retrieval: Box::new(pack),
         })
     }
 
@@ -470,12 +470,9 @@ fn validate_answer_sources(pack: &MemoryPack, proposed: &[String]) -> Option<Vec
         }
         // A composer may cite the bare short id the item shows; the source
         // keeps the item's pin so it hydrates the revision that was read.
-        let Some(item) = items
+        let item = items
             .iter()
-            .find(|item| item.short_id == *candidate || item.reference() == *candidate)
-        else {
-            return None;
-        };
+            .find(|item| item.short_id == *candidate || item.reference() == *candidate)?;
         let source = item.reference();
         if !sources.contains(&source) {
             sources.push(source);
