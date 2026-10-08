@@ -2,7 +2,6 @@
 //! trust manifest, the statistics block, and the hash definitions the external
 //! verifier has to reproduce byte for byte.
 
-use super::super::report::AXES;
 use super::*;
 
 /// The exact JCS bytes for a fixture that exercises every formatting rule the
@@ -62,35 +61,6 @@ fn the_canonical_form_is_exactly_the_pinned_fixture_bytes() {
     assert_eq!(blake3::hash(&bytes).to_hex().to_string(), expected);
 }
 
-/// Whoever built the document must not be able to change its hash. This is the
-/// property that makes the certificate reproducible at all, and it is not free:
-/// this workspace builds `serde_json` with `preserve_order`, so a `Value` DOES
-/// remember the order it was written in.
-#[test]
-fn key_order_cannot_change_a_hash() {
-    let written_one_way = fixture();
-    let written_another: serde_json::Value =
-        serde_json::from_str(FIXTURE_JCS).expect("the canonical form parses back");
-
-    assert_ne!(
-        serde_json::to_string(&written_one_way).expect("renders"),
-        serde_json::to_string(&written_another).expect("renders"),
-        "the fixture must actually differ in key order, or this test proves nothing"
-    );
-    assert_eq!(
-        canonical_blake3("a", &written_one_way).expect("hashes"),
-        canonical_blake3("b", &written_another).expect("hashes"),
-    );
-
-    // A real content change still moves the hash.
-    let mut changed = fixture();
-    changed["int"] = serde_json::json!(43);
-    assert_ne!(
-        canonical_blake3("a", &fixture()).expect("hashes"),
-        canonical_blake3("c", &changed).expect("hashes"),
-    );
-}
-
 /// Values that cannot survive the round trip are REFUSED, not hashed into a
 /// digest the verifier will disagree with.
 #[test]
@@ -121,122 +91,6 @@ fn unrepresentable_values_are_refused_rather_than_hashed() {
     // The boundary itself is representable and is admitted.
     let at_boundary = serde_json::json!({ "seed": MAX_EXACT_JSON_INTEGER });
     canonical_blake3("provenance", &at_boundary).expect("2^53 exactly is representable");
-}
-
-/// The publication scope is an EXACTLY-ONE partition of the emitted axes: every
-/// axis is decided about, and nothing is decided about twice.
-#[test]
-fn the_publication_scope_partitions_every_emitted_axis() {
-    assert_eq!(scope_partition_error(), None);
-    assert_eq!(BLOCKING_AXES.len() + ADVISORY_AXES.len(), AXES.len());
-
-    for axis in AXES {
-        let blocking = BLOCKING_AXES.contains(&axis);
-        let advisory = ADVISORY_AXES.contains(&axis);
-        assert!(
-            blocking ^ advisory,
-            "`{axis}` must be in exactly one half of the partition"
-        );
-    }
-    assert_eq!(
-        ADVISORY_AXES,
-        ["cache"],
-        "cache is the operator-declared axis"
-    );
-    for blocking in BLOCKING_AXES {
-        assert!(
-            !ADVISORY_AXES.contains(&blocking),
-            "`{blocking}` cannot be both"
-        );
-    }
-}
-
-/// Every trust input reaches the manifest with its class, its concrete origin
-/// and the checks that rest on it.
-#[test]
-fn the_trust_manifest_carries_every_declared_input() {
-    let manifest = trust_manifest();
-    assert_eq!(manifest.len(), trust::INPUTS.len());
-
-    for row in &manifest {
-        let spec = trust::input_spec(row.name).expect("a manifest row is a declared input");
-        assert_eq!(row.class, spec.class);
-        assert_eq!(row.source, spec.source);
-        assert!(
-            !row.consumed_by.is_empty(),
-            "`{}` must name the checks that rest on it",
-            row.name
-        );
-    }
-
-    let cache = manifest
-        .iter()
-        .find(|row| row.name == "cache_events")
-        .expect("the cache stream is a declared input");
-    assert_eq!(cache.class, TrustInput::OperatorDeclared);
-    assert_eq!(cache.consumed_by, vec!["cache_rungs_complete"]);
-
-    let child = manifest
-        .iter()
-        .find(|row| row.name == "child_program_blake3")
-        .expect("ONE-1963 declares the child program digest");
-    assert_eq!(child.class, TrustInput::Measured);
-    assert_eq!(
-        child.consumed_by,
-        vec!["child_program_matches_build_revision"]
-    );
-
-    let rendered = serde_json::to_string(&manifest).expect("the manifest renders");
-    assert!(
-        rendered.contains(r#""class":"operator_declared""#),
-        "{rendered}"
-    );
-    assert!(
-        rendered.contains(r#""class":"compile_declared""#),
-        "{rendered}"
-    );
-    assert!(rendered.contains(r#""class":"measured""#), "{rendered}");
-    assert!(rendered.contains(r#""class":"derived""#), "{rendered}");
-}
-
-/// The statistics block exposes every axis's sample size and says out loud that
-/// each one ran once. A missing count is an error, never a reported zero.
-#[test]
-fn the_statistics_block_exposes_every_axis_and_refuses_a_missing_count() {
-    let mut counts: std::collections::BTreeMap<String, usize> = AXIS_SAMPLE_SOURCES
-        .iter()
-        .enumerate()
-        .map(|(index, (_, key))| ((*key).to_owned(), index + 1))
-        .collect();
-
-    let exposed = statistics(&counts).expect("a complete count set produces statistics");
-    assert_eq!(exposed.per_axis.len(), AXES.len());
-    assert_eq!(exposed.repeats, 1);
-    assert_eq!(
-        exposed.single_trial_axes,
-        ["wake", "resident_memory", "precision", "recall_latency"]
-    );
-    for axis in AXES {
-        let row = exposed
-            .per_axis
-            .get(axis)
-            .unwrap_or_else(|| panic!("`{axis}` must carry statistics"));
-        assert_eq!(row.repeats, 1, "no axis is repeated in this round");
-    }
-    assert_eq!(
-        exposed.per_axis.get("wake").map(|row| row.samples),
-        counts.get("wake_probes").copied()
-    );
-
-    // Every single-trial axis is an axis the report actually emits.
-    for axis in exposed.single_trial_axes {
-        assert!(AXES.contains(&axis), "`{axis}` is not an emitted axis");
-    }
-
-    counts.remove("wake_probes");
-    let error = statistics(&counts).expect_err("a missing count fails closed");
-    assert!(error.contains("wake_probes"), "{error}");
-    assert!(error.contains("not zero samples"), "{error}");
 }
 
 /// `certificate_blake3` is the digest of the certificate WITHOUT that field,

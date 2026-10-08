@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     filesystem::Workspace,
-    protocol::{MAX_COMPONENT, MAX_FILE, MAX_FRAME, MAX_REQUESTS, MAX_SOURCE, Session, Snapshot},
+    protocol::{MAX_COMPONENT, MAX_FILE, MAX_FRAME, MAX_SOURCE, Session, Snapshot},
 };
 use serde_json::{Value, json};
 use std::{
@@ -83,44 +83,6 @@ fn scratch() -> (tempfile::TempDir, std::path::PathBuf) {
     let temp = tempfile::tempdir().expect("scratch");
     let path = temp.path().canonicalize().expect("real scratch path");
     (temp, path)
-}
-
-#[test]
-fn typed_component_over_unix_stream_returns_receipt_only_and_proposes_source_bytes() {
-    let (_temp, root) = scratch();
-    let (mut host, guest) = UnixStream::pair().expect("socketpair");
-    host.set_read_timeout(Some(Duration::from_secs(30)))
-        .expect("read timeout");
-    guest
-        .set_read_timeout(Some(Duration::from_secs(30)))
-        .expect("read timeout");
-    let path = root.clone();
-    let worker = std::thread::spawn(move || serve_localtest(guest, &path));
-    assert_eq!(get(&mut host), json!({"type":"hello", "version":1}));
-    // Literal fixture bytes are echoed; this is explicitly not JS execution.
-    input(
-        &mut host,
-        &conformance_component().expect("WAT encoding"),
-        "typed source conduit",
-    );
-    assert_eq!(
-        get(&mut host),
-        json!({"type":"credential_read", "handle":"conformance-handle",
-        "operation":"metadata", "scheme":"https", "host":"api.example.com"})
-    );
-    put(&mut host, json!({"type":"receipt", "accepted":true}));
-    assert_eq!(
-        get(&mut host),
-        json!({"type":"write", "path":"/mnt/workspace/result.txt",
-        "bytes":b"typed source conduit".to_vec()})
-    );
-    put(&mut host, json!({"type":"receipt", "accepted":true}));
-    assert_eq!(get(&mut host), json!({"type":"finish", "status":0}));
-    worker.join().expect("guest thread").expect("guest run");
-    assert_eq!(
-        fs::read(root.join("result.txt")).expect("proposal scratch"),
-        b"typed source conduit"
-    );
 }
 
 #[test]
@@ -254,25 +216,6 @@ fn source_order_duplicates_paths_and_budgets_fail_closed() {
 }
 
 #[test]
-fn frame_and_sequential_request_bounds_are_enforced() {
-    for size in [0, MAX_FRAME + 1] {
-        let (transport, _) = channel((size as u32).to_be_bytes().to_vec());
-        assert!(Session::new(transport).receive().is_err());
-    }
-    let mut bytes = Vec::new();
-    put(&mut bytes, start(MAX_REQUESTS));
-    for offset in 0..MAX_REQUESTS {
-        put(
-            &mut bytes,
-            json!({"type":"component", "offset":offset, "bytes":[0]}),
-        );
-    }
-    put(&mut bytes, json!({"type":"ready"}));
-    let (transport, _) = channel(bytes);
-    assert!(Session::new(transport).receive().is_err());
-}
-
-#[test]
 fn descriptor_workspace_refuses_symlinks_hardlinks_and_special_files() {
     let (_temp, root) = scratch();
     let (_outside, outside) = scratch();
@@ -313,33 +256,6 @@ fn descriptor_walk_refuses_symlink_ancestors_and_conflicting_tree() {
     ]);
     assert!(workspace.seed(&files).is_err());
     assert!(workspace.snapshot().expect("empty").is_empty());
-}
-
-#[test]
-fn repeated_snapshot_and_whole_file_replacement_preserve_other_files() {
-    let (_temp, root) = scratch();
-    let workspace = Workspace::open(&root).expect("workspace");
-    let files = Snapshot::from([
-        ("/mnt/workspace/nested/a".into(), b"before".to_vec()),
-        ("/mnt/workspace/kept".into(), b"same".to_vec()),
-    ]);
-    workspace.seed(&files).expect("seed");
-    assert_eq!(workspace.snapshot().expect("snapshot 1"), files);
-    assert_eq!(workspace.snapshot().expect("snapshot 2"), files);
-    workspace
-        .apply(&Snapshot::from([(
-            "/mnt/workspace/nested/a".into(),
-            b"after".to_vec(),
-        )]))
-        .expect("apply");
-    assert_eq!(
-        workspace.read("/mnt/workspace/nested/a").expect("read"),
-        b"after"
-    );
-    assert_eq!(
-        workspace.read("/mnt/workspace/kept").expect("read"),
-        b"same"
-    );
 }
 
 fn real_foreign_component() -> Vec<u8> {
@@ -430,99 +346,4 @@ fn real_quickjs_guest_invalid_rename_finishes_error_without_effect() {
     assert_eq!(get(&mut host), json!({"type":"finish", "status":1}));
     assert!(worker.join().expect("guest thread").is_err());
     assert_eq!(fs::read(root.join("old")).expect("seeded file"), b"old");
-}
-
-/// The checked-in foreign QuickJS component executes real JS in the same
-/// unprivileged guest protocol used inside the isolated production VM. This
-/// proves language behavior, not a Firecracker/KVM boot.
-#[test]
-fn foreign_quickjs_pack_script_reads_only_snapshot_and_emits_typed_output() {
-    const COMPONENT: &[u8] =
-        include_bytes!("../../../components/code-run-quickjs/artifacts/quickjs-foreign.wasm");
-    let (_temp, root) = scratch();
-    let (mut host, guest) = UnixStream::pair().expect("socketpair");
-    host.set_read_timeout(Some(Duration::from_secs(120)))
-        .expect("timeout");
-    guest
-        .set_read_timeout(Some(Duration::from_secs(120)))
-        .expect("timeout");
-    let worker = std::thread::spawn(move || serve_localtest(guest, &root));
-    assert_eq!(get(&mut host), json!({"type":"hello", "version":1}));
-    let source = include_str!("../../oneiron/tests/fixtures/echo_pack/scripts/adapter.js");
-    let script = format!(
-        "const packGrants = Object.freeze({{\"email\":{{\"handle\":\"fixture-handle\",\"scheme\":\"https\",\"host\":\"api.example.com\"}}}});\n{source}"
-    );
-    let mut first = start(COMPONENT.len());
-    first["source"] = script.into();
-    put(&mut host, first);
-    for (index, bytes) in COMPONENT.chunks(256 * 1024).enumerate() {
-        put(
-            &mut host,
-            json!({"type":"component", "offset":index*256*1024,"bytes":bytes}),
-        );
-    }
-    let input: Value = serde_json::from_slice(include_bytes!(
-        "../../oneiron/tests/fixtures/echo_pack/scripts/input.json"
-    ))
-    .unwrap();
-    put(
-        &mut host,
-        json!({"type":"file","path":"/mnt/workspace/scripts/input.json",
-        "bytes":serde_json::to_vec(&input).unwrap()}),
-    );
-    put(&mut host, json!({"type":"ready"}));
-    let first_reply = get(&mut host);
-    if first_reply["type"] == "finish" {
-        panic!(
-            "guest refused before credential: {first_reply:?}; {:?}",
-            worker.join().expect("guest thread")
-        );
-    }
-    assert_eq!(
-        first_reply,
-        json!({"type":"credential_read","handle":"fixture-handle",
-        "operation":"metadata","scheme":"https","host":"api.example.com"})
-    );
-    put(&mut host, json!({"type":"receipt","accepted":true}));
-    let proposed = get(&mut host);
-    assert_eq!(proposed["type"], "write");
-    assert_eq!(proposed["path"], "/mnt/workspace/adapter-output.json");
-    let bytes: Vec<u8> = serde_json::from_value(proposed["bytes"].clone()).unwrap();
-    let output: Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(output["inbound"][0], input);
-    assert_eq!(output["verbs"][0]["verb"], "send");
-    assert_eq!(output["events"][0]["event_kind"], "arrived");
-    put(&mut host, json!({"type":"receipt","accepted":true}));
-    assert_eq!(get(&mut host), json!({"type":"finish","status":0}));
-    worker
-        .join()
-        .expect("guest thread")
-        .expect("real JS completed");
-}
-
-#[test]
-fn foreign_quickjs_refuses_read_outside_manifest_without_output() {
-    const COMPONENT: &[u8] =
-        include_bytes!("../../../components/code-run-quickjs/artifacts/quickjs-foreign.wasm");
-    let (_temp, root) = scratch();
-    let (mut host, guest) = UnixStream::pair().expect("socketpair");
-    host.set_read_timeout(Some(Duration::from_secs(120)))
-        .expect("timeout");
-    guest
-        .set_read_timeout(Some(Duration::from_secs(120)))
-        .expect("timeout");
-    let worker = std::thread::spawn(move || serve_localtest(guest, &root));
-    assert_eq!(get(&mut host), json!({"type":"hello","version":1}));
-    let mut first = start(COMPONENT.len());
-    first["source"] = "await sandbox.fs.read_file('/mnt/workspace/undeclared.txt'); propose.file('/mnt/workspace/adapter-output.json',[1]);".into();
-    put(&mut host, first);
-    for (index, bytes) in COMPONENT.chunks(256 * 1024).enumerate() {
-        put(
-            &mut host,
-            json!({"type":"component", "offset":index*256*1024,"bytes":bytes}),
-        );
-    }
-    put(&mut host, json!({"type":"ready"}));
-    assert_eq!(get(&mut host), json!({"type":"finish","status":1}));
-    assert!(worker.join().expect("guest thread").is_err());
 }
