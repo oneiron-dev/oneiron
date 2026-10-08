@@ -51,6 +51,11 @@ impl Vault {
         if header.entity_type != crate::registry::ENTITY_TYPE_ACCESS_GRANT {
             return Ok(false);
         }
+        // A deleted grant authorizes nothing, even while an unapplied delete
+        // leaves its body stored.
+        if !crate::vault::live_entity_row_in_txn(&self.store, &txn, grant_ref)?.is_live() {
+            return Ok(false);
+        }
         let grant =
             crate::access_grant::decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
         let AccessGrantScope::ChannelIdentity {
