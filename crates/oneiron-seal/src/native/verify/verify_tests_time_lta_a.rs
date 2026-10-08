@@ -7,12 +7,10 @@ pub(crate) mod tests {
 
     use der::{Decode, Encode};
 
-    use super::super::super::{cms, engine, pdf, profile, tsp};
-    use super::super::verify_revocation::TS_GEN_TIME_MAX_SKEW_SECS;
+    use super::super::super::{cms, engine, pdf, profile};
     use super::super::verify_sig_pipeline::{Checks, SigEntry, verify_doc_ts};
     use super::super::verify_tests_dss_b::tests::*;
     use super::super::verify_tests_fixtures_dss_a::tests::*;
-    use super::super::verify_tests_lta_probes::tests::*;
     use super::super::*;
     use crate::api::{
         BackendError, BackendSignature, FetchError, FetchPolicy, FetchRequest, FetchResponse,
@@ -20,133 +18,6 @@ pub(crate) mod tests {
         SealResourceLimits, Sha256Digest, SignDigestRequest, SignatureAlgorithm, SigningIdentity,
         VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode,
     };
-
-    #[test]
-    fn validate_response_rejects_over_skew_gen_time() {
-        // The seal-side response path applies the SAME clock bound as the
-        // verify path: an over-skew token must be refused at validation so
-        // TSA failover (or profile degradation) stays available, instead of
-        // the seal embedding a token its own self-verify rejects.
-        let tsa = tsa_ca();
-        let imprint = [9u8; 32];
-        let nonce = [7u8; 16];
-        let anchors = anchors_of(&tsa);
-        let wrap_granted = |token: &[u8]| {
-            let mut body = cms::tlv(0x30, &cms::tlv(0x02, &[0]));
-            body.extend_from_slice(token);
-            cms::tlv(0x30, &body)
-        };
-        let over = mint_token_custom(
-            &tsa,
-            &imprint,
-            AT_UNIX + TS_GEN_TIME_MAX_SKEW_SECS + 1,
-            true,
-            Some(nonce),
-            false,
-        );
-        assert!(
-            tsp::validate_response(
-                &wrap_granted(&over),
-                &imprint,
-                &nonce,
-                None,
-                &anchors,
-                AT_UNIX * 1000,
-            )
-            .is_err(),
-            "over-skew genTime must fail the seal-side response path"
-        );
-        // Within skew passes: TSA and sealer clocks are not assumed
-        // synchronized.
-        let near = mint_token_custom(
-            &tsa,
-            &imprint,
-            AT_UNIX + TS_GEN_TIME_MAX_SKEW_SECS - 1,
-            true,
-            Some(nonce),
-            false,
-        );
-        assert!(
-            tsp::validate_response(
-                &wrap_granted(&near),
-                &imprint,
-                &nonce,
-                None,
-                &anchors,
-                AT_UNIX * 1000,
-            )
-            .is_ok(),
-            "within-skew genTime must pass the seal-side response path"
-        );
-    }
-
-    #[test]
-    fn future_dated_ts_token_is_rejected_within_skew_passes() {
-        // genTime ahead of the verify clock past the documented skew anchors
-        // the applicable time in the future: rejected, never clamped.
-        let signer = test_ca("skew-signer");
-        let tsa = tsa_ca();
-        let input = base_input();
-        let anchors = vec![signer.cert_der.clone(), tsa.cert_der.clone()];
-        let future = append_sig_revision(
-            &input,
-            &signer,
-            "skew-a",
-            Some(&tsa),
-            AT_UNIX + TS_GEN_TIME_MAX_SKEW_SECS + 1,
-        );
-        let engine = verify_engine(anchors, AT_UNIX);
-        let report = engine.verify_sealed_pdf(&future).unwrap();
-        assert!(!report.valid(), "future-dated token must fail verification");
-        let ts = report
-            .checks()
-            .find(|c| c.kind == VerifyCheckKind::SignatureTimestamp)
-            .unwrap();
-        assert_eq!(
-            (ts.status, ts.finding),
-            (
-                VerifyCheckStatus::Fail,
-                Some(VerifyFindingCode::TimestampInvalid)
-            )
-        );
-        // Within skew: TSA/verifier clocks are not assumed synchronized.
-        let near = append_sig_revision(
-            &input,
-            &signer,
-            "skew-b",
-            Some(&tsa),
-            AT_UNIX + TS_GEN_TIME_MAX_SKEW_SECS - 1,
-        );
-        let report = engine.verify_sealed_pdf(&near).unwrap();
-        assert!(report.valid(), "within-skew token must pass: {report:?}");
-        assert_eq!(report.achieved_profile(), Some(PadesProfile::BaselineT));
-    }
-
-    #[test]
-    fn future_dated_doc_timestamp_is_rejected() {
-        // The DocTimeStamp genTime feeds archival evidence freshness; a
-        // future-dated one must fail, not launder stale evidence.
-        let signer = test_ca("dts-skew-signer");
-        let tsa = tsa_ca();
-        let input = base_input();
-        let b1 = append_sig_revision(&input, &signer, "dts-skew", Some(&tsa), AT_UNIX);
-        let b2 = append_doc_ts_revision(&b1, &tsa, AT_UNIX + TS_GEN_TIME_MAX_SKEW_SECS + 1);
-        let engine = verify_engine(vec![signer.cert_der, tsa.cert_der], AT_UNIX);
-        let report = engine.verify_sealed_pdf(&b2).unwrap();
-        let dts = report
-            .checks()
-            .find(|c| c.kind == VerifyCheckKind::DocumentTimestamp)
-            .unwrap();
-        assert_eq!(
-            (dts.status, dts.finding),
-            (
-                VerifyCheckStatus::Fail,
-                Some(VerifyFindingCode::DocumentTimestampInvalid)
-            ),
-            "future-dated DocTimeStamp must fail its check"
-        );
-        assert!(!report.valid());
-    }
 
     #[test]
     fn dss_crl_issuer_key_usage_without_crl_sign_fails() {

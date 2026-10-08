@@ -23,17 +23,20 @@ pub enum IssueCategory {
     Environment,
     /// The decider's taste moved; the artifact was not wrong.
     PreferenceShift,
+    /// The judge could not attribute it: no label fit, or it was not sure.
+    Unclear,
 }
 
 impl IssueCategory {
-    /// Every arm — the closed enum made iterable, so a sixth category cannot
+    /// Every arm — the closed enum made iterable, so a seventh category cannot
     /// be added without every site here seeing it.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::SkillDefect,
         Self::ExecutionLapse,
         Self::Discovery,
         Self::Environment,
         Self::PreferenceShift,
+        Self::Unclear,
     ];
 
     /// The pinned on-disk/wire token.
@@ -45,6 +48,7 @@ impl IssueCategory {
             Self::Discovery => "discovery",
             Self::Environment => "environment",
             Self::PreferenceShift => "preference_shift",
+            Self::Unclear => "unclear",
         }
     }
 
@@ -63,6 +67,7 @@ impl IssueCategory {
             AttributionVerdict::Discovery => Self::Discovery,
             AttributionVerdict::Environment => Self::Environment,
             AttributionVerdict::PreferenceShift => Self::PreferenceShift,
+            AttributionVerdict::Unclear => Self::Unclear,
         }
     }
 }

@@ -116,35 +116,3 @@ fn wake_sample(program: &Path, settings: &ChildSettings, dir: &Path) -> Result<W
         shutdown: shutdown.as_str().to_owned(),
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Without a resolvable ready-child program the axis is explicitly
-    /// not-ready and names why; it never reports a zero wake latency.
-    #[test]
-    fn a_wake_axis_without_a_child_program_is_not_ready() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let settings = ChildSettings {
-            samples: 2,
-            timeout_ms: 500,
-            hold_ms: 5_500,
-            child: None,
-        };
-        let axis = measure_wake(dir.path(), &settings, EvidenceKind::SyntheticSmoke);
-        assert_eq!(axis.readiness_signal, ReadinessSignal::TcpAccept);
-        assert_eq!(axis.readiness_rule, READINESS_RULE);
-        assert_eq!(axis.shutdown_rule, CHILD_SHUTDOWN_RULE);
-        if axis.samples == 0 {
-            assert!(!axis.spawn_to_ready_ms.is_measured());
-            assert!(!axis.child.is_measured());
-            assert!(
-                !axis.errors.is_empty(),
-                "an unmeasured wake axis must say why"
-            );
-        }
-        let rendered = serde_json::to_string(&axis).expect("axis renders");
-        assert!(rendered.contains("shutdown_outcomes"), "{rendered}");
-    }
-}

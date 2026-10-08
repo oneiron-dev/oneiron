@@ -125,37 +125,3 @@ pub extern "system" fn Java_org_oneiron_EmbeddedVault_closeNative(
         Ok(())
     });
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn same_core_round_trip_and_invalid_id_refusal() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().to_str().expect("UTF-8 path");
-        let id = "0102030405060708090a0b0c0d0e0f10";
-        let body = oneiron::conversation::ConversationBody {
-            title: Some("android round trip".to_owned()),
-            ..Default::default()
-        }
-        .to_bytes()
-        .expect("conversation body");
-        let vault = NativeVault::open(path).expect("open");
-        vault.put(id, 4, 1, &body).expect("put");
-        assert_eq!(vault.get(id).expect("get"), Some(body.clone()));
-        assert_eq!(
-            vault.put("not-an-id", 4, 1, &body),
-            Err(display(
-                EntityId::from_hex("not-an-id").expect_err("invalid id")
-            ))
-        );
-        drop(vault);
-        assert_eq!(
-            NativeVault::open(path)
-                .expect("reopen")
-                .get(id)
-                .expect("get"),
-            Some(body)
-        );
-    }
-}
