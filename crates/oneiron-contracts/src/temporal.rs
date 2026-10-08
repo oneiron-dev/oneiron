@@ -441,7 +441,8 @@ enum Quantity {
 fn quantity_at(tokens: &[String], index: usize) -> Option<(Quantity, usize)> {
     let mut index = index;
     let token = tokens.get(index)?.as_str();
-    if token.starts_with(|ch: char| ch.is_ascii_digit())
+    if token.starts_with(|ch: char| ch.is_ascii_digit() || ch == '.')
+        && token.bytes().any(|byte| byte.is_ascii_digit())
         && token
             .bytes()
             .all(|byte| byte.is_ascii_digit() || byte == b',' || byte == b'.')
@@ -560,17 +561,19 @@ fn number_word(token: &str) -> Option<u32> {
     })
 }
 
-/// Lowercased alphanumeric runs. A `.` or `,` between two digits stays in
-/// its number (`0.5`, `1,000`), so a decimal never splits into two counts.
+/// Lowercased alphanumeric runs. A `.` or `,` between two digits, or a `.`
+/// opening a number, stays in it (`0.5`, `.5`, `1,000`), so a decimal never
+/// splits into a different count.
 fn temporal_query_tokens(value: &str) -> Vec<String> {
     let chars: Vec<char> = value.chars().collect();
     let mut tokens = Vec::new();
     let mut current = String::new();
     for (index, &ch) in chars.iter().enumerate() {
+        let before = index.checked_sub(1).map(|before| chars[before]);
         let in_number = matches!(ch, '.' | ',')
-            && index > 0
-            && chars[index - 1].is_ascii_digit()
-            && chars.get(index + 1).is_some_and(char::is_ascii_digit);
+            && chars.get(index + 1).is_some_and(char::is_ascii_digit)
+            && (before.is_some_and(|before| before.is_ascii_digit())
+                || (ch == '.' && !before.is_some_and(char::is_alphanumeric)));
         if ch.is_ascii_alphanumeric() || in_number {
             current.push(ch.to_ascii_lowercase());
         } else if !current.is_empty() {
@@ -975,6 +978,7 @@ mod tests {
                 "half of a year ago",
             ),
             ("the deployment from 0.5 days ago", "0.5 days ago"),
+            ("the deployment from .5 days ago", ".5 days ago"),
         ] {
             let hints = temporal_hints_from_query(query, FROZEN_NOW);
             assert_eq!(hints.range, None, "{query}");

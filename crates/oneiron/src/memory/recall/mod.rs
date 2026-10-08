@@ -143,17 +143,22 @@ fn recall_kinds(scope: &RecallScope) -> MemoryResult<Option<Vec<u8>>> {
     let Some(kinds) = &scope.kinds else {
         return Ok(None);
     };
-    if kinds.is_empty() {
+    if kinds.is_empty() || kinds.len() > crate::registry::ENTITY_TYPE_REGISTRY.len() {
         return Err(MemoryError::bad_request_with(
-            "scope.kinds names no kind",
-            &["Name at least one registry kind, or omit kinds for every content kind."],
+            format!(
+                "scope.kinds must name between 1 and {} registry kinds",
+                crate::registry::ENTITY_TYPE_REGISTRY.len()
+            ),
+            &["Name each kind once, or omit kinds for every content kind."],
         ));
     }
-    kinds
+    let mut types = kinds
         .iter()
         .map(|kind| type_byte_for_kind(kind))
-        .collect::<MemoryResult<Vec<u8>>>()
-        .map(Some)
+        .collect::<MemoryResult<Vec<u8>>>()?;
+    types.sort_unstable();
+    types.dedup();
+    Ok(Some(types))
 }
 
 /// Item provenance (S6, default-on).
