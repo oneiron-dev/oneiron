@@ -4,9 +4,10 @@
 //! send meets, a public booking page served, an e-sign principal's autonomy,
 //! what a signing ceremony lets its parties do, and whom a calendar
 //! invitation may reach.
-use super::{Decision, held, held_by_both};
+use super::{Decision, held_by_both};
 use crate::blob_artifact::esign::{self, DocumentStatus, EsignState, SigningStatus};
-use crate::booking::invite_grant::{booker_identity, normalize_identity};
+use crate::booking::invite_grant::{booker_identity_in_txn, normalize_identity};
+use crate::calendar::invite::CalendarInviteConsentSnapshot;
 use crate::channel_identity_provider::native_mail;
 use crate::claim::{COREFERENCE_PACT_ID_LEN, ClaimSubject, PREDICATE_COREFERENCE_SHARE_CONSENT};
 use crate::delivery_window::{DELIVERY_WINDOW_CLAIM_PREDICATES, DeliveryWindowPolicyClaim};
@@ -432,29 +433,34 @@ impl Decision for CalendarInviteConsent {
         }
         subjects.extend(parties.iter().map(String::as_str).filter_map(spelling));
         if pages {
-            // Each identity read opens its own transaction, so it runs once
-            // the scans above have closed theirs.
+            let mut identities = BTreeSet::new();
             for vault in vaults {
-                for person in held(vault, ENTITY_TYPE_PERSON)? {
-                    let identity = booker_identity(vault, &person)
-                        .map_err(|error| Error::InvalidConfig(error.to_string()))?;
-                    if let Some(identity) = identity {
-                        subjects.extend(booker_spellings(&identity, &parties));
-                    }
+                let txn = vault.store.env.read_txn()?;
+                for person in vault
+                    .store
+                    .port_entity_ids_by_type(&txn, ENTITY_TYPE_PERSON, None)?
+                {
+                    identities.extend(
+                        booker_identity_in_txn(vault, &txn, &person?)
+                            .map_err(|error| Error::InvalidConfig(error.to_string()))?,
+                    );
                 }
+            }
+            for identity in &identities {
+                subjects.extend(booker_spellings(identity, &parties));
             }
         }
         Ok(subjects)
     }
 
+    /// Each subject's answer from one read of the vault's consent evidence,
+    /// which folds it as the invitation door does
+    /// (`CalendarInviteConsentSnapshot`).
     fn answers(vault: &Vault, subjects: &BTreeSet<String>) -> Result<Vec<Option<bool>>> {
+        let consent = CalendarInviteConsentSnapshot::read(vault);
         Ok(subjects
             .iter()
-            .map(|recipient| {
-                crate::calendar::invite::resolve_consent_basis(vault, recipient)
-                    .ok()
-                    .map(|basis| basis.is_some())
-            })
+            .map(|recipient| consent.basis(recipient).ok().map(|basis| basis.is_some()))
             .collect())
     }
 

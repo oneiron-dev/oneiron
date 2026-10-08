@@ -5,11 +5,17 @@ use super::admission::{ingest_reason, refused};
 use super::claims::{PREDICATE_CALENDAR_ATTENDEE, decode_attendee_value};
 use super::payload::{CALENDAR_INVITE_CHANNEL, CalendarInviteMethod, CalendarInvitePayload};
 use crate::Vault;
+use crate::booking::invite_grant::BookingInviteCoverage;
 use crate::channel_identity::{ChannelIdentity, ChannelIdentityShape};
 use crate::claim::ClaimLifecycleStatus;
+use crate::comm::{CommParties, PREDICATE_COMM_LAST_TOUCH, count_active_party_claims_in_txn};
 use crate::entity_id::EntityId;
-use crate::outbound_grant::{StandingOutboundGrantScope, StandingOutboundGrantStatus};
+use crate::outbound_grant::{
+    StandingOutboundGrant, StandingOutboundGrantScope, StandingOutboundGrantStatus,
+    standing_outbound_grant_in_txn,
+};
 use crate::registry::{ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_OUTBOUND_GRANT};
+use std::collections::BTreeMap;
 
 /// Channel classes an iMIP invite counts as prior contact on.
 ///
@@ -177,77 +183,223 @@ pub(crate) fn resolve_consent_basis(
     vault: &Vault,
     recipient: &str,
 ) -> Result<Option<CalendarInviteConsentBasis>, CalendarError> {
+    consent_basis(
+        |channel_class| {
+            crate::comm::count_active_comm_claims(
+                vault,
+                PREDICATE_COMM_LAST_TOUCH,
+                recipient,
+                channel_class,
+            )
+            .map_err(|err| ingest_reason(err.to_string()))
+        },
+        || StandingGrants::read(vault)?.covering(recipient),
+    )
+}
+
+/// The consent basis of one recipient: a prior thread when `touches` counts
+/// a standing `comm.last_touch` with them on a prior-thread channel class,
+/// otherwise the grant `covering` verifies.
+fn consent_basis(
+    mut touches: impl FnMut(&str) -> Result<usize, CalendarError>,
+    covering: impl FnOnce() -> Result<Option<EntityId>, CalendarError>,
+) -> Result<Option<CalendarInviteConsentBasis>, CalendarError> {
     for channel_class in PRIOR_THREAD_CHANNEL_CLASSES {
-        let touched = crate::comm::count_active_comm_claims(
-            vault,
-            crate::comm::PREDICATE_COMM_LAST_TOUCH,
-            recipient,
-            channel_class,
-        )
-        .map_err(|err| ingest_reason(err.to_string()))?;
-        if touched > 0 {
+        if touches(channel_class)? > 0 {
             return Ok(Some(CalendarInviteConsentBasis::PriorThread));
         }
     }
-    Ok(confirmed_booking_grant(vault, recipient)?
-        .map(|grant_ref| CalendarInviteConsentBasis::ConfirmedBookingGrant { grant_ref }))
+    Ok(
+        covering()?
+            .map(|grant_ref| CalendarInviteConsentBasis::ConfirmedBookingGrant { grant_ref }),
+    )
 }
 
-/// Verifies — never mints — an ACTIVE standing outbound grant that covers
-/// invites to this recipient.
-///
-/// BK-03 (ONE-1814) owns the booking-page grant and the
-/// `BookingPageInvites`-shaped scope; this door reads whatever the existing
-/// [`StandingOutboundGrantScope`] vocabulary already expresses: a contact-scoped
-/// grant for this exact recipient, or a channel-scoped grant on the calendar
-/// connector. Until BK-03 mints one, nothing here can match and only a prior
-/// thread can carry a REQUEST — which is exactly the ratified pre-BK-03 state.
-fn confirmed_booking_grant(
-    vault: &Vault,
-    recipient: &str,
-) -> Result<Option<EntityId>, CalendarError> {
-    let grants = vault
-        .entities_by_type(ENTITY_TYPE_OUTBOUND_GRANT)
-        .map_err(CalendarError::from)?;
-    let mut matched: Option<EntityId> = None;
-    for grant_ref in grants {
-        let Some(grant) = vault
-            .get_standing_outbound_grant(&grant_ref)
-            .map_err(CalendarError::from)?
-        else {
-            continue;
-        };
-        if grant.status != StandingOutboundGrantStatus::Active || grant.revoked_at.is_some() {
-            continue;
-        }
-        let covers = match &grant.scope {
-            StandingOutboundGrantScope::Contact { contact_ref } => {
-                contact_ref.trim().eq_ignore_ascii_case(recipient)
-            }
-            StandingOutboundGrantScope::Channel { channel } => {
-                crate::counterparty_contact::normalize_channel_class(channel)
-                    == CALENDAR_INVITE_CHANNEL
-            }
-            // BK-03's booking-page grant. The scope names a PAGE, never a
-            // recipient, so a bare `true` here would turn one page grant into
-            // a licence to invite anyone. The booking layer owns the binding
-            // and answers only from persisted claims: a CONFIRMED booking on
-            // exactly this page whose recorded booker identity IS this
-            // recipient. Any resolution failure refuses.
-            StandingOutboundGrantScope::BookingPageInvites { page_ref } => {
-                crate::booking::invite_grant::booking_page_grant_covers_recipient(
-                    vault, page_ref, recipient,
-                )
-                .map_err(|err| ingest_reason(err.to_string()))?
-            }
-            _ => false,
-        };
-        // Converge on one deterministic grant when several cover the same send.
-        if covers && matched.is_none_or(|current| grant_ref.as_bytes() < current.as_bytes()) {
-            matched = Some(grant_ref);
+/// The consent evidence of one vault, read once for every recipient a caller
+/// asks about: [`resolve_consent_basis`]'s fold over every comm party's
+/// standing touches and the standing grants, read in bulk.
+pub(crate) struct CalendarInviteConsentSnapshot {
+    touches: Result<PartyTouches, CalendarError>,
+    grants: Result<StandingGrants, CalendarError>,
+}
+
+impl CalendarInviteConsentSnapshot {
+    /// Reads `vault`'s consent evidence.
+    pub(crate) fn read(vault: &Vault) -> Self {
+        Self {
+            touches: PartyTouches::read(vault),
+            grants: StandingGrants::read(vault),
         }
     }
-    Ok(matched)
+
+    /// The consent basis the vault carries for `recipient`, as
+    /// [`resolve_consent_basis`] answers it.
+    pub(crate) fn basis(
+        &self,
+        recipient: &str,
+    ) -> Result<Option<CalendarInviteConsentBasis>, CalendarError> {
+        consent_basis(
+            |channel_class| {
+                self.touches
+                    .as_ref()
+                    .map_err(CalendarError::clone)?
+                    .count(recipient, channel_class)
+            },
+            || {
+                self.grants
+                    .as_ref()
+                    .map_err(CalendarError::clone)?
+                    .covering(recipient)
+            },
+        )
+    }
+}
+
+/// Every comm party, and the standing touches it carries on each
+/// prior-thread channel class, read in one transaction.
+struct PartyTouches {
+    parties: CommParties,
+    counts: BTreeMap<EntityId, BTreeMap<&'static str, Result<usize, CalendarError>>>,
+}
+
+impl PartyTouches {
+    fn read(vault: &Vault) -> Result<Self, CalendarError> {
+        let rtxn = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|error| CalendarError::from(crate::Error::from(error)))?;
+        let parties =
+            CommParties::read_in_txn(vault, &rtxn).map_err(|err| ingest_reason(err.to_string()))?;
+        let mut counts = BTreeMap::new();
+        for party in parties.refs() {
+            let touches = PRIOR_THREAD_CHANNEL_CLASSES
+                .into_iter()
+                .map(|channel_class| {
+                    let count = count_active_party_claims_in_txn(
+                        vault,
+                        &rtxn,
+                        party,
+                        PREDICATE_COMM_LAST_TOUCH,
+                        channel_class,
+                    )
+                    .map_err(|err| ingest_reason(err.to_string()));
+                    (channel_class, count)
+                })
+                .collect::<BTreeMap<_, _>>();
+            counts.insert(party, touches);
+        }
+        Ok(Self { parties, counts })
+    }
+
+    /// What `count_active_comm_claims` counts for `party` on `channel_class`.
+    fn count(&self, party: &str, channel_class: &str) -> Result<usize, CalendarError> {
+        let Some(party_ref) = self
+            .parties
+            .resolve(party)
+            .map_err(|err| ingest_reason(err.to_string()))?
+        else {
+            return Ok(0);
+        };
+        self.counts
+            .get(&party_ref)
+            .and_then(|touches| touches.get(channel_class))
+            .map_or(Ok(0), Clone::clone)
+    }
+}
+
+/// The standing outbound grants, read once, and which recipients the booking
+/// page ones cover.
+struct StandingGrants {
+    /// Every grant record, by id.
+    grants: Vec<(EntityId, StandingOutboundGrant)>,
+    /// Each booking page's confirmed bookers, read only when an active booking
+    /// page grant needs them.
+    bookings: BookingInviteCoverage,
+}
+
+impl StandingGrants {
+    fn read(vault: &Vault) -> Result<Self, CalendarError> {
+        let grant_refs = vault
+            .entities_by_type(ENTITY_TYPE_OUTBOUND_GRANT)
+            .map_err(CalendarError::from)?;
+        let mut grants = Vec::new();
+        {
+            let rtxn = vault
+                .store
+                .env
+                .read_txn()
+                .map_err(|error| CalendarError::from(crate::Error::from(error)))?;
+            for grant_ref in grant_refs {
+                if let Some(grant) = standing_outbound_grant_in_txn(&vault.store, &rtxn, &grant_ref)
+                    .map_err(CalendarError::from)?
+                {
+                    grants.push((grant_ref, grant));
+                }
+            }
+        }
+        let pages = grants.iter().any(|(_, grant)| {
+            live(grant)
+                && matches!(
+                    grant.scope,
+                    StandingOutboundGrantScope::BookingPageInvites { .. }
+                )
+        });
+        let bookings = if pages {
+            BookingInviteCoverage::read(vault)
+        } else {
+            BookingInviteCoverage::default()
+        };
+        Ok(Self { grants, bookings })
+    }
+
+    /// Verifies — never mints — an ACTIVE standing outbound grant that covers
+    /// invites to this recipient.
+    ///
+    /// BK-03 (ONE-1814) owns the booking-page grant and the
+    /// `BookingPageInvites`-shaped scope; this door reads whatever the existing
+    /// [`StandingOutboundGrantScope`] vocabulary already expresses: a contact-scoped
+    /// grant for this exact recipient, or a channel-scoped grant on the calendar
+    /// connector. Until BK-03 mints one, nothing here can match and only a prior
+    /// thread can carry a REQUEST — which is exactly the ratified pre-BK-03 state.
+    fn covering(&self, recipient: &str) -> Result<Option<EntityId>, CalendarError> {
+        let mut matched: Option<EntityId> = None;
+        for (grant_ref, grant) in &self.grants {
+            if !live(grant) {
+                continue;
+            }
+            let covers = match &grant.scope {
+                StandingOutboundGrantScope::Contact { contact_ref } => {
+                    contact_ref.trim().eq_ignore_ascii_case(recipient)
+                }
+                StandingOutboundGrantScope::Channel { channel } => {
+                    crate::counterparty_contact::normalize_channel_class(channel)
+                        == CALENDAR_INVITE_CHANNEL
+                }
+                // BK-03's booking-page grant. The scope names a PAGE, never a
+                // recipient, so a bare `true` here would turn one page grant into
+                // a licence to invite anyone. The booking layer owns the binding
+                // and answers only from persisted claims: a CONFIRMED booking on
+                // exactly this page whose recorded booker identity IS this
+                // recipient. Any resolution failure refuses.
+                StandingOutboundGrantScope::BookingPageInvites { page_ref } => self
+                    .bookings
+                    .covers(page_ref, recipient)
+                    .map_err(|err| ingest_reason(err.to_string()))?,
+                _ => false,
+            };
+            // Converge on one deterministic grant when several cover the same send.
+            if covers && matched.is_none_or(|current| grant_ref.as_bytes() < current.as_bytes()) {
+                matched = Some(*grant_ref);
+            }
+        }
+        Ok(matched)
+    }
+}
+
+/// Whether `grant` is active and unrevoked.
+fn live(grant: &StandingOutboundGrant) -> bool {
+    grant.status == StandingOutboundGrantStatus::Active && grant.revoked_at.is_none()
 }
 
 /// Whether a live `calendar.attendee` claim already binds this recipient.

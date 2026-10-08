@@ -16,6 +16,7 @@ use crate::entity_id::EntityId;
 use crate::outbound_grant::StandingOutboundGrantScope;
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
+use std::collections::BTreeSet;
 
 /// The page/booker binding one confirmed booking persists.
 pub(super) struct BookingInviteBinding {
@@ -87,18 +88,69 @@ pub fn booking_page_grant_covers_recipient(
     page_ref: &EntityId,
     recipient: &str,
 ) -> Result<bool, BookingError> {
-    for booking_ref in vault
-        .entities_by_type(ENTITY_TYPE_EVENT)
-        .map_err(|error| engine_failure("booking event scan", error))?
-    {
-        let Some(binding) = confirmed_booking_binding(vault, &booking_ref)? else {
-            continue;
-        };
-        if binding.page_ref == *page_ref && identities_match(&binding.recipient, recipient) {
+    BookingInviteCoverage::read(vault).covers(page_ref, recipient)
+}
+
+/// Which recipients the booking page grants cover, for every page at once:
+/// the page and booker identity of each confirmed booking, read in EVENT
+/// order up to the first booking whose evidence does not read.
+#[derive(Default)]
+pub(crate) struct BookingInviteCoverage {
+    /// Each page, with the normalized identity of a booker it covers.
+    covered: BTreeSet<(EntityId, String)>,
+    /// What stopped the read, which a page that does not already cover the
+    /// recipient answers with.
+    failure: Option<BookingError>,
+}
+
+impl BookingInviteCoverage {
+    /// Reads every booking EVENT's binding, in one transaction after the
+    /// EVENT scan.
+    pub(crate) fn read(vault: &Vault) -> Self {
+        let mut coverage = Self::default();
+        if let Err(failure) = coverage.read_bindings(vault) {
+            coverage.failure = Some(failure);
+        }
+        coverage
+    }
+
+    fn read_bindings(&mut self, vault: &Vault) -> Result<(), BookingError> {
+        let bookings = vault
+            .entities_by_type(ENTITY_TYPE_EVENT)
+            .map_err(|error| engine_failure("booking event scan", error))?;
+        let rtxn = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|error| engine_failure("read transaction", error))?;
+        for booking_ref in bookings {
+            if let Some(binding) = confirmed_booking_binding_in_txn(vault, &rtxn, &booking_ref)? {
+                self.covered
+                    .insert((binding.page_ref, normalize_identity(&binding.recipient)));
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether a live grant on `page_ref` covers invites to `recipient`
+    /// (`booking_page_grant_covers_recipient`): a confirmed booking on that
+    /// page read before any that failed, whose booker is the recipient.
+    pub(crate) fn covers(
+        &self,
+        page_ref: &EntityId,
+        recipient: &str,
+    ) -> Result<bool, BookingError> {
+        if self
+            .covered
+            .contains(&(*page_ref, normalize_identity(recipient)))
+        {
             return Ok(true);
         }
+        match &self.failure {
+            Some(failure) => Err(failure.clone()),
+            None => Ok(false),
+        }
     }
-    Ok(false)
 }
 
 /// The page/booker binding `booking_ref` carries, or `None` when this EVENT is
@@ -107,16 +159,30 @@ pub(super) fn confirmed_booking_binding(
     vault: &Vault,
     booking_ref: &EntityId,
 ) -> Result<Option<BookingInviteBinding>, BookingError> {
+    let rtxn = vault
+        .store
+        .env
+        .read_txn()
+        .map_err(|error| engine_failure("read transaction", error))?;
+    confirmed_booking_binding_in_txn(vault, &rtxn, booking_ref)
+}
+
+/// [`confirmed_booking_binding`] through the caller's transaction.
+fn confirmed_booking_binding_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    booking_ref: &EntityId,
+) -> Result<Option<BookingInviteBinding>, BookingError> {
     let mut page_ref = None;
     let mut status = None;
     let mut booker_contact = None;
     let mut event_type = None;
     for claim_id in vault
-        .claims_for_subject(booking_ref)
+        .claims_for_subject_in_txn(rtxn, booking_ref)
         .map_err(|error| engine_failure("booking claim scan", error))?
     {
         let Some(body) = vault
-            .get_claim(&claim_id)
+            .get_claim_in_txn(rtxn, &claim_id)
             .map_err(|error| engine_failure("booking claim read", error))?
         else {
             continue;
@@ -156,7 +222,7 @@ pub(super) fn confirmed_booking_binding(
     else {
         return Ok(None);
     };
-    let Some(recipient) = booker_identity(vault, &booker_contact)? else {
+    let Some(recipient) = booker_identity_in_txn(vault, rtxn, &booker_contact)? else {
         return Ok(None);
     };
     Ok(Some(BookingInviteBinding {
@@ -177,9 +243,18 @@ pub(crate) fn booker_identity(
         .env
         .read_txn()
         .map_err(|error| engine_failure("read transaction", error))?;
+    booker_identity_in_txn(vault, &rtxn, contact_ref)
+}
+
+/// [`booker_identity`] through the caller's transaction.
+pub(crate) fn booker_identity_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    contact_ref: &EntityId,
+) -> Result<Option<String>, BookingError> {
     let Some(raw) = vault
         .store
-        .port_entity_record(&rtxn, contact_ref)
+        .port_entity_record(rtxn, contact_ref)
         .map(|row| row.map(|row| row.encode()))
         .map_err(|error| engine_failure("booker contact read", error))?
     else {
