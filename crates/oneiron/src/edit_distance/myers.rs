@@ -117,6 +117,25 @@ impl LineDiff {
 /// on which text was called `before`.
 #[must_use]
 pub fn myers_line_diff(before: &str, after: &str) -> LineDiff {
+    // A layout-only edit is settled before any line is paired: a re-wrap can
+    // leave one line that happens to equal another, and pairing it would
+    // charge a move for text that never went anywhere.
+    let collapsed = collapse_whitespace(before);
+    if collapsed == collapse_whitespace(after) {
+        let len = if collapsed.is_empty() {
+            0
+        } else {
+            u32_saturating(collapsed.chars().count()).saturating_add(1)
+        };
+        let ops = OpsSummary {
+            kept: len,
+            ..OpsSummary::default()
+        };
+        return LineDiff {
+            d_norm: ops.d_norm(len, len),
+            ops,
+        };
+    }
     let forward = one_way_diff(before, after);
     let reverse = one_way_diff(after, before);
     if reverse.d_norm < forward.d_norm {
