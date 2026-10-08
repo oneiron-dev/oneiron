@@ -614,7 +614,19 @@ fn message_drift_after_preparation_refuses_new_claims_and_attachments() -> Resul
                 delete_message(vault, dropped)
             })),
             "author edge" => Some(Box::new(move |vault: &Vault| {
-                assert!(vault.delete_edge(&cited, EdgeKind::AuthoredBy, &writer)?);
+                // Fault injection past the delete door's room guards: a room
+                // MESSAGE's author edge moves only through the actor door.
+                use crate::ports::EdgeStoreStaging;
+                vault.with_write_txn(|txn| {
+                    let torn = vault.store.port_remove_edge_rows(
+                        txn,
+                        &cited,
+                        EdgeKind::AuthoredBy,
+                        &writer,
+                    )?;
+                    assert!(torn, "the author edge existed");
+                    Ok(())
+                })?;
                 vault.put_edge(&cited, EdgeKind::AuthoredBy, &other, 1.0)?;
                 Ok(())
             })),
