@@ -3247,11 +3247,14 @@ fn a_paused_marker_below_the_range_moves_into_it_still_paused() {
 
 /// A ready marker whose ready entry a fault left under a later instant is
 /// indexed again when the worker starts, and is claimed when its row says
-/// it is ready, not when the stale entry does.
+/// it is ready, not when the stale entry does. Once that instant comes, a
+/// pass with nothing to claim deletes the stale entry for good.
 #[test]
 fn a_ready_marker_indexed_only_under_a_later_instant_is_claimed_at_once() {
+    const LATER: u64 = NOW + 86_400;
     let dir = tempfile::tempdir().expect("dir");
-    let vault = open(dir.path(), true);
+    let clock = ManualClock::new(NOW);
+    let vault = open_on(dir.path(), &clock);
     let turn = witness(&vault, "Ada sailed north");
     let [marker] = markers(&vault).try_into().expect("one marker");
     assert_eq!(marker.scheduled_at, None, "ready at once");
@@ -3262,12 +3265,13 @@ fn a_ready_marker_indexed_only_under_a_later_instant_is_claimed_at_once() {
             vault
                 .store
                 .attempt_ready
-                .put(txn, &key(NOW + 86_400), marker.id.as_bytes())?;
+                .put(txn, &key(LATER), marker.id.as_bytes())?;
             Ok::<(), crate::Error>(())
         })
         .expect("a stale ready entry");
     let tagger = Scripted::new(Answer::Good);
-    let pass = reconciler(&vault, &tagger).drain_once().expect("drain");
+    let reconciler = reconciler(&vault, &tagger);
+    let pass = reconciler.drain_once().expect("drain");
     assert_eq!(pass.traces.len(), 1);
     assert!(matches!(
         pass.traces[0].outcome,
@@ -3275,4 +3279,17 @@ fn a_ready_marker_indexed_only_under_a_later_instant_is_claimed_at_once() {
     ));
     assert!(markers(&vault).is_empty());
     assert_eq!(settled(&vault, &turn), 1);
+
+    clock.set(LATER + 1);
+    assert!(reconciler.drain_once().expect("drain").traces.is_empty());
+    let txn = vault.store.env.read_txn().expect("read txn");
+    assert!(
+        vault
+            .store
+            .attempt_ready
+            .get(&txn, &key(LATER))
+            .expect("ready index")
+            .is_none(),
+        "the stale entry is gone"
+    );
 }

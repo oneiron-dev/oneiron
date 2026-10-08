@@ -295,14 +295,19 @@ impl<'a> AttemptQueue<'a> {
     /// kind's ready backlog, and a row of another kind that does not decode
     /// never stops the claim. Those entries are left for their own kind's
     /// claim to repair; an owner-retained entry gets the generic claim's
-    /// checks and repairs.
+    /// checks and repairs, and the claim reports whether it made any, so the
+    /// caller can keep them when nothing was claimed. An entry naming a row
+    /// that is gone is deleted alone: an owner-retained row's dedupe entries
+    /// leave with it, and one left naming a missing row reads as no pending
+    /// attempt and is replaced by the next enqueue, so no dedupe scan runs
+    /// under the writer.
     pub(crate) fn claim_owner_retained_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         kind: &str,
         input: ClaimAttempt,
         cutoff: u64,
-    ) -> Result<ClaimOutcome> {
+    ) -> Result<(ClaimOutcome, bool)> {
         validate_kind(kind)?;
         validate_lease_owner(&input.lease_owner)?;
         if !crate::attempt_queue::owner_retained_kind(kind) {
@@ -320,7 +325,6 @@ impl<'a> AttemptQueue<'a> {
         let mut lower = floor(0);
         let mut stale_ready_keys = Vec::new();
         let mut ready_replacements = Vec::new();
-        let mut stale_missing_record_ids = HashSet::new();
         let mut claimed = None;
         loop {
             let next = self
@@ -360,7 +364,6 @@ impl<'a> AttemptQueue<'a> {
                 continue;
             }
             let Some(raw_record) = self.store.attempt_records.get(&*wtxn, id.as_bytes())? else {
-                stale_missing_record_ids.insert(id);
                 stale_ready_keys.push(key);
                 continue;
             };
@@ -396,7 +399,7 @@ impl<'a> AttemptQueue<'a> {
             break;
         }
 
-        self.delete_dedupe_entries_for_ids(wtxn, &stale_missing_record_ids)?;
+        let repaired = !stale_ready_keys.is_empty() || !ready_replacements.is_empty();
         for key in stale_ready_keys {
             self.store.attempt_ready.delete(wtxn, &key)?;
         }
@@ -405,7 +408,7 @@ impl<'a> AttemptQueue<'a> {
         }
 
         let Some((ready_key, id, record)) = claimed else {
-            return Ok(ClaimOutcome::Empty);
+            return Ok((ClaimOutcome::Empty, repaired));
         };
         crate::task_verb::acquire_task_symbols(
             self.store,
@@ -418,7 +421,7 @@ impl<'a> AttemptQueue<'a> {
         self.store
             .attempt_records
             .put(wtxn, id.as_bytes(), &encoded)?;
-        Ok(ClaimOutcome::Claimed(record))
+        Ok((ClaimOutcome::Claimed(record), repaired))
     }
 
     /// Whether a ready owner-retained row lacks the ready entry its own state

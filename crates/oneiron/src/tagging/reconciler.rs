@@ -450,16 +450,23 @@ impl TaggingReconciler {
         #[cfg(test)]
         self.vault.test_hooks().run_after_tagging_claim_writer();
         let now = self.stamp_in_txn(&txn)?;
-        let claimed = AttemptQueue::from_store(&self.vault.store).claim_owner_retained_in_txn(
-            &mut txn,
-            TAGGING_MARKER_KIND,
-            ClaimAttempt {
-                lease_owner: self.lease_owner.clone(),
+        let (claimed, repaired) = AttemptQueue::from_store(&self.vault.store)
+            .claim_owner_retained_in_txn(
+                &mut txn,
+                TAGGING_MARKER_KIND,
+                ClaimAttempt {
+                    lease_owner: self.lease_owner.clone(),
+                    now,
+                },
                 now,
-            },
-            now,
-        )?;
+            )?;
         let ClaimOutcome::Claimed(record) = claimed else {
+            // An empty claim commits only the index entries it repaired, so
+            // the next pass does not meet them again.
+            if repaired {
+                txn.commit()?;
+                self.vault.store.notify_attempt_observers();
+            }
             return Ok(None);
         };
         txn.commit()?;
