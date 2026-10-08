@@ -152,11 +152,8 @@ impl Decision for DeliveryWindows {
     }
 
     fn loosens(live: &Self::Answer, restored: &Self::Answer) -> bool {
-        live.iter().any(|restriction| {
-            !restored
-                .iter()
-                .any(|kept| kept.same_reach(restriction))
-        })
+        live.iter()
+            .any(|restriction| !restored.iter().any(|kept| kept.same_reach(restriction)))
     }
 }
 
