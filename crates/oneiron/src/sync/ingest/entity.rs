@@ -142,6 +142,22 @@ impl RefusalRetry {
     }
 }
 
+/// A row checked against a sibling row of the same entities map: an ask word or
+/// receipt against its group, a project's derived home room against its project.
+/// Forward remat and observer B visit these after every other row of a pass or
+/// delta, so a sibling carried in the same map is visited first. It lands first
+/// only when its own dependencies are already met.
+pub(in crate::sync) fn waits_for_sibling_row(blob: &[u8]) -> bool {
+    crate::task_verb::waits_for_ask_group(blob)
+        || EntityMetadataHeader::parse(blob).is_some_and(|header| {
+            header.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION
+                && crate::workspace_roster::project_room_dependency(
+                    &blob[ENTITY_METADATA_HEADER_LEN..],
+                )
+                .is_some()
+        })
+}
+
 fn refuse(id: Option<EntityId>, err: Error) -> EntityStep {
     EntityStep::Quarantine(EntityRefusal {
         id,
