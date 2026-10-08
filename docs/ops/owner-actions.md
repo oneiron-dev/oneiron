@@ -21,7 +21,7 @@ oneiron doctor /path/to/vault            # add --config FILE if it is not the XD
 | `location.vault` | The vault directory, absolute. |
 | `location.disk_bytes`, `location.disk` | Space the vault directory takes on disk. |
 | `location.backups` | Backup directory, how many backups, the newest one, the schedule (`every_hours`, `keep`). |
-| `location.last_export` | The last whole-vault export: when, format, size, who. Every export writes this receipt. |
+| `location.last_export` | The latest recorded export receipt: when, format, size, who. Writing the receipt is best effort, so an export can succeed without a new one. |
 | `location.secret_scan` | `on` or `off`. |
 
 While `serve` holds the vault, `doctor` still prints the path, size and backups, and says to ask
@@ -93,7 +93,9 @@ working. An approval spent after the backup stays spent.
 The restored copy is built beside the vault, then swapped into place in one atomic step while
 the restore holds both vaults, so a server starting meanwhile can open neither half-way. Your
 previous vault is kept whole as `<vault>.pre-restore-<UTC time>`; nothing is deleted. To undo,
-stop the server and swap the directories back.
+stop the server and swap the directories back. If the directory cannot be synced after the swap,
+the restore still reports success, with a `durability_warning` that names the previous vault:
+the swap is done, but a crash before the disk flushes may undo it.
 
 A restore refuses, and changes nothing, when:
 
@@ -119,9 +121,10 @@ oneiron export --format json > vault.json      # stdout when --out is omitted
 ```
 
 On a running server, `POST /v1/core/facade/export` with `{"format": "md"}` and an owner
-credential. Every export writes a receipt (time, format, bytes, digest, who), and `doctor`
-shows the last one. An export is a readable archive of your knowledge. It is not a backup:
-restore from a backup file.
+credential. Each export tries to write a receipt (time, format, bytes, digest, who), and
+`doctor` shows the latest one recorded. The receipt is best effort: if it cannot be written the
+export still succeeds, a warning is logged, and `last_export` stays as it was. An export is a
+readable archive of your knowledge. It is not a backup: restore from a backup file.
 
 ## Secret scan switch
 
@@ -162,9 +165,10 @@ oneiron import decline preview.json --digest <digest from preview>
 
 `approve` admits every claim of the previewed batch as approved, in one transaction, with one
 approval receipt. A batch that changed after preview is refused whole. `decline` writes one
-refusal receipt and admits nothing. An approval works once. Routes: `POST
-/v1/owner/imports/preview` with the batch, then `/v1/owner/imports/approve` or `/decline` with
-`{"batch": <preview.batch>, "digest": "<digest>"}`.
+refusal receipt and admits nothing. A batch takes one decision: once it is approved or
+declined, a second approve or decline is refused (409, `already_decided`) and the first
+decision stands. Routes: `POST /v1/owner/imports/preview` with the batch, then
+`/v1/owner/imports/approve` or `/decline` with `{"batch": <preview.batch>, "digest": "<digest>"}`.
 
 ## Approve or decline an agent run in one act
 
