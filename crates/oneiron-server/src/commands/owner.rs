@@ -153,6 +153,24 @@ pub fn export(args: ExportArgs) -> anyhow::Result<()> {
         io::stdout().lock().write_all(export.rendered.as_bytes())?;
         return Ok(());
     };
+    write_new_file(&out, |file| {
+        file.write_all(export.rendered.as_bytes())?;
+        file.sync_all()
+    })?;
+    emit(&Exported {
+        file: &out,
+        format: export.format,
+        bytes: export.rendered.len(),
+    })
+}
+
+/// Creates `out` (owner-only, never over an existing file) and fills it with
+/// `write`. A failed write removes the partial file, so the same `--out` can
+/// be retried.
+fn write_new_file(
+    out: &Path,
+    write: impl FnOnce(&mut std::fs::File) -> io::Result<()>,
+) -> anyhow::Result<()> {
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -161,15 +179,14 @@ pub fn export(args: ExportArgs) -> anyhow::Result<()> {
         options.mode(0o600);
     }
     let mut file = options
-        .open(&out)
+        .open(out)
         .map_err(|error| anyhow::anyhow!("create {}: {error}", out.display()))?;
-    file.write_all(export.rendered.as_bytes())?;
-    file.sync_all()?;
-    emit(&Exported {
-        file: &out,
-        format: export.format,
-        bytes: export.rendered.len(),
-    })
+    if let Err(error) = write(&mut file) {
+        drop(file);
+        let _ = std::fs::remove_file(out);
+        anyhow::bail!("write {}: {error}", out.display());
+    }
+    Ok(())
 }
 
 pub fn secret_scan(args: SecretScanArgs) -> anyhow::Result<()> {
@@ -260,3 +277,6 @@ pub fn runs(command: RunsCommand) -> anyhow::Result<()> {
         )?),
     }
 }
+
+#[cfg(test)]
+mod tests;
