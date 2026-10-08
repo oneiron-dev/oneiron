@@ -2732,10 +2732,19 @@ fn ready_parent_budget_continues_after_reopen_without_other_traffic() {
     };
     let mut append = input(room, Some(trunk), false, actor);
     append.session = Some(session);
-    let mut children = Vec::new();
-    for _ in 0..10_001 {
-        children.push(source.append_dag_record(&append).unwrap().id);
-    }
+    // Durable commits dominate this test's run time, so the 10,001 children
+    // are appended in one source transaction and reach the peer as one live
+    // delta (a few transactions) rather than one commit per record.
+    let children = source
+        .with_write_txn(|txn| {
+            (0..10_001)
+                .map(|_| {
+                    crate::conversation_dag::append_in_txn(&source, txn, &append, None, false)
+                        .map(|record| record.id)
+                })
+                .collect::<crate::Result<Vec<_>>>()
+        })
+        .unwrap();
     let doc = crate::sync::schema::create_window_doc("budget-children", &key);
     crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
     let entities = doc.get_map("entities");
@@ -2748,7 +2757,12 @@ fn ready_parent_budget_continues_after_reopen_without_other_traffic() {
     doc.commit();
     {
         let peer = std::sync::Arc::new(Vault::open(dir.path(), config.clone()).unwrap());
-        crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key).unwrap();
+        let received = crate::sync::schema::create_window_doc("budget-received", &key);
+        let _observer =
+            crate::sync::bridge::register_observer_b(&received, &peer, &materializer, key.as_str());
+        received
+            .import(&doc.export(loro::ExportMode::all_updates()).unwrap())
+            .unwrap();
         assert!(
             !peer
                 .edge_exists(children.last().unwrap(), EdgeKind::Parent, &trunk)
