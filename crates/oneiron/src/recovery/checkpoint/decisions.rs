@@ -111,6 +111,10 @@ const DECISIONS: &[(&str, Check)] = &[
     ("ask authority holders", loosened::<tasks::AskHolders>),
     ("skill activations", loosened::<skills::SkillActivations>),
     (
+        "installed script packs",
+        loosened::<skills::InstalledScriptPacks>,
+    ),
+    (
         "sender reputation offers",
         loosened::<consent::MailReputation>,
     ),

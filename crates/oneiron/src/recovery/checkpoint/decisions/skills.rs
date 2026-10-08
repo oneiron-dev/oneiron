@@ -2,11 +2,13 @@
 //! scan verdicts give an entry into `Active`, and the approval that entry
 //! lands with. A board plugin section, a marketplace ask and a shared-skill
 //! merge read the same posture; what else they read is the skill's content
-//! or authority the row classes compare.
+//! or authority the row classes compare. Beside it, the script code an
+//! installed pack's name runs.
 use super::{Decision, held_by_either};
 use crate::claim::ClaimApprovalStatus;
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::skill::SkillContentHash;
+use crate::skill_hub::pack_catalog::{PackAdapter, PackRuntimeRecipe};
 use crate::skill_scan::ActivationPosture;
 use crate::{EntityId, Result, Vault};
 use std::collections::BTreeSet;
@@ -100,4 +102,71 @@ fn asks_less(live: ActivationPosture, restored: ActivationPosture) -> bool {
             ActivationPosture::AutoEligible
         )
     )
+}
+
+/// Which script code each installed pack name runs: the source and the
+/// qualified runtime `Vault::installed_script_pack`, the preflight of every
+/// script run and wake subscription, selects for the name from its `Active`
+/// install receipt. An install under the name replaces that receipt, so a
+/// restore takes the name back to code a later install replaced, with the
+/// runtime it was qualified on then, without qualifying it again. A restored
+/// name may not run a source or a runtime the live one does not; it may run
+/// none where the live one runs one. Each script source a receipt in either
+/// vault selects is asked about under that receipt's name, where both vaults
+/// hold the source live: one only one vault holds returns or leaves with the
+/// restore (RD-20).
+pub(super) struct InstalledScriptPacks;
+
+impl Decision for InstalledScriptPacks {
+    type Subject = (String, EntityId);
+    /// The runtime the name runs the source on; `None` where it runs no
+    /// script, or another source.
+    type Answer = Option<PackRuntimeRecipe>;
+
+    fn subjects(vaults: [&Vault; 2]) -> Result<BTreeSet<Self::Subject>> {
+        let mut selected = BTreeSet::new();
+        for vault in vaults {
+            for receipt in vault.installed_packs()? {
+                if matches!(receipt.adapter, Some(PackAdapter::Script(_))) {
+                    let source = EntityId::from_hex(&receipt.source_id)?;
+                    selected.insert((receipt.pack_name, source));
+                }
+            }
+        }
+        let [live, restored] = vaults;
+        let mut subjects = BTreeSet::new();
+        for (name, source) in selected {
+            if live.get_pack_source(&source)?.is_some()
+                && restored.get_pack_source(&source)?.is_some()
+            {
+                subjects.insert((name, source));
+            }
+        }
+        Ok(subjects)
+    }
+
+    fn answers(
+        vault: &Vault,
+        subjects: &BTreeSet<Self::Subject>,
+    ) -> Result<Vec<Option<Self::Answer>>> {
+        let answer = |(name, source): &Self::Subject| -> Result<Option<PackRuntimeRecipe>> {
+            let (_, _, receipt) = vault.installed_script_pack(name)?;
+            let selected = EntityId::from_hex(&receipt.source_id)? == *source;
+            Ok(receipt.runtime.filter(|_| selected))
+        };
+        Ok(subjects
+            .iter()
+            .map(|subject| answer(subject).ok())
+            .collect())
+    }
+
+    fn loosens(live: &Option<PackRuntimeRecipe>, restored: &Option<PackRuntimeRecipe>) -> bool {
+        restored
+            .as_ref()
+            .is_some_and(|runtime| live.as_ref() != Some(runtime))
+    }
+
+    fn refusal() -> Option<Option<PackRuntimeRecipe>> {
+        Some(None)
+    }
 }

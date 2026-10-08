@@ -161,7 +161,7 @@ impl Vault {
         }
     }
 
-    fn installed_script_pack(
+    pub(crate) fn installed_script_pack(
         &self,
         name: &str,
     ) -> Result<(PackSource, String, PackInstallReceipt)> {

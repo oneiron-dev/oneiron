@@ -76,6 +76,7 @@ const CASES: &[fn() -> Result<Case>] = &[
     tasks::agent_ceilings,
     tasks::ask_holders,
     skills::skill_activations,
+    skills::installed_script_packs,
     consent::mail_reputation,
     consent::shared_coreference,
     consent::delivery_windows,
