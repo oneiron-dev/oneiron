@@ -1776,11 +1776,11 @@ fn excel_functions_the_engine_lacks_fall_back_instead_of_caching_name_errors() {
             r#"_xlfn.WEBSERVICE("https://example.invalid/")"#,
             "_xlfn.WEBSERVICE",
         ),
-        ("_xlfn.ANCHORARRAY(Input!A1)", "_xlfn.ANCHORARRAY"),
+        ("_xlfn.STOCKHISTORY(Input!A1,0)", "_xlfn.STOCKHISTORY"),
         // Beside a name Excel does not know, in the same formula.
         (
-            "IFERROR(EOM(Input!A1,0),0)+_xlfn.ANCHORARRAY(Input!A1)",
-            "_xlfn.ANCHORARRAY",
+            "IFERROR(EOM(Input!A1,0),0)+_xlfn.STOCKHISTORY(Input!A1,0)",
+            "_xlfn.STOCKHISTORY",
         ),
         // Excel's, written bare, though the fork's Excel 2007 list lacks them:
         // DBCS is the name a file gives JIS.
@@ -1809,11 +1809,11 @@ fn excel_functions_the_engine_lacks_fall_back_instead_of_caching_name_errors() {
     }
     let named = with_names(
         &fixture("", r#"<c r="A1"><f>scaled</f><v>0</v></c>"#, false),
-        r#"<definedName name="scaled">EOM(Input!$A$1,0)+_xlfn.ANCHORARRAY(Input!$A$1)</definedName>"#,
+        r#"<definedName name="scaled">EOM(Input!$A$1,0)+_xlfn.STOCKHISTORY(Input!$A$1,0)</definedName>"#,
     );
     assert_eq!(
         fallback(&named),
-        "function the engine does not implement: _xlfn.ANCHORARRAY"
+        "function the engine does not implement: _xlfn.STOCKHISTORY"
     );
     // Excel 4.0 macro functions a defined name calls, which Excel runs.
     for (formula, function) in [
@@ -2004,7 +2004,7 @@ fn names_an_add_in_a_vba_project_or_a_workbook_may_define_fall_back() {
     let mixed = with_names(
         &fixture(
             "",
-            r#"<c r="A1"><f>_xll.Foo(1)+_xlfn.ANCHORARRAY(Input!A1)+MyFn(1)</f><v>0</v></c>"#,
+            r#"<c r="A1"><f>_xll.Foo(1)+_xlfn.STOCKHISTORY(Input!A1,0)+MyFn(1)</f><v>0</v></c>"#,
             false,
         ),
         r#"<definedName name="MyFn">Input!$A$1</definedName>"#,
@@ -2012,17 +2012,17 @@ fn names_an_add_in_a_vba_project_or_a_workbook_may_define_fall_back() {
     assert_eq!(fallback(&mixed), "name used as a function: MyFn");
     let unnamed = fixture(
         "",
-        r#"<c r="A1"><f>_xll.Foo(1)+_xlfn.ANCHORARRAY(Input!A1)</f><v>0</v></c>"#,
+        r#"<c r="A1"><f>_xll.Foo(1)+_xlfn.STOCKHISTORY(Input!A1,0)</f><v>0</v></c>"#,
         false,
     );
     assert_eq!(
         fallback(&unnamed),
-        "function the engine does not implement: _xlfn.ANCHORARRAY"
+        "function the engine does not implement: _xlfn.STOCKHISTORY"
     );
     assert_eq!(
         fallback(&with_part(
             &edit_part(&unnamed, OUTPUT, |xml| xml
-                .replace("+_xlfn.ANCHORARRAY(Input!A1)", "+ClrCnt(1)")),
+                .replace("+_xlfn.STOCKHISTORY(Input!A1,0)", "+ClrCnt(1)")),
             "xl/vbaProject.bin",
             b"VBA".to_vec()
         )),

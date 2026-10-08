@@ -374,7 +374,7 @@ fn refused_workbooks_reach_the_host_recalc_untouched() {
         deep_chain.as_str(),
         // An Excel function the engine lacks: it would cache #NAME? where
         // Excel computes a value.
-        "<f>_xlfn.ANCHORARRAY(Input!A1)</f>",
+        "<f>_xlfn.STOCKHISTORY(Input!A1,0)</f>",
         // The edit gate requires the OOXML prefix in a recalculated sheet.
         "<f>XLOOKUP(2,Input!A1:A1,Input!A1:A1)</f>",
     ];
