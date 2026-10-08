@@ -22,7 +22,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/remote/origin.rs` | src | s | 2 crate-vis | — | — |
 | `src/remote/pairing.rs` | src | s | 2 crate-vis | — | — |
 | `src/remote/response.rs` | src | s | 6 crate-vis | — | — |
-| `src/remote/tests.rs` | test | m | — | — | — |
+| `src/remote/tests.rs` | test | s | — | — | — |
 | `tests/agent_verbs.rs` | test | s | — | — | Generated SDK calls preserve handles and durable C9 wait results |
 | `tests/error_mapping.rs` | test | s | — | — | ONE-1441 error-contract tests (blueprint §Test/Shared #5–#6, §Typed error contract) |
 | `tests/facade_contract.rs` | test | s | — | — | ONE-1441 shared-backend contract tests (blueprint §Test/Shared #1–#4) |
@@ -30,5 +30,3 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/numeric_boundaries.rs` | test | s | — | — | The shared timestamp bound must agree with JavaScript's safe integers |
 | `tests/origin_security.rs` | test | s | — | — | Credentials may travel over HTTP only to loopback development endpoints |
 | `tests/retained_correctness.rs` | test | s | — | — | Retained admission regressions through the actual shared SDK dispatcher |
-| `tests/same_pid_reopen.rs` | test | s | — | — | ONE-1441 §Test/Shared #3 — same-PID reopen opens one shared native vault |
-| `tests/transport_ownership.rs` | test | s | — | — | ONE-1441 §Test/Shared #7 — `bindings_depend_on_one_http_stack` |

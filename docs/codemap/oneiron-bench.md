@@ -13,7 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `benches/materializer_mutex.rs` | src | s | — | — | ONE-331 — bench-only comparison of `std::sync::Mutex` against `parking_lot::Mutex` on the Observer B… |
 | `benches/materializer_mutex/configuration.rs` | src | s | 11 crate-vis | — | Workload defaults and parse-time dimension bounds |
-| `benches/materializer_mutex/contract_tests.rs` | test | m | — | — | Deterministic workload, report, bounds, and rejection contracts |
+| `benches/materializer_mutex/contract_tests.rs` | test | s | — | — | Deterministic workload, report, bounds, and rejection contracts |
 | `benches/materializer_mutex/measurement.rs` | src | s | 3 crate-vis | — | Admit only fully materialized cases to the timing report |
 | `benches/materializer_mutex/observers.rs` | src | s | 14 crate-vis | — | The real Observer B and identical shadow bodies under the two mutexes |
 | `benches/materializer_mutex/reporting.rs` | src | s | 11 crate-vis | — | Stable JSON rows, percentiles, calibration, and fail-closed report output |
@@ -25,13 +25,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/arms.rs` | src | m | 15 crate-vis | — | Deterministic and vanilla arms plus adapter dispatch |
 | `src/beam/chroma.rs` | src | s | 5 crate-vis | — | Independent vanilla-RAG arm |
 | `src/beam/chroma/tests.rs` | test | s | 1 crate-vis | — | — |
-| `src/beam/chroma/tests/support.rs` | test | s | 3 crate-vis | — | — |
+| `src/beam/chroma/tests/support.rs` | test | s | — | — | — |
 | `src/beam/citations.rs` | src | m | 4 crate-vis | — | Evidence-backed per-number citations |
 | `src/beam/community.rs` | src | m | 9 crate-vis | — | Community-beam run, timing loop, and aggregate gating |
 | `src/beam/comparability.rs` | src | s | 9 crate-vis | — | Seven independent comparability axes and per-number publication decisions |
 | `src/beam/corpus_clock.rs` | src | s | 1 crate-vis | — | Dataset valid-time admission |
 | `src/beam/edit_path.rs` | src | s | 6 crate-vis | — | Five edit-task shapes with an independent tests-plus-contract oracle |
-| `src/beam/edit_path/tests.rs` | test | s | 2 fn · 1 mod | — | — |
+| `src/beam/edit_path/tests.rs` | test | s | — | — | — |
 | `src/beam/fixture_protocol.rs` | src | s | 4 crate-vis | — | Retrieval-only gold-span protocol |
 | `src/beam/infra.rs` | src | s | 5 crate-vis | — | Vector-database cost framing |
 | `src/beam/judge.rs` | src | s | 13 crate-vis | — | Pinned majority-judge substrate |
@@ -39,7 +39,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/llm_judge.rs` | src | s | 8 crate-vis | — | The production model-scored BEAM door: pin validation, three votes, no reward feedback |
 | `src/beam/llm_judge/tests.rs` | test | s | — | — | — |
 | `src/beam/load.rs` | src | m | 17 crate-vis | — | Dataset and contract loading |
-| `src/beam/mod.rs` | src | s | 7 crate-vis | — | BEAM scaffold and fixed scorer for EVAL-001/EVAL-002 |
+| `src/beam/mod.rs` | src | s | 6 crate-vis | — | BEAM scaffold and fixed scorer for EVAL-001/EVAL-002 |
 | `src/beam/model.rs` | src | s | 21 crate-vis | — | Fixture, manifest, and arm input types |
 | `src/beam/model_scaffold.rs` | src | m | 12 crate-vis | — | Shared measured answerer scaffold |
 | `src/beam/model_scaffold/offline.rs` | src | s | 4 crate-vis | — | Stage-aware offline accounting for the measured scaffold |
@@ -52,19 +52,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/rung_fixture.rs` | src | s | 2 crate-vis | — | Deterministic-arm conformance across first attach and remote rung changes |
 | `src/beam/runner.rs` | src | m | 11 crate-vis | — | Subcommand run entry points and orchestration |
 | `src/beam/scorer.rs` | src | s | 3 crate-vis | — | BeamScorer trait and fixed scorer |
-| `src/beam/tests_community_eval004.rs` | src | m | 19 crate-vis | — | Community and EVAL-004 tests |
-| `src/beam/tests_gates.rs` | src | m | 1 crate-vis | — | Gate tests |
+| `src/beam/tests_community_eval004.rs` | src | s | 7 crate-vis | — | Community and EVAL-004 tests |
 | `src/beam/tests_jsonl_contract.rs` | src | m | 2 crate-vis | — | JSONL contract tests |
-| `src/beam/tests_judge_cost.rs` | src | m | 1 crate-vis | — | Judge and cost tests |
-| `src/beam/tests_ppr_vad.rs` | src | m | 4 crate-vis | — | PPR-VAD tests |
-| `src/beam/tests_rerank_sweep.rs` | src | s | — | — | Deterministic BEAM seam sweep; this is not a learned-model quality claim |
-| `src/beam/tests_smoke_manifest.rs` | src | m | 1 crate-vis | — | Smoke and manifest tests |
+| `src/beam/tests_judge_cost.rs` | src | s | 1 crate-vis | — | Judge and cost tests |
+| `src/beam/tests_ppr_vad.rs` | src | s | 2 crate-vis | — | PPR-VAD tests |
+| `src/beam/tests_smoke_manifest.rs` | src | s | 1 crate-vis | — | Smoke and manifest tests |
 | `src/beam/tiers.rs` | src | s | 6 crate-vis | — | Dataset graduation: no-regression at the previous rung, explicit gated cells |
 | `src/beam/util.rs` | src | s | 18 crate-vis | — | Hex, hash, base64, and id-set helpers |
 | `src/beam/validate.rs` | src | m | 9 crate-vis | — | Fixture and manifest validators |
 | `src/eval.rs` | src | m | 2 crate-vis | — | ONE-218 eval-side driver for the telemetry-v0 retrieval-outcome loop |
 | `src/eval/outcome_ingest.rs` | src | s | 1 crate-vis | — | JSONL terminal retrieval outcome ingest for the explicit eval command |
-| `src/eval/tests.rs` | test | L | — | — | — |
+| `src/eval/tests.rs` | test | m | — | — | — |
 | `src/fleet/configuration.rs` | src | s | 3 crate-vis | — | Explicit fleet workload and host settings; smoke cannot masquerade as fleet scale |
 | `src/fleet/mod.rs` | src | s | 1 crate-vis | — | Fleet load, real held sockets, paired PPR optimization, and measured JSON receipts |
 | `src/fleet/optimization.rs` | src | s | 4 crate-vis | — | Paired full recompute versus persisted depth-five resume, with identical output checks |
@@ -79,38 +77,36 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/interface_bench/mod.rs` | src | s | 1 crate-vis | — | Campaign #5 interface bench task generation and smoke harness |
 | `src/interface_bench/reports_and_fixture_helpers.rs` | src | m | 19 crate-vis | — | Row aggregation and report tables |
 | `src/interface_bench/taskgen.rs` | src | m | 4 crate-vis | — | Fixture and task generation plus atomic JSON writers |
-| `src/interface_bench/tests_a.rs` | src | m | 3 crate-vis | — | Taskgen, config, and memo tests |
-| `src/interface_bench/tests_b.rs` | src | m | — | — | Pinned-model tests |
+| `src/interface_bench/tests_a.rs` | src | s | 2 crate-vis | — | Taskgen, config, and memo tests |
+| `src/interface_bench/tests_b.rs` | src | s | — | — | Pinned-model tests |
 | `src/interface_bench/wire_and_scoring.rs` | src | m | 13 crate-vis | — | Request hashing, memo keys, and provider wire calls |
 | `src/main.rs` | src | m | — | — | oneiron-bench — benchmark harness skeleton |
 | `src/oneironer_shadow.rs` | src | m | 1 crate-vis | — | Checkpoint-backed NER shadow proof beside an indexed fixture turn |
 | `src/perf/acceptance.rs` | src | m | 14 crate-vis | — | ONE-1579 acceptance evidence: structured support for the five ONE-1578 lifecycle knobs, and the exact… |
-| `src/perf/acceptance/tests.rs` | test | m | — | — | Regressions for the ONE-1579 acceptance evidence |
 | `src/perf/axes.rs` | src | m | 27 crate-vis | — | ONE-1579 axis shapes and the floors they are held to |
 | `src/perf/binary16.rs` | src | s | 2 crate-vis | — | IEEE-754 binary16 conversion for the ONE-1579 precision axis |
 | `src/perf/build_profile.rs` | src | m | 7 crate-vis | — | Compiled-settings attribution for ONE-1579 publication |
 | `src/perf/build_profile/tests.rs` | test | s | — | — | Regressions for ONE-1579 compiled-settings attribution |
-| `src/perf/cache_events.rs` | src | m | 5 crate-vis | — | ONE-1579 axis 7: real-traffic cache hit rates per listed rung |
+| `src/perf/cache_events.rs` | src | s | 5 crate-vis | — | ONE-1579 axis 7: real-traffic cache hit rates per listed rung |
 | `src/perf/cells.rs` | src | s | 17 crate-vis | — | ONE-1579 fail-closed reporting cells |
 | `src/perf/certificate.rs` | src | m | 18 crate-vis | — | ONE-1961 run certificate: the block an external verifier reads first |
-| `src/perf/certificate/tests.rs` | test | m | — | — | ONE-1961 regressions over the run certificate: the scope partition, the trust manifest, the statistics… |
+| `src/perf/certificate/tests.rs` | test | s | — | — | ONE-1961 regressions over the run certificate: the scope partition, the trust manifest, the statistics… |
 | `src/perf/child_process.rs` | src | m | 32 crate-vis | — | ONE-1579 ready-child plumbing: the TCP-accept readiness probe, the child programs the harness spawns, and… |
-| `src/perf/child_process/tests.rs` | test | m | — | — | ONE-1579 / ONE-1963 ready-child regressions: the readiness boundary, the bounded shutdown path, and the… |
+| `src/perf/child_process/tests.rs` | test | s | — | — | ONE-1579 / ONE-1963 ready-child regressions: the readiness boundary, the bounded shutdown path, and the… |
 | `src/perf/cli.rs` | src | m | 2 crate-vis | — | ONE-1579 `perf` command surface: argument parsing, the bundled smoke, and the rendered report |
 | `src/perf/corpus.rs` | src | m | 10 crate-vis | — | ONE-1579 corpus: the seeded, deterministic documents, queries and vectors a run is measured against, and the… |
-| `src/perf/gated_writes.rs` | src | m | 2 crate-vis | — | ONE-1579 axis 5: gated-write throughput through the public claim door |
+| `src/perf/gated_writes.rs` | src | s | 2 crate-vis | — | ONE-1579 axis 5: gated-write throughput through the public claim door |
 | `src/perf/git_sha.rs` | src | m | 10 crate-vis | — | Build-revision and checkout-HEAD resolution for ONE-1579 provenance |
 | `src/perf/mod.rs` | src | s | 28 crate-vis | — | `perf` subcommand — ONE-1579 performance bench harness |
 | `src/perf/nvme.rs` | src | m | 6 crate-vis | — | ONE-1579 axis 8: the descriptive NVMe sequential/random fsync row |
 | `src/perf/nvme_device.rs` | src | s | 2 crate-vis | — | Honest backing-device resolution for the ONE-1579 NVMe descriptor |
 | `src/perf/plan.rs` | src | m | 20 crate-vis | — | ONE-1579 plan admission |
-| `src/perf/plan/tests.rs` | test | m | — | — | ONE-1579 plan-admission regressions |
+| `src/perf/plan/tests.rs` | test | s | — | — | ONE-1579 plan-admission regressions |
 | `src/perf/precision.rs` | src | m | 14 crate-vis | — | ONE-1579 precision axis: F32 / F16 / Int8Sq / `BinaryPrefixRescore` rows |
-| `src/perf/precision/tests.rs` | test | m | — | — | Regressions for the ONE-1579 precision axis |
+| `src/perf/precision/tests.rs` | test | s | — | — | Regressions for the ONE-1579 precision axis |
 | `src/perf/provenance.rs` | src | m | 18 crate-vis | — | ONE-1579 run provenance: where, on what, and from which inputs a report was made |
-| `src/perf/provenance/tests.rs` | test | m | — | — | Regressions for ONE-1579 run provenance |
+| `src/perf/provenance/tests.rs` | test | s | — | — | Regressions for ONE-1579 run provenance |
 | `src/perf/publication.rs` | src | m | 5 crate-vis | — | ONE-1579 publication-CANDIDATE predicate |
-| `src/perf/publication/tests.rs` | test | m | — | — | ONE-1579 / ONE-1961 / ONE-1963 regressions over the candidacy predicate |
 | `src/perf/publication_state.rs` | src | m | 2 crate-vis | — | Fail-closed projection from measured ONE-1579 axes into publication checks |
 | `src/perf/report.rs` | src | s | 10 crate-vis | — | ONE-1579 report envelope |
 | `src/perf/representations.rs` | src | s | 8 crate-vis | — | Candidate vector representations for the ONE-1579 precision axis, and the scans that rank a query against… |
@@ -118,8 +114,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/perf/retrieval.rs` | src | s | 2 crate-vis | — | ONE-1579 axis 1: the warm and cold retrieval passes |
 | `src/perf/runner.rs` | src | m | 2 crate-vis | — | ONE-1579 run orchestration: measure every axis, then assemble the report |
 | `src/perf/sessions.rs` | src | m | 8 crate-vis | — | ONE-1579 axis 3: the concurrent-session curve against ONE vault |
-| `src/perf/trust.rs` | src | m | 15 crate-vis | — | ONE-1961 trust classes for publication evidence |
-| `src/perf/trust/tests.rs` | test | s | — | — | ONE-1961 regressions over the trust tables |
+| `src/perf/trust.rs` | src | m | 14 crate-vis | — | ONE-1961 trust classes for publication evidence |
 | `src/perf/wake.rs` | src | s | 1 crate-vis | — | ONE-1579 axis 2: process spawn-to-ready wake latency |
 | `src/retrieval_trace_export.rs` | src | m | 4 crate-vis | — | — |
 | `src/retrieval_turn_corpus.rs` | src | m | 1 crate-vis | — | Offline replay of finalized, turn-indexed retrieval runs |

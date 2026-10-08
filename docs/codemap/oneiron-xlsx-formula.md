@@ -24,6 +24,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/routing.rs` | src | s | 2 fn · 1 re-export | — | External links on the precision fallback's route |
 | `src/workbook.rs` | src | L | 1 struct · 1 fn · 3 crate-vis | WorkbookRecalc | Recalculate a local XLSX through the fork's retained cache writer |
 | `src/xml.rs` | src | s | 4 crate-vis | — | The document organ's namespace-aware reader, with this crate's errors |
-| `tests/corpus.rs` | test | s | — | — | Corpus honesty: every case emits exactly one row, probes never score |
-| `tests/error_concat.rs` | test | s | — | — | Error operands remain typed errors across both owned evaluator paths |
 | `tests/workbook.rs` | test | XL | — | — | Actual XLSX in/out tests of the retained engine |
