@@ -369,8 +369,12 @@ fn anchored_hint(tokens: &[String], index: usize) -> Option<(usize, Option<Tempo
         return two(TemporalExpression::Weekday { weekday, relation });
     }
     if let Some(unit) = TemporalUnit::from_token(next) {
-        // `last minute` and `this second` are idioms far more often than times.
-        if matches!(unit, TemporalUnit::Second | TemporalUnit::Minute) {
+        // `last minute`, `last second` and `this second` are idioms far more
+        // often than times.
+        if matches!(
+            (anchor, unit),
+            ("last", TemporalUnit::Minute | TemporalUnit::Second) | ("this", TemporalUnit::Second)
+        ) {
             return None;
         }
         let rolling = |ahead| TemporalExpression::Rolling {
@@ -886,6 +890,12 @@ mod tests {
                 "a few days ago",
                 Used,
                 (1_710_201_600, 1_710_287_999),
+            ),
+            (
+                "errors in the past minute",
+                "past minute",
+                Used,
+                (FROZEN_NOW - 60, FROZEN_NOW),
             ),
             (
                 "one hundred and two days ago",
