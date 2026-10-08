@@ -44,11 +44,11 @@ pub(super) const MAX_FIELD_DIFF_DEPTH: u32 = 64;
 /// `moved` at the move discount instead. The replay tracks which characters
 /// the log itself typed, so a pair is capped at what the log added and
 /// removed less its churn: text typed and then deleted again. Churn is in
-/// neither cap, so it keeps its full price however the log split it. It is
-/// counted in non-whitespace characters, because whitespace is layout. The caps are totals, not positions: where a move's line
-/// repeats the characters around it, the log can show less than the line,
-/// and a proposal character deleted and retyped there can still raise the
-/// move toward the line's weight.
+/// neither cap, so it keeps its full price however the log split it. The
+/// caps are totals, not positions: when the log shows less than the moved
+/// line (its characters repeat around it, or the swap was made by editing
+/// words in place), a proposal character deleted and retyped can still raise
+/// the move toward the line's weight.
 ///
 /// The per-change region is the span between the common prefix and the
 /// common suffix — one contiguous edit. A change that scatters edits across
@@ -88,10 +88,9 @@ pub fn delta_from_recorded_ops(finalized: &FinalizedProposalText) -> AmendmentDe
 struct LoggedMass {
     ins: u32,
     del: u32,
-    /// Typed non-whitespace characters that a later change removed. Each was
-    /// added once and removed once, so it is churn in `ins` and in `del`.
-    /// Whitespace is layout: a typed space can come and go with a re-wrap, so
-    /// it is never counted here.
+    /// Typed characters that a later content change removed. Each was added
+    /// once and removed once, so it is churn in `ins` and in `del`. A space a
+    /// layout-only change laid down is layout, not typed text.
     churn: u32,
 }
 
@@ -125,12 +124,7 @@ impl LoggedMass {
             } else {
                 vec![true; added]
             };
-            let removed_typed = before
-                .chars()
-                .skip(region.start)
-                .zip(&typed[region.clone()])
-                .filter(|(c, flag)| **flag && !c.is_whitespace())
-                .count();
+            let removed_typed = typed[region.clone()].iter().filter(|flag| **flag).count();
             typed.splice(region, arrived).for_each(drop);
             if layout_only {
                 continue;
@@ -144,8 +138,8 @@ impl LoggedMass {
 }
 
 /// The typed flags of a layout-only change's arrived region: it moves no
-/// character, so each non-whitespace character keeps its flag. Whitespace is
-/// layout and is never churn, so its flag is not read.
+/// character, so each non-whitespace character keeps its flag, and the
+/// spaces it lays down are layout, never typed text.
 fn carry_typed(
     before: &str,
     after: &str,
