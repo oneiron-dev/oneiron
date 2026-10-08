@@ -1,5 +1,6 @@
 use super::*;
 
+use crate::edit_distance::myers::MOVE_DISCOUNT;
 use crate::edit_distance::{LoroOpRef, OpAttribution, OpSpan, ProposalArtifactRef};
 use crate::error::ArtifactError;
 
@@ -255,18 +256,18 @@ fn recorded_ops_does_not_overlap_prefix_and_suffix() {
 /// lane: a context offering ALL THREE takes the recorded one, and a context
 /// offering the last two takes the field diff.
 ///
-/// `moved` is the tell that the Myers lane never ran. It is the only counter
-/// no other producer can fill, and the texts offered here are a pure
-/// relocation — a Δ measuring THEM would carry `moved == 2`.
+/// `moved` is the tell that the Myers lane never ran: the texts offered here
+/// are a pure relocation, so a Δ measuring THEM would carry `moved > 0`,
+/// while the recorded window moves nothing and the field diff never pairs.
 #[test]
 fn chooser_prefers_recorded_ops_then_field_diff_over_reconstructed() {
     let window = churned_window();
     let proposed = body(&[("a", Value::from(1))]);
     let amended = body(&[("a", Value::from(2))]);
     let (before, after) = ("one\ntwo\nthree\nfour", "three\nfour\none\ntwo");
-    assert_eq!(
+    assert_ne!(
         delta_from_reconstructed(before, after).ops_summary.moved,
-        2,
+        0,
         "fixture must be a relocation, or it proves nothing about the lane"
     );
 
@@ -330,12 +331,14 @@ fn reconstructed_lane_carries_content_hashes_of_both_ends() {
         delta.final_ref,
         bytes_to_hex_lower(blake3::hash(after.as_bytes()).as_bytes())
     );
+    // Characters, a terminator per line: `charlie` arrived, `alpha` and
+    // `bravo` stayed.
     assert_eq!(
         delta.ops_summary,
         OpsSummary {
-            ins: 1,
+            ins: 8,
             del: 0,
-            kept: 2,
+            kept: 12,
             moved: 0,
             approx: false,
         }
@@ -367,11 +370,150 @@ fn a_capped_reconstructed_diff_decodes_as_approximate() {
 /// number the reconstructed lane computes for itself.
 #[test]
 fn the_move_discount_reaches_d_norm_through_the_pinned_formula() {
-    let delta = delta_from_reconstructed("one\ntwo\nthree\nfour", "three\nfour\none\ntwo");
-    assert_eq!(delta.ops_summary.moved, 2);
-    assert_eq!(delta.d_norm, delta.ops_summary.d_norm(4, 4));
-    // Two relocations cost 0.4 where two rewrites would cost 4.
+    let delta = delta_from_reconstructed("one\ntwo\nsix\nten", "six\nten\none\ntwo");
+    assert_eq!(delta.ops_summary.moved, 8);
+    assert_eq!(delta.d_norm, delta.ops_summary.d_norm(16, 16));
+    // Eight relocated characters cost 1.6 where rewriting them would cost 16.
     assert!((delta.d_norm - 0.05).abs() < 1e-6, "{}", delta.d_norm);
+}
+
+// ─── what the text lanes read (ARCH-0056 §3, owner 2026-10-08) ─────────
+
+/// One recorded change from `before` to `after`: a decider's single
+/// correction run as the op log replays it.
+fn one_change_window(before: &str, after: &str) -> FinalizedProposalText {
+    let mut window = churned_window();
+    window.ops_by_actor = vec![span(before, after)];
+    window.proposed_text = before.to_owned();
+    window.final_text = after.to_owned();
+    window
+}
+
+const LONG_LINE: &str = "The quarterly report covers revenue, churn and hiring across all \
+    four regions, and it closes with the risks the board asked us to watch before the next \
+    planning cycle begins in spring.";
+
+/// A one-character typo in a long line charges the character, not the
+/// line: in both text lanes it reads far below the same line replaced.
+#[test]
+fn a_typo_in_a_long_line_reads_far_below_the_line_replaced_in_both_lanes() {
+    let before = format!("Summary\n{LONG_LINE}\nRegards");
+    let typo = before.replacen("revenue", "revenoe", 1);
+    let replaced = before.replacen(
+        LONG_LINE,
+        "Ship the new onboarding flow to every customer by the end of the month.",
+        1,
+    );
+
+    let reconstructed_typo = delta_from_reconstructed(&before, &typo).d_norm;
+    let reconstructed_line = delta_from_reconstructed(&before, &replaced).d_norm;
+    let recorded_typo = delta_from_recorded_ops(&one_change_window(&before, &typo)).d_norm;
+    let recorded_line = delta_from_recorded_ops(&one_change_window(&before, &replaced)).d_norm;
+
+    for (lane, typo, line) in [
+        ("reconstructed", reconstructed_typo, reconstructed_line),
+        ("recorded", recorded_typo, recorded_line),
+    ] {
+        assert!(typo > 0.0, "{lane}: a typo is still an edit");
+        assert!(typo < 0.01, "{lane}: a typo scored {typo}");
+        assert!(
+            typo * 50.0 < line,
+            "{lane}: typo {typo} is not far below the replaced line {line}"
+        );
+    }
+}
+
+/// Re-wrapping a paragraph, re-spacing it and adding blank lines changes no
+/// word, so it measures zero in both text lanes; one changed word does not.
+#[test]
+fn a_layout_only_edit_measures_zero_in_both_lanes() {
+    let before = "The deploy window opens at noon on Fridays, and the on-call\n\
+                  engineer confirms the rollback plan before anything ships.\n\
+                  \n\
+                  Questions go to the release channel.";
+    let rewrapped = "The deploy window opens at noon on Fridays,\n\
+                     and the on-call engineer confirms the rollback\n\
+                     plan  before\tanything ships.\n\
+                     \n\
+                     \n\
+                     \u{20}  Questions go to the   release channel.  \n";
+
+    assert_eq!(delta_from_reconstructed(before, rewrapped).d_norm, 0.0);
+    assert_eq!(
+        delta_from_recorded_ops(&one_change_window(before, rewrapped)).d_norm,
+        0.0
+    );
+
+    let reworded = rewrapped.replacen("noon", "midnight", 1);
+    assert!(delta_from_reconstructed(before, &reworded).d_norm > 0.0);
+    assert!(delta_from_recorded_ops(&one_change_window(before, &reworded)).d_norm > 0.0);
+}
+
+/// A paragraph moved to the end costs a tenth of deleting it and inserting a
+/// different paragraph of the same size there, in both text lanes. The
+/// recorded lane sees the move as the op log has it: a cut, then a paste.
+#[test]
+fn a_moved_paragraph_costs_a_tenth_of_a_replaced_one_in_both_lanes() {
+    let moving = "Pricing stays flat for the first year.\nRenewals follow the standard schedule.";
+    // Same lengths line by line, no shared line: ROT13 of `moving`.
+    let stand_in = rot13(moving);
+    let first = "Hi Sam,\nthanks for the call today.";
+    let second = "The contract is attached.\nSign it when you are ready.";
+
+    let before = format!("{moving}\n\n{first}\n\n{second}");
+    let cut = format!("{first}\n\n{second}");
+    let moved = format!("{cut}\n\n{moving}");
+    let replaced = format!("{cut}\n\n{stand_in}");
+
+    let reconstructed_move = delta_from_reconstructed(&before, &moved);
+    let reconstructed_swap = delta_from_reconstructed(&before, &replaced);
+    assert_ne!(reconstructed_move.ops_summary.moved, 0);
+    assert!(
+        (reconstructed_move.d_norm - MOVE_DISCOUNT * reconstructed_swap.d_norm).abs() < 1e-6,
+        "reconstructed: {} is not {MOVE_DISCOUNT}x {}",
+        reconstructed_move.d_norm,
+        reconstructed_swap.d_norm
+    );
+
+    let window = |end: &str| {
+        let mut window = one_change_window(&before, end);
+        window.ops_by_actor = vec![span(&before, &cut), span(&cut, end)];
+        window
+    };
+    let recorded_move = delta_from_recorded_ops(&window(&moved));
+    let recorded_swap = delta_from_recorded_ops(&window(&replaced));
+    assert_ne!(recorded_move.ops_summary.moved, 0);
+    assert_eq!(recorded_swap.ops_summary.moved, 0);
+    assert!(
+        (recorded_move.d_norm - MOVE_DISCOUNT * recorded_swap.d_norm).abs() < 1e-6,
+        "recorded: {} is not {MOVE_DISCOUNT}x {}",
+        recorded_move.d_norm,
+        recorded_swap.d_norm
+    );
+}
+
+/// Text typed and then deleted is churn, not a move: it is in neither
+/// endpoint, so the recorded lane charges it in full.
+#[test]
+fn recorded_churn_never_pairs_as_a_move() {
+    let mut window = one_change_window("keep this line", "keep this line");
+    window.ops_by_actor = vec![
+        span("keep this line", "keep this line\nan aside"),
+        span("keep this line\nan aside", "keep this line"),
+    ];
+    let delta = delta_from_recorded_ops(&window);
+    assert_eq!(delta.ops_summary.moved, 0);
+    assert_eq!((delta.ops_summary.ins, delta.ops_summary.del), (9, 9));
+}
+
+fn rot13(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            'a'..='z' => (((c as u8 - b'a') + 13) % 26 + b'a') as char,
+            'A'..='Z' => (((c as u8 - b'A') + 13) % 26 + b'A') as char,
+            _ => c,
+        })
+        .collect()
 }
 
 // ─── side-ledger ────────────────────────────────────────────────────────

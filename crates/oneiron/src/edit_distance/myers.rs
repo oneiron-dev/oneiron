@@ -1,6 +1,6 @@
 //! ED-02 (ARCH-0056 §3, ruling r2 — ONE-1758): the reconstructed lane's
-//! measuring instrument, a two-pass line diff for amendments that arrived
-//! with no op log to replay.
+//! measuring instrument, a line diff refined to characters, for amendments
+//! that arrived with no op log to replay.
 //!
 //! # When this lane runs
 //!
@@ -12,18 +12,37 @@
 //! [`crate::edit_distance::delta::capture_delta_best`]; nothing here decides
 //! when it is chosen.
 //!
-//! # Two passes
+//! # Three passes
 //!
 //! 1. **Shortest edit script** — classic Myers O(ND) over INTERNED line ids.
 //!    Interned rather than hashed: equal ids mean equal lines, so no
 //!    collision can make two different lines diff as one. Common leading and
 //!    trailing lines are trimmed first; they are survivors by definition, and
 //!    the trim is what keeps a one-line edit inside a 10k-line artifact cheap.
+//!    The script groups its edits into hunks: the changed regions between
+//!    runs of surviving lines.
 //! 2. **Move pairing** — a deleted line whose text reappears among the
 //!    insertions is one relocation, not two edits, and is charged
 //!    [`MOVE_DISCOUNT`] instead of a fresh delete-plus-insert. The pair leaves
 //!    `ins`/`del` entirely and lands in [`OpsSummary::moved`], which is the
 //!    channel ED-01 reserved for exactly this producer.
+//! 3. **Characters inside each hunk** — the lines a hunk still holds are
+//!    diffed again character by character (the same Myers walk over
+//!    `char`s), so a one-character typo in a long line charges one character,
+//!    not the line. A hunk whose characters barely overlap is a rewrite and
+//!    is charged whole (`REWRITE_SIMILARITY_PERCENT`), so coincidental shared letters
+//!    never discount new text.
+//!
+//! # Unit and normal form
+//!
+//! The counts are CHARACTERS of the normalized text, the same unit as the
+//! recorded-ops lane. Each line is `collapse_whitespace`d and blank lines
+//! are dropped, so re-indenting or re-spacing is not an edit; and pass 3 joins
+//! a hunk's lines with spaces, so re-wrapping a paragraph across different
+//! line breaks is not an edit either. A line weighs its characters plus one
+//! terminator. `\r\n` is `\n`, and a trailing newline is not an edit.
+//! Deliberately boring — this lane measures how much a decider changed, not
+//! how the text was laid out.
 //!
 //! # The cap
 //!
@@ -33,19 +52,13 @@
 //! for: the trimmed middle is charged as a whole replacement (an upper bound
 //! on the real edit mass), move pairing runs unchanged over it, and
 //! [`OpsSummary::approx`] marks the result so a consumer can never read a
-//! capped diff as an exact one.
-//!
-//! # Line model
-//!
-//! [`str::lines`]: a trailing newline is not an edit, and `\r\n` is `\n`.
-//! Deliberately boring — this lane measures how much a decider changed, not
-//! how a file was terminated.
+//! capped diff as an exact one. Pass 3 keeps the same cap per hunk.
 //!
 //! # Scope
 //!
-//! No generic diff trait, no character-level mode, no rename detection. r2
-//! says this lane never becomes the substrate, and the cheapest way to keep
-//! that true is to leave it not quite good enough to tempt anyone.
+//! No generic diff trait and no rename detection. r2 says this lane never
+//! becomes the substrate, and the cheapest way to keep that true is to leave
+//! it not quite good enough to tempt anyone.
 
 use std::collections::HashMap;
 
@@ -53,9 +66,9 @@ use crate::edit_distance::delta::{OpsSummary, u32_saturating};
 
 /// What a relocated line costs against a rewritten one.
 ///
-/// A move-paired line charges `2 · MOVE_DISCOUNT` (0.2) into the edit mass
-/// where the delete-plus-insert it replaces would charge 2.0 — the ratified
-/// tenth. Compile-time on purpose: this is part of the metric's definition,
+/// A move-paired character charges `2 · MOVE_DISCOUNT` (0.2) into the edit
+/// mass where the delete-plus-insert it replaces would charge 2.0 — the
+/// ratified tenth. Compile-time on purpose: this is part of the metric's definition,
 /// not a dial an operator turns under a miner that already banked numbers
 /// measured with the old one.
 pub const MOVE_DISCOUNT: f32 = 0.1;
@@ -70,10 +83,10 @@ const MAX_EDIT_SCRIPT: usize = 1024;
 /// One reconstructed line diff.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LineDiff {
-    /// Line-level op counts, with relocated lines already split out of
-    /// `ins`/`del` and into `moved`.
+    /// Character counts of the normalized text, with relocated lines
+    /// already split out of `ins`/`del` and into `moved`.
     pub ops: OpsSummary,
-    /// The pinned `clamp(edit_mass / (lines_before + lines_after), 0, 1)`.
+    /// The pinned `clamp(edit_mass / (len_before + len_after), 0, 1)`.
     pub d_norm: f32,
 }
 
@@ -89,7 +102,8 @@ impl LineDiff {
     }
 }
 
-/// Measures the line-level edit between two endpoint texts.
+/// Measures the edit between two endpoint texts, in characters of their
+/// normalized lines (see the module docs).
 ///
 /// Never fails: every degenerate input has an honest answer. Two empty texts
 /// changed nothing (`d_norm == 0`), a wholly rewritten text scores exactly
@@ -97,48 +111,110 @@ impl LineDiff {
 /// flagged approximate.
 #[must_use]
 pub fn myers_line_diff(before: &str, after: &str) -> LineDiff {
-    let (before_ids, after_ids) = intern_lines(before, after);
-    let (survived, mid_before, mid_after) = trim_common_affix(&before_ids, &after_ids);
+    let lines = Lines::intern(before, after);
+    let (_, mid_before, mid_after) = trim_common_affix(&lines.before, &lines.after);
 
     let script = shortest_edit_script(mid_before, mid_after)
         .unwrap_or_else(|| EditScript::whole_replacement(mid_before, mid_after));
-    let moved = pair_moves(&script.deleted, &script.inserted);
+    let mut hunks = script.hunks;
+    let moved = pair_moves(&mut hunks);
 
-    let ops = OpsSummary {
-        ins: u32_saturating(script.inserted.len()).saturating_sub(moved),
-        del: u32_saturating(script.deleted.len()).saturating_sub(moved),
-        kept: survived.saturating_add(script.kept),
-        moved,
+    let before_len = lines.weight_of(&lines.before);
+    let after_len = lines.weight_of(&lines.after);
+    let survived = before_len.saturating_sub(lines.weight_of(mid_before));
+    let mut ops = OpsSummary {
+        ins: 0,
+        del: 0,
+        kept: survived.saturating_add(lines.weight_of(&script.kept)),
+        moved: lines.weight_of(&moved),
         approx: script.approx,
     };
+    for hunk in &hunks {
+        let chars = char_pass(&lines, hunk);
+        ops.ins = ops.ins.saturating_add(chars.ins);
+        ops.del = ops.del.saturating_add(chars.del);
+        ops.kept = ops.kept.saturating_add(chars.kept);
+        ops.approx |= chars.approx;
+    }
     LineDiff {
-        d_norm: ops.d_norm(
-            u32_saturating(before_ids.len()),
-            u32_saturating(after_ids.len()),
-        ),
+        d_norm: ops.d_norm(before_len, after_len),
         ops,
     }
 }
 
 // ---------------------------------------------------------------------------
-// Interning + affix trim
+// Normalization + interning + affix trim
 // ---------------------------------------------------------------------------
 
-/// Maps both texts' lines onto dense ids sharing one table, so the diff and
-/// the move pairing both compare integers while equality stays EXACT.
-fn intern_lines<'a>(before: &'a str, after: &'a str) -> (Vec<u32>, Vec<u32>) {
-    let mut table: HashMap<&'a str, u32> = HashMap::new();
-    let mut intern = |text: &'a str| -> Vec<u32> {
-        text.lines()
-            .map(|line| {
-                let next = u32_saturating(table.len());
-                *table.entry(line).or_insert(next)
-            })
+/// The format-blind form of a text: every whitespace run, newlines
+/// included, becomes one space, and the ends are trimmed.
+///
+/// Both text lanes measure THIS, never the raw text, so re-indenting,
+/// re-spacing or re-wrapping a passage costs nothing.
+pub(in crate::edit_distance) fn collapse_whitespace(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Both texts' normalized, non-blank lines as dense ids sharing one table,
+/// so the diff and the move pairing compare integers while equality stays
+/// EXACT. A blank line is format, not content, so it is not a line here.
+struct Lines {
+    before: Vec<u32>,
+    after: Vec<u32>,
+    /// `weights[id]`: the line's characters plus its one terminator, so the
+    /// lines of a text weigh exactly what its newline-terminated normal form
+    /// does.
+    weights: Vec<u32>,
+    /// `texts[id]`: the normalized line itself, for the character pass.
+    texts: Vec<String>,
+}
+
+impl Lines {
+    fn intern(before: &str, after: &str) -> Self {
+        let mut table: HashMap<String, u32> = HashMap::new();
+        let mut texts: Vec<String> = Vec::new();
+        let mut intern = |text: &str| -> Vec<u32> {
+            text.lines()
+                .map(collapse_whitespace)
+                .filter(|line| !line.is_empty())
+                .map(|line| {
+                    let next = u32_saturating(texts.len());
+                    *table.entry(line).or_insert_with_key(|line| {
+                        texts.push(line.clone());
+                        next
+                    })
+                })
+                .collect()
+        };
+        let before = intern(before);
+        let after = intern(after);
+        let weights = texts
+            .iter()
+            .map(|line| u32_saturating(line.chars().count()).saturating_add(1))
+            .collect();
+        Self {
+            before,
+            after,
+            weights,
+            texts,
+        }
+    }
+
+    fn weight_of(&self, ids: &[u32]) -> u32 {
+        ids.iter().fold(0, |total: u32, id| {
+            total.saturating_add(self.weights[*id as usize])
+        })
+    }
+
+    /// The characters of `ids`, each line followed by a SPACE rather than a
+    /// newline, so a passage re-wrapped across different line breaks reads
+    /// as the same characters.
+    fn chars_of(&self, ids: &[u32]) -> Vec<u32> {
+        ids.iter()
+            .flat_map(|id| self.texts[*id as usize].chars().chain([' ']))
+            .map(u32::from)
             .collect()
-    };
-    let before_ids = intern(before);
-    let after_ids = intern(after);
-    (before_ids, after_ids)
+    }
 }
 
 /// Splits off the shared head and tail, returning how many lines survived
@@ -171,25 +247,52 @@ fn trim_common_affix<'a>(before: &'a [u32], after: &'a [u32]) -> (u32, &'a [u32]
 // Pass 1 — shortest edit script
 // ---------------------------------------------------------------------------
 
-/// The edit script over one trimmed middle: which line ids left, which
-/// arrived, and how many the script walked over untouched.
+/// The edit script over one trimmed middle: the changed regions it found,
+/// and the ids it walked over untouched.
 struct EditScript {
+    hunks: Vec<Hunk>,
+    kept: Vec<u32>,
+    approx: bool,
+}
+
+/// One changed region: the ids that left and the ids that arrived between
+/// two runs of survivors, each in text order.
+#[derive(Default)]
+struct Hunk {
     deleted: Vec<u32>,
     inserted: Vec<u32>,
-    kept: u32,
-    approx: bool,
+}
+
+impl Hunk {
+    /// Closes this region, if it holds anything, onto `hunks`. The backtrack
+    /// collects ids last-first, so they are put back in text order here.
+    fn close_into(&mut self, hunks: &mut Vec<Self>) {
+        if self.deleted.is_empty() && self.inserted.is_empty() {
+            return;
+        }
+        let mut done = std::mem::take(self);
+        done.deleted.reverse();
+        done.inserted.reverse();
+        hunks.push(done);
+    }
 }
 
 impl EditScript {
     /// The bound taken when the exact script costs more than a telemetry
     /// number is worth: everything between the shared affixes is charged as
-    /// rewritten. `ins`/`del` can only overstate from here, never understate,
-    /// which is why the flag says APPROXIMATE rather than unknown.
+    /// ONE rewritten region. `ins`/`del` can only overstate from here, never
+    /// understate, which is why the flag says APPROXIMATE rather than
+    /// unknown.
     fn whole_replacement(before: &[u32], after: &[u32]) -> Self {
+        let mut hunks = Vec::new();
+        Hunk {
+            deleted: before.iter().rev().copied().collect(),
+            inserted: after.iter().rev().copied().collect(),
+        }
+        .close_into(&mut hunks);
         Self {
-            deleted: before.to_vec(),
-            inserted: after.to_vec(),
-            kept: 0,
+            hunks,
+            kept: Vec::new(),
             approx: true,
         }
     }
@@ -253,11 +356,11 @@ fn backtrack(
     end: (i32, i32),
 ) -> EditScript {
     let mut script = EditScript {
-        deleted: Vec::new(),
-        inserted: Vec::new(),
-        kept: 0,
+        hunks: Vec::new(),
+        kept: Vec::new(),
         approx: false,
     };
+    let mut hunk = Hunk::default();
     let (mut x, mut y) = end;
 
     for d in (0..=depth).rev() {
@@ -272,18 +375,20 @@ fn backtrack(
         while x > prev_x && y > prev_y {
             x -= 1;
             y -= 1;
-            script.kept += 1;
+            script.kept.push(before[x as usize]);
+            hunk.close_into(&mut script.hunks);
         }
         if d > 0 {
             if x == prev_x {
-                script.inserted.push(after[prev_y as usize]);
+                hunk.inserted.push(after[prev_y as usize]);
             } else {
-                script.deleted.push(before[prev_x as usize]);
+                hunk.deleted.push(before[prev_x as usize]);
             }
         }
         x = prev_x;
         y = prev_y;
     }
+    hunk.close_into(&mut script.hunks);
     script
 }
 
@@ -306,28 +411,93 @@ fn predecessor(trace: &[i32], d: i32, k: i32) -> (i32, i32) {
 // Pass 2 — move pairing
 // ---------------------------------------------------------------------------
 
-/// Pairs each deleted line against an identical insertion, returning how many
-/// pairs held.
+/// Pairs each deleted line against an identical insertion anywhere in the
+/// script, takes both out of their hunks, and returns the paired lines.
 ///
 /// Multiplicity is respected: three deletions of one line against two
 /// insertions of it are two moves and one real deletion. Anything unpaired
-/// stays a genuine insert or delete, so the discount can only ever apply to
-/// content that demonstrably survived.
-fn pair_moves(deleted: &[u32], inserted: &[u32]) -> u32 {
+/// stays in its hunk for the character pass, so the discount can only ever
+/// apply to content that demonstrably survived.
+fn pair_moves(hunks: &mut [Hunk]) -> Vec<u32> {
     let mut pool: HashMap<u32, u32> = HashMap::new();
-    for line in deleted {
+    for line in hunks.iter().flat_map(|hunk| &hunk.deleted) {
         *pool.entry(*line).or_insert(0) += 1;
     }
-    let mut moved: u32 = 0;
-    for line in inserted {
-        if let Some(remaining) = pool.get_mut(line)
-            && *remaining > 0
-        {
-            *remaining -= 1;
-            moved = moved.saturating_add(1);
-        }
+    let mut moved = Vec::new();
+    for hunk in hunks.iter_mut() {
+        hunk.inserted.retain(|line| match pool.get_mut(line) {
+            Some(remaining) if *remaining > 0 => {
+                *remaining -= 1;
+                moved.push(*line);
+                false
+            }
+            _ => true,
+        });
+    }
+    let mut unclaimed: HashMap<u32, u32> = HashMap::new();
+    for line in &moved {
+        *unclaimed.entry(*line).or_insert(0) += 1;
+    }
+    for hunk in hunks.iter_mut() {
+        hunk.deleted.retain(|line| match unclaimed.get_mut(line) {
+            Some(remaining) if *remaining > 0 => {
+                *remaining -= 1;
+                false
+            }
+            _ => true,
+        });
     }
     moved
+}
+
+// ---------------------------------------------------------------------------
+// Pass 3 — characters inside each changed region
+// ---------------------------------------------------------------------------
+
+/// Below this share of a region's characters surviving, counted on both
+/// sides as `200 · kept / (before + after)`, its character diff is
+/// coincidence, not an edit, and the region is charged as rewritten.
+///
+/// Two unrelated English sentences still share ~40-45% of their characters
+/// in order (common letters, spaces); a typo or a reworded clause keeps 70%
+/// and more. Without the floor a rewritten line would read as a half-edit,
+/// and a full rewrite has to keep scoring `1`.
+const REWRITE_SIMILARITY_PERCENT: u64 = 60;
+
+/// The character counts of one region.
+struct CharCounts {
+    ins: u32,
+    del: u32,
+    kept: u32,
+    approx: bool,
+}
+
+/// Diffs one region's remaining lines character by character, so a typo in
+/// a long line charges the typo rather than the line, and a re-wrapped
+/// passage (same characters, different breaks) charges nothing.
+fn char_pass(lines: &Lines, hunk: &Hunk) -> CharCounts {
+    let before = lines.chars_of(&hunk.deleted);
+    let after = lines.chars_of(&hunk.inserted);
+    let (common, mid_before, mid_after) = trim_common_affix(&before, &after);
+    let (kept, approx) = match shortest_edit_script(mid_before, mid_after) {
+        Some(script) => (
+            common.saturating_add(u32_saturating(script.kept.len())),
+            false,
+        ),
+        None => (common, true),
+    };
+    let region = (before.len() + after.len()) as u64;
+    let kept = if 200 * u64::from(kept) < REWRITE_SIMILARITY_PERCENT * region {
+        0
+    } else {
+        kept
+    };
+    CharCounts {
+        ins: u32_saturating(after.len()).saturating_sub(kept),
+        del: u32_saturating(before.len()).saturating_sub(kept),
+        kept,
+        approx,
+    }
 }
 
 #[cfg(test)]

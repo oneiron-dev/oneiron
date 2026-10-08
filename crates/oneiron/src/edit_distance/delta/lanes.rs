@@ -3,7 +3,7 @@
 use rmpv::Value;
 
 use crate::edit_distance::FinalizedProposalText;
-use crate::edit_distance::myers::myers_line_diff;
+use crate::edit_distance::myers::{collapse_whitespace, myers_line_diff};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 
@@ -30,27 +30,45 @@ pub(super) const MAX_FIELD_DIFF_DEPTH: u32 = 64;
 /// standing at finalize), because summing per-change survivals would count
 /// the untouched remainder once per change.
 ///
+/// Every text is measured in its whitespace-collapsed form, so a change that
+/// only re-spaces or re-wraps text records no change at all.
+///
+/// Moves are paired at the endpoints by the reconstructed lane's own
+/// instrument ([`myers_line_diff`]): a line that left one place and arrived
+/// at another must have been removed and added somewhere in the op log, so
+/// its characters come out of `del` and `ins` once each and are charged in
+/// `moved` at the move discount instead. Text typed and then deleted is in
+/// neither endpoint, so it can never pair, and churn keeps its full price.
+/// A pair is capped at what the log actually removed and added.
+///
 /// The per-change region is the span between the common prefix and the
 /// common suffix — one contiguous edit. A change that scatters edits across
 /// a line reads as one wider region, which under-counts `kept` and never
-/// under-counts `ins`/`del`; ED-02's Myers pass (ONE-1758) is what resolves
-/// scattered changes exactly.
+/// under-counts `ins`/`del`.
 #[must_use]
 pub fn delta_from_recorded_ops(finalized: &FinalizedProposalText) -> AmendmentDelta {
     let mut ins: u32 = 0;
     let mut del: u32 = 0;
     for (_, span) in &finalized.ops_by_actor {
-        let affix = CharAffix::between(&span.before_text, &span.after_text);
+        let affix = CharAffix::between(
+            &collapse_whitespace(&span.before_text),
+            &collapse_whitespace(&span.after_text),
+        );
         del = del.saturating_add(affix.removed());
         ins = ins.saturating_add(affix.added());
     }
-    let window = CharAffix::between(&finalized.proposed_text, &finalized.final_text);
+    let window = CharAffix::between(
+        &collapse_whitespace(&finalized.proposed_text),
+        &collapse_whitespace(&finalized.final_text),
+    );
+    let endpoints = myers_line_diff(&finalized.proposed_text, &finalized.final_text).ops;
+    let moved = endpoints.moved.min(ins).min(del);
     let ops_summary = OpsSummary {
-        ins,
-        del,
+        ins: ins - moved,
+        del: del - moved,
         kept: window.common(),
-        moved: 0,
-        approx: false,
+        moved,
+        approx: endpoints.approx && moved > 0,
     };
     AmendmentDelta {
         proposed_ref: bytes_to_hex_lower(finalized.proposed_ref.as_bytes()),
@@ -263,16 +281,18 @@ fn leaf_count(value: &Value) -> u32 {
 // Lane 3 — reconstructed
 // ---------------------------------------------------------------------------
 
-/// Measures a Δ by diffing the two endpoint TEXTS line by line, for an edit
-/// that arrived with no op log and no structured body — a human editing
-/// outside the gated proposal flow.
+/// Measures a Δ by diffing the two endpoint TEXTS line by line, then
+/// character by character inside each changed region, for an edit that
+/// arrived with no op log and no structured body — a human editing outside
+/// the gated proposal flow.
 ///
 /// Last in precedence for a reason: the endpoints are all it has, so churn
 /// (text typed and then replaced) is invisible to it, and a rewrite that
-/// happens to land back on the proposed text scores zero. What it can do that
-/// neither other lane can is recognize a MOVE: relocated lines land in
-/// [`OpsSummary::moved`] at [`MOVE_DISCOUNT`](crate::edit_distance::myers::MOVE_DISCOUNT) rather than being charged twice
-/// as a deletion and an insertion.
+/// happens to land back on the proposed text scores zero. Relocated lines
+/// land in [`OpsSummary::moved`] at
+/// [`MOVE_DISCOUNT`](crate::edit_distance::myers::MOVE_DISCOUNT) rather than
+/// being charged twice as a deletion and an insertion; layout-only changes
+/// (whitespace, re-wrapping) are not changes.
 ///
 /// The refs are the two texts' own blake3 hashes, so a consumer can verify
 /// the pair it was handed — the same contract the field-diff lane keeps.
