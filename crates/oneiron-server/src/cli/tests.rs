@@ -452,3 +452,61 @@ fn api_without_a_subcommand_is_a_parse_error() {
     assert!(err.use_stderr());
     assert_eq!(err.exit_code(), 2);
 }
+
+#[test]
+fn owner_commands_parse_with_the_serve_config_flags() {
+    let parse = |args: &[&str]| {
+        let mut argv = vec!["oneiron"];
+        argv.extend_from_slice(args);
+        Cli::try_parse_from(argv).map(Cli::into_command)
+    };
+    match parse(&["backup", "--keep", "3", "--vault-path", "/v"]).unwrap() {
+        Command::Backup(args) => {
+            assert_eq!(args.keep, Some(3));
+            assert!(!args.list);
+            assert_eq!(args.serve.vault_path, Some(PathBuf::from("/v")));
+        }
+        _ => panic!("expected backup"),
+    }
+    match parse(&[
+        "restore",
+        "b.oneiron-backup",
+        "--rehearse",
+        "--scratch",
+        "/s",
+    ])
+    .unwrap()
+    {
+        Command::Restore(args) => {
+            assert!(args.rehearse);
+            assert_eq!(args.scratch, Some(PathBuf::from("/s")));
+        }
+        _ => panic!("expected restore"),
+    }
+    assert!(
+        parse(&["restore", "b.oneiron-backup", "--scratch", "/s"]).is_err(),
+        "--scratch only names a rehearsal's copy"
+    );
+    match parse(&["secret-scan", "off"]).unwrap() {
+        Command::SecretScan(args) => assert_eq!(args.mode, Some(SecretScanSwitch::Off)),
+        _ => panic!("expected secret-scan"),
+    }
+    match parse(&["runs", "approve", "run-1", "--bundle", "ab"]).unwrap() {
+        Command::Runs(RunsCommand::Approve(args)) => {
+            assert_eq!(args.run_id, "run-1");
+            assert_eq!(args.bundle, "ab");
+        }
+        _ => panic!("expected runs approve"),
+    }
+    assert!(
+        parse(&["import", "approve", "batch.json"]).is_err(),
+        "approval names the previewed digest"
+    );
+    match parse(&["doctor", "/v", "--config", "/c.toml"]).unwrap() {
+        Command::Doctor(args) => {
+            assert_eq!(args.vault.path, PathBuf::from("/v"));
+            assert_eq!(args.config, Some(PathBuf::from("/c.toml")));
+        }
+        _ => panic!("expected doctor"),
+    }
+}

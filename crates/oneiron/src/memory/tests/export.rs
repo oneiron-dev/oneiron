@@ -559,3 +559,35 @@ fn conflicting_authority_roots_suspend_embedded_export() {
         MEMORY_CODE_INVALID_STATE
     );
 }
+
+#[test]
+fn every_export_lands_a_receipt_and_a_refused_one_lands_none() {
+    let (_dir, vault, owner) = owner_vault();
+    let other = put_person(&vault, 38);
+    assert!(
+        facade_for(&vault, other)
+            .export(&ExportOptions::default())
+            .is_err()
+    );
+    assert!(vault.export_receipts().unwrap().is_empty());
+    let export = facade_for(&vault, owner)
+        .export(&ExportOptions {
+            format: Some("md".into()),
+        })
+        .unwrap();
+    let receipts = vault.export_receipts().unwrap();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].format, "md");
+    assert_eq!(receipts[0].bytes, export.rendered.len() as u64);
+    assert_eq!(
+        receipts[0].digest,
+        blake3::hash(export.rendered.as_bytes())
+            .to_hex()
+            .to_string()
+    );
+    assert_eq!(receipts[0].by, owner.to_hex());
+    facade_for(&vault, owner)
+        .export(&ExportOptions::default())
+        .unwrap();
+    assert_eq!(vault.export_receipts().unwrap().len(), 2);
+}

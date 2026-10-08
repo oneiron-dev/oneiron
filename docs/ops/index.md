@@ -3,6 +3,9 @@
 Runbooks in this directory are operational response guides for hosted Oneiron
 surfaces. They do not replace counsel review for jurisdiction-specific calls.
 
+- [Your vault: where it lives, backups, restore, export, one-act approvals](owner-actions.md) —
+  `oneiron doctor`, `backup`, `restore --rehearse`, `restore`, `export`, `secret-scan`,
+  `import`, `runs`, and the `/v1/owner` routes.
 - [Known-CSAM hosted media response](known-csam-hosted-media.md)
 - [Wasabi snapshot credential runbook](wasabi-snapshot-credential-runbook.md) — preflight, mint,
   custody registration, smoke, root retirement, and rotation of the bucket-scoped snapshot

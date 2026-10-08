@@ -241,6 +241,9 @@ side_tables! {
     ESIGN_SEALED_DOCUMENT: VaultMeta b"esign.sealed.v1/" LegacyJson;
     /// Signature image ownership marker. Key: id16 + string + string.
     ESIGN_SIGNATURE_IMAGE_BINDING: VaultMeta b"esign.signature_image.v1/" Raw;
+    /// One whole-vault export receipt: when, which format, how many bytes and their digest, by
+    /// whom; never the exported bytes. Key: u64be(sequence).
+    EXPORT_RECEIPT: VaultMeta b"export:receipt:v1:" Named;
     /// Binding proof tying a restored foreign expression-preference claim to the exact local row it
     /// reconstructed. Key: id16.
     EXPRESSION_ARCHIVE_BINDING: VaultMeta b"expression/archive-binding/v1\0" Raw;

@@ -399,6 +399,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "ESIGN_PUBLIC_CHECK",
         "ESIGN_PUBLIC_RATE_V2",
         "ESIGN_RECIPIENT_CAPABILITY_INDEX",
+        "EXPORT_RECEIPT",
         "FAILURE_SIGNALS_TIER2_SAMPLE",
         "FAILURE_SIGNALS_TIER2_SOURCE",
         "FAILURE_SIGNALS_TIER2_WEEK",

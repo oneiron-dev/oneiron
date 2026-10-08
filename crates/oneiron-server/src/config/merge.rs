@@ -8,6 +8,7 @@ use anyhow::Context;
 use oneiron::{HostingPrivacyPosture, SyncConfigField, SyncProtocolValidation};
 use serde::Deserialize;
 
+use super::backup::{BackupConfigOverride, lookup_backup_override};
 use super::embedder::{EmbedderConfig, EmbedderProvider};
 use super::embedder::{EmbedderConfigOverride, lookup_embedder_override};
 use super::lookup::{
@@ -103,6 +104,7 @@ impl EnvConfig {
         values.max_bulk_decompressed = lookup_parse(&mut lookup, "ONEIRON_MAX_BULK_DECOMPRESSED")?;
         values.runtime = lookup_runtime_override(&mut lookup)?;
         values.embedder = lookup_embedder_override(&mut lookup)?;
+        values.backup = lookup_backup_override(&mut lookup)?;
         values.privacy_posture = lookup_parse(&mut lookup, "ONEIRON_PRIVACY_POSTURE")?;
         values.failure_signal_export = lookup_bool(&mut lookup, "ONEIRON_FAILURE_SIGNAL_EXPORT")?;
         values.failure_signal_training =
@@ -218,6 +220,7 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
         ));
     }
     validate_embedder_config(config)?;
+    config.backup.validate()?;
     // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
     // refused while it is still a config error with an operator-facing
     // remedy, not only at open time.
@@ -387,6 +390,7 @@ struct FileServeConfig {
     max_bulk_decompressed: Option<usize>,
     runtime: Option<RuntimeConfigOverride>,
     embedder: Option<EmbedderConfigOverride>,
+    backup: Option<BackupConfigOverride>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -427,6 +431,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             max_bulk_decompressed: value.max_bulk_decompressed,
             runtime: value.runtime,
             embedder: value.embedder,
+            backup: value.backup,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,
@@ -468,6 +473,7 @@ struct PartialServeConfig {
     max_bulk_decompressed: Option<usize>,
     runtime: Option<RuntimeConfigOverride>,
     embedder: Option<EmbedderConfigOverride>,
+    backup: Option<BackupConfigOverride>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -520,6 +526,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("max_bulk_decompressed", &self.max_bulk_decompressed)
             .field("runtime", &self.runtime)
             .field("embedder", &self.embedder)
+            .field("backup", &self.backup)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
@@ -630,6 +637,9 @@ impl PartialServeConfig {
                 .get_or_insert_with(EmbedderConfig::default)
                 .apply_override(value, source)?;
         }
+        if let Some(value) = self.backup {
+            resolved.backup.apply_override(value);
+        }
         if let Some(value) = self.failure_signal_export {
             resolved.failure_signal_export = value;
         }
@@ -685,6 +695,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             max_bulk_decompressed: value.max_bulk_decompressed,
             runtime: runtime_override_from_args(value),
             embedder: embedder_override_from_args(value),
+            backup: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,

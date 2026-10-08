@@ -48,6 +48,8 @@ pub(crate) mod retrieval_retention;
 pub(crate) mod retry_source_policy;
 mod room_policy;
 mod room_thread;
+#[cfg(feature = "test-support")]
+mod run_proposal_fixture;
 pub use room_thread::RoomThreadFill;
 pub(crate) use room_thread::{RoomThreadManifest, RoomThreadSettings};
 mod share;

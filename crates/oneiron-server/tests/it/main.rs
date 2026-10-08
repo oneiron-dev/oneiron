@@ -7,6 +7,7 @@ mod core_discover;
 mod first_owner_bootstrap;
 mod mcp_booking;
 mod mcp_oracle;
+mod owner_backup;
 mod remote_pairing;
 mod skills_pack;
 mod ws_sync;

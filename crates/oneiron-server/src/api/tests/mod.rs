@@ -15,6 +15,7 @@ mod mcp_source_gate;
 
 mod auth_idempotency;
 mod org_admin;
+mod owner_routes;
 mod slips;
 use crate::test_credentials as slip_credentials;
 mod billing_usage;

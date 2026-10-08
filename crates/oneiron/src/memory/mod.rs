@@ -85,7 +85,7 @@ pub use error::{
     MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER, MemoryError, MemoryGateDenial, MemoryPolicyDenial,
     MemoryPolicyExceptionProposal, MemoryResult,
 };
-pub use export::{ExportOptions, MemoryExport};
+pub use export::{ExportOptions, ExportReceipt, MemoryExport};
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,
 };
