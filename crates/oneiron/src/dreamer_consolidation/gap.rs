@@ -260,7 +260,19 @@ pub(super) fn upsert_scanned_gap_queue(
     texts: &GapTexts,
     now: u64,
 ) -> Result<GapQueueDelta> {
-    upsert_gap_projection(vault, gaps, texts, now, PRIVATE_GAP, |gap| {
+    let recheck = |wtxn: &mut heed::RwTxn<'_>| {
+        if texts.is_empty() {
+            return Ok(());
+        }
+        // Grants are judged at this writer's own clock, never a stale floor.
+        crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+        let read = super::turn_text::dreamer_read(vault)?;
+        for (turn, text) in texts {
+            text.check_live_in(&read, wtxn, turn)?;
+        }
+        Ok(())
+    };
+    upsert_gap_projection(vault, gaps, recheck, now, PRIVATE_GAP, |gap| {
         gap_hash(gap.kind, &gap.subject, "")
     })
 }
@@ -285,10 +297,14 @@ pub(super) fn branch_gap_projection(
     }
 }
 
+/// The branch's gap write holds its whole read fence: every source, TURN and
+/// MESSAGE pin the branch read must still hold in this transaction, at this
+/// writer's clock and under the branch's own reader.
 pub(super) fn upsert_branch_gap_queue(
     vault: &Vault,
     scope: &crate::llm::Scope,
     partition: &super::partition::ConsolidationPartitionKey,
+    fence: &super::resources::ConsolidationFence,
     gaps: Vec<ReflectionGap>,
     now: u64,
 ) -> Result<GapQueueDelta> {
@@ -309,7 +325,11 @@ pub(super) fn upsert_branch_gap_queue(
     )
     .expect("branch gap projection key is ASCII hex/text")
     .to_owned();
-    upsert_gap_projection(vault, gaps, &GapTexts::new(), now, BRANCH_GAP, move |gap| {
+    let recheck = |wtxn: &mut heed::RwTxn<'_>| {
+        crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+        fence.validate_in_txn(vault, wtxn)
+    };
+    upsert_gap_projection(vault, gaps, recheck, now, BRANCH_GAP, move |gap| {
         BranchGapKey {
             scope_text: scope_text.clone(),
             gap_hash: gap_hash(gap.kind, &gap.subject, ""),
@@ -317,10 +337,11 @@ pub(super) fn upsert_branch_gap_queue(
     })
 }
 
+/// `recheck` runs first in the write transaction; an error writes nothing.
 fn upsert_gap_projection<K: SideKey>(
     vault: &Vault,
     gaps: Vec<ReflectionGap>,
-    texts: &GapTexts,
+    recheck: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
     now: u64,
     table: SideTable<K, ReflectionGap, Raw>,
     key_of: impl Fn(&ReflectionGap) -> K,
@@ -328,14 +349,7 @@ fn upsert_gap_projection<K: SideKey>(
     let mut delta = GapQueueDelta::default();
     let mut observed: BTreeSet<Vec<u8>> = BTreeSet::new();
     let mut wtxn = vault.store.env.write_txn()?;
-    if !texts.is_empty() {
-        // Grants are judged at this writer's own clock, never a stale floor.
-        crate::ports::recorded_at_in_txn(&vault.store, &mut wtxn)?;
-        let read = super::turn_text::dreamer_read(vault)?;
-        for (turn, text) in texts {
-            text.check_live_in(&read, &wtxn, turn)?;
-        }
-    }
+    recheck(&mut wtxn)?;
 
     for gap in gaps {
         let key = key_of(&gap);

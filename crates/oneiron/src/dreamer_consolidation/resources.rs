@@ -596,6 +596,7 @@ impl<'a> BranchResources<'a> {
             self.read.vault(),
             scope,
             &self.partition,
+            &self.write_fence(),
             persisted,
             now,
         )
@@ -636,7 +637,14 @@ impl<'a> BranchResources<'a> {
                 }
             }
         }
-        super::gap::upsert_branch_gap_queue(self.read.vault(), scope, &self.partition, gaps, now)
+        super::gap::upsert_branch_gap_queue(
+            self.read.vault(),
+            scope,
+            &self.partition,
+            &self.write_fence(),
+            gaps,
+            now,
+        )
     }
 
     pub(super) fn accept_verified(

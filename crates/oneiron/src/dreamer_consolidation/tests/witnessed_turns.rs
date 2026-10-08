@@ -1427,3 +1427,94 @@ fn stored_rows_join_by_order_then_id_and_a_foreign_bucket_refuses() -> Result<()
     assert!(open().is_err(), "another speaker's words refuse the turn");
     Ok(())
 }
+
+fn branch_gap_rows(
+    vault: &Vault,
+    partition: &ConsolidationPartitionKey,
+    scope: &crate::llm::Scope,
+) -> Result<usize> {
+    let ScopeResource::Projection { key } =
+        super::super::gap::branch_gap_projection(partition, scope)
+    else {
+        panic!("branch gap identity is a projection")
+    };
+    let txn = vault.store.env.read_txn()?;
+    Ok(vault
+        .store
+        .vault_meta
+        .prefix_iter(&txn, key.as_bytes())?
+        .count())
+}
+
+/// The branch's contradiction-gap write is fenced like its claim writes. A
+/// cited MESSAGE erased, or its grant expired on the clock, after the branch
+/// verified the evidence refuses the queue write in its own transaction, and
+/// nothing is queued.
+#[test]
+fn branch_gap_write_refuses_evidence_that_moved_after_the_read() -> Result<()> {
+    for case in ["none", "deleted row", "expired grant"] {
+        let (_dir, vault, clock) = open_clocked_vault();
+        let space = EntityId::now();
+        let said = WitnessMessage {
+            metadata: Some(serde_json::json!({"rel": space.to_hex()})),
+            ..message(0, WitnessAuthor::User, SAID, true)
+        };
+        let words = id_of(&said);
+        let (turn, conversation) = witness(&vault, 0x7b, vec![said]);
+        grant_messages(&vault, space, 100)?;
+        let partition = partition_of(conversation);
+        let branch = BranchResources::open(
+            &vault,
+            vault.dreamer_authority()?,
+            partition,
+            &[turn],
+            AttemptId::now(),
+            None,
+        )?;
+        let (start, end) = name_range();
+        let evidence = super::super::evidence::VerifiedEvidenceSet::verify(
+            &branch,
+            &[super::super::evidence::EvidenceLocator::turn_range(
+                turn, start, end,
+            )?],
+            ClaimSource::UserStated,
+        )?;
+        let gap = ReflectionGap {
+            kind: ReflectionGapKind::ContradictionLeftStanding,
+            subject: EntityId::now(),
+            evidence_turn_refs: evidence.refs(),
+            evidence_refs: evidence.locators(),
+            verified_evidence: Some(evidence.envelope(Vec::new())),
+            first_seen: 2_000,
+            last_seen: 2_000,
+            escalations: 0,
+            decayed: false,
+        };
+        let fence = branch.write_fence();
+        match case {
+            "deleted row" => delete_message(&vault, words)?,
+            "expired grant" => clock.set(200),
+            _ => {}
+        }
+        let written = super::super::gap::upsert_branch_gap_queue(
+            &vault,
+            branch.scope(),
+            &partition,
+            &fence,
+            vec![gap],
+            2_000,
+        );
+        let rows = branch_gap_rows(&vault, &partition, branch.scope())?;
+        if case == "none" {
+            assert_eq!(written?.created, 1);
+            assert_eq!(rows, 1);
+        } else {
+            assert!(
+                written.is_err(),
+                "{case}: the moved evidence refuses the write"
+            );
+            assert_eq!(rows, 0, "{case}: nothing is queued");
+        }
+    }
+    Ok(())
+}
