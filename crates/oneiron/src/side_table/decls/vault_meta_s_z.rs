@@ -189,6 +189,9 @@ side_tables! {
     /// Resume cursor (receipt-id text bytes) for the in-progress task-attribution receipt-page scan.
     /// Key: ().
     SKILL_ATTRIBUTION_SWEEP_SCAN_CURSOR: VaultMeta b"skill_attribution:sweep_scan:v1" Raw;
+    /// One outcome the attribution judge left `unclear`, with each unclear hunk's reason, share and
+    /// note, awaiting Dreamer clustering. Key: string (lane ":" reference).
+    SKILL_ATTRIBUTION_UNCLEAR: VaultMeta b"skill_attribution:unclear:v1:" Raw;
     /// Skills citing a source. Key: id16 + id16.
     SKILL_SOURCE_INDEX: VaultMeta b"skill_convert/source_index/v1\0" Raw;
     /// Staleness note of a skill. Key: id16.

@@ -5,7 +5,8 @@ use crate::error::Result;
 use crate::llm::CallPurpose;
 
 use super::types::{
-    AttemptOutcome, AttributionVerdict, DeviationCause, FollowedState, OutcomeEvidence,
+    AttemptOutcome, AttributionVerdict, DeviationCause, FollowedState, HunkVerdict, JudgeRequest,
+    OutcomeEvidence,
 };
 
 /// [`CallPurpose::Other`] name for the LLM classification tier. Ambiguous
@@ -28,6 +29,27 @@ pub const ATTRIBUTION_CALL_PURPOSE_NAME: &str = "skill_attribution";
 pub trait AttributionJudge {
     /// Returns the verdict for `evidence`, or `None` to abstain.
     fn judge(&self, evidence: &OutcomeEvidence) -> Result<Option<AttributionVerdict>>;
+
+    /// Labels each changed hunk of `request` (ARCH-0056 §5 #attribution-split),
+    /// or ABSTAINS with `None`.
+    ///
+    /// Owes exactly [`JudgeRequest::regions`] answers, in hunk order: one per
+    /// hunk, or one for an outcome with no edit. Each answer carries the
+    /// judge's confidence. An answer that is `unclear`, or held below
+    /// [`JudgeRequest::floor`], MUST carry a short note saying why — the
+    /// engine refuses one without. That is why doubt is answered here and
+    /// never from [`Self::judge`], which has no note to give. The engine still
+    /// applies the floor and the lane's labels itself, so no judge can charge
+    /// past them.
+    ///
+    /// The default is [`Self::judge`]'s one verdict on every hunk, fully
+    /// confident: a judge that cannot split gives the 100% case of the same
+    /// split, never a second path.
+    fn judge_hunks(&self, request: &JudgeRequest<'_>) -> Result<Option<Vec<HunkVerdict>>> {
+        Ok(self
+            .judge(request.evidence)?
+            .map(|verdict| vec![HunkVerdict::certain(verdict); request.regions()]))
+    }
 
     /// Exact judge skill revision, if known. Used to mark its old verdicts
     /// when a replacement is admitted; unstamped verdicts remain unknown.
@@ -117,14 +139,13 @@ impl AttributionJudge for RuleAttributionJudge {
     }
 }
 
-/// The entity a verdict routes to, or `None` when the evidence cannot carry it.
+/// The entity a verdict routes to, or `None` when it charges nobody.
 ///
-/// The two AMENDMENT-lane arms route to nothing HERE on purpose. This ledger
-/// is the attempt lane's, and neither class names an attempt subject: an
-/// environment verdict blames no entity at all, and a preference shift is
-/// [`crate::edit_distance::attribution`]'s to turn into a proposal. A judge
-/// that returns one anyway leaves no judgment row rather than charging the
-/// nearest actor.
+/// Three labels route to nothing on purpose: an environment verdict blames no
+/// entity at all, an unclear one holds until the Dreamer has clustered it, and
+/// a preference shift is [`crate::edit_distance::attribution`]'s to turn into
+/// a proposal (the attempt lane never admits one). None of them leaves a
+/// judgment row, rather than charging the nearest actor.
 pub(super) fn verdict_subject(
     verdict: AttributionVerdict,
     evidence: &OutcomeEvidence,
@@ -132,6 +153,8 @@ pub(super) fn verdict_subject(
     match verdict {
         AttributionVerdict::ExecutionLapse => Some(evidence.actor),
         AttributionVerdict::SkillDefect | AttributionVerdict::Discovery => evidence.skill,
-        AttributionVerdict::Environment | AttributionVerdict::PreferenceShift => None,
+        AttributionVerdict::Environment
+        | AttributionVerdict::PreferenceShift
+        | AttributionVerdict::Unclear => None,
     }
 }

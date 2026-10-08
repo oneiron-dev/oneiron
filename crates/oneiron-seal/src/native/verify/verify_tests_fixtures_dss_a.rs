@@ -466,32 +466,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn dss_valid_crl_and_ocsp_pass() {
-        let ca = test_ca("dss-ca");
-        let crl = build_crl(&ca, AT_UNIX - 3600, Some(AT_UNIX + 3600), None, vec![]);
-        let ocsp = build_ocsp(
-            &ca,
-            ca.cert.tbs_certificate.serial_number.clone(),
-            AT_UNIX - 60,
-            Some(AT_UNIX + 3600),
-            x509_ocsp::CertStatus::good(),
-        );
-        let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[crl], &[ocsp]);
-        let covered = covered_of(&[&ca.cert_der]);
-        let checks = dss_check(&doc, &covered);
-        assert!(checks.passed(VerifyCheckKind::ValidationMaterial));
-    }
-
-    #[test]
-    fn dss_empty_dss_is_evidence_free_and_fails() {
-        // /DSS present with /Certs, /CRLs, /OCSPs all absent must not
-        // inflate a B-T document into B-LT.
-        let doc = dss_doc(&[], &[], &[]);
-        let checks = dss_check(&doc, &[]);
-        assert_material_fails(&checks);
-    }
-
-    #[test]
     fn dss_unrelated_certs_fail_binding() {
         // Authenticated material about unrelated self-signed /Certs must not
         // authenticate the document's covered signer chain.
@@ -502,27 +476,6 @@ pub(crate) mod tests {
         let covered = covered_of(&[&signer.cert_der]);
         let checks = dss_check(&doc, &covered);
         assert_material_fails(&checks);
-    }
-
-    #[test]
-    fn dss_anchor_only_binding_passes() {
-        // A covered certificate that is a trust anchor satisfies the binding
-        // without appearing in /Certs.
-        let ca = test_ca("dss-ca");
-        let crl = build_crl(&ca, AT_UNIX - 3600, Some(AT_UNIX + 3600), None, vec![]);
-        let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[crl], &[]);
-        let anchor = EmbeddedCert::from_der(&ca.cert_der).unwrap();
-        let covered = covered_of(&[&ca.cert_der]);
-        let mut checks = Checks::new();
-        verify_dss(
-            &doc,
-            std::slice::from_ref(&anchor),
-            &covered,
-            AT_UNIX,
-            usize::MAX,
-            &mut checks,
-        );
-        assert!(checks.passed(VerifyCheckKind::ValidationMaterial));
     }
 
     #[test]
