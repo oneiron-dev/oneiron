@@ -15128,14 +15128,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/edit_distance/attribution/evidence_judge.rs",
      "purpose": "Amendment evidence doors and the judging pass",
      "surface": {
       "crate-vis": 1,
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -15166,16 +15166,17 @@
      "path": "src/edit_distance/attribution/stored.rs",
      "purpose": "Stored rows: key shapes, row shapes, and the row codec",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AmendmentCause",
       "AmendmentEvidence",
       "AmendmentJudgment",
+      "AmendmentShare",
       "PreferenceProposal"
      ],
      "path": "src/edit_distance/attribution/taxonomy.rs",
@@ -15183,8 +15184,8 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 8,
-      "struct": 3,
+      "fn": 11,
+      "struct": 4,
       "type": 1
      }
     },
@@ -15234,7 +15235,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -15250,7 +15251,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/edit_distance/delta/tests.rs",
@@ -15611,9 +15612,10 @@
       "LineDiff"
      ],
      "path": "src/edit_distance/myers.rs",
-     "purpose": "ED-02 (ARCH-0056 §3, ruling r2 — ONE-1758): the reconstructed lane's measuring instrument, a two-pass line…",
+     "purpose": "ED-02 (ARCH-0056 §3, ruling r2 — ONE-1758): the reconstructed lane's measuring instrument, a word diff…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 2,
       "struct": 1
      }
@@ -15796,7 +15798,7 @@
      "path": "src/edit_distance/routing/keys.rs",
      "purpose": "Pinned ledger keys and receipt fields",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -20622,6 +20624,23 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SettingMode",
+      "SettingRow",
+      "SettingSpec"
+     ],
+     "path": "src/learning_setting.rs",
+     "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -21233,7 +21252,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 19,
-      "mod": 170,
+      "mod": 171,
       "re-export": 72
      }
     },
@@ -30789,8 +30808,8 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 3,
-      "re-export": 6
+      "crate-vis": 5,
+      "re-export": 7
      }
     },
     {
@@ -30802,6 +30821,16 @@
      "surface": {
       "crate-vis": 2,
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_attribution/split.rs",
+     "purpose": "The one split path both lanes judge through (ARCH-0056 §5): per-hunk answers in, a label + share vector out…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -30845,24 +30874,46 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AttemptOutcome",
       "AttributionJudgment",
+      "AttributionLane",
+      "AttributionShare",
+      "AttributionSplit",
       "AttributionVerdict",
       "DeviationCause",
+      "EditHunk",
       "FollowedState",
+      "HunkVerdict",
+      "JudgeRequest",
       "OutcomeEvidence",
-      "SkillEditProposal"
+      "SkillEditProposal",
+      "UnclearNote",
+      "UnclearReason"
      ],
      "path": "src/skill_attribution/types.rs",
      "purpose": "Verdict taxonomy and row shapes: evidence in, judgments and edit proposals out",
      "surface": {
-      "const": 1,
-      "enum": 4,
-      "fn": 9,
-      "struct": 3
+      "const": 2,
+      "enum": 6,
+      "fn": 20,
+      "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "UnclearAttribution"
+     ],
+     "path": "src/skill_attribution/unclear.rs",
+     "purpose": "The unclear ledger: every outcome the judge left `unclear`, kept for the Dreamer to cluster (ARCH-0056 §5…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -38924,6 +38975,13 @@
      "layout": "file+dir",
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
+    "learning_setting": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…"
+    },
     "lens": {
      "files": 44,
      "impl_vault": true,
@@ -39310,7 +39368,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 11,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39529,7 +39587,7 @@
    },
    "over_bar": 22,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2353,
+   "source_files": 2356,
    "test_files": 836
   },
   "oneiron-android": {
@@ -49764,6 +49822,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/reopen_after_restart.rs",
+     "purpose": "Text saved through `oneiron serve` survives a restart (prune e2e row 4): witness one invented line, stop the…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -50013,7 +50079,7 @@
    "over_bar": 2,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 256,
-   "test_files": 109
+   "test_files": 110
   },
   "oneiron-uniffi": {
    "files": [
