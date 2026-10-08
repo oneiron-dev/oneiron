@@ -2,6 +2,10 @@
 //! computation there, and copies out what the computation left, so a test can see how
 //! deep a secret computation reached and which secret bytes it left behind. Painting
 //! and copying are inline asm, so no Rust call touches the region between the two.
+//!
+//! Linux and macOS only: their thread stacks are mapped up front, so the first write may
+//! land anywhere in the span. Windows commits stack pages through a moving guard page,
+//! which a write far below it skips, faulting instead of growing the stack.
 
 const PAINT: u8 = 0xA5;
 

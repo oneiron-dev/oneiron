@@ -171,11 +171,11 @@ one. None of these changes the combiner's inputs or their order.
   `zeroize::zeroize_stack` right after it, over the measured depth with margin (an
   unoptimized build without debug assertions gets the optimized size): best-effort stack
   wipe per upstream policy (meta#38); register or compiler copies may remain. The wipe
-  covers those two calls only. Unit tests paint the stack, run each wrapper, and check
-  that none of the known secrets (the HMAC key blocks and states, the PRK, the payload
-  key, the SLH-DSA randomizer) is left below it; run in a release build, they fail if an
-  inner function is inlined. Recovering a remaining copy needs a memory disclosure of
-  this process.
+  covers those two calls only. Unit tests (Linux and macOS) paint the stack, run each
+  wrapper, and check that none of the known secrets (the HMAC key blocks and states, the
+  PRK, the payload key, the SLH-DSA randomizer) is left below it; run in a release
+  build, they fail if an inner function is inlined. Recovering a remaining copy needs a
+  memory disclosure of this process.
 
 ## Signature record encoding v1
 
