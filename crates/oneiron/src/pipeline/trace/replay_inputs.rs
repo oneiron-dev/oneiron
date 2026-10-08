@@ -64,7 +64,7 @@ pub(in crate::pipeline) fn capture_replay_inputs(
             "query_occurred_range": t.query_occurred_range, "effort_anchor": t.effort_anchor,
         })
     });
-    RetrievalReplayInputs {
+    let mut inputs = RetrievalReplayInputs {
         query_ref: builder.replay_query_ref.clone(),
         config: json!({
             "channels": {
@@ -96,7 +96,6 @@ pub(in crate::pipeline) fn capture_replay_inputs(
             "recency_half_lives": super::super::types::RETRIEVAL_RECENCY_HALF_LIFE_DAYS_BY_TYPE,
             "default_recency_half_life": super::super::types::DEFAULT_RECENCY_HALF_LIFE_DAYS,
             "fast_dims": builder.vault.config.fast_dims,
-            "turn_fold": builder.turn_fold,
             "blend_weights": blend_weights,
             "authority": {
                 "entity_types": authority.entity_types,
@@ -158,5 +157,8 @@ pub(in crate::pipeline) fn capture_replay_inputs(
             }),
         }),
         corpus_snapshot_ref: builder.corpus_snapshot_ref.clone(),
-    }
+    };
+    // `json!` above is at its recursion limit, so the flag joins after it.
+    inputs.config["turn_fold"] = serde_json::Value::Bool(builder.turn_fold);
+    inputs
 }
