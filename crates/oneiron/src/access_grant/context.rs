@@ -62,6 +62,9 @@ impl<'v> AccessContext<'v> {
         if principal.is_none() {
             return Ok(context);
         }
+        let live = |id: &EntityId| -> Result<bool> {
+            Ok(crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?.is_live())
+        };
         for kind in [ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CLAIM] {
             for row in vault.store.type_index.prefix_iter(txn, &[kind])? {
                 let (key, _) = row?;
@@ -74,9 +77,15 @@ impl<'v> AccessContext<'v> {
                     return Err(Error::CorruptedIndex("access context type"));
                 }
                 if kind == ENTITY_TYPE_ACCESS_GRANT {
+                    // A deleted grant grants nothing, and the bodyless shell
+                    // it may leave is not a corrupt grant.
+                    if raw.len() == ENTITY_METADATA_HEADER_LEN && !live(&id)? {
+                        continue;
+                    }
                     let grant = decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
                     if Some(grant.principal_ref) == principal
                         && grant.effective_status_at(now) == super::AccessGrantStatus::Active
+                        && live(&id)?
                     {
                         context.grants.push(grant);
                     }
@@ -91,11 +100,13 @@ impl<'v> AccessContext<'v> {
                             .is_some_and(|id| Some(id) == principal)
                         && let ClaimSubject::Entity(space) = body.subject
                     {
-                        // A member binding is a membership only while its subject is a
-                        // live relationship: a deleted one keeps its typed header.
-                        if crate::vault::live_entity_row_in_txn(&vault.store, txn, &space)?
-                            .live_type()
-                            == Some(crate::registry::ENTITY_TYPE_RELATIONSHIP)
+                        // A member binding is a membership only while it and its
+                        // subject are live, and the subject is a relationship: a
+                        // deleted one keeps its typed header.
+                        if live(&id)?
+                            && crate::vault::live_entity_row_in_txn(&vault.store, txn, &space)?
+                                .live_type()
+                                == Some(crate::registry::ENTITY_TYPE_RELATIONSHIP)
                         {
                             context.relationships.insert(space);
                         }
@@ -486,84 +497,207 @@ mod tests {
         Ok(())
     }
 
+    /// A claim shared through relationship `space`, which its bound `member`
+    /// reads through the scoped reader.
+    struct RelationshipShare {
+        space: EntityId,
+        member: EntityId,
+        shared: EntityId,
+    }
+
+    impl RelationshipShare {
+        fn new(vault: &Vault) -> Self {
+            use crate::claim::{
+                ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject,
+            };
+
+            let when = crate::TimeRange { start: 1, end: 1 };
+            let space = EntityId::now();
+            vault
+                .put_entity(
+                    &space,
+                    crate::registry::ENTITY_TYPE_RELATIONSHIP,
+                    when,
+                    1,
+                    b"relationship",
+                )
+                .expect("put the relationship");
+            let member = EntityId::now();
+            vault
+                .put_entity(
+                    &member,
+                    crate::registry::ENTITY_TYPE_PERSON,
+                    when,
+                    1,
+                    b"person",
+                )
+                .expect("put the member");
+            // Bound before the shipped manifest is installed below: under it
+            // the binding's predicate is critical and the write pends.
+            crate::federation::bind_member_person(vault, space, member, when, 1)
+                .expect("bind the member");
+            let shared = EntityId::now();
+            let mut body = ClaimBody::new(
+                "test.relationship_scope",
+                ClaimSubject::Entity(space),
+                rmpv::Value::from("fact"),
+                1.0,
+                ClaimApprovalStatus::Approved,
+                ClaimLifecycleStatus::Active,
+            )
+            .unwrap();
+            body.rel = Some(space);
+            vault
+                .put_claim(&shared, &body, when, 1)
+                .expect("put the shared claim");
+            crate::test_util::authorize_readers(vault, &["reader"]);
+            Self {
+                space,
+                member,
+                shared,
+            }
+        }
+
+        /// A read grant on the relationship's claims, from its id.
+        fn grant(&self, vault: &Vault, principal: EntityId) -> Result<EntityId> {
+            let id = EntityId::now();
+            vault.create_access_grant(
+                &id,
+                &AccessGrant {
+                    principal_ref: principal,
+                    scope: AccessGrantScope::RelationshipClaims {
+                        space_ref: self.space,
+                    },
+                    capability: AccessGrantCapability::RelationshipClaimsRead,
+                    status: AccessGrantStatus::Active,
+                    created_at: 1,
+                    revoked_at: None,
+                    expires_at: None,
+                    authority_scope: crate::federation::scope_codec::read_preset(),
+                },
+            )?;
+            Ok(id)
+        }
+
+        fn reads_as(&self, vault: &Vault, principal: EntityId) -> Result<bool> {
+            let reader = vault.scoped_read(
+                ScopedReadActorKey::new("reader")
+                    .unwrap()
+                    .require_access_grants(Some(principal)),
+            );
+            Ok(reader
+                .read(&[crate::claim::PointRead::id(self.shared)], None)?
+                .single()
+                .value
+                .is_some())
+        }
+    }
+
     /// Bug repro (#1307 census): a soft-deleted relationship must stop
     /// granting its members the reads its membership granted while live.
     #[test]
     fn a_deleted_relationship_grants_its_members_nothing() -> Result<()> {
-        use crate::claim::{
-            ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, PointRead,
-        };
-
         let (_dir, vault) =
             crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-        let when = crate::TimeRange { start: 1, end: 1 };
-        let member = EntityId::now();
-        let topic = EntityId::now();
-        for person in [member, topic] {
-            vault.put_entity(
-                &person,
-                crate::registry::ENTITY_TYPE_PERSON,
-                when,
-                1,
-                b"person",
-            )?;
-        }
-        let space = EntityId::now();
-        vault.put_entity(
-            &space,
-            crate::registry::ENTITY_TYPE_RELATIONSHIP,
-            when,
-            1,
-            b"relationship",
-        )?;
-        let shared = EntityId::now();
-        let mut body = ClaimBody::new(
-            "test.relationship_share",
-            ClaimSubject::Entity(topic),
-            rmpv::Value::from("fact"),
-            1.0,
-            ClaimApprovalStatus::Approved,
-            ClaimLifecycleStatus::Active,
-        )
-        .unwrap();
-        body.rel = Some(space);
-        vault.put_claim(&shared, &body, when, 1)?;
-        crate::test_util::authorize_readers(&vault, &["reader"]);
-        let reader = vault.scoped_read(
-            ScopedReadActorKey::new("reader")
-                .unwrap()
-                .require_access_grants(Some(member)),
-        );
-        let member_reads = || -> Result<bool> {
-            Ok(reader
-                .read(&[PointRead::id(shared)], None)?
-                .single()
-                .value
-                .is_some())
-        };
-
-        assert!(!member_reads()?, "no membership yet, so no read");
-        crate::federation::bind_member_person(&vault, space, member, when, 1)?;
+        let share = RelationshipShare::new(&vault);
+        let member = share.member;
         assert!(
-            member_reads()?,
+            !share.reads_as(&vault, EntityId::now())?,
+            "no membership, no read"
+        );
+        assert!(
+            share.reads_as(&vault, member)?,
             "a live relationship grants its member the read"
         );
         let retained = vault.access_context(member)?;
         let retained_allows = || {
             retained.allows(
                 ENTITY_TYPE_CLAIM,
-                Some(space),
+                Some(share.space),
                 false,
                 &crate::federation::Scope::top(),
             )
         };
         assert!(retained_allows());
 
-        assert!(vault.delete_entity(&space)?);
-        assert!(!member_reads()?, "a deleted relationship grants nothing");
+        assert!(vault.delete_entity(&share.space)?);
+        assert!(
+            !share.reads_as(&vault, member)?,
+            "a deleted relationship grants nothing"
+        );
         assert!(
             !retained_allows(),
             "nor does a context loaded before the delete"
+        );
+        Ok(())
+    }
+
+    /// Bug repro (#1307 census review): a relationship a peer deleted grants
+    /// nothing here either, once its tombstone is applied: before the update
+    /// carrying it is stored, and after, in a window with no snapshot yet.
+    #[cfg(feature = "sync")]
+    #[test]
+    fn a_relationship_a_peer_deleted_grants_its_members_nothing() -> Result<()> {
+        use crate::sync::bridge::{Materializer, persist_window_update, register_observer_b};
+        use crate::sync::loro_support::{export_all_updates, import_doc, map_insert_bytes};
+        use std::sync::Arc;
+
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let vault = Arc::new(vault);
+        let share = RelationshipShare::new(&vault);
+        assert!(share.reads_as(&vault, share.member)?);
+
+        // The peer's soft tombstone from literal wire parts:
+        // [reason 1 = user_delete][deleted_at: 8 LE][request_id: 16].
+        let mut tombstone = vec![1u8];
+        tombstone.extend_from_slice(&1_771_027_200u64.to_le_bytes());
+        tombstone.extend_from_slice(&[0x5A; 16]);
+        let peer = loro::LoroDoc::new();
+        map_insert_bytes(
+            &peer.get_map("tombstones"),
+            &share.space.to_hex(),
+            &tombstone,
+        )?;
+        peer.commit();
+
+        let window = crate::deletion::window_label_from_timestamp(1);
+        let doc = loro::LoroDoc::new();
+        let _observer = register_observer_b(&doc, &vault, &Arc::new(Materializer::new()), &window);
+        import_doc(&doc, &export_all_updates(&peer)?)?;
+        assert!(
+            !share.reads_as(&vault, share.member)?,
+            "applied, its update not stored yet"
+        );
+        persist_window_update(&vault, &window, &export_all_updates(&doc)?)?;
+        assert!(
+            !share.reads_as(&vault, share.member)?,
+            "applied and stored, no window snapshot"
+        );
+        Ok(())
+    }
+
+    /// Bug repro (#1307 census review): a deleted AccessGrant grants nothing,
+    /// and the shell it leaves does not stop every other grant from loading.
+    #[test]
+    fn a_deleted_access_grant_grants_nothing_and_other_grants_still_load() -> Result<()> {
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let share = RelationshipShare::new(&vault);
+        let kept = EntityId::now();
+        let dropped = EntityId::now();
+        share.grant(&vault, kept)?;
+        let dropped_grant = share.grant(&vault, dropped)?;
+        assert!(share.reads_as(&vault, kept)? && share.reads_as(&vault, dropped)?);
+
+        assert!(vault.delete_entity(&dropped_grant)?);
+        assert!(
+            share.reads_as(&vault, kept)?,
+            "another principal's grant still loads"
+        );
+        assert!(
+            !share.reads_as(&vault, dropped)?,
+            "a deleted grant grants nothing"
         );
         Ok(())
     }
