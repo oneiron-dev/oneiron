@@ -35,6 +35,7 @@ mod memories;
 mod memories_frame;
 mod memories_projection;
 mod memory_pins;
+mod notifications;
 pub use memories::MemoryTier;
 pub use memories_frame::assemble_memories_sections;
 mod plugin;
@@ -75,6 +76,10 @@ pub use memories::{
     MemoriesSection, MemoryRow, MemorySlot, MemorySource,
 };
 pub use memories_projection::project_memories_section;
+pub(crate) use notifications::{NotificationRecipientScope, notification_recipient_scope};
+pub use notifications::{
+    caller_marker_contains, notification_body_json, notification_scoped_to_caller,
+};
 pub use plugin::{
     AdmittedPluginSection, AuthorityLaneRef, BoardBlockKind, BoardBlockRecord, BoardBlockScope,
     BoardBlockWriteEnvelope, CORE_SECTION_IDS, PLUGIN_INSTALL_CLAIM_SCHEMA_VERSION,

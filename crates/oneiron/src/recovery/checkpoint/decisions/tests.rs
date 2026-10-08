@@ -9,6 +9,7 @@ mod audience;
 mod campaign;
 mod consent;
 mod counterparty;
+mod notifications;
 mod reads;
 mod skills;
 mod tasks;
@@ -86,6 +87,7 @@ const CASES: &[fn() -> Result<Case>] = &[
     consent::esign_ceremonies,
     consent::calendar_invitation_consent,
     worlds::world_selection_authority,
+    notifications::notification_recipients,
 ];
 
 #[test]

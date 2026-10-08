@@ -26,6 +26,7 @@ mod audience;
 mod campaign;
 mod consent;
 mod counterparty;
+mod notifications;
 mod reads;
 mod skills;
 mod tasks;
@@ -149,6 +150,10 @@ const DECISIONS: &[(&str, Check)] = &[
     (
         "world selection authority",
         loosened::<worlds::WorldSelections>,
+    ),
+    (
+        "notification recipients",
+        loosened::<notifications::NotificationRecipients>,
     ),
 ];
 
