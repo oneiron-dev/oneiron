@@ -384,3 +384,107 @@ async fn owner_backup_rehearse_and_status_through_the_route() {
     assert_eq!(location["secret_scan"], "on");
     assert!(location["disk_bytes"].as_u64().unwrap() > 0);
 }
+
+/// A request the owner door admitted, then a revocation of its slip commits
+/// while the act waits for the writer: every queued act is refused in its
+/// own transaction and lands no receipt and no change.
+#[tokio::test]
+async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
+    use crate::owner::{OwnerError, imports, runs};
+    let (_dir, server) = auth_test_server();
+    let vault = server.vault();
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
+    let recipe = format!("principal_ref={};actor_class=human", owner_id.to_hex());
+    let request = slip_credentials::bind_request(
+        &server,
+        core_request_with_authz("POST", "/v1/owner/secret-scan", test_bearer(&recipe), None),
+    );
+    let auth = CoreAuth::from_headers(request.headers(), &server.config, vault.as_ref()).unwrap();
+
+    // What the queued acts would decide: an import batch and a parked run.
+    let unbound = vault
+        .authenticate_owner(
+            owner_id,
+            &owner_id.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let subject = person(&server, b"imported subject").to_hex();
+    let batch: imports::ImportBatch = serde_json::from_value(json!({
+        "source_id": "okf",
+        "claims": [{ "subject": subject, "source_record_id": "concept-1",
+                     "predicate": "profile.name", "value": "Ada",
+                     "occurred": { "start": 1, "end": 1 }, "learned_at": 2 }]
+    }))
+    .unwrap();
+    let preview = imports::preview(vault, &unbound, batch).unwrap();
+    let run = "owner-route-run-revoked";
+    let proposal = vault
+        .park_run_proposal_for_test(
+            run,
+            oneiron::EntityId::now(),
+            oneiron::EntityId::now(),
+            "one",
+        )
+        .unwrap();
+    let bundle_id = runs::review(vault, &unbound, run).unwrap().bundle_id;
+
+    // Admitted at the door, then revoked before any act reaches the writer.
+    let admitted = crate::api::owner_routes::owner(&auth, &server).expect("the owner is admitted");
+    let (slip, _) = slip_credentials::credential(&server, &recipe);
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(
+        server.config.auth_secret.as_deref().unwrap().as_bytes(),
+    )
+    .unwrap();
+    vault
+        .revoke_capability_slip(&issuer, slip.claims.slip_id)
+        .unwrap();
+
+    let refused = |error: oneiron::Error| {
+        assert_eq!(
+            error.kind(),
+            oneiron::ErrorKind::ConsentOwnerNotAuthenticated,
+            "{error}"
+        );
+    };
+    let refused_owner = |error: OwnerError| match error {
+        OwnerError::Engine(error) => refused(*error),
+        other => panic!("refused for another reason: {other}"),
+    };
+    refused(
+        vault
+            .set_secret_scan_mode(
+                &admitted,
+                oneiron::policy_model::SecretScanMode::Off,
+                vault.now_recorded_at(),
+            )
+            .unwrap_err(),
+    );
+    assert_eq!(
+        vault.secret_scan_mode().unwrap(),
+        oneiron::policy_model::SecretScanMode::On
+    );
+    assert!(vault.secret_scan_change_log().unwrap().is_empty());
+
+    refused_owner(imports::approve(vault, &admitted, &preview.batch, &preview.digest).unwrap_err());
+    refused_owner(imports::decline(vault, &admitted, &preview.batch, &preview.digest).unwrap_err());
+    for claim in &preview.batch.claims {
+        let id = oneiron::EntityId::from_hex(claim.claim_id.as_deref().unwrap()).unwrap();
+        assert!(vault.get_raw(&id).unwrap().is_none(), "nothing admitted");
+    }
+    // The batch's one decision is still open for the owner's live slip.
+    imports::decline(vault, &unbound, &preview.batch, &preview.digest).unwrap();
+
+    for action in [
+        oneiron::run_tree::GateConsentBundleAction::Approve,
+        oneiron::run_tree::GateConsentBundleAction::Decline,
+    ] {
+        refused_owner(runs::resolve(vault, &admitted, run, &bundle_id, action).unwrap_err());
+    }
+    assert_eq!(
+        vault.get_claim(&proposal).unwrap().unwrap().approval,
+        oneiron::ClaimApprovalStatus::Proposed
+    );
+    assert_eq!(runs::pending(vault).unwrap()[0].run_id, run);
+}

@@ -310,6 +310,10 @@ impl Vault {
     ) -> Result<GateConsentBundleReceipt> {
         require_gate_consent_bundle_run_id(dreamer_run_id)?;
         let (receipt, recorded_decisions) = self.with_write_txn(|wtxn| {
+            // The proof is rechecked where the decision commits: an owner
+            // whose person, credential or ownership went away while the call
+            // waited for the writer decides nothing.
+            owner.revalidate_in_txn(self, &*wtxn)?;
             let members = gate_consent_bundle_members_in_txn(&self.store, &*wtxn, dreamer_run_id)?;
             if members.is_empty() {
                 return Err(Error::EntityNotFound);
