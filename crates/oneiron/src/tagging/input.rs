@@ -345,8 +345,10 @@ fn context_message_in_txn(
 /// adopted the DAG, is a root and reads alone, as is a turn whose `ChildOf`
 /// owner is not one live conversation, or one of whose turns carries DAG
 /// topology of its own (a received `Parent`, say). Only a conversation that
-/// never adopted it is ordered by time: its `ChildOf` turns that come before
-/// `turn`, those of one second in id order. That read takes each turn's row
+/// never adopted it is ordered by time: its `ChildOf` turns that occurred in
+/// an earlier second than `turn`. A turn of the same second is left out,
+/// since nothing orders the two: a turn's id may be its caller's choice, and
+/// its time has one-second precision. That read takes each turn's row
 /// header, never its body, keeps only the nearest `limit`, and reads alone
 /// past [`MAX_EDGE_QUERY_RESULTS`] turns. A topology the DAG readers refuse
 /// reads alone too: the window is context, and a refusal must not keep the
@@ -398,7 +400,7 @@ pub(super) fn earlier_turns_in_txn(
     if dag_record || keeps_dag_topology(store, txn, &conversation).unwrap_or(true) {
         return Ok(Vec::new());
     }
-    let Some(at) = header_key(vault, txn, turn)? else {
+    let Some((at, _)) = header_key(vault, txn, turn)? else {
         return Ok(Vec::new());
     };
     // The nearest `limit` earlier turns, the farthest of them on top.
@@ -426,7 +428,8 @@ pub(super) fn earlier_turns_in_txn(
         if record_has_dag_topology(vault, txn, &id).unwrap_or(true) {
             return Ok(Vec::new());
         }
-        if key >= at {
+        // Only a strictly earlier second proves a turn came first.
+        if key.0 >= at {
             continue;
         }
         nearest.push(Reverse(key));
@@ -443,7 +446,8 @@ pub(super) fn earlier_turns_in_txn(
 }
 
 /// A TURN's place in time, read from its row header: its occurred second,
-/// then its id. `None` for a row that is absent or not a TURN.
+/// then its id, which only makes the order of one second's turns stable.
+/// `None` for a row that is absent or not a TURN.
 fn header_key(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

@@ -2484,6 +2484,54 @@ fn the_window_keeps_the_nearest_earlier_turns() {
     );
 }
 
+/// A turn's id does not place it in time. Two turns of one second, the later
+/// with the smaller id its caller chose, stay out of each other's window,
+/// even when the earlier is tagged after the later commits; a turn of an
+/// earlier second is in both.
+#[test]
+fn a_later_turn_of_the_same_second_never_enters_an_earlier_turns_window() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    let before = witness_at(&vault, "Ada sailed north", NOW - 1);
+    let memory = vault.memory(speaker(&vault), EdgeActorClass::Human);
+    let witness_as = |turn_ref: &str, content: &str| {
+        receipt_turn(
+            &memory
+                .witness(&turn(Some(turn_ref.to_owned()), vec![message(0, content)]))
+                .expect("witness"),
+        )
+    };
+    let earlier = witness_as("7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a", "Grace stayed behind");
+    let later = witness_as("6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a", "they wrote letters");
+    assert!(later.as_bytes() < earlier.as_bytes());
+    let tagger = Scripted::new(Answer::Good);
+    let pass = reconciler(&vault, &tagger)
+        .with_batch_size(3)
+        .drain_once()
+        .expect("drain");
+    assert_eq!(pass.traces.len(), 3);
+    let inputs = tagger.inputs.lock().expect("inputs").clone();
+    let input = |turn: &EntityId| {
+        inputs
+            .iter()
+            .find(|input| input.turn == turn.to_hex())
+            .expect("the turn was tagged")
+            .clone()
+    };
+    let earlier_input = input(&earlier);
+    assert!(
+        earlier_input
+            .context
+            .iter()
+            .flat_map(|turn| &turn.messages)
+            .all(|message| message.text != "they wrote letters"),
+        "the later turn's text is not in the earlier turn's input"
+    );
+    let first = (before.to_hex(), vec!["Ada sailed north".to_owned()]);
+    assert_eq!(window(&earlier_input), vec![first.clone()]);
+    assert_eq!(window(&input(&later)), vec![first]);
+}
+
 /// A same-second re-mark of a settled turn draws a new id: pruning the
 /// settled marker frees no id, so the old one never names the new pass, and
 /// the two passes' traces name distinct attempts.
