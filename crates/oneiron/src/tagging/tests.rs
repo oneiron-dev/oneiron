@@ -1417,7 +1417,8 @@ fn a_long_retry_history_in_one_second_leaves_the_turn_its_ids() {
         pass.traces[0].outcome,
         TaggingOutcome::Shadowed { .. }
     ));
-    // The settled marker left the job ledger with all 4,100 tries it retried.
+    // Each retry left the tries past the history's bound, and the settled
+    // marker left the job ledger with the rest.
     assert!(markers(&vault).is_empty());
 }
 
@@ -2233,6 +2234,80 @@ fn pruning_keeps_exactly_the_configured_trace_history() {
     clock.set(NOW + 154);
     reconciler.drain_once().expect("drain");
     assert!(history(&vault, &busy).is_empty());
+}
+
+/// A turn whose tagger keeps failing holds a bounded lineage in the job
+/// ledger: the live marker and at most the failed tries its trace history
+/// keeps, none past the history's age. The tries it drops still count, so
+/// every retry backs off on the turn's whole history and every trace names
+/// its try, and the settlement that ends the run prunes what is left.
+#[test]
+fn a_turn_that_keeps_failing_keeps_a_bounded_lineage_and_still_backs_off() {
+    const PER_TURN: usize = 2;
+    const MAX_AGE_SECS: u64 = 3_600;
+    const FAILURES: u32 = 20;
+    let dir = tempfile::tempdir().expect("dir");
+    let clock = ManualClock::new(NOW);
+    let vault = {
+        let mut config = config(true);
+        config.store_clock = clock.bundle();
+        config.tagging = Some(
+            TaggingMarkerConfig::new(CHECKPOINT)
+                .expect("checkpoint")
+                .with_trace_history(TaggingTraceHistory {
+                    per_turn: PER_TURN as u32,
+                    max_age_secs: MAX_AGE_SECS,
+                }),
+        );
+        Arc::new(Vault::open(dir.path(), config).expect("open vault"))
+    };
+    let turn = witness(&vault, "Ada sailed north");
+    let tagger = Scripted::new(Answer::Fail);
+    let reconciler = reconciler(&vault, &tagger).with_backoff(TaggingBackoff {
+        first_secs: 1,
+        max_secs: 1 << 30,
+    });
+    let mut at = NOW;
+    for failed in 0..FAILURES {
+        let pass = reconciler.drain_once().expect("drain");
+        assert_eq!(pass.traces.len(), 1, "the retry is claimed when it is due");
+        assert_eq!(pass.traces[0].try_number, failed + 1);
+        let TaggingOutcome::Failed { retry_at, .. } = pass.traces[0].outcome else {
+            panic!("the call failed");
+        };
+        assert_eq!(retry_at - at, 1 << failed, "try {} backs off", failed + 1);
+        let rows = markers(&vault);
+        assert!(
+            rows.len() <= PER_TURN + 1,
+            "{} rows after {} failures",
+            rows.len(),
+            failed + 1
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row.state == AttemptState::Scheduled)
+                .count(),
+            1,
+            "one live marker"
+        );
+        if failed == 4 {
+            assert_eq!(rows.len(), PER_TURN + 1);
+        }
+        at = retry_at;
+        clock.set(at);
+    }
+    // The last gaps were past the age bound: only the try that just failed
+    // stays behind the live marker.
+    assert_eq!(markers(&vault).len(), 2);
+    tagger.set(Answer::Good);
+    let pass = reconciler.drain_once().expect("drain");
+    assert_eq!(pass.traces[0].try_number, FAILURES + 1);
+    assert!(matches!(
+        pass.traces[0].outcome,
+        TaggingOutcome::Shadowed { .. }
+    ));
+    assert!(markers(&vault).is_empty());
+    assert_eq!(settled(&vault, &turn), 1);
 }
 
 /// A scan for another job kind never reads the tagging range: not a settled

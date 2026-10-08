@@ -247,6 +247,7 @@ impl<'a> AttemptQueue<'a> {
             claimed_at: None,
             scheduled_at: None,
             retry_of: None,
+            folded_retries: 0,
             backoff_until: None,
             last_error: None,
             task_ref,

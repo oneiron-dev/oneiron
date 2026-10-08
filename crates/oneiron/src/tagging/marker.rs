@@ -43,6 +43,8 @@ pub const DEFAULT_TRACE_MAX_AGE_SECS: u64 = 7 * 86_400;
 
 /// How much tagging history a vault keeps. A settled marker leaves the job
 /// ledger with every try it retried; what stays is its traces, bounded here.
+/// A marker still retrying keeps behind it no more failed tries than this
+/// keeps traces, and none older.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TaggingTraceHistory {
     /// Traces kept per turn, the newest; 0 keeps none.
@@ -268,16 +270,38 @@ pub(super) fn enqueue_marker_in_txn(
 
 /// Retries a leased marker in the caller's write transaction, under a
 /// successor id derived from the try it retries, stamped at `input.now`.
+///
+/// The failed tries the trace history would keep stay in the ledger behind
+/// the new one: the newest [`TaggingTraceHistory::per_turn`], none older
+/// than [`TaggingTraceHistory::max_age_secs`]. Older tries are deleted and
+/// counted into the oldest one kept, so backoff and try numbers read on, a
+/// turn that keeps failing holds a bounded lineage, and its settlement
+/// prunes a bounded one.
 pub(super) fn retry_marker_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     input: RetryAttempt,
 ) -> Result<()> {
     let source = input.id;
+    let now = input.now;
     let id = free_id(vault, wtxn, MAX_RETRY_GENERATIONS, |generation| {
-        derived_id(RETRY_ID_DOMAIN, &[source.as_bytes()], input.now, generation)
+        derived_id(RETRY_ID_DOMAIN, &[source.as_bytes()], now, generation)
     })?;
-    AttemptQueue::from_store(&vault.store).retry_with_id_in_txn(wtxn, input, id)?;
+    let queue = AttemptQueue::from_store(&vault.store);
+    queue.retry_with_id_in_txn(wtxn, input, id)?;
+    let history = vault
+        .config
+        .tagging
+        .as_ref()
+        .map_or_else(TaggingTraceHistory::default, |tagging| {
+            tagging.trace_history
+        });
+    queue.compact_retry_chain_in_txn(
+        wtxn,
+        id,
+        usize::try_from(history.per_turn).unwrap_or(usize::MAX),
+        now.saturating_sub(history.max_age_secs),
+    )?;
     Ok(())
 }
 

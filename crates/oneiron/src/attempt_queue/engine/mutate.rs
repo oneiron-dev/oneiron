@@ -106,6 +106,7 @@ impl AttemptQueue<'_> {
             claimed_at: None,
             scheduled_at: Some(input.backoff_until),
             retry_of: Some(source.id),
+            folded_retries: 0,
             backoff_until: None,
             last_error: None,
             task_ref: source.task_ref.clone(),

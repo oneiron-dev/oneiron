@@ -1,9 +1,11 @@
-//! The door a settled attempt of an owner-retained kind leaves the ledger by.
+//! The doors an owner-retained kind's tries leave the ledger by: a settled
+//! attempt with every try it retried, and the older tries of a lineage that
+//! is still retrying.
 
 use std::collections::HashSet;
 
 use crate::attempt_queue::encoding::{
-    DedupeIndexKeys, decode_record, legacy_dedupe_index_key, ready_at, ready_key,
+    DedupeIndexKeys, decode_record, encode_record, legacy_dedupe_index_key, ready_at, ready_key,
 };
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::types::{AttemptId, AttemptRecord};
@@ -74,6 +76,88 @@ impl AttemptQueue<'_> {
             child = Some(record);
         }
         Ok(pruned)
+    }
+
+    /// Compacts the lineage of the try `id` of an owner-retained kind in the
+    /// caller's transaction, and returns how many rows went.
+    ///
+    /// It keeps the newest `keep` tries `id` retried that were finalized at
+    /// or after `kept_since`. Every older try is deleted, with each index
+    /// entry that still names it. Their count is folded into the oldest row
+    /// kept, whose `retry_of` is cleared
+    /// ([`AttemptRecord::folded_retries`]), so the lineage depth, and every
+    /// backoff that reads it, stays what it was. A try that fails again and
+    /// again leaves the ledger a bounded lineage, so the settlement that
+    /// prunes it deletes a bounded one. A deleted try must be settled and
+    /// named by no run or task, as for [`Self::prune_settled_in_txn`];
+    /// anything else is refused, so the caller must abort.
+    pub(crate) fn compact_retry_chain_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: AttemptId,
+        keep: usize,
+        kept_since: u64,
+    ) -> Result<usize> {
+        let mut seen = HashSet::from([id]);
+        let mut kept = self.retry_chain_record_in_txn(wtxn, id)?;
+        if !crate::attempt_queue::owner_retained_kind(&kept.kind) {
+            return Err(invalid_transition("compact", kept.state.as_str()));
+        }
+        let mut kept_tries = 0;
+        let mut child = loop {
+            let Some(parent_id) = kept.retry_of else {
+                return Ok(0);
+            };
+            if !seen.insert(parent_id) {
+                return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                    ERR_RETRY_CHAIN_CYCLE,
+                )));
+            }
+            let parent = self.retry_chain_record_in_txn(wtxn, parent_id)?;
+            if !retries_the_same_attempt(&kept, &parent) {
+                return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                    ERR_RETRY_CHAIN_MISMATCH,
+                )));
+            }
+            if kept_tries == keep || parent.updated_at < kept_since {
+                break parent;
+            }
+            kept_tries += 1;
+            kept = parent;
+        };
+        let mut deleted = 0_u32;
+        let folded_before = loop {
+            if !child.state.is_terminal() || child.run_id.is_some() || child.task_ref.is_some() {
+                return Err(invalid_transition("compact", child.state.as_str()));
+            }
+            self.delete_entries_naming(wtxn, &child)?;
+            self.store
+                .attempt_records
+                .delete(wtxn, child.id.as_bytes())?;
+            crate::vault_cleanup::forget_archived_attempt_in_txn(self.store, wtxn, &child)?;
+            deleted = deleted.saturating_add(1);
+            let Some(parent_id) = child.retry_of else {
+                break child.folded_retries;
+            };
+            if !seen.insert(parent_id) {
+                return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                    ERR_RETRY_CHAIN_CYCLE,
+                )));
+            }
+            let parent = self.retry_chain_record_in_txn(wtxn, parent_id)?;
+            if !retries_the_same_attempt(&child, &parent) {
+                return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                    ERR_RETRY_CHAIN_MISMATCH,
+                )));
+            }
+            child = parent;
+        };
+        kept.retry_of = None;
+        kept.folded_retries = deleted.saturating_add(folded_before);
+        self.store
+            .attempt_records
+            .put(wtxn, kept.id.as_bytes(), &encode_record(&kept)?)?;
+        Ok(usize::try_from(deleted).unwrap_or(usize::MAX))
     }
 
     /// Deletes the ready and dedupe entries that name `record`. A settled row

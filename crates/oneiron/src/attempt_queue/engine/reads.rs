@@ -72,7 +72,9 @@ impl AttemptQueue<'_> {
 
     /// Counts the retries that precede `id` by walking its `retry_of` lineage.
     ///
-    /// A first try is depth 0 and every `retry_of` hop adds one. [`Self::retry`]
+    /// A first try is depth 0 and every `retry_of` hop adds one, as does each
+    /// try a compaction folded into the oldest stored row
+    /// ([`AttemptRecord::folded_retries`]). [`Self::retry`]
     /// mints a NEW row whose `attempt_count` restarts at zero, so the lineage
     /// is the only honest logical retry counter: a caller spacing retries must
     /// read the depth here rather than infer one from a per-row lease counter.
@@ -128,7 +130,10 @@ impl AttemptQueue<'_> {
             }
             child = parent;
         }
-        Ok(depth)
+        // The oldest stored row counts the tries a compaction deleted.
+        Ok(depth
+            .saturating_add(child.folded_retries)
+            .min(RETRY_CHAIN_DEPTH_LIMIT))
     }
 
     /// One row of the lineage walk: it must exist, or the chain is broken.
@@ -136,7 +141,7 @@ impl AttemptQueue<'_> {
     /// Yields the whole decoded record, not just its link, so the hop that
     /// follows can check parent-child identity within the same one read and
     /// one decode this walk already spends per visited row.
-    fn retry_chain_record_in_txn(
+    pub(super) fn retry_chain_record_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: AttemptId,
