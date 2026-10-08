@@ -712,11 +712,16 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
     // Light widens lexical admission for its temporal anchor and blends
     // recency, salience and confidence. One world-scoped target-predicate
     // decoy separately proves that the filtered view excludes other worlds.
+    // A third of the decoys are PERSON rows, which plain recall returns only
+    // when the scope names their kind.
     let old = memory
         .recall(
             "viewneedle",
             Effort::Light,
-            &RecallScope::default(),
+            &RecallScope {
+                kinds: Some(vec!["PERSON".into(), "CLAIM".into()]),
+                ..RecallScope::default()
+            },
             1000,
             None,
             None,
