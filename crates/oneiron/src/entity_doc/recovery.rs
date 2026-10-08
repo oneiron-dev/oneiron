@@ -14,7 +14,8 @@ use heed::{RoTxn, RwTxn};
 fn guard(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId) -> Result<()> {
     // Existing causal bases, pinned quotes and receipts cannot be rebuilt from
     // a value-only snapshot. Refuse instead of discarding their authority.
-    // Citation floors do not refuse: `restore` stales their citers instead.
+    // Citation floors do not refuse: `restore` keeps a document that already
+    // holds the recovered value, and stales their citers when it rebuilds.
     if !super::forks::all_forks(&vault.store, txn, entity)?.is_empty() {
         return Err(invalid("entity document forks require causal recovery"));
     }
@@ -83,6 +84,11 @@ pub(crate) fn restore(
                 "entity document recovery conflicts with existing head",
             ));
         }
+        // A live document that already holds this value keeps its history and
+        // incarnation untouched, so every frontier cited in it still resolves.
+        if holds_value(vault, txn, &entity, &old, row)? {
+            return Ok(());
+        }
         // The rebuild keeps no old operation and takes a fresh incarnation:
         // every live record citing this document's history goes stale here,
         // in this transaction, rather than naming a frontier that is gone.
@@ -101,12 +107,42 @@ pub(crate) fn restore(
         entity: entity.to_hex(),
         incarnation: EntityId::now().to_hex(),
         document,
-        field: match &row.field {
-            None => storage::TextField::Utf8Body,
-            Some(field) => storage::TextField::MapField(field.clone()),
-        },
+        field: field_of(row),
         generation: 0,
         pending: 0,
     };
     storage::persist(vault, txn, &entity, &mut head, &doc, None)
+}
+
+fn field_of(row: &CanonicalEntityDocument) -> storage::TextField {
+    match &row.field {
+        None => storage::TextField::Utf8Body,
+        Some(field) => storage::TextField::MapField(field.clone()),
+    }
+}
+
+/// Whether the existing document under `old` already is `row`'s value: the
+/// same field and birth, the same text. A document that does not load
+/// (corrupt) is not, and is rebuilt; a storage failure is still an error.
+fn holds_value(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+    old: &storage::Head,
+    row: &CanonicalEntityDocument,
+) -> Result<bool> {
+    if old.entity != entity.to_hex() || old.field != field_of(row) {
+        return Ok(false);
+    }
+    let doc = match storage::load(&vault.store, txn, old) {
+        Ok(doc) => doc,
+        Err(error @ (crate::Error::Storage(_) | crate::Error::MapFull)) => return Err(error),
+        Err(_) => return Ok(false),
+    };
+    let birth = doc.birth();
+    Ok(
+        birth.actor == EntityId::from_bytes(row.birth_actor)?.to_hex()
+            && birth.at == row.birth_at
+            && doc.text() == row.text,
+    )
 }
