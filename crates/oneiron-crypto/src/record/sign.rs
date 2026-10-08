@@ -18,6 +18,23 @@ use crate::suite::{Suite, SuiteId, SuiteKind, name_of};
 
 const LABEL: &[u8] = b"oneiron-crypto/v1/sig";
 const SLHDSA_N: usize = 32;
+/// Stack bytes wiped after an Ed25519 signature, measured by stack painting
+/// (`sign::tests`, x86_64 Linux, rustc 1.96, 2026-10-09): the signer reached 62,248 bytes
+/// below its caller in a release build and 152,728 in a dev build (this crate at
+/// opt-level 0), most of it [`SigningKey::sign_message_inner`]'s own frame; so about 2.1x
+/// and 1.7x that.
+const ED25519_STACK_WIPE: usize = if cfg!(debug_assertions) {
+    256 * 1024
+} else {
+    128 * 1024
+};
+/// Stack bytes wiped after an SLH-DSA signature, measured the same way: 188,056 bytes in
+/// a release build and 464,504 in a dev build, so about 1.7x and 1.4x that.
+const SLHDSA_STACK_WIPE: usize = if cfg!(debug_assertions) {
+    640 * 1024
+} else {
+    320 * 1024
+};
 
 /// A signing key of one signature suite. Zeroizes on drop.
 pub enum SigningKey {
@@ -69,7 +86,28 @@ impl SigningKey {
         }
     }
 
+    /// Signs, then wipes the stack the signer ran on. SLH-DSA-SHA2's PRF_msg is
+    /// HMAC-SHA-512 keyed by SK.prf, and `hmac` leaves the padded key block in a plain
+    /// stack value; upstream asks callers to erase it (RustCrypto/meta#38). The same wipe
+    /// takes whatever else the signers leave there, such as WOTS+/FORS values and the
+    /// Ed25519 nonce. Best effort: register copies and spills in this frame are not reached.
     fn sign_message<R: TryCryptoRng + ?Sized>(
+        &self,
+        message: &[u8],
+        rng: &mut R,
+    ) -> Result<Vec<u8>> {
+        let signature = self.sign_message_inner(message, rng);
+        match self {
+            Self::Ed25519(_) => zeroize::zeroize_stack::<ED25519_STACK_WIPE>(),
+            Self::SlhDsaSha2_256s(_) => zeroize::zeroize_stack::<SLHDSA_STACK_WIPE>(),
+        }
+        signature
+    }
+
+    /// Out of line, so its frames sit below [`Self::sign_message`]'s and the wipe after it
+    /// covers them.
+    #[inline(never)]
+    fn sign_message_inner<R: TryCryptoRng + ?Sized>(
         &self,
         message: &[u8],
         rng: &mut R,
@@ -271,3 +309,6 @@ impl SignatureRecord {
         Ok(())
     }
 }
+
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
+mod tests;

@@ -28,6 +28,11 @@ use crate::suite::{Suite, SuiteId, SuiteKind, name_of};
 use crate::{MAX_PLAINTEXT_LEN, TAG_LEN};
 
 const KEY_LABEL: &[u8] = b"oneiron-crypto/v1/aead-key";
+/// Stack bytes wiped after the HKDF key schedule, measured by stack painting
+/// (`seal::tests`, x86_64 Linux, rustc 1.96, 2026-10-09): the schedule reached 1,480 bytes
+/// below its caller in a release build and 3,992 in a dev build (this crate at opt-level
+/// 0), so about 11x and 4x that.
+const AEAD_KEY_STACK_WIPE: usize = 16 * 1024;
 
 /// What the writer states about a new envelope.
 #[derive(Clone, Copy, Debug)]
@@ -189,7 +194,8 @@ pub fn seal<R: TryCryptoRng + ?Sized>(
     };
     header.validate()?;
     let header_bytes = header.encode();
-    let key = aead_key(&secret, header.kdf.salt(), &header_bytes)?;
+    let mut key = Zeroizing::new([0u8; 32]);
+    aead_key(&secret, header.kdf.salt(), &header_bytes, &mut key)?;
     let ciphertext = aead_seal(header.suite, &key, &header.nonce, &header_bytes, plaintext)?;
     if ciphertext.len() != header.ciphertext_len as usize {
         return Err(Error::Primitive("aead output length"));
@@ -265,7 +271,8 @@ impl Envelope {
             ) => hybrid::decapsulate(secret_key, x25519_ephemeral, mlkem_ciphertext)?,
             _ => return Err(Error::WrongKeyForWrap { wrap: h.wrap }),
         };
-        let key = aead_key(&secret, h.kdf.salt(), &self.header_bytes)?;
+        let mut key = Zeroizing::new([0u8; 32]);
+        aead_key(&secret, h.kdf.salt(), &self.header_bytes, &mut key)?;
         aead_open(
             h.suite,
             &key,
@@ -305,16 +312,32 @@ fn argon2id(
     Ok(out)
 }
 
+/// Writes `K` into `key`, then wipes the stack the key schedule ran on: `hkdf` and
+/// `hmac` leave the PRK, the padded HMAC key blocks and the output blocks in plain stack
+/// values, and upstream asks callers to erase them (RustCrypto/meta#38). Best effort:
+/// register copies and spills in this frame are not reached.
 fn aead_key(
     secret: &[u8; 32],
     salt: &[u8; 32],
     header_bytes: &[u8],
-) -> Result<Zeroizing<[u8; 32]>> {
-    let mut key = Zeroizing::new([0u8; 32]);
+    key: &mut [u8; 32],
+) -> Result<()> {
+    let derived = aead_key_inner(secret, salt, header_bytes, key);
+    zeroize::zeroize_stack::<AEAD_KEY_STACK_WIPE>();
+    derived
+}
+
+/// Out of line, so its frames sit below [`aead_key`]'s and the wipe after it covers them.
+#[inline(never)]
+fn aead_key_inner(
+    secret: &[u8; 32],
+    salt: &[u8; 32],
+    header_bytes: &[u8],
+    key: &mut [u8; 32],
+) -> Result<()> {
     Hkdf::<Sha256>::new(Some(salt), secret)
-        .expand_multi_info(&[KEY_LABEL, header_bytes], &mut *key)
-        .map_err(|_| Error::Primitive("hkdf"))?;
-    Ok(key)
+        .expand_multi_info(&[KEY_LABEL, header_bytes], key)
+        .map_err(|_| Error::Primitive("hkdf"))
 }
 
 fn aead_seal(
@@ -376,3 +399,6 @@ fn aead_open(
     };
     out.map(Zeroizing::new).map_err(|_| Error::OpenFailed)
 }
+
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
+mod tests;

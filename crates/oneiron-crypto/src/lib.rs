@@ -15,6 +15,8 @@ mod error;
 mod keys;
 mod nonce;
 mod record;
+#[cfg(all(test, any(target_arch = "x86_64", target_arch = "aarch64")))]
+mod stack_probe;
 mod suite;
 
 pub use crate::envelope::{
