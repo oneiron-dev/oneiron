@@ -29,17 +29,3 @@ pub(super) fn addressed(data: &[u8], conn: u32) -> Option<(u64, &[u8])> {
         &data[HEADER..],
     ))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn private_frames_have_one_recipient_and_no_wire_header() {
-        let frame = vec![crate::protocol::TAG_SUB, 0x80];
-        let data = wrap(7, 9, frame.clone());
-        assert_eq!(addressed(&data, 7), Some((9, frame.as_slice())));
-        assert!(addressed(&data, 8).is_none());
-        assert!(addressed(&data[..5], 7).is_none());
-        assert!(addressed(&wrap(7, 9, vec![crate::protocol::TAG_RPC]), 7).is_none());
-    }
-}

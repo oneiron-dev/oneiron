@@ -6,8 +6,6 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use loro::LoroDoc;
 use oneiron::DreamerAttemptProgressProducer;
 use oneiron::SyncEngineContext;
-#[cfg(test)]
-use oneiron::sync::WindowKey;
 use oneiron::sync::bridge::{LiveQueryTee, Materializer};
 use oneiron::sync::lease::ROOT_LEASES_MAP;
 use oneiron::sync::schema::{
@@ -416,12 +414,6 @@ impl SyncServer {
                 Some(if next == 0 { 1 } else { next })
             })
             .expect("fetch_update closure always returns Some")
-    }
-
-    /// Returns the window key (YYYY-MM) for a Unix timestamp.
-    #[cfg(test)]
-    pub(crate) fn window_key_for_timestamp(ts: u64) -> String {
-        WindowKey::from_timestamp(ts).as_str().to_string()
     }
 }
 

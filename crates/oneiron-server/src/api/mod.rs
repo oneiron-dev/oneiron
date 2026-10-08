@@ -48,25 +48,13 @@ use utoipa::ToSchema;
 #[cfg(test)]
 use crate::auth::CoreAuth;
 #[cfg(test)]
-use crate::error::ApiErrorDetails;
-#[cfg(test)]
-use crate::error::ErrorCode;
-#[cfg(test)]
 use crate::projection::View;
-#[cfg(test)]
-use crate::protocol::CountMode;
-#[cfg(test)]
-use crate::protocol::PaginatedResponse;
-#[cfg(test)]
-use crate::protocol::ResponseMeta;
 #[cfg(test)]
 use crate::runtime::RuntimeMode;
 #[cfg(test)]
 use crate::runtime::RuntimeProviderKind;
 #[cfg(test)]
 use crate::runtime::RuntimeRole;
-#[cfg(test)]
-use axum::extract::Query;
 #[cfg(test)]
 use axum::http::HeaderMap;
 
@@ -492,8 +480,6 @@ struct HealthResponse {
     ai: crate::ai_host::AiHealth,
 }
 
-// ─── Companion v1 profile access ─────────────────────────────────────────────
-
 // ─── Usage Ledger ────────────────────────────────────────────────────────────
 
 fn require_entity_type(
@@ -515,8 +501,6 @@ fn require_entity_type(
         }
     }
 }
-
-// ─── Receipt-provenance key revocation ────────────────────────────────────────
 
 // ─── Context Pack ─────────────────────────────────────────────────────────────
 

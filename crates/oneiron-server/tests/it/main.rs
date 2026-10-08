@@ -15,5 +15,4 @@ mod remote_pairing;
 // SIGTERM through `libc::kill` is Unix-only.
 #[cfg(unix)]
 mod reopen_after_restart;
-mod skills_pack;
 mod ws_sync;

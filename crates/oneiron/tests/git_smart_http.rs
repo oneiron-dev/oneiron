@@ -8,9 +8,8 @@
 //! client is a stock `git`, unmodified and unpatched.
 //!
 //! The bearer gate itself lives in the server crate (`api::git_http`), where
-//! `CoreAuth` lives, and is proved there: `git_smart_http_unauthenticated_
-//! info_refs_is_401` and `git_smart_http_receive_pack_without_registered_
-//! principal_ref_refused_even_on_loopback`. This binary proves the wire.
+//! `CoreAuth` lives, and is proved there (`api::git_http::tests_auth`). This
+//! binary proves the wire.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};

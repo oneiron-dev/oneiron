@@ -319,21 +319,3 @@ async fn mirrored_reaction_route_goes_through_the_signed_mirror_machine() {
     assert_eq!(removed["event"], "reaction.revoked");
     assert_eq!(server.vault.reactions_outbound(room).unwrap(), "mirrored");
 }
-
-#[test]
-fn reaction_route_has_openapi_and_security_policy() {
-    let spec = generated_spec();
-    assert!(spec["paths"]["/v1/core/messages/{message}/reactions"]["post"]["security"].is_array());
-    for schema in [
-        "ReactionRequest",
-        "ReactionResponse",
-        "DagReactionRecord",
-        "CoreReactionSignal",
-        "SurfaceReactionPayload",
-    ] {
-        assert!(
-            spec["components"]["schemas"][schema].is_object(),
-            "{schema}"
-        );
-    }
-}

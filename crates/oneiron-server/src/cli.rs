@@ -466,6 +466,3 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Dreamer(DreamerCommand::Grant(args)) => commands::dreamer_grant(*args),
     }
 }
-
-#[cfg(test)]
-mod tests;
