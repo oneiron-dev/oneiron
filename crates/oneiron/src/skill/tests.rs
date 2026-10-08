@@ -1284,3 +1284,40 @@ fn callable_role_contract_round_trips_and_noncallable_cannot_smuggle_call() -> R
 }
 
 mod resident;
+
+/// SOL-9A-2-R2 F1: a quarantine is the owner's decision, and a restore over
+/// the vault from before it is refused rather than load the skill again.
+#[test]
+fn a_restore_never_lifts_a_quarantine_placed_since() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let id = EntityId::now();
+    let candidate = human_skill("1.0.0");
+    vault.put_skill_record(&id, &candidate, TimeRange { start: 10, end: 10 }, 11)?;
+    let active = activate(&vault, &id, &candidate)?;
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100)?;
+    let mut quarantined = active;
+    quarantined.lifecycle_status = SkillLifecycle::Quarantined;
+    quarantined.approval_status = ClaimApprovalStatus::Approved;
+    vault.update_skill_record(&id, &quarantined, TimeRange { start: 32, end: 32 }, 33)?;
+
+    let destination = backups.path().join("restored");
+    let error = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &destination,
+        embedding_test_config(),
+        &vault,
+        200,
+    )
+    .err()
+    .expect("the restore must be refused");
+    assert!(
+        error
+            .to_string()
+            .contains("skill quarantines and rejections"),
+        "{error}"
+    );
+    assert!(!destination.exists());
+    Ok(())
+}

@@ -23,6 +23,12 @@ fn private_scope(scope: Option<&rmpv::Value>) -> bool {
     private.unwrap_or(false)
 }
 
+/// The relationship a claim is scoped to and whether it is private, as
+/// relationship reads see them.
+pub(crate) fn claim_access_axes(body: &ClaimBody) -> (Option<EntityId>, bool) {
+    (body.rel, private_scope(body.scope.as_ref()))
+}
+
 impl ScopedRead<'_> {
     /// Persist grant time before the read snapshot, never inside it.
     pub(crate) fn persist_grant_clock(&self) -> Result<()> {
@@ -46,10 +52,11 @@ impl ScopedRead<'_> {
             return Ok(true);
         }
         let context = AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?;
+        let (space, private) = claim_access_axes(body);
         Ok(context.allows_at_snapshot(
             ENTITY_TYPE_CLAIM,
-            body.rel,
-            private_scope(body.scope.as_ref()),
+            space,
+            private,
             &body.record_scope("read"),
         ))
     }

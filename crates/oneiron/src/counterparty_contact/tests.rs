@@ -576,3 +576,51 @@ fn opt_out_receipt_reason_round_trips() {
         CounterpartyOptOutReason::from_receipt_reason("counterparty_opt_out_unknown").is_none(),
     );
 }
+
+/// SOL-9A-2-R2 F6: a party's STOP and the owner's revocation of a contact
+/// both narrow who is reached and what is disclosed. A restore over the vault
+/// from before either is refused rather than undo it.
+#[test]
+fn a_restore_never_undoes_a_stop_or_a_contact_revocation_since() -> Result<()> {
+    let (_tmp, vault) = open_vault();
+    let identity = entity(0x7A);
+    let contact = entity(0x7B);
+    put_identity(&vault, identity, "email", "owner@example.com")?;
+    vault.create_counterparty_contact(
+        &contact,
+        &CounterpartyContactRecord::user_introduction(identity, "sora@example.com", 10)?,
+    )?;
+    let backups = tempfile::tempdir()?;
+    let refused = |image: &std::path::Path, name: &str| {
+        let destination = backups.path().join(name);
+        let error = Vault::restore_checkpoint_keeping_authority(
+            image,
+            &destination,
+            vault.config.clone(),
+            &vault,
+            200,
+        )
+        .err()
+        .expect("the restore must be refused");
+        assert!(
+            error
+                .to_string()
+                .contains("counterparty contacts and their consents"),
+            "{error}"
+        );
+        assert!(!destination.exists());
+    };
+
+    let before_stop = backups.path().join("before-stop");
+    vault.snapshot_checkpoint(&before_stop, 100)?;
+    crate::comm::record_comm_inbound_stop(&vault, "sora@example.com", "email", 30)
+        .map_err(comm_fold_error)?;
+    crate::comm::run_comm_projector(&vault).map_err(comm_fold_error)?;
+    refused(&before_stop, "after-stop");
+
+    let before_revocation = backups.path().join("before-revocation");
+    vault.snapshot_checkpoint(&before_revocation, 110)?;
+    vault.revoke_counterparty_contact(&contact, 40)?;
+    refused(&before_revocation, "after-revocation");
+    Ok(())
+}

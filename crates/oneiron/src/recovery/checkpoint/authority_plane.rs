@@ -21,13 +21,21 @@
 //! owner or member who is not one now, whether by reviving a deleted or
 //! merged PERSON or a removed shared member (`refuse_new_members`).
 use super::CanonicalRows;
-use super::restore_class::{Class, Classes, Scope};
+use super::restore_class::{Class, Classes, Projection, Scope};
+use crate::agent_def::{
+    AgentCeiling, AgentScope, AgentWakeCadence, DreamingMode, McpRef, MemoryProfile,
+};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::conversation::ConversationBody;
-use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CONVERSATION};
+use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject};
+use crate::conversation::{ConversationBody, RoomRole};
+use crate::counterparty_contact::{CounterpartyContactStatus, CounterpartyOptOut};
+use crate::llm::ModelTierRef;
+use crate::note::NoteKind;
+use crate::outbound_grant::StandingOutboundGrant;
+use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
+use crate::skill::{SkillDependency, SkillLifecycle};
 use crate::{EntityId, Error, Result, Vault};
 use heed::types::Bytes;
-use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The `vault_meta` row holding a store's random id (`vault::identity`).
@@ -76,9 +84,9 @@ pub(super) fn carry_current_authority(
         .iter()
         .map(|(key, _)| key.as_slice())
         .collect();
-    let mut moved = BTreeSet::new();
+    let mut moved = authority_moved(&classes, &databases["entities"], &live.authority);
     for (database, live_rows) in &live.rows {
-        let scoped = |rows| refused(&classes, database, rows, &image_entities, &live.rooms);
+        let scoped = |rows| refused(&classes, database, rows, &image_entities);
         let image = scoped(&databases[*database]);
         let current = scoped(live_rows);
         for what in image.keys().chain(current.keys()) {
@@ -109,18 +117,23 @@ pub(super) fn carry_current_authority(
     Ok(())
 }
 
-/// The live vault's rows that are not content, by database.
+/// The live vault's rows that are not content.
 struct LiveRows {
+    /// Live rows and the rows of refused families, by database.
     rows: BTreeMap<&'static str, CanonicalRows>,
-    /// Rooms the live vault holds and has not deleted.
-    rooms: BTreeSet<Vec<u8>>,
+    /// The authority each live entity of a projected kind carries, by id. An
+    /// entity the live vault deleted is absent, except an outbound grant.
+    authority: Projected,
 }
+
+/// Entity ids with the authority their bodies carry and the class's name.
+type Projected = BTreeMap<Vec<u8>, (&'static str, Projection, Compared)>;
 
 fn current_rows(current: &Vault, classes: &Classes) -> Result<LiveRows> {
     let txn = current.store.env.read_txn()?;
     let mut live = LiveRows {
         rows: BTreeMap::new(),
-        rooms: BTreeSet::new(),
+        authority: BTreeMap::new(),
     };
     for entry in crate::store::DB_MANIFEST {
         if !Classes::has_authority(entry.name) {
@@ -134,83 +147,266 @@ fn current_rows(current: &Vault, classes: &Classes) -> Result<LiveRows> {
         let mut rows = Vec::new();
         for row in db.iter(&txn)? {
             let (key, value) = row?;
-            if super::storage_tier(entry.name, key) != super::StorageTier::Canonical
-                || classes.row(entry.name, key, value).0 == Class::Content
-            {
+            if super::storage_tier(entry.name, key) != super::StorageTier::Canonical {
                 continue;
             }
-            if entry.name == "entities"
-                && EntityMetadataHeader::parse(value)
-                    .is_some_and(|header| header.entity_type == ENTITY_TYPE_CONVERSATION)
-            {
-                let id = EntityId::from_bytes(key.try_into().map_err(|_| super::codec_error())?)?;
-                if !crate::ports::TombstoneStoreRead::port_deletion_state(
-                    &current.store,
-                    &txn,
-                    &id,
-                )?
-                .deleted
-                {
-                    live.rooms.insert(key.to_vec());
+            match classes.row(entry.name, key, value).0 {
+                Class::Content => {}
+                Class::Refuse {
+                    what,
+                    scope: Scope::Authority(projection),
+                } => {
+                    let deleted = || -> Result<bool> {
+                        let id = EntityId::from_bytes(
+                            key.try_into().map_err(|_| super::codec_error())?,
+                        )?;
+                        Ok(crate::ports::TombstoneStoreRead::port_deletion_state(
+                            &current.store,
+                            &txn,
+                            &id,
+                        )?
+                        .deleted)
+                    };
+                    if let Some(authority) = project(projection, value)
+                        && (projection == Projection::OutboundGrant || !deleted()?)
+                    {
+                        live.authority
+                            .insert(key.to_vec(), (what, projection, authority));
+                    }
                 }
+                _ => rows.push((key.to_vec(), value.to_vec())),
             }
-            rows.push((key.to_vec(), value.to_vec()));
         }
         live.rows.insert(entry.name, rows);
     }
     Ok(live)
 }
 
-/// One refused family's compared rows: each key with what is compared of it.
-type Compared<'a> = Vec<(&'a [u8], Cow<'a, [u8]>)>;
+/// The names of the projected classes whose authority the image would roll
+/// back: an entity both vaults hold whose authority differs; one the image
+/// holds and the live vault deleted, when that absence is itself authority
+/// (a membership binding, an outbound grant); and an outbound grant only the
+/// live vault holds. An entity only one side holds is otherwise content.
+fn authority_moved(
+    classes: &Classes,
+    image: &CanonicalRows,
+    live: &Projected,
+) -> BTreeSet<&'static str> {
+    let mut moved = BTreeSet::new();
+    let mut held = BTreeSet::new();
+    for (key, value) in image {
+        let (
+            Class::Refuse {
+                what,
+                scope: Scope::Authority(projection),
+            },
+            _,
+        ) = classes.row("entities", key, value)
+        else {
+            continue;
+        };
+        let Some(authority) = project(projection, value) else {
+            continue;
+        };
+        held.insert(key.as_slice());
+        let changed = match live.get(key) {
+            Some((_, _, current)) => *current != authority,
+            None => match projection {
+                Projection::OutboundGrant => true,
+                Projection::Claim => matches!(
+                    authority,
+                    Compared::Claim {
+                        member: Some(_),
+                        ..
+                    }
+                ),
+                _ => false,
+            },
+        };
+        if changed {
+            moved.insert(what);
+        }
+    }
+    for (key, (what, projection, _)) in live {
+        if *projection == Projection::OutboundGrant && !held.contains(key.as_slice()) {
+            moved.insert(*what);
+        }
+    }
+    moved
+}
 
-/// The rows of each refused family that its scope compares, by name.
+/// What one refused row or projected entity is compared by.
+#[derive(PartialEq)]
+enum Compared {
+    /// Its stored bytes: a body that does not decode compares whole.
+    Row(Vec<u8>),
+    /// Who a room admits, in what role, and from when.
+    Room {
+        members: BTreeSet<EntityId>,
+        roles: BTreeMap<String, RoomRole>,
+        history_visible: Option<bool>,
+    },
+    /// Whether the owner took a skill out of use.
+    Skill { quarantined: bool, rejected: bool },
+    /// What bounds an agent.
+    Agent(Box<AgentBounds>),
+    /// Whether a counterparty contact is live, and the party's consents.
+    Contact {
+        status: CounterpartyContactStatus,
+        opt_out: Option<CounterpartyOptOut>,
+        promo_consent: bool,
+    },
+    /// A note's kind and author.
+    Note { kind: NoteKind, author: EntityId },
+    /// A claim's read scope, and the relationship membership it binds, if
+    /// any: whose, of what, and whether it still binds.
+    Claim {
+        space: Option<EntityId>,
+        private: bool,
+        member: Option<(ClaimSubject, rmpv::Value, bool)>,
+    },
+    /// A grant as it authorizes, without its last use.
+    OutboundGrant(Box<StandingOutboundGrant>),
+}
+
+/// Every field of an agent definition that bounds what the agent may do.
+#[derive(PartialEq)]
+struct AgentBounds {
+    approval: ClaimApprovalStatus,
+    lifecycle: ClaimLifecycleStatus,
+    enabled: bool,
+    ceiling: AgentCeiling,
+    scope: AgentScope,
+    connectors: Vec<String>,
+    tools: Vec<McpRef>,
+    skills: Vec<SkillDependency>,
+    model: Option<ModelTierRef>,
+    memory: Option<MemoryProfile>,
+    dreaming: Option<DreamingMode>,
+    dreaming_model: Option<ModelTierRef>,
+    wake: Option<AgentWakeCadence>,
+}
+
+/// The authority `projection` reads in one entity row, or `None` for a row
+/// too short to hold a body, or a note body that does not decode.
+fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
+    let body = raw.get(ENTITY_METADATA_HEADER_LEN..)?;
+    let whole = || Compared::Row(raw.to_vec());
+    Some(match projection {
+        Projection::Room => ConversationBody::from_bytes(body).map_or_else(
+            |_| whole(),
+            |room| Compared::Room {
+                members: room.member_ids.into_iter().collect(),
+                roles: room.roles,
+                history_visible: room.history_visible,
+            },
+        ),
+        Projection::Skill => crate::skill::decode_skill_record(body).map_or_else(
+            |_| whole(),
+            |skill| Compared::Skill {
+                quarantined: skill.lifecycle_status == SkillLifecycle::Quarantined,
+                rejected: skill.approval_status == ClaimApprovalStatus::Rejected,
+            },
+        ),
+        Projection::Agent => crate::agent_def::decode_agent_definition(body).map_or_else(
+            |_| whole(),
+            |agent| {
+                Compared::Agent(Box::new(AgentBounds {
+                    approval: agent.approval_status,
+                    lifecycle: agent.lifecycle_status,
+                    enabled: agent.enabled,
+                    ceiling: agent.ceiling,
+                    scope: agent.scope,
+                    connectors: agent.connectors,
+                    tools: agent.code_mode_mcps,
+                    skills: agent.skills,
+                    model: agent.model_tier,
+                    memory: agent.memory_profile,
+                    dreaming: agent.dreaming,
+                    dreaming_model: agent.dreaming_model,
+                    wake: agent.wake_cadence,
+                }))
+            },
+        ),
+        Projection::Contact => crate::counterparty_contact::decode_counterparty_contact_body(body)
+            .map_or_else(
+                |_| whole(),
+                |contact| Compared::Contact {
+                    status: contact.status,
+                    opt_out: contact.opt_out,
+                    promo_consent: contact.promo_consent,
+                },
+            ),
+        Projection::Note => {
+            let note = crate::note::decode_note_body_using(body, NoteKind::wire).ok()?;
+            Compared::Note {
+                kind: note.kind,
+                author: note.author_ref,
+            }
+        }
+        Projection::Claim => crate::claim::decode_claim_body(body, true).map_or_else(
+            |_| whole(),
+            |claim| {
+                let (space, private) = crate::claim::claim_access_axes(&claim);
+                let member = (claim.predicate
+                    == crate::federation::PREDICATE_RELATIONSHIP_PERSON_REF)
+                    .then(|| {
+                        let binds = crate::claim::claim_surfaceable(&claim);
+                        (claim.subject, claim.value, binds)
+                    });
+                Compared::Claim {
+                    space,
+                    private,
+                    member,
+                }
+            },
+        ),
+        Projection::OutboundGrant => {
+            crate::outbound_grant::decode_standing_outbound_grant_body(body).map_or_else(
+                |_| whole(),
+                |grant| {
+                    Compared::OutboundGrant(Box::new(StandingOutboundGrant {
+                        last_used_at: None,
+                        ..grant
+                    }))
+                },
+            )
+        }
+    })
+}
+
+/// One refused family's compared rows, in key order.
+type Family<'a> = Vec<(&'a [u8], &'a [u8])>;
+
+/// The rows of each refused family that its scope compares, by name. The
+/// projected entity kinds are compared by [`authority_moved`].
 fn refused<'a>(
     classes: &Classes,
     database: &str,
     rows: &'a CanonicalRows,
     image_entities: &BTreeSet<&[u8]>,
-    rooms: &BTreeSet<Vec<u8>>,
-) -> BTreeMap<&'static str, Compared<'a>> {
+) -> BTreeMap<&'static str, Family<'a>> {
     let mut families: BTreeMap<_, Vec<_>> = BTreeMap::new();
     for (key, value) in rows {
         let (Class::Refuse { what, scope }, prefix) = classes.row(database, key, value) else {
             continue;
         };
-        let compared = match scope {
-            Scope::Family => Cow::Borrowed(value.as_slice()),
+        match scope {
+            Scope::Family => {}
             Scope::ImageEntities => {
                 let id = key.get(prefix..prefix + 16);
                 if !id.is_some_and(|id| image_entities.contains(id)) {
                     continue;
                 }
-                Cow::Borrowed(value.as_slice())
             }
-            Scope::RoomAuthority => {
-                if !image_entities.contains(key.as_slice()) || !rooms.contains(key) {
-                    continue;
-                }
-                Cow::Owned(room_authority(value))
-            }
-        };
+            Scope::Authority(_) => continue,
+        }
         families
             .entry(what)
             .or_default()
-            .push((key.as_slice(), compared));
+            .push((key.as_slice(), value.as_slice()));
     }
     families
-}
-
-/// Who a room's body admits, in what role, and from when: its members, role
-/// overrides and history default. A body that does not decode compares whole.
-fn room_authority(raw: &[u8]) -> Vec<u8> {
-    raw.get(ENTITY_METADATA_HEADER_LEN..)
-        .and_then(|body| ConversationBody::from_bytes(body).ok())
-        .and_then(|body| {
-            let members: BTreeSet<EntityId> = body.member_ids.into_iter().collect();
-            rmp_serde::to_vec(&(members, body.roles, body.history_visible)).ok()
-        })
-        .unwrap_or_else(|| raw.to_vec())
 }
 
 /// Refuses a restored vault in which someone is a member who is not a member

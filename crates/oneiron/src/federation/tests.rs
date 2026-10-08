@@ -4002,3 +4002,55 @@ fn membership_scope_migration_never_ignores_a_carried_scope() -> Result<()> {
     }
     Ok(())
 }
+
+/// SOL-9A-2-R2 F5: a relationship membership binding is access. A restore
+/// over the vault goes ahead past a binding made since the backup (it leaves
+/// with the restore), and is refused once a binding the backup holds was
+/// retracted.
+#[test]
+fn a_restore_never_brings_back_a_relationship_membership_retracted_since() -> Result<()> {
+    let (_dir, vault) = relationship_vault();
+    let person = entity(PERSON_SEED);
+    let relationship = |seed: u8| -> Result<EntityId> {
+        let id = entity(seed);
+        vault.put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_RELATIONSHIP,
+            relationship_time(),
+            1,
+            b"relationship",
+        )?;
+        Ok(id)
+    };
+    let shared = relationship(0xB1)?;
+    let binding = bind_member_person(&vault, shared, person, relationship_time(), 1)?;
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100)?;
+    let restore = |destination: &std::path::Path| {
+        Vault::restore_checkpoint_keeping_authority(
+            &image,
+            destination,
+            VaultConfig::device(),
+            &vault,
+            200,
+        )
+        .map(|(restored, _)| restored)
+    };
+
+    let later = relationship(0xB2)?;
+    bind_member_person(&vault, later, person, relationship_time(), 2)?;
+    drop(restore(&backups.path().join("first"))?);
+
+    vault.retract_claim(&binding, 10)?;
+    let destination = backups.path().join("second");
+    let error = restore(&destination)
+        .err()
+        .expect("the restore must be refused");
+    assert!(
+        error.to_string().contains("relationship membership"),
+        "{error}"
+    );
+    assert!(!destination.exists());
+    Ok(())
+}

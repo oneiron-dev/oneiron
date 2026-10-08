@@ -63,9 +63,36 @@ pub(super) enum Scope {
     /// content: a room or document made after the checkpoint does not block
     /// restoring it, and any change to one the checkpoint holds does.
     ImageEntities,
-    /// For room bodies: the roles, members and history default of each room
-    /// the image holds that the live vault has not deleted.
-    RoomAuthority,
+    /// Entity bodies that are content but carry authority: only the
+    /// authority the [`Projection`] names is compared.
+    Authority(Projection),
+}
+
+/// The authority a content body carries. It is compared for each entity
+/// both vaults hold, the live vault not having deleted it; one only the image
+/// holds is content unless its absence is itself authority, as noted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Projection {
+    /// A room's members, roles and history default.
+    Room,
+    /// Whether the owner quarantined or rejected a skill.
+    Skill,
+    /// What bounds an agent: approval, lifecycle, its on switch, ceiling,
+    /// scope, connectors, tools, skills, model, memory and waking.
+    Agent,
+    /// Whether a counterparty contact is live, and the party's opt-out and
+    /// promotional consent.
+    Contact,
+    /// A NOTE's kind, which decides who reads it, and its author. A body
+    /// that does not decode is content.
+    Note,
+    /// A claim's relationship scope and privacy, and the relationship
+    /// membership it binds. A binding the image holds and the live vault
+    /// deleted counts as changed.
+    Claim,
+    /// Every outbound grant, without the stamp each use writes. One only one
+    /// side holds counts as changed.
+    OutboundGrant,
 }
 
 const CONTENT: Class = Class::Content;
@@ -84,7 +111,10 @@ const ACCESS_GRANTS: Class = refuse("access grants");
 const SECRET_CUSTODY: Class = refuse("secret custody");
 const CONNECTOR_KEYS: Class = refuse("connector keys");
 const CHANNEL_IDENTITIES: Class = refuse("channel identities");
-const OUTBOUND_GRANTS: Class = refuse("outbound grants");
+const OUTBOUND_GRANTS: Class = Class::Refuse {
+    what: "outbound grants",
+    scope: Scope::Authority(Projection::OutboundGrant),
+};
 const MACHINE_IDENTITIES: Class = refuse("machine identities");
 const SKILL_HUB_CONFIGURATION: Class = refuse("skill hub configuration");
 const STANDING_GRANTS: Class = refuse("standing consent grants");
@@ -95,6 +125,7 @@ const SHARED_VAULT_MEMBERSHIP: Class = refuse("shared vault membership");
 const ESIGN_CAPABILITIES: Class = refuse("e-sign capabilities");
 const SHARE_ADMISSIONS: Class = refuse("share admissions");
 const PUBLIC_BOOKING_PAGES: Class = refuse("public booking pages");
+const PUBLISHED_ARTIFACTS: Class = refuse("published artifacts");
 const ORIGIN_AUTHORITY: Class = refuse("repository origin authority");
 const ROOMS: Class = Class::Refuse {
     what: "room roles and membership",
@@ -102,7 +133,27 @@ const ROOMS: Class = Class::Refuse {
 };
 const ROOM_BODIES: Class = Class::Refuse {
     what: "room roles and membership",
-    scope: Scope::RoomAuthority,
+    scope: Scope::Authority(Projection::Room),
+};
+const SKILLS: Class = Class::Refuse {
+    what: "skill quarantines and rejections",
+    scope: Scope::Authority(Projection::Skill),
+};
+const AGENT_DEFINITIONS: Class = Class::Refuse {
+    what: "agent permissions",
+    scope: Scope::Authority(Projection::Agent),
+};
+const CONTACTS: Class = Class::Refuse {
+    what: "counterparty contacts and their consents",
+    scope: Scope::Authority(Projection::Contact),
+};
+const NOTES: Class = Class::Refuse {
+    what: "note privacy",
+    scope: Scope::Authority(Projection::Note),
+};
+const CLAIMS: Class = Class::Refuse {
+    what: "relationship membership and claim privacy",
+    scope: Scope::Authority(Projection::Claim),
 };
 const ESIGN_CEREMONIES: Class = Class::Refuse {
     what: "e-sign ceremonies",
@@ -112,11 +163,15 @@ const UNCLASSIFIED_ROWS: Class = refuse("rows of an undeclared family");
 const UNCLASSIFIED_KINDS: Class = refuse("entities of an unregistered kind");
 
 /// Every entity kind. Most are content; the kinds that hold the authority
-/// root, grants, policy, custody or machine identities are live or refused.
+/// root, grants, policy, custody or machine identities are live or refused,
+/// and a few content kinds have their authority compared.
 const ENTITY_KINDS: &[(u8, Class)] = &[
-    (ENTITY_TYPE_CLAIM, CONTENT),
+    (ENTITY_TYPE_CLAIM, CLAIMS),
     (ENTITY_TYPE_TURN, CONTENT),
     (ENTITY_TYPE_SESSION, CONTENT),
+    // A MESSAGE id stays bound to its first body, and a SUMMARY carries no
+    // privacy of its own (a `scope` key makes it a scope summary): neither
+    // body can narrow who reads it after the fact.
     (ENTITY_TYPE_MESSAGE, CONTENT),
     (ENTITY_TYPE_CONVERSATION, ROOM_BODIES),
     (ENTITY_TYPE_SUMMARY, CONTENT),
@@ -130,8 +185,8 @@ const ENTITY_KINDS: &[(u8, Class)] = &[
     (ENTITY_TYPE_WORLD, CONTENT),
     (ENTITY_TYPE_ASSET, CONTENT),
     (ENTITY_TYPE_ASSET_TEXT, CONTENT),
-    (ENTITY_TYPE_SKILL, CONTENT),
-    (ENTITY_TYPE_AGENT_DEF, CONTENT),
+    (ENTITY_TYPE_SKILL, SKILLS),
+    (ENTITY_TYPE_AGENT_DEF, AGENT_DEFINITIONS),
     (ENTITY_TYPE_NOTIFICATION, CONTENT),
     (ENTITY_TYPE_AUTHORITY_LOG, LIVE),
     (ENTITY_TYPE_POLICY_MANIFEST, POLICY_MANIFESTS),
@@ -145,7 +200,7 @@ const ENTITY_KINDS: &[(u8, Class)] = &[
     (ENTITY_TYPE_SUSPICIOUS_WAKE, CONTENT),
     (ENTITY_TYPE_CONNECTOR_KEY, CONNECTOR_KEYS),
     (ENTITY_TYPE_CHANNEL_IDENTITY, CHANNEL_IDENTITIES),
-    (ENTITY_TYPE_COUNTERPARTY_CONTACT, CONTENT),
+    (ENTITY_TYPE_COUNTERPARTY_CONTACT, CONTACTS),
     (ENTITY_TYPE_OUTBOUND_GRANT, OUTBOUND_GRANTS),
     (ENTITY_TYPE_COMM_RECORD, CONTENT),
     (ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, CONTENT),
@@ -161,7 +216,7 @@ const ENTITY_KINDS: &[(u8, Class)] = &[
     (ENTITY_TYPE_CODE_ARTIFACT, CONTENT),
     (ENTITY_TYPE_CODE_SYMBOL, CONTENT),
     (ENTITY_TYPE_BLOB_ARTIFACT, CONTENT),
-    (ENTITY_TYPE_NOTE, CONTENT),
+    (ENTITY_TYPE_NOTE, NOTES),
     (crate::companion::ENTITY_TYPE_COMPANION_REGISTER, CONTENT),
 ];
 
