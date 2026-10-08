@@ -82,6 +82,7 @@ fn rehearsal_reports_the_backup_and_restore_brings_it_back() {
 
     let restored = restore_over(&outcome.backup.path, &vault_path, VaultConfig::default()).unwrap();
     assert_eq!(restored.kinds, at_backup);
+    assert_eq!(restored.durability_warning, None);
     let vault = Vault::open_owned(&vault_path, VaultConfig::default()).unwrap();
     assert!(vault.get(&kept).unwrap().is_some());
     assert!(vault.get(&later).unwrap().is_none());
@@ -91,6 +92,38 @@ fn rehearsal_reports_the_backup_and_restore_brings_it_back() {
         previous.get(&later).unwrap().is_some(),
         "the old vault is kept whole"
     );
+}
+
+#[test]
+fn a_failed_sync_after_the_swap_still_reports_the_restore_and_the_previous_vault() {
+    let root = tempfile::tempdir().unwrap();
+    let vault_path = root.path().join("vault");
+    let plan = plan(root.path(), 7);
+    let vault = Vault::open_owned(&vault_path, VaultConfig::default()).unwrap();
+    let kept = person(&vault, b"in the backup");
+    let outcome = take(&vault, &plan).unwrap();
+    let later = person(&vault, b"after the backup");
+    drop(vault);
+
+    let restored = restore_over_syncing(
+        &outcome.backup.path,
+        &vault_path,
+        VaultConfig::default(),
+        |_| Err(anyhow::anyhow!("fsync: input/output error")),
+    )
+    .expect("the swap happened, so the restore succeeded");
+    let warning = restored.durability_warning.as_deref().expect("a warning");
+    assert!(warning.contains("input/output error"), "{warning}");
+    assert!(
+        warning.contains(&restored.previous_vault.display().to_string()),
+        "{warning}"
+    );
+    let vault = Vault::open_owned(&vault_path, VaultConfig::default()).unwrap();
+    assert!(vault.get(&kept).unwrap().is_some());
+    assert!(vault.get(&later).unwrap().is_none());
+    drop(vault);
+    let previous = Vault::open_owned(&restored.previous_vault, VaultConfig::default()).unwrap();
+    assert!(previous.get(&later).unwrap().is_some());
 }
 
 #[test]

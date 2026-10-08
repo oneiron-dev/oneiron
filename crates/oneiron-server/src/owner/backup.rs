@@ -312,6 +312,10 @@ pub(crate) struct Restored {
     pub(crate) previous_vault: PathBuf,
     pub(crate) kinds: BTreeMap<String, u64>,
     pub(crate) entities: u64,
+    /// Set when the restore is in place but the directory holding it could
+    /// not be synced: a crash before the filesystem flushes may undo the swap.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) durability_warning: Option<String>,
 }
 
 /// Restores `backup` over the stopped vault at `vault_path`.
@@ -323,10 +327,23 @@ pub(crate) struct Restored {
 /// no server opens either half-way. A filesystem that cannot exchange two
 /// directories refuses the restore with nothing changed. The old vault is
 /// kept whole as `<vault>.pre-restore-<stamp>`; nothing is deleted.
+///
+/// Once the swap is done the restore has happened, so a failed sync of the
+/// directory after it is reported in `durability_warning`, never as an error
+/// that would hide where the previous vault went.
 pub(crate) fn restore_over(
     backup: &Path,
     vault_path: &Path,
     config: oneiron::VaultConfig,
+) -> anyhow::Result<Restored> {
+    restore_over_syncing(backup, vault_path, config, sync_dir)
+}
+
+fn restore_over_syncing(
+    backup: &Path,
+    vault_path: &Path,
+    config: oneiron::VaultConfig,
+    sync_after_swap: impl FnOnce(&Path) -> anyhow::Result<()>,
 ) -> anyhow::Result<Restored> {
     // Absolute from here on: a bare `vault` has an empty parent to sync.
     let vault_path = &std::path::absolute(vault_path)?;
@@ -404,9 +421,20 @@ pub(crate) fn restore_over(
         }
         Err(_) => restored_path,
     };
-    if let Some(parent) = vault_path.parent() {
-        sync_dir(parent)?;
-    }
+    let durability_warning = vault_path.parent().and_then(|parent| {
+        let error = sync_after_swap(parent).err()?;
+        tracing::warn!(
+            error = %format!("{error:#}"),
+            previous_vault = %previous.display(),
+            "restore swapped in but the directory sync failed"
+        );
+        Some(format!(
+            "the restore is in place, but {} could not be synced ({error:#}); a crash before \
+             the filesystem flushes may undo it. The previous vault is {}",
+            parent.display(),
+            previous.display()
+        ))
+    });
     // Both leases are released only now, after the swap.
     drop(restored);
     drop(live);
@@ -417,6 +445,7 @@ pub(crate) fn restore_over(
         previous_vault: previous,
         entities: kinds.values().sum(),
         kinds,
+        durability_warning,
     })
 }
 
