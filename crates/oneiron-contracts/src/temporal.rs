@@ -441,14 +441,20 @@ enum Quantity {
 fn quantity_at(tokens: &[String], index: usize) -> Option<(Quantity, usize)> {
     let mut index = index;
     let token = tokens.get(index)?.as_str();
-    if !token.is_empty() && token.bytes().all(|byte| byte.is_ascii_digit()) {
+    if token.starts_with(|ch: char| ch.is_ascii_digit())
+        && token
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || byte == b',' || byte == b'.')
+    {
+        // A fraction is a count the parser will not round.
+        if token.contains('.') {
+            return Some((Quantity::Vague, skip_of(tokens, index + 1)));
+        }
         let count = token
+            .replace(',', "")
             .parse::<u32>()
             .map_or(TEMPORAL_MAX_COUNT, |count| count.min(TEMPORAL_MAX_COUNT));
         return Some((Quantity::Count(count), skip_of(tokens, index + 1)));
-    }
-    if token == "half" && matches!(tokens.get(index + 1).map(String::as_str), Some("a" | "an")) {
-        return Some((Quantity::Vague, skip_of(tokens, index + 2)));
     }
     if matches!(token, "a" | "an") {
         match tokens.get(index + 1).map(String::as_str) {
@@ -460,7 +466,16 @@ fn quantity_at(tokens: &[String], index: usize) -> Option<(Quantity, usize)> {
         "couple" => Quantity::Count(2),
         "few" => Quantity::Count(3),
         "dozen" => Quantity::Count(12),
-        "several" | "many" | "half" => Quantity::Vague,
+        "several" | "many" => Quantity::Vague,
+        // `half a year`, `half of an hour`: the article belongs to the count.
+        "half" => {
+            let after = skip_of(tokens, index + 1);
+            let after = match tokens.get(after).map(String::as_str) {
+                Some("a" | "an") => after + 1,
+                _ => after,
+            };
+            return Some((Quantity::Vague, after));
+        }
         _ => {
             let (count, after) = number_words_at(tokens, index)?;
             return Some((Quantity::Count(count), skip_of(tokens, after)));
@@ -545,12 +560,27 @@ fn number_word(token: &str) -> Option<u32> {
     })
 }
 
+/// Lowercased alphanumeric runs. A `.` or `,` between two digits stays in
+/// its number (`0.5`, `1,000`), so a decimal never splits into two counts.
 fn temporal_query_tokens(value: &str) -> Vec<String> {
-    value
-        .split(|ch: char| !ch.is_ascii_alphanumeric())
-        .filter(|token| !token.is_empty())
-        .map(str::to_ascii_lowercase)
-        .collect()
+    let chars: Vec<char> = value.chars().collect();
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    for (index, &ch) in chars.iter().enumerate() {
+        let in_number = matches!(ch, '.' | ',')
+            && index > 0
+            && chars[index - 1].is_ascii_digit()
+            && chars.get(index + 1).is_some_and(char::is_ascii_digit);
+        if ch.is_ascii_alphanumeric() || in_number {
+            current.push(ch.to_ascii_lowercase());
+        } else if !current.is_empty() {
+            tokens.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
 }
 
 fn weekday_index(token: &str) -> Option<u8> {
@@ -898,6 +928,12 @@ mod tests {
                 (FROZEN_NOW - 60, FROZEN_NOW),
             ),
             (
+                "1,000 days ago",
+                "1,000 days ago",
+                Used,
+                (1_624_060_800, 1_624_147_199),
+            ),
+            (
                 "one hundred and two days ago",
                 "one hundred and two days ago",
                 Used,
@@ -934,6 +970,11 @@ mod tests {
         for (query, phrase) in [
             ("notes from the last several weeks", "last several weeks"),
             ("the agreement from half a year ago", "half a year ago"),
+            (
+                "the agreement from half of a year ago",
+                "half of a year ago",
+            ),
+            ("the deployment from 0.5 days ago", "0.5 days ago"),
         ] {
             let hints = temporal_hints_from_query(query, FROZEN_NOW);
             assert_eq!(hints.range, None, "{query}");

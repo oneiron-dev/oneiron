@@ -1,14 +1,16 @@
 //! The recall verb as every server transport runs it.
 //!
 //! One place builds recall's execution inputs, so the HTTP facade and the
-//! WebSocket read RPC return the same pack for the same request: the query is
-//! embedded whenever the vault's embedder is serving, and the caller's
-//! `as_of` rides along. A vault with no embedder, or one still loading its
+//! WebSocket read RPC return the same pack for the same request: above light
+//! effort the query is embedded whenever the vault's embedder is serving, and
+//! the caller's `as_of` rides along. A vault with no embedder, or one still loading its
 //! model, recalls on its sparse signals and says so (`sparse: true`).
 
 use std::sync::Arc;
 
-use oneiron::memory::{MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryPack, MemoryResult};
+use oneiron::memory::{
+    Effort, MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryPack, MemoryResult,
+};
 use oneiron::task_verb::sdk::RecallRequest;
 use oneiron::{EdgeActorClass, EntityId};
 
@@ -26,8 +28,11 @@ impl SyncServer {
         memory: &Memory<'_>,
         input: RecallRequest,
     ) -> MemoryResult<MemoryPack> {
+        // Light is pure retrieval with no model call (ARCH-0044 S6); every
+        // other effort embeds the query when the vault's embedder serves.
+        let embeds = input.effort.unwrap_or(Effort::Medium) != Effort::Light;
         oneiron::task_verb::sdk::recall_with_vector(memory, input, |query| {
-            self.recall_query_vector(query)
+            embeds.then(|| self.recall_query_vector(query)).flatten()
         })
     }
 
