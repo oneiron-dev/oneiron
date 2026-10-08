@@ -140,6 +140,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::INGEST_FINGERPRINT, CONTENT),
     (&t::ATTEMPT_RUN_INDEX, CONTENT),
     (&t::STRUCTURAL_KIND_REGISTRY, CONTENT),
+    (&t::LEARNING_SETTING, LIVE),
     (&t::LENS_INTENT, CONTENT),
     (&t::LINEAR_ISSUE_REVERSE, CONTENT),
     (&t::LINEAR_PULL_CURSOR, CONTENT),
