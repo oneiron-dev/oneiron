@@ -1012,7 +1012,7 @@ async fn a_rejection_rides_ahead_of_a_full_cap_of_approvals() {
                     "rider-approve",
                     agent,
                     oneiron::EntityId::now(),
-                    &format!("approved {n}"),
+                    format!("approved {n}"),
                 )
                 .unwrap()
         })
