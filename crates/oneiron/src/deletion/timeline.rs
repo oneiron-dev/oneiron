@@ -8,7 +8,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store};
 
 use super::tombstone::{
     ARCHIVE_MARKER, PENDING_TOMBSTONE, PendingTombstoneKey, decode_tombstone_value,
@@ -19,13 +19,13 @@ use crate::side_table::HexId;
 /// A world claim's body may already be erased; the deletion txn preserves
 /// its window address before purge so every reader still finds its tombstone.
 pub(in crate::deletion) fn deletion_window_label(
-    store: &Store,
+    dbs: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     learned_at: u64,
 ) -> Result<String> {
     let key = format!("m:dw:{}", id.to_hex());
-    if let Some(raw) = store.sync_state.get(txn, &key)? {
+    if let Some(raw) = dbs.sync_state().get(txn, &key)? {
         let label = std::str::from_utf8(&raw).map_err(|_| Error::InvalidKey)?;
         if label.len() != 40
             || label.as_bytes()[7] != b'@'
@@ -39,6 +39,35 @@ pub(in crate::deletion) fn deletion_window_label(
         return Ok(label.to_owned());
     }
     Ok(window_label_from_timestamp(learned_at))
+}
+
+/// The sync window the row `raw` stored under `id` resides in, so the one
+/// holding its pending or published deletion. A CLAIM body names its world,
+/// a CLAIM shell has lost its body so its preserved deletion address
+/// answers, and every other row lives in the base month of its learned-at.
+/// A CLAIM body that does not decode names no world, which is also where
+/// sync places it.
+pub(crate) fn residence_window_label(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<String> {
+    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != ENTITY_TYPE_CLAIM {
+        return Ok(window_label_from_timestamp(header.learned_at));
+    }
+    if raw.len() == ENTITY_METADATA_HEADER_LEN {
+        return deletion_window_label(dbs, txn, id, header.learned_at);
+    }
+    let mut label = window_label_from_timestamp(header.learned_at);
+    if let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+        && let Some(world) = body.world
+    {
+        label.push('@');
+        label.push_str(&world.to_hex());
+    }
+    Ok(label)
 }
 
 /// Stable deletion reason surfaced by short-id hydrate.

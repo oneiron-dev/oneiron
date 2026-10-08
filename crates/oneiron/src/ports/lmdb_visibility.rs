@@ -1,10 +1,6 @@
 //! Transaction-local visibility ledger for canonical and composed session views.
 use super::{DeletionState, TombstoneStoreRead};
-use crate::{
-    EntityId, Vault,
-    error::{Error, Result},
-    store::ManifestDbs,
-};
+use crate::{EntityId, Vault, error::Result, store::ManifestDbs};
 use heed::RoTxn;
 impl<T: ManifestDbs> TombstoneStoreRead for T {
     fn port_tombstone_records<'a>(
@@ -42,6 +38,14 @@ impl<T: ManifestDbs> TombstoneStoreRead for T {
                 .sync_state()
                 .get(txn, crate::deletion::local_hard_delete_key(id).as_str())?
                 .is_some()
+            // The current row's own deletion, applied here or accepted and
+            // awaiting its retry, whatever the payload length or a window's
+            // mutable tombstone map say.
+            || crate::deletion::ROW_DELETION_FENCE.contains(
+                self,
+                txn,
+                &crate::side_table::HexId(*id),
+            )?
             || self
                 .vault_meta()
                 .get(txn, &super::integrity::tombstone_key(id))?
@@ -61,27 +65,9 @@ impl<T: ManifestDbs> TombstoneStoreRead for T {
                 stale,
             });
         };
-        let h = crate::batch::EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("entity header"))?;
-        let window = crate::deletion::window_label_from_timestamp(h.learned_at);
+        let window = crate::deletion::residence_window_label(self, txn, id, &raw)?;
         let key = crate::deletion::pending_tombstone_key(&window, id);
         if self.sync_state().get(txn, &key)?.is_some() {
-            return Ok(DeletionState {
-                archived,
-                deleted: true,
-                stale,
-            });
-        }
-        // A bodyless row this vault soft-erased is deleted. Applying a peer's
-        // tombstone writes no `pt:` marker, and the window holding it may have
-        // no `d:w:` snapshot yet, so the applied-soft-delete marker answers.
-        if raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN
-            && crate::deletion::IDENTITY_SOFT_DELETE_MARKER.contains(
-                self,
-                txn,
-                &crate::side_table::HexId(*id),
-            )?
-        {
             return Ok(DeletionState {
                 archived,
                 deleted: true,

@@ -62,6 +62,10 @@ side_tables! {
     DEFERRED_CHILD_OF: SyncState b"dc:w:" Raw;
     /// Endpoint index for a deferred ChildOf candidate. Key: hex32 ":" full dc:w: key.
     DEFERRED_CHILD_OF_ENDPOINT: SyncState b"de:" Raw;
+    /// The current row's applied-deletion fence: written with every soft erase and with a peer
+    /// tombstone accepted but not yet applied; lifted only by a local recreation, never by a peer.
+    /// Presence-only, empty value. Key: hex32 (entity id).
+    DELETION_ROW_FENCE: SyncState b"df:" Raw;
     /// Dependency index for a deferred Parent candidate. Key: kind ":" hex32 ":" full dp:w: key.
     DEFERRED_PARENT_DEPENDENCY: SyncState b"di:" Raw;
     /// Deferred Parent candidate, keyed by window, source and target. Key: yyyy-mm ":" hex32 ":" hex32.

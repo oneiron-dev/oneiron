@@ -214,6 +214,7 @@ impl Vault {
             .port_entity_scrub(wtxn, id, ScrubbedRecord::Shell, mutation_recorded_at)?;
         crate::federation::record_scope::retire_stamp(&self.store, wtxn, *id)?;
         IDENTITY_SOFT_DELETE_MARKER.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
+        ROW_DELETION_FENCE.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
         Ok((true, had_vector, ledger_changed))
     }
 }

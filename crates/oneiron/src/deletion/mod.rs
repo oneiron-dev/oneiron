@@ -40,9 +40,11 @@ pub(crate) use sweep_queue::{
     HARD_ERASE_SWEEP_PREFIX, HardEraseSweepJob, decode_hard_erase_sweep_job,
     decode_hard_erase_sweep_seq, encode_hard_erase_sweep_job_value,
 };
+pub(crate) use timeline::residence_window_label;
 pub(crate) use tombstone::{
     ARCHIVE_TOMBSTONE_PREFIX, HARD_DELETE_MARKER, IDENTITY_SOFT_DELETE_MARKER,
-    LOCAL_HARD_DELETE_PREFIX, PENDING_TOMBSTONE, archive_tombstone_key, local_hard_delete_key,
+    LOCAL_HARD_DELETE_PREFIX, PENDING_TOMBSTONE, ROW_DELETION_FENCE, archive_tombstone_key,
+    local_hard_delete_key,
 };
 pub(crate) use topology_delete_intent::topology_delete_reservation_in_txn;
 // The replay outcome is read by sync production (`sync::quarantine`) and by

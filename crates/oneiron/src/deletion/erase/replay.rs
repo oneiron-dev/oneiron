@@ -136,6 +136,9 @@ impl Vault {
                 _ => Vec::new(),
             };
             IDENTITY_SOFT_DELETE_MARKER.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
+            // Also for an id with no row here: a peer's later put of it is a
+            // withdrawn delete, not a recreation.
+            ROW_DELETION_FENCE.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
             if let Some(request) = decoded.request_id.as_ref() {
                 clear_own_topology_delete_in_txn(&self.store, wtxn, id, request, false)?;
             }

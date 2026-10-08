@@ -364,9 +364,15 @@ fn rm_marker_round_trip_purge_failure_then_drain() {
     map_insert_bytes(&window.doc.get_map("tombstones"), &id.to_hex(), b"1").unwrap();
     window.doc.commit();
 
+    // The failed purge left the body stored, but the accepted delete fences
+    // it from every read until the retry lands.
     assert!(
-        vault.get(&id).unwrap().is_some(),
-        "precondition: failed purge left hard-deleted content live"
+        vault.get_raw(&id).unwrap().is_some(),
+        "precondition: failed purge left the hard-deleted body stored"
+    );
+    assert!(
+        vault.get(&id).unwrap().is_none(),
+        "an accepted delete is never served while its purge is pending"
     );
     // Pinned literal grammar: rm:w:{window}:{entity_hex} → 1 byte.
     let marker_key = format!("rm:w:2026-03:{}", id.to_hex());

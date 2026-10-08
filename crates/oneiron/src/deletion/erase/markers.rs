@@ -37,6 +37,29 @@ impl Vault {
         HARD_DELETE_MARKER.delete(&self.store, wtxn, &HexId(*id))
     }
 
+    /// One-time open backfill of [`ROW_DELETION_FENCE`]. A vault written
+    /// before the fence existed records its applied soft deletes only in the
+    /// identity marker; each header-only row under that marker is fenced, so
+    /// the deletes it records keep reading deleted.
+    pub(crate) fn backfill_row_deletion_fences_on_open(&self) -> Result<()> {
+        if ROW_DELETION_FENCE_BACKFILLED.contains(&self.store, &self.store.env.read_txn()?, &())? {
+            return Ok(());
+        }
+        self.with_write_txn(|wtxn| {
+            if ROW_DELETION_FENCE_BACKFILLED.contains(&self.store, wtxn, &())? {
+                return Ok(());
+            }
+            for HexId(id) in IDENTITY_SOFT_DELETE_MARKER.scan_keys(&self.store, wtxn, &[])? {
+                if crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, &id)?
+                    .is_some_and(|raw| raw.len() == ENTITY_METADATA_HEADER_LEN)
+                {
+                    ROW_DELETION_FENCE.put(&self.store, wtxn, &HexId(id), &Vec::new())?;
+                }
+            }
+            ROW_DELETION_FENCE_BACKFILLED.put(&self.store, wtxn, &(), &b"1".to_vec())
+        })
+    }
+
     pub(in crate::deletion) fn active_delete_scope_exists_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,

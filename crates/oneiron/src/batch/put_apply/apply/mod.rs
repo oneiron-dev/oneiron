@@ -27,6 +27,7 @@ use crate::registry::{
     ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
 };
 use crate::secret_custody::plan_replicated_name_index;
+use crate::side_table::HexId;
 use crate::skill_hub::validate_refinement_admission;
 use crate::store::Store;
 
@@ -78,6 +79,14 @@ pub(in crate::batch) fn apply_put(
     } = options.replication;
     let hub_sync_imported = options.hub.sync_imported;
     let claim_gate_prechecked = options.decision.prechecked;
+    // Delete wins over a peer: no replicated put brings back a row this vault
+    // deleted, whatever the window's tombstone map now says. Refused before any
+    // effect is staged.
+    if replicated && crate::deletion::ROW_DELETION_FENCE.contains(store, wtxn, &HexId(id))? {
+        return Err(Error::InvariantViolation(
+            "a replicated put cannot restore an entity deleted here",
+        ));
+    }
     crate::dreamer_runner::authority::guard_actor_put(id, entity_type, data, occurred, learned_at)?;
     super::super::person_substrate::validate_scope_identity(id)?;
     // Normalize before body comparison, short-id hashing and scope stamping so
@@ -643,6 +652,11 @@ pub(in crate::batch) fn apply_put(
     crate::skill_hub::stage_refinement_carrier_put(store, wtxn, &id, entity_type, data)?;
     if entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
         crate::channel_identity::maintain_assignment_put(store, wtxn, &id, data)?;
+    }
+    if !replicated {
+        // A local put at a deleted id is a sanctioned recreation: the row it
+        // writes is live, so the erased row's fence goes in the same commit.
+        crate::deletion::ROW_DELETION_FENCE.delete(store, wtxn, &HexId(id))?;
     }
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
     crate::skill_hub::stage_refinement_origin(
