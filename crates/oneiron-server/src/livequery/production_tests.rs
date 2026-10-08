@@ -166,7 +166,7 @@ pub(super) fn claim(server: &SyncServer) -> oneiron::memory::CommitReceipt {
 
 fn rpc(server: &SyncServer, auth: &CoreAuth, method: &str, params: Value) -> Value {
     let frame = bound_rpc(
-        server.vault(),
+        server,
         auth,
         RpcRequest {
             request_id: 7,
@@ -529,6 +529,7 @@ async fn production_source_derives_real_channels_and_rechecks_revocation_before_
             &RecallScope {
                 world_ref: None,
                 facet: missing_facet.facet.clone(),
+                kinds: None,
             },
             100,
             None,

@@ -146,6 +146,7 @@ fn boundary_caps_refuse_before_dispatch() {
             &oneiron::memory::RecallScope::default(),
             10,
             None,
+            None,
         )
         .expect_err("an over-cap query is refused");
     assert_eq!(error.code, MEMORY_CODE_BAD_REQUEST);

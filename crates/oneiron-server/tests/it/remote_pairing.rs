@@ -155,7 +155,14 @@ async fn a_paired_client_witnesses_claims_recalls_and_reads_its_receipts() {
         let claimed = client.claim_upsert(&claim).unwrap();
         let effort = oneiron_remote::parse_effort("medium").unwrap();
         client
-            .recall("window seat", effort, &RecallScope::default(), 10, None)
+            .recall(
+                "window seat",
+                effort,
+                &RecallScope::default(),
+                10,
+                None,
+                None,
+            )
             .unwrap();
         let receipts = client.receipts(100).unwrap();
         receipts

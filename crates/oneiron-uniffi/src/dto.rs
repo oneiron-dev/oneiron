@@ -549,6 +549,8 @@ pub struct RecallScope {
     pub world_ref: Option<String>,
     /// Facet ref; strict facet narrowing when set.
     pub facet: Option<String>,
+    /// Registry kinds to return; unset returns every content kind.
+    pub kinds: Option<Vec<String>>,
 }
 
 /// Item provenance; default-on, never stripped.
@@ -565,8 +567,10 @@ pub struct MemoryProvenance {
 /// One memory pack item.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MemoryItem {
-    /// Short ref, hydratable through `hydrate`.
+    /// Short ref, hydratable through `hydrate`; never revision-qualified.
     pub short_id: String,
+    /// The revision the item was read at; `short_id@source_revision_ref` hydrates it.
+    pub source_revision_ref: Option<String>,
     /// Registry kind string.
     pub kind: String,
     /// Predicate (claims only).

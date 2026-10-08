@@ -66,6 +66,20 @@ pub fn check_query(query: &str) -> Result<(), MemoryError> {
     Ok(())
 }
 
+/// Latest reference time a recall may name: 9999-12-31T23:59:59Z.
+pub const MAX_AS_OF_SECONDS: u64 = 253_402_300_799;
+
+/// Rejects a reference time past the calendar the temporal parser resolves.
+pub fn check_as_of(as_of: Option<u64>) -> Result<(), MemoryError> {
+    if as_of.is_some_and(|as_of| as_of > MAX_AS_OF_SECONDS) {
+        return Err(MemoryError::bad_request_with(
+            format!("as_of must be Unix seconds no later than {MAX_AS_OF_SECONDS}"),
+            &["Send the conversation's time in Unix seconds, or omit as_of for now."],
+        ));
+    }
+    Ok(())
+}
+
 /// Rejects a non-positive or over-large row count.
 ///
 /// Zero is refused rather than silently defaulted: a caller who asks for no

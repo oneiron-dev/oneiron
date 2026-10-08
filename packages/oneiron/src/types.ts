@@ -102,6 +102,8 @@ export type PackFormat = "json" | "yaml" | "toon" | "md" | "txt"
 export type RecallScope = {
   worldRef?: string
   facet?: string
+  /** Registry kinds to return (`MESSAGE`, `CLAIM`, `TURN`, ...). Unset returns every content kind, not turns, conversations or people. */
+  kinds?: string[]
 }
 
 /** Options for {@link Oneiron.recall}. */
@@ -114,6 +116,8 @@ export type RecallOptions = {
   limit?: number
   /** Omitted returns a typed pack with no rendering. */
   format?: PackFormat
+  /** Unix seconds the query's time words resolve against; omitted is now. */
+  asOf?: number
 }
 
 /** Where one recalled item came from. */
@@ -125,7 +129,10 @@ export type MemoryProvenance = {
 
 /** One ranked memory pack item. */
 export type MemoryItem = {
+  /** The same `name:hash` a witness receipt returns. */
   shortId: string
+  /** The revision the item was read at; `${shortId}@${sourceRevisionRef}` hydrates exactly it. */
+  sourceRevisionRef?: string
   kind: string
   predicate?: string
   valueText: string
@@ -142,6 +149,15 @@ export type ScopeHonesty = {
   outOfScopeWorlds: string[]
 }
 
+/** One time phrase read from a recall query. `used` narrowed the window; `unresolved` and `future` were skipped. */
+export type TemporalHint = {
+  phrase: string
+  status: "used" | "unresolved" | "future"
+  /** Unix seconds, inclusive. */
+  start?: number
+  end?: number
+}
+
 /** Retrieval accounting. */
 export type RetrievalMeta = {
   partial: boolean
@@ -149,6 +165,7 @@ export type RetrievalMeta = {
   totalCandidates: number
   claimsReturned: number
   deepPending?: boolean
+  temporalHints?: TemporalHint[]
 }
 
 /** A full-vault render in one of the five pack serialization formats. */

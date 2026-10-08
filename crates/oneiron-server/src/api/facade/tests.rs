@@ -1057,3 +1057,239 @@ async fn export_projects_five_formats_and_refuses_non_owner_credentials() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
+
+/// A served vault, its owner, and a read/write slip bound to that owner.
+struct OwnerFacade {
+    _dir: tempfile::TempDir,
+    server: Arc<SyncServer>,
+    slip: oneiron::authority::CapabilitySlip,
+    holder: ed25519_dalek::SigningKey,
+}
+
+impl OwnerFacade {
+    fn new(secret: &str) -> Self {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vault = Arc::new(
+            oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).expect("vault"),
+        );
+        let actor = vault.ensure_embedded_owner_actor().expect("owner");
+        let server = Arc::new(
+            SyncServer::new(
+                vault,
+                crate::config::SyncServerConfig {
+                    auth_secret: Some(secret.to_owned()),
+                    ..Default::default()
+                },
+            )
+            .expect("server"),
+        );
+        let recipe = format!(
+            "scope=core:read,core:write;principal_ref={};actor_class=human",
+            actor.to_hex()
+        );
+        let (slip, holder) = crate::test_credentials::credential(&server, &recipe);
+        Self {
+            _dir: dir,
+            server,
+            slip,
+            holder,
+        }
+    }
+
+    async fn post(&self, verb: &str, payload: Value) -> (StatusCode, Value) {
+        let request = crate::test_credentials::bind_slip_request(
+            &self.server,
+            &self.slip,
+            &self.holder,
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/core/facade/{verb}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .expect("request"),
+        );
+        let response = crate::build_app(Arc::clone(&self.server))
+            .oneshot(request)
+            .await
+            .expect("response");
+        let status = response.status();
+        let body = to_bytes(response.into_body(), 1 << 20).await.expect("body");
+        (status, serde_json::from_slice(&body).expect("JSON"))
+    }
+
+    /// Witnesses one user message per entry and returns their short ids.
+    async fn witness(&self, conversation: &str, messages: &[(u64, &str)]) -> Vec<String> {
+        let mut said = Vec::new();
+        for (at, content) in messages {
+            let (status, receipt) = self
+                .post(
+                    "witness",
+                    json!({"conversation_ref": conversation, "occurred_at": at, "messages": [{
+                        "author": "user", "message_type": "text", "content": content,
+                        "is_visible": true, "order": 0
+                    }]}),
+                )
+                .await;
+            assert_eq!(status, StatusCode::OK, "{receipt}");
+            said.push(
+                receipt["message_short_ids"][0]
+                    .as_str()
+                    .expect("id")
+                    .to_owned(),
+            );
+        }
+        said
+    }
+
+    /// Recalls, returning each item's `(short_id, kind)` and the time hints.
+    async fn recall(&self, request: Value) -> (Vec<(String, String)>, Vec<(String, String)>) {
+        let (status, pack) = self.post("recall", request.clone()).await;
+        assert_eq!(status, StatusCode::OK, "{request}: {pack}");
+        let field = |value: &Value, name: &str| value[name].as_str().unwrap_or_default().to_owned();
+        let items = pack["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .map(|item| (field(item, "short_id"), field(item, "kind")))
+            .collect();
+        let hints = pack["retrieval_meta"]["temporal_hints"]
+            .as_array()
+            .map(|hints| {
+                hints
+                    .iter()
+                    .map(|hint| (field(hint, "phrase"), field(hint, "status")))
+                    .collect()
+            })
+            .unwrap_or_default();
+        (items, hints)
+    }
+}
+
+fn ids(items: &[(String, String)]) -> Vec<&str> {
+    items.iter().map(|(id, _)| id.as_str()).collect()
+}
+
+fn named(hints: &[(&str, &str)]) -> Vec<(String, String)> {
+    hints
+        .iter()
+        .map(|(phrase, status)| ((*phrase).to_owned(), (*status).to_owned()))
+        .collect()
+}
+
+/// Wave 9 long-context A/B: a recall query with a time word the parser could
+/// not resolve (`tomorrow`, `last 2 weeks`, two hints at once) failed the
+/// whole request with a 400, and the agent lost its recall. Recall now runs on
+/// its other signals, names each hint it used or skipped, and resolves hints
+/// against the caller's `as_of`.
+#[tokio::test]
+async fn recall_reads_time_words_without_refusing_and_resolves_them_as_of() {
+    const DAY: u64 = 86_400;
+    // 2026-01-01T00:00:00Z.
+    const DAY0: u64 = 1_767_225_600;
+    let facade = OwnerFacade::new("facade-temporal-hints-secret");
+    let said = [
+        facade
+            .witness(
+                "21212121212121212121212121212121",
+                &[(
+                    DAY0 + 3_600,
+                    "Staging rollout runs tomorrow night after the freeze.",
+                )],
+            )
+            .await,
+        facade
+            .witness(
+                "31313131313131313131313131313131",
+                &[(
+                    DAY0 + DAY + 3_600,
+                    "Staging rollout moved again; the canary goes first.",
+                )],
+            )
+            .await,
+    ]
+    .concat();
+    let recall =
+        |query: &str, as_of: Option<u64>| facade.recall(json!({"query": query, "as_of": as_of}));
+    let both = |found: &[(String, String)]| {
+        ids(found).contains(&said[0].as_str()) && ids(found).contains(&said[1].as_str())
+    };
+
+    // The A/B's refused query: a future hint is named and not applied.
+    let (found, hints) = recall("what runs tomorrow night", None).await;
+    assert!(ids(&found).contains(&said[0].as_str()), "{found:?}");
+    assert_eq!(hints, named(&[("tomorrow", "future")]));
+
+    let (found, hints) = recall("staging rollout in the last 2 weeks", Some(DAY0 + 3 * DAY)).await;
+    assert!(both(&found), "{found:?}");
+    assert_eq!(hints, named(&[("last 2 weeks", "used")]));
+
+    let (found, hints) = recall("recent staging rollout yesterday", Some(DAY0 + 2 * DAY)).await;
+    assert!(both(&found), "{found:?}");
+    assert_eq!(hints, named(&[("recent", "used"), ("yesterday", "used")]));
+
+    let (found, hints) = recall("staging rollout plans for the last several weeks", None).await;
+    assert!(both(&found), "{found:?}");
+    assert_eq!(hints, named(&[("last several weeks", "unresolved")]));
+
+    // `as_of` moves the day "yesterday" names.
+    let (found, _) = recall("staging rollout yesterday", Some(DAY0 + DAY + 7_200)).await;
+    assert_eq!(ids(&found), [said[0].as_str()], "{found:?}");
+    let (found, _) = recall("staging rollout yesterday", Some(DAY0 + 2 * DAY + 7_200)).await;
+    assert_eq!(ids(&found), [said[1].as_str()], "{found:?}");
+}
+
+/// Wave 9 long-context A/B: recall named a message `ms87:76@<revision>` where
+/// its witness receipt said `ms87:76`, so a client stripped the suffix to join
+/// them; and TURN, CONVERSATION and PERSON rows took recall `limit` slots.
+/// Recall now returns the receipt's short id with the revision beside it, and
+/// `limit` counts content unless the scope names other kinds.
+#[tokio::test]
+async fn recall_returns_witness_short_ids_and_limit_counts_content() {
+    let facade = OwnerFacade::new("facade-ids-and-slots-secret");
+    let said = facade
+        .witness(
+            "71717171717171717171717171717171",
+            &(0..7)
+                .map(|turn| {
+                    (
+                        1_767_225_600 + 60 * turn,
+                        "The tide table lists a spring tide.",
+                    )
+                })
+                .collect::<Vec<_>>(),
+        )
+        .await;
+
+    let (status, pack) = facade
+        .post(
+            "recall",
+            json!({"query": "tide table spring tide", "limit": 5}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{pack}");
+    let items = pack["items"].as_array().expect("items");
+    assert_eq!(items.len(), 5, "{pack}");
+    for item in items {
+        assert_eq!(item["kind"], "MESSAGE", "{item}");
+        let short_id = item["short_id"].as_str().expect("short id");
+        assert!(
+            said.iter().any(|id| id == short_id),
+            "{short_id} in {said:?}"
+        );
+        assert_eq!(
+            item["source_revision_ref"].as_str().map(str::len),
+            Some(32),
+            "{item}"
+        );
+    }
+
+    // Containers come back when the scope names them.
+    let (found, _) = facade
+        .recall(json!({"query": "tide table spring tide", "limit": 5,
+            "scope": {"kinds": ["TURN"]}}))
+        .await;
+    assert!(
+        !found.is_empty() && found.iter().all(|(_, kind)| kind == "TURN"),
+        "{found:?}"
+    );
+}

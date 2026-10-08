@@ -4,10 +4,12 @@ mod embedding;
 mod leases;
 mod lifecycle;
 mod message_stream;
+mod recall;
 mod windows;
 
 pub(crate) use self::core::BroadcastPayload;
 pub use self::core::SyncServer;
+pub(crate) use self::recall::blocking;
 
 #[cfg(test)]
 mod slip_transport_tests;

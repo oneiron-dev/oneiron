@@ -468,11 +468,17 @@ fn validate_answer_sources(pack: &MemoryPack, proposed: &[String]) -> Option<Vec
         if candidate.trim().is_empty() {
             return None;
         }
-        if !items.iter().any(|item| item.short_id == *candidate) {
+        // A composer may cite the bare short id the item shows; the source
+        // keeps the item's pin so it hydrates the revision that was read.
+        let Some(item) = items
+            .iter()
+            .find(|item| item.short_id == *candidate || item.reference() == *candidate)
+        else {
             return None;
-        }
-        if !sources.contains(candidate) {
-            sources.push(candidate.clone());
+        };
+        let source = item.reference();
+        if !sources.contains(&source) {
+            sources.push(source);
         }
     }
     if sources.is_empty() {
@@ -486,7 +492,7 @@ fn validate_answer_sources(pack: &MemoryPack, proposed: &[String]) -> Option<Vec
 fn pack_short_ids(pack: &MemoryPack) -> Vec<String> {
     let mut short_ids = Vec::with_capacity(pack.items.len());
     for item in &pack.items {
-        short_ids.push(item.short_id.clone());
+        short_ids.push(item.reference());
     }
     short_ids
 }
@@ -502,12 +508,16 @@ fn document_item(view: &EntityView) -> MemoryItem {
         (None, Some(body)) => serde_json::to_string(body).unwrap_or_default(),
         (None, None) => String::new(),
     };
-    let short_id = match &view.short_ref {
-        Some(short_ref) => short_ref.clone(),
-        None => view.id_hex.clone(),
+    let (short_id, source_revision_ref) = match view.short_ref.as_deref() {
+        Some(short_ref) => match short_ref.rsplit_once('@') {
+            Some((bare, revision)) => (bare.to_owned(), Some(revision.to_owned())),
+            None => (short_ref.to_owned(), None),
+        },
+        None => (view.id_hex.clone(), None),
     };
     MemoryItem {
         short_id,
+        source_revision_ref,
         kind: view.kind.clone(),
         predicate: None,
         value_text: truncate_text(&value_text, DEFAULT_MAX_FIELD_CHARS),

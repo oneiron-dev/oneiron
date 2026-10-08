@@ -48,7 +48,21 @@ impl Memory<'_> {
                 .find(|edge| edge.kind == EdgeKind::HasFacet)
                 .map(|edge| edge.target.to_hex())
         });
-        let short_id = view.short_ref.clone().unwrap_or_else(|| id.to_hex());
+        // The view qualifies a pinned short ref with its revision; the item
+        // carries the two apart, so its short id matches a witness receipt.
+        let short_id = view.short_ref.as_deref().map_or_else(
+            || id.to_hex(),
+            |short| {
+                short
+                    .rsplit_once('@')
+                    .map_or(short, |(bare, _)| bare)
+                    .to_owned()
+            },
+        );
+        let source_revision_ref = match mode {
+            crate::vault::ReadMode::Pinned(revision) => Some(revision.to_hex()),
+            crate::vault::ReadMode::Live | crate::vault::ReadMode::Indexed => None,
+        };
         let kind = kind_string_for_type(entity_type);
 
         if entity_type == ENTITY_TYPE_CLAIM {
@@ -59,6 +73,7 @@ impl Memory<'_> {
             let value_json = companion_value_to_json(&body.value);
             Ok(Some(MemoryItem {
                 short_id,
+                source_revision_ref: source_revision_ref.clone(),
                 kind,
                 predicate: Some(body.predicate.clone()),
                 value_text: truncate_text(&value_text_of(&value_json), DEFAULT_MAX_FIELD_CHARS),
@@ -107,6 +122,7 @@ impl Memory<'_> {
             };
             Ok(Some(MemoryItem {
                 short_id,
+                source_revision_ref,
                 kind,
                 predicate: None,
                 value_text: truncate_text(&value_text, DEFAULT_MAX_FIELD_CHARS),

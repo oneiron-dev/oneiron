@@ -108,14 +108,52 @@ impl Effort {
     }
 }
 
-/// Recall scoping (S5): world/facet narrowing only — unset means the vault
-/// floor; the scope never widens beyond it.
+/// Recall scoping (S5): world/facet narrowing and the kinds returned — unset
+/// means the vault floor; the scope never widens beyond it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RecallScope {
     /// WORLD entity ref; scopes to that world plus base reality.
     pub world_ref: Option<String>,
     /// Facet entity ref; strict facet narrowing when set.
     pub facet: Option<String>,
+    /// Registry kinds to return (`MESSAGE`, `CLAIM`, `TURN`, ...). Unset
+    /// returns every kind but the ones that organise memories rather than
+    /// hold them ([`CONTAINER_KINDS`]), so `limit` counts content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kinds: Option<Vec<String>>,
+}
+
+/// Kinds that organise memories rather than hold them: a conversation and its
+/// turns, the people and groups in it, and the worlds and facets that scope
+/// it. Recall returns them only when [`RecallScope::kinds`] names them.
+pub const CONTAINER_KINDS: [u8; 8] = [
+    crate::registry::ENTITY_TYPE_TURN,
+    crate::registry::ENTITY_TYPE_CONVERSATION,
+    crate::registry::ENTITY_TYPE_SESSION,
+    crate::registry::ENTITY_TYPE_PERSON,
+    crate::registry::ENTITY_TYPE_ORG,
+    crate::registry::ENTITY_TYPE_RELATIONSHIP,
+    crate::registry::ENTITY_TYPE_FACET,
+    crate::registry::ENTITY_TYPE_WORLD,
+];
+
+/// The kinds a recall admits, resolved once from its scope. `None` is the
+/// default: every kind but [`CONTAINER_KINDS`].
+fn recall_kinds(scope: &RecallScope) -> MemoryResult<Option<Vec<u8>>> {
+    let Some(kinds) = &scope.kinds else {
+        return Ok(None);
+    };
+    if kinds.is_empty() {
+        return Err(MemoryError::bad_request_with(
+            "scope.kinds names no kind",
+            &["Name at least one registry kind, or omit kinds for every content kind."],
+        ));
+    }
+    kinds
+        .iter()
+        .map(|kind| type_byte_for_kind(kind))
+        .collect::<MemoryResult<Vec<u8>>>()
+        .map(Some)
 }
 
 /// Item provenance (S6, default-on).
@@ -133,8 +171,13 @@ pub struct MemoryProvenance {
 /// One memory pack item (S6 schema).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MemoryItem {
-    /// Short ref, hydratable via [`Memory::hydrate`].
+    /// Short ref, hydratable via [`Memory::hydrate`]: the same `name:hash`
+    /// a witness receipt returns, never revision-qualified.
     pub short_id: String,
+    /// The retained revision (32 hex) retrieval read this item at, when it
+    /// pinned one. [`Self::reference`] joins it to `short_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_revision_ref: Option<String>,
     /// Registry kind string.
     pub kind: String,
     /// Predicate (claims only).
@@ -158,6 +201,18 @@ pub struct MemoryItem {
     /// glyph (`👍×8 (Anna, Ben, +6)`); empty for every other item.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reactions: Vec<String>,
+}
+
+impl MemoryItem {
+    /// The ref that hydrates exactly the revision this item was read at:
+    /// `short_id@source_revision_ref`, or `short_id` when nothing was pinned.
+    #[must_use]
+    pub fn reference(&self) -> String {
+        match &self.source_revision_ref {
+            Some(revision) => format!("{}@{revision}", self.short_id),
+            None => self.short_id.clone(),
+        }
+    }
 }
 
 /// Scope honesty (S6): what the scope excluded.
@@ -188,6 +243,11 @@ pub struct RetrievalMeta {
     /// Requested stages skipped at the explicit deadline.
     #[serde(default)]
     pub partial: bool,
+    /// Time phrases read from the query, in order. `used` ones narrowed the
+    /// occurred-time window; `unresolved` and `future` ones were skipped and
+    /// recall ran on its other signals.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub temporal_hints: Vec<crate::temporal::TemporalHintReport>,
 }
 
 /// The facade projection of a `ContextPack` (S6, `pack_version: 1`).
@@ -481,11 +541,29 @@ impl Memory<'_> {
                 narrowing: Box::new(receipt),
             });
         }
+        let kinds = recall_kinds(scope)?;
         // Admission runs in each candidate's retrieval transaction before ranking.
         let admitted = |store: &crate::store::Store, txn: &heed::RoTxn<'_>, id: &EntityId| {
             // Reject irrelevant kind/predicate rows before the actor gate.
             if !candidate_filter.map_or(Ok(true), |filter| filter(store, txn, id))? {
                 return Ok(false);
+            }
+            // A caller's own filter already chose its kinds; otherwise the
+            // scope's kinds, or every content kind, decide.
+            if kinds.is_some() || candidate_filter.is_none() {
+                let Some(kind) = store
+                    .port_entity_record(txn, id)?
+                    .map(|row| row.entity_type)
+                else {
+                    return Ok(false);
+                };
+                let wanted = match &kinds {
+                    Some(kinds) => kinds.contains(&kind),
+                    None => !CONTAINER_KINDS.contains(&kind),
+                };
+                if !wanted {
+                    return Ok(false);
+                }
             }
             lane.recall_candidate_in(txn, &plan_policy, &plan_filter, id)
         };
@@ -525,19 +603,25 @@ impl Memory<'_> {
             Vec::new()
         };
 
-        let (items, total_candidates, rendered, retrieval_quality, vector_completed) = match &scope
-            .facet
-        {
+        let (
+            items,
+            total_candidates,
+            rendered,
+            retrieval_quality,
+            vector_completed,
+            temporal_hints,
+        ) = match &scope.facet {
             Some(facet_ref) => {
                 // Facet-strict narrowing rides the raw retrieval pipeline:
                 // ContextPackBuilder exposes no facet passthrough and
                 // pipeline.rs/context_pack.rs are consume-only for this
                 // chain. No pack rendering on this path.
                 let facet_id = self.resolve_ref(facet_ref)?;
-                let mut pipeline = self
-                    .vault
-                    .query()
-                    .search_text(query, limit)
+                let mut pipeline = self.vault.query().search_text(query, limit);
+                if let Some(as_of) = execution.as_of {
+                    pipeline = pipeline.with_temporal_now(as_of);
+                }
+                pipeline = pipeline
                     .facet(&facet_id, FacetMode::Strict)
                     .world(world_scope)
                     .retrieval_effort(effective, &seeds)
@@ -593,13 +677,15 @@ impl Memory<'_> {
                     None,
                     retrieval.retrieval_quality,
                     retrieval.vector_completed,
+                    retrieval.temporal_hints,
                 )
             }
             None => {
-                let mut builder = self
-                    .vault
-                    .context_pack()
-                    .search_text(query, limit)
+                let mut builder = self.vault.context_pack().search_text(query, limit);
+                if let Some(as_of) = execution.as_of {
+                    builder = builder.with_temporal_now(as_of);
+                }
+                builder = builder
                     .limit(limit)
                     .world(world_scope)
                     .retrieval_effort(effective, &seeds)
@@ -648,7 +734,8 @@ impl Memory<'_> {
                             .boost_confidence();
                     }
                 }
-                let (scoped, vector_completed) = builder.run_scoped_with_vector_status(&lane)?;
+                let (scoped, vector_completed, temporal_hints) =
+                    builder.run_scoped_with_run_status(&lane)?;
                 receipt.restrict_with(&scoped.receipt);
                 let mut pack = scoped.value;
                 lane.attach_reactions(&mut pack)?;
@@ -693,6 +780,7 @@ impl Memory<'_> {
                     rendered,
                     pack.retrieval_quality,
                     vector_completed,
+                    temporal_hints,
                 )
             }
         };
@@ -717,6 +805,7 @@ impl Memory<'_> {
                 total_candidates,
                 claims_returned,
                 deep_pending,
+                temporal_hints,
             },
             items,
             pack_version: MEMORY_PACK_VERSION,

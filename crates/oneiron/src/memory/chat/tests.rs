@@ -226,7 +226,7 @@ fn recalled_short_ids(memory: &Memory<'_>, query: &str) -> Vec<String> {
     pack.items
         .iter()
         .filter(|item| item.value_text.contains(query))
-        .map(|item| item.short_id.clone())
+        .map(MemoryItem::reference)
         .collect()
 }
 
@@ -304,7 +304,7 @@ fn chat_minimal_is_zero_model_extractive_and_never_calls_the_composer() {
     assert!(!answered.source_short_ids.is_empty());
     let items = &answered.retrieval.items;
     for source in &answered.source_short_ids {
-        let in_pack = items.iter().any(|item| item.short_id == *source);
+        let in_pack = items.iter().any(|item| item.reference() == *source);
         assert!(in_pack, "{source} is in the pack");
     }
 
@@ -615,7 +615,11 @@ fn chat_answers_cite_short_ids_that_hydrate_back_out_of_the_pack() {
             "ferry",
             ChatDepth::Medium,
             ChatOptions {
-                scope: whole_vault(),
+                // The TURN below comes back because the scope names it.
+                scope: ChatScope::Recall(RecallScope {
+                    kinds: Some(vec!["MESSAGE".to_owned(), "TURN".to_owned()]),
+                    ..RecallScope::default()
+                }),
                 limit: 10,
                 format: None,
                 lease: None,
@@ -628,7 +632,7 @@ fn chat_answers_cite_short_ids_that_hydrate_back_out_of_the_pack() {
     assert!(!answered.source_short_ids.is_empty());
     let items = &answered.retrieval.items;
     for source in &answered.source_short_ids {
-        let in_pack = items.iter().any(|item| item.short_id == *source);
+        let in_pack = items.iter().any(|item| item.reference() == *source);
         assert!(in_pack, "{source} is in the pack handed over");
     }
 
@@ -828,7 +832,7 @@ fn chat_document_scope_reads_only_the_named_ids_and_cannot_leak() {
     // Only the named document was read: the rest of the vault is not evidence
     // here, however well it matches the question.
     assert_eq!(answered.retrieval.items.len(), 1);
-    assert_eq!(answered.retrieval.items[0].short_id, document);
+    assert_eq!(answered.retrieval.items[0].reference(), document);
     assert!(!answered.retrieval.items[0].value_text.is_empty());
     assert!(answered.retrieval.rendered.is_none());
 

@@ -294,6 +294,7 @@ pub(super) fn gate_receipt_from_engine(
 pub(super) fn memory_item_from_engine(item: oneiron::memory::MemoryItem) -> NapiMemoryItem {
     NapiMemoryItem {
         short_id: item.short_id,
+        source_revision_ref: item.source_revision_ref,
         kind: item.kind,
         predicate: item.predicate,
         value_text: item.value_text,
@@ -351,5 +352,6 @@ pub(super) fn recall_scope_to_engine(scope: Option<NapiRecallScope>) -> RecallSc
     scope.map_or_else(RecallScope::default, |scope| RecallScope {
         world_ref: scope.world_ref,
         facet: scope.facet,
+        kinds: scope.kinds,
     })
 }

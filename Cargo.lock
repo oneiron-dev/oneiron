@@ -8144,6 +8144,7 @@ dependencies = [
  "oneiron",
  "oneiron-remote",
  "oneiron-vault-contract",
+ "rand_core 0.6.4",
  "reqwest 0.12.28",
  "rmp-serde",
  "rmpv",

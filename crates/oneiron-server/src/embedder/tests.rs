@@ -156,6 +156,8 @@ enum MockBehaviour {
     WrongWidth,
     /// List a model the configured key is not among.
     UnknownModel,
+    /// Embed into [`concept_vector`]'s meaning space.
+    Concepts,
 }
 
 struct EmbeddingPause {
@@ -261,6 +263,34 @@ fn mock_vector(text: &str, width: usize) -> Vec<f32> {
     vector
 }
 
+/// A tiny meaning space: the words of one concept share an axis, so a
+/// paraphrase that shares no word with its document still lands on it. Text
+/// with no concept word points along the last axis.
+fn concept_vector(text: &str, width: usize) -> Vec<f32> {
+    const CONCEPTS: [&[&str]; 3] = [
+        &["car", "automobile", "vehicle"],
+        &["repair", "mechanic", "garage", "fix"],
+        &["lunch", "meal", "noon"],
+    ];
+    let mut vector = vec![0.0f32; width];
+    for word in text
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .map(str::to_ascii_lowercase)
+    {
+        if let Some(axis) = CONCEPTS
+            .iter()
+            .position(|words| words.contains(&word.as_str()))
+        {
+            vector[axis] += 1.0;
+        }
+    }
+    if vector.iter().all(|value| *value == 0.0) {
+        vector[width - 1] = 1.0;
+    }
+    let norm = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
+    vector.iter().map(|value| value / norm).collect()
+}
+
 async fn mock_embeddings(
     State(state): State<Arc<MockState>>,
     axum::Json(body): axum::Json<Value>,
@@ -294,7 +324,14 @@ async fn mock_embeddings(
     let mut rows: Vec<Value> = inputs
         .iter()
         .enumerate()
-        .map(|(index, text)| json!({ "index": index, "embedding": mock_vector(text, width) }))
+        .map(|(index, text)| {
+            let embedding = if state.behaviour() == MockBehaviour::Concepts {
+                concept_vector(text, width)
+            } else {
+                mock_vector(text, width)
+            };
+            json!({ "index": index, "embedding": embedding })
+        })
         .collect();
     if state.behaviour() == MockBehaviour::Reversed {
         rows.reverse();
@@ -1227,6 +1264,116 @@ fn busy_embedding_worker_publishes_due_staged_revisions_between_passes() {
         assert!(paused.is_ok(), "worker must reach its second nonempty pass");
         assert!(pending, "the global queue was not empty at publication");
         assert_eq!(indexed, Some(expected));
+    });
+    runtime.shutdown_background();
+}
+
+/// Wave 9 long-context A/B: the recall verb ran `RecallExecution::default()`,
+/// so a vault served with an embedder still recalled sparse, and a paraphrase
+/// that shares no word with its turn found nothing. Both server doors, the
+/// HTTP facade and the WebSocket read RPC, now embed the query.
+#[test]
+fn recall_doors_embed_the_query_when_the_vault_has_an_embedder() {
+    use axum::body::{Body, to_bytes};
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    const SECRET: &str = "embedder-recall-secret";
+    let mock = MockEndpoint::start(MockBehaviour::Concepts);
+    let dir = tempfile::tempdir().unwrap();
+    let vault = test_vault(dir.path());
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let slot = EmbedderSlot::from_config(&endpoint_config(&mock.base))
+        .unwrap()
+        .unwrap();
+    let server = Arc::new(
+        crate::server::SyncServer::new(
+            Arc::clone(&vault),
+            crate::config::SyncServerConfig {
+                auth_secret: Some(SECRET.to_owned()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .with_embedder(Some(slot)),
+    );
+    let recipe = format!(
+        "scope=core:read,core:write;principal_ref={};actor_class=human",
+        owner.to_hex()
+    );
+    let (slip, key) = crate::test_credentials::credential(&server, &recipe);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let worker = server.spawn_embedding_worker().unwrap();
+        let post = |verb: &str, payload: Value| {
+            let request = crate::test_credentials::bind_slip_request(
+                &server,
+                &slip,
+                &key,
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/core/facade/{verb}"))
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .unwrap(),
+            );
+            let app = crate::build_app(Arc::clone(&server));
+            async move {
+                let response = app.oneshot(request).await.unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                let bytes = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+                serde_json::from_slice::<Value>(&bytes).unwrap()
+            }
+        };
+        let receipt = post(
+            "witness",
+            json!({"conversation_ref": "41414141414141414141414141414141",
+                "occurred_at": 1_767_225_600_u64, "messages": [
+                {"author": "user", "message_type": "text", "is_visible": true, "order": 0,
+                 "content": "The mechanic says the automobile needs new brakes."},
+                {"author": "user", "message_type": "text", "is_visible": true, "order": 1,
+                 "content": "Lunch with Anna moved to Thursday at noon."}]}),
+        )
+        .await;
+        let target = receipt["message_short_ids"][0].as_str().unwrap().to_owned();
+        let messages = vault
+            .entities_by_type(oneiron::registry::ENTITY_TYPE_MESSAGE)
+            .unwrap();
+        assert!(
+            wait_for_vectors(&vault, &messages).await,
+            "messages embedded"
+        );
+
+        let first = |pack: &Value| -> (Value, String) {
+            (
+                pack["retrieval_meta"]["sparse"].clone(),
+                pack["items"][0]["short_id"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            )
+        };
+        let request = json!({"query": "car repair garage", "limit": 5});
+        let http = post("recall", request.clone()).await;
+        assert_eq!(first(&http), (json!(false), target.clone()), "{http}");
+
+        let auth = crate::test_credentials::authenticate(&server, &recipe);
+        let frames = crate::livequery::bound_rpc(
+            &server,
+            &auth,
+            crate::livequery::RpcRequest {
+                request_id: 9,
+                method: "recall".to_owned(),
+                params: request,
+            },
+        )
+        .unwrap();
+        let ws = crate::livequery::test_wire::reply(&frames);
+        assert_eq!(first(&ws["result"]), (json!(false), target), "{ws}");
+        worker.abort();
     });
     runtime.shutdown_background();
 }

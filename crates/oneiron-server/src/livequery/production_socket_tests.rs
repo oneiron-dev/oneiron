@@ -375,6 +375,7 @@ async fn production_sub_errors_keep_engine_codes_and_scope_refusals_are_not_clos
             &RecallScope {
                 world_ref: None,
                 facet: Some("zz999:ff".to_owned()),
+                kinds: None,
             },
             100,
             None,

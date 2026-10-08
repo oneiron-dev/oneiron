@@ -107,6 +107,8 @@ export type PackFormat = "json" | "yaml" | "toon" | "md" | "txt"
 export type RecallScope = {
   worldRef?: string
   facet?: string
+  /** Registry kinds to return (`MESSAGE`, `CLAIM`, `TURN`, ...). Unset returns every content kind, not turns, conversations or people. */
+  kinds?: string[]
 }
 
 /** Options for {@link Oneiron.recall}. */
@@ -119,6 +121,8 @@ export type RecallOptions = {
   limit?: number
   /** Omitted returns a typed pack with no rendering. */
   format?: PackFormat
+  /** Unix seconds the query's time words resolve against; omitted is now. */
+  asOf?: number
 }
 
 /** Where one recalled item came from. */
@@ -130,7 +134,10 @@ export type MemoryProvenance = {
 
 /** One ranked memory pack item. */
 export type MemoryItem = {
+  /** The same `name:hash` a witness receipt returns. */
   shortId: string
+  /** The revision the item was read at; `${shortId}@${sourceRevisionRef}` hydrates exactly it. */
+  sourceRevisionRef?: string
   kind: string
   predicate?: string
   valueText: string
@@ -147,6 +154,15 @@ export type ScopeHonesty = {
   outOfScopeWorlds: string[]
 }
 
+/** One time phrase read from a recall query. `used` narrowed the window; `unresolved` and `future` were skipped. */
+export type TemporalHint = {
+  phrase: string
+  status: "used" | "unresolved" | "future"
+  /** Unix seconds, inclusive. */
+  start?: number
+  end?: number
+}
+
 /** Retrieval accounting. */
 export type RetrievalMeta = {
   partial: boolean
@@ -154,7 +170,11 @@ export type RetrievalMeta = {
   totalCandidates: number
   claimsReturned: number
   deepPending?: boolean
+  temporalHints?: TemporalHint[]
 }
+
+/** A full-vault render in one of the five pack serialization formats. */
+export type MemoryExport = { format: string; rendered: string }
 
 /** The engine `MemoryPack`, unchanged apart from field spelling. */
 export type MemoryPack = {
@@ -164,6 +184,8 @@ export type MemoryPack = {
   /** Always equal to the engine's `MEMORY_PACK_VERSION`, and to this package's major. */
   packVersion: number
   rendered?: string
+  /** The actor-scoped read receipt for candidates and rendered content. */
+  narrowing: ReadReceipt
 }
 
 /** One gate decision receipt. */
@@ -284,6 +306,7 @@ class CommitReceipt(TypedDict):
 class RecallScope(TypedDict):
     world_ref: NotRequired[str | None]
     facet: NotRequired[str | None]
+    kinds: NotRequired[list[str] | None]
 
 class MemoryProvenance(TypedDict):
     source: str
@@ -292,6 +315,7 @@ class MemoryProvenance(TypedDict):
 
 class MemoryItem(TypedDict):
     short_id: str
+    source_revision_ref: NotRequired[str]
     kind: str
     predicate: str | None
     value_text: str
@@ -305,12 +329,22 @@ class MemoryItem(TypedDict):
 class ScopeHonesty(TypedDict):
     out_of_scope_worlds: list[str]
 
+class TemporalHint(TypedDict):
+    phrase: str
+    status: Literal["used", "unresolved", "future"]
+    start: int | None
+    end: int | None
+
 class RetrievalMeta(TypedDict):
+    quality: Literal["full", "degraded", "passthrough"]
+    degradation: NotRequired[list[Literal["ppr_cache_miss", "embedding_timeout", "bm25_stale", "temporal_signal_skipped"]]]
+    confidence_adjustment: float
     partial: bool
     sparse: bool | None
     total_candidates: int
     claims_returned: int
     deep_pending: bool | None
+    temporal_hints: NotRequired[list[TemporalHint]]
 
 class MemoryPack(TypedDict):
     items: list[MemoryItem]
@@ -437,7 +471,8 @@ class Oneiron:
     def describe(self, task_ref: str | None = None) -> TaskDescription: ...
     def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
     def claim_upsert(self, claim: ClaimInput) -> CommitReceipt: ...
-    def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None) -> MemoryPack: ...
+    def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None, as_of: int | None = None) -> MemoryPack: ...
+    def export(self, format: PackFormat | None = None) -> dict[str, Any]: ...
     def receipts(self, limit: int = 100) -> list[FacadeReceipt]: ...
     def key_value_get(self, request: KeyValueAddress) -> KeyValueItem | None: ...
     def key_value_put(self, request: KeyValuePut) -> KeyValuePutReceipt: ...

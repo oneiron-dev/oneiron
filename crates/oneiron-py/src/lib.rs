@@ -239,7 +239,7 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
-    #[pyo3(signature = (query, effort=None, scope_json=None, limit=None, format=None))]
+    #[pyo3(signature = (query, effort=None, scope_json=None, limit=None, format=None, as_of=None))]
     fn recall(
         &self,
         py: Python<'_>,
@@ -248,6 +248,7 @@ impl NativeClient {
         scope_json: Option<&str>,
         limit: Option<usize>,
         format: Option<String>,
+        as_of: Option<u64>,
     ) -> PyResult<String> {
         let effort = oneiron_remote::parse_effort(effort.unwrap_or("medium")).map_err(raise)?;
         let scope_json = match scope_json {
@@ -255,10 +256,11 @@ impl NativeClient {
             None => oneiron::memory::RecallScope::default(),
         };
         let limit = limit.unwrap_or(10);
+
         let output = py
             .detach(|| {
                 self.inner
-                    .recall(&query, effort, &scope_json, limit, format.as_deref())
+                    .recall(&query, effort, &scope_json, limit, format.as_deref(), as_of)
             })
             .map_err(raise)?;
         encode_recall(&output)

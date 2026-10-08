@@ -94,6 +94,7 @@ fn deep_recall_returns_lease_required() {
             &RecallScope::default(),
             10,
             None,
+            None,
         )
         .expect_err("deep recall is lease-gated");
 

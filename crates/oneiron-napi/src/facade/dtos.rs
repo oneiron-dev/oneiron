@@ -348,6 +348,8 @@ pub struct NapiRecallScope {
     pub world_ref: Option<String>,
     /// Facet entity ref; strict facet narrowing when set.
     pub facet: Option<String>,
+    /// Registry kinds to return; unset returns every content kind.
+    pub kinds: Option<Vec<String>>,
 }
 
 /// One BM25 hit (engine index scores).
@@ -403,8 +405,10 @@ pub struct NapiMemoryProvenance {
 /// One memory pack item (S6).
 #[napi(object)]
 pub struct NapiMemoryItem {
-    /// Short ref, hydratable via `hydrate`.
+    /// Short ref, hydratable via `hydrate`; never revision-qualified.
     pub short_id: String,
+    /// The revision the item was read at; `shortId@sourceRevisionRef` hydrates it.
+    pub source_revision_ref: Option<String>,
     /// Registry kind string.
     pub kind: String,
     /// Predicate (claims only).

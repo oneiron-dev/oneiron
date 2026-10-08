@@ -124,7 +124,7 @@ pub(crate) fn residence_rpc(
 }
 
 pub(crate) fn bound_rpc(
-    vault: &oneiron::Vault,
+    server: &crate::server::SyncServer,
     auth: &CoreAuth,
     request: RpcRequest,
 ) -> Result<Vec<Vec<u8>>, ProtocolError> {
@@ -136,8 +136,8 @@ pub(crate) fn bound_rpc(
         auth.require(CoreScope::Read)?;
         auth.require_unrestricted_record_scope()?;
         let read = Read::parse(&request.method, request.params)?;
-        let memory = bound_memory(vault, auth)?;
-        read.run(&memory)
+        let memory = bound_memory(server.vault(), auth)?;
+        read.run(server, &memory)
     })();
     match result {
         Ok(value) => rpc_result(request.request_id, value).or_else(|_| {
