@@ -376,7 +376,7 @@ pub(crate) fn enqueue_partition_attempts_in_txn(
     if planned_turn_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let turns = read_partition_turns_in_txn(vault, wtxn, planned_turn_ids)?;
+    let turns = read_partition_turns_in_txn(vault, wtxn, scope, planned_turn_ids)?;
     if turns.iter().any(|turn| turn.conversation.is_none()) {
         return Err(invalid_consolidation(
             "dreamer planned turn has no conversation",
@@ -384,7 +384,7 @@ pub(crate) fn enqueue_partition_attempts_in_txn(
     }
     let screen = prefilter_partition_input_in_txn(vault, wtxn, &turns)?;
     let plans = partition_screened_turns_in_txn(vault, wtxn, &screen.kept, watermark)?;
-    let carried = super::redirty::carried_orders_in_txn(vault, wtxn, &turns)?;
+    let carried = super::redirty::carried_orders_in_txn(vault, wtxn, scope, &turns)?;
     let store = DreamerRunnerStore::new(vault);
     let mut outcomes = Vec::with_capacity(plans.len());
     for plan in &plans {
@@ -404,6 +404,7 @@ pub(crate) fn enqueue_partition_attempts_in_txn(
 pub(crate) fn read_partition_turns_in_txn(
     vault: &Vault,
     txn: &heed::RwTxn<'_>,
+    scope: DreamerConsolidationScope,
     turn_ids: &[EntityId],
 ) -> Result<Vec<WorkingSetTurn>> {
     let mut seen = std::collections::BTreeSet::new();
@@ -448,8 +449,13 @@ pub(crate) fn read_partition_turns_in_txn(
             .map(|edge| edge.target);
         // The effective dirty position the scan ordered this TURN by, so a
         // re-dirtied TURN's round hashes to a new attempt identity.
-        let learned_at =
-            super::redirty::effective_learned_at_in_txn(vault, txn, turn_id, header.learned_at)?;
+        let learned_at = super::redirty::effective_learned_at_in_txn(
+            vault,
+            txn,
+            scope,
+            turn_id,
+            header.learned_at,
+        )?;
         turns.push(WorkingSetTurn {
             turn_id: *turn_id,
             role,

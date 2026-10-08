@@ -14,11 +14,13 @@
 //! source, only orders it among the temporal entries (the round cap reads
 //! that order) and names the change in the partition-round identity.
 //!
-//! While the TURN is live and its row has not moved past the carrier, the
-//! carrier is the TURN's EFFECTIVE key, consumed or not: its temporal entry
-//! does not stand. Selection, settlement and the partition-round identity
-//! read the effective key; the fence's source pins keep the row's own
-//! `learned_at`, which a carrier never touches.
+//! For each scope, while the TURN is live, a pending carrier is the TURN's
+//! EFFECTIVE key, and a consumed one stays it while the row stands where that
+//! scope's consuming round read it: its temporal entry does not stand. A row
+//! moved since (a generic re-put) is new work on its own temporal key again.
+//! Selection, settlement and the partition-round identity read the effective
+//! key; the fence's source pins keep the row's own `learned_at`, which a
+//! carrier never touches.
 //!
 //! One latest row per TURN: a newer change replaces it, pending for every
 //! scope again. Like stream finality, the row is local to this vault.
@@ -38,34 +40,42 @@ use std::iter::Peekable;
 const REDIRTY: SideTable<EntityId, Carrier, Named> =
     SideTable::new(&side_table::DREAMER_TURN_REDIRTY);
 
-/// A TURN's carrier key `(position, order)`, the row `learned_at` it was
-/// taken against, and the scopes whose rounds consumed it.
+/// A TURN's carrier key `(position, order)` and, per scope, whether a round
+/// of it consumed the carrier and the row `learned_at` that round read.
 #[derive(Clone, Copy, Serialize, Deserialize)]
 struct Carrier {
     position: u64,
     order: EntityId,
-    row_learned_at: u64,
-    /// One [`scope_bit`] per scope that consumed this carrier.
+    /// One `1 << slot(scope)` bit per scope that consumed this carrier.
     consumed: u8,
+    /// The row `learned_at` each scope's consuming round read, by [`slot`].
+    read_at: [u64; 3],
 }
 
 impl Carrier {
-    /// Whether this carrier, not the row, keys its TURN: the row has not moved
-    /// since the carrier was taken, or has not moved past it.
-    const fn leads(&self, stored: u64) -> bool {
-        self.row_learned_at == stored || self.position >= stored
+    /// Whether this carrier, not the row, keys its TURN for `scope`, whose
+    /// row carries `stored`: while pending, and once consumed while the row
+    /// stands where the consuming round read it.
+    const fn leads(&self, scope: DreamerConsolidationScope, stored: u64) -> bool {
+        self.pending(scope) || self.read_at[slot(scope)] == stored
     }
 
-    const fn pending(&self, bit: u8) -> bool {
-        self.consumed & bit == 0
+    const fn pending(&self, scope: DreamerConsolidationScope) -> bool {
+        self.consumed & (1 << slot(scope)) == 0
+    }
+
+    /// Consumes this carrier for `scope`, whose round read the row at `stored`.
+    const fn consume(&mut self, scope: DreamerConsolidationScope, stored: u64) {
+        self.consumed |= 1 << slot(scope);
+        self.read_at[slot(scope)] = stored;
     }
 }
 
-const fn scope_bit(scope: DreamerConsolidationScope) -> u8 {
+const fn slot(scope: DreamerConsolidationScope) -> usize {
     match scope {
-        DreamerConsolidationScope::Micro => 1,
-        DreamerConsolidationScope::Meso => 2,
-        DreamerConsolidationScope::Macro => 4,
+        DreamerConsolidationScope::Micro => 0,
+        DreamerConsolidationScope::Meso => 1,
+        DreamerConsolidationScope::Macro => 2,
     }
 }
 
@@ -101,45 +111,58 @@ pub(crate) fn redirty_turn_in_txn(
     let carrier = Carrier {
         position,
         order,
-        row_learned_at: row.learned_at,
         consumed: 0,
+        read_at: [0; 3],
     };
     REDIRTY.put(&vault.store, txn, turn, &carrier)
 }
 
 /// Marks the carriers a settled round of `scope` selected, each `(turn,
-/// order)`, consumed for that scope. A carrier a newer change replaced since
-/// (another order) stays pending.
+/// order)`, consumed for that scope at the row it read. A carrier a newer
+/// change replaced since (another order) stays pending.
 pub(super) fn consume_carriers_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     scope: DreamerConsolidationScope,
     selected: impl IntoIterator<Item = (EntityId, EntityId)>,
 ) -> Result<()> {
-    let bit = scope_bit(scope);
     for (turn, order) in selected {
-        let Some(mut carrier) = REDIRTY.get(&vault.store, txn, &turn)? else {
+        let Some(carrier) = REDIRTY.get(&vault.store, txn, &turn)? else {
             continue;
         };
-        if carrier.order == order && carrier.pending(bit) {
-            carrier.consumed |= bit;
-            REDIRTY.put(&vault.store, txn, &turn, &carrier)?;
+        if carrier.order == order && carrier.pending(scope) {
+            consume_in_txn(vault, txn, scope, &turn, carrier)?;
         }
     }
     Ok(())
 }
 
-/// The effective selection key of `turn`, whose row carries `stored`, in the
-/// caller's snapshot: its carrier's key while that leads a live row, else the
-/// row's own temporal key `(stored, turn)`.
+fn consume_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    scope: DreamerConsolidationScope,
+    turn: &EntityId,
+    mut carrier: Carrier,
+) -> Result<()> {
+    let Some(row) = vault.store.port_entity_record(txn, turn)? else {
+        return Ok(());
+    };
+    carrier.consume(scope, row.learned_at);
+    REDIRTY.put(&vault.store, txn, turn, &carrier)
+}
+
+/// The effective selection key of `turn` for `scope`, whose row carries
+/// `stored`, in the caller's snapshot: its carrier's key while that leads a
+/// live row, else the row's own temporal key `(stored, turn)`.
 pub(super) fn effective_key_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    scope: DreamerConsolidationScope,
     turn: &EntityId,
     stored: u64,
 ) -> Result<(u64, EntityId)> {
     let carrier = REDIRTY.get(&vault.store, txn, turn)?;
-    let leading = leading_carrier(vault, txn, turn, stored, carrier.as_ref())?;
+    let leading = leading_carrier(vault, txn, scope, turn, stored, carrier.as_ref())?;
     Ok(leading.unwrap_or((stored, *turn)))
 }
 
@@ -147,17 +170,20 @@ pub(super) fn effective_key_in_txn(
 pub(super) fn effective_learned_at_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    scope: DreamerConsolidationScope,
     turn: &EntityId,
     stored: u64,
 ) -> Result<u64> {
-    Ok(effective_key_in_txn(vault, txn, turn, stored)?.0)
+    Ok(effective_key_in_txn(vault, txn, scope, turn, stored)?.0)
 }
 
-/// The carrier ids of those `turns` keyed by their carriers, for the
-/// partition-round identity: a carried TURN hashes the key it was selected at.
+/// The carrier ids of those `turns` keyed by their carriers for `scope`, for
+/// the partition-round identity: a carried TURN hashes the key it was
+/// selected at.
 pub(super) fn carried_orders_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    scope: DreamerConsolidationScope,
     turns: &[WorkingSetTurn],
 ) -> Result<BTreeMap<EntityId, EntityId>> {
     let mut orders = BTreeMap::new();
@@ -166,7 +192,7 @@ pub(super) fn carried_orders_in_txn(
             continue;
         };
         let carrier = REDIRTY.get(&vault.store, txn, &turn)?;
-        let leading = leading_carrier(vault, txn, &turn, row.learned_at, carrier.as_ref())?;
+        let leading = leading_carrier(vault, txn, scope, &turn, row.learned_at, carrier.as_ref())?;
         if let Some((_, order)) = leading {
             orders.insert(turn, order);
         }
@@ -174,16 +200,17 @@ pub(super) fn carried_orders_in_txn(
     Ok(orders)
 }
 
-/// `carrier`'s key while it leads the live row of `turn`, which carries
-/// `stored`.
+/// `carrier`'s key while it leads the live row of `turn` for `scope`; the
+/// row carries `stored`.
 fn leading_carrier(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    scope: DreamerConsolidationScope,
     turn: &EntityId,
     stored: u64,
     carrier: Option<&Carrier>,
 ) -> Result<Option<(u64, EntityId)>> {
-    let Some(carrier) = carrier.filter(|carrier| carrier.leads(stored)) else {
+    let Some(carrier) = carrier.filter(|carrier| carrier.leads(scope, stored)) else {
         return Ok(None);
     };
     Ok(is_live(vault, txn, turn)?.then_some((carrier.position, carrier.order)))
@@ -211,7 +238,7 @@ pub(super) struct DirtyCandidate {
 /// its TURN's temporal entry out, so each TURN is enumerated at most once.
 pub(super) struct DirtyCarriers {
     latest: BTreeMap<EntityId, Carrier>,
-    bit: u8,
+    scope: DreamerConsolidationScope,
 }
 
 impl DirtyCarriers {
@@ -222,16 +249,15 @@ impl DirtyCarriers {
     ) -> Result<Self> {
         Ok(Self {
             latest: REDIRTY.scan(&vault.store, txn)?.into_iter().collect(),
-            bit: scope_bit(scope),
+            scope,
         })
     }
 
     /// The temporal stream (already cut after the scope cursor) and every
     /// carrier still pending for the scope through `upper_inclusive`, in one
     /// `(position, id)` order. A pending carrier is merged wherever the
-    /// cursor stands. A carrier that does not lead its row still appears
-    /// here; [`Self::stands`] drops whichever of the two entries is not the
-    /// TURN's effective key.
+    /// cursor stands; [`Self::stands`] drops whichever of a TURN's two
+    /// entries is not its effective key.
     pub(super) fn merge<'t>(
         &self,
         timeline: PortRows<'t, EntityTime>,
@@ -241,7 +267,7 @@ impl DirtyCarriers {
             .latest
             .iter()
             .filter(|(_, carrier)| {
-                carrier.pending(self.bit)
+                carrier.pending(self.scope)
                     && upper_inclusive.is_none_or(|upper| carrier.position <= upper)
             })
             .map(|(turn, carrier)| (carrier.position, carrier.order, *turn))
@@ -265,7 +291,7 @@ impl DirtyCarriers {
         stored: u64,
     ) -> Result<bool> {
         let carrier = self.latest.get(&candidate.turn);
-        let leading = leading_carrier(vault, txn, &candidate.turn, stored, carrier)?;
+        let leading = leading_carrier(vault, txn, self.scope, &candidate.turn, stored, carrier)?;
         Ok(candidate.carried == leading.is_some())
     }
 }

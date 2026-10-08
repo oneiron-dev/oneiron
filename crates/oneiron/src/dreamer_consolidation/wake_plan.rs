@@ -308,7 +308,7 @@ impl PreparedWake {
                 // Membership and order read the effective selection key, as
                 // the scan does; the source pin keeps the row's own learned_at.
                 let (learned_at, key) =
-                    super::redirty::effective_key_in_txn(vault, &txn, &id, *stored)?;
+                    super::redirty::effective_key_in_txn(vault, &txn, scope, &id, *stored)?;
                 let facts = decode_turn_body(bytes);
                 let role = dreamer_turn_role(
                     facts.speaker.as_deref(),

@@ -3,7 +3,8 @@
 //! TURN already advanced, and in a conversation that adopted the DAG, whose
 //! TURN rows are append-only. A TURN changed again in the second it was
 //! learned is planned by a session end in that same second, and settling it
-//! strands no TURN learned after it.
+//! strands no TURN learned after it. A consumed continuation hides no later
+//! re-put of its TURN.
 #![cfg(feature = "sync")]
 
 use super::*;
@@ -200,5 +201,29 @@ fn a_same_second_continuation_is_planned_by_its_close_and_strands_no_new_turn() 
         vec![later],
         "the new turn is not stranded"
     );
+    Ok(())
+}
+
+/// A consumed continuation hides no later work on its TURN: a generic re-put
+/// of the row at a later occurrence, ahead of the cursor but before the
+/// continuation's second, is selected again on its own key.
+#[test]
+fn a_re_put_after_a_consumed_continuation_is_selected_again() -> Result<()> {
+    let (_dir, vault, _clock) = open_clocked_vault();
+    let (turn, _, _, input) = stream_turn(&vault, 0x97, "call me", "finalize")?;
+    let writer = EntityId::from_bytes([0x97; 16])?;
+    consume(&vault)?;
+    end_stream(&vault, writer, &input, " Oleksii", "finalize");
+    assert_eq!(dirty(&vault)?, vec![turn], "the continued turn comes back");
+    consume(&vault)?;
+    let row = vault.get_raw(&turn)?.expect("the turn row");
+    vault.put_entity(
+        &turn,
+        crate::registry::ENTITY_TYPE_TURN,
+        occurred(20),
+        20,
+        &row[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+    )?;
+    assert_eq!(dirty(&vault)?, vec![turn], "the re-put is new work");
     Ok(())
 }
