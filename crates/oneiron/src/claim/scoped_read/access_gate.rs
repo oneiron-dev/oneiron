@@ -135,6 +135,9 @@ impl ScopedRead<'_> {
                 private |= private_scope(Some(value));
             }
         }
+        if self.actor_key.unscoped_rows_open && !seen_rel && !private {
+            return Ok(true);
+        }
         let Some(record) =
             crate::federation::record_scope::scope_for_blob(&self.vault.store, txn, *id, raw)?
         else {

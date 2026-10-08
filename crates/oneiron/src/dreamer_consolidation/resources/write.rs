@@ -215,7 +215,10 @@ impl ConsolidationFence {
     }
 
     /// The frozen text the model saw for one fenced turn.
-    pub(crate) fn turn_text(&self, turn: &EntityId) -> Result<Option<&str>> {
+    pub(in crate::dreamer_consolidation) fn turn_text(
+        &self,
+        turn: &EntityId,
+    ) -> Result<Option<&str>> {
         self.texts
             .get(turn)
             .map(TurnText::text)

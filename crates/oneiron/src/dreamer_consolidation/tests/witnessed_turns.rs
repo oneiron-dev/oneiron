@@ -55,10 +55,12 @@ impl LlmBackend for RecordingBackend {
     }
 }
 
-/// Deletes one MESSAGE after the executor sealed its write, then promotes.
+type Change = Box<dyn FnOnce(&Vault) -> Result<()>>;
+
+/// Changes the vault after the executor sealed its write, then promotes.
 struct DriftSink<'a> {
     inner: PromotionWriterSink<'a>,
-    delete: Option<EntityId>,
+    change: Option<Change>,
 }
 
 impl ConsolidationSink for DriftSink<'_> {
@@ -67,14 +69,61 @@ impl ConsolidationSink for DriftSink<'_> {
     }
 
     fn accept_scoped(&mut self, write: ScopedConsolidationWrite) -> Result<()> {
-        if let Some(id) = self.delete.take() {
-            self.inner.vault.delete_room_record_unchecked_for_test(
-                &id,
-                crate::deletion::DeleteReason::UserDelete,
-            )?;
+        if let Some(change) = self.change.take() {
+            change(self.inner.vault)?;
         }
         self.inner.accept_scoped(write)
     }
+}
+
+fn delete_message(vault: &Vault, id: EntityId) -> Result<()> {
+    vault.delete_room_record_unchecked_for_test(&id, crate::deletion::DeleteReason::UserDelete)?;
+    Ok(())
+}
+
+/// The fixture's Dreamer read grant plus the one permit for engine-voice
+/// `system` rows: an owner-authored `auto` ceiling bound to `writer`.
+fn allow_system_rows(vault: &Vault, writer: EntityId) -> Result<()> {
+    let Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest()?.as_slice())
+            .expect("default policy map")
+    else {
+        panic!("policy manifest map")
+    };
+    for (key, value) in &mut entries {
+        if key.as_str() == Some("actor_ceilings")
+            && let Value::Array(rows) = value
+        {
+            rows.push(Value::Map(vec![
+                ("actor_class".into(), "human".into()),
+                ("actor_ref".into(), writer.to_hex().into()),
+                ("ceiling".into(), "auto".into()),
+            ]));
+        }
+    }
+    entries.push((
+        "scoped_grants".into(),
+        Value::Array(vec![Value::Map(vec![
+            (
+                "actor_ref".into(),
+                vault.dreamer_authority()?.entity_ref().to_hex().into(),
+            ),
+            ("actor_class".into(), "system".into()),
+            ("effector".into(), "core:read".into()),
+            (
+                "scope".into(),
+                crate::federation::scope_codec::encode_scope_value(
+                    &crate::federation::scope_codec::read_preset(),
+                )?,
+            ),
+            ("receipt_required".into(), false.into()),
+        ])]),
+    ));
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &super::super::support::encode_value(&Value::Map(entries))?,
+    )
 }
 
 fn message(order: u32, author: WitnessAuthor, content: &str, is_visible: bool) -> WitnessMessage {
@@ -326,54 +375,24 @@ fn witnessed_user_turn_reaches_extraction_and_lands_its_message_evidence() -> Re
     Ok(())
 }
 
+/// GATE-10 and the evidence contract at the branch door: system interleave
+/// and hidden rows never reach the transcript or a citation, rows join in
+/// position order, ranges are measured over the displayed UTF-8 text, a
+/// supplied scope is never widened to the MESSAGE rows, and inline TURN text
+/// wins exactly.
 #[test]
-fn witnessed_text_joins_visible_rows_of_its_bucket_and_slices_exact_utf8() -> Result<()> {
-    // The pure rule: (order, id) with an id tie-break, joined by exactly
-    // "\n" with empty rows kept; system interleave and hidden rows never
-    // enter, and another non-system bucket refuses the turn.
-    let body = |author: &str, order: u32, is_visible: bool, content: &str| {
-        crate::gate::WitnessMessageEnvelope {
-            author,
-            message_type: "dialogue",
-            content,
-            metadata: None,
-            is_visible,
-            order,
-        }
-        .encode_body()
-        .expect("canonical message body")
-    };
-    let children = vec![
-        (
-            EntityId::from_bytes([0x22; 16])?,
-            body("user", 1, true, "b"),
-        ),
-        (EntityId::now(), body("system", 0, true, "tool output")),
-        (
-            EntityId::from_bytes([0x11; 16])?,
-            body("user", 1, true, "a"),
-        ),
-        (EntityId::now(), body("user", 0, false, "hidden")),
-        (EntityId::now(), body("user", 0, true, "")),
-    ];
-    let project = super::super::turn_text::project;
-    assert_eq!(project("user", &children)?.as_deref(), Some("\na\nb"));
-    let mut mixed = children;
-    mixed.push((
-        EntityId::now(),
-        body("companion", 2, true, "not the speaker"),
-    ));
-    assert!(project("user", &mixed).is_err());
-
-    // The real door: a companion turn with a hidden row, read by a branch.
+fn branch_reads_only_the_turns_visible_words_and_cites_them_exactly() -> Result<()> {
     let (_dir, vault) = open_vault();
+    let writer = EntityId::from_bytes([0x63; 16])?;
+    allow_system_rows(&vault, writer)?;
     let (turn, conversation) = witness(
         &vault,
         0x63,
         vec![
-            message(2, WitnessAuthor::Companion, "and ☕ after", true),
+            message(3, WitnessAuthor::Companion, "and ☕ after", true),
             message(0, WitnessAuthor::Companion, "I met Casey", true),
-            message(1, WitnessAuthor::Companion, "Morgan stays private", false),
+            message(1, WitnessAuthor::System, "tool output", true),
+            message(2, WitnessAuthor::Companion, "Morgan stays private", false),
         ],
     );
     let actor = vault.dreamer_authority()?;
@@ -474,17 +493,33 @@ fn witnessed_names_mint_people_only_from_visible_text() -> Result<()> {
     Ok(())
 }
 
+/// The write fence (new claims and existing-head attachments alike) refuses
+/// a turn whose MESSAGE dependencies moved after the write was sealed: a
+/// deleted uncited row, or only an `AuthoredBy` edge on the cited row, with
+/// the words themselves unchanged (its author replaced by another PERSON).
 #[test]
 fn message_drift_after_preparation_refuses_new_claims_and_attachments() -> Result<()> {
-    for drift in [false, true] {
+    for drift in ["none", "deleted row", "author edge"] {
         let (_dir, vault) = open_vault();
+        let first = message(0, WitnessAuthor::User, SAID, true);
         let second = message(1, WitnessAuthor::User, "thanks", true);
+        let cited = EntityId::from_hex(first.id.as_deref().expect("message id"))?;
         let dropped = EntityId::from_hex(second.id.as_deref().expect("message id"))?;
-        let (turn, _) = witness(
-            &vault,
-            0x67,
-            vec![message(0, WitnessAuthor::User, SAID, true), second],
-        );
+        let (turn, _) = witness(&vault, 0x67, vec![first, second]);
+        let writer = EntityId::from_bytes([0x67; 16])?;
+        let other = EntityId::now();
+        vault.put_entity(&other, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+        let change: Option<Change> = match drift {
+            "deleted row" => Some(Box::new(move |vault: &Vault| {
+                delete_message(vault, dropped)
+            })),
+            "author edge" => Some(Box::new(move |vault: &Vault| {
+                assert!(vault.delete_edge(&cited, EdgeKind::AuthoredBy, &writer)?);
+                vault.put_edge(&cited, EdgeKind::AuthoredBy, &other, 1.0)?;
+                Ok(())
+            })),
+            _ => None,
+        };
         let actor = vault.dreamer_authority()?;
         super::prior_heads::policy(&vault, actor.entity_ref(), true)?;
         let (subject, owner, head) = (EntityId::now(), EntityId::now(), EntityId::now());
@@ -550,21 +585,30 @@ fn message_drift_after_preparation_refuses_new_claims_and_attachments() -> Resul
                     now_ms: 21_000,
                 },
             ),
-            delete: drift.then_some(dropped),
+            change,
         };
         let turn_before = vault.get_raw(&turn)?;
+        let cited_before = vault.get_raw(&cited)?;
         let head_before = vault.get_raw(&head)?;
         let result = execute_direct(&vault, &admitted, &backend, &mut sink, Some(scope));
         let supports = vault.sources(&head, EdgeKind::Supports, None)?;
         let nicknames = claims_with(&vault, "profile.nickname")?;
         let wrappers = claims_with(&vault, crate::provenance::PREDICATE_EDGE_PROVENANCE)?;
         assert_eq!(vault.get_raw(&head)?, head_before);
-        if drift {
-            assert!(result.is_err(), "a changed child set refuses the write");
+        if drift != "none" {
+            assert!(
+                result.is_err(),
+                "{drift}: the moved dependency refuses the write"
+            );
             assert_eq!(
                 vault.get_raw(&turn)?,
                 turn_before,
-                "the TURN itself never moved"
+                "{drift}: the TURN never moved"
+            );
+            assert_eq!(
+                vault.get_raw(&cited)?,
+                cited_before,
+                "{drift}: the words never moved"
             );
             assert!(sink.inner.outcome.landed.is_empty());
             assert_eq!(sink.inner.outcome.rejected.len(), 2);
@@ -577,5 +621,123 @@ fn message_drift_after_preparation_refuses_new_claims_and_attachments() -> Resul
             assert_eq!((nicknames.len(), wrappers.len()), (1, 1));
         }
     }
+    Ok(())
+}
+
+/// MESSAGE privacy is a read gate: a private row, or a relationship row the
+/// Dreamer holds no live grant for, refuses its turn. No word reaches the
+/// model, and no claim or PERSON lands; a grant revoked after preparation
+/// refuses at the write fence the same way.
+#[test]
+fn private_or_ungranted_relationship_messages_never_reach_consolidation() -> Result<()> {
+    let space = EntityId::now();
+    for case in ["private", "no grant", "revoked grant"] {
+        let (_dir, vault) = open_vault();
+        let metadata = if case == "private" {
+            serde_json::json!({"scope": {"private": true}})
+        } else {
+            serde_json::json!({"rel": space.to_hex()})
+        };
+        let (turn, _) = witness(
+            &vault,
+            0x69,
+            vec![WitnessMessage {
+                metadata: Some(metadata),
+                ..message(0, WitnessAuthor::User, SAID, true)
+            }],
+        );
+        let actor = vault.dreamer_authority()?;
+        super::prior_heads::policy(&vault, actor.entity_ref(), true)?;
+        if case == "revoked grant" {
+            let grant = EntityId::now();
+            vault.create_access_grant(
+                &grant,
+                &crate::access_grant::AccessGrant {
+                    principal_ref: actor.entity_ref(),
+                    scope: crate::access_grant::AccessGrantScope::Messages { space_ref: space },
+                    capability: crate::access_grant::AccessGrantCapability::MessagesRead,
+                    status: crate::access_grant::AccessGrantStatus::Active,
+                    created_at: 1,
+                    revoked_at: None,
+                    expires_at: Some(u64::MAX),
+                    authority_scope: crate::federation::scope_codec::read_preset(),
+                },
+            )?;
+            vault
+                .test_hooks()
+                .install_before_dreamer_person_mint(move |vault| {
+                    vault.revoke_access_grant(&grant, 2).expect("revoke grant");
+                });
+        }
+        let (subject, named) = (EntityId::now(), EntityId::now());
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+        queue_micro(&vault)?;
+        let admitted = admit(&vault)?;
+        let backend = RecordingBackend::new(vec![Ok(text_response(
+            serde_json::json!({
+                "candidates": [{
+                    "subject": subject.to_hex(), "predicate": "profile.name", "value": "Oleksii",
+                    "confidence": 0.8, "evidence_refs": [cite(turn, name_range())],
+                }],
+                "persons": [{"id": named.to_hex(), "name": "Oleksii", "evidence_turn_refs": [turn.to_hex()]}],
+            })
+            .to_string(),
+        ))]);
+        let mut sink = PromotionWriterSink::new(
+            &vault,
+            DreamerRunContext {
+                run_id: "run-1".into(),
+                attempt_id: admitted.status.attempt.id,
+                agent_actor: actor,
+                now_ms: 21_000,
+            },
+        );
+        let result = execute_direct(&vault, &admitted, &backend, &mut sink, None);
+        assert!(result.is_err(), "{case}: the turn is refused");
+        // Only a grant that was live at preparation let the words out.
+        assert_eq!(
+            backend.inner.calls.load(Ordering::SeqCst),
+            usize::from(case == "revoked grant"),
+            "{case}"
+        );
+        assert!(sink.outcome.landed.is_empty(), "{case}");
+        assert!(claims_with(&vault, "profile.name")?.is_empty(), "{case}");
+        assert!(!vault.entity_exists(&named)?, "{case}: no PERSON");
+    }
+    Ok(())
+}
+
+/// A text-dependent reflection gap is written only while the words it was
+/// read from still stand: the user's message is deleted between the scan and
+/// the queue write, so the write stores nothing.
+#[test]
+fn gap_queue_refuses_a_text_gap_whose_message_changed_after_the_scan() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let said = message(0, WitnessAuthor::User, "I'll call Casey tomorrow", true);
+    let words = EntityId::from_hex(said.id.as_deref().expect("message id"))?;
+    let (turn, conversation) = witness(&vault, 0x6b, vec![said]);
+    let working_set = [WorkingSetTurn {
+        turn_id: turn,
+        role: DreamerTurnRole::User,
+        learned_at: 10,
+        conversation: Some(conversation),
+    }];
+    let kinds = |gaps: &[ReflectionGap]| gaps.iter().map(|gap| gap.kind).collect::<Vec<_>>();
+    let (gaps, texts) = super::super::gap::scan_with_texts(&vault, &working_set, 1_000)?;
+    assert_eq!(
+        kinds(&gaps),
+        vec![
+            ReflectionGapKind::UnresolvedThread,
+            ReflectionGapKind::StatedIntentWithoutAction
+        ]
+    );
+    delete_message(&vault, words)?;
+    assert!(super::super::gap::upsert_scanned_gap_queue(&vault, gaps, &texts, 1_000).is_err());
+    // A fresh scan no longer reads the intent; the refused write left nothing
+    // behind, so even the role-only gap is created now, not refreshed.
+    let (gaps, texts) = super::super::gap::scan_with_texts(&vault, &working_set, 2_000)?;
+    assert_eq!(kinds(&gaps), vec![ReflectionGapKind::UnresolvedThread]);
+    let delta = super::super::gap::upsert_scanned_gap_queue(&vault, gaps, &texts, 2_000)?;
+    assert_eq!((delta.created, delta.refreshed), (1, 0));
     Ok(())
 }

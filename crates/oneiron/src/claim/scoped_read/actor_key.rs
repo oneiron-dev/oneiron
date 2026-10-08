@@ -11,6 +11,9 @@ pub struct ScopedReadActorKey {
     actor_class: Option<String>,
     pub(super) principal_ref: Option<EntityId>,
     pub(super) enforce_access_grants: bool,
+    /// With `enforce_access_grants`: a row naming no relationship and no
+    /// private scope stays readable (see [`Self::require_relationship_grants`]).
+    pub(super) unscoped_rows_open: bool,
     pub(super) proof: Option<crate::authority::VerifiedSlip>,
     /// Set only on the vault owner's own key; see [`Self::vault_owner`].
     owner: Option<EntityId>,
@@ -41,6 +44,7 @@ impl ScopedReadActorKey {
             actor_class,
             principal_ref: None,
             enforce_access_grants: false,
+            unscoped_rows_open: false,
             proof: None,
             owner: None,
         })
@@ -69,6 +73,7 @@ impl ScopedReadActorKey {
             ),
             principal_ref: None,
             enforce_access_grants: false,
+            unscoped_rows_open: false,
             proof: None,
             owner: Some(owner),
         }
@@ -85,6 +90,19 @@ impl ScopedReadActorKey {
         self.principal_ref = principal_ref;
         self.enforce_access_grants = true;
         self
+    }
+
+    /// A vault-internal reader (the Dreamer) under the delegated relationship
+    /// gate: a row that names a relationship or a private scope passes only
+    /// on this principal's live grants. A row that names neither is the
+    /// vault's own and stays readable, where a delegated key refuses every
+    /// such MESSAGE or SUMMARY.
+    #[must_use]
+    pub(crate) fn require_relationship_grants(self, principal_ref: EntityId) -> Self {
+        Self {
+            unscoped_rows_open: true,
+            ..self.require_access_grants(Some(principal_ref))
+        }
     }
 
     /// Constructs a read capability only from a log/MAC/holder-verified slip.

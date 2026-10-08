@@ -117,7 +117,8 @@ impl PreparedWake {
         only_attempt: Option<AttemptId>,
     ) -> Result<Self> {
         use crate::ports::EdgeDirection;
-        let txn = vault.store.env.read_txn()?;
+        // Witnessed TURN text is read under live relationship grants.
+        let txn = super::turn_text::snapshot(vault)?;
         let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
         let records = crate::attempt_queue::AttemptQueue::new(vault).list_in_txn(&txn)?;
         let mut ids = BTreeSet::new();

@@ -684,5 +684,6 @@ pub(crate) fn turn_text_for_shadow(vault: &Vault, id: &EntityId) -> Result<Strin
         return Err(invalid_consolidation("shadow tag input must be a turn"));
     }
     super::turn_text::read_turn_text(vault, id)?
+        .into_text()
         .ok_or_else(|| invalid_consolidation("turn has no text"))
 }

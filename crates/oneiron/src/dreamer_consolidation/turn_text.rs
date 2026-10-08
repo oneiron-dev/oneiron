@@ -7,12 +7,13 @@
 //! `system` interleave and hidden rows never enter it, and a non-system row of
 //! another bucket refuses the turn instead of being read as its speaker.
 //!
-//! Every child the text depends on is read through the actor's ScopedRead in
-//! the caller's snapshot and pinned at its exact logical version (plus its
-//! document frontier when one exists). Later doors re-collect and compare
-//! against that pin; they never reinterpret frozen offsets against new text.
-//! An incomplete or unreadable child set refuses; a partial transcript is
-//! never assembled.
+//! Every child the text depends on is read as the same actor under the
+//! relationship gate (private rows and relationship rows without a live grant
+//! are withheld) in the caller's snapshot, and pinned at its exact logical
+//! version, `AuthoredBy` targets and document frontier. Later doors re-collect
+//! and compare against that pin; they never reinterpret frozen offsets
+//! against new text. An incomplete or unreadable child set refuses; a partial
+//! transcript is never assembled.
 
 use std::collections::BTreeMap;
 
@@ -39,6 +40,8 @@ struct MessagePin {
     id: EntityId,
     learned_at: u64,
     version: ScopeResource,
+    /// Exact `AuthoredBy` targets: one for a non-system row, none for system.
+    authors: Vec<EntityId>,
     frontier: Option<Vec<u8>>,
 }
 
@@ -54,6 +57,10 @@ pub(super) struct TurnText {
 impl TurnText {
     pub(super) fn text(&self) -> Option<&str> {
         self.text.as_deref()
+    }
+
+    pub(super) fn into_text(self) -> Option<String> {
+        self.text
     }
 
     /// The exact MESSAGE versions this text depends on; none for inline text.
@@ -86,8 +93,7 @@ impl TurnText {
     ) -> Result<Option<String>> {
         let text = self.readable_text(scope)?.map(str::to_owned);
         if self.messages.is_some() {
-            let txn = read.vault().store.env.read_txn()?;
-            self.check_live_in(read, &txn, turn)?;
+            self.check_live_in(read, &snapshot(read.vault())?, turn)?;
         }
         Ok(text)
     }
@@ -179,7 +185,7 @@ pub(super) fn collect_in(
     }
     ids.sort_unstable();
     ids.dedup();
-    let rows = read.get_entities_parts_in_txn(txn, &ids)?;
+    let rows = message_reader(read)?.get_entities_parts_in_txn(txn, &ids)?;
     let unreadable = rows.iter().filter(|row| row.is_none()).count();
     if unreadable != 0 {
         *withheld += unreadable;
@@ -190,16 +196,15 @@ pub(super) fn collect_in(
     let mut messages = Vec::with_capacity(ids.len());
     let mut children = Vec::with_capacity(ids.len());
     for (id, (entity_type, learned_at, body)) in ids.into_iter().zip(rows.into_iter().flatten()) {
+        let message = decode_message(&body)
+            .ok_or_else(|| invalid_consolidation("witnessed message body is malformed"))?;
+        let out = |kind| peers(vault, txn, &id, EdgeDirection::Out, kind, None);
+        let mut authors = out(EdgeKind::AuthoredBy)?;
+        authors.sort_unstable();
         if entity_type != ENTITY_TYPE_MESSAGE
-            || peers(vault, txn, &id, EdgeDirection::Out, EdgeKind::PartOf, None)? != [*turn]
-            || peers(
-                vault,
-                txn,
-                &id,
-                EdgeDirection::Out,
-                EdgeKind::BelongsTo,
-                None,
-            )? != [*conversation]
+            || out(EdgeKind::PartOf)? != [*turn]
+            || out(EdgeKind::BelongsTo)? != [*conversation]
+            || authors.len() != usize::from(message.author != WITNESS_AUTHOR_SYSTEM)
         {
             return Err(invalid_consolidation(
                 "witnessed turn message binding changed",
@@ -213,12 +218,13 @@ pub(super) fn collect_in(
             id,
             learned_at,
             version: document_version(id, &body),
+            authors,
             frontier,
         });
-        children.push((id, body));
+        children.push((id, message));
     }
     Ok(TurnText {
-        text: project(bucket, &children)?,
+        text: project(bucket, children)?,
         messages: Some(messages),
     })
 }
@@ -262,28 +268,47 @@ pub(crate) fn live_turn_text_in(
 }
 
 /// The text of one TURN for the Dreamer's read-only side doors (gap scan,
-/// retrieval shadow). Inline text keeps its existing reader; the MESSAGE
-/// fallback reads as the Dreamer, in one snapshot.
-pub(super) fn read_turn_text(vault: &Vault, id: &EntityId) -> Result<Option<String>> {
+/// retrieval shadow), with the record a writer re-checks. Inline text keeps
+/// its existing reader; the MESSAGE fallback reads as the Dreamer, in one
+/// snapshot.
+pub(super) fn read_turn_text(vault: &Vault, id: &EntityId) -> Result<TurnText> {
     let facts = super::watermark::read_turn_facts(vault, id)?;
     if facts.text.is_some() {
-        return Ok(facts.text);
+        return Ok(TurnText {
+            text: facts.text,
+            messages: None,
+        });
     }
-    let reader = WriteActor::new(
-        crate::dreamer_runner::authority::dreamer_actor_id()?,
-        EdgeActorClass::System,
-    );
-    let read = vault.scoped_read(reader_key(reader)?);
-    let txn = vault.store.env.read_txn()?;
+    let read = dreamer_read(vault)?;
+    let txn = snapshot(vault)?;
     // A TURN the Dreamer may not read has no text here, like an absent one.
     let Some((_, _, body)) = read
         .get_entities_parts_in_txn(&txn, std::slice::from_ref(id))?
         .pop()
         .flatten()
     else {
-        return Ok(None);
+        return Ok(TurnText {
+            text: None,
+            messages: None,
+        });
     };
-    Ok(collect_in(&read, &txn, id, &body, &mut 0)?.text)
+    collect_in(&read, &txn, id, &body, &mut 0)
+}
+
+/// The Dreamer's own reader for the side doors and their write re-checks.
+pub(super) fn dreamer_read(vault: &Vault) -> Result<ScopedRead<'_>> {
+    let reader = WriteActor::new(
+        crate::dreamer_runner::authority::dreamer_actor_id()?,
+        EdgeActorClass::System,
+    );
+    Ok(vault.scoped_read(reader_key(reader)?))
+}
+
+/// A read snapshot opened after the grant clock is persisted, so a grant's
+/// expiry is judged at a real floor, never inside the snapshot.
+pub(super) fn snapshot(vault: &Vault) -> Result<heed::RoTxn<'_>> {
+    vault.store.authorization_now()?;
+    Ok(vault.store.env.read_txn()?)
 }
 
 /// A byte range is measured over the exact UTF-8 turn text the child saw in
@@ -310,13 +335,11 @@ pub(crate) fn cited_evidence_bytes(
     Ok(bytes.to_vec())
 }
 
-/// The pure projection over already-read children. `bucket` is the TURN's
-/// own MESSAGE author string.
-pub(super) fn project(bucket: &str, children: &[(EntityId, Vec<u8>)]) -> Result<Option<String>> {
+/// The projection over already-read children. `bucket` is the TURN's own
+/// MESSAGE author string.
+fn project(bucket: &str, children: Vec<(EntityId, MessageText)>) -> Result<Option<String>> {
     let mut visible = Vec::new();
-    for (id, body) in children {
-        let message = decode_message(body)
-            .ok_or_else(|| invalid_consolidation("witnessed message body is malformed"))?;
+    for (id, message) in children {
         if message.author == WITNESS_AUTHOR_SYSTEM {
             continue;
         }
@@ -324,7 +347,7 @@ pub(super) fn project(bucket: &str, children: &[(EntityId, Vec<u8>)]) -> Result<
             return Err(invalid_consolidation("witnessed turn mixes author buckets"));
         }
         if message.is_visible {
-            visible.push((message.order, *id, message.content));
+            visible.push((message.order, id, message.content));
         }
     }
     if visible.is_empty() {
@@ -397,6 +420,18 @@ fn peers(
             }
             error => error,
         })
+}
+
+/// MESSAGE rows are read as the same actor under the relationship gate:
+/// private rows, and relationship rows without this actor's live grant, are
+/// withheld. Rows that name neither are the vault's own and stay readable.
+fn message_reader<'v>(read: &ScopedRead<'v>) -> Result<ScopedRead<'v>> {
+    let key = read.actor_key();
+    let principal = EntityId::from_hex(key.actor_ref())
+        .map_err(|_| invalid_consolidation("turn text reader is not an entity"))?;
+    Ok(read
+        .vault()
+        .scoped_read(key.clone().require_relationship_grants(principal)))
 }
 
 fn reader_key(reader: WriteActor) -> Result<ScopedReadActorKey> {
