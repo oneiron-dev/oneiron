@@ -3280,31 +3280,36 @@ fn a_ready_marker_indexed_only_under_a_later_instant_is_claimed_at_once() {
     assert!(markers(&vault).is_empty());
     assert_eq!(settled(&vault, &turn), 1);
 
-    clock.set(LATER + 1);
+    // Other kinds' jobs wait at instants past the stale one; the repair
+    // claim acts only on the entry it repairs.
+    plant_other_kinds_waiting(&vault, LATER + 1..=LATER + 200);
+    clock.set(LATER + 201);
     assert!(reconciler.drain_once().expect("drain").traces.is_empty());
-    let txn = vault.store.env.read_txn().expect("read txn");
-    assert!(
-        vault
-            .store
-            .attempt_ready
-            .get(&txn, &key(LATER))
-            .expect("ready index")
-            .is_none(),
-        "the stale entry is gone"
+    {
+        let txn = vault.store.env.read_txn().expect("read txn");
+        assert!(
+            vault
+                .store
+                .attempt_ready
+                .get(&txn, &key(LATER))
+                .expect("ready index")
+                .is_none(),
+            "the stale entry is gone"
+        );
+    }
+    assert_eq!(
+        pass_beside_a_held_writer(&vault, &tagger),
+        Some(0),
+        "with the repair kept, the next pass takes no writer"
     );
 }
 
-/// With no marker to claim, a pass takes no writer, however many distinct
-/// instants other kinds' jobs wait at: where a claim starts is found outside
-/// the writer, so an idle worker never holds off another writer.
-#[test]
-fn an_idle_pass_takes_no_writer_however_many_instants_other_jobs_wait_at() {
-    use std::sync::mpsc;
-    let dir = tempfile::tempdir().expect("dir");
-    let vault = open(dir.path(), true);
+/// Plants readiness entries for jobs of another kind, one at each instant of
+/// `instants`; a claim of an owner-retained kind never reads their rows.
+fn plant_other_kinds_waiting(vault: &Vault, instants: std::ops::RangeInclusive<u64>) {
     vault
         .try_with_write_txn(|txn| {
-            for at in 1..=200_u64 {
+            for at in instants {
                 let mut id = [0x10_u8; 16];
                 id[8..].copy_from_slice(&at.to_be_bytes());
                 let key = [&at.to_be_bytes()[..], &id[..]].concat();
@@ -3313,11 +3318,17 @@ fn an_idle_pass_takes_no_writer_however_many_instants_other_jobs_wait_at() {
             Ok::<(), crate::Error>(())
         })
         .expect("other kinds' jobs waiting at distinct instants");
-    let tagger = Scripted::new(Answer::Good);
+}
+
+/// Runs a pass of a fresh reconciler while another thread holds the vault's
+/// writer, and returns its trace count, or `None` if the pass did not end
+/// while the writer was held.
+fn pass_beside_a_held_writer(vault: &Arc<Vault>, tagger: &Arc<Scripted>) -> Option<usize> {
+    use std::sync::mpsc;
     let (held, writer_held) = mpsc::channel();
     let (release, released) = mpsc::channel::<()>();
     let holder = {
-        let vault = Arc::clone(&vault);
+        let vault = Arc::clone(vault);
         std::thread::spawn(move || {
             let txn = vault.store.env.write_txn().expect("writer");
             held.send(()).expect("held");
@@ -3328,7 +3339,7 @@ fn an_idle_pass_takes_no_writer_however_many_instants_other_jobs_wait_at() {
     writer_held.recv().expect("another writer holds the vault");
     let (done, finished) = mpsc::channel();
     let drainer = {
-        let (vault, tagger) = (Arc::clone(&vault), Arc::clone(&tagger));
+        let (vault, tagger) = (Arc::clone(vault), Arc::clone(tagger));
         std::thread::spawn(move || {
             let pass = reconciler(&vault, &tagger)
                 .drain_once()
@@ -3336,13 +3347,25 @@ fn an_idle_pass_takes_no_writer_however_many_instants_other_jobs_wait_at() {
             done.send(pass).ok();
         })
     };
-    let idle = finished.recv_timeout(std::time::Duration::from_secs(10));
+    let ended = finished.recv_timeout(std::time::Duration::from_secs(10));
     release.send(()).ok();
     holder.join().expect("holder");
     drainer.join().expect("drainer");
+    ended.ok().map(|pass| pass.expect("drain"))
+}
+
+/// With no marker to claim, a pass takes no writer, however many distinct
+/// instants other kinds' jobs wait at: what a claim acts on is found outside
+/// the writer, so an idle worker never holds off another writer.
+#[test]
+fn an_idle_pass_takes_no_writer_however_many_instants_other_jobs_wait_at() {
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    plant_other_kinds_waiting(&vault, 1..=200);
+    let tagger = Scripted::new(Answer::Good);
     assert_eq!(
-        idle.expect("the pass ended while another writer held the vault")
-            .expect("drain"),
-        0
+        pass_beside_a_held_writer(&vault, &tagger),
+        Some(0),
+        "the pass ended while another writer held the vault"
     );
 }

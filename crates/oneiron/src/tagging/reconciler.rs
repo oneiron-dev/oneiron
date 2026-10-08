@@ -437,9 +437,10 @@ impl TaggingReconciler {
     }
 
     /// Leases the next ready marker, reading only the owner-retained entries
-    /// of the readiness index. Where the claim starts is found outside the
-    /// writer, so another kind's waiting jobs cost the writer one seek, and a
-    /// claim with nothing to claim or repair takes no writer at all.
+    /// of the readiness index. The entries to act on are found outside the
+    /// writer, and under it only those are read again, so another kind's
+    /// waiting jobs cost the writer nothing, and a claim with nothing to
+    /// claim or repair takes no writer at all.
     ///
     /// Every job row this reconciler writes is stamped from the store clock
     /// without persisting its floor, and a claim that finds nothing commits
@@ -452,19 +453,14 @@ impl TaggingReconciler {
             lease_owner: self.lease_owner.clone(),
             now,
         };
-        let start = {
+        let plan = {
             let txn = self.vault.store.env.read_txn()?;
             let now = self.stamp_in_txn(&txn)?;
-            queue.owner_retained_claim_start_in_txn(
-                &txn,
-                TAGGING_MARKER_KIND,
-                &attempt(now),
-                now,
-            )?
+            queue.owner_retained_claim_plan_in_txn(&txn, TAGGING_MARKER_KIND, &attempt(now), now)?
         };
-        let Some(start) = start else {
+        if plan.is_empty() {
             return Ok(None);
-        };
+        }
         let mut txn = self.vault.store.env.write_txn()?;
         #[cfg(test)]
         self.vault.test_hooks().run_after_tagging_claim_writer();
@@ -474,7 +470,7 @@ impl TaggingReconciler {
             TAGGING_MARKER_KIND,
             attempt(now),
             now,
-            start,
+            &plan,
         )?;
         let ClaimOutcome::Claimed(record) = claimed else {
             // An empty claim commits only the index entries it repaired, so

@@ -19,22 +19,51 @@ use crate::attempt_queue::validate::{
 use crate::error::Result;
 
 use super::AttemptQueue;
-/// What the owner-retained claim's walk found: the entries it repairs, the
-/// first row it claims, and the ready instant of the first of either.
+/// The readiness entries an owner-retained claim acts on, in index order,
+/// each as its key and the id it named when read: the entries it repairs,
+/// then the one it claims. Empty when the claim has nothing to do.
 #[derive(Debug, Default)]
-struct OwnerRetainedScan {
-    stale_ready_keys: Vec<Vec<u8>>,
-    ready_replacements: Vec<([u8; READY_KEY_LEN], AttemptId)>,
-    candidate: Option<(Vec<u8>, AttemptId, AttemptRecord)>,
-    first: Option<u64>,
+pub(crate) struct OwnerRetainedPlan(Vec<(Vec<u8>, Vec<u8>)>);
+
+impl OwnerRetainedPlan {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
 }
 
-impl OwnerRetainedScan {
-    /// Marks the entry under `key`, ready at `at`, for deletion.
-    fn stale(&mut self, key: Vec<u8>, at: u64) {
-        self.first.get_or_insert(at);
-        self.stale_ready_keys.push(key);
+/// What an owner-retained claim does with one readiness entry.
+#[derive(Debug, Default)]
+struct EntryAction {
+    /// The entry names no ready row, or names it under another instant.
+    stale: bool,
+    /// The entry the row's own instant names, put back.
+    replacement: Option<([u8; READY_KEY_LEN], AttemptId)>,
+    /// The row the claim leases.
+    claim: Option<AttemptRecord>,
+}
+
+impl EntryAction {
+    fn stale() -> Self {
+        Self {
+            stale: true,
+            ..Self::default()
+        }
     }
+
+    fn acts(&self) -> bool {
+        self.stale || self.replacement.is_some() || self.claim.is_some()
+    }
+}
+
+fn check_owner_retained_claim(kind: &str, input: &ClaimAttempt) -> Result<()> {
+    validate_kind(kind)?;
+    validate_lease_owner(&input.lease_owner)?;
+    if !crate::attempt_queue::owner_retained_kind(kind) {
+        return Err(crate::error::Error::InvariantViolation(
+            "an owner-retained claim names another kind",
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Default)]
@@ -304,91 +333,95 @@ impl<'a> AttemptQueue<'a> {
         self.claim_matching_in_txn(wtxn, input, kind, cutoff)
     }
 
-    /// [`Self::claim_kind_storage_in_txn`] for an owner-retained kind, reading
-    /// only the owner-retained entries of the readiness index, from the ready
-    /// instant `from` on.
+    /// [`Self::claim_kind_storage_in_txn`] for an owner-retained kind, acting
+    /// only on the readiness entries `plan` names, which
+    /// [`Self::owner_retained_claim_plan_in_txn`] found outside the writer:
+    /// under the writer each is read again by its key and checked against
+    /// the rows as they are now, and nothing else of the index is read. An
+    /// entry gone or changed since is left for the next plan.
     ///
-    /// Within one ready instant every other kind's entries sort before the
-    /// owner-retained range, so one seek per instant passes over them without
-    /// reading their rows, and a row of another kind that does not decode
-    /// never stops the claim. Those entries are left for their own kind's
-    /// claim to repair; an owner-retained entry gets the generic claim's
-    /// checks and repairs, and the claim reports whether it made any, so the
-    /// caller can keep them when nothing was claimed. An entry naming a row
-    /// that is gone is deleted alone: an owner-retained row's dedupe entries
-    /// leave with it, and one left naming a missing row reads as no pending
-    /// attempt and is replaced by the next enqueue, so no dedupe scan runs
-    /// under the writer.
-    ///
-    /// The seeks still grow with the distinct instants other kinds' jobs wait
-    /// at, so a caller finds `from` first, outside the writer, with
-    /// [`Self::owner_retained_claim_start_in_txn`].
+    /// An owner-retained entry gets the generic claim's checks and repairs,
+    /// and the claim reports whether it made any, so the caller can keep them
+    /// when nothing was claimed. An entry naming a row that is gone is
+    /// deleted alone: an owner-retained row's dedupe entries leave with it,
+    /// and one left naming a missing row reads as no pending attempt and is
+    /// replaced by the next enqueue, so no dedupe scan runs under the writer.
     pub(crate) fn claim_owner_retained_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         kind: &str,
         input: ClaimAttempt,
         cutoff: u64,
-        from: u64,
+        plan: &OwnerRetainedPlan,
     ) -> Result<(ClaimOutcome, bool)> {
-        let scan = self.scan_owner_retained(wtxn, kind, &input, cutoff, from)?;
-        let repaired = !scan.stale_ready_keys.is_empty() || !scan.ready_replacements.is_empty();
-        for key in scan.stale_ready_keys {
-            self.store.attempt_ready.delete(wtxn, &key)?;
+        check_owner_retained_claim(kind, &input)?;
+        let mut repaired = false;
+        for (key, value) in &plan.0 {
+            let current = self.store.attempt_ready.get(wtxn, key)?;
+            if current.is_none_or(|current| *current != **value) {
+                continue;
+            }
+            let Ok((key_ready_at, key_id)) = decode_ready_key(key) else {
+                continue;
+            };
+            if key_ready_at > cutoff {
+                continue;
+            }
+            let action = self.owner_retained_entry_action(
+                wtxn,
+                kind,
+                &input,
+                cutoff,
+                (key_ready_at, key_id, value),
+            )?;
+            if action.stale {
+                self.store.attempt_ready.delete(wtxn, key)?;
+            }
+            if let Some((replacement, id)) = action.replacement {
+                self.store
+                    .attempt_ready
+                    .put(wtxn, &replacement, id.as_bytes())?;
+            }
+            repaired |= action.stale || action.replacement.is_some();
+            let Some(mut record) = action.claim else {
+                continue;
+            };
+            lease_claimed_record(&mut record, &input.lease_owner, input.now)?;
+            crate::task_verb::acquire_task_symbols(
+                self.store,
+                wtxn,
+                record.task_ref.as_deref(),
+                input.now,
+            )?;
+            self.store.attempt_ready.delete(wtxn, key)?;
+            let encoded = encode_record(&record)?;
+            self.store
+                .attempt_records
+                .put(wtxn, record.id.as_bytes(), &encoded)?;
+            return Ok((ClaimOutcome::Claimed(record), repaired));
         }
-        for (key, id) in scan.ready_replacements {
-            self.store.attempt_ready.put(wtxn, &key, id.as_bytes())?;
-        }
-
-        let Some((ready_key, id, mut record)) = scan.candidate else {
-            return Ok((ClaimOutcome::Empty, repaired));
-        };
-        lease_claimed_record(&mut record, &input.lease_owner, input.now)?;
-        crate::task_verb::acquire_task_symbols(
-            self.store,
-            wtxn,
-            record.task_ref.as_deref(),
-            input.now,
-        )?;
-        self.store.attempt_ready.delete(wtxn, &ready_key)?;
-        let encoded = encode_record(&record)?;
-        self.store
-            .attempt_records
-            .put(wtxn, id.as_bytes(), &encoded)?;
-        Ok((ClaimOutcome::Claimed(record), repaired))
+        Ok((ClaimOutcome::Empty, repaired))
     }
 
-    /// The ready instant [`Self::claim_owner_retained_in_txn`] would first
-    /// claim or repair at, read through `txn` without taking the writer;
-    /// `None` when it would do neither, so an idle claim needs no writer.
-    pub(crate) fn owner_retained_claim_start_in_txn(
+    /// The readiness entries [`Self::claim_owner_retained_in_txn`] would act
+    /// on, read through `txn` without taking the writer: every entry it
+    /// would repair up to the first row it would claim, and that row's.
+    /// Empty when it would do nothing, so an idle claim needs no writer.
+    ///
+    /// Within one ready instant every other kind's entries sort before the
+    /// owner-retained range, so one seek per instant passes over them without
+    /// reading their rows, and a row of another kind that does not decode
+    /// never stops the walk. Those entries are left for their own kind's
+    /// claim to repair. The seeks grow with the distinct instants other
+    /// kinds' jobs wait at, which is why this walk only reads.
+    pub(crate) fn owner_retained_claim_plan_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         kind: &str,
         input: &ClaimAttempt,
         cutoff: u64,
-    ) -> Result<Option<u64>> {
-        Ok(self.scan_owner_retained(txn, kind, input, cutoff, 0)?.first)
-    }
-
-    /// The owner-retained claim's walk, which only reads: the entries it
-    /// would repair, the first row it would claim, and the instant of the
-    /// first of either.
-    fn scan_owner_retained(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        kind: &str,
-        input: &ClaimAttempt,
-        cutoff: u64,
-        from: u64,
-    ) -> Result<OwnerRetainedScan> {
-        validate_kind(kind)?;
-        validate_lease_owner(&input.lease_owner)?;
-        if !crate::attempt_queue::owner_retained_kind(kind) {
-            return Err(crate::error::Error::InvariantViolation(
-                "an owner-retained claim names another kind",
-            ));
-        }
+    ) -> Result<OwnerRetainedPlan> {
+        check_owner_retained_claim(kind, input)?;
         let floor = |ready: u64| {
             let mut key = [0_u8; READY_KEY_LEN];
             key[..8].copy_from_slice(&ready.to_be_bytes());
@@ -396,8 +429,8 @@ impl<'a> AttemptQueue<'a> {
             key.to_vec()
         };
         let after = |key: &[u8]| [key, &[0][..]].concat();
-        let mut lower = floor(from);
-        let mut scan = OwnerRetainedScan::default();
+        let mut lower = floor(0);
+        let mut plan = OwnerRetainedPlan::default();
         loop {
             let next = self
                 .store
@@ -427,52 +460,82 @@ impl<'a> AttemptQueue<'a> {
                 continue;
             }
             lower = after(&key);
-            let Ok(id) = AttemptId::from_bytes(&value) else {
-                scan.stale(key, key_ready_at);
-                continue;
-            };
-            if id != key_id {
-                scan.stale(key, key_ready_at);
-                continue;
-            }
-            let Some(raw_record) = self.store.attempt_records.get(txn, id.as_bytes())? else {
-                scan.stale(key, key_ready_at);
-                continue;
-            };
-            let record = decode_record(&raw_record, id)?;
-            if !record.state.is_ready_indexed() {
-                scan.stale(key, key_ready_at);
-                continue;
-            }
-            let record_ready_at = ready_at(&record);
-            if record_ready_at != key_ready_at {
-                scan.stale(key.clone(), key_ready_at);
-                if record_ready_at > cutoff {
-                    scan.ready_replacements
-                        .push((ready_key(record_ready_at, id), id));
-                    continue;
-                }
-            }
-            if record.kind != kind || !record.accepts_worker(&input.lease_owner) {
-                if record_ready_at != key_ready_at {
-                    scan.ready_replacements
-                        .push((ready_key(record_ready_at, id), id));
-                }
-                continue;
-            }
-            if !crate::task_verb::task_dispatch_ready(
-                self.store,
+            let action = self.owner_retained_entry_action(
                 txn,
-                record.task_ref.as_deref(),
-                input.now,
-            )? {
+                kind,
+                input,
+                cutoff,
+                (key_ready_at, key_id, &value),
+            )?;
+            if !action.acts() {
                 continue;
             }
-            scan.first.get_or_insert(key_ready_at);
-            scan.candidate = Some((key, id, record));
-            break;
+            let claims = action.claim.is_some();
+            plan.0.push((key, value));
+            if claims {
+                break;
+            }
         }
-        Ok(scan)
+        Ok(plan)
+    }
+
+    /// What the owner-retained claim does with a readiness entry, given as
+    /// its ready instant, the id its key names and the id its value names,
+    /// as the rows read through `txn` stand.
+    fn owner_retained_entry_action(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        kind: &str,
+        input: &ClaimAttempt,
+        cutoff: u64,
+        (key_ready_at, key_id, value): (u64, AttemptId, &[u8]),
+    ) -> Result<EntryAction> {
+        let Ok(id) = AttemptId::from_bytes(value) else {
+            return Ok(EntryAction::stale());
+        };
+        if id != key_id {
+            return Ok(EntryAction::stale());
+        }
+        let Some(raw_record) = self.store.attempt_records.get(txn, id.as_bytes())? else {
+            return Ok(EntryAction::stale());
+        };
+        let record = decode_record(&raw_record, id)?;
+        if !record.state.is_ready_indexed() {
+            return Ok(EntryAction::stale());
+        }
+        let record_ready_at = ready_at(&record);
+        let stale = record_ready_at != key_ready_at;
+        let replacement = Some((ready_key(record_ready_at, id), id));
+        if stale && record_ready_at > cutoff {
+            return Ok(EntryAction {
+                stale,
+                replacement,
+                claim: None,
+            });
+        }
+        if record.kind != kind || !record.accepts_worker(&input.lease_owner) {
+            return Ok(EntryAction {
+                stale,
+                replacement: replacement.filter(|_| stale),
+                claim: None,
+            });
+        }
+        if !crate::task_verb::task_dispatch_ready(
+            self.store,
+            txn,
+            record.task_ref.as_deref(),
+            input.now,
+        )? {
+            return Ok(EntryAction {
+                stale,
+                ..EntryAction::default()
+            });
+        }
+        Ok(EntryAction {
+            stale,
+            replacement: None,
+            claim: Some(record),
+        })
     }
 
     /// Whether a ready owner-retained row lacks the ready entry its own state
