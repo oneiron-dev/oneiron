@@ -351,7 +351,9 @@ pub const ENTITY_TYPE_REGISTRY: &[EntityTypeRegistryEntry] = &[
     EntityTypeRegistryEntry {
         kind: "SECRET_CUSTODY",
         type_byte: ENTITY_TYPE_SECRET_CUSTODY,
-        short_id_prefix: None,
+        // The handle a model reads in place of the value (W-18, ARCH-0069
+        // #handles): `sc12` names a secret without holding it.
+        short_id_prefix: Some("sc"),
         legacy_short_id_prefixes: &[],
         classification: EntityClassification::Maintenance,
         family: Some(TypeByteFamily::AuthorityPolicyCustody),

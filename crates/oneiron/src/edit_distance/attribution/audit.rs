@@ -5,7 +5,9 @@ use super::taxonomy::{AmendmentCause, AmendmentClass, AmendmentEvidence, classif
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::skill_attribution::{AttributionAuditReport, AttributionJudge, RuleAttributionJudge};
+use crate::skill_attribution::{
+    AttributionAuditReport, AttributionJudge, RuleAttributionJudge, unclear_floor,
+};
 
 // ---------------------------------------------------------------------------
 // Defect-injection audit (Blind Curator guard)
@@ -54,10 +56,12 @@ pub fn run_judge_audit_with_judge(
     judge: &dyn AttributionJudge,
     at: u64,
 ) -> Result<AttributionAuditReport> {
+    let floor = unclear_floor(vault)?;
     let mut passed = 0;
     let mut abstained = 0;
     for fixture in fixtures {
-        let answer = classify_amendment(&fixture.evidence, judge)?;
+        let answer = classify_amendment(&fixture.evidence, judge, &[], floor)?
+            .and_then(|split| split.sole());
         if answer.is_none() {
             abstained += 1;
         }
