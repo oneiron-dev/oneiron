@@ -23,7 +23,8 @@ pub struct ScopedReadActorKey {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RoomTurnCeiling {
     pub(crate) room: EntityId,
-    /// What `room_scope` returned for the roster when the turn opened.
+    /// The room's Scope for this read: what `room_scope` returned when the
+    /// turn opened, met with what it returns for the current roster.
     pub(crate) scope: crate::federation::Scope,
     /// The room's members, sorted and unique: each row must pass the
     /// all-of-audience rule for every one of them (ARCH-0006a).

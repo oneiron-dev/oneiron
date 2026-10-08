@@ -580,6 +580,25 @@ async fn http_room_turn_header_keeps_ordinary_reads_inside_the_room() {
             post_in_room_turn(&server, &owner_token, verb, json!({}), Some(room)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{verb}: {body}");
     }
+    // An unserved verb is refused before it looks up its target, so a task
+    // that does not exist answers exactly as one outside the room would.
+    let missing = json!({"task_ref": EntityId::now().to_hex()});
+    for verb in ["cancel", "tasks.update", "describe"] {
+        let (status, body) =
+            post_in_room_turn(&server, &owner_token, verb, missing.clone(), None).await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "{verb} outside a room: {body}"
+        );
+        let (status, body) =
+            post_in_room_turn(&server, &owner_token, verb, missing.clone(), Some(room)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{verb}: {body}");
+        assert!(
+            body.to_string().contains("not served inside a room turn"),
+            "{body}"
+        );
+    }
     // A turn opens only in a room the caller belongs to.
     let (status, body) =
         post_in_room_turn(&server, &owner_token, "rooms.list", json!({}), Some(lone)).await;

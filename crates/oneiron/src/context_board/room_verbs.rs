@@ -42,8 +42,7 @@ impl Memory<'_> {
     ) -> MemoryResult<Vec<crate::pipeline::WorldAuthoritySet>> {
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        let grants = crate::pipeline::WorldGrantIndex::read(&vault.store, &txn)?;
-        // Folded once, and only when some member is under world-access law.
+        // Folded once, and only when the vault holds a world-access grant.
         let fold = std::cell::OnceCell::new();
         let admit = |id: &EntityId, body: &crate::claim::ClaimBody| -> crate::Result<bool> {
             if fold.get().is_none() {
@@ -52,6 +51,7 @@ impl Memory<'_> {
             let fold = fold.get().expect("authority fold was just set");
             crate::authority::claim_causal_admitted(&vault.store, &txn, fold, id, body)
         };
+        let grants = crate::pipeline::WorldGrantIndex::read(&vault.store, &txn, &admit)?;
         let now = crate::unix_seconds_now();
         actors
             .iter()
@@ -98,18 +98,16 @@ impl Memory<'_> {
     }
 
     /// The ceiling a bound handle reads under now: the Scope the turn opened
-    /// with, met with the room's current roster, and every member, past or
-    /// newly joined, in the audience. A change mid-turn can only narrow it.
+    /// with, met with the room's current roster, and the current roster as
+    /// the audience, the same membership the room's own history reads check.
+    /// A change mid-turn can only narrow the Scope.
     pub(crate) fn room_turn_now(&self) -> MemoryResult<Option<crate::claim::RoomTurnCeiling>> {
         let Some(turn) = self.room_turn() else {
             return Ok(None);
         };
         let roster = self.room_roster(turn.room)?;
         let scope = turn.scope.meet(&room_scope(&roster)?);
-        let mut members = turn.roster.clone();
-        members.extend(roster.iter().map(|member| member.actor));
-        members.sort_unstable();
-        members.dedup();
+        let members: Vec<_> = roster.iter().map(|member| member.actor).collect();
         let peers = self.peer_read_keys(&members)?;
         Ok(Some(crate::claim::RoomTurnCeiling {
             room: turn.room,

@@ -341,9 +341,15 @@ def outputs():
         # `readable` names the credential read checks: each caller-named ref is
         # refused before the engine call, and `rows` filters the typed result.
         guard, result = '', f'facade_invoke(&server, &headers, actor, class, "{r["name"]}", value)?'
-        for readable in r.get('admission', {}).get('readable', []):
+        readables = r.get('admission', {}).get('readable', [])
+        # A room turn refuses an unserved verb before any credential lookup,
+        # so the refusal says nothing about the target the lookup would read.
+        if 'rows' in readables:
+            guard += f'facade_outside_room_turn(&headers, "{r["name"]}")?;'
+        elif readables:
+            guard += f'facade_room_turn_serves(&headers, "{r["name"]}", oneiron::memory::RoomTurnHandle::serves("{r["name"]}"))?;'
+        for readable in readables:
             if readable == 'rows':
-                guard += f'facade_outside_room_turn(&headers, "{r["name"]}")?;'
                 result = f'facade_readable_task_rows(&server.vault, &auth, oneiron::task_verb::sdk::{method}(&server.vault.memory(actor,class), facade_input(value)?)?)?'
             else:
                 guard += f'facade_admit_readable_ref(&server.vault, &auth, &value, "{readable}")?;'

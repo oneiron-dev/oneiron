@@ -41,6 +41,11 @@ async fn cancel(
     auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
+    facade_room_turn_serves(
+        &headers,
+        "cancel",
+        oneiron::memory::RoomTurnHandle::serves("cancel"),
+    )?;
     facade_admit_readable_ref(&server.vault, &auth, &value, "task_ref")?;
     Ok(Json(facade_invoke(
         &server, &headers, actor, class, "cancel", value,
@@ -63,8 +68,8 @@ async fn describe(
         ));
     }
     let (actor, class) = facade_actor(&auth)?;
-    facade_admit_readable_ref(&server.vault, &auth, &value, "task_ref")?;
     facade_outside_room_turn(&headers, "describe")?;
+    facade_admit_readable_ref(&server.vault, &auth, &value, "task_ref")?;
     Ok(Json(facade_readable_task_rows(
         &server.vault,
         &auth,
@@ -103,6 +108,11 @@ async fn tasks_update(
     auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
     let (actor, class) = facade_actor(&auth)?;
+    facade_room_turn_serves(
+        &headers,
+        "tasks.update",
+        oneiron::memory::RoomTurnHandle::serves("tasks.update"),
+    )?;
     facade_admit_readable_ref(&server.vault, &auth, &value, "task_ref")?;
     Ok(Json(facade_invoke(
         &server,

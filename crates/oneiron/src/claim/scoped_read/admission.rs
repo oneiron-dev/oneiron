@@ -119,6 +119,15 @@ impl<'a> ScopedRead<'a> {
                     .vault
                     .scoped_read(peer.clone())
                     .with_claim_status(self.claim_status);
+                // A member read as the owner must still be the owner in this
+                // snapshot; one whose standing lapsed keeps the row out.
+                match peer.owner_live_in(txn) {
+                    Ok(()) => {}
+                    Err(Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(_))) => {
+                        return Ok(false);
+                    }
+                    Err(error) => return Err(error),
+                }
                 let policy = peer.policy_manifest_in(txn)?;
                 let filter = crate::gate::narrow_retrieval_filter(
                     &policy.retrieval_floor_for_actor(Some(&peer.actor_key)),

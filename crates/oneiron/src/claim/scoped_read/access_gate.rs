@@ -24,9 +24,15 @@ fn private_scope(scope: Option<&rmpv::Value>) -> bool {
 }
 
 impl ScopedRead<'_> {
-    /// Persist grant time before the read snapshot, never inside it.
+    /// Persist grant time before the read snapshot, never inside it. Inside
+    /// a room turn each peer's access grants are judged at that time too.
     pub(crate) fn persist_grant_clock(&self) -> Result<()> {
-        if self.actor_key.enforce_access_grants {
+        let peers = self
+            .actor_key
+            .room_turn
+            .as_ref()
+            .is_some_and(|room| room.peers.iter().any(|peer| peer.enforce_access_grants));
+        if self.actor_key.enforce_access_grants || peers {
             self.vault.store.authorization_now()?;
         }
         Ok(())

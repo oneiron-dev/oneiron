@@ -232,7 +232,13 @@ impl ScopedRead<'_> {
             applied,
             replan_hint: Vec::new(),
             narrowed_axes: Vec::new(),
-            suppressed_count,
+            // Inside a room turn a withheld row may be another room's or a
+            // peer's private one, so no count says it exists.
+            suppressed_count: if self.actor_key.room_turn.is_some() {
+                0
+            } else {
+                suppressed_count
+            },
         };
         receipt.record_axes();
         receipt

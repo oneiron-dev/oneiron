@@ -19,17 +19,15 @@ pub(crate) fn thread_tasks(
         return Ok(Vec::new());
     }
     let vault = memory.vault();
-    let key = crate::claim::ScopedReadActorKey::with_actor_class(
-        memory.actor().to_hex(),
-        memory.actor_class().gate_actor_class(),
-    )
-    .ok_or_else(|| crate::memory::MemoryError::bad_request("invalid room reader"))?;
-    let key = memory.in_room_turn(key)?;
     let audience = members
         .iter()
         .map(|id| EntityId::from_hex(id))
         .collect::<crate::Result<Vec<_>>>()?;
-    let scoped = vault.scoped_read(key).for_audience(&audience);
+    // The caller's own read lane, proof and access grants included, narrowed
+    // to the room's audience.
+    let scoped = memory
+        .read_lane(crate::claim::ClaimReadStatus::Surfaceable)?
+        .for_audience(&audience);
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     let mut candidates = Vec::new();
     for row in vault

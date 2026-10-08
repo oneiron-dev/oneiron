@@ -166,7 +166,17 @@ fn facade_invoke(
 
 /// A verb that reads around the read lane is not served inside a room turn.
 fn facade_outside_room_turn(headers: &HeaderMap, verb: &str) -> Result<(), FacadeApiError> {
-    if facade_room_turn(headers)?.is_some() {
+    facade_room_turn_serves(headers, verb, false)
+}
+
+/// Refuses, before any lookup the verb would make, a verb the named room
+/// turn does not serve, so the refusal says nothing about the verb's target.
+fn facade_room_turn_serves(
+    headers: &HeaderMap,
+    verb: &str,
+    served: bool,
+) -> Result<(), FacadeApiError> {
+    if !served && facade_room_turn(headers)?.is_some() {
         return Err(FacadeApiError::new(
             StatusCode::BAD_REQUEST,
             MEMORY_CODE_BAD_REQUEST,

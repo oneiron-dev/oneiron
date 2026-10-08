@@ -42,10 +42,17 @@ impl<'v> RoomTurnHandle<'v> {
         self.memory.room_read_scope(self.room())
     }
 
+    /// Whether a turn serves `verb`. A host refuses any other verb before it
+    /// looks anything up for it.
+    #[must_use]
+    pub fn serves(verb: &str) -> bool {
+        ROOM_TURN_VERBS.contains(&verb)
+    }
+
     /// One SDK verb inside the turn; a verb that could read around the room
     /// is refused rather than run unbound.
     pub fn invoke(&self, verb: &str, input: serde_json::Value) -> MemoryResult<serde_json::Value> {
-        if !ROOM_TURN_VERBS.contains(&verb) {
+        if !Self::serves(verb) {
             return Err(MemoryError::bad_request_with(
                 format!("{verb} is not served inside a room turn"),
                 &["Call it outside the room turn."],

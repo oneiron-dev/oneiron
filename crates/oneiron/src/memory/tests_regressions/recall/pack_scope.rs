@@ -175,6 +175,15 @@ fn unset_recall_reads_base_plus_the_active_world() {
         input.world_ref = Some(world.to_hex());
         facade.claim_upsert(&input).expect("world claim");
     }
+    let home = claim_input(
+        "note.topic",
+        &actor,
+        "user_stated",
+        serde_json::json!("harbor at home"),
+    );
+    facade.claim_upsert(&home).expect("base claim");
+    // A base claim beside them: base is listed as excluded only when the
+    // actor's reading default drops it.
     let unset = || {
         facade
             .recall(
@@ -192,6 +201,28 @@ fn unset_recall_reads_base_plus_the_active_world() {
     let mut both = vec![active.to_hex(), other.to_hex()];
     both.sort();
     assert_eq!(unset(), both, "no grant: base reality only");
+
+    // A row about the actor that no owner granted governs nobody: the actor
+    // still reads base reality, so the base claim is not listed as excluded.
+    let stray = world_access_claim_body(
+        PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+        actor,
+        &WorldAuthoritySet::new(false, [active]).unwrap(),
+        ClaimSource::UserStated,
+        ClaimApprovalStatus::Proposed,
+        None,
+        None,
+    )
+    .unwrap();
+    vault
+        .put_claim(
+            &EntityId::from_bytes([0x2F; 16]).unwrap(),
+            &stray,
+            test_time(1),
+            1,
+        )
+        .expect("proposed row");
+    assert_eq!(unset(), both, "a proposed row leaves the actor ungoverned");
 
     let grant = world_access_claim_body(
         PREDICATE_WORLD_ACCESS_ALLOWED_SET,
