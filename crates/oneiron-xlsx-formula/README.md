@@ -177,7 +177,7 @@ goldens reader resolves Excel's rich-value error caches since 2026-10-03), again
 LibreOffice's 753 (the unchanged evaluator scored 754). The comparison uses a pinned UTC
 instant; the edit round trip uses the caller's clock (above).
 
-The shipped adapter on the same corpus (2026-10-08, fork rev `492b432a`, `recalc_native` over
+The shipped adapter on the same corpus (2026-10-08, fork rev `468a333b`, `recalc_native` over
 the 5,455 saved originals, 3,040 of them with formulas; the retained OPC reader admits their ZIP
 directory entries): 2,994 of the 3,040 formula workbooks (98.5%) recalculate natively, none is
 refused outright and 46 fall back: 15 for precision-as-displayed, 8 for linked-workbook forms the
