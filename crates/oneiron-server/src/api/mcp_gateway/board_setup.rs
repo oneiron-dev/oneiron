@@ -670,6 +670,7 @@ pub(crate) async fn execute_mcp_setup(
         true,
     )
     .await?;
+    let mut rider = None;
     let (mut structured, keyframe, health, snapshot, producer_epoch) = if let Some(continuation) =
         dispatch.continuation.as_ref()
     {
@@ -726,6 +727,7 @@ pub(crate) async fn execute_mcp_setup(
             health,
             keyframe: Some(keyframe.clone()),
         };
+        rider = Some(board.changes);
         (structured, keyframe, health, snapshot, Some(board.epoch))
     };
     dispatch.producer_epoch = producer_epoch;
@@ -765,6 +767,11 @@ pub(crate) async fn execute_mcp_setup(
     } else {
         McpCarrierPolicy::FreshKeyframe(Some(keyframe))
     };
+    // Page one returns the keyframe it rendered, rider and connector state
+    // included; a continuation restates it and moves nothing.
+    if let Some(rider) = &rider {
+        super::board_observations::delivered(server, actor, rider, true).await;
+    }
     Ok(mcp_endpoint_result(
         server,
         actor,

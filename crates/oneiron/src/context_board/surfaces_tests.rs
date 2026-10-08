@@ -219,9 +219,7 @@ fn new_pack_install_appears_on_existing_session_changed_line_without_push() {
 fn changed_rider_replaces_the_whole_block_and_clears_on_next_existing_frame() {
     let changes = ChangedLine {
         rows: vec![("cl1".into(), ServedLifecycle::Retracted)],
-        overflow: 0,
-        install_rows: Vec::new(),
-        install_overflow: 0,
+        ..ChangedLine::default()
     };
     let keyframe = changes
         .ride(Some(BoardStreamFrame {
@@ -271,4 +269,49 @@ fn base_world_obeys_the_same_exclusion_and_active_off_count_rules() {
     let hidden = WorldsSection::project(&[], &authority(false, false), 1);
     assert!(hidden.rows.is_empty());
     assert_eq!((hidden.active_count, hidden.off_count), (0, 0));
+}
+
+/// The rider stays inside the board's row-byte limit whatever a restored
+/// session checkpoint holds: every row, and the one row a STREAM delta joins.
+#[test]
+fn a_restored_checkpoint_cannot_push_the_rider_past_the_row_byte_limit() {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let huge = "m".repeat(MAX_BOARD_ROW_BYTES * 2);
+    let prefix: serde_json::Map<String, serde_json::Value> = (0..40)
+        .map(|n| {
+            (
+                format!("{n}{huge}"),
+                serde_json::json!({"key": huge, "fingerprint": huge}),
+            )
+        })
+        .collect();
+    let session: SessionReadSet = serde_json::from_value(serde_json::json!({
+        "rows": {},
+        "loaded_skills": {},
+        "proposal_count": 0,
+        "own_proposals": [format!("claim:{huge}")],
+        "prefix_connectors": prefix,
+    }))
+    .unwrap();
+    let mut line = ChangedLine {
+        rows: vec![(huge.clone(), ServedLifecycle::Superseded(huge.clone()))],
+        ..ChangedLine::default()
+    };
+    session
+        .fold_own_changes(&vault, Some(id(7)), &mut line, 16)
+        .unwrap();
+    assert!(!line.events.is_empty());
+    let rows = line.render();
+    assert!(rows.iter().all(|row| row.len() <= MAX_BOARD_ROW_BYTES));
+    assert!(rows.join(" ").len() <= MAX_BOARD_ROW_BYTES);
+    let delta = line
+        .ride(Some(BoardStreamFrame {
+            epoch: 1,
+            kind: FrameKind::Delta(Vec::new()),
+        }))
+        .unwrap();
+    let FrameKind::Delta(delta) = delta.kind else {
+        panic!("delta")
+    };
+    assert!(delta[0].line.len() <= MAX_BOARD_ROW_BYTES);
 }

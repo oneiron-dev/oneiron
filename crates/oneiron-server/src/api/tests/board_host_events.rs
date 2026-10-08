@@ -830,3 +830,180 @@ async fn board_host_pack_install_is_changed_line_and_live_section_next_render() 
     assert!(!board.contains("alice.board.topic"), "{board}");
     assert!(!board.contains(&receipt.content_hash), "{board}");
 }
+
+/// An agent's board read over Core, under its own authenticated slip.
+async fn agent_board(
+    server: &Arc<SyncServer>,
+    agent: oneiron::EntityId,
+    session: &str,
+) -> Vec<String> {
+    let (status, response) = route_json(
+        server.clone(),
+        core_request_with_authz(
+            "POST",
+            "/v1/core/context-board",
+            test_bearer(&format!(
+                "scope=core:read;principal_ref={};actor_class=agent",
+                agent.to_hex()
+            )),
+            Some(&json!({"session":{"session_id": session}})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{response:#}");
+    serde_json::from_value(response["changed"].clone()).unwrap()
+}
+
+/// The owner answers a whole run through the owner route, as the app does.
+async fn settle_run(server: &Arc<SyncServer>, run_id: &str, action: &str) {
+    let owner = test_bearer(&format!(
+        "principal_ref={};actor_class=human",
+        server.vault.ensure_embedded_owner_actor().unwrap().to_hex()
+    ));
+    let (status, review) = route_json(
+        server.clone(),
+        core_request_with_authz(
+            "GET",
+            &format!("/v1/owner/runs/review?run_id={run_id}"),
+            owner.clone(),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{review}");
+    let (status, resolved) = route_json(
+        server.clone(),
+        core_request_with_authz(
+            "POST",
+            &format!("/v1/owner/runs/{action}"),
+            owner,
+            Some(&json!({"run_id": run_id, "bundle_id": review["bundle_id"]})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resolved}");
+}
+
+/// ARCH-0067: the changed line carries this agent's own proposals that moved,
+/// with the answer by reference, and a rejection arrives with its diagnostic
+/// on the next wake. Another agent's proposal never rides it.
+#[tokio::test]
+async fn own_proposal_outcome_rides_the_next_board_read_once() {
+    let (_dir, server) = auth_test_server();
+    let agent = seeded_test_entity_id(0x1021_0001);
+    let stranger = seeded_test_entity_id(0x1021_0002);
+    let own = server
+        .vault
+        .park_run_proposal_for_test("rider-own", agent, oneiron::EntityId::now(), "one")
+        .unwrap();
+    let foreign = server
+        .vault
+        .park_run_proposal_for_test("rider-foreign", stranger, oneiron::EntityId::now(), "two")
+        .unwrap();
+    // The first read sets this session's baseline while the proposal is open.
+    assert!(agent_board(&server, agent, "rider").await.is_empty());
+    settle_run(&server, "rider-own", "decline").await;
+    settle_run(&server, "rider-foreign", "decline").await;
+    let changed = agent_board(&server, agent, "rider").await;
+    assert_eq!(changed.len(), 2, "{changed:?}");
+    assert_eq!(changed[0], "changed[1:]{id,to}:");
+    let row = &changed[1];
+    assert!(
+        row.starts_with(&format!("claim:{}: rejected why=", own.to_hex())),
+        "{row}"
+    );
+    assert!(row.contains(" diagnostic="), "{row}");
+    assert!(!row.contains(&foreign.to_hex()));
+    // Delivered once: the next wake has nothing new to say.
+    assert!(agent_board(&server, agent, "rider").await.is_empty());
+}
+
+/// A full cap of older outcomes cannot hold a rejection back, and whatever
+/// the cap holds back is delivered on the following wake.
+#[tokio::test]
+async fn a_rejection_rides_ahead_of_a_full_cap_of_approvals() {
+    let (_dir, server) = auth_test_server();
+    let agent = seeded_test_entity_id(0x1021_0003);
+    let approved: Vec<_> = (0..17)
+        .map(|n| {
+            server
+                .vault
+                .park_run_proposal_for_test(
+                    "rider-approve",
+                    agent,
+                    oneiron::EntityId::now(),
+                    &format!("approved {n}"),
+                )
+                .unwrap()
+        })
+        .collect();
+    let rejected = server
+        .vault
+        .park_run_proposal_for_test("rider-reject", agent, oneiron::EntityId::now(), "late")
+        .unwrap();
+    assert!(agent_board(&server, agent, "cap").await.is_empty());
+    settle_run(&server, "rider-approve", "approve").await;
+    settle_run(&server, "rider-reject", "decline").await;
+    let first = agent_board(&server, agent, "cap").await;
+    assert_eq!(first[0], "changed[16:]{id,to}:", "{first:?}");
+    assert!(
+        first[1].starts_with(&format!("claim:{}: rejected", rejected.to_hex())),
+        "{first:?}"
+    );
+    assert_eq!(first.last().unwrap(), "changed: +2");
+    let second = agent_board(&server, agent, "cap").await;
+    assert_eq!(second[0], "changed[2:]{id,to}:", "{second:?}");
+    let delivered: Vec<_> = first[2..17].iter().chain(&second[1..]).collect();
+    for id in &approved {
+        assert_eq!(
+            delivered
+                .iter()
+                .filter(|row| row.starts_with(&format!("claim:{}: approved", id.to_hex())))
+                .count(),
+            1,
+            "{first:?} {second:?}"
+        );
+    }
+    assert!(agent_board(&server, agent, "cap").await.is_empty());
+}
+
+/// ARCH-0067: a connector installed mid-epoch renders in the tail until the
+/// next keyframe, which carries it, and no later frame repeats it.
+#[tokio::test]
+async fn a_connector_installed_mid_epoch_rides_the_tail_until_the_next_keyframe() {
+    let (_dir, server) = auth_test_server();
+    let agent = seeded_test_entity_id(0x1021_0004);
+    register_mcp_actor(&server, "rider-mcp", agent, oneiron::EdgeActorClass::Human).await;
+    let keyframe = |reply: &Value| {
+        reply["result"]["structuredContent"]["board"]["keyframe"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    // Core reads mid-epoch: the first sets the baseline, later ones keep the
+    // change on the tail.
+    assert!(agent_board(&server, agent, "tail").await.is_empty());
+    let first = board_mcp_call(&server, "rider-mcp", agent, "setup_oneiron", json!({})).await;
+    assert!(!keyframe(&first).contains("connector installed"));
+    let key = oneiron::EntityId::now();
+    server
+        .vault
+        .register_connector_key(
+            &key,
+            oneiron::connector_key::ConnectorKeyRecord::active("rider_mail", None, Vec::new(), 1),
+        )
+        .unwrap();
+    let installed = format!("rider_mail: connector installed key={}", key.to_hex());
+    for _ in 0..2 {
+        let tail = agent_board(&server, agent, "tail").await;
+        assert!(
+            tail.iter().any(|row| row.starts_with(&installed)),
+            "{tail:?}"
+        );
+    }
+    // MCP: the next keyframe carries it once and moves it into the prefix.
+    let next = board_mcp_call(&server, "rider-mcp", agent, "setup_oneiron", json!({})).await;
+    assert!(keyframe(&next).contains(&installed), "{}", keyframe(&next));
+    let after = board_mcp_call(&server, "rider-mcp", agent, "setup_oneiron", json!({})).await;
+    assert!(!keyframe(&after).contains("connector installed"));
+}

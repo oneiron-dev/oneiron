@@ -257,7 +257,12 @@ pub(crate) async fn context_board_hydrate(
         req.session.as_ref().and_then(|s| s.session_id.as_deref()),
     )
     .await?;
-    let changed = reads
+    // The authenticated principal's own proposal outcomes and connector
+    // changes ride the same line; this route already refuses narrowed slips.
+    let own = auth
+        .principal_ref()
+        .and_then(|reference| oneiron::EntityId::from_hex(reference).ok());
+    let changed_line = reads
         .as_deref()
         .map(|reads| {
             let mut changed = reads.refresh(&read, 16)?;
@@ -267,12 +272,13 @@ pub(crate) async fn context_board_hydrate(
             );
             changed.rows.extend(installs.rows);
             changed.overflow += installs.overflow;
+            reads.fold_own_changes(&server.vault, own, &mut changed, 16)?;
             Ok::<_, oneiron::Error>(changed)
         })
         .transpose()
         .map_err(|error| super::core_engine_error("board lifecycle resolution failed", error))?
-        .unwrap_or_default()
-        .render();
+        .unwrap_or_default();
+    let changed = changed_line.render();
     let empty = oneiron::context_board::SessionReadSet::default();
     let hits = pack
         .as_ref()
@@ -385,6 +391,7 @@ pub(crate) async fn context_board_hydrate(
             .into());
         }
     }
+    let prefix_committed = staged_prefix.is_some();
     if let Some((key, render, epoch)) = staged_prefix {
         let run = runs
             .get_mut(&key)
@@ -403,6 +410,13 @@ pub(crate) async fn context_board_hydrate(
     .await?
     {
         reads.observe_pack_inventory(&installed_packs);
+        // The response is final: the rider it carries is delivered, and a
+        // committed prefix now holds the current connector state.
+        if prefix_committed {
+            reads.keyframe_committed(&changed_line);
+        } else {
+            reads.acknowledge(&changed_line);
+        }
     }
     Ok(Json(response))
 }

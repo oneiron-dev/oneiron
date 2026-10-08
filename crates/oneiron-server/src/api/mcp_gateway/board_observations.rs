@@ -60,7 +60,30 @@ pub(super) async fn state(
     let installs = observations.pack_changes(&packs, 16_usize.saturating_sub(changed.rows.len()));
     changed.rows.extend(installs.rows);
     changed.overflow += installs.overflow;
+    // Own proposal outcomes and connector changes reach only a vault-wide
+    // connection, the same ceiling the carrier rider keeps.
+    let own = (!actor.scope.is_narrow() && actor.has_unrestricted_record_scope())
+        .then_some(actor.actor_ref);
+    observations
+        .fold_own_changes(&server.vault, own, &mut changed, 16)
+        .map_err(|error| mcp_engine_error("mcp session refresh failed", error))?;
     Ok((observations, changed))
+}
+
+/// The rider in `changed` was delivered: move the session past it. A keyframe
+/// also moves the connector state into the prefix.
+pub(super) async fn delivered(
+    server: &SyncServer,
+    actor: &McpResolvedActor,
+    changed: &ChangedLine,
+    keyframe: bool,
+) {
+    let mut reads = read_set(server, actor).await;
+    if keyframe {
+        reads.keyframe_committed(changed);
+    } else {
+        reads.acknowledge(changed);
+    }
 }
 
 /// The empty queue is checked before reading session state or rendering. This
@@ -81,7 +104,9 @@ pub(super) async fn ride(
     let frame = changed
         .ride(Some(frame))
         .expect("rider preserves an existing frame");
-    Ok(Some(ride_capabilities(frame, hits, &observations)?))
+    let frame = ride_capabilities(frame, hits, &observations)?;
+    delivered(server, actor, &changed, false).await;
+    Ok(Some(frame))
 }
 
 fn ride_capabilities(
