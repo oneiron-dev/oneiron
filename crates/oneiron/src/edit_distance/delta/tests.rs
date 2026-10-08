@@ -538,6 +538,134 @@ fn recorded_churn_never_pairs_as_a_move() {
     );
 }
 
+// ─── review repros (PR #1308) ───────────────────────────────────────────
+
+/// Re-wrapping next to a content edit charges only the content, in both
+/// lanes. The oracle is the same content edit with the original line breaks:
+/// `bravo` arrives, then `!` arrives. The reconstructed lane counts a
+/// terminator per text (6 over 20 + 26, 1 over 10 + 11); the recorded lane
+/// does not (6 over 19 + 25, 1 over 9 + 10). Before the fix the first scored
+/// 34/46 and the second paired `a b` as a move.
+#[test]
+fn a_rewrap_next_to_a_content_edit_charges_only_the_content() {
+    for (before, rewrapped, same_breaks, reconstructed_score, recorded_score) in [
+        (
+            "alpha\nbravo\ncharlie",
+            "alpha bravo charlie\nbravo",
+            "alpha\nbravo\ncharlie\nbravo",
+            6.0 / 46.0,
+            6.0 / 44.0,
+        ),
+        (
+            "a b\na\nb\nz",
+            "a\nb\na b\nz!",
+            "a b\na\nb\nz!",
+            1.0 / 21.0,
+            1.0 / 19.0,
+        ),
+    ] {
+        let reconstructed = delta_from_reconstructed(before, rewrapped);
+        let oracle = delta_from_reconstructed(before, same_breaks);
+        assert_eq!(
+            reconstructed.ops_summary, oracle.ops_summary,
+            "{rewrapped:?}"
+        );
+        assert!(
+            (reconstructed.d_norm - reconstructed_score).abs() < 1e-6,
+            "{rewrapped:?}: {}",
+            reconstructed.d_norm
+        );
+
+        let recorded = delta_from_recorded_ops(&one_change_window(before, rewrapped));
+        let oracle = delta_from_recorded_ops(&one_change_window(before, same_breaks));
+        assert_eq!(recorded.ops_summary, oracle.ops_summary, "{rewrapped:?}");
+        assert!(
+            (recorded.d_norm - recorded_score).abs() < 1e-6,
+            "{rewrapped:?}: {}",
+            recorded.d_norm
+        );
+    }
+}
+
+/// Text only appended to a passage charges the appended characters; the
+/// characters that survived are not re-charged as a rewrite. Before the fix
+/// this scored 1.0.
+#[test]
+fn appended_text_charges_only_what_was_added() {
+    let delta = delta_from_reconstructed("abc", "abcdefghij");
+    // `abc` and its terminator survive; `defghij` arrives.
+    assert_eq!(
+        delta.ops_summary,
+        OpsSummary {
+            ins: 7,
+            del: 0,
+            kept: 4,
+            moved: 0,
+            approx: false,
+        }
+    );
+    assert!((delta.d_norm - 7.0 / 15.0).abs() < 1e-6, "{}", delta.d_norm);
+}
+
+/// A recorded cut and paste of a paragraph whose edges match its neighbour
+/// still costs a tenth of replacing it. Before the fix the endpoint affix
+/// capped the move and it cost 0.4x.
+#[test]
+fn a_recorded_cut_and_paste_costs_a_tenth_of_a_replacement() {
+    let recorded = |paste: &str| {
+        let mut window = one_change_window("aaa\n\naa", paste);
+        window.ops_by_actor = vec![span("aaa\n\naa", "aaa"), span("aaa", paste)];
+        delta_from_recorded_ops(&window)
+    };
+    let moved = recorded("aa\n\naaa");
+    let replaced = recorded("bb\n\naaa");
+    assert_eq!(moved.ops_summary.moved, 3);
+    assert_eq!(replaced.ops_summary.moved, 0);
+    assert!(
+        (moved.d_norm - MOVE_DISCOUNT * replaced.d_norm).abs() < 1e-6,
+        "{} is not {MOVE_DISCOUNT}x {}",
+        moved.d_norm,
+        replaced.d_norm
+    );
+}
+
+/// Churn typed and deleted after a move keeps its full price when the move
+/// itself was recorded as separate changes. Before the fix the churn raised
+/// the move's cap and was charged a tenth.
+#[test]
+fn churn_after_a_split_recorded_move_keeps_its_full_price() {
+    let recorded = |churn: &[(&str, &str)]| {
+        let mut window = one_change_window("aaa\naa", "aa\naaa");
+        window.ops_by_actor = vec![span("aaa\naa", "aa\naa"), span("aa\naa", "aa\naaa")];
+        window
+            .ops_by_actor
+            .extend(churn.iter().map(|(before, after)| span(before, after)));
+        delta_from_recorded_ops(&window)
+    };
+    let plain = recorded(&[]);
+    let churned = recorded(&[("aa\naaa", "aa\naaaq"), ("aa\naaaq", "aa\naaa")]);
+    // The `q` in and out: two characters over 6 + 6, at full price.
+    assert!(
+        (churned.d_norm - plain.d_norm - 2.0 / 12.0).abs() < 1e-6,
+        "churn {} over move {} is not full price",
+        churned.d_norm,
+        plain.d_norm
+    );
+}
+
+/// A newline replaced by a space is layout even when the log records the
+/// delete and the insert as separate changes. Before the fix this scored
+/// 2/22.
+#[test]
+fn a_whitespace_edit_split_across_recorded_changes_measures_zero() {
+    let mut window = one_change_window("alpha\nbravo", "alpha bravo");
+    window.ops_by_actor = vec![
+        span("alpha\nbravo", "alphabravo"),
+        span("alphabravo", "alpha bravo"),
+    ];
+    assert_eq!(delta_from_recorded_ops(&window).d_norm, 0.0);
+}
+
 fn rot13(text: &str) -> String {
     text.chars()
         .map(|c| match c {

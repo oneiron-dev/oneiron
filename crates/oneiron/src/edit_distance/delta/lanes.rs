@@ -30,17 +30,20 @@ pub(super) const MAX_FIELD_DIFF_DEPTH: u32 = 64;
 /// standing at finalize), because summing per-change survivals would count
 /// the untouched remainder once per change.
 ///
-/// Every text is measured in its whitespace-collapsed form, so a change that
-/// only re-spaces or re-wraps text records no change at all.
+/// Every text is measured in its whitespace-collapsed form, and a change
+/// that touches only whitespace (its texts hold the same non-whitespace
+/// characters in the same order) is layout and records nothing, however the
+/// log grouped it.
 ///
 /// Moves are paired at the endpoints by the reconstructed lane's own
 /// instrument ([`myers_line_diff`]): a line that left one place and arrived
 /// at another must have been removed and added somewhere in the op log, so
 /// its characters come out of `del` and `ins` once each and are charged in
-/// `moved` at the move discount instead. Text typed and then deleted is in
-/// neither endpoint, so it can never pair, and churn keeps its full price.
-/// A pair is capped at the net change between the endpoints and at what the
-/// log removed and added, so a move can never absorb the churn around it.
+/// `moved` at the move discount instead. The replay tracks which characters
+/// the log itself typed, so a pair is capped at the proposal text the log
+/// removed and the typed text that survives to finalize. Text typed and then
+/// deleted is churn: it is in neither cap, so it keeps its full price however
+/// the log split it.
 ///
 /// The per-change region is the span between the common prefix and the
 /// common suffix — one contiguous edit. A change that scatters edits across
@@ -48,16 +51,7 @@ pub(super) const MAX_FIELD_DIFF_DEPTH: u32 = 64;
 /// under-counts `ins`/`del`.
 #[must_use]
 pub fn delta_from_recorded_ops(finalized: &FinalizedProposalText) -> AmendmentDelta {
-    let mut ins: u32 = 0;
-    let mut del: u32 = 0;
-    for (_, span) in &finalized.ops_by_actor {
-        let affix = CharAffix::between(
-            &collapse_whitespace(&span.before_text),
-            &collapse_whitespace(&span.after_text),
-        );
-        del = del.saturating_add(affix.removed());
-        ins = ins.saturating_add(affix.added());
-    }
+    let log = LoggedMass::replay(finalized);
     let window = CharAffix::between(
         &collapse_whitespace(&finalized.proposed_text),
         &collapse_whitespace(&finalized.final_text),
@@ -65,13 +59,11 @@ pub fn delta_from_recorded_ops(finalized: &FinalizedProposalText) -> AmendmentDe
     let endpoints = myers_line_diff(&finalized.proposed_text, &finalized.final_text).ops;
     let moved = endpoints
         .moved
-        .min(window.removed())
-        .min(window.added())
-        .min(ins)
-        .min(del);
+        .min(log.ins - log.churn_ins)
+        .min(log.del - log.churn_del);
     let ops_summary = OpsSummary {
-        ins: ins - moved,
-        del: del - moved,
+        ins: log.ins - moved,
+        del: log.del - moved,
         kept: window.common(),
         moved,
         approx: endpoints.approx && moved > 0,
@@ -83,6 +75,62 @@ pub fn delta_from_recorded_ops(finalized: &FinalizedProposalText) -> AmendmentDe
         d_norm: ops_summary.d_norm(window.before_len, window.after_len),
         ops_summary,
         engine_ver: engine_ver(),
+    }
+}
+
+/// What the op log removed and added, and how much of each was churn: text
+/// the log typed and then removed again.
+struct LoggedMass {
+    ins: u32,
+    del: u32,
+    /// Typed characters that do not survive to the last change.
+    churn_ins: u32,
+    /// Removed characters that the log itself had typed.
+    churn_del: u32,
+}
+
+impl LoggedMass {
+    fn replay(finalized: &FinalizedProposalText) -> Self {
+        let mut mass = Self {
+            ins: 0,
+            del: 0,
+            churn_ins: 0,
+            churn_del: 0,
+        };
+        // `typed[i]`: whether character `i` of the current collapsed text was
+        // typed by a recorded change rather than proposed.
+        let mut typed: Vec<bool> = Vec::new();
+        for (_, span) in &finalized.ops_by_actor {
+            let before = collapse_whitespace(&span.before_text);
+            let after = collapse_whitespace(&span.after_text);
+            let affix = CharAffix::between(&before, &after);
+            // The replay seam chains each change onto the last; a log that
+            // does not chain restarts provenance at this change.
+            if typed.len() != affix.before_len as usize {
+                typed = vec![false; affix.before_len as usize];
+            }
+            let layout_only = before
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .eq(after.chars().filter(|c| !c.is_whitespace()));
+            let region = affix.prefix as usize..(affix.before_len - affix.suffix) as usize;
+            let removed_typed = typed[region.clone()].iter().filter(|t| **t).count();
+            typed
+                .splice(
+                    region,
+                    std::iter::repeat_n(!layout_only, affix.added() as usize),
+                )
+                .for_each(drop);
+            if layout_only {
+                continue;
+            }
+            mass.del = mass.del.saturating_add(affix.removed());
+            mass.ins = mass.ins.saturating_add(affix.added());
+            mass.churn_del = mass.churn_del.saturating_add(u32_saturating(removed_typed));
+        }
+        let survived = u32_saturating(typed.iter().filter(|t| **t).count());
+        mass.churn_ins = mass.ins.saturating_sub(survived);
+        mass
     }
 }
 
