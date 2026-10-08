@@ -3,50 +3,39 @@
 //! This module defines the shared request, response, streaming, usage, error,
 //! and catalog types consumed by engine callers and host-supplied adapters. It
 //! intentionally contains no provider implementation or inference dependency.
+//!
+//! The vault-free part of the seam (protocol, backend, catalog, errors, stream bus,
+//! budget guard and leases) is defined in `oneiron-model` and re-exported here; the
+//! vault-bound parts (durable steps, seats, manifests, routing, defaults, the RSI
+//! ledger, role defaults) live in this module.
 
-mod assembly;
-pub use assembly::StreamAssembly;
 mod autocheck;
-mod backend;
-mod bus;
-mod subscribers;
-pub use bus::{LlmEventBus, StreamSubscription, TerminalSink};
-pub use subscribers::{ProgressSnapshot, ProgressSubscriber, VoiceChunkPolicy, VoiceChunker};
 mod budget;
-mod burst_inputs;
-mod call;
 mod defaults;
 mod inference_admission;
-#[cfg(test)]
-mod streaming_tests;
-pub use defaults::{
-    ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, ValidatedPurposeDefaults,
-    VoiceBackendBinding, VoiceLane, VoicePrecedence, locality_within_extraction_bound,
-};
+mod role_defaults;
 pub use inference_admission::{
     AuthorizedInference, BoundInference, HostInferenceBinding, HostInferenceContext,
     InferencePolicySnapshot,
 };
-pub mod scope;
-pub use self::scope::{Scope, ScopeResource};
-mod catalog;
+pub use oneiron_model::llm::{
+    ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, ValidatedPurposeDefaults,
+    VoiceBackendBinding, VoiceLane, VoicePrecedence, locality_within_extraction_bound,
+};
 pub(crate) mod entity_refs;
-mod error;
-mod fallback;
-pub use fallback::{DeterministicRunner, FallbackError, FallbackRegistry};
-mod failure_policy;
-pub use failure_policy::{DreamerFailureClass, DreamerFailureDecision, DreamerFailureRoute};
-pub(crate) use failure_policy::{
+pub use oneiron_model::llm::{
+    DeterministicRunner, DreamerFailureClass, DreamerFailureDecision, DreamerFailureRoute,
+    FallbackError, FallbackRegistry, LlmEventBus, ProgressSnapshot, ProgressSubscriber, Scope,
+    ScopeResource, StreamAssembly, StreamSubscription, TerminalSink, VoiceChunkPolicy,
+    VoiceChunker, image, scope,
+};
+pub(crate) use oneiron_model::llm::{
     DreamerFailurePrecedence, DreamerFailureRule, decide_failure, fallback_failure_class,
     parse_failure_rules,
 };
-pub mod image;
 pub mod manifest;
-mod model_id;
-mod protocol;
 pub mod registry;
 pub mod routing;
-mod safeguard;
 pub mod score_scraper;
 pub mod seat;
 mod step;
@@ -69,7 +58,7 @@ pub(crate) use step::{
     verified_step_effector_eligible_in_txn,
 };
 
-pub use budget::{
+pub use oneiron_model::llm::{
     BUDGET_LAND_PROMPT_TEMPLATE, BUDGET_LAND_PROMPT_TEMPLATE_ID,
     BUDGET_OWNER_DIGEST_PROMPT_TEMPLATE, BUDGET_OWNER_DIGEST_PROMPT_TEMPLATE_ID,
     BUDGET_PLAN_PROMPT_TEMPLATE, BUDGET_PLAN_PROMPT_TEMPLATE_ID, BUDGET_PROMPT_TEMPLATES,
@@ -78,9 +67,9 @@ pub use budget::{
     BudgetRead, BudgetSettlement, BudgetSignalDeliveryChannel, BudgetSteeringSignal,
     BudgetThreshold, DEFAULT_BUDGET_RESERVE_UNITS,
 };
-pub(crate) use budget::{BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable};
+pub(crate) use oneiron_model::llm::{BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable};
 
-pub use self::burst_inputs::{NormalizedBurstInputs, normalized_burst_inputs};
+pub use oneiron_model::llm::{NormalizedBurstInputs, normalized_burst_inputs};
 
 pub(crate) use self::autocheck::truncate_on_char_boundary;
 pub use self::autocheck::{
@@ -88,29 +77,19 @@ pub use self::autocheck::{
     AutoCheckCandidateOwned, AutoCheckOutcome, AutoCheckSignals, AutoChecker, BoundedAutoChecker,
     auto_check_llm_request,
 };
-pub use self::backend::{
-    BudgetLease, LlmBackend, LlmGenerateFuture, LlmResult, LlmStream, LlmStreamResult,
-};
-pub use self::call::{
-    CallClass, CallEnvelope, CallPurpose, DeterministicFallback, LlmRole, ModelLocality,
-    ModelTierRef, PinnedConfigViolation, PinnedModelConfig, ResponseFormat, RoleModelDefaults,
-    TierPrecedence,
-};
-pub use self::catalog::{LlmCapability, LlmCatalogCost, LlmCatalogEntry, ReasoningEffort};
-pub use self::error::{
-    BudgetDenied, FatalLlmError, LlmError, RetryableLlmError, UnsupportedCapability,
-};
-pub use self::model_id::{ModelId, ModelIdError};
-pub(crate) use self::protocol::canonical_json_bytes;
-pub use self::protocol::{
-    ContentPart, FinishReason, ImageContent, LlmInputUsage, LlmMessage, LlmMessageRole,
-    LlmOutputUsage, LlmRequest, LlmResponse, LlmStreamEvent, LlmToolSpec, LlmUsage,
-};
-pub use self::safeguard::{
-    DEFAULT_ON_DEVICE_SAFEGUARD_TIER, DEFAULT_SAFEGUARD_MODEL_BINDING, SafeguardModelBinding,
-    SafeguardModelBindingError,
-};
+pub use self::role_defaults::RoleModelDefaults;
 pub(crate) use self::step::{ExecutedModelWitness, terminal_step_identity};
+pub(crate) use oneiron_model::llm::canonical_json_bytes;
+pub use oneiron_model::llm::{
+    BudgetDenied, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart,
+    DEFAULT_ON_DEVICE_SAFEGUARD_TIER, DEFAULT_SAFEGUARD_MODEL_BINDING, DeterministicFallback,
+    FatalLlmError, FinishReason, ImageContent, LlmBackend, LlmCapability, LlmCatalogCost,
+    LlmCatalogEntry, LlmError, LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole,
+    LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmRole, LlmStream, LlmStreamEvent,
+    LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelIdError, ModelLocality, ModelTierRef,
+    PinnedConfigViolation, PinnedModelConfig, ReasoningEffort, ResponseFormat, RetryableLlmError,
+    SafeguardModelBinding, SafeguardModelBindingError, TierPrecedence, UnsupportedCapability,
+};
 
 #[cfg(test)]
 mod tests;

@@ -73,7 +73,6 @@ mod scope;
 mod scope_stamp;
 mod scoped_read;
 mod source_trust;
-mod status;
 pub(crate) mod supersession_diff;
 mod supersession_provenance;
 pub(crate) mod transition;
@@ -86,6 +85,7 @@ pub(crate) use expression_archive::{ArchivedExpressionPreference, ExpressionPref
 pub use history_handoff::*;
 pub use lexical_query_hint::*;
 pub(crate) use machine_birth::SignedClaimBirth;
+pub use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 pub use predicate_grammar::*;
 pub use predicate_validators::*;
 pub(crate) use read::*;
@@ -97,7 +97,6 @@ pub(crate) use scope_stamp::{default_facet_in, upgrade_pre_scope_body};
 pub use scoped_read::*;
 pub(crate) use scoped_read::{claim_access_axes, invalidate_weave_digest_source_in_txn};
 pub use source_trust::*;
-pub use status::*;
 pub(crate) use write_target::validate_claim_write_target_in_txn;
 
 #[cfg(test)]
