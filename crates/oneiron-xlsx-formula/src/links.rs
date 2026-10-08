@@ -378,6 +378,9 @@ impl LinkedBooks {
 
     fn external(&self, external: &ExternalReference, parent: &Parent<'_>) -> Result<()> {
         let book = self.book(external)?;
+        if reads_linked_location(parent) {
+            return Err(unsupported(LINKED_LOCATION));
+        }
         if !one_cell(external.kind) && !reads_a_range(parent, external.kind) {
             return Err(unsupported(
                 "external range returned or passed on as a reference",
@@ -933,6 +936,9 @@ fn passed_on(
     if matches!(node.node_type, ASTNodeType::Reference { .. }) || !mentions_link(node, names) {
         return Ok(());
     }
+    if reads_linked_location(parent) {
+        return Err(unsupported(LINKED_LOCATION));
+    }
     if criteria_range(parent) {
         return Err(unsupported(
             "external reference reaching a criteria function through another function",
@@ -944,6 +950,25 @@ fn passed_on(
         ));
     }
     Ok(())
+}
+
+/// CELL("filename") and CELL("address") of a linked workbook's cell name that
+/// workbook's file, whose location the engine does not read.
+const LINKED_LOCATION: &str = "CELL(\"filename\") or CELL(\"address\") of a linked workbook's cell reads that workbook's location";
+
+/// Whether `parent` is the reference of CELL("filename") or CELL("address").
+fn reads_linked_location(parent: &Parent<'_>) -> bool {
+    matches!(
+        parent,
+        Parent::Argument { function, index: 1, args, .. }
+            if function == "CELL"
+                && matches!(
+                    &args[0].node_type,
+                    ASTNodeType::Literal(formualizer_common::LiteralValue::Text(info))
+                        if info.eq_ignore_ascii_case("filename")
+                            || info.eq_ignore_ascii_case("address")
+                )
+    )
 }
 
 /// The fork binds a LET name or LAMBDA parameter to a linked reference's

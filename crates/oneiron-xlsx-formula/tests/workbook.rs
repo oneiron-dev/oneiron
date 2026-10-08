@@ -1233,8 +1233,34 @@ fn without_a_location_cell_filename_reads_the_one_excel_saved() {
         r#"<c r="A1" t="str"><f>MID(CELL(&quot;filename&quot;,A1),FIND(&quot;]&quot;,CELL(&quot;filename&quot;,A1))+1,255)</f><v>Result</v></c>"#.to_owned(),
         filename(""),
         filename("'file:///C:/Old/Book.xlsx'#$Result"),
+        // Caches that disagree (review of this change): a shared formula's
+        // member before its anchor, and a cache the reader cannot decode.
+        r#"<c r="A1" t="str"><f t="shared" si="0"/><v>C:\New\[Plan.xlsx]Result</v></c><c r="B1" t="str"><f t="shared" ref="A1:B1" si="0">CELL(&quot;filename&quot;,$A$1)</f><v>C:\Old\[Book.xlsx]Result</v></c>"#.to_owned(),
+        filename(r"C:\Old\[Book.xlsx]Result")
+            + r#"<c r="B1" t="str"><f>CELL(&quot;filename&quot;,A1)</f><v>C:\New\[Bo_x006F_k.xlsx]Result</v></c>"#,
     ] {
         assert_eq!(fallback(&saved(&cells)), need, "{cells}");
+    }
+}
+
+#[test]
+fn cell_location_of_a_linked_cell_falls_back() {
+    // CELL("filename") and CELL("address") of a linked cell name the linked
+    // workbook's file, which the engine does not read: given the caller's
+    // location, the fork printed the calling workbook's (review of this
+    // change).
+    let location = DocumentLocation::from_path(r"C:\Reports\Budget.xlsx").expect("location");
+    for formula in [
+        "CELL(&quot;filename&quot;,[1]S!A1)",
+        "CELL(&quot;address&quot;,INDEX([1]S!A1:A5,2))",
+    ] {
+        assert!(
+            matches!(
+                recalc_located(&over_five(formula), &location),
+                Err(FormulaError::UnsupportedWorkbook(_))
+            ),
+            "{formula}"
+        );
     }
 }
 

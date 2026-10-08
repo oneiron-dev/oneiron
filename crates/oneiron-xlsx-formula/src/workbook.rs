@@ -8,6 +8,7 @@ use formualizer_eval::timezone::TimeZoneSpec;
 use formualizer_workbook::{
     IoError, XlsxRecalculateLimits, XlsxRecalculateOptions, recalculate_xlsx_bytes,
 };
+use oneiron_docedit::ooxml::Node;
 use oneiron_docedit::retained_opc::{Limits, Package};
 
 use crate::clock::RecalcClock;
@@ -41,8 +42,9 @@ struct Formulas {
     /// The worksheets' names, as the workbook spells them.
     sheet_names: Vec<String>,
     /// Each formula cell that may be a CELL("filename") call and caches text:
-    /// its formula (a shared formula's anchor text) and that text.
-    filename_caches: Vec<(String, String)>,
+    /// its formula (a shared formula's anchor text) and that text, `None`
+    /// when the reader does not decode it.
+    filename_caches: Vec<(String, Option<String>)>,
 }
 
 struct DefinedName {
@@ -361,7 +363,10 @@ impl Formulas {
             if !crate::context::cell_filename(&crate::context::parse_bounded(formula)?) {
                 continue;
             }
-            let Some(location) = saved_filename(text, &self.sheet_names) else {
+            let Some(location) = text
+                .as_deref()
+                .and_then(|text| saved_filename(text, &self.sheet_names))
+            else {
                 return Ok(None);
             };
             if found.as_ref().is_some_and(|found| *found != location) {
@@ -773,44 +778,48 @@ fn check_cells(xml: &Xml, strings: usize, refusal: &mut Option<Cow<'static, str>
 }
 
 /// The formula and cached text of each formula cell of `xml` whose formula
-/// (a shared formula's anchor text for the cells sharing it) holds `call`,
-/// without case: Excel caches a formula's text result as `t="str"`. A cached
-/// text with an escape the reader does not decode is left out.
-fn text_caches(xml: &Xml, call: &str) -> Result<Vec<(String, String)>> {
+/// (a shared formula's anchor text for the cells sharing it, wherever the
+/// anchor sits) holds `call`, without case: Excel caches a formula's text
+/// result as `t="str"`. `None` for a cached text with an escape the reader
+/// does not decode.
+fn text_caches(xml: &Xml, call: &str) -> Result<Vec<(String, Option<String>)>> {
     let mut caches = Vec::new();
     let Some((data, _)) = xml.child(0, MAIN, "sheetData")? else {
         return Ok(caches);
     };
-    let mut shared = BTreeMap::new();
+    let mut cells = Vec::new();
     for (row, _) in xml.children(data).filter(|(_, node)| node.is(MAIN, "row")) {
         for (index, cell) in xml.children(row).filter(|(_, node)| node.is(MAIN, "c")) {
-            let Some((_, formula)) = xml.child(index, MAIN, "f")? else {
-                continue;
-            };
-            let group = formula
-                .attr("si")
-                .filter(|_| formula.attr("t") == Some("shared"));
-            let text = match (formula.text.is_empty(), group) {
-                (false, group) => {
-                    if let Some(group) = group {
-                        shared.insert(group, formula.text.as_str());
-                    }
-                    formula.text.as_str()
-                }
-                (true, Some(group)) => match shared.get(group) {
-                    Some(anchor) => anchor,
-                    None => continue,
-                },
-                (true, None) => continue,
-            };
-            if !text.to_ascii_uppercase().contains(call) || cell.attr("t") != Some("str") {
-                continue;
+            if let Some((_, formula)) = xml.child(index, MAIN, "f")? {
+                cells.push((index, cell, formula));
             }
-            if let Some((_, value)) = xml.child(index, MAIN, "v")?
-                && !escaped(&value.text)
-            {
-                caches.push((text.to_owned(), value.text.clone()));
+        }
+    }
+    fn group(formula: &Node) -> Option<&str> {
+        formula
+            .attr("si")
+            .filter(|_| formula.attr("t") == Some("shared"))
+    }
+    let shared: BTreeMap<_, _> = cells
+        .iter()
+        .filter(|(_, _, formula)| !formula.text.is_empty())
+        .filter_map(|(_, _, formula)| Some((group(formula)?, formula.text.as_str())))
+        .collect();
+    for (index, cell, formula) in &cells {
+        let text = if formula.text.is_empty() {
+            match group(formula).and_then(|group| shared.get(group)) {
+                Some(anchor) => anchor,
+                None => continue,
             }
+        } else {
+            formula.text.as_str()
+        };
+        if !text.to_ascii_uppercase().contains(call) || cell.attr("t") != Some("str") {
+            continue;
+        }
+        if let Some((_, value)) = xml.child(*index, MAIN, "v")? {
+            let value = (!escaped(&value.text)).then(|| value.text.clone());
+            caches.push((text.to_owned(), value));
         }
     }
     Ok(caches)
