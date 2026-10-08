@@ -1,6 +1,7 @@
 //! An importer completes a turn's marker with tags it already holds: no
 //! tagger call.
 
+use super::history::record_in_txn;
 use super::input::{TurnInput, turn_input_in_txn};
 use super::marker::{TAGGING_MARKER_KIND, dedupe_key};
 use super::output::{AnswerMood, OutputRefusal, check_output};
@@ -34,8 +35,9 @@ impl Vault {
     /// holds, in one write transaction and with no tagger call.
     ///
     /// The tags are checked against the turn's current text exactly as a
-    /// tagger's answer is. This build settles in shadow: the marker completes
-    /// and nothing else is written; saving the tags lands with ONE-2167.
+    /// tagger's answer is. This build settles in shadow: the marker completes,
+    /// its trace is recorded and the marker leaves the job ledger, and
+    /// nothing else is written; saving the tags lands with ONE-2167.
     pub fn complete_tagging_with_held_tags(
         &self,
         turn: &EntityId,
@@ -91,7 +93,7 @@ impl Vault {
                 }
             };
             // Stamped from the store clock without persisting its floor, as
-            // the worker's settlements are: shadow writes only the job tables.
+            // the worker's settlements are: shadow writes only job state.
             let now = crate::ports::job_recorded_at_in_txn(&self.store, txn)?;
             let claimed = queue.claim_id_storage_in_txn(
                 txn,
@@ -118,7 +120,7 @@ impl Vault {
                     now,
                 },
             )?;
-            Ok(HeldTagsOutcome::Completed(TaggingTrace {
+            let trace = TaggingTrace {
                 attempt: attempt_hex(&leased.id),
                 turn: Some(*turn),
                 checkpoint: checkpoint.clone(),
@@ -127,7 +129,12 @@ impl Vault {
                 try_number,
                 call_micros: None,
                 outcome,
-            }))
+            };
+            // As a worker's settlement: the trace is recorded and the marker
+            // leaves the job ledger with every try it retried.
+            record_in_txn(self, txn, &trace, now)?;
+            queue.prune_settled_in_txn(txn, leased.id)?;
+            Ok(HeldTagsOutcome::Completed(trace))
         })
     }
 }

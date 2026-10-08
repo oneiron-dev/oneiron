@@ -405,10 +405,7 @@ impl ServeConfig {
         config.tagging = self
             .oneironer
             .as_ref()
-            .and_then(OneironerConfig::marker_checkpoint)
-            .map(|checkpoint| oneiron::tagging::TaggingMarkerConfig {
-                checkpoint: checkpoint.to_owned(),
-            });
+            .and_then(OneironerConfig::marker_config);
         config
     }
 

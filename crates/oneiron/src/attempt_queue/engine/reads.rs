@@ -204,6 +204,11 @@ impl AttemptQueue<'_> {
     }
 
     /// Complete kind view for a projection that must not silently truncate.
+    ///
+    /// `max_scanned` caps the rows the view reads. A row of another kind whose
+    /// owner bounds it ([`crate::attempt_queue::owner_retained_kind`]) is
+    /// passed over uncounted, so a tagging backlog never fails another kind's
+    /// view closed.
     pub(crate) fn list_kind_bounded(
         &self,
         kind: &str,
@@ -211,12 +216,17 @@ impl AttemptQueue<'_> {
     ) -> Result<Vec<AttemptRecord>> {
         let txn = self.store.env.read_txn()?;
         let mut records = Vec::new();
-        for (scanned, row) in self.store.attempt_records.iter(&txn)?.enumerate() {
+        let mut scanned = 0_usize;
+        for row in self.store.attempt_records.iter(&txn)? {
+            let (key, raw) = row?;
+            let record = decode_record(&raw, AttemptId::from_bytes(&key)?)?;
+            if record.kind != kind && crate::attempt_queue::owner_retained_kind(&record.kind) {
+                continue;
+            }
             if scanned >= max_scanned {
                 return Err(Error::IndexOverflow("attempt kind projection"));
             }
-            let (key, raw) = row?;
-            let record = decode_record(&raw, AttemptId::from_bytes(&key)?)?;
+            scanned += 1;
             if record.kind == kind {
                 records.push(record);
             }
@@ -486,7 +496,7 @@ impl AttemptQueue<'_> {
 /// event/manifest/cancel logs are all EXPECTED to diverge between a finalized
 /// source and its fresh successor, which is why the link cannot be checked by
 /// record equality.
-fn retries_the_same_attempt(child: &AttemptRecord, parent: &AttemptRecord) -> bool {
+pub(super) fn retries_the_same_attempt(child: &AttemptRecord, parent: &AttemptRecord) -> bool {
     child.kind == parent.kind
         && child.payload == parent.payload
         && child.task_ref == parent.task_ref

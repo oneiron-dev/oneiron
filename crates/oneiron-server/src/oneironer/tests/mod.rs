@@ -83,6 +83,7 @@ mode = "shadow"
 url = "http://127.0.0.1:9100"
 checkpoint_sha16 = "0123456789abcdef"
 label_count = 53
+trace_history_per_turn = 9
 [oneironer.labels]
 PERSON = "PERSON"
 "#;
@@ -91,6 +92,8 @@ PERSON = "PERSON"
         &[
             ("ONEIRON_ONEIRONER_URL", "http://127.0.0.1:9200"),
             ("ONEIRON_ONEIRONER_LABELS", "PERSON=PERSON,PLACE=PLACE"),
+            ("ONEIRON_ONEIRONER_TRACE_HISTORY_PER_TURN", "2"),
+            ("ONEIRON_ONEIRONER_TRACE_HISTORY_MAX_AGE_SECS", "3600"),
         ],
         ServeArgs {
             oneironer: crate::config::OneironerArgs {
@@ -111,13 +114,36 @@ PERSON = "PERSON"
         section.label_kinds().get("PLACE"),
         Some(&oneiron::registry::ENTITY_TYPE_PLACE)
     );
+    let tagging = config.vault_config().tagging.expect("armed");
+    assert_eq!(tagging.checkpoint, "0123456789abcdef");
     assert_eq!(
-        config
-            .vault_config()
-            .tagging
-            .map(|tagging| tagging.checkpoint),
-        Some("0123456789abcdef".to_owned())
+        tagging.trace_history,
+        oneiron::tagging::TaggingTraceHistory {
+            per_turn: 2,
+            max_age_secs: 3600,
+        }
     );
+}
+
+#[test]
+fn the_trace_history_rows_default_and_are_bounded() {
+    let base = "[oneironer]\nprovider = \"endpoint\"\nmode = \"shadow\"\nurl = \"http://127.0.0.1:9100\"\ncheckpoint_sha16 = \"0123456789abcdef\"\nlabel_count = 3\n";
+    let config = resolve(base, &[], ServeArgs::default()).expect("resolve");
+    let tagging = config.vault_config().tagging.expect("armed");
+    assert_eq!(
+        tagging.trace_history,
+        oneiron::tagging::TaggingTraceHistory::default()
+    );
+    for row in [
+        "trace_history_per_turn = 1025",
+        "trace_history_max_age_secs = 0",
+    ] {
+        let file = format!("{base}{row}\n");
+        assert!(
+            resolve(&file, &[], ServeArgs::default()).is_err(),
+            "{row} is refused"
+        );
+    }
 }
 
 #[test]

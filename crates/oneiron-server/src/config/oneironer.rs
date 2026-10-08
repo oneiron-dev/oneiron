@@ -128,6 +128,11 @@ pub struct OneironerConfig {
     pub retry_backoff_secs: u64,
     /// Ceiling on the doubled retry delay.
     pub max_retry_backoff_secs: u64,
+    /// Traces kept per turn once a settled marker leaves the job ledger.
+    /// Defaults to 4; 0 keeps none; at most 1,024.
+    pub trace_history_per_turn: u32,
+    /// Store-clock seconds a trace is kept. Defaults to seven days.
+    pub trace_history_max_age_secs: u64,
 }
 
 impl Default for OneironerConfig {
@@ -144,6 +149,8 @@ impl Default for OneironerConfig {
             idle_interval_ms: DEFAULT_IDLE_INTERVAL_MS,
             retry_backoff_secs: DEFAULT_RETRY_BACKOFF_SECS,
             max_retry_backoff_secs: DEFAULT_MAX_RETRY_BACKOFF_SECS,
+            trace_history_per_turn: oneiron::tagging::DEFAULT_TRACES_PER_TURN,
+            trace_history_max_age_secs: oneiron::tagging::DEFAULT_TRACE_MAX_AGE_SECS,
         }
     }
 }
@@ -162,6 +169,23 @@ impl OneironerConfig {
         (self.provider == OneironerProvider::Endpoint)
             .then_some(self.checkpoint_sha16.as_deref())
             .flatten()
+    }
+
+    /// The vault's marker configuration, when markers are on: the checkpoint
+    /// and the trace history.
+    pub fn marker_config(&self) -> Option<oneiron::tagging::TaggingMarkerConfig> {
+        let checkpoint = self.marker_checkpoint()?;
+        Some(oneiron::tagging::TaggingMarkerConfig {
+            checkpoint: checkpoint.to_owned(),
+            trace_history: self.trace_history(),
+        })
+    }
+
+    fn trace_history(&self) -> oneiron::tagging::TaggingTraceHistory {
+        oneiron::tagging::TaggingTraceHistory {
+            per_turn: self.trace_history_per_turn,
+            max_age_secs: self.trace_history_max_age_secs,
+        }
     }
 
     /// The label table as engine type bytes. Validation guarantees every kind
@@ -207,12 +231,24 @@ impl OneironerConfig {
         if let Some(value) = over.max_retry_backoff_secs {
             self.max_retry_backoff_secs = value;
         }
+        if let Some(value) = over.trace_history_per_turn {
+            self.trace_history_per_turn = value;
+        }
+        if let Some(value) = over.trace_history_max_age_secs {
+            self.trace_history_max_age_secs = value;
+        }
     }
 
     /// Refuses a section that cannot produce a working slot. The local
     /// provider and save mode pass here and are refused, typed, when the slot
     /// is built.
     pub fn validate(&self) -> anyhow::Result<()> {
+        if self.trace_history_per_turn > oneiron::tagging::MAX_TRACES_PER_TURN {
+            anyhow::bail!("oneironer.trace_history_per_turn must be at most 1024");
+        }
+        if self.trace_history_max_age_secs == 0 {
+            anyhow::bail!("oneironer.trace_history_max_age_secs must be greater than zero");
+        }
         for (label, kind) in &self.labels {
             if label.is_empty() || label.len() > MAX_LABEL_BYTES {
                 anyhow::bail!("oneironer.labels keys must be 1 to 64 bytes");
@@ -280,6 +316,8 @@ pub struct OneironerConfigOverride {
     pub idle_interval_ms: Option<u64>,
     pub retry_backoff_secs: Option<u64>,
     pub max_retry_backoff_secs: Option<u64>,
+    pub trace_history_per_turn: Option<u32>,
+    pub trace_history_max_age_secs: Option<u64>,
 }
 
 impl OneironerConfigOverride {
@@ -361,6 +399,11 @@ pub(super) fn lookup_oneironer_override(
         idle_interval_ms: lookup_parse(lookup, "ONEIRON_ONEIRONER_IDLE_INTERVAL_MS")?,
         retry_backoff_secs: lookup_parse(lookup, "ONEIRON_ONEIRONER_RETRY_BACKOFF_SECS")?,
         max_retry_backoff_secs: lookup_parse(lookup, "ONEIRON_ONEIRONER_MAX_RETRY_BACKOFF_SECS")?,
+        trace_history_per_turn: lookup_parse(lookup, "ONEIRON_ONEIRONER_TRACE_HISTORY_PER_TURN")?,
+        trace_history_max_age_secs: lookup_parse(
+            lookup,
+            "ONEIRON_ONEIRONER_TRACE_HISTORY_MAX_AGE_SECS",
+        )?,
     };
     Ok((!over.is_empty()).then_some(over))
 }

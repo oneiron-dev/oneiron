@@ -193,6 +193,30 @@ fn count(vault: &Vault, state: AttemptState) -> usize {
         .count()
 }
 
+/// The outcomes of the turn's recorded traces, oldest first.
+fn history(vault: &Vault, turn: &EntityId) -> Vec<TaggingOutcome> {
+    vault
+        .tagging_trace_history(turn)
+        .expect("trace history")
+        .into_iter()
+        .map(|record| record.trace.outcome)
+        .collect()
+}
+
+/// The turn's recorded traces that settled a marker: every outcome but a
+/// failed or superseded try.
+fn settled(vault: &Vault, turn: &EntityId) -> usize {
+    history(vault, turn)
+        .iter()
+        .filter(|outcome| {
+            !matches!(
+                outcome,
+                TaggingOutcome::Failed { .. } | TaggingOutcome::Superseded { .. }
+            )
+        })
+        .count()
+}
+
 fn reconciler(vault: &Arc<Vault>, tagger: &Arc<Scripted>) -> TaggingReconciler {
     TaggingReconciler::new(
         Arc::clone(vault),
@@ -306,8 +330,9 @@ fn witness_both(tagged: &Vault, plain: &Vault, text: &str) -> EntityId {
     turn
 }
 
-/// Every content database matches; the job tables, left out by name, are
-/// where the tagged run differs.
+/// Every content database matches; the job state, left out by name (the job
+/// tables and `vault_meta`'s job rows, digested as `job_meta`), is where the
+/// tagged run differs.
 fn assert_only_job_tables_differ(tagged: &Vault, plain: &Vault) {
     let differing = differing_content(tagged, plain);
     assert!(
@@ -372,17 +397,20 @@ fn an_exact_retry_owes_nothing_and_new_text_marks_the_turn_again() {
 
     let tagger = Scripted::new(Answer::Good);
     reconciler(&vault, &tagger).drain_once().expect("drain");
-    assert_eq!(count(&vault, AttemptState::Completed), 1);
+    // The settled marker left the job ledger; its trace stayed.
+    let tagged = EntityId::from_hex(turn_ref.as_deref().expect("turn ref")).expect("turn id");
+    assert!(markers(&vault).is_empty());
+    assert_eq!(settled(&vault, &tagged), 1);
     // A settled turn: the exact retry stages nothing and owes nothing.
     memory
         .witness(&turn(turn_ref.clone(), vec![first]))
         .expect("exact retry after settlement");
-    assert_eq!(markers(&vault).len(), 1);
+    assert!(markers(&vault).is_empty());
     // New text in the same turn owes a new pass.
     memory
         .witness(&turn(turn_ref, vec![message(1, "and a second message")]))
         .expect("append");
-    assert_eq!(markers(&vault).len(), 2);
+    assert_eq!(markers(&vault).len(), 1);
     assert_eq!(count(&vault, AttemptState::Queued), 1);
 }
 
@@ -394,7 +422,8 @@ fn a_moved_indexed_frontier_marks_the_turn_again() {
     let turn = witness(&vault, "words the tagger read once");
     let tagger = Scripted::new(Answer::Good);
     reconciler(&vault, &tagger).drain_once().expect("drain");
-    assert_eq!(count(&vault, AttemptState::Completed), 1);
+    assert!(markers(&vault).is_empty());
+    assert_eq!(settled(&vault, &turn), 1);
 
     let raw = vault.get(&turn).expect("read").expect("turn body");
     let mut body: serde_json::Value = rmp_serde::from_slice(&raw).expect("decode body");
@@ -414,7 +443,7 @@ fn a_moved_indexed_frontier_marks_the_turn_again() {
         .commit()
         .expect("edit");
     // The edit moves the live revision; the indexed frontier waits for idle.
-    assert_eq!(markers(&vault).len(), 1);
+    assert!(markers(&vault).is_empty());
     vault.set_indexed_idle_delay_ms(0).expect("delay");
     let report = vault
         .refresh_staged_indexed_at_idle(u64::MAX)
@@ -460,16 +489,18 @@ fn a_message_frontier_marks_the_turn_it_is_part_of() {
     );
 }
 
-/// Shadow writes nothing outside the three job tables, through the paths that
-/// retry a marker too (a failed call, a refused answer, a lease a stopped
-/// worker left) and while the store clock runs, an empty pass included. A
-/// write after them allocates the same entity ids in both arms, even after
-/// the clock rolls back: no retry drew from the vault's id source, and no
-/// pass moved the vault's clock floor, on disk or in memory.
+/// Shadow writes nothing outside the job state (the three job tables and the
+/// trace history), through the paths that retry a marker too (a failed call,
+/// a refused answer, a lease a stopped worker left) and while the store clock
+/// runs, an empty pass included. A write after them allocates the same entity
+/// ids in both arms, even after the clock rolls back: no retry drew from the
+/// vault's id source, and no pass moved the vault's clock floor, on disk or
+/// in memory.
 #[test]
 fn shadow_leaves_every_content_database_as_a_run_with_no_tagger_leaves_it() {
     let arms = Arms::new();
     let tagger = Scripted::new(Answer::Fail);
+    let mut turns = Vec::new();
     {
         let (tagged, plain) = arms.open();
         assert_eq!(content_digests(&tagged), content_digests(&plain));
@@ -478,7 +509,7 @@ fn shadow_leaves_every_content_database_as_a_run_with_no_tagger_leaves_it() {
             "Grace stayed behind",
             "they wrote letters",
         ] {
-            witness_both(&tagged, &plain, text);
+            turns.push(witness_both(&tagged, &plain, text));
         }
         let reconciler = reconciler(&tagged, &tagger);
         let pass = reconciler.drain_once().expect("drain");
@@ -525,9 +556,18 @@ fn shadow_leaves_every_content_database_as_a_run_with_no_tagger_leaves_it() {
             mapped_spans: 1
         }
     )));
-    // Two retried tries and the restarted lease; every turn settled once.
-    assert_eq!(count(&tagged, AttemptState::Failed), 3);
-    assert_eq!(count(&tagged, AttemptState::Completed), 3);
+    // Every turn settled once, and its marker left the job ledger with the
+    // two retried tries and the restarted lease. The two failed calls and the
+    // three answers are the traces.
+    assert!(markers(&tagged).is_empty());
+    assert!(turns.iter().all(|turn| settled(&tagged, turn) == 1));
+    assert_eq!(
+        turns
+            .iter()
+            .map(|turn| history(&tagged, turn).len())
+            .sum::<usize>(),
+        5
+    );
     arms.tick(NOW + 120);
     assert!(reconciler.drain_once().expect("drain").traces.is_empty());
     witness_both(&tagged, &plain, "the harbour froze that winter");
@@ -589,9 +629,10 @@ fn a_failed_call_a_panic_and_bad_offsets_each_trace_and_retry_without_failing_th
     );
     assert!(traces.iter().all(|trace| trace.turn == Some(turn)));
     assert_eq!(tagger.calls(), 4);
-    // Three retried tries and the one that settled; nothing left owed.
-    assert_eq!(count(&vault, AttemptState::Failed), 3);
-    assert_eq!(count(&vault, AttemptState::Completed), 1);
+    // Every try's trace is recorded; the three retried tries left the job
+    // ledger with the one that settled, and nothing is left owed.
+    assert_eq!(history(&vault, &turn), outcomes);
+    assert!(markers(&vault).is_empty());
     assert!(vault.get(&turn).expect("turn read").is_some());
 }
 
@@ -663,11 +704,10 @@ fn a_crash_right_after_the_commit_resumes_with_no_lost_and_no_doubled_turn() {
     assert_eq!(tagged, expected);
     assert_eq!(tagger.calls(), 2);
     assert_eq!(reconciler.drain_once().expect("drain").traces.len(), 0);
-    // One settled marker per turn; the abandoned lease is a retried try.
-    assert_eq!(count(&vault, AttemptState::Completed), 2);
-    assert_eq!(count(&vault, AttemptState::Failed), 1);
-    assert_eq!(count(&vault, AttemptState::Queued), 0);
-    assert_eq!(count(&vault, AttemptState::Leased), 0);
+    // One settled marker per turn, gone from the job ledger with the
+    // abandoned lease's retried try.
+    assert!(turns.iter().all(|turn| settled(&vault, turn) == 1));
+    assert!(markers(&vault).is_empty());
 }
 
 /// A claimed marker whose settlement fails on storage stays this worker's:
@@ -680,11 +720,13 @@ fn a_settlement_that_fails_after_the_claim_is_settled_by_the_same_worker() {
     let vault = open(dir.path(), true);
     let tagger = Scripted::new(Answer::Good);
     let reconciler = reconciler(&vault, &tagger);
+    let mut turns = Vec::new();
     for (call, text) in [
         (Answer::Good, "Ada sailed north"),
         (Answer::Fail, "Grace stayed behind"),
     ] {
         let turn = witness(&vault, text);
+        turns.push(turn);
         tagger.set(call);
         vault.test_hooks().arm_fail_next_tagging_settlement();
         let error = reconciler
@@ -704,7 +746,8 @@ fn a_settlement_that_fails_after_the_claim_is_settled_by_the_same_worker() {
         assert_eq!(count(&vault, AttemptState::Leased), 0);
         assert!(reconciler.drain_once().expect("drain").traces.is_empty());
     }
-    assert_eq!(count(&vault, AttemptState::Completed), 2);
+    assert!(turns.iter().all(|turn| settled(&vault, turn) == 1));
+    assert!(markers(&vault).is_empty());
 }
 
 /// A stale-lease release at worker start that fails on storage stays owed:
@@ -746,7 +789,8 @@ fn a_stale_lease_release_that_fails_is_finished_by_the_same_worker() {
         TaggingOutcome::Shadowed { .. }
     ));
     assert_eq!(count(&vault, AttemptState::Leased), 0);
-    assert_eq!(count(&vault, AttemptState::Completed), 1);
+    assert_eq!(settled(&vault, &turn), 1);
+    assert!(markers(&vault).is_empty());
 }
 
 /// A MESSAGE whose text lives in an entity document marks its turn again when
@@ -1168,7 +1212,11 @@ fn a_promoted_off_record_turn_owes_one_marker_committed_with_the_promotion() {
         TaggingOutcome::Shadowed { .. }
     ));
     session.promote_turn(&promoted).expect("promote retry");
-    assert_eq!(markers(&vault).len(), 1, "a retried promotion owes nothing");
+    assert!(
+        markers(&vault).is_empty(),
+        "a retried promotion owes nothing"
+    );
+    assert_eq!(settled(&vault, &promoted), 1);
     session.close().expect("close session");
 }
 
@@ -1206,7 +1254,7 @@ fn a_turn_edited_during_the_call_is_tagged_again_on_its_new_text() {
     ));
     assert_ne!(pass.traces[0].input_hash, pass.traces[1].input_hash);
     assert_eq!(tagger.calls(), 2);
-    assert_eq!(count(&vault, AttemptState::Completed), 1);
+    assert!(markers(&vault).is_empty());
 }
 
 /// A retry owed at once is ready at once: superseded text is tagged again in
@@ -1261,7 +1309,7 @@ fn a_superseded_retry_is_ready_at_once_after_the_clock_rolls_back() {
         pass.traces[1].outcome,
         TaggingOutcome::Shadowed { .. }
     ));
-    assert_eq!(count(&vault, AttemptState::Completed), 1);
+    assert!(markers(&vault).is_empty());
 }
 
 #[test]
@@ -1294,8 +1342,7 @@ fn text_that_appears_after_an_empty_read_is_tagged_before_the_marker_settles() {
         TaggingOutcome::Shadowed { .. }
     ));
     assert_eq!(tagger.calls(), 1);
-    assert_eq!(count(&vault, AttemptState::Completed), 1);
-    assert_eq!(count(&vault, AttemptState::Queued), 0);
+    assert!(markers(&vault).is_empty());
 }
 
 /// A long retry history of one turn, all in one second, takes none of the
@@ -1364,7 +1411,8 @@ fn a_long_retry_history_in_one_second_leaves_the_turn_its_ids() {
         pass.traces[0].outcome,
         TaggingOutcome::Shadowed { .. }
     ));
-    assert_eq!(count(&vault, AttemptState::Completed), 1);
+    // The settled marker left the job ledger with all 4,100 tries it retried.
+    assert!(markers(&vault).is_empty());
 }
 
 #[test]
@@ -1430,7 +1478,11 @@ fn a_gone_or_empty_turn_settles_with_no_call() {
             reason: SkipReason::NoText
         }
     ));
-    assert_eq!(count(&vault, AttemptState::Completed), 1);
+    assert!(markers(&vault).is_empty());
+    assert_eq!(
+        pass.traces[0].turn.map(|turn| settled(&vault, &turn)),
+        Some(1)
+    );
 }
 
 #[test]
@@ -1455,7 +1507,7 @@ fn a_marker_for_another_checkpoint_moves_onto_the_active_one() {
 }
 
 /// An importer's held tags complete a marker in shadow, while the store
-/// clock runs, without writing outside the job tables, and a write after the
+/// clock runs, without writing outside the job state, and a write after the
 /// clock rolls back is the same in both arms.
 #[test]
 fn held_tags_complete_a_marker_writing_only_the_job_tables() {
@@ -1609,7 +1661,8 @@ fn an_importer_completes_a_marker_with_held_tags_and_no_call() {
         }
     ));
     assert_eq!(trace.try_number, 1);
-    assert_eq!(count(&vault, AttemptState::Completed), 1);
+    assert!(markers(&vault).is_empty());
+    assert_eq!(history(&vault, &turn), vec![trace.outcome]);
     assert_eq!(
         vault
             .complete_tagging_with_held_tags(&turn, &held(3))
@@ -1704,6 +1757,7 @@ fn a_checkpoint_that_is_not_sixteen_lowercase_hex_digits_is_refused_at_open() {
         let mut config = config(false);
         config.tagging = Some(TaggingMarkerConfig {
             checkpoint: bad.into(),
+            ..TaggingMarkerConfig::new(CHECKPOINT).expect("checkpoint")
         });
         assert!(matches!(
             Vault::open(dir.path(), config),
@@ -1732,4 +1786,312 @@ fn an_off_device_tagger_and_an_unarmed_vault_are_refused() {
     drop(armed);
     let unarmed = open(dir.path(), false);
     assert!(TaggingReconciler::new(unarmed, Scripted::new(Answer::Good)).is_err());
+}
+
+/// Plants `count` settled markers the way a build that kept every settled
+/// marker left them: Completed rows of the job ledger that hold no index
+/// entry. The first settles through the queue's own doors; the rest are its
+/// copies under further ids.
+fn plant_settled_markers(vault: &Vault, count: u64, settled_at: u64) {
+    use crate::attempt_queue::{AttemptId, CompleteAttempt};
+    const OWNER: &str = "earlier-build";
+    let queue = AttemptQueue::new(vault);
+    let mut txn = vault.store.env.write_txn().expect("write txn");
+    let turn = EntityId::from_bytes([0x5e; 16]).expect("turn id");
+    super::marker::enqueue_marker_in_txn(vault, &mut txn, turn, CHECKPOINT, settled_at)
+        .expect("marker");
+    let ClaimOutcome::Claimed(leased) = queue
+        .claim_kind_storage_in_txn(
+            &mut txn,
+            Some(TAGGING_MARKER_KIND),
+            ClaimAttempt {
+                lease_owner: OWNER.into(),
+                now: settled_at,
+            },
+            settled_at,
+        )
+        .expect("claim")
+    else {
+        panic!("the planted marker is ready");
+    };
+    queue
+        .complete_storage_in_txn(
+            &mut txn,
+            CompleteAttempt {
+                id: leased.id,
+                lease_owner: OWNER.into(),
+                attempt_count: leased.attempt_count,
+                now: settled_at,
+            },
+        )
+        .expect("complete");
+    let template = queue
+        .get_in_write_txn(&txn, leased.id)
+        .expect("read")
+        .expect("settled row");
+    for n in 1..count {
+        let mut row = template.clone();
+        let mut id = [0_u8; 16];
+        id[..8].copy_from_slice(&settled_at.to_be_bytes());
+        id[8..].copy_from_slice(&n.to_be_bytes());
+        row.id = AttemptId::from_bytes(&id).expect("id");
+        let encoded = crate::attempt_queue::encode_signal_record(&row).expect("encode");
+        vault
+            .store
+            .attempt_records
+            .put(&mut txn, row.id.as_bytes(), &encoded)
+            .expect("plant");
+    }
+    txn.commit().expect("commit");
+}
+
+fn ledger_rows(vault: &Vault) -> u64 {
+    let txn = vault.store.env.read_txn().expect("read txn");
+    vault
+        .store
+        .attempt_records
+        .len(&txn)
+        .expect("ledger length")
+}
+
+/// Binds the seeded team lead as a resident woken by human messages, as the
+/// resident dispatch tests do, and returns its agent id.
+fn bind_resident(vault: &Vault) -> EntityId {
+    use crate::agent_dispatch::{ResidentAgentSpec, ResidentGoalRecord, ResidentWakeMode};
+    use crate::task_verb::ConsultPayloadRef;
+    let owner = EntityId::now();
+    vault
+        .put_entity(
+            &owner,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"owner",
+        )
+        .expect("owner");
+    let (lead, _) = vault
+        .get_seeded_agent_definition_by_logical_id("sys.team_lead")
+        .expect("seeded definitions")
+        .expect("team lead");
+    let inbox = EntityId::now();
+    vault
+        .create_own_app_channel_identity(&inbox, lead, 1)
+        .expect("inbox identity");
+    let room = EntityId::now();
+    let node = EntityId::now();
+    let goal = EntityId::now();
+    vault
+        .put_entity(
+            &goal,
+            crate::registry::ENTITY_TYPE_TURN,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &[0x80],
+        )
+        .expect("goal");
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: room.to_hex(),
+            turn_ref: None,
+            occurred_at: 2,
+            messages: vec![WitnessMessage {
+                id: Some(node.to_hex()),
+                ..message(0, "room")
+            }],
+        })
+        .expect("room");
+    let auth = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .expect("owner auth");
+    let spec = ResidentAgentSpec {
+        agent_def_ref: lead,
+        inbox_identity_ref: inbox,
+        home_conversation_ref: room,
+        home_message_ref: node,
+        goal: ResidentGoalRecord {
+            goal: ConsultPayloadRef::Turn(goal),
+            why: ConsultPayloadRef::Turn(goal),
+            axes: vec![],
+        },
+        wake: ResidentWakeMode::HumanMessages,
+    };
+    vault
+        .bind_resident_agent(&auth, &spec, 3)
+        .expect("resident");
+    lead
+}
+
+/// A vault holding more settled tagging markers than the ledger's all-kinds
+/// scan cap still serves the inbox lens and resident dispatch: a scan for
+/// another kind passes tagging rows over, uncounted.
+#[test]
+fn a_vault_past_100k_settled_tagging_markers_still_serves_the_inbox_and_resident_dispatch() {
+    let config = VaultConfig {
+        store_clock: ManualClock::new(NOW).bundle(),
+        tagging: Some(TaggingMarkerConfig::new(CHECKPOINT).expect("checkpoint")),
+        ..VaultConfig::default()
+    };
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+    let lead = bind_resident(&vault);
+    let cap = crate::receipt::MAX_RECEIPT_QUERY_SCAN as u64;
+    plant_settled_markers(&vault, cap + 1, NOW);
+    assert!(ledger_rows(&vault) > cap);
+    let lens = vault.agent_inbox_lens(crate::agent_inbox_lens::AgentInboxLensQuery {
+        identity_ref: None,
+        limit: 16,
+        before: None,
+    });
+    assert!(lens.is_ok(), "the inbox lens fails closed: {lens:?}");
+    let dispatched =
+        crate::agent_dispatch::AgentDispatcher::new(&vault).dispatch_resident_inbox(lead, 16, 4);
+    assert!(
+        dispatched.is_ok(),
+        "resident dispatch fails closed: {:?}",
+        dispatched.err()
+    );
+}
+
+/// Settled tagging markers are job state: a cleanup pass past the retention
+/// horizon proposes none of them, so they mint no proposal id. A completed
+/// job of another kind beside them is still proposed.
+#[test]
+fn vault_cleanup_proposes_nothing_from_tagging_markers() {
+    use crate::attempt_queue::{AttemptId, CompleteAttempt, EnqueueAttempt};
+    let dir = tempfile::tempdir().expect("dir");
+    let clock = ManualClock::new(NOW);
+    let mut config = config(true);
+    config.store_clock = clock.bundle();
+    let vault = Vault::open(dir.path(), config).expect("open vault");
+    plant_settled_markers(&vault, 3, NOW);
+    let queue = AttemptQueue::new(&vault);
+    queue
+        .enqueue(EnqueueAttempt {
+            kind: "test.retained".into(),
+            payload: vec![1, 2, 3],
+            dedupe_key: None,
+            run_id: None,
+            now: NOW,
+        })
+        .expect("enqueue");
+    let ClaimOutcome::Claimed(other) = queue
+        .claim_kind(
+            "test.retained",
+            ClaimAttempt {
+                lease_owner: "test".into(),
+                now: NOW,
+            },
+        )
+        .expect("claim")
+    else {
+        panic!("the other job is ready");
+    };
+    queue
+        .complete(CompleteAttempt {
+            id: other.id,
+            lease_owner: "test".into(),
+            attempt_count: other.attempt_count,
+            now: NOW,
+        })
+        .expect("complete");
+    clock.set(NOW + 91 * 86_400);
+    vault.set_task_retention_days(Some(90)).expect("retention");
+    let report =
+        crate::vault_cleanup::run_vault_cleanup(&vault, &AttemptId::now()).expect("cleanup");
+    let proposed: Vec<[u8; 16]> = report
+        .candidates
+        .iter()
+        .map(|candidate| *candidate.entity.as_bytes())
+        .collect();
+    assert_eq!(
+        proposed,
+        vec![*other.id.as_bytes()],
+        "only the other job is proposed"
+    );
+    assert!(report.proposal.is_some());
+}
+
+/// The trace history keeps exactly what its bounds say: a turn's newest
+/// traces up to the per-turn bound, and, once a pass has run, none past the
+/// age bound. The job ledger keeps no settled marker and no try it retried.
+#[test]
+fn pruning_keeps_exactly_the_configured_trace_history() {
+    let dir = tempfile::tempdir().expect("dir");
+    let clock = ManualClock::new(NOW);
+    let vault = {
+        let mut config = config(true);
+        config.store_clock = clock.bundle();
+        config.tagging = Some(
+            TaggingMarkerConfig::new(CHECKPOINT)
+                .expect("checkpoint")
+                .with_trace_history(TaggingTraceHistory {
+                    per_turn: 3,
+                    max_age_secs: 100,
+                }),
+        );
+        Arc::new(Vault::open(dir.path(), config).expect("open vault"))
+    };
+    let tagger = Scripted::new(Answer::Good);
+    let reconciler = reconciler(&vault, &tagger);
+    let old = witness(&vault, "the oldest turn");
+    reconciler.drain_once().expect("drain");
+    assert_eq!(history(&vault, &old).len(), 1);
+
+    // One turn tagged five times, the first a failed call: its traces past
+    // the newest three are dropped, the failed one first.
+    clock.set(NOW + 50);
+    let turn_ref = Some("6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f".to_owned());
+    let busy = EntityId::from_hex(turn_ref.as_deref().expect("ref")).expect("turn id");
+    let memory = vault.memory(speaker(&vault), EdgeActorClass::Human);
+    memory
+        .witness(&turn(
+            turn_ref.clone(),
+            vec![message(0, "Ada sailed north")],
+        ))
+        .expect("witness");
+    tagger.set(Answer::Fail);
+    reconciler.drain_once().expect("drain");
+    tagger.set(Answer::Good);
+    reconciler.drain_once().expect("drain");
+    for order in 1..=3_u32 {
+        clock.set(NOW + 50 + u64::from(order));
+        memory
+            .witness(&turn(
+                turn_ref.clone(),
+                vec![message(order, "and then some more")],
+            ))
+            .expect("more text");
+        reconciler.drain_once().expect("drain");
+    }
+    let kept = vault.tagging_trace_history(&busy).expect("history");
+    assert_eq!(
+        kept.iter()
+            .map(|record| record.recorded_at)
+            .collect::<Vec<_>>(),
+        vec![NOW + 51, NOW + 52, NOW + 53]
+    );
+    assert!(
+        kept.iter()
+            .all(|record| matches!(record.trace.outcome, TaggingOutcome::Shadowed { .. }))
+    );
+    assert!(markers(&vault).is_empty(), "no settled marker or try stays");
+
+    // Past the age bound a trace stays until a pass prunes it; then only
+    // the traces within the bound are left.
+    clock.set(NOW + 101);
+    assert_eq!(history(&vault, &old).len(), 1);
+    assert!(reconciler.drain_once().expect("drain").traces.is_empty());
+    assert!(history(&vault, &old).is_empty());
+    assert_eq!(history(&vault, &busy).len(), 3);
+    clock.set(NOW + 153);
+    reconciler.drain_once().expect("drain");
+    assert_eq!(history(&vault, &busy).len(), 1);
+    clock.set(NOW + 154);
+    reconciler.drain_once().expect("drain");
+    assert!(history(&vault, &busy).is_empty());
 }

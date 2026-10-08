@@ -16,10 +16,18 @@
 //! tags completes its marker with no tagger call
 //! ([`crate::Vault::complete_tagging_with_held_tags`]).
 //!
+//! Markers and their tries are job state. Each attempt's trace is recorded in
+//! the transaction that settles or retries it, and a settled marker leaves
+//! the job ledger there with every try it retried. What stays is the trace
+//! history, bounded per turn and by age ([`TaggingTraceHistory`],
+//! [`crate::Vault::tagging_trace_history`]). Content-side cleanup never
+//! proposes a marker, and no scan of another job kind counts one.
+//!
 //! This build settles in shadow: a checked answer completes its marker and
 //! nothing else is written. Saving the tags lands with ONE-2167.
 
 mod held;
+mod history;
 mod input;
 mod marker;
 mod output;
@@ -27,7 +35,11 @@ mod reconciler;
 mod trace;
 
 pub use held::HeldTagsOutcome;
-pub use marker::{TAGGING_MARKER_KIND, TaggingMarkerConfig};
+pub use history::TaggingTraceRecord;
+pub use marker::{
+    DEFAULT_TRACE_MAX_AGE_SECS, DEFAULT_TRACES_PER_TURN, MAX_TRACES_PER_TURN, TAGGING_MARKER_KIND,
+    TaggingMarkerConfig, TaggingTraceHistory,
+};
 pub use output::{OutputRefusal, spans_only_answers_admitted};
 pub use reconciler::{TaggingBackoff, TaggingPass, TaggingReconciler};
 pub use trace::{SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace};

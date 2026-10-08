@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
+use super::history;
 use super::input::{TurnInput, turn_input_in_txn};
 use super::marker::{
     MarkerPayload, TAGGING_MARKER_KIND, enqueue_marker_in_txn, retry_marker_in_txn,
@@ -86,10 +87,12 @@ impl TaggingPass {
 /// Drains tagging markers through one host-served tagger.
 ///
 /// Every claimed marker settles inside the pass: completed, retried with
-/// backoff, or (for a payload this build cannot read) failed. A marker whose
-/// settling write fails stays this reconciler's, as does one a stopped worker
-/// left leased, and its next pass hands it back before claiming anything. No
-/// marker ever fails the write that committed it.
+/// backoff, or (for a payload this build cannot read) failed. Each attempt's
+/// trace is recorded in the transaction that settles or retries it, and a
+/// settled marker leaves the job ledger there, with every try it retried. A
+/// marker whose settling write fails stays this reconciler's, as does one a
+/// stopped worker left leased, and its next pass hands it back before
+/// claiming anything. No marker ever fails the write that committed it.
 pub struct TaggingReconciler {
     vault: Arc<Vault>,
     encoder: Arc<dyn ExtractionEncoder>,
@@ -237,7 +240,8 @@ impl TaggingReconciler {
         Ok(found)
     }
 
-    /// Claims and settles up to the batch size of ready markers.
+    /// Claims and settles up to the batch size of ready markers, after
+    /// pruning traces past the history's age.
     ///
     /// A failed attempt ends the pass early: a tagger that is down costs one
     /// attempt per pass, not one per waiting marker, and a refused marker is
@@ -257,6 +261,7 @@ impl TaggingReconciler {
         } else {
             self.release_stale_leases()?;
         }
+        self.prune_expired_traces()?;
         let queue = AttemptQueue::new(&self.vault);
         let mut pass = TaggingPass::default();
         for _ in 0..self.batch_size {
@@ -287,7 +292,7 @@ impl TaggingReconciler {
     ///
     /// Every job row this reconciler writes is stamped from the store clock
     /// without persisting its floor, and a claim that finds nothing commits
-    /// nothing: a shadow worker writes nothing outside the job tables, even
+    /// nothing: a shadow worker writes nothing outside the job state, even
     /// while the clock runs and the queue is empty. The lease is stamped once
     /// the write lock is held, so waiting for another writer does not age it.
     fn claim(&self) -> Result<Option<AttemptRecord>> {
@@ -310,6 +315,24 @@ impl TaggingReconciler {
         txn.commit()?;
         self.vault.store.notify_attempt_observers();
         Ok(Some(record))
+    }
+
+    /// Prunes a bounded number of traces past the history's age. It reads
+    /// first, so a pass with nothing to prune commits nothing.
+    fn prune_expired_traces(&self) -> Result<()> {
+        let due = {
+            let txn = self.vault.store.env.read_txn()?;
+            let now = self.stamp_in_txn(&txn)?;
+            history::expired_in_txn(&self.vault, &txn, now)?
+        };
+        if !due {
+            return Ok(());
+        }
+        self.vault.try_with_write_txn(|txn| -> Result<()> {
+            let now = self.stamp_in_txn(txn)?;
+            history::prune_expired_in_txn(&self.vault, txn, now)?;
+            Ok(())
+        })
     }
 
     /// Hands back each marker this reconciler holds, as an immediate retry.
@@ -362,20 +385,22 @@ impl TaggingReconciler {
             outcome: TaggingOutcome::Unreadable,
         };
         let Some(payload) = MarkerPayload::decode(&record.payload) else {
-            self.vault
-                .try_with_write_txn(|txn| self.fail_unreadable_in_txn(txn, record))?;
+            self.vault.try_with_write_txn(|txn| -> Result<()> {
+                self.fail_unreadable_in_txn(txn, record)?;
+                self.record_in_txn(txn, &trace)
+            })?;
             return Ok(trace);
         };
         trace.turn = Some(payload.turn);
         trace.checkpoint.clone_from(&payload.checkpoint);
         if payload.checkpoint != self.checkpoint {
             // Owed by another checkpoint: the active tagger owes the turn now.
+            trace.outcome = TaggingOutcome::Rekeyed;
             self.vault.try_with_write_txn(|txn| -> Result<()> {
                 let now = self.stamp_in_txn(txn)?;
                 enqueue_marker_in_txn(&self.vault, txn, payload.turn, &self.checkpoint, now)?;
-                self.complete_in_txn(txn, record)
+                self.settle_in_txn(txn, record, &trace)
             })?;
-            trace.outcome = TaggingOutcome::Rekeyed;
             return Ok(trace);
         }
         let read = {
@@ -419,23 +444,23 @@ impl TaggingReconciler {
         }
         // The answer stands only for the text it read: settle against the turn
         // as the settling transaction sees it.
+        trace.outcome = self.shadowed(&output);
         let settled = self.vault.try_with_write_txn(|txn| -> Result<bool> {
             let current = matches!(
                 turn_input_in_txn(&self.vault, txn, &payload.turn)?,
                 TurnInput::Ready { hash: ref now, .. } if *now == hash
             );
             if current {
-                self.complete_in_txn(txn, record)?;
+                self.settle_in_txn(txn, record, &trace)?;
             }
             Ok(current)
         })?;
         if settled {
-            trace.outcome = self.shadowed(&output);
             return Ok(trace);
         }
-        let retry_at = self.retry_at(record, 0, "superseded")?;
-        trace.outcome = TaggingOutcome::Superseded { retry_at };
-        Ok(trace)
+        self.retry_traced(record, 0, "superseded", trace, |retry_at| {
+            TaggingOutcome::Superseded { retry_at }
+        })
     }
 
     /// Nothing is owed: the marker completes with no tagger call.
@@ -451,23 +476,23 @@ impl TaggingReconciler {
         reason: SkipReason,
         mut trace: TaggingTrace,
     ) -> Result<TaggingTrace> {
+        trace.outcome = TaggingOutcome::Skipped { reason };
         let settled = self.vault.try_with_write_txn(|txn| -> Result<bool> {
             let owes_nothing = !matches!(
                 turn_input_in_txn(&self.vault, txn, turn)?,
                 TurnInput::Ready { .. }
             );
             if owes_nothing {
-                self.complete_in_txn(txn, record)?;
+                self.settle_in_txn(txn, record, &trace)?;
             }
             Ok(owes_nothing)
         })?;
         if settled {
-            trace.outcome = TaggingOutcome::Skipped { reason };
             return Ok(trace);
         }
-        let retry_at = self.retry_at(record, 0, "superseded")?;
-        trace.outcome = TaggingOutcome::Superseded { retry_at };
-        Ok(trace)
+        self.retry_traced(record, 0, "superseded", trace, |retry_at| {
+            TaggingOutcome::Superseded { retry_at }
+        })
     }
 
     fn shadowed(&self, output: &EncoderOutput) -> TaggingOutcome {
@@ -481,6 +506,27 @@ impl TaggingReconciler {
                 .filter(|span| self.label_kinds.contains_key(&span.label))
                 .count(),
         }
+    }
+
+    /// Completes a marker, records its trace, and prunes it from the job
+    /// ledger with every try it retried, in one transaction.
+    fn settle_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        record: &AttemptRecord,
+        trace: &TaggingTrace,
+    ) -> Result<()> {
+        self.complete_in_txn(txn, record)?;
+        self.record_in_txn(txn, trace)?;
+        AttemptQueue::from_store(&self.vault.store).prune_settled_in_txn(txn, record.id)?;
+        Ok(())
+    }
+
+    /// Records `trace` in the history, stamped as the transaction's job rows
+    /// are.
+    fn record_in_txn(&self, txn: &mut heed::RwTxn<'_>, trace: &TaggingTrace) -> Result<()> {
+        let recorded_at = self.stamp_in_txn(txn)?;
+        history::record_in_txn(&self.vault, txn, trace, recorded_at)
     }
 
     fn complete_in_txn(&self, txn: &mut heed::RwTxn<'_>, record: &AttemptRecord) -> Result<()> {
@@ -500,13 +546,15 @@ impl TaggingReconciler {
         Ok(())
     }
 
-    /// Fails a marker whose payload this build cannot read: no pass ever can.
+    /// Fails a marker whose payload this build cannot read, since no pass
+    /// ever can, and prunes it from the job ledger with every try it retried.
     fn fail_unreadable_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         record: &AttemptRecord,
     ) -> Result<()> {
-        AttemptQueue::from_store(&self.vault.store).fail_storage_in_txn(
+        let queue = AttemptQueue::from_store(&self.vault.store);
+        queue.fail_storage_in_txn(
             txn,
             FailAttempt {
                 id: record.id,
@@ -516,6 +564,7 @@ impl TaggingReconciler {
                 now: self.stamp_in_txn(txn)?,
             },
         )?;
+        queue.prune_settled_in_txn(txn, record.id)?;
         Ok(())
     }
 
@@ -524,7 +573,7 @@ impl TaggingReconciler {
         record: &AttemptRecord,
         prior_retries: u32,
         failure: TaggingFailure,
-        mut trace: TaggingTrace,
+        trace: TaggingTrace,
     ) -> Result<TaggingTrace> {
         let reason = match failure {
             TaggingFailure::Call { .. } => "call_failed",
@@ -532,19 +581,31 @@ impl TaggingReconciler {
             TaggingFailure::Panicked => "tagger_panicked",
         };
         let delay = self.backoff.delay_secs(prior_retries);
-        let retry_at = self.retry_at(record, delay, reason)?;
-        trace.outcome = TaggingOutcome::Failed { failure, retry_at };
-        Ok(trace)
+        self.retry_traced(record, delay, reason, trace, |retry_at| {
+            TaggingOutcome::Failed { failure, retry_at }
+        })
     }
 
-    fn retry_at(&self, record: &AttemptRecord, delay_secs: u64, reason: &str) -> Result<u64> {
+    /// Retries the marker `delay_secs` from now and records its trace, whose
+    /// outcome `outcome` names from the retry's time, in one transaction.
+    fn retry_traced(
+        &self,
+        record: &AttemptRecord,
+        delay_secs: u64,
+        reason: &str,
+        mut trace: TaggingTrace,
+        outcome: impl FnOnce(u64) -> TaggingOutcome,
+    ) -> Result<TaggingTrace> {
         self.vault.try_with_write_txn(|txn| {
-            let retry_at = self.stamp_in_txn(txn)?.saturating_add(delay_secs);
+            let stamp = self.stamp_in_txn(txn)?;
+            let retry_at = stamp.saturating_add(delay_secs);
             // A retry owed at once is ready at once, whatever the clock reads
             // at the next claim; a backoff counts from this stamp.
             let ready_at = if delay_secs == 0 { 0 } else { retry_at };
             self.retry_in_txn(txn, record, ready_at, reason)?;
-            Ok(retry_at)
+            trace.outcome = outcome(retry_at);
+            history::record_in_txn(&self.vault, txn, &trace, stamp)?;
+            Ok(trace)
         })
     }
 

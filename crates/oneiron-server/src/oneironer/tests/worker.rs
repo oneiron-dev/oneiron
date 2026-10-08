@@ -73,6 +73,16 @@ fn shadowed(server: &SyncServer) -> usize {
         .count()
 }
 
+/// The outcomes of the turn's recorded traces, oldest first.
+fn history(vault: &Vault, turn: &EntityId) -> Vec<TaggingOutcome> {
+    vault
+        .tagging_trace_history(turn)
+        .expect("trace history")
+        .into_iter()
+        .map(|record| record.trace.outcome)
+        .collect()
+}
+
 fn content_digests(vault: &Vault) -> Vec<(&'static str, [u8; 32])> {
     vault
         .database_digests()
@@ -93,9 +103,10 @@ fn job_digests(vault: &Vault) -> Vec<(&'static str, [u8; 32])> {
 
 /// Shadow mode, acceptance line 1: after the same writes, a vault whose
 /// worker tagged every turn through the stub holds the same bytes in every
-/// content database as a vault with no tagger. The three job tables are left
-/// out by name (`job_records`, `job_ready`, `job_dedupe`): they hold the
-/// markers, which is the one thing the tagger run is meant to add.
+/// content database as a vault with no tagger. The job state is left out by
+/// name (`job_records`, `job_ready`, `job_dedupe`, and `vault_meta`'s job
+/// rows as `job_meta`): it holds the markers and their trace history, the
+/// one thing the tagger run is meant to add.
 #[test]
 fn shadow_tagging_leaves_every_content_database_as_a_run_with_no_tagger() {
     let stub = StubTagger::start(Answer::Good);
@@ -120,21 +131,23 @@ fn shadow_tagging_leaves_every_content_database_as_a_run_with_no_tagger() {
         content_digests(&plain_vault)
     );
     let running = Running::start(&tagged);
+    let mut turns = Vec::new();
     for text in TEXTS {
-        witness(&tagged_vault, text);
+        turns.push(witness(&tagged_vault, text));
         witness(&plain_vault, text);
     }
     assert!(wait_until(|| shadowed(&tagged) == TEXTS.len()));
     running.stop();
 
     assert_eq!(stub.extracts().len(), TEXTS.len());
-    let settled = markers(&tagged_vault);
-    assert_eq!(settled.len(), TEXTS.len());
-    assert!(
-        settled
-            .iter()
-            .all(|row| row.state == AttemptState::Completed)
-    );
+    // Every turn settled once; its marker left the job ledger, its trace
+    // stayed.
+    assert!(markers(&tagged_vault).is_empty());
+    for turn in &turns {
+        let outcomes = history(&tagged_vault, turn);
+        assert_eq!(outcomes.len(), 1);
+        assert!(matches!(outcomes[0], TaggingOutcome::Shadowed { .. }));
+    }
     assert!(markers(&plain_vault).is_empty());
     let tagged_content = content_digests(&tagged_vault);
     assert_eq!(
@@ -143,7 +156,7 @@ fn shadow_tagging_leaves_every_content_database_as_a_run_with_no_tagger() {
         "every content database is compared"
     );
     assert_eq!(tagged_content, content_digests(&plain_vault));
-    // The exclusion is real: the job tables do differ.
+    // The exclusion is real: the job state does differ.
     assert_ne!(job_digests(&tagged_vault), job_digests(&plain_vault));
 }
 
@@ -205,20 +218,19 @@ fn a_failing_slow_or_wrong_tagger_never_fails_the_write_and_is_retried() {
         .collect();
     let traced: BTreeSet<String> = traces.iter().map(|trace| trace.attempt.clone()).collect();
     assert_eq!(traced.len(), traces.len(), "one trace per attempt");
-    let rows = markers(&vault);
-    let settled: BTreeSet<String> = rows
-        .iter()
-        .filter(|row| row.state.is_terminal())
-        .map(|row| hex(row.id.as_bytes()))
+    // The settled marker left the job ledger with every try it retried; the
+    // turn's newest traces stayed, the ones the worker logged.
+    assert!(markers(&vault).is_empty());
+    let recorded: Vec<_> = vault
+        .tagging_trace_history(&turn)
+        .expect("trace history")
+        .into_iter()
+        .map(|record| record.trace)
         .collect();
-    assert_eq!(traced, settled, "every settled try has its trace");
-    assert_eq!(
-        rows.iter()
-            .filter(|row| row.state == AttemptState::Completed)
-            .count(),
-        1
-    );
-    assert!(rows.iter().all(|row| row.state.is_terminal()));
+    let kept = traces
+        .len()
+        .min(oneiron::tagging::DEFAULT_TRACES_PER_TURN as usize);
+    assert_eq!(recorded, traces[traces.len() - kept..].to_vec());
     assert!(traces.iter().all(|trace| trace.turn == Some(turn)));
     assert!(traces.len() >= 4);
 }
@@ -290,11 +302,7 @@ fn a_restarted_server_resumes_the_markers_of_a_crashed_one() {
     expected.sort_by_key(|turn| *turn.as_bytes());
     assert_eq!(tagged, expected, "each turn tagged once");
     assert_eq!(stub.extracts().len(), TEXTS.len());
-    assert!(
-        markers(&vault)
-            .iter()
-            .all(|row| row.state == AttemptState::Completed)
-    );
+    assert!(markers(&vault).is_empty());
 }
 
 /// A tagger that turns into another checkpoint after startup is caught by
@@ -378,7 +386,16 @@ fn a_tagger_swapped_mid_backlog_settles_no_answer_under_the_configured_checkpoin
             })
             .collect()
     };
-    let completed = turns_in(&|state| state == AttemptState::Completed);
+    // A settled marker has left the job ledger; its trace says so.
+    let completed: BTreeSet<EntityId> = backlog
+        .iter()
+        .filter(|turn| {
+            history(&vault, turn)
+                .iter()
+                .any(|outcome| matches!(outcome, TaggingOutcome::Shadowed { .. }))
+        })
+        .copied()
+        .collect();
     let pending =
         turns_in(&|state| matches!(state, AttemptState::Queued | AttemptState::Scheduled));
     assert_eq!(completed, answered_as_configured);
@@ -387,10 +404,6 @@ fn a_tagger_swapped_mid_backlog_settles_no_answer_under_the_configured_checkpoin
         backlog.difference(&completed).copied().collect(),
         "every turn the configured checkpoint did not answer still owes a pass"
     );
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn wait_until_long(mut done: impl FnMut() -> bool) -> bool {

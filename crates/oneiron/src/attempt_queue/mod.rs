@@ -80,3 +80,11 @@ pub(crate) use engine::dreamer_run_root_id_in_txn;
 #[cfg_attr(not(test), allow(unused_imports))]
 pub(crate) use types::ATTEMPT_RECORD_VERSION;
 pub(crate) use types::attempt_record_order;
+
+/// Whether rows of `kind` are job state whose owner settles, prunes and
+/// bounds them itself (the tagging marker: its settled tries leave the ledger
+/// for a bounded trace history). No content-side cleanup proposes such a row,
+/// and no scan of another kind counts it against its cap.
+pub(crate) fn owner_retained_kind(kind: &str) -> bool {
+    kind == crate::tagging::TAGGING_MARKER_KIND
+}

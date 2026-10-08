@@ -23,6 +23,32 @@ const RETRY_ID_DOMAIN: &[u8] = b"oneiron.tagging.retry.v1\0";
 /// has one successor, so only a chance collision needs another.
 const MAX_RETRY_GENERATIONS: u32 = 16;
 
+/// Traces kept per turn by default: the turn's latest few attempts.
+pub const DEFAULT_TRACES_PER_TURN: u32 = 4;
+/// The most traces a turn may keep.
+pub const MAX_TRACES_PER_TURN: u32 = 1_024;
+/// How long a trace is kept by default, in store-clock seconds: seven days.
+pub const DEFAULT_TRACE_MAX_AGE_SECS: u64 = 7 * 86_400;
+
+/// How much tagging history a vault keeps. A settled marker leaves the job
+/// ledger with every try it retried; what stays is its traces, bounded here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaggingTraceHistory {
+    /// Traces kept per turn, the newest; 0 keeps none.
+    pub per_turn: u32,
+    /// Store-clock seconds a trace is kept; an older one is pruned.
+    pub max_age_secs: u64,
+}
+
+impl Default for TaggingTraceHistory {
+    fn default() -> Self {
+        Self {
+            per_turn: DEFAULT_TRACES_PER_TURN,
+            max_age_secs: DEFAULT_TRACE_MAX_AGE_SECS,
+        }
+    }
+}
+
 /// Arms the tagging marker on a vault ([`crate::VaultConfig::tagging`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaggingMarkerConfig {
@@ -30,27 +56,41 @@ pub struct TaggingMarkerConfig {
     /// digits of the SHA-256 of its weights. Half of every marker's dedupe
     /// key, so a new checkpoint owes every turn a new pass.
     pub checkpoint: String,
+    /// The traces kept once their markers leave the job ledger.
+    pub trace_history: TaggingTraceHistory,
 }
 
 impl TaggingMarkerConfig {
-    /// A validated marker configuration.
+    /// A validated marker configuration, with the default trace history.
     pub fn new(checkpoint: impl Into<String>) -> Result<Self> {
         let config = Self {
             checkpoint: checkpoint.into(),
+            trace_history: TaggingTraceHistory::default(),
         };
         config.validate()?;
         Ok(config)
     }
 
-    /// Refuses a checkpoint that is not 16 lowercase hex digits.
+    #[must_use]
+    pub fn with_trace_history(mut self, history: TaggingTraceHistory) -> Self {
+        self.trace_history = history;
+        self
+    }
+
+    /// Refuses a checkpoint that is not 16 lowercase hex digits, and a trace
+    /// history past its bounds or with no age.
     pub fn validate(&self) -> Result<()> {
-        if is_checkpoint(&self.checkpoint) {
-            Ok(())
-        } else {
-            Err(Error::InvalidConfig(
-                "tagging checkpoint must be 16 lowercase hex digits".to_owned(),
-            ))
+        let invalid = |reason: &str| Err(Error::InvalidConfig(reason.to_owned()));
+        if !is_checkpoint(&self.checkpoint) {
+            return invalid("tagging checkpoint must be 16 lowercase hex digits");
         }
+        if self.trace_history.per_turn > MAX_TRACES_PER_TURN {
+            return invalid("tagging trace history keeps at most 1024 traces per turn");
+        }
+        if self.trace_history.max_age_secs == 0 {
+            return invalid("tagging trace history max age must be greater than zero");
+        }
+        Ok(())
     }
 }
 

@@ -15,19 +15,30 @@ impl Vault {
     /// the wall-clock and random-peer stamps of entity-revision rows in
     /// `vault_meta`, and the wall-clock queue time of embed jobs in
     /// `sync_queue`.
+    ///
+    /// `vault_meta`'s rows under `job:` are job state beside the job tables
+    /// (the attempt run index, the tagging trace history), not content: its
+    /// digest leaves them out, and one more digest after the manifest's,
+    /// named `job_meta`, covers them.
     pub fn database_digests(&self) -> Result<Vec<(&'static str, [u8; 32])>> {
         let store = &self.store;
         let txn = store.env.read_txn()?;
         let mut digests: Vec<(&'static str, [u8; 32])> = Vec::new();
+        let mut job_meta: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
         macro_rules! digest {
             ($($name:literal => $field:ident),* $(,)?) => {$(
                 let mut rows: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
                 for row in store.$field.iter(&txn)? {
                     let (key, value) = row?;
-                    rows.push((
+                    let row = (
                         AsRef::<[u8]>::as_ref(&*key).to_vec(),
                         AsRef::<[u8]>::as_ref(&*value).to_vec(),
-                    ));
+                    );
+                    if $name == "vault_meta" && row.0.starts_with(JOB_META_PREFIX) {
+                        job_meta.push(row);
+                    } else {
+                        rows.push(row);
+                    }
                 }
                 digests.push(($name, digest_rows($name, rows)?));
             )*};
@@ -77,9 +88,14 @@ impl Vault {
                 "database digests name a database outside the manifest",
             ));
         }
+        ordered.push(("job_meta", digest_rows("job_meta", job_meta)?));
         Ok(ordered)
     }
 }
+
+/// The `vault_meta` family that holds job state: rows that index or outlive
+/// the job tables' rows and are never content.
+pub(crate) const JOB_META_PREFIX: &[u8] = b"job:";
 
 fn digest_rows(name: &str, mut rows: Vec<(Vec<u8>, Vec<u8>)>) -> Result<[u8; 32]> {
     match name {

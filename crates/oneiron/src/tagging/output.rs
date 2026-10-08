@@ -1,6 +1,6 @@
 //! What a tagger's answer must satisfy before a marker settles on it.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::affect::Vad;
 use crate::memory::extraction::{EncoderInput, EncoderOutput};
@@ -10,7 +10,7 @@ const MAX_LABEL_BYTES: usize = 64;
 
 /// Why an answer was refused. Each code names the rule it broke and carries
 /// none of the answer or the turn.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OutputRefusal {
     /// More than 4,096 spans or links.

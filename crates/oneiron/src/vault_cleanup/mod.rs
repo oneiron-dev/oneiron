@@ -161,4 +161,6 @@ use uuid::Uuid;
 mod retention_tests;
 
 mod attempt_retention;
-pub(crate) use attempt_retention::{attempt_is_archived, restore_task_attempts};
+pub(crate) use attempt_retention::{
+    attempt_is_archived, forget_archived_attempt_in_txn, restore_task_attempts,
+};
