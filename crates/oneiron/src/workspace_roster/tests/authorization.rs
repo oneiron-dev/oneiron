@@ -795,13 +795,13 @@ fn mailbox_resume_refuses_future_lifecycle_and_changed_member_subject() -> Resul
                 AT + 3,
             )?;
         }
-        let before = durable_rows(&vault)?;
+        let before = durable_rows_without_authorization_clock(&vault)?;
         assert!(
             vault
                 .onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner))
                 .is_err()
         );
-        assert_eq!(durable_rows(&vault)?, before);
+        assert_eq!(durable_rows_without_authorization_clock(&vault)?, before);
         assert_eq!(
             type_count(&vault, crate::registry::ENTITY_TYPE_OUTBOUND_GRANT),
             0

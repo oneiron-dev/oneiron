@@ -17,6 +17,10 @@ import pytest
 from oneiron import Oneiron, OneironError
 
 
+SCOPE = {
+    "entity_types": None, "max_sensitivity_band": 3, "include_stale": False,
+    "min_confidence": 0.0, "min_salience": 0.0, "deny_all": False,
+}
 SUCCESS = {
     "witness": {
         "turn_short_id": "turn-probe",
@@ -45,6 +49,15 @@ SUCCESS = {
         },
         "pack_version": 1,
         "rendered": None,
+        # Every recall reply carries its read receipt (`MemoryPack.narrowing`).
+        "narrowing": {
+            "requested": SCOPE,
+            "actor_ceiling": SCOPE,
+            "applied": SCOPE,
+            "narrowed_axes": [],
+            "suppressed_count": 0,
+            "replan_hint": [],
+        },
     },
     "receipts": [],
 }

@@ -6,6 +6,7 @@ mod embedder_shape;
 mod embedder_space;
 mod lookup;
 pub mod merge;
+pub mod oneironer;
 pub mod remote_embedder;
 pub mod serve_args;
 pub mod server_config;
@@ -18,6 +19,9 @@ pub use embedder::{
 pub use embedder_shape::{EmbedderAttention, EmbedderOutputQuantization};
 pub use merge::{
     EnvConfig, default_config_path, resolve_serve_config, resolve_serve_config_with_sources,
+};
+pub use oneironer::{
+    OneironerArgs, OneironerConfig, OneironerConfigOverride, OneironerMode, OneironerProvider,
 };
 pub use serve_args::ServeArgs;
 pub use server_config::{ServeConfig, SyncServerConfig};
@@ -32,10 +36,4 @@ mod process_env_tests;
 mod tests;
 
 #[cfg(test)]
-use crate::runtime::{RuntimeMode, RuntimeProviderKind, RuntimeRole};
-#[cfg(test)]
-use crate::usage::UsageMode;
-#[cfg(test)]
-use oneiron::{HostingPrivacyPosture, VaultDataKeyCustody, VaultPrivacyConfig};
-#[cfg(test)]
-use std::path::PathBuf;
+use oneiron::{HostingPrivacyPosture, VaultDataKeyCustody};

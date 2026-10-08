@@ -6,8 +6,6 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use loro::LoroDoc;
 use oneiron::DreamerAttemptProgressProducer;
 use oneiron::SyncEngineContext;
-#[cfg(test)]
-use oneiron::sync::WindowKey;
 use oneiron::sync::bridge::{LiveQueryTee, Materializer};
 use oneiron::sync::lease::ROOT_LEASES_MAP;
 use oneiron::sync::schema::{
@@ -21,6 +19,7 @@ use crate::api::DeepRetrievalHost;
 use crate::config::SyncServerConfig;
 use crate::embedder::EmbedderSlot;
 use crate::mcp::{McpConnectorActorRegistry, McpCredentialHashKey};
+use crate::oneironer::TaggerSlot;
 use crate::usage::UsageLedger;
 
 use super::lifecycle::{LifecycleJobKey, NEXT_LIFECYCLE_SESSION_ID};
@@ -106,6 +105,9 @@ pub struct SyncServer {
     /// construction, the same way the deep-retrieval host is: `Self::new` pins
     /// no model and downloads nothing.
     pub(crate) embedder: Option<EmbedderSlot>,
+    /// The `[oneironer]` tagger slot, `None` when no tagger is configured.
+    /// Attached by the serve path after construction, like the embedder.
+    pub(crate) tagger: Option<TaggerSlot>,
     pub(crate) llm: Option<(Arc<dyn oneiron::LlmBackend>, oneiron::BudgetGuard)>,
     /// Host-injected, request-by-request egress decision for nonlocal extraction.
     pub(crate) extraction_egress: Option<Arc<dyn oneiron::llm::ExtractionEgressPredicate>>,
@@ -250,6 +252,7 @@ impl SyncServer {
             self_brief_sessions: Mutex::new(BTreeMap::new()),
             deep_retrieval: None,
             embedder: None,
+            tagger: None,
             llm: None,
             extraction_egress: None,
             owner_host: None,
@@ -361,6 +364,13 @@ impl SyncServer {
         self
     }
 
+    /// Attaches the tagger slot resolved from configuration. Its worker
+    /// drains the tagging markers every witnessed turn commits.
+    pub(crate) fn with_tagger(mut self, tagger: Option<TaggerSlot>) -> Self {
+        self.tagger = tagger;
+        self
+    }
+
     pub(crate) fn with_owner_host(mut self, host: crate::owner::schedule::OwnerHost) -> Self {
         self.owner_host = Some(Arc::new(host));
         self
@@ -384,12 +394,6 @@ impl SyncServer {
                 Some(if next == 0 { 1 } else { next })
             })
             .expect("fetch_update closure always returns Some")
-    }
-
-    /// Returns the window key (YYYY-MM) for a Unix timestamp.
-    #[cfg(test)]
-    pub(crate) fn window_key_for_timestamp(ts: u64) -> String {
-        WindowKey::from_timestamp(ts).as_str().to_string()
     }
 }
 

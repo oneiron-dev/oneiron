@@ -53,6 +53,35 @@ impl AttemptQueue<'_> {
         mut input: RetryAttempt,
     ) -> Result<RetryOutcome> {
         input.now = crate::ports::recorded_at_in_txn(self.store, wtxn)?;
+        let outcome = self.retry_storage_in_txn(wtxn, input, None)?;
+        // The minted successor's id joins the persisted id floor.
+        crate::ports::recorded_at_in_txn(self.store, wtxn)?;
+        Ok(outcome)
+    }
+
+    /// [`Self::retry_in_txn`] under a successor id the caller derived from the
+    /// work's own identity, stamped at the caller's `input.now`.
+    ///
+    /// It draws nothing from the vault's id source and persists no clock
+    /// floor, so the retry writes nothing outside the job tables and a write
+    /// after it allocates exactly the entity ids it would allocate without
+    /// it. The source's lease is fenced and every index moves as for a minted
+    /// successor; a taken id is refused as a collision, never overwritten.
+    pub(crate) fn retry_with_id_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: RetryAttempt,
+        id: AttemptId,
+    ) -> Result<RetryOutcome> {
+        self.retry_storage_in_txn(wtxn, input, Some(id))
+    }
+
+    fn retry_storage_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: RetryAttempt,
+        id: Option<AttemptId>,
+    ) -> Result<RetryOutcome> {
         let Some(raw_record) = self.store.attempt_records.get(wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition("retry", "missing"));
         };
@@ -65,7 +94,10 @@ impl AttemptQueue<'_> {
         validate_optional_failure_reason(input.last_error.as_deref())?;
 
         let next = AttemptRecord {
-            id: AttemptId::from_bytes(&self.store.clock.ulid()?)?,
+            id: match id {
+                Some(id) => id,
+                None => AttemptId::from_bytes(&self.store.clock.ulid()?)?,
+            },
             kind: source.kind.clone(),
             payload: source.payload.clone(),
             state: AttemptState::Scheduled,
@@ -74,6 +106,7 @@ impl AttemptQueue<'_> {
             claimed_at: None,
             scheduled_at: Some(input.backoff_until),
             retry_of: Some(source.id),
+            folded_retries: 0,
             backoff_until: None,
             last_error: None,
             task_ref: source.task_ref.clone(),
@@ -132,6 +165,7 @@ impl AttemptQueue<'_> {
         );
         source.updated_at = input.now;
 
+        crate::attempt_queue::check_owner_retained_range(&next.kind, &next.id)?;
         if self
             .store
             .attempt_records
@@ -140,7 +174,6 @@ impl AttemptQueue<'_> {
         {
             return Err(Error::InvariantViolation("attempt id collision"));
         }
-        crate::ports::recorded_at_in_txn(self.store, wtxn)?;
         let encoded_source = encode_record(&source)?;
         self.store
             .attempt_records

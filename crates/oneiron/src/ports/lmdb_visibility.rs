@@ -72,6 +72,22 @@ impl<T: ManifestDbs> TombstoneStoreRead for T {
                 stale,
             });
         }
+        // A bodyless row this vault soft-erased is deleted. Applying a peer's
+        // tombstone writes no `pt:` marker, and the window holding it may have
+        // no `d:w:` snapshot yet, so the applied-soft-delete marker answers.
+        if raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN
+            && crate::deletion::IDENTITY_SOFT_DELETE_MARKER.contains(
+                self,
+                txn,
+                &crate::side_table::HexId(*id),
+            )?
+        {
+            return Ok(DeletionState {
+                archived,
+                deleted: true,
+                stale,
+            });
+        }
         #[cfg(feature = "sync")]
         let deleted = {
             use crate::sync::loro_support::{
