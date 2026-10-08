@@ -244,6 +244,7 @@ fn authority_moved(
     let mut image_verdicts = Vec::new();
     let mut image_bytes = BTreeSet::new();
     let mut image_members: BTreeSet<&[u8]> = BTreeSet::new();
+    let mut image_contacts = PartyContacts::new();
     let mut image_observations: BTreeMap<&[u8], Observation> = BTreeMap::new();
     for (key, value) in image {
         let (
@@ -264,6 +265,15 @@ fn authority_moved(
         }
         if authority.enrolls() {
             image_members.insert(key.as_slice());
+        }
+        if let Compared::Contact {
+            party, first_touch, ..
+        } = &authority
+        {
+            image_contacts
+                .entry(party.clone())
+                .or_default()
+                .insert(key.as_slice(), *first_touch);
         }
         // A claim compared in aggregate still has its read scope compared as
         // any claim's is, whatever the live body under its id became.
@@ -320,6 +330,23 @@ fn authority_moved(
             moved.insert(current.family().unwrap_or(*what));
         }
     }
+    let mut live_contacts = PartyContacts::new();
+    for (key, (_, _, current)) in live {
+        if let Compared::Contact {
+            party, first_touch, ..
+        } = current
+        {
+            live_contacts
+                .entry(party.clone())
+                .or_default()
+                .insert(key.as_slice(), *first_touch);
+        }
+    }
+    if first_touch_shadowed(&image_contacts, &live_contacts)
+        || first_touch_shadowed(&live_contacts, &image_contacts)
+    {
+        moved.insert(CONTACTS_FAMILY);
+    }
     let live_verdicts = live.values().filter_map(|(_, _, current)| match current {
         Compared::ScanVerdict { verdict, .. } => Some(verdict.clone()),
         _ => None,
@@ -370,6 +397,37 @@ fn authority_moved(
         moved.insert("recipient jurisdictions");
     }
     moved
+}
+
+/// The refusal name of counterparty contacts.
+const CONTACTS_FAMILY: &str = "counterparty contacts and their consents";
+
+/// Each party's contacts, by id, with how each was first met.
+type PartyContacts<'a> = BTreeMap<String, BTreeMap<&'a [u8], CounterpartyFirstTouch>>;
+
+/// Whether a contact of a party that `one` vault holds and the `other` does
+/// not would change the first touch the send gate takes for that party. The
+/// gate reads a party's contacts in id order and takes the first one's first
+/// touch, which decides whether a native-mail send is to a known recipient or
+/// held as cold. So a contact only one side holds, with a lower id than a
+/// contact of the same party on the other side and a different first touch,
+/// moves that answer. A contact of a party the other side has none of only
+/// leaves the gate asking (`presence_is_authority` covers the restrictive
+/// ones), and one with a higher id is never read first.
+fn first_touch_shadowed(one: &PartyContacts<'_>, other: &PartyContacts<'_>) -> bool {
+    one.iter().any(|(party, contacts)| {
+        other.get(party).is_some_and(|others| {
+            contacts.iter().any(|(id, touch)| {
+                !others.contains_key(id)
+                    && others
+                        .range::<[u8], _>((
+                            std::ops::Bound::Excluded(*id),
+                            std::ops::Bound::Unbounded,
+                        ))
+                        .any(|(_, other_touch)| other_touch != touch)
+            })
+        })
+    })
 }
 
 /// What one `comm.jurisdiction` claim tells the campaign gate.

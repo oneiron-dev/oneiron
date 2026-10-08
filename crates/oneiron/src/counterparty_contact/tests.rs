@@ -766,3 +766,44 @@ fn a_restore_never_drops_the_hold_of_a_public_first_touch() -> Result<()> {
     assert_contact_restore_refused(&vault, &before_public, &backups.path().join("after-public"));
     Ok(())
 }
+
+/// ASTRA-9A-2-R3 F8: the send gate reads a party's contacts in id order and
+/// takes the first one's first touch, which decides whether a native-mail
+/// send is to a known recipient or held as cold. A contact made since the
+/// backup that the gate reads first, with another first touch, refuses the
+/// restore; one it reads after does not.
+#[test]
+fn a_restore_never_drops_a_contact_the_send_gate_reads_first() -> Result<()> {
+    let (_tmp, vault) = open_vault();
+    let (desk, inbox, studio) = (entity(0x8A), entity(0x8B), entity(0x8C));
+    put_identity(&vault, desk, "email", "desk@example.com")?;
+    put_identity(&vault, inbox, "email", "inbox@example.com")?;
+    put_identity(&vault, studio, "email", "studio@example.com")?;
+    vault.create_counterparty_contact(
+        &entity(0x91),
+        &CounterpartyContactRecord::user_introduction(desk, "sora@example.com", 10)?,
+    )?;
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100)?;
+
+    vault.create_counterparty_contact(
+        &entity(0x95),
+        &CounterpartyContactRecord::inbound_first(studio, "sora@example.com", 20)?,
+    )?;
+    Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &backups.path().join("read-after"),
+        vault.config.clone(),
+        &vault,
+        200,
+    )
+    .map(drop)?;
+
+    vault.create_counterparty_contact(
+        &entity(0x90),
+        &CounterpartyContactRecord::inbound_first(inbox, "sora@example.com", 30)?,
+    )?;
+    assert_contact_restore_refused(&vault, &image, &backups.path().join("read-first"));
+    Ok(())
+}

@@ -89,7 +89,8 @@ pub(super) enum Projection {
     /// was first met (a public first touch holds a send for the owner),
     /// whether it is live, and the party's opt-out and promotional consent.
     /// One only one vault holds counts as changed when it is revoked, opted
-    /// out or first met in public.
+    /// out or first met in public, or when the send gate would read it before
+    /// another contact of the same party with a different first touch.
     Contact,
     /// A NOTE's kind, which decides who reads it, and its author. A body
     /// that does not decode is content.
