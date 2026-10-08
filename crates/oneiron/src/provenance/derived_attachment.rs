@@ -8,22 +8,26 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimSource, claim_evidence_admissible, claim_evidence_taint, decode_claim_body,
 };
-use crate::dreamer_consolidation::decode_verified_locators;
-use crate::dreamer_consolidation::resources::{cited_evidence_bytes, native_turn_source};
+use crate::dreamer_consolidation::resources::native_turn_source;
 use crate::dreamer_consolidation::{
-    decode_consolidation_evidence, source_meet, swarm_evidence_content_hash,
+    cited_evidence_bytes, decode_consolidation_evidence, decode_verified_locators,
+    live_turn_text_in, source_meet, swarm_evidence_content_hash,
 };
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
+use crate::write_envelope::WriteActor;
 use rmpv::Value;
 use std::collections::BTreeSet;
 
+/// `reader` is the provenance writer: a TURN range is re-sliced from the turn
+/// text it can read in this transaction, the same projection it cited.
 pub(super) fn verify(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     subject: &EdgeRef,
     evidence: &Value,
+    reader: WriteActor,
 ) -> Result<ClaimSource> {
     let decoded = decode_consolidation_evidence(evidence)?.ok_or(Error::InvalidClaimBody(
         "derived edge requires typed evidence",
@@ -74,6 +78,15 @@ pub(super) fn verify(
         }
     };
     let locators = decode_verified_locators(evidence)?;
+    let text = if source_header.entity_type == ENTITY_TYPE_TURN
+        && locators
+            .iter()
+            .any(|(locator, _)| locator.byte_range.is_some())
+    {
+        live_turn_text_in(vault, txn, reader, &subject.source, source_body)?
+    } else {
+        None
+    };
     let mut unique = BTreeSet::new();
     for (locator, reported_hash) in locators {
         if locator.source_id != subject.source || !unique.insert((locator.source_id, reported_hash))
@@ -93,7 +106,7 @@ pub(super) fn verify(
                 "derived support turn locator mismatch",
             ));
         }
-        let bytes = cited_evidence_bytes(locator, source_body)?;
+        let bytes = cited_evidence_bytes(locator, source_body, text.as_deref())?;
         if swarm_evidence_content_hash(&bytes) != reported_hash {
             return Err(Error::InvalidClaimBody(
                 "derived support locator hash mismatch",

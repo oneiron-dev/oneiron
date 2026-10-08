@@ -8,7 +8,7 @@ use super::support::{
     KEY_SCHEMA_VERSION, KEY_SUBJECT, decode_value, encode_value, expect_key, expect_map,
     invalid_consolidation,
 };
-use super::watermark::{WorkingSetTurn, entity_ref_from_value, read_turn_facts};
+use super::watermark::{WorkingSetTurn, entity_ref_from_value};
 use crate::Vault;
 use crate::dreamer_runner::DreamerTurnRole;
 use crate::entity_id::EntityId;
@@ -184,8 +184,7 @@ pub fn scan_reflection_gaps(
             if turn.role != DreamerTurnRole::User {
                 continue;
             }
-            let text = read_turn_facts(vault, &turn.turn_id)?
-                .text
+            let text = super::turn_text::read_turn_text(vault, &turn.turn_id)?
                 .unwrap_or_default()
                 .to_ascii_lowercase();
             let answered = turns[position + 1..]

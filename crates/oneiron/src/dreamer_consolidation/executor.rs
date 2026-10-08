@@ -199,12 +199,9 @@ impl ConsolidationExecutor<'_> {
                 &turn_ids,
                 resources.scope(),
                 ctx.now_ms,
-                resources
-                    .fallback_binding()
-                    .map(|binding| (binding, self.actor.entity_ref())),
                 Some(ctx.deadline),
+                Some(&resources.write_fence()),
             )
-            .map(|_| ())
         } else {
             Ok(())
         };

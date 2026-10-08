@@ -4,7 +4,7 @@
 //! admissible turns in this extraction's working set may mint a new row. The
 //! mint door stamps Generated provenance and refuses existing/deleted ids.
 
-use super::resources::FallbackOutputPin;
+use super::resources::ConsolidationFence;
 use super::support::invalid_consolidation;
 use super::watermark::read_turn_facts_in_txn;
 use crate::Vault;
@@ -55,8 +55,8 @@ pub(super) fn mint_extracted_people(
     working_set: &[EntityId],
     scope: &crate::llm::Scope,
     now: u64,
-    fallback_binding: Option<(FallbackOutputPin, EntityId)>,
     deadline: Option<&WakePassDeadline>,
+    fence: Option<&ConsolidationFence>,
 ) -> Result<()> {
     let text: String = response
         .message
@@ -80,7 +80,7 @@ pub(super) fn mint_extracted_people(
                 "wake pass expired before person mint",
             ));
         }
-        if let Some((binding, actor)) = fallback_binding {
+        if let Some((binding, actor)) = fence.and_then(ConsolidationFence::fallback) {
             let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
             if !crate::llm::verified_step_consolidation_eligible_in_txn(
                 vault,
@@ -96,6 +96,13 @@ pub(super) fn mint_extracted_people(
                     "extraction fallback eligibility revoked",
                 ));
             }
+        }
+        // A branch's names are checked against the text its model saw, so
+        // the whole branch fence must still hold before the first mint.
+        if let Some(fence) = fence
+            && !people.is_empty()
+        {
+            fence.validate_in_txn(vault, txn)?;
         }
         for person in people {
             let Some(id) = person
@@ -166,8 +173,11 @@ pub(super) fn mint_extracted_people(
                     admissible = false;
                     break;
                 }
-                mentioned |= facts
-                    .text
+                let text = match fence {
+                    Some(fence) => fence.turn_text(&turn)?.map(str::to_owned),
+                    None => facts.text,
+                };
+                mentioned |= text
                     .as_deref()
                     .is_some_and(|text| has_name_span(text, &normalized_name));
             }

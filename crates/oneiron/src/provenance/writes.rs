@@ -463,7 +463,8 @@ impl Vault {
             imported::stamp_imported_source(&mut claim_body, evidence);
         }
         if let Some(evidence) = generated_evidence {
-            let source = super::derived_attachment::verify(self, wtxn, subject, &evidence)?;
+            let reader = crate::WriteActor::new(record.actor_entity_ref, actor_class);
+            let source = super::derived_attachment::verify(self, wtxn, subject, &evidence, reader)?;
             claim_body.source = Some(source);
             claim_body.scope = Some(Value::Map(vec![
                 (

@@ -7,6 +7,7 @@ use crate::claim::{ScopedReadActorKey, ScopedReadReceipt};
 use crate::dreamer_consolidation::PromotionCandidate;
 use crate::dreamer_consolidation::evidence::{VerifiedCandidate, VerifiedEvidenceSet};
 use crate::dreamer_consolidation::support::invalid_consolidation;
+use crate::dreamer_consolidation::turn_text::TurnText;
 use crate::llm::Scope;
 use crate::{EntityId, Result, Vault, WriteActor};
 use std::collections::{BTreeMap, BTreeSet};
@@ -39,6 +40,7 @@ pub(crate) struct ConsolidationFence {
     fallback_binding: Option<FallbackOutputPin>,
     sources: BTreeMap<EntityId, SourcePin>,
     turns: BTreeSet<EntityId>,
+    texts: BTreeMap<EntityId, TurnText>,
     conversation: EntityId,
     rules: crate::dreamer_consolidation::routing::PredicateKeyRules,
 }
@@ -113,6 +115,7 @@ impl BranchResources<'_> {
             fallback_binding: self.fallback_binding(),
             sources: self.sources.clone(),
             turns: self.turns.clone(),
+            texts: self.texts.clone(),
             conversation: self.partition.conversation_ref,
             rules: self.rules.clone(),
         }
@@ -195,7 +198,28 @@ impl ConsolidationFence {
                 return Err(invalid_consolidation("pinned source partition changed"));
             }
         }
+        // A witnessed TURN's text is its MESSAGE children: the exact child
+        // set, bindings, versions and frontiers must still match the pin.
+        for (turn, text) in &self.texts {
+            text.check_live_in(&read, txn, turn)?;
+        }
         Ok(())
+    }
+
+    /// The extraction fallback this branch consumed, with its Dreamer actor.
+    pub(in crate::dreamer_consolidation) fn fallback(
+        &self,
+    ) -> Option<(FallbackOutputPin, EntityId)> {
+        self.fallback_binding
+            .map(|binding| (binding, self.actor.entity_ref()))
+    }
+
+    /// The frozen text the model saw for one fenced turn.
+    pub(crate) fn turn_text(&self, turn: &EntityId) -> Result<Option<&str>> {
+        self.texts
+            .get(turn)
+            .map(TurnText::text)
+            .ok_or_else(|| invalid_consolidation("unfenced extraction turn"))
     }
 
     #[cfg(test)]

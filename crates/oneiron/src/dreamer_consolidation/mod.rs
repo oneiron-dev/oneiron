@@ -51,6 +51,7 @@ pub mod routing;
 pub mod selection;
 mod step_charge;
 mod support;
+mod turn_text;
 mod wake_plan;
 mod watermark;
 
@@ -68,6 +69,7 @@ pub(crate) use provenance::{
 };
 pub use resources::ScopedConsolidationWrite;
 pub use support::*;
+pub(crate) use turn_text::{cited_evidence_bytes, live_turn_text_in};
 pub(crate) use wake_plan::AttemptPreparation;
 pub use wake_plan::{PreparedConsolidationAttempt, PreparedWake};
 pub use watermark::*;
