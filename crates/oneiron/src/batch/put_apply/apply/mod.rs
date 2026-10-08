@@ -653,9 +653,15 @@ pub(in crate::batch) fn apply_put(
     if entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
         crate::channel_identity::maintain_assignment_put(store, wtxn, &id, data)?;
     }
-    if !replicated {
-        // A local put at a deleted id is a sanctioned recreation: the row it
-        // writes is live, so the erased row's fence goes in the same commit.
+    // A local put over an erased row is a sanctioned recreation: the row it
+    // writes is live, so the fence goes in the same commit. A row that still
+    // has its body is fenced by an accepted delete awaiting its retry, and a
+    // local edit does not withdraw that delete.
+    if !replicated
+        && crate::deletion::ROW_DELETION_FENCE.contains(store, wtxn, &HexId(id))?
+        && crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &id)?
+            .is_none_or(|old| old.len() == ENTITY_METADATA_HEADER_LEN)
+    {
         crate::deletion::ROW_DELETION_FENCE.delete(store, wtxn, &HexId(id))?;
     }
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
