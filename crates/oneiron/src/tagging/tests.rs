@@ -3000,7 +3000,9 @@ fn an_earlier_turn_past_the_message_bound_ends_the_window_and_the_turn_settles()
 
 /// A room whose turns carry DAG topology this replica has not adopted, a
 /// received Parent among them, is not ordered by time: its root reads alone,
-/// not a descendant that occurred before it.
+/// not a descendant that occurred before it. The descendant is no DAG record,
+/// so its Parent proves no more than time does, and a root that occurred
+/// after it is not in its window either.
 #[test]
 fn a_received_dag_root_reads_alone_before_the_room_adopts_the_dag() {
     let dir = tempfile::tempdir().expect("dir");
@@ -3030,10 +3032,11 @@ fn a_received_dag_root_reads_alone_before_the_room_adopts_the_dag() {
             .expect("earlier")
             .is_empty()
     );
-    assert_eq!(
-        super::input::earlier_turns_in_txn(&vault, &txn, &descendant, 256).expect("earlier"),
-        vec![root],
-        "the descendant reads its ancestry"
+    assert!(
+        super::input::earlier_turns_in_txn(&vault, &txn, &descendant, 256)
+            .expect("earlier")
+            .is_empty(),
+        "a legacy turn's ancestry keeps no turn of a later second"
     );
 }
 
