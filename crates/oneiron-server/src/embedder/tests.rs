@@ -1283,9 +1283,13 @@ fn recall_doors_embed_the_query_when_the_vault_has_an_embedder() {
     let dir = tempfile::tempdir().unwrap();
     let vault = test_vault(dir.path());
     let owner = vault.ensure_embedded_owner_actor().unwrap();
-    let slot = EmbedderSlot::from_config(&endpoint_config(&mock.base))
-        .unwrap()
-        .unwrap();
+    // Witnessed messages publish their vectors at idle; publish at once.
+    vault.set_indexed_idle_delay_ms(0).unwrap();
+    let config = EmbedderConfig {
+        idle_interval_ms: 20,
+        ..endpoint_config(&mock.base)
+    };
+    let slot = EmbedderSlot::from_config(&config).unwrap().unwrap();
     let server = Arc::new(
         crate::server::SyncServer::new(
             Arc::clone(&vault),
@@ -1339,13 +1343,6 @@ fn recall_doors_embed_the_query_when_the_vault_has_an_embedder() {
         )
         .await;
         let target = receipt["message_short_ids"][0].as_str().unwrap().to_owned();
-        let messages = vault
-            .entities_by_type(oneiron::registry::ENTITY_TYPE_MESSAGE)
-            .unwrap();
-        assert!(
-            wait_for_vectors(&vault, &messages).await,
-            "messages embedded"
-        );
 
         let first = |pack: &Value| -> (Value, String) {
             (
@@ -1356,8 +1353,16 @@ fn recall_doors_embed_the_query_when_the_vault_has_an_embedder() {
                     .to_owned(),
             )
         };
+        // Wait until the vectors are published and the HTTP door answers.
         let request = json!({"query": "car repair garage", "limit": 5});
-        let http = post("recall", request.clone()).await;
+        let mut http = Value::Null;
+        for _ in 0..600 {
+            http = post("recall", request.clone()).await;
+            if first(&http).1 == target {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
         assert_eq!(first(&http), (json!(false), target.clone()), "{http}");
 
         let auth = crate::test_credentials::authenticate(&server, &recipe);
