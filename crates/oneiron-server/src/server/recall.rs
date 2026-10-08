@@ -1,10 +1,12 @@
 //! The recall verb as every server transport runs it.
 //!
 //! One place builds recall's execution inputs, so the HTTP facade and the
-//! WebSocket read RPC return the same pack for the same request: above light
+//! WebSocket read RPC run the same recall for the same request: above light
 //! effort the query is embedded whenever the vault's embedder is serving, and
-//! the caller's `as_of` rides along. A vault with no embedder, or one still loading its
-//! model, recalls on its sparse signals and says so (`sparse: true`).
+//! the caller's `as_of` rides along. Each door brings its own read lane: WS
+//! reads under the slip the caller presented, HTTP as the bound principal.
+//! A vault with no embedder, or one still loading its model, recalls on its
+//! sparse signals and says so (`sparse: true`).
 
 use std::sync::Arc;
 

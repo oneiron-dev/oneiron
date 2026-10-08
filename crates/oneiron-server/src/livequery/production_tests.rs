@@ -352,6 +352,65 @@ async fn all_eight_production_rpc_reads_return_the_engine_dtos() {
     }
 }
 
+/// Wave 9: `oneiron token read` and `token pair --scope core:read` mint the
+/// read verb as the host spells it, `core:read`. The WebSocket door reads
+/// under the presented slip, and a `core:read` slip resolved a deny-all read
+/// floor, so its recall came back empty.
+#[tokio::test]
+async fn a_paired_core_read_slip_recalls_over_the_websocket() {
+    use ed25519_dalek::{Signer, SigningKey};
+
+    let (_dir, server) = server();
+    let said = witness(&server, "solar panel maintenance").message_short_ids[0].clone();
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+    let mut scope = oneiron::federation::Scope::top();
+    scope.verbs = oneiron::federation::ScopeAxis::Some(["core:read".to_owned()].into());
+    let link = server
+        .vault()
+        .issue_pairing_link_for_principal(
+            &issuer,
+            scope,
+            3_600,
+            oneiron::authority::PairingPrincipal {
+                holder_ref: Some(ACTOR.to_owned()),
+                actor_class: Some("human".to_owned()),
+                org_ref: None,
+            },
+        )
+        .unwrap();
+    let key = SigningKey::from_bytes(&[7; 32]);
+    let binding = key.verifying_key().to_bytes();
+    let transcript =
+        oneiron::authority::pairing_binding_transcript(&link.code, &binding, ACTOR).unwrap();
+    let slip = server
+        .vault()
+        .redeem_pairing_link(
+            &issuer,
+            &link.code,
+            ACTOR,
+            binding,
+            &key.sign(&transcript).to_bytes(),
+        )
+        .unwrap();
+    let request = crate::test_credentials::bind_slip_request(
+        &server,
+        &slip,
+        &key,
+        axum::http::Request::new(axum::body::Body::empty()),
+    );
+    let auth =
+        CoreAuth::from_headers(request.headers(), &server.config, server.vault().as_ref()).unwrap();
+
+    let pack = rpc(&server, &auth, "recall", json!({"query": "solar panel"}))["result"].clone();
+    let found: Vec<&str> = pack["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|item| item["short_id"].as_str())
+        .collect();
+    assert!(found.contains(&said.as_str()), "{said}: {pack}");
+}
+
 #[tokio::test]
 async fn http_recall_and_receipts_defaults_limits_and_error_order_are_preserved() {
     let (_dir, server) = server();
