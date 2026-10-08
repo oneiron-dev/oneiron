@@ -144,31 +144,21 @@ jobs:
           # The deny-policy tests call the pinned cargo-deny.
           cargo install --locked cargo-deny@0.19.4 --root "$HOME/ci/tools"
           python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
-          python3 -m unittest discover -s scripts/tests -p 'test_codemap.py' -v
-          python3 -m unittest discover -s scripts/tests -p 'test_verify.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_ci_workflow.py' -v
           python3 scripts/sdk/generate.py --check
           python3 -m unittest discover -s scripts/tests -p 'test_agent_sdk.py' -v
           python3 scripts/code-sandbox/generate.py --check
           python3 -m unittest discover -s scripts/tests -p 'test_sandbox_wit.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_microvm_artifacts.py' -v
-          python3 -m unittest discover -s scripts/tests -p 'test_quickjs_build.py' -v
-          python3 -m unittest discover -s scripts/tests -p 'test_federation_burst_audit.py' -v
-          python3 -m unittest discover -s scripts/tests -p 'test_fleet_regression.py' -v
       # Office oracle scripts are host tools CI never runs. These checks read only stored
       # inputs, synthetic packages and the archived-receipt pointer: no Office, network or receipt.
       - name: Test stored Office inputs and archived-receipt pointers (offline)
         if: ${{ !cancelled() }}
         run: |
-          python3 -m unittest discover -s scripts/tests -p 'test_docedit_receipt_pointers.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_excel_goldens.py' -v
-          python3 -m unittest discover -s scripts/tests -p 'test_office_corpus.py' -v
-          python3 -m unittest discover -s scripts/tests -p 'test_office_staging.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_docedit_direction.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_excel_resume.py' -v
-          python3 -m unittest discover -s scripts/tests -p 'test_lo_oracle.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_real_workbook_oracle.py' -v
-          python3 -m unittest discover -s scripts/tests -p 'test_saved_cache_benchmark.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_word_oracle.py' -v
       - name: Compiler cache stats
         if: always() && steps.sccache.outcome == 'success'

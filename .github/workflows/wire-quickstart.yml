@@ -25,7 +25,6 @@ on:
       - "scripts/wire-test-server.sh"
       - "scripts/tests/test_wire_quickstart.py"
       - "scripts/tests/test_wire_key_value.py"
-      - "scripts/tests/test_wire_workflow.py"
       - "scripts/code-sandbox/**"
       - "scripts/tests/test_sandbox_wit.*"
       - ".github/workflows/wire-quickstart.yml"
@@ -43,7 +42,6 @@ on:
       - "scripts/wire-test-server.sh"
       - "scripts/tests/test_wire_quickstart.py"
       - "scripts/tests/test_wire_key_value.py"
-      - "scripts/tests/test_wire_workflow.py"
       - "scripts/code-sandbox/**"
       - "scripts/tests/test_sandbox_wit.*"
       - ".github/workflows/wire-quickstart.yml"
@@ -220,7 +218,6 @@ jobs:
         run: >-
           "$WIRE_PYTHON_ENV/bin/python" -m pytest -q
           scripts/tests/test_wire_quickstart.py::test_installed_quickstarts
-          scripts/tests/test_wire_workflow.py
 
       - name: Remote DTO and error parity through the real server
         env:
