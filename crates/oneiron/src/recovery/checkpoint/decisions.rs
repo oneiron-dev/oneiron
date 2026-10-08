@@ -22,6 +22,7 @@ use crate::ports::EntityStoreRead;
 use crate::{EntityId, Error, Result, Vault};
 use std::collections::BTreeSet;
 
+mod artifacts;
 mod audience;
 mod campaign;
 mod consent;
@@ -154,6 +155,10 @@ const DECISIONS: &[(&str, Check)] = &[
     (
         "notification recipients",
         loosened::<notifications::NotificationRecipients>,
+    ),
+    (
+        "artifact taint admissions",
+        loosened::<artifacts::ArtifactTaints>,
     ),
 ];
 

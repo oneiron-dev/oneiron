@@ -5,6 +5,7 @@ use crate::{Result, Vault};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+mod artifacts;
 mod audience;
 mod campaign;
 mod consent;
@@ -88,6 +89,7 @@ const CASES: &[fn() -> Result<Case>] = &[
     consent::calendar_invitation_consent,
     worlds::world_selection_authority,
     notifications::notification_recipients,
+    artifacts::artifact_taint_admissions,
 ];
 
 #[test]
