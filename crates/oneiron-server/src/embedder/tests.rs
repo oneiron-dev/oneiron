@@ -1331,18 +1331,33 @@ fn recall_doors_embed_the_query_when_the_vault_has_an_embedder() {
                 serde_json::from_slice::<Value>(&bytes).unwrap()
             }
         };
+        // The target is the oldest claim. With no vector channel, recall
+        // falls back to recency and the newer decoys fill every slot.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         let mut claimed = Vec::new();
-        for (predicate, value) in [
-            (
-                "note.first",
-                "The mechanic says the automobile needs new brakes.",
-            ),
-            ("note.second", "Lunch with Anna moved to Thursday at noon."),
-        ] {
+        for (hour, value) in [
+            "The mechanic says the automobile needs new brakes.",
+            "The quarterly report is due on the fifth.",
+            "Remember to water the basil on the balcony.",
+            "The flight to Lisbon boards at gate twelve.",
+            "Our team retro covered flaky integration tests.",
+            "The library closes early on Sundays.",
+            "Pack the blue umbrella for the trip.",
+            "The piano tuner visits in spring.",
+            "Renew the passport before October.",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let at = now - 3_600 * (10 - hour as u64);
             let receipt = post(
                 "claim_upsert",
-                json!({"predicate": predicate, "subject_ref": owner.to_hex(),
-                    "value": value, "confidence": 0.9, "source": "user_stated"}),
+                json!({"predicate": format!("note.n{hour}"), "subject_ref": owner.to_hex(),
+                    "value": value, "confidence": 0.9, "source": "user_stated",
+                    "occurred_at": at, "learned_at": at}),
             )
             .await;
             claimed.push(receipt["claim_short_id"].as_str().unwrap().to_owned());
@@ -1358,7 +1373,7 @@ fn recall_doors_embed_the_query_when_the_vault_has_an_embedder() {
             )
         };
         // Wait until the claim vectors are filled and the HTTP door answers.
-        let request = json!({"query": "car repair garage", "limit": 5});
+        let request = json!({"query": "car repair garage", "limit": 3});
         let mut http = Value::Null;
         for _ in 0..600 {
             http = post("recall", request.clone()).await;
