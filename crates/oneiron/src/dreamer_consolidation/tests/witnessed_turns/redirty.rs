@@ -4,7 +4,8 @@
 //! TURN rows are append-only. A TURN changed again in the second it was
 //! learned is planned by a session end in that same second, and settling it
 //! strands no TURN learned after it. A consumed continuation hides no later
-//! re-put of its TURN.
+//! re-put of its TURN, comes back on an operator's full rescan, and settles
+//! through the public complete-second door.
 #![cfg(feature = "sync")]
 
 use super::*;
@@ -225,5 +226,31 @@ fn a_re_put_after_a_consumed_continuation_is_selected_again() -> Result<()> {
         &row[crate::batch::ENTITY_METADATA_HEADER_LEN..],
     )?;
     assert_eq!(dirty(&vault)?, vec![turn], "the re-put is new work");
+    Ok(())
+}
+
+/// An operator's full rescan reopens a TURN whose continuation a round
+/// already consumed, and the public complete-second settlement through the
+/// continuation's second consumes it again.
+#[test]
+fn a_consumed_continuation_comes_back_on_a_full_rescan_and_settles_by_second() -> Result<()> {
+    let (_dir, vault, _clock) = open_clocked_vault();
+    let (turn, _, _, input) = stream_turn(&vault, 0x99, "call me", "finalize")?;
+    let writer = EntityId::from_bytes([0x99; 16])?;
+    consume(&vault)?;
+    end_stream(&vault, writer, &input, " Oleksii", "finalize");
+    consume(&vault)?;
+    let scope = DreamerConsolidationScope::Micro;
+    crate::dreamer_prefilter::reopen_prefilter_rescan(&vault, scope, 0)?;
+    assert_eq!(
+        dirty(&vault)?,
+        vec![turn],
+        "a full rescan reopens every turn"
+    );
+    crate::dreamer_consolidation::advance_watermark(&vault, scope, 50)?;
+    assert!(
+        dirty(&vault)?.is_empty(),
+        "settling through its second consumes it"
+    );
     Ok(())
 }

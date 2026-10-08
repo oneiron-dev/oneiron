@@ -137,6 +137,43 @@ pub(super) fn consume_carriers_in_txn(
     Ok(())
 }
 
+/// The complete-second door: every carrier still pending for `scope` at or
+/// before `upper` is consumed, as that settlement completes the temporal
+/// keys of those seconds.
+pub(super) fn consume_carriers_through_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    scope: DreamerConsolidationScope,
+    upper: u64,
+) -> Result<()> {
+    for (turn, carrier) in REDIRTY.scan(&vault.store, txn)? {
+        if carrier.pending(scope) && carrier.position <= upper {
+            consume_in_txn(vault, txn, scope, &turn, carrier)?;
+        }
+    }
+    Ok(())
+}
+
+/// The administrative rescan from second `from`, inclusive: every carrier
+/// `scope` consumed at or after `from`, by its own key or by the row its
+/// round read, is pending for that scope again. Other scopes keep theirs.
+pub(super) fn reopen_carriers_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    scope: DreamerConsolidationScope,
+    from: u64,
+) -> Result<()> {
+    for (turn, mut carrier) in REDIRTY.scan(&vault.store, txn)? {
+        if !carrier.pending(scope)
+            && (carrier.position >= from || carrier.read_at[slot(scope)] >= from)
+        {
+            carrier.consumed &= !(1 << slot(scope));
+            REDIRTY.put(&vault.store, txn, &turn, &carrier)?;
+        }
+    }
+    Ok(())
+}
+
 fn consume_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

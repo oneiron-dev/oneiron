@@ -123,7 +123,8 @@ pub(crate) fn read_watermark_in_txn(
 }
 
 /// Complete-second administrative adapter — writes `last_turn_id = None`,
-/// treating the whole second as consumed; bounded rounds must use the
+/// treating the whole second as consumed, and consumes every re-dirty
+/// carrier still pending through it; bounded rounds must use the
 /// exact-position path.
 ///
 /// Call ONLY after the round's attempts are enqueued+committed — a crash
@@ -136,12 +137,15 @@ pub fn advance_watermark(
 ) -> Result<()> {
     let mut wtxn = vault.store.env.write_txn()?;
     write_watermark_position_in_txn(vault, &mut wtxn, scope, last_learned_at, None)?;
+    super::redirty::consume_carriers_through_in_txn(vault, &mut wtxn, scope, last_learned_at)?;
     wtxn.commit()?;
     Ok(())
 }
 
 /// Administrative inclusive rescan, distinct from normal round settlement.
 /// Zero needs a before-first position: completing second zero would skip it.
+/// The re-dirty carriers the scope consumed from that second on are pending
+/// again in the same commit.
 pub(crate) fn reopen_watermark_from(
     vault: &Vault,
     scope: DreamerConsolidationScope,
@@ -155,6 +159,7 @@ pub(crate) fn reopen_watermark_from(
     };
     let mut wtxn = vault.store.env.write_txn()?;
     write_watermark_in_txn(vault, &mut wtxn, scope, &watermark)?;
+    super::redirty::reopen_carriers_in_txn(vault, &mut wtxn, scope, from_learned_at)?;
     wtxn.commit()?;
     Ok(())
 }
