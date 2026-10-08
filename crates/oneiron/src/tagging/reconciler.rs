@@ -564,13 +564,12 @@ impl TaggingReconciler {
         if self.vault.test_hooks().take_fail_next_tagging_settlement() {
             return Err(Error::MapFull);
         }
-        let Some(payload) = MarkerPayload::decode(&record.payload) else {
+        if MarkerPayload::decode(&record.payload).is_none() {
             return self.fail_unreadable_in_txn(txn, record);
-        };
+        }
         retry_marker_in_txn(
             &self.vault,
             txn,
-            &payload,
             RetryAttempt {
                 id: record.id,
                 lease_owner: self.lease_owner.clone(),

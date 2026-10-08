@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use super::*;
 use crate::attempt_queue::{
     AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome, CleanupAttemptLeases,
+    RetryAttempt,
 };
 use crate::edge::EdgeActorClass;
 use crate::error::ErrorKind;
@@ -1295,6 +1296,75 @@ fn text_that_appears_after_an_empty_read_is_tagged_before_the_marker_settles() {
     assert_eq!(tagger.calls(), 1);
     assert_eq!(count(&vault, AttemptState::Completed), 1);
     assert_eq!(count(&vault, AttemptState::Queued), 0);
+}
+
+/// A long retry history of one turn, all in one second, takes none of the
+/// ids the turn's markers need: each retry's id names the try it retries. The
+/// history leaves the worker able to claim the turn, and a write that adds
+/// text to it still lands.
+#[test]
+fn a_long_retry_history_in_one_second_leaves_the_turn_its_ids() {
+    const OWNER: &str = "oneironer-tagging";
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path(), true);
+    let turn_ref = Some("6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e".to_owned());
+    let memory = vault.memory(speaker(&vault), EdgeActorClass::Human);
+    memory
+        .witness(&turn(
+            turn_ref.clone(),
+            vec![message(0, "Ada sailed north")],
+        ))
+        .expect("witness");
+    let first = markers(&vault).remove(0);
+    let key = first.dedupe_key.expect("dedupe key");
+    let queue = AttemptQueue::from_store(&vault.store);
+    // Each try is claimed and retried at once, every one at the second NOW,
+    // through the door the worker retries by.
+    vault
+        .with_write_txn(|txn| {
+            for _ in 0..4_100 {
+                let next = queue
+                    .pending_dedupe_in_txn(txn, TAGGING_MARKER_KIND, &key)?
+                    .expect("a pending try");
+                let ClaimOutcome::Claimed(leased) = queue.claim_id_storage_in_txn(
+                    txn,
+                    next.id,
+                    ClaimAttempt {
+                        lease_owner: OWNER.into(),
+                        now: NOW,
+                    },
+                    NOW,
+                )?
+                else {
+                    panic!("the retry is ready at once");
+                };
+                super::marker::retry_marker_in_txn(
+                    &vault,
+                    txn,
+                    RetryAttempt {
+                        id: leased.id,
+                        lease_owner: OWNER.into(),
+                        attempt_count: leased.attempt_count,
+                        backoff_until: 0,
+                        last_error: Some("call_failed".into()),
+                        now: NOW,
+                    },
+                )?;
+            }
+            Ok(())
+        })
+        .expect("a long retry history");
+    memory
+        .witness(&turn(turn_ref, vec![message(1, "then Grace followed")]))
+        .expect("text added to the turn lands");
+    let tagger = Scripted::new(Answer::Good);
+    let pass = reconciler(&vault, &tagger).drain_once().expect("drain");
+    assert_eq!(pass.traces.len(), 1);
+    assert!(matches!(
+        pass.traces[0].outcome,
+        TaggingOutcome::Shadowed { .. }
+    ));
+    assert_eq!(count(&vault, AttemptState::Completed), 1);
 }
 
 #[test]

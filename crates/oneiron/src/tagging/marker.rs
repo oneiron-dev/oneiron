@@ -18,6 +18,10 @@ const MARKER_ID_DOMAIN: &[u8] = b"oneiron.tagging.marker.v1\0";
 /// Probes for a free derived id: one per earlier marker of the same turn and
 /// checkpoint committed in the same second.
 const MAX_MARKER_GENERATIONS: u32 = 4096;
+const RETRY_ID_DOMAIN: &[u8] = b"oneiron.tagging.retry.v1\0";
+/// Probes for a free retry id: its digest names the try it retries, which
+/// has one successor, so only a chance collision needs another.
+const MAX_RETRY_GENERATIONS: u32 = 16;
 
 /// Arms the tagging marker on a vault ([`crate::VaultConfig::tagging`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,20 +89,23 @@ pub(super) fn dedupe_key(turn: &EntityId, checkpoint: &str) -> String {
 }
 
 /// The marker id is the store-clock second it was committed at, then a digest
-/// of what it names. Committing one, or a retry of one, draws nothing from the
-/// vault's id source, so a write allocates the same entity ids with or without
-/// a tagger, and the readiness index still drains markers in commit order
-/// across seconds.
+/// of what it names: a new marker's digest names its turn and checkpoint, a
+/// retry's names the try it retries, so a long retry history takes none of
+/// the ids a new marker of the turn needs. Committing either draws nothing
+/// from the vault's id source, so a write allocates the same entity ids with
+/// or without a tagger, and the readiness index still drains markers in
+/// commit order across seconds.
 fn derived_id(
-    turn: &EntityId,
-    checkpoint: &str,
+    domain: &[u8],
+    parts: &[&[u8]],
     recorded_at: u64,
     generation: u32,
 ) -> Result<AttemptId> {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(MARKER_ID_DOMAIN);
-    hasher.update(turn.as_bytes());
-    hasher.update(checkpoint.as_bytes());
+    hasher.update(domain);
+    for part in parts {
+        hasher.update(part);
+    }
     hasher.update(&generation.to_be_bytes());
     let mut bytes = [0_u8; 16];
     bytes[..8].copy_from_slice(&recorded_at.to_be_bytes());
@@ -106,15 +113,15 @@ fn derived_id(
     AttemptId::from_bytes(&bytes)
 }
 
-fn free_marker_id(
+/// The first derived id no job row holds.
+fn free_id(
     vault: &Vault,
     wtxn: &heed::RwTxn<'_>,
-    turn: &EntityId,
-    checkpoint: &str,
-    recorded_at: u64,
+    generations: u32,
+    derive: impl Fn(u32) -> Result<AttemptId>,
 ) -> Result<AttemptId> {
-    for generation in 0..MAX_MARKER_GENERATIONS {
-        let id = derived_id(turn, checkpoint, recorded_at, generation)?;
+    for generation in 0..generations {
+        let id = derive(generation)?;
         if vault
             .store
             .attempt_records
@@ -137,18 +144,31 @@ pub(super) fn enqueue_marker_in_txn(
     checkpoint: &str,
     recorded_at: u64,
 ) -> Result<EnqueueOutcome> {
-    let id = free_marker_id(vault, wtxn, &turn, checkpoint, recorded_at)?;
+    let queue = AttemptQueue::from_store(&vault.store);
+    let key = dedupe_key(&turn, checkpoint);
+    // A live marker absorbs the call before any id is drawn for it.
+    if let Some(live) = queue.pending_dedupe_in_txn(wtxn, TAGGING_MARKER_KIND, &key)? {
+        return Ok(EnqueueOutcome::Existing(live));
+    }
+    let id = free_id(vault, wtxn, MAX_MARKER_GENERATIONS, |generation| {
+        derived_id(
+            MARKER_ID_DOMAIN,
+            &[turn.as_bytes(), checkpoint.as_bytes()],
+            recorded_at,
+            generation,
+        )
+    })?;
     let payload = MarkerPayload {
         turn,
         checkpoint: checkpoint.to_owned(),
     };
-    AttemptQueue::from_store(&vault.store).enqueue_with_id_in_txn(
+    queue.enqueue_with_id_in_txn(
         wtxn,
         id,
         EnqueueAttempt {
             kind: TAGGING_MARKER_KIND.to_owned(),
             payload: payload.encode()?,
-            dedupe_key: Some(dedupe_key(&turn, checkpoint)),
+            dedupe_key: Some(key),
             run_id: None,
             now: recorded_at,
         },
@@ -156,14 +176,16 @@ pub(super) fn enqueue_marker_in_txn(
 }
 
 /// Retries a leased marker in the caller's write transaction, under a
-/// successor id derived as a new marker's is, stamped at `input.now`.
+/// successor id derived from the try it retries, stamped at `input.now`.
 pub(super) fn retry_marker_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    payload: &MarkerPayload,
     input: RetryAttempt,
 ) -> Result<()> {
-    let id = free_marker_id(vault, wtxn, &payload.turn, &payload.checkpoint, input.now)?;
+    let source = input.id;
+    let id = free_id(vault, wtxn, MAX_RETRY_GENERATIONS, |generation| {
+        derived_id(RETRY_ID_DOMAIN, &[source.as_bytes()], input.now, generation)
+    })?;
     AttemptQueue::from_store(&vault.store).retry_with_id_in_txn(wtxn, input, id)?;
     Ok(())
 }
