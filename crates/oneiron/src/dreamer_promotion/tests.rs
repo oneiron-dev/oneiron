@@ -1834,20 +1834,26 @@ fn promotion_isolates_panicking_checkers_and_records_unavailable() -> Result<()>
     Ok(())
 }
 
+/// Holds its first call until released; reports when its last handle drops,
+/// which is when the checker worker has exited.
 struct BlockingPromotionAutoChecker {
-    calls: AtomicUsize,
+    calls: Arc<AtomicUsize>,
     release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+    dropped: std::sync::mpsc::SyncSender<()>,
 }
 
 impl AutoChecker for BlockingPromotionAutoChecker {
     fn check(&self, _candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
         let _ = self.calls.fetch_add(1, AtomicOrdering::Relaxed);
-        self.release
-            .lock()
-            .expect("release lock")
-            .recv()
-            .expect("release blocked promotion checker");
+        // A closed channel returns at once.
+        let _ = self.release.lock().expect("release lock").recv();
         AutoCheckOutcome::Allow
+    }
+}
+
+impl Drop for BlockingPromotionAutoChecker {
+    fn drop(&mut self) {
+        let _ = self.dropped.try_send(());
     }
 }
 
@@ -1855,64 +1861,51 @@ impl AutoChecker for BlockingPromotionAutoChecker {
 fn promotion_bounds_repeated_blocked_checker_calls_and_records_each_refusal() -> Result<()> {
     let (_dir, vault) = open_auto_checker_vault();
     let fixture = fixture(&vault)?;
-    let batch = || -> Vec<_> {
-        (0..3)
-            .map(|_| candidate(&fixture, "profile.name", "Ada", vec![fixture.turn]))
-            .collect()
-    };
-    // The same three refusals behind a host that answers at once: what this
-    // promotion costs on this host right now, with no deadline wait in it.
-    // Both batches and both checkers exist before either timer starts, so the
-    // two windows time the same promotion call and nothing else.
-    let control_candidates = batch();
-    let answering = CountingAutoChecker::new(AutoCheckOutcome::Unavailable);
-    let control_checker = BoundedAutoChecker::new(answering.clone());
-    let candidates = batch();
-    let ids: Vec<_> = candidates
-        .iter()
-        .map(|candidate| candidate.claim_id)
-        .collect();
+    let calls = Arc::new(AtomicUsize::new(0));
     let (release, waiting) = std::sync::mpsc::sync_channel(1);
-    let host = Arc::new(BlockingPromotionAutoChecker {
-        calls: AtomicUsize::new(0),
+    let (dropped, worker_exited) = std::sync::mpsc::sync_channel(1);
+    let checker = BoundedAutoChecker::new(Arc::new(BlockingPromotionAutoChecker {
+        calls: Arc::clone(&calls),
         release: std::sync::Mutex::new(waiting),
-    });
-    let checker = BoundedAutoChecker::new(host.clone());
+        dropped,
+    }));
 
-    let started = std::time::Instant::now();
-    let control = promote_consolidated_claims_with_checker(
-        &vault,
-        &fixture.run,
-        control_candidates,
-        Some(&control_checker),
-    )?;
-    let baseline = started.elapsed();
-    assert_eq!(control.rejected.len(), 3);
-    assert_eq!(answering.calls(), 3);
-
-    let started = std::time::Instant::now();
-    let outcome =
-        promote_consolidated_claims_with_checker(&vault, &fixture.run, candidates, Some(&checker))?;
-    let elapsed = started.elapsed();
-
-    assert!(outcome.landed.is_empty());
-    assert!(outcome.pended.is_empty());
-    assert_eq!(outcome.rejected.len(), ids.len());
-    assert_eq!(host.calls.load(AtomicOrdering::Relaxed), 1);
-    // One deadline wait fits under the bound and a second does not. The
-    // promotion's own cost is measured above, not assumed, so a loaded host
-    // does not read as a wait.
-    assert!(
-        elapsed.saturating_sub(baseline)
-            < std::time::Duration::from_millis(crate::llm::AUTO_CHECKER_DEADLINE_MS * 3 / 2),
-        "only the first consult may wait for the deadline: {elapsed:?}, {baseline:?} without a wait"
-    );
-    for id in ids {
-        assert_checker_rejection_receipt(&vault, &id, "gate.pending.checker.unavailable", &[])?;
+    // Two promotions behind a host that never answers. The first consult
+    // waits out the deadline and keeps the host's one slot; every later
+    // consult, in this promotion and the next, refuses without a handoff.
+    for _ in 0..2 {
+        let candidates: Vec<_> = (0..3)
+            .map(|_| candidate(&fixture, "profile.name", "Ada", vec![fixture.turn]))
+            .collect();
+        let ids: Vec<_> = candidates
+            .iter()
+            .map(|candidate| candidate.claim_id)
+            .collect();
+        let outcome = promote_consolidated_claims_with_checker(
+            &vault,
+            &fixture.run,
+            candidates,
+            Some(&checker),
+        )?;
+        assert!(outcome.landed.is_empty());
+        assert!(outcome.pended.is_empty());
+        assert_eq!(outcome.rejected.len(), ids.len());
+        for id in ids {
+            assert_checker_rejection_receipt(&vault, &id, "gate.pending.checker.unavailable", &[])?;
+        }
     }
     // Drop must not join a host that is still blocked.
     drop(checker);
+    // A consult queued behind the blocked call would now reach the host and
+    // count; the worker drops the host only after every handed-off consult.
     release.send(()).expect("release the sole host worker");
+    drop(release);
+    worker_exited
+        .recv_timeout(std::time::Duration::from_secs(60))
+        .expect("the checker worker exits once its host returns");
+    // Six consults, one handoff. Only a handed-off consult can wait for the
+    // deadline, so only the first one waited.
+    assert_eq!(calls.load(AtomicOrdering::Relaxed), 1);
     Ok(())
 }
 
