@@ -7675,23 +7675,22 @@ dependencies = [
  "half",
  "heed",
  "icalendar",
- "icu_casemap",
  "icu_normalizer",
- "icu_properties",
- "icu_segmenter",
  "image",
- "jieba-rs",
  "jiff-tzdb",
  "jsonschema",
  "kamadak-exif",
  "libc",
- "lindera",
  "lopdf",
  "loro",
  "ocrs",
  "oneiron",
+ "oneiron-authority",
+ "oneiron-contracts",
  "oneiron-docedit",
  "oneiron-guest",
+ "oneiron-model",
+ "oneiron-retrieval",
  "oneiron-sandbox-contract",
  "oneiron-seal",
  "oneiron-vault-contract",
@@ -7711,13 +7710,11 @@ dependencies = [
  "rmpv",
  "rrule",
  "rten",
- "rust-stemmers",
  "schemars 0.8.22",
  "serde",
  "serde_json",
  "serde_path_to_error",
  "sha2 0.10.9",
- "sudachi",
  "tempfile",
  "thiserror 2.0.20",
  "tiktoken-rs",
@@ -7730,7 +7727,6 @@ dependencies = [
  "trybuild",
  "tz-rs",
  "unicode-script",
- "unicode-segmentation",
  "uuid",
  "wasmtime",
  "wat",
@@ -7750,6 +7746,20 @@ dependencies = [
  "jni 0.21.1",
  "oneiron",
  "tempfile",
+]
+
+[[package]]
+name = "oneiron-authority"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "ed25519-dalek 2.2.0",
+ "oneiron-contracts",
+ "p256",
+ "rmp-serde",
+ "rmpv",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -7779,6 +7789,24 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-tungstenite 0.26.2",
+]
+
+[[package]]
+name = "oneiron-contracts"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "heed",
+ "loro",
+ "rand 0.8.8",
+ "rand_core 0.6.4",
+ "rand_distr 0.4.3",
+ "rmp-serde",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "uuid",
 ]
 
 [[package]]
@@ -7978,6 +8006,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-model"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "futures-core",
+ "oneiron-contracts",
+ "rmpv",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "oneiron-napi"
 version = "0.1.0"
 dependencies = [
@@ -8016,6 +8057,30 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "oneiron-retrieval"
+version = "0.1.0"
+dependencies = [
+ "icu_casemap",
+ "icu_normalizer",
+ "icu_properties",
+ "icu_segmenter",
+ "jieba-rs",
+ "lindera",
+ "oneiron-contracts",
+ "rmpv",
+ "rust-stemmers",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sudachi",
+ "tempfile",
+ "thiserror 2.0.20",
+ "unicode-script",
+ "unicode-segmentation",
+ "whichlang",
 ]
 
 [[package]]

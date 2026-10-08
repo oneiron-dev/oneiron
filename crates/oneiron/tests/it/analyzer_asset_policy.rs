@@ -19,7 +19,9 @@ use std::io::Write;
 
 use oneiron::analyzer::{AnalyzerAssetManifest, MultilingualAnalyzer};
 
-const ONEIRON_CARGO_TOML: &str = include_str!("../../Cargo.toml");
+// The analyzer and its dictionary crates live in `oneiron-retrieval`; its manifest is the
+// one that declares them.
+const RETRIEVAL_CARGO_TOML: &str = include_str!("../../../oneiron-retrieval/Cargo.toml");
 
 fn allowed_licenses() -> BTreeSet<&'static str> {
     // Must stay in sync with deny.toml [licenses].allow.
@@ -48,8 +50,8 @@ fn find_line_starting_with(haystack: &str, needle: &str) -> Option<String> {
 
 #[test]
 fn jieba_rs_default_dict_disabled() {
-    let line = find_line_starting_with(ONEIRON_CARGO_TOML, "jieba-rs")
-        .expect("jieba-rs dependency line missing from crates/oneiron/Cargo.toml");
+    let line = find_line_starting_with(RETRIEVAL_CARGO_TOML, "jieba-rs")
+        .expect("jieba-rs dependency line missing from crates/oneiron-retrieval/Cargo.toml");
     assert!(
         line.contains("default-features = false"),
         "jieba-rs must be declared with `default-features = false` to keep the \
@@ -59,8 +61,8 @@ fn jieba_rs_default_dict_disabled() {
 
 #[test]
 fn lindera_embed_dic_disabled() {
-    let line = find_line_starting_with(ONEIRON_CARGO_TOML, "lindera")
-        .expect("lindera dependency line missing from crates/oneiron/Cargo.toml");
+    let line = find_line_starting_with(RETRIEVAL_CARGO_TOML, "lindera")
+        .expect("lindera dependency line missing from crates/oneiron-retrieval/Cargo.toml");
     assert!(
         line.contains("default-features = false"),
         "lindera must be declared with `default-features = false` so no \

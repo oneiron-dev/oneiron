@@ -91,7 +91,8 @@ fi
 # Honor the workspace's heed exclusion; --all also follows local path dependencies.
 run_stage fmt                 cargo fmt --check
 run_stage clippy              cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-run_stage clippy-featureless  cargo clippy --locked -p oneiron --all-targets --no-default-features -- -D warnings
+# The lower engine crates split out of `oneiron` keep featureless lanes of their own.
+run_stage clippy-featureless  cargo clippy --locked -p oneiron -p oneiron-contracts -p oneiron-retrieval -p oneiron-model -p oneiron-authority --all-targets --no-default-features -- -D warnings
 # The server's own feature selection of the engine (`sync` without `test-hooks`) is a
 # third combination neither row above compiles: `--workspace --all-targets` unifies the
 # dev-dependency features in, and `--no-default-features` drops `sync`. No `--all-targets`
@@ -102,7 +103,7 @@ run_stage clippy-server       cargo clippy --locked -p oneiron-server --all-feat
 # do not change other stages' environments or compiler fingerprints globally.
 run_stage rustdoc             env -u CARGO_ENCODED_RUSTDOCFLAGS RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --all-features --no-deps
 run_stage test                cargo nextest run --locked --workspace --all-features --profile full
-run_stage test-featureless    cargo test --locked -p oneiron --lib --no-default-features
+run_stage test-featureless    cargo test --locked -p oneiron -p oneiron-contracts -p oneiron-retrieval -p oneiron-model -p oneiron-authority --lib --no-default-features
 run_stage doctest             cargo test --locked --doc --workspace --exclude oneiron-bench --all-features
 
 if [ "$LIST_ONLY" = false ]; then

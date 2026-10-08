@@ -646,7 +646,7 @@ fn a_slip_mint_signed_by_an_agent_device_folds_invalid_even_with_an_owner_cosign
         AuthorityKey::Ed25519(owner.verifying_key().to_bytes())
     );
     mint.cosigns[0].signature = owner.sign(&transcript).to_bytes().to_vec();
-    super::super::crypto::verify_entry_signatures(&mint).unwrap();
+    super::super::verify_entry_signatures(&mint).unwrap();
     let hash = authority_entry_hash(&mint).unwrap();
     let fold = super::super::fold_engine::fold_authority_log(&[genesis, root_mint, enroll, mint]);
     assert!(fold.valid_entries.contains(&enrolled_hash));

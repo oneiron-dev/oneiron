@@ -12,19 +12,6 @@ use crate::entity_id::EntityId;
 
 use super::*;
 
-/// Folded roster entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FoldedDevice {
-    /// Authority key.
-    pub key: AuthorityKey,
-    /// Assurance tier.
-    pub tier: AuthorityTier,
-    /// Role bits after most-restrictive conflict folding.
-    pub roles: u16,
-    /// Whether any valid revocation tombstone removed this key.
-    pub revoked: bool,
-}
-
 /// Fold issue retained for diagnostics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthorityFoldIssue {

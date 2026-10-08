@@ -9,8 +9,7 @@ use std::time::Duration;
 
 use serde_json::Value as JsonValue;
 
-use super::burst_inputs::NormalizedBurstInputs;
-use super::model_id::dynamic_model_id;
+use super::NormalizedBurstInputs;
 use super::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback, LlmMessage,
     LlmMessageRole, LlmRequest, ModelId, ModelTierRef, ResponseFormat, TierPrecedence,
@@ -18,6 +17,7 @@ use super::{
 use crate::claim::ClaimSource;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::write_envelope::SourceLineage;
+use oneiron_model::llm::dynamic_model_id;
 
 // ---------------------------------------------------------------------------
 // Auto-check seam (ONE-1296).

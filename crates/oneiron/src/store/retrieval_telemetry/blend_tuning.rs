@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use heed::RoTxn;
+use oneiron_contracts::retrieval_telemetry::validate_retrieval_blend_weights;
 
 use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
@@ -240,28 +241,6 @@ fn vet_retrieval_blend_weight_table_entry(entry: &RetrievalBlendWeightTableEntry
             || entry.data_window.started_at_max.is_none())
     {
         return Err(Error::CorruptedIndex("retrieval blend weight table"));
-    }
-    Ok(())
-}
-
-pub(super) fn validate_retrieval_blend_weights(
-    weights: RetrievalBlendWeights,
-) -> std::result::Result<(), String> {
-    let values = [
-        ("recency", weights.recency),
-        ("salience", weights.salience),
-        ("confidence", weights.confidence),
-        ("gravity", weights.gravity),
-    ];
-    for (name, value) in values {
-        if !value.is_finite() || value < 0.0 {
-            return Err(format!(
-                "retrieval blend {name} weight must be finite and non-negative"
-            ));
-        }
-    }
-    if weights.sum() <= 0.0 {
-        return Err("retrieval blend weights must have positive total mass".to_owned());
     }
     Ok(())
 }

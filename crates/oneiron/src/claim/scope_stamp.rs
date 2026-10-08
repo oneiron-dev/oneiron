@@ -18,10 +18,8 @@ use std::collections::BTreeSet;
 #[cfg(test)]
 mod tests;
 
-/// Reserved value for base reality. This is a scope member, never an entity row.
-pub fn base_world_id() -> EntityId {
-    EntityId::from_bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]).expect("base scope id")
-}
+/// Reserved value for base reality. Defined in `oneiron-contracts`.
+pub use oneiron_contracts::claim::base_world_id;
 /// Reserved project value; projects are ids, not a new engine entity kind.
 pub fn default_project_id() -> EntityId {
     EntityId::from_bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2])

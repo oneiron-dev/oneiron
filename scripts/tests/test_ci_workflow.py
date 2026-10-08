@@ -9,8 +9,8 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/ci.yml"
 RUNNER = ROOT / "scripts/ci/run_scoped.sh"
 FEATURELESS_FULL = (
-    "run cargo test --locked -p oneiron --lib --no-default-features",
-    "run cargo nextest run --locked -p oneiron --lib --no-default-features --profile featureless --no-fail-fast --retries 0",
+    'run cargo test --locked -p oneiron "${lower[@]}" --lib --no-default-features',
+    'run cargo nextest run --locked -p oneiron "${lower[@]}" --lib --no-default-features --profile featureless --no-fail-fast --retries 0',
 )
 GUARD = (
     "      && vars.CI_PAUSED != 'true' && !inputs.cache_proof && (github.event_name != 'pull_request' "

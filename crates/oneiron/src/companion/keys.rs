@@ -1,11 +1,8 @@
 //! Retired register discriminator and durable companion task payload keys.
 
-/// Retired companion-register byte; every new put and replay refuses it.
-/// It remains reserved so unrelated entities cannot reuse the old identity byte.
-pub const ENTITY_TYPE_COMPANION_REGISTER: u8 = 115;
-
-/// Short-id prefix for companion-register rows.
-pub const COMPANION_REGISTER_SHORT_ID_PREFIX: &str = "cr";
+pub use oneiron_contracts::companion::{
+    COMPANION_REGISTER_SHORT_ID_PREFIX, ENTITY_TYPE_COMPANION_REGISTER,
+};
 
 pub(super) const SCOPE_KEYS: [&str; 3] = ["kind", "person_ref", "vault_id"];
 

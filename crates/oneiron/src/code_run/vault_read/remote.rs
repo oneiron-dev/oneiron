@@ -5,7 +5,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::contract::{VaultReadAdapterKind, VaultReadMethod, VaultReadResponse, VaultReadWireOp};
-use super::error::{VaultReadError, VaultReadResult, response_arm_mismatch};
+use super::error::{VaultReadError, VaultReadErrorExt, VaultReadResult, response_arm_mismatch};
 use super::sealed;
 
 /// Host-injected transport seam. HTTP and MCP daemons implement this later; no

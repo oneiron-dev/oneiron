@@ -16,7 +16,9 @@ use super::context_pack::{
     CoreContextPackResponse,
 };
 use super::contract::{VaultReadMethod, VaultReadRequest, VaultReadResponse};
-use super::error::{VaultReadError, VaultReadResult, engine_absent, engine_failure};
+use super::error::{
+    VaultReadError, VaultReadErrorExt, VaultReadResult, engine_absent, engine_failure,
+};
 use super::projection::{
     batch_item_from_result, entity_record_from_parts, project_context_pack,
     project_memory_timeline, timeline_is_absent,

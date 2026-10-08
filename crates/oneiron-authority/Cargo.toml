@@ -1,0 +1,25 @@
+[package]
+name = "oneiron-authority"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Authority vocabulary of the oneiron engine: the authority-log wire layer and federation scope codecs"
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
+blake3 = { workspace = true }
+ed25519-dalek = { workspace = true }
+p256 = { workspace = true }
+rmp-serde = { workspace = true }
+rmpv = { workspace = true, features = ["with-serde"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts", features = ["test-support"] }
+
+[lints]
+workspace = true

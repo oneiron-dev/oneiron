@@ -1,29 +1,18 @@
 //! Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators.
+//!
+//! Defined in `oneiron-contracts` and re-exported here; the vault-backed pack byte map
+//! stays in this crate.
 
-mod artifact_kinds;
-mod families;
-mod namespaces;
 pub mod pack_byte_map;
-mod registry_table;
-mod type_bytes;
-mod validation;
-mod zones;
 
-pub use self::artifact_kinds::{ArtifactFamilyId, ArtifactFamilyKindId, artifact_family_kind_of};
-pub(crate) use self::families::family_matches;
-pub use self::families::{
+pub use oneiron_contracts::registry::{
+    ArtifactFamilyId, ArtifactFamilyKindId, artifact_family_kind_of,
+};
+pub use oneiron_contracts::registry::{
     TYPE_BYTE_FAMILIES, TypeByteFamily, TypeByteFamilyEntry, allocate_type_byte, family_of,
 };
 
-pub use self::namespaces::{
-    ID_NAMESPACE_REGISTRY, IdNamespaceRegistryEntry, IdNamespaceTarget, StructuralKindRegistration,
-    VAULT_ID_NAMESPACE_PREFIX, id_namespace_for_prefix,
-};
-pub use self::registry_table::{
-    ENTITY_TYPE_REGISTRY, EntityTypeRegistryEntry, entity_type_registry_entry, is_structural_kind,
-    short_id_prefix,
-};
-pub use self::type_bytes::{
+pub use oneiron_contracts::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT,
     ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CHANNEL_IDENTITY,
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_COMM_RECORD,
@@ -38,19 +27,28 @@ pub use self::type_bytes::{
     ENTITY_TYPE_SKILL_CONTENT_ANCHOR, ENTITY_TYPE_SKILL_HUB, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK,
     ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN, ENTITY_TYPE_WORKFLOW, ENTITY_TYPE_WORLD,
 };
-pub use self::type_bytes::{ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR, ENTITY_TYPE_SUSPICIOUS_WAKE};
-pub use self::zones::{
+pub use oneiron_contracts::registry::{
+    ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR, ENTITY_TYPE_SUSPICIOUS_WAKE,
+};
+pub use oneiron_contracts::registry::{
+    ENTITY_TYPE_REGISTRY, EntityTypeRegistryEntry, entity_type_registry_entry, is_structural_kind,
+    short_id_prefix,
+};
+pub use oneiron_contracts::registry::{
     EntityClassification, TYPE_BYTE_SEMANTIC, TYPE_BYTE_ZONE_COMPILED_PRODUCT_END,
     TYPE_BYTE_ZONE_COMPILED_PRODUCT_START, TYPE_BYTE_ZONE_CORE_END, TYPE_BYTE_ZONE_CORE_START,
     TYPE_BYTE_ZONE_ENGINE_EXPERIMENTAL_END, TYPE_BYTE_ZONE_ENGINE_EXPERIMENTAL_START,
     TYPE_BYTE_ZONE_SYSTEM_END, TYPE_BYTE_ZONE_SYSTEM_START, TypeByteZone, zone_of,
 };
+pub use oneiron_contracts::registry::{
+    ID_NAMESPACE_REGISTRY, IdNamespaceRegistryEntry, IdNamespaceTarget, StructuralKindRegistration,
+    VAULT_ID_NAMESPACE_PREFIX, id_namespace_for_prefix,
+};
 
-pub(crate) use self::registry_table::{
+pub(crate) use oneiron_contracts::registry::{
     is_delete_protected_engine_record, static_short_id_prefix_collision,
 };
-pub(crate) use self::validation::{validate_entity_type, validate_public_entity_type};
-// Only the `#[cfg(test)]` type-registry suite names this door; the crate's own
-// `validate_entity_type` delegate calls it inside `validation.rs` directly.
+pub(crate) use oneiron_contracts::registry::{validate_entity_type, validate_public_entity_type};
+// Only the `#[cfg(test)]` type-registry suite names this door.
 #[cfg(test)]
-pub(crate) use self::validation::validate_entity_type_for_mode;
+pub(crate) use oneiron_contracts::registry::validate_entity_type_for_mode;

@@ -46,7 +46,6 @@ pub use self::context_pack::{
     CoreContextPackRequest, CoreContextPackResponse, CoreContextPackSectionTokenStats,
     CoreContextPackSignal, CoreContextPackStats, CoreContextPackTokenStats, CoreContextPackVad,
 };
-pub(crate) use self::contract::request_schema;
 pub use self::contract::{
     MEMORY_VERBS, VAULT_READ_METHOD_MAP, VaultReadAdapterKind, VaultReadAvailability,
     VaultReadClient, VaultReadMethod, VaultReadMethodMapping, VaultReadRequest, VaultReadResponse,
@@ -63,6 +62,7 @@ pub use self::types::{
     CoreMemoryTimelineResponse, CoreQueryMeta, CoreQueryRequest, CoreQueryResponse,
     CoreShortIdHydrateOutcome, CountMode, VAULT_READ_MAX_BATCH_REFS, View,
 };
+pub(crate) use oneiron_contracts::code_run::vault_read::request_schema;
 
 // ─── One validated dispatch path ─────────────────────────────────────────────
 

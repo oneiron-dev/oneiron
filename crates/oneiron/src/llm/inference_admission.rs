@@ -206,7 +206,7 @@ fn admit_extraction(
     {
         return Ok(());
     }
-    if !defaults::locality_within_extraction_bound(
+    if !super::locality_within_extraction_bound(
         binding.locality,
         snapshot.defaults.table().extraction_max_locality,
     ) || !host

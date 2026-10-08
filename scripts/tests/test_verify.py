@@ -47,14 +47,16 @@ print("PASS error::tests::fixture")
 # Main regenerates the code map (.github/workflows/codemap.yml); CODEMAP_CHECK=1
 # puts its check in front of the default gates.
 CODEMAP_GATE = ("codemap", ["scripts/codemap/check.sh"])
+# The lower engine crates split out of `oneiron` keep featureless lanes of their own.
+LOWER = ["-p", "oneiron-contracts", "-p", "oneiron-retrieval", "-p", "oneiron-model", "-p", "oneiron-authority"]
 GATES = [
     ("fmt", ["cargo", "fmt", "--check"]),
     ("clippy", ["cargo", "clippy", "--locked", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"]),
-    ("clippy-featureless", ["cargo", "clippy", "--locked", "-p", "oneiron", "--all-targets", "--no-default-features", "--", "-D", "warnings"]),
+    ("clippy-featureless", ["cargo", "clippy", "--locked", "-p", "oneiron", *LOWER, "--all-targets", "--no-default-features", "--", "-D", "warnings"]),
     ("clippy-server", ["cargo", "clippy", "--locked", "-p", "oneiron-server", "--all-features", "--", "-D", "warnings"]),
     ("rustdoc", ["env", "-u", "CARGO_ENCODED_RUSTDOCFLAGS", "RUSTDOCFLAGS=-D warnings", "cargo", "doc", "--locked", "--workspace", "--all-features", "--no-deps"]),
     ("test", ["cargo", "nextest", "run", "--locked", "--workspace", "--all-features", "--profile", "full"]),
-    ("test-featureless", ["cargo", "test", "--locked", "-p", "oneiron", "--lib", "--no-default-features"]),
+    ("test-featureless", ["cargo", "test", "--locked", "-p", "oneiron", *LOWER, "--lib", "--no-default-features"]),
     ("doctest", ["cargo", "test", "--locked", "--doc", "--workspace", "--exclude", "oneiron-bench", "--all-features"]),
 ]
 # The recorder sees Cargo, not env's options/assignments or the fixture's path.

@@ -1,0 +1,36 @@
+[package]
+name = "oneiron-model"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Model seam of the oneiron engine: LLM request/response/stream types, the backend trait, the budget guard and extraction evaluation"
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+# No doc-comment code fences in this crate.
+doctest = false
+
+[dependencies]
+oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
+blake3 = { workspace = true }
+futures-core = { workspace = true }
+rmpv = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts", features = ["test-support"] }
+
+[features]
+# `BudgetLease::for_test` for downstream crates' tests. `oneiron` forwards its own
+# `test-hooks` here; never enabled in a production build.
+test-hooks = []
+# The same test-only constructors for `oneiron`'s own tests, forwarded from its
+# `test-support` (enabled only through its self dev-dependency).
+test-support = []
+
+[lints]
+workspace = true

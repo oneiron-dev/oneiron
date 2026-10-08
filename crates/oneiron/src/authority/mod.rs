@@ -31,25 +31,18 @@ mod ancestry_evaluator;
 mod causal_write;
 mod checkpoint;
 mod claim_write;
-mod confirm;
-mod constants;
-mod crypto;
-mod device;
 mod engine_machine;
 mod entry_transition;
-mod federation_pact;
 mod first_seen_clock;
 mod fold_engine;
 mod fold_state;
 mod history_transfer;
 mod ingest_observation;
-mod log_entry_op;
 mod machine_write;
 mod mesh_machine;
 mod observation_policy;
 mod op_apply;
 mod readonly_fold;
-mod recovery_ceremony;
 mod revoke_proof;
 mod sequence_ancestry;
 mod sequence_observation;
@@ -58,16 +51,41 @@ mod slip_pairing;
 mod slip_replay;
 mod slip_state;
 mod slip_vault;
-mod slip_wire;
 mod stale_roster;
 mod tier_floor;
 mod vault_api;
-mod wire_decode;
-mod wire_encode;
 mod write_authorization;
 
 #[cfg(test)]
 mod tests;
+
+// The wire layer (constants, key material and signatures, the op vocabulary and entry
+// envelope, the codec, device/confirm/pact types, slip payloads) is defined in
+// `oneiron-authority`. Its public items keep their public path here; the helpers that were
+// private to this module are re-exported crate-internally only, so the fold and the doors
+// below call them as before without widening `oneiron::authority`.
+pub(crate) use oneiron_authority::authority::*;
+pub use oneiron_authority::authority::{
+    AUTHORITY_HASH_LEN, AUTHORITY_LOG_SCHEMA_VERSION, AUTHORITY_TRANSCRIPT_DOMAIN,
+    AuthorityAttestation, AuthorityConfirmAction, AuthorityConfirmKind, AuthorityEntryHash,
+    AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthoritySignatureSuite,
+    AuthorityTier, AuthorityVaultId, CRITICAL_WRITE_CONFIRM_DOMAIN,
+    CRITICAL_WRITE_CONFIRM_SCHEMA_VERSION, CriticalWriteConfirmAction,
+    CriticalWriteConfirmDisposition, CriticalWriteConfirmMethod, CriticalWriteConfirmState,
+    DEFAULT_PENDING_WIDEN_DELAY_SECS, DeviceAuthority, FEDERATION_PACT_DOMAIN,
+    FEDERATION_SCOPE_COMMIT_DOMAIN, FederationGrantActivation, FederationLifecycleAction,
+    FederationLifecycleKind, FederationLifecycleRejection, FederationPactGesture,
+    FederationPactState, FederationPactStatus, FoldedDevice, GENESIS_FRAGILE_FLAG,
+    GenesisRecoveryStep, MAX_DEFAULT_PENDING_WIDEN_DELAY_SECS, MAX_PACT_SCOPE_BYTES,
+    MIN_DEFAULT_PENDING_WIDEN_DELAY_SECS, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER,
+    ROLE_RECOVERY, SlipClaims, SlipMintAction, authority_entry_hash, authority_log_entity_id,
+    authority_log_entity_id_from_hash, authority_transcript, decode_authority_log_entry_body,
+    encode_authority_log_entry_body, federation_pact_transcript, federation_scope_digest,
+    genesis_vault_id, sign_federation_pact_gesture, validate_authority_log_entry_body_bytes,
+    verify_authority_signature,
+};
+mod federation_activation;
+pub use federation_activation::federation_grant_activation;
 
 // Re-exports reproduce the pre-split `crate::authority::` surface exactly: each
 // glob carries every item of its file at that item's own visibility, so `pub`
@@ -77,20 +95,13 @@ mod tests;
 // `use super::*`, so the file boundaries below do not change name resolution.
 pub use causal_write::CausalWriteDisposition;
 pub use checkpoint::*;
-pub use confirm::*;
-pub use constants::*;
-pub use crypto::*;
-pub use device::*;
-pub use federation_pact::*;
 pub use fold_engine::*;
 pub use fold_state::*;
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
 pub use ingest_observation::*;
-pub use log_entry_op::*;
 pub use machine_write::machine_claim_transcript;
 pub use mesh_machine::{MeshMachineAddress, MeshMachineAddressEnvelope};
 pub use observation_policy::*;
-pub use recovery_ceremony::*;
 pub use slip::*;
 pub use slip_pairing::{
     PairingDescriptor, PairingLink, PairingPrincipal, format_pairing_link,
@@ -126,5 +137,3 @@ use op_apply::*;
 use sequence_observation::{AuthorityLocalObservations, authority_local_observations_in_txn};
 use stale_roster::{apply_stale_roster_window, next_stale_roster_deadline};
 use tier_floor::*;
-use wire_decode::*;
-use wire_encode::*;

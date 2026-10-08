@@ -5,54 +5,16 @@ use serde_json::Value;
 
 use crate::deletion::{HydratedShortIdDeletion, MemoryTimelineRecordState};
 
+#[cfg(test)]
+pub(super) use oneiron_contracts::code_run::vault_read::default_limit;
+pub use oneiron_contracts::code_run::vault_read::{
+    AskRequest, CodeExecuteRequest, CodeSearchRequest, CoreBatchShortIdHydrateRequest,
+    CoreHydrateRequest, CoreMemoryTimelineRequest, CoreQueryRequest, CountMode, View,
+};
+
 /// Maximum refs accepted by one batch short-id hydrate call. Copied from the
 /// accepted route's `CORE_MAX_BATCH_ENTITIES`.
 pub const VAULT_READ_MAX_BATCH_REFS: usize = 256;
-
-/// Accepted default page limit, copied from the accepted route's
-/// `default_limit()`.
-pub(super) const fn default_limit() -> usize {
-    10
-}
-
-/// Read projection requested by the accepted routes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum View {
-    /// Compact projection used by list/search results.
-    Summary,
-    /// Identity-only projection; the v1 rule omits the body.
-    Standard,
-    /// Full projection including the decoded body.
-    Full,
-}
-
-/// Count precision requested by callers and reported in response metadata.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum CountMode {
-    /// Skip count work and report `total = 0`.
-    None,
-    /// Report a non-exact search estimate.
-    Estimate,
-    /// Requested exact count; search responses collapse it to `Estimate`.
-    Exact,
-}
-
-impl CountMode {
-    pub(super) const fn default_estimate() -> Self {
-        Self::Estimate
-    }
-
-    /// Accepted collapse: search responses never report exact counts.
-    #[must_use]
-    pub const fn for_search_response(self) -> Self {
-        match self {
-            Self::None => Self::None,
-            Self::Estimate | Self::Exact => Self::Estimate,
-        }
-    }
-}
 
 /// Accepted over-fetch recipe. `Exact` is collapsed before this call.
 pub(super) const fn search_fetch_limit(count_mode: CountMode, page_limit: usize) -> usize {
@@ -95,31 +57,6 @@ pub struct CoreEntityRecord {
     pub body: Option<Value>,
 }
 
-/// Accepted `POST /v1/core/query` request body.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CoreQueryRequest {
-    /// Optional BM25 text query.
-    #[serde(default)]
-    pub query: Option<String>,
-    /// Optional vector query.
-    #[serde(default, rename = "query_vector", alias = "queryVector")]
-    pub query_vector: Option<Vec<f32>>,
-    /// Maximum result count.
-    #[serde(default = "default_limit")]
-    pub limit: usize,
-    /// Projection view. Defaults to `Summary`.
-    #[serde(default)]
-    pub view: Option<View>,
-    /// Count precision. Defaults to `Estimate`.
-    #[serde(
-        default = "CountMode::default_estimate",
-        rename = "countMode",
-        alias = "count_mode"
-    )]
-    pub count_mode: CountMode,
-}
-
 /// Count metadata reported by [`CoreQueryResponse`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CoreQueryMeta {
@@ -145,24 +82,6 @@ pub struct CoreQueryResponse {
     pub next_cursor: Option<String>,
     /// Count metadata.
     pub meta: CoreQueryMeta,
-}
-
-/// Accepted `POST /v1/core/hydrate` request body.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CoreHydrateRequest {
-    /// Canonical short reference in `shortId:contentHashHex` form.
-    #[serde(default, rename = "ref", alias = "short_ref", alias = "shortRef")]
-    pub reference: Option<String>,
-    /// Short id without the content hash.
-    #[serde(default, rename = "short_id", alias = "shortId")]
-    pub short_id: Option<String>,
-    /// Two-hex-digit content hash.
-    #[serde(default, rename = "content_hash", alias = "contentHash")]
-    pub content_hash: Option<String>,
-    /// Projection view for live entities. Defaults to `Full`.
-    #[serde(default)]
-    pub view: Option<View>,
 }
 
 /// Hydrate outcome for a resolved short ref.
@@ -202,25 +121,6 @@ pub struct CoreHydrateResponse {
     pub item: Option<CoreEntityRecord>,
 }
 
-/// Accepted `POST /v1/core/batch/shortId/hydrate` request body.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CoreBatchShortIdHydrateRequest {
-    /// Canonical short references in `shortId:contentHashHex` form.
-    #[serde(
-        default,
-        rename = "refs",
-        alias = "short_refs",
-        alias = "shortRefs",
-        alias = "short_ids",
-        alias = "shortIds"
-    )]
-    pub refs: Vec<String>,
-    /// Projection view for live entities. Defaults to `Full`.
-    #[serde(default)]
-    pub view: Option<View>,
-}
-
 /// Per-item batch hydrate outcome.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -255,23 +155,6 @@ pub struct CoreBatchShortIdHydrateResponse {
     pub narrowing: crate::claim::ScopedReadReceipt,
     /// Per-input results, in caller order.
     pub results: Vec<CoreBatchShortIdHydrateItem>,
-}
-
-/// Canonical transport body for the accepted
-/// `GET /v1/core/memory/{id}/timeline` route.
-///
-/// An HTTP `WireTransport` places `id` in the route path and `view` in the
-/// query while still carrying this canonical JSON body at the `round_trip`
-/// seam.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CoreMemoryTimelineRequest {
-    /// Hex entity id whose supersession chain is requested.
-    pub id: String,
-    /// Accepted for wire fidelity. Deliberately ignored in v1: the engine
-    /// timeline record carries no `item` projection to view.
-    #[serde(default)]
-    pub view: Option<View>,
 }
 
 /// One projected timeline record.
@@ -317,30 +200,15 @@ pub struct CoreMemoryTimelineResponse {
     pub records: Vec<CoreMemoryTimelineRecord>,
 }
 
-/// M8-reserved ask request payload. Opaque on purpose.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(transparent)]
-pub struct AskRequest(pub Value);
-
 /// M8-reserved ask response payload. Opaque on purpose.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct AskResponse(pub Value);
 
-/// M8-reserved code-search request payload. Opaque on purpose.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(transparent)]
-pub struct CodeSearchRequest(pub Value);
-
 /// M8-reserved code-search response payload. Opaque on purpose.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct CodeSearchResponse(pub Value);
-
-/// M8-reserved code-execute request payload. Opaque on purpose.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(transparent)]
-pub struct CodeExecuteRequest(pub Value);
 
 /// M8-reserved code-execute response payload. Opaque on purpose.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
