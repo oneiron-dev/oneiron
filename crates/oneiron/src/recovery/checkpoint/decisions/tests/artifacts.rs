@@ -176,17 +176,27 @@ fn cached_build(
 
 /// A stale taint holds a site's publication. One attached since the backup,
 /// through the attachment door, to a site the backup holds unchanged is one a
-/// restore would drop, publishing the site again; a new summary of the site
-/// is content.
+/// restore would drop, publishing the site again. A new summary of the site
+/// is content, and so is a taint on a second artifact holding the same
+/// snapshot, which publication never selects over the first in fork-index
+/// order.
 pub(super) fn artifact_taint_admissions() -> Result<Case> {
     let (dir, vault) = open_vault();
     revoked_secret(&vault)?;
-    let site = entity(0xC1);
+    let (site, shadowed) = (entity(0xC1), entity(0xC5));
     let fork = publishable_site(&vault, site)?;
+    publishable_site(&vault, shadowed)?;
     Case::after_backup(
         "artifact taint admissions",
         (dir, vault),
-        move |vault| put_site_body(vault, site, "Summarize the published site."),
+        move |vault| {
+            put_site_body(vault, site, "Summarize the published site.")?;
+            vault.mark_artifact_tainted(&shadowed, &stale_taint())?;
+            match vault.resolve_artifact_snapshot_by_fork(SITE, &fork)? {
+                Some(selected) if selected.code_artifact_id == site => Ok(()),
+                other => Err(invalid(other)),
+            }
+        },
         move |vault| {
             vault.mark_artifact_tainted(&site, &stale_taint())?;
             if publish_refused_stale(vault, &fork) {

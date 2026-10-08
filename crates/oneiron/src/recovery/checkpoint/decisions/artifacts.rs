@@ -3,7 +3,7 @@
 //! the stale-publish dial is open, and any taint holds its cached result.
 use super::{Decision, held_by_both};
 use crate::blob_artifact::BlobArtifactVersion;
-use crate::codebase::{CodebaseForkHash, codebase_artifact_snapshot_matches_in_txn};
+use crate::codebase::CodebaseForkHash;
 use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CODE_ARTIFACT};
 use crate::secret_rotation::{
     ArtifactTaintState, allow_stale_publish_in_txn, exhaust_taint_refs_in_txn,
@@ -94,8 +94,11 @@ impl Decision for ArtifactTaints {
 }
 
 /// The outputs among `code` and `blobs` that `vault` holds, each with whether
-/// a door serves it there: a code snapshot whose artifact is hostable, and
-/// every blob version, which a cached result can name.
+/// a door serves it there: a code snapshot whose artifact publication selects
+/// for its project and fork (`resolve_artifact_snapshot_by_fork_in_txn`, the
+/// first artifact-class owner in fork-index order), and every blob version,
+/// which a cached result can name. Another owner of the same project and fork
+/// is never published, so its taint decides nothing there.
 fn outputs(
     vault: &Vault,
     code: &BTreeSet<EntityId>,
@@ -103,23 +106,23 @@ fn outputs(
 ) -> Result<BTreeMap<TaintSubject, bool>> {
     let txn = vault.store.env.read_txn()?;
     let mut held = BTreeMap::new();
+    // The owner publication selects for each project and fork; `None` where
+    // the selector fails, which leaves every owner of that route compared.
+    let mut selected: BTreeMap<(String, CodebaseForkHash), Option<Option<EntityId>>> =
+        BTreeMap::new();
     for id in code {
-        if let Some(snapshot) = vault.get_codebase_snapshot_in_txn(&txn, id)? {
-            // A hostability check that fails serves the output: its taint is
-            // still compared.
-            let served = codebase_artifact_snapshot_matches_in_txn(
-                &vault.store,
-                &txn,
-                id,
-                &snapshot.project_id,
-                &snapshot.fork_hash,
-            )
-            .unwrap_or(true);
-            held.insert(
-                TaintSubject::Code(*id, snapshot.project_id, snapshot.fork_hash),
-                served,
-            );
-        }
+        let Some(snapshot) = vault.get_codebase_snapshot_in_txn(&txn, id)? else {
+            continue;
+        };
+        let route = (snapshot.project_id, snapshot.fork_hash);
+        let owner = *selected.entry(route.clone()).or_insert_with(|| {
+            vault
+                .resolve_artifact_snapshot_by_fork_in_txn(&txn, &route.0, &route.1)
+                .ok()
+                .map(|found| found.map(|found| found.code_artifact_id))
+        });
+        let served = owner.is_none_or(|owner| owner == Some(*id));
+        held.insert(TaintSubject::Code(*id, route.0, route.1), served);
     }
     for id in blobs {
         for (artifact, version) in VERSIONS.scan_keys(&vault.store, &txn, id.as_bytes())? {
