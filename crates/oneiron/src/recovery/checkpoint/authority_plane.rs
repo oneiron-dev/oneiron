@@ -294,6 +294,16 @@ fn authority_moved(
         held.insert(key.as_slice());
         match live.get(key) {
             Some((_, _, current)) if *current == authority => {}
+            // An ordinary claim rewritten under its id into one compared in
+            // aggregate: its read scope is compared here, and the aggregate
+            // weighs what it now says.
+            Some((_, _, current))
+                if authority.family().is_none()
+                    && matches!(
+                        current,
+                        Compared::ScanVerdict { .. } | Compared::Jurisdiction { .. }
+                    )
+                    && current.access() == authority.access() => {}
             Some((_, _, current)) => {
                 moved.insert(authority.family().or(current.family()).unwrap_or(what));
             }

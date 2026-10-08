@@ -683,3 +683,48 @@ fn restore_goes_ahead_past_a_moved_jurisdiction_of_a_non_person() {
     )
     .expect("an organisation's jurisdiction binds no campaign send");
 }
+
+/// ASTRA-9A-2-R3 F7: an ordinary claim rewritten under its id into a
+/// jurisdiction observation of someone in no campaign changes no authority,
+/// so it does not block the restore; making it private as well does.
+#[test]
+fn restore_compares_only_the_read_scope_of_a_claim_rewritten_into_a_jurisdiction() {
+    let (_dir, live) = crate::test_util::open_test_vault_with(VaultConfig::device());
+    let backups = tempfile::tempdir().unwrap();
+    let subject = person(&live, b"subject");
+    let claim = EntityId::now();
+    let mut ordinary = jurisdiction_observation(subject, "UK", 10);
+    ordinary.predicate = "profile.region".to_owned();
+    live.put_claim(&claim, &ordinary, TimeRange { start: 10, end: 10 }, 10)
+        .unwrap();
+    let image = backups.path().join("backup");
+    live.snapshot_checkpoint(&image, 100).unwrap();
+    let restore = |name: &str| {
+        Vault::restore_checkpoint_keeping_authority(
+            &image,
+            &backups.path().join(name),
+            VaultConfig::device(),
+            &live,
+            200,
+        )
+        .map(drop)
+    };
+
+    let mut rewritten = live.get_claim(&claim).unwrap().unwrap();
+    rewritten.predicate = crate::campaign::claims::PREDICATE_COMM_JURISDICTION.to_owned();
+    live.put_claim(&claim, &rewritten, TimeRange { start: 10, end: 10 }, 20)
+        .unwrap();
+    restore("rewritten").expect("the same read scope, now a jurisdiction, restores");
+
+    let mut scope = match rewritten.scope.take() {
+        Some(rmpv::Value::Map(entries)) => entries,
+        _ => Vec::new(),
+    };
+    scope.retain(|(key, _)| key.as_str() != Some("private"));
+    scope.push((rmpv::Value::from("private"), rmpv::Value::from(true)));
+    rewritten.scope = Some(rmpv::Value::Map(scope));
+    live.put_claim(&claim, &rewritten, TimeRange { start: 10, end: 10 }, 30)
+        .unwrap();
+    let error = restore("private").expect_err("a narrowed read scope refuses the restore");
+    assert!(error.to_string().contains("claim privacy"), "{error}");
+}
