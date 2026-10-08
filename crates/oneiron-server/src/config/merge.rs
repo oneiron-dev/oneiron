@@ -137,7 +137,7 @@ pub fn resolve_backup_config(args: &ServeArgs) -> anyhow::Result<BackupConfig> {
         .or_else(default_config_path)
     {
         Some(path) if path.exists() => {
-            if let Some(over) = load_file_config(&path)?.backup {
+            if let Some(over) = load_backup_section(&path)? {
                 backup.apply_override(over);
             }
         }
@@ -377,6 +377,23 @@ pub fn default_config_path() -> Option<PathBuf> {
             .join(DEFAULT_CONFIG_DIR)
             .join(DEFAULT_CONFIG_FILE)
     })
+}
+
+/// The config file's `[backup]` table alone: a mistyped setting elsewhere in
+/// the file does not stop it being read.
+fn load_backup_section(path: &Path) -> anyhow::Result<Option<BackupConfigOverride>> {
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("read config file {}", path.display()))?;
+    let mut table: toml::Table =
+        toml::from_str(&raw).with_context(|| format!("parse config file {}", path.display()))?;
+    table
+        .remove("backup")
+        .map(|section| {
+            section
+                .try_into()
+                .with_context(|| format!("parse [backup] in config file {}", path.display()))
+        })
+        .transpose()
 }
 
 fn load_file_config(path: &Path) -> anyhow::Result<PartialServeConfig> {

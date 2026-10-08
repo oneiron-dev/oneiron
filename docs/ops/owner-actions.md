@@ -208,8 +208,10 @@ oneiron runs decline RUN_ID --bundle <bundle id from show>
 ```
 
 The bundle id binds exactly the proposals you reviewed: `show` and the route read the proposals
-and compute the id in one read. Values are shown through the same credential redaction as serve
-and export, even with the secret scan off; the stored proposal is unchanged. If the run changed
+and compute the id in one read. Values, predicates, run ids and labels are shown through the same
+credential redaction as serve and export, even with the secret scan off; the stored proposal is
+unchanged. Each run also has a `run_ref`, which `show`, `approve` and `decline` (and the routes'
+`run_id`) accept in place of the run id. If the run changed
 since, the action is refused (409) and you review again. Approve lands every proposal as approved; decline closes
 every one as rejected. Either way one receipt represents the run. Routes: `GET
 /v1/owner/runs`, `GET /v1/owner/runs/review?run_id=…`, `POST /v1/owner/runs/approve` or

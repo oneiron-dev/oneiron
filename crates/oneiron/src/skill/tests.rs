@@ -1315,7 +1315,7 @@ fn a_restore_never_lifts_a_quarantine_placed_since() -> Result<()> {
     assert!(
         error
             .to_string()
-            .contains("skill quarantines and rejections"),
+            .contains("skill approvals and quarantines"),
         "{error}"
     );
     assert!(!destination.exists());

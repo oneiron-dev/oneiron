@@ -2021,3 +2021,72 @@ fn anchor_subjected_verdict_stays_unforgeable_via_public_door() -> Result<()> {
     ));
     Ok(())
 }
+
+/// ASTRA-9A-2-R2 F3: a skill's scan verdicts restrict how its bytes activate.
+/// A refreshed scan with the same clean result supersedes the old verdict
+/// but changes no posture, so a restore over the vault goes ahead; a verdict
+/// that finds risk since the backup refuses it.
+#[test]
+fn a_restore_goes_ahead_past_a_clean_rescan_and_refuses_a_risk_found_since() -> Result<()> {
+    let (_temp, vault) = open_vault();
+    let (_, imported_entity) = materialize_shared_hash_skills(&vault)?;
+    let scan = |at: u64, risk: ScanRiskLevel| {
+        let verdict = if risk == ScanRiskLevel::None {
+            ScanVerdict::Clean
+        } else {
+            ScanVerdict::Suspicious
+        };
+        SkillScanReceipt::new(
+            "alpha",
+            at,
+            verdict,
+            risk,
+            ScanCompleteness::Complete,
+            SkillGovernance::Recommended,
+        )
+    };
+    vault.ingest_skill_scan_verdict(
+        &imported_entity,
+        fixture_hash(),
+        &scan(5, ScanRiskLevel::None)?,
+        t(5),
+        6,
+    )?;
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100)?;
+    let restore = |destination: &std::path::Path| {
+        Vault::restore_checkpoint_keeping_authority(
+            &image,
+            destination,
+            crate::VaultConfig::default(),
+            &vault,
+            200,
+        )
+        .map(|(restored, _)| restored)
+    };
+
+    vault.ingest_skill_scan_verdict(
+        &imported_entity,
+        fixture_hash(),
+        &scan(7, ScanRiskLevel::None)?,
+        t(7),
+        8,
+    )?;
+    drop(restore(&backups.path().join("first"))?);
+
+    vault.ingest_skill_scan_verdict(
+        &imported_entity,
+        fixture_hash(),
+        &scan(9, ScanRiskLevel::High)?,
+        t(9),
+        10,
+    )?;
+    let destination = backups.path().join("second");
+    let error = restore(&destination)
+        .err()
+        .expect("the restore must be refused");
+    assert!(error.to_string().contains("skill scan verdicts"), "{error}");
+    assert!(!destination.exists());
+    Ok(())
+}

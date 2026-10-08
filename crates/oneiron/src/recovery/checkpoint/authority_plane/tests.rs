@@ -319,3 +319,51 @@ fn restore_goes_ahead_past_an_ordinary_project_edit() {
     .unwrap();
     assert_eq!(restored.project(project).unwrap().unwrap().why, None);
 }
+
+/// ASTRA-9A-2-R2 F6: a kind is the engine's by its pack and short-id prefix
+/// together. Another pack's kind under the CAMPAIGN prefix is not CAMPAIGN
+/// content, so a restore over the vault past an edit to one of its rows is
+/// refused like any unclassified kind.
+#[test]
+fn restore_refuses_a_changed_row_of_another_packs_kind_under_an_engine_prefix() {
+    let root = tempfile::tempdir().unwrap();
+    let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    let kind = (crate::registry::TYPE_BYTE_ZONE_COMPILED_PRODUCT_START
+        ..=crate::registry::TYPE_BYTE_ZONE_COMPILED_PRODUCT_END)
+        .find(|byte| {
+            crate::registry::entity_type_registry_entry(*byte).is_none()
+                && live.structural_kind_registration(*byte).is_none()
+        })
+        .unwrap();
+    live.register_structural_kind(
+        kind,
+        crate::campaign::CAMPAIGN_SHORT_ID_PREFIX,
+        crate::registry::TypeByteZone::CompiledProduct,
+        "other-pack",
+    )
+    .unwrap();
+    let row = EntityId::now();
+    let at = TimeRange { start: 1, end: 1 };
+    live.put_entity(&row, kind, at, 1, b"first").unwrap();
+    let image = root.path().join("backup");
+    live.snapshot_checkpoint(&image, 100).unwrap();
+    live.put_entity(&row, kind, at, 2, b"second").unwrap();
+
+    let destination = root.path().join("restored");
+    let Err(error) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &destination,
+        VaultConfig::device(),
+        &live,
+        200,
+    ) else {
+        panic!("the restore must be refused");
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("entities of an unregistered kind"),
+        "{error}"
+    );
+    assert!(!destination.exists());
+}

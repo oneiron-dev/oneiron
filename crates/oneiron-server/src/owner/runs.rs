@@ -6,7 +6,9 @@
 //! id, and the engine re-hashes the live bundle inside the resolving
 //! transaction, so an approval never lands on proposals the owner did not see.
 //! Review shows each value through the release redaction, as every serve
-//! path does; the id stays bound to the stored body.
+//! path does; the id stays bound to the stored body. A run id is free text
+//! its proposer chose, so it is shown redacted too, beside a `run_ref` that
+//! review and resolve accept in its place.
 
 use oneiron::claim::ClaimBody;
 use oneiron::consent::AuthenticatedOwner;
@@ -24,7 +26,10 @@ const PENDING_SCAN_LIMIT: usize = 10_000;
 /// A run with proposals waiting for the owner.
 #[derive(Debug, Serialize)]
 pub(crate) struct PendingRun {
+    /// The run id through the release redaction.
     pub(crate) run_id: String,
+    /// Names the run to review and resolve, whatever its id holds.
+    pub(crate) run_ref: String,
     pub(crate) pending: usize,
 }
 
@@ -35,6 +40,7 @@ pub(crate) struct RunReview {
     pub(crate) bundle_id: String,
     pub(crate) name: String,
     pub(crate) run_id: String,
+    pub(crate) run_ref: String,
     pub(crate) agent_label: Option<String>,
     pub(crate) proposals: Vec<RunProposal>,
 }
@@ -54,6 +60,7 @@ pub(crate) struct RunProposal {
 #[derive(Debug, Serialize)]
 pub(crate) struct RunResolved {
     pub(crate) run_id: String,
+    pub(crate) run_ref: String,
     pub(crate) bundle_id: String,
     pub(crate) action: &'static str,
     pub(crate) receipt_id: String,
@@ -62,28 +69,64 @@ pub(crate) struct RunResolved {
 
 /// Runs with proposals waiting, most proposals first.
 pub(crate) fn pending(vault: &Vault) -> OwnerResult<Vec<PendingRun>> {
-    let mut runs: Vec<PendingRun> = vault
+    let mut runs: Vec<(String, usize)> = vault
         .pending_gate_consent_groups(PENDING_SCAN_LIMIT)?
         .into_iter()
         .filter_map(|group| {
-            group.dreamer_run_id.map(|run_id| PendingRun {
-                run_id,
-                pending: group.records.len(),
-            })
+            group
+                .dreamer_run_id
+                .map(|run_id| (run_id, group.records.len()))
         })
         .collect();
-    runs.sort_by(|a, b| b.pending.cmp(&a.pending).then(a.run_id.cmp(&b.run_id)));
-    Ok(runs)
+    runs.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    Ok(runs
+        .into_iter()
+        .map(|(run_id, pending)| PendingRun {
+            run_ref: run_ref(&run_id),
+            run_id: redacted(run_id),
+            pending,
+        })
+        .collect())
+}
+
+/// A run's handle for review and resolve, derived from its id and never
+/// carrying it.
+fn run_ref(run_id: &str) -> String {
+    hex(&blake3::derive_key(
+        "oneiron owner run ref v1",
+        run_id.as_bytes(),
+    ))
+}
+
+/// The run `run` names: a waiting run whose `run_ref` it is, or else the run
+/// id it is.
+fn run_named(vault: &Vault, run: &str) -> OwnerResult<String> {
+    if run.len() == 64
+        && run
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        let named = vault
+            .pending_gate_consent_groups(PENDING_SCAN_LIMIT)?
+            .into_iter()
+            .filter_map(|group| group.dreamer_run_id)
+            .find(|run_id| run_ref(run_id) == run);
+        if let Some(run_id) = named {
+            return Ok(run_id);
+        }
+    }
+    Ok(run.to_owned())
 }
 
 /// What one run is waiting on.
 pub(crate) fn review(
     vault: &Vault,
     owner: &AuthenticatedOwner,
-    run_id: &str,
+    run: &str,
 ) -> OwnerResult<RunReview> {
+    let run_id = run_named(vault, run)?;
     let actor = WriteActor::new(owner.actor(), EdgeActorClass::Human);
-    let (bundle, bodies) = vault.review_gate_consent_bundle_with_bodies(&actor, run_id)?;
+    let (bundle, bodies) = vault.review_gate_consent_bundle_with_bodies(&actor, &run_id)?;
     Ok(review_of(bundle, bodies))
 }
 
@@ -115,15 +158,16 @@ fn review_of(bundle: GateConsentBundle, bodies: Vec<ClaimBody>) -> RunReview {
         .collect();
     RunReview {
         bundle_id: hex(&bundle.bundle_id),
-        name: bundle.name,
-        run_id: bundle.dreamer_run_id,
-        agent_label: bundle.agent_label,
+        name: redacted(bundle.name),
+        run_ref: run_ref(&bundle.dreamer_run_id),
+        run_id: redacted(bundle.dreamer_run_id),
+        agent_label: bundle.agent_label.map(redacted),
         proposals,
     }
 }
 
-/// A stored string as the release redaction serves it: a predicate is free
-/// text a proposer chose, so it is checked like the value.
+/// A stored string as the release redaction serves it: a predicate, a run id
+/// or a label is free text a proposer chose, so it is checked like the value.
 fn redacted(text: String) -> String {
     let mut value = rmpv::Value::from(text);
     oneiron::batch::export::redact_messagepack_credentials(&mut value);
@@ -134,13 +178,14 @@ fn redacted(text: String) -> String {
 pub(crate) fn resolve(
     vault: &Vault,
     owner: &AuthenticatedOwner,
-    run_id: &str,
+    run: &str,
     bundle_id: &str,
     action: GateConsentBundleAction,
 ) -> OwnerResult<RunResolved> {
     let expected = parse_bundle_id(bundle_id)?;
+    let run_id = run_named(vault, run)?;
     let receipt = vault
-        .resolve_gate_consent_bundle(owner, expected, run_id, action, vault.now_recorded_at())
+        .resolve_gate_consent_bundle(owner, expected, &run_id, action, vault.now_recorded_at())
         .map_err(|error| match error.kind() {
             oneiron::ErrorKind::GateConsentStale => OwnerError::Changed(
                 "this run's proposals changed since they were reviewed; review it again".into(),
@@ -148,7 +193,8 @@ pub(crate) fn resolve(
             _ => OwnerError::from(error),
         })?;
     Ok(RunResolved {
-        run_id: receipt.dreamer_run_id,
+        run_ref: run_ref(&receipt.dreamer_run_id),
+        run_id: redacted(receipt.dreamer_run_id),
         bundle_id: hex(&receipt.bundle_id),
         action: receipt.action.as_str(),
         receipt_id: receipt.receipt_id.to_hex(),

@@ -34,6 +34,7 @@ use crate::note::NoteKind;
 use crate::outbound_grant::StandingOutboundGrant;
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::skill::{SkillDependency, SkillGovernanceTier, SkillLifecycle};
+use crate::skill_hub::ScanRiskLevel;
 use crate::task_authority::TaskAuthorityFact;
 use crate::workspace_roster::{ProjectAuthority, ProjectBudgetShare, ProjectRecord, ProjectRole};
 use crate::{EntityId, Error, Result, Vault};
@@ -202,6 +203,7 @@ fn authority_moved(
 ) -> BTreeSet<&'static str> {
     let mut moved = BTreeSet::new();
     let mut held = BTreeSet::new();
+    let mut image_verdicts = Vec::new();
     for (key, value) in image {
         let (
             Class::Refuse {
@@ -216,6 +218,10 @@ fn authority_moved(
         let Some(authority) = project(projection, value) else {
             continue;
         };
+        if let Compared::ScanVerdict(verdict) = authority {
+            image_verdicts.push(verdict);
+            continue;
+        }
         held.insert(key.as_slice());
         match live.get(key) {
             Some((_, _, current)) if *current == authority => {}
@@ -235,7 +241,42 @@ fn authority_moved(
             moved.insert(current.family().unwrap_or(*what));
         }
     }
+    let live_verdicts = live.values().filter_map(|(_, _, current)| match current {
+        Compared::ScanVerdict(verdict) => Some(verdict.clone()),
+        _ => None,
+    });
+    if scan_postures(image_verdicts) != scan_postures(live_verdicts) {
+        moved.insert("skill scan verdicts");
+    }
     moved
+}
+
+/// One active skill scan verdict: the bytes it is about, the risk it found,
+/// and whether its dependency scan was partial.
+#[derive(Clone, PartialEq)]
+struct ScanVerdictFacts {
+    content_hash: Option<String>,
+    risk: ScanRiskLevel,
+    partial: bool,
+}
+
+/// The activation posture each skill's bytes take from their active scan
+/// verdicts, as the activation gate folds them: the worst risk, and whether a
+/// dependency scan was partial. Bytes with no verdict, or only clean complete
+/// ones, are absent, so a refreshed scan with the same result changes nothing.
+fn scan_postures(
+    verdicts: impl IntoIterator<Item = ScanVerdictFacts>,
+) -> BTreeMap<Option<String>, (ScanRiskLevel, bool)> {
+    let mut postures: BTreeMap<_, (ScanRiskLevel, bool)> = BTreeMap::new();
+    for verdict in verdicts {
+        let posture = postures
+            .entry(verdict.content_hash)
+            .or_insert((ScanRiskLevel::None, false));
+        posture.0 = posture.0.max(verdict.risk);
+        posture.1 |= verdict.partial;
+    }
+    postures.retain(|_, posture| *posture != (ScanRiskLevel::None, false));
+    postures
 }
 
 /// Whether an entity only one vault holds (only the live one when
@@ -308,6 +349,8 @@ enum Compared {
     OutboundGrant(Box<StandingOutboundGrant>),
     /// An authority fact about a task.
     TaskFact(TaskAuthorityFact),
+    /// An active skill scan verdict, compared as a posture.
+    ScanVerdict(ScanVerdictFacts),
 }
 
 impl Compared {
@@ -427,6 +470,9 @@ fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
         Projection::Claim => crate::claim::decode_claim_body(body, true).map_or_else(
             |_| whole(),
             |claim| {
+                if claim.predicate == crate::skill_hub::PREDICATE_SKILL_SCAN_VERDICT {
+                    return scan_verdict(&claim);
+                }
                 let (space, private) = crate::claim::claim_access_axes(&claim);
                 let authority = super::restore_class::authority_claim(&claim.predicate)
                     .map(|family| (family, body.to_vec()));
@@ -451,6 +497,30 @@ fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
                 },
             )
         }
+    })
+}
+
+/// What an active skill scan verdict tells the activation gate; an inactive
+/// one tells it nothing. A risk that does not decode counts as the worst.
+fn scan_verdict(claim: &crate::claim::ClaimBody) -> Compared {
+    let field = |name: &str| match &claim.value {
+        rmpv::Value::Map(fields) => fields
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(name))
+            .and_then(|(_, value)| value.as_str()),
+        _ => None,
+    };
+    let active = claim.lifecycle == ClaimLifecycleStatus::Active;
+    Compared::ScanVerdict(ScanVerdictFacts {
+        content_hash: field("contentHash").map(str::to_owned),
+        risk: if active {
+            crate::skill_hub::scan_verdict_row_risk(claim).unwrap_or(ScanRiskLevel::Critical)
+        } else {
+            ScanRiskLevel::None
+        },
+        partial: active
+            && field("provider") == Some(crate::skill_hub::osv::OSV_SCAN_PROVIDER)
+            && field("completeness") == Some("partial"),
     })
 }
 

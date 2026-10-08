@@ -91,7 +91,9 @@ pub(super) enum Projection {
     Note,
     /// A claim's relationship scope and privacy, and the whole of a claim in
     /// an [`AUTHORITY_CLAIMS`] family. Such a claim only one vault holds
-    /// counts as changed.
+    /// counts as changed. Skill scan verdicts are compared as the activation
+    /// posture each skill's bytes take from them, not claim by claim, so a
+    /// refreshed scan with the same result changes nothing.
     Claim,
     /// A project's authority (parents, claims scope, slice, depth, leader,
     /// board), roster, role and budget.
@@ -208,7 +210,6 @@ pub(super) const AUTHORITY_CLAIMS: &[(&str, &str)] = &[
     ("federation.admin_ruling", "federation rulings"),
     ("plugin.section_install", "board plugins"),
     ("project.leader_chat", "leader chat rules"),
-    ("skill.scan_verdict", "skill scan verdicts"),
     ("vault.default_facet", "the default facet"),
 ];
 
@@ -222,13 +223,26 @@ pub(super) fn authority_claim(predicate: &str) -> Option<&'static str> {
         .map(|(_, name)| *name)
 }
 
-/// Kinds a vault registers at run time, by their short-id prefix: the engine
-/// registers each of these itself. A registered kind not named here is
-/// refused when it differs.
-const RUNTIME_KINDS: &[(&str, Class)] = &[
-    (crate::workspace_roster::PROJECT_SHORT_ID_PREFIX, PROJECTS),
-    (crate::saved_query::SAVED_QUERY_SHORT_ID_PREFIX, CONTENT),
-    (crate::campaign::CAMPAIGN_SHORT_ID_PREFIX, CONTENT),
+/// Kinds a vault registers at run time, by their pack and short-id prefix,
+/// the identity their own readers check: the engine registers each of these
+/// itself. A registered kind not named here, including one that reuses a
+/// prefix under another pack, is refused when it differs.
+const RUNTIME_KINDS: &[(&str, &str, Class)] = &[
+    (
+        crate::workspace_roster::PROJECT_PACK,
+        crate::workspace_roster::PROJECT_SHORT_ID_PREFIX,
+        PROJECTS,
+    ),
+    (
+        crate::campaign::CRM_PACK_ID,
+        crate::saved_query::SAVED_QUERY_SHORT_ID_PREFIX,
+        CONTENT,
+    ),
+    (
+        crate::campaign::CRM_PACK_ID,
+        crate::campaign::CAMPAIGN_SHORT_ID_PREFIX,
+        CONTENT,
+    ),
 ];
 const ESIGN_CEREMONIES: Class = Class::Refuse {
     what: "e-sign ceremonies",
@@ -382,8 +396,10 @@ impl Classes {
         for registration in current.structural_kind_registrations() {
             let class = RUNTIME_KINDS
                 .iter()
-                .find(|(prefix, _)| registration.short_id_prefix == *prefix)
-                .map(|(_, class)| *class);
+                .find(|(pack, prefix, _)| {
+                    registration.pack == *pack && registration.short_id_prefix == *prefix
+                })
+                .map(|(_, _, class)| *class);
             let slot = &mut kinds[usize::from(registration.type_byte)];
             if slot.is_none() {
                 *slot = class;

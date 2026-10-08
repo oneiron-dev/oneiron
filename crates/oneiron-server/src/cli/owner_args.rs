@@ -141,6 +141,7 @@ pub struct ServeOnlyArgs {
 
 #[derive(Args, Clone, Debug)]
 pub struct RunArgs {
+    /// The run id, or the `run_ref` `runs pending` printed for it.
     pub run_id: String,
 
     #[command(flatten)]
@@ -149,6 +150,7 @@ pub struct RunArgs {
 
 #[derive(Args, Clone, Debug)]
 pub struct RunDecisionArgs {
+    /// The run id, or the `run_ref` `runs pending` printed for it.
     pub run_id: String,
 
     /// The bundle id `runs show` printed for exactly these proposals.

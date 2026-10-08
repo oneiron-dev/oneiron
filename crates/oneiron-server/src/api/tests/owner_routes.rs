@@ -638,3 +638,57 @@ async fn a_backup_queued_behind_a_slip_revocation_takes_and_prunes_nothing() {
         .count();
     assert_eq!(partials, 0, "no partial file is left behind");
 }
+
+/// ASTRA-9A-2-R2 F1: a run id is free text its proposer chose. A
+/// credential-shaped one is never served by the listing, review or receipt,
+/// and the run is still reviewed and approved through its `run_ref`.
+#[tokio::test]
+async fn a_credential_shaped_run_id_is_never_served_and_its_ref_decides_the_run() {
+    let (_dir, server) = auth_test_server();
+    let owner = owner_recipe(&server);
+    let vault = server.vault();
+    let (status, _) = call(
+        &server,
+        "POST",
+        "/v1/owner/secret-scan",
+        owner.clone(),
+        Some(&json!({ "mode": "off" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let run = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
+    let proposal = vault
+        .park_run_proposal_for_test(
+            run,
+            oneiron::EntityId::now(),
+            oneiron::EntityId::now(),
+            "an innocuous value",
+        )
+        .unwrap();
+
+    let (status, listing) = call(&server, "GET", "/v1/owner/runs", owner.clone(), None).await;
+    assert_eq!(status, StatusCode::OK, "{listing}");
+    assert!(!listing.to_string().contains(run), "{listing}");
+    let run_ref = listing[0]["run_ref"].as_str().unwrap().to_owned();
+
+    let path = format!("/v1/owner/runs/review?run_id={run_ref}");
+    let (status, review) = call(&server, "GET", &path, owner.clone(), None).await;
+    assert_eq!(status, StatusCode::OK, "{review}");
+    assert!(!review.to_string().contains(run), "{review}");
+
+    let decide = json!({ "run_id": run_ref, "bundle_id": review["bundle_id"] });
+    let (status, resolved) = call(
+        &server,
+        "POST",
+        "/v1/owner/runs/approve",
+        owner,
+        Some(&decide),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resolved}");
+    assert!(!resolved.to_string().contains(run), "{resolved}");
+    assert_eq!(
+        vault.get_claim(&proposal).unwrap().unwrap().approval,
+        oneiron::ClaimApprovalStatus::Approved
+    );
+}

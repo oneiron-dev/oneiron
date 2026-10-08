@@ -87,7 +87,9 @@ fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Value> {
         note_error(error);
     }
     let backup = resolve_backup_config(&serve).unwrap_or_else(|error| {
-        note_error(error);
+        note_error(error.context(
+            "the [backup] settings did not resolve, so the backups shown are at the default location",
+        ));
         BackupConfig::default()
     });
     let plan = BackupPlan::new(

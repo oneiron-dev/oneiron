@@ -123,10 +123,10 @@ pub use project::{
     ProjectWidenAxis, ProjectWriteProof, RoomOriginCard,
 };
 pub(crate) use project::{
-    GoalLimits, HUB_BELONGS_TO_LAMBDA, LEADER_CHAT_FIELD, PROJECT_SHORT_ID_PREFIX, ProjectReader,
-    admit_leader_chat_turn, admit_leader_chat_witness, deindex_project_room, guard_goal_claim_put,
-    guard_goal_delete, guard_goal_pointer_put, is_project_entity, is_project_type,
-    leader_chat_record_permitted, normalize_project_body, note_project_proof,
+    GoalLimits, HUB_BELONGS_TO_LAMBDA, LEADER_CHAT_FIELD, PROJECT_PACK, PROJECT_SHORT_ID_PREFIX,
+    ProjectReader, admit_leader_chat_turn, admit_leader_chat_witness, deindex_project_room,
+    guard_goal_claim_put, guard_goal_delete, guard_goal_pointer_put, is_project_entity,
+    is_project_type, leader_chat_record_permitted, normalize_project_body, note_project_proof,
     permit_leader_chat_record, precheck_goal_delete, project_mint_gate_refs_in_txn,
     project_room_dependency, reconcile_project_rooms, retire_goal_for_delete, root_project_in,
     seed_root_project, settle_leader_chat_record, validate_local_leader_chat_turns,

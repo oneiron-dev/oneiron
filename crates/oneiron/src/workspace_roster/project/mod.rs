@@ -65,7 +65,9 @@ use std::collections::BTreeSet;
 pub const PROJECT_TYPE_BYTE: u8 = 103;
 /// The short-id prefix PROJECT is registered under at run time.
 pub(crate) const PROJECT_SHORT_ID_PREFIX: &str = "pj";
-const PACK: &str = "oneiron.project";
+/// The pack PROJECT is registered under at run time.
+pub(crate) const PROJECT_PACK: &str = "oneiron.project";
+const PACK: &str = PROJECT_PACK;
 
 /// The root project's entity id, seeded once at first boot. Key: ().
 const ROOT: SideTable<(), EntityId, Raw> = SideTable::new(&side_table::PROJECT_ROOT);
