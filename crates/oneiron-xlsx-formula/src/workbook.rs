@@ -42,6 +42,8 @@ struct Formulas {
 struct DefinedName {
     name: String,
     formula: String,
+    /// Defined for one sheet (`localSheetId`), not the whole workbook.
+    sheet_level: bool,
 }
 
 impl FormualizerEngine {
@@ -199,6 +201,7 @@ impl Formulas {
             names.push(DefinedName {
                 name: name.to_owned(),
                 formula: node.text.clone(),
+                sheet_level: scope.is_some(),
             });
         }
         // The writer reads the package's own relationships first.
@@ -328,7 +331,23 @@ impl Formulas {
             .names
             .iter()
             .map(|name| (&name.formula, Some(name.name.as_str())));
+        // The engine reads `[0]!Rate` as `Rate`: on a sheet with its own
+        // `Rate` that is the sheet's, where Excel reads the workbook's.
+        let sheet_level: BTreeSet<String> = self
+            .names
+            .iter()
+            .filter(|name| name.sheet_level)
+            .map(|name| name.name.to_lowercase())
+            .collect();
         for (formula, defined) in cells.chain(names) {
+            if let Some(name) = crate::links::workbook_qualified_names(formula)
+                .into_iter()
+                .find(|name| sheet_level.contains(&name.to_lowercase()))
+            {
+                return Err(unsupported(format!(
+                    "workbook-qualified name with a sheet-level definition ([0]!{name})"
+                )));
+            }
             let inspection = crate::context::inspect_formula(formula)?;
             if let Some(need) = inspection.host_context {
                 return Err(unsupported(format!("formula needs host context: {need}")));
