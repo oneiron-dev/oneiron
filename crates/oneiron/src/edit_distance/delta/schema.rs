@@ -30,14 +30,15 @@ impl DeltaSource {
     }
 }
 
-/// The edit mass behind a Δ, in the unit its lane counts: CHARACTERS for
-/// [`DeltaSource::RecordedOps`], LEAVES for [`DeltaSource::FieldDiff`], LINES
-/// for [`DeltaSource::Reconstructed`].
+/// The edit mass behind a Δ, in the unit its lane counts: CHARACTERS of the
+/// whitespace-normalized text for [`DeltaSource::RecordedOps`] and
+/// [`DeltaSource::Reconstructed`], LEAVES for [`DeltaSource::FieldDiff`].
 ///
 /// `moved` is the discount channel: a producer that DETECTS a move records
 /// the relocated units here and leaves them out of `ins`/`del`, so relocated
-/// content is charged once and cheaply instead of twice at full price. Only
-/// the reconstructed lane detects moves; the other two report `0`.
+/// content is charged once and cheaply instead of twice at full price. Both
+/// text lanes detect moved lines; the field-diff lane compares arrays
+/// positionally and reports `0`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpsSummary {
     /// Units inserted.
@@ -51,10 +52,10 @@ pub struct OpsSummary {
     /// Whether the producer hit its own cost cap, leaving these counts an
     /// upper BOUND rather than an exact script.
     ///
-    /// Only the reconstructed lane can set it (its Myers trace is the only
-    /// capped work in the module). It rides the Δ onto disk because a
-    /// consumer reading a capped diff as exact is the one way this telemetry
-    /// lies.
+    /// Only the text lanes can set it: the Myers trace is the only capped
+    /// work in the module, and the recorded-ops lane pairs its moves with it.
+    /// It rides the Δ onto disk because a consumer reading a capped diff as
+    /// exact is the one way this telemetry lies.
     pub approx: bool,
 }
 

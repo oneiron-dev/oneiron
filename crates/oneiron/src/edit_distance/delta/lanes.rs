@@ -1,9 +1,11 @@
 //! The three delta capture lanes plus the precedence chooser; pure over inputs.
 
+use std::ops::Range;
+
 use rmpv::Value;
 
 use crate::edit_distance::FinalizedProposalText;
-use crate::edit_distance::myers::myers_line_diff;
+use crate::edit_distance::myers::{collapse_whitespace, myers_line_diff};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 
@@ -30,27 +32,46 @@ pub(super) const MAX_FIELD_DIFF_DEPTH: u32 = 64;
 /// standing at finalize), because summing per-change survivals would count
 /// the untouched remainder once per change.
 ///
+/// Every text is measured in its whitespace-collapsed form, and a change
+/// that touches only whitespace (its texts hold the same non-whitespace
+/// characters in the same order) is layout and records nothing, however the
+/// log grouped it.
+///
+/// Moves are paired at the endpoints by the reconstructed lane's own
+/// instrument ([`myers_line_diff`]): a line that left one place and arrived
+/// at another must have been removed and added somewhere in the op log, so
+/// its characters come out of `del` and `ins` once each and are charged in
+/// `moved` at the move discount instead. The replay tracks which characters
+/// the log itself typed, so a pair is capped at what the log added and
+/// removed less its churn: text typed and then deleted again. Churn is in
+/// neither cap, so it keeps its full price however the log split it. The
+/// caps are totals, not positions: when the log shows less than the moved
+/// line (its characters repeat around it, or the swap was made by editing
+/// words in place), a proposal character deleted and retyped can still raise
+/// the move toward the line's weight.
+///
 /// The per-change region is the span between the common prefix and the
 /// common suffix — one contiguous edit. A change that scatters edits across
 /// a line reads as one wider region, which under-counts `kept` and never
-/// under-counts `ins`/`del`; ED-02's Myers pass (ONE-1758) is what resolves
-/// scattered changes exactly.
+/// under-counts `ins`/`del`.
 #[must_use]
 pub fn delta_from_recorded_ops(finalized: &FinalizedProposalText) -> AmendmentDelta {
-    let mut ins: u32 = 0;
-    let mut del: u32 = 0;
-    for (_, span) in &finalized.ops_by_actor {
-        let affix = CharAffix::between(&span.before_text, &span.after_text);
-        del = del.saturating_add(affix.removed());
-        ins = ins.saturating_add(affix.added());
-    }
-    let window = CharAffix::between(&finalized.proposed_text, &finalized.final_text);
+    let log = LoggedMass::replay(finalized);
+    let window = CharAffix::between(
+        &collapse_whitespace(&finalized.proposed_text),
+        &collapse_whitespace(&finalized.final_text),
+    );
+    let endpoints = myers_line_diff(&finalized.proposed_text, &finalized.final_text).ops;
+    let moved = endpoints
+        .moved
+        .min(log.ins - log.churn)
+        .min(log.del - log.churn);
     let ops_summary = OpsSummary {
-        ins,
-        del,
+        ins: log.ins - moved,
+        del: log.del - moved,
         kept: window.common(),
-        moved: 0,
-        approx: false,
+        moved,
+        approx: endpoints.approx && moved > 0,
     };
     AmendmentDelta {
         proposed_ref: bytes_to_hex_lower(finalized.proposed_ref.as_bytes()),
@@ -60,6 +81,85 @@ pub fn delta_from_recorded_ops(finalized: &FinalizedProposalText) -> AmendmentDe
         ops_summary,
         engine_ver: engine_ver(),
     }
+}
+
+/// What the op log removed and added, and how much of it was churn: text
+/// the log typed and then removed again, counted on both sides.
+struct LoggedMass {
+    ins: u32,
+    del: u32,
+    /// Typed characters that a later content change removed. Each was added
+    /// once and removed once, so it is churn in `ins` and in `del`. A space a
+    /// layout-only change laid down is layout, not typed text.
+    churn: u32,
+}
+
+impl LoggedMass {
+    fn replay(finalized: &FinalizedProposalText) -> Self {
+        let mut mass = Self {
+            ins: 0,
+            del: 0,
+            churn: 0,
+        };
+        // `typed[i]`: whether character `i` of the current collapsed text was
+        // typed by a recorded change rather than proposed.
+        let mut typed: Vec<bool> = Vec::new();
+        for (_, span) in &finalized.ops_by_actor {
+            let before = collapse_whitespace(&span.before_text);
+            let after = collapse_whitespace(&span.after_text);
+            let affix = CharAffix::between(&before, &after);
+            // The replay seam chains each change onto the last; a log that
+            // does not chain restarts provenance at this change.
+            if typed.len() != affix.before_len as usize {
+                typed = vec![false; affix.before_len as usize];
+            }
+            let layout_only = before
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .eq(after.chars().filter(|c| !c.is_whitespace()));
+            let region = affix.prefix as usize..(affix.before_len - affix.suffix) as usize;
+            let added = affix.added() as usize;
+            let arrived: Vec<bool> = if layout_only {
+                carry_typed(&before, &after, &typed, region.clone(), added)
+            } else {
+                vec![true; added]
+            };
+            let removed_typed = typed[region.clone()].iter().filter(|flag| **flag).count();
+            typed.splice(region, arrived).for_each(drop);
+            if layout_only {
+                continue;
+            }
+            mass.del = mass.del.saturating_add(affix.removed());
+            mass.ins = mass.ins.saturating_add(affix.added());
+            mass.churn = mass.churn.saturating_add(u32_saturating(removed_typed));
+        }
+        mass
+    }
+}
+
+/// The typed flags of a layout-only change's arrived region: it moves no
+/// character, so each non-whitespace character keeps its flag, and the
+/// spaces it lays down are layout, never typed text.
+fn carry_typed(
+    before: &str,
+    after: &str,
+    typed: &[bool],
+    region: Range<usize>,
+    added: usize,
+) -> Vec<bool> {
+    let start = region.start;
+    let mut carried = before
+        .chars()
+        .skip(start)
+        .zip(&typed[region])
+        .filter(|(c, _)| !c.is_whitespace())
+        .map(|(_, flag)| *flag);
+    after
+        .chars()
+        .skip(start)
+        .take(added)
+        .map(|c| !c.is_whitespace() && carried.next().unwrap_or(false))
+        .collect()
 }
 
 /// Two strings split at their common prefix and suffix, in CHARACTERS —
@@ -263,16 +363,18 @@ fn leaf_count(value: &Value) -> u32 {
 // Lane 3 — reconstructed
 // ---------------------------------------------------------------------------
 
-/// Measures a Δ by diffing the two endpoint TEXTS line by line, for an edit
-/// that arrived with no op log and no structured body — a human editing
-/// outside the gated proposal flow.
+/// Measures a Δ by diffing the two endpoint TEXTS line by line, then
+/// character by character inside each changed region, for an edit that
+/// arrived with no op log and no structured body — a human editing outside
+/// the gated proposal flow.
 ///
 /// Last in precedence for a reason: the endpoints are all it has, so churn
 /// (text typed and then replaced) is invisible to it, and a rewrite that
-/// happens to land back on the proposed text scores zero. What it can do that
-/// neither other lane can is recognize a MOVE: relocated lines land in
-/// [`OpsSummary::moved`] at [`MOVE_DISCOUNT`](crate::edit_distance::myers::MOVE_DISCOUNT) rather than being charged twice
-/// as a deletion and an insertion.
+/// happens to land back on the proposed text scores zero. Relocated lines
+/// land in [`OpsSummary::moved`] at
+/// [`MOVE_DISCOUNT`](crate::edit_distance::myers::MOVE_DISCOUNT) rather than
+/// being charged twice as a deletion and an insertion; layout-only changes
+/// (whitespace, re-wrapping) are not changes.
 ///
 /// The refs are the two texts' own blake3 hashes, so a consumer can verify
 /// the pair it was handed — the same contract the field-diff lane keeps.
