@@ -66,6 +66,7 @@ const CASES: &[fn() -> Result<Case>] = &[
     audience::project_verdicts,
     reads::relationship_reads,
     reads::claim_grants,
+    reads::credential_backed_claim_reads,
     reads::note_reads,
     reads::diary_links,
     reads::record_positions,

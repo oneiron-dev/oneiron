@@ -1,10 +1,11 @@
 //! Who a read admits: the relationship reads a principal's memberships and
 //! grants decide, the policy grants a reader's key matches on a claim, the
-//! private notes a reader reaches through a diary link, the diary links graph
-//! reads show, and the position at which each record is read, selected and
-//! connected.
+//! claims a minted credential's holder reads, the private notes a reader
+//! reaches through a diary link, the diary links graph reads show, and the
+//! position at which each record is read, selected and connected.
 use super::{Decision, field, held_by_both};
 use crate::access_grant::{AccessContext, decode_access_grant_body};
+use crate::authority::AuthorityFold;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimBody, RelationshipRead, ScopedRead, ScopedReadActorKey, decode_claim_body,
@@ -18,6 +19,7 @@ use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE,
     ENTITY_TYPE_SUMMARY,
 };
+use crate::secret_lease::VaultInstant;
 use crate::{EntityId, Result, Vault};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -219,6 +221,130 @@ impl Decision for ClaimGrants {
     fn refusal() -> Option<bool> {
         Some(false)
     }
+}
+
+/// Whether a credential the authority log minted lets its holder read a
+/// claim, as the key a verified proof of it reads under does
+/// (`ScopedReadActorKey::from_verified_slip`), where no policy grant need
+/// name the holder. A proof only meets or narrows its mint, so the mint's
+/// own bounds stand for every proof of it: live at one instant both vaults
+/// share (`AuthorityFold::slip_is_live_at`, `ScopedRead::proof_live_in`), a
+/// read verb, no channel, and the claim among its records when it names any
+/// (`ScopedRead::credential_allows_id`). The claim is one generic reads
+/// serve (`claim::claim_generic_readable`), its principal audience admits
+/// the holder, and the policy grants match with the mint's Scope standing
+/// for the proof's (`gate::scoped_read_claim_allowed_with_scope`), each claim
+/// asked at its most permissive on the floors that sort content.
+pub(super) struct SlipClaimGrants;
+
+impl Decision for SlipClaimGrants {
+    type Subject = (EntityId, [u8; 32], VaultInstant);
+    type Answer = bool;
+
+    /// Every claim both vaults keep, with every credential either vault's
+    /// authority log minted, at the later of the two vaults' instants.
+    fn subjects(vaults: [&Vault; 2]) -> Result<BTreeSet<Self::Subject>> {
+        let claims = kept(vaults, &[ENTITY_TYPE_CLAIM])?;
+        let [live, restored] = vaults.map(minted);
+        let ((mut slips, live_at), (restored_slips, restored_at)) = (live?, restored?);
+        slips.extend(restored_slips);
+        let at = live_at.max(restored_at);
+        Ok(claims
+            .iter()
+            .flat_map(|claim| slips.iter().map(move |slip| (*claim, *slip, at)))
+            .collect())
+    }
+
+    fn answers(
+        vault: &Vault,
+        subjects: &BTreeSet<Self::Subject>,
+    ) -> Result<Vec<Option<Self::Answer>>> {
+        let txn = vault.store.env.read_txn()?;
+        let Ok(policy) = crate::gate::resolve_policy_manifest(&vault.store, &txn) else {
+            return Ok(vec![None; subjects.len()]);
+        };
+        let fold = vault.authority_fold_readonly_in_txn(&txn)?;
+        let mut claim: Option<(EntityId, Option<GrantInputs>)> = None;
+        let mut answers = Vec::with_capacity(subjects.len());
+        for (id, slip, at) in subjects {
+            let Some((scope, key)) = credential_reader(&fold, slip, *at, id) else {
+                answers.push(Some(false));
+                continue;
+            };
+            let read = vault.scoped_read(key);
+            if claim.as_ref().is_none_or(|(held, _)| held != id) {
+                claim = Some((*id, permissive_claim(vault, &txn, &read, id)));
+            }
+            answers.push(
+                claim
+                    .as_ref()
+                    .and_then(|(_, claim)| claim.as_ref())
+                    .and_then(|(body, facets)| {
+                        let principal = crate::claim::claim_principal_id(body).ok()?;
+                        Some(
+                            crate::claim::claim_generic_readable(body)
+                                && read.principal_admits(principal)
+                                && crate::gate::scoped_read_claim_allowed_with_scope(
+                                    &policy,
+                                    read.actor_key(),
+                                    body,
+                                    facets,
+                                    Some(scope),
+                                ),
+                        )
+                    }),
+            );
+        }
+        Ok(answers)
+    }
+
+    fn loosens(live: &bool, restored: &bool) -> bool {
+        !live && *restored
+    }
+
+    fn refusal() -> Option<bool> {
+        Some(false)
+    }
+}
+
+/// Every credential `vault`'s authority log minted, and the instant `vault`
+/// reads credentials at.
+fn minted(vault: &Vault) -> Result<(BTreeSet<[u8; 32]>, VaultInstant)> {
+    let txn = vault.store.env.read_txn()?;
+    let fold = vault.authority_fold_readonly_in_txn(&txn)?;
+    Ok((
+        fold.slips.mints.keys().copied().collect(),
+        vault.instant_in_txn(&txn)?,
+    ))
+}
+
+/// The Scope of the credential minted as `slip`, and the key a verified
+/// proof of it reads under, where at `at` it may read claim `id`; `None`
+/// where no proof of it reads that claim.
+fn credential_reader<'f>(
+    fold: &'f AuthorityFold,
+    slip: &[u8; 32],
+    at: VaultInstant,
+    id: &EntityId,
+) -> Option<(&'f Scope, ScopedReadActorKey)> {
+    let credential = &fold.slips.mints.get(slip)?.action.claims;
+    let reads = ["read", "core:read"]
+        .into_iter()
+        .any(|verb| credential.scope.verbs.contains(&verb.to_owned()));
+    if !(reads
+        && fold.slip_is_live_at(slip, at)
+        && fold.vault_id == Some(credential.vault_id)
+        && credential.channels.is_empty()
+        && (credential.records.is_empty() || credential.records.contains(&id.to_hex())))
+    {
+        return None;
+    }
+    let holder = credential.holder_ref.clone();
+    let key = match credential.actor_class.clone() {
+        None => ScopedReadActorKey::new(holder),
+        Some(class) => ScopedReadActorKey::with_actor_class(holder, class),
+    }?;
+    Some((&credential.scope, key))
 }
 
 /// A claim as the grant check reads it, and the facets its `FacetOf` edges
@@ -542,7 +668,7 @@ fn owners(vaults: [&Vault; 2]) -> Result<BTreeSet<EntityId>> {
 
 /// Every entity of `kinds` both vaults hold and neither has deleted. A
 /// decision about one record is asked only of these.
-fn kept(vaults: [&Vault; 2], kinds: &[u8]) -> Result<BTreeSet<EntityId>> {
+pub(super) fn kept(vaults: [&Vault; 2], kinds: &[u8]) -> Result<BTreeSet<EntityId>> {
     let mut ids = BTreeSet::new();
     for kind in kinds {
         ids.extend(held_by_both(vaults, *kind)?);
@@ -553,7 +679,10 @@ fn kept(vaults: [&Vault; 2], kinds: &[u8]) -> Result<BTreeSet<EntityId>> {
 /// The entities of `ids` both vaults hold and neither has deleted: one only
 /// one vault holds, or one deleted since, is content leaving or returning
 /// with the restore, and the shell a deletion keeps decides nothing.
-fn undeleted(vaults: [&Vault; 2], mut ids: BTreeSet<EntityId>) -> Result<BTreeSet<EntityId>> {
+pub(super) fn undeleted(
+    vaults: [&Vault; 2],
+    mut ids: BTreeSet<EntityId>,
+) -> Result<BTreeSet<EntityId>> {
     for vault in vaults {
         let txn = vault.store.env.read_txn()?;
         let mut held = BTreeSet::new();

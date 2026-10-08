@@ -35,6 +35,25 @@ pub(crate) fn scoped_read_claim_allowed(
     body: &ClaimBody,
     claim_facets: &[EntityId],
 ) -> bool {
+    scoped_read_claim_allowed_with_scope(
+        policy,
+        actor_key,
+        body,
+        claim_facets,
+        actor_key.authority_scope(),
+    )
+}
+
+/// What a key holding a proof of `explicit_scope` reads, as
+/// `scoped_read_claim_allowed` asks of the proof a key carries. The key's
+/// own proof, if any, is not read, and no proof is built.
+pub(crate) fn scoped_read_claim_allowed_with_scope(
+    policy: &PolicyManifestResolution,
+    actor_key: &ScopedReadActorKey,
+    body: &ClaimBody,
+    claim_facets: &[EntityId],
+    explicit_scope: Option<&crate::federation::Scope>,
+) -> bool {
     // This derived-data restriction narrows even a default-open vault. The
     // question's principal is a reader boundary, never a grant by itself.
     if let Some(Value::Map(scope)) = &body.scope {
@@ -60,7 +79,6 @@ pub(crate) fn scoped_read_claim_allowed(
         return false;
     }
 
-    let explicit_scope = actor_key.authority_scope();
     if explicit_scope.is_some_and(|scope| {
         !scope.admits(
             "read",
