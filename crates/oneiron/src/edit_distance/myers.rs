@@ -109,8 +109,32 @@ impl LineDiff {
 /// changed nothing (`d_norm == 0`), a wholly rewritten text scores exactly
 /// `1`, and a script too long to build is charged as a replacement and
 /// flagged approximate.
+///
+/// Myers breaks ties between equally short line scripts by direction, and
+/// once lines weigh their characters two such scripts can cost differently
+/// (keep the long block and move the short one, or the reverse). Both
+/// directions are measured and the cheaper kept, so the score never depends
+/// on which text was called `before`.
 #[must_use]
 pub fn myers_line_diff(before: &str, after: &str) -> LineDiff {
+    let forward = one_way_diff(before, after);
+    let reverse = one_way_diff(after, before);
+    if reverse.d_norm < forward.d_norm {
+        LineDiff {
+            ops: OpsSummary {
+                ins: reverse.ops.del,
+                del: reverse.ops.ins,
+                ..reverse.ops
+            },
+            d_norm: reverse.d_norm,
+        }
+    } else {
+        forward
+    }
+}
+
+/// [`myers_line_diff`] in one direction, with Myers' own tie-breaking.
+fn one_way_diff(before: &str, after: &str) -> LineDiff {
     let lines = Lines::intern(before, after);
     let (_, mid_before, mid_after) = trim_common_affix(&lines.before, &lines.after);
 
