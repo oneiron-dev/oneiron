@@ -37,7 +37,7 @@ use crate::counterparty_contact::{
 use crate::llm::ModelTierRef;
 use crate::note::NoteKind;
 use crate::outbound_grant::StandingOutboundGrant;
-use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
+use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_PERSON};
 use crate::skill::{SkillDependency, SkillGovernanceTier, SkillLifecycle};
 use crate::skill_hub::ScanRiskLevel;
 use crate::task_authority::{TaskAuthorityFact, TaskAuthorityFactKind};
@@ -341,10 +341,20 @@ fn authority_moved(
         &live_members,
         &live_observations,
     );
+    // The gate reads the jurisdiction of the PERSON a recipient's address
+    // resolves to, and of nothing else; an entity's kind never changes.
+    let image_persons: BTreeSet<&[u8]> = image
+        .iter()
+        .filter(|(_, value)| {
+            EntityMetadataHeader::parse(value)
+                .is_some_and(|header| header.entity_type == ENTITY_TYPE_PERSON)
+        })
+        .map(|(key, _)| key.as_slice())
+        .collect();
     if image_view
         .enrolled
         .union(&live_view.enrolled)
-        .filter(|subject| image_entities.contains(**subject))
+        .filter(|subject| image_persons.contains(**subject))
         .any(|subject| image_view.selection(subject) != live_view.selection(subject))
     {
         moved.insert("recipient jurisdictions");
@@ -369,7 +379,7 @@ type Selection = std::result::Result<Option<(String, Option<u16>)>, ()>;
 /// What the campaign gate reads in one vault, finding a subject's claims as
 /// it does, through their `claim_of` edges, whatever subject a body names:
 /// the subjects an active membership enrolls, and each subject's
-/// jurisdiction observations. The selection they give a subject the image
+/// jurisdiction observations. The selection they give a PERSON the image
 /// holds and either vault enrolls picks which compliance rules bind a
 /// campaign send, so a newer observation that moves it is authority, and a
 /// refreshed one with the same result changes nothing. The gate reads no

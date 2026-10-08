@@ -639,3 +639,47 @@ fn restore_reads_campaign_recipients_through_their_claim_of_edges() {
     );
     assert!(!destination.exists());
 }
+
+/// SOL-9A-2-R3 F33: the campaign gate reads the jurisdiction of the PERSON a
+/// recipient's address resolves to, and of nothing else. A moved
+/// jurisdiction of another kind of entity a membership reaches is content.
+#[test]
+fn restore_goes_ahead_past_a_moved_jurisdiction_of_a_non_person() {
+    let (_dir, live) = crate::test_util::open_test_vault_with(VaultConfig::device());
+    let backups = tempfile::tempdir().unwrap();
+    let org = EntityId::now();
+    live.put_entity(
+        &org,
+        crate::registry::ENTITY_TYPE_ORG,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"org",
+    )
+    .unwrap();
+    enroll(&live, org);
+    let observe = |jurisdiction: &str, observed_at: u64| {
+        live.put_claim(
+            &EntityId::now(),
+            &jurisdiction_observation(org, jurisdiction, observed_at),
+            TimeRange {
+                start: observed_at,
+                end: observed_at,
+            },
+            observed_at,
+        )
+        .unwrap();
+    };
+    observe("UK", 10);
+    let image = backups.path().join("backup");
+    live.snapshot_checkpoint(&image, 100).unwrap();
+    observe("US", 30);
+
+    Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &backups.path().join("restored"),
+        VaultConfig::device(),
+        &live,
+        200,
+    )
+    .expect("an organisation's jurisdiction binds no campaign send");
+}
