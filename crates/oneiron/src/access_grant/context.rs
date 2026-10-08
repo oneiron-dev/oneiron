@@ -502,11 +502,17 @@ mod tests {
     struct RelationshipShare {
         space: EntityId,
         member: EntityId,
+        binding: EntityId,
         shared: EntityId,
     }
 
     impl RelationshipShare {
         fn new(vault: &Vault) -> Self {
+            Self::with_binding_world(vault, None)
+        }
+
+        /// The member binding is an ordinary claim, so it may name a world.
+        fn with_binding_world(vault: &Vault, world: Option<EntityId>) -> Self {
             use crate::claim::{
                 ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject,
             };
@@ -534,8 +540,27 @@ mod tests {
                 .expect("put the member");
             // Bound before the shipped manifest is installed below: under it
             // the binding's predicate is critical and the write pends.
-            crate::federation::bind_member_person(vault, space, member, when, 1)
-                .expect("bind the member");
+            let binding = match world {
+                None => crate::federation::bind_member_person(vault, space, member, when, 1)
+                    .expect("bind the member"),
+                Some(world) => {
+                    let binding = EntityId::now();
+                    let mut body = ClaimBody::new(
+                        crate::federation::PREDICATE_RELATIONSHIP_PERSON_REF,
+                        ClaimSubject::Entity(space),
+                        rmpv::Value::from(member.to_hex()),
+                        1.0,
+                        ClaimApprovalStatus::Approved,
+                        ClaimLifecycleStatus::Active,
+                    )
+                    .unwrap();
+                    body.world = Some(world);
+                    vault
+                        .put_claim(&binding, &body, when, 1)
+                        .expect("bind the member in a world");
+                    binding
+                }
+            };
             let shared = EntityId::now();
             let mut body = ClaimBody::new(
                 "test.relationship_scope",
@@ -554,6 +579,7 @@ mod tests {
             Self {
                 space,
                 member,
+                binding,
                 shared,
             }
         }
@@ -698,6 +724,302 @@ mod tests {
         assert!(
             !share.reads_as(&vault, dropped)?,
             "a deleted grant grants nothing"
+        );
+        Ok(())
+    }
+
+    /// Whether the row stored under `id` still carries a body.
+    #[cfg(feature = "sync")]
+    fn has_body(vault: &Vault, id: &EntityId) -> Result<bool> {
+        let txn = vault.store.env.read_txn()?;
+        Ok(
+            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, id)?
+                .is_some_and(|raw| raw.len() > ENTITY_METADATA_HEADER_LEN),
+        )
+    }
+
+    /// A peer's soft tombstone from literal wire parts:
+    /// [reason 1 = user_delete][deleted_at: 8 LE][request_id: 16].
+    #[cfg(feature = "sync")]
+    fn peer_soft_tombstone() -> Vec<u8> {
+        let mut tombstone = vec![1u8];
+        tombstone.extend_from_slice(&1_771_027_200u64.to_le_bytes());
+        tombstone.extend_from_slice(&[0x5A; 16]);
+        tombstone
+    }
+
+    /// The base month of the row stored under `id`, off its header.
+    #[cfg(feature = "sync")]
+    fn base_window(vault: &Vault, id: &EntityId) -> Result<String> {
+        let txn = vault.store.env.read_txn()?;
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, id)?
+            .expect("a stored row");
+        let header = EntityMetadataHeader::parse(&raw).expect("a row header");
+        Ok(crate::deletion::window_label_from_timestamp(
+            header.learned_at,
+        ))
+    }
+
+    /// A peer's soft deletes of `ids` reach window `window`, loaded with its
+    /// observers, and every local apply fails: the bodies stay and `rm:`
+    /// retries are flagged. The accepted update is then stored, under a window
+    /// snapshot or as a lone `u:w:` update row.
+    #[cfg(feature = "sync")]
+    fn deliver_unapplied_peer_deletes(
+        vault: &std::sync::Arc<Vault>,
+        window: &str,
+        ids: &[EntityId],
+        snapshot: bool,
+    ) -> Result<()> {
+        use crate::sync::bridge::{Materializer, persist_window_update};
+        use crate::sync::loro_support::{export_all_updates, import_doc, map_insert_bytes};
+        use crate::sync::quarantine::INJECT_PURGE_FAILURES;
+
+        let peer = loro::LoroDoc::new();
+        for id in ids {
+            map_insert_bytes(
+                &peer.get_map("tombstones"),
+                &id.to_hex(),
+                &peer_soft_tombstone(),
+            )?;
+        }
+        peer.commit();
+        let loaded = crate::sync::window::LoadedWindow::new(
+            "local",
+            crate::sync::WindowKey::try_new(window).expect("a window key"),
+            vault,
+            &std::sync::Arc::new(Materializer::new()),
+        );
+        INJECT_PURGE_FAILURES.with(|cell| cell.set(u32::try_from(ids.len()).unwrap()));
+        let imported = import_doc(&loaded.doc, &export_all_updates(&peer)?);
+        INJECT_PURGE_FAILURES.with(|cell| cell.set(0));
+        imported?;
+        if snapshot {
+            loaded.persist_state(vault)?;
+        } else {
+            persist_window_update(vault, window, &export_all_updates(&loaded.doc)?)?;
+        }
+        for id in ids {
+            assert!(has_body(vault, id)?, "the failed apply left the body");
+        }
+        Ok(())
+    }
+
+    /// Bug repro (Astra #1322 finding 1): a peer that withdraws a soft delete,
+    /// dropping the tombstone and putting the relationship's original body
+    /// back, restores nothing. Delete wins here, whatever the window's
+    /// tombstone map and the payload length now say.
+    #[cfg(feature = "sync")]
+    #[test]
+    fn a_peer_cannot_withdraw_a_relationship_delete() -> Result<()> {
+        use crate::sync::bridge::Materializer;
+        use crate::sync::loro_support::{
+            doc_from_snapshot, doc_version_vector, export_all_updates, export_snapshot,
+            export_updates_since, import_doc, map_insert_bytes,
+        };
+        use std::sync::Arc;
+
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let vault = Arc::new(vault);
+        let share = RelationshipShare::new(&vault);
+        let original = {
+            let txn = vault.store.env.read_txn()?;
+            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &share.space)?
+                .expect("the relationship row")
+        };
+        assert!(original.len() > ENTITY_METADATA_HEADER_LEN);
+
+        let peer = loro::LoroDoc::new();
+        map_insert_bytes(
+            &peer.get_map("tombstones"),
+            &share.space.to_hex(),
+            &peer_soft_tombstone(),
+        )?;
+        peer.commit();
+        let window = base_window(&vault, &share.space)?;
+        let loaded = crate::sync::window::LoadedWindow::new(
+            "local",
+            crate::sync::WindowKey::try_new(&window).expect("a window key"),
+            &vault,
+            &Arc::new(Materializer::new()),
+        );
+        import_doc(&loaded.doc, &export_all_updates(&peer)?)?;
+        loaded.persist_state(&vault)?;
+        assert!(
+            !share.reads_as(&vault, share.member)?,
+            "the peer's delete applied"
+        );
+
+        // A fork of the causally complete window withdraws the delete.
+        let fork = doc_from_snapshot(&export_snapshot(&loaded.doc)?)?;
+        fork.get_map("tombstones")
+            .delete(&share.space.to_hex())
+            .expect("drop the tombstone");
+        map_insert_bytes(&fork.get_map("entities"), &share.space.to_hex(), &original)?;
+        fork.commit();
+        import_doc(
+            &loaded.doc,
+            &export_updates_since(&fork, &doc_version_vector(&loaded.doc))?,
+        )?;
+        loaded.persist_state(&vault)?;
+        assert!(
+            !share.reads_as(&vault, share.member)?,
+            "a withdrawn delete restores no membership"
+        );
+        Ok(())
+    }
+
+    /// Bug repro (Astra #1322 finding 2): grants whose deletes this vault
+    /// accepted but failed to apply, stored under a snapshot of their base
+    /// window, authorize neither a companion profile read (the server's
+    /// profile and context-assembly doors) nor a brief share, though their
+    /// Active bodies are still stored.
+    #[cfg(feature = "sync")]
+    #[test]
+    fn grants_a_peer_deleted_authorize_no_door() -> Result<()> {
+        let (_dir, vault, issuer, share) =
+            crate::share::tests::fixture_with_config(crate::test_util::embedding_test_config())?;
+        let vault = std::sync::Arc::new(vault);
+        let share_id = EntityId::now();
+        let recipient = share.recipient_ref;
+        vault.create_share(&share_id, &issuer, &share)?;
+        let (principal, person, persona) = (EntityId::now(), EntityId::now(), EntityId::now());
+        let profile_grant = EntityId::now();
+        vault.create_access_grant(
+            &profile_grant,
+            &crate::AccessGrant::companion_profile_read(principal, person, persona, 10),
+        )?;
+        let profile = || vault.companion_profile_access_grant(&principal, &person, &persona);
+        let brief = || vault.resolve_share_for_view(&share_id, &recipient, None, &[]);
+        assert_eq!(profile()?, Some(profile_grant));
+        assert!(brief()?.is_some());
+
+        let window = base_window(&vault, &share_id)?;
+        assert_eq!(base_window(&vault, &profile_grant)?, window);
+        deliver_unapplied_peer_deletes(&vault, &window, &[share_id, profile_grant], true)?;
+        assert_eq!(profile()?, None, "a deleted grant authorizes no profile");
+        assert!(brief()?.is_none(), "a deleted share resolves no brief");
+        Ok(())
+    }
+
+    /// Bug repro (Astra #1322 finding 3): a relationship delete this vault
+    /// accepted but failed to apply, stored in a window holding only
+    /// updates, grants nothing while its retry is pending.
+    #[cfg(feature = "sync")]
+    #[test]
+    fn a_relationship_delete_that_failed_to_apply_grants_nothing() -> Result<()> {
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let vault = std::sync::Arc::new(vault);
+        let share = RelationshipShare::new(&vault);
+        assert!(share.reads_as(&vault, share.member)?);
+
+        let window = base_window(&vault, &share.space)?;
+        deliver_unapplied_peer_deletes(&vault, &window, &[share.space], false)?;
+        assert!(
+            !share.reads_as(&vault, share.member)?,
+            "an accepted delete grants nothing before its retry lands"
+        );
+        Ok(())
+    }
+
+    /// Bug repro (Astra #1322 finding 4): a member binding that names a world
+    /// lives in that world's window, and so does its tombstone. A peer's
+    /// delete of it there, accepted but not applied, grants nothing.
+    #[cfg(feature = "sync")]
+    #[test]
+    fn a_world_scoped_binding_a_peer_deleted_grants_nothing() -> Result<()> {
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let vault = std::sync::Arc::new(vault);
+        let world = EntityId::now();
+        let share = RelationshipShare::with_binding_world(&vault, Some(world));
+        assert!(share.reads_as(&vault, share.member)?);
+
+        let window = format!(
+            "{}@{}",
+            base_window(&vault, &share.binding)?,
+            world.to_hex()
+        );
+        deliver_unapplied_peer_deletes(&vault, &window, &[share.binding], true)?;
+        assert!(
+            !share.reads_as(&vault, share.member)?,
+            "a binding deleted in its world grants nothing"
+        );
+        Ok(())
+    }
+
+    /// Substrate check (Astra #1322 finding 4): the deletion resolver reads a
+    /// world-scoped binding's published tombstone from the binding's world
+    /// window, with no local apply to lean on, never from its base month.
+    #[cfg(feature = "sync")]
+    #[test]
+    fn a_world_window_delete_is_read_from_the_bindings_world() -> Result<()> {
+        use crate::sync::loro_support::{doc_version_vector, export_snapshot, map_insert_bytes};
+
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let world = EntityId::now();
+        let share = RelationshipShare::with_binding_world(&vault, Some(world));
+        assert!(share.reads_as(&vault, share.member)?);
+
+        let state = loro::LoroDoc::new();
+        map_insert_bytes(
+            &state.get_map("tombstones"),
+            &share.binding.to_hex(),
+            &peer_soft_tombstone(),
+        )?;
+        state.commit();
+        let window = format!(
+            "{}@{}",
+            base_window(&vault, &share.binding)?,
+            world.to_hex()
+        );
+        let key = crate::sync::WindowKey::try_new(&window).expect("a window key");
+        vault.with_write_txn(|txn| {
+            crate::sync::window::persist_window_doc_in_txn(
+                &vault,
+                txn,
+                &key,
+                &export_snapshot(&state)?,
+                &doc_version_vector(&state),
+            )
+        })?;
+        assert!(has_body(&vault, &share.binding)?);
+        assert!(
+            !share.reads_as(&vault, share.member)?,
+            "the world window's tombstone deletes the binding"
+        );
+        Ok(())
+    }
+
+    /// Bug repro (Astra #1322 finding 5): a relationship recreated at its id
+    /// after a soft delete, with an empty body in a later month, is live
+    /// again. A local recreation is sanctioned; only a peer's re-put is not.
+    #[test]
+    fn a_relationship_recreated_after_its_delete_grants_again() -> Result<()> {
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let share = RelationshipShare::new(&vault);
+        assert!(vault.delete_entity(&share.space)?);
+        assert!(!share.reads_as(&vault, share.member)?);
+
+        // The original was learned at 1, in 1970-01.
+        let later = 40 * 86_400;
+        vault.put_entity(
+            &share.space,
+            crate::registry::ENTITY_TYPE_RELATIONSHIP,
+            crate::TimeRange {
+                start: later,
+                end: later,
+            },
+            later,
+            b"",
+        )?;
+        assert!(
+            share.reads_as(&vault, share.member)?,
+            "the recreated relationship grants its member again"
         );
         Ok(())
     }
