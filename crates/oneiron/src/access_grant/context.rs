@@ -91,14 +91,11 @@ impl<'v> AccessContext<'v> {
                             .is_some_and(|id| Some(id) == principal)
                         && let ClaimSubject::Entity(space) = body.subject
                     {
-                        // A member binding is only a relationship membership when its subject really is one.
-                        if crate::ports::EntityStoreRead::port_entity_raw(
-                            &vault.store,
-                            txn,
-                            &space,
-                        )?
-                        .and_then(|raw| EntityMetadataHeader::parse(&raw))
-                        .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_RELATIONSHIP)
+                        // A member binding is a membership only while its subject is a
+                        // live relationship: a deleted one keeps its typed header.
+                        if crate::vault::live_entity_row_in_txn(&vault.store, txn, &space)?
+                            .live_type()
+                            == Some(crate::registry::ENTITY_TYPE_RELATIONSHIP)
                         {
                             context.relationships.insert(space);
                         }
@@ -477,6 +474,64 @@ mod tests {
                 .value
                 .is_none()
         );
+        Ok(())
+    }
+
+    /// Bug repro (#1307 census): a soft-deleted relationship must stop
+    /// granting its members the reads its membership granted while live.
+    #[test]
+    fn a_deleted_relationship_grants_its_members_nothing() -> Result<()> {
+        use crate::claim::{
+            ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, PointRead,
+        };
+
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let when = crate::TimeRange { start: 1, end: 1 };
+        let member = EntityId::now();
+        let topic = EntityId::now();
+        for person in [member, topic] {
+            vault.put_entity(&person, crate::registry::ENTITY_TYPE_PERSON, when, 1, b"person")?;
+        }
+        let space = EntityId::now();
+        vault.put_entity(
+            &space,
+            crate::registry::ENTITY_TYPE_RELATIONSHIP,
+            when,
+            1,
+            b"relationship",
+        )?;
+        let shared = EntityId::now();
+        let mut body = ClaimBody::new(
+            "test.relationship_share",
+            ClaimSubject::Entity(topic),
+            rmpv::Value::from("fact"),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        body.rel = Some(space);
+        vault.put_claim(&shared, &body, when, 1)?;
+        crate::test_util::authorize_readers(&vault, &["reader"]);
+        let reader = vault.scoped_read(
+            ScopedReadActorKey::new("reader")
+                .unwrap()
+                .require_access_grants(Some(member)),
+        );
+        let member_reads = || -> Result<bool> {
+            Ok(reader
+                .read(&[PointRead::id(shared)], None)?
+                .single()
+                .value
+                .is_some())
+        };
+
+        assert!(!member_reads()?, "no membership yet, so no read");
+        crate::federation::bind_member_person(&vault, space, member, when, 1)?;
+        assert!(member_reads()?, "a live relationship grants its member the read");
+        assert!(vault.delete_entity(&space)?);
+        assert!(!member_reads()?, "a deleted relationship grants nothing");
         Ok(())
     }
 }
