@@ -73,6 +73,7 @@ pub struct PipelineBuilder<'a> {
     pub(super) result_limit: usize,
     pub(super) temporal_adaptive_default: bool,
     pub(super) temporal_now: Option<u64>,
+    pub(super) turn_fold: bool,
     pub(super) telemetry_action: RetrievalAction,
     pub(super) capture_retrieval_trace: bool,
     pub(super) retrieval_state: Option<crate::store::RetrievalState>,
@@ -133,6 +134,7 @@ impl<'a> PipelineBuilder<'a> {
             result_limit: DEFAULT_RESULT_LIMIT,
             temporal_adaptive_default: true,
             temporal_now: None,
+            turn_fold: false,
             telemetry_action: RetrievalAction::Pipeline,
             capture_retrieval_trace: false,
             retrieval_state: None,
@@ -401,6 +403,14 @@ impl<'a> PipelineBuilder<'a> {
     /// frozen Unix timestamp.
     pub fn with_temporal_now(mut self, now: u64) -> Self {
         self.temporal_now = Some(now);
+        self
+    }
+
+    /// Returns each MESSAGE hit as the TURN it is part of, one row per turn,
+    /// and reports the messages each turn took in. ARCH-0004 makes the turn
+    /// the unit recall returns; a lexical hit on its message is a hit on it.
+    pub(crate) fn fold_messages_into_turns(mut self) -> Self {
+        self.turn_fold = true;
         self
     }
 

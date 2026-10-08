@@ -10,11 +10,11 @@ use super::boundary::{
     BoundaryResult, FORGET_PAGE_SIZE, ts_from_engine, ts_opt_to_engine, ts_to_engine,
 };
 use super::dtos::{
-    NapiCalendarEventView, NapiCalendarRange, NapiCalendarSel, NapiClaimView, NapiCommitReceipt,
-    NapiEntityRefReceipt, NapiEntityView, NapiGateReceipt, NapiMemoryItem, NapiMemoryPack,
-    NapiMemoryProvenance, NapiReadReceipt, NapiReadScope, NapiRecallScope, NapiRetrievalMeta,
-    NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint, NapiWitnessReceipt,
-    NapiWitnessTurn,
+    NapiCalendarEventView, NapiCalendarRange, NapiCalendarSel, NapiCitedMessage, NapiClaimView,
+    NapiCommitReceipt, NapiEntityRefReceipt, NapiEntityView, NapiGateReceipt, NapiMemoryItem,
+    NapiMemoryPack, NapiMemoryProvenance, NapiReadReceipt, NapiReadScope, NapiRecallScope,
+    NapiRetrievalMeta, NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint,
+    NapiWitnessReceipt, NapiWitnessTurn,
 };
 
 // ── conversions ─────────────────────────────────────────────────────────
@@ -309,6 +309,14 @@ pub(super) fn memory_item_from_engine(item: oneiron::memory::MemoryItem) -> Napi
         world: item.world,
         facet: item.facet,
         salience: item.salience.map(f64::from),
+        cited_messages: item
+            .cited_messages
+            .into_iter()
+            .map(|cited| NapiCitedMessage {
+                short_id: cited.short_id,
+                value_text: cited.value_text,
+            })
+            .collect(),
     }
 }
 

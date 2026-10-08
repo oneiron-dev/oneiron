@@ -127,11 +127,10 @@ pub struct RecallScope {
 /// worlds and facets that scope memories. Recall returns them only when
 /// [`RecallScope::kinds`] names them.
 ///
-/// TURN is here only until turns are embedded: ARCH-0004 makes the turn the
-/// embedding unit, but today a turn's text repeats its messages, so a turn hit
-/// would take the slot of the message it copies.
-pub const CONTAINER_KINDS: [u8; 5] = [
-    crate::registry::ENTITY_TYPE_TURN,
+/// A TURN is content, not a container: it is the embedding unit (ARCH-0004),
+/// and recall returns a matched MESSAGE as its turn, quoting the message
+/// ([`MemoryItem::cited_messages`]).
+pub const CONTAINER_KINDS: [u8; 4] = [
     crate::registry::ENTITY_TYPE_CONVERSATION,
     crate::registry::ENTITY_TYPE_SESSION,
     crate::registry::ENTITY_TYPE_FACET,
@@ -207,6 +206,20 @@ pub struct MemoryItem {
     /// glyph (`👍×8 (Anna, Ben, +6)`); empty for every other item.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reactions: Vec<String>,
+    /// For a TURN item, the messages whose words the query matched, best
+    /// first: a hit on a message returns its turn, which quotes the message
+    /// here. Empty for every other item.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cited_messages: Vec<CitedMessage>,
+}
+
+/// A MESSAGE a TURN item quotes: the words a query matched, as they were said.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CitedMessage {
+    /// The message's short ref, the one its witness receipt returned.
+    pub short_id: String,
+    /// The message's text (capped).
+    pub value_text: String,
 }
 
 impl MemoryItem {
@@ -631,7 +644,11 @@ impl Memory<'_> {
                 // pipeline.rs/context_pack.rs are consume-only for this
                 // chain. No pack rendering on this path.
                 let facet_id = self.resolve_ref(facet_ref)?;
-                let mut pipeline = self.vault.query().search_text(query, limit);
+                let mut pipeline = self
+                    .vault
+                    .query()
+                    .search_text(query, limit)
+                    .fold_messages_into_turns();
                 if let Some(as_of) = execution.as_of {
                     pipeline = pipeline.with_temporal_now(as_of);
                 }
@@ -677,9 +694,18 @@ impl Memory<'_> {
                         continue;
                     };
                     let mode = crate::vault::ReadMode::Pinned(*revision);
-                    if let Some(item) =
-                        self.memory_item_for(&lane, &hit.id, Some(facet_id), mode, &mut receipt)?
-                    {
+                    let cited = retrieval
+                        .cited_messages
+                        .get(&hit.id)
+                        .map_or(&[][..], Vec::as_slice);
+                    if let Some(item) = self.memory_item_for(
+                        &lane,
+                        &hit.id,
+                        Some(facet_id),
+                        mode,
+                        cited,
+                        &mut receipt,
+                    )? {
                         items.push(item);
                     }
                 }
@@ -695,7 +721,11 @@ impl Memory<'_> {
                 )
             }
             None => {
-                let mut builder = self.vault.context_pack().search_text(query, limit);
+                let mut builder = self
+                    .vault
+                    .context_pack()
+                    .search_text(query, limit)
+                    .fold_messages_into_turns();
                 if let Some(as_of) = execution.as_of {
                     builder = builder.with_temporal_now(as_of);
                 }
@@ -748,8 +778,7 @@ impl Memory<'_> {
                             .boost_confidence();
                     }
                 }
-                let (scoped, vector_completed, temporal_hints) =
-                    builder.run_scoped_with_run_status(&lane)?;
+                let (scoped, status) = builder.run_scoped_with_run_status(&lane)?;
                 receipt.restrict_with(&scoped.receipt);
                 let mut pack = scoped.value;
                 lane.attach_reactions(&mut pack)?;
@@ -780,8 +809,12 @@ impl Memory<'_> {
                             crate::vault::ReadMode::Pinned(crate::vault::RevisionRef(revision))
                         },
                     );
+                    let cited = status
+                        .cited_messages
+                        .get(&entity.id)
+                        .map_or(&[][..], Vec::as_slice);
                     if let Some(item) =
-                        self.memory_item_for(&lane, &entity.id, None, mode, &mut receipt)?
+                        self.memory_item_for(&lane, &entity.id, None, mode, cited, &mut receipt)?
                     {
                         items.push(item);
                     }
@@ -793,8 +826,8 @@ impl Memory<'_> {
                     total,
                     rendered,
                     pack.retrieval_quality,
-                    vector_completed,
-                    temporal_hints,
+                    status.vector_completed,
+                    status.temporal_hints,
                 )
             }
         };

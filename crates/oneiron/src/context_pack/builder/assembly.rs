@@ -33,6 +33,17 @@ use super::{
     SerializedContextPack, UnfinalizedContextPack,
 };
 
+/// What a scoped pack run reports beside its pack.
+pub(crate) struct PackRunStatus {
+    /// Whether the vector channel completed.
+    pub(crate) vector_completed: bool,
+    /// The query's temporal phrases and what the run did with each.
+    pub(crate) temporal_hints: Vec<crate::temporal::TemporalHintReport>,
+    /// Per TURN in the pack, the MESSAGE rows it took the place of, best
+    /// first ([`ContextPackBuilder::fold_messages_into_turns`]).
+    pub(crate) cited_messages: std::collections::HashMap<EntityId, Vec<EntityId>>,
+}
+
 impl<'a> ContextPackBuilder<'a> {
     /// Runs retrieval and returns the opt-in stored-profile companion section.
     pub fn run_with_psych_profile(self) -> Result<(ContextPack, Option<PsychProfilePackSection>)> {
@@ -100,18 +111,17 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     /// Filter the actor's pack before rendering or finalizing telemetry, including rooms.
-    /// Also returns whether the vector channel completed and the query's temporal phrases.
+    /// Also returns how the run went ([`PackRunStatus`]).
     pub(crate) fn run_scoped_with_run_status(
         self,
         lane: &crate::claim::ScopedRead<'_>,
-    ) -> Result<(
-        crate::claim::ScopedReadResult<ContextPack>,
-        bool,
-        Vec<crate::temporal::TemporalHintReport>,
-    )> {
+    ) -> Result<(crate::claim::ScopedReadResult<ContextPack>, PackRunStatus)> {
         let run = self.run_unfinalized()?;
-        let vector_completed = run.vector_completed;
-        let temporal_hints = run.temporal_hints;
+        let status = PackRunStatus {
+            vector_completed: run.vector_completed,
+            temporal_hints: run.temporal_hints,
+            cited_messages: run.cited_messages,
+        };
         let mut pending = UnfinalizedContextPack {
             value: run.pack,
             telemetry_run_id: run.telemetry_run_id,
@@ -137,8 +147,7 @@ impl<'a> ContextPackBuilder<'a> {
                 value: pack,
                 receipt,
             },
-            vector_completed,
-            temporal_hints,
+            status,
         ))
     }
 
@@ -573,6 +582,7 @@ impl<'a> ContextPackBuilder<'a> {
             Ok(ContextPackRun {
                 vector_completed: pipeline_output.vector_completed,
                 temporal_hints: pipeline_output.temporal_hints,
+                cited_messages: pipeline_output.cited_messages,
                 pack: ContextPack {
                     capabilities,
                     l2_base,

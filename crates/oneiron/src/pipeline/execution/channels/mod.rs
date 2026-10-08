@@ -8,6 +8,7 @@ mod ppr_expand;
 mod rerank;
 mod text;
 mod trace_assembly;
+mod turn_fold;
 
 use self::admit::ChannelAccumulator;
 use self::post_blend::{PostBlend, PostBlendInputs};
@@ -370,6 +371,7 @@ impl PipelineBuilder<'_> {
                     revisions: HashMap::new(),
                     diagnostics,
                     scores: Vec::new(),
+                    cited_messages: HashMap::new(),
                     capabilities: Vec::new(),
                     pending_vectors: Vec::new(),
                     claim_gate: ClaimStatusGateCache::default(),
@@ -582,6 +584,19 @@ impl PipelineBuilder<'_> {
                 )?;
             }
 
+            let cited_messages = if self.turn_fold {
+                turn_fold::fold_messages_into_turns(
+                    &mut scores,
+                    &self.vault.store,
+                    rtxn,
+                    filter_config,
+                    &mut metadata_cache,
+                    &mut claim_gate,
+                )?
+            } else {
+                HashMap::new()
+            };
+
             let capabilities = self.prepare_pack_candidates(
                 rtxn,
                 &mut scores,
@@ -674,6 +689,7 @@ impl PipelineBuilder<'_> {
                 revisions,
                 diagnostics,
                 scores,
+                cited_messages,
                 capabilities,
                 pending_vectors,
                 claim_gate,

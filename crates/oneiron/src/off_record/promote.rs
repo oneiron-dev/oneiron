@@ -231,10 +231,11 @@ impl FloorWrites<'_> {
         BatchBuilder::promotion_replay(vault, replay_ops, &grant)
             .apply_recording_gate_decisions(wtxn)?;
         // The outbox rule (write-path hub; ARCH-0036): the promoted turn is
-        // base text now, so it owes the vault's tagger a pass, committed with
-        // the promotion. The receipt above answers a retry first, so a retry
-        // owes nothing more.
+        // base text now, so it owes the vault's tagger a pass and its embedder
+        // a vector (ARCH-0004), committed with the promotion. The receipt
+        // above answers a retry first, so a retry owes nothing more.
         crate::tagging::mark_turn_in_txn(vault, wtxn, turn)?;
+        crate::embed::mark_turn_in_txn(vault, wtxn, turn)?;
 
         let mut short_id_mapping = Vec::with_capacity(plan.temporary_short_ids.len());
         for (id, temporary) in &plan.temporary_short_ids {

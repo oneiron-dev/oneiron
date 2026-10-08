@@ -125,6 +125,15 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
                     .mark_pending_embedding(txn, id, &raw[ENTITY_METADATA_HEADER_LEN..])?;
                 embeddings += 1;
             }
+            // A TURN embeds its messages' text, so it is marked at that text.
+            if header.entity_type == crate::registry::ENTITY_TYPE_TURN
+                && let Some(text) = crate::embed::turn_text_in_txn(vault, txn, id)?
+            {
+                vault
+                    .store
+                    .mark_pending_embedding(txn, id, text.as_bytes())?;
+                embeddings += 1;
+            }
         }
         let sources = INDEX_SOURCE_TEXT.scan(&vault.store, txn)?;
         let mut texts = 0;

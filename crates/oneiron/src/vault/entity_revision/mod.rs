@@ -4,6 +4,7 @@
 
 mod citations;
 mod idle;
+pub(crate) use idle::drop_vector_state;
 mod pending_index;
 mod phonetic;
 pub(crate) use pending_index::{defer_index_inputs, drop_staged_vectors};

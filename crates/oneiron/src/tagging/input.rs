@@ -132,8 +132,9 @@ fn read_in_txn(
 }
 
 /// A live TURN's visible, non-empty messages in message order; `None` for a
-/// turn that is absent, deleted, of another type or archived.
-fn turn_messages_in_txn(
+/// turn that is absent, deleted, of another type or archived. The embedder
+/// reads a turn's text through this too, so both read the same words.
+pub(crate) fn turn_messages_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,

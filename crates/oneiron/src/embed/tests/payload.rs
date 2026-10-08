@@ -37,7 +37,7 @@ fn a_pending_epoch_summary_offers_its_text_to_the_embedder() -> Result<()> {
     })?;
 
     vault.with_write_txn(|wtxn| {
-        let input = pending_input_in_txn(&vault, &*wtxn, &id)?
+        let input = pending_input_in_txn(&vault, wtxn, &id)?
             .expect("a marked epoch summary is embeddable work");
         assert_eq!(
             input.payload,
@@ -80,7 +80,7 @@ fn a_marked_summary_that_is_not_an_epoch_record_stays_skipped() -> Result<()> {
 
     vault.with_write_txn(|wtxn| {
         assert!(
-            pending_input_in_txn(&vault, &*wtxn, &id)?.is_none(),
+            pending_input_in_txn(&vault, wtxn, &id)?.is_none(),
             "a SUMMARY that is not an epoch-summary record is skipped, not failed"
         );
         Ok(())

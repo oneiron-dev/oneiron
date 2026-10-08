@@ -331,6 +331,13 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
+    /// Returns each MESSAGE hit as its TURN — the pack-surface twin of
+    /// [`PipelineBuilder::fold_messages_into_turns`].
+    pub(crate) fn fold_messages_into_turns(mut self) -> Self {
+        self.pipeline = self.pipeline.fold_messages_into_turns();
+        self
+    }
+
     /// Associates the retrieval run with a caller turn for ordered lookup.
     pub fn retrieval_turn(mut self, turn: crate::store::RetrievalTurn) -> Self {
         self.pipeline = self.pipeline.retrieval_turn(turn);

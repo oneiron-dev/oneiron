@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
 use crate::side_table::{self, HexId, Raw, SideTable};
 
 use super::*;
@@ -153,9 +153,8 @@ impl Store {
         let epoch = crate::hnsw::read_embedding_model_epoch(self, rtxn)?;
         let owner = crate::federation::derivation::owner_in_txn(self, rtxn)?;
         Ok(self
-            .embeddable_body_from_record(&record)
-            .filter(|body| Self::pending_marker_is_current(&marker, epoch, body, owner))
-            .map(|_| marker.to_vec()))
+            .marker_is_current_for_record(&marker, &record, epoch, owner)
+            .then(|| marker.to_vec()))
     }
 
     #[cfg(feature = "sync")]
@@ -173,9 +172,8 @@ impl Store {
         let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
         let owner = crate::federation::derivation::owner_in_txn(self, wtxn)?;
         Ok(self
-            .embeddable_body_from_record(&record)
-            .filter(|body| Self::pending_marker_is_current(&marker, epoch, body, owner))
-            .map(|_| marker.to_vec()))
+            .marker_is_current_for_record(&marker, &record, epoch, owner)
+            .then(|| marker.to_vec()))
     }
 
     pub(crate) fn has_current_pending_embedding_in_txn(
@@ -191,9 +189,7 @@ impl Store {
         };
         let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
         let owner = crate::federation::derivation::owner_in_txn(self, wtxn)?;
-        Ok(self
-            .embeddable_body_from_record(&record)
-            .is_some_and(|body| Self::pending_marker_is_current(&marker, epoch, body, owner)))
+        Ok(self.marker_is_current_for_record(&marker, &record, epoch, owner))
     }
 
     pub(crate) fn pending_embedding_matches_in_txn(
@@ -213,9 +209,28 @@ impl Store {
         };
         let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
         let owner = crate::federation::derivation::owner_in_txn(self, wtxn)?;
-        Ok(self
-            .embeddable_body_from_record(&record)
-            .is_some_and(|body| Self::pending_marker_is_current(&marker, epoch, body, owner)))
+        Ok(self.marker_is_current_for_record(&marker, &record, epoch, owner))
+    }
+
+    /// Whether a record's marker is the one its current text would mark.
+    ///
+    /// A TURN's marker commits to its messages' text, which this store-level
+    /// check cannot read: the turn doors re-mark the turn whenever that text
+    /// moves (`embed::mark_turn_in_txn`) and the worker re-marks it from the
+    /// text it leases, so the marker they last wrote is the current one and a
+    /// fill for older text no longer equals it.
+    fn marker_is_current_for_record(
+        &self,
+        marker: &[u8],
+        record: &[u8],
+        epoch: u64,
+        owner: Option<crate::federation::derivation::DerivationOwner>,
+    ) -> bool {
+        if record.len() > ENTITY_BODY_OFFSET && record[0] == ENTITY_TYPE_TURN {
+            return marker.len() == PENDING_EMBEDDING_MARKER_TOKEN_LEN;
+        }
+        self.embeddable_body_from_record(record)
+            .is_some_and(|body| Self::pending_marker_is_current(marker, epoch, body, owner))
     }
 
     /// The embeddable body of a base record, or `None` when the row carries no

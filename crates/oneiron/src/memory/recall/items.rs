@@ -10,6 +10,7 @@ impl Memory<'_> {
         id: &EntityId,
         facet_hint: Option<EntityId>,
         mode: crate::vault::ReadMode,
+        cited: &[EntityId],
         receipt: &mut ScopedReadReceipt,
     ) -> MemoryResult<Option<MemoryItem>> {
         let ScopedReadResult {
@@ -21,11 +22,17 @@ impl Memory<'_> {
             };
             let entity_type = row.entity_type;
             let body = row.body.clone();
+            // A TURN's text is its messages', which its own body does not hold.
+            let turn_text = if entity_type == ENTITY_TYPE_TURN {
+                crate::embed::turn_text_in_txn(self.vault, txn, id)?
+            } else {
+                None
+            };
             let view = self.entity_view_of_in_txn(txn, row, mode)?;
-            Ok(Some((entity_type, body, view)))
+            Ok(Some((entity_type, body, view, turn_text)))
         })?;
         receipt.restrict_with(&read);
-        let Some((entity_type, Some(body), Some(view))) = admitted else {
+        let Some((entity_type, Some(body), Some(view), turn_text)) = admitted else {
             return Ok(None);
         };
         let ScopedReadResult {
@@ -90,13 +97,17 @@ impl Memory<'_> {
                 facet,
                 salience: body.salience,
                 reactions: Vec::new(),
+                cited_messages: Vec::new(),
             }))
         } else {
-            let value_text = view
-                .body
-                .as_ref()
-                .and_then(|body| body.get("content"))
-                .and_then(serde_json::Value::as_str)
+            let value_text = turn_text
+                .as_deref()
+                .or_else(|| {
+                    view.body
+                        .as_ref()
+                        .and_then(|body| body.get("content"))
+                        .and_then(serde_json::Value::as_str)
+                })
                 .map_or_else(
                     || {
                         view.body
@@ -120,6 +131,24 @@ impl Memory<'_> {
             } else {
                 Vec::new()
             };
+            // Each message a TURN took in is read through the same lane, so a
+            // quote is one the actor may read.
+            let mut cited_messages = Vec::with_capacity(cited.len());
+            for message in cited {
+                if let Some(item) = self.memory_item_for(
+                    lane,
+                    message,
+                    None,
+                    crate::vault::ReadMode::Indexed,
+                    &[],
+                    receipt,
+                )? {
+                    cited_messages.push(CitedMessage {
+                        short_id: item.short_id,
+                        value_text: item.value_text,
+                    });
+                }
+            }
             Ok(Some(MemoryItem {
                 short_id,
                 source_revision_ref,
@@ -137,6 +166,7 @@ impl Memory<'_> {
                 facet,
                 salience: None,
                 reactions,
+                cited_messages,
             }))
         }
     }

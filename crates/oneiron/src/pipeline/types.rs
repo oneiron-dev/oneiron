@@ -224,6 +224,9 @@ pub(crate) struct PipelineOutput {
     pub(crate) revisions: HashMap<EntityId, crate::vault::RevisionRef>,
     pub(crate) retrieval_quality: RetrievalQualityReport,
     pub(crate) scores: Vec<ScoredEntity>,
+    /// Per TURN in `scores`, the MESSAGE rows it took the place of, best
+    /// first. Empty unless the run folds messages into their turns.
+    pub(crate) cited_messages: HashMap<EntityId, Vec<EntityId>>,
     pub(crate) capabilities: Vec<ScoredEntity>,
     pub(crate) claim_bodies: HashMap<EntityId, ClaimBody>,
     pub(crate) pending_vectors: Vec<PendingVectorEmbedding>,

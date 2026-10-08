@@ -39,6 +39,9 @@ impl Vault {
     ) -> Result<(bool, Vec<EntityId>)> {
         crate::dreamer_runner::authority::guard_actor_delete(id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
+        // A purged message's turns stop matching its words: read them while
+        // its edges stand, and mark them once it is gone.
+        let turns = crate::embed::erased_message_turns_in_txn(self, wtxn, id)?;
         let settled = match request_id {
             Some(request) => settled_topology_delete_in_txn(&self.store, wtxn, id, request)?,
             None => false,
@@ -79,6 +82,7 @@ impl Vault {
         if had_vector {
             crate::hnsw::increment_vector_version(&self.store, wtxn)?;
         }
+        crate::embed::mark_turns_in_txn(self, wtxn, turns)?;
         Ok((
             existed || note_removed || had_refinement || had_merge_receipt,
             citing,
@@ -91,6 +95,8 @@ impl Vault {
         id: &EntityId,
     ) -> Result<(bool, bool, bool)> {
         crate::dreamer_runner::authority::guard_actor_delete(id)?;
+        // An erased message's turns stop matching its words (see the purge).
+        let turns = crate::embed::erased_message_turns_in_txn(self, wtxn, id)?;
         crate::conversation_dag::capture_before_erase(self, wtxn, id, false)?;
         crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
@@ -214,6 +220,7 @@ impl Vault {
             .port_entity_scrub(wtxn, id, ScrubbedRecord::Shell, mutation_recorded_at)?;
         crate::federation::record_scope::retire_stamp(&self.store, wtxn, *id)?;
         IDENTITY_SOFT_DELETE_MARKER.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
+        crate::embed::mark_turns_in_txn(self, wtxn, turns)?;
         Ok((true, had_vector, ledger_changed))
     }
 }

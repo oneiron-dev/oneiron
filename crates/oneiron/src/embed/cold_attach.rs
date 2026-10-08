@@ -50,9 +50,10 @@ pub(crate) fn remark_all_embeddable_pending_in_txn(
     remark_pending_in_txn(vault, wtxn, priority, true)
 }
 
-/// Queues every record the worker embeds ([`super::embeddable_payload`]): the
-/// same rule the worker leases by, so nothing queued here is work it can only
-/// fail on, and nothing it can embed is left out.
+/// Queues every record the worker embeds ([`super::embeddable_payload_in_txn`]):
+/// the same rule the worker leases by, so nothing queued here is work it can
+/// only fail on, and nothing it can embed is left out. A TURN is marked at its
+/// messages' text, as the turn doors mark it.
 ///
 /// A replacement (`replace_priority`) also drops what a record the rule does
 /// not embed still carries — a marker, a job, a lease — so none of it is left
@@ -69,7 +70,12 @@ fn remark_pending_in_txn(
     let mut retired = Vec::new();
     for row in vault.store.port_entity_records(wtxn)? {
         let (id, row) = row?;
-        if super::embeddable_payload(row.entity_type, &row.body).is_some() {
+        if row.entity_type == crate::registry::ENTITY_TYPE_TURN {
+            match super::turn_text_in_txn(vault, wtxn, &id)? {
+                Some(text) => embeddable.push((id, text.into_bytes())),
+                None => retired.push(id),
+            }
+        } else if super::embeddable_payload(row.entity_type, &row.body).is_some() {
             embeddable.push((id, row.body));
         } else if row.entity_type == crate::registry::ENTITY_TYPE_CLAIM
             || row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY

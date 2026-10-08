@@ -281,13 +281,15 @@ impl Memory<'_> {
                 WitnessSink::Base(base) => {
                     self.stage_in_base(&plan, &admission, base, mint_conversation, wtxn)?;
                     // The outbox rule (write-path hub; ARCH-0036): a turn that
-                    // gained text owes the vault's tagger a pass, committed
+                    // gained text owes the vault's tagger a pass, and its
+                    // embedder a vector of the new text (ARCH-0004), committed
                     // with the turn. An exact retry stages nothing and owes
                     // nothing.
                     if matches!(admission.turn, AdmittedTurn::Mint { .. })
                         || admission.has_new_messages()
                     {
                         crate::tagging::mark_turn_in_txn(self.vault, wtxn, plan.turn_id)?;
+                        crate::embed::mark_turn_in_txn(self.vault, wtxn, plan.turn_id)?;
                     }
                     Landed::Base
                 }

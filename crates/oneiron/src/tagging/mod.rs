@@ -48,6 +48,7 @@ pub use output::{OutputRefusal, spans_only_answers_admitted};
 pub use reconciler::{TaggingBackoff, TaggingPass, TaggingReconciler};
 pub use trace::{HandBackReason, SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace};
 
+pub(crate) use input::turn_messages_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use marker::text_entity_type_in_txn;
 pub(crate) use marker::{mark_on_publication_in_txn, mark_turn_in_txn};

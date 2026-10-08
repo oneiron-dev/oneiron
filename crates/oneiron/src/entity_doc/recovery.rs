@@ -105,11 +105,13 @@ pub(crate) fn restore(
     };
     storage::persist(vault, txn, &entity, &mut head, &doc, None)?;
     // With no head the text could not be read, so a MESSAGE or TURN whose
-    // text this restores owes its turn a tag pass (ARCH-0036).
+    // text this restores owes its turn a tag pass (ARCH-0036) and a vector
+    // (ARCH-0004).
     if existing.is_none()
         && let Some(entity_type) = crate::tagging::text_entity_type_in_txn(vault, txn, &entity)?
     {
         crate::tagging::mark_on_publication_in_txn(vault, txn, &entity, entity_type)?;
+        crate::embed::mark_on_publication_in_txn(vault, txn, &entity, entity_type)?;
     }
     Ok(())
 }

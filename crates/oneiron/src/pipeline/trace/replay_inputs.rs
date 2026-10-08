@@ -96,6 +96,7 @@ pub(in crate::pipeline) fn capture_replay_inputs(
             "recency_half_lives": super::super::types::RETRIEVAL_RECENCY_HALF_LIFE_DAYS_BY_TYPE,
             "default_recency_half_life": super::super::types::DEFAULT_RECENCY_HALF_LIFE_DAYS,
             "fast_dims": builder.vault.config.fast_dims,
+            "turn_fold": builder.turn_fold,
             "blend_weights": blend_weights,
             "authority": {
                 "entity_types": authority.entity_types,

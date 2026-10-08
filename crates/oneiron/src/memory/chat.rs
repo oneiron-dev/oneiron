@@ -530,6 +530,7 @@ fn document_item(view: &EntityView) -> MemoryItem {
         facet: None,
         salience: None,
         reactions: Vec::new(),
+        cited_messages: Vec::new(),
     }
 }
 
