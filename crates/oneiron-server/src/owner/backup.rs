@@ -4,8 +4,8 @@
 //! canonical rows only, never indexes, never exterior key custody. Each one is
 //! written under a hidden partial name and renamed into place, so a listing
 //! never shows a half-written file. File names carry the vault's directory
-//! name, so two vaults can share one backup directory without pruning each
-//! other's files.
+//! name and a hash of its full path, so vaults sharing one backup directory
+//! never list or prune each other's files.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -29,22 +29,42 @@ pub(crate) struct BackupPlan {
 
 impl BackupPlan {
     pub(crate) fn new(vault_path: &Path, dir: PathBuf, keep: usize) -> Self {
-        let label = vault_path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .filter(|name| !name.is_empty())
-            .unwrap_or_else(|| "vault".to_owned())
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-' {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect();
-        Self { dir, label, keep }
+        Self {
+            dir,
+            label: vault_label(vault_path),
+            keep,
+        }
     }
+}
+
+/// `<directory name>-<8 hex of the full path>`: readable, and distinct for two
+/// vaults with one name in different places.
+fn vault_label(vault_path: &Path) -> String {
+    let name: String = vault_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "vault".to_owned())
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    // Resolve the parent, which exists whether or not the vault does yet.
+    let full = vault_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .and_then(|parent| parent.canonicalize().ok())
+        .zip(vault_path.file_name())
+        .map(|(parent, file)| parent.join(file))
+        .or_else(|| std::path::absolute(vault_path).ok())
+        .unwrap_or_else(|| vault_path.to_path_buf());
+    let hash = blake3::hash(full.as_os_str().as_encoded_bytes()).to_hex();
+    format!("{name}-{}", &hash[..8])
 }
 
 /// One backup file.
@@ -128,10 +148,13 @@ pub(crate) fn list(plan: &BackupPlan) -> anyhow::Result<Vec<BackupRecord>> {
         let Some(taken_ms) = parse_file_stamp(stamp) else {
             continue;
         };
-        let metadata = entry.metadata()?;
-        if !metadata.is_file() {
-            continue;
-        }
+        // Retention may delete a file between the listing and this read.
+        let metadata = match entry.metadata() {
+            Ok(metadata) if metadata.is_file() => metadata,
+            Ok(_) => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
         records.push(BackupRecord {
             path: entry.path(),
             file,
@@ -150,8 +173,11 @@ pub(crate) fn prune(plan: &BackupPlan) -> anyhow::Result<Vec<String>> {
     let excess = records.len().saturating_sub(plan.keep.max(1));
     let mut pruned = Vec::new();
     for record in records.into_iter().take(excess) {
-        std::fs::remove_file(&record.path)?;
-        pruned.push(record.file);
+        match std::fs::remove_file(&record.path) {
+            Ok(()) => pruned.push(record.file),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
     }
     if !pruned.is_empty() {
         sync_dir(&plan.dir)?;
@@ -179,30 +205,26 @@ pub(crate) struct Rehearsal {
 }
 
 /// Restores `backup` into a scratch directory, opens it, checks it and
-/// reports. The live vault is never opened. Without `keep_at`, the scratch
-/// copy goes in the system temp directory and is deleted afterwards.
+/// reports. The live vault is never opened. The copy is made in a directory
+/// this call creates: `keep_at` names it and keeps it, otherwise it is a new
+/// directory under the system temp directory and is deleted afterwards.
 pub(crate) fn rehearse(
     backup: &Path,
     config: oneiron::VaultConfig,
     keep_at: Option<&Path>,
 ) -> anyhow::Result<Rehearsal> {
-    let scratch = match keep_at {
+    let scratch = Owned::create(match keep_at {
         Some(path) => path.to_path_buf(),
         None => std::env::temp_dir().join(format!(
             "oneiron-rehearse-{}-{}",
             file_stamp(now_unix_ms()),
-            std::process::id()
+            oneiron::EntityId::now().to_hex()
         )),
-    };
-    anyhow::ensure!(
-        !scratch.exists(),
-        "scratch directory {} already exists; name a new one",
-        scratch.display()
-    );
-    let outcome = rehearse_into(backup, config, &scratch);
+    })?;
+    let outcome = rehearse_into(backup, config, &scratch.vault());
     // A failed rehearsal leaves nothing behind, even where it was told to keep.
     if keep_at.is_none() || outcome.is_err() {
-        remove_scratch(&scratch);
+        scratch.remove();
     }
     let mut rehearsal = outcome?;
     rehearsal.kept = keep_at.is_some();
@@ -238,14 +260,33 @@ fn rehearse_into(
     })
 }
 
-/// Removes a scratch vault and the key-custody sibling an open may have made.
-fn remove_scratch(scratch: &Path) {
-    let _ = std::fs::remove_dir_all(scratch);
-    if let Some(name) = scratch.file_name() {
-        let mut keys = std::ffi::OsString::from(".");
-        keys.push(name);
-        keys.push(".gate-decision-keys");
-        let _ = std::fs::remove_dir_all(scratch.with_file_name(keys));
+/// A directory this call created, owner-only. A restored copy goes in its
+/// `vault` subdirectory, so the copy and any key-custody sibling an open makes
+/// beside it stay inside, and removing it removes only what this call made.
+struct Owned {
+    dir: PathBuf,
+}
+
+impl Owned {
+    fn create(dir: PathBuf) -> anyhow::Result<Self> {
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder
+            .create(&dir)
+            .map_err(|error| anyhow::anyhow!("create {}: {error}", dir.display()))?;
+        Ok(Self { dir })
+    }
+
+    fn vault(&self) -> PathBuf {
+        self.dir.join("vault")
+    }
+
+    fn remove(self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
 
@@ -277,8 +318,11 @@ pub(crate) struct Restored {
 ///
 /// Content comes from the backup; the vault's current authority (its log,
 /// devices, slips, revocations and freshness pins) stays. The restored copy is
-/// built beside the vault, and only then do the two directories swap. The old
-/// vault is kept whole as `<vault>.pre-restore-<stamp>`; nothing is deleted.
+/// built in a staging directory beside the vault and swapped into its path in
+/// one atomic exchange while this process holds the writer leases of both, so
+/// no server opens either half-way. A filesystem that cannot exchange two
+/// directories refuses the restore with nothing changed. The old vault is
+/// kept whole as `<vault>.pre-restore-<stamp>`; nothing is deleted.
 pub(crate) fn restore_over(
     backup: &Path,
     vault_path: &Path,
@@ -295,49 +339,75 @@ pub(crate) fn restore_over(
         .to_string_lossy()
         .into_owned();
     let stamp = file_stamp(now_unix_ms());
-    let staging = vault_path.with_file_name(format!(".{name}.restore-{stamp}"));
     let previous = vault_path.with_file_name(format!("{name}.pre-restore-{stamp}"));
     anyhow::ensure!(
-        !staging.exists() && !previous.exists(),
-        "{} or {} already exists; try again",
-        staging.display(),
+        !previous.exists(),
+        "{} already exists; try again",
         previous.display()
     );
-    // Holding the writer lease keeps a server off the vault until the swap.
-    let live =
-        oneiron::Vault::open_owned(vault_path, config.clone()).map_err(|error| match error {
-            oneiron::Error::ConcurrentWrite(oneiron::VAULT_WRITER_LEASE_HELD) => anyhow::anyhow!(
-                "vault {} is open in a running `oneiron serve`; stop it before restoring",
-                vault_path.display()
-            ),
-            error => anyhow::anyhow!("open vault {}: {error}", vault_path.display()),
-        })?;
+    let staging = Owned::create(vault_path.with_file_name(format!(".{name}.restore-{stamp}")))?;
+    let live = match oneiron::Vault::open_owned(vault_path, config.clone()) {
+        Ok(live) => live,
+        Err(error) => {
+            staging.remove();
+            return Err(match error {
+                oneiron::Error::ConcurrentWrite(oneiron::VAULT_WRITER_LEASE_HELD) => {
+                    anyhow::anyhow!(
+                        "vault {} is open in a running `oneiron serve`; stop it before restoring",
+                        vault_path.display()
+                    )
+                }
+                error => anyhow::anyhow!("open vault {}: {error}", vault_path.display()),
+            });
+        }
+    };
+    let restored_path = staging.vault();
     let (restored, report) = match oneiron::Vault::restore_checkpoint_keeping_authority(
         backup,
-        &staging,
-        config.clone(),
+        &restored_path,
+        config,
         &live,
         live.now_recorded_at(),
     ) {
         Ok(restored) => restored,
         Err(error) => {
-            remove_scratch(&staging);
+            staging.remove();
             anyhow::bail!("backup {} does not restore: {error}", backup.display());
         }
     };
-    drop(restored);
-    std::fs::rename(vault_path, &previous)?;
-    if let Err(error) = std::fs::rename(&staging, vault_path) {
-        // Put the vault back where it was before reporting.
-        let _ = std::fs::rename(&previous, vault_path);
-        return Err(error.into());
+    let kinds = match kind_counts(&restored) {
+        Ok(kinds) => kinds,
+        Err(error) => {
+            drop(restored);
+            staging.remove();
+            return Err(error);
+        }
+    };
+    // One atomic exchange: the vault path never names nothing, and both
+    // directories stay leased by this process until it is done.
+    if let Err(error) = exchange(&restored_path, vault_path) {
+        drop(restored);
+        staging.remove();
+        anyhow::bail!(
+            "cannot swap the restored copy into {} atomically ({error}); nothing was changed",
+            vault_path.display()
+        );
     }
+    // The old vault now sits inside the staging directory; give it its own
+    // name. If that fails it stays where it is, whole, and is reported there.
+    let previous = match std::fs::rename(&restored_path, &previous) {
+        Ok(()) => {
+            staging.remove();
+            previous
+        }
+        Err(_) => restored_path,
+    };
     if let Some(parent) = vault_path.parent() {
         sync_dir(parent)?;
     }
+    // Both leases are released only now, after the swap.
+    drop(restored);
     drop(live);
-    let reopened = oneiron::Vault::open_owned(vault_path, config)?;
-    let kinds = kind_counts(&reopened)?;
     Ok(Restored {
         backup: backup.to_path_buf(),
         checkpoint_id: report.epoch.checkpoint_id,
@@ -346,6 +416,48 @@ pub(crate) fn restore_over(
         entities: kinds.values().sum(),
         kinds,
     })
+}
+
+/// Atomically exchanges two directory entries.
+fn exchange(a: &Path, b: &Path) -> std::io::Result<()> {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let a = std::ffi::CString::new(a.as_os_str().as_bytes())?;
+        let b = std::ffi::CString::new(b.as_os_str().as_bytes())?;
+        if exchange_raw(&a, &b) == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = (a, b);
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn exchange_raw(a: &std::ffi::CStr, b: &std::ffi::CStr) -> libc::c_int {
+    // SAFETY: both pointers come from live NUL-terminated `CStr`s that outlive
+    // the call; renameat2 only reads the two paths and writes no memory.
+    unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            a.as_ptr(),
+            libc::AT_FDCWD,
+            b.as_ptr(),
+            libc::RENAME_EXCHANGE,
+        )
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn exchange_raw(a: &std::ffi::CStr, b: &std::ffi::CStr) -> libc::c_int {
+    // SAFETY: both pointers come from live NUL-terminated `CStr`s that outlive
+    // the call; renamex_np only reads the two paths and writes no memory.
+    unsafe { libc::renamex_np(a.as_ptr(), b.as_ptr(), libc::RENAME_SWAP) }
 }
 
 fn create_private_dir(dir: &Path) -> anyhow::Result<()> {

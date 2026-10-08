@@ -186,15 +186,17 @@ mod tests {
     }
 
     #[test]
-    fn a_disabled_or_hosted_config_has_no_schedule() {
+    fn the_schedule_is_opt_in_and_never_on_a_hosted_node() {
         let mut config = crate::config::ServeConfig::default();
         let host = |config: &crate::config::ServeConfig| {
             OwnerHost::from_config(config, config.vault_config())
         };
-        assert!(host(&config).every.is_some());
-        config.backup.enabled = false;
-        assert!(host(&config).every.is_none());
+        assert!(host(&config).every.is_none(), "the schedule is opt-in");
         config.backup.enabled = true;
+        assert_eq!(
+            host(&config).every,
+            Some(Duration::from_secs(24 * 3_600))
+        );
         config.privacy_posture = oneiron::HostingPrivacyPosture::Hosted;
         assert!(host(&config).every.is_none());
     }

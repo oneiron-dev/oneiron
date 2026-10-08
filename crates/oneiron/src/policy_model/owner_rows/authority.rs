@@ -153,6 +153,18 @@ impl Vault {
         owner.revalidate_in_txn(self, &txn)?;
         Ok(owners_in_txn(self, &txn)?.contains(&owner.actor()))
     }
+
+    /// Everyone whose membership confers authority now: the embedded owner of
+    /// a personal vault, or every live member of a shared one, whatever role.
+    pub(crate) fn live_member_ids(&self) -> Result<BTreeSet<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(match live_shared_members_in_txn(self, &txn)? {
+            None => personal_owner_in_txn(self, &txn)?.into_iter().collect(),
+            Some(LiveMembers { grants, .. }) => {
+                grants.iter().map(|grant| grant.member_ref).collect()
+            }
+        })
+    }
 }
 
 /// The vault's live owners: the embedded owner of a personal vault, or every

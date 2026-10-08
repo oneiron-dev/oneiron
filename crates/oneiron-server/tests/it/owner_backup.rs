@@ -62,6 +62,10 @@ fn backup_rehearse_restore_and_doctor_through_the_cli() {
         "init: {}",
         String::from_utf8_lossy(&init.stderr)
     );
+    // The schedule is opt-in; turning it on is one config section.
+    let mut text = std::fs::read_to_string(&config).unwrap();
+    text.push_str("\n[backup]\nenabled = true\nevery_hours = 12\nkeep = 3\n");
+    std::fs::write(&config, text).unwrap();
     let person = entity_type_registry_entry(ENTITY_TYPE_PERSON).unwrap().kind;
 
     let kept = add_person(&vault_path, b"in the backup");
@@ -131,7 +135,8 @@ fn backup_rehearse_restore_and_doctor_through_the_cli() {
     assert!(location["disk_bytes"].as_u64().unwrap() > 0);
     assert_eq!(location["backups"]["count"], 1);
     assert_eq!(location["backups"]["last"]["path"], backup.as_str());
-    assert_eq!(location["backups"]["every_hours"], 24);
+    assert_eq!(location["backups"]["every_hours"], 12);
+    assert_eq!(location["backups"]["keep"], 3);
     assert_eq!(location["last_export"]["format"], "md");
     assert_eq!(location["secret_scan"], "on");
 }

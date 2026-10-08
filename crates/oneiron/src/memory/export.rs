@@ -17,8 +17,9 @@ pub struct ExportOptions {
     pub format: Option<String>,
 }
 
-/// One whole-vault export, written in the same call that renders it, so every
-/// owner can see that the vault left and in what shape. Never the bytes.
+/// One whole-vault export, written by the call that renders it, so every
+/// owner can see that the vault left and in what shape. Never the bytes. A
+/// receipt that cannot be written is logged and does not withhold the export.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExportReceipt {
@@ -179,7 +180,9 @@ fn render_export(
         digest: blake3::hash(rendered.as_bytes()).to_hex().to_string(),
         by: by.to_owned(),
     };
-    vault.with_write_txn(|txn| {
+    // Export is never gated: a vault that cannot take one more write (a full
+    // map, a failing disk) still hands the owner their data, and says so.
+    if let Err(error) = vault.with_write_txn(|txn| {
         let sequence = match EXPORT_RECEIPTS
             .iter_rev_from(&vault.store, txn, &[])?
             .next()
@@ -191,7 +194,9 @@ fn render_export(
                 .ok_or(crate::Error::IndexOverflow("export receipt sequence"))?,
         };
         EXPORT_RECEIPTS.put(&vault.store, txn, &sequence, &receipt)
-    })?;
+    }) {
+        tracing::warn!(%error, "whole-vault export served without its receipt");
+    }
     Ok(MemoryExport {
         format: name.to_owned(),
         rendered,

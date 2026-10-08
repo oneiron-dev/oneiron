@@ -1,9 +1,11 @@
-//! The `[backup]` section: where local backups go, how often `serve` takes one,
-//! and how many it keeps.
+//! The `[backup]` section: where local backups go, whether `serve` takes them
+//! on its own, how often, and how many it keeps.
 //!
-//! Backups are on by default for a self-hosted `serve`: one a day, the newest
-//! seven kept, in a directory beside the vault. Nothing leaves the machine.
-//! `enabled = false` stops the schedule; `oneiron backup` still works by hand.
+//! The schedule is opt-in (`enabled = true`): one a day, the newest seven
+//! kept, in a directory beside the vault, and nothing leaves the machine. It
+//! stays off by default until erasure reaches backup files (ARCH-0038 orders
+//! the exterior erasure ledger before snapshot storage). `oneiron backup`
+//! works either way.
 
 use std::path::{Path, PathBuf};
 
@@ -17,7 +19,7 @@ const DEFAULT_KEEP: usize = 7;
 /// Resolved backup settings.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BackupConfig {
-    /// Whether `serve` takes backups on its own.
+    /// Whether `serve` takes backups on its own. Off unless set.
     pub enabled: bool,
     /// Backup directory. `None` means `<vault>.backups` beside the vault.
     pub dir: Option<PathBuf>,
@@ -30,7 +32,7 @@ pub struct BackupConfig {
 impl Default for BackupConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             dir: None,
             every_hours: DEFAULT_EVERY_HOURS,
             keep: DEFAULT_KEEP,

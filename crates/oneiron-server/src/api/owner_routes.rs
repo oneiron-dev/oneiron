@@ -205,12 +205,15 @@ async fn secret_scan(
     State(server): State<Arc<SyncServer>>,
 ) -> OwnerReply<SecretScanState> {
     owner(&auth, &server)?;
-    let vault = server.vault();
-    let engine = |error: oneiron::Error| owner_error(error.into());
-    Ok(Json(SecretScanState {
-        mode: vault.secret_scan_mode().map_err(engine)?,
-        changes: vault.secret_scan_change_log().map_err(engine)?,
-    }))
+    let state = blocking(move || {
+        let vault = server.vault();
+        Ok(SecretScanState {
+            mode: vault.secret_scan_mode()?,
+            changes: vault.secret_scan_change_log()?,
+        })
+    })
+    .await?;
+    Ok(Json(state))
 }
 
 #[derive(Debug, Deserialize)]
@@ -226,10 +229,11 @@ async fn set_secret_scan(
 ) -> OwnerReply<oneiron::policy_model::SecretScanReceipt> {
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let vault = server.vault();
-    let receipt = vault
-        .set_secret_scan_mode(&owner, request.mode, vault.now_recorded_at())
-        .map_err(|error| owner_error(error.into()))?;
+    let receipt = blocking(move || {
+        let vault = server.vault();
+        Ok(vault.set_secret_scan_mode(&owner, request.mode, vault.now_recorded_at())?)
+    })
+    .await?;
     Ok(Json(receipt))
 }
 
@@ -240,7 +244,7 @@ async fn preview_import(
 ) -> OwnerReply<imports::ImportPreview> {
     let owner = owner(&auth, &server)?;
     let batch = json_payload(payload)?;
-    let preview = imports::preview(server.vault(), &owner, batch).map_err(owner_error)?;
+    let preview = blocking(move || imports::preview(server.vault(), &owner, batch)).await?;
     Ok(Json(preview))
 }
 
@@ -259,8 +263,9 @@ async fn approve_import(
 ) -> OwnerReply<imports::ImportApproved> {
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let approved = imports::approve(server.vault(), &owner, &request.batch, &request.digest)
-        .map_err(owner_error)?;
+    let approved =
+        blocking(move || imports::approve(server.vault(), &owner, &request.batch, &request.digest))
+            .await?;
     Ok(Json(approved))
 }
 
@@ -271,8 +276,9 @@ async fn decline_import(
 ) -> OwnerReply<imports::ImportDeclined> {
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let declined = imports::decline(server.vault(), &owner, &request.batch, &request.digest)
-        .map_err(owner_error)?;
+    let declined =
+        blocking(move || imports::decline(server.vault(), &owner, &request.batch, &request.digest))
+            .await?;
     Ok(Json(declined))
 }
 
@@ -281,7 +287,7 @@ async fn pending_runs(
     State(server): State<Arc<SyncServer>>,
 ) -> OwnerReply<Vec<runs::PendingRun>> {
     owner(&auth, &server)?;
-    Ok(Json(runs::pending(server.vault()).map_err(owner_error)?))
+    Ok(Json(blocking(move || runs::pending(server.vault())).await?))
 }
 
 #[derive(Debug, Deserialize)]
@@ -297,7 +303,7 @@ async fn review_run(
 ) -> OwnerReply<runs::RunReview> {
     let owner = owner(&auth, &server)?;
     let query = query_params(query)?;
-    let review = runs::review(server.vault(), &owner, &query.run_id).map_err(owner_error)?;
+    let review = blocking(move || runs::review(server.vault(), &owner, &query.run_id)).await?;
     Ok(Json(review))
 }
 
@@ -314,7 +320,7 @@ async fn approve_run(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<DecideRun>, JsonRejection>,
 ) -> OwnerReply<runs::RunResolved> {
-    decide_run(auth, &server, payload, GateConsentBundleAction::Approve)
+    decide_run(auth, server, payload, GateConsentBundleAction::Approve).await
 }
 
 async fn decline_run(
@@ -322,24 +328,26 @@ async fn decline_run(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<DecideRun>, JsonRejection>,
 ) -> OwnerReply<runs::RunResolved> {
-    decide_run(auth, &server, payload, GateConsentBundleAction::Decline)
+    decide_run(auth, server, payload, GateConsentBundleAction::Decline).await
 }
 
-fn decide_run(
+async fn decide_run(
     auth: CoreAuth,
-    server: &SyncServer,
+    server: Arc<SyncServer>,
     payload: Result<Json<DecideRun>, JsonRejection>,
     action: GateConsentBundleAction,
 ) -> OwnerReply<runs::RunResolved> {
-    let owner = owner(&auth, server)?;
+    let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let resolved = runs::resolve(
-        server.vault(),
-        &owner,
-        &request.run_id,
-        &request.bundle_id,
-        action,
-    )
-    .map_err(owner_error)?;
+    let resolved = blocking(move || {
+        runs::resolve(
+            server.vault(),
+            &owner,
+            &request.run_id,
+            &request.bundle_id,
+            action,
+        )
+    })
+    .await?;
     Ok(Json(resolved))
 }

@@ -7,10 +7,15 @@
 //!
 //! - **carried**: the live vault's rows replace the image's, and a family the
 //!   live vault no longer holds stays absent. This is the root, device and
-//!   slip plane, its freshness pins and clocks, and exterior key custody.
+//!   slip plane, its freshness pins and clocks, exterior key custody, and
+//!   one-shot approvals, so nothing spent or revoked comes back.
 //! - **guarded**: grants, policy, consent, custody and machine identities.
 //!   Their history is entangled with content, so a restore that would roll
 //!   one of them back is refused rather than half-applied.
+//!
+//! Membership is checked on the result: a restore may not make anyone an
+//! owner or member who is not one now, whether by reviving a deleted or
+//! merged PERSON or a removed shared member (`refuse_new_members`).
 //! - everything else is content and comes from the image.
 use super::CanonicalRows;
 use crate::batch::EntityMetadataHeader;
@@ -38,6 +43,9 @@ enum Select {
 use Plane::{Carried, Guarded};
 use Select::{Kind, Prefix};
 
+/// The `vault_meta` row holding a store's random id (`vault::identity`).
+const VAULT_STORE_ID: &[u8] = b"vault_identity:local:v1";
+
 /// `(database, rows, plane)`. The first matching row family wins.
 const FAMILIES: &[(&str, Select, Plane)] = &[
     // Root, devices, keys, slips, revocations, pacts and their observation.
@@ -59,7 +67,7 @@ const FAMILIES: &[(&str, Select, Plane)] = &[
     ("vault_meta", Prefix(b"authority.checkpoint."), Carried),
     ("vault_meta", Prefix(b"ports:clock_floor:v1"), Carried),
     ("vault_meta", Prefix(b"ports:id_floor:v1"), Carried),
-    ("vault_meta", Prefix(b"vault_identity:local:v1"), Carried),
+    ("vault_meta", Prefix(VAULT_STORE_ID), Carried),
     ("vault_meta", Prefix(b"derivation:owner:v1"), Carried),
     (
         "vault_meta",
@@ -67,6 +75,8 @@ const FAMILIES: &[(&str, Select, Plane)] = &[
         Carried,
     ),
     ("vault_meta", Prefix(b"tasks.ask.link_signer.v1:"), Carried),
+    // One-shot approvals: a spent approve-once never comes back available.
+    ("vault_meta", Prefix(b"consent.once.v1:"), Carried),
     // Grants, policy, consent, custody and machine identities.
     (
         "entities",
@@ -219,6 +229,20 @@ pub(super) fn carry_current_authority(
     current: &Vault,
 ) -> Result<()> {
     let live = current_planed_rows(current)?;
+    // A store's random id, minted at its first open, names the vault even
+    // before it has an authority log. Every image carries one; a missing or
+    // different id is another vault.
+    let store_id = |rows: &CanonicalRows| {
+        rows.iter()
+            .find(|(key, _)| key.as_slice() == VAULT_STORE_ID)
+            .map(|(_, value)| value.clone())
+    };
+    let image_id = store_id(&databases["vault_meta"]);
+    if image_id.is_none() || image_id != store_id(&live["vault_meta"]) {
+        return Err(Error::InvalidConfig(
+            "this checkpoint belongs to another vault".into(),
+        ));
+    }
     // The log only grows. An image entry the live vault never saw means the
     // image is another vault's, or this one's history was rewritten.
     let log = |rows: &CanonicalRows| -> BTreeSet<Vec<u8>> {
@@ -232,7 +256,7 @@ pub(super) fn carry_current_authority(
     };
     if !log(&databases["entities"]).is_subset(&log(&live["entities"])) {
         return Err(Error::InvalidConfig(
-            "checkpoint authority log is not a prefix of this vault's; it belongs to another vault"
+            "this checkpoint's authority log is not a prefix of this vault's; it belongs to another vault"
                 .into(),
         ));
     }
@@ -303,6 +327,26 @@ fn current_planed_rows(current: &Vault) -> Result<BTreeMap<&'static str, Canonic
         planed.insert(database, rows);
     }
     Ok(planed)
+}
+
+/// Refuses a restored vault in which someone is a member who is not a member
+/// of `current` now (the owner of a personal vault; any role of a shared one).
+/// Membership rides content (PERSON rows, lifecycle, shared grants), so it is
+/// checked on the result rather than by row: a person deleted or merged away
+/// since the checkpoint does not regain the authority their unchanged grants
+/// would confer.
+pub(super) fn refuse_new_members(current: &Vault, restored: &Vault) -> Result<()> {
+    if restored
+        .live_member_ids()?
+        .is_subset(&current.live_member_ids()?)
+    {
+        Ok(())
+    } else {
+        Err(Error::InvalidConfig(
+            "restoring this checkpoint would make someone a vault owner or member who is not one now; restore it beside the vault instead"
+                .into(),
+        ))
+    }
 }
 
 #[cfg(test)]

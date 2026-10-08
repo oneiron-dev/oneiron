@@ -119,15 +119,12 @@ fn restore_refuses_to_roll_back_a_guarded_grant_before_creating_anything() {
 #[test]
 fn restore_refuses_another_vaults_checkpoint() {
     let root = tempfile::tempdir().unwrap();
-    let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
+    // Neither vault has an authority log yet: the store id alone tells them apart.
     let other = Vault::open(root.path().join("other"), VaultConfig::device()).unwrap();
-    other
-        .ensure_host_root_slip(&HostSlipIssuer::from_secret(b"another vault's host").unwrap())
-        .unwrap();
+    person(&other, b"another vault's content");
     let image = root.path().join("backup");
     other.snapshot_checkpoint(&image, 100).unwrap();
     let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
-    live.ensure_host_root_slip(&issuer).unwrap();
     let destination = root.path().join("restored");
     let Err(error) = Vault::restore_checkpoint_keeping_authority(
         &image,
@@ -139,5 +136,67 @@ fn restore_refuses_another_vaults_checkpoint() {
         panic!("the restore must be refused");
     };
     assert!(error.to_string().contains("another vault"), "{error}");
+    assert!(!destination.exists());
+}
+
+#[test]
+fn restore_never_revives_a_spent_approval() {
+    use crate::consent::{
+        ComposedEffect, EffectFacts, approve_once_authorization_in_txn, spend_approve_once_in_txn,
+    };
+    let root = tempfile::tempdir().unwrap();
+    let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    let owner_id = person(&live, b"owner");
+    let owner = live
+        .authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())
+        .unwrap();
+    let digest = ComposedEffect::new(EffectFacts::new("claims.import.review").unwrap()).digest();
+    live.approve_once(&owner, digest).unwrap();
+    let image = root.path().join("backup");
+    live.snapshot_checkpoint(&image, 100).unwrap();
+    // Spent after the checkpoint, in the image still available.
+    live.with_write_txn(|txn| {
+        let authorization = approve_once_authorization_in_txn(&live.store, txn, &digest)?
+            .expect("approved and unspent");
+        spend_approve_once_in_txn(&live.store, txn, &authorization)
+    })
+    .unwrap();
+
+    let (restored, _) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &root.path().join("restored"),
+        VaultConfig::device(),
+        &live,
+        200,
+    )
+    .unwrap();
+    let txn = restored.store.env.read_txn().unwrap();
+    assert!(matches!(
+        approve_once_authorization_in_txn(&restored.store, &txn, &digest),
+        Err(error) if error.kind() == crate::ErrorKind::ConsentApproveOnceSpent
+    ));
+}
+
+#[test]
+fn restore_refuses_to_revive_an_owner_deleted_since() {
+    let root = tempfile::tempdir().unwrap();
+    let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    let owner = live.ensure_embedded_owner_actor().unwrap();
+    let image = root.path().join("backup");
+    live.snapshot_checkpoint(&image, 100).unwrap();
+    live.delete_entity_with_options(&owner, crate::deletion::DeleteEntityOptions { purge: true })
+        .unwrap();
+    assert!(live.live_member_ids().unwrap().is_empty());
+    let destination = root.path().join("restored");
+    let Err(error) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &destination,
+        VaultConfig::device(),
+        &live,
+        200,
+    ) else {
+        panic!("the restore must be refused");
+    };
+    assert!(error.to_string().contains("vault owner"), "{error}");
     assert!(!destination.exists());
 }

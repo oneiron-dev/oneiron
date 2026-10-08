@@ -249,7 +249,9 @@ impl Vault {
     /// replay, freshness and authority-checkpoint rows. Refuses before
     /// creating `destination` when the image is another vault's, or when a
     /// grant, policy, custody or machine identity moved since the checkpoint,
-    /// rather than roll it back (ARCH-0038, RD-20).
+    /// rather than roll it back (ARCH-0038, RD-20); refuses and removes
+    /// `destination` when the result would make someone an owner or member
+    /// who is not one of `current` now.
     pub fn restore_checkpoint_keeping_authority(
         path: &Path,
         destination: &Path,
@@ -259,14 +261,21 @@ impl Vault {
     ) -> Result<(Self, RestoreReport)> {
         let (mut image, checkpoint_id) = read_image(path)?;
         authority_plane::carry_current_authority(&mut image.databases, current)?;
-        Self::restore_image(
+        let (vault, report) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
             config,
             RestoreReason::Restore,
             restored_at,
-        )
+        )?;
+        if let Err(error) = authority_plane::refuse_new_members(current, &vault) {
+            drop(vault);
+            // This call created the destination; nothing else is in it.
+            let _ = std::fs::remove_dir_all(destination);
+            return Err(error);
+        }
+        Ok((vault, report))
     }
     fn restore_image(
         image: CheckpointImage,

@@ -51,7 +51,8 @@ pub struct RestoreArgs {
     #[arg(long)]
     pub rehearse: bool,
 
-    /// With `--rehearse`: restore into this new directory and keep it.
+    /// With `--rehearse`: create this new directory and keep the restored
+    /// copy in it, at `<DIR>/vault`.
     #[arg(long, requires = "rehearse")]
     pub scratch: Option<PathBuf>,
 

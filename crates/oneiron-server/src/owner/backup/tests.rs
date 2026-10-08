@@ -110,3 +110,40 @@ fn restore_refuses_a_running_vault_and_leaves_it_alone() {
         .collect();
     assert!(siblings.is_empty(), "{siblings:?}");
 }
+
+#[test]
+fn vaults_sharing_a_backup_directory_never_prune_each_other() {
+    let root = tempfile::tempdir().unwrap();
+    let shared = root.path().join("backups");
+    let open_at = |parent: &str| {
+        let path = root.path().join(parent).join("vault");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let vault = Vault::open_owned(&path, VaultConfig::default()).unwrap();
+        (BackupPlan::new(&path, shared.clone(), 1), vault)
+    };
+    let (plan_a, vault_a) = open_at("a");
+    let (plan_b, vault_b) = open_at("b");
+    assert_ne!(plan_a.label, plan_b.label, "same name, different vaults");
+    let kept_b = take(&vault_b, &plan_b).unwrap();
+    for _ in 0..2 {
+        std::thread::sleep(std::time::Duration::from_millis(3));
+        take(&vault_a, &plan_a).unwrap();
+    }
+    assert_eq!(list(&plan_a).unwrap().len(), 1);
+    assert_eq!(list(&plan_b).unwrap(), vec![kept_b.backup]);
+}
+
+#[test]
+fn a_failed_rehearsal_removes_only_what_it_created() {
+    let root = tempfile::tempdir().unwrap();
+    let scratch = root.path().join("scratch");
+    // Custody left by an earlier vault of the same name is not the rehearsal's.
+    let custody = root.path().join(".scratch.gate-decision-keys");
+    std::fs::create_dir(&custody).unwrap();
+    std::fs::write(custody.join("key"), b"not ours").unwrap();
+    let bogus = root.path().join("not-a-backup");
+    std::fs::write(&bogus, b"garbage").unwrap();
+    assert!(rehearse(&bogus, VaultConfig::default(), Some(&scratch)).is_err());
+    assert!(!scratch.exists());
+    assert_eq!(std::fs::read(custody.join("key")).unwrap(), b"not ours");
+}

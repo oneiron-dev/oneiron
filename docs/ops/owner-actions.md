@@ -37,38 +37,43 @@ oneiron backup --dir DIR --keep 14
 
 A backup is the engine's checkpoint image: the vault's own records, without indexes. A
 restore rebuilds the indexes, and vectors are re-embedded by the next `serve` that has an
-embedder. Files are named `<vault-name>-<UTC time>-<id>.oneiron-backup`. The file is
-owner-only (`0600`) and sits in an owner-only directory (`0700`). A backup is written under a
-hidden partial name and renamed into place only once complete.
+embedder. Files are named `<vault-name>-<path hash>-<UTC time>-<id>.oneiron-backup`. The path
+hash keeps two vaults that share one backup directory from listing or pruning each other's
+files. The file is owner-only (`0600`) and sits in an owner-only directory (`0700`). A backup
+is written under a hidden partial name and renamed into place only once complete.
 
-`oneiron serve` takes backups on its own. Settings live in the config file or environment:
+`oneiron serve` can take backups on its own. The schedule is opt-in; turn it on in the config
+file or environment:
 
 ```toml
 [backup]
-enabled = true        # ONEIRON_BACKUP_ENABLED — false stops the schedule; `oneiron backup` still works
+enabled = true        # ONEIRON_BACKUP_ENABLED — default false; `oneiron backup` works either way
 dir = "~/oneiron-backups"   # ONEIRON_BACKUP_DIR — default: <vault>.backups beside the vault
 every_hours = 24      # ONEIRON_BACKUP_EVERY_HOURS
 keep = 7              # ONEIRON_BACKUP_KEEP — newest kept; older ones are deleted after each new backup
 ```
 
-The server checks every minute whether the newest backup is older than `every_hours`. The
-newest file on disk is its only state, so a restart or a manual backup is counted. Only a
-self-hosted local vault backs up this way; hosted and relay deployments back up through their
-host. The server also takes a backup on demand: `POST /v1/owner/backups`. `GET
+The schedule is off by default because erasing a record does not yet reach backup files (see
+*Limits*). With it on, the server checks every minute whether the newest backup is older than
+`every_hours`. The newest file on disk is its only state, so a restart or a manual backup is
+counted. Only a self-hosted local vault backs up this way; hosted and relay deployments back up
+through their host. The server also takes a backup on demand: `POST /v1/owner/backups`. `GET
 /v1/owner/backups` lists the backups.
 
 ## Rehearse a restore
 
 ```sh
 oneiron restore FILE --rehearse
-oneiron restore FILE --rehearse --scratch /tmp/look-here   # keep the restored copy to inspect
+oneiron restore FILE --rehearse --scratch /tmp/look-here   # keep the copy, at /tmp/look-here/vault
 ```
 
 A rehearsal restores the backup into a scratch directory, opens it through every open check,
 verifies its gate receipts against the vault's current key custody, and reports:
 `checkpoint_id`, `kinds` (live entities by kind), `entities`, `text_documents`,
 `pending_embeddings`, `verified`. The live vault is never opened, so a rehearsal is safe while
-`serve` runs. Without `--scratch` the copy is deleted afterwards. On a running server:
+`serve` runs. `--scratch DIR` names a new directory the rehearsal creates and keeps, with the
+copy in `DIR/vault`; without it the copy goes in a new temp directory that is deleted
+afterwards. A failed rehearsal removes what it created. On a running server:
 `POST /v1/owner/backups/rehearse` with `{}` (the newest backup) or `{"file": "<name>"}`.
 
 ## Restore
@@ -81,20 +86,26 @@ oneiron restore FILE
 A restore brings back your **content** as it stood at the backup: notes, claims,
 conversations, tasks, files and receipts. It keeps the vault's **current authority**
 (ARCH-0038, RD-20): its authority log (root, devices and keys, paired slips, revocations), device
-identity and leases, freshness pins and clocks, and gate-decision key custody. A slip revoked
-after the backup stays revoked. A device added after the backup keeps working.
+identity and leases, freshness pins and clocks, gate-decision key custody, and one-shot
+approvals. A slip revoked after the backup stays revoked. A device added after the backup keeps
+working. An approval spent after the backup stays spent.
 
-The restored copy is built beside the vault. The two directories then swap. Your previous vault
-is kept whole as `<vault>.pre-restore-<UTC time>`; nothing is deleted. To undo, stop the
-server and swap the directories back.
+The restored copy is built beside the vault, then swapped into place in one atomic step while
+the restore holds both vaults, so a server starting meanwhile can open neither half-way. Your
+previous vault is kept whole as `<vault>.pre-restore-<UTC time>`; nothing is deleted. To undo,
+stop the server and swap the directories back.
 
 A restore refuses, and changes nothing, when:
 
 - the vault is in use (stop `serve`);
-- the backup belongs to another vault;
+- the backup belongs to another vault (each vault has its own store id, minted at its first
+  open);
 - grants, policy, consent grants, secret custody, connector keys, channel identities, outbound
   grants or machine identities changed since the backup, since restoring them would roll a
   permission back. Rehearse with `--scratch` to read the old content beside the vault instead;
+- the restored vault would make someone an owner or member who is not one now: a person
+  deleted, merged away or removed from a shared vault since the backup does not get their
+  authority back;
 - a claim was erased after the backup. Its receipt key is gone, and a restore never brings a
   destroyed key back. Take a new backup after an erase.
 
@@ -190,9 +201,13 @@ oneiron api raw POST /v1/owner/secret-scan --data '{"mode":"off"}'
 ## Limits today
 
 - Erase does not reach local backups yet. A backup keeps the plaintext of anything erased after
-  it, and restoring that backup is refused (above). ARCH-0038 requires an exterior erasure
-  ledger before snapshot storage counts as erasure-complete, and that ledger is not built. Prune
-  or delete older backups after an erase if they must not keep the data.
+  it. Restoring that backup is refused when the erased record had receipts bound to a key the
+  erase destroyed. ARCH-0038 orders an exterior erasure ledger before snapshot storage ships,
+  and that ledger is not built, which is why the schedule is opt-in. After an erase, delete the
+  backups taken before it if they must not keep the data.
 - Device replicas that synced after the backup can send newer data back to a restored vault.
+- To cut someone's access, revoke their slip; a revocation is authority and survives a restore.
+  Deleting a person who is not a vault owner or member is content, and an older backup brings
+  that person back.
 - Backups are not encrypted beyond your filesystem. Keep the backup directory on a disk you
   trust.
