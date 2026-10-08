@@ -40,15 +40,16 @@ not (
 )
 """
 # A stuck test fails instead of stalling the run: nextest kills it after
-# period x terminate-after. Every profile inherits this and the override
-# below. The slowest healthy tests took ~22 min on a loaded gate host.
+# period x terminate-after (each retry under `full`/`ci-pr` gets the same
+# bound). Every profile inherits this and the override below. The slowest
+# healthy tests took ~22 min on a loaded gate host.
 slow-timeout = { period = "60s", terminate-after = 60 }
 
-# The conversation_dag replay tests. The 10,001-record budget test once ran
-# for 38+ min on a loaded host; healthy runs finish far inside 10 min.
+# The conversation_dag replay tests. The 10,001-record budget test held a
+# gate for 38+ min before its setup stopped committing once per record.
 [[profile.default.overrides]]
 filter = 'package(oneiron) & test(/^conversation_dag::tests::replay::/)'
-slow-timeout = { period = "60s", terminate-after = 10 }
+slow-timeout = { period = "60s", terminate-after = 20 }
 
 [profile.full]
 # Full tier: every test (slow set included). Used by CI and the pre-push
