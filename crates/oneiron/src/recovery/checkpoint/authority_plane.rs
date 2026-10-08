@@ -2,233 +2,45 @@
 //!
 //! ARCH-0038 (RD-20, amended 2026-09-26): a checkpoint never resets the current
 //! authority root or freshness pins and never restores a destroyed identity
-//! key. Restoring over a live vault therefore splits the image's rows into
-//! three planes by family:
+//! key. Restoring over a live vault classes every canonical row by
+//! [`super::restore_class`], deny by default:
 //!
-//! - **carried**: the live vault's rows replace the image's, and a family the
-//!   live vault no longer holds stays absent. This is the root, device and
-//!   slip plane, its freshness pins and clocks, exterior key custody, and
-//!   one-shot approvals, so nothing spent or revoked comes back.
-//! - **guarded**: grants, policy, consent, custody and machine identities.
-//!   Their history is entangled with content, so a restore that would roll
-//!   one of them back is refused rather than half-applied.
+//! - **content** comes from the image;
+//! - **live** rows replace the image's, and a row the live vault no longer
+//!   holds stays absent: the root, device and slip plane, freshness pins,
+//!   key custody, spent approvals, consent and policy switches and their
+//!   receipts, erasure state, and the ledgers of sends and exports, so
+//!   nothing spent, revoked, withdrawn or switched off comes back and no
+//!   send is made twice;
+//! - **refused** families hold authority entangled with content (grants,
+//!   policy manifests, room roles and membership, e-sign ceremonies). A
+//!   restore that would change one is refused before anything is created,
+//!   rather than half-applied.
 //!
 //! Membership is checked on the result: a restore may not make anyone an
 //! owner or member who is not one now, whether by reviving a deleted or
 //! merged PERSON or a removed shared member (`refuse_new_members`).
-//! - everything else is content and comes from the image.
 use super::CanonicalRows;
-use crate::batch::EntityMetadataHeader;
-use crate::registry::{
-    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CHANNEL_IDENTITY,
-    ENTITY_TYPE_CONNECTOR_KEY, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE,
-    ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SECRET_CUSTODY,
-};
-use crate::{Error, Result, Vault};
+use super::restore_class::{Class, Classes, Scope};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::conversation::ConversationBody;
+use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_CONVERSATION};
+use crate::{EntityId, Error, Result, Vault};
 use heed::types::Bytes;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Plane {
-    Carried,
-    Guarded(&'static str),
-}
-
-#[derive(Clone, Copy)]
-enum Select {
-    Prefix(&'static [u8]),
-    Kind(u8),
-}
-
-use Plane::{Carried, Guarded};
-use Select::{Kind, Prefix};
 
 /// The `vault_meta` row holding a store's random id (`vault::identity`).
 const VAULT_STORE_ID: &[u8] = b"vault_identity:local:v1";
 
-/// `(database, rows, plane)`. The first matching row family wins.
-const FAMILIES: &[(&str, Select, Plane)] = &[
-    // Root, devices, keys, slips, revocations, pacts and their observation.
-    ("entities", Kind(ENTITY_TYPE_AUTHORITY_LOG), Carried),
-    ("sync_state", Prefix(b"auth:"), Carried),
-    ("sync_state", Prefix(b"authlog:"), Carried),
-    ("sync_state", Prefix(b"authority:"), Carried),
-    ("sync_state", Prefix(b"peerauth:"), Carried),
-    // Device identity and the device lease registry, with the root document
-    // that mirrors the leases.
-    ("sync_state", Prefix(b"m:client_id"), Carried),
-    ("sync_state", Prefix(b"m:device_sk"), Carried),
-    ("sync_state", Prefix(b"m:device_pk"), Carried),
-    ("sync_state", Prefix(b"ls:"), Carried),
-    ("sync_state", Prefix(b"d:root"), Carried),
-    ("sync_state", Prefix(b"u:root:"), Carried),
-    ("sync_state", Prefix(b"managed:"), Carried),
-    // Freshness pins, clocks, local identity and exterior key custody.
-    ("vault_meta", Prefix(b"authority.checkpoint."), Carried),
-    ("vault_meta", Prefix(b"ports:clock_floor:v1"), Carried),
-    ("vault_meta", Prefix(b"ports:id_floor:v1"), Carried),
-    ("vault_meta", Prefix(VAULT_STORE_ID), Carried),
-    ("vault_meta", Prefix(b"derivation:owner:v1"), Carried),
-    (
-        "vault_meta",
-        Prefix(b"gate_decision:custody_root:v1"),
-        Carried,
-    ),
-    ("vault_meta", Prefix(b"tasks.ask.link_signer.v1:"), Carried),
-    // One-shot approvals: a spent approve-once never comes back available.
-    ("vault_meta", Prefix(b"consent.once.v1:"), Carried),
-    // Grants, policy, consent, custody and machine identities.
-    (
-        "entities",
-        Kind(ENTITY_TYPE_POLICY_MANIFEST),
-        Guarded("policy manifests"),
-    ),
-    (
-        "entities",
-        Kind(ENTITY_TYPE_FEDERATION_GRANT),
-        Guarded("federation grants"),
-    ),
-    (
-        "entities",
-        Kind(ENTITY_TYPE_ACCESS_GRANT),
-        Guarded("access grants"),
-    ),
-    (
-        "entities",
-        Kind(ENTITY_TYPE_SECRET_CUSTODY),
-        Guarded("secret custody"),
-    ),
-    (
-        "entities",
-        Kind(ENTITY_TYPE_CONNECTOR_KEY),
-        Guarded("connector keys"),
-    ),
-    (
-        "entities",
-        Kind(ENTITY_TYPE_CHANNEL_IDENTITY),
-        Guarded("channel identities"),
-    ),
-    (
-        "entities",
-        Kind(ENTITY_TYPE_OUTBOUND_GRANT),
-        Guarded("outbound grants"),
-    ),
-    (
-        "entities",
-        Kind(ENTITY_TYPE_MACHINE),
-        Guarded("machine identities"),
-    ),
-    (
-        "vault_meta",
-        Prefix(b"consent.grant.v1:"),
-        Guarded("standing consent grants"),
-    ),
-    (
-        "vault_meta",
-        Prefix(b"standing.block.v1:"),
-        Guarded("standing blocks"),
-    ),
-    (
-        "vault_meta",
-        Prefix(b"disclosure.scope.v1:"),
-        Guarded("disclosure scopes"),
-    ),
-    (
-        "vault_meta",
-        Prefix(b"disclosure.tier_a.v1:"),
-        Guarded("disclosure scopes"),
-    ),
-    (
-        "vault_meta",
-        Prefix(b"org.admin.v1."),
-        Guarded("org admin grants"),
-    ),
-    (
-        "vault_meta",
-        Prefix(b"shared-vault:creation:v1"),
-        Guarded("shared vault membership"),
-    ),
-    (
-        "vault_meta",
-        Prefix(b"secret_custody:name:v1:"),
-        Guarded("secret custody"),
-    ),
-    (
-        "vault_meta",
-        Prefix(b"secret_lease:v1:"),
-        Guarded("secret custody"),
-    ),
-    (
-        "vault_meta",
-        Prefix(b"secret_local:v1:"),
-        Guarded("secret custody"),
-    ),
-    (
-        "vault_meta",
-        Prefix(b"connector_key/"),
-        Guarded("connector keys"),
-    ),
-    (
-        "vault_meta",
-        Prefix(b"connector.grant_slate"),
-        Guarded("connector keys"),
-    ),
-    (
-        "vault_meta",
-        Prefix(b"outbound_grant:channel_identity_usage:v1:"),
-        Guarded("outbound grants"),
-    ),
-    (
-        "vault_meta",
-        Prefix(b"esign.principal.v1/"),
-        Guarded("e-sign capabilities"),
-    ),
-    (
-        "vault_meta",
-        Prefix(b"esign.capability.v1/"),
-        Guarded("e-sign capabilities"),
-    ),
-    (
-        "vault_meta",
-        Prefix(b"esign.recipient_capability.v1/"),
-        Guarded("e-sign capabilities"),
-    ),
-    (
-        "vault_meta",
-        Prefix(b"share:brief:admission:v1:"),
-        Guarded("share admissions"),
-    ),
-    (
-        "vault_meta",
-        Prefix(b"origin:authority"),
-        Guarded("repository origin authority"),
-    ),
-];
-
-fn plane_of(database: &str, key: &[u8], value: &[u8]) -> Option<Plane> {
-    FAMILIES
-        .iter()
-        .find(|(db, select, _)| {
-            *db == database
-                && match select {
-                    Prefix(prefix) => key.starts_with(prefix),
-                    Kind(kind) => EntityMetadataHeader::parse(value)
-                        .is_some_and(|header| header.entity_type == *kind),
-                }
-        })
-        .map(|(_, _, plane)| *plane)
-}
-
-fn planed_databases() -> BTreeSet<&'static str> {
-    FAMILIES.iter().map(|(db, _, _)| *db).collect()
-}
-
-/// Rewrites `databases` so its authority plane is `current`'s.
+/// Rewrites `databases` so every live row is `current`'s, or refuses when a
+/// refused family moved since the checkpoint.
 pub(super) fn carry_current_authority(
     databases: &mut BTreeMap<String, CanonicalRows>,
     current: &Vault,
 ) -> Result<()> {
-    let live = current_planed_rows(current)?;
+    let classes = Classes::new();
+    let live = current_rows(current, &classes)?;
     // A store's random id, minted at its first open, names the vault even
     // before it has an authority log. Every image carries one; a missing or
     // different id is another vault.
@@ -238,7 +50,7 @@ pub(super) fn carry_current_authority(
             .map(|(_, value)| value.clone())
     };
     let image_id = store_id(&databases["vault_meta"]);
-    if image_id.is_none() || image_id != store_id(&live["vault_meta"]) {
+    if image_id.is_none() || image_id != store_id(&live.rows["vault_meta"]) {
         return Err(Error::InvalidConfig(
             "this checkpoint belongs to another vault".into(),
         ));
@@ -254,31 +66,24 @@ pub(super) fn carry_current_authority(
             .map(|(key, _)| key.clone())
             .collect()
     };
-    if !log(&databases["entities"]).is_subset(&log(&live["entities"])) {
+    if !log(&databases["entities"]).is_subset(&log(&live.rows["entities"])) {
         return Err(Error::InvalidConfig(
             "this checkpoint's authority log is not a prefix of this vault's; it belongs to another vault"
                 .into(),
         ));
     }
+    let image_entities: BTreeSet<&[u8]> = databases["entities"]
+        .iter()
+        .map(|(key, _)| key.as_slice())
+        .collect();
     let mut moved = BTreeSet::new();
-    for database in planed_databases() {
-        let guarded = |rows: &CanonicalRows| -> BTreeMap<&'static str, CanonicalRows> {
-            let mut families: BTreeMap<_, CanonicalRows> = BTreeMap::new();
-            for (key, value) in rows {
-                if let Some(Guarded(name)) = plane_of(database, key, value) {
-                    families
-                        .entry(name)
-                        .or_default()
-                        .push((key.clone(), value.clone()));
-                }
-            }
-            families
-        };
-        let image = guarded(&databases[database]);
-        let current = guarded(&live[database]);
-        for name in image.keys().chain(current.keys()) {
-            if image.get(name) != current.get(name) {
-                moved.insert(*name);
+    for (database, live_rows) in &live.rows {
+        let scoped = |rows| refused(&classes, database, rows, &image_entities, &live.rooms);
+        let image = scoped(&databases[*database]);
+        let current = scoped(live_rows);
+        for what in image.keys().chain(current.keys()) {
+            if image.get(what) != current.get(what) {
+                moved.insert(*what);
             }
         }
     }
@@ -288,45 +93,124 @@ pub(super) fn carry_current_authority(
             moved.into_iter().collect::<Vec<_>>().join(", ")
         )));
     }
-    for database in planed_databases() {
-        let rows = databases.get_mut(database).ok_or_else(super::codec_error)?;
+    for (database, live_rows) in &live.rows {
+        let is_live =
+            |(key, value): &(Vec<u8>, Vec<u8>)| classes.row(database, key, value).0 == Class::Live;
+        let rows = databases
+            .get_mut(*database)
+            .ok_or_else(super::codec_error)?;
         let mut merged: BTreeMap<Vec<u8>, Vec<u8>> = std::mem::take(rows)
             .into_iter()
-            .filter(|(key, value)| plane_of(database, key, value) != Some(Carried))
+            .filter(|row| !is_live(row))
             .collect();
-        merged.extend(
-            live[database]
-                .iter()
-                .filter(|(key, value)| plane_of(database, key, value) == Some(Carried))
-                .cloned(),
-        );
+        merged.extend(live_rows.iter().filter(|row| is_live(row)).cloned());
         *rows = merged.into_iter().collect();
     }
     Ok(())
 }
 
-/// The live vault's canonical rows in any carried or guarded family.
-fn current_planed_rows(current: &Vault) -> Result<BTreeMap<&'static str, CanonicalRows>> {
+/// The live vault's rows that are not content, by database.
+struct LiveRows {
+    rows: BTreeMap<&'static str, CanonicalRows>,
+    /// Rooms the live vault holds and has not deleted.
+    rooms: BTreeSet<Vec<u8>>,
+}
+
+fn current_rows(current: &Vault, classes: &Classes) -> Result<LiveRows> {
     let txn = current.store.env.read_txn()?;
-    let mut planed = BTreeMap::new();
-    for database in planed_databases() {
+    let mut live = LiveRows {
+        rows: BTreeMap::new(),
+        rooms: BTreeSet::new(),
+    };
+    for entry in crate::store::DB_MANIFEST {
+        if !Classes::has_authority(entry.name) {
+            continue;
+        }
         let db = current
             .store
             .env
-            .open_database::<Bytes, Bytes>(&txn, Some(database))?
+            .open_database::<Bytes, Bytes>(&txn, Some(entry.name))?
             .ok_or_else(super::codec_error)?;
         let mut rows = Vec::new();
         for row in db.iter(&txn)? {
             let (key, value) = row?;
-            if super::storage_tier(database, key) == super::StorageTier::Canonical
-                && plane_of(database, key, value).is_some()
+            if super::storage_tier(entry.name, key) != super::StorageTier::Canonical
+                || classes.row(entry.name, key, value).0 == Class::Content
             {
-                rows.push((key.to_vec(), value.to_vec()));
+                continue;
             }
+            if entry.name == "entities"
+                && EntityMetadataHeader::parse(value)
+                    .is_some_and(|header| header.entity_type == ENTITY_TYPE_CONVERSATION)
+            {
+                let id = EntityId::from_bytes(key.try_into().map_err(|_| super::codec_error())?)?;
+                if !crate::ports::TombstoneStoreRead::port_deletion_state(
+                    &current.store,
+                    &txn,
+                    &id,
+                )?
+                .deleted
+                {
+                    live.rooms.insert(key.to_vec());
+                }
+            }
+            rows.push((key.to_vec(), value.to_vec()));
         }
-        planed.insert(database, rows);
+        live.rows.insert(entry.name, rows);
     }
-    Ok(planed)
+    Ok(live)
+}
+
+/// One refused family's compared rows: each key with what is compared of it.
+type Compared<'a> = Vec<(&'a [u8], Cow<'a, [u8]>)>;
+
+/// The rows of each refused family that its scope compares, by name.
+fn refused<'a>(
+    classes: &Classes,
+    database: &str,
+    rows: &'a CanonicalRows,
+    image_entities: &BTreeSet<&[u8]>,
+    rooms: &BTreeSet<Vec<u8>>,
+) -> BTreeMap<&'static str, Compared<'a>> {
+    let mut families: BTreeMap<_, Vec<_>> = BTreeMap::new();
+    for (key, value) in rows {
+        let (Class::Refuse { what, scope }, prefix) = classes.row(database, key, value) else {
+            continue;
+        };
+        let compared = match scope {
+            Scope::Family => Cow::Borrowed(value.as_slice()),
+            Scope::ImageEntities => {
+                let id = key.get(prefix..prefix + 16);
+                if !id.is_some_and(|id| image_entities.contains(id)) {
+                    continue;
+                }
+                Cow::Borrowed(value.as_slice())
+            }
+            Scope::RoomAuthority => {
+                if !image_entities.contains(key.as_slice()) || !rooms.contains(key) {
+                    continue;
+                }
+                Cow::Owned(room_authority(value))
+            }
+        };
+        families
+            .entry(what)
+            .or_default()
+            .push((key.as_slice(), compared));
+    }
+    families
+}
+
+/// Who a room's body admits, in what role, and from when: its members, role
+/// overrides and history default. A body that does not decode compares whole.
+fn room_authority(raw: &[u8]) -> Vec<u8> {
+    raw.get(ENTITY_METADATA_HEADER_LEN..)
+        .and_then(|body| ConversationBody::from_bytes(body).ok())
+        .and_then(|body| {
+            let members: BTreeSet<EntityId> = body.member_ids.into_iter().collect();
+            rmp_serde::to_vec(&(members, body.roles, body.history_visible)).ok()
+        })
+        .unwrap_or_else(|| raw.to_vec())
 }
 
 /// Refuses a restored vault in which someone is a member who is not a member

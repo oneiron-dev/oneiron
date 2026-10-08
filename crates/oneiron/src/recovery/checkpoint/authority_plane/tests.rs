@@ -200,3 +200,51 @@ fn restore_refuses_to_revive_an_owner_deleted_since() {
     assert!(error.to_string().contains("vault owner"), "{error}");
     assert!(!destination.exists());
 }
+
+/// ASTRA-9A-2 F1: the secret-scan switch is live policy. Backed up while
+/// off, switched on, restored: the scan stays on, its receipts stay, and a
+/// credential-shaped write is still refused.
+#[test]
+fn restore_keeps_the_secret_scan_the_owner_switched_on_since() {
+    use crate::policy_model::SecretScanMode;
+    let root = tempfile::tempdir().unwrap();
+    let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    let owner_id = live.ensure_embedded_owner_actor().unwrap();
+    let owner = live
+        .authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())
+        .unwrap();
+    let at = live.now_recorded_at();
+    live.set_secret_scan_mode(&owner, SecretScanMode::Off, at)
+        .unwrap();
+    let image = root.path().join("backup");
+    live.snapshot_checkpoint(&image, 100).unwrap();
+    live.set_secret_scan_mode(&owner, SecretScanMode::On, at + 1)
+        .unwrap();
+
+    let (restored, _) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &root.path().join("restored"),
+        VaultConfig::device(),
+        &live,
+        200,
+    )
+    .unwrap();
+    assert_eq!(restored.secret_scan_mode().unwrap(), SecretScanMode::On);
+    assert_eq!(
+        restored.secret_scan_change_log().unwrap(),
+        live.secret_scan_change_log().unwrap()
+    );
+    let leak = EntityId::now();
+    let refused = restored.put_entity(
+        &leak,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"note to self: ghp_0123456789abcdefghijklmnopqrstuvwxyzAB",
+    );
+    assert!(
+        refused.is_err(),
+        "the scan refuses a credential-shaped write"
+    );
+    assert!(restored.get(&leak).unwrap().is_none());
+}

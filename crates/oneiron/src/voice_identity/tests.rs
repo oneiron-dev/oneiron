@@ -2418,3 +2418,97 @@ fn voice_offer_verification_is_engine_derived_and_not_authority() -> Result<()> 
     );
     Ok(())
 }
+
+/// ASTRA-9A-2 F5: a withdrawal is live consent. A restore over the vault from
+/// before it keeps the withdrawal and the absence of everything it erased:
+/// no print, sample, reference pack, voice identity or render target comes
+/// back, matching never names the subject, and the old grant enrolls nothing.
+#[test]
+fn a_restore_never_undoes_a_voice_consent_withdrawal() -> Result<()> {
+    use super::ref_bank::{VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip};
+
+    let (_tmp, vault) = temp_ref_vault();
+    let subject = test_id(0xB1);
+    let recorder = test_id(0xB2);
+    vault.store_voice_ref_pack(&VoiceRefPack {
+        version: 1,
+        id: "designed".into(),
+        voice_id: "stable-voice".into(),
+        owner: subject,
+        origin: VoiceRefOrigin::Designed {
+            vendor: "design-tool".into(),
+        },
+        clips: vec![VoiceRegisterClip {
+            register: "neutral".into(),
+            media_type: "audio/wav".into(),
+            audio: vec![1, 2, 3],
+            transcript: "reference".into(),
+        }],
+    })?;
+    let request = vault.prepare_voice_clone("stable-voice", "render", true)?;
+    vault.record_voice_target_clone(&request, "vendor-pointer", 123)?;
+    vault.record_voice_consent(&granted_event(
+        "consent-1",
+        subject,
+        recorder,
+        100,
+        notice_basis(),
+    ))?;
+    let enrolled = enrollment(
+        subject,
+        "consent-1",
+        vec![solo_sample("s-1", "en", [1.0, 0.0, 0.0, 0.0])],
+        200,
+    );
+    vault.enroll_voice_print(&enrolled)?;
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 300)?;
+    vault.withdraw_voice_consent(&VoiceWithdrawalRequest {
+        event_id: "withdraw-1".into(),
+        subject_ref: subject,
+        recorded_by_ref: subject,
+        occurred_at: 400,
+        purposes: vec![VoicePrintPurpose::MeetingAttribution],
+        basis: notice_basis(),
+    })?;
+
+    let (restored, _) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &backups.path().join("restored"),
+        crate::config::VaultConfig::default(),
+        &vault,
+        500,
+    )?;
+    assert!(stored_consent(&restored, subject, "withdraw-1")?.is_some());
+    assert!(stored_print(&restored, subject)?.is_none());
+    assert!(print_family_rows(&restored, subject)?.is_empty());
+    assert!(stored_sample(&restored, subject, "s-1")?.is_none());
+    assert!(restored.voice_identity("stable-voice")?.is_none());
+    assert!(restored.voice_ref_pack("designed")?.is_none());
+    assert!(
+        restored
+            .voice_target_clone("stable-voice", "render", true)?
+            .is_none()
+    );
+    let space_id = space().space_id;
+    let roster = restored.resolve_voice_segments(&match_request(
+        "call-after-restore",
+        &space_id,
+        vec![segment("seg-1", 0, [1.0, 0.0, 0.0, 0.0], &space_id)],
+        Vec::new(),
+    ))?;
+    assert!(!matches!(
+        evidence_of(&roster, "seg-1"),
+        VoiceAttributionEvidence::EnrolledPrint { .. }
+    ));
+    assert!(
+        restored
+            .enroll_voice_print(&VoiceEnrollmentRequest {
+                requested_at: 600,
+                ..enrolled
+            })
+            .is_err()
+    );
+    Ok(())
+}

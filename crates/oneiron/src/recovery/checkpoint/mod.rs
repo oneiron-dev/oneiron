@@ -5,6 +5,7 @@
 //! is distinct from the logical export's entity/claim transformation format.
 mod authority_plane;
 mod rebuild;
+mod restore_class;
 mod tiers;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault, VaultConfig, store::DB_MANIFEST};
@@ -245,13 +246,14 @@ impl Vault {
         )
     }
     /// Historical content restore beside a live vault: the image's content
-    /// with `current`'s authority plane — its AUTHORITY_LOG, slip, pairing,
-    /// replay, freshness and authority-checkpoint rows. Refuses before
-    /// creating `destination` when the image is another vault's, or when a
-    /// grant, policy, custody or machine identity moved since the checkpoint,
-    /// rather than roll it back (ARCH-0038, RD-20); refuses and removes
-    /// `destination` when the result would make someone an owner or member
-    /// who is not one of `current` now.
+    /// with `current`'s live authority, consent, policy, credential and
+    /// erasure state, every row classed deny by default (`restore_class`).
+    /// Refuses before creating `destination` when the image is another
+    /// vault's, or when a family entangled with content (a grant, policy
+    /// manifest, custody, machine identity, room role or membership, e-sign
+    /// ceremony) moved since the checkpoint, rather than roll it back
+    /// (ARCH-0038, RD-20); refuses and removes `destination` when the result
+    /// would make someone an owner or member who is not one of `current` now.
     pub fn restore_checkpoint_keeping_authority(
         path: &Path,
         destination: &Path,
