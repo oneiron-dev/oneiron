@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::speech_identity_regressions::initial_executor_replay_record;
 use super::*;
-use crate::code_run::{AgentVerbDoor, AgentVerbRefusal, SelfAgentVerbCall};
+use crate::code_run::{AgentVerbDoor, AgentVerbRefusal, SelfAgentVerbCall, SelfMemorySearchCall};
 use crate::memory::HostWriteOrigin;
 use crate::task_verb::sdk::{AgentVerb, TaskCreateRequest};
 
@@ -35,25 +35,26 @@ impl AgentVerbDoor for TaskCreateDoor {
     }
 }
 
-/// One step that makes one bridge call and keeps its answer. Given a competing
-/// replay record, it then loses the step checkpoint's compare-and-set: the
-/// call's write is committed and the step's checkpoint is not, as when the
-/// process stops between the two.
-struct OneCallStep<'a> {
+/// One step that makes its bridge calls and keeps their answers. Given a
+/// competing replay record, it then loses the step checkpoint's
+/// compare-and-set: the calls' writes are committed and the step's checkpoint
+/// is not, as when the process stops between the two.
+struct RecordedStep<'a> {
     vault: &'a Vault,
-    call: SelfCall,
+    calls: Vec<SelfCall>,
     competing_record: Option<CodeRunReplayRecord>,
     answers: Vec<SelfDispatchOutcome>,
 }
 
-impl JsCodeModeRuntime for OneCallStep<'_> {
+impl JsCodeModeRuntime for RecordedStep<'_> {
     fn run_step(
         &mut self,
         _step: JsCodeModeStep<'_>,
         host: &mut dyn JsCodeModeHost,
     ) -> Result<JsCodeModeStepOutcome> {
-        self.answers
-            .push(host.dispatch_self(self.call.clone())?.outcome);
+        for call in self.calls.clone() {
+            self.answers.push(host.dispatch_self(call)?.outcome);
+        }
         if let Some(record) = self.competing_record.take() {
             self.vault.put_code_run_replay_record(&record)?;
         }
@@ -71,12 +72,21 @@ fn written_tasks_and_claims(vault: &Vault) -> Vec<EntityId> {
     .collect()
 }
 
-/// Review repro (#1338): a code-mode `tasks.create` commits before its step's
-/// checkpoint. A process that stops in that window resumes the same step at
-/// the same bridge position; the resumed call answers with the first receipt
-/// and the vault holds the one task the first attempt wrote.
-#[test]
-fn resumed_step_returns_the_committed_verb_write_instead_of_writing_again() {
+fn create_task() -> SelfCall {
+    SelfCall::AgentVerb(SelfAgentVerbCall {
+        verb: AgentVerb::TasksCreate,
+        input: serde_json::json!({"spec": "summarize the open notes", "label": null}),
+    })
+}
+
+/// A step runs `tasks.create`, which commits; the step's checkpoint is then
+/// lost, as when the process stops in that window. The same step resumes as
+/// `resumed`, whose last call is the same `tasks.create`. Returns the first
+/// attempt's answer and the resumed one's, after checking the resumed step
+/// wrote nothing new.
+fn resume_after_a_lost_checkpoint(
+    resumed: Vec<SelfCall>,
+) -> (SelfDispatchOutcome, SelfDispatchOutcome) {
     let (_dir, vault) = open_test_vault();
     let vault = Arc::new(vault);
     let actor_id = EntityId::from_bytes(crate::gate::FIRST_PARTY_CONNECTOR_ACTOR_ID)
@@ -100,16 +110,12 @@ fn resumed_step_returns_the_committed_verb_write_instead_of_writing_again() {
     let config = executor_config(entity(0xE7), EngineExecutorLimits::default());
     let lease = BudgetLease::for_test("executor-lease");
     let script = "await self.memory.tasks.create({spec: 'summarize the open notes'});";
-    let call = SelfCall::AgentVerb(SelfAgentVerbCall {
-        verb: AgentVerb::TasksCreate,
-        input: serde_json::json!({"spec": "summarize the open notes", "label": null}),
-    });
     let before = written_tasks_and_claims(&vault);
 
     let backend = FixtureBackend::new([script]);
-    let mut stopped = OneCallStep {
+    let mut stopped = RecordedStep {
         vault: &vault,
-        call: call.clone(),
+        calls: vec![create_task()],
         competing_record: Some(initial_executor_replay_record(&vault, &config)),
         answers: Vec::new(),
     };
@@ -129,9 +135,9 @@ fn resumed_step_returns_the_committed_verb_write_instead_of_writing_again() {
     );
 
     let backend = FixtureBackend::new([script]);
-    let mut resumed = OneCallStep {
+    let mut resumed = RecordedStep {
         vault: &vault,
-        call,
+        calls: resumed,
         competing_record: None,
         answers: Vec::new(),
     };
@@ -146,12 +152,34 @@ fn resumed_step_returns_the_committed_verb_write_instead_of_writing_again() {
         committed,
         "the resumed step writes no second task"
     );
-    assert!(matches!(
-        stopped.answers.as_slice(),
-        [SelfDispatchOutcome::AgentVerb(_)]
-    ));
+    let first = stopped.answers.pop().expect("the first attempt's answer");
+    assert!(matches!(first, SelfDispatchOutcome::AgentVerb(_)));
+    (first, resumed.answers.pop().expect("the resumed answer"))
+}
+
+/// Review repro (Greptile, #1338): a code-mode `tasks.create` commits before
+/// its step's checkpoint. Resumed, the step makes the same call again and
+/// gets the first receipt back; the vault holds the one task.
+#[test]
+fn resumed_step_returns_the_committed_verb_write_instead_of_writing_again() {
+    let (first, resumed) = resume_after_a_lost_checkpoint(vec![create_task()]);
     assert_eq!(
-        resumed.answers, stopped.answers,
+        resumed, first,
         "the resumed call answers with the first receipt"
+    );
+}
+
+/// Review repro (Astra R3, #1338): the resumed step's code is generated again
+/// and may place the same write at another bridge position, here behind a
+/// search. The write is still the one the first attempt committed.
+#[test]
+fn resumed_step_that_moves_its_write_still_gets_the_first_receipt() {
+    let (first, resumed) = resume_after_a_lost_checkpoint(vec![
+        SelfCall::MemorySearch(SelfMemorySearchCall::new("open notes", 4)),
+        create_task(),
+    ]);
+    assert_eq!(
+        resumed, first,
+        "the moved call answers with the first receipt"
     );
 }

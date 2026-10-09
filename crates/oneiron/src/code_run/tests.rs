@@ -2151,6 +2151,15 @@ fn code_run_claim_doors_preserve_owned_keyed_revisions() -> Result<()> {
     Ok(())
 }
 
+fn executor_site(run_id: EntityId) -> ExecutorCallSite<'static> {
+    ExecutorCallSite {
+        run_id,
+        seq: 0,
+        step_start: 0,
+        earlier: &[],
+    }
+}
+
 #[test]
 fn ask_void_notice_replays_until_durable_bridge_result_then_reparks()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -2192,7 +2201,7 @@ fn ask_void_notice_replays_until_durable_bridge_result_then_reparks()
         "void-replay",
     )?;
     let call = SelfCall::TasksWait(handle);
-    let changed = dispatcher.dispatch_for_executor_run(run, 0, call.clone())?;
+    let changed = dispatcher.dispatch_for_executor_run(executor_site(run), call.clone())?;
     let SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Changed { voided, generation }) =
         &changed
     else {
@@ -2201,7 +2210,7 @@ fn ask_void_notice_replays_until_durable_bridge_result_then_reparks()
     assert_eq!(voided, &vec![friend]);
     assert_eq!(*generation, 1);
     assert_eq!(
-        dispatcher.dispatch_for_executor_run(run, 0, call.clone())?,
+        dispatcher.dispatch_for_executor_run(executor_site(run), call.clone())?,
         changed,
         "an unrecorded result must be replayed after a crash"
     );
@@ -2212,7 +2221,7 @@ fn ask_void_notice_replays_until_durable_bridge_result_then_reparks()
     vault.put_code_run_replay_record(&record)?;
     assert!(
         matches!(
-            dispatcher.dispatch_for_executor_run(run, 0, call.clone())?,
+            dispatcher.dispatch_for_executor_run(executor_site(run), call.clone())?,
             SelfDispatchOutcome::DurableWait(_)
         ),
         "the recorded generation permits the next wait to park"
@@ -2224,7 +2233,7 @@ fn ask_void_notice_replays_until_durable_bridge_result_then_reparks()
     let next = memory.tasks_ask_option_link(handle, friend)?;
     vault.void_ask_option_link(&next.token)?;
     let SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Changed { generation, .. }) =
-        dispatcher.dispatch_for_executor_run(run, 0, call)?
+        dispatcher.dispatch_for_executor_run(executor_site(run), call)?
     else {
         panic!("later void wakes again")
     };

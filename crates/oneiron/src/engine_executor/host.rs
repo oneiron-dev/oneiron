@@ -9,9 +9,9 @@ use super::types::{
     EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, SelfDispatchResponse,
 };
 use crate::code_run::{
-    CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord, ExecutorStorage,
-    GatedActorWrite, SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait, SelfEffect,
-    SelfFailedResult,
+    CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord, ExecutorCallSite,
+    ExecutorStorage, GatedActorWrite, SelfCall, SelfDeniedResult, SelfDispatchOutcome,
+    SelfDurableWait, SelfEffect, SelfFailedResult,
 };
 use crate::code_sandbox::{
     PLAIN_JS_HOST_VERB_DTS, SANDBOX_WIT_WORLD_NAME, SandboxBoundaryContract,
@@ -26,6 +26,7 @@ use crate::{Error, Result};
 pub(super) struct RecordingJsHost<'a, 's> {
     gated_write: &'a GatedActorWrite<'a>,
     run_id: EntityId,
+    step_start: u64,
     next_seq: u64,
     determinism: CodeRunDeterminism,
     legibility: Option<ExecutorLegibility<'a>>,
@@ -51,6 +52,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         Self {
             gated_write,
             run_id,
+            step_start: next_seq,
             next_seq,
             determinism,
             legibility,
@@ -178,9 +180,15 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         // has made, so a write can never be sealed against a narrower history
         // than the one already recorded.
         self.gated_write.observe_bridge_history(&self.bridge_calls);
+        let site = ExecutorCallSite {
+            run_id: self.run_id,
+            seq,
+            step_start: self.step_start,
+            earlier: &self.bridge_calls,
+        };
         let dispatched = self
             .gated_write
-            .dispatch_for_executor_run(self.run_id, seq, call.clone());
+            .dispatch_for_executor_run(site, call.clone());
         let outcome = match dispatched {
             Ok(outcome) => outcome,
             Err(err) => {

@@ -513,6 +513,14 @@ impl Memory<'_> {
         self
     }
 
+    /// Whether a host bound this surface to generated code's origin. Such a
+    /// surface never speaks, answers or assigns in a person's name.
+    pub(crate) fn writes_generated(&self) -> bool {
+        self.host_origin
+            .as_ref()
+            .is_some_and(|origin| origin.source() == ClaimSource::Generated)
+    }
+
     /// The source a claim door writes: the bound origin's, else the caller's.
     pub(super) fn claim_source(&self, declared: &str) -> MemoryResult<ClaimSource> {
         match &self.host_origin {
@@ -529,21 +537,32 @@ impl Memory<'_> {
         verb: &str,
         approval: ClaimApprovalStatus,
     ) -> crate::Result<crate::WriteEnvelope> {
-        let actor = crate::WriteActor::new(self.actor, self.actor_class);
-        let Some(origin) = &self.host_origin else {
-            return Ok(crate::WriteEnvelope::new(
-                actor,
+        match self.host_envelope(approval)? {
+            Some(envelope) => Ok(envelope),
+            None => Ok(crate::WriteEnvelope::new(
+                crate::WriteActor::new(self.actor, self.actor_class),
                 source,
                 crate::WriteProvenance::new(facade_provenance(verb))?,
                 approval,
-            ));
+            )),
+        }
+    }
+
+    /// The bound origin's envelope at `approval`, for a writer that stamps its
+    /// own source and provenance when no origin is bound.
+    pub(crate) fn host_envelope(
+        &self,
+        approval: ClaimApprovalStatus,
+    ) -> crate::Result<Option<crate::WriteEnvelope>> {
+        let Some(origin) = &self.host_origin else {
+            return Ok(None);
         };
-        if origin.envelope.actor() != actor {
+        if origin.envelope.actor() != crate::WriteActor::new(self.actor, self.actor_class) {
             return Err(Error::InvalidClaimBody(
                 "host write origin does not match bound facade",
             ));
         }
-        Ok(origin.envelope.clone().with_approval(approval))
+        Ok(Some(origin.envelope.clone().with_approval(approval)))
     }
 
     /// The room turn this handle is bound to, if any.
