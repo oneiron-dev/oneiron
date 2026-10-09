@@ -44,7 +44,9 @@ pub(crate) enum Rows<T, E> {
     /// Keep the rows (a refusal's own receipt); answer `E` once the group is
     /// durable.
     Refuse(E),
-    /// Drop the rows and answer at once: nothing of this write joins the group.
+    /// Drop the rows: nothing of this write joins the group. The answer still
+    /// waits for the group's commit, and a success becomes the commit's error
+    /// if it fails, because it may rest on rows an earlier member staged.
     Discard(std::result::Result<T, E>),
 }
 
@@ -120,7 +122,7 @@ enum Turn {
     Run(SharedTxn),
     /// Done with the shared transaction; `kept` says whether its rows joined.
     Ran { kept: bool },
-    /// The shared commit is decided: `None` committed, `Some` lost the rows.
+    /// The shared commit is decided: `None` committed, `Some` failed.
     Settled(Option<heed::Error>),
 }
 
@@ -306,12 +308,13 @@ impl Ticket {
         }
     }
 
-    /// Member side: blocks until the shared commit is decided.
+    /// Member side: blocks until the shared commit is decided. Leaves every
+    /// other state in place: the leader may not have read `Ran` yet.
     fn wait_settled(&self) -> Option<heed::Error> {
         let mut turn = self.lock();
         loop {
-            if let Turn::Settled(lost) = std::mem::take(&mut *turn) {
-                return lost;
+            if let Turn::Settled(lost) = &mut *turn {
+                return lost.take();
             }
             turn = self
                 .changed
@@ -336,8 +339,8 @@ impl Store {
     /// The write's closure gets a transaction of its own (the shared one when
     /// it leads, a nested one when it joins) and says through [`Rows`] whether
     /// its rows stay. The answer arrives only after the shared transaction
-    /// committed, unless the rows were dropped. A panic in the closure drops
-    /// its rows and resumes on the caller's thread.
+    /// committed. A panic in the closure drops its rows and resumes on the
+    /// caller's thread.
     ///
     /// A thread already inside a write transaction keeps its own, as before.
     pub(crate) fn group_write<T, E>(
@@ -441,21 +444,21 @@ impl Store {
                 resume_unwind(panic);
             }
         };
-        let mut kept = Vec::new();
-        let mut ran = 1;
-        while let Some(ticket) = group.next_member(ran, &limits, opened) {
-            ran += 1;
-            if ticket.run(SharedTxn::lend(&mut shared)) {
-                kept.push(ticket);
-            }
+        let mut members = Vec::new();
+        let mut kept = 1;
+        while let Some(ticket) = group.next_member(1 + members.len(), &limits, opened) {
+            kept += usize::from(ticket.run(SharedTxn::lend(&mut shared)));
+            members.push(ticket);
         }
         #[cfg(test)]
-        group.hooks.before_commit(ran);
+        group.hooks.before_commit(1 + members.len());
         let committed = shared.commit();
         if committed.is_ok() {
-            self.diagnostics.group_commit.record(1 + kept.len() as u64);
+            self.diagnostics.group_commit.record(kept as u64);
         }
-        for ticket in &kept {
+        // Every member waits for this, kept rows or not: an answer read in the
+        // shared transaction may rest on rows an earlier member staged.
+        for ticket in &members {
             ticket.set(Turn::Settled(committed.as_ref().err().map(replicate)));
         }
         group.hand_off();
@@ -502,9 +505,14 @@ impl Store {
                     Some(lost) => Err(E::from(Error::from(lost))),
                 }
             }
+            // No rows of its own joined, but a success read in the group may
+            // rest on rows the group then failed to commit.
             Staged::Dropped(answer) => {
                 ticket.set(Turn::Ran { kept: false });
-                answer
+                match (ticket.wait_settled(), answer) {
+                    (Some(lost), Ok(_)) => Err(E::from(Error::from(lost))),
+                    (_, answer) => answer,
+                }
             }
             Staged::Panicked(panic) => {
                 ticket.set(Turn::Ran { kept: false });

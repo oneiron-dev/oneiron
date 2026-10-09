@@ -268,26 +268,29 @@ fn percentile(samples: &mut [f64], percent: usize) -> Option<f64> {
 }
 
 /// LMDB's last committed transaction id, read from the two meta pages of
-/// `data.mdb` (64-bit layout: page header 16 bytes, magic at 16, txnid at
-/// 144). Every durable commit raises it by one.
+/// `data.mdb` (64-bit layout: page header 16 bytes, then magic at 16, the
+/// page size in the free DB's `md_pad` at 40, txnid at 144). Every durable
+/// commit raises it by one, alternating between the two pages.
 fn lmdb_txnid(dir: &Path) -> Option<u64> {
-    use std::io::Read;
+    use std::io::{Read, Seek, SeekFrom};
     const MAGIC: u32 = 0xBEEF_C0DE;
-    let page_size = 4096;
-    let mut pages = vec![0_u8; page_size * 2];
-    std::fs::File::open(dir.join("data.mdb"))
-        .ok()?
-        .read_exact(&mut pages)
-        .ok()?;
+    let field =
+        |page: &[u8], at: usize| -> Option<[u8; 8]> { page.get(at..at + 8)?.try_into().ok() };
     let txnid = |page: &[u8]| -> Option<u64> {
         let magic = u32::from_le_bytes(page.get(16..20)?.try_into().ok()?);
         if magic != MAGIC {
             return None;
         }
-        Some(u64::from_le_bytes(page.get(144..152)?.try_into().ok()?))
+        Some(u64::from_le_bytes(field(page, 144)?))
     };
-    let (first, second) = pages.split_at(page_size);
-    txnid(first).max(txnid(second))
+    let mut file = std::fs::File::open(dir.join("data.mdb")).ok()?;
+    let mut first = vec![0_u8; 4096];
+    file.read_exact(&mut first).ok()?;
+    let page_size = u32::from_le_bytes(first.get(40..44)?.try_into().ok()?);
+    let mut second = vec![0_u8; 4096];
+    file.seek(SeekFrom::Start(u64::from(page_size))).ok()?;
+    file.read_exact(&mut second).ok()?;
+    txnid(&first).max(txnid(&second))
 }
 
 /// fsync, fdatasync and synchronous msync calls so far, when the counting
