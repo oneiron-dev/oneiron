@@ -81,6 +81,12 @@ pub struct AmendmentEvidence {
     pub actor: EntityId,
     /// The SKILL the proposal rode, when it rode one.
     pub skill: Option<EntityId>,
+    /// The terminal pack receipt of the attempt whose proposal was amended, when
+    /// an attempt made it. This is the join that lets a `skill_defect` share
+    /// replace that attempt's outcome in `skill.reliability` (ARCH-0056 §5);
+    /// no receipt the engine stamps carries it, so the host that ran the
+    /// attempt supplies it.
+    pub attempt_receipt: Option<String>,
     /// The `(subject, scope)` axis the resulting cost row is keyed on.
     pub scope: String,
     /// Why the decider amended (see [`AmendmentCause`]).
@@ -102,6 +108,7 @@ impl AmendmentEvidence {
             receipt_id: receipt_id.into(),
             actor,
             skill: None,
+            attempt_receipt: None,
             scope: scope.into(),
             cause: None,
             followed_skill: None,
@@ -121,6 +128,14 @@ impl AmendmentEvidence {
     #[must_use]
     pub const fn with_skill(mut self, skill: EntityId) -> Self {
         self.skill = Some(skill);
+        self
+    }
+
+    /// Names the attempt whose proposal was amended, by its terminal pack
+    /// receipt.
+    #[must_use]
+    pub fn with_attempt(mut self, attempt_receipt: impl Into<String>) -> Self {
+        self.attempt_receipt = Some(attempt_receipt.into());
         self
     }
 
