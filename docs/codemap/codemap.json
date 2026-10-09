@@ -15024,7 +15024,7 @@
      "path": "src/edit_distance/attribution/evidence_judge.rs",
      "purpose": "Amendment evidence doors and the judging pass",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 4,
       "fn": 7
      }
     },
@@ -15033,7 +15033,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/edit_distance/attribution/mod.rs",
-     "purpose": "ED-03 (ONE-1759, ARCH-0056 §5): the amendment JUDGE, and the `*.edit_cost` claim rows a judged amendment earns",
+     "purpose": "ED-03 (ONE-1759, ARCH-0056 §5): the amendment JUDGE, and everything a judged amendment's shares earn",
      "surface": {
       "crate-vis": 2,
       "re-export": 4
@@ -15044,9 +15044,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/edit_distance/attribution/projector.rs",
-     "purpose": "Edit-cost claim projection and retraction",
+     "purpose": "Projection of judged amendments — edit-cost claims, the skill's reliability record, actor lessons — and…",
      "surface": {
-      "fn": 2
+      "fn": 4
      }
     },
     {
@@ -15056,7 +15056,7 @@
      "path": "src/edit_distance/attribution/stored.rs",
      "purpose": "Stored rows: key shapes, row shapes, and the row codec",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
@@ -15074,13 +15074,13 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 11,
+      "fn": 12,
       "struct": 4,
       "type": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/edit_distance/attribution/tests.rs",
@@ -30675,7 +30675,7 @@
      "path": "src/skill/doors.rs",
      "purpose": "Typed Vault doors for SKILL records",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 6
      }
     },
@@ -30822,7 +30822,7 @@
      "path": "src/skill_attribution/codec.rs",
      "purpose": "Storage: vault_meta keyspace, the evidence-grounding door check, and MessagePack encode/decode",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -30863,7 +30863,7 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 7
      }
     },
@@ -30874,7 +30874,7 @@
      "path": "src/skill_attribution/projector.rs",
      "purpose": "Evidence door and ordered idempotent projection from evidence to judgments and edit proposals",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "fn": 6
      }
     },
@@ -32166,6 +32166,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_reliability/amended.rs",
+     "purpose": "Amendment verdicts on an attempt's outcome row (ARCH-0056 §5): one record per attempt, and the later verdict…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -32182,7 +32192,7 @@
      "path": "src/skill_reliability/callable.rs",
      "purpose": "Callable invocation witnesses",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -32215,7 +32225,7 @@
      "purpose": "The durable per-(skill, receipt) outcome ledger: the contributing-win door and the tallies read off it",
      "surface": {
       "const": 1,
-      "crate-vis": 17,
+      "crate-vis": 24,
       "fn": 2
      }
     },
@@ -32226,7 +32236,7 @@
      "path": "src/skill_reliability/mod.rs",
      "purpose": "ARCH-0053 §5 skill reliability (SK-05, ONE-1738): the Beta(α, β) posterior that decides which skills load…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 7
      }
     },
@@ -32241,7 +32251,7 @@
      "purpose": "The Beta(α, β) posterior over a skill’s success rate and the provenance classes its prior is keyed by",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 6,
       "struct": 1
@@ -32255,7 +32265,7 @@
      "purpose": "Projecting the `skill.reliability` claim from the outcome ledger, including the imported base",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3
      }
     },
@@ -39548,7 +39558,7 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Dreamer maintenance job that keeps skill…"
     },
     "skill_reliability": {
-     "files": 13,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39746,7 +39756,7 @@
    },
    "over_bar": 27,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2398,
+   "source_files": 2399,
    "test_files": 788
   },
   "oneiron-android": {
