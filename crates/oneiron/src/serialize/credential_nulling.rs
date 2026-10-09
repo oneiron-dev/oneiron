@@ -41,10 +41,10 @@ pub(crate) fn null_credentials(key: &str, value: &Value) -> Value {
 }
 
 /// The whole-vault document pass. Its typed MessagePack trees were judged by the
-/// serializer, which writes an `entity_reference` node only for a validated id.
-/// Those bytes keep the secret scan but not the opaque-container rule: an id
-/// hashed from its subject is random bytes, about 4 in 10,000 parse as a whole
-/// MessagePack container, and nulling one left an archive the importer refused.
+/// serializer, which writes an `entity_reference` node only for an id slot. An id
+/// must survive the archive, so its bytes are read for credentials rather than
+/// nulled as an opaque container: an id hashed from its subject is random bytes,
+/// and about 4 in 10,000 of those parse as a whole MessagePack container.
 pub(super) fn null_document_credentials(value: &Value) -> Value {
     null_at_depth("", value, 0, true)
 }
@@ -57,8 +57,8 @@ fn null_at_depth(key: &str, value: &Value, depth: usize, document: bool) -> Valu
         && let Value::Object(fields) = value
         && let Some(bytes) = entity_reference_bytes(fields)
     {
-        // A secret-shaped id is nulled whole, as the typed serializer does.
-        return if scan_file_content("", &bytes).is_some() {
+        // A credential-bearing id is nulled whole, as the typed serializer does.
+        return if id_carries_credential(&bytes, depth) {
             Value::Null
         } else {
             value.clone()
@@ -104,6 +104,60 @@ fn json_bytes(values: &[Value]) -> Option<Vec<u8>> {
         .collect()
 }
 
+/// An id's bytes are nulled for a secret shape, credential-bearing JSON, or a
+/// MessagePack reading that names a credential field or holds a secret, but not
+/// for container shape alone.
+fn id_carries_credential(bytes: &[u8], depth: usize) -> bool {
+    if depth >= 128 || scan_file_content("", bytes).is_some() {
+        return true;
+    }
+    if json_carries_credential(bytes, depth) {
+        return true;
+    }
+    let mut cursor = std::io::Cursor::new(bytes);
+    rmpv::decode::read_value(&mut cursor).is_ok_and(|value| {
+        cursor.position() == bytes.len() as u64 && names_credential(&value, depth + 1)
+    })
+}
+
+fn names_credential(value: &rmpv::Value, depth: usize) -> bool {
+    if depth >= 128 {
+        return true;
+    }
+    match value {
+        rmpv::Value::String(text) => {
+            scan_file_content("", text.as_bytes()).is_some()
+                || json_carries_credential(text.as_bytes(), depth)
+        }
+        rmpv::Value::Binary(bytes) | rmpv::Value::Ext(_, bytes) => {
+            id_carries_credential(bytes, depth)
+        }
+        rmpv::Value::Array(values) => values
+            .iter()
+            .any(|value| names_credential(value, depth + 1)),
+        rmpv::Value::Map(entries) => entries.iter().any(|(key, value)| {
+            // Key names read as the typed serializer reads them: text or UTF-8 binary.
+            key.as_str()
+                .or_else(|| {
+                    key.as_slice()
+                        .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                })
+                .is_some_and(credential_key)
+                || names_credential(key, depth + 1)
+                || names_credential(value, depth + 1)
+        }),
+        _ => false,
+    }
+}
+
+fn json_carries_credential(bytes: &[u8], depth: usize) -> bool {
+    matches!(
+        serde_json::from_slice::<Value>(bytes),
+        Ok(value @ (Value::Object(_) | Value::Array(_)))
+            if null_at_depth("", &value, depth + 1, false) != value
+    )
+}
+
 // JSON byte arrays must be inspected as bytes, not as harmless decimal digits.
 // Retain ordinary numeric arrays, but refuse encoded secrets and opaque nested
 // containers just as the MessagePack serializer does.
@@ -114,12 +168,7 @@ fn encoded_credentials(values: &[Value], depth: usize) -> bool {
     let Some(bytes) = json_bytes(values) else {
         return false;
     };
-    if scan_file_content("", &bytes).is_some() {
-        return true;
-    }
-    if let Ok(value @ (Value::Object(_) | Value::Array(_))) = serde_json::from_slice(&bytes)
-        && null_at_depth("", &value, depth + 1, false) != value
-    {
+    if scan_file_content("", &bytes).is_some() || json_carries_credential(&bytes, depth) {
         return true;
     }
     let mut cursor = std::io::Cursor::new(&bytes);

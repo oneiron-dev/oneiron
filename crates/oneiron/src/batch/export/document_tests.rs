@@ -312,6 +312,53 @@ fn whole_vault_json_reimports_a_scope_id_whose_bytes_parse_as_messagepack() -> R
     Ok(())
 }
 
+/// Secrets invariant beside the repro above: an id slot keeps bytes that only
+/// parse as MessagePack, never bytes that encode a credential. Here a claim
+/// value's `actor_entity_ref` holds the 16-byte map `{"password":"hello"}`.
+#[test]
+fn whole_vault_json_nulls_an_id_slot_whose_bytes_encode_a_credential() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    let forged = encode(&Value::Map(vec![(
+        Value::from("password"),
+        Value::from("hello"),
+    )]));
+    assert_eq!(forged.len(), 16);
+    let person = crate::EntityId::now();
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, range(), 789, b"person")?;
+    let mut body = ClaimBody::new(
+        "preference.food",
+        ClaimSubject::Entity(person),
+        Value::from("matcha"),
+        0.75,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )?;
+    body.value = Value::Map(vec![(
+        Value::from("actor_entity_ref"),
+        Value::Binary(forged),
+    )]);
+    // Residue already on disk, as above: the write wall is not under test.
+    let claim = crate::EntityId::now();
+    let encoded = crate::claim::encode_claim_body(&body)?;
+    raw_residue(&vault, &claim, crate::registry::ENTITY_TYPE_CLAIM, &encoded)?;
+    let export = vault.export_whole_vault(PackFormat::Json)?;
+    let document = vault.read_whole_vault_json(export.bytes())?;
+    let row = document
+        .claims
+        .iter()
+        .find(|row| row.id == claim.to_hex())
+        .unwrap();
+    let ExportBody::MessagePack(exported) = &row.body else {
+        panic!("MessagePack body expected");
+    };
+    let exported = exported.to_msgpack()?;
+    assert_eq!(
+        field(field(&exported, "val"), "actor_entity_ref"),
+        &Value::Nil
+    );
+    Ok(())
+}
+
 #[test]
 fn whole_vault_import_rejects_manifest_drift_false_proof_and_forged_binary() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());
