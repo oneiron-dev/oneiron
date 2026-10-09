@@ -18,7 +18,7 @@
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::SyncSender;
 use std::sync::{LazyLock, Mutex};
 
@@ -50,10 +50,6 @@ pub(crate) struct TestHooks {
     /// The staged-foreign-import seams; see [`StagedImportHooks`].
     #[cfg(feature = "sync")]
     pub(crate) staged_import: StagedImportHooks,
-    /// How many times the outbound intent ledger has forced an environment
-    /// sync on this vault. The durability fence is what the count proves, so
-    /// the reader wants an exact delta and now gets one.
-    force_sync_calls: AtomicUsize,
     /// One-shot failure after a durable fallback is saved, before policy resolution.
     fail_next_dreamer_failure_policy_read: AtomicBool,
     /// One-shot storage failure in the next transaction that settles a
@@ -249,11 +245,6 @@ impl TestHooks {
             // so the deleter's scope probe is provably ordered before the erase.
             let _ = sender.send(());
         }
-    }
-
-    /// Records one forced environment sync on this vault.
-    pub(crate) fn note_force_sync(&self) {
-        self.force_sync_calls.fetch_add(1, Ordering::SeqCst);
     }
 }
 
