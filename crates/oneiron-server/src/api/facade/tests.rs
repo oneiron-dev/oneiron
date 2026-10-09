@@ -355,6 +355,13 @@ async fn rooms_http_routes_only_the_addressed_companion_and_requires_a_claim() {
     vault
         .bind_room_handle(room, "@addressed", addressed)
         .unwrap();
+    // Membership reads nothing; each companion reads through its own grant.
+    vault
+        .install_read_permits_for_test(&[
+            oneiron::WriteActor::new(addressed, oneiron::EdgeActorClass::Agent),
+            oneiron::WriteActor::new(other, oneiron::EdgeActorClass::Agent),
+        ])
+        .unwrap();
     let owner_token = room_token(owner, "human");
     let addressed_token = room_token(addressed, "agent");
     let other_token = room_token(other, "agent");
@@ -451,6 +458,13 @@ async fn rooms_http_history_reads_inside_the_rosters_scope() {
     spec.roster.push(agent.to_hex());
     vault.put_project(project, &spec, 1).unwrap();
     let room = EntityId::from_hex(&spec.home_room).unwrap();
+    // Membership reads nothing; the agent reads through its own grant.
+    vault
+        .install_read_permit_for_test(oneiron::WriteActor::new(
+            agent,
+            oneiron::EdgeActorClass::Agent,
+        ))
+        .unwrap();
     let server = Arc::new(
         SyncServer::new(
             vault.clone(),

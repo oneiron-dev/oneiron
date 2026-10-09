@@ -710,6 +710,14 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
     bind_room_owner(&server, owner);
     create_owned_project(&server, owner, project, &record);
     let room = oneiron::EntityId::from_hex(&record.home_room).expect("room");
+    // Membership reads nothing; the second member claims a turn it may read.
+    server
+        .vault
+        .install_read_permit_for_test(oneiron::WriteActor::new(
+            other,
+            oneiron::EdgeActorClass::Human,
+        ))
+        .expect("read permit");
     let memory = server.vault.memory(owner, oneiron::EdgeActorClass::Human);
     let mut turns = Vec::new();
     for at in 0..256 {

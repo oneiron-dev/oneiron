@@ -212,10 +212,19 @@ impl Vault {
     /// before using it; other Conversations keep their ledger-based audience.
     pub fn room_audience_members(&self, room: EntityId) -> Result<Vec<EntityId>> {
         let txn = self.store.env.read_txn()?;
+        self.room_audience_members_in_txn(&txn, room)
+    }
+
+    /// [`Self::room_audience_members`] in the caller's snapshot.
+    pub(crate) fn room_audience_members_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        room: EntityId,
+    ) -> Result<Vec<EntityId>> {
         // A PROJECT and its exact room may arrive in the same batch. The
         // projector's equality path can then leave no marker behind; the
         // stored body, not that auxiliary row, identifies the substrate.
-        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &room)?
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &room)?
             .ok_or(Error::EntityNotFound)?;
         let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
         if header.entity_type != crate::registry::ENTITY_TYPE_CONVERSATION {
@@ -227,17 +236,16 @@ impl Vault {
         let derived = body.extra.contains_key("project_id") || body.extra.contains_key("memberIds");
         if derived
             || super::project::ROOM_PROJECT
-                .get(&self.store, &txn, &room)?
+                .get(&self.store, txn, &room)?
                 .is_some()
         {
-            return room_in(self, &txn, room)?
+            return room_in(self, txn, room)?
                 .member_ids
                 .iter()
                 .map(|id| EntityId::from_hex(id))
                 .collect();
         }
-        drop(txn);
-        self.members(room)
+        self.members_in_txn(txn, room)
     }
 
     /// Host roster configuration, not a user message. A platform handle maps
@@ -254,12 +262,13 @@ impl Vault {
     }
 }
 impl Memory<'_> {
-    /// The caller's rooms whose Scope reads base reality, where room records
-    /// live. Inside a room turn, only that room.
+    /// The caller's rooms whose record its own grants admit and whose Scope
+    /// reads base reality, where room records live. Inside a room turn, only
+    /// that room.
     pub fn rooms_list(&self) -> MemoryResult<Vec<(EntityId, ProjectRoom)>> {
         if let Some(turn) = self.room_turn() {
             let room = turn.room;
-            if !turns_readable(&self.room_read_scope(room)?) {
+            if !self.room_record_readable(room)? || !turns_readable(&self.room_read_scope(room)?) {
                 return Ok(Vec::new());
             }
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
@@ -287,7 +296,7 @@ impl Memory<'_> {
         drop(txn);
         let mut readable = Vec::with_capacity(result.len());
         for (id, room) in result {
-            if turns_readable(&self.room_read_scope(id)?) {
+            if self.room_record_readable(id)? && turns_readable(&self.room_read_scope(id)?) {
                 readable.push((id, room));
             }
         }
@@ -301,6 +310,14 @@ impl Memory<'_> {
     ) -> MemoryResult<RoomClaimOutcome> {
         if !turns_readable(&self.room_read_scope(room)?) {
             return Err(outside_scope());
+        }
+        // A claim names who holds the turn, so the turn must be one this
+        // caller may read.
+        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        let claimed = turn_in(self.vault(), &txn, turn)?;
+        drop(txn);
+        if claimed.room_id != room.to_hex() || self.admitted_turns(vec![claimed])?.is_empty() {
+            return Err(MemoryError::from(invalid()));
         }
         self.with_verified_actor_write_txn(|txn| {
             require_member(self.vault(), txn, room, self.actor())?;

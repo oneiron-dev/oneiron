@@ -23,6 +23,7 @@ pub use read_set::{
 };
 pub(crate) use room::scope_worlds;
 pub use room::{RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, room_scope};
+pub(crate) use room_verbs::room_ceiling_in;
 pub use worlds::{WorldPresence, WorldsSection};
 mod frame;
 mod history;

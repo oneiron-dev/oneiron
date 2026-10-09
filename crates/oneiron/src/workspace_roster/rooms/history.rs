@@ -75,6 +75,63 @@ pub(in crate::workspace_roster) fn delete_room_metadata(
     Ok(())
 }
 impl Memory<'_> {
+    /// The turns among `turns` this reader may read. Membership admits none
+    /// of them: each passes the reader's own read lane, which inside a room
+    /// turn is the room's lane, so every other member's read binds it too. A
+    /// turn is kept only when its TURN record and the turns it answers are
+    /// admitted, and it names only the messages, tasks and project the lane
+    /// admits as well.
+    pub(super) fn admitted_turns(&self, turns: Vec<RoomTurn>) -> MemoryResult<Vec<RoomTurn>> {
+        if turns.is_empty() {
+            return Ok(turns);
+        }
+        let ids: BTreeSet<EntityId> = turns
+            .iter()
+            .flat_map(|turn| {
+                [&turn.turn_id]
+                    .into_iter()
+                    .chain(&turn.reply_to)
+                    .chain(&turn.thread_of)
+                    .chain(&turn.message_ids)
+                    .chain(&turn.task_ids)
+                    .chain(&turn.converted_project)
+            })
+            .filter_map(|id| EntityId::from_hex(id).ok())
+            .collect();
+        let ids: Vec<_> = ids.into_iter().collect();
+        let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+        let mut admitted = BTreeSet::<EntityId>::new();
+        for chunk in ids.chunks(128) {
+            let reads: Vec<_> = chunk
+                .iter()
+                .copied()
+                .map(crate::claim::PointRead::id)
+                .collect();
+            let rows = lane.read(&reads, None)?.value;
+            admitted.extend(
+                chunk
+                    .iter()
+                    .zip(rows)
+                    .filter_map(|(id, row)| row.map(|_| *id)),
+            );
+        }
+        let readable = |id: &String| EntityId::from_hex(id).is_ok_and(|id| admitted.contains(&id));
+        Ok(turns
+            .into_iter()
+            .filter(|turn| {
+                readable(&turn.turn_id)
+                    && turn.reply_to.iter().all(readable)
+                    && turn.thread_of.iter().all(readable)
+            })
+            .map(|mut turn| {
+                turn.message_ids.retain(readable);
+                turn.task_ids.retain(readable);
+                turn.converted_project = turn.converted_project.filter(readable);
+                turn
+            })
+            .collect())
+    }
+
     /// Bounded first trunk page: the original thread is a pointer card,
     /// followed by trunk turns. Thread replies never consume trunk slots.
     pub fn room_trunk(&self, room: EntityId) -> MemoryResult<Vec<RoomTrunkItem>> {
@@ -84,18 +141,26 @@ impl Memory<'_> {
         if !turns_readable(&scope) {
             return Ok(Vec::new());
         }
-        let origin = project_room.origin;
+        let heads = HEADS
+            .iter_from(&self.vault().store, &txn, room.as_bytes())?
+            .take(PAGE_LIMIT)
+            .map(|row| Ok(turn_in(self.vault(), &txn, row?.1)?))
+            .collect::<MemoryResult<Vec<_>>>()?;
+        drop(txn);
+        // The origin card is the room record's own field.
+        let origin = match project_room.origin {
+            Some(origin) if self.room_record_readable(room)? => Some(origin),
+            _ => None,
+        };
         let mut entries = Vec::with_capacity(PAGE_LIMIT + usize::from(origin.is_some()));
         if let Some(origin) = origin {
             entries.push(RoomTrunkItem::Origin(origin));
         }
-        for row in HEADS
-            .iter_from(&self.vault().store, &txn, room.as_bytes())?
-            .take(PAGE_LIMIT)
-        {
-            let (_, turn) = row?;
-            entries.push(RoomTrunkItem::Turn(turn_in(self.vault(), &txn, turn)?));
-        }
+        entries.extend(
+            self.admitted_turns(heads)?
+                .into_iter()
+                .map(RoomTrunkItem::Turn),
+        );
         Ok(entries)
     }
 
@@ -104,6 +169,9 @@ impl Memory<'_> {
     pub fn rooms_messages(&self, room: EntityId) -> MemoryResult<Vec<RoomTurn>> {
         Ok(self.rooms_messages_page(room, None, PAGE_LIMIT)?.rows)
     }
+    /// One page of the turns this reader may read. A withheld turn never
+    /// fills a slot or becomes the cursor, and a cursor must be a turn the
+    /// reader may read.
     pub fn rooms_messages_page(
         &self,
         room: EntityId,
@@ -123,27 +191,33 @@ impl Memory<'_> {
                 scope,
             });
         }
-        let start = if let Some(after) = after {
-            let turn = turn_in(self.vault(), &txn, after)?;
-            if turn.room_id != room.to_hex() {
-                return Err(MemoryError::from(invalid()));
+        let cursor = after
+            .map(|after| turn_in(self.vault(), &txn, after))
+            .transpose()?;
+        drop(txn);
+        let mut start = match cursor {
+            Some(turn) if turn.room_id == room.to_hex() => {
+                let at = turn.at;
+                if self.admitted_turns(vec![turn])?.is_empty() {
+                    return Err(MemoryError::from(invalid()));
+                }
+                after.map(|after| (at, after))
             }
-            Some((turn.at, after))
-        } else {
-            None
+            Some(_) => return Err(MemoryError::from(invalid())),
+            None => None,
         };
-        let mut rows = HISTORY
-            .iter_from(&self.vault().store, &txn, room.as_bytes())?
-            .skip_while(|row| match (start, row) {
-                (Some(start), Ok(((_, at, id), _))) => (*at, *id) <= start,
-                _ => false,
-            })
-            .take(limit + 1)
-            .map(|row| {
-                let (_, turn_id) = row?;
-                Ok(turn_in(self.vault(), &txn, turn_id)?)
-            })
-            .collect::<MemoryResult<Vec<_>>>()?;
+        let mut rows = Vec::new();
+        let mut window = limit + 1;
+        loop {
+            let scanned = self.history_after(room, start, window)?;
+            let exhausted = scanned.len() < window;
+            start = scanned.last().map(|(key, _)| *key).or(start);
+            rows.extend(self.admitted_turns(scanned.into_iter().map(|(_, turn)| turn).collect())?);
+            if rows.len() > limit || exhausted {
+                break;
+            }
+            window = window.saturating_mul(2).min(PAGE_LIMIT * 16);
+        }
         let has_more = rows.len() > limit;
         rows.truncate(limit);
         let next_after = if has_more {
@@ -157,7 +231,33 @@ impl Memory<'_> {
             scope,
         })
     }
+
+    /// Up to `window` history rows after `start`, each with its index key.
+    /// The snapshot closes before the caller admits any of them.
+    fn history_after(
+        &self,
+        room: EntityId,
+        start: Option<(u64, EntityId)>,
+        window: usize,
+    ) -> MemoryResult<Vec<((u64, EntityId), RoomTurn)>> {
+        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        let rows = HISTORY
+            .iter_from(&self.vault().store, &txn, room.as_bytes())?
+            .skip_while(|row| match (start, row) {
+                (Some(start), Ok(((_, at, id), _))) => (*at, *id) <= start,
+                _ => false,
+            })
+            .take(window)
+            .map(|row| {
+                let ((_, at, id), turn_id) = row?;
+                Ok(((at, id), turn_in(self.vault(), &txn, turn_id)?))
+            })
+            .collect::<MemoryResult<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     /// Canonical HEAD is a room-local indexed read; branch turns are excluded.
+    /// A head this reader may not read is no head for it.
     pub fn room_head(&self, room: EntityId) -> MemoryResult<Option<RoomTurn>> {
         let scope = self.room_read_scope(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
@@ -165,14 +265,16 @@ impl Memory<'_> {
         if !turns_readable(&scope) {
             return Ok(None);
         }
-        HEADS
+        let head = HEADS
             .iter_rev_from(&self.vault().store, &txn, room.as_bytes())?
             .next()
-            .map(|row| {
+            .map(|row| -> MemoryResult<RoomTurn> {
                 let (_, turn_id) = row?;
                 Ok(turn_in(self.vault(), &txn, turn_id)?)
             })
-            .transpose()
+            .transpose()?;
+        drop(txn);
+        Ok(self.admitted_turns(head.into_iter().collect())?.pop())
     }
 }
 
@@ -195,7 +297,8 @@ impl Memory<'_> {
             }
             turns.push(turn_in(self.vault(), &txn, turn_id)?);
         }
-        Ok(turns)
+        drop(txn);
+        self.admitted_turns(turns)
     }
 
     /// Recomputes thread liveness from the current room history and TASK
@@ -260,10 +363,11 @@ impl Memory<'_> {
             return Err(outside_scope());
         }
         let turn = turn_in(self.vault(), &txn, trunk)?;
+        drop(txn);
         if turn.room_id != room.to_hex() || turn.thread_of.is_some() {
             return Err(MemoryError::from(invalid()));
         }
-        drop(txn);
+        let turn = self.admitted_turns(vec![turn])?.pop().ok_or_else(invalid)?;
         let turns = self.room_turn_snapshot(room)?;
         let trunk_hex = trunk.to_hex();
         let root_ids = turns

@@ -265,6 +265,70 @@ fn every_read_a_room_turn_makes_runs_inside_the_rosters_scope() -> Result<()> {
     Ok(())
 }
 
+/// Greptile on #1312: a member who joins after a turn's read lane copied
+/// the roster still binds the rows that lane serves. Each row's own snapshot
+/// reads the room again, so the join narrows the read it lands under.
+#[test]
+fn a_member_who_joins_mid_read_binds_the_rows_it_serves() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let agent = id(0x61);
+    let stranger = id(0x64);
+    for person in [agent, stranger] {
+        vault.put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"agent",
+        )?;
+    }
+    // The room reads base reality. The stranger holds the fiction world
+    // alone, so once it joins the room reads no world at all.
+    let fiction = id(0x62);
+    grant(&vault, id(0x63), agent, WorldAuthoritySet::new(true, [])?)?;
+    grant(
+        &vault,
+        id(0x65),
+        stranger,
+        WorldAuthoritySet::new(false, [fiction])?,
+    )?;
+    crate::test_util::authorize_readers(&vault, &[&agent.to_hex(), &stranger.to_hex()]);
+    let (project, mut record) = project_room(&vault, owner, &[agent])?;
+    let room = EntityId::from_hex(&record.home_room)?;
+    let host = vault.memory(owner, EdgeActorClass::Human);
+    let receipt = host
+        .claim_upsert(&note(room, "lantern harbor", None))
+        .expect("note");
+    let harbor = EntityId::from_hex(
+        &host
+            .get_entity(&receipt.claim_short_id)
+            .expect("note read")
+            .value
+            .expect("owner reads the note")
+            .id_hex,
+    )?;
+    let turn = host.for_room_turn(room).expect("open room turn");
+    let lane = turn
+        .memory()
+        .read_lane(crate::claim::ClaimReadStatus::Recorded)
+        .expect("room lane");
+    let served = || -> Result<bool> {
+        Ok(lane
+            .read(&[crate::claim::PointRead::id(harbor)], None)?
+            .value
+            .into_iter()
+            .flatten()
+            .next()
+            .is_some())
+    };
+    assert!(served()?, "before the join the room reads base");
+    record.roster.push(stranger.to_hex());
+    vault.put_project(project, &record, 2)?;
+    assert!(!served()?, "the row's snapshot holds the stranger");
+    Ok(())
+}
+
 /// The roster is the channel's own membership: an ordinary channel's ledger,
 /// never an unchecked field a body carries beside it.
 #[test]

@@ -443,16 +443,7 @@ impl<'v> Memory<'v> {
                     &[],
                 ));
             }
-            None => {
-                let roster = self.room_roster(room)?;
-                let members: Vec<_> = roster.iter().map(|member| member.actor).collect();
-                crate::claim::RoomTurnCeiling {
-                    room,
-                    scope: crate::context_board::room_scope(&roster)?,
-                    peers: self.peer_read_keys(&members)?,
-                    roster: members,
-                }
-            }
+            None => self.room_ceiling(room)?,
         };
         Ok(super::RoomTurnHandle {
             memory: Memory {

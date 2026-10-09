@@ -456,21 +456,31 @@ impl Memory<'_> {
                 ));
             }
         }
+        let worlds = self.recall_worlds(scope)?;
         let canonical_lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let session_view = session
             .map(crate::off_record::OffRecordSession::read_view)
             .transpose()?;
+        // The census reads past the asked worlds only to name the ones left
+        // out. Every row retrieval reads, ranked or reached through the graph
+        // as a neighbour, an edge, a seed or evidence, lies in `worlds`.
+        let census = match session_view.as_ref() {
+            Some(view) => self
+                .vault
+                .scoped_read_in_session(canonical_lane.actor_key().clone(), view),
+            None => self.vault.scoped_read(canonical_lane.actor_key().clone()),
+        };
         let lane = match session_view.as_ref() {
             Some(view) => self
                 .vault
                 .scoped_read_in_session(canonical_lane.actor_key().clone(), view),
             None => canonical_lane,
-        };
+        }
+        .within_worlds(worlds.clone());
         let mut receipt = lane.read_receipt(None, 0)?;
         let (plan_filter, plan_policy) = lane.recall_plan()?;
         let effective = effort;
         let deep_pending = None;
-        let worlds = self.recall_worlds(scope)?;
         let world_scope = if worlds.include_base() && worlds.worlds().is_empty() {
             WorldScope::Base
         } else {
@@ -709,7 +719,7 @@ impl Memory<'_> {
 
         let claims_returned = items.iter().filter(|item| item.kind == "CLAIM").count() as u64;
         Ok(MemoryPack {
-            scope_honesty: self.out_of_scope_worlds(&lane, &mut receipt, &worlds)?,
+            scope_honesty: self.out_of_scope_worlds(&census, &mut receipt, &worlds)?,
             retrieval_meta: RetrievalMeta {
                 quality: retrieval_quality.quality,
                 degradation: retrieval_quality.degradation,

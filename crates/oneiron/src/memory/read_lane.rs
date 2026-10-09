@@ -38,6 +38,16 @@ impl Memory<'_> {
             .with_claim_status(claims))
     }
 
+    /// The bound actor's own read, without a bound room turn's ceiling: what
+    /// its grants alone admit. A room read checks it beside membership; it
+    /// never serves a row inside a turn.
+    pub(crate) fn own_read_lane(&self, claims: ClaimReadStatus) -> MemoryResult<ScopedRead<'_>> {
+        Ok(self
+            .vault
+            .scoped_read(self.actor_read_key()?)
+            .with_claim_status(claims))
+    }
+
     /// The bound actor's read key, verified in one snapshot.
     fn actor_read_key(&self) -> MemoryResult<ScopedReadActorKey> {
         let txn = self

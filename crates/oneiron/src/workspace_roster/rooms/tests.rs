@@ -30,6 +30,29 @@ fn permit_room_reads(vault: &Vault, actors: &[EntityId]) -> Result<()> {
     permit_room_reads_with_types(vault, actors, None)
 }
 
+/// One unrestricted-scope `core:read` row per actor, each limited to the
+/// entity kinds given beside it.
+fn permit_reads_by_actor(vault: &Vault, rows: &[(EntityId, &[u8])]) -> Result<()> {
+    let bytes = crate::gate::default_policy_manifest().unwrap();
+    let mut manifest: serde_json::Value = rmp_serde::from_slice(&bytes).expect("policy");
+    manifest["scoped_grants"] = rows
+        .iter()
+        .map(|(actor, types)| {
+            serde_json::json!({
+                "actor_ref": actor.to_hex(), "effector": "core:read",
+                "scope": serde_json::to_value(crate::federation::scope_codec::read_preset()).unwrap(),
+                "receipt_required": false,
+                "selectors": {"entity_types": types},
+            })
+        })
+        .collect();
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &rmp_serde::to_vec_named(&manifest).expect("encode policy"),
+    )
+}
+
 fn permit_room_reads_with_types(
     vault: &Vault,
     actors: &[EntityId],
@@ -83,6 +106,7 @@ fn mention_claim_speech_scope_and_thread_head() -> Result<()> {
     // The ordinary Conversation ledger is not the PROJECT roster source.
     assert!(vault.members(room)?.is_empty());
     vault.bind_room_handle(room, "@companion", a)?;
+    permit_room_reads(&vault, &[owner, a, b])?;
     let user = vault.memory(owner, EdgeActorClass::Human);
     let first = vault.memory(a, EdgeActorClass::Agent);
     let other = vault.memory(b, EdgeActorClass::Agent);
@@ -138,6 +162,80 @@ fn mention_claim_speech_scope_and_thread_head() -> Result<()> {
     Ok(())
 }
 
+/// Greptile on #1312: membership is no read grant. A member whose own
+/// `core:read` grant leaves TURN out reads no room turn, and while it sits in
+/// the room a turn another member runs there shows none either: a room turn
+/// reads only what every member may read. Granting it TURN brings the
+/// history back.
+#[test]
+fn room_history_needs_the_readers_own_grant() -> Result<()> {
+    use crate::registry::{
+        ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON,
+        ENTITY_TYPE_TURN,
+    };
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let leader = EntityId::now();
+    let agent = EntityId::now();
+    for actor in [leader, agent] {
+        vault.put_entity(
+            &actor,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"room participant",
+        )?;
+    }
+    let root = vault.root_project()?;
+    let project = EntityId::now();
+    let mut spec = ProjectRecord::new(project, Some(root), root, leader)?;
+    spec.roster.push(agent.to_hex());
+    vault.put_project(project, &spec, 1)?;
+    let room = EntityId::from_hex(&spec.home_room)?;
+    let every_kind = [
+        ENTITY_TYPE_CONVERSATION,
+        ENTITY_TYPE_TURN,
+        ENTITY_TYPE_MESSAGE,
+        ENTITY_TYPE_CLAIM,
+        ENTITY_TYPE_PERSON,
+    ];
+    let grant = |agent_kinds: &[u8]| {
+        permit_reads_by_actor(&vault, &[(leader, &every_kind[..]), (agent, agent_kinds)])
+    };
+    grant(&[
+        ENTITY_TYPE_CONVERSATION,
+        ENTITY_TYPE_MESSAGE,
+        ENTITY_TYPE_CLAIM,
+        ENTITY_TYPE_PERSON,
+    ])?;
+    let host = vault.memory(leader, EdgeActorClass::Human);
+    host.rooms_speak(&turn(
+        room,
+        EntityId::now(),
+        WitnessAuthor::User,
+        serde_json::json!({}),
+        2,
+    ))
+    .expect("speak");
+    let peer = vault.memory(agent, EdgeActorClass::Agent);
+    assert!(peer.rooms_messages(room).expect("peer history").is_empty());
+    assert!(peer.room_head(room).expect("peer head").is_none());
+    let in_room = host.for_room_turn(room).expect("open room turn");
+    assert!(in_room.rooms_messages().expect("turn history").is_empty());
+    assert_eq!(host.rooms_messages(room).expect("own history").len(), 1);
+    grant(&every_kind)?;
+    // The turn is back. A message id rides with it only when the read admits
+    // that message too: the agent's own read here, and inside the turn every
+    // member's.
+    let rows = peer.rooms_messages(room).expect("peer history");
+    assert_eq!(rows.len(), 1);
+    for id in &rows[0].message_ids {
+        assert!(peer.get_entity(id).expect("message read").value.is_some());
+    }
+    assert_eq!(in_room.rooms_messages().expect("turn history").len(), 1);
+    Ok(())
+}
+
 #[test]
 fn room_history_is_bounded_paged_and_removed_with_its_project() -> Result<()> {
     let dir = tempfile::tempdir()?;
@@ -159,6 +257,7 @@ fn room_history_is_bounded_paged_and_removed_with_its_project() -> Result<()> {
     let other_record = ProjectRecord::new(other_project, Some(root), root, owner)?;
     vault.put_project(other_project, &other_record, 1)?;
     let other_room = EntityId::from_hex(&other_record.home_room)?;
+    permit_room_reads(&vault, &[owner])?;
     let memory = vault.memory(owner, EdgeActorClass::Human);
     vault.bind_room_handle(room, "@owner", owner)?;
     let mut turns = Vec::new();

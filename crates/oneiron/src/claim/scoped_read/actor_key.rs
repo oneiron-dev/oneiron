@@ -16,6 +16,9 @@ pub struct ScopedReadActorKey {
     owner: Option<EntityId>,
     /// The room turn this key reads inside, when a host bound one.
     pub(super) room_turn: Option<Box<RoomTurnCeiling>>,
+    /// The worlds this read asked for (ARCH-0022). Every row it serves,
+    /// ranked or reached through the graph, lies in one of them.
+    pub(super) worlds: Option<crate::pipeline::WorldAuthoritySet>,
 }
 
 /// A room turn's read ceiling (ARCH-0067 §8). It travels with the key, so
@@ -23,6 +26,8 @@ pub struct ScopedReadActorKey {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RoomTurnCeiling {
     pub(crate) room: EntityId,
+    /// The member reading through this ceiling; every other member is a peer.
+    pub(crate) caller: EntityId,
     /// The room's Scope for this read: what `room_scope` returned when the
     /// turn opened, met with what it returns for the current roster.
     pub(crate) scope: crate::federation::Scope,
@@ -41,6 +46,18 @@ impl RoomTurnCeiling {
         self.scope.worlds.contains(&crate::federation::ScopeId(
             world.unwrap_or_else(crate::claim::base_world_id),
         ))
+    }
+
+    /// This ceiling as the snapshot `now` reads the room: its Scope met with
+    /// the one `now` resolves, and `now`'s roster and peers. A change between
+    /// the snapshot that built this ceiling and the one serving a row can
+    /// therefore narrow the read and never widen it.
+    #[must_use]
+    pub(crate) fn narrowed_by(&self, now: Self) -> Self {
+        Self {
+            scope: self.scope.meet(&now.scope),
+            ..now
+        }
     }
 }
 
@@ -72,6 +89,7 @@ impl ScopedReadActorKey {
             proof: None,
             owner: None,
             room_turn: None,
+            worlds: None,
         })
     }
 
@@ -101,6 +119,7 @@ impl ScopedReadActorKey {
             proof: None,
             owner: Some(owner),
             room_turn: None,
+            worlds: None,
         }
     }
 
@@ -114,6 +133,14 @@ impl ScopedReadActorKey {
     #[must_use]
     pub(crate) fn in_room_turn(mut self, ceiling: RoomTurnCeiling) -> Self {
         self.room_turn = Some(Box::new(ceiling));
+        self
+    }
+
+    /// Read only rows in `worlds`, a claim by its own world and any other
+    /// record as base reality. The ceiling only narrows.
+    #[must_use]
+    pub(crate) fn within_worlds(mut self, worlds: crate::pipeline::WorldAuthoritySet) -> Self {
+        self.worlds = Some(worlds);
         self
     }
 
