@@ -960,6 +960,9 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
             ])]),
         ),
     ];
+    // DEC-0006 invariant 7: the catastrophe floor ships as a versioned row.
+    let mut entries = entries;
+    entries.push(crate::consent::CatastropheFloor::pinned().manifest_entry());
     encode_with_native_mail_policy(entries)
 }
 

@@ -837,3 +837,52 @@ fn absent_row_uses_shipped_default_and_zero_wait_runs_at_once() -> Result<()> {
     assert_eq!(now.deadline, 103);
     Ok(())
 }
+
+/// DEC-0006 invariant 7 (REV-9 item 4): an owner's live bypass grant answers
+/// that owner's own ask inside its scope, and never skips another Owner's
+/// objection window: the act still waits, and the other Owner's objection
+/// still holds it.
+#[test]
+fn a_bypass_grant_never_skips_another_owners_objection_window() -> Result<()> {
+    use crate::consent::{
+        ActionClass, ActionEnvelope, ActorBound, BypassScope, CatastropheClass, ComposedEffect,
+        ConsentDecision, EffectFacts, EffectPlace, GrantBound,
+    };
+    let (_dir, vault, owner, other, _admin) = fixture(SharedVaultPreset::Team);
+    let thread = EntityId::now();
+    vault.put_entity(
+        &thread,
+        crate::registry::ENTITY_TYPE_CONVERSATION,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"thread",
+    )?;
+    let bound = GrantBound::action(
+        ActorBound::new(owner.actor().to_hex())?,
+        ActionClass::new(CatastropheClass::VaultWideDestruction.as_str())?,
+        ActionEnvelope::new(["act:delete_vault".to_owned()])?,
+    )?;
+    let warning = vault.bypass_grant_warning(&owner, bound.clone(), BypassScope::Thread(thread))?;
+    vault.create_bypass_grant(&owner, &warning)?;
+    let effect = ComposedEffect::new(
+        EffectFacts::new("delete_vault")?.with_catastrophe(CatastropheClass::VaultWideDestruction),
+    )
+    .with_action_requirement(bound)?
+    .in_place(EffectPlace {
+        project: None,
+        thread: Some(thread),
+    });
+    let evaluation = vault.evaluate_consent_for(&effect, None)?;
+    assert_eq!(evaluation.decision, ConsentDecision::Auto);
+    assert!(evaluation.bypassed_by.is_some());
+
+    let act = vault.start_authority_act(&owner, 42, "delete_vault", Vec::new(), 100)?;
+    assert_eq!(act.deadline, 100 + WEEK, "the bypass opens no shortcut");
+    assert!(!act.completed);
+    vault.change_authority_objection(&other, &act.id, true, 101)?;
+    assert!(
+        !vault.advance_authority_act(&act.id, 100 + WEEK)?.completed,
+        "the other Owner's objection still holds the act"
+    );
+    Ok(())
+}

@@ -695,6 +695,15 @@ impl PolicyManifestResolution {
     }
 
     #[must_use]
+    /// The catastrophe floor row this resolution carries, or the pinned
+    /// floor when no trusted manifest names one (DEC-0006 invariant 7). A
+    /// fail-closed resolution still has a floor.
+    pub(crate) fn catastrophe_floor(&self) -> crate::consent::CatastropheFloor {
+        self.catastrophe_floor
+            .clone()
+            .unwrap_or_else(crate::consent::CatastropheFloor::pinned)
+    }
+
     pub(crate) fn scoped_grants(&self) -> &[PolicyScopedGrant] {
         if self.is_fail_closed() {
             &[]
