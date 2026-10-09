@@ -16,6 +16,11 @@
 //! [`GROUP_COMMIT_MAX_WRITES`]) that the leader reads in the transaction it
 //! opens.
 //!
+//! A write that leaves a session-overlay segment installed holds that
+//! segment's permit until it commits the segment after the base commit, so the
+//! group closes right after it: no later member of the same group can wait on
+//! that permit.
+//!
 //! This is the store's existing single writer taking many rows per commit. It
 //! is not a lock: correctness is still LMDB's one write transaction, and a
 //! writer that opens `env.write_txn()` itself waits for the group like any
@@ -120,8 +125,9 @@ enum Turn {
     Lead,
     /// Run inside the leader's open transaction.
     Run(SharedTxn),
-    /// Done with the shared transaction; `kept` says whether its rows joined.
-    Ran { kept: bool },
+    /// Done with the shared transaction: whether its rows joined, and whether
+    /// the group must close after it.
+    Ran { kept: bool, closes: bool },
     /// The shared commit is decided: `None` committed, `Some` failed.
     Settled(Option<heed::Error>),
 }
@@ -292,14 +298,15 @@ impl Ticket {
     }
 
     /// Leader side: lends the open transaction and blocks until the member is
-    /// done with it. Returns whether the member's rows joined the group.
-    fn run(&self, shared: SharedTxn) -> bool {
+    /// done with it. Returns whether the member's rows joined the group, and
+    /// whether the group closes after it.
+    fn run(&self, shared: SharedTxn) -> (bool, bool) {
         let mut turn = self.lock();
         *turn = Turn::Run(shared);
         self.changed.notify_all();
         loop {
-            if let Turn::Ran { kept } = *turn {
-                return kept;
+            if let Turn::Ran { kept, closes } = *turn {
+                return (kept, closes);
             }
             turn = self
                 .changed
@@ -446,8 +453,11 @@ impl Store {
         };
         let mut members = Vec::new();
         let mut kept = 1;
-        while let Some(ticket) = group.next_member(1 + members.len(), &limits, opened) {
-            kept += usize::from(ticket.run(SharedTxn::lend(&mut shared)));
+        let mut closes = holds_postcommit_permit();
+        while !closes && let Some(ticket) = group.next_member(1 + members.len(), &limits, opened) {
+            let (joined, closed) = ticket.run(SharedTxn::lend(&mut shared));
+            kept += usize::from(joined);
+            closes = closed;
             members.push(ticket);
         }
         #[cfg(test)]
@@ -499,7 +509,10 @@ impl Store {
         };
         match staged {
             Staged::Kept(answer) => {
-                ticket.set(Turn::Ran { kept: true });
+                ticket.set(Turn::Ran {
+                    kept: true,
+                    closes: holds_postcommit_permit(),
+                });
                 match ticket.wait_settled() {
                     None => answer,
                     Some(lost) => Err(E::from(Error::from(lost))),
@@ -508,18 +521,33 @@ impl Store {
             // No rows of its own joined, but a success read in the group may
             // rest on rows the group then failed to commit.
             Staged::Dropped(answer) => {
-                ticket.set(Turn::Ran { kept: false });
+                ticket.set(Turn::Ran {
+                    kept: false,
+                    closes: false,
+                });
                 match (ticket.wait_settled(), answer) {
                     (Some(lost), Ok(_)) => Err(E::from(Error::from(lost))),
                     (_, answer) => answer,
                 }
             }
             Staged::Panicked(panic) => {
-                ticket.set(Turn::Ran { kept: false });
+                ticket.set(Turn::Ran {
+                    kept: false,
+                    closes: false,
+                });
                 resume_unwind(panic)
             }
         }
     }
+}
+
+/// Whether the write that just ran on this thread holds something it releases
+/// only after its commit: an installed session-overlay segment, whose permit
+/// the next write on that overlay waits for (lock order: base writer, then
+/// segment permit). Its group closes after it, so that wait never sits inside
+/// the same group.
+fn holds_postcommit_permit() -> bool {
+    crate::session_overlay::txn_segment_installed()
 }
 
 /// The shared commit's error, once per member whose rows it lost.
