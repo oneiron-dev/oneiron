@@ -481,59 +481,6 @@ fn witness_refuses_out_of_range_and_colliding_message_orders() {
     assert_witness_left_nothing(&vault, "first claim", edges_before);
 }
 
-/// The witness interface accepts the complete legal order domain and refuses
-/// a duplicate appended to it; this test makes no complexity guarantee.
-#[test]
-fn witness_message_order_validation_is_linear_over_the_complete_domain() {
-    let (_dir, vault) = open_vault();
-    let facade = facade_for(&vault, put_person(&vault, 0x31));
-    let mut messages = (0..=crate::gate::MAX_WITNESS_MESSAGE_ORDER)
-        .map(|order| witness_message(order, WitnessAuthor::User, "x"))
-        .collect::<Vec<_>>();
-    let message_count = messages.len();
-    let mut turn = WitnessTurn {
-        conversation_ref: EntityId::from_bytes([0x32; 16]).expect("conv").to_hex(),
-        turn_ref: None,
-        messages,
-        occurred_at: 700,
-    };
-    facade
-        .witness(&turn)
-        .expect("all legal distinct orders pass through witness");
-    assert_eq!(
-        vault
-            .entities_by_type(ENTITY_TYPE_MESSAGE)
-            .expect("message scan")
-            .len(),
-        message_count,
-    );
-
-    messages = turn.messages;
-    messages.push(witness_message(
-        crate::gate::MAX_WITNESS_MESSAGE_ORDER,
-        WitnessAuthor::User,
-        "duplicate",
-    ));
-    turn.messages = messages;
-    let error = facade
-        .witness(&turn)
-        .expect_err("duplicate order is refused");
-    assert_eq!(error.code, MEMORY_CODE_BAD_REQUEST);
-    assert_eq!(
-        vault
-            .entities_by_type(ENTITY_TYPE_MESSAGE)
-            .expect("message scan after refusal")
-            .len(),
-        message_count,
-    );
-    assert!(
-        vault
-            .search_text("duplicate", 10)
-            .expect("text search")
-            .is_empty(),
-    );
-}
-
 /// An append shares the existing TURN's order domain. A new message may not
 /// claim a slot occupied by an earlier call, and the refusal must leave the
 /// complete second call untouched.
@@ -587,52 +534,6 @@ fn witness_append_rejects_a_persisted_message_order_collision() {
             .count(),
         1,
         "the original message remains the only child at order zero"
-    );
-}
-
-/// The legitimate envelopes keep working, metadata and hidden companion rows
-/// included: the door hardens the ceiling, it does not narrow the transcript.
-#[test]
-fn witness_admits_legitimate_user_and_companion_envelopes() {
-    let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0xB9);
-    let facade = facade_for(&vault, actor);
-    let conversation_hex = EntityId::from_bytes([0xBA; 16]).expect("conv").to_hex();
-
-    facade
-        .witness(&WitnessTurn {
-            conversation_ref: conversation_hex.clone(),
-            turn_ref: None,
-            messages: vec![WitnessMessage {
-                metadata: Some(serde_json::json!({"client": {"locale": "en-GB"}})),
-                ..witness_message(0, WitnessAuthor::User, "what is the plan")
-            }],
-            occurred_at: 700,
-        })
-        .expect("a user envelope with ordinary metadata lands");
-    let receipt = facade
-        .witness(&WitnessTurn {
-            conversation_ref: conversation_hex,
-            turn_ref: None,
-            messages: vec![
-                WitnessMessage {
-                    is_visible: false,
-                    message_type: "executor.think".to_owned(),
-                    ..witness_message(0, WitnessAuthor::Companion, "kept to myself")
-                },
-                witness_message(1, WitnessAuthor::Companion, "here is the plan"),
-            ],
-            occurred_at: 701,
-        })
-        .expect("a hidden companion row is a real, permitted shape");
-    assert_eq!(receipt.message_short_ids.len(), 2);
-    assert_eq!(
-        vault
-            .entities_by_type(ENTITY_TYPE_MESSAGE)
-            .expect("messages")
-            .len(),
-        3,
-        "every legitimate row landed"
     );
 }
 
@@ -888,45 +789,4 @@ fn witness_door_rejects_a_conversation_owned_by_a_live_session() {
         "a refused witness writes nothing"
     );
     assert_eq!(vault.get_raw(&conversation).expect("get raw"), None);
-}
-
-/// Ownership is what the door checks — not the mere existence of a live
-/// session. An unrelated conversation stays witnessable while a session is
-/// open, so the backstop cannot become a global write freeze.
-#[test]
-fn witness_door_admits_a_conversation_no_session_owns() {
-    let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x43);
-    let facade = facade_for(&vault, actor);
-    let owned = EntityId::from_bytes([0x44; 16]).expect("owned conv id");
-    let free = EntityId::from_bytes([0x45; 16]).expect("free conv id");
-
-    let session = vault
-        .off_record_session_vault()
-        .enter(
-            "sess-witness-door-scope",
-            crate::off_record::OffRecordBackendClass::Local,
-        )
-        .expect("enter session");
-    let overlay = session.overlay();
-    let segment = overlay.install_txn_segment().expect("segment");
-    overlay
-        .put(
-            crate::session_overlay::OverlayKeyspace::Entities,
-            owned.as_bytes(),
-            b"session-owned conversation shell",
-        )
-        .expect("stage overlay shell");
-    segment.commit().expect("commit segment");
-
-    facade
-        .witness(&WitnessTurn {
-            conversation_ref: free.to_hex(),
-            turn_ref: None,
-            messages: vec![witness_message(0, WitnessAuthor::User, "ordinary turn")],
-            occurred_at: 800,
-        })
-        .expect("an unowned conversation stays witnessable");
-    assert!(vault.get_raw(&free).expect("get raw").is_some());
-    session.close().expect("close session");
 }

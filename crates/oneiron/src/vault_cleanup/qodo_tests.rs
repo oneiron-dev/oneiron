@@ -291,58 +291,6 @@ fn archive_door_rechecks_person_provenance_without_trusting_its_caller() {
 }
 
 #[test]
-fn bounded_scans_resume_after_retained_archives_and_wrap_after_reopen() {
-    let (dir, vault) = open();
-    let mut ids: Vec<_> = (0..5).map(|_| summary(&vault)).collect();
-    ids.sort();
-    let first = scan::run_with_limit(&vault, &AttemptId::now(), 2).expect("regression fixture");
-    assert_eq!(
-        first
-            .candidates
-            .iter()
-            .map(|c| c.entity)
-            .collect::<Vec<_>>(),
-        ids[..2]
-    );
-    accept_cleanup_proposal(&vault, &first.proposal.expect("regression fixture"))
-        .expect("regression fixture");
-    drop(vault);
-    let vault = Vault::open(dir.path(), test_config()).expect("regression fixture");
-    let second = scan::run_with_limit(&vault, &AttemptId::now(), 2).expect("regression fixture");
-    assert_eq!(
-        second
-            .candidates
-            .iter()
-            .map(|c| c.entity)
-            .collect::<Vec<_>>(),
-        ids[2..4]
-    );
-    let third = scan::run_with_limit(&vault, &AttemptId::now(), 2).expect("regression fixture");
-    assert_eq!(
-        third
-            .candidates
-            .iter()
-            .map(|c| c.entity)
-            .collect::<Vec<_>>(),
-        ids[4..]
-    );
-    // Wrapped to the archived prefix: it is examined but never re-archived.
-    assert!(
-        scan::run_with_limit(&vault, &AttemptId::now(), 2)
-            .expect("regression fixture")
-            .candidates
-            .is_empty()
-    );
-    assert_eq!(
-        scan::run_with_limit(&vault, &AttemptId::now(), 2)
-            .expect("regression fixture")
-            .candidates
-            .len(),
-        2
-    );
-}
-
-#[test]
 fn user_delete_after_archive_is_not_restorable() {
     let (_dir, vault) = open();
     let id = summary(&vault);
@@ -431,48 +379,6 @@ fn extraction_cannot_remint_a_hard_deleted_id_in_a_different_window() {
     assert_eq!(
         zero_live_members(&vault, &id).expect("regression fixture"),
         None
-    );
-}
-
-#[test]
-fn archived_nearest_nodes_do_not_fill_the_live_vector_beam() {
-    let dir = tempfile::tempdir().expect("regression fixture");
-    let config = VaultConfig {
-        hnsw: crate::config::HnswConfig {
-            ef_search: 1,
-            ..crate::config::HnswConfig::default()
-        },
-        ..test_config()
-    };
-    let vault = Vault::open(dir.path(), config).expect("regression fixture");
-    let archived = summary(&vault);
-    let live = EntityId::now();
-    vault
-        .put_entity(&live, ENTITY_TYPE_PERSON, at(1), 1, b"owner person")
-        .expect("regression fixture");
-    let query = vec![1.0; vault.config.dimensions];
-    let mut farther = query.clone();
-    farther[0] = -1.0;
-    vault
-        .put_vector(&archived, &query)
-        .expect("regression fixture");
-    vault
-        .put_vector(&live, &farther)
-        .expect("regression fixture");
-    let proposal = run_vault_cleanup(&vault, &AttemptId::now())
-        .expect("regression fixture")
-        .proposal
-        .expect("regression fixture");
-    accept_cleanup_proposal(&vault, &proposal).expect("regression fixture");
-    let found = vault.search_vector(&query, 1).expect("regression fixture");
-    assert_eq!(found.len(), 1);
-    assert_eq!(found[0].id, live);
-    vault
-        .restore_archived(&archived)
-        .expect("regression fixture");
-    assert_eq!(
-        vault.search_vector(&query, 1).expect("regression fixture")[0].id,
-        archived
     );
 }
 

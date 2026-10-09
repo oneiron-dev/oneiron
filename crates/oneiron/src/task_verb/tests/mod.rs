@@ -24,24 +24,21 @@ use crate::claim::PREDICATE_CONFLICT_OPEN;
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ClaimSubject};
 use crate::config::VaultConfig;
 use crate::consult_ladder::{
-    A2aBaseTaskState, AuthorityEvidence, CaseCriticality, DeltaShapeFingerprint, GraduationLookup,
-    GraduationScope, InterruptedState, InterruptionKind, MagistrateRecusal, PolicyEvidence,
-    WorkingState, terminal_for_human_verdict,
+    AuthorityEvidence, CaseCriticality, DeltaShapeFingerprint, GraduationLookup, GraduationScope,
+    InterruptedState, InterruptionKind, MagistrateRecusal, PolicyEvidence, WorkingState,
+    terminal_for_human_verdict,
 };
 use crate::consult_ladder::{
     ConsultLadderState, ConsultLineage, ConsultLineageRelation, ConsultPurpose,
-    DREAMER_MAGISTRATE_ATTEMPT_TYPE, EntityDeltaArtifact, EntityDeltaShape, HumanVerdict,
-    LadderTerminalDisposition, LadderTerminalState, LadderTransition, LadderTransitionError,
-    MagistrateCase, MagistrateOverturnRecord, MagistrateVerdict,
+    EntityDeltaArtifact, EntityDeltaShape, HumanVerdict, LadderTerminalDisposition,
+    LadderTerminalState, LadderTransition, MagistrateCase, MagistrateOverturnRecord,
+    MagistrateVerdict,
 };
 use crate::context_board::{
     TaskBoardStatus, TasksSection, ack_task_in_txn, cancel_task_in_txn, task_is_acked,
     task_is_cancelled,
 };
-use crate::dreamer_runner::{
-    DREAMER_RUNNER_ATTEMPT_KIND, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
-    decode_dreamer_attempt_payload,
-};
+use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, DreamerRunnerStore};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;

@@ -8,14 +8,12 @@ use crate::batch::EntityMetadataHeader;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
-use crate::store::{GRAPH_VERSION_KEY, ManifestDbs, Store};
+use crate::store::{GRAPH_VERSION_KEY, ManifestDbs, Rows, Store};
 
 use super::query::DeferredPprCacheWrite;
 use super::walk::{CachedPprRow, PprCacheState, PprFrontierEntry, SCORE_EPSILON};
 
 pub(super) const SEED_HASH_LEN: usize = 16;
-#[cfg(test)]
-pub(super) const LEGACY_SEED_HASH_LEN: usize = 32;
 pub(super) const CACHE_HEADER_LEN: usize = 17;
 pub(super) const CACHE_STALE_OFFSET: usize = 16;
 const CACHE_ENTRY_LEN: usize = 20;
@@ -24,8 +22,6 @@ const CACHE_STATE_VERSION: u8 = 2;
 const CACHE_STATE_PREFIX_LEN: usize = 29;
 const CACHE_FRONTIER_ENTRY_LEN: usize = ENTITY_ID_LEN + 8;
 pub(super) const CACHE_DEP_KEY_LEN: usize = ENTITY_ID_LEN + SEED_HASH_LEN;
-#[cfg(test)]
-pub(super) const LEGACY_CACHE_DEP_KEY_LEN: usize = ENTITY_ID_LEN + LEGACY_SEED_HASH_LEN;
 pub(super) const CACHE_TTL_ACTIVE_SECS: u64 = 86_400;
 pub(super) const CACHE_TTL_RECENT_SECS: u64 = 259_200;
 pub(super) const CACHE_TTL_DORMANT_SECS: u64 = 604_800;
@@ -103,64 +99,81 @@ pub(super) fn recency_tiered_cache_ttl_secs(
         CACHE_TTL_DORMANT_SECS
     })
 }
+/// Publishes a retrieval's deferred PPR cache writes as ONE logical write in
+/// the vault's group commit (RESEARCH-1115 Bend 2), so a read's cache rows
+/// share the fsync of the writes around it. Each cache write keeps its own
+/// all-or-nothing in a nested transaction: a graph-version mismatch skips it,
+/// and an error drops it and stops the flush with the earlier ones kept, as
+/// when each committed alone.
 pub(crate) fn flush_deferred_ppr_cache_writes(
     store: &Store,
     writes: &[DeferredPprCacheWrite],
 ) -> Result<()> {
-    for write in writes {
-        if let Some(snapshot) = &write.community_snapshot {
-            // Both local caches describe the same read snapshot. Never publish
-            // either after a concurrent graph mutation, and never publish a
-            // partially replaced logical family.
-            let mut txn = store.env.write_txn()?;
-            if read_graph_version(store, &txn)? != write.graph_version {
-                continue;
+    if writes.is_empty() {
+        return Ok(());
+    }
+    store.group_write(None, |txn| {
+        for write in writes {
+            let mut each = match store.env.nested_write_txn(txn) {
+                Ok(each) => each,
+                Err(err) => return Rows::Refuse(err.into()),
+            };
+            match publish_deferred_ppr_cache_write(store, &mut each, write) {
+                Ok(true) => {
+                    if let Err(err) = each.commit() {
+                        return Rows::Refuse(err.into());
+                    }
+                }
+                Ok(false) => each.abort(),
+                Err(err) => {
+                    each.abort();
+                    return Rows::Refuse(err);
+                }
             }
-            store.replace_ppr_community_cache_in_txn(&mut txn, snapshot)?;
-            if let Some(state) = &write.state {
-                store_cache_entry(
-                    store,
-                    &mut txn,
-                    &write.seed_hash,
-                    write.computed_at,
-                    write.graph_version,
-                    state,
-                )?;
-            }
-            txn.commit()?;
-        } else if let Some(state) = &write.state {
-            // Literal legacy write path for beta zero and Specificity.
-            write_ppr_cache(
+        }
+        Rows::Commit(())
+    })
+}
+
+/// Stages one deferred cache write; `false` when it no longer applies.
+fn publish_deferred_ppr_cache_write(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    write: &DeferredPprCacheWrite,
+) -> Result<bool> {
+    if let Some(snapshot) = &write.community_snapshot {
+        // Both local caches describe the same read snapshot. Never publish
+        // either after a concurrent graph mutation, and never publish a
+        // partially replaced logical family.
+        if read_graph_version(store, txn)? != write.graph_version {
+            return Ok(false);
+        }
+        store.replace_ppr_community_cache_in_txn(txn, snapshot)?;
+        if let Some(state) = &write.state {
+            store_cache_entry(
                 store,
+                txn,
                 &write.seed_hash,
                 write.computed_at,
                 write.graph_version,
                 state,
             )?;
         }
+        Ok(true)
+    } else if let Some(state) = &write.state {
+        // Literal legacy write path for beta zero and Specificity. The version
+        // check in store_cache_entry is atomic with the cache write.
+        store_cache_entry(
+            store,
+            txn,
+            &write.seed_hash,
+            write.computed_at,
+            write.graph_version,
+            state,
+        )
+    } else {
+        Ok(false)
     }
-    Ok(())
-}
-fn write_ppr_cache(
-    store: &Store,
-    seed_hash: &[u8; SEED_HASH_LEN],
-    computed_at: u64,
-    graph_version: u64,
-    state: &PprCacheState,
-) -> Result<()> {
-    // The version check in store_cache_entry is atomic with the cache write.
-    let mut wtxn = store.env.write_txn()?;
-    if store_cache_entry(
-        store,
-        &mut wtxn,
-        seed_hash,
-        computed_at,
-        graph_version,
-        state,
-    )? {
-        wtxn.commit()?;
-    }
-    Ok(())
 }
 /// SLIM (ONE-1933 / OF-447) concrete PPR drop producer: clears the whole
 /// derived cache inside the caller's write transaction.
@@ -479,11 +492,6 @@ pub(super) fn parse_cache_header(bytes: &[u8]) -> Result<(u64, u64, u8)> {
     let graph_version = decode_u64(&bytes[8..16], "ppr cache header")?;
     let stale = bytes[CACHE_STALE_OFFSET];
     Ok((computed_at, graph_version, stale))
-}
-#[cfg(test)]
-pub(super) fn decode_cache_scores(payload: &[u8]) -> Result<Vec<ScoredEntity>> {
-    let decoded = decode_cache_payload(payload)?;
-    Ok(decoded.into_scores())
 }
 pub(super) fn decode_cache_payload(payload: &[u8]) -> Result<CachedPprRow> {
     if is_state_cache_payload(payload) {

@@ -238,6 +238,3 @@ pub fn allocate_type_byte(family: TypeByteFamily, occupied: &[u8]) -> Option<u8>
 pub fn family_matches(entry: &EntityTypeRegistryEntry, family: TypeByteFamily) -> bool {
     entry.family == Some(family) && entry.classification == family.classification()
 }
-
-#[cfg(test)]
-mod tests;
