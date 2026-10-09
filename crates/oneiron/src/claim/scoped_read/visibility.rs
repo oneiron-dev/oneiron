@@ -30,11 +30,22 @@ impl ScopedRead<'_> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
     ) -> Result<bool> {
-        let filter = crate::gate::narrow_retrieval_filter(
+        // A read by id matches no meaning, so it takes the row predicate
+        // alone; the doors that find rows take the TURN rule as well
+        // (`is_entity_retrievable_with_policy_in`).
+        let filter = self.actor_retrieval_floor(policy)?;
+        self.is_entity_readable_with_filter_in(rtxn, policy, id, &filter)
+    }
+
+    /// The actor's own retrieval floor, with no request narrowing.
+    pub(super) fn actor_retrieval_floor(
+        &self,
+        policy: &PolicyManifestResolution,
+    ) -> Result<ResolvedRetrievalFilter> {
+        crate::gate::narrow_retrieval_filter(
             &policy.retrieval_floor_for_actor(Some(&self.actor_key)),
             None,
-        )?;
-        self.is_entity_retrievable_with_policy_in(rtxn, policy, &filter, id)
+        )
     }
 
     pub(super) fn is_entity_readable_with_filter_in(
@@ -165,12 +176,13 @@ impl ScopedRead<'_> {
 /// ONE-1608 / ARCH-0050 R6 L2: the L2 pull ranks over an ACTOR-SCOPED walk,
 /// so `crate::ppr` asks this lane whether a node may carry PPR mass at all.
 ///
-/// The predicate is exactly [`ScopedRead::is_entity_readable_with_policy_in`],
-/// the same admission the result-filtering doors above apply, so a scoped walk
-/// can neither widen nor narrow what this lane already admits: a CLAIM is
-/// traversable exactly when this actor could read it, and an entity kind that
-/// carries no CLAIM clamp stays visible exactly as everywhere else. The
-/// authority is resolved in the caller's snapshot, never cached across reads.
+/// The predicate is exactly the retrieval predicate the result-filtering doors
+/// apply, under the actor's floor, so a scoped walk can neither widen nor
+/// narrow what this lane already admits: a CLAIM is traversable exactly when
+/// this actor could read it, a TURN only when it may read each of its
+/// messages, and an entity kind that carries no CLAIM clamp stays visible
+/// exactly as everywhere else. The authority is resolved in the caller's
+/// snapshot, never cached across reads.
 ///
 /// IN THE CALLER'S TRANSACTION, deliberately: the walk hands over the `RoTxn`
 /// it is already reading from, matching
@@ -180,6 +192,7 @@ impl ScopedRead<'_> {
 impl crate::ppr::PprNodeVisibility for ScopedRead<'_> {
     fn ppr_node_visible(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
         let policy = self.policy_manifest_in(txn)?;
-        self.is_entity_readable_with_policy_in(txn, &policy, id)
+        let filter = self.actor_retrieval_floor(&policy)?;
+        self.is_entity_retrievable_with_policy_in(txn, &policy, &filter, id)
     }
 }

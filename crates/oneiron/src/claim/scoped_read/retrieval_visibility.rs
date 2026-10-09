@@ -56,8 +56,9 @@ impl<'vault> ScopedRead<'vault> {
     /// turn embedded counts at once. An erased message is a shell whose words
     /// left the turn's vector in its erasing write
     /// (`embed::erase_turn_vectors_in_txn`), so it no longer counts. A read by
-    /// id finds nothing by meaning: it reads the turn's row alone
-    /// (`entity_raw_with_mode_in`), whose text is the messages it may read.
+    /// id finds nothing by meaning: it takes the turn's row alone
+    /// (`entity_raw_with_mode_in`, `is_entity_readable_with_policy_in`), whose
+    /// text is the messages it may read.
     ///
     /// Each message is read under the actor's own floor, not the request's
     /// narrowing: a scope that asks for TURNs alone still may read messages.
@@ -67,10 +68,7 @@ impl<'vault> ScopedRead<'vault> {
         policy: &PolicyManifestResolution,
         turn: &EntityId,
     ) -> Result<bool> {
-        let floor = crate::gate::narrow_retrieval_filter(
-            &policy.retrieval_floor_for_actor(Some(&self.actor_key)),
-            None,
-        )?;
+        let floor = self.actor_retrieval_floor(policy)?;
         let parts = match self.session_view {
             Some(view) => {
                 view.port_edges(txn, turn, EdgeDirection::In, Some(EdgeKind::PartOf), None)?
