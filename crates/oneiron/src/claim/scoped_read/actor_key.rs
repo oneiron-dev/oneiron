@@ -11,12 +11,81 @@ pub struct ScopedReadActorKey {
     actor_class: Option<String>,
     pub(super) principal_ref: Option<EntityId>,
     pub(super) enforce_access_grants: bool,
+    /// With `enforce_access_grants`: a row naming no relationship and no
+    /// private scope stays readable (see [`Self::require_relationship_grants`]).
+    pub(super) unscoped_rows_open: bool,
     pub(super) proof: Option<crate::authority::VerifiedSlip>,
     /// The proof's Scope as every read door checks it; see
     /// [`Self::authority_scope`].
     authority: Option<crate::federation::Scope>,
     /// Set only on the vault owner's own key; see [`Self::vault_owner`].
     owner: Option<EntityId>,
+    /// The room turn this key reads inside, when a host bound one.
+    pub(super) room_turn: Option<Box<RoomTurnCeiling>>,
+    /// The worlds this read asked for (ARCH-0022). Every row it serves,
+    /// ranked or reached through the graph, lies in one of them.
+    pub(super) worlds: Option<crate::pipeline::WorldAuthoritySet>,
+}
+
+/// A room turn's read ceiling (ARCH-0067 §8). It travels with the key, so
+/// every lane built from it reads inside the room's Scope and roster.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RoomTurnCeiling {
+    pub(crate) room: EntityId,
+    /// The member reading through this ceiling; every other member is a peer.
+    pub(crate) caller: EntityId,
+    /// The room's Scope for this read: what `room_scope` returned when the
+    /// turn opened, met with what it returns for the current roster.
+    pub(crate) scope: crate::federation::Scope,
+    /// The room's members, sorted and unique: each row must pass the
+    /// all-of-audience rule for every one of them (ARCH-0006a).
+    pub(crate) roster: Vec<EntityId>,
+    /// Every other member's read key: a row the room reads must be one each
+    /// of them may read too, private principal rows and NOTEs included.
+    pub(crate) peers: Vec<ScopedReadActorKey>,
+}
+
+impl RoomTurnCeiling {
+    /// World membership of one ordinary record: a claim's world, else base
+    /// reality, which also holds every record that is not a claim.
+    pub(crate) fn admits_world(&self, world: Option<EntityId>) -> bool {
+        self.scope.worlds.contains(&crate::federation::ScopeId(
+            world.unwrap_or_else(crate::claim::base_world_id),
+        ))
+    }
+
+    /// This ceiling conjoined with `now`, the room as a later snapshot reads
+    /// it: the two Scopes met, both rosters as one audience, and every peer
+    /// read either holds. A member who joined binds the read; one who left
+    /// still binds a lane built while it belonged. Refreshing a ceiling can
+    /// therefore narrow the read and never drop a restriction it held.
+    #[must_use]
+    pub(crate) fn narrowed_by(&self, now: &Self) -> Self {
+        let mut roster = self.roster.clone();
+        roster.extend(&now.roster);
+        roster.sort_unstable();
+        roster.dedup();
+        let mut peers = self.peers.clone();
+        for peer in &now.peers {
+            if !peers.contains(peer) {
+                peers.push(peer.clone());
+            }
+        }
+        Self {
+            room: self.room,
+            caller: self.caller,
+            scope: self.scope.meet(&now.scope),
+            roster,
+            peers,
+        }
+    }
+
+    /// Whether every member of `roster` already binds this ceiling.
+    pub(crate) fn binds_all(&self, roster: &[EntityId]) -> bool {
+        roster
+            .iter()
+            .all(|member| self.roster.binary_search(member).is_ok())
+    }
 }
 
 impl ScopedReadActorKey {
@@ -44,9 +113,12 @@ impl ScopedReadActorKey {
             actor_class,
             principal_ref: None,
             enforce_access_grants: false,
+            unscoped_rows_open: false,
             proof: None,
             authority: None,
             owner: None,
+            room_turn: None,
+            worlds: None,
         })
     }
 
@@ -73,9 +145,12 @@ impl ScopedReadActorKey {
             ),
             principal_ref: None,
             enforce_access_grants: false,
+            unscoped_rows_open: false,
             proof: None,
             authority: None,
             owner: Some(owner),
+            room_turn: None,
+            worlds: None,
         }
     }
 
@@ -84,12 +159,41 @@ impl ScopedReadActorKey {
         self.owner
     }
 
+    /// Read inside a room turn. The ceiling only narrows: every check this key
+    /// already makes still runs.
+    #[must_use]
+    pub(crate) fn in_room_turn(mut self, ceiling: RoomTurnCeiling) -> Self {
+        self.room_turn = Some(Box::new(ceiling));
+        self
+    }
+
+    /// Read only rows in `worlds`, a claim by its own world and any other
+    /// record as base reality. The ceiling only narrows.
+    #[must_use]
+    pub(crate) fn within_worlds(mut self, worlds: crate::pipeline::WorldAuthoritySet) -> Self {
+        self.worlds = Some(worlds);
+        self
+    }
+
     /// Attach the authenticated principal. An unbound delegated caller has no grants.
     #[must_use]
     pub fn require_access_grants(mut self, principal_ref: Option<EntityId>) -> Self {
         self.principal_ref = principal_ref;
         self.enforce_access_grants = true;
         self
+    }
+
+    /// A vault-internal reader (the Dreamer) under the delegated relationship
+    /// gate: a row that names a relationship or a private scope passes only
+    /// on this principal's live grants. A row that names neither is the
+    /// vault's own and stays readable, where a delegated key refuses every
+    /// such MESSAGE or SUMMARY.
+    #[must_use]
+    pub(crate) fn require_relationship_grants(self, principal_ref: EntityId) -> Self {
+        Self {
+            unscoped_rows_open: true,
+            ..self.require_access_grants(Some(principal_ref))
+        }
     }
 
     /// Constructs a read capability only from a log/MAC/holder-verified slip.
