@@ -59,6 +59,22 @@ pub(super) enum InsertOutcome {
 pub(super) enum GraphSource<'a> {
     Persisted,
     Rebuilt(&'a HashMap<EntityId, Vec<EntityId>>),
+    /// The persisted rows, logging every neighbour list the beam expands, so
+    /// a later transaction can tell whether the same beam would run the same.
+    PersistedLogged(&'a std::cell::RefCell<ExpandedLists>),
+}
+
+/// The neighbour lists a beam expanded, in expansion order: the node and an
+/// order-sensitive hash of its list. From the same entry point and vectors,
+/// the same lists make the same beam.
+pub(super) type ExpandedLists = Vec<(EntityId, u64)>;
+
+/// The order-sensitive hash [`ExpandedLists`] records for one list.
+pub(super) fn neighbor_list_hash(neighbors: &[EntityId]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::hash::DefaultHasher::new();
+    neighbors.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Beam-search knobs, bundled so probed call sites stay within argument

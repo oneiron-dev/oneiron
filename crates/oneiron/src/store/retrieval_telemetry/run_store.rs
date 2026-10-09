@@ -246,23 +246,22 @@ impl Store {
             ));
         }
 
-        let result = (|| {
-            let mut wtxn = self.env.write_txn()?;
+        // Joins the vault's group commit; a failure here drops only this row.
+        let result = self.write_in_group(|wtxn| {
             if published {
-                super::retention::require_prune_retrieval_runs(self, &mut wtxn, 1)?;
+                super::retention::require_prune_retrieval_runs(self, wtxn, 1)?;
             }
-            stage_retrieval_run_with_visibility(self, &mut wtxn, record, published)?;
+            stage_retrieval_run_with_visibility(self, wtxn, record, published)?;
             if published {
                 super::retention::put_retrieval_age(
                     self,
-                    &mut wtxn,
+                    wtxn,
                     record.run_id,
                     self.clock.now_recorded_at(),
                 )?;
             }
-            wtxn.commit()?;
             Ok(())
-        })();
+        });
         if result.is_err() {
             self.retrieval_writes_disabled
                 .store(true, std::sync::atomic::Ordering::Release);
@@ -277,10 +276,7 @@ impl Store {
             ));
         }
 
-        let mut wtxn = self.env.write_txn()?;
-        stage_retrieval_run_delete(self, &mut wtxn, run_id)?;
-        wtxn.commit()?;
-        Ok(())
+        self.write_in_group(|wtxn| stage_retrieval_run_delete(self, wtxn, run_id))
     }
 
     /// Publishes the caller's scope count and surfaced ids atomically.
@@ -296,22 +292,22 @@ impl Store {
             ));
         }
 
-        let mut wtxn = self.env.write_txn()?;
-        let run_id = finalize.run_id;
-        if RETRIEVAL_RUN_PROVISIONAL.contains(self, &wtxn, &run_id)? {
-            super::retention::require_prune_retrieval_runs(self, &mut wtxn, 1)?;
-        }
-        stage_context_pack_retrieval_run_finalize(self, &mut wtxn, finalize)?;
-        if RETRIEVAL_RUN.contains(self, &wtxn, &run_id)? {
-            super::retention::put_retrieval_age(
-                self,
-                &mut wtxn,
-                run_id,
-                self.clock.now_recorded_at(),
-            )?;
-        }
-        wtxn.commit()?;
-        Ok(())
+        self.write_in_group(|wtxn| {
+            let run_id = finalize.run_id;
+            if RETRIEVAL_RUN_PROVISIONAL.contains(self, wtxn, &run_id)? {
+                super::retention::require_prune_retrieval_runs(self, wtxn, 1)?;
+            }
+            stage_context_pack_retrieval_run_finalize(self, wtxn, finalize)?;
+            if RETRIEVAL_RUN.contains(self, wtxn, &run_id)? {
+                super::retention::put_retrieval_age(
+                    self,
+                    wtxn,
+                    run_id,
+                    self.clock.now_recorded_at(),
+                )?;
+            }
+            Ok(())
+        })
     }
 
     pub(crate) fn record_retrieval_outcome(&self, outcome: RetrievalOutcome) -> Result<()> {
