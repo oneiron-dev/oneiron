@@ -5,9 +5,11 @@
 //! module creates no listener, runtime, budget policy, memory store or provider.
 //! Runtime route selection reuses the server summarizer route; it must contain
 //! a fully revisioned TINY model. The default placeholder route fails closed.
-//! The wake supervisor can attach this host to its existing backend and pass
-//! meter. Serving still requires an owner-admitted stream and real output seams.
+//! The wake supervisor attaches this host to its existing backend and pass
+//! meter through `oneiron_driver::PassAttachmentSource` (see `attachment`).
+//! Serving still requires an owner-admitted stream and real output seams.
 
+mod attachment;
 mod connection;
 mod extraction;
 mod serve_bindings;

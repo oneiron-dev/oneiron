@@ -158,6 +158,40 @@ pub(crate) fn put_policy_manifest_bytes(
     })
 }
 
+/// Removes the Dreamer's read row from the vault's default policy, as a vault
+/// seeded before ARCH-0026's warm default (or whose owner removed the row)
+/// holds it. Every other row, the Dreamer's ceiling and permit included,
+/// stays.
+pub(crate) fn withhold_dreamer_read(vault: &Vault) -> crate::Result<()> {
+    use rmpv::Value;
+    let id = crate::gate::default_policy_manifest_id()?;
+    let body = vault.get(&id)?.ok_or(Error::EntityNotFound)?;
+    let Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut body.as_slice()).expect("default policy map")
+    else {
+        unreachable!("default policy manifest is a map");
+    };
+    let dreamer = crate::dreamer_runner::authority::dreamer_actor_id()?.to_hex();
+    for (key, table) in &mut entries {
+        if let (Some("scoped_grants"), Value::Array(rows)) = (key.as_str(), table) {
+            rows.retain(|row| {
+                !row.as_map().is_some_and(|fields| {
+                    fields.iter().any(|(name, value)| {
+                        name.as_str() == Some("actor_ref") && value.as_str() == Some(&dreamer)
+                    })
+                })
+            });
+        }
+    }
+    entries.retain(|(key, table)| {
+        key.as_str() != Some("scoped_grants")
+            || table.as_array().is_some_and(|rows| !rows.is_empty())
+    });
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &Value::Map(entries)).expect("encode policy");
+    put_policy_manifest_bytes(vault, id, &data)
+}
+
 /// Pin a test model manifest with a passing teacher-probe receipt, the way
 /// the bench publishes one; a bare `set_model_manifest` refuses a new teacher.
 pub(crate) fn pin_model_manifest(
