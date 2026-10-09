@@ -170,9 +170,11 @@ call the provider answered with a retryable error is tried again after
 `models.workflows.retry_backoff_secs` (30) times the tries so far, up to five
 tries. Any other failure, or a fifth retryable one, ends the step for a
 person to look at, and its workflow stops. Spend per step:
-`models.workflows.step_budget_units` (64000), one budget for all of a step's
-tries: each failed try is charged its reservation, and a try the remainder
-cannot admit ends the step. `models.workflows.enabled = false` turns the pump
+`models.workflows.step_budget_units` (64000, at least one call's 8000-unit
+reservation), one budget for all of a step's tries: each failed try is
+charged its reservation, every budget policy row the step matches (its
+agent's cap, its purpose's) counts those charges too, and a try the
+remainder cannot admit ends the step. `models.workflows.enabled = false` turns the pump
 off.
 
 ## 6. Raw calls

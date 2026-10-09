@@ -28,7 +28,8 @@ pub(super) struct StepRunner {
     /// Steps run on the generative role, admitted against the vault's live
     /// model policy like chat turns.
     pub(super) models: Arc<ModelRuntime>,
-    /// One logical step's budget, shared by all its tries.
+    /// One logical step's budget, shared by all its tries; at least one
+    /// call's reservation (config refuses less).
     pub(super) budget_units: u64,
     /// How long a failed step waits before its next try, times the tries.
     pub(super) retry_backoff_secs: u64,
@@ -128,11 +129,12 @@ impl StepRunner {
         let request = call.request;
         // The agent pays: its live budget policy rows, its own meter. Every
         // earlier try of this step failed its model call and was charged its
-        // reservation. Those charges are replayed into this try's meter, so
-        // the step's budget and every policy row it matches (the agent's
-        // cap, the purpose's) see them: retries share one budget, never renew
-        // it.
-        let reserve = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS.min(self.budget_units);
+        // reservation, the same fixed amount for every try whatever the
+        // config did between them. Those charges are replayed into this
+        // try's meter, so the step's budget and every policy row it matches
+        // (the agent's cap, the purpose's) see them: retries share one
+        // budget, never renew it.
+        let reserve = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
         let earlier = AttemptQueue::new(vault).retry_chain_depth(step.attempt.id)?;
         let guard = vault.policy_budget_guard(
             format!(

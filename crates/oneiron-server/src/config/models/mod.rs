@@ -198,6 +198,15 @@ impl ModelsFile {
         {
             anyhow::bail!("models budget units must be greater than zero");
         }
+        // Every try of a step reserves one call's units, the same amount
+        // whatever this config later becomes, so its retries can replay
+        // exactly what the earlier tries were charged.
+        if workflows.step_budget_units < oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS {
+            anyhow::bail!(
+                "models.workflows.step_budget_units must cover one call's reservation ({} units)",
+                oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS
+            );
+        }
         Ok(ModelsConfig {
             providers,
             roles,
