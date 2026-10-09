@@ -62,11 +62,6 @@ impl FrozenMcpPayload {
     pub(crate) const fn freeze_event_baseline(&self) -> usize {
         self.freeze_event_baseline
     }
-
-    #[cfg(test)]
-    pub(crate) fn into_bytes(self) -> Vec<u8> {
-        self.bytes
-    }
 }
 
 impl fmt::Debug for FrozenMcpPayload {

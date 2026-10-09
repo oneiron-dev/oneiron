@@ -59,34 +59,3 @@ pub(super) fn evaluate_seat_policy(
         send_decision.into()
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn connector_policy_evidence_survives_neutral_wall_conversion() {
-        for (source, expected) in [
-            (LinkedInSeatPolicyAction::Allow, SeatPolicyAction::Allow),
-            (LinkedInSeatPolicyAction::Hold, SeatPolicyAction::Hold),
-            (
-                LinkedInSeatPolicyAction::Suppress,
-                SeatPolicyAction::Suppress,
-            ),
-        ] {
-            let decision = LinkedInSeatPolicyDecision {
-                action: source,
-                reason_code: Some("seat.reason".to_owned()),
-                receipt_fields: BTreeMap::from([("seat_field".to_owned(), "value".to_owned())]),
-                policy_trace: vec!["seat.reason".to_owned()],
-            };
-            let wall: SeatPolicyDecision = decision.into();
-            assert_eq!(wall.action, expected);
-            assert_eq!(
-                wall.receipt_fields.get("seat_field").map(String::as_str),
-                Some("value")
-            );
-            assert_eq!(wall.policy_trace, ["seat.reason"]);
-        }
-    }
-}

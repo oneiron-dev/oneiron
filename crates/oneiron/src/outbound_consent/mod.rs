@@ -54,6 +54,6 @@ use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 #[cfg(test)]
 use crate::outbound_intent_ledger::{
-    FrozenOutboundCall, IntentState, OutboundAuthorizationBinding, OutboundCallClass,
-    OutboundSendOutcome, OutboundToolDescriptor,
+    FrozenOutboundCall, IntentState, OutboundAuthorizationBinding, OutboundSendOutcome,
+    OutboundToolDescriptor,
 };

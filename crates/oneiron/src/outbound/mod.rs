@@ -53,8 +53,6 @@ pub use self::intent::{
 pub(crate) use self::connector_task::{
     connector_send_attempt_payload, put_connector_send_task_in_txn,
 };
-#[cfg(test)]
-pub(crate) use self::window_door::local_minute_of_day_at;
 pub(crate) use self::window_door::stored_delivery_window_policy_claims;
 
 // The flat outbound.rs module used to provide these names to the test module
@@ -69,9 +67,7 @@ use self::connector_task::{
     send_receipt_exists_for_task,
 };
 #[cfg(test)]
-use self::window_door::{
-    most_restrictive_delivery_window_decision, outbound_delivery_window_is_chat_like_ambient,
-};
+use self::window_door::outbound_delivery_window_is_chat_like_ambient;
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
@@ -88,6 +84,6 @@ use crate::error::Error;
 #[cfg(test)]
 use crate::habit::TaskRole;
 #[cfg(test)]
-use crate::receipt::{ContextReceiptFields, SendReceiptOutcome};
+use crate::receipt::SendReceiptOutcome;
 #[cfg(test)]
 use crate::temporal::TimeRange;

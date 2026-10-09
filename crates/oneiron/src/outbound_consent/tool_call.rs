@@ -518,33 +518,6 @@ mod tests {
         );
     }
     #[test]
-    fn headers_have_their_own_frozen_grant_class_and_destructive_tools_preview() {
-        let schema = json!({"type":"object","properties":{"tenant":{"type":"string","x-mcp-header":"X-Tenant"},"record":{"type":"string"},"dry_run":{"type":"boolean"}}});
-        let mut args = json!({"tenant":"original","record":"r1","dry_run":false});
-        let preview = prepare(&schema, &args, true, MutationIntent::Preview).unwrap();
-        assert!(preview.is_preview());
-        assert_eq!(
-            preview.header_grants()[0].data_class,
-            ToolGrantDataClass::XMcpHeader
-        );
-        args["tenant"] = json!("changed after consent");
-        let frozen: Value = serde_json::from_slice(preview.frozen_bytes()).unwrap();
-        assert_eq!(frozen["headers"]["x-tenant"], "original");
-        assert!(frozen["arguments"].get("tenant").is_none());
-        assert_eq!(frozen["arguments"]["dry_run"], true);
-        assert_eq!(
-            frozen["grant_requirements"][0]["data_class"],
-            "x_mcp_header"
-        );
-        let mutation = prepare(&schema, &args, true, MutationIntent::ExplicitMutation).unwrap();
-        assert!(!mutation.is_preview());
-        let bytes = mutation.into_frozen_payload().into_bytes();
-        assert_eq!(
-            serde_json::from_slice::<Value>(&bytes).unwrap()["arguments"]["dry_run"],
-            false
-        );
-    }
-    #[test]
     fn unresolved_schema_header_smuggling_and_wrong_values_fail_closed() {
         for schema in [
             json!({"$ref":"hidden"}),

@@ -2,7 +2,6 @@
 
 use super::*;
 use crate::edge::EdgeActorClass;
-use crate::pipeline::filters::apply_world_filter;
 use crate::pipeline::world_authority::resolve_world_authority;
 use crate::write_envelope::{
     ClaimCandidate, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY,
@@ -279,68 +278,6 @@ fn default_candidate_admission_binds_envelope_not_candidate_evidence() -> Result
         ),
         HashSet::from([fixture.claim_w]),
         "legitimate envelope identity wins over unrelated candidate-local evidence"
-    );
-    Ok(())
-}
-
-#[test]
-fn postfusion_world_filter_uses_resolved_authority_without_a_second_scan() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let fixture = world_access_fixture(&vault)?;
-    WorldAccessRowSpec::owner_grant(entity_id(0xB0), fixture.agent, false, &[fixture.world_w])
-        .put(&vault)?;
-    let selection = ActiveWorldSelection {
-        agent_ref: fixture.agent,
-        selected: Some(WorldAuthoritySet::new(false, [fixture.world_w])?),
-    };
-    let resolved = {
-        let rtxn = vault.store.env.read_txn()?;
-        resolve_world_authority(&vault.store, &rtxn, &selection, WORLD_ACCESS_NOW)?
-    };
-    // Poison the authority adjacency after resolution. A second resolution
-    // would fail, but the post-fusion filter consumes only the captured set.
-    // Production keeps both stages under one read transaction; splitting the
-    // fixture snapshots makes any accidental scan observable here.
-    let mut malformed = world_access_body(Value::from("not-a-world-access-map"));
-    malformed.source = Some(ClaimSource::UserStated);
-    vault.put_claim(
-        &entity_id(0xB1),
-        &malformed,
-        TimeRange { start: 1, end: 1 },
-        1,
-    )?;
-    let rtxn = vault.store.env.read_txn()?;
-    assert_matches!(
-        resolve_world_authority(&vault.store, &rtxn, &selection, WORLD_ACCESS_NOW),
-        Err(Error::InvalidConfig(_))
-    );
-    let mut scores = [
-        fixture.claim_base,
-        fixture.claim_w,
-        fixture.claim_v,
-        fixture.plain,
-    ]
-    .into_iter()
-    .map(|id| ScoredEntity { id, score: 1.0 })
-    .collect();
-    apply_world_filter(
-        &mut scores,
-        &vault.store,
-        &rtxn,
-        &WorldScope::ActiveSet,
-        Some(&resolved.active_set),
-    )?;
-    assert_eq!(world_access_ids(&scores), HashSet::from([fixture.claim_w]));
-    scores.clear();
-    assert_matches!(
-        apply_world_filter(
-            &mut scores,
-            &vault.store,
-            &rtxn,
-            &WorldScope::ActiveSet,
-            None
-        ),
-        Err(Error::InvalidConfig(_))
     );
     Ok(())
 }

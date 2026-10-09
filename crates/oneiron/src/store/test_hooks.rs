@@ -255,11 +255,6 @@ impl TestHooks {
     pub(crate) fn note_force_sync(&self) {
         self.force_sync_calls.fetch_add(1, Ordering::SeqCst);
     }
-
-    /// Forced environment syncs this vault has performed.
-    pub(crate) fn force_sync_calls(&self) -> usize {
-        self.force_sync_calls.load(Ordering::SeqCst)
-    }
 }
 
 struct TargetedLmdbOpenHook {
