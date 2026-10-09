@@ -584,6 +584,17 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         async move { ctl.serve(state, ctl_shutdown).await }
     });
 
+    // The receipts every vault signs (ARCH-0066 §8-§9), as the plain host signs
+    // them. Each emission is admitted through the reap freeze like a served
+    // write: a frozen vault signs nothing, and a reap never reads quiescent
+    // over a set in flight.
+    let oversight = sync_server
+        .start_healer_oversight(crate::server::HEALER_OVERSIGHT_EVERY, {
+            let state = Arc::clone(&state);
+            move || state.admit_http_mutation().ok()
+        })
+        .await;
+
     // Both sockets are bound, the credentials are consumed, and the open gates
     // have passed. Only now is this process something the supervisor may route
     // traffic to.
@@ -610,6 +621,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // No new durable background work from here on.
     lifecycle_handle.abort();
     let _ = lifecycle_handle.await;
+    oversight.abort();
+    let _ = oversight.await;
 
     if let Some(path) = http_owned_path {
         // Only ever the path this process created. An inherited socket's inode

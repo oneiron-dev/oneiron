@@ -52,6 +52,9 @@
 //! - **spawn order** — `ready_byte_lands_only_after_sockets_credentials_and_gates`
 //!   runs the real `serve_managed` boot over real descriptors, because the ready
 //!   byte is the supervisor's only evidence that any of the ordering held.
+//! - **oversight** — `a_managed_start_signs_the_three_oversight_receipts` boots
+//!   the real binary and reads the receipts back from the vault it left, since
+//!   no route a supervisor reaches exposes them.
 
 use std::os::fd::{IntoRawFd, RawFd};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -1457,4 +1460,88 @@ async fn admitted_http_body_blocks_quiescence_until_its_write_finishes() {
     ));
     fixture.shutdown.trigger();
     fixture.task.await.unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// Oversight — every vault signs its three receipts, managed ones included
+// ---------------------------------------------------------------------------
+
+/// A managed start signs the three healer oversight receipts, as a plain
+/// serve does (ARCH-0066 §8-§9: per vault, from day one). Managed serve
+/// returned before the plain path's emission, so a managed vault never had
+/// one. The receipts land before the ready byte, so a supervisor's hard stop
+/// right after ready still leaves them committed.
+///
+/// A child process over real argv, because the receipts are read back by
+/// opening the vault, and the serving process holds it exclusively until it
+/// exits.
+#[test]
+fn a_managed_start_signs_the_three_oversight_receipts() {
+    use oneiron::failure_ladder::oversight::OversightKind;
+
+    let dir = tempfile::tempdir().unwrap();
+    let run = sockets_dir(dir.path());
+    {
+        let vault = open_vault(&run.join("data"));
+        vault
+            .sync_state_put(CANARY_MARKER_KEY, CANARY_MARKER_VALUE)
+            .unwrap();
+        assert!(vault.healer_oversight_receipts().unwrap().is_empty());
+    }
+
+    let frame_path = run.join("creds");
+    let mut frame = Vec::new();
+    write_credentials(&mut frame, &[0x11; DEK_LEN], &[0x22; TOKEN_LEN]).unwrap();
+    std::fs::write(&frame_path, &frame).unwrap();
+    let ready_path = run.join("ready");
+    let stderr_path = run.join("stderr");
+    // The frame on stdin and the ready file on stdout, as in
+    // `boot_with_aliased_listen_fd`; tracing quieted so stdout is the ready byte.
+    let mut argv = with_flag_value(&managed_argv(&run), "--credentials-fd", "0");
+    argv = with_flag_value(&argv, "--ready-fd", "1");
+    argv.extend(["--log-level".to_owned(), "error".to_owned()]);
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_oneiron-server"))
+        .arg("serve")
+        .args(&argv)
+        .env_remove(HYPNOS_LISTEN_FD)
+        .stdin(std::fs::File::open(&frame_path).unwrap())
+        .stdout(std::fs::File::create(&ready_path).unwrap())
+        .stderr(std::fs::File::create(&stderr_path).unwrap())
+        .spawn()
+        .unwrap();
+    let stderr = || std::fs::read_to_string(&stderr_path).unwrap_or_default();
+    let deadline = std::time::Instant::now() + Duration::from_secs(120);
+    while !std::fs::read(&ready_path).unwrap().contains(&READY_BYTE) {
+        if let Some(status) = child.try_wait().unwrap() {
+            panic!("managed boot exited {status} before ready; stderr: {}", stderr());
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no ready byte; stderr: {}",
+            stderr()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    child.kill().unwrap();
+    child.wait().unwrap();
+
+    let vault = open_vault(&run.join("data"));
+    let receipts = vault.healer_oversight_receipts().unwrap();
+    let kinds: Vec<_> = receipts
+        .iter()
+        .map(|(receipt, _)| receipt.counts.kind)
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            OversightKind::Coverage,
+            OversightKind::ReviewLatency,
+            OversightKind::EscalationRate
+        ],
+        "stderr: {}",
+        stderr()
+    );
+    for (receipt, verified) in &receipts {
+        assert!(verified, "{receipt:?}");
+    }
 }
