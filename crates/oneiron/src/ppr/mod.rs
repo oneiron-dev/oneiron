@@ -6,8 +6,8 @@ mod walk;
 
 pub(crate) use self::cache_store::{
     MAX_PPR_SEEDS, cleanup_ppr_cache, drop_rebuildable_ppr_cache, flush_deferred_ppr_cache_writes,
-    increment_graph_version, invalidate_ppr_for_delete, invalidate_ppr_for_edge,
-    read_graph_version,
+    flush_deferred_ppr_cache_writes_admitted, increment_graph_version, invalidate_ppr_for_delete,
+    invalidate_ppr_for_edge, read_graph_version,
 };
 #[cfg(test)]
 use self::community::ppr_expand_in_txn_with_community_deferred_cache;

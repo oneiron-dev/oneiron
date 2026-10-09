@@ -72,6 +72,15 @@ impl Store {
         RETIRE_PENDING.get(self, txn, claim)
     }
 
+    /// Every staged key-retirement intent, so a caller-owned write
+    /// transaction can tell whether it staged one and must finish it.
+    pub(crate) fn gate_retirements_staged_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+    ) -> Result<Vec<([u8; 16], u64)>> {
+        RETIRE_PENDING.scan(self, txn)
+    }
+
     pub(crate) fn reject_held_gate_partition_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -311,8 +320,16 @@ impl Vault {
                     ));
                 }
             }
+            // A crash between a generation's marker and its unlink leaves the
+            // key behind a marker, so every generation is checked, not just
+            // the ones after the newest marker.
             let root = &self.store.core.gate_custody_root;
-            for generation in orcb::key_generation(root, &claim)?..=through {
+            for generation in 0..=through {
+                if orcb::generation_retired(root, &claim, generation)?
+                    && !orcb::key_published(root, &claim, generation)?
+                {
+                    continue;
+                }
                 orcb::retire_claim_key(root, &claim, generation)?;
             }
             RETIRE_PENDING.delete(&self.store, &mut txn, &claim)?;

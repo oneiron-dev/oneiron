@@ -5596,16 +5596,17 @@ fn gate_retention_resumes_committed_key_retirement_after_interruption() -> Resul
     let key_path = key_dir.join(crate::entity_id::bytes_to_hex_lower(&claim));
     let mut pending = b"gate_decision:partition_retire_pending:v1:".to_vec();
     pending.extend_from_slice(&claim);
-    vault.with_write_txn(|txn| {
-        vault
-            .store
-            .delete_gate_decision_in_txn(txn, old.decision_id)?;
-        vault
-            .store
-            .vault_meta
-            .put(txn, &pending, &0_u64.to_be_bytes())?;
-        Ok(())
-    })?;
+    // A raw transaction, not `with_write_txn`: that door finishes a staged
+    // retirement after commit, and this stages one a crash interrupted.
+    let mut txn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .delete_gate_decision_in_txn(&mut txn, old.decision_id)?;
+    vault
+        .store
+        .vault_meta
+        .put(&mut txn, &pending, &0_u64.to_be_bytes())?;
+    txn.commit()?;
     assert!(
         key_path.exists(),
         "simulate a crash after LMDB commit, before key retirement"
@@ -5635,16 +5636,17 @@ fn gate_retention_pending_hold_defers_retirement_until_release() -> Result<()> {
         .join(crate::entity_id::bytes_to_hex_lower(&claim));
     let mut intent = b"gate_decision:partition_retire_pending:v1:".to_vec();
     intent.extend_from_slice(&claim);
-    vault.with_write_txn(|txn| {
-        vault
-            .store
-            .delete_gate_decision_in_txn(txn, old.decision_id)?;
-        vault
-            .store
-            .vault_meta
-            .put(txn, &intent, &0_u64.to_be_bytes())?;
-        Ok(())
-    })?;
+    // A raw transaction, not `with_write_txn`: that door finishes a staged
+    // retirement after commit, and this stages one a crash interrupted.
+    let mut txn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .delete_gate_decision_in_txn(&mut txn, old.decision_id)?;
+    vault
+        .store
+        .vault_meta
+        .put(&mut txn, &intent, &0_u64.to_be_bytes())?;
+    txn.commit()?;
     vault.set_gate_decision_partition_hold(Some(claim), true)?;
     assert_eq!(vault.sweep_gate_decision_retention()?, 0);
     assert!(key.exists());
@@ -5673,16 +5675,17 @@ fn gate_retention_two_finishers_consume_same_snapshot_without_false_corruption()
     append_gate_decisions(&vault, std::slice::from_ref(&old))?;
     let mut intent = b"gate_decision:partition_retire_pending:v1:".to_vec();
     intent.extend_from_slice(&claim);
-    vault.with_write_txn(|txn| {
-        vault
-            .store
-            .delete_gate_decision_in_txn(txn, old.decision_id)?;
-        vault
-            .store
-            .vault_meta
-            .put(txn, &intent, &0_u64.to_be_bytes())?;
-        Ok(())
-    })?;
+    // A raw transaction, not `with_write_txn`: that door finishes a staged
+    // retirement after commit, and this stages one a crash interrupted.
+    let mut txn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .delete_gate_decision_in_txn(&mut txn, old.decision_id)?;
+    vault
+        .store
+        .vault_meta
+        .put(&mut txn, &intent, &0_u64.to_be_bytes())?;
+    txn.commit()?;
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
     std::thread::scope(|scope| -> Result<()> {
         let handles: Vec<_> = (0..2)
@@ -5853,16 +5856,17 @@ fn gate_retention_refuses_a_hold_after_key_retirement_crossed_the_boundary() -> 
     ));
     let mut intent = b"gate_decision:partition_retire_pending:v1:".to_vec();
     intent.extend_from_slice(&claim);
-    vault.with_write_txn(|txn| {
-        vault
-            .store
-            .delete_gate_decision_in_txn(txn, old.decision_id)?;
-        vault
-            .store
-            .vault_meta
-            .put(txn, &intent, &0_u64.to_be_bytes())?;
-        Ok(())
-    })?;
+    // A raw transaction, not `with_write_txn`: that door finishes a staged
+    // retirement after commit, and this stages one a crash interrupted.
+    let mut txn = vault.store.env.write_txn()?;
+    vault
+        .store
+        .delete_gate_decision_in_txn(&mut txn, old.decision_id)?;
+    vault
+        .store
+        .vault_meta
+        .put(&mut txn, &intent, &0_u64.to_be_bytes())?;
+    txn.commit()?;
     std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)

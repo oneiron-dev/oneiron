@@ -33,6 +33,13 @@ impl SessionRetrievalTelemetry<'_> {
         self.route.target() == RouteTarget::Base
     }
 
+    /// The check a base PPR cache flush runs inside its own transaction, as
+    /// the base witness does: a room that flipped off record mid-walk
+    /// rolls the cache write back.
+    pub(crate) fn admit_base_write(&self) -> Result<()> {
+        self.route.revalidate()
+    }
+
     /// Anonymous retrievals expose no stored retrieval-run identity.
     pub(crate) fn discards_writes(&self) -> bool {
         self.route.target() == RouteTarget::Discard

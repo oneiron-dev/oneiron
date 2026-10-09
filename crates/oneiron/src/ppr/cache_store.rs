@@ -107,6 +107,17 @@ pub(crate) fn flush_deferred_ppr_cache_writes(
     store: &Store,
     writes: &[DeferredPprCacheWrite],
 ) -> Result<()> {
+    flush_deferred_ppr_cache_writes_admitted(store, writes, || Ok(()))
+}
+
+/// [`flush_deferred_ppr_cache_writes`] with `admit` run as the last statement
+/// of every cache transaction: its error rolls that transaction back and is
+/// returned, so a writer whose authority lapsed mid-walk publishes nothing.
+pub(crate) fn flush_deferred_ppr_cache_writes_admitted(
+    store: &Store,
+    writes: &[DeferredPprCacheWrite],
+    admit: impl Fn() -> Result<()>,
+) -> Result<()> {
     for write in writes {
         if let Some(snapshot) = &write.community_snapshot {
             // Both local caches describe the same read snapshot. Never publish
@@ -127,6 +138,7 @@ pub(crate) fn flush_deferred_ppr_cache_writes(
                     state,
                 )?;
             }
+            admit()?;
             txn.commit()?;
         } else if let Some(state) = &write.state {
             // Literal legacy write path for beta zero and Specificity.
@@ -136,6 +148,7 @@ pub(crate) fn flush_deferred_ppr_cache_writes(
                 write.computed_at,
                 write.graph_version,
                 state,
+                &admit,
             )?;
         }
     }
@@ -147,6 +160,7 @@ fn write_ppr_cache(
     computed_at: u64,
     graph_version: u64,
     state: &PprCacheState,
+    admit: &impl Fn() -> Result<()>,
 ) -> Result<()> {
     // The version check in store_cache_entry is atomic with the cache write.
     let mut wtxn = store.env.write_txn()?;
@@ -158,6 +172,7 @@ fn write_ppr_cache(
         graph_version,
         state,
     )? {
+        admit()?;
         wtxn.commit()?;
     }
     Ok(())

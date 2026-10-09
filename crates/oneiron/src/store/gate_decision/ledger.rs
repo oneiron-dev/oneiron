@@ -463,7 +463,7 @@ impl Store {
             )?;
             self.delete_gate_retention_context_in_txn(wtxn, *decision_id)?;
             self.delete_gate_decision_claim_refs_in_txn(wtxn, *decision_id)?;
-            self.consume_unapplied_preflight_decision_in_txn(wtxn, *decision_id)?;
+            self.discard_unapplied_preflight_marker_in_txn(wtxn, *decision_id)?;
             LEDGER.delete(self, wtxn, decision_id)?;
             let id = crate::entity_id::EntityId::from_bytes(*claim_id)
                 .map_err(|_| Error::CorruptedIndex("gate decision claim id"))?;

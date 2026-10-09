@@ -309,6 +309,7 @@ impl Vault {
         E: From<Error>,
     {
         let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
+        let retirements_before = self.store.gate_retirements_staged_in_txn(&wtxn)?;
         let (result, postcommit) = {
             let _active_write_txn = crate::store::active_write_txn_guard();
             let vad_scope = crate::batch::VadPostcommitScope::new(self, &wtxn);
@@ -317,10 +318,17 @@ impl Vault {
         };
         let approved_vad_ids =
             self.resolved_dreamer_vad_approvals_in_txn(&wtxn, postcommit.vad_ids)?;
+        // A claim delete applied in this transaction staged its key's
+        // retirement; destroy the key now, not at the next retention pass.
+        let retirement_staged =
+            self.store.gate_retirements_staged_in_txn(&wtxn)? != retirements_before;
         wtxn.commit().map_err(Error::from)?;
         self.store.notify_attempt_observers();
         if postcommit.proactivity_changed {
             self.store.notify_proactivity_changes();
+        }
+        if retirement_staged {
+            self.finish_gate_decision_retirements_after_commit();
         }
         // Approval is durable now. The canonical consolidator opens its own
         // writer; its failure is returned without rolling back Approved. The
