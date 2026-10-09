@@ -138,7 +138,19 @@ impl Vault {
                         if !owner {
                             return Err(invalid("CLAIM fork requires the owner").into());
                         }
-                        self.fork_claim_to_facet_in_txn(txn, origin, facet, fork, supersede, at)?;
+                        let writer = crate::batch::SuccessionWriter::new(
+                            Some(actor),
+                            crate::claim::ClaimSource::UserStated,
+                            "note.fork_to_facet",
+                        );
+                        self.fork_claim_to_facet_in_txn(
+                            txn,
+                            (origin, fork),
+                            facet,
+                            supersede,
+                            writer,
+                            at,
+                        )?;
                     }
                     other => return Err(crate::Error::InvalidEntityType(other).into()),
                 }
@@ -147,18 +159,18 @@ impl Vault {
     }
 
     /// The CLAIM half of [`Self::fork_to_facet`], composed into the caller's
-    /// transaction: births `fork` under `facet` as the origin's successor (same
-    /// author, same claim_of weight) with its `facet_of` stamp, links it
-    /// `DerivedFrom` the origin, and with `supersede` closes the origin. The
-    /// identity-topology facet op forks each reassigned claim through this
-    /// door (ARCH-0055 r9).
+    /// transaction: births `fork` under `facet` as `origin`'s successor
+    /// (`writer`'s claim, at the origin's claim_of weight) with its `facet_of`
+    /// stamp, links it `DerivedFrom` the origin, and with `supersede` closes
+    /// the origin. The identity-topology facet op forks each reassigned claim
+    /// through this door (ARCH-0055 r9).
     pub(crate) fn fork_claim_to_facet_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        origin: EntityId,
+        (origin, fork): (EntityId, EntityId),
         facet: EntityId,
-        fork: EntityId,
         supersede: bool,
+        writer: crate::batch::SuccessionWriter,
         at: u64,
     ) -> crate::Result<()> {
         crate::batch::ClaimMaterialization::apply_successor(
@@ -167,13 +179,14 @@ impl Vault {
             &origin,
             &fork,
             crate::claim::ClaimSuccession::Fork { facet, stamp: true },
+            writer,
             at,
         )?;
         self.batch_in()
             .edge(&fork, EdgeKind::DerivedFrom, &origin, 1.0)
             .apply(txn)?;
         if supersede {
-            self.supersede_claim_in_txn(txn, &fork, &origin, at)?;
+            self.supersede_claim_in_txn_as(txn, &fork, &origin, at, writer.actor())?;
         }
         Ok(())
     }

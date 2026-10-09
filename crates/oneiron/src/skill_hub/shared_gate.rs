@@ -71,8 +71,9 @@ pub struct SharedSkillMergeReceipt {
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum SharedSkillMergeDisposition {
-    /// The delta widens the skill's permissions, and a widening answers the
-    /// fit ladder's ask rung: the owner approves this exact effect once.
+    /// The owner must answer this exact effect once: the delta widens the
+    /// skill's permissions (the fit ladder's ask rung), or the scan of its
+    /// bytes requires an owner review.
     PendingConsent,
     Ruled(Box<SharedSkillMergeReceipt>),
 }
@@ -82,6 +83,7 @@ struct MergeSnapshot {
     base: SkillRecord,
     record: SkillRecord,
     package: HubPackage,
+    scan: crate::skill_scan::ActivationPosture,
     baseline: String,
     evidence: Vec<String>,
     binding: String,
@@ -132,7 +134,8 @@ impl Vault {
         })
     }
     /// The owner's answer to a merge whose delta widens the skill's
-    /// permissions. A merge that keeps or narrows them needs no answer.
+    /// permissions or whose scan requires review. Any other merge needs no
+    /// answer.
     pub fn approve_shared_skill_merge(
         &self,
         ask: &SharedSkillMergeAsk,
@@ -146,12 +149,13 @@ impl Vault {
     /// The one merge door. A caller cannot submit a bool or a precomputed score.
     /// The typed useful-upstream decision and the held-out replay are the gate;
     /// no per-merge approval exists, because the merge is reversible (ARCH-0053
-    /// r4, ARCH-0043: "No publish step exists"). A delta that widens the skill's
-    /// permissions still asks, like any widening: it returns `PendingConsent`
-    /// until the owner approves that exact effect.
+    /// r4, ARCH-0043: "No publish step exists"). A required review still asks:
+    /// a delta that widens the skill's permissions, or whose scan sets
+    /// `ProposedRequired`, returns `PendingConsent` until the owner approves
+    /// that exact effect.
     /// Both host callbacks run without a read or write transaction held. The
-    /// binding, and any widening answer, are rechecked when activation +
-    /// supersession commit together.
+    /// binding, which covers the scan posture, and any owner answer are
+    /// rechecked when activation + supersession commit together.
     pub fn merge_shared_skill_delta(
         &self,
         ask: &SharedSkillMergeAsk,
@@ -163,7 +167,7 @@ impl Vault {
         let snapshot = {
             let txn = self.store.env.read_txn()?;
             let snapshot = self.check_merge_ask(&txn, ask)?;
-            if self.merge_widens_permissions_in_txn(&txn, &snapshot)?
+            if self.merge_needs_owner_in_txn(&txn, &snapshot)?
                 && crate::consent::approve_once_authorization_in_txn(
                     &self.store,
                     &txn,
@@ -230,14 +234,14 @@ impl Vault {
                 crate::skill_optimize::ensure_current_judge_in_txn(self, txn, revision)?;
             }
             let current = self.check_merge_ask(txn, ask)?;
-            let widening = if self.merge_widens_permissions_in_txn(txn, &current)? {
+            let answer = if self.merge_needs_owner_in_txn(txn, &current)? {
                 Some(
                     crate::consent::approve_once_authorization_in_txn(
                         &self.store,
                         txn,
                         &ask.effect,
                     )?
-                    .ok_or_else(|| invalid("the owner's permission answer is missing"))?,
+                    .ok_or_else(|| invalid("the owner's merge answer is missing"))?,
                 )
             } else {
                 None
@@ -271,7 +275,7 @@ impl Vault {
                     learned_at,
                 )?;
             }
-            if let Some(authorization) = &widening {
+            if let Some(authorization) = &answer {
                 crate::consent::spend_approve_once_in_txn(&self.store, txn, authorization)?;
             }
             control.state = if accepted {
@@ -403,14 +407,23 @@ impl Vault {
         }
         Ok(receipt)
     }
-    /// A widening is any capability the candidate declares beyond the base's
-    /// admitted surface. A base with no admitted surface admits none, so every
-    /// declared capability then widens.
-    fn merge_widens_permissions_in_txn(
+    /// The owner answers a merge only where a review is required. A widening
+    /// is any capability the candidate declares beyond the base's admitted
+    /// surface; a base with no admitted surface admits none, so every declared
+    /// capability then widens. A `ProposedRequired` scan of the candidate's
+    /// bytes asks too: the activation stamps `Approved`, which the scan gate
+    /// never escalates, so the review must happen here.
+    fn merge_needs_owner_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         snapshot: &MergeSnapshot,
     ) -> Result<bool> {
+        if matches!(
+            snapshot.scan,
+            crate::skill_scan::ActivationPosture::ProposedRequired { .. }
+        ) {
+            return Ok(true);
+        }
         let admitted = self
             .read_admitted_capability_surface_in_txn(txn, &snapshot.base_id)?
             .unwrap_or_default();
@@ -516,6 +529,7 @@ impl Vault {
             base,
             record,
             package,
+            scan,
             baseline,
             evidence,
             binding: hash.finalize().to_hex().to_string(),

@@ -2245,6 +2245,67 @@ fn shared_merge_that_widens_permissions_waits_for_the_owner() -> Result<()> {
     Ok(())
 }
 
+/// Greptile #1336 repro: dropping the per-merge approve-once must not drop a
+/// review the scan requires. With the dial at `Low`, a delta that keeps the
+/// base's admitted tool scans `ProposedRequired`. It widens nothing, and the
+/// merge still waits for the owner.
+#[test]
+fn shared_merge_the_scan_flags_waits_for_the_owner() -> Result<()> {
+    let fixture = Fixture::new();
+    let delta = widened_package();
+    fixture.vault.with_write_txn(|txn| {
+        fixture.vault.write_admitted_capability_surface_in_txn(
+            txn,
+            &fixture.baseline,
+            &delta.capabilities,
+        )
+    })?;
+    crate::skill_scan::set_skill_scan_activation_risk_threshold(
+        &fixture.vault,
+        super::ScanRiskLevel::Low,
+    )?;
+    let merged = submit_fixture_delta(&fixture, &delta)?;
+    let ask = fixture.vault.prepare_shared_skill_merge(
+        merged,
+        fixture.resident,
+        useful_question(merged),
+    )?;
+    let lifecycle = || -> Result<SkillLifecycle> {
+        Ok(fixture
+            .vault
+            .get_skill_record(&merged)?
+            .expect("candidate")
+            .lifecycle_status)
+    };
+    assert_eq!(
+        fixture.vault.merge_shared_skill_delta(
+            &ask,
+            &Useful(true),
+            &Replay::new(true),
+            at(21),
+            21
+        )?,
+        SharedSkillMergeDisposition::PendingConsent
+    );
+    assert_eq!(lifecycle()?, SkillLifecycle::Candidate);
+    fixture
+        .vault
+        .approve_shared_skill_merge(&ask, &fixture.owner)?;
+    let SharedSkillMergeDisposition::Ruled(receipt) = fixture.vault.merge_shared_skill_delta(
+        &ask,
+        &Useful(true),
+        &Replay::new(true),
+        at(22),
+        22,
+    )?
+    else {
+        panic!("the owner answered the review");
+    };
+    assert!(receipt.accepted);
+    assert_eq!(lifecycle()?, SkillLifecycle::Active);
+    Ok(())
+}
+
 /// Scores instructions that say "twice" above any that do not, so a delta can
 /// beat a stored revision the default fixture scorer already rates highest.
 struct PrefersTwice;

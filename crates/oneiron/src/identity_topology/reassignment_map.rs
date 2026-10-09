@@ -485,8 +485,9 @@ pub(super) fn clear_reassignment_rows_in_txn(
 ///   under its mask and the fork supersedes it. The fork's birth stamp is the
 ///   canonical `facet_of` edge the query filter and federation selector read,
 ///   so no index row is written. Only a current claim forks; a closed one is
-///   history, and an assignment naming it is dropped. So is a stale MACHINE
-///   claim: a signed birth is never stale, so its fork cannot be born yet.
+///   history, and an assignment naming it is dropped. So is a deleted claim,
+///   or one whose deletion is in flight, and a stale MACHINE claim: a signed
+///   birth is never stale, so its fork cannot be born yet.
 ///
 /// The facet pairs are returned in `forks`, which the caller forks AFTER the
 /// minted FACET rows land — a fork whose facet has no entity row fails closed.
@@ -533,6 +534,9 @@ fn claim_is_forkable_in_txn(
     txn: &heed::RoTxn<'_>,
     claim: &EntityId,
 ) -> Result<bool> {
+    if !crate::batch::ClaimMaterialization::succession_source_live(store, txn, claim)? {
+        return Ok(false);
+    }
     let Some(raw) = store.entities.get(txn, claim.as_bytes())? else {
         return Ok(false);
     };

@@ -38,8 +38,14 @@ fn source_heads() -> Result<SourceHeads> {
         let bundle = vault.review_gate_consent_bundle(&reviewer, run)?;
         vault.resolve_gate_consent_bundle(&owner, bundle.bundle_id, run, action, 9)?;
     }
-    let (subject, envelope) =
-        super::carry_forward::forward_envelope(&vault, ClaimApprovalStatus::Auto)?;
+    // The Dreamer weakens only a claim that is not user truth, and under its
+    // own signer, ceiling and permits.
+    super::carry_forward::let_dreamer_curate(&vault, policy)?;
+    let (subject, envelope) = super::carry_forward::forward_envelope_as(
+        &vault,
+        ClaimApprovalStatus::Auto,
+        crate::ClaimSource::Observed,
+    )?;
     vault.put_carry_forward_claim(
         &weakened,
         CarryForwardClaim {
@@ -83,6 +89,26 @@ fn source_heads() -> Result<SourceHeads> {
         heads: final_heads,
         before_demotion,
     })
+}
+
+/// The weakening's successor is the Dreamer's signed MACHINE claim. A peer
+/// that holds only its current blob stores its exact bytes and withholds it
+/// until the vault's signed history arrives: a MACHINE claim never reads
+/// unsigned on a replica.
+fn withholds_until_signed_history(target: &Vault, (id, blob): &(EntityId, Vec<u8>)) -> Result<()> {
+    let header = crate::batch::ENTITY_METADATA_HEADER_LEN;
+    assert_eq!(
+        &target.get_raw(id)?.expect("stored successor")[header..],
+        &blob[header..],
+        "the peer stores the successor's exact bytes"
+    );
+    assert!(matches!(
+        target.get_claim(id),
+        Err(crate::Error::Claim(
+            crate::error::ClaimError::MachineClaimHistoryIncomplete
+        ))
+    ));
+    Ok(())
 }
 
 fn same_final_heads(source: &Vault, target: &Vault, heads: &[(EntityId, Vec<u8>)]) -> Result<()> {
@@ -135,13 +161,15 @@ fn fresh_peer_and_forward_rematerialization_accept_final_care_heads() -> Result<
         loro_support::map_insert_bytes(&entities, &id.to_hex(), blob)?;
     }
     doc.commit(); // Observer B sees only current heads, no local proposal history.
-    same_final_heads(source, &peer, heads)?;
+    same_final_heads(source, &peer, &heads[..3])?;
+    withholds_until_signed_history(&peer, &heads[3])?;
     let (_reopen_dir, reopened) = temp_vault();
     assert_eq!(
         window::forward_rematerialize(&reopened, &doc, &bridge::Materializer::new(), &key)?,
         heads.len() as u32
     );
-    same_final_heads(source, &reopened, heads)?;
+    same_final_heads(source, &reopened, &heads[..3])?;
+    withholds_until_signed_history(&reopened, &heads[3])?;
     drop(peer_dir);
     Ok(())
 }
@@ -171,6 +199,7 @@ fn incremental_peer_can_skip_intermediate_demotion_states() -> Result<()> {
         loro_support::map_insert_bytes(&entities, &head.to_hex(), blob)?;
     }
     doc.commit();
-    same_final_heads(source, &peer, &heads[2..])?;
+    same_final_heads(source, &peer, &heads[2..3])?;
+    withholds_until_signed_history(&peer, &heads[3])?;
     Ok(())
 }

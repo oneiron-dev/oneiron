@@ -153,8 +153,9 @@ pub enum IdentityTopologyRejection {
     },
     /// undo names an event that is not the current topology writer for its
     /// entities (already undone, superseded by a later re-apply, parked, or
-    /// never applied), or a facet event one of whose forks a later write has
-    /// touched.
+    /// never applied, including one the effective ledger never admitted), or
+    /// a facet event one of whose forks a later write has touched, or whose
+    /// origin or fork is deleted or being deleted.
     NotCurrent {
         /// The named event.
         event: EntityId,

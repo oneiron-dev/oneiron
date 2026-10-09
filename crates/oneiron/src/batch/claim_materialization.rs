@@ -742,6 +742,7 @@ pub(crate) fn apply_owner_bound_claim_puts_with_transitions(
 mod demotion;
 mod succession;
 use demotion::demotion_body;
+pub(crate) use succession::SuccessionWriter;
 
 #[cfg(test)]
 mod tests;

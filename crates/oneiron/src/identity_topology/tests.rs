@@ -3286,6 +3286,201 @@ fn a_reweighted_fork_makes_the_facet_undo_stale() {
     );
 }
 
+/// Astra #1336 P1 repro: a hard delete is decided once its tombstone
+/// publishes, and the purge lands in a later transaction. In between, the
+/// fork's body is still stored, and facet undo must not copy it into a fresh
+/// live id.
+#[cfg(feature = "sync")]
+#[test]
+fn facet_undo_never_revives_a_fork_whose_hard_delete_published() {
+    use super::op_apply::facet_fork_id;
+    let (_dir, vault) = open_vault();
+    let base = put_person(&vault, 0x61);
+    let origin = write_note_claim(&vault, id(0x71), base);
+    let (event, _) = seam_apply_facet(&vault, base, &["work"], &[(origin, 0)]);
+    let fork = facet_fork_id(&event, &origin).expect("fork id");
+    crate::deletion::arm_fail_after_tombstone_before_purge();
+    vault
+        .delete_entity_with_options(&fork, crate::deletion::DeleteEntityOptions { purge: true })
+        .expect_err("crash after the tombstone published, before the purge");
+    assert!(
+        vault.get_raw(&fork).expect("read fork").is_some(),
+        "the purge has not landed"
+    );
+
+    let write = IdentityOpWrite::auto(ClaimSource::Inferred);
+    let err = vault
+        .undo_identity_topology_event(&event, &write, 300)
+        .expect_err("a deleted fork is never revived");
+    assert_eq!(
+        expect_rejection(err),
+        IdentityTopologyRejection::NotCurrent { event }
+    );
+    assert_eq!(event_count(&vault), 1);
+    assert_eq!(vault.facets_of(&base).expect("facets").len(), 2);
+}
+
+/// One person's `UserStated` claim on `subject`, written through the gated
+/// candidate door, so it carries that person's authenticated author binding.
+fn write_authored_claim(vault: &Vault, claim: EntityId, author: EntityId, subject: EntityId) {
+    vault
+        .batch()
+        .claim_candidate(
+            &claim,
+            crate::write_envelope::ClaimCandidate::new(
+                "profile.note",
+                ClaimSubject::Entity(subject),
+                Value::from("the owner said so"),
+                0.9,
+            ),
+            &crate::write_envelope::WriteEnvelope::new(
+                WriteActor::new(author, EdgeActorClass::Human),
+                ClaimSource::UserStated,
+                crate::write_envelope::WriteProvenance::new(Value::from("author fixture"))
+                    .expect("provenance"),
+                ClaimApprovalStatus::Auto,
+            ),
+            TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+        )
+        .commit()
+        .expect("authored claim");
+}
+
+/// Astra #1336 P1 repro: a facet fork is the deciding actor's claim, never
+/// its origin author's. A person's fork carries that person's stamp and
+/// binding, and keeps the origin's source.
+#[test]
+fn a_facet_fork_is_the_deciding_actors_claim() {
+    use super::op_apply::facet_fork_id;
+    let (_dir, vault) = open_vault();
+    let author = put_person(&vault, 0x60);
+    let decider = put_person(&vault, 0x5f);
+    let base = put_person(&vault, 0x61);
+    let origin = id(0x71);
+    write_authored_claim(&vault, origin, author, base);
+    let decider = WriteActor::new(decider, EdgeActorClass::Human);
+    let (event, _) = expect_applied(
+        vault
+            .apply_identity_topology_op(
+                &facet_op_with_map(
+                    base,
+                    &["work"],
+                    vec![ReassignmentEntry {
+                        item: ClaimSubject::Entity(origin),
+                        target: ReassignmentTarget::Facet { index: 0 },
+                    }],
+                ),
+                &IdentityOpWrite::auto(ClaimSource::UserStated).with_actor(decider),
+                200,
+            )
+            .expect("a person forks a claim"),
+    );
+    let fork = facet_fork_id(&event, &origin).expect("fork id");
+    let body = vault.get_claim(&fork).expect("read").expect("fork");
+    assert_eq!(body.source, Some(ClaimSource::UserStated));
+    let txn = vault.store.env.read_txn().expect("read txn");
+    assert_eq!(
+        crate::batch::authenticated_claim_author_in_txn(&vault.store, &txn, &fork, &body)
+            .expect("author"),
+        Some(decider)
+    );
+}
+
+/// Astra #1336 P1 repro: a machine's facet op forks under the machine's own
+/// authority. Its fork is a `Generated` claim, and Generated never closes
+/// user truth, so the op is refused whole and the owner's claim stays
+/// current.
+#[test]
+fn a_machine_facet_op_never_closes_user_truth() {
+    let (_dir, vault) = open_vault();
+    let author = put_person(&vault, 0x60);
+    let base = put_person(&vault, 0x61);
+    let origin = id(0x71);
+    write_authored_claim(&vault, origin, author, base);
+    let machine = vault.dreamer_authority().expect("machine actor");
+    let err = vault
+        .apply_identity_topology_op(
+            &facet_op_with_map(
+                base,
+                &["work"],
+                vec![ReassignmentEntry {
+                    item: ClaimSubject::Entity(origin),
+                    target: ReassignmentTarget::Facet { index: 0 },
+                }],
+            ),
+            &IdentityOpWrite::auto(ClaimSource::Generated).with_actor(machine),
+            200,
+        )
+        .expect_err("a machine never closes user truth");
+    assert!(
+        matches!(
+            err,
+            Error::InvalidClaimBody("generated claim cannot supersede user-stated truth")
+        ),
+        "{err:?}"
+    );
+    assert_eq!(
+        vault
+            .get_claim(&origin)
+            .expect("read")
+            .expect("claim")
+            .lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    assert_eq!(vault.facets_of(&base).expect("facets").len(), 1);
+    assert_eq!(event_count(&vault), 0);
+}
+
+/// Astra #1336 P2 repro: undo acts only on an event the effective ledger
+/// admitted. A stored facet event still waiting for its signed admission fact
+/// never applied, so its undo is `NotCurrent` and detaches no mask it names.
+#[test]
+fn facet_undo_refuses_an_event_the_ledger_never_admitted() {
+    let (_dir, vault) = open_vault();
+    let base = put_person(&vault, 0x61);
+    let (_, masks) = seam_apply_facet(&vault, base, &["work"], &[]);
+    let pending = id(0x74);
+    put_identity_event_record(
+        &vault,
+        pending,
+        &StoredIdentityOpEvent {
+            seq: 50,
+            validated_at_write: false,
+            invalidated: false,
+            at: 200,
+            actor: None,
+            source: ClaimSource::Inferred,
+            approval: ClaimApprovalStatus::Auto,
+            confidence: 1.0,
+            evidence: None,
+            action: StoredIdentityOpAction::Facet {
+                entity: base,
+                facets: masks,
+                reassignment: ReassignmentMap {
+                    entries: Vec::new(),
+                },
+                applied_assigned: 0,
+                applied_residue: 0,
+                forked: Vec::new(),
+            },
+        },
+    );
+
+    let write = IdentityOpWrite::auto(ClaimSource::Inferred);
+    let err = vault
+        .undo_identity_topology_event(&pending, &write, 300)
+        .expect_err("an unadmitted event never applied");
+    assert_eq!(
+        expect_rejection(err),
+        IdentityTopologyRejection::NotCurrent { event: pending }
+    );
+    assert_eq!(vault.facets_of(&base).expect("facets").len(), 2);
+}
+
 /// The sync-ingest door never runs the apply door, so a REPLICATED split
 /// arrives with its map and no rows. The reconciler — the chokepoint the
 /// redirect projection already rides — is where those rows are born, and

@@ -1080,13 +1080,9 @@ fn scoped_birth_control_follows_restrictive_current_demotion() {
             .rung,
         ClaimDemotionRung::Decayed
     );
-    // A weakening births a successor, signed by the writer's retained signer.
-    let signer = signing.clone();
-    vault
-        .retain_machine_write_signer(machine, signing.verifying_key().to_bytes(), move |bytes| {
-            Ok(signer.sign(bytes).to_bytes())
-        })
-        .unwrap();
+    // A weakening is the Dreamer's act: it births the Dreamer's own successor,
+    // signed by the Dreamer's retained signer, never the machine's.
+    vault.provision_engine_machine_identities(&issuer).unwrap();
     let weakened = vault
         .apply_claim_demotion(
             &id,

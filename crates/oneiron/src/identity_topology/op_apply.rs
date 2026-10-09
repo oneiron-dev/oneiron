@@ -350,10 +350,13 @@ impl Vault {
                 // under its mask once the masks exist, and the fork closes the
                 // origin. The event lists the forked origins and each fork id
                 // derives from (event, origin), so the undo door finds every
-                // fork from the event alone.
+                // fork from the event alone. Each fork is the deciding actor's
+                // claim, never its origin's author's: a machine's fork is
+                // `Generated`, so it cannot close user truth.
+                let writer = facet_fork_writer(write.actor, write.source);
                 for (origin, mask) in forks {
                     let fork = facet_fork_id(&event_id, &origin)?;
-                    self.fork_claim_to_facet_in_txn(wtxn, origin, mask, fork, true, now)?;
+                    self.fork_claim_to_facet_in_txn(wtxn, (origin, fork), mask, true, writer, now)?;
                 }
                 Ok(outcome)
             }
@@ -596,6 +599,15 @@ impl Vault {
             Ok(IdentityOpOutcome::Parked { event: event_id })
         }
     }
+}
+
+/// The writer of a FACET event's forks: the event's deciding actor and source,
+/// as its record stores them, so the undo door re-derives each fork's birth.
+pub(super) fn facet_fork_writer(
+    actor: Option<WriteActor>,
+    source: ClaimSource,
+) -> crate::batch::SuccessionWriter {
+    crate::batch::SuccessionWriter::new(actor, source, "identity.facet")
 }
 
 /// The fork a FACET event births for one reassigned claim. Deriving it from

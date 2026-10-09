@@ -84,9 +84,11 @@ pub struct IdentityTopologyFold {
     pub moot_proposals: BTreeSet<EntityId>,
     /// Per-event rejections, in fold order.
     pub rejections: Vec<(EntityId, IdentityTopologyRejection)>,
-    /// Events a counter-event has reverted. A FACET event moves no lifecycle
-    /// state, so this is its only fold-level undo-currency witness.
-    pub undone_events: BTreeSet<EntityId>,
+    /// FACET events the fold applied and no counter-event has reverted. A
+    /// facet moves no lifecycle state, so this is its only fold-level
+    /// undo-currency witness, and an event the effective ledger never
+    /// admitted is never in it.
+    pub live_facets: BTreeSet<EntityId>,
 }
 
 /// Folds identity-topology events into lifecycle states — the
@@ -122,6 +124,9 @@ pub fn fold_identity_topology_log(events: &[IdentityTopologyEvent]) -> IdentityT
                             fold.current_event.insert(entity, event.event_id);
                         }
                     }
+                    if matches!(op, IdentityTopologyOp::Facet(_)) {
+                        fold.live_facets.insert(event.event_id);
+                    }
                     applied.insert(event.event_id, op);
                 }
                 Err(rejection) => fold.rejections.push((event.event_id, rejection)),
@@ -131,7 +136,7 @@ pub fn fold_identity_topology_log(events: &[IdentityTopologyEvent]) -> IdentityT
                     &fold.current_event,
                     &applied,
                     &undo_events,
-                    &fold.undone_events,
+                    &fold.live_facets,
                     target,
                 ) {
                     Ok(reverted) => {
@@ -140,7 +145,7 @@ pub fn fold_identity_topology_log(events: &[IdentityTopologyEvent]) -> IdentityT
                             fold.current_event.remove(&entity);
                         }
                         undo_events.insert(event.event_id);
-                        fold.undone_events.insert(*target);
+                        fold.live_facets.remove(target);
                     }
                     Err(rejection) => {
                         fold.rejections.push((event.event_id, rejection));
@@ -190,7 +195,7 @@ fn evaluate_fold_undo(
     current_event: &BTreeMap<EntityId, EntityId>,
     applied: &BTreeMap<EntityId, &IdentityTopologyOp>,
     undo_events: &BTreeSet<EntityId>,
-    undone_events: &BTreeSet<EntityId>,
+    live_facets: &BTreeSet<EntityId>,
     target: &EntityId,
 ) -> std::result::Result<Vec<EntityId>, IdentityTopologyRejection> {
     if undo_events.contains(target) {
@@ -207,7 +212,7 @@ fn evaluate_fold_undo(
         // whether a later write touched a fork is a claim-level question the
         // undo door answers against the store.
         IdentityTopologyOp::Facet(_) => {
-            if undone_events.contains(target) {
+            if !live_facets.contains(target) {
                 return Err(IdentityTopologyRejection::NotCurrent { event: *target });
             }
             return Ok(Vec::new());

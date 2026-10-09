@@ -37,6 +37,39 @@ fn authored_local_claim(vault: &Vault, actor: WriteActor, id: EntityId) -> Resul
         .commit()
 }
 
+/// The Dreamer's own output, as a weakening's predecessor is (ARCH-0026
+/// Curate grades the Dreamer's output): a `Generated` claim the Dreamer wrote
+/// and signed. Returns the Dreamer.
+fn dreamer_claim(vault: &Vault, id: EntityId) -> Result<WriteActor> {
+    crate::test_util::provision_engine_machines(vault);
+    let dreamer = vault.dreamer_authority()?;
+    permit(vault, dreamer.entity_ref(), &[ClaimSource::Generated])?;
+    let envelope = WriteEnvelope::new(
+        dreamer,
+        ClaimSource::Generated,
+        WriteProvenance::new(Value::from("dreamer fixture"))?,
+        ClaimApprovalStatus::Auto,
+    );
+    let candidate = ClaimCandidate::new(
+        "profile.lifecycle_actor",
+        ClaimSubject::Entity(entity(0x62)),
+        Value::from("fact"),
+        1.0,
+    );
+    let envelope = crate::test_util::sign_machine_candidate(vault, &id, &candidate, &envelope);
+    vault
+        .batch()
+        .claim_candidate(
+            &id,
+            candidate,
+            &envelope,
+            TimeRange { start: 10, end: 99 },
+            10,
+        )
+        .commit()?;
+    Ok(dreamer)
+}
+
 fn binding_digest(vault: &Vault, id: EntityId) -> Result<Option<Vec<u8>>> {
     let txn = vault.store.env.read_txn()?;
     Ok(AUTHORED
@@ -67,10 +100,34 @@ fn actor_only_policy(vault: &Vault, actor: WriteActor) -> Result<()> {
     // No first_party row, and not even a class-wide human row. Only this
     // exact actor can auto-write under the test policy.
     *ceilings = Value::Array(vec![Value::Map(vec![
-        ("actor_class".into(), "human".into()),
+        (
+            "actor_class".into(),
+            actor.actor_class().gate_actor_class().into(),
+        ),
         ("actor_ref".into(), actor.entity_ref().to_hex().into()),
         ("ceiling".into(), "auto".into()),
     ])]);
+    // The actor's own `Generated` claims stay auto-writable to it alone.
+    let (_, Value::Map(trust)) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("source_trust"))
+        .expect("source trust")
+    else {
+        panic!("trust map");
+    };
+    trust.retain(|(key, _)| key.as_str() != Some(ClaimSource::Generated.as_str()));
+    trust.push((
+        ClaimSource::Generated.as_str().into(),
+        Value::Map(vec![
+            ("actor_ref".into(), actor.entity_ref().to_hex().into()),
+            (
+                "max_auto_sensitivity".into(),
+                u64::from(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND).into(),
+            ),
+            ("receipted".into(), true.into()),
+            ("warned".into(), true.into()),
+        ]),
+    ));
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &manifest).expect("manifest encode");
     crate::test_util::put_policy_manifest_bytes(
@@ -104,9 +161,10 @@ fn retract_op(vault: &Vault, id: EntityId) -> Result<BatchOp> {
 #[test]
 fn demotion_refreshes_binding_at_each_rung_and_stales_old_seal() -> Result<()> {
     for rung_count in 1..=3 {
-        let (_dir, vault, actor) = fixture()?;
+        let (_dir, vault, _) = fixture()?;
         let id = entity(0x64);
-        authored_local_claim(&vault, actor, id)?;
+        // The Dreamer's own claim: only it may be weakened by the Dreamer.
+        let actor = dreamer_claim(&vault, id)?;
         let original = vault.get_claim(&id)?.expect("authored claim");
         let mut head = id;
         for (action, rung, now) in [
@@ -144,7 +202,7 @@ fn demotion_refreshes_binding_at_each_rung_and_stales_old_seal() -> Result<()> {
             let body = vault.get_claim(&head)?.expect("demoted body");
             assert_eq!(claim_demotion_rung(&body)?, Some(rung));
             assert_eq!(body.lifecycle, ClaimLifecycleStatus::Active);
-            assert_eq!(body.evidence, original.evidence);
+            assert_current_actor(&vault, head, actor)?;
             assert_eq!(body.source, original.source);
             assert_eq!(body.approval, original.approval);
             let error = vault

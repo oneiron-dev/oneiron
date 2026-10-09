@@ -203,7 +203,19 @@ fn demotion_preserves_lineage_scope_and_session_and_rechecks_current_policy() ->
     }
     let raw = vault.get_raw(&id)?.expect("demoted");
     let digest = binding_digest(&vault, id)?;
-    permit(&vault, actor.entity_ref(), &[ClaimSource::ToolOutput])?;
+    // A weakening is the Dreamer's write, gated under its own permits. Its
+    // successor carries the predecessor's lineage forward, so without a
+    // permit for every lineage member it pends and writes nothing. The
+    // author keeps its own permits: the close of its claim is still its own.
+    crate::test_util::provision_engine_machines(&vault);
+    let dreamer = vault.dreamer_authority()?;
+    permit_rows(
+        &vault,
+        &[
+            (ClaimSource::ToolOutput, Some(actor.entity_ref())),
+            (ClaimSource::Generated, None),
+        ],
+    )?;
     let error = vault
         .apply_claim_demotion(
             &id,
@@ -212,7 +224,7 @@ fn demotion_preserves_lineage_scope_and_session_and_rechecks_current_policy() ->
             },
             21,
         )
-        .expect_err("the declared source cannot cover a revoked lineage member");
+        .expect_err("the Dreamer's permits must cover the carried lineage");
     assert!(
         matches!(&error, Error::Gate(GateError::GateWriteRejected { outcome: "pending", reason_codes })
         if reason_codes == &vec!["gate.pending.source_trust"]),
@@ -220,13 +232,12 @@ fn demotion_preserves_lineage_scope_and_session_and_rechecks_current_policy() ->
     );
     assert_eq!(vault.get_raw(&id)?.expect("unchanged"), raw);
     assert_eq!(binding_digest(&vault, id)?, digest);
-    permit(
+    permit_rows(
         &vault,
-        actor.entity_ref(),
-        &[ClaimSource::ToolOutput, ClaimSource::Generated],
+        &[(ClaimSource::ToolOutput, None), (ClaimSource::Generated, None)],
     )?;
-    // The successor keeps the original author, so that author's
-    // lineage-bound policy still governs its later lifecycle.
+    // The successor is the Dreamer's, never the original author's, so the
+    // Dreamer's lineage-bound policy governs its later lifecycle.
     let successor = vault
         .apply_claim_demotion(
             &id,
@@ -236,20 +247,33 @@ fn demotion_preserves_lineage_scope_and_session_and_rechecks_current_policy() ->
             21,
         )?
         .claim;
-    assert_current_actor(&vault, successor, actor)?;
+    assert_current_actor(&vault, successor, dreamer)?;
+    let weakened = vault.get_claim(&successor)?.expect("successor");
+    assert_eq!(weakened.source, Some(ClaimSource::Generated));
+    assert_eq!(weakened.session_tag, original.session_tag);
+    let Some(Value::Map(stamp)) = &weakened.evidence else {
+        panic!("stamp");
+    };
+    assert!(stamp.iter().any(|(key, value)| {
+        key.as_str() == Some("lineage")
+            && value
+                .as_array()
+                .is_some_and(|sources| sources.contains(&Value::from("tool_output")))
+    }));
     vault.retract_claim(&successor, 30)?;
     Ok(())
 }
 
 /// REV-9 D1 (ARCH-0003 change policy, RD-23; ARCH-0026 Curate): a confidence
 /// weakening supersedes. The weakened claim closes and stays readable as
-/// history; a successor by the same author carries the lower confidence, the
-/// rung stamp and the decayed claim_of weight; and the claim can rise again.
+/// history; a successor carries the lower confidence, the rung stamp and the
+/// decayed claim_of weight; and the claim can rise again. The successor is
+/// the Dreamer's own claim, and its provenance names the claim it weakened.
 #[test]
 fn weakening_supersedes_and_keeps_the_old_claim_as_history() -> Result<()> {
     let (_dir, vault, actor) = fixture()?;
     let id = entity(0x64);
-    authored_local_claim(&vault, actor, id)?;
+    let dreamer = dreamer_claim(&vault, id)?;
     let original = vault.get_claim(&id)?.expect("authored claim");
     vault.apply_claim_demotion(
         &id,
@@ -285,8 +309,18 @@ fn weakening_supersedes_and_keeps_the_old_claim_as_history() -> Result<()> {
     );
     assert_eq!(successor.predicate, original.predicate);
     assert_eq!(successor.value, original.value);
-    assert_eq!(successor.evidence, original.evidence);
-    assert_current_actor(&vault, weakened.claim, actor)?;
+    assert_eq!(successor.source, Some(ClaimSource::Generated));
+    assert_current_actor(&vault, weakened.claim, dreamer)?;
+    let Some(Value::Map(stamp)) = &successor.evidence else {
+        panic!("stamp");
+    };
+    assert!(
+        stamp
+            .iter()
+            .any(|(key, value)| key.as_str() == Some("provenance")
+                && value.as_map().is_some_and(|provenance| provenance
+                    .contains(&("predecessor".into(), Value::Binary(id.as_bytes().to_vec())))))
+    );
     let edges = vault.edges_out(&weakened.claim)?;
     assert!(
         edges
@@ -313,9 +347,9 @@ fn weakening_supersedes_and_keeps_the_old_claim_as_history() -> Result<()> {
 /// mask and then weakened is still listed by that mask, as its successor.
 #[test]
 fn weakening_a_forked_claim_keeps_its_facet_stamp() -> Result<()> {
-    let (_dir, vault, actor) = fixture()?;
+    let (_dir, vault, _) = fixture()?;
     let id = entity(0x64);
-    authored_local_claim(&vault, actor, id)?;
+    let dreamer = dreamer_claim(&vault, id)?;
     let mask = entity(0x67);
     let mut facet = Vec::new();
     rmpv::encode::write_value(
@@ -334,7 +368,11 @@ fn weakening_a_forked_claim_keeps_its_facet_stamp() -> Result<()> {
         &facet,
     )?;
     let fork = entity(0x68);
-    vault.with_write_txn(|txn| vault.fork_claim_to_facet_in_txn(txn, id, mask, fork, true, 15))?;
+    let writer =
+        crate::batch::SuccessionWriter::new(Some(dreamer), ClaimSource::Generated, "test.fork");
+    vault.with_write_txn(|txn| {
+        vault.fork_claim_to_facet_in_txn(txn, (id, fork), mask, true, writer, 15)
+    })?;
     vault.apply_claim_demotion(
         &fork,
         ClaimDemotionAction::Decay {
@@ -363,5 +401,43 @@ fn weakening_a_forked_claim_keeps_its_facet_stamp() -> Result<()> {
         mask
     );
     assert!(vault.claims_assigned_to(&mask)?.contains(&weakened.claim));
+    Ok(())
+}
+
+/// Astra #1336 P1 repro: a weakening is the Dreamer's act, so it never
+/// borrows the authority of the person who wrote the claim. The Dreamer's
+/// successor is `Generated`, which never closes user truth: the weakening is
+/// refused and the claim stays as its author wrote it.
+#[test]
+fn a_dreamer_weakening_never_closes_user_truth() -> Result<()> {
+    let (_dir, vault, actor) = fixture()?;
+    let id = entity(0x64);
+    authored_local_claim(&vault, actor, id)?;
+    vault.apply_claim_demotion(
+        &id,
+        ClaimDemotionAction::Decay {
+            new_claim_of_weight: 0.1,
+        },
+        20,
+    )?;
+    let raw = vault.get_raw(&id)?.expect("decayed");
+    let error = vault
+        .apply_claim_demotion(
+            &id,
+            ClaimDemotionAction::Weaken {
+                new_confidence: 0.5,
+            },
+            21,
+        )
+        .expect_err("the Dreamer never closes user truth");
+    assert!(
+        matches!(
+            error,
+            Error::InvalidClaimBody("generated claim cannot supersede user-stated truth")
+        ),
+        "{error:?}"
+    );
+    assert_eq!(vault.get_raw(&id)?.expect("unchanged"), raw);
+    assert_current_actor(&vault, id, actor)?;
     Ok(())
 }

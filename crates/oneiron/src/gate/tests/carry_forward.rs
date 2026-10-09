@@ -10,16 +10,43 @@ pub(super) fn forward_envelope(
     vault: &Vault,
     approval: ClaimApprovalStatus,
 ) -> Result<(EntityId, WriteEnvelope)> {
+    forward_envelope_as(vault, approval, crate::ClaimSource::UserStated)
+}
+
+/// The owner's forward claim, stamped `source`. The Dreamer weakens only a
+/// claim that is not user truth, so a weakening fixture records an
+/// observation.
+pub(super) fn forward_envelope_as(
+    vault: &Vault,
+    approval: ClaimApprovalStatus,
+    source: crate::ClaimSource,
+) -> Result<(EntityId, WriteEnvelope)> {
     let owner = vault.ensure_embedded_owner_actor().expect("owner actor");
     Ok((
         owner,
         WriteEnvelope::new(
             WriteActor::new(owner, EdgeActorClass::Human),
-            crate::ClaimSource::UserStated,
+            source,
             WriteProvenance::new(Value::from("follow-up observation"))?,
             approval,
         ),
     ))
+}
+
+/// Puts `policy` with the Dreamer allowed to curate under it: its signer is
+/// provisioned, it has an auto ceiling, and it may auto-write `Generated`
+/// claims. A weakening is the Dreamer's own write (ARCH-0026 Curate), gated
+/// under its own ceiling and permits.
+pub(super) fn let_dreamer_curate(vault: &Vault, mut policy: Vec<u8>) -> Result<()> {
+    crate::test_util::provision_engine_machines(vault);
+    let dreamer = vault.dreamer_authority()?.entity_ref().to_hex();
+    append_actor_ceiling(
+        &mut policy,
+        actor_ceiling_row_for_ref("system", &dreamer, "auto"),
+    );
+    let (key, permits) = source_trust_entry(crate::ClaimSource::Generated, 3);
+    rewrite_policy_manifest_entries(&mut policy, |entries| entries.push((key, permits)));
+    put_policy_manifest_bytes(vault, test_id(0x70), &policy)
 }
 
 #[test]
@@ -285,6 +312,7 @@ fn owner_accepts_low_confidence_care_without_rewriting_confidence() -> Result<()
         crate::claim::ClaimDemotionRung::Decayed
     );
     // A weakening supersedes; its successor carries the lower confidence.
+    let_dreamer_curate(&vault, encode_policy_manifest(vec![]))?;
     let weakening = vault.apply_claim_demotion(
         &id,
         crate::claim::ClaimDemotionAction::Weaken {
@@ -345,8 +373,12 @@ fn admitted_auto_care_can_decay_and_weaken_below_floor() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let mut policy = encode_policy_manifest(vec![]);
     trust_human_candidate_actor(&mut policy);
-    put_policy_manifest_bytes(&vault, test_id(0x70), &policy)?;
-    let (subject, envelope) = forward_envelope(&vault, ClaimApprovalStatus::Auto)?;
+    let_dreamer_curate(&vault, policy)?;
+    let (subject, envelope) = forward_envelope_as(
+        &vault,
+        ClaimApprovalStatus::Auto,
+        crate::ClaimSource::Observed,
+    )?;
     let id = test_id(0x30);
     vault.put_carry_forward_claim(
         &id,
@@ -410,8 +442,12 @@ fn weakened_auto_care_can_be_superseded() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let mut policy = encode_policy_manifest(vec![]);
     trust_human_candidate_actor(&mut policy);
-    put_policy_manifest_bytes(&vault, test_id(0x70), &policy)?;
-    let (subject, envelope) = forward_envelope(&vault, ClaimApprovalStatus::Auto)?;
+    let_dreamer_curate(&vault, policy)?;
+    let (subject, envelope) = forward_envelope_as(
+        &vault,
+        ClaimApprovalStatus::Auto,
+        crate::ClaimSource::Observed,
+    )?;
     let old = test_id(0x30);
     let replacement = test_id(0x31);
     for (id, detail) in [(old, "initial care"), (replacement, "newer care")] {
@@ -836,13 +872,19 @@ fn edited_seed_and_second_authored_row_narrow_in_both_scan_orders() -> Result<()
 
 fn stricter_care_fixture() -> Result<(tempfile::TempDir, Vault, EntityId, WriteEnvelope, EntityId)>
 {
+    stricter_care_fixture_as(crate::ClaimSource::UserStated)
+}
+
+fn stricter_care_fixture_as(
+    source: crate::ClaimSource,
+) -> Result<(tempfile::TempDir, Vault, EntityId, WriteEnvelope, EntityId)> {
     let (dir, vault) = temp_vault();
     put_policy_manifest_bytes(
         &vault,
         test_id(0x70),
         &confidence_manifest(0.9, "nested_narrowing", Vec::new()),
     )?;
-    let (subject, envelope) = forward_envelope(&vault, ClaimApprovalStatus::Auto)?;
+    let (subject, envelope) = forward_envelope_as(&vault, ClaimApprovalStatus::Auto, source)?;
     let id = test_id(0x71);
     vault.put_carry_forward_claim(
         &id,
@@ -866,7 +908,13 @@ fn stricter_care_fixture() -> Result<(tempfile::TempDir, Vault, EntityId, WriteE
 
 #[test]
 fn stricter_policy_does_not_block_canonical_decay_weaken_stale_or_retract() -> Result<()> {
-    let (_dir, vault, subject, _envelope, id) = stricter_care_fixture()?;
+    // The Dreamer weakens only a claim that is not user truth.
+    let (_dir, vault, subject, _envelope, id) =
+        stricter_care_fixture_as(crate::ClaimSource::Observed)?;
+    let_dreamer_curate(
+        &vault,
+        confidence_manifest(0.95, "nested_narrowing", Vec::new()),
+    )?;
     assert_eq!(
         vault
             .apply_claim_demotion(

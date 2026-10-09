@@ -17,6 +17,9 @@ impl Vault {
     /// claim_of edge weight in place and the stale mark is an in-place flag. A
     /// weakening changes belief, so it supersedes: a successor claim at the
     /// lower confidence closes `claim_id`, which stays readable as history.
+    /// The weakening is the Dreamer's act (ARCH-0026 Curate), so its successor
+    /// is the Dreamer's own `Generated` claim, and a `UserStated` or legacy
+    /// unstamped claim is refused before anything parks or is written.
     pub fn apply_claim_demotion(
         &self,
         claim_id: &EntityId,
@@ -38,6 +41,10 @@ impl Vault {
                 ));
             }
             _ => {}
+        }
+        if matches!(action, ClaimDemotionAction::Weaken { .. }) {
+            self.dreamer_successor_writer_in_txn(&mut wtxn, now)?
+                .require_may_succeed(&body)?;
         }
         let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
         if policy.criticality_for_predicate(&body.predicate)
@@ -149,6 +156,7 @@ impl Vault {
                     return Err(Error::InvalidClaimBody("confidence increase"));
                 }
                 let successor = EntityId::now();
+                let writer = self.dreamer_successor_writer_in_txn(wtxn, now)?;
                 crate::batch::ClaimMaterialization::apply_successor(
                     self,
                     wtxn,
@@ -157,9 +165,10 @@ impl Vault {
                     super::ClaimSuccession::Weakening {
                         confidence: new_confidence,
                     },
+                    writer,
                     now,
                 )?;
-                self.supersede_claim_in_txn(wtxn, &successor, claim_id, now)?;
+                self.supersede_claim_in_txn_as(wtxn, &successor, claim_id, now, writer.actor())?;
                 return Ok(ClaimDemotion {
                     rung: ClaimDemotionRung::Weakened,
                     claim: successor,
@@ -234,5 +243,19 @@ impl Vault {
             rung: next,
             claim: *claim_id,
         })
+    }
+
+    /// A weakening is the Dreamer's act (ARCH-0026 Curate): its successor is
+    /// the Dreamer's own `Generated` claim, under its authority and stamp.
+    fn dreamer_successor_writer_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        now: u64,
+    ) -> Result<crate::batch::SuccessionWriter> {
+        Ok(crate::batch::SuccessionWriter::new(
+            Some(self.dreamer_authority_in_txn(wtxn, now)?),
+            ClaimSource::Generated,
+            "dreamer.curate",
+        ))
     }
 }
