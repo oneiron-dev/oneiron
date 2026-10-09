@@ -1,6 +1,7 @@
 //! The stale door's provenance hook: a wrapper whose cited source was erased
-//! stops justifying its semantic edge in the same transaction. Replaying an
-//! older image of that edge never brings the support back.
+//! stops justifying its semantic edge in the same transaction. Writing that
+//! edge again, by replaying an older image or by a public put after its
+//! removal, never brings the support back.
 
 use super::queries::walk_edge_provenance_cohort_in_txn;
 use super::{
@@ -25,12 +26,13 @@ use crate::vault::MAX_EDGE_QUERY_RESULTS;
 use heed::RwTxn;
 use std::ops::ControlFlow;
 
-/// How many inbound `claim_of` rows the replay check walks before refusing.
-/// A WORK bound, like the claim lookup's walk (`claim::read`): the walk holds
-/// only the replayed edge's own wrappers, never its source's whole fan-in, so
-/// it sits an order of magnitude above the materialization cap, and ordinary
-/// claims about a busy source do not turn a valid replay into a refusal.
-const REPLAY_SCAN_CEILING: usize = MAX_EDGE_QUERY_RESULTS * 10;
+/// How many inbound `claim_of` rows the withdrawal check walks before
+/// refusing. A WORK bound, like the claim lookup's walk (`claim::read`): the
+/// walk holds only the written edge's own wrappers, never its source's whole
+/// fan-in, so it sits an order of magnitude above the materialization cap,
+/// and ordinary claims about a busy source do not turn a valid write into a
+/// refusal.
+const WITHDRAWAL_SCAN_CEILING: usize = MAX_EDGE_QUERY_RESULTS * 10;
 
 /// Re-derives the subject edge's flags once `id` is dependency-stale.
 ///
@@ -110,9 +112,9 @@ pub(crate) fn refresh_stale_wrapper_in_txn(
     stamp_in_txn(store, txn, &subject, edge.provenance, flags)
 }
 
-/// Whether a replayed image of `subject` carrying `incoming` flags must meet
-/// the local wrapper cohort once written (see
-/// [`withdraw_replayed_support_in_txn`]); read before the write.
+/// Whether an edge image of `subject` carrying `incoming` flags, a replay or
+/// a public put, must meet the local wrapper cohort once written (see
+/// [`withdraw_image_support_in_txn`]); read before the write.
 ///
 /// The surviving local wrappers decide, not the stored edge: an edge removal
 /// drops the edge rows but keeps each wrapper and its `claim_of` link. Only a
@@ -123,7 +125,7 @@ pub(crate) fn refresh_stale_wrapper_in_txn(
 /// has no withdrawn wrapper the image could outrank. Any other image, bare
 /// over no stored edge or provenanced over any, is checked, unless its source
 /// has no inbound `claim_of` link at all (one seek).
-pub(crate) fn replay_needs_cohort_check(
+pub(crate) fn image_needs_cohort_check(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     subject: &EdgeRef,
@@ -155,17 +157,17 @@ pub(crate) fn replay_needs_cohort_check(
         .is_some())
 }
 
-/// Local invalidation outranks a replayed edge image. Run after the replay
-/// wrote `subject` in this transaction: when local `edge.provenance` wrappers
-/// for it exist and none is live (each closed or dependency-stale), the
-/// support the image asserts was withdrawn here, so the edge takes the
-/// retracted stamp with the D14 winner's persisted actor class. A live
-/// wrapper, or no wrapper at all (none replicated yet), leaves the image's
-/// flags as written. Changed flags invalidate both endpoints' PPR and bump
-/// the graph version. The walk stops at the first live wrapper and refuses
-/// past [`REPLAY_SCAN_CEILING`] `claim_of` rows, never reading a crowded
-/// source as an empty cohort.
-pub(crate) fn withdraw_replayed_support_in_txn(
+/// Local invalidation outranks a written edge image. Run after a replay or a
+/// public put wrote `subject` in this transaction: when local
+/// `edge.provenance` wrappers for it exist and none is live (each closed or
+/// dependency-stale), the support the image asserts was withdrawn here, so
+/// the edge takes the retracted stamp with the D14 winner's persisted actor
+/// class. A live wrapper, or no wrapper at all (none replicated yet), leaves
+/// the image's flags as written. Changed flags invalidate both endpoints' PPR
+/// and bump the graph version. The walk stops at the first live wrapper and
+/// refuses past [`WITHDRAWAL_SCAN_CEILING`] `claim_of` rows, never reading a
+/// crowded source as an empty cohort.
+pub(crate) fn withdraw_image_support_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
     subject: &EdgeRef,
@@ -181,7 +183,7 @@ pub(crate) fn withdraw_replayed_support_in_txn(
 }
 
 /// Whether `stored` is `image` of `subject` as the replay guard lands it over
-/// local withdrawal ([`withdraw_replayed_support_in_txn`]): the image's own
+/// local withdrawal ([`withdraw_image_support_in_txn`]): the image's own
 /// value bytes under the retracted stamp the local cohort decides. Recovery
 /// completion accepts that projection in place of the image's bytes. An
 /// image that asserts no support (structural, or already retracted) is never
@@ -231,7 +233,7 @@ fn withdrawn_support(
             ClaimLifecycleStatus::Superseded,
             ClaimLifecycleStatus::Retracted,
         ],
-        REPLAY_SCAN_CEILING,
+        WITHDRAWAL_SCAN_CEILING,
         |claim, lifecycle| {
             if lifecycle == ClaimLifecycleStatus::Active {
                 live = true;

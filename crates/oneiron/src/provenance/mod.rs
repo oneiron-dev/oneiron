@@ -152,7 +152,7 @@ mod invalidation;
 #[cfg(feature = "sync")]
 pub(crate) use invalidation::holds_withdrawn_image;
 pub(crate) use invalidation::{
-    refresh_stale_wrapper_in_txn, replay_needs_cohort_check, withdraw_replayed_support_in_txn,
+    image_needs_cohort_check, refresh_stale_wrapper_in_txn, withdraw_image_support_in_txn,
 };
 mod lifecycle;
 pub mod made_by;

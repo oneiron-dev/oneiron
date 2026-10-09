@@ -2,7 +2,8 @@
 //! Erasing the cited words withdraws that support from fresh graph reads, and
 //! so from PPR, which skips a retracted edge. The TURN and the approved head
 //! stay, and another live attachment of the same edge keeps the support. A
-//! replay or a canonical recovery of an older image keeps it withdrawn.
+//! replay or a canonical recovery of an older image keeps it withdrawn, and
+//! so does a public put of the edge after its removal.
 use super::*;
 use crate::edge::EdgeConfirmationStatus::{self, Confirmed, Retracted};
 use crate::provenance::{
@@ -179,6 +180,48 @@ fn a_bare_image_after_edge_removal_keeps_the_withdrawn_support_retracted() -> Re
         [Some(Retracted); 2],
         "a bare image never supports the head undampened"
     );
+    Ok(())
+}
+
+/// After the erasure, a caller removes the TURN -> head edge and puts it back
+/// through each public edge door: the plain puts (`Vault::put_edge`,
+/// `Vault::put_edge_with_vad`) and the timestamped batch builders. The stale
+/// wrapper still names the edge, so each put lands retracted: a fresh graph
+/// read never finds the erased words supporting the head again.
+#[test]
+fn putting_a_removed_edge_back_keeps_the_withdrawn_support_retracted() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = attached(&vault)?;
+    delete_message(&vault, fixture.cited)?;
+    let (turn, kind, head) = (fixture.turn, EdgeKind::Supports, fixture.head);
+    let neutral = crate::affect::Vad::NEUTRAL;
+    let doors: [(&str, &dyn Fn() -> Result<()>); 4] = [
+        ("put_edge", &|| vault.put_edge(&turn, kind, &head, 1.0)),
+        ("put_edge_with_vad", &|| {
+            vault.put_edge_with_vad(&turn, kind, &head, 1.0, neutral)
+        }),
+        ("edge_with_created_at", &|| {
+            vault
+                .batch()
+                .edge_with_created_at(&turn, kind, &head, 1.0, 7)
+                .commit()
+        }),
+        ("edge_with_created_at_and_vad", &|| {
+            vault
+                .batch()
+                .edge_with_created_at_and_vad(&turn, kind, &head, 1.0, 7, neutral)
+                .commit()
+        }),
+    ];
+    for (door, put) in doors {
+        assert!(vault.delete_edge(&turn, kind, &head)?, "{door}: removed");
+        put()?;
+        assert_eq!(
+            support_status(&vault, turn, head)?,
+            [Some(Retracted); 2],
+            "{door}: the erased words never support the head again"
+        );
+    }
     Ok(())
 }
 
