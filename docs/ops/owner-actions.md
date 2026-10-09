@@ -113,8 +113,19 @@ on.
 
 The restored copy is built beside the vault, then swapped into place in one atomic step while
 the restore holds both vaults, so a server starting meanwhile can open neither half-way. Your
-previous vault is kept whole as `<vault>.pre-restore-<UTC time>`; nothing is deleted. To undo,
-stop the server and swap the directories back. If the directory cannot be synced after the swap,
+previous vault is kept whole as `<vault>.pre-restore-<UTC time>`; nothing is deleted. It still
+binds the gate-decision key custody the restored vault keeps, so it is archived: it opens and
+reads, but refuses every write, erase and key retirement, which would otherwise reach the
+restored vault's keys. To use it again, activate it:
+
+```sh
+oneiron restore --activate /path/to/vault.pre-restore-<UTC time>
+```
+
+Activation gives it key custody of its own beside it, holding only the keys still live in the
+restored vault's custody, the way a rehearsal's copy gets its own; from then on it is a side
+vault you can serve from its own path (`--vault-path`), and an erase in either vault never
+reaches the other's keys. If the directory cannot be synced after the swap,
 the restore still reports success, with a `durability_warning` that names the previous vault:
 the swap is done, but a crash before the disk flushes may undo it.
 
