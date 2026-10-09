@@ -180,3 +180,51 @@ fn a_failed_rehearsal_removes_only_what_it_created() {
     assert!(!scratch.exists());
     assert_eq!(std::fs::read(custody.join("key")).unwrap(), b"not ours");
 }
+
+#[test]
+fn a_clock_that_stepped_back_never_prunes_the_backup_just_taken() {
+    let root = tempfile::tempdir().unwrap();
+    let plan = plan(root.path(), 2);
+    let vault = Vault::open_owned(root.path().join("vault"), VaultConfig::default()).unwrap();
+    // Two backups stamped in the future: the clock has since stepped back.
+    let mut older = Vec::new();
+    for _ in 0..2 {
+        let taken = take(&vault, &plan).unwrap();
+        let future = taken
+            .backup
+            .file
+            .replace(&file_stamp(taken.backup.taken_ms), "20991231T235959.999Z");
+        std::fs::rename(&taken.backup.path, plan.dir.join(&future)).unwrap();
+        older.push(future);
+    }
+    let newest = take(&vault, &plan).unwrap();
+    assert!(newest.backup.path.exists(), "the backup just taken is kept");
+    assert_eq!(newest.pruned, vec![older[0].clone()]);
+    let listed: Vec<_> = list(&plan).unwrap().into_iter().map(|r| r.file).collect();
+    assert_eq!(listed, vec![older[1].clone(), newest.backup.file.clone()]);
+    assert!(newest.backup.sequence > 2, "{}", newest.backup.file);
+}
+
+/// A backup named before sequences (`<label>-<stamp>-<id8>`, as #1301
+/// shipped) still lists, older than every sequenced one, and is pruned first.
+#[test]
+fn a_backup_named_before_sequences_lists_first_and_is_pruned_first() {
+    let root = tempfile::tempdir().unwrap();
+    let plan = plan(root.path(), 2);
+    let vault = Vault::open_owned(root.path().join("vault"), VaultConfig::default()).unwrap();
+    let first = take(&vault, &plan).unwrap().backup;
+    let legacy = format!("{}-20991231T235959.999Z-abcdef12{FILE_SUFFIX}", plan.label);
+    std::fs::rename(&first.path, plan.dir.join(&legacy)).unwrap();
+    let listed = list(&plan).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(
+        (listed[0].file.as_str(), listed[0].sequence),
+        (legacy.as_str(), 0)
+    );
+
+    let second = take(&vault, &plan).unwrap();
+    assert_eq!(second.backup.sequence, 1);
+    assert!(second.pruned.is_empty());
+    let third = take(&vault, &plan).unwrap();
+    assert_eq!(third.pruned, vec![legacy]);
+}
