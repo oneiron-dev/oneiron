@@ -126,6 +126,19 @@ pub(crate) fn scan_file_content(_path: &str, bytes: &[u8]) -> Option<&'static st
     detect(&haystack, Door::Release)
 }
 
+/// The release doors' field rule, for a reader that finds fields the
+/// structural scans below do not walk (a binary map key, a repeated JSON key).
+pub(crate) fn release_credential_field(name: &str, nil: bool, text: Option<&str>) -> bool {
+    credential_field(name, nil, text, Door::Release)
+}
+
+/// A credential name holding anything but nil or a placeholder.
+fn credential_field(name: &str, nil: bool, text: Option<&str>, door: Door) -> bool {
+    shapes::sensitive_key(name)
+        && !nil
+        && !text.is_some_and(|text| shapes::field_placeholder(text, door))
+}
+
 /// Identifiers and records outside the batch door (refs, paths, telemetry
 /// keys, session tags, question rows) keep their scan in both modes: they land
 /// in keys, indexes and receipts that a later mask cannot reach.
@@ -267,11 +280,7 @@ fn sanitize_json(value: &mut serde_json::Value, null: bool, door: Door) -> bool 
             }
         }
         Value::Object(fields) => fields.iter_mut().fold(false, |changed, (key, value)| {
-            let sensitive = shapes::sensitive_key(key)
-                && !value.is_null()
-                && !value
-                    .as_str()
-                    .is_some_and(|text| shapes::field_placeholder(text, door));
+            let sensitive = credential_field(key, value.is_null(), value.as_str(), door);
             if sensitive {
                 *value = replacement();
                 true
@@ -325,11 +334,9 @@ fn sanitize_messagepack(value: &mut rmpv::Value, null: bool, door: Door) -> bool
             }
         }
         Value::Map(fields) => fields.iter_mut().fold(false, |changed, (key, value)| {
-            let sensitive = key.as_str().is_some_and(shapes::sensitive_key)
-                && !value.is_nil()
-                && !value
-                    .as_str()
-                    .is_some_and(|text| shapes::field_placeholder(text, door));
+            let sensitive = key
+                .as_str()
+                .is_some_and(|key| credential_field(key, value.is_nil(), value.as_str(), door));
             let key_changed = sanitize_messagepack(key, null, door);
             let value_changed = if sensitive {
                 *value = replacement();
