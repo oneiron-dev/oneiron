@@ -48,9 +48,7 @@ pub use self::types::*;
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
-use crate::attempt_queue::{
-    AttemptId, AttemptInterventionEffect, AttemptQueue, ClaimAttempt, ClaimOutcome,
-};
+use crate::attempt_queue::{AttemptId, AttemptQueue, ClaimAttempt, ClaimOutcome};
 #[cfg(test)]
 use crate::claim::ClaimSubject;
 #[cfg(test)]

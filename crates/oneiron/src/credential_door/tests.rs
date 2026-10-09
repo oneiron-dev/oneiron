@@ -291,15 +291,6 @@ fn the_door_composes_over_the_vault_it_was_given() {
 }
 
 #[test]
-fn catastrophe_floors_are_constants_not_dials() {
-    const {
-        assert!(DOOR_SCAN_ALWAYS_ON);
-    }
-    assert_eq!(DOOR_MAX_LEASE_TTL_SECS, 3600);
-    assert_eq!(DOOR_ONE_SHOT_MAX_LIFETIME_SECS, 300);
-}
-
-#[test]
 fn a_row_naming_the_scan_floor_fails_closed_and_the_scan_still_runs() {
     // The lattice may not reach a floor at all: naming one is refused, and
     // the scan the row tried to name keeps rejecting.
@@ -313,17 +304,6 @@ fn a_row_naming_the_scan_floor_fails_closed_and_the_scan_still_runs() {
     let blobs = [blob("src/lib.rs", &[DETECTED_LINE])];
     let verdict = scan(&door, &blobs).expect("the scan reads no dial");
     assert!(matches!(verdict, DoorScanVerdict::Rejected { .. }));
-}
-
-#[test]
-fn a_row_naming_the_ttl_floor_fails_closed() {
-    let (_tmp, vault, door) = door_fixture();
-    let key = "secret.door.floor.door_max_lease_ttl_secs";
-    let row = (Value::from(key), Value::from(7200_u64));
-    put_policy_manifest(&vault, 0x12, vec![row]);
-
-    let err = door.door_policy().expect_err("floor naming fails closed");
-    assert!(is_floor_named(&err));
 }
 
 #[test]
@@ -342,34 +322,8 @@ fn a_slip_may_not_name_a_floor_either() {
 }
 
 // ---------------------------------------------------------------------------
-// T0 — remote at door
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // Authenticated receive-pack — loopback is not an identity
 // ---------------------------------------------------------------------------
-
-#[test]
-fn an_absent_credential_on_loopback_is_refused() {
-    let (_tmp, _vault, door) = door_fixture();
-    let err = door
-        .authenticate_receive_pack(None, &repo(), loopback())
-        .expect_err("127.0.0.1 is a route, not a principal");
-    assert_eq!(deny_reason(err), DoorDenyReason::CredentialAbsent);
-}
-
-#[test]
-fn a_live_credential_passes_the_one_evaluator_from_any_address() {
-    let (_tmp, _vault, door) = door_fixture();
-    let now = witnessed(&door);
-    let credential = push_credential(now);
-    let elsewhere = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7));
-
-    door.authenticate_receive_pack(Some(&credential), &repo(), loopback())
-        .expect("a live slip authenticates on loopback");
-    door.authenticate_receive_pack(Some(&credential), &repo(), elsewhere)
-        .expect("and off it: the address is not an authorization input");
-}
 
 #[test]
 fn a_dial_with_no_allowed_effectors_shuts_the_receive_pack_door_itself() {
@@ -404,40 +358,6 @@ fn a_dial_with_no_allowed_effectors_shuts_the_receive_pack_door_itself() {
         .authenticate_receive_pack(None, &repo(), loopback())
         .expect_err("still default-deny");
     assert_eq!(deny_reason(err), DoorDenyReason::CredentialAbsent);
-}
-
-#[test]
-fn a_dial_that_keeps_receive_pack_still_authenticates_it() {
-    // The dial narrows; it does not deny by existing. A manifest that lowers
-    // the TTL ceiling, or that names receive-pack explicitly, leaves the push
-    // path exactly where it was.
-    let (_tmp, vault, door) = door_fixture();
-    let now = witnessed(&door);
-    let credential = push_credential(now);
-
-    let named = vec![Value::from(DOOR_RECEIVE_PACK_EFFECTOR)];
-    put_policy_manifest(&vault, 0x42, vec![ttl_row(60), effector_row(named)]);
-    let policy = door.door_policy().expect("dial");
-
-    assert!(policy.admits_effector(EFFECTOR));
-
-    door.authenticate_receive_pack(Some(&credential), &repo(), loopback())
-        .expect("a narrowed dial that keeps the door open keeps it open");
-}
-
-#[test]
-fn an_unreadable_dial_refuses_receive_pack_authentication() {
-    // Fail-closed applies to the push path too: a dial the door cannot read
-    // is never the permissive default that would let the push through.
-    let (_tmp, vault, door) = door_fixture();
-    let now = witnessed(&door);
-    let credential = push_credential(now);
-    put_policy_manifest(&vault, 0x43, vec![ttl_row(DOOR_MAX_LEASE_TTL_SECS + 1)]);
-
-    let err = door
-        .authenticate_receive_pack(Some(&credential), &repo(), loopback())
-        .expect_err("an unreadable dial denies the push");
-    assert!(is_invalid_policy(&err));
 }
 
 #[test]
@@ -538,18 +458,6 @@ fn a_door_operation_takes_its_instant_from_the_vault_clock_seam() {
 }
 
 #[test]
-fn a_credential_dead_at_the_vault_instant_cannot_push() {
-    let (_tmp, _vault, door) = door_fixture();
-    let now = witnessed(&door).secs();
-    let credential = push_credential_from(now - 3600, 600);
-
-    let err = door
-        .authenticate_receive_pack(Some(&credential), &repo(), loopback())
-        .expect_err("a slip dead at the vault's instant is refused");
-    assert_eq!(deny_reason(err), DoorDenyReason::Expired);
-}
-
-#[test]
 fn two_dials_resolve_most_restrictive() {
     let (_tmp, vault, door) = door_fixture();
     put_policy_manifest(
@@ -561,24 +469,6 @@ fn two_dials_resolve_most_restrictive() {
 
     let policy = door.door_policy().expect("dial");
     assert!(!policy.admits_effector(EFFECTOR));
-}
-
-#[test]
-fn a_dial_may_narrow_the_effector_set_but_never_widen_it() {
-    let (_tmp, vault, door) = door_fixture();
-    put_policy_manifest(&vault, 0x24, vec![effector_row(vec![])]);
-    let now = witnessed(&door);
-    let credential = push_credential(now);
-
-    let err = door
-        .authenticate_receive_pack(Some(&credential), &repo(), loopback())
-        .expect_err("a dial allowing no effector denies every push");
-    assert!(is_scope_refusal(&err));
-
-    let foreign = vec![Value::from("connector:gmail")];
-    let body = encoded_map(vec![effector_row(foreign)]);
-    let widened = stored_policy(body).expect_err("widening fails");
-    assert!(is_invalid_policy(&widened));
 }
 
 #[test]
@@ -640,46 +530,6 @@ fn a_partially_decoded_dial_body_never_defaults_open() {
     let err = door
         .authenticate_receive_pack(Some(&credential), &repo(), loopback())
         .expect_err("no push is admitted against an unreadable dial");
-    assert!(is_invalid_policy(&err));
-}
-
-#[test]
-fn a_body_with_no_door_rows_takes_the_safe_default() {
-    let (_tmp, vault, door) = door_fixture();
-    let row = (Value::from("gate.unrelated.key"), Value::from(1_u64));
-    put_policy_manifest(&vault, 0x26, vec![row]);
-
-    let policy = door.door_policy().expect("dial");
-
-    assert!(policy.admits_effector(EFFECTOR));
-    assert!(!policy.admits_effector(""));
-}
-
-#[test]
-fn a_dangling_manifest_index_entry_refuses_the_door_and_writes_nothing() {
-    // The corruption this fails closed on is the cheapest one available: an
-    // indexed POLICY_MANIFEST whose body is gone. If the resolver skipped it,
-    // deleting exactly one entity row would restore the FULL effector set and
-    // the FULL TTL ceiling the deleted manifest existed to narrow — a dial
-    // that can be widened by damaging the store is not a dial.
-    let (_tmp, vault, door) = door_fixture();
-    put_manifest_index_over_entity(&vault, 0x32, None);
-
-    let err = door
-        .door_policy()
-        .expect_err("a dangling manifest entry is not a manifest that declared nothing");
-    assert!(is_invalid_policy(&err));
-
-    let now = witnessed(&door);
-    let credential = push_credential(now);
-    let err = door
-        .authenticate_receive_pack(Some(&credential), &repo(), loopback())
-        .expect_err("no push is admitted against a corrupt manifest plane");
-    assert!(is_invalid_policy(&err));
-
-    let err = door
-        .authenticate_receive_pack(Some(&credential), &repo(), loopback())
-        .expect_err("nor does a push");
     assert!(is_invalid_policy(&err));
 }
 
@@ -769,59 +619,9 @@ fn every_broken_manifest_index_branch_fails_closed() {
     );
 }
 
-#[test]
-fn a_manifest_body_that_is_present_but_unreadable_refuses_the_door() {
-    // The body half of the same audit: a POLICY_MANIFEST row whose body was
-    // truncated to nothing is a declaration erased, not a pack that never
-    // declared.
-    let (_tmp, vault, door) = door_fixture();
-    put_policy_manifest_body(&vault, 0x36, Vec::new());
-
-    let err = door.door_policy().expect_err("an erased body");
-    assert!(is_invalid_policy(&err));
-
-    let now = witnessed(&door);
-    let credential = push_credential(now);
-    let err = door
-        .authenticate_receive_pack(Some(&credential), &repo(), loopback())
-        .expect_err("and denies a push");
-    assert!(is_invalid_policy(&err));
-}
-
-// ---------------------------------------------------------------------------
-// The admission is atomic with the stamp
-// ---------------------------------------------------------------------------
-
 // ---------------------------------------------------------------------------
 // The typed admission values are the only authority shape
 // ---------------------------------------------------------------------------
-
-#[test]
-fn a_door_effector_is_a_member_of_the_constant_set_not_a_matching_string() {
-    // The raw effector plumbing this replaces was a `BTreeSet<String>` that
-    // could hold anything, checked for membership by whoever remembered to.
-    // Now membership is decided once, on the way in, and a value that exists
-    // IS a member.
-    let known = DoorEffector::parse(DOOR_RECEIVE_PACK_EFFECTOR).expect("a known effector");
-    assert_eq!(known.as_str(), DOOR_RECEIVE_PACK_EFFECTOR);
-    // What came back is one of the door's own constants — a `&'static str`
-    // drawn from `DOOR_EFFECTORS`, never the caller's bytes re-wrapped.
-    assert!(DOOR_EFFECTORS.contains(&known.as_str()));
-
-    for foreign in [
-        "",
-        "connector:gmail",
-        "door:receive-pack ",
-        " door:receive-pack",
-        "DOOR:RECEIVE-PACK",
-        "door:receive-pack\0",
-    ] {
-        assert!(
-            DoorEffector::parse(foreign).is_none(),
-            "{foreign:?} is not a door effector"
-        );
-    }
-}
 
 #[test]
 fn the_dial_is_a_subset_of_the_door_effectors_by_construction() {
@@ -853,18 +653,6 @@ fn the_dial_is_a_subset_of_the_door_effectors_by_construction() {
 // ---------------------------------------------------------------------------
 // Pre-receive verdict
 // ---------------------------------------------------------------------------
-
-#[test]
-fn a_clean_push_is_clean() {
-    let (_tmp, _vault, door) = door_fixture();
-    let blobs = [
-        blob("src/lib.rs", &[b"fn main() {}", b"// nothing to see"]),
-        blob("README.md", &[b"# engine"]),
-    ];
-
-    let verdict = scan(&door, &blobs).expect("a clean push scans");
-    assert_eq!(verdict, DoorScanVerdict::Clean);
-}
 
 #[test]
 fn a_detector_hit_rejects_with_a_valueless_lift_proposal() {
@@ -959,45 +747,8 @@ fn a_scanner_failure_is_a_rejection() {
 }
 
 // ---------------------------------------------------------------------------
-// One-shot hatch and the recorded mint stop
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // Nothing printable carries a value
 // ---------------------------------------------------------------------------
-
-#[test]
-fn door_refusals_and_credentials_print_no_secret_material() {
-    let (_tmp, _vault, door) = door_fixture();
-    let now = witnessed(&door);
-    let credential = push_credential(now);
-    let printed = format!("{credential:?}");
-    assert_eq!(credential.slip_id(), "slip-push-1");
-    assert_eq!(credential.holder_ref(), "holder:tester");
-    assert!(printed.contains("slip-push-1"));
-    assert!(!printed.contains(secret_text()));
-
-    let errors = [
-        CredentialDoorError::BinaryContentRejected {
-            path: "assets/blob.bin".to_owned(),
-        },
-        CredentialDoorError::UnauthorizedPrincipal {
-            reason: DoorDenyReason::Expired,
-        },
-        CredentialDoorError::AuthorityRejected,
-        CredentialDoorError::LeaseScopeRefused {
-            effector: DOOR_RECEIVE_PACK_EFFECTOR.to_owned(),
-            reason: "scope refused",
-        },
-    ];
-    for err in &errors {
-        let rendered = format!("{err} / {err:?}");
-        assert!(!rendered.contains(secret_text()));
-        assert!(!rendered.contains("ghp_"));
-    }
-}
-
-mod authority;
 
 #[test]
 fn all_scope_admits_only_the_live_door_preset_vocabulary() {

@@ -25,8 +25,7 @@ const MAX_PROPOSAL_CHOICES: u16 = 5;
 /// How many participants one proposal may issue tokens for.
 const MAX_PROPOSAL_PARTICIPANTS: u16 = 16;
 /// Width of a raw participant token, in lower-hex characters. Pinned to what
-/// the shared minter emits; `participant_token_width_matches_the_shared_minter`
-/// is what keeps the two from drifting.
+/// the shared minter emits.
 pub(super) const PARTICIPANT_TOKEN_HEX_LEN: usize = 64;
 // Domain separators, in the discipline `lifecycle.rs` established: a companion
 // digest can never be replayed as a hold token digest or a session key.

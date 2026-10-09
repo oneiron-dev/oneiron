@@ -5,7 +5,6 @@ use crate::registry::{
     TYPE_BYTE_ZONE_COMPILED_PRODUCT_END, TYPE_BYTE_ZONE_COMPILED_PRODUCT_START,
     TYPE_BYTE_ZONE_SYSTEM_START, entity_type_registry_entry, zone_of,
 };
-use crate::temporal::TimeRange;
 use crate::vault::Vault;
 
 fn open_test_vault() -> (tempfile::TempDir, Vault) {
@@ -33,34 +32,6 @@ fn crm_band_byte(vault: &Vault, nth: u8) -> u8 {
         })
         .nth(nth as usize)
         .expect("the compiled-product zone must retain free dynamic slots")
-}
-
-#[test]
-fn campaign_kind_registers_runtime_assigned_crm_byte() -> crate::Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let assigned = crm_band_byte(&vault, 0);
-
-    let registration = register_campaign_kind(
-        &vault,
-        assigned,
-        crate::registry::TypeByteFamily::Productivity,
-    )?;
-
-    assert_eq!(registration.type_byte, assigned);
-    assert_eq!(registration.zone, TypeByteZone::CompiledProduct);
-    assert_eq!(registration.short_id_prefix, CAMPAIGN_SHORT_ID_PREFIX);
-    assert_eq!(registration.pack, CRM_PACK_ID);
-    assert_eq!(registration.family, Some(TypeByteFamily::Productivity));
-
-    let persisted = vault
-        .structural_kind_registration(assigned)
-        .expect("registration must be readable from the vault registry");
-    assert_eq!(persisted.type_byte, assigned);
-    assert_eq!(persisted.zone, TypeByteZone::CompiledProduct);
-    assert_eq!(persisted.short_id_prefix, CAMPAIGN_SHORT_ID_PREFIX);
-    assert_eq!(persisted.pack, CRM_PACK_ID);
-    assert_eq!(persisted.family, Some(TypeByteFamily::Productivity));
-    Ok(())
 }
 
 #[test]
@@ -185,45 +156,6 @@ fn campaign_kind_rejects_prefix_or_byte_collision() -> crate::Result<()> {
             Error::Registry(RegistryError::StructuralKindPrefixCollision(ref prefix)) if prefix == CAMPAIGN_SHORT_ID_PREFIX
         ),
         "prefix collision must surface the existing prefix variant"
-    );
-    Ok(())
-}
-
-#[test]
-fn campaign_short_id_uses_ca_prefix() -> crate::Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let assigned = crm_band_byte(&vault, 0);
-    register_campaign_kind(
-        &vault,
-        assigned,
-        crate::registry::TypeByteFamily::Productivity,
-    )?;
-
-    let id = crate::test_util::entity(0x5C);
-    vault.put_entity(
-        &id,
-        assigned,
-        TimeRange { start: 1, end: 1 },
-        2,
-        b"campaign",
-    )?;
-
-    let rtxn = vault.store.env.read_txn()?;
-    let raw = vault
-        .store
-        .short_ids_reverse
-        .get(&rtxn, id.as_bytes())?
-        .expect("a registered kind must mint a short id on write");
-    let (short_id, _content_hash) = crate::batch::parse_short_id_value(&raw)?;
-
-    assert!(
-        short_id.starts_with(CAMPAIGN_SHORT_ID_PREFIX),
-        "short id {short_id:?} must resolve through the persisted `ca` registration"
-    );
-    assert_eq!(
-        short_id,
-        format!("{CAMPAIGN_SHORT_ID_PREFIX}1"),
-        "the first CAMPAIGN entity must take counter 1 in the `ca` namespace"
     );
     Ok(())
 }

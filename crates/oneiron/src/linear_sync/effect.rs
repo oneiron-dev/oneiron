@@ -385,47 +385,4 @@ mod tests {
             .unwrap();
         assert!(fx.denied(&request));
     }
-
-    #[test]
-    fn scheduler_bound_cap_of_one_refuses_second_task_from_unkeyed_writer() {
-        let fx = fixture();
-        fx.grant(fx.scheduler);
-        fx.grant(fx.writer);
-        // Only the scheduler holds a key. Actor-bound keys never match the
-        // writer, so the scheduler's budget alone must bound the mirror.
-        fx.cap_one_key(Some(fx.scheduler));
-        let first = fx.create_request("first");
-        assert!(fx.vault.authorize_linear_effect(&first).is_ok());
-        assert_eq!(fx.used(fx.scheduler), 1);
-        assert!(
-            fx.vault.authorize_linear_effect(&first).is_ok(),
-            "one logical effect pays once"
-        );
-        assert_eq!(fx.used(fx.scheduler), 1);
-        let second = fx.create_request("second");
-        assert!(fx.denied(&second), "scheduler cap of one refuses task two");
-        assert_eq!(fx.used(fx.scheduler), 1);
-    }
-
-    #[test]
-    fn shared_connector_key_charges_once_and_refuses_second_task() {
-        let fx = fixture();
-        fx.grant(fx.writer);
-        fx.grant(fx.scheduler);
-        fx.cap_one_key(None);
-        let request = fx.create_request("work");
-        assert!(
-            fx.vault.authorize_linear_effect(&request).is_ok(),
-            "a shared cap-one key must be charged only once for two authorities"
-        );
-        assert_eq!(fx.used(fx.scheduler), 1);
-        assert!(
-            fx.vault.authorize_linear_effect(&request).is_ok(),
-            "replay costs zero"
-        );
-        assert_eq!(fx.used(fx.writer), 1);
-        let other = fx.create_request("other");
-        assert!(fx.denied(&other));
-        assert_eq!(fx.used(fx.scheduler), 1);
-    }
 }

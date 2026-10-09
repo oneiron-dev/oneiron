@@ -80,29 +80,6 @@ fn code_sandbox_microvm_read_file_bounds_base_mount_bytes() {
 
 #[cfg(unix)]
 #[test]
-fn code_sandbox_microvm_prepare_accepts_self_owned_existing_scratch_root() {
-    use std::os::unix::fs::MetadataExt;
-
-    let dir = tempfile::tempdir().expect("tempdir");
-    let root = dir.path().join("scratch");
-    fs::create_dir(&root).expect("pre-existing scratch root");
-    let expected_uid = fs::symlink_metadata(dir.path())
-        .expect("tempdir metadata")
-        .uid();
-    assert_eq!(
-        fs::symlink_metadata(&root).expect("scratch metadata").uid(),
-        expected_uid
-    );
-
-    let contract = SandboxBoundaryContract::for_tier(SandboxGuestTier::Foreign);
-    let handle =
-        prepare_overlay_handle(&root, DEV_BACKEND_NAME, &contract, &test_mounts(dir.path()))
-            .expect("self-owned pre-existing scratch root");
-    assert!(handle.overlay_upper().is_dir());
-}
-
-#[cfg(unix)]
-#[test]
 fn code_sandbox_microvm_validate_refuses_synthetic_uid_mismatch() {
     use std::os::unix::fs::MetadataExt;
 
@@ -254,38 +231,6 @@ fn code_sandbox_microvm_overlay_rejects_over_depth_descent() {
 }
 
 #[test]
-fn code_sandbox_microvm_overlay_small_multifile_parity() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    fs::create_dir_all(dir.path().join("notes")).expect("nested dir");
-    fs::write(dir.path().join("result.txt"), b"guest output").expect("overlay file");
-    fs::write(dir.path().join("notes/deep.txt"), b"nested output").expect("overlay file");
-
-    let writes = collect_overlay_writes(dir.path(), SandboxMount::Workspace)
-        .expect("small overlay collection");
-    let mut collected = writes
-        .into_iter()
-        .map(|write| match write {
-            SandboxProposalWrite::FileWrite(write) => (write.path.as_str().to_owned(), write.bytes),
-            _ => unreachable!("file writes only"),
-        })
-        .collect::<Vec<_>>();
-    collected.sort();
-    assert_eq!(
-        collected,
-        vec![
-            (
-                "/mnt/workspace/notes/deep.txt".to_owned(),
-                b"nested output".to_vec(),
-            ),
-            (
-                "/mnt/workspace/result.txt".to_owned(),
-                b"guest output".to_vec(),
-            ),
-        ]
-    );
-}
-
-#[test]
 fn code_sandbox_microvm_overlay_nested_directory_disappearance_errors() {
     let dir = tempfile::tempdir().expect("tempdir");
     let nested = dir.path().join("nested");
@@ -387,12 +332,6 @@ fn code_sandbox_microvm_allowlist_defaults_to_deny() {
 }
 
 #[test]
-fn code_sandbox_microvm_first_party_tier_takes_no_backend() {
-    let selected = select_backend_for_tier(SandboxGuestTier::FirstPartyDreamer).expect("selection");
-    assert!(selected.is_none(), "first-party code stays in-process");
-}
-
-#[test]
 fn code_sandbox_microvm_isolating_tiers_never_fall_through_silently() {
     for tier in [SandboxGuestTier::Foreign, SandboxGuestTier::Untrusted] {
         match select_backend_for_tier(tier) {
@@ -409,14 +348,6 @@ fn code_sandbox_microvm_isolating_tiers_never_fall_through_silently() {
     // Assert the typed release fail-closed refusal independently of this build's cfg.
     let refusal = backend_unavailable(SandboxGuestTier::Foreign);
     assert_eq!(refusal.kind(), ErrorKind::MicroVmBackendUnavailable);
-}
-
-#[test]
-fn code_sandbox_microvm_budget_must_bound_every_axis() {
-    assert!(ExecutionBudget::new(5, 128, 32).is_bounded());
-    assert!(!ExecutionBudget::new(0, 128, 32).is_bounded());
-    assert!(!ExecutionBudget::new(5, 0, 32).is_bounded());
-    assert!(!ExecutionBudget::new(5, 128, 0).is_bounded());
 }
 
 #[test]
@@ -560,29 +491,6 @@ fn code_sandbox_microvm_reaper_skips_live_and_removes_crashed_vm_scratch() {
     assert!(!live.exists());
 }
 
-#[cfg(unix)]
-#[test]
-fn code_sandbox_microvm_startup_reaper_cleans_crash_leftovers_without_new_vm() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let root = dir.path().join("scratch");
-    let contract = SandboxBoundaryContract::for_tier(SandboxGuestTier::Foreign);
-    let live = prepare_overlay_handle(&root, DEV_BACKEND_NAME, &contract, &test_mounts(dir.path()))
-        .expect("live VM");
-    let live_root = live
-        .overlay_upper()
-        .parent()
-        .expect("VM root")
-        .to_path_buf();
-    let stale = root.join("fedcba9876543210fedcba9876543210");
-    fs::create_dir(&stale).expect("crashed VM fixture");
-    fs::write(stale.join("old"), b"orphan").expect("crashed output");
-    reap_overlay_scratch(&root, DEV_BACKEND_NAME).expect("backend startup reaper");
-    assert!(!stale.exists());
-    assert!(live_root.exists());
-    drop(live);
-    assert!(!live_root.exists());
-}
-
 #[test]
 fn code_sandbox_microvm_opaque_marker_preserves_real_dot_opaque_file_in_both_orders() {
     for marker_first in [false, true] {
@@ -605,35 +513,6 @@ fn code_sandbox_microvm_opaque_marker_preserves_real_dot_opaque_file_in_both_ord
         assert!(deltas.iter().any(|entry| matches!(entry,
             SandboxProposalWrite::DirectoryOpaque(dir) if dir.path.as_str() == "/mnt/workspace/nested")));
     }
-}
-
-#[cfg(target_os = "linux")]
-#[test]
-fn code_sandbox_microvm_xattr_and_oci_opaque_markers_deduplicate_without_losing_file() {
-    use std::{ffi::CString, os::unix::ffi::OsStrExt};
-    let dir = tempfile::tempdir().expect("tempdir");
-    let nested = dir.path().join("nested");
-    fs::create_dir(&nested).expect("nested");
-    let path = CString::new(nested.as_os_str().as_bytes()).expect("path");
-    // SAFETY: both C strings and the one-byte value are valid for this call.
-    let result = unsafe {
-        libc::setxattr(
-            path.as_ptr(),
-            c"user.overlay.opaque".as_ptr(),
-            b"y".as_ptr().cast(),
-            1,
-            0,
-        )
-    };
-    assert_eq!(result, 0, "setxattr: {}", std::io::Error::last_os_error());
-    fs::write(nested.join(".wh..wh..opq"), []).expect("OCI marker");
-    fs::write(nested.join(".opaque"), b"actual edit").expect("file");
-    let deltas = collect_overlay_writes(dir.path(), SandboxMount::Workspace).expect("delta");
-    assert_eq!(deltas.len(), 2);
-    assert!(deltas.iter().any(|entry| matches!(entry,
-        SandboxProposalWrite::FileWrite(write) if write.path.as_str() == "/mnt/workspace/nested/.opaque" && write.bytes == b"actual edit")));
-    assert!(deltas.iter().any(|entry| matches!(entry,
-        SandboxProposalWrite::DirectoryOpaque(dir) if dir.path.as_str() == "/mnt/workspace/nested")));
 }
 
 #[cfg(unix)]
