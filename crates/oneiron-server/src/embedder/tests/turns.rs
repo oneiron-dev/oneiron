@@ -331,5 +331,13 @@ fn an_edited_message_embeds_its_turn_again() {
             "ok\nWe met for a meal at noon.",
             "the new words find the turn as edited: {pack}"
         );
+        // The edited message's text now lives in its entity document; the
+        // turn still quotes its words, not the document pointer.
+        let cited = &first(&pack)["cited_messages"];
+        assert_eq!(cited.as_array().map(Vec::len), Some(1), "{pack}");
+        assert_eq!(
+            cited[0]["value_text"], "We met for a meal at noon.",
+            "the turn quotes the edited words: {pack}"
+        );
     });
 }

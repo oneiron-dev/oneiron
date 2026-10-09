@@ -135,15 +135,17 @@ impl Memory<'_> {
                 Vec::new()
             };
             // Each message a TURN took in is read through the same lane, so a
-            // quote is one the actor may read. Its reactions ride on the turn
-            // that returns it.
+            // quote is one the actor may read, and live, as the turn's own
+            // text reads it: only a live read resolves the text of a message
+            // that lives in an entity document. Its reactions ride on the
+            // turn that returns it.
             let mut cited_messages = Vec::with_capacity(cited.len());
             for message in cited {
                 if let Some(item) = self.memory_item_for(
                     lane,
                     message,
                     None,
-                    crate::vault::ReadMode::Indexed,
+                    crate::vault::ReadMode::Live,
                     &[],
                     receipt,
                 )? {

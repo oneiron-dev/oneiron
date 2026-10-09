@@ -679,10 +679,18 @@ impl PipelineBuilder<'_> {
                     rerank_query,
                 )
             });
+            // A hit whose indexed revision cannot be read has no pin, so it
+            // leaves the pack instead of failing the run. A MESSAGE whose text
+            // moved into an entity document is one: the migration replaced its
+            // body without retaining the revision its state still names.
             let mut revisions = HashMap::new();
             for hit in &scores {
-                if let Some(revision) = self.vault.indexed_revision_in_txn(rtxn, &hit.id)? {
-                    revisions.insert(hit.id, revision);
+                match self.vault.indexed_revision_in_txn(rtxn, &hit.id) {
+                    Ok(Some(revision)) => {
+                        revisions.insert(hit.id, revision);
+                    }
+                    Ok(None) | Err(crate::Error::EntityNotFound) => {}
+                    Err(error) => return Err(error),
                 }
             }
             Ok(RetrievalTxnOutput {
