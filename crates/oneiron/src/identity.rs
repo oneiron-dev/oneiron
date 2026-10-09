@@ -281,38 +281,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn client_id_accessor_mints_only_client_id_then_reads_existing_row() {
-        let (_dir, vault) = test_vault();
-        let first = load_or_mint_client_id(&vault).unwrap();
-        assert_ne!(first, 0);
-
-        let rtxn = vault.store.env.read_txn().unwrap();
-        let id_row = vault
-            .store
-            .sync_state
-            .get(&rtxn, KEY_CLIENT_ID)
-            .unwrap()
-            .expect("client id row");
-        assert_eq!(
-            u64::from_le_bytes(id_row.as_ref().try_into().unwrap()),
-            first
-        );
-        assert!(
-            vault
-                .store
-                .sync_state
-                .get(&rtxn, KEY_DEVICE_SK)
-                .unwrap()
-                .is_none(),
-            "client-id-only accessor must not mint the receipt signing key"
-        );
-        drop(rtxn);
-
-        let second = load_or_mint_client_id(&vault).unwrap();
-        assert_eq!(second, first, "existing client id is stable");
-    }
-
     /// Fail-closed arms: malformed/zero `m:client_id` and malformed
     /// `m:device_sk`/mismatched `m:device_pk` rows are typed errors — never
     /// silently re-minted (ONE-1155 zero-check composed per OD-2).

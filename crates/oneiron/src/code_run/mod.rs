@@ -50,9 +50,7 @@ pub(crate) use self::storage::{ExecutorOutputSpan, ExecutorStorage};
 #[cfg(test)]
 use self::storage::canonical_speech_conversation_id;
 #[cfg(test)]
-pub(crate) use self::storage::{
-    canonical_speech_conversation_id_for_run, executor_speech_message_id,
-};
+pub(crate) use self::storage::executor_speech_message_id;
 pub use self::types::{
     SelfAgentDefinitionPutCall, SelfAgentDefinitionPutResult, SelfAgentSpawnCall,
     SelfAgentSpawnResult, SelfAskCall, SelfCall, SelfContextCall, SelfContextResult,
