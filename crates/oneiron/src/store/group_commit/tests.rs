@@ -22,7 +22,7 @@ fn rows(writer: usize, write: usize) -> [EntityId; 3] {
     })
 }
 
-fn put_rows(batch: crate::BatchBuilder<'_>, ids: &[EntityId]) -> crate::BatchBuilder<'_> {
+fn put_rows<'v>(batch: crate::BatchBuilder<'v>, ids: &[EntityId]) -> crate::BatchBuilder<'v> {
     ids.iter().fold(batch, |batch, id| {
         batch
             .put(id, 1, TimeRange { start: 1, end: 1 }, 1, b"group-commit")
