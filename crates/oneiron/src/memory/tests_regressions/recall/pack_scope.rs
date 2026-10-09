@@ -101,6 +101,7 @@ fn recall_scope_honesty_lists_excluded_worlds() {
             &RecallScope {
                 world_ref: Some(world_one.to_hex()),
                 facet: None,
+                kinds: None,
             },
             10,
             None,

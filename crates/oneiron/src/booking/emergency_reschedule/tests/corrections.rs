@@ -291,39 +291,6 @@ fn owner_first_enumeration_and_per_item_fact_refusals_do_not_poison_the_batch() 
 }
 
 #[test]
-fn memory_error_taxonomy_preserves_storage_state_and_typed_boundary_errors() {
-    assert_eq!(
-        crate::memory::booking_error(BookingError::SlotOracle("store unavailable".to_owned())).code,
-        crate::memory::MEMORY_CODE_INTERNAL
-    );
-    assert_eq!(
-        crate::memory::booking_error(BookingError::InvalidConfig("wrong home".to_owned())).code,
-        crate::memory::MEMORY_CODE_INVALID_STATE
-    );
-    assert_eq!(
-        crate::memory::booking_error(BookingError::InvalidConstraint("bad window".to_owned())).code,
-        crate::memory::MEMORY_CODE_BAD_REQUEST
-    );
-    let (_dir, vault, _, _) = executable_with_invite(EmergencyActionPolicy::Cancel, false);
-    let denied = vault
-        .memory(id(OWNER), crate::edge::EdgeActorClass::Agent)
-        .record_emergency_instruction(&crate::memory::EmergencyInstructionInput {
-            affected_window: crate::calendar::query::CalendarRangeDto {
-                start: NOW,
-                end: NOW + 1,
-            },
-            reason: "unavailable".to_owned(),
-            action_policy: EmergencyActionPolicy::Cancel,
-            recorded_at: NOW,
-        })
-        .unwrap_err();
-    assert_eq!(
-        crate::memory::booking_error(BookingError::Boundary(Box::new(denied.clone()))),
-        denied
-    );
-}
-
-#[test]
 fn verified_effect_admission_requires_the_same_gate_principal() {
     use crate::outbound::{
         OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,

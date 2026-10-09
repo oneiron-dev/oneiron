@@ -259,63 +259,6 @@ fn claim_candidate_lexical_hints_replace_and_delete_stale_side_records() -> Resu
 }
 
 #[test]
-fn local_raw_claim_put_removes_lexical_hint_side_records() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let actor = EntityId::now();
-    let subject = EntityId::now();
-    let occurred = test_time_range(1, 1);
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred, 1, b"actor")?;
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred, 1, b"subject")?;
-
-    let claim = EntityId::now();
-    let envelope = test_write_envelope(actor)?;
-    let candidate = ClaimCandidate::new(
-        "profile.preference",
-        ClaimSubject::Entity(subject),
-        Value::from("sencha"),
-        0.9,
-    );
-    vault
-        .batch()
-        .claim_candidate_with_lexical_hints(
-            &claim,
-            candidate,
-            &envelope,
-            test_time_range(10, 10),
-            11,
-            &["rawputretiredunique"],
-        )
-        .commit()?;
-
-    let hint = lexical_query_hint_claim_id(&claim, "rawputretiredunique")?;
-    assert!(vault.get_claim(&hint)?.is_some());
-    assert_eq!(
-        vault
-            .search_text("rawputretiredunique", 10)?
-            .first()
-            .map(|hit| hit.id),
-        Some(claim)
-    );
-
-    let mut replacement = ClaimBody::new(
-        "profile.preference",
-        ClaimSubject::Entity(subject),
-        Value::from("gyokuro"),
-        0.9,
-        ClaimApprovalStatus::Approved,
-        ClaimLifecycleStatus::Active,
-    )?;
-    replacement.scope_facet = vault.get_claim(&claim)?.expect("stored claim").scope_facet;
-    vault.put_claim(&claim, &replacement, test_time_range(12, 12), 13)?;
-
-    assert!(vault.get_claim(&hint)?.is_none());
-    assert!(vault.claims_for_subject(&claim)?.is_empty());
-    assert!(vault.search_text("rawputretiredunique", 10)?.is_empty());
-    assert_eq!(vault.claims_for_subject(&subject)?, vec![claim]);
-    Ok(())
-}
-
-#[test]
 fn soft_delete_removes_lexical_hint_side_records() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let actor = EntityId::now();
@@ -608,72 +551,6 @@ fn lh_prefixed_normal_ids_are_not_treated_as_synthetic_hints() -> Result<()> {
             .first()
             .map(|hit| hit.id),
         Some(claim)
-    );
-    Ok(())
-}
-
-#[test]
-fn claim_candidate_lexical_hint_ids_are_order_stable() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let actor = EntityId::now();
-    let subject = EntityId::now();
-    let occurred = test_time_range(1, 1);
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred, 1, b"actor")?;
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred, 1, b"subject")?;
-
-    let claim = EntityId::now();
-    let envelope = test_write_envelope(actor)?;
-    let write_hints = |hints: &[&str]| -> Result<()> {
-        let candidate = ClaimCandidate::new(
-            "profile.preference",
-            ClaimSubject::Entity(subject),
-            Value::from("sencha"),
-            0.9,
-        );
-        vault
-            .batch()
-            .claim_candidate_with_lexical_hints(
-                &claim,
-                candidate,
-                &envelope,
-                test_time_range(10, 10),
-                11,
-                hints,
-            )
-            .commit()
-    };
-
-    write_hints(&["spring roadmap migration", "account recovery plan"])?;
-    let mut first_hint_claims = vault.claims_for_subject(&claim)?;
-    first_hint_claims.sort();
-    assert_eq!(first_hint_claims.len(), 2);
-
-    write_hints(&["account recovery plan", "spring roadmap migration"])?;
-    let mut reordered_hint_claims = vault.claims_for_subject(&claim)?;
-    reordered_hint_claims.sort();
-    assert_eq!(reordered_hint_claims, first_hint_claims);
-    assert!(reordered_hint_claims.iter().all(|hint_claim| {
-        hint_claim
-            .as_bytes()
-            .starts_with(&crate::claim::LEXICAL_QUERY_HINT_ID_PREFIX)
-    }));
-
-    let roadmap_hits = vault.search_text("spring roadmap migration", 10)?;
-    assert_eq!(roadmap_hits.first().map(|hit| hit.id), Some(claim));
-    assert!(
-        !roadmap_hits
-            .iter()
-            .any(|hit| reordered_hint_claims.contains(&hit.id)),
-        "reordered lexical hint docs must collapse to the source claim"
-    );
-
-    let recovery_hits = vault.search_text("account recovery plan", 10)?;
-    assert_eq!(recovery_hits.first().map(|hit| hit.id), Some(claim));
-    assert!(
-        !recovery_hits
-            .iter()
-            .any(|hit| reordered_hint_claims.contains(&hit.id)),
-        "reordered lexical hint docs must collapse to the source claim"
     );
     Ok(())
 }

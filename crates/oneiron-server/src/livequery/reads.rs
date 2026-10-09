@@ -1,5 +1,6 @@
 //! The eight existing WS read verbs call the engine facade, without write aliases.
-use oneiron::memory::{ClaimListFilter, Effort, Memory, MemoryError, NeighborOpts, RecallScope};
+use oneiron::memory::{ClaimListFilter, Memory, MemoryError, NeighborOpts};
+use oneiron::task_verb::sdk::RecallRequest;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -51,20 +52,8 @@ struct History {
     claim_ref: String,
 }
 
-// These two request shapes and defaults are the released HTTP facade contract.
-#[derive(Deserialize)]
-struct Recall {
-    query: String,
-    #[serde(default)]
-    effort: Option<Effort>,
-    #[serde(default)]
-    scope: Option<RecallScope>,
-    #[serde(default)]
-    limit: Option<usize>,
-    #[serde(default)]
-    format: Option<String>,
-}
-
+// This request shape and default are the released HTTP facade contract;
+// `recall` decodes the facade's own `RecallRequest`.
 #[derive(Deserialize)]
 struct Receipts {
     #[serde(default)]
@@ -79,13 +68,7 @@ pub(super) enum Read {
     Receipts(usize),
     ClaimList(ClaimListFilter),
     ClaimHistory(String),
-    Recall {
-        query: String,
-        effort: Effort,
-        scope: RecallScope,
-        limit: usize,
-        format: Option<String>,
-    },
+    Recall(RecallRequest),
 }
 
 impl Read {
@@ -128,20 +111,19 @@ impl Read {
                 Self::ClaimHistory(p.claim_ref)
             }
             "recall" => {
-                let p: Recall = params(value)?;
-                Self::Recall {
-                    query: p.query,
-                    effort: p.effort.unwrap_or(Effort::Medium),
-                    scope: p.scope.unwrap_or_default(),
-                    limit: facade_limit(p.limit, 10)?,
-                    format: p.format,
-                }
+                let mut request: RecallRequest = params(value)?;
+                request.limit = Some(facade_limit(request.limit, 10)?);
+                Self::Recall(request)
             }
             _ => return Err(AppError::bad_request("unknown read RPC", Some("method"))),
         })
     }
 
-    pub(super) fn run(self, memory: &Memory<'_>) -> Result<Value, AppError> {
+    pub(super) fn run(
+        self,
+        server: &crate::server::SyncServer,
+        memory: &Memory<'_>,
+    ) -> Result<Value, AppError> {
         match self {
             Self::Hydrate(refs) => result(memory.hydrate(&refs)),
             Self::Query(query, limit) => result(memory.query_bm25(&query, limit)),
@@ -150,13 +132,9 @@ impl Read {
             Self::Receipts(limit) => result(memory.receipts(limit)),
             Self::ClaimList(filter) => result(memory.claim_list(&filter)),
             Self::ClaimHistory(claim_ref) => result(memory.claim_history(&claim_ref)),
-            Self::Recall {
-                query,
-                effort,
-                scope,
-                limit,
-                format,
-            } => result(memory.recall(&query, effort, &scope, limit, format.as_deref(), None)),
+            Self::Recall(request) => {
+                result(crate::server::blocking(|| server.recall(memory, request)))
+            }
         }
     }
 }

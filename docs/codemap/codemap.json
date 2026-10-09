@@ -131,7 +131,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/access_grant/tests.rs",
@@ -260,18 +260,10 @@
      "surface": {}
     },
     {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/actor_claims/tests/pack_load.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
-     "path": "src/actor_claims/tests/runner.rs",
+     "path": "src/actor_claims/tests/pack_load.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -807,7 +799,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/agent_dispatch/workflow_tests.rs",
@@ -843,7 +835,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/agent_inbox_lens/tests.rs",
@@ -968,7 +960,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/anchored_annotation/pptx_tests.rs",
@@ -1206,7 +1198,7 @@
      "path": "src/attempt_queue/engine/mod.rs",
      "purpose": "The [`AttemptQueue`] handle and its lease state machine",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 3,
       "struct": 1
      }
     },
@@ -1347,7 +1339,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/attempt_queue/tests/actor_task_run.rs",
@@ -1371,7 +1363,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/attempt_queue/tests/enqueue_pause_cancel.rs",
@@ -1395,7 +1387,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/attempt_queue/tests/manifest_pack_compat.rs",
@@ -1441,7 +1433,7 @@
      "path": "src/attempt_queue/tests/support.rs",
      "purpose": "Shared fixtures, helpers, and telemetry captures for the attempt-queue tests",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 21
      }
     },
     {
@@ -2191,14 +2183,6 @@
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/autoreason_campaign/general/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
      "kind": "src",
      "notable": [
       "BlindCampaignJudgeInput",
@@ -2256,14 +2240,6 @@
     },
     {
      "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/autoreason_campaign/selection/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/autoreason_campaign/tests.rs",
@@ -2595,7 +2571,7 @@
      "path": "src/batch/export/credential_filter.rs",
      "purpose": "Credential filtering at memory serve and export serialization boundaries",
      "surface": {
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -3027,7 +3003,7 @@
      "path": "src/batch/put_apply/mod.rs",
      "purpose": "Batch entity-put materialization: the `apply_put` chokepoint and its row-staging helpers",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 7
      }
     },
     {
@@ -3140,7 +3116,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/batch/tests/facet_taint_session.rs",
@@ -3172,7 +3148,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/batch/tests/mod.rs",
@@ -3230,7 +3206,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/batch/tests/vectors_embeddings.rs",
@@ -3321,7 +3297,7 @@
      "path": "src/blob_artifact/esign/capability.rs",
      "purpose": "Session-less, high-entropy capabilities",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 4,
       "struct": 1
      }
@@ -3393,20 +3369,12 @@
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/blob_artifact/esign/lifecycle_tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/blob_artifact/esign/mod.rs",
      "purpose": "Native signing requests on versioned blob artifacts; claims are the state machine",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "mod": 2,
       "re-export": 9
      }
@@ -3624,7 +3592,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/blob_artifact/esign/render_tests.rs",
@@ -3870,7 +3838,7 @@
      "path": "src/bm25/mod.rs",
      "purpose": "Analyzer-driven fielded inverted index + BM25F scorer",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 7,
       "re-export": 2
      }
     },
@@ -3889,7 +3857,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/bm25/scoped.rs",
-     "purpose": "Bounded exact top-k over the existing BM25F scorer, under one read snapshot",
+     "purpose": "Exact top-k over the existing BM25F scorer for a scoped read, under one read snapshot: one pass over the…",
      "surface": {
       "crate-vis": 3
      }
@@ -3905,7 +3873,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/bm25/tests.rs",
@@ -3913,7 +3881,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "BoardVerbCall",
@@ -4183,7 +4151,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/booking/companion_preset/tests.rs",
@@ -4236,7 +4204,7 @@
      "purpose": "ONE-1816 [BK-05] booking constraint seam",
      "surface": {
       "const": 2,
-      "crate-vis": 9,
+      "crate-vis": 5,
       "enum": 3,
       "fn": 7,
       "struct": 12,
@@ -4279,22 +4247,6 @@
      }
     },
     {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/booking/conversion/policy/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/booking/conversion/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -4320,7 +4272,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/booking/conversion/ux_tests.rs",
@@ -4463,7 +4415,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/booking/emergency_reschedule/tests/effects.rs",
@@ -4487,7 +4439,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/booking/emergency_reschedule/tests/instruction.rs",
@@ -4571,14 +4523,6 @@
       "crate-vis": 2,
       "re-export": 4
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/booking/invite_grant/tests/faceted_sender.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "L",
@@ -4898,14 +4842,6 @@
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/booking/reminder/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/booking/solver/civil_date.rs",
@@ -4986,15 +4922,7 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/booking/solver/tests.rs",
-     "purpose": "Stage-by-stage and end-to-end pipeline tests for the solver",
-     "surface": {}
-    },
-    {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/booking/tests.rs",
@@ -5016,7 +4944,7 @@
      "path": "src/branch_store_oracle/seam/binding.rs",
      "purpose": "Seam: error mappers, crash/reopen, job/taint/scoped-read probes, executor binding-mismatch and route-flip…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 19
      }
     },
     {
@@ -5046,7 +4974,7 @@
      "path": "src/branch_store_oracle/seam/substrate.rs",
      "purpose": "Seam: executor verbs on the session handle, the overlay-vs-model harness, and the…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 19
      }
     },
     {
@@ -5066,7 +4994,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/branch_store_oracle/tests_promote.rs",
@@ -5200,7 +5128,7 @@
      "path": "src/calendar/claims/mod.rs",
      "purpose": "The `calendar.*` claim family (CAL-00)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 3,
       "re-export": 3
      }
     },
@@ -5356,7 +5284,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "BusyInterval"
@@ -5639,7 +5567,7 @@
      "path": "src/calendar/mod.rs",
      "purpose": "Calendar module home (CAL-00)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 8,
       "enum": 1,
       "mod": 17,
       "re-export": 15
@@ -5854,14 +5782,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/calendar/query/tests.rs",
-     "purpose": "Scoped-lane, search, and surfaceability suite",
-     "surface": {}
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -5916,7 +5836,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/calendar/series/tests.rs",
@@ -5944,7 +5864,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "WallTime"
@@ -6078,20 +5998,20 @@
      "path": "src/campaign/compliance/evaluate.rs",
      "purpose": "Pure dispatch evaluator: jurisdiction selection, row matching, verdict",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 2,
       "struct": 3
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/campaign/compliance/hydrate.rs",
      "purpose": "External-effect gate leg and vault-to-facts hydration (evidence, jurisdiction, message elements)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 6
      }
     },
     {
@@ -6101,7 +6021,7 @@
      "path": "src/campaign/compliance/mod.rs",
      "purpose": "CA-06's compliance pack: versioned, vault-resident legal rule rows and the dispatch gate that enforces them",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 4
      }
     },
@@ -6246,7 +6166,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/campaign/enrollment/tests.rs",
@@ -6307,14 +6227,6 @@
       "enum": 2,
       "struct": 10
      }
-    },
-    {
-     "bucket": "L",
-     "kind": "test",
-     "notable": [],
-     "path": "src/campaign/presets/tests.rs",
-     "purpose": "CA-08 preset-content tests",
-     "surface": {}
     },
     {
      "bucket": "m",
@@ -6523,7 +6435,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/campaign/surface/tests.rs",
@@ -6754,7 +6666,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/channel_identity/tests/policy_residence.rs",
@@ -6888,14 +6800,6 @@
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/channel_identity_autonomy/tests/space_posting.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
      "kind": "src",
      "notable": [
       "ChannelIdentityActionEnvelope",
@@ -6958,7 +6862,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "ChannelIdentityCapabilityMatrix",
@@ -7187,7 +7091,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/channel_identity_provider/tests.rs",
@@ -7280,7 +7184,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/channel_identity_selection/tests.rs",
@@ -7339,7 +7243,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/checkout/env_blueprint/tests.rs",
@@ -7459,7 +7363,7 @@
      "purpose": "The CLAIM body itself: [`ClaimBody`], [`ClaimSubject`], the pinned MessagePack key set, its hand-rolled…",
      "surface": {
       "const": 1,
-      "crate-vis": 17,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 2,
       "struct": 3
@@ -7752,7 +7656,7 @@
      "path": "src/claim/scoped_read/access_gate.rs",
      "purpose": "Relationship access checks share the row read transaction with grant resolution",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 8
      }
     },
     {
@@ -7787,7 +7691,7 @@
      "path": "src/claim/scoped_read/claim_admission.rs",
      "purpose": "Claim admission on the scoped lane: the lane's claim-status mode, then the reader, credential, ceiling…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -7851,7 +7755,7 @@
      "path": "src/claim/scoped_read/mod.rs",
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 6,
       "struct": 1
      }
@@ -7935,7 +7839,7 @@
      "path": "src/claim/scoped_read/search.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 6
      }
     },
@@ -7962,7 +7866,7 @@
      "path": "src/claim/scoped_read/versions.rs",
      "purpose": "Explicit read frontiers keep the scoped lane's current and historic gates",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -8009,7 +7913,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/claim/scoped_read/weave_digest/tests.rs",
@@ -8037,7 +7941,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/claim/scoped_read/weave_report/tests.rs",
@@ -8173,11 +8077,11 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/cluster/tests.rs",
-     "purpose": "Deterministic, authority-boundary, and frozen-parity fixtures for the clustering tool",
+     "purpose": "Deterministic and authority-boundary fixtures for the clustering tool",
      "surface": {}
     },
     {
@@ -9015,7 +8919,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/code_run/vault_read/tests.rs",
@@ -9397,7 +9301,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/code_sandbox/tests.rs",
@@ -9547,7 +9451,7 @@
      "path": "src/code_symbol/tests.rs",
      "purpose": "—",
      "surface": {
-      "fn": 9
+      "fn": 3
      }
     },
     {
@@ -9743,7 +9647,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/codebase/tests.rs",
@@ -9802,7 +9706,7 @@
      "path": "src/comm/parties.rs",
      "purpose": "Node-local party shortcut vs synced PERSON truth plus twin reconciliation",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 1
      }
     },
@@ -9875,7 +9779,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/commitment/codec_tests.rs",
@@ -9930,7 +9834,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/commitment/verbs_tests.rs",
@@ -9961,14 +9865,6 @@
       "fn": 1,
       "struct": 3
      }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/commitment_ledger/tests.rs",
-     "purpose": "CMT-5 read-side tests",
-     "surface": {}
     },
     {
      "bucket": "m",
@@ -10060,7 +9956,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/commitment_schedule/tests.rs",
@@ -10255,7 +10151,7 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/compaction/tests.rs",
@@ -10263,7 +10159,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/compaction/tests/driver_regressions.rs",
@@ -10351,7 +10247,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/companion/persona/tests.rs",
@@ -10481,14 +10377,6 @@
      "kind": "test",
      "notable": [],
      "path": "src/config/failure_signals/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/config/tests.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -10930,7 +10818,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 15,
-      "fn": 16,
+      "fn": 17,
       "struct": 2
      }
     },
@@ -11022,14 +10910,6 @@
      "surface": {
       "crate-vis": 4
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/consent/owner_reason/selection/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -11278,7 +11158,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/consult_ladder/tests.rs",
@@ -11465,7 +11345,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/context_board/memories_projection.rs",
@@ -11492,7 +11372,7 @@
      "path": "src/context_board/mod.rs",
      "purpose": "Typed Context Board render projections",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 4,
       "re-export": 17
      }
     },
@@ -11671,7 +11551,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/context_board/plugin/tests.rs",
@@ -11773,14 +11653,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/context_board/self_brief/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -11864,7 +11736,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/context_board/stream/routing_tests.rs",
@@ -11872,7 +11744,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/context_board/stream/tests.rs",
@@ -11906,14 +11778,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/context_board/stream/wake_adapter_tests.rs",
-     "purpose": "Durable-mailbox adapter-install scenario tests",
-     "surface": {}
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -11924,15 +11788,7 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/context_board/stream/wake_tests.rs",
-     "purpose": "Instance binding, dispatch fallback and delivery-report fencing tests",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/context_board/surfaces_tests.rs",
@@ -11992,14 +11848,6 @@
       "crate-vis": 3,
       "fn": 3
      }
-    },
-    {
-     "bucket": "L",
-     "kind": "test",
-     "notable": [],
-     "path": "src/context_board/tasks/tests.rs",
-     "purpose": "TASKS board tests: projection, row rendering, the overflow grammar, and render-state agreement",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -12087,14 +11935,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/context_pack/capability_tests.rs",
-     "purpose": "Actual retrieval split: turn discoveries cannot displace memory rows",
-     "surface": {}
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -12145,7 +11985,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/context_pack/l2_base/tests.rs",
@@ -12235,22 +12075,6 @@
      "notable": [],
      "path": "src/context_pack/tests.rs",
      "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/context_pack/tests/criticality.rs",
-     "purpose": "Manifest criticality is a read-time priority and a narrowing selector only",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/context_pack/tests/source_ranking.rs",
-     "purpose": "Source ranking is PACK data and cannot widen visibility or scope",
      "surface": {}
     },
     {
@@ -12379,40 +12203,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/context_projection/tests.rs",
-     "purpose": "Descriptor, narrowing, resolution-order, and scan-behaviour contract tests",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/context_projection/tests/panel.rs",
-     "purpose": "Lead-panel codec, planner, blindness ordering, and `contextFrom` admission tests",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/context_projection/tests/resolution.rs",
-     "purpose": "Memory- and chat-projection scan behaviour against a live vault",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/context_projection/tests/test_support.rs",
-     "purpose": "Shared test fixtures for the `context_projection` test suite",
-     "surface": {
-      "crate-vis": 14
-     }
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -12458,16 +12248,6 @@
      "surface": {
       "fn": 6,
       "struct": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/contract_oracle/tests.rs",
-     "purpose": "—",
-     "surface": {
-      "fn": 1
      }
     },
     {
@@ -12604,6 +12384,14 @@
      "notable": [],
      "path": "src/conversation/tests/deletion.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/conversation/tests/restore.rs",
+     "purpose": "ASTRA-9A-2 F2: a restore over the live vault never brings back room authority narrowed since the checkpoint",
      "surface": {}
     },
     {
@@ -12758,7 +12546,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/conversation_dag/tests/mod.rs",
@@ -12838,14 +12626,6 @@
      }
     },
     {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/corpus/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -12901,7 +12681,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/counterparty_contact/tests.rs",
@@ -12995,7 +12775,7 @@
      "path": "src/credential_door/door_types.rs",
      "purpose": "Door constants, floor names and prefixes, error type, and small naming helpers",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 24
      }
     },
     {
@@ -13014,14 +12794,6 @@
      "notable": [],
      "path": "src/credential_door/tests.rs",
      "purpose": "Checkout receive-pack, catastrophe policy, closed scope, and pre-receive scan laws",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/credential_door/tests/authority.rs",
-     "purpose": "—",
      "surface": {}
     },
     {
@@ -13121,14 +12893,6 @@
      "kind": "test",
      "notable": [],
      "path": "src/critic/review/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/critic/tests.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -13426,7 +13190,7 @@
      "path": "src/delivery_window/claims.rs",
      "purpose": "Policy claim parsing and per-claim restriction gating",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 1,
       "struct": 1
      }
@@ -13470,7 +13234,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/delivery_window/tests.rs",
@@ -13555,7 +13319,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/disclosure/tests.rs",
@@ -13588,7 +13352,7 @@
      "path": "src/disclosure/vault_context.rs",
      "purpose": "vault_meta scope/tier-A rows, Vault impl, and agent-visible assembly block",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 12,
       "struct": 2
      }
@@ -13704,7 +13468,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/dispatch_byoa/tests.rs",
@@ -13717,14 +13481,6 @@
      "notable": [],
      "path": "src/dispatch_byoa/tests/successor.rs",
      "purpose": "Successor Qodo regressions for terminal custody and runtime attribution",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/dispatch_byoa/tests/successor/stop_reasons.rs",
-     "purpose": "Stop reasons are part of failed and abandoned capture idempotency",
      "surface": {}
     },
     {
@@ -14017,14 +13773,6 @@
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/dreamer_consolidation/routing/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
      "kind": "src",
      "notable": [
       "SelectionCandidate",
@@ -14041,14 +13789,6 @@
       "fn": 6,
       "struct": 5
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/dreamer_consolidation/selection/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -14080,14 +13820,6 @@
      "surface": {
       "crate-vis": 1
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/dreamer_consolidation/tests/contradictions.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "m",
@@ -14219,7 +13951,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_plugin_suggest/tests.rs",
@@ -14236,7 +13968,7 @@
      "path": "src/dreamer_prefilter/config.rs",
      "purpose": "The operator knob: weights, threshold, its row codec and the Vault read/write doors",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 3,
       "fn": 4,
       "struct": 2
      }
@@ -14305,7 +14037,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_prefilter/tests.rs",
@@ -14645,7 +14377,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/tests.rs",
@@ -14723,7 +14455,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_runner/tests.rs",
@@ -14817,7 +14549,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_tournament/tests.rs",
@@ -14911,14 +14643,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/dreamer_wake/grain_tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -14970,7 +14694,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_wake/policy/tests.rs",
@@ -15025,7 +14749,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_wake/tests.rs",
@@ -15216,7 +14940,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/edit_distance/attribution/tests.rs",
@@ -15277,7 +15001,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/edit_distance/delta/tests.rs",
@@ -15350,7 +15074,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/edit_distance/escalation/tests.rs",
@@ -15434,12 +15158,12 @@
      "path": "src/edit_distance/graduation/receipts.rs",
      "purpose": "Receipt projection for graduation answers",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 1,
       "fn": 1
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/edit_distance/graduation/tests.rs",
@@ -15606,7 +15330,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/edit_distance/miner/tests.rs",
@@ -15614,7 +15338,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/edit_distance/miner/tests/preference_learning.rs",
@@ -15645,14 +15369,6 @@
       "fn": 2,
       "struct": 1
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/edit_distance/myers/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "m",
@@ -15810,7 +15526,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/edit_distance/reservoir/tests.rs",
@@ -15887,7 +15603,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/edit_distance/routing/tests.rs",
@@ -16070,14 +15786,6 @@
      "surface": {
       "crate-vis": 14
      }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/edit_roundtrip/opc/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "m",
@@ -16291,7 +15999,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/edit_roundtrip/slides_review/tests.rs",
@@ -16299,7 +16007,7 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/edit_roundtrip/tests.rs",
@@ -16471,15 +16179,7 @@
      }
     },
     {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/embed/payload_text_tests.rs",
-     "purpose": "The canonical text projection every host embeds",
-     "surface": {}
-    },
-    {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/embed/tests.rs",
@@ -16487,7 +16187,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/embed/tests/payload.rs",
@@ -16587,14 +16287,6 @@
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/engine_executor/tests/seat_routing.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/engine_executor/tests/speech_identity_regressions.rs",
@@ -16960,14 +16652,6 @@
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/failure_ladder/oversight/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
      "kind": "src",
      "notable": [
       "FailureEscalationMode",
@@ -16983,7 +16667,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/failure_ladder/tests.rs",
@@ -16999,7 +16683,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/failure_ladder/tests/drill.rs",
@@ -17007,7 +16691,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/failure_ladder/tests/failure_integrity.rs",
@@ -17059,7 +16743,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/failure_signals/tests.rs",
@@ -17107,7 +16791,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/fanout_auto/tests.rs",
@@ -17252,7 +16936,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "mod": 2,
       "re-export": 13
      }
@@ -17321,7 +17005,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Birth-facet-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -17548,7 +17232,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/feedback/tests.rs",
@@ -17586,14 +17270,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/gate/bundle.rs",
      "purpose": "—",
      "surface": {
       "const": 5,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -17928,7 +17612,7 @@
      "path": "src/gate/effect/effect_contacts.rs",
      "purpose": "Counterparty hydration plus send-override and do-not-contact fold",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -17948,7 +17632,7 @@
      "path": "src/gate/effect/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -17968,7 +17652,7 @@
      "path": "src/gate/foreign_agent.rs",
      "purpose": "Owner-bound foreign introductions",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3
      }
     },
@@ -18033,7 +17717,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 53,
+      "crate-vis": 54,
       "re-export": 7
      }
     },
@@ -18336,7 +18020,7 @@
      "path": "src/gate/run_proposal_fixture.rs",
      "purpose": "Test-support seam: park one Dreamer-authored proposal on a run's consent lane, as a dream pass does, so a…",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -18976,7 +18660,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/genui/tests.rs",
@@ -18984,7 +18668,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/genui/tests/failure_integrity.rs",
@@ -18992,7 +18676,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/genui/tests/project_proposal.rs",
@@ -19414,7 +19098,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/graph_fs/tests.rs",
@@ -19587,7 +19271,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/human_task/followup_tests.rs",
@@ -19631,7 +19315,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/human_task/signal_tests.rs",
@@ -19682,7 +19366,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/identity_redirect/tests.rs",
@@ -19713,14 +19397,6 @@
       "fn": 16,
       "struct": 5
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/identity_reputation/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "m",
@@ -20038,7 +19714,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/inbox/tests.rs",
@@ -20159,14 +19835,6 @@
       "enum": 1,
       "struct": 1
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/ingest/exports/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -20403,7 +20071,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/ingest/meeting_audio/tests/algorithms.rs",
@@ -20419,19 +20087,11 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/ingest/meeting_audio/tests/producer.rs",
      "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/ingest/meeting_audio/tests/recorded_evaluation.rs",
-     "purpose": "Offline harness fixtures, not native model quality or host provisioning evidence",
      "surface": {}
     },
     {
@@ -20441,7 +20101,7 @@
      "path": "src/ingest/meeting_audio/tests/support.rs",
      "purpose": "Synthetic callback fixtures only: no decoder or model runs in these tests",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 8
      }
     },
     {
@@ -20583,7 +20243,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/ingest/tests.rs",
@@ -20642,7 +20302,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/interlocutor/tests.rs",
@@ -20764,7 +20424,7 @@
      "path": "src/lens/atom/mod.rs",
      "purpose": "The closed [`LensAtom`] vocabulary: the atom enum, its leaf payload structs, [`LensNode`] with its…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "re-export": 4
      }
     },
@@ -21129,7 +20789,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/lens/tests/genui_render.rs",
@@ -21137,7 +20797,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/lens/tests/genui_validation.rs",
@@ -21156,14 +20816,6 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
-     "path": "src/lens/tests/intent.rs",
-     "purpose": "Vault intent survives reload and drives the upgrade behavior-diff gate",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
      "path": "src/lens/tests/mediation.rs",
      "purpose": "Atom-kit catalog and mediation-auth tests: principal-held keys, backing-ref tokens, and host-bound action…",
      "surface": {}
@@ -21177,7 +20829,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/lens/tests/result_set.rs",
@@ -21193,7 +20845,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/lens/tests/selfui_actions.rs",
@@ -21207,7 +20859,7 @@
      "path": "src/lens/tests/support.rs",
      "purpose": "Shared fixtures and helpers for the lens behaviour tests",
      "surface": {
-      "crate-vis": 56
+      "crate-vis": 52
      }
     },
     {
@@ -21219,19 +20871,11 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/lens/tests/versioning.rs",
      "purpose": "Envelope-versioning and behavior-fingerprint tests: version stamps, canonical fingerprints, and diffs",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/lens/tests/weave_report.rs",
-     "purpose": "A host-authored section recipe can lower the live report into the lens kit",
      "surface": {}
     },
     {
@@ -21388,7 +21032,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/linear_sync/tests.rs",
@@ -22655,8 +22299,8 @@
      "path": "src/memory/caps.rs",
      "purpose": "The boundary cap contract (ONE-1441 §Binding cap contract, I11)",
      "surface": {
-      "const": 10,
-      "fn": 8
+      "const": 11,
+      "fn": 9
      }
     },
     {
@@ -23086,7 +22730,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "Effort",
@@ -23100,10 +22744,10 @@
      "path": "src/memory/recall/mod.rs",
      "purpose": "Recall and `MemoryPack` assembly (S6): recall/recall_in_session and the scope-honesty + provenance plumbing",
      "surface": {
-      "const": 1,
+      "const": 2,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 10,
+      "fn": 11,
       "struct": 6
      }
     },
@@ -25168,7 +24812,7 @@
      "path": "src/outbound/mod.rs",
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 7
      }
     },
@@ -26099,6 +25743,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/execution/channels/entity_rank.rs",
+     "purpose": "Named entities below the content a query matched",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -26316,7 +25970,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/pipeline/tests/retrieval_blend.rs",
@@ -26548,7 +26202,7 @@
      "path": "src/policy_model/mod.rs",
      "purpose": "Policy classification over two planes",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 13
      }
     },
@@ -26569,7 +26223,7 @@
      "path": "src/policy_model/owner_rows/authority.rs",
      "purpose": "Live policy-power holders from shared membership and owner-stamped action grants",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -26600,7 +26254,7 @@
      "path": "src/policy_model/owner_rows/mod.rs",
      "purpose": "Holder-governed owner-policy row edits, proposals, events and change log",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 5,
       "re-export": 3
@@ -28386,7 +28040,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/authority_plane.rs",
@@ -28396,12 +28050,172 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/recovery/checkpoint/authority_plane/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions.rs",
+     "purpose": "No decision the engine makes from rows a restore brings back permits more than it does now (ARCH-0038…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/audience.rs",
+     "purpose": "Who reads or witnesses what: a record's audience, the disclosure clamp a conversation runs under and the…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/campaign.rs",
+     "purpose": "What a campaign send reads about its recipient: the compliance rules the campaign gate binds a send to an…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/consent.rs",
+     "purpose": "What the engine grants on consent and standing it folds from rows a restore brings back: the ramp offer a…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/counterparty.rs",
+     "purpose": "What a send reads about its counterparty: the contacts the send gate folds for a party, the do-not-contact…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/reads.rs",
+     "purpose": "Who a read admits: the relationship reads a principal's memberships and grants decide, the policy grants a…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/skills.rs",
+     "purpose": "What the activation gate decides about a skill: the posture its bytes' scan verdicts give an entry into…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/tasks.rs",
+     "purpose": "What a task, an ask and an agent may do: the authority a task's facts prove through the `ScopedTo` edges…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/tests.rs",
+     "purpose": "The census check, a substrate invariant: no restore loosens a decision the engine makes from restored rows…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/tests/audience.rs",
+     "purpose": "Census cases for who reads or witnesses what",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/tests/campaign.rs",
+     "purpose": "Census cases for what a campaign send reads about its recipient",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/tests/consent.rs",
+     "purpose": "Census cases for consent and standing the engine grants from restored rows",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/tests/counterparty.rs",
+     "purpose": "Census cases for what a send reads about its counterparty",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/tests/reads.rs",
+     "purpose": "Census cases for who a read admits",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/tests/skills.rs",
+     "purpose": "Census cases for what the activation gate decides about a skill",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/tests/tasks.rs",
+     "purpose": "Census cases for what a task, an ask and an agent may do",
+     "surface": {
+      "crate-vis": 8
+     }
     },
     {
      "bucket": "m",
@@ -28415,7 +28229,7 @@
      "purpose": "Tier-C physical-row checkpoints and one restore/wake/migrate path",
      "surface": {
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "re-export": 1,
       "struct": 2
      }
@@ -28428,6 +28242,74 @@
      "purpose": "Rebuild mechanical projections and reset leased attempt ownership",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/restore_class/mod.rs",
+     "purpose": "What a restore over a live vault does with each canonical row: one table, deny by default",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/restore_class/sync_state.rs",
+     "purpose": "The restore class of every canonical `sync_state` family, in declaration order",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/checkpoint/restore_class/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/restore_class/vault_meta_a_c.rs",
+     "purpose": "The restore class of every canonical `vault_meta`, `a` to `c` family, in declaration order",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/restore_class/vault_meta_d_l.rs",
+     "purpose": "The restore class of every canonical `vault_meta`, `d` to `l` family, in declaration order",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/restore_class/vault_meta_m_r.rs",
+     "purpose": "The restore class of every canonical `vault_meta`, `m` to `r` family, in declaration order",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/restore_class/vault_meta_s_z.rs",
+     "purpose": "The restore class of every canonical `vault_meta`, `s` to `z` family, in declaration order",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -31476,7 +31358,7 @@
      "path": "src/skill_hub/pack_catalog/mod.rs",
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 5,
       "re-export": 8
      }
     },
@@ -33833,7 +33715,7 @@
      "path": "src/sync/ingest/entity.rs",
      "purpose": "The entity-ingest ladder: one admission for every replicated entities-map value",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -34906,7 +34788,7 @@
      "path": "src/task_verb/ask_settlement.rs",
      "purpose": "Atomic ask cutoffs and the fixed human-word reducers",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
@@ -35232,7 +35114,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "mod": 1,
       "re-export": 18
      }
@@ -35400,6 +35282,7 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "enum": 1,
+      "fn": 1,
       "struct": 18
      }
     },
@@ -35618,7 +35501,7 @@
      "path": "src/task_verb/wire_decode.rs",
      "purpose": "Read side of the hand-rolled rmpv wire format for typed TASK bodies",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -35651,7 +35534,7 @@
      "path": "src/test_util/channel_identity.rs",
      "purpose": "Self-held ChannelIdentity fixtures: a row in a chosen state, reached by walking its machine",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -35671,7 +35554,7 @@
      "path": "src/test_util/row_dump.rs",
      "purpose": "Byte dump of every named LMDB database a vault holds, and the rows a write changed between two dumps",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 4
      }
     },
     {
@@ -36065,7 +35948,7 @@
      "path": "src/vault/entities.rs",
      "purpose": "Vault entity, vector, short-id and type-index reads and writes",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 17,
       "struct": 1
      }
@@ -36224,7 +36107,7 @@
      "path": "src/vault/open/mod.rs",
      "purpose": "Vault open and bootstrap: open doors, privacy posture and live-window attachment",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 9,
       "fn": 12
      }
     },
@@ -37162,7 +37045,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 5
      }
     },
@@ -37280,7 +37163,7 @@
      "purpose": "Direct leader chats: same-vault routing, shared-ancestor rule clamp and speaker scope",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 2,
       "struct": 1
      }
@@ -37318,7 +37201,7 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 31,
+      "crate-vis": 34,
       "enum": 1,
       "fn": 15,
       "re-export": 6,
@@ -37385,7 +37268,7 @@
      "path": "src/workspace_roster/project/tests.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -37395,7 +37278,7 @@
      "path": "src/workspace_roster/project/tests/authority.rs",
      "purpose": "Leader and board authority over PROJECT rows: live doors refuse a bad proof, replay stores it, and the read…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -37866,7 +37749,7 @@
      "path": "tests/it/cb_oracle_plugin.rs",
      "purpose": "Context Board forward test oracle — epic ONE-1692, opened by ONE-1693 (CB-01)",
      "surface": {
-      "crate-vis": 53
+      "crate-vis": 55
      }
     },
     {
@@ -38425,7 +38308,7 @@
      "purpose": "AccessGrant control-plane record substrate"
     },
     "actor_claims": {
-     "files": 13,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -38502,7 +38385,7 @@
      "purpose": "AUTHORITY_LOG record substrate"
     },
     "autoreason_campaign": {
-     "files": 11,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -38516,7 +38399,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 42,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -38532,12 +38415,12 @@
     "board_verb": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "—"
     },
     "booking": {
-     "files": 83,
+     "files": 78,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -38558,14 +38441,14 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 58,
+     "files": 57,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 44,
+     "files": 43,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -38579,7 +38462,7 @@
      "purpose": "ChannelIdentity record substrate (OF-347 CID-1)"
     },
     "channel_identity_autonomy": {
-     "files": 10,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -38595,7 +38478,7 @@
     "channel_identity_manifest": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Channel identity capability manifests (OF-347 CID-4)"
     },
@@ -38712,10 +38595,10 @@
      "purpose": "Commitment claim substrate (CMT-1)"
     },
     "commitment_ledger": {
-     "files": 2,
+     "files": 1,
      "impl_vault": true,
      "largest_src_bucket": "s",
-     "layout": "file+dir",
+     "layout": "file",
      "purpose": "Counterparty commitment ledger projection (CMT-5)"
     },
     "commitment_lifecycle": {
@@ -38754,7 +38637,7 @@
      "purpose": "Companion task queue and PERSON/FACET persona compilation"
     },
     "config": {
-     "files": 5,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -38768,7 +38651,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 17,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -38789,35 +38672,35 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 53,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Typed Context Board render projections"
     },
     "context_pack": {
-     "files": 24,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Context-pack assembly: retrieval results in, a hydrated, validated, budget-clamped pack out"
     },
     "context_projection": {
-     "files": 9,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Typed context projection (`ContextSpec`) and the referenced panel-spec codec/planner a recursive task lead…"
     },
     "contract_oracle": {
-     "files": 6,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Persisted, deterministic Rust API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -38831,10 +38714,10 @@
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution"
     },
     "corpus": {
-     "files": 2,
+     "files": 1,
      "impl_vault": false,
      "largest_src_bucket": "s",
-     "layout": "file+dir",
+     "layout": "file",
      "purpose": "Project-axis selection for corpus queries"
     },
     "counterparty_contact": {
@@ -38845,14 +38728,14 @@
      "purpose": "Counterparty contact record substrate (OF-347 CID-7)"
     },
     "credential_door": {
-     "files": 11,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning"
     },
     "critic": {
-     "files": 8,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -38880,7 +38763,7 @@
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
     "dispatch_byoa": {
-     "files": 10,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -38894,7 +38777,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 39,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -38936,7 +38819,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 15,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -38950,14 +38833,14 @@
      "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`"
     },
     "edit_distance": {
-     "files": 69,
+     "files": 68,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 31,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -38971,14 +38854,14 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
     "embed": {
-     "files": 8,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 12,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39013,7 +38896,7 @@
      "purpose": "OF-360 extraction-quality evaluation"
     },
     "failure_ladder": {
-     "files": 16,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -39118,10 +39001,10 @@
      "purpose": "ARCH-0055 redirect projection: the rebuildable `shell id -> head set` table and the read-time…"
     },
     "identity_reputation": {
-     "files": 2,
+     "files": 1,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file+dir",
+     "layout": "file",
      "purpose": "ChannelIdentity reputation claims and warmup delivery floors (OF-347 R4)"
     },
     "identity_topology": {
@@ -39139,7 +39022,7 @@
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
     "ingest": {
-     "files": 42,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39160,7 +39043,7 @@
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…"
     },
     "lens": {
-     "files": 44,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39218,7 +39101,7 @@
     "memory": {
      "files": 96,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade"
     },
@@ -39300,7 +39183,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 54,
+     "files": 55,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -39391,9 +39274,9 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 20,
+     "files": 43,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "Canonical Layer-1 recovery, validated rebuilds and bounded repair"
     },
@@ -39769,10 +39652,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 23,
+   "over_bar": 26,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2368,
-   "test_files": 838
+   "source_files": 2383,
+   "test_files": 803
   },
   "oneiron-android": {
    "files": [
@@ -42072,20 +41955,26 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
+      "QueryTemporalHints",
       "TemporalExpression",
       "TemporalExpressionParseError",
       "TemporalGranularity",
-      "TimeRange"
+      "TemporalHintReport",
+      "TemporalHintStatus",
+      "TemporalUnit",
+      "TimeRange",
+      "WeekdayRelation"
      ],
      "path": "src/temporal.rs",
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity",
      "surface": {
-      "enum": 3,
-      "fn": 5,
-      "struct": 1
+      "const": 1,
+      "enum": 6,
+      "fn": 6,
+      "struct": 3
      }
     },
     {
@@ -42254,7 +42143,7 @@
     "temporal": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity"
     },
@@ -42266,7 +42155,7 @@
      "purpose": "The write actor every write path stamps"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
    "source_files": 54,
    "test_files": 3
@@ -44222,7 +44111,7 @@
      "kind": "test",
      "notable": [],
      "path": "tests/conformance.rs",
-     "purpose": "The same admission, stream and reconnect laws for the in-memory and iroh transports",
+     "purpose": "The admission, stream and reconnect laws for the iroh transport",
      "surface": {}
     },
     {
@@ -44282,14 +44171,6 @@
       "crate-vis": 1,
       "struct": 2
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/extraction_eval/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "m",
@@ -44804,7 +44685,7 @@
    ],
    "modules": {
     "extraction_eval": {
-     "files": 4,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -44821,7 +44702,7 @@
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
    "source_files": 30,
-   "test_files": 8
+   "test_files": 7
   },
   "oneiron-napi": {
    "files": [
@@ -44959,6 +44840,7 @@
       "NapiScopeHonesty",
       "NapiStructuralEdgeSpec",
       "NapiStructuralPutInput",
+      "NapiTemporalHint",
       "NapiTextIndexField",
       "NapiWitnessMessage",
       "NapiWitnessReceipt",
@@ -44967,7 +44849,7 @@
      "path": "src/facade/dtos.rs",
      "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
-      "struct": 50
+      "struct": 51
      }
     },
     {
@@ -45412,7 +45294,7 @@
   "oneiron-retrieval": {
    "files": [
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "CharByteTable",
@@ -45511,7 +45393,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/analyzer/latin.rs",
@@ -45521,7 +45403,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "AnalyzerAssetManifest",
@@ -45558,7 +45440,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "NormalizedText"
@@ -45595,7 +45477,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/analyzer/tests.rs",
@@ -45648,14 +45530,6 @@
     },
     {
      "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/distance/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
      "kind": "src",
      "notable": [
       "LinearLogBlendScores",
@@ -45671,7 +45545,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/fusion/tests.rs",
@@ -45718,7 +45592,7 @@
      "purpose": "Multilingual analyzer subsystem"
     },
     "distance": {
-     "files": 3,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -45742,7 +45616,7 @@
    "over_bar": 0,
    "purpose": "Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion",
    "source_files": 18,
-   "test_files": 6
+   "test_files": 5
   },
   "oneiron-sandbox-contract": {
    "files": [
@@ -46355,7 +46229,7 @@
      "kind": "test",
      "notable": [],
      "path": "tests/it/fetch_policy.rs",
-     "purpose": "Fetch-policy tests (§5, §10): offline fetcher posture, policy defaults, and — with `network-fetch` — the…",
+     "purpose": "Fetch-policy tests (§5, §10), all behind `network-fetch`: the guarded client's pre-network denials",
      "surface": {}
     },
     {
@@ -46591,7 +46465,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/api/booking/public_tests.rs",
@@ -46669,7 +46543,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/api/booking_anti_abuse/tests_guards.rs",
@@ -47039,7 +46913,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/api/entity.rs",
@@ -47175,7 +47049,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/api/git_http/tests_push.rs",
@@ -47423,7 +47297,7 @@
      "path": "src/api/mcp_gateway/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 8
      }
     },
     {
@@ -47475,14 +47349,6 @@
      "surface": {
       "crate-vis": 9
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/api/memory_reason/deep_admission/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -47589,7 +47455,7 @@
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -47631,14 +47497,6 @@
      "surface": {
       "crate-vis": 28
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/api/run_tree/rate_projection_tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -47699,7 +47557,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/billing_usage.rs",
@@ -47739,7 +47597,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/context_pack_v4.rs",
@@ -47747,7 +47605,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/contract_snapshots.rs",
@@ -47779,7 +47637,7 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/core_memory_conversations.rs",
@@ -47787,20 +47645,10 @@
      "surface": {}
     },
     {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/api/tests/depth_quality.rs",
-     "purpose": "—",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
-     "path": "src/api/tests/depth_spend.rs",
+     "path": "src/api/tests/depth_quality.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -47861,7 +47709,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/mcp_write_guards.rs",
@@ -47869,7 +47717,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/memory_reason_repairs.rs",
@@ -47883,7 +47731,7 @@
      "path": "src/api/tests/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 66
+      "crate-vis": 54
      }
     },
     {
@@ -47919,7 +47767,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/retrieval_depth_quality.rs",
@@ -47957,7 +47805,7 @@
      "path": "src/api/tests/support_contract.rs",
      "purpose": "Shared contract/OpenAPI projection helpers for the API tests",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 5
      }
     },
     {
@@ -47967,7 +47815,7 @@
      "path": "src/api/tests/support_mcp.rs",
      "purpose": "Shared MCP test harness: legacy adapter, tool-first endpoints, scoping, code-run fixtures",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 31
      }
     },
     {
@@ -48021,7 +47869,7 @@
      "path": "src/auth.rs",
      "purpose": "HTTP authentication for log-backed version-two capability slips",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 29
      }
     },
     {
@@ -48096,6 +47944,7 @@
       "TokenBootstrapArgs",
       "TokenCommand",
       "TokenPairArgs",
+      "TokenReadArgs",
       "TokenRevokeArgs",
       "VaultArgs"
      ],
@@ -48105,7 +47954,7 @@
       "enum": 4,
       "fn": 2,
       "re-export": 1,
-      "struct": 12
+      "struct": 13
      }
     },
     {
@@ -48124,25 +47973,18 @@
       "RunsCommand",
       "SecretScanArgs",
       "SecretScanSwitch",
-      "ServeOnlyArgs"
+      "ServeOnlyArgs",
+      "WhoamiArgs"
      ],
      "path": "src/cli/owner_args.rs",
      "purpose": "Flags for the owner's own commands: doctor, backup, restore, export, the secret scan switch, import consent…",
      "surface": {
       "enum": 3,
-      "struct": 10
+      "struct": 11
      }
     },
     {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/cli/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DictSearchResolution"
@@ -48152,7 +47994,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 9,
+      "fn": 10,
       "re-export": 5,
       "struct": 1
      }
@@ -48179,14 +48021,6 @@
      }
     },
     {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/commands/host_runtime_tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -48207,13 +48041,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/commands/owner.rs",
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, export, the secret scan switch, import…",
      "surface": {
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -48326,7 +48160,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/config/embedder_tests.rs",
@@ -48344,7 +48178,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "EnvConfig"
@@ -48353,7 +48187,7 @@
      "purpose": "Layered merge: file, environment, and argv values into `ServeConfig`",
      "surface": {
       "crate-vis": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -48388,7 +48222,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/config/privacy_tests.rs",
@@ -48445,7 +48279,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/config/tests.rs",
@@ -48575,7 +48409,7 @@
      "path": "src/embedder/local/qwen3_embedding.rs",
      "purpose": "The embedding model body: a Qwen3 decoder stack with no language head",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 15
      }
     },
     {
@@ -48599,7 +48433,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/embedder/local/tests.rs",
@@ -48665,14 +48499,6 @@
      "surface": {
       "fn": 4
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/error/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -48891,7 +48717,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/linear_host/tests.rs",
@@ -49015,7 +48841,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/livequery/residence/tests.rs",
@@ -49681,7 +49507,7 @@
      "path": "src/owner/runs.rs",
      "purpose": "Agent-run batch consent: see what a run is waiting on, then approve or decline the whole run in one act…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -49691,7 +49517,7 @@
      "path": "src/owner/schedule.rs",
      "purpose": "Scheduled backups for a running `serve`",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -49714,7 +49540,6 @@
      "path": "src/projection.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
       "enum": 1,
       "fn": 7,
       "struct": 1
@@ -49771,7 +49596,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "GpuDerivationLease",
@@ -49796,7 +49621,6 @@
      "path": "src/runtime/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
       "re-export": 5
      }
     },
@@ -49832,19 +49656,10 @@
      "path": "src/runtime/routes.rs",
      "purpose": "Resolved route decisions and redacted/full status views for health and discovery",
      "surface": {
-      "crate-vis": 1,
       "enum": 3,
       "fn": 2,
       "struct": 4
      }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/runtime/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "m",
@@ -49855,7 +49670,7 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 10,
       "fn": 6,
       "struct": 1
      }
@@ -49907,8 +49722,18 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/recall.rs",
+     "purpose": "The recall verb as every server transport runs it",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -49930,7 +49755,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/server/tests.rs",
@@ -49968,13 +49793,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/test_credentials.rs",
      "purpose": "Request fixtures mint real logged slips before crossing the production router",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 10
      }
     },
     {
@@ -50172,14 +49997,6 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
-     "path": "tests/gpu_distribution.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
      "path": "tests/inference_defaults.rs",
      "purpose": "Owner-grade HTTP edit/read proof for resident inference policy rows",
      "surface": {}
@@ -50193,7 +50010,15 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/agent_credentials.rs",
+     "purpose": "A local agent's identity and read credential, from the shipped CLI",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/it/booking_agent_api.rs",
@@ -50209,7 +50034,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/it/core_discover.rs",
@@ -50233,7 +50058,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/it/mcp_booking.rs",
@@ -50273,14 +50098,6 @@
      "surface": {}
     },
     {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/it/skills_pack.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -50297,7 +50114,7 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/managed_mode.rs",
@@ -50330,7 +50147,7 @@
      "purpose": "Host-bound UI and agent action executor over the engine's one verb registry"
     },
     "api": {
-     "files": 166,
+     "files": 163,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -50351,23 +50168,23 @@
      "purpose": "Broadcast group for multi-device fan-out with echo suppression"
     },
     "cli": {
-     "files": 3,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "—"
     },
     "commands": {
-     "files": 12,
+     "files": 11,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
      "files": 15,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge"
     },
@@ -50386,7 +50203,7 @@
      "purpose": "The embedder provider slot"
     },
     "error": {
-     "files": 3,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -50477,14 +50294,14 @@
      "purpose": "Custom Oneiron sync protocol — server-side extensions"
     },
     "runtime": {
-     "files": 7,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "—"
     },
     "server": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -50500,7 +50317,7 @@
     "test_credentials": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
@@ -50526,10 +50343,10 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 2,
+   "over_bar": 4,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 260,
-   "test_files": 113
+   "source_files": 261,
+   "test_files": 105
   },
   "oneiron-uniffi": {
    "files": [
@@ -50596,6 +50413,7 @@
       "ScopeHonesty",
       "StructuralEdgeSpec",
       "StructuralPutInput",
+      "TemporalHint",
       "TextIndexField",
       "WireJson",
       "WitnessAuthor",
@@ -50607,7 +50425,7 @@
      "purpose": "The complete DTO inventory for the WIRE head contract",
      "surface": {
       "enum": 3,
-      "struct": 43
+      "struct": 44
      }
     },
     {

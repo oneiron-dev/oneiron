@@ -13,7 +13,7 @@ use serde::Serialize;
 
 use crate::cli::{
     BackupArgs, DoctorArgs, ExportArgs, ImportCommand, RestoreArgs, RunsCommand, SecretScanArgs,
-    SecretScanSwitch,
+    SecretScanSwitch, WhoamiArgs,
 };
 use crate::config::{
     BackupConfig, ServeArgs, ServeConfig, resolve_backup_config, resolve_serve_config,
@@ -166,6 +166,44 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
 }
 
 #[derive(Serialize)]
+struct Whoami {
+    /// The PERSON a credential names to act as this vault's owner.
+    owner_principal: String,
+    /// The class that credential binds for the owner's read lane.
+    actor_class: &'static str,
+    /// The authority vault id its slips carry; `null` until the vault is
+    /// rooted (its first `serve` or `token bootstrap` with an issuer key).
+    vault_id: Option<String>,
+}
+
+/// Prints who owns the stopped vault: the principal facade credentials name
+/// and the vault id they carry. Read-only apart from the housekeeping every
+/// open does; it never roots the vault.
+pub fn whoami(args: WhoamiArgs) -> anyhow::Result<()> {
+    let config = resolve_serve_config(&ServeArgs {
+        config: args.config,
+        vault_path: Some(args.path),
+        ..ServeArgs::default()
+    })?;
+    let vault = open_vault(
+        &config,
+        "POST /v1/core/facade/describe --data '{\"self\":true}'",
+    )?;
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|error| anyhow::anyhow!("vault owner unavailable: {error}"))?;
+    let vault_id = vault
+        .authority_fold()?
+        .vault_id
+        .map(|id| id.iter().map(|byte| format!("{byte:02x}")).collect());
+    emit(&Whoami {
+        owner_principal: owner.to_hex(),
+        actor_class: "human",
+        vault_id,
+    })
+}
+
+#[derive(Serialize)]
 struct Exported<'a> {
     file: &'a Path,
     format: String,
@@ -294,22 +332,29 @@ pub fn runs(command: RunsCommand) -> anyhow::Result<()> {
     match command {
         RunsCommand::Pending(_) => emit(&runs::pending(&vault)?),
         RunsCommand::Show(args) => {
-            emit(&runs::review(&vault, &local_owner(&vault)?, &args.run_id)?)
+            let run = runs::RunName::from_fields(args.run_id.as_deref(), args.run_ref.as_deref())?;
+            emit(&runs::review(&vault, &local_owner(&vault)?, run)?)
         }
-        RunsCommand::Approve(args) => emit(&runs::resolve(
-            &vault,
-            &local_owner(&vault)?,
-            &args.run_id,
-            &args.bundle,
-            GateConsentBundleAction::Approve,
-        )?),
-        RunsCommand::Decline(args) => emit(&runs::resolve(
-            &vault,
-            &local_owner(&vault)?,
-            &args.run_id,
-            &args.bundle,
-            GateConsentBundleAction::Decline,
-        )?),
+        RunsCommand::Approve(args) => {
+            let run = runs::RunName::from_fields(args.run_id.as_deref(), args.run_ref.as_deref())?;
+            emit(&runs::resolve(
+                &vault,
+                &local_owner(&vault)?,
+                run,
+                &args.bundle,
+                GateConsentBundleAction::Approve,
+            )?)
+        }
+        RunsCommand::Decline(args) => {
+            let run = runs::RunName::from_fields(args.run_id.as_deref(), args.run_ref.as_deref())?;
+            emit(&runs::resolve(
+                &vault,
+                &local_owner(&vault)?,
+                run,
+                &args.bundle,
+                GateConsentBundleAction::Decline,
+            )?)
+        }
     }
 }
 

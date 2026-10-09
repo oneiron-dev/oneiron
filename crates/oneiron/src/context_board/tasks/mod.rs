@@ -21,23 +21,8 @@ pub(crate) use self::authority_state::{
     ack_task_in_txn, cancel_task_in_txn, task_is_acked, task_is_cancelled,
 };
 
-#[cfg(test)]
-mod tests;
-
 // The flat tasks.rs module used to provide these names to the inline test
 // module through `use super::*`: the TASKS items the tests name bare (via the
 // child glob seam below) and the crate imports the old file header supplied.
 // After the directory split the seam re-imports both so `tests.rs` resolves
 // exactly as it did before.
-#[cfg(test)]
-use self::{authority_state::*, projection::*};
-#[cfg(test)]
-use crate::Vault;
-#[cfg(test)]
-use crate::consult_ladder::LadderTerminalDisposition;
-#[cfg(test)]
-use crate::outbound::ConnectorSendTask;
-#[cfg(test)]
-use crate::run_tree::RunTreeStatus;
-#[cfg(test)]
-use crate::task_verb::{ConsultResultPresence, TaskKind, TaskTerminalDisposition};

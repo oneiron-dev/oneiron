@@ -428,7 +428,9 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
             "one",
         )
         .unwrap();
-    let bundle_id = runs::review(vault, &unbound, run).unwrap().bundle_id;
+    let bundle_id = runs::review(vault, &unbound, runs::RunName::Id(run))
+        .unwrap()
+        .bundle_id;
 
     // Admitted at the door, then revoked before any act reaches the writer.
     let admitted = crate::api::owner_routes::owner(&auth, &server).expect("the owner is admitted");
@@ -480,6 +482,7 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
         oneiron::run_tree::GateConsentBundleAction::Approve,
         oneiron::run_tree::GateConsentBundleAction::Decline,
     ] {
+        let run = runs::RunName::Id(run);
         refused_owner(runs::resolve(vault, &admitted, run, &bundle_id, action).unwrap_err());
     }
     assert_eq!(
@@ -586,6 +589,62 @@ async fn run_review_redacts_stored_credentials_with_the_scan_off() {
     );
 }
 
+/// #1307 review: a run id is any text, another run's `run_ref` among it.
+/// The run with that id is reviewed and decided by it, the other run by its
+/// `run_ref`, and neither name selects the other run.
+#[tokio::test]
+async fn a_run_id_that_is_another_runs_ref_names_its_own_run() {
+    let (_dir, server) = auth_test_server();
+    let owner = owner_recipe(&server);
+    let vault = server.vault();
+    let first = vault
+        .park_run_proposal_for_test(
+            "owner-route-run-first",
+            oneiron::EntityId::now(),
+            oneiron::EntityId::now(),
+            "the first run's",
+        )
+        .unwrap();
+    let (status, listing) = call(&server, "GET", "/v1/owner/runs", owner.clone(), None).await;
+    assert_eq!(status, StatusCode::OK, "{listing}");
+    let first_ref = listing[0]["run_ref"].as_str().unwrap().to_owned();
+    let second = vault
+        .park_run_proposal_for_test(
+            &first_ref,
+            oneiron::EntityId::now(),
+            oneiron::EntityId::now(),
+            "the second run's",
+        )
+        .unwrap();
+    let proposal = |review: &Value| review["proposals"][0]["claim_id"].clone();
+
+    let path = format!("/v1/owner/runs/review?run_id={first_ref}");
+    let (status, by_id) = call(&server, "GET", &path, owner.clone(), None).await;
+    assert_eq!(status, StatusCode::OK, "{by_id}");
+    assert_eq!(proposal(&by_id), second.to_hex(), "{by_id}");
+    let path = format!("/v1/owner/runs/review?run_ref={first_ref}");
+    let (status, by_ref) = call(&server, "GET", &path, owner.clone(), None).await;
+    assert_eq!(status, StatusCode::OK, "{by_ref}");
+    assert_eq!(proposal(&by_ref), first.to_hex(), "{by_ref}");
+    let both = format!("/v1/owner/runs/review?run_id={first_ref}&run_ref={first_ref}");
+    let (status, _) = call(&server, "GET", &both, owner.clone(), None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let decide = json!({ "run_id": first_ref, "bundle_id": by_id["bundle_id"] });
+    let (status, resolved) = call(
+        &server,
+        "POST",
+        "/v1/owner/runs/approve",
+        owner,
+        Some(&decide),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{resolved}");
+    let approval = |id| vault.get_claim(&id).unwrap().unwrap().approval;
+    assert_eq!(approval(second), oneiron::ClaimApprovalStatus::Approved);
+    assert_eq!(approval(first), oneiron::ClaimApprovalStatus::Proposed);
+}
+
 /// SOL-9A-2-R2 F2: a backup the owner door admitted, then queued behind a
 /// revocation of its slip, writes nothing and prunes nothing.
 #[tokio::test]
@@ -671,12 +730,12 @@ async fn a_credential_shaped_run_id_is_never_served_and_its_ref_decides_the_run(
     assert!(!listing.to_string().contains(run), "{listing}");
     let run_ref = listing[0]["run_ref"].as_str().unwrap().to_owned();
 
-    let path = format!("/v1/owner/runs/review?run_id={run_ref}");
+    let path = format!("/v1/owner/runs/review?run_ref={run_ref}");
     let (status, review) = call(&server, "GET", &path, owner.clone(), None).await;
     assert_eq!(status, StatusCode::OK, "{review}");
     assert!(!review.to_string().contains(run), "{review}");
 
-    let decide = json!({ "run_id": run_ref, "bundle_id": review["bundle_id"] });
+    let decide = json!({ "run_ref": run_ref, "bundle_id": review["bundle_id"] });
     let (status, resolved) = call(
         &server,
         "POST",

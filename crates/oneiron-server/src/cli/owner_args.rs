@@ -24,6 +24,16 @@ pub struct DoctorArgs {
 }
 
 #[derive(Args, Clone, Debug)]
+pub struct WhoamiArgs {
+    /// Path to the LMDB vault directory.
+    pub path: PathBuf,
+
+    /// Config file the vault runs with. Defaults to the XDG path.
+    #[arg(long)]
+    pub config: Option<PathBuf>,
+}
+
+#[derive(Args, Clone, Debug)]
 pub struct BackupArgs {
     /// List this vault's backups instead of taking one.
     #[arg(long)]
@@ -141,8 +151,13 @@ pub struct ServeOnlyArgs {
 
 #[derive(Args, Clone, Debug)]
 pub struct RunArgs {
-    /// The run id, or the `run_ref` `runs pending` printed for it.
-    pub run_id: String,
+    /// The run id.
+    #[arg(required_unless_present = "run_ref")]
+    pub run_id: Option<String>,
+
+    /// The `run_ref` `runs pending` printed for the run, in place of its id.
+    #[arg(long = "ref", value_name = "RUN_REF", conflicts_with = "run_id")]
+    pub run_ref: Option<String>,
 
     #[command(flatten)]
     pub serve: ServeArgs,
@@ -150,8 +165,13 @@ pub struct RunArgs {
 
 #[derive(Args, Clone, Debug)]
 pub struct RunDecisionArgs {
-    /// The run id, or the `run_ref` `runs pending` printed for it.
-    pub run_id: String,
+    /// The run id.
+    #[arg(required_unless_present = "run_ref")]
+    pub run_id: Option<String>,
+
+    /// The `run_ref` `runs pending` printed for the run, in place of its id.
+    #[arg(long = "ref", value_name = "RUN_REF", conflicts_with = "run_id")]
+    pub run_ref: Option<String>,
 
     /// The bundle id `runs show` printed for exactly these proposals.
     #[arg(long)]

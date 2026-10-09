@@ -348,6 +348,17 @@ pub(crate) fn ask_standing_in(
     }))
 }
 
+/// The settlement that closes the ask group `id`, read as [`settle_in`]
+/// reads it before it cuts: [`settle_in`] returns it and cuts no other.
+/// `None` while no receipt is held for `id`, whether or not its group is.
+pub(crate) fn ask_settlement_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Option<TaskAskResult>> {
+    read_result(vault, txn, id)
+}
+
 fn reduce(
     spec: &TaskAskSpec,
     who: &BTreeSet<EntityId>,
