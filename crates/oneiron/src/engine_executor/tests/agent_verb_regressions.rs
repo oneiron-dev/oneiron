@@ -79,12 +79,13 @@ fn create_task() -> SelfCall {
     })
 }
 
-/// A step runs `tasks.create`, which commits; the step's checkpoint is then
-/// lost, as when the process stops in that window. The same step resumes as
-/// `resumed`, whose last call is the same `tasks.create`. Returns the first
-/// attempt's answer and the resumed one's, after checking the resumed step
-/// wrote nothing new.
+/// A step makes the calls `first`, the last of them a `tasks.create` that
+/// commits; the step's checkpoint is then lost, as when the process stops in
+/// that window. The same step resumes as `resumed`, whose last call is the
+/// same `tasks.create`. Returns the first attempt's answer to it and the
+/// resumed one's, after checking the resumed step wrote nothing new.
 fn resume_after_a_lost_checkpoint(
+    first: Vec<SelfCall>,
     resumed: Vec<SelfCall>,
 ) -> (SelfDispatchOutcome, SelfDispatchOutcome) {
     let (_dir, vault) = open_test_vault();
@@ -115,7 +116,7 @@ fn resume_after_a_lost_checkpoint(
     let backend = FixtureBackend::new([script]);
     let mut stopped = RecordedStep {
         vault: &vault,
-        calls: vec![create_task()],
+        calls: first,
         competing_record: Some(initial_executor_replay_record(&vault, &config)),
         answers: Vec::new(),
     };
@@ -162,7 +163,7 @@ fn resume_after_a_lost_checkpoint(
 /// gets the first receipt back; the vault holds the one task.
 #[test]
 fn resumed_step_returns_the_committed_verb_write_instead_of_writing_again() {
-    let (first, resumed) = resume_after_a_lost_checkpoint(vec![create_task()]);
+    let (first, resumed) = resume_after_a_lost_checkpoint(vec![create_task()], vec![create_task()]);
     assert_eq!(
         resumed, first,
         "the resumed call answers with the first receipt"
@@ -170,14 +171,14 @@ fn resumed_step_returns_the_committed_verb_write_instead_of_writing_again() {
 }
 
 /// Review repro (Astra R3, #1338): the resumed step's code is generated again
-/// and may place the same write at another bridge position, here behind a
-/// search. The write is still the one the first attempt committed.
+/// and may place the same write at another bridge position. Here the first
+/// attempt wrote behind a search and the resumed one writes first; the write
+/// is still the one the first attempt committed.
 #[test]
 fn resumed_step_that_moves_its_write_still_gets_the_first_receipt() {
-    let (first, resumed) = resume_after_a_lost_checkpoint(vec![
-        SelfCall::MemorySearch(SelfMemorySearchCall::new("open notes", 4)),
-        create_task(),
-    ]);
+    let search = SelfCall::MemorySearch(SelfMemorySearchCall::new("open notes", 4));
+    let (first, resumed) =
+        resume_after_a_lost_checkpoint(vec![search, create_task()], vec![create_task()]);
     assert_eq!(
         resumed, first,
         "the moved call answers with the first receipt"

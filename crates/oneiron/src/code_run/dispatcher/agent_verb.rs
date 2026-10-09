@@ -73,8 +73,9 @@ impl HostSelfDispatcher<'_> {
             .storage
             .put_code_run_replay_record_if_generation_with_heal(&receipt, None, None)?;
         let outcome = answered(door.call(&call, &origin));
+        // A receipt is a one-call record, so its row is that record's first.
         receipt.bridge_calls.push(CodeRunBridgeCall::record(
-            site.seq,
+            0,
             &SelfCall::AgentVerb(call),
             &outcome,
             0,
