@@ -17,6 +17,14 @@ thread_local! {
     pub(super) static ACTIVE_SEGMENT: RefCell<Option<TxnSegment>> = const { RefCell::new(None) };
 }
 
+/// Whether this thread holds an installed txn segment, which keeps its overlay
+/// segment permit until the owner commits it after the base commit. The group
+/// commit closes a group after such a write, so no later member of the same
+/// group waits on that permit.
+pub(crate) fn txn_segment_installed() -> bool {
+    ACTIVE_SEGMENT.with(|slot| slot.borrow().is_some())
+}
+
 pub(super) use self::lifecycle::Lease;
 pub(crate) use self::lifecycle::SessionOverlay;
 pub(crate) use self::segment::TxnSegmentGuard;
