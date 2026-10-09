@@ -62,6 +62,14 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "examples/write_mix_bench.rs",
+     "purpose": "Agent write-mix bench for the vault's single writer (OF-536 group commit)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/access_grant/codec.rs",
      "purpose": "Pinned AccessGrant body/scope key sets and fail-closed MessagePack codec",
      "surface": {
@@ -2371,7 +2379,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/batch/builder/commit.rs",
-     "purpose": "Committing terminal: builder-time checks, its own transaction, preflight, apply, commit, VAD postcommit",
+     "purpose": "Committing terminal: builder-time checks, index preparation, its share of the group commit, preflight…",
      "surface": {
       "crate-vis": 2,
       "fn": 1
@@ -2853,7 +2861,7 @@
      "path": "src/batch/gate_mode.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -2934,6 +2942,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/prepared_index.rs",
+     "purpose": "Index work a committing batch does before its write transaction opens (RESEARCH-1115 Bend 2): the BM25…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -3838,7 +3856,7 @@
      "path": "src/bm25/index.rs",
      "purpose": "Index/deindex mutation paths plus the missing-posting repair proof",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 6
      }
     },
     {
@@ -19247,7 +19265,7 @@
      "path": "src/hnsw/insert.rs",
      "purpose": "Insert, localized refresh, and backlink attachment",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 8
      }
     },
     {
@@ -19297,7 +19315,7 @@
      "path": "src/hnsw/search.rs",
      "purpose": "Search, MRL rescore, and beam traversal",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -19335,7 +19353,7 @@
      "path": "src/hnsw/types.rs",
      "purpose": "Shared graph, heap, and beam option types",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -20530,7 +20548,8 @@
      "path": "src/learning_setting.rs",
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…",
      "surface": {
-      "const": 2,
+      "const": 4,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 5,
       "struct": 2
@@ -30467,7 +30486,7 @@
      "path": "src/session_overlay/overlay/mod.rs",
      "purpose": "Ephemeral in-memory write overlay for one live session (ARCH-0052, D1)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -32523,7 +32542,7 @@
      "path": "src/store/diagnostics.rs",
      "purpose": "The content-free counters one open vault owns",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -32651,6 +32670,27 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "GroupCommitStats"
+     ],
+     "path": "src/store/group_commit.rs",
+     "purpose": "Group commit at the vault's single LMDB writer (ARCH-0019 storage invariant, OF-536)",
+     "surface": {
+      "crate-vis": 15,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/store/group_commit/tests.rs",
+     "purpose": "Group commit (OF-536), checked against outside truth: LMDB's own transaction id counts the durable commits…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "RawDatabases",
       "Store",
       "StoreCore",
@@ -32691,9 +32731,9 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 1,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -38628,7 +38668,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 96,
+     "files": 97,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39720,7 +39760,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 55,
+     "files": 57,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39890,8 +39930,8 @@
    },
    "over_bar": 27,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2399,
-   "test_files": 809
+   "source_files": 2402,
+   "test_files": 810
   },
   "oneiron-android": {
    "files": [
