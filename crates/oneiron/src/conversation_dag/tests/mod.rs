@@ -850,3 +850,59 @@ fn bounded_thread_summary_excludes_room_prefix_and_pins_historic_replies() {
     );
     assert_eq!(vault.drill(&header.claim).unwrap(), [first, second]);
 }
+
+/// OF-296 (docs-pass canon read): thread meta is a derived cache over the
+/// reply chain. A checkpoint does not carry it, and a restore folds it again
+/// from the restored threads, so a cache row the source held is never copied.
+#[test]
+fn a_restore_rebuilds_thread_meta_from_the_threads_not_the_copied_cache() {
+    use crate::recovery::checkpoint::RestoreReason;
+    use crate::side_table::{self, Raw, SideTable};
+    const THREAD_META: SideTable<EntityId, ThreadMeta, Raw> =
+        SideTable::new(&side_table::CONVERSATION_DAG_THREAD_META);
+
+    let (dir, vault, conversation, actor) = fixture();
+    let root = vault
+        .append_dag_record(&input(conversation, None, true, actor))
+        .unwrap()
+        .id;
+    let mut reply = input(conversation, None, false, actor);
+    reply.occurred = time(21);
+    let first = vault.reply_in_thread(root, &reply).unwrap().id;
+    reply.occurred = time(22);
+    vault.reply_in_thread(root, &reply).unwrap();
+    let folded = vault.thread_meta(root).unwrap().unwrap();
+    assert_eq!((folded.root, folded.count, folded.last_at), (first, 2, 22));
+
+    // A cache row that disagrees with the threads: the live vault trusts it
+    // until it is marked dirty, so only a rebuild can tell.
+    let stale = ThreadMeta {
+        root: first,
+        count: 9,
+        last_at: 99,
+    };
+    vault
+        .with_write_txn(|txn| THREAD_META.put(&vault.store, txn, &root, &stale))
+        .unwrap();
+    assert_eq!(vault.thread_meta(root).unwrap(), Some(stale));
+
+    let image = dir.path().join("thread-meta.checkpoint");
+    vault.snapshot_checkpoint(&image, 100).unwrap();
+    let destination = dir.path().join("restored");
+    let (restored, _) = Vault::restore_checkpoint(
+        &image,
+        &destination,
+        crate::VaultConfig::device(),
+        RestoreReason::Restore,
+        120,
+    )
+    .unwrap();
+    let txn = restored.store.env.read_txn().unwrap();
+    assert_eq!(
+        THREAD_META.get(&restored.store, &txn, &root).unwrap(),
+        Some(folded.clone()),
+        "the restore rebuilt the row from the restored reply chain"
+    );
+    drop(txn);
+    assert_eq!(restored.thread_meta(root).unwrap(), Some(folded));
+}

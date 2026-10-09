@@ -151,6 +151,7 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
         for key in windows {
             WINDOW_FULL_RESYNC_MARKER.put(&vault.store, txn, &key[4..].to_owned(), &[1u8])?;
         }
+        crate::conversation_dag::rebuild_thread_meta_projection_in_txn(vault, txn)?;
         crate::attempt_queue::rebuild_checkpoint_indexes(&vault.store, txn)?;
         vault.store.rebuild_commitment_due_sidecars(txn)?;
         vault.store.rebuild_pending_gate_consent_sidecars(txn)?;
