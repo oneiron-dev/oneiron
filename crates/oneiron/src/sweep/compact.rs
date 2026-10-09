@@ -585,7 +585,7 @@ mod scoped_update_tests {
             seq: 0,
         };
         vault
-            .with_write_txn_grouped(|txn| {
+            .with_write_txn(|txn| {
                 WINDOW_SNAPSHOT.put(&vault.store, txn, &window, &snapshot)?;
                 WINDOW_UPDATE.put(&vault.store, txn, &update_key, &update)?;
                 // A damaged neighbor has no valid Loro payload. Its label only shares

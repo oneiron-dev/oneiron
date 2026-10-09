@@ -10,15 +10,16 @@
 //! once and only then settles the members: no caller hears "committed" before
 //! the shared transaction is durable.
 //!
-//! A group takes every write already queued, in order, until it carries its
-//! size bound. When its queue runs empty it waits only while a write is
-//! announced as on its way, and only until its window, counted from when the
-//! group opened, has passed. With nothing announced it closes at once, so a
-//! lone writer never waits. The window bounds that idle wait, not how long a
-//! group stays open: a group whose queue never empties runs past its window
-//! until its size bound. Both bounds are learned-setting rows
-//! ([`GROUP_COMMIT_WINDOW_MS`], [`GROUP_COMMIT_MAX_WRITES`]) that the leader
-//! reads in the transaction it opens.
+//! A group takes the writes already queued, in order, until it carries its
+//! size bound or meets a write that closes it (below). When its queue runs
+//! empty it waits only while a write is announced as on its way, and only
+//! until its window, counted from when the group opened, has passed. With
+//! nothing announced it closes at once, so a lone writer never waits. The
+//! window bounds that idle wait, not how long a group stays open: a group
+//! whose queue never empties runs past its window until its size bound. Both
+//! bounds are learned-setting rows ([`GROUP_COMMIT_WINDOW_MS`],
+//! [`GROUP_COMMIT_MAX_WRITES`]) that the leader reads in the transaction it
+//! opens.
 //!
 //! A member's answer, and whatever its calling thread holds, stay alive until
 //! the group commits, so no member may wait on another's. Only engine writes

@@ -129,7 +129,7 @@ mod tests {
         let actor = "11111111111111111111111111111111";
         let other = "22222222222222222222222222222222";
         vault
-            .with_write_txn_grouped(|txn| {
+            .with_write_txn(|txn| {
                 for n in 0u64..1005 {
                     let mut bytes = [1; 16];
                     bytes[8..].copy_from_slice(&n.to_be_bytes());
@@ -209,7 +209,7 @@ mod tests {
         }
         batch.commit().unwrap();
         vault
-            .with_write_txn_grouped(|txn| {
+            .with_write_txn(|txn| {
                 for n in 0..1009 {
                     let decision_id = GateDecisionId::from_bytes(*id_for(n).as_bytes());
                     let created_at = if n == 1005 {

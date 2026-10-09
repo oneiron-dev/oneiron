@@ -301,13 +301,12 @@ impl Vault {
     /// Executes a closure within a single LMDB write transaction and allows
     /// callers to return their own error type.
     ///
-    /// The transaction commits on `Ok` return and rolls back on `Err`. It is
-    /// this write's share of the vault's group commit (OF-536): it may join
-    /// writes already in progress and commit with them in one fsync, a
-    /// failing one rolls back only its own rows, and `Ok` returns once the
-    /// shared commit is durable. The closure runs on the calling thread. Its
-    /// result is held until that commit, so the group closes right after the
-    /// closure: no later write waits on a lock or permit the result carries.
+    /// The transaction commits on `Ok` return and rolls back on `Err`, and
+    /// `Ok` returns once the commit is durable. The closure runs on the
+    /// calling thread. In the vault's group commit (OF-536) this write is a
+    /// group of its own: it joins no group already open, so it never waits on
+    /// what an earlier write's caller holds, and its group commits right after
+    /// it, so no later write waits on a lock or permit its result carries.
     /// Explicit Dreamer approvals applied through [`Self::batch_in`] run VAD
     /// consolidation after commit. A postcommit error retains Approved; retry
     /// [`Self::consolidate_claim_vad_now`] to finish that work.

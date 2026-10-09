@@ -442,7 +442,7 @@ pub(crate) mod tests {
             .expect("upload")
             .object;
         vault
-            .with_write_txn_grouped(|wtxn| {
+            .with_write_txn(|wtxn| {
                 vault
                     .store
                     .entities
@@ -513,7 +513,7 @@ pub(crate) mod tests {
             vec![(main_ref(), next)]
         );
         vault
-            .with_write_txn_grouped(|wtxn| {
+            .with_write_txn(|wtxn| {
                 vault
                     .store
                     .entities

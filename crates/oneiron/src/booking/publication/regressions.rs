@@ -79,7 +79,7 @@ fn publication_token_lookup_is_durable_and_misses_do_not_scan_claims() {
     // A malformed unrelated claim would make a scan fail. The fixed-key miss
     // and hit must not inspect it.
     vault
-        .with_write_txn_grouped(|txn| {
+        .with_write_txn(|txn| {
             let raw = vault
                 .store
                 .entities
@@ -177,7 +177,7 @@ fn publication_read_still_rejects_corrupt_surfaceability_states() {
         body.stale = stale;
         // Deliberate internal corruption fixture, not a supported write door.
         vault
-            .with_write_txn_grouped(|txn| {
+            .with_write_txn(|txn| {
                 let raw =
                     crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &claim)?
                         .expect("row");
@@ -389,7 +389,7 @@ fn publication_put_rejects_corrupt_existing_claim_but_allows_erased_shell() -> R
         corrupt_rows.push(raw);
     }
     for corrupt in corrupt_rows {
-        vault.with_write_txn_grouped(|txn| {
+        vault.with_write_txn(|txn| {
             vault.store.entities.put(txn, claim.as_bytes(), &corrupt)?;
             Ok(())
         })?;
@@ -423,7 +423,7 @@ fn publication_put_rejects_corrupt_existing_claim_but_allows_erased_shell() -> R
         assert_eq!(vault.get_raw(&claim)?, Some(corrupt));
     }
 
-    vault.with_write_txn_grouped(|txn| {
+    vault.with_write_txn(|txn| {
         vault.store.entities.put(txn, claim.as_bytes(), &shell)?;
         Ok(())
     })?;

@@ -275,7 +275,7 @@ mod tests {
     fn one_receipt_mints_one_human_task_and_cursor_without_a_worker() -> Result<()> {
         let (_dir, vault, author, recipient) = fixture();
         let before = vault.entities_by_type(ENTITY_TYPE_TASK)?;
-        let task = vault.with_write_txn_grouped(|txn| {
+        let task = vault.with_write_txn(|txn| {
             let first = enqueue_policy_change_followup_in_txn(
                 &vault,
                 txn,
@@ -335,7 +335,7 @@ mod tests {
         )?;
         assert!(
             vault
-                .with_write_txn_grouped(|txn| enqueue_policy_change_followup_in_txn(
+                .with_write_txn(|txn| enqueue_policy_change_followup_in_txn(
                     &vault,
                     txn,
                     author,

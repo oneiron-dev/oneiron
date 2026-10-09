@@ -289,7 +289,7 @@ mod tests {
         let (_dir, vault) = test_vault();
 
         vault
-            .with_write_txn_grouped(|wtxn| {
+            .with_write_txn(|wtxn| {
                 vault
                     .store
                     .sync_state
@@ -303,7 +303,7 @@ mod tests {
         assert_matches!(err, Error::CorruptedIndex("sync client_id zero"));
 
         vault
-            .with_write_txn_grouped(|wtxn| {
+            .with_write_txn(|wtxn| {
                 vault.store.sync_state.put(wtxn, KEY_CLIENT_ID, b"short")?;
                 Ok(())
             })
@@ -314,7 +314,7 @@ mod tests {
         assert_matches!(err, Error::CorruptedIndex("sync client_id row"));
 
         vault
-            .with_write_txn_grouped(|wtxn| {
+            .with_write_txn(|wtxn| {
                 vault
                     .store
                     .sync_state
@@ -332,7 +332,7 @@ mod tests {
         assert_matches!(err, Error::CorruptedIndex("device signing key row"));
 
         vault
-            .with_write_txn_grouped(|wtxn| {
+            .with_write_txn(|wtxn| {
                 vault
                     .store
                     .sync_state

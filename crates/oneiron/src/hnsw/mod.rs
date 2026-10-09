@@ -89,7 +89,7 @@ mod slim_graph_tests {
             let (_dir, vault) = open_test_vault_with(embedding_test_config());
             let id = entity(50);
             vault.put_entity(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"node")?;
-            vault.with_write_txn_grouped(|txn| {
+            vault.with_write_txn(|txn| {
                 if discipline == LinkDiscipline::Legacy {
                     vault.store.hnsw_meta.delete(txn, SYMMETRIC_LINKS_KEY)?;
                 } else {
@@ -122,7 +122,7 @@ mod slim_graph_tests {
         let id = entity(50);
         vault.put_entity(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"node")?;
         vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
-        vault.with_write_txn_grouped(|txn| drop_rebuildable_hnsw(&vault.store, txn))?;
+        vault.with_write_txn(|txn| drop_rebuildable_hnsw(&vault.store, txn))?;
         let graph = {
             let txn = vault.store.env.read_txn()?;
             build_hnsw_graph_from_snapshot(
@@ -151,7 +151,7 @@ mod slim_graph_tests {
             assert_eq!(read_count(&vault.store, &txn)?, 0);
             assert_eq!(read_entry_point(&vault.store, &txn)?, None);
         }
-        vault.with_write_txn_grouped(|txn| {
+        vault.with_write_txn(|txn| {
             write_rebuilt_hnsw(&vault.store, txn, &graph, LinkDiscipline::Symmetric)
         })?;
         let txn = vault.store.env.read_txn()?;

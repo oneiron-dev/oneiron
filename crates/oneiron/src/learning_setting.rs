@@ -44,10 +44,11 @@ pub const ATTRIBUTION_UNCLEAR_FLOOR: SettingSpec = SettingSpec {
 /// How long a group commit at the vault's single writer may wait, with its
 /// queue empty, for writes already on their way, in milliseconds counted from
 /// when the group opened (ARCH-0019 group-commit invariant, OF-536). It bounds
-/// that idle wait only: writes already queued always join, up to
-/// [`GROUP_COMMIT_MAX_WRITES`]. A group never waits when no write is on its
-/// way, so a lone writer pays nothing; zero closes every group as soon as its
-/// queue is empty.
+/// that idle wait only: writes already queued join regardless, up to
+/// [`GROUP_COMMIT_MAX_WRITES`], until one that runs alone (a host's callback)
+/// or holds a session-overlay segment closes the group. A group never waits
+/// when no write is on its way, so a lone writer pays nothing; zero closes
+/// every group as soon as its queue is empty.
 pub const GROUP_COMMIT_WINDOW_MS: SettingSpec = SettingSpec {
     key: "group_commit_window_ms",
     min: 0.0,

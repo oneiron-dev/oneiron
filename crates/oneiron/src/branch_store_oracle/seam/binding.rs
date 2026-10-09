@@ -565,7 +565,7 @@ pub(in crate::branch_store_oracle) fn replay_put_racing_a_committed_change(
             writer_held.wait();
             storage.put_code_run_replay_record_if_generation(&record, Some(generation))
         });
-        vault.with_write_txn_grouped(|wtxn| {
+        vault.with_write_txn(|wtxn| {
             writer_held.wait();
             // Long enough that a compare living outside the transaction has
             // certainly run: the run thread is queued on the writer this
