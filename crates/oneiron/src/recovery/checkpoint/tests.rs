@@ -277,6 +277,151 @@ fn a_hold_after_an_erase_commits_never_keeps_its_receipts_readable() {
     );
 }
 
+/// A person claim with one receipt encrypted under the claim's key.
+fn claim_with_receipt(vault: &Vault) -> (EntityId, crate::store::GateDecisionRecord) {
+    use crate::store::{GateDecisionId, GateDecisionRecord};
+    let claim = EntityId::now();
+    vault
+        .put_entity(
+            &claim,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 10, end: 10 },
+            10,
+            b"custody fixture",
+        )
+        .expect("put fixture entity");
+    let receipt = GateDecisionRecord {
+        version: 0,
+        decision_id: GateDecisionId::now(),
+        created_at: 40,
+        outcome: "approved".into(),
+        reason_codes: vec!["gate.test.custody".into()],
+        receipt_reasons: vec![],
+        system_notices: vec![],
+        actor_class: "agent".into(),
+        actor_ref: Some("private-custody-receipt".into()),
+        content_kind: "claim".into(),
+        policy_manifest_version: "v0".into(),
+        claim_id: Some(*claim.as_bytes()),
+        grant_ref: None,
+        diff_handle: vec![1],
+        read_frontier_hash: [2; 32],
+        redacted_at: None,
+    };
+    vault
+        .with_write_txn(|txn| vault.store.append_gate_decision_in_txn(txn, &receipt))
+        .expect("append claim receipt");
+    (claim, receipt)
+}
+
+/// ARCH-0038 #erasure-completeness, "Key custody in a side restore" (REV-9
+/// item 11): a copy served beside its source gets custody of its own, so an
+/// erase in either vault never reaches the other vault's keys or receipts.
+/// Both side doors: the rehearsal's, and the one that keeps live authority.
+#[test]
+fn a_side_restore_forks_key_custody_so_each_vault_shreds_only_its_own_keys() {
+    for keeping_authority in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+        let (erased_in_copy, copy_side) = claim_with_receipt(&source);
+        let (erased_in_source, source_side) = claim_with_receipt(&source);
+        let image = root.path().join("image");
+        source.snapshot_checkpoint(&image, 100).expect("image");
+        let destination = root.path().join("copy");
+        let (copy, _) = if keeping_authority {
+            Vault::restore_checkpoint_keeping_authority(
+                &image,
+                &destination,
+                VaultConfig::device(),
+                &source,
+                120,
+            )
+        } else {
+            Vault::restore_checkpoint_beside(&image, &destination, VaultConfig::device(), 120)
+        }
+        .expect("side restore");
+
+        copy.delete_entity_with_reason(&erased_in_copy, crate::DeleteReason::UserHardDelete)
+            .expect("erase in the copy");
+        assert!(
+            !copy
+                .gate_decisions(100)
+                .expect("the copy's ledger reads")
+                .contains(&copy_side),
+            "the erase redacts the copy's receipt"
+        );
+        assert!(
+            source
+                .gate_decisions(100)
+                .expect("the source's receipts still decrypt")
+                .contains(&copy_side),
+            "an erase in the copy never reaches the source"
+        );
+
+        source
+            .delete_entity_with_reason(&erased_in_source, crate::DeleteReason::UserHardDelete)
+            .expect("erase in the source");
+        assert!(
+            copy.gate_decisions(100)
+                .expect("the copy's receipts still decrypt")
+                .contains(&source_side),
+            "an erase in the source never reaches the copy"
+        );
+    }
+}
+
+/// The fork copies only the keys still live in the source's custody: a key
+/// destroyed before the restore, or one whose retirement the source has
+/// committed but not yet carried out, never reaches the copy, and the copy
+/// restores without the receipts it decrypted.
+#[test]
+fn a_side_restore_copies_no_key_the_source_destroyed_or_committed_to_destroy() {
+    let hex = |claim: &EntityId| crate::entity_id::bytes_to_hex_lower(claim.as_bytes());
+    let root = tempfile::tempdir().unwrap();
+    let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    let (live, live_receipt) = claim_with_receipt(&source);
+    let (destroyed, destroyed_receipt) = claim_with_receipt(&source);
+    let (committed, committed_receipt) = claim_with_receipt(&source);
+    let image = root.path().join("image");
+    source.snapshot_checkpoint(&image, 100).expect("image");
+    source
+        .delete_entity_with_reason(&destroyed, crate::DeleteReason::UserHardDelete)
+        .expect("erase before the restore");
+    // An erase whose intent committed and whose finisher has not run yet
+    // (the process stopped in between): the key is still on disk.
+    let mut wtxn = source.store.env.write_txn().unwrap();
+    source
+        .store
+        .redact_gate_decisions_for_claim_in_txn(&mut wtxn, committed.as_bytes(), 50)
+        .expect("commit an erase");
+    wtxn.commit().unwrap();
+    let source_custody = root.path().join(".source.gate-decision-keys");
+    assert!(source_custody.join(hex(&committed)).exists());
+
+    let (copy, _) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &root.path().join("copy"),
+        VaultConfig::device(),
+        &source,
+        120,
+    )
+    .expect("side restore");
+    let copy_custody = root.path().join(".copy.gate-decision-keys");
+    assert!(
+        copy_custody.join(hex(&live)).exists(),
+        "the copy holds its own copy of a live key"
+    );
+    for claim in [destroyed, committed] {
+        assert!(!copy_custody.join(hex(&claim)).exists());
+    }
+    let rows = copy.gate_decisions(100).expect("the copy's ledger reads");
+    assert!(rows.contains(&live_receipt));
+    assert!(rows.iter().all(|row| {
+        row.decision_id != destroyed_receipt.decision_id
+            && row.decision_id != committed_receipt.decision_id
+    }));
+}
+
 #[test]
 fn canonical_snapshot_rebuilds_indexes_excludes_runtime_and_mints_epoch() {
     let root = tempfile::tempdir().unwrap();

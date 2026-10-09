@@ -25,7 +25,7 @@ use super::vet::vet_gate_decision_record;
 /// the Store door decodes with its current custody root after this typed read.
 pub(super) const LEDGER: SideTable<GateDecisionId, Vec<u8>, Raw> =
     SideTable::new(&side_table::GATE_DECISION_LEDGER);
-const CUSTODY_ROOT: SideTable<(), Vec<u8>, Raw> =
+pub(super) const CUSTODY_ROOT: SideTable<(), Vec<u8>, Raw> =
     SideTable::new(&side_table::GATE_DECISION_CUSTODY_ROOT);
 
 /// Presence marker literal byte `b"1"`, matching the marker already on disk
@@ -211,8 +211,8 @@ impl Store {
         crate::ports::recorded_at_in_txn(self, wtxn)?;
         if record.claim_id.is_some() {
             // The first claim-bound append pins a path to LIVE exterior custody
-            // in the same LMDB transaction as the value. Restoring the image
-            // elsewhere reuses that path, never a backed-up key copy.
+            // in the same LMDB transaction as the value. A restore in this vault's
+            // place reuses that path; a side restore forks it (checkpoint_custody).
             let expected = orcb::encode_custody_root(&self.core.gate_custody_root)?;
             match CUSTODY_ROOT.get(self, &*wtxn, &())? {
                 Some(bound) if bound != expected => {

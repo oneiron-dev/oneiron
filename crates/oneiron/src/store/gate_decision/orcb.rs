@@ -32,7 +32,7 @@ const MAX_PLAINTEXT: usize = 16 * 1024 * 1024;
 // sample taken from a vault, even in a test fixture or build script.
 const SYNTHETIC_DICTIONARY: &[u8] = b"version decision_id created_at outcome reason_codes receipt_reasons system_notices actor_class actor_ref content_kind policy_manifest_version claim_id grant_ref diff_handle read_frontier_hash redacted_at notice_type channel voice audience body row_ref setting_change_offer policy_plane policy_version docs_url allow deny hold owner_policy hosted_legal gate.allow gate.deny gate.hold";
 
-fn corrupt() -> Error {
+pub(super) fn corrupt() -> Error {
     Error::CorruptedIndex("gate decision ORCB")
 }
 
@@ -57,8 +57,9 @@ fn key_directory(root: &Path) -> Result<PathBuf> {
 }
 
 /// This marker is checkpointed; it contains a native absolute PATH, never key
-/// material. A restore binds to the current exterior custody at that path, so
-/// replacing an LMDB image cannot bring back a key already destroyed there.
+/// material. A restore binds to, or a side restore forks, the current exterior
+/// custody at that path, so replacing an LMDB image cannot bring back a key
+/// already destroyed there.
 pub(in crate::store) const CUSTODY_ROOT_KEY: &[u8] = b"gate_decision:custody_root:v1";
 
 pub(in crate::store) fn encode_custody_root(root: &Path) -> Result<Vec<u8>> {
@@ -252,14 +253,10 @@ fn clean_pending(dir: &Path, claim_id: &[u8; 16]) -> Result<()> {
     Ok(())
 }
 
-/// First claim-bound append syncs the exterior directory entry before LMDB
-/// may commit ciphertext. A short/zero final key is NEVER treated as absent.
-/// Only an unpublished temporary file may be discarded on retry.
-fn first_append_key(
-    root: &Path,
-    claim_id: &[u8; 16],
-    generation: u64,
-) -> Result<Zeroizing<[u8; 32]>> {
+/// Opens the custody directory beside `root`, creating it when absent, or
+/// only creating it when `create_new`. A new directory's parent is synced
+/// before any key is written inside it.
+fn open_key_directory(root: &Path, create_new: bool) -> Result<(PathBuf, File)> {
     let dir = key_directory(root)?;
     let mut builder = fs::DirBuilder::new();
     #[cfg(unix)]
@@ -273,10 +270,45 @@ fn first_append_key(
             // still disappear after power loss while LMDB keeps its ciphertext.
             File::open(dir.parent().ok_or_else(corrupt)?)?.sync_all()?;
         }
-        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists && !create_new => {}
         Err(err) => return Err(err.into()),
     }
     let directory = safe_open(&dir, false, true)?;
+    Ok((dir, directory))
+}
+
+/// Publishes `key` at `path` through a synced temporary hard link, so a crash
+/// never leaves a short final key. False when `path` already exists.
+fn publish_key(dir: &Path, path: &Path, claim_id: &[u8; 16], key: &[u8; 32]) -> Result<bool> {
+    let suffix = rand::rngs::OsRng.next_u64();
+    let temp = dir.join(format!(
+        ".{}-{suffix:016x}.pending",
+        crate::entity_id::bytes_to_hex_lower(claim_id)
+    ));
+    let published = (|| -> Result<bool> {
+        let mut file = safe_open(&temp, true, false)?;
+        file.write_all(key)?;
+        file.sync_all()?;
+        match fs::hard_link(&temp, path) {
+            Ok(()) => Ok(true),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+            Err(err) => Err(err.into()),
+        }
+    })();
+    // Cleanup is unconditional, including I/O failure before publication.
+    fs::remove_file(&temp)?;
+    published
+}
+
+/// First claim-bound append syncs the exterior directory entry before LMDB
+/// may commit ciphertext. A short/zero final key is NEVER treated as absent.
+/// Only an unpublished temporary file may be discarded on retry.
+fn first_append_key(
+    root: &Path,
+    claim_id: &[u8; 16],
+    generation: u64,
+) -> Result<Zeroizing<[u8; 32]>> {
+    let (dir, directory) = open_key_directory(root, false)?;
     clean_pending(&dir, claim_id)?;
     directory.sync_all()?;
     if is_retired(&dir, claim_id, generation)? {
@@ -288,24 +320,7 @@ fn first_append_key(
     }
     let mut key = Zeroizing::new([0; 32]);
     rand::rngs::OsRng.fill_bytes(&mut *key);
-    let suffix = rand::rngs::OsRng.next_u64();
-    let temp = dir.join(format!(
-        ".{}-{suffix:016x}.pending",
-        crate::entity_id::bytes_to_hex_lower(claim_id)
-    ));
-    let published = (|| -> Result<bool> {
-        let mut file = safe_open(&temp, true, false)?;
-        file.write_all(&*key)?;
-        file.sync_all()?;
-        match fs::hard_link(&temp, &path) {
-            Ok(()) => Ok(true),
-            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
-            Err(err) => Err(err.into()),
-        }
-    })();
-    // Cleanup is unconditional, including I/O failure before publication.
-    fs::remove_file(&temp)?;
-    let published = published?;
+    let published = publish_key(&dir, &path, claim_id, &key)?;
     directory.sync_all()?;
     if published {
         Ok(key)
@@ -417,66 +432,77 @@ pub(super) fn decode_hot(
     Ok(record)
 }
 
-/// Authenticate encrypted canonical rows against CURRENT exterior keys before
-/// restore creates its destination. The image supplies a pointer, not a key;
-/// deleted keys remain absent when an old checkpoint is replayed.
-///
-/// A row whose key generation carries a retirement marker was erased (or
-/// aged out) after the image was taken. It is returned, not decoded, so the
-/// restore drops it: the restored vault is the vault at that time without
-/// the receipts an erase destroyed. A key that is merely missing, with no
-/// marker, is lost custody and still refuses the whole restore.
-pub(crate) fn preflight_checkpoint_rows(
-    rows: &[(Vec<u8>, Vec<u8>)],
-) -> Result<Vec<(GateDecisionId, [u8; 16])>> {
-    use super::keys::GATE_DECISION_KEY_PREFIX;
-    use crate::side_table::SideKey;
-    let bound = rows
-        .iter()
-        .find(|(key, _)| key == CUSTODY_ROOT_KEY)
-        .map(|(_, value)| decode_custody_root(value))
-        .transpose()?;
-    let mut erased = Vec::new();
-    for (key, value) in rows {
-        if key.starts_with(GATE_DECISION_KEY_PREFIX) && is_orcb(value) {
-            let root = bound.as_deref().ok_or_else(corrupt)?;
-            let id = key
-                .strip_prefix(GATE_DECISION_KEY_PREFIX)
-                .and_then(GateDecisionId::decode_key)
-                .ok_or(Error::CorruptedIndex("gate decision ledger key"))?;
-            if raw_key_retired(root, value)? {
-                let (claim, _) = raw_claim_generation(value).ok_or_else(corrupt)?;
-                erased.push((id, claim));
-            } else {
-                decode_hot(root, id, value)?;
-            }
-        }
-    }
-    Ok(erased)
-}
-
 /// Retire precisely the committed intent's generation. Later receipts use
 /// a new generation, and neither an old snapshot nor a delayed finisher can
 /// revive or destroy a different generation's key.
 pub(super) fn retire_claim_key(root: &Path, claim_id: &[u8; 16], generation: u64) -> Result<()> {
     let dir = key_directory(root)?;
     let directory = safe_open(&dir, false, true)?;
-    let marker = retired_marker(&dir, claim_id, generation);
-    match safe_open(&marker, true, false) {
-        Ok(file) => file.sync_all()?,
-        Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-            if !is_retired(&dir, claim_id, generation)? {
-                return Err(corrupt());
-            }
-        }
-        Err(err) => return Err(err),
-    }
+    mark_retired(&dir, claim_id, generation)?;
     directory.sync_all()?;
     let path = claim_key_path(root, claim_id, generation)?;
     match fs::remove_file(path) {
         Ok(()) => {}
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
         Err(err) => return Err(err.into()),
+    }
+    directory.sync_all()?;
+    Ok(())
+}
+
+fn mark_retired(dir: &Path, claim_id: &[u8; 16], generation: u64) -> Result<()> {
+    match safe_open(&retired_marker(dir, claim_id, generation), true, false) {
+        Ok(file) => file.sync_all()?,
+        Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            if !is_retired(dir, claim_id, generation)? {
+                return Err(corrupt());
+            }
+        }
+        Err(err) => return Err(err),
+    }
+    Ok(())
+}
+
+/// Whether a custody directory exists beside `root`.
+pub(super) fn custody_present(root: &Path) -> Result<bool> {
+    match fs::symlink_metadata(key_directory(root)?) {
+        Ok(_) => Ok(true),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err.into()),
+    }
+}
+
+/// Forks claims' custody from `source` into a new custody directory beside
+/// `destination`. For each claim, every generation through its newest is
+/// marked destroyed in the copy when the source destroyed it or a committed
+/// retirement (`committed`, its newest generation) will; every other key
+/// still live in the source is copied. The copy thus counts generations as
+/// the source does, so its own erase reaches every key it holds.
+pub(super) fn fork_custody(
+    source: &Path,
+    destination: &Path,
+    claims: impl IntoIterator<Item = ([u8; 16], u64, Option<u64>)>,
+) -> Result<()> {
+    let source_dir = key_directory(source)?;
+    let mut claims = claims.into_iter().peekable();
+    if claims.peek().is_none() {
+        return Ok(());
+    }
+    let (dir, directory) = open_key_directory(destination, true)?;
+    for (claim_id, through, committed) in claims {
+        for generation in 0..=through {
+            if committed.is_some_and(|newest| generation <= newest)
+                || is_retired(&source_dir, &claim_id, generation)?
+            {
+                mark_retired(&dir, &claim_id, generation)?;
+            } else if key_published(source, &claim_id, generation)? {
+                let key = read_key(source, &claim_id, generation)?;
+                let path = claim_key_path(destination, &claim_id, generation)?;
+                if !publish_key(&dir, &path, &claim_id, &key)? {
+                    return Err(corrupt());
+                }
+            }
+        }
     }
     directory.sync_all()?;
     Ok(())

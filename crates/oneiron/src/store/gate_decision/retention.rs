@@ -120,6 +120,42 @@ impl Store {
     }
 }
 
+/// Each key-retirement intent among a checkpoint's `vault_meta` rows, with
+/// whether the finisher would carry it out now: an erase's always, a sweep's
+/// unless its partition is held. A restore treats a carried-out one as done,
+/// so it never brings back a key a vault has committed to destroy.
+pub(super) fn checkpoint_retirements(
+    rows: &[(Vec<u8>, Vec<u8>)],
+) -> Result<Vec<([u8; 16], u64, bool)>> {
+    let row = |key: Vec<u8>| {
+        rows.iter()
+            .find(|(stored, _)| *stored == key)
+            .map(|(_, value)| value.as_slice())
+    };
+    let mut retirements = Vec::new();
+    for (key, value) in rows {
+        let Some(claim) = key
+            .strip_prefix(RETIRE_PENDING.decl().prefix)
+            .and_then(<[u8; 16]>::decode_key)
+        else {
+            continue;
+        };
+        let erase = match row(ERASE_PENDING.key_bytes(&claim)) {
+            None => false,
+            Some([1]) => true,
+            Some(_) => return Err(Error::CorruptedIndex("gate decision partition erase")),
+        };
+        let held = match row(HOLD.key_bytes(&Partition(Some(claim)))) {
+            None => false,
+            Some([1]) => true,
+            Some(_) => return Err(Error::CorruptedIndex("gate decision partition hold")),
+        };
+        let through = RETIRE_PENDING.decode_value(value)?;
+        retirements.push((claim, through, erase || !held));
+    }
+    Ok(retirements)
+}
+
 #[cfg(test)]
 thread_local! {
     static BEFORE_RETIRE_LOCK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =

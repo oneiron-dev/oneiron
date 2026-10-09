@@ -12,7 +12,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use oneiron::recovery::checkpoint::RestoreReason;
 use serde::Serialize;
 
 use super::stamp::{file_stamp, now_unix_ms, parse_file_stamp, rfc3339};
@@ -285,14 +284,13 @@ fn rehearse_into(
     config: oneiron::VaultConfig,
     scratch: &Path,
 ) -> anyhow::Result<Rehearsal> {
-    let (restored, report) = oneiron::Vault::restore_checkpoint(
-        backup,
-        scratch,
-        config,
-        RestoreReason::Restore,
-        now_unix_ms() / 1_000,
-    )
-    .map_err(|error| anyhow::anyhow!("backup {} does not restore: {error}", backup.display()))?;
+    // The copy sits beside the live vault, so its key custody forks: an erase
+    // in a kept scratch copy never reaches the live vault's keys.
+    let (restored, report) =
+        oneiron::Vault::restore_checkpoint_beside(backup, scratch, config, now_unix_ms() / 1_000)
+            .map_err(|error| {
+            anyhow::anyhow!("backup {} does not restore: {error}", backup.display())
+        })?;
     let unreadable_fields = restored.doctor()?.unreadable_fields;
     let kinds = kind_counts(&restored)?;
     Ok(Rehearsal {
@@ -370,12 +368,13 @@ pub(crate) struct Restored {
 /// Restores `backup` over the stopped vault at `vault_path`.
 ///
 /// Content comes from the backup; the vault's current authority (its log,
-/// devices, slips, revocations and freshness pins) stays. The restored copy is
-/// built in a staging directory beside the vault and swapped into its path in
-/// one atomic exchange while this process holds the writer leases of both, so
-/// no server opens either half-way. A filesystem that cannot exchange two
-/// directories refuses the restore with nothing changed. The old vault is
-/// kept whole as `<vault>.pre-restore-<stamp>`; nothing is deleted.
+/// devices, slips, revocations and freshness pins) and key custody stay. The
+/// restored copy is built in a staging directory beside the vault and swapped
+/// into its path in one atomic exchange while this process holds the writer
+/// leases of both, so no server opens either half-way. A filesystem that
+/// cannot exchange two directories refuses the restore with nothing changed.
+/// The old vault is kept whole as `<vault>.pre-restore-<stamp>`; nothing is
+/// deleted.
 ///
 /// Once the swap is done the restore has happened, so a failed sync of the
 /// directory after it is reported in `durability_warning`, never as an error
@@ -430,7 +429,8 @@ fn restore_over_syncing(
         }
     };
     let restored_path = staging.vault();
-    let (restored, report) = match oneiron::Vault::restore_checkpoint_keeping_authority(
+    // The copy replaces the vault at its path, so it keeps the vault's key custody.
+    let (restored, report) = match oneiron::Vault::restore_checkpoint_replacing(
         backup,
         &restored_path,
         config,
