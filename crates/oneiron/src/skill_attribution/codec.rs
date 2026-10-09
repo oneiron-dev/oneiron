@@ -166,34 +166,45 @@ pub(super) fn validate_evidence(vault: &Vault, evidence: &OutcomeEvidence) -> Re
             ));
         }
     }
-    if evidence.receipt_ref.is_empty() {
+    ground_attempt_receipt(vault, &evidence.receipt_ref, &evidence.actor, evidence.skill)
+}
+
+/// Grounds one attempt citation: `receipt_ref` is a stamped terminal pack
+/// receipt bound to `actor`, and `skill`, when named, is a skill that pack
+/// loaded. The attempt lane's evidence door runs it, and so does the amendment
+/// lane's join to the attempt whose proposal was amended — one check, so the
+/// two lanes cannot disagree about which attempt a skill's outcome belongs to.
+pub(crate) fn ground_attempt_receipt(
+    vault: &Vault,
+    receipt_ref: &str,
+    actor: &EntityId,
+    skill: Option<EntityId>,
+) -> Result<()> {
+    if receipt_ref.is_empty() {
         return Err(invalid("attribution evidence must cite a receipt"));
     }
-    let Some(receipt) = crate::receipt::attempt_pack_receipt(vault, &evidence.receipt_ref)? else {
+    let Some(receipt) = crate::receipt::attempt_pack_receipt(vault, receipt_ref)? else {
         return Err(invalid("attribution evidence cites an unstamped receipt"));
     };
-    if vault.get_raw(&evidence.actor)?.is_none() {
+    if vault.get_raw(actor)?.is_none() {
         return Err(invalid("attribution evidence names an unknown actor"));
     }
     // A caller-chosen actor ID cannot assign an unbound receipt to a
     // resident. This check precedes the optional skill: shared-skill and
     // skillless outcomes need the same executor proof as fork outcomes.
-    if crate::skill::resident::receipt_resident(vault, &evidence.receipt_ref)?
-        != Some(evidence.actor)
-    {
+    if crate::skill::resident::receipt_resident(vault, receipt_ref)? != Some(*actor) {
         return Err(invalid("attribution receipt is not bound to its actor"));
     }
-    let Some(skill) = evidence.skill else {
+    let Some(skill) = skill else {
         return Ok(());
     };
     let Some(record) = vault.get_skill_record(&skill)? else {
         return Err(invalid("attribution evidence names an unknown skill"));
     };
     if let Some(resident) = crate::skill::resident_of(&record)? {
-        if resident != evidence.actor
-            || crate::skill::resident::receipt_resident(vault, &evidence.receipt_ref)?
-                != Some(resident)
-            || !crate::skill::resident::receipt_loaded_skill(vault, &evidence.receipt_ref, &skill)?
+        if resident != *actor
+            || crate::skill::resident::receipt_resident(vault, receipt_ref)? != Some(resident)
+            || !crate::skill::resident::receipt_loaded_skill(vault, receipt_ref, &skill)?
         {
             return Err(invalid(
                 "resident skill evidence belongs to another actor or attempt",

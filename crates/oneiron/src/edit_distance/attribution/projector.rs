@@ -1,14 +1,16 @@
-//! Edit-cost claim projection and retraction.
+//! Projection of judged amendments — edit-cost claims, the skill's reliability
+//! record, actor lessons — and their retraction.
 
-use super::evidence_judge::amendment_judgments;
+use super::evidence_judge::{amendment_evidence_in_txn, amendment_judgments};
 use super::stored::{
     MAX_CITED_RECEIPTS, ROW_VERSION, StoredTarget, TARGET, TARGET_ROW_LABEL, TargetKey, hex_entity,
     invalid, normalized_scope,
 };
-use super::taxonomy::{AmendmentJudgment, cost_predicate};
+use super::taxonomy::{AmendmentClass, AmendmentJudgment, cost_predicate};
 use crate::Vault;
 use crate::actor_claims::{
-    ActorClaimEvidence, ActorClaimRow, edit_cost_scope, edit_cost_scope_name, write_actor_claim,
+    ActorClaimEvidence, ActorClaimRow, PREDICATE_ACTOR_LESSON, edit_cost_scope,
+    edit_cost_scope_name, write_actor_claim,
 };
 use crate::batch::EntityMetadataHeader;
 use crate::claim::{
@@ -19,6 +21,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::side_table::HexId;
+use crate::skill_reliability::{AmendedOutcome, reconcile_amended_outcomes};
 use crate::temporal::TimeRange;
 
 // ---------------------------------------------------------------------------
@@ -153,6 +156,141 @@ fn write_cost_head(
 }
 
 // ---------------------------------------------------------------------------
+// skill_defect → skill.reliability
+// ---------------------------------------------------------------------------
+
+/// Lands each judged amendment's `skill_defect` share on the reliability record
+/// of the attempt whose proposal was amended, returning the skills whose
+/// `skill.reliability` was reprojected (ARCH-0056 §5).
+///
+/// **One record per attempt, the later verdict holding.** The attempt already
+/// has an outcome row in the skill's ledger, often a contributing win. The
+/// amendment is a later verdict on that same attempt, so it REPLACES the row
+/// rather than adding a loss beside it: the attempt counts once, as a loss
+/// weighted by the defect share. Two amendments of one attempt leave the later
+/// one standing. A later amendment that charges the skill nothing hands the
+/// attempt back its own record.
+///
+/// The join is the evidence's attempt receipt, grounded at the door. An
+/// amendment recorded without one names no attempt, so its share reaches
+/// `skill.edit_cost` alone.
+///
+/// Recomputed from the whole judgment ledger on every pass, like the cost rows:
+/// a re-judged or withdrawn amendment takes its share back on the next pass,
+/// and a pass with nothing new reprojects nothing.
+///
+/// # Errors
+///
+/// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
+pub fn project_amendment_reliability(vault: &Vault) -> Result<Vec<EntityId>> {
+    let judgments = amendment_judgments(vault)?;
+    let mut verdicts = Vec::new();
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        for judgment in judgments {
+            let Some(evidence) = amendment_evidence_in_txn(vault, &rtxn, &judgment.receipt_id)?
+            else {
+                continue;
+            };
+            let (Some(attempt_receipt), Some(skill)) = (evidence.attempt_receipt, evidence.skill)
+            else {
+                continue;
+            };
+            // A verdict that charges this skill nothing is still a verdict on
+            // the attempt: it is what lets a later amendment stand over an
+            // earlier one.
+            let defect_share = judgment
+                .split
+                .iter()
+                .filter(|share| {
+                    share.class == AmendmentClass::SkillDefect && share.subject == Some(skill)
+                })
+                .map(|share| share.share)
+                .sum();
+            verdicts.push(AmendedOutcome {
+                skill,
+                attempt_receipt,
+                amendment_receipt: judgment.receipt_id,
+                defect_share,
+                at: judgment.at,
+            });
+        }
+    }
+    reconcile_amended_outcomes(vault, &verdicts)
+}
+
+// ---------------------------------------------------------------------------
+// execution_lapse → actor.lesson
+// ---------------------------------------------------------------------------
+
+/// Lands one `actor.lesson` per judged amendment whose split charges the actor
+/// an `execution_lapse` share, citing that amendment's receipt, and returns the
+/// lesson ids (ARCH-0056 §5).
+///
+/// A lesson is a SET row with no weight, so the share does not size it: any
+/// lapse share records the lapse, once. The entry names the label and the
+/// amendment receipt, `execution_lapse:<receipt>` — the receipt resolves the Δ,
+/// which is what the decider corrected, and the engine writes no prose about it
+/// (a distiller may turn the entry into one later). Naming the receipt is also
+/// what keeps two lapses two entries: the SET key is the note, so one bare
+/// token would fold every lapse into the first.
+///
+/// Every judgment is re-grounded, not trusted: a row counts only if it IS the
+/// row this module persisted for that receipt. Every pass reconciles first, so
+/// an amendment judged again without its lapse share retracts the lesson it
+/// earned. A replay re-returns the standing lesson rather than writing another.
+///
+/// # Errors
+///
+/// Storage errors, and whatever the `actor.*` write door rejects.
+pub fn project_amendment_lessons(
+    vault: &Vault,
+    judgments: &[AmendmentJudgment],
+) -> Result<Vec<EntityId>> {
+    let persisted = amendment_judgments(vault)?;
+    retract_unsupported_targets(vault, &persisted)?;
+    let mut written = Vec::new();
+    for judgment in judgments {
+        if !persisted
+            .iter()
+            .any(|row| row.receipt_id == judgment.receipt_id && row == judgment)
+        {
+            continue;
+        }
+        let Some(actor) = lapse_actor(judgment) else {
+            continue;
+        };
+        let evidence =
+            ActorClaimEvidence::amendment(judgment.evidence_receipts.clone(), judgment.at)?;
+        // Recorded before the head, for the reason the cost rows give.
+        record_target(vault, PREDICATE_ACTOR_LESSON, &actor, &judgment.receipt_id)?;
+        written.push(write_actor_claim(
+            vault,
+            ActorClaimRow::Lesson {
+                actor,
+                text: lapse_lesson(&judgment.receipt_id),
+            },
+            &evidence,
+        )?);
+    }
+    Ok(written)
+}
+
+/// The actor an amendment's `execution_lapse` share charges, if it charges one.
+fn lapse_actor(judgment: &AmendmentJudgment) -> Option<EntityId> {
+    judgment
+        .split
+        .iter()
+        .find(|share| share.class == AmendmentClass::ExecutionLapse && share.share > 0.0)
+        .and_then(|share| share.subject)
+}
+
+/// The lesson entry a lapse on `receipt` leaves: the label, then the receipt.
+fn lapse_lesson(receipt: &str) -> String {
+    format!("{}:{receipt}", AmendmentClass::ExecutionLapse.as_str())
+}
+
+// ---------------------------------------------------------------------------
 // The landed-target ledger (retraction)
 // ---------------------------------------------------------------------------
 
@@ -184,7 +322,7 @@ fn recorded_targets(vault: &Vault) -> Result<Vec<(&'static str, EntityId, String
     let mut out = Vec::new();
     for (_, row) in TARGET.scan(&vault.store, &rtxn)? {
         let predicate =
-            known_cost_predicate(&row.predicate).ok_or(Error::CorruptedIndex(TARGET_ROW_LABEL))?;
+            known_target_predicate(&row.predicate).ok_or(Error::CorruptedIndex(TARGET_ROW_LABEL))?;
         out.push((
             predicate,
             hex_entity(&row.subject, TARGET_ROW_LABEL)?,
@@ -203,10 +341,17 @@ fn recorded_targets(vault: &Vault) -> Result<Vec<(&'static str, EntityId, String
 /// not deletion — is the withdrawal: the row stays readable as history.
 fn retract_unsupported_targets(vault: &Vault, persisted: &[AmendmentJudgment]) -> Result<()> {
     for (predicate, subject, scope) in recorded_targets(vault)? {
-        if aggregate_for(persisted, predicate, subject, &scope).is_some() {
-            continue;
+        let supported = if predicate == PREDICATE_ACTOR_LESSON {
+            // A lesson's scope is the amendment it was learned from.
+            persisted
+                .iter()
+                .any(|row| row.receipt_id == scope && lapse_actor(row) == Some(subject))
+        } else {
+            aggregate_for(persisted, predicate, subject, &scope).is_some()
+        };
+        if !supported {
+            retract_target(vault, predicate, &subject, &scope)?;
         }
-        retract_target(vault, predicate, &subject, &scope)?;
     }
     Ok(())
 }
@@ -226,7 +371,12 @@ fn retract_target(
     let now = vault.store.clock.now_recorded_at();
     let key = target_key(predicate, subject, scope);
     vault.with_write_txn(|wtxn| {
-        for (id, mut body) in active_cost_heads_in_txn(vault, wtxn, predicate, subject, scope)? {
+        let heads = if predicate == PREDICATE_ACTOR_LESSON {
+            active_lesson_heads_in_txn(vault, wtxn, subject, &lapse_lesson(scope))?
+        } else {
+            active_cost_heads_in_txn(vault, wtxn, predicate, subject, scope)?
+        };
+        for (id, mut body) in heads {
             let header = {
                 let Some(raw) = vault
                     .store
@@ -270,11 +420,16 @@ fn target_key(predicate: &str, subject: &EntityId, scope: &str) -> TargetKey {
     }
 }
 
-/// The `'static` predicate a stored token names, if it names one of the two.
-fn known_cost_predicate(token: &str) -> Option<&'static str> {
-    [PREDICATE_ACTOR_EDIT_COST, PREDICATE_SKILL_EDIT_COST]
-        .into_iter()
-        .find(|predicate| *predicate == token)
+/// The `'static` predicate a stored token names, if it names one this
+/// projector lands.
+fn known_target_predicate(token: &str) -> Option<&'static str> {
+    [
+        PREDICATE_ACTOR_EDIT_COST,
+        PREDICATE_SKILL_EDIT_COST,
+        PREDICATE_ACTOR_LESSON,
+    ]
+    .into_iter()
+    .find(|predicate| *predicate == token)
 }
 
 /// One `(subject, scope)` pair's folded cost.
@@ -436,6 +591,31 @@ fn active_cost_heads_in_txn(
             || body.source != Some(ClaimSource::Observed)
             || body.approval != ClaimApprovalStatus::Auto
             || edit_cost_scope_name(body.scope.as_ref()) != Some(scope)
+        {
+            continue;
+        }
+        heads.push((id, body));
+    }
+    Ok(heads)
+}
+
+/// The active `actor.lesson` heads of `actor` that carry exactly `text`.
+fn active_lesson_heads_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    actor: &EntityId,
+    text: &str,
+) -> Result<Vec<(EntityId, ClaimBody)>> {
+    let mut heads = Vec::new();
+    for id in vault.claims_for_subject_in_txn(rtxn, actor)? {
+        let Some(body) = vault.get_claim_in_txn(rtxn, &id)? else {
+            continue;
+        };
+        if body.predicate != PREDICATE_ACTOR_LESSON
+            || body.lifecycle != ClaimLifecycleStatus::Active
+            || body.source != Some(ClaimSource::Observed)
+            || body.approval != ClaimApprovalStatus::Auto
+            || body.value.as_str() != Some(text)
         {
             continue;
         }

@@ -14,8 +14,10 @@ use crate::actor_claims::require_actor_entity;
 use crate::edit_distance::delta::amendment_delta;
 use crate::error::{Error, Result};
 use crate::skill_attribution::{
-    AttributionJudge, AttributionLane, EditHunk, RuleAttributionJudge, UnclearAttribution,
-    delete_unclear_in_txn, put_unclear_in_txn, unclear_floor,
+    AttributionJudge, AttributionJudgment, AttributionLane, EditHunk, RuleAttributionJudge,
+    UnclearAttribution, delete_unclear_in_txn, draw_proposal_sequence_in_txn,
+    ground_attempt_receipt, mint_edit_proposal_in_txn, put_unclear_in_txn, unclear_floor,
+    withdraw_edit_proposal_in_txn,
 };
 
 // ---------------------------------------------------------------------------
@@ -32,6 +34,11 @@ use crate::skill_attribution::{
 /// carry a Δ this engine measured, any skill must exist, the scope must be a
 /// usable key, and the actor must be an entity that can ACT. A judgment is only
 /// as good as its inputs, and the classes it feeds author reserved truth.
+///
+/// A named attempt is grounded by the attempt lane's own check: a stamped pack
+/// receipt, bound to this actor, whose pack loaded the named skill. That join
+/// is what lets a `skill_defect` share replace the attempt's own outcome in
+/// `skill.reliability`, so an attempt it cannot vouch for is refused here.
 ///
 /// The actor check is the DOWNSTREAM door's own (`require_actor_entity`, the
 /// D13 matrix), asked here rather than three passes later: an
@@ -54,10 +61,14 @@ pub fn record_amendment_evidence(vault: &Vault, evidence: &AmendmentEvidence) ->
     {
         return Err(invalid("amendment evidence names an unknown skill"));
     }
+    if let Some(attempt) = evidence.attempt_receipt.as_deref() {
+        ground_attempt_receipt(vault, attempt, &evidence.actor, evidence.skill)?;
+    }
     let row = StoredEvidence {
         v: ROW_VERSION,
         actor: evidence.actor.to_hex(),
         skill: evidence.skill.map(|id| id.to_hex()),
+        attempt: evidence.attempt_receipt.clone(),
         scope,
         cause: evidence.cause.map(|cause| cause.as_str().to_owned()),
         followed_skill: evidence.followed_skill,
@@ -98,6 +109,7 @@ pub(in crate::edit_distance) fn amendment_evidence_in_txn(
             .as_deref()
             .map(|hex| hex_entity(hex, EVIDENCE_ROW_LABEL))
             .transpose()?,
+        attempt_receipt: row.attempt,
         scope: row.scope,
         cause: row
             .cause
@@ -152,8 +164,12 @@ pub fn judge_amendment_with(
 /// of the edit each label explains; no hunks is one region, one class at 100%.
 /// Each route then takes only its share: a `preference_shift` share files a
 /// preference note carrying it, an `unclear` share files a row in the unclear
-/// ledger for the Dreamer, and [`project_edit_cost_claims`](crate::edit_distance::attribution::project_edit_cost_claims) charges the
-/// skill and the actor their shares alone.
+/// ledger for the Dreamer, a `discovery` share mints a skill edit proposal
+/// through the attempt lane's own minting door, and the projection passes
+/// ([`project_edit_cost_claims`](crate::edit_distance::attribution::project_edit_cost_claims),
+/// [`project_amendment_reliability`](crate::edit_distance::attribution::project_amendment_reliability),
+/// [`project_amendment_lessons`](crate::edit_distance::attribution::project_amendment_lessons))
+/// charge the skill and the actor their shares alone.
 ///
 /// Re-judging OVERWRITES the receipt's judgment row rather than freezing the
 /// first answer. A deterministic judge re-derives the same row, so the pass is
@@ -231,6 +247,7 @@ pub fn judge_amendment_hunks(
         evidence_receipts: judgment.evidence_receipts.clone(),
         d_norm: judgment.d_norm,
         at: judgment.at,
+        proposal: None,
     };
     let preference_share = judgment.share_of(AmendmentClass::PreferenceShift);
     let preference_row = (preference_share > 0.0).then(|| StoredPreference {
@@ -250,6 +267,8 @@ pub fn judge_amendment_hunks(
 
     let receipt_id_owned = receipt_id.to_owned();
     vault.with_write_txn(|wtxn| {
+        let mut row = row.clone();
+        row.proposal = settle_edit_proposal_in_txn(vault, wtxn, &receipt_id_owned, &judgment)?;
         JUDGMENT.put(&vault.store, wtxn, &receipt_id_owned, &row)?;
         // A note and the judgment that demanded it land together, and a
         // re-judgment that no longer carries the share withdraws the note it
@@ -273,8 +292,55 @@ pub fn judge_amendment_hunks(
     Ok(Some(judgment))
 }
 
+/// Mints, re-mints or withdraws the one skill edit proposal `judgment`'s
+/// `discovery` share earns, through the attempt lane's own minting door, and
+/// returns the sequence the judgment row records.
+///
+/// One amendment holds one proposal: a re-judgment re-mints under the
+/// sequence the first one drew, and a judgment with no discovery share
+/// withdraws the proposal it held. A discovery names the skill that lacked
+/// content, so with no skill there is nothing to propose an edit to.
+fn settle_edit_proposal_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    receipt_id: &str,
+    judgment: &AmendmentJudgment,
+) -> Result<Option<u64>> {
+    let held = JUDGMENT
+        .get(&vault.store, wtxn, &receipt_id.to_owned())?
+        .and_then(|stored| stored.proposal);
+    let discovery = judgment
+        .split
+        .iter()
+        .find(|share| share.class == AmendmentClass::Discovery && share.share > 0.0)
+        .and_then(|share| share.subject);
+    let Some(skill) = discovery else {
+        if let Some(sequence) = held {
+            withdraw_edit_proposal_in_txn(vault, wtxn, sequence)?;
+        }
+        return Ok(None);
+    };
+    let sequence = match held {
+        Some(sequence) => sequence,
+        None => draw_proposal_sequence_in_txn(vault, wtxn)?,
+    };
+    mint_edit_proposal_in_txn(
+        vault,
+        wtxn,
+        &AttributionJudgment {
+            sequence,
+            verdict: AmendmentClass::Discovery,
+            subject: skill,
+            evidence_receipts: judgment.evidence_receipts.clone(),
+            at: judgment.at,
+        },
+    )?;
+    Ok(Some(sequence))
+}
+
 /// Deletes whatever a previous pass persisted for `receipt_id` — its judgment
-/// and, with it, any preference note or unclear row that judgment filed.
+/// and, with it, any preference note, unclear row or edit proposal that
+/// judgment filed.
 ///
 /// The withdrawal is the whole correction on this side: the cost head the row
 /// was holding up loses its ledger support, and the next
@@ -293,6 +359,12 @@ fn withdraw_judgment(vault: &Vault, receipt_id: &str) -> Result<()> {
         }
     }
     vault.with_write_txn(|wtxn| {
+        if let Some(sequence) = JUDGMENT
+            .get(&vault.store, wtxn, &receipt_id)?
+            .and_then(|stored| stored.proposal)
+        {
+            withdraw_edit_proposal_in_txn(vault, wtxn, sequence)?;
+        }
         JUDGMENT.delete(&vault.store, wtxn, &receipt_id)?;
         PREFERENCE.delete(&vault.store, wtxn, &receipt_id)?;
         delete_unclear_in_txn(vault, wtxn, AttributionLane::Amendment, &receipt_id)?;

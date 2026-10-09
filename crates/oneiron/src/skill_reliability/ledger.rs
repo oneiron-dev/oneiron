@@ -10,6 +10,7 @@ use crate::receipt::ReceiptRecord;
 use crate::side_table::{self, FixedSideKey, Raw, RawValue, SideKey, SideTable};
 use crate::skill::SkillRecord;
 
+use super::amended::{amended_receipts_in_txn, amended_shares_in_txn, is_amended};
 use super::codec::{
     KEY_AT, KEY_SCHEMA_VERSION, KEY_WIN, decode_value, encode_value, invalid, map_entry, map_u64,
 };
@@ -153,9 +154,23 @@ impl OutcomeRef {
         }
     }
 
+    pub(super) fn receipt(&self) -> &str {
+        match self {
+            Self::Unknown((_, receipt)) | Self::Paired(PairedOutcomeKey { receipt, .. }) => receipt,
+        }
+    }
+
     fn into_receipt(self) -> String {
         match self {
             Self::Unknown((_, receipt)) | Self::Paired(PairedOutcomeKey { receipt, .. }) => receipt,
+        }
+    }
+
+    /// The arm this row belongs to: its skill, and its executor when it is a named arm.
+    pub(super) fn arm(&self) -> (EntityId, Option<&str>) {
+        match self {
+            Self::Unknown((skill, _)) => (*skill, None),
+            Self::Paired(key) => (key.arm.skill, Some(key.arm.executor.as_str())),
         }
     }
 
@@ -197,6 +212,36 @@ impl SideKey for OutcomeRef {
         let key = bytes.strip_prefix(PAIRED_OUTCOME.decl().prefix)?;
         PairedOutcomeKey::decode_key(key).map(Self::Paired)
     }
+}
+
+/// The stored-key prefix every outcome row of one arm starts with, table prefix included: the
+/// prefix a table keyed by [`OutcomeRef`] scans one arm under.
+pub(super) fn outcome_arm_prefix(skill: &EntityId, executor: Option<&str>) -> Vec<u8> {
+    let mut out = Vec::new();
+    match executor {
+        None => {
+            out.extend_from_slice(OUTCOME.decl().prefix);
+            skill.encode_into(&mut out);
+        }
+        Some(executor) => {
+            out.extend_from_slice(PAIRED_OUTCOME.decl().prefix);
+            ExecutorArm::new(skill, executor).encode_into(&mut out);
+        }
+    }
+    out
+}
+
+/// The stored-key prefixes of every arm of `skill`: the legacy arm, then every named one.
+pub(super) fn outcome_skill_prefixes(skill: &EntityId) -> [Vec<u8>; 2] {
+    let prefix = |table: &[u8]| {
+        let mut out = table.to_vec();
+        skill.encode_into(&mut out);
+        out
+    };
+    [
+        prefix(OUTCOME.decl().prefix),
+        prefix(PAIRED_OUTCOME.decl().prefix),
+    ]
 }
 
 /// Outcome rows whose judge was displaced: the row stays, its weight leaves every fold.
@@ -431,10 +476,13 @@ pub(super) fn record_outcome_in_txn(
 }
 
 /// Attributed-outcome counts for one skill, plus the citation trace.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub(super) struct OutcomeTally {
     wins: u32,
     losses: u32,
+    /// The summed `skill_defect` shares of amended attempts. Each amended attempt is ONE record,
+    /// a loss weighted by its share (ARCH-0056 §5).
+    shares: f32,
     /// The most recent [`SKILL_RELIABILITY_MAX_CITED_RECEIPTS`] receipt ids, in
     /// ledger order. Pack receipt ids embed the UUIDv7 attempt id, so key order
     /// IS mint order.
@@ -445,7 +493,7 @@ impl OutcomeTally {
     pub(super) fn posterior(&self, prior: SkillReliabilityPosterior) -> SkillReliabilityPosterior {
         SkillReliabilityPosterior {
             alpha: prior.alpha + count_weight(self.wins),
-            beta: prior.beta + count_weight(self.losses),
+            beta: prior.beta + count_weight(self.losses) + self.shares,
         }
     }
 }
@@ -495,10 +543,12 @@ pub(crate) fn attributed_outcome_results(
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
 ) -> Result<Vec<(String, bool)>> {
+    // An amended attempt is one record, a loss, whatever the attempt lane recorded for it.
+    let amended = amended_receipts_in_txn(vault, rtxn, skill)?;
     let mut outcomes = Vec::new();
     for (key, row) in OUTCOME.scan_from(&vault.store, rtxn, skill.as_bytes())? {
         let outcome = OutcomeRef::Unknown(key);
-        if is_displaced(vault, rtxn, &outcome)? {
+        if amended.contains(outcome.receipt()) || is_displaced(vault, rtxn, &outcome)? {
             continue;
         }
         outcomes.push((outcome.into_receipt(), row.win));
@@ -510,11 +560,12 @@ pub(crate) fn attributed_outcome_results(
             return Err(Error::CorruptedIndex("skill reliability pair key"));
         }
         let outcome = OutcomeRef::Paired(key);
-        if is_displaced(vault, rtxn, &outcome)? {
+        if amended.contains(outcome.receipt()) || is_displaced(vault, rtxn, &outcome)? {
             continue;
         }
         outcomes.push((outcome.into_receipt(), row.win));
     }
+    outcomes.extend(amended.into_iter().map(|receipt| (receipt, false)));
     outcomes.sort_by(|a, b| a.0.cmp(&b.0));
     // One receipt is one outcome for the split, even when several executors
     // invoked a callable under it; a loss outranks a win, as in the ledger.
@@ -549,20 +600,57 @@ pub(super) fn tally_outcomes(
             .map(|(key, row)| (OutcomeRef::Paired(key), row))
             .collect(),
     };
-    let mut tally = OutcomeTally::default();
+    // One record per attempt: an amended attempt counts as its amendment's share alone, in place
+    // of whatever the attempt lane recorded for it — and still counts when the attempt lane
+    // recorded nothing.
+    let mut amended = amended_shares_in_txn(vault, rtxn, skill, executor)?;
+    let mut records = Vec::with_capacity(rows.len() + amended.len());
     for (outcome, row) in rows {
+        if let Some(share) = amended.remove(outcome.receipt()) {
+            records.push((outcome.into_receipt(), Counted::Share(share)));
+            continue;
+        }
         if is_displaced(vault, rtxn, &outcome)? {
             continue;
         }
-        if row.win {
-            tally.wins = tally.wins.saturating_add(1);
-        } else {
-            tally.losses = tally.losses.saturating_add(1);
+        let counted = if row.win { Counted::Win } else { Counted::Loss };
+        records.push((outcome.into_receipt(), counted));
+    }
+    records.extend(
+        amended
+            .into_iter()
+            .map(|(receipt, share)| (receipt, Counted::Share(share))),
+    );
+    // Ledger order is receipt order, so the citation trace keeps the newest receipts.
+    records.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut tally = OutcomeTally::default();
+    for (receipt, counted) in records {
+        match counted {
+            Counted::Win => tally.wins = tally.wins.saturating_add(1),
+            Counted::Loss => tally.losses = tally.losses.saturating_add(1),
+            Counted::Share(share) => tally.shares += share,
         }
-        tally.cited.push(outcome.into_receipt());
+        tally.cited.push(receipt);
         if tally.cited.len() > SKILL_RELIABILITY_MAX_CITED_RECEIPTS {
             tally.cited.remove(0);
         }
     }
     Ok(tally)
+}
+
+/// What one attempt's record adds to a tally.
+enum Counted {
+    Win,
+    Loss,
+    /// An amended attempt: a loss weighted by its `skill_defect` share.
+    Share(f32),
+}
+
+/// Whether `outcome` is a row this vault's own ledger holds, attempt lane or amendment.
+pub(super) fn outcome_is_local(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    outcome: &OutcomeRef,
+) -> Result<bool> {
+    Ok(outcome.contains(vault, rtxn)? || is_amended(vault, rtxn, outcome)?)
 }

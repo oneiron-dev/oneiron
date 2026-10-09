@@ -5,9 +5,10 @@
 //! ```text
 //! SK-04 judgments ─┐
 //!                  ├─▶ outcome ledger ─▶ Beta(α,β) ─▶ skill.reliability CLAIM (truth)
-//! contributing ────┘   (per skill and executor,           │
-//!  wins                 keyed by receipt)                ├─▶ pair selection score (mean + UCB)
-//!                                                        └─▶ pair floor → quarantine PROPOSAL
+//! contributing ────┤   (per skill and executor,           │
+//!  wins            │    keyed by receipt)                ├─▶ pair selection score (mean + UCB)
+//! amendment ───────┘                                     │
+//!  defect shares                                         └─▶ pair floor → quarantine PROPOSAL
 //! Unknown-executor history retains the old scalar SkillRecord.confidence cache.
 //! ```
 //!
@@ -17,11 +18,16 @@
 //! hold it is now a materialization — CID-7's demotion pattern, the same
 //! "claims are truth, the record is cache" law the contact record follows.
 //!
-//! **What counts (§5).** Only two classes of outcome move the posterior:
+//! **What counts (§5).** Only three classes of outcome move the posterior:
 //! - β: an SK-04-routed [`AttributionVerdict::SkillDefect`](crate::skill_attribution::AttributionVerdict::SkillDefect) judgment — the
 //!   skill's content was wrong.
 //! - α: a CONTRIBUTING WIN — a terminal pack receipt whose manifest loaded the
 //!   skill, whose attempt COMPLETED, and which SK-04 routed to no judgment.
+//! - β, by a share: an AMENDED attempt (ARCH-0056 §5) — the amendment judge
+//!   charged part of the decider's edit to the skill, so the attempt counts as
+//!   ONE loss weighted by that `skill_defect` share, in place of whatever the
+//!   attempt lane recorded for it (one record per attempt; the later verdict
+//!   holds).
 //!
 //! Everything else contributes NOTHING, by construction rather than by
 //! special-case: an [`AttributionVerdict::ExecutionLapse`](crate::skill_attribution::AttributionVerdict::ExecutionLapse) blames the actor and
@@ -41,6 +47,7 @@
 //! update/bonus entry points with critic reliability. Attribution remains here:
 //! only receipt-backed wins and routed skill defects reach this posterior.
 
+mod amended;
 mod callable;
 mod codec;
 mod floor;
@@ -51,6 +58,7 @@ mod provenance;
 mod read;
 mod resident;
 
+pub(crate) use self::amended::{AmendedOutcome, reconcile_amended_outcomes};
 pub(crate) use self::callable::{project_callable_receipt_outcome, record_callable_invocation};
 pub use self::floor::{
     DEFAULT_SKILL_RELIABILITY_FLOOR, PREDICATE_SKILL_QUARANTINE_PROPOSAL,
