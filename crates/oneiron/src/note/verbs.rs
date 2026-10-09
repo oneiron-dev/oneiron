@@ -138,22 +138,45 @@ impl Vault {
                         if !owner {
                             return Err(invalid("CLAIM fork requires the owner").into());
                         }
-                        let mut body = self
-                            .get_claim_in_txn(txn, &origin)?
-                            .ok_or(crate::Error::EntityNotFound)?;
-                        body.scope_facet = facet;
-                        self.put_claim_in_txn(txn, &fork, &body, occurred, at)?;
-                        self.batch_in()
-                            .edge(&fork, EdgeKind::DerivedFrom, &origin, 1.0)
-                            .apply(txn)?;
-                        if supersede {
-                            self.supersede_claim_in_txn(txn, &fork, &origin, at)?;
-                        }
+                        self.fork_claim_to_facet_in_txn(txn, origin, facet, fork, supersede, at)?;
                     }
                     other => return Err(crate::Error::InvalidEntityType(other).into()),
                 }
                 Ok(fork)
             })
+    }
+
+    /// The CLAIM half of [`Self::fork_to_facet`], composed into the caller's
+    /// transaction: births `fork` under `facet` as the origin's successor (same
+    /// author, same claim_of weight) with its `facet_of` stamp, links it
+    /// `DerivedFrom` the origin, and with `supersede` closes the origin. The
+    /// identity-topology facet op forks each reassigned claim through this
+    /// door (ARCH-0055 r9).
+    pub(crate) fn fork_claim_to_facet_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        origin: EntityId,
+        facet: EntityId,
+        fork: EntityId,
+        supersede: bool,
+        at: u64,
+    ) -> crate::Result<()> {
+        crate::batch::ClaimMaterialization::apply_successor(
+            self,
+            txn,
+            &origin,
+            &fork,
+            crate::claim::ClaimSuccession::Fork { facet },
+            at,
+        )?;
+        self.batch_in()
+            .edge(&fork, EdgeKind::FacetOf, &facet, 1.0)
+            .edge(&fork, EdgeKind::DerivedFrom, &origin, 1.0)
+            .apply(txn)?;
+        if supersede {
+            self.supersede_claim_in_txn(txn, &fork, &origin, at)?;
+        }
+        Ok(())
     }
 
     /// A proposed move of `origin` to `facet`: one pending

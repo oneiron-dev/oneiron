@@ -1,8 +1,10 @@
-//! The undo door: a counter-event appended over an applied merge/split, never
-//! a rewrite of the event it reverts (ARCH-0055 r1).
+//! The undo door: a counter-event appended over an applied merge, split or
+//! facet, never a rewrite of the event it reverts (ARCH-0055 r1).
 
 use crate::batch::BatchOp;
-use crate::claim::ClaimApprovalStatus;
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, ClaimSuccession,
+};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -10,8 +12,10 @@ use crate::vault::Vault;
 
 use super::ledger_fold::fold_identity_topology_log;
 use super::lifecycle_state::EntityLifecycleState;
-use super::op_apply::{IdentityOpOutcome, IdentityOpWrite};
-use super::reassignment_map::clear_reassignment_rows_in_txn;
+use super::op_apply::{IdentityOpOutcome, IdentityOpWrite, facet_fork_id};
+use super::reassignment_map::{
+    ReassignmentMap, ReassignmentTarget, clear_reassignment_rows_in_txn,
+};
 use super::stored_event::StoredIdentityOpAction;
 use super::transition_table::IdentityTopologyRejection;
 use crate::error::SyncError;
@@ -23,8 +27,9 @@ impl Vault {
     /// over the whole event family ordered by the engine-stamped `seq` —
     /// the event must still be the current topology writer for every entity
     /// it shelled; an already-undone, superseded, or parked event is
-    /// rejected with [`IdentityTopologyRejection::NotCurrent`]. Undo of a
-    /// counter-event is rejected with
+    /// rejected with [`IdentityTopologyRejection::NotCurrent`]. A FACET event
+    /// undoes by forking its claims home and archiving its masks (see
+    /// `undo_facet_event_in_txn`). Undo of a counter-event is rejected with
     /// [`IdentityTopologyRejection::NotUndoable`]. The consent axis applies
     /// like the apply door: `Proposed` parks the counter-event with the
     /// shell edges untouched; `Rejected` is the consent no-op.
@@ -71,25 +76,27 @@ impl Vault {
                     IdentityTopologyRejection::NotUndoable { event: *event },
                 )));
             }
-            // A FACET event is not undoable either, and the fold's own undo
-            // rule ([`evaluate_fold_undo`]) already says so — the door only
-            // repeats it. A facet op moves NO lifecycle state (r6: the base
-            // stays `Active`), so this family's undo currency test — "is this
-            // event still the topology writer for the entities it shelled?" —
-            // has nothing to test, and every facet event would be undoable
-            // forever, repeatedly. Reversing one is also not an edge
-            // retraction but an ENTITY retraction: the minted masks are live
-            // ARCH-0022 entities that other records may already reference, and
-            // deleting entities is ARCH-0038's door, not this one. Retiring a
-            // mask is a split of that FACET, which this family already
-            // expresses.
-            // An assert_distinct event is not undoable for the same reason,
-            // and its retraction door already exists: the assertion lives in
-            // a public CLAIM whose own lifecycle (supersede / retract) lifts
-            // suppression. Unwinding it from here would need a second,
-            // shadow retraction path over the same row.
-            StoredIdentityOpAction::Facet { .. }
-            | StoredIdentityOpAction::AssertDistinct { .. } => {
+            StoredIdentityOpAction::Facet {
+                entity,
+                facets,
+                reassignment,
+                ..
+            } => {
+                return self.undo_facet_event_in_txn(
+                    wtxn,
+                    event,
+                    (*entity, facets),
+                    reassignment,
+                    write,
+                    now,
+                );
+            }
+            // An assert_distinct event is not undoable: its retraction door
+            // already exists. The assertion lives in a public CLAIM whose own
+            // lifecycle (supersede / retract) lifts suppression. Unwinding it
+            // from here would need a second, shadow retraction path over the
+            // same row.
+            StoredIdentityOpAction::AssertDistinct { .. } => {
                 return Err(Error::Sync(SyncError::IdentityTopologyRejected(
                     IdentityTopologyRejection::NotUndoable { event: *event },
                 )));
@@ -149,4 +156,129 @@ impl Vault {
             transitions,
         )
     }
+
+    /// Undoes one applied FACET event (ARCH-0055 trio, r9). The facet op
+    /// forked each reassigned claim under its mask and the fork superseded
+    /// its origin, so the undo forks each one home: a restore claim under the
+    /// origin's facet, derived from the origin, supersedes the fork. The
+    /// minted masks are archived, not deleted: detached from the entity, with
+    /// their rows kept, because the closed forks still name them.
+    ///
+    /// The event must not be undone already, and no later write may have
+    /// touched one of its forks (closed, demoted or edited it); either is
+    /// [`IdentityTopologyRejection::NotCurrent`]. `Proposed` parks the
+    /// counter-event and moves nothing.
+    fn undo_facet_event_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        event: &EntityId,
+        (entity, facets): (EntityId, &[EntityId]),
+        reassignment: &ReassignmentMap,
+        write: &IdentityOpWrite,
+        now: u64,
+    ) -> Result<IdentityOpOutcome> {
+        let not_current = || {
+            Error::Sync(SyncError::IdentityTopologyRejected(
+                IdentityTopologyRejection::NotCurrent { event: *event },
+            ))
+        };
+        let events = self.fold_effective_identity_topology_events_in_txn(&*wtxn)?;
+        if fold_identity_topology_log(&events)
+            .undone_events
+            .contains(event)
+        {
+            return Err(not_current());
+        }
+        let mut forks = Vec::new();
+        for entry in &reassignment.entries {
+            let (ClaimSubject::Entity(origin), ReassignmentTarget::Facet { index }) =
+                (&entry.item, entry.target)
+            else {
+                continue;
+            };
+            let Some(mask) = facets.get(index as usize) else {
+                continue;
+            };
+            let fork = facet_fork_id(event, origin)?;
+            // No fork row: the apply dropped this assignment (a closed or
+            // foreign claim), so there is nothing to send home.
+            let Some(fork_body) = self.get_claim_in_txn(&*wtxn, &fork)? else {
+                continue;
+            };
+            let origin_body = self
+                .get_claim_in_txn(&*wtxn, origin)?
+                .ok_or_else(not_current)?;
+            if !fork_untouched(&origin_body, &fork_body, *mask) {
+                return Err(not_current());
+            }
+            forks.push((*origin, fork, origin_body.scope_facet));
+        }
+
+        let mut effects = Vec::new();
+        if write.is_effective() {
+            for (origin, fork, home) in forks {
+                let restore = self.store.clock.entity_id()?;
+                crate::batch::ClaimMaterialization::apply_successor(
+                    self,
+                    wtxn,
+                    &fork,
+                    &restore,
+                    ClaimSuccession::Fork { facet: home },
+                    now,
+                )?;
+                // The restore wears its origin's stamp exactly: a `facet_of`
+                // edge only where the origin carried one.
+                let stamped = crate::ports::EdgeStoreRead::port_edge_get(
+                    &self.store,
+                    &*wtxn,
+                    &origin,
+                    EdgeKind::FacetOf,
+                    &home,
+                )?
+                .is_some();
+                let mut links = self.batch_in();
+                if stamped {
+                    links = links.edge(&restore, EdgeKind::FacetOf, &home, 1.0);
+                }
+                links
+                    .edge(&restore, EdgeKind::DerivedFrom, &origin, 1.0)
+                    .apply(wtxn)?;
+                self.supersede_claim_in_txn(wtxn, &restore, &fork, now)?;
+            }
+            for mask in facets {
+                effects.push(BatchOp::DeleteEdge {
+                    src: entity,
+                    kind: EdgeKind::HasFacet,
+                    tgt: *mask,
+                });
+            }
+        }
+        self.write_identity_event_in_txn(
+            wtxn,
+            self.store.clock.entity_id()?,
+            write,
+            now,
+            StoredIdentityOpAction::Undo { target: *event },
+            None,
+            effects,
+            Vec::new(),
+        )
+    }
+}
+
+/// A fork is current while it still carries exactly the origin's content
+/// under its mask: active, never demoted, edited or closed. Lifecycle,
+/// `valid_to` and the MACHINE proof legitimately differ between the two.
+fn fork_untouched(origin: &ClaimBody, fork: &ClaimBody, mask: EntityId) -> bool {
+    if fork.lifecycle != ClaimLifecycleStatus::Active || fork.scope_facet != mask {
+        return false;
+    }
+    let mut expected = origin.clone();
+    expected.lifecycle = fork.lifecycle;
+    expected.valid_to = fork.valid_to;
+    expected.scope_facet = mask;
+    expected.evidence = crate::authority::evidence_without_machine_signature(origin);
+    let mut actual = fork.clone();
+    actual.evidence = crate::authority::evidence_without_machine_signature(fork);
+    expected == actual
 }

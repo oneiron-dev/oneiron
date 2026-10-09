@@ -84,6 +84,9 @@ pub struct IdentityTopologyFold {
     pub moot_proposals: BTreeSet<EntityId>,
     /// Per-event rejections, in fold order.
     pub rejections: Vec<(EntityId, IdentityTopologyRejection)>,
+    /// Events a counter-event has reverted. A FACET event moves no lifecycle
+    /// state, so this is its only fold-level undo-currency witness.
+    pub undone_events: BTreeSet<EntityId>,
 }
 
 /// Folds identity-topology events into lifecycle states — the
@@ -124,13 +127,20 @@ pub fn fold_identity_topology_log(events: &[IdentityTopologyEvent]) -> IdentityT
                 Err(rejection) => fold.rejections.push((event.event_id, rejection)),
             },
             IdentityTopologyAction::Undo { target } => {
-                match evaluate_fold_undo(&fold.current_event, &applied, &undo_events, target) {
+                match evaluate_fold_undo(
+                    &fold.current_event,
+                    &applied,
+                    &undo_events,
+                    &fold.undone_events,
+                    target,
+                ) {
                     Ok(reverted) => {
                         for entity in reverted {
                             fold.states.insert(entity, EntityLifecycleState::Active);
                             fold.current_event.remove(&entity);
                         }
                         undo_events.insert(event.event_id);
+                        fold.undone_events.insert(*target);
                     }
                     Err(rejection) => {
                         fold.rejections.push((event.event_id, rejection));
@@ -175,11 +185,12 @@ pub fn fold_identity_topology_log(events: &[IdentityTopologyEvent]) -> IdentityT
 
 /// Undo legality against the fold state: the target must be an applied
 /// merge/split whose shell entities all still name it as their current
-/// topology writer.
+/// topology writer, or an applied facet no counter-event has reverted yet.
 fn evaluate_fold_undo(
     current_event: &BTreeMap<EntityId, EntityId>,
     applied: &BTreeMap<EntityId, &IdentityTopologyOp>,
     undo_events: &BTreeSet<EntityId>,
+    undone_events: &BTreeSet<EntityId>,
     target: &EntityId,
 ) -> std::result::Result<Vec<EntityId>, IdentityTopologyRejection> {
     if undo_events.contains(target) {
@@ -191,13 +202,19 @@ fn evaluate_fold_undo(
     let shelled = match op {
         IdentityTopologyOp::Merge(merge) => merge.sources.clone(),
         IdentityTopologyOp::Split(split) => vec![split.entity],
-        // Facet and assert_distinct applies move no lifecycle state, so this
-        // family's undo currency test — "is this event still the topology
-        // writer for the entities it shelled?" — has nothing to test for
-        // either. Both are retracted through the door that owns their
-        // effect: a mask by splitting that FACET, an assertion by
-        // superseding or retracting its own CLAIM.
-        IdentityTopologyOp::Facet(_) | IdentityTopologyOp::AssertDistinct(_) => {
+        // A facet apply moves no lifecycle state: it mints masks and forks
+        // claims (r9). Its undo is current until a counter-event reverts it;
+        // whether a later write touched a fork is a claim-level question the
+        // undo door answers against the store.
+        IdentityTopologyOp::Facet(_) => {
+            if undone_events.contains(target) {
+                return Err(IdentityTopologyRejection::NotCurrent { event: *target });
+            }
+            return Ok(Vec::new());
+        }
+        // An assert_distinct apply is retracted through the door that owns
+        // its effect: superseding or retracting its own CLAIM.
+        IdentityTopologyOp::AssertDistinct(_) => {
             return Err(IdentityTopologyRejection::NotUndoable { event: *target });
         }
     };

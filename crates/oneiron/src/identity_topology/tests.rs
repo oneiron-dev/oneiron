@@ -3123,28 +3123,114 @@ fn undo_of_a_mapped_split_reverses_its_assignment_rows() {
     assert_eq!(vault.claims_assigned_to(&head).expect("head"), vec![claim]);
 }
 
-/// A facet op has no undo: it moves no lifecycle state, so the family's
-/// currency test has nothing to test, and reversing one would be an ENTITY
-/// retraction (ARCH-0038's door), not an edge retraction. Typed, not silent.
+/// REV-9 D1 (ARCH-0055 trio, ruling r9 "fork, never restamp"): the facet op
+/// forks each reassigned claim under its mask, linked `DerivedFrom` it, and
+/// the fork supersedes the origin. Undo appends a counter-event that forks
+/// each claim home and archives the masks (detached, rows kept), so the
+/// original claims are current again. A second undo is `NotCurrent`.
 #[test]
-fn undo_of_a_facet_event_is_typed_not_silent() {
+fn facet_forks_claims_and_undo_makes_the_originals_current_again() {
+    use super::op_apply::facet_fork_id;
+    use crate::claim::ClaimLifecycleStatus;
     let (_dir, vault) = open_vault();
     let base = put_person(&vault, 0x61);
+    let work = write_note_claim(&vault, id(0x71), base);
+    let home = write_note_claim(&vault, id(0x72), base);
+    let before = |claim: &EntityId| vault.get_claim(claim).expect("read").expect("claim");
+    let originals = [(work, before(&work)), (home, before(&home))];
+    let (event, masks) = seam_apply_facet(&vault, base, &["work", "home"], &[(work, 0), (home, 1)]);
+
+    for ((origin, original), mask) in originals.iter().zip(&masks) {
+        let fork = facet_fork_id(&event, origin).expect("fork id");
+        let closed = before(origin);
+        assert_eq!(closed.lifecycle, ClaimLifecycleStatus::Superseded);
+        assert_eq!(
+            closed.scope_facet, original.scope_facet,
+            "a claim's facet never moves"
+        );
+        let forked = before(&fork);
+        assert_eq!(forked.lifecycle, ClaimLifecycleStatus::Active);
+        assert_eq!(forked.scope_facet, *mask);
+        assert_eq!(forked.value, original.value);
+        let edges = vault.edges_out(&fork).expect("fork edges");
+        for kind in [EdgeKind::DerivedFrom, EdgeKind::Supersedes] {
+            assert!(
+                edges
+                    .iter()
+                    .any(|edge| edge.kind == kind && edge.target == *origin)
+            );
+        }
+    }
+    assert_eq!(vault.facets_of(&base).expect("facets").len(), 3);
+
     let write = IdentityOpWrite::auto(ClaimSource::Inferred);
-    let (event, _) = expect_applied(
+    expect_applied(
         vault
-            .apply_identity_topology_op(&facet_op(base), &write, 200)
-            .expect("apply facet"),
+            .undo_identity_topology_event(&event, &write, 300)
+            .expect("undo facet"),
     );
+    for (origin, original) in &originals {
+        let fork = facet_fork_id(&event, origin).expect("fork id");
+        assert_eq!(before(&fork).lifecycle, ClaimLifecycleStatus::Superseded);
+        let restored = vault
+            .edges_in(&fork)
+            .expect("fork in-edges")
+            .into_iter()
+            .find(|edge| edge.kind == EdgeKind::Supersedes)
+            .expect("the fork is superseded by its restore")
+            .target;
+        let current = before(&restored);
+        assert_eq!(current.lifecycle, ClaimLifecycleStatus::Active);
+        assert_eq!(current.scope_facet, original.scope_facet);
+        assert_eq!(current.value, original.value);
+        assert_eq!(current.confidence, original.confidence);
+        assert!(
+            vault
+                .edges_out(&restored)
+                .expect("restore edges")
+                .iter()
+                .any(|edge| edge.kind == EdgeKind::DerivedFrom && edge.target == *origin)
+        );
+    }
+    // Archived, not deleted: the masks leave the base, their rows stay.
+    assert_eq!(vault.facets_of(&base).expect("facets").len(), 1);
+    for mask in &masks {
+        assert_eq!(
+            vault.get_entity_type(mask).expect("mask type"),
+            Some(crate::registry::ENTITY_TYPE_FACET)
+        );
+    }
+    assert_eq!(event_count(&vault), 2);
 
     let err = vault
-        .undo_identity_topology_event(&event, &write, 300)
-        .expect_err("facet events are not undoable");
+        .undo_identity_topology_event(&event, &write, 400)
+        .expect_err("a facet event undoes once");
     assert_eq!(
         expect_rejection(err),
-        IdentityTopologyRejection::NotUndoable { event }
+        IdentityTopologyRejection::NotCurrent { event }
     );
-    // Nothing was orphaned by the refusal: the mask and its wiring stand.
+}
+
+/// A later write that touched a fork makes the facet undo stale: it refuses
+/// with `NotCurrent` and moves nothing.
+#[test]
+fn facet_undo_is_not_current_once_a_fork_was_touched() {
+    use super::op_apply::facet_fork_id;
+    let (_dir, vault) = open_vault();
+    let base = put_person(&vault, 0x61);
+    let origin = write_note_claim(&vault, id(0x71), base);
+    let (event, _) = seam_apply_facet(&vault, base, &["work"], &[(origin, 0)]);
+    let fork = facet_fork_id(&event, &origin).expect("fork id");
+    vault.retract_claim(&fork, 250).expect("touch the fork");
+
+    let write = IdentityOpWrite::auto(ClaimSource::Inferred);
+    let err = vault
+        .undo_identity_topology_event(&event, &write, 300)
+        .expect_err("a touched fork makes the undo stale");
+    assert_eq!(
+        expect_rejection(err),
+        IdentityTopologyRejection::NotCurrent { event }
+    );
     assert_eq!(vault.facets_of(&base).expect("facets").len(), 2);
     assert_eq!(event_count(&vault), 1);
 }
@@ -3231,16 +3317,17 @@ fn sync_reconcile_derives_and_retires_replicated_assignment_rows() {
 
 /// The two arms record in different places on purpose, so neither may erase
 /// the other: a split reconcile rebuilds the split index wholesale, and a
-/// facet's canonical `facet_of` stamps must survive it untouched.
+/// facet fork's canonical `facet_of` birth stamp must survive it untouched.
 #[test]
 fn split_reconcile_never_erases_facet_scoping_on_the_same_base() {
     let (_dir, vault) = open_vault();
     let base = put_person(&vault, 0x61);
     let head = put_person(&vault, 0x62);
-    let scoped = write_note_claim(&vault, id(0x71), base);
+    let origin = write_note_claim(&vault, id(0x71), base);
     let write = IdentityOpWrite::auto(ClaimSource::Inferred);
 
-    let masks = seam_apply_facet(&vault, base, &["work", "home"], &[(scoped, 0)]);
+    let (event, masks) = seam_apply_facet(&vault, base, &["work", "home"], &[(origin, 0)]);
+    let scoped = super::op_apply::facet_fork_id(&event, &origin).expect("fork id");
     assert_eq!(
         vault.claims_assigned_to(&masks[0]).expect("mask a"),
         vec![scoped]
@@ -3266,13 +3353,13 @@ fn split_reconcile_never_erases_facet_scoping_on_the_same_base() {
     assert_eq!(vault.facets_of(&base).expect("facets").len(), 3);
 }
 
-/// Applies a facet op and returns its minted masks in spec order.
+/// Applies a facet op and returns its event and minted masks in spec order.
 fn seam_apply_facet(
     vault: &Vault,
     entity: EntityId,
     labels: &[&str],
     assignments: &[(EntityId, u32)],
-) -> Vec<EntityId> {
+) -> (EntityId, Vec<EntityId>) {
     let (event, _) = expect_applied(
         vault
             .apply_identity_topology_op(
@@ -3300,7 +3387,7 @@ fn seam_apply_facet(
     else {
         panic!("expected a facet action");
     };
-    facets
+    (event, facets)
 }
 
 /// The applied counts are OMITTED from the wire when zero, which is what
@@ -3509,7 +3596,8 @@ fn reassignment_records_only_claims_the_origin_owns() {
     // cross-identity `facet_of` stamp is ever minted.
     let base = put_person(&vault, 0x64);
     let ours = write_note_claim(&vault, id(0x73), base);
-    let masks = seam_apply_facet(&vault, base, &["work", "home"], &[(theirs, 0), (ours, 1)]);
+    let (facet_event, masks) =
+        seam_apply_facet(&vault, base, &["work", "home"], &[(theirs, 0), (ours, 1)]);
     assert!(
         vault
             .claims_assigned_to(&masks[0])
@@ -3519,7 +3607,16 @@ fn reassignment_records_only_claims_the_origin_owns() {
     );
     assert_eq!(
         vault.claims_assigned_to(&masks[1]).expect("mask b"),
-        vec![ours]
+        vec![super::op_apply::facet_fork_id(&facet_event, &ours).expect("fork id")]
+    );
+    assert_eq!(
+        vault
+            .get_claim(&theirs)
+            .expect("read")
+            .expect("theirs")
+            .lifecycle,
+        crate::claim::ClaimLifecycleStatus::Active,
+        "the stranger's claim is never forked or closed"
     );
 }
 

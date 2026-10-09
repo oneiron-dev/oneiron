@@ -7,7 +7,6 @@ use std::collections::BTreeSet;
 
 use rmpv::Value;
 
-use crate::batch::BatchOp;
 use crate::claim::ClaimSubject;
 use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
@@ -21,7 +20,6 @@ use super::ledger_fold::IdentityTopologyFold;
 use super::lifecycle_state::EntityLifecycleState;
 use super::store_entity_helpers::{
     identity_topology_entity_type_for_store_in_txn, identity_topology_event_for_store_in_txn,
-    topology_edge_weight,
 };
 use super::stored_event::StoredIdentityOpAction;
 use super::wire_keys::{MAP_KEY_FACET, MAP_KEY_HEAD, MAP_KEY_ITEM};
@@ -373,7 +371,7 @@ fn decode_reassignment_row(row: &[u8]) -> Result<Option<EntityId>> {
 ///   that: [`evaluate_transition`](super::evaluate_transition) checks the map's TARGETS, never its
 ///   items' provenance, and the map replicates verbatim on a peer's event.
 ///   Without this filter a split of `A` files an unrelated `B`'s claim under
-///   `A`'s head, and a facet of `A` stamps `B`'s claim `FacetOf` a mask `A`
+///   `A`'s head, and a facet of `A` forks `B`'s claim under a mask `A`
 ///   owns — cross-identity contamination the two query surfaces would then
 ///   report as fact. Membership is read the way this family's own reader
 ///   reads it ([`Vault::claims_remaining_on_origin`](crate::Vault::claims_remaining_on_origin) → `claims_for_subject`):
@@ -482,19 +480,15 @@ pub(super) fn clear_reassignment_rows_in_txn(
 /// different canonical witnesses:
 /// - a SPLIT assignment has none — no edge, no subject change — so the
 ///   `vault_meta` index IS the record, keyed by the event that stated it.
-/// - a FACET assignment already has one: the canonical `facet_of` stamp
-///   ([`EdgeKind::FacetOf`], ONE-1645's write-time type table), which the
-///   local query filter and the federation selector both already read. A
-///   second projection of it would be a stale twin, so the stamps are staged
-///   into `stamps` and no index row is written.
+/// - a FACET assignment is a fork (r9, "fork, never restamp"): a claim's
+///   facet is set at birth and never moves, so each assigned claim is forked
+///   under its mask and the fork supersedes it. The fork's birth stamp is the
+///   canonical `facet_of` edge the query filter and federation selector read,
+///   so no index row is written. Only a current claim forks; a closed one is
+///   history, and an assignment naming it is dropped.
 ///
-/// `stamps` is applied by the caller's [`apply_ops`](crate::batch::apply_ops) batch AFTER the minted
-/// FACET rows land in the same batch — a `facet_of` edge whose target has no
-/// entity row fails closed at that table.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one shared split/facet apply door over event + origin + map + targets, accumulating into the caller's effect batch"
-)]
+/// The facet pairs are returned in `forks`, which the caller forks AFTER the
+/// minted FACET rows land — a fork whose facet has no entity row fails closed.
 pub(super) fn apply_reassignment_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -502,10 +496,18 @@ pub(super) fn apply_reassignment_in_txn(
     origin: &EntityId,
     map: &ReassignmentMap,
     targets: ReassignmentContext<'_>,
-    stamps: &mut Vec<BatchOp>,
-    now: u64,
+    forks: &mut Vec<(EntityId, EntityId)>,
 ) -> Result<ReassignmentStats> {
-    let rows = resolve_reassignment_in_txn(store, &*wtxn, origin, map, targets)?;
+    let mut rows = resolve_reassignment_in_txn(store, &*wtxn, origin, map, targets)?;
+    if let ReassignmentContext::Facets(_) = targets {
+        let mut current = Vec::with_capacity(rows.len());
+        for (claim, target) in rows {
+            if target.is_none() || claim_is_active_in_txn(store, &*wtxn, &claim)? {
+                current.push((claim, target));
+            }
+        }
+        rows = current;
+    }
     let assigned = rows.iter().filter(|(_, target)| target.is_some()).count();
     let stats = ReassignmentStats {
         assigned,
@@ -516,24 +518,22 @@ pub(super) fn apply_reassignment_in_txn(
             write_reassignment_rows_in_txn(store, wtxn, event, origin, &rows)?;
         }
         ReassignmentContext::Facets(_) => {
-            let weight = topology_edge_weight(EdgeKind::FacetOf)?;
-            for (claim, target) in rows {
-                let Some(facet) = target else {
-                    continue;
-                };
-                stamps.push(BatchOp::EdgeWithCreatedAt {
-                    src: claim,
-                    kind: EdgeKind::FacetOf,
-                    tgt: facet,
-                    weight,
-                    created_at: now,
-                    vad: crate::affect::Vad::NEUTRAL,
-                    provenance: None,
-                });
-            }
+            forks.extend(
+                rows.into_iter()
+                    .filter_map(|(claim, target)| target.map(|facet| (claim, facet))),
+            );
         }
     }
     Ok(stats)
+}
+
+fn claim_is_active_in_txn(store: &Store, txn: &heed::RoTxn<'_>, claim: &EntityId) -> Result<bool> {
+    let Some(raw) = store.entities.get(txn, claim.as_bytes())? else {
+        return Ok(false);
+    };
+    let body =
+        crate::claim::decode_claim_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], true)?;
+    Ok(body.lifecycle == crate::claim::ClaimLifecycleStatus::Active)
 }
 
 /// Re-derives the split assignment rows of exactly `sources` from the ledger

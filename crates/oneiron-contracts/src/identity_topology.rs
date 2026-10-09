@@ -153,7 +153,8 @@ pub enum IdentityTopologyRejection {
     },
     /// undo names an event that is not the current topology writer for its
     /// entities (already undone, superseded by a later re-apply, parked, or
-    /// never applied).
+    /// never applied), or a facet event one of whose forks a later write has
+    /// touched.
     NotCurrent {
         /// The named event.
         event: EntityId,

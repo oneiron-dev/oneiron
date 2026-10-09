@@ -374,8 +374,8 @@ mod seam {
             .len()
     }
 
-    /// Applies a facet op: mints one FACET entity per label and backfills
-    /// `facet_of` scoping per `assignments` (claim id → facet index).
+    /// Applies a facet op: mints one FACET entity per label and forks each
+    /// claim in `assignments` (claim id → facet index) under its mask (r9).
     /// Returns the minted FACET entity ids, in label order.
     pub(crate) fn apply_facet(
         vault: &Vault,
@@ -945,9 +945,9 @@ fn ms03_facet_mints_exactly_n_type13_entities() {
     assert_eq!(seam::count_facet_entities_of(&vault, &person), 3);
 }
 
-/// r5/r6: the facet op backfills `facet_of` scoping on the named
-/// behavioral claims and mints NO new base entity ids — facet ops touch no
-/// entity ids beyond the FACET entities themselves.
+/// r5/r6/r9: the facet op scopes the named behavioral claims by forking each
+/// under its mask and mints NO new base entity ids — facet ops touch no
+/// entity ids beyond the FACET entities and the claim forks themselves.
 #[test]
 fn ms03_facet_backfills_scoping_and_mints_no_base_ids() {
     let (_dir, vault) = open_vault();
@@ -992,15 +992,19 @@ fn ms03_facet_never_blends_profiles_across_masks() {
     assert_eq!(seam::count_facet_of_scoped_claims(&vault, &minted[1]), 1);
 
     // Exact per-facet MEMBERSHIP, not just counts: each mask carries the
-    // one claim the map scoped to it, and never the other's.
-    assert_eq!(
-        seam::claim_ids_scoped_to_facet(&vault, &minted[0]),
-        vec![claim_a]
-    );
-    assert_eq!(
-        seam::claim_ids_scoped_to_facet(&vault, &minted[1]),
-        vec![claim_b]
-    );
+    // fork of the one claim the map scoped to it (r9, "fork, never
+    // restamp"), and never the other's.
+    for (mask, origin) in [(minted[0], claim_a), (minted[1], claim_b)] {
+        let scoped = seam::claim_ids_scoped_to_facet(&vault, &mask);
+        assert_eq!(scoped.len(), 1);
+        assert!(
+            vault
+                .edges_out(&scoped[0])
+                .expect("fork edges")
+                .iter()
+                .any(|edge| edge.kind == oneiron::EdgeKind::DerivedFrom && edge.target == origin)
+        );
+    }
 }
 
 // ===== ONE-1746 (MS-04) — entity.distinct_from =====
