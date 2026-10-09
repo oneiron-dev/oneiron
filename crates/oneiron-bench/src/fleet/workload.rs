@@ -269,7 +269,7 @@ fn verify_writes(vault: &Vault, agents: &mut [Agent], round: usize) -> Result<()
         if body["content"].as_str() != Some(needle(agent.index, round).as_str()) {
             return Err("stored witness content differs from submitted bytes".into());
         }
-        // Receipts name the written entity; recall emits its published revision.
+        // Receipts name the written entity; recall names the revision it read.
         // Pin the expected frontier outside measured write/recall traffic instead
         // of accepting any revision by stripping the returned suffix.
         let revision = vault

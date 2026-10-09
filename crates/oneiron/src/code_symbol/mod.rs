@@ -38,7 +38,7 @@ use self::storage::delete_code_symbol_manifest_in_txn;
 // bare. After the directory split the seam re-imports them so `tests.rs`
 // resolves exactly as it did before.
 #[cfg(test)]
-use self::{codec::*, keys::*};
+use self::keys::*;
 #[cfg(test)]
 use crate::code_artifact::decode_code_artifact_body;
 #[cfg(test)]

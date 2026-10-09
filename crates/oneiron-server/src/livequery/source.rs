@@ -158,6 +158,7 @@ impl LiveQuerySource for BoundSource {
                 let scope = RecallScope {
                     world_ref: view.world_ref.clone(),
                     facet: view.facet.clone(),
+                    kinds: None,
                 };
                 let pack = memory
                     .recall_view(

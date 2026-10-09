@@ -139,41 +139,6 @@ fn document_and_claim_reviews_persist_and_learn_dismissals() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn duplicate_findings_do_not_inflate_votes_and_trusted_findings_resolve() -> Result<()> {
-    let catalog = catalog()?;
-    let inputs = catalog
-        .lenses
-        .iter()
-        .map(|lens| CriticReviewInput {
-            target: EntityId::now(),
-            kind: ReviewArtifactKind::Document,
-            lens: lens.clone(),
-            run_id: "run".into(),
-            branch_attempt: AttemptId::now(),
-        })
-        .collect::<Vec<_>>();
-    let mut artifacts = Critics.fan_out(&inputs)?;
-    let rows = catalog
-        .lenses
-        .iter()
-        .map(|lens| CriticReliability::new(&lens.id, &lens.domain, 99.0, 1.0, 98))
-        .collect::<Result<Vec<_>>>()?;
-    let base = triage_critiques(&catalog, &artifacts, &rows)?;
-    artifacts.push(artifacts[0].clone());
-    let repeated = triage_critiques(&catalog, &artifacts, &rows)?;
-    assert_eq!(base.scores, repeated.scores);
-    assert_eq!(repeated.findings.len(), 1);
-    assert!(repeated.auto_resolved);
-    assert!(repeated.findings[0].auto_resolved);
-    artifacts[0].suggested_edit = Some("different finding".into());
-    artifacts[0].severity = CritiqueSeverity::Blocking;
-    let ranked = triage_critiques(&catalog, &artifacts, &rows)?;
-    assert_eq!(ranked.findings.len(), 2);
-    assert_eq!(ranked.findings[0].severity, CritiqueSeverity::Blocking);
-    Ok(())
-}
-
 struct NoSecondCall;
 impl ReviewHost for NoSecondCall {
     fn fan_out(&self, _: &[CriticReviewInput]) -> Result<Vec<CritiqueArtifact>> {

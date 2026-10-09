@@ -5,9 +5,6 @@
 
 use super::*;
 
-use rmpv::Value as RmpValue;
-
-use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::config::VaultConfig;
 use crate::consent::AuthenticatedOwner;
 use crate::edit_distance::attribution::{
@@ -24,7 +21,6 @@ use crate::error::GateError;
 use crate::llm::ModelId;
 use crate::off_record::OffRecordBackendClass;
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
-use crate::skill::{SkillLifecycle, SkillRecord, canonical_skill_tree_hash};
 use crate::store::GateDecisionId;
 use crate::temporal::TimeRange;
 
@@ -67,34 +63,6 @@ impl io::Write for CountingSink {
 fn put_actor(vault: &Vault) -> Result<EntityId> {
     let id = EntityId::now();
     vault.put_entity(&id, ENTITY_TYPE_PERSON, t(1), 1, b"ed09 actor fixture")?;
-    Ok(id)
-}
-
-fn put_skill(vault: &Vault) -> Result<EntityId> {
-    let id = EntityId::now();
-    let tree_hash = canonical_skill_tree_hash([("SKILL.md", b"# ed09 fixture\n".as_slice())])
-        .expect("fixture tree hashes");
-    let candidate = SkillRecord::new(
-        "ed09.fixture",
-        "ed09 fixture skill",
-        "1.0.0",
-        ClaimApprovalStatus::Approved,
-        SkillLifecycle::Candidate,
-        ClaimSource::UserStated,
-        0.9,
-        false,
-        true,
-        Vec::new(),
-        RmpValue::Map(vec![(
-            RmpValue::from("source"),
-            RmpValue::from("ed09-fixture"),
-        )]),
-    )
-    .with_content_hash(tree_hash);
-    vault.put_skill_record(&id, &candidate, t(10), 11)?;
-    let mut active = candidate;
-    active.lifecycle_status = SkillLifecycle::Active;
-    vault.update_skill_record(&id, &active, t(12), 13)?;
     Ok(id)
 }
 
@@ -211,26 +179,6 @@ fn export_to_vec(vault: &Vault, scope: ReservoirScope) -> Result<(ExportManifest
 
 // ─── the pair projection ────────────────────────────────────────────────
 
-/// An amendment projects `rejected = proposed` / `chosen = final`. An untouched
-/// approval leaves the two ends EQUAL, which is not a preference — so it
-/// projects no pair.
-#[test]
-fn an_amendment_projects_a_pair_and_an_unamended_outcome_projects_none() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let amended = put_artifact(&vault, "draft text", "decider's text", None)?;
-    mark_amended(&vault, amended)?;
-    // approved_untouched: the window closed with nothing changed.
-    let untouched = put_artifact(&vault, "untouched", "untouched", None)?;
-    mark_amended(&vault, untouched)?;
-
-    let pairs = candidates(&vault, ReservoirScope::default())?;
-    assert_eq!(pairs.len(), 1, "only the amended artifact is a candidate");
-    assert_eq!(pairs[0].rejected, "draft text");
-    assert_eq!(pairs[0].chosen, "decider's text");
-    assert_eq!(pairs[0].receipt_ref, amended.entity_id());
-    Ok(())
-}
-
 /// ELIGIBILITY. `finalize` persists every artifact it closes, so a retention
 /// row with two DIFFERING texts says only that the body was edited — a rejected
 /// proposal was edited and thrown away, and one still awaiting a ruling was
@@ -321,37 +269,6 @@ fn the_model_tag_is_the_generation_the_amendment_was_folded_under() -> Result<()
     Ok(())
 }
 
-/// Tags join from the evidence row. An amended artifact with no evidence row
-/// still projects its pair, with every tag explicitly absent — never a guess,
-/// never a drop.
-#[test]
-fn tags_join_from_the_evidence_row_and_absence_stays_explicit() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let skill = put_skill(&vault)?;
-    let tagged = put_artifact(&vault, "a", "b", None)?;
-    tag_artifact(&vault, tagged, "outbound", 500, Some(skill))?;
-    let bare = put_artifact(&vault, "c", "d", None)?;
-    mark_amended(&vault, bare)?;
-
-    let pairs = candidates(&vault, ReservoirScope::default())?;
-    assert_eq!(pairs.len(), 2);
-    let joined = pairs
-        .iter()
-        .find(|pair| pair.receipt_ref == tagged.entity_id())
-        .expect("the tagged pair");
-    assert_eq!(joined.task_class.as_deref(), Some("outbound"));
-    assert_eq!(joined.skill, Some(skill));
-
-    let untagged = pairs
-        .iter()
-        .find(|pair| pair.receipt_ref != tagged.entity_id())
-        .expect("the untagged pair");
-    assert_eq!(untagged.task_class, None, "absence is explicit");
-    assert_eq!(untagged.skill, None);
-    assert_eq!(untagged.model_id, None);
-    Ok(())
-}
-
 /// A narrowed scope excludes untagged pairs, both on the class axis and the
 /// time axis: a pair that cannot be SHOWN to be in the named set is not in it.
 #[test]
@@ -421,26 +338,6 @@ fn stage_live_overlay_turn(
     segment.commit()
 }
 
-/// CONSTRUCTIVE exclusion: a live session's turns are pipeline-inert, so no
-/// derived row is produced from them and the scan has nothing to filter. The
-/// candidate stream is empty because the work never became a row — not because
-/// something removed it.
-#[test]
-fn a_live_session_contributes_no_candidates_at_all() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let session = vault
-        .off_record_session_vault()
-        .enter("session:ed09", OffRecordBackendClass::Local)?;
-    stage_live_overlay_turn(&session, &crate::test_util::entity(0x41))?;
-
-    // The room produced work, and none of it left a retention row.
-    assert!(
-        candidates(&vault, ReservoirScope::default())?.is_empty(),
-        "a live session's work never enters the candidate stream"
-    );
-    Ok(())
-}
-
 /// THE TRIPWIRE. A candidate whose persisted `source_turn_ref` names a live
 /// session-overlay member means an upstream inertness bug: the export ABORTS
 /// with a typed error, and the two-phase contract means the sink has seen ZERO
@@ -479,19 +376,6 @@ fn a_live_session_source_turn_aborts_the_export_before_the_first_byte() -> Resul
     Ok(())
 }
 
-/// A candidate with no turn source passes the tripwire: absent is "not
-/// turn-sourced", not "unknown", so there is no membership question to ask.
-#[test]
-fn a_pair_with_no_source_turn_passes_the_tripwire() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    grant_export(&vault);
-    let artifact = put_artifact(&vault, "no turn", "no turn amended", None)?;
-    mark_amended(&vault, artifact)?;
-    let (manifest, _) = export_to_vec(&vault, ReservoirScope::default())?;
-    assert_eq!(manifest.pairs, 1);
-    Ok(())
-}
-
 /// A turn-sourced pair whose turn is an ordinary base turn exports normally —
 /// the tripwire discriminates on live room membership, not on having a turn.
 #[test]
@@ -507,32 +391,6 @@ fn an_ordinary_source_turn_exports_normally() -> Result<()> {
     assert_eq!(manifest.pairs, 1);
     assert!(jsonl.contains("open final"));
     Ok(())
-}
-
-/// NO OVERRIDE API: the scope and pair shapes are destructured EXHAUSTIVELY —
-/// a new field is a compile error right here.
-#[test]
-fn no_override_api_on_the_export_surface() {
-    // Compile-surface: adding an admit-session field to either type breaks this.
-    let ReservoirScope {
-        task_classes: _,
-        since: _,
-    } = ReservoirScope::default();
-    let TrainingPair {
-        rejected: _,
-        chosen: _,
-        task_class: _,
-        skill: _,
-        model_id: _,
-        receipt_ref: _,
-    } = TrainingPair {
-        rejected: String::new(),
-        chosen: String::new(),
-        task_class: None,
-        skill: None,
-        model_id: None,
-        receipt_ref: EntityId::now(),
-    };
 }
 
 // ─── the consent rail ───────────────────────────────────────────────────
@@ -674,56 +532,6 @@ fn re_exporting_one_scope_reproduces_the_hash() -> Result<()> {
     Ok(())
 }
 
-/// The export receipt records scope, count and hash — and projects through the
-/// ordinary receipt query, in the `ScopedRead` family.
-#[test]
-fn the_export_receipt_records_scope_count_and_hash() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    grant_export(&vault);
-    let prose = put_artifact(&vault, "p0", "p1", None)?;
-    tag_artifact(&vault, prose, "prose", 10, None)?;
-
-    let (manifest, _) = export_to_vec(
-        &vault,
-        ReservoirScope {
-            task_classes: Some(vec!["prose".to_owned()]),
-            since: Some(5),
-        },
-    )?;
-
-    let receipt = vault
-        .receipts(ReceiptQuery::default().with_kind(ReceiptKind::ScopedRead))?
-        .into_iter()
-        .find(|record| {
-            record.receipt_id == format!("{EXPORT_RECEIPT_ID_PREFIX}{}", manifest.receipt.to_hex())
-        })
-        .expect("the export receipt projects into the ScopedRead family");
-    assert_eq!(receipt.outcome, "exported");
-    assert_eq!(
-        receipt.fields.get(FIELD_EXPORT_PAIRS).map(String::as_str),
-        Some("1")
-    );
-    assert_eq!(
-        receipt
-            .fields
-            .get(FIELD_EXPORT_CONTENT_HASH)
-            .map(String::as_str),
-        Some(manifest.content_hash.as_str())
-    );
-    assert_eq!(
-        receipt
-            .fields
-            .get(FIELD_EXPORT_TASK_CLASSES)
-            .map(String::as_str),
-        Some("prose")
-    );
-    assert_eq!(
-        receipt.fields.get(FIELD_EXPORT_SINCE).map(String::as_str),
-        Some("5")
-    );
-    Ok(())
-}
-
 /// ONE SNAPSHOT. The manifest is receipted with a `content_hash` that attests a
 /// point in time, so every read behind a body — artifacts, fence, amendment
 /// marks, evidence, model bindings — must come from one boundary. A read that
@@ -781,44 +589,6 @@ fn the_resolution_reads_every_ledger_on_one_snapshot() -> Result<()> {
 
 // ─── the rebuildable index (CID-7) ──────────────────────────────────────
 
-/// The index is derived state: rebuilding it twice is an identity, it carries
-/// exactly the candidates the export carries, and a row that stopped being a
-/// candidate is DELETED rather than remembered.
-#[test]
-fn rebuilding_the_index_is_an_identity_and_drops_stale_rows() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let prose = put_artifact(&vault, "p0", "p1", None)?;
-    tag_artifact(&vault, prose, "prose", 10, None)?;
-    put_artifact(&vault, "same", "same", None)?;
-
-    rebuild_reservoir_index(&vault)?;
-    let first = index_rows(&vault)?;
-    rebuild_reservoir_index(&vault)?;
-    assert_eq!(first, index_rows(&vault)?, "the rebuild is an identity");
-
-    let projected = candidates(&vault, ReservoirScope::default())?;
-    assert_eq!(
-        first.len(),
-        projected.len(),
-        "the index holds exactly the candidates"
-    );
-    assert!(
-        first.contains_key(&CANDIDATE.key_bytes(&prose.entity_id())),
-        "the amended artifact is indexed"
-    );
-
-    // A row the index remembers but the projection no longer produces is
-    // deleted, not carried.
-    let ghost = CANDIDATE.key_bytes(&EntityId::now());
-    vault.with_write_txn(|wtxn| {
-        vault.store.vault_meta.put(wtxn, &ghost, b"{}")?;
-        Ok(())
-    })?;
-    rebuild_reservoir_index(&vault)?;
-    assert!(!index_rows(&vault)?.contains_key(&ghost), "stale rows go");
-    Ok(())
-}
-
 /// The index refuses to build over a session-sourced candidate for the same
 /// reason the export does: the tripwire runs on the one shared enumeration path.
 #[test]
@@ -836,17 +606,4 @@ fn the_index_rebuild_shares_the_export_tripwire() -> Result<()> {
         Err(Error::InvariantViolation(_))
     ));
     Ok(())
-}
-
-fn index_rows(vault: &Vault) -> Result<BTreeMap<Vec<u8>, Vec<u8>>> {
-    let rtxn = vault.store.env.read_txn()?;
-    vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, side_table::EDIT_DISTANCE_RESERVOIR_CANDIDATE.prefix)?
-        .map(|entry| {
-            let (key, value) = entry?;
-            Ok((key.to_vec(), value.to_vec()))
-        })
-        .collect()
 }

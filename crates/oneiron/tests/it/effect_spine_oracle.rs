@@ -863,15 +863,9 @@ mod seam {
     // The three seams here are gone rather than retargeted: `outbound_chokepoint`
     // is `pub(crate)`, so ONE-1719's plan, estimate, and decider are neither
     // nameable nor constructible from this integration-test crate and no public
-    // composition reaches the classification seam. Each successor is an in-crate
-    // test in `crates/oneiron/src/fanout_auto/tests.rs`.
-    //
-    // classify_fan_out_ask -> successor `es07_classifier_escalates_uncertain_asks_to_human`.
-    // apply_escalation_ruling -> successor `escalation_ruling_roundtrip` (the public fn of
-    // the same name; its policy-row storage is ONE-1762's, not "workbench #6").
-    // count_pending_escalations -> successor `es07_human_ruling_persistence_is_optional`,
-    // where a pre-ruling ask is ONE-1719's paused, visible plan and a ruled one is
-    // resumed or kept-paused through that same surface — never pending.
+    // composition reaches the classification seam. Their in-crate successors in
+    // `crates/oneiron/src/fanout_auto/tests.rs` were removed by the 2026-10 test
+    // prune as MIRROR tests.
 
     // ---- ONE-1721 (ES-08): optional per-peer EffectorBudget ----
 
@@ -1569,24 +1563,11 @@ fn es06_deny_ruling_dispatches_nothing_and_records_denial() {
 
 // ===== ONE-1720 (ES-07) — AUTO-mode escalation learning =====
 //
-// The three ES-07 arms are RE-HOMED, not paralleled: their successors live in
-// `crates/oneiron/src/fanout_auto/tests.rs` under the same names, because the
-// crate-private fan-out types they need are not nameable from here.
-//
-// es07_classifier_escalates_uncertain_asks_to_human -> in-crate successor of the same
-// name: `AutoGateRuling::EscalateToHuman` is now `FanoutAskVerdict::EscalateToHuman`,
-// surfacing through `FanoutAutoDisposition::SurfaceHuman`.
-//
-// es07_classifier_conditions_on_decision_history -> in-crate successor of the same
-// name: the in-cap `AutoGateRuling::Run` is now an `Allow` carried by an ACCEPTED
-// standing Budget row with a 500 band ceiling, and both `EscalateToHuman` arms
-// (a different key, and an over-cap magnitude) stay `EscalateToHuman`.
-//
-// es07_human_ruling_persistence_is_optional -> in-crate successor of the same name:
-// pending-escalation counts become ONE-1719's pause-surface reads, and policy rows
-// are counted through ONE-1762's `standing_policy_for` status read — ONE-1762 owns
-// that storage schema, which is what the deferred "workbench ask #6" punt became.
-// `count_fan_out_policy_rows` stays ONE-1719-owned and untouched.
+// The three ES-07 arms are not here: the crate-private fan-out types they need
+// are not nameable from this crate. Their in-crate successors in
+// `crates/oneiron/src/fanout_auto/tests.rs` were removed by the 2026-10 test
+// prune as MIRROR tests. `count_fan_out_policy_rows` stays ONE-1719-owned and
+// untouched.
 
 // ===== ONE-1721 (ES-08) — optional per-peer EffectorBudget + handshake =====
 

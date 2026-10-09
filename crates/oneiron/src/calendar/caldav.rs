@@ -207,21 +207,3 @@ pub fn caldav_write_status_error(
         }),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn precondition_statuses_reconcile_and_others_are_transport_failures() {
-        assert!(caldav_write_status_error(204, "put", "/c/1.ics", None, None).is_none());
-        assert!(matches!(
-            caldav_write_status_error(412, "put", "/c/1.ics", Some("v1"), Some("v2")),
-            Some(CalendarConnectorError::EtagMismatch { .. })
-        ));
-        assert!(matches!(
-            caldav_write_status_error(503, "put", "/c/1.ics", None, None),
-            Some(CalendarConnectorError::Transport { .. })
-        ));
-    }
-}

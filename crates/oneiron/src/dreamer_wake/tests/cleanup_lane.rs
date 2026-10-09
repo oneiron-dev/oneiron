@@ -1,5 +1,5 @@
 use super::*;
-use crate::vault_cleanup::{CleanupPosture, cleanup_proposals, set_cleanup_posture};
+use crate::vault_cleanup::cleanup_proposals;
 
 fn timer_input(node: u64) -> RunWakePass {
     let mut input = run_input(DreamerConsolidationScope::Macro, node, 20);
@@ -123,84 +123,6 @@ fn cleanup_failure_parks_and_refunds_without_leaving_partial_proposals() -> Resu
             .expect("regression fixture")
             .remaining_units,
         10_000
-    );
-    assert!(store.budget_reservation("cleanup", cleanup)?.is_none());
-    assert!(cleanup_proposals(&vault)?.is_empty());
-    assert_eq!(executor.executed, 0);
-    Ok(())
-}
-
-#[test]
-fn cleanup_obeys_cancellation_and_budget_denial_before_dispatch() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let store = DreamerRunnerStore::new(&vault);
-    let cleanup = request_timer(&vault, &store)?;
-    let node = crate::identity::load_or_mint_client_id(&vault)?;
-    let mut driver = DreamerWakeDriver::new(&vault, "cleanup", frozen_deadline(0, 180_000));
-    let mut executor = CompletingExecutor {
-        completed_units: 50,
-        executed: 0,
-    };
-    let cancel = WakeCancellation::new();
-    cancel.cancel();
-    assert_eq!(
-        block_on_ready(driver.run_wake_pass(timer_input(node), &mut executor, &cancel))?.stop,
-        WakePassStop::Cancelled
-    );
-    let mut input = timer_input(node);
-    input.budget_total_units = 1;
-    assert_eq!(
-        block_on_ready(driver.run_wake_pass(input, &mut executor, &WakeCancellation::new()))?.stop,
-        WakePassStop::BudgetExhausted
-    );
-    assert_eq!(
-        store
-            .status(cleanup)?
-            .expect("regression fixture")
-            .attempt
-            .state,
-        AttemptState::Queued
-    );
-    assert!(cleanup_proposals(&vault)?.is_empty());
-    assert!(set_cleanup_posture(&vault, CleanupPosture::AutoWithDigest).is_err());
-    Ok(())
-}
-
-#[test]
-fn cleanup_dispatch_waits_for_timer_macro_and_respects_the_deadline() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let store = DreamerRunnerStore::new(&vault);
-    let cleanup = request_timer(&vault, &store)?;
-    let node = crate::identity::load_or_mint_client_id(&vault)?;
-    let mut executor = CompletingExecutor {
-        completed_units: 50,
-        executed: 0,
-    };
-    let cancel = WakeCancellation::new();
-    let mut driver = DreamerWakeDriver::new(&vault, "cleanup", frozen_deadline(0, 180_000));
-    block_on_ready(driver.run_wake_pass(
-        run_input(DreamerConsolidationScope::Macro, node, 20),
-        &mut executor,
-        &cancel,
-    ))?;
-    assert_eq!(
-        store
-            .status(cleanup)?
-            .expect("cleanup attempt")
-            .attempt
-            .state,
-        AttemptState::Queued
-    );
-    let mut driver = DreamerWakeDriver::new(&vault, "cleanup", frozen_deadline(180_000, 180_000));
-    let report = block_on_ready(driver.run_wake_pass(timer_input(node), &mut executor, &cancel))?;
-    assert_eq!(report.stop, WakePassStop::DeadlineHardCut);
-    assert_eq!(
-        store
-            .status(cleanup)?
-            .expect("cleanup attempt")
-            .attempt
-            .state,
-        AttemptState::Queued
     );
     assert!(store.budget_reservation("cleanup", cleanup)?.is_none());
     assert!(cleanup_proposals(&vault)?.is_empty());

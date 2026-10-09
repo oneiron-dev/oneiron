@@ -371,8 +371,6 @@ use self::{claims::*, consent::*, parties::*, projection_writes::*, projector::*
 #[cfg(test)]
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, apply_ops};
 #[cfg(test)]
-use crate::claim::ClaimSource;
-#[cfg(test)]
 use crate::edge::{EdgeActorClass, EdgeKind};
 #[cfg(test)]
 use crate::error::{Error, Result};
@@ -382,8 +380,6 @@ use crate::vault::entity_id_from_type_index_key;
 use crate::write_envelope::WriteActor;
 #[cfg(test)]
 use rmpv::Value;
-#[cfg(test)]
-use std::collections::BTreeSet;
 
 pub(crate) use thread_membership::active_thread_refs_in_txn;
 

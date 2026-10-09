@@ -56,16 +56,18 @@ fn identical_recalls_return_the_same_pack_across_a_clock_tick() {
         })
         .expect("claim");
 
+    // The turn and conversation come back only when the scope names them.
+    let scope = RecallScope {
+        kinds: Some(
+            ["CLAIM", "MESSAGE", "TURN", "CONVERSATION"]
+                .map(str::to_owned)
+                .to_vec(),
+        ),
+        ..RecallScope::default()
+    };
     let recall = || {
         facade
-            .recall(
-                "window seat",
-                Effort::Medium,
-                &RecallScope::default(),
-                10,
-                None,
-                None,
-            )
+            .recall("window seat", Effort::Medium, &scope, 10, None, None)
             .expect("recall")
     };
     recall();
@@ -98,6 +100,7 @@ fn world_scoped_last_week_recall_keeps_eligible_hit_at_limit_one() {
     let scope = RecallScope {
         world_ref: Some(eligible_world.to_hex()),
         facet: None,
+        kinds: None,
     };
     for (seed, world, days) in [(0xE4, eligible_world, 60), (0xE5, other_world, 3)] {
         let subject = put_person(&vault, seed);

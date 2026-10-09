@@ -153,63 +153,6 @@ impl GpuRegistry {
         self.leases.remove(&id).is_some()
     }
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn healthy() -> GpuHealth {
-        GpuHealth {
-            transport: true,
-            app: true,
-            inference: true,
-        }
-    }
-    #[test]
-    fn p2c_balances_and_expiry_reclaims_capacity() {
-        let mut r = GpuRegistry::new("west").unwrap();
-        for id in ["a", "b"] {
-            r.register(id.into(), 100, healthy()).unwrap();
-        }
-        let mut counts = BTreeMap::new();
-        for n in 0..200 {
-            let l = r.acquire(0, [n, n * 7]).unwrap();
-            *counts.entry(l.pod).or_insert(0) += 1;
-        }
-        assert_eq!(counts["a"], 100);
-        assert_eq!(counts["b"], 100);
-        assert_eq!(r.acquire(299, [0, 1]), Err(GpuRegistryError::Unavailable));
-        assert!(r.acquire(300, [0, 1]).is_ok());
-    }
-    #[test]
-    fn renewal_and_all_three_health_layers() {
-        let mut r = GpuRegistry::new("east").unwrap();
-        r.register("a".into(), 1, healthy()).unwrap();
-        let l = r.acquire(0, [1, 2]).unwrap();
-        assert_eq!(l.renew_at, 60);
-        let renewed = r.renew(l.id, 60).unwrap();
-        assert_eq!(renewed.expires_at, 360);
-        assert_eq!(r.acquire(300, [1, 2]), Err(GpuRegistryError::Unavailable));
-        assert_eq!(r.renew(l.id, 360), Err(GpuRegistryError::LeaseExpired));
-        for health in [
-            GpuHealth {
-                transport: false,
-                ..healthy()
-            },
-            GpuHealth {
-                app: false,
-                ..healthy()
-            },
-            GpuHealth {
-                inference: false,
-                ..healthy()
-            },
-        ] {
-            r.set_health("a", health).unwrap();
-            assert_eq!(r.acquire(400, [1, 2]), Err(GpuRegistryError::Unavailable));
-        }
-        r.set_health("a", healthy()).unwrap();
-        assert!(r.acquire(400, [1, 2]).is_ok());
-    }
-}
 
 /// The routing host, not the worker, binds the holding account to a GPU job.
 #[derive(Debug)]

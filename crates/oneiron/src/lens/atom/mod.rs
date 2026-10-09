@@ -25,5 +25,3 @@ pub use self::atom_scalars::{
 };
 
 pub(in crate::lens) use self::atom_node::LensNodeSeed;
-#[cfg(test)]
-pub(in crate::lens) use self::atom_scalars::MAX_LENS_TEXT_BYTES;

@@ -7,7 +7,7 @@ use crate::booking::{
     SolveResult, WeeklyWallWindow, encode_event_type_claim_value, enqueue_booking_verb,
     run_booking_lifecycle_once,
 };
-use crate::calendar::outcome::{EventOutcome, project_event_outcome, read_event_outcome};
+use crate::calendar::outcome::{EventOutcome, read_event_outcome};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus};
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
 use crate::test_util::{entity as id, open_test_vault_with};

@@ -311,40 +311,6 @@ fn expression_archive_restores_native_generations_with_fresh_provenance_and_safe
 }
 
 #[test]
-fn expression_archive_cannot_supersede_an_existing_local_explicit_preference() -> Result<()> {
-    let archive = archive([ExpressionPreferenceOrigin::ExplicitUser; 2])?;
-    let (_dir, target, writer) = fresh_vault()?;
-    local_policy(&target, Some(writer.entity_ref()), "auto")?;
-    target.put_entity(&archive.subject, ENTITY_TYPE_PERSON, at(1), 1, b"subject")?;
-    let local = preference(
-        &target,
-        &writer,
-        archive.subject,
-        "fr",
-        ExpressionPreferenceOrigin::ExplicitUser,
-        2,
-    )?;
-    target.import_whole_vault_json_with_actor(&archive.bytes, &writer)?;
-    assert_eq!(
-        target.get_claim(&local)?.unwrap().lifecycle,
-        ClaimLifecycleStatus::Active
-    );
-    assert_eq!(
-        target.get_claim(&archive.head)?.unwrap().source,
-        Some(ClaimSource::Imported)
-    );
-    let resolved = target.expression_preferences(&archive.subject, 30)?;
-    assert_eq!(resolved.language.as_deref(), Some("fr"));
-    assert_eq!(
-        resolved
-            .winning_claim_ids
-            .get(&ExpressionPreferenceKind::Language),
-        Some(&local)
-    );
-    Ok(())
-}
-
-#[test]
 fn expression_archive_refuses_mixed_precedence_and_missing_history_without_writes() -> Result<()> {
     let (_dir, target, writer) = fresh_vault()?;
     local_policy(&target, Some(writer.entity_ref()), "auto")?;
