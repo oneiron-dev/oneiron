@@ -1606,6 +1606,8 @@ fn agent_verb_schemas_follow_manifest_inputs_and_argument_paths() {
             };
             let expected = input.pointer(&pointer).expect("typed input field");
             assert_eq!(&projected["properties"][field], expected, "{name}.{field}");
+            // The tool closes every struct-shaped object the input declares.
+            let expected = &super::endpoint_schema::close_object_schemas(expected.clone());
             let shipped = &arguments["properties"][field];
             if let Some(properties) = expected.as_object() {
                 for (key, value) in properties {

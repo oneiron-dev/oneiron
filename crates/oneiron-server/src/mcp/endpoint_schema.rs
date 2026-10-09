@@ -163,7 +163,7 @@ pub(super) fn verb_tool_schema(tool: McpGeneratedVerbTool) -> Value {
 /// Every struct-shaped object a verb tool advertises is closed, whatever its
 /// Rust input type tolerates: the client is told exactly the fields the verb
 /// reads. Free-form values (no `properties`) stay open.
-fn close_object_schemas(mut schema: Value) -> Value {
+pub(super) fn close_object_schemas(mut schema: Value) -> Value {
     fn close(value: &mut Value) {
         match value {
             Value::Object(map) => {
