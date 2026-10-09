@@ -392,9 +392,9 @@ fn decision_slot(batch: &ImportedNoteBatch) -> Result<[u8; 32]> {
 
 fn validate_batch(batch: &ImportedNoteBatch) -> Result<()> {
     let invalid = super::document::invalid;
-    if !crate::ingest::INGEST_SOURCE_REGISTRY
+    if crate::ingest::INGEST_SOURCE_REGISTRY
         .get_config(NOTES_IMPORT_SOURCE)
-        .is_some_and(|config| !config.writes_claims)
+        .is_none_or(|config| config.writes_claims)
     {
         return Err(invalid("the markdown import source is not registered"));
     }
