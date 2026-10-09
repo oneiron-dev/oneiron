@@ -156,6 +156,10 @@ pub struct StoreCore {
     /// Exterior key custody binding. On restore this remains the source vault's
     /// canonical path; it is never reset to the new LMDB image's location.
     pub(in crate::store) gate_custody_root: std::path::PathBuf,
+    /// The vault is archived by a restore in its place, and the custody it
+    /// binds is its replacement's: from the first moment of its open no
+    /// handle on it mints or retires a key there.
+    pub(in crate::store) gate_custody_archived: bool,
     /// Exterior retirement cannot race a live snapshot's decision decrypt.
     pub(in crate::store) gate_retirement_lock: std::sync::RwLock<()>,
     /// Shared environment handle used to open transactions. The close-on-
@@ -450,6 +454,7 @@ macro_rules! manifest_dbs {
             fn diagnostics(&self) -> &Diagnostics;
             fn clock(&self) -> &crate::ports::StoreClock;
             fn gate_key_root(&self) -> &std::path::Path;
+            fn gate_custody_archived(&self) -> bool;
         }
 
         impl ManifestDbs for Store {
@@ -458,6 +463,7 @@ macro_rules! manifest_dbs {
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
             fn gate_key_root(&self) -> &std::path::Path { &self.core.gate_custody_root }
+            fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived }
         }
 
         impl ManifestDbs for SessionStoreView<'_> {
@@ -466,6 +472,7 @@ macro_rules! manifest_dbs {
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
             fn gate_key_root(&self) -> &std::path::Path { &self.core.gate_custody_root }
+            fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived }
         }
     };
 }

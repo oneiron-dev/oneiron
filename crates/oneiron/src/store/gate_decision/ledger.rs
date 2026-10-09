@@ -374,6 +374,9 @@ impl Store {
             // No exterior custody exists here, so no claim key can either.
             return Ok(());
         }
+        if self.core.gate_custody_archived {
+            return Err(Error::Store(crate::error::StoreError::ArchivedVault));
+        }
         let root = &self.core.gate_custody_root;
         let overflow = || Error::ArithmeticOverflow("gate decision key generation");
         let first = orcb::key_generation(root, claim_id)?;
@@ -798,6 +801,11 @@ fn append_gate_decision_row_in_txn(
         return Err(Error::InvariantViolation("gate decision id collision"));
     }
     let value = if let Some(claim) = record.claim_id {
+        // An archived vault's custody is its replacement's; it mints no key
+        // there.
+        if store.gate_custody_archived() {
+            return Err(Error::Store(crate::error::StoreError::ArchivedVault));
+        }
         // A committed age sweep may still be retiring this partition's
         // exterior key. No new ciphertext may reuse it in that interval.
         if super::retention::RETIRE_PENDING.contains(store, &*wtxn, &claim)? {
