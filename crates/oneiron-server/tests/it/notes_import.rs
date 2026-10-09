@@ -256,6 +256,13 @@ fn a_notes_folder_lands_as_one_approved_batch_and_a_reimport_adds_nothing() {
     assert!(!home.dir.path().join("again.json").exists());
     assert_eq!(note_count(&home.open()), 5);
 
+    // A deleted note is not imported again, and does not stop the rest.
+    assert!(
+        home.open()
+            .delete_entity(&home.id("other/alpha.md"))
+            .expect("delete a note")
+    );
+
     // A new note lands with its links; a changed one waits as it is. A new
     // `gamma.md` does not take beta's `[[gamma]]` from notes/gamma.md.
     home.write("delta.md", "Delta follows [[alpha]].\n");
@@ -267,11 +274,17 @@ fn a_notes_folder_lands_as_one_approved_batch_and_a_reimport_adds_nothing() {
     let later = home.import("later.json");
     assert_eq!(later["notes"]["new"], 2);
     assert_eq!(later["notes"]["changed"], 1);
-    assert_eq!(later["notes"]["unchanged"], 4);
+    assert_eq!(later["notes"]["unchanged"], 3);
+    assert_eq!(later["notes"]["removed"], 1);
     assert_eq!(later["batch"]["links"], 1, "only delta's link lands");
     assert!(home.decide("approve", &later).status.success());
     let vault = home.open();
-    assert_eq!(note_count(&vault), 7);
+    assert!(
+        vault
+            .read_note(&home.id("gamma.md"))
+            .expect("test fixture")
+            .is_some()
+    );
     assert_eq!(mentions_of(&vault, beta), beta_links);
     assert_eq!(
         vault

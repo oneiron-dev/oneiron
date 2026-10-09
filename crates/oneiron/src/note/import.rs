@@ -82,7 +82,7 @@ pub enum ImportedNoteStanding {
     Unchanged,
     /// An import landed an earlier text; the note is left as it is.
     Changed,
-    /// The note it became was erased or archived; it is not imported again.
+    /// The note it became was deleted or archived; it is not imported again.
     Removed,
     /// New, but the write door's secret scan would refuse its text.
     Refused,
@@ -115,7 +115,9 @@ impl Vault {
             .iter()
             .map(|(path, markdown)| {
                 let id = Self::imported_note_id(folder, path)?;
-                if self.local_hard_delete_marker_exists_in_txn(&txn, &id)?
+                // Deleted (its shell kept, or purged) or archived.
+                let raw = self.get_raw_in(&txn, &id)?;
+                if crate::deletion::row_deletion_marked(&self.store, &txn, &id, raw.as_deref())?
                     || self.archive_tombstone_in_txn(&txn, &id)?.is_some()
                 {
                     return Ok(ImportedNoteStanding::Removed);

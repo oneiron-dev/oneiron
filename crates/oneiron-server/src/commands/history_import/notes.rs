@@ -73,6 +73,8 @@ struct NoteCounts {
     /// Files passed over: larger than a note may be, or blank.
     too_large: usize,
     blank: usize,
+    /// Files whose name is not UTF-8: it could not name its note.
+    unreadable_name: usize,
     /// Notes whose frontmatter is not YAML: title from the file name, kind
     /// from `--kind`.
     unreadable_frontmatter: usize,
@@ -155,7 +157,10 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
     let mut counts = NoteCounts::default();
     let notes = read_folder(&folder, &mut counts)?;
     super::progress(&format!("read {} note(s)", notes.len()));
-    let folder = folder.to_string_lossy().into_owned();
+    let folder = folder
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("{} is not a UTF-8 path", folder.display()))?
+        .to_owned();
 
     let vault = super::open_vault(&config)?;
     let owner = crate::owner::local_owner(&vault)?;
@@ -277,6 +282,10 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
 fn read_folder(folder: &Path, counts: &mut NoteCounts) -> anyhow::Result<Vec<Note>> {
     let mut notes = Vec::new();
     super::walk_notes(folder, &mut |shown, file| {
+        let Some(path) = relative(folder, shown) else {
+            counts.unreadable_name += 1;
+            return Ok(());
+        };
         let metadata = file.metadata()?;
         if metadata.len() > MAX_NOTE_BYTES {
             counts.too_large += 1;
@@ -312,7 +321,7 @@ fn read_folder(folder: &Path, counts: &mut NoteCounts) -> anyhow::Result<Vec<Not
         let links = markdown::wikilinks(body);
         counts.found += 1;
         notes.push(Note {
-            path: relative(folder, shown),
+            path,
             written_at,
             title,
             label,
@@ -355,17 +364,19 @@ fn quoted(text: &str) -> String {
 }
 
 /// `shown` under `folder`, `/`-separated.
-fn relative(folder: &Path, shown: &Path) -> String {
-    shown
+/// `None` when a part of it is not UTF-8: the path names the note, so it is
+/// never read lossily.
+fn relative(folder: &Path, shown: &Path) -> Option<String> {
+    let parts = shown
         .strip_prefix(folder)
         .unwrap_or(shown)
         .components()
         .filter_map(|component| match component {
-            Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
+            Component::Normal(part) => Some(part.to_str()),
             _ => None,
         })
-        .collect::<Vec<_>>()
-        .join("/")
+        .collect::<Option<Vec<_>>>()?;
+    Some(parts.join("/"))
 }
 
 /// A title for a new note that no other note holds: the frontmatter's, else
