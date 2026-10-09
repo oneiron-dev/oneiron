@@ -69,6 +69,12 @@ async fn owner_rotates_a_secret_and_nobody_else_can() {
     let reply = rotated.to_string();
     assert!(!reply.contains(new_value) && !reply.contains("second value"));
     assert_eq!(generation(&server), 1);
+    // The refused callers' bodies were never read; the owner's frame and the
+    // buffer it was copied into were both wiped.
+    assert_eq!(
+        crate::owner::secrets::wiped::count(body.to_string().as_bytes()),
+        2
+    );
 
     let (status, _) = call(
         &server,
@@ -80,6 +86,29 @@ async fn owner_rotates_a_secret_and_nobody_else_can() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(generation(&server), 1);
+}
+
+/// A body the parser refuses inside the value (Astra on #1339). The literal
+/// backslash makes the escape fail after the parser has passed the whole
+/// recoverable encoding. Read through `Json`, that encoding was left in the
+/// extractor's body copy and in the parser's scratch, both freed unwiped.
+#[tokio::test]
+async fn a_rotation_refused_inside_the_value_wipes_the_body_that_carried_it() {
+    let (_dir, server) = auth_test_server();
+    let body: &[u8] = br#"{"name":"deploy-token","value_base64":"c2VjcmV0\uZZZZ"}"#;
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/owner/secrets/rotate")
+        .header(AUTHORIZATION, owner_recipe(&server))
+        .header(CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_vec()))
+        .unwrap();
+    let (status, reply) = route_json(server.clone(), request).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{reply}");
+    assert!(!reply.to_string().contains("c2VjcmV0"), "{reply}");
+    // The frame the body handed over and the one buffer it was copied into;
+    // the parser borrowed from the second and copied nothing.
+    assert_eq!(crate::owner::secrets::wiped::count(body), 2);
 }
 
 #[tokio::test]

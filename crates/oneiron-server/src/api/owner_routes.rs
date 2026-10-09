@@ -15,8 +15,10 @@
 use std::sync::Arc;
 
 use axum::Router;
+use axum::body::Body;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Query, State};
+use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::consent::AuthenticatedOwner;
@@ -25,7 +27,7 @@ use oneiron::store::GateDecisionId;
 use serde::Deserialize;
 
 use super::error_map::core_engine_error;
-use super::{json_payload, query_params};
+use super::{has_json_content_type, json_payload, query_params};
 use crate::auth::CoreAuth;
 use crate::error::{ApiError, ApiErrorDetails, EnvelopedApiError};
 use crate::owner::schedule::OwnerHost;
@@ -235,13 +237,21 @@ async fn set_secret_scan(
     Ok(Json(receipt))
 }
 
+/// The body is read by `RotateSecret::read`, not `Json`: the extractor's
+/// body copy and parser scratch would outlive the request unwiped.
 async fn rotate_secret(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<secrets::RotateSecret>, JsonRejection>,
+    headers: HeaderMap,
+    body: Body,
 ) -> OwnerReply<secrets::Rotated> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    if !has_json_content_type(&headers) {
+        return Err(ApiError::bad_request("invalid JSON request body", None).into());
+    }
+    let request = secrets::RotateSecret::read(body)
+        .await
+        .map_err(owner_error)?;
     let rotated = blocking(move || secrets::rotate(server.vault(), &owner, &request)).await?;
     Ok(Json(rotated))
 }
