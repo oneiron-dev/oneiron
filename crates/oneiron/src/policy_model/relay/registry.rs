@@ -390,27 +390,6 @@ impl EdgeServiceRegistry {
         Ok(())
     }
 
-    /// Binds a policy WITHOUT the registration guard, so the crate's own tests
-    /// can reach the relay branches that exist only for a registry that was
-    /// bypassed. `cfg(test)` + `pub(crate)` on purpose: a production-reachable
-    /// unchecked bind would make the guard cosmetic.
-    #[cfg(test)]
-    pub(in crate::policy_model) fn bind_unvalidated_for_testing(
-        &mut self,
-        service: &str,
-        class: ConnectionClass,
-        policy: HostedLegalPolicy,
-    ) {
-        self.services.insert(
-            service.to_owned(),
-            EdgeService {
-                class,
-                legal_policy: Some(policy),
-                patterns: CompiledPatternRules::default(),
-            },
-        );
-    }
-
     /// The legal policy bound to a `connector-edge:<name>` identity, if the
     /// deployment registered one. The relay edge looks this up with the
     /// identity it just validated and hands it to the pass.

@@ -1,11 +1,8 @@
 //! Common vault/actor helpers plus the scoped-MCP fixture shared by the 1690 and 1691 oracles.
 
-use rmpv::Value;
-
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::config::VaultConfig;
-use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::outbound_chokepoint::{PreparedAuthorization, PreparedEffect};
 use crate::outbound_consent::{DataClass, OutboundBindingAuthority, ScopedMcpCallContext};
@@ -13,7 +10,6 @@ use crate::outbound_grant::ScopedMcpGrantMintIntent;
 use crate::outbound_intent_ledger::BudgetClass;
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::temporal::TimeRange;
-use crate::write_envelope::WriteActor;
 
 pub(super) fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -23,20 +19,6 @@ pub(super) fn open_vault() -> (tempfile::TempDir, Vault) {
 
 pub(super) fn t(at: u64) -> TimeRange {
     TimeRange { start: at, end: at }
-}
-
-pub(super) fn empty_map_body() -> Vec<u8> {
-    let mut body = Vec::new();
-    rmpv::encode::write_value(&mut body, &Value::Map(Vec::new())).expect("encode empty map");
-    body
-}
-
-pub(super) fn person_actor(vault: &Vault, seed: u8, class: EdgeActorClass) -> WriteActor {
-    let id = EntityId::from_bytes([seed; 16]).expect("actor id");
-    vault
-        .put_entity(&id, ENTITY_TYPE_PERSON, t(1), 1, b"oracle actor")
-        .expect("put actor");
-    WriteActor::new(id, class)
 }
 
 pub(super) struct OracleScopedFixture {
