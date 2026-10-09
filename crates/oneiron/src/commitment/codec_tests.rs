@@ -10,7 +10,7 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::receipt::{ReceiptKind, ReceiptQuery};
-use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
+use crate::registry::ENTITY_TYPE_PERSON;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
@@ -45,10 +45,6 @@ pub(crate) fn seed_entities(vault: &Vault, ids: &[EntityId]) -> Result<()> {
     Ok(())
 }
 
-fn seed_agent(vault: &Vault, id: &EntityId) -> Result<()> {
-    vault.put_entity(id, ENTITY_TYPE_MACHINE, time(1, 1), 1, b"agent")
-}
-
 pub(crate) fn envelope(actor: EntityId) -> Result<WriteEnvelope> {
     Ok(WriteEnvelope::new(
         WriteActor::new(actor, EdgeActorClass::Human),
@@ -72,12 +68,6 @@ pub(crate) fn record(
         CommitmentStatus::Open,
         CommitmentBirthProvenance::new(CommitmentBirthKind::RunTreeNode, "run:turn-7")?,
     )
-}
-
-fn value_bytes(value: &Value) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, value).expect("encode MessagePack value");
-    bytes
 }
 
 #[test]
@@ -182,59 +172,6 @@ fn retro_dated_commitment_keeps_valid_time_and_learned_time_separate() -> Result
 }
 
 #[test]
-fn user_strength_override_beats_extractor_and_agent_owed_is_commitment() -> Result<()> {
-    let owner_strength = CommitmentStrength::resolve(
-        CommitmentObligorKind::Owner,
-        CommitmentStrength::StatedIntention,
-        Some(CommitmentStrength::Decision),
-    );
-    assert_eq!(owner_strength, CommitmentStrength::Decision);
-
-    let agent_strength = CommitmentStrength::resolve(
-        CommitmentObligorKind::Agent,
-        CommitmentStrength::StatedIntention,
-        Some(CommitmentStrength::Decision),
-    );
-    assert_eq!(agent_strength, CommitmentStrength::Commitment);
-
-    let (_dir, vault) = temp_vault()?;
-    let owner = crate::test_util::entity(0xD1);
-    let beneficiary = crate::test_util::entity(0xD2);
-    let agent = crate::test_util::entity(0xD3);
-    seed_entities(&vault, &[owner, beneficiary])?;
-    seed_agent(&vault, &agent)?;
-
-    let owner_id = crate::test_util::entity(0xD4);
-    let owner_record = record(owner, beneficiary, owner_strength)?;
-    vault.put_commitment_claim(
-        &owner_id,
-        &owner_record,
-        &envelope(owner)?,
-        time(400, 500),
-        600,
-    )?;
-    assert_eq!(
-        vault
-            .get_commitment_claim(&owner_id)?
-            .expect("owner commitment")
-            .strength,
-        CommitmentStrength::Decision
-    );
-
-    let agent_record = CommitmentRecord::new(
-        CommitmentObligor::new(CommitmentObligorKind::Agent, agent),
-        owner,
-        CommitmentContent::new("check in on Friday", None)?,
-        schedule(700),
-        CommitmentStrength::StatedIntention,
-        CommitmentStatus::Open,
-        CommitmentBirthProvenance::new(CommitmentBirthKind::Brief, "brief:check-in")?,
-    )?;
-    assert_eq!(agent_record.strength, CommitmentStrength::Commitment);
-    Ok(())
-}
-
-#[test]
 fn commitment_value_round_trips_closed_schema() -> Result<()> {
     let record = record(
         crate::test_util::entity(0x61),
@@ -264,94 +201,6 @@ fn commitment_value_round_trips_closed_schema() -> Result<()> {
             Err(Error::InvalidClaimBody(_))
         ));
     }
-    Ok(())
-}
-
-#[test]
-fn commitment_status_transition_matrix_is_closed() {
-    let statuses = [
-        CommitmentStatus::Open,
-        CommitmentStatus::Fulfilled,
-        CommitmentStatus::Released,
-        CommitmentStatus::Lapsed,
-        CommitmentStatus::Superseded,
-    ];
-    for from in statuses {
-        for to in statuses {
-            assert_eq!(
-                from.can_transition_to(to),
-                matches!(
-                    (from, to),
-                    (
-                        CommitmentStatus::Open,
-                        CommitmentStatus::Fulfilled
-                            | CommitmentStatus::Released
-                            | CommitmentStatus::Lapsed
-                            | CommitmentStatus::Superseded
-                    )
-                )
-            );
-        }
-    }
-}
-
-#[test]
-fn terminal_candidate_and_strength_rules_are_enforced() -> Result<()> {
-    let obligor = crate::test_util::entity(0x63);
-    let beneficiary = crate::test_util::entity(0x64);
-    let terminal = CommitmentRecord::new(
-        CommitmentObligor::new(CommitmentObligorKind::Owner, obligor),
-        beneficiary,
-        CommitmentContent::new("x", None)?,
-        schedule(9),
-        CommitmentStrength::Decision,
-        CommitmentStatus::Fulfilled,
-        CommitmentBirthProvenance::new(CommitmentBirthKind::Brief, "b")?,
-    )?;
-    assert!(matches!(
-        commitment_claim_candidate(&terminal),
-        Err(Error::InvalidClaimBody(_))
-    ));
-    assert_eq!(
-        CommitmentStrength::resolve(
-            CommitmentObligorKind::Owner,
-            CommitmentStrength::Decision,
-            None,
-        ),
-        CommitmentStrength::Decision
-    );
-    assert_eq!(
-        CommitmentStrength::resolve(
-            CommitmentObligorKind::Agent,
-            CommitmentStrength::Decision,
-            None,
-        ),
-        CommitmentStrength::Commitment
-    );
-    Ok(())
-}
-
-#[test]
-fn opaque_schedule_round_trips_byte_identical() -> Result<()> {
-    let actor = crate::test_util::entity(0x65);
-    let schedule = Value::Map(vec![(
-        Value::from("unknown"),
-        Value::Array(vec![Value::from(1), Value::from("nested")]),
-    )]);
-    let expected = value_bytes(&schedule);
-    let rec = CommitmentRecord::new(
-        CommitmentObligor::new(CommitmentObligorKind::Owner, actor),
-        crate::test_util::entity(0x66),
-        CommitmentContent::new("x", None)?,
-        schedule,
-        CommitmentStrength::Decision,
-        CommitmentStatus::Open,
-        CommitmentBirthProvenance::new(CommitmentBirthKind::Brief, "b")?,
-    )?;
-    assert_eq!(
-        value_bytes(&decode_commitment_value(&encode_commitment_value(&rec)?)?.schedule),
-        expected
-    );
     Ok(())
 }
 

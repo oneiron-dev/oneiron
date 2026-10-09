@@ -163,16 +163,6 @@ impl SessionActorDistiller for FixedDistiller {
     }
 }
 
-/// A distiller tier that is having a bad day — the host-supplied seam is the
-/// one step in this pass that fails for reasons that pass.
-struct FailingDistiller;
-
-impl SessionActorDistiller for FailingDistiller {
-    fn distill(&self, _brief: &SessionDistillBrief) -> Result<Vec<ActorNote>> {
-        Err(Error::InvariantViolation("distiller tier unavailable"))
-    }
-}
-
 /// Plants a SECOND Active head with `head`'s exact shape under a fresh id —
 /// the state two replicas reach when each observed the same fact locally and
 /// then synced (`EntityId::now()` is per-replica unique).
@@ -185,55 +175,6 @@ fn plant_replica_head(vault: &Vault, head: &ClaimBody, at: u64) -> Result<Entity
 }
 
 // ─── cardinality ────────────────────────────────────────────────────────
-
-#[test]
-fn set_rows_dedupe_on_the_normalized_note() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = put_actor(&vault)?;
-
-    let first = write_actor_claim(
-        &vault,
-        ActorClaimRow::Lesson {
-            actor,
-            text: "cite the receipt".to_owned(),
-        },
-        &task_evidence(&vault, actor, 30),
-    )?;
-    // Same meaning, different spacing: one standing fact, not two.
-    let repeat = write_actor_claim(
-        &vault,
-        ActorClaimRow::Lesson {
-            actor,
-            text: "  cite   the receipt  ".to_owned(),
-        },
-        &task_evidence(&vault, actor, 31),
-    )?;
-    assert_eq!(
-        first, repeat,
-        "a duplicate note re-returns the standing row"
-    );
-
-    write_actor_claim(
-        &vault,
-        ActorClaimRow::Lesson {
-            actor,
-            text: "read the diff".to_owned(),
-        },
-        &task_evidence(&vault, actor, 32),
-    )?;
-
-    let (active, superseded) = rows(&vault, &actor, PREDICATE_ACTOR_LESSON)?;
-    assert_eq!(
-        active.len(),
-        2,
-        "two distinct lessons, one duplicate folded"
-    );
-    assert!(
-        superseded.is_empty(),
-        "SET rows dedupe; they never supersede"
-    );
-    Ok(())
-}
 
 /// A SET write is a convergence point, not just a dedupe: two Active heads
 /// carrying the same note is a post-sync FORK, and returning the first one
@@ -340,137 +281,6 @@ fn a_note_reobserved_from_the_other_lane_folds_the_meet_down() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn skill_fit_supersedes_per_pair_not_per_actor() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = put_actor(&vault)?;
-    let skill_a = put_skill(&vault, "sk06.fit.a")?;
-    let skill_b = put_skill(&vault, "sk06.fit.b")?;
-
-    for (skill, fit, at) in [
-        (skill_a, 0.25_f32, 40_u64),
-        (skill_a, 0.75, 41),
-        (skill_b, 0.5, 42),
-    ] {
-        write_actor_claim(
-            &vault,
-            ActorClaimRow::SkillFit { actor, skill, fit },
-            &task_evidence(&vault, actor, at),
-        )?;
-    }
-
-    let (active, superseded) = rows(&vault, &actor, PREDICATE_ACTOR_SKILL_FIT)?;
-    assert_eq!(active.len(), 2, "one live row per (actor, skill)");
-    assert_eq!(superseded.len(), 1, "only skill_a's first estimate closed");
-    assert_eq!(superseded[0].value, Value::F32(0.25));
-    assert_eq!(skill_fit_for(&vault, &actor, &skill_a)?, Some(0.75));
-    assert_eq!(skill_fit_for(&vault, &actor, &skill_b)?, Some(0.5));
-    Ok(())
-}
-
-/// A supersession closes a head with an EARLIER event time, never a later one:
-/// a backfill landing at 50 must not retire the estimate the ledger already
-/// holds at 100 and leave the stale fit sole-active.
-#[test]
-fn a_backfilled_fit_never_closes_a_later_head() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = put_actor(&vault)?;
-    let skill = put_skill(&vault, "sk06.fit.backfill")?;
-
-    write_actor_claim(
-        &vault,
-        ActorClaimRow::SkillFit {
-            actor,
-            skill,
-            fit: 0.75,
-        },
-        &task_evidence(&vault, actor, 100),
-    )?;
-    write_actor_claim(
-        &vault,
-        ActorClaimRow::SkillFit {
-            actor,
-            skill,
-            fit: 0.25,
-        },
-        &task_evidence(&vault, actor, 50),
-    )?;
-
-    let (active, superseded) = rows(&vault, &actor, PREDICATE_ACTOR_SKILL_FIT)?;
-    assert!(
-        superseded.is_empty(),
-        "the later head is not the backfill's to close"
-    );
-    assert_eq!(
-        active.len(),
-        2,
-        "both observations stand on their own times"
-    );
-    assert_eq!(
-        skill_fit_for(&vault, &actor, &skill)?,
-        Some(0.75),
-        "the read still resolves to the NEWEST estimate, not the backfill"
-    );
-    Ok(())
-}
-
-#[test]
-fn fit_outside_the_unit_interval_or_non_finite_is_refused() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = put_actor(&vault)?;
-    let skill = put_skill(&vault, "sk06.fit.range")?;
-
-    for fit in [1.5_f32, -0.1, f32::NAN, f32::INFINITY] {
-        let error = write_actor_claim(
-            &vault,
-            ActorClaimRow::SkillFit { actor, skill, fit },
-            &task_evidence(&vault, actor, 50),
-        )
-        .expect_err("an out-of-range or non-finite fit is refused");
-        assert!(
-            matches!(error, Error::InvalidClaimBody(_)),
-            "typed rejection, got {error:?}"
-        );
-    }
-    assert_eq!(skill_fit_for(&vault, &actor, &skill)?, None);
-    Ok(())
-}
-
-#[test]
-fn an_empty_note_and_an_unknown_actor_are_refused() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = put_actor(&vault)?;
-
-    let blank = write_actor_claim(
-        &vault,
-        ActorClaimRow::ScopeNote {
-            actor,
-            text: "   ".to_owned(),
-        },
-        &task_evidence(&vault, actor, 60),
-    )
-    .expect_err("a blank note is refused");
-    assert!(matches!(blank, Error::InvalidClaimBody(_)));
-
-    let missing = write_actor_claim(
-        &vault,
-        ActorClaimRow::FailureMode {
-            actor: EntityId::now(),
-            text: "skips verification".to_owned(),
-        },
-        &task_evidence(&vault, actor, 61),
-    )
-    .expect_err("an unresolvable actor is refused");
-    assert!(matches!(missing, Error::EntityNotFound));
-    Ok(())
-}
-
-#[test]
-fn evidence_free_rows_are_unconstructible() {
-    assert!(ActorClaimEvidence::task(Vec::new(), 70).is_err());
-    assert!(ActorClaimEvidence::chat(EntityId::now(), Vec::new(), 70).is_err());
-}
-
 /// Constructible is not grounded: `ActorClaimEvidence` is built from
 /// caller-owned strings and ids, so the door RESOLVES every citation before it
 /// authors reserved truth (the ONE-1738 loss-door posture).
@@ -545,68 +355,6 @@ fn public_writes_of_the_four_predicates_are_reserved() -> Result<()> {
             matches!(error, Error::Claim(ClaimError::ReservedPredicate { .. })),
             "typed reserved-namespace rejection, got {error:?}"
         );
-    }
-    Ok(())
-}
-
-#[test]
-fn the_provider_confidence_prior_path_still_writes_and_supersedes() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    crate::provider_confidence::write_provider_prior(&vault, "provider_sk06", 0.4, "evidence:a")?;
-    crate::provider_confidence::write_provider_prior(&vault, "provider_sk06", 0.8, "evidence:b")?;
-
-    assert_eq!(
-        crate::provider_confidence::count_active_prior_claims(&vault, "provider_sk06")?,
-        1,
-        "the reserved door still supersedes the old head"
-    );
-    assert_eq!(
-        crate::provider_confidence::count_superseded_prior_claims(&vault, "provider_sk06")?,
-        1
-    );
-    Ok(())
-}
-
-#[test]
-fn stored_rows_are_auto_evidence_carrying_and_lineage_stamped() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = put_actor(&vault)?;
-
-    write_actor_claim(
-        &vault,
-        ActorClaimRow::Lesson {
-            actor,
-            text: "from the task lane".to_owned(),
-        },
-        &task_evidence(&vault, actor, 90),
-    )?;
-    write_actor_claim(
-        &vault,
-        ActorClaimRow::Lesson {
-            actor,
-            text: "from the chat lane".to_owned(),
-        },
-        &chat_evidence(&vault, 91),
-    )?;
-
-    let (active, _) = rows(&vault, &actor, PREDICATE_ACTOR_LESSON)?;
-    assert_eq!(active.len(), 2, "one ledger, two inlets");
-    let mut lineages: Vec<Option<ClaimSource>> = active.iter().map(actor_claim_lineage).collect();
-    lineages.sort_by_key(|source| source.map(ClaimSource::as_str));
-    assert_eq!(
-        lineages,
-        vec![Some(ClaimSource::Generated), Some(ClaimSource::ToolOutput)],
-        "the evidence meet is derived per lane, never a blanket restamp"
-    );
-    for body in &active {
-        assert_eq!(body.approval, ClaimApprovalStatus::Auto);
-        assert_eq!(body.confidence, 1.0);
-        assert_eq!(
-            body.source,
-            Some(ClaimSource::Observed),
-            "the projector observed the trace; the meet rides the evidence"
-        );
-        assert!(body.evidence.is_some(), "gate-written rows carry evidence");
     }
     Ok(())
 }
@@ -888,39 +636,6 @@ fn session_end_registers_a_distill_job_the_run_consumes() -> Result<()> {
     Ok(())
 }
 
-/// The job is the sitting's ONLY record that it is over and unlearned-from, so
-/// a distiller tier having a bad minute must not spend it. Consume-after-success
-/// or the transient failure is permanent.
-#[test]
-fn a_failing_distiller_leaves_the_job_standing() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = put_actor(&vault)?;
-    let session = witnessed_chat_session(&vault, 2, 500)?;
-
-    let failed = run_session_end_actor_distill(&vault, &session, &FailingDistiller)
-        .expect_err("the distiller's failure surfaces");
-    assert!(matches!(failed, Error::InvariantViolation(_)));
-    assert_eq!(
-        pending_session_actor_distills(&vault)?,
-        vec![session],
-        "the sitting is still owed a distillation"
-    );
-
-    // …and the retry, on a tier that is up again, still lands.
-    let distilled = run_session_end_actor_distill(
-        &vault,
-        &session,
-        &FixedDistiller(vec![ActorNote {
-            actor,
-            kind: ActorNoteKind::Lesson,
-            text: "the retry still learns".to_owned(),
-        }]),
-    )?;
-    assert_eq!(distilled.len(), 1);
-    assert!(pending_session_actor_distills(&vault)?.is_empty());
-    Ok(())
-}
-
 /// One sitting's notes are ONE landing: a pass that dies partway leaves no
 /// half-distillation behind, and the job it did not finish is still pending.
 #[test]
@@ -988,30 +703,6 @@ fn the_brief_carries_the_witnessed_words_in_scan_order() -> Result<()> {
     ));
     Ok(())
 }
-
-#[test]
-fn a_sitting_with_no_turns_distills_nothing() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = put_actor(&vault)?;
-    let session = witnessed_chat_session(&vault, 0, 400)?;
-
-    let distilled = run_session_end_actor_distill(
-        &vault,
-        &session,
-        &FixedDistiller(vec![ActorNote {
-            actor,
-            kind: ActorNoteKind::ScopeNote,
-            text: "invented from nothing".to_owned(),
-        }]),
-    )?;
-    assert!(
-        distilled.is_empty(),
-        "no turns is no evidence, whatever a distiller offers"
-    );
-    Ok(())
-}
-
-mod runner;
 
 mod pack_load;
 

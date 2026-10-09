@@ -46,15 +46,12 @@ mod tests;
 // every inbox-internal item the tests name bare. After the directory split
 // the seam re-imports both so `tests.rs` resolves exactly as it did before.
 #[cfg(test)]
-use self::{model::*, projection::*, resolve::*};
+use self::{model::*, projection::*};
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
-use crate::attempt_queue::AttemptQueue;
-#[cfg(test)]
 use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    PREDICATE_CONFLICT_OPEN,
+    ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ClaimSubject, PREDICATE_CONFLICT_OPEN,
 };
 #[cfg(test)]
 use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;

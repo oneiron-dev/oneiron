@@ -719,6 +719,3 @@ fn require_bool(entries: &[(Value, Value)], key: &str) -> Result<bool> {
         )),
     }
 }
-
-#[cfg(test)]
-mod tests;

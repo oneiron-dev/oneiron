@@ -98,13 +98,9 @@ pub(crate) mod sealed {
 // split the seam re-imports both so `tests.rs` resolves exactly as it did
 // before.
 #[cfg(test)]
-use self::{error::*, in_process::*, projection::*, remote::*, types::*, validate::*};
+use self::{error::*, in_process::*, remote::*, types::*, validate::*};
 #[cfg(test)]
 use crate::claim::ScopedReadActorKey;
-#[cfg(test)]
-use crate::context_pack::{FieldProfile, MAX_EDGE_HOP, TokenAllocation};
-#[cfg(test)]
-use crate::deletion::{MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState};
 #[cfg(test)]
 use crate::entity_id::EntityId;
 #[cfg(test)]

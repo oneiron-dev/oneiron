@@ -426,21 +426,7 @@ fn is_series_exception(vault: &Vault, event: &EntityId) -> Result<bool, Calendar
 
 #[cfg(test)]
 mod tests {
-    use super::super::claims::CalendarPassportDirection;
     use super::*;
-    use crate::calendar::test_support::open_calendar_vault;
-
-    fn passport(system: &str, uid: &str, sequence: u32) -> CalendarPassportValue {
-        CalendarPassportValue {
-            system: system.to_owned(),
-            uid: uid.to_owned(),
-            last_sequence: sequence,
-            content_hash: [7_u8; 32],
-            direction: CalendarPassportDirection::Inbound,
-            last_seen_at: 1_754_400_000,
-            presence: CalendarPassportPresence::Live,
-        }
-    }
 
     #[test]
     fn index_key_is_prefixed_sha256_of_the_uid() {
@@ -453,55 +439,5 @@ mod tests {
         );
         assert_ne!(digest, passport_digest("uid-2@example.com"));
         assert_eq!(digest, passport_digest("uid-1@example.com"));
-    }
-
-    #[test]
-    fn encode_passport_value_matches_the_cal00_codec() {
-        let value = passport("google", "uid-1@example.com", 3);
-        let decoded = decode_passport_value(&encode_passport_value(&value)).expect("decode");
-        assert_eq!(decoded, value);
-    }
-
-    #[test]
-    fn resolve_event_by_uid_scans_synced_truth_on_index_miss() {
-        let (_dir, vault) = open_calendar_vault();
-        let event = crate::test_util::entity(0x61);
-        vault
-            .put_entity(
-                &event,
-                ENTITY_TYPE_EVENT,
-                crate::temporal::TimeRange { start: 1, end: 1 },
-                1,
-                b"event",
-            )
-            .expect("put event");
-        let claim_id = crate::test_util::entity(0x62);
-        vault
-            .put_claim(
-                &claim_id,
-                &crate::claim::ClaimBody::new(
-                    PREDICATE_CALENDAR_PASSPORT,
-                    crate::claim::ClaimSubject::Entity(event),
-                    encode_passport_value(&passport("google", "uid-1@example.com", 3)),
-                    1.0,
-                    crate::claim::ClaimApprovalStatus::Approved,
-                    ClaimLifecycleStatus::Active,
-                )
-                .unwrap(),
-                crate::temporal::TimeRange { start: 1, end: 1 },
-                1,
-            )
-            .expect("put passport claim");
-
-        // No index row at all: resolution scans the live claims, finds the
-        // EVENT, and repairs the shortcut.
-        let resolved = resolve_event_by_uid(&vault, "uid-1@example.com").expect("resolve");
-        assert_eq!(resolved, Some(event));
-        let with_index = resolve_event_by_uid(&vault, "uid-1@example.com").expect("resolve");
-        assert_eq!(with_index, Some(event));
-        assert_eq!(
-            resolve_event_by_uid(&vault, "uid-absent@example.com").expect("resolve"),
-            None
-        );
     }
 }

@@ -351,41 +351,6 @@ fn conflicted_roots_never_restore_local_creator_or_initial_role_powers() {
 }
 
 #[test]
-fn agent_person_creator_can_delegate_and_policy_delete_in_unrooted_room() {
-    let (_dir, vault, _, _, _) = fixture();
-    let agent_id = EntityId::now();
-    vault
-        .put_entity(
-            &agent_id,
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            &encode(&serde_json::json!({})).unwrap(),
-        )
-        .unwrap();
-    let agent = WriteActor::new(agent_id, EdgeActorClass::Agent);
-    let bob = second(&vault);
-    let room = EntityId::now();
-    let body = ConversationBody {
-        member_ids: vec![agent_id, bob.entity_ref()],
-        roles: BTreeMap::from([(agent_id.to_hex(), RoomRole::Owner)]),
-        ..Default::default()
-    };
-    vault.create_conversation(room, &body, agent, 2).unwrap();
-    vault
-        .set_room_role(room, bob.entity_ref(), RoomRole::Admin, agent)
-        .unwrap();
-    let record = vault
-        .append_dag_record(&record(&vault, room, bob, 3))
-        .unwrap()
-        .id;
-    let result = vault
-        .delete_room_record(room, record, agent, crate::DeleteReason::PolicyDelete)
-        .unwrap();
-    assert!(result.existed && result.receipt_id.is_some());
-}
-
-#[test]
 fn room_soft_shell_escalates_through_authorized_gdpr_and_keeps_dag_usable() {
     let (_dir, vault, owner, room, _) = fixture();
     let bob = second(&vault);

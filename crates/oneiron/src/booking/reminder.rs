@@ -108,7 +108,3 @@ pub fn booking_no_show_escalation(recorded_history: &[EventOutcome]) -> NoShowEs
         NoShowEscalation::None
     }
 }
-
-#[cfg(test)]
-#[path = "reminder/tests.rs"]
-mod tests;
