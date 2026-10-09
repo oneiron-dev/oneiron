@@ -134,6 +134,14 @@ pub(crate) fn scan_metadata_field(value: &str) -> Result<()> {
     Ok(())
 }
 
+/// The batch write door's scan of one payload, for a planner that must say
+/// what that door would refuse without staging a write. It does not read the
+/// owner's switch; the caller does.
+pub(crate) fn scan_write_payload(data: &[u8]) -> Result<()> {
+    let _secrets_nulled = scan_payload(data)?;
+    Ok(())
+}
+
 /// Apply the same raw/structured scan as ordinary non-custody batch puts to
 /// source bytes staged outside the entity tables, before their first write.
 /// It follows the batch door, so the owner's switch turns it off too.
