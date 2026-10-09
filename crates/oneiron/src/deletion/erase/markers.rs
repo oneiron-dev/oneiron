@@ -127,7 +127,8 @@ impl Vault {
     /// record that deletion or the replay's protection gates refuse it: the
     /// verdict an observed import of those tombstones reaches. For a document
     /// persisted without its observer having applied it. Only rows residing in
-    /// `window` are touched, as only their deletes are published there.
+    /// `window` are touched, as only their deletes are published there, and
+    /// never a row whose delete was already applied here.
     #[cfg(feature = "sync")]
     pub(crate) fn fence_published_deletes_in_txn(
         &self,
@@ -149,7 +150,11 @@ impl Vault {
             else {
                 continue;
             };
+            // A soft delete applied here wrote the identity marker. With no
+            // fence beside it, a local recreation has since superseded that
+            // delete, and its tombstone is already consumed.
             if crate::deletion::row_deletion_marked(&self.store, wtxn, &id, Some(&raw))?
+                || IDENTITY_SOFT_DELETE_MARKER.contains(&self.store, wtxn, &HexId(id))?
                 || super::super::timeline::residence_window_for_row(&self.store, wtxn, &id, &raw)?
                     != window
             {

@@ -280,6 +280,15 @@ impl Vault {
         id: &EntityId,
         decoded: &DecodedTombstoneValue,
     ) -> Result<()> {
+        // Cleanup is local visibility, never a replicated deletion intent.
+        // Accepting byte 5 here would irreversibly scrub a retained archive
+        // (or an unrelated row) without the cleanup predicate or owner decision.
+        // Refused first, before any lookup that could fail to read its state.
+        if decoded.reason == Some(super::tombstone::TombstoneReason::ArchivedByCleanup) {
+            return Err(Error::InvariantViolation(
+                "cleanup archives cannot be replayed as deletion intent",
+            ));
+        }
         crate::dreamer_runner::authority::guard_actor_delete(id)?;
         crate::federation::reject_ruling_delete(&self.store, txn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, txn, id)?;
@@ -293,14 +302,6 @@ impl Vault {
             self.guard_active_merge_hard_delete_in_txn(txn, id)?;
         }
         self.store.guard_pack_map_carrier_delete_in_txn(txn, id)?;
-        // Cleanup is local visibility, never a replicated deletion intent.
-        // Accepting byte 5 here would irreversibly scrub a retained archive
-        // (or an unrelated row) without the cleanup predicate or owner decision.
-        if decoded.reason == Some(super::tombstone::TombstoneReason::ArchivedByCleanup) {
-            return Err(Error::InvariantViolation(
-                "cleanup archives cannot be replayed as deletion intent",
-            ));
-        }
         if let Some(header) = self.read_entity_header_in_txn(txn, id)?
             && crate::registry::is_delete_protected_engine_record(header.entity_type)
         {

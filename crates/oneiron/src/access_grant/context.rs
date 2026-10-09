@@ -1033,6 +1033,101 @@ mod tests {
         Ok(())
     }
 
+    /// Bug repro (Astra access follow-ups re-check, finding 1): a relationship
+    /// recreated here in the window of its applied delete stays live when that
+    /// window's document, still holding the consumed tombstone, is persisted
+    /// again through the standalone door.
+    #[cfg(feature = "sync")]
+    #[test]
+    fn a_recreated_relationship_survives_its_window_being_persisted() -> Result<()> {
+        use crate::sync::bridge::Materializer;
+        use crate::sync::loro_support::{export_all_updates, import_doc, map_insert_bytes};
+
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let vault = std::sync::Arc::new(vault);
+        let share = RelationshipShare::new(&vault);
+        let original = {
+            let txn = vault.store.env.read_txn()?;
+            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &share.space)?
+                .expect("the relationship row")
+        };
+        let peer = loro::LoroDoc::new();
+        map_insert_bytes(
+            &peer.get_map("tombstones"),
+            &share.space.to_hex(),
+            &peer_soft_tombstone(),
+        )?;
+        peer.commit();
+        let key = crate::sync::WindowKey::try_new(&base_window(&vault, &share.space)?)
+            .expect("a window key");
+        let loaded = crate::sync::window::LoadedWindow::new(
+            "local",
+            key.clone(),
+            &vault,
+            &std::sync::Arc::new(Materializer::new()),
+        );
+        import_doc(&loaded.doc, &export_all_updates(&peer)?)?;
+        loaded.persist_state(&vault)?;
+        assert!(!share.reads_as(&vault, share.member)?, "the delete applied");
+
+        // Recreated locally, learned at 1 again: the same window.
+        vault.put_entity(
+            &share.space,
+            crate::registry::ENTITY_TYPE_RELATIONSHIP,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            &original[ENTITY_METADATA_HEADER_LEN..],
+        )?;
+        assert!(
+            share.reads_as(&vault, share.member)?,
+            "the recreation is live"
+        );
+        crate::sync::server_state::persist_window_snapshot(&vault, &key, &loaded.doc)?;
+        assert!(
+            share.reads_as(&vault, share.member)?,
+            "persisting the window deletes the recreation again"
+        );
+        Ok(())
+    }
+
+    /// Bug repro (Astra access follow-ups re-check, finding 2): a cleanup
+    /// archive tombstone is never deletion intent, whatever the local
+    /// protection state. A window persisted with one for a live relationship,
+    /// while the pack-map head pin is unreadable, deletes nothing.
+    #[cfg(feature = "sync")]
+    #[test]
+    fn a_cleanup_tombstone_persisted_with_unreadable_protection_deletes_nothing() -> Result<()> {
+        use crate::sync::loro_support::map_insert_bytes;
+
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let share = RelationshipShare::new(&vault);
+        assert!(share.reads_as(&vault, share.member)?);
+        vault.with_write_txn(|txn| {
+            vault.store.vault_meta.put(
+                txn,
+                b"pack_byte_map:local_head:v1".as_slice(),
+                b"not a head pin".as_slice(),
+            )?;
+            Ok(())
+        })?;
+        let key = crate::sync::WindowKey::try_new(&base_window(&vault, &share.space)?)
+            .expect("a window key");
+        let doc = crate::sync::schema::create_window_doc("standalone", &key);
+        let mut archive = vec![5u8];
+        archive.extend_from_slice(&1_771_027_200u64.to_le_bytes());
+        archive.extend_from_slice(&[0x5A; 16]);
+        map_insert_bytes(&doc.get_map("tombstones"), &share.space.to_hex(), &archive)?;
+        doc.commit();
+        crate::sync::server_state::persist_window_snapshot(&vault, &key, &doc)?;
+        assert!(
+            share.reads_as(&vault, share.member)?,
+            "a cleanup tombstone deletes nothing"
+        );
+        Ok(())
+    }
+
     /// Bug repro (Astra #1322 finding 2): grants whose deletes this vault
     /// accepted but failed to apply, stored under a snapshot of their base
     /// window, authorize neither a companion profile read (the server's
