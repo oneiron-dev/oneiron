@@ -185,6 +185,98 @@ fn erase_destroys_the_claim_key_so_a_pre_erase_image_restores_without_its_receip
     );
 }
 
+/// Erase is complete: a hold asked for after the erase commits, before its
+/// key is destroyed, never keeps the erased receipts readable from a
+/// pre-erase image (ARCH-0038 #erasure-completeness; Greptile on #1335).
+#[test]
+fn a_hold_after_an_erase_commits_never_keeps_its_receipts_readable() {
+    use crate::store::{GateDecisionId, GateDecisionRecord};
+    let root = tempfile::tempdir().unwrap();
+    let source = std::sync::Arc::new(
+        Vault::open(root.path().join("source"), VaultConfig::device()).unwrap(),
+    );
+    let erased = EntityId::now();
+    source
+        .put_entity(
+            &erased,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 10, end: 10 },
+            10,
+            b"erase fixture",
+        )
+        .expect("put fixture entity");
+    let receipt = GateDecisionRecord {
+        version: 0,
+        decision_id: GateDecisionId::now(),
+        created_at: 40,
+        outcome: "approved".into(),
+        reason_codes: vec!["gate.test.erase".into()],
+        receipt_reasons: vec![],
+        system_notices: vec![],
+        actor_class: "agent".into(),
+        actor_ref: Some("private-erased-receipt".into()),
+        content_kind: "claim".into(),
+        policy_manifest_version: "v0".into(),
+        claim_id: Some(*erased.as_bytes()),
+        grant_ref: None,
+        diff_handle: vec![1],
+        read_frontier_hash: [2; 32],
+        redacted_at: None,
+    };
+    source
+        .with_write_txn(|txn| source.store.append_gate_decision_in_txn(txn, &receipt))
+        .expect("append claim receipt");
+    let image = root.path().join("pre-erase");
+    source
+        .snapshot_checkpoint(&image, 100)
+        .expect("pre-erase image");
+    let key = root
+        .path()
+        .join(".source.gate-decision-keys")
+        .join(crate::entity_id::bytes_to_hex_lower(erased.as_bytes()));
+    assert!(key.exists());
+
+    // Another caller asks for a hold after the erase commits, just before
+    // its finisher destroys the key.
+    let holder = std::sync::Arc::clone(&source);
+    let claim = *erased.as_bytes();
+    let hold = std::rc::Rc::new(std::cell::Cell::new(None));
+    let hold_result = std::rc::Rc::clone(&hold);
+    crate::store::arm_before_retire_lock(move || {
+        hold_result.set(Some(
+            holder
+                .set_gate_decision_partition_hold(Some(claim), true)
+                .is_ok(),
+        ));
+    });
+    source
+        .delete_entity_with_reason(&erased, crate::DeleteReason::UserHardDelete)
+        .expect("erase the claim");
+    assert!(!key.exists(), "the erase still destroys the claim key");
+    assert_eq!(
+        hold.get(),
+        Some(false),
+        "the erased partition refuses a hold"
+    );
+
+    let (restored, _) = Vault::restore_checkpoint(
+        &image,
+        &root.path().join("restored"),
+        VaultConfig::device(),
+        RestoreReason::Restore,
+        120,
+    )
+    .expect("a pre-erase image still restores");
+    assert!(
+        restored
+            .gate_decisions(10)
+            .expect("restored ledger reads")
+            .iter()
+            .all(|row| row.decision_id != receipt.decision_id),
+        "the erased claim's receipt does not decrypt back from the image"
+    );
+}
+
 #[test]
 fn canonical_snapshot_rebuilds_indexes_excludes_runtime_and_mints_epoch() {
     let root = tempfile::tempdir().unwrap();

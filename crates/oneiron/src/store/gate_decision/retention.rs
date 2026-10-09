@@ -50,6 +50,10 @@ const RETAIN_UNTIL: SideTable<Partition, u64, Raw> =
 /// A committed key-retirement intent: the claim partition's key generation.
 pub(super) const RETIRE_PENDING: SideTable<[u8; 16], u64, Raw> =
     SideTable::new(&side_table::GATE_DECISION_PARTITION_RETIRE_PENDING);
+/// Marks a pending retirement as an erase's; the value is the single byte 1.
+/// Erase is complete, so no hold defers it (ARCH-0038 #erasure-completeness).
+pub(super) const ERASE_PENDING: SideTable<[u8; 16], [u8; 1], Raw> =
+    SideTable::new(&side_table::GATE_DECISION_PARTITION_ERASE_PENDING);
 
 impl Store {
     pub(crate) fn gate_partition_held_in_txn(
@@ -70,6 +74,18 @@ impl Store {
         claim: &[u8; 16],
     ) -> Result<Option<u64>> {
         RETIRE_PENDING.get(self, txn, claim)
+    }
+
+    fn gate_partition_erase_pending_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        claim: &[u8; 16],
+    ) -> Result<bool> {
+        match ERASE_PENDING.get(self, txn, claim)? {
+            None => Ok(false),
+            Some([1]) => Ok(true),
+            Some(_) => Err(Error::CorruptedIndex("gate decision partition erase")),
+        }
     }
 
     /// Every staged key-retirement intent, so a caller-owned write
@@ -102,7 +118,7 @@ thread_local! {
 }
 
 #[cfg(test)]
-pub(in crate::store) fn arm_before_retire_lock(callback: impl FnOnce() + 'static) {
+pub(crate) fn arm_before_retire_lock(callback: impl FnOnce() + 'static) {
     BEFORE_RETIRE_LOCK.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
 }
 
@@ -232,7 +248,8 @@ impl Vault {
 
     /// Hold the entire exterior-key partition, not an individual decision.
     /// `None` names the plaintext, claim-free partition. A hold must be
-    /// released explicitly; the age sweep never clears it.
+    /// released explicitly; the age sweep never clears it. A claim whose
+    /// erase committed refuses a hold until its key is destroyed.
     pub fn set_gate_decision_partition_hold(
         &self,
         claim_partition: Option<[u8; 16]>,
@@ -241,6 +258,13 @@ impl Vault {
         let partition = Partition(claim_partition);
         self.with_write_txn(|txn| {
             if held {
+                if let Some(claim) = claim_partition.as_ref()
+                    && self.store.gate_partition_erase_pending_in_txn(txn, claim)?
+                {
+                    return Err(Error::InvalidConfig(
+                        "gate decision partition was erased".into(),
+                    ));
+                }
                 if let Some(claim) = claim_partition.as_ref()
                     && let Some(generation) = self
                         .store
@@ -276,7 +300,8 @@ impl Vault {
     /// including ones an interrupted process left behind. An intent names the
     /// newest generation to destroy; every older live generation goes with
     /// it. Never deletes a live row: the intent is committed with the
-    /// redaction or removal of every row those generations decrypt.
+    /// redaction or removal of every row those generations decrypt. A hold
+    /// defers a sweep's retirement until release, never an erase's.
     pub(crate) fn finish_gate_decision_retirements(&self) -> Result<()> {
         let txn = self.store.env.read_txn()?;
         let pending = RETIRE_PENDING.scan(&self.store, &txn)?;
@@ -305,7 +330,10 @@ impl Vault {
             else {
                 continue;
             };
-            if self.store.gate_partition_held_in_txn(&txn, Some(&claim))? {
+            let erase = self
+                .store
+                .gate_partition_erase_pending_in_txn(&txn, &claim)?;
+            if !erase && self.store.gate_partition_held_in_txn(&txn, Some(&claim))? {
                 continue;
             }
             // Only ciphertext under a retiring generation needs its key.
@@ -333,6 +361,9 @@ impl Vault {
                 orcb::retire_claim_key(root, &claim, generation)?;
             }
             RETIRE_PENDING.delete(&self.store, &mut txn, &claim)?;
+            if erase {
+                ERASE_PENDING.delete(&self.store, &mut txn, &claim)?;
+            }
             txn.commit()?;
         }
         Ok(())
@@ -496,7 +527,10 @@ impl Vault {
         // A crash before commit leaves readable rows; a crash after commit
         // leaves a resumable pending marker and no rows that need the key.
         for claim in removed_claims.difference(&live_claims) {
-            let generation = orcb::key_generation(&self.store.core.gate_custody_root, claim)?;
+            // An erase that committed after this pass's finisher may name a
+            // newer generation; never lower its intent.
+            let generation = orcb::key_generation(&self.store.core.gate_custody_root, claim)?
+                .max(RETIRE_PENDING.get(&self.store, &txn, claim)?.unwrap_or(0));
             RETIRE_PENDING.put(&self.store, &mut txn, claim, &generation)?;
         }
         txn.commit()?;

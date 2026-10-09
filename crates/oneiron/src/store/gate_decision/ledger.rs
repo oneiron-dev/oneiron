@@ -385,10 +385,10 @@ impl Store {
     /// Erase destroys the claim's exterior key in the same act (ARCH-0038
     /// #erasure-completeness): a restored pre-erase image must not decrypt
     /// the rows this erase redacted. The retirement intent commits with the
-    /// redaction; the caller's post-commit finisher destroys the key, as the
-    /// age sweep's does. A future receipt that batch preflight staged in this
-    /// transaction stays readable: it moves to the generation after the
-    /// retired one before the intent lands.
+    /// redaction, marked as an erase's so no later hold can defer it; the
+    /// caller's post-commit finisher destroys the key. A future receipt that
+    /// batch preflight staged in this transaction stays readable: it moves
+    /// to the generation after the retired one before the intent lands.
     fn stage_erased_claim_key_retirement_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -424,7 +424,8 @@ impl Store {
                 )?;
             }
         }
-        super::retention::RETIRE_PENDING.put(self, wtxn, claim_id, &through)
+        super::retention::RETIRE_PENDING.put(self, wtxn, claim_id, &through)?;
+        super::retention::ERASE_PENDING.put(self, wtxn, claim_id, &[1])
     }
 
     /// Drops the rows a restore must not bring back: a checkpoint row whose
