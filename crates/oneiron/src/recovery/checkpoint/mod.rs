@@ -47,6 +47,9 @@ struct CheckpointImage {
 enum Custody<'a> {
     /// The restored vault takes its source's place and keeps its custody.
     Keep,
+    /// As `Keep`, for the replacement of the vault at `home`: archived until
+    /// a swap puts it there ([`Vault::swap_in_replacement`]).
+    Replace(&'a Path),
     /// A copy served beside its source gets custody of its own. It never
     /// holds a key the source's live state, when given, says is destroyed or
     /// committed to be.
@@ -77,22 +80,21 @@ pub struct SideRestoreSource<'a>(Source<'a>);
 enum Source<'a> {
     /// A vault open in this process, read through its own handle.
     Open(&'a Vault),
-    /// A vault read off its directory, whose custody root was `root` when
-    /// [`SideRestoreSource::read`] verified it.
-    Disk { dir: PathBuf, root: PathBuf },
+    /// A vault read off its directory, as [`SideRestoreSource::read`] read
+    /// it first.
+    Disk { dir: PathBuf, first: LiveCustody },
 }
 impl SideRestoreSource<'static> {
     /// The vault at `vault_dir`, read without opening it, so a running
     /// server may hold it; a vault open in this process is
     /// [`Vault::side_restore_source`]. Refuses when no vault is there, when
     /// it cannot be read, or when it is archived. Each restore reads it again
-    /// at its start, and refuses if the vault there no longer binds the
-    /// custody it bound here.
+    /// at its start, and refuses if the vault there is no longer the store
+    /// read here, bound to the custody it bound here.
     pub fn read(vault_dir: &Path) -> Result<Self> {
-        let live = crate::store::read_live_custody(vault_dir)?;
         Ok(Self(Source::Disk {
             dir: vault_dir.to_path_buf(),
-            root: live.root().to_path_buf(),
+            first: crate::store::read_live_custody(vault_dir)?,
         }))
     }
 }
@@ -101,9 +103,9 @@ impl SideRestoreSource<'_> {
     fn capture(&self) -> Result<LiveCustody> {
         match &self.0 {
             Source::Open(vault) => vault.store.live_custody(),
-            Source::Disk { dir, root } => {
+            Source::Disk { dir, first } => {
                 let live = crate::store::read_live_custody(dir)?;
-                if live.root() != root {
+                if !first.same_vault(&live) {
                     return Err(Error::InvalidConfig(
                         "the vault read as this side restore's source has changed".into(),
                     ));
@@ -386,40 +388,44 @@ impl Vault {
         self.store.refuse_archived()?;
         Ok(SideRestoreSource(Source::Open(self)))
     }
-    /// Archives this vault once a restore swapped its replacement
-    /// ([`Vault::restore_checkpoint_replacing`]) into its place. The
+    /// Puts `replacement`, restored for this vault's place
+    /// ([`Vault::restore_checkpoint_replacing`]), in it through `swap`, which
+    /// exchanges the two directories at once, and archives this vault. The
     /// replacement keeps the key custody this vault binds to, so this vault
     /// is set aside as an archive: this handle, and every later open of it,
     /// reads, and refuses every write, erase and key retirement, until
     /// [`Vault::activate_archived`] gives it custody of its own.
-    pub fn archive_replaced(&self) -> Result<()> {
-        self.store.archive_replaced()
+    ///
+    /// Whichever of the two sits at this vault's path is the live one, at
+    /// every instant of the swap and after a crash anywhere in it; the other
+    /// opens archived. A swap that fails changes nothing on disk, though this
+    /// handle stays sealed. Reopen the replacement before it mints or retires
+    /// a key.
+    pub fn swap_in_replacement(
+        &self,
+        replacement: &Self,
+        swap: impl FnOnce() -> std::io::Result<()>,
+    ) -> Result<()> {
+        self.store.swap_out(&replacement.store, swap)
     }
     /// An owner's activation of the archived vault at `path` as a side vault
     /// of `source`, the vault that replaced it. Its key custody forks as a
     /// side restore's does ([`Vault::restore_checkpoint_beside`]): a key
     /// `source` destroyed or has committed to destroy is not copied and the
     /// receipts under it are dropped, and from then on an erase or age sweep
-    /// in either vault never reaches the other's keys. Refuses a vault that
-    /// is not archived, and a `source` whose custody is not the one it binds.
+    /// in either vault never reaches the other's keys. Every receipt it
+    /// keeps is read under its own keys before the activation commits; when
+    /// this returns `Ok` it is done, and the vault opens live. Refuses a vault
+    /// that is not archived, and a `source` whose custody is not the one it
+    /// binds; a refusal leaves it archived, as it was.
     pub fn activate_archived(
         path: &Path,
         config: VaultConfig,
         source: &SideRestoreSource<'_>,
-    ) -> Result<Self> {
+    ) -> Result<()> {
         let live = source.capture()?;
-        let archive = Self::open_owned(path, config.clone())?;
-        archive.store.activate_archived(&live)?;
-        drop(archive);
-        let vault = Self::open_owned(path, config)?;
-        // Every receipt it kept decrypts under its own keys.
-        {
-            let txn = vault.store.env.read_txn()?;
-            vault
-                .store
-                .for_each_gate_decision_in_txn(&txn, |_| Ok(()))?;
-        }
-        Ok(vault)
+        let archive = Self::open_owned(path, config)?;
+        archive.store.activate_archived(&live)
     }
     /// Historical content restore beside a live vault: the image's content
     /// with `current`'s live authority, consent, policy, credential and
@@ -453,9 +459,10 @@ impl Vault {
         )
     }
     /// [`Vault::restore_checkpoint_keeping_authority`] for a restore that
-    /// replaces `current`: the caller swaps the result into `current`'s path,
-    /// so it keeps `current`'s key custody rather than forking it, and then
-    /// archives `current` ([`Vault::archive_replaced`]).
+    /// replaces `current`: it keeps `current`'s key custody rather than
+    /// forking it, and is archived until [`Vault::swap_in_replacement`] puts
+    /// it in `current`'s place. Until then this handle writes its rows but
+    /// mints and retires no key.
     pub fn restore_checkpoint_replacing(
         path: &Path,
         staging: &Path,
@@ -469,7 +476,7 @@ impl Vault {
             config,
             current,
             restored_at,
-            Custody::Keep,
+            Custody::Replace(current.store.env.path()),
         )
     }
     fn restore_with_current_authority(
@@ -525,9 +532,10 @@ impl Vault {
         // Authenticate every ORCB row against LIVE exterior custody before
         // creating a destination. A checkpoint never carries a key copy, and
         // a row whose key an erase destroyed since is dropped, not restored.
-        let (fork, source) = match custody {
-            Custody::Keep => (false, None),
-            Custody::Fork(source) => (true, source),
+        let (fork, source, home) = match custody {
+            Custody::Keep => (false, None, None),
+            Custody::Replace(home) => (false, None, Some(home)),
+            Custody::Fork(source) => (true, source, None),
         };
         let gate_custody =
             crate::store::preflight_checkpoint_rows(&image.databases["vault_meta"], source)?;
@@ -552,6 +560,9 @@ impl Vault {
             }
             if fork {
                 forked.0 = vault.store.fork_gate_custody_in_txn(txn, &gate_custody)?;
+            }
+            if let Some(home) = home {
+                vault.store.mark_live_only_at_in_txn(txn, home)?;
             }
             vault
                 .store
@@ -581,6 +592,9 @@ impl Vault {
         drop(vault);
         // Re-open through all ABI, model, analyzer and manifest gates before rebuilding.
         let vault = Self::open_owned(destination, config)?;
+        if let Some(home) = home {
+            vault.store.unseal_replacement(home)?;
+        }
         // The image carries only a binding to current exterior custody, never
         // the keys. Verify EVERY claim-bound receipt against those live keys,
         // or a side copy's forked ones, before reporting a successful restore,

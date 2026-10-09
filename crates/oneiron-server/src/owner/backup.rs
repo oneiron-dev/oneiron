@@ -461,29 +461,18 @@ fn restore_over_syncing(
         }
     };
     // One atomic exchange: the vault path never names nothing, and both
-    // directories stay leased by this process until it is done.
-    if let Err(error) = exchange(&restored_path, vault_path) {
+    // directories stay leased by this process until it is done. The old
+    // vault still binds the key custody the restored copy now holds, so the
+    // engine archives it with the swap: whichever of the two sits at the
+    // vault path is the live one, even after a crash in the middle, and the
+    // other reads but never writes, erases or shreds a key until the owner
+    // activates it as a side vault with custody of its own.
+    if let Err(error) = live.swap_in_replacement(&restored, || exchange(&restored_path, vault_path)) {
         drop(restored);
         staging.remove();
         anyhow::bail!(
-            "cannot swap the restored copy into {} atomically ({error}); nothing was changed",
+            "cannot swap the restored copy into {} ({error}); nothing was changed",
             vault_path.display()
-        );
-    }
-    // The old vault still binds the key custody the restored copy now holds.
-    // Archived, it reads but never writes, erases or shreds a key until the
-    // owner activates it as a side vault with custody of its own.
-    if let Err(error) = live.archive_replaced() {
-        let undone = exchange(&restored_path, vault_path);
-        drop(restored);
-        if undone.is_ok() {
-            staging.remove();
-            anyhow::bail!("cannot archive the vault being replaced ({error}); nothing was changed");
-        }
-        anyhow::bail!(
-            "the restore is in place, but the previous vault at {} could not be archived \
-             ({error}) and still shares the restored vault's key custody; do not open it",
-            restored_path.display()
         );
     }
     // The old vault now sits inside the staging directory; give it its own

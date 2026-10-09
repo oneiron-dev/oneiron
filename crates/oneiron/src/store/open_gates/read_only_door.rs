@@ -28,8 +28,11 @@ pub(in crate::store) struct VaultMetaRows {
 /// environment is registered under the process root-open guard like any open
 /// for as long as it lives, so a vault this process already holds, under any
 /// name or through aliased files, refuses instead of gaining a second
-/// environment over the same files. A missing, empty or incomplete root
-/// refuses with nothing created.
+/// environment over the same files. That registration comes before any of
+/// the root's files is opened, and every check of the pair after the open
+/// reads metadata alone, so this door never closes a descriptor of a
+/// `lock.mdb` an environment of this process locks. A missing, empty or
+/// incomplete root refuses with nothing created.
 pub(in crate::store) fn read_existing_vault_meta(
     path: &Path,
     prefixes: &[&[u8]],
@@ -75,11 +78,22 @@ fn not_an_existing_root(root: &Path, after_environment_open: bool) -> Error {
 /// descriptor, as the existing-only door opens it read-write.
 #[cfg(target_os = "linux")]
 fn open_read_only(root: &Path) -> Result<(OwnedEnv, RegisteredPath)> {
+    use super::super::root_directory::open_root_directory;
     use super::vault_root_bind::BoundVaultRoot;
 
     let _vault_root_open_guard = vault_root_open_guard()?;
-    let bound = BoundVaultRoot::bind(root)?;
-    let registered = RegisteredPath::reserve(root.to_path_buf(), Some(bound.identity.clone()))?;
+    let dir = open_root_directory(root)?;
+    // Reserved from the pair's metadata before either file is opened: a
+    // vault this process holds refuses here, its environment's `fcntl` locks
+    // on `lock.mdb` untouched.
+    let Some(identity) = BoundVaultRoot::pair_by_metadata(root, &dir)? else {
+        return Err(not_an_existing_root(root, false));
+    };
+    let registered = RegisteredPath::reserve(root.to_path_buf(), Some(identity.clone()))?;
+    let bound = BoundVaultRoot::bind_dir(root, dir)?;
+    if bound.identity != identity {
+        return Err(not_an_existing_root(root, false));
+    }
     let mut options = EnvOpenOptions::new();
     options.max_dbs(1);
     // SAFETY: as `open_existing_environment`. The open path is the
@@ -104,7 +118,7 @@ fn open_read_only(root: &Path) -> Result<(OwnedEnv, RegisteredPath)> {
         env,
         _bound_root_dir: None,
     };
-    bound.verify_unchanged(root)?;
+    bound.verify_unchanged_by_metadata(root)?;
     env.retain_bound_root(bound.into_dir());
     Ok((env, registered))
 }

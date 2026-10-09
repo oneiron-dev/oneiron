@@ -656,10 +656,18 @@ fn each_side_restore_reads_its_source_when_it_starts() {
 /// A vault this process holds is read through its own handle, never through
 /// a second LMDB environment over the same files, under its own name or any
 /// other (Astra A3).
+///
+/// Nor does the refusal touch the held vault's LMDB locks. Closing any
+/// descriptor of `lock.mdb` releases every `fcntl` lock this process holds
+/// on it, so a door that opened the file to learn whose it is would strip
+/// the held environment, and its live reader, of the locks other processes
+/// rely on (Astra re-check R5).
 #[test]
 fn a_side_restore_source_never_reopens_a_vault_this_process_holds() {
     let root = tempfile::tempdir().unwrap();
     let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    let reader = source.store.env.read_txn().unwrap();
+    let locks = |dir: &str| lmdb_locks_held(&root.path().join(dir).join("lock.mdb"));
     let held = |path: &Path| {
         matches!(
             SideRestoreSource::read(path),
@@ -669,11 +677,102 @@ fn a_side_restore_source_never_reopens_a_vault_this_process_holds() {
             }))
         )
     };
+    let before = locks("source");
+    assert!(cfg!(not(target_os = "linux")) || before > 0);
     assert!(held(&root.path().join("source")));
     std::fs::rename(root.path().join("source"), root.path().join("renamed")).unwrap();
     assert!(held(&root.path().join("renamed")));
+    assert_eq!(locks("renamed"), before, "the held environment keeps its locks");
+    drop(reader);
     drop(source);
     assert!(SideRestoreSource::read(&root.path().join("renamed")).is_ok());
+}
+
+/// How many `fcntl` record locks this process holds on `lock_file`, from
+/// `/proc/locks`; zero where there is none to read.
+fn lmdb_locks_held(lock_file: &Path) -> usize {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let inode = std::fs::metadata(lock_file).unwrap().ino().to_string();
+        let pid = std::process::id().to_string();
+        std::fs::read_to_string("/proc/locks")
+            .unwrap()
+            .lines()
+            .map(|line| line.split_whitespace().collect::<Vec<_>>())
+            .filter(|fields| fields.get(1) == Some(&"POSIX"))
+            .filter(|fields| fields.get(4) == Some(&pid.as_str()))
+            .filter(|fields| fields.get(5).and_then(|id| id.rsplit(':').next()) == Some(inode.as_str()))
+            .count()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = lock_file;
+        0
+    }
+}
+
+/// A source read off its directory is that vault, not whatever is at its
+/// path when a restore starts: a different vault made there since, bound by
+/// default to custody at the same place, refuses the restore rather than
+/// stand in for the source's live state (Astra re-check R2).
+#[test]
+fn a_side_restore_source_read_off_disk_is_that_vault_only() {
+    let root = tempfile::tempdir().unwrap();
+    let source_path = root.path().join("source");
+    let source = Vault::open(&source_path, VaultConfig::device()).unwrap();
+    let (claim, _) = claim_with_receipt(&source);
+    let image = root.path().join("image");
+    source.snapshot_checkpoint(&image, 100).expect("image");
+    drop(source);
+    let state = SideRestoreSource::read(&source_path).expect("source state");
+    let source = Vault::open(&source_path, VaultConfig::device()).unwrap();
+    commit_unfinished_erase(&source, &claim);
+    drop(source);
+    // The source moves; its custody stays, and a new vault takes its path.
+    std::fs::rename(&source_path, root.path().join("moved")).unwrap();
+    drop(Vault::open(&source_path, VaultConfig::device()).unwrap());
+    let destination = root.path().join("copy");
+    assert!(matches!(
+        Vault::restore_checkpoint_beside(&image, &destination, VaultConfig::device(), &state, 120),
+        Err(Error::InvalidConfig(_))
+    ));
+    assert!(!destination.exists());
+    assert!(!root.path().join(".copy.gate-decision-keys").exists());
+}
+
+/// Whether `result` is the refusal of a write to an archived vault.
+fn archived<T>(result: Result<T>) -> bool {
+    matches!(
+        result,
+        Err(Error::Store(crate::error::StoreError::ArchivedVault))
+    )
+}
+
+/// Exchanges two directories, as `oneiron restore` does in one call.
+fn exchange(a: &Path, b: &Path) -> std::io::Result<()> {
+    let between = a.with_extension("exchange");
+    std::fs::rename(a, &between)?;
+    std::fs::rename(b, a)?;
+    std::fs::rename(&between, b)
+}
+
+/// A vault with one claim receipt, its image, and a replacement restored
+/// from the image for its place at `<root>/vault`, built at `<root>/staged`.
+fn replacement_for(root: &Path) -> (Vault, Vault, EntityId, crate::store::GateDecisionRecord) {
+    let vault = Vault::open(root.join("vault"), VaultConfig::device()).unwrap();
+    let (claim, receipt) = claim_with_receipt(&vault);
+    let image = root.join("image");
+    vault.snapshot_checkpoint(&image, 100).expect("image");
+    let (replacement, _) = Vault::restore_checkpoint_replacing(
+        &image,
+        &root.join("staged"),
+        VaultConfig::device(),
+        &vault,
+        120,
+    )
+    .expect("restore");
+    (vault, replacement, claim, receipt)
 }
 
 /// The vault a restore in its place set aside still binds the custody its
@@ -685,32 +784,22 @@ fn a_side_restore_source_never_reopens_a_vault_this_process_holds() {
 /// in it no longer reaches the replacement.
 #[test]
 fn a_vault_a_restore_replaced_is_archived_until_activated() {
-    let archived = |result: Result<()>| {
-        matches!(
-            result,
-            Err(Error::Store(crate::error::StoreError::ArchivedVault))
-        )
-    };
     let root = tempfile::tempdir().unwrap();
-    let vault_path = root.path().join("vault");
-    let previous_path = root.path().join("previous");
-    let source = Vault::open(&vault_path, VaultConfig::device()).unwrap();
-    let (claim, receipt) = claim_with_receipt(&source);
-    let image = root.path().join("image");
-    source.snapshot_checkpoint(&image, 100).expect("image");
-    // As `oneiron restore` runs it: the copy is made beside, swapped into
-    // the vault's place, and the vault it replaced is archived.
-    let staged = root.path().join("staged");
-    let (replacement, _) =
-        Vault::restore_checkpoint_replacing(&image, &staged, VaultConfig::device(), &source, 120)
-            .expect("restore");
-    drop(replacement);
+    let (vault_path, previous_path) = (root.path().join("vault"), root.path().join("previous"));
+    let (source, replacement, claim, receipt) = replacement_for(root.path());
+    // Until it is in the vault's place, the replacement shreds no key there.
+    assert!(archived(
+        replacement.delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
+    ));
+    // As `oneiron restore` runs it.
     source
-        .archive_replaced()
-        .expect("archive the replaced vault");
-    drop(source);
-    std::fs::rename(&vault_path, &previous_path).unwrap();
-    std::fs::rename(&staged, &vault_path).unwrap();
+        .swap_in_replacement(&replacement, || exchange(&vault_path, &root.path().join("staged")))
+        .expect("swap");
+    assert!(archived(
+        source.delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
+    ));
+    drop((source, replacement));
+    std::fs::rename(root.path().join("staged"), &previous_path).unwrap();
     let replacement = Vault::open(&vault_path, VaultConfig::device()).unwrap();
 
     let previous = Vault::open(&previous_path, VaultConfig::device()).unwrap();
@@ -721,11 +810,9 @@ fn a_vault_a_restore_replaced_is_archived_until_activated() {
             .contains(&receipt)
     );
     assert!(archived(
-        previous
-            .delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
-            .map(|_| ())
+        previous.delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
     ));
-    assert!(archived(previous.side_restore_source().map(|_| ())));
+    assert!(archived(previous.side_restore_source()));
     drop(previous);
     assert!(
         replacement
@@ -734,13 +821,14 @@ fn a_vault_a_restore_replaced_is_archived_until_activated() {
             .contains(&receipt)
     );
 
-    let activated = Vault::activate_archived(
+    Vault::activate_archived(
         &previous_path,
         VaultConfig::device(),
         &replacement.side_restore_source().unwrap(),
     )
     .expect("activate");
-    activated
+    Vault::open(&previous_path, VaultConfig::device())
+        .unwrap()
         .delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
         .expect("erase in the activated vault");
     assert!(
@@ -748,6 +836,110 @@ fn a_vault_a_restore_replaced_is_archived_until_activated() {
             .gate_decisions(100)
             .expect("the replacement's receipts still decrypt")
             .contains(&receipt)
+    );
+}
+
+/// A restore that dies in the middle of its swap leaves one live vault on
+/// the custody both halves bind: the one at the vault's path. The other
+/// opens archived, so an erase in it never shreds the live vault's keys
+/// (Astra re-check R1).
+#[test]
+fn a_restore_that_dies_mid_swap_leaves_one_live_vault() {
+    let root = tempfile::tempdir().unwrap();
+    let (vault_path, staged) = (root.path().join("vault"), root.path().join("staged"));
+    let (source, replacement, claim, receipt) = replacement_for(root.path());
+    let died = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        source.swap_in_replacement(&replacement, || {
+            exchange(&vault_path, &staged).unwrap();
+            panic!("the process dies once the directories are exchanged");
+        })
+    }));
+    assert!(died.is_err());
+    drop((source, replacement));
+
+    let previous = Vault::open(&staged, VaultConfig::device()).unwrap();
+    assert!(archived(
+        previous.delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
+    ));
+    drop(previous);
+    let live = Vault::open(&vault_path, VaultConfig::device()).unwrap();
+    assert!(
+        live.gate_decisions(100)
+            .expect("the live vault's receipts decrypt")
+            .contains(&receipt)
+    );
+    live.delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
+        .expect("the vault in place erases");
+}
+
+/// A writer that passed the seal check before a restore swapped its vault
+/// out, and takes LMDB's writer after, is refused: nothing it would write,
+/// or shred, reaches the archive or the custody it shares (Astra re-check
+/// R4).
+#[test]
+fn a_writer_waiting_through_a_swap_is_refused() {
+    let root = tempfile::tempdir().unwrap();
+    let (vault_path, staged) = (root.path().join("vault"), root.path().join("staged"));
+    let (source, replacement, claim, receipt) = replacement_for(root.path());
+    let (source, replacement) = (std::rc::Rc::new(source), std::rc::Rc::new(replacement));
+    crate::store::arm_after_seal_check({
+        let (source, replacement) = (source.clone(), replacement.clone());
+        move || {
+            source
+                .swap_in_replacement(&replacement, || exchange(&vault_path, &staged))
+                .expect("swap");
+        }
+    });
+    assert!(archived(
+        source.delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
+    ));
+    drop((source, replacement));
+    let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    assert!(
+        live.gate_decisions(100)
+            .expect("the live vault's receipts decrypt")
+            .contains(&receipt)
+    );
+}
+
+/// An activation commits only once every receipt it keeps reads under its
+/// forked keys. A key the replacement shreds after the activation checked
+/// the archive's receipts, before the fork, refuses the activation and
+/// leaves the archive as it was, to be activated again (Astra re-check R3).
+#[test]
+fn an_activation_commits_only_receipts_its_forked_keys_read() {
+    let root = tempfile::tempdir().unwrap();
+    let (vault_path, previous_path) = (root.path().join("vault"), root.path().join("previous"));
+    let (source, replacement, claim, receipt) = replacement_for(root.path());
+    source
+        .swap_in_replacement(&replacement, || exchange(&vault_path, &root.path().join("staged")))
+        .expect("swap");
+    drop((source, replacement));
+    std::fs::rename(root.path().join("staged"), &previous_path).unwrap();
+    let replacement = std::rc::Rc::new(Vault::open(&vault_path, VaultConfig::device()).unwrap());
+    crate::store::arm_before_activation_fork({
+        let replacement = replacement.clone();
+        move || {
+            replacement
+                .delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
+                .expect("erase in the replacement");
+        }
+    });
+    let source = replacement.side_restore_source().unwrap();
+    assert!(Vault::activate_archived(&previous_path, VaultConfig::device(), &source).is_err());
+    assert!(!root.path().join(".previous.gate-decision-keys").exists());
+    let previous = Vault::open(&previous_path, VaultConfig::device()).unwrap();
+    assert!(archived(previous.side_restore_source()));
+    drop(previous);
+
+    Vault::activate_archived(&previous_path, VaultConfig::device(), &source).expect("activate");
+    let previous = Vault::open(&previous_path, VaultConfig::device()).unwrap();
+    assert!(
+        previous
+            .gate_decisions(100)
+            .expect("the activated vault's ledger reads")
+            .iter()
+            .all(|row| row.decision_id != receipt.decision_id)
     );
 }
 

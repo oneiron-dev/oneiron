@@ -18,6 +18,9 @@ mod sidecar;
 mod types;
 mod vet;
 
+pub(in crate::store) use self::checkpoint_custody::archived_by;
+#[cfg(test)]
+pub(crate) use self::checkpoint_custody::arm_before_activation_fork;
 pub(crate) use self::checkpoint_custody::{
     LiveCustody, preflight_checkpoint_rows, read_live_custody, refuse_custody_beside,
 };

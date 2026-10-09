@@ -116,7 +116,9 @@ the restore holds both vaults, so a server starting meanwhile can open neither h
 previous vault is kept whole as `<vault>.pre-restore-<UTC time>`; nothing is deleted. It still
 binds the gate-decision key custody the restored vault keeps, so it is archived: it opens and
 reads, but refuses every write, erase and key retirement, which would otherwise reach the
-restored vault's keys. To use it again, activate it:
+restored vault's keys. A restore that stops part-way through the swap (a crash, a power cut)
+leaves the same rule: whichever vault sits at the vault's path is the live one, and the other
+opens archived. To use the archived vault again, activate it:
 
 ```sh
 oneiron restore --activate /path/to/vault.pre-restore-<UTC time>

@@ -374,7 +374,7 @@ impl Store {
             // No exterior custody exists here, so no claim key can either.
             return Ok(());
         }
-        if self.core.gate_custody_archived {
+        if self.core.gate_custody_archived() {
             return Err(Error::Store(crate::error::StoreError::ArchivedVault));
         }
         let root = &self.core.gate_custody_root;
