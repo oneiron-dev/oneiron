@@ -273,6 +273,8 @@ fn an_edited_message_embeds_its_turn_again() {
                 body["content"] == "The mechanic says the automobile needs new brakes."
             })
             .unwrap();
+        // A text edit is an owner verb, and the served vault is host-rooted.
+        crate::test_credentials::bind_owner(&served.vault, SECRET, served.owner);
         let writer = oneiron::WriteActor::new(served.owner, oneiron::EdgeActorClass::Human);
         let owner = served
             .vault

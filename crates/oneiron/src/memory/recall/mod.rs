@@ -137,6 +137,41 @@ pub const CONTAINER_KINDS: [u8; 4] = [
     crate::registry::ENTITY_TYPE_WORLD,
 ];
 
+/// What recall refuses from its request alone, before it reads the vault: a
+/// zero limit, an `as_of` out of range, a paid effort without its lease and
+/// reranker, an unknown format or kind. A door that pays for a query vector
+/// runs this first, so a request recall would refuse costs no embedding.
+pub(crate) fn check_recall_request(
+    effort: Effort,
+    scope: &RecallScope,
+    limit: usize,
+    format: Option<&str>,
+    lease: Option<&BudgetLease>,
+    execution: &RecallExecution<'_>,
+) -> MemoryResult<()> {
+    if limit == 0 {
+        return Err(MemoryError::bad_request("recall limit must be at least 1"));
+    }
+    crate::memory::caps::check_as_of(execution.as_of)?;
+    if effort.requires_rerank() {
+        if lease.is_none() {
+            return Err(MemoryError::new(
+                MEMORY_CODE_LEASE_REQUIRED,
+                "high, xhigh and max recall require a budget lease",
+                &["Use light or medium, or present a lease."],
+            ));
+        }
+        if execution.reranker.is_none() {
+            return Err(MemoryError::bad_request(
+                "paid recall requires a prepared reranker",
+            ));
+        }
+    }
+    format.map(parse_pack_format).transpose()?;
+    recall_kinds(scope)?;
+    Ok(())
+}
+
 /// The kinds a recall admits, resolved once from its scope. `None` is the
 /// default: every kind but [`CONTAINER_KINDS`].
 fn recall_kinds(scope: &RecallScope) -> MemoryResult<Option<Vec<u8>>> {
@@ -491,10 +526,7 @@ impl Memory<'_> {
         candidate_filter: Option<&crate::pipeline::CandidateFilter<'_>>,
         execution: &RecallExecution<'_>,
     ) -> MemoryResult<MemoryPack> {
-        if limit == 0 {
-            return Err(MemoryError::bad_request("recall limit must be at least 1"));
-        }
-        crate::memory::caps::check_as_of(execution.as_of)?;
+        check_recall_request(effort, scope, limit, format, lease, execution)?;
         if let Some(session) = session {
             // A session handle names a room in ONE store, and this facade's
             // vault is an independent borrow — nothing in the lifetimes ties
@@ -522,20 +554,6 @@ impl Memory<'_> {
             (Some(session), Some(route)) => Some(session.retrieval_telemetry(route)?),
             _ => None,
         };
-        if effort.requires_rerank() {
-            if lease.is_none() {
-                return Err(MemoryError::new(
-                    MEMORY_CODE_LEASE_REQUIRED,
-                    "high, xhigh and max recall require a budget lease",
-                    &["Use light or medium, or present a lease."],
-                ));
-            }
-            if execution.reranker.is_none() {
-                return Err(MemoryError::bad_request(
-                    "paid recall requires a prepared reranker",
-                ));
-            }
-        }
         let canonical_lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let session_view = session
             .map(crate::off_record::OffRecordSession::read_view)

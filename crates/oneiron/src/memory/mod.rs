@@ -99,6 +99,7 @@ pub use outbound::{
     OutboundScheduleContext,
 };
 pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts};
+pub(crate) use recall::check_recall_request;
 pub use recall::{
     CONTAINER_KINDS, CitedMessage, Effort, MEMORY_PACK_VERSION, MemoryItem, MemoryPack,
     MemoryProvenance, RecallScope, RetrievalMeta, ScopeHonesty,

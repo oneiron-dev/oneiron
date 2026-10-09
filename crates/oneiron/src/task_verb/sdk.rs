@@ -168,21 +168,35 @@ pub struct RecallRequest {
 
 /// `recall` with a host's query vector. Every SDK door lands here: the
 /// generated [`recall`] embeds nothing, and a server whose embedder is serving
-/// embeds the query. `embed` runs only once the request is admitted.
+/// embeds the query. `embed` runs only once the request is admitted: a request
+/// recall refuses (a paid effort, an unknown format or kind) costs no vector.
 pub fn recall_with_vector(
     memory: &Memory<'_>,
     input: RecallRequest,
     embed: impl FnOnce(&str) -> Option<Vec<f32>>,
 ) -> MemoryResult<crate::memory::MemoryPack> {
+    let effort = input.effort.unwrap_or(crate::memory::Effort::Medium);
+    let scope = input.scope.unwrap_or_default();
+    let limit = input.limit.unwrap_or(10);
     crate::memory::caps::check_query(&input.query)?;
-    crate::memory::caps::check_limit(input.limit.unwrap_or(10))?;
-    crate::memory::caps::check_as_of(input.as_of)?;
+    crate::memory::caps::check_limit(limit)?;
+    crate::memory::check_recall_request(
+        effort,
+        &scope,
+        limit,
+        input.format.as_deref(),
+        None,
+        &crate::retrieval_depth::RecallExecution {
+            as_of: input.as_of,
+            ..Default::default()
+        },
+    )?;
     let embedding = embed(&input.query);
     memory.recall_with_execution(
         &input.query,
-        input.effort.unwrap_or(crate::memory::Effort::Medium),
-        &input.scope.unwrap_or_default(),
-        input.limit.unwrap_or(10),
+        effort,
+        &scope,
+        limit,
         input.format.as_deref(),
         None,
         &crate::retrieval_depth::RecallExecution {
@@ -264,6 +278,56 @@ fn retired_task_verb_names_are_unknown() {
     for name in ["describe", "tasks.update", "cancel"] {
         assert!(AgentVerb::from_name(name).is_some(), "{name}");
     }
+}
+
+/// #1323 review (CodeRabbit, Greptile): a server embedded the query of a
+/// recall that validation then refused, so a paid effort, an unknown format
+/// or an unknown kind still cost an embedding call. Each is refused first.
+#[cfg(test)]
+#[test]
+fn a_recall_the_engine_refuses_never_embeds_its_query() {
+    use crate::memory::Effort;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).expect("vault");
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let memory = vault.memory(owner, crate::EdgeActorClass::Human);
+    let request = |effort, format: Option<&str>, kinds: Option<&str>| RecallRequest {
+        query: "who fixes my car".to_owned(),
+        effort: Some(effort),
+        scope: kinds.map(|kind| crate::memory::RecallScope {
+            kinds: Some(vec![kind.to_owned()]),
+            ..Default::default()
+        }),
+        limit: None,
+        format: format.map(str::to_owned),
+        as_of: None,
+    };
+    for (input, code) in [
+        (
+            request(Effort::High, None, None),
+            crate::memory::MEMORY_CODE_LEASE_REQUIRED,
+        ),
+        (
+            request(Effort::Medium, Some("xml"), None),
+            crate::memory::MEMORY_CODE_BAD_REQUEST,
+        ),
+        (
+            request(Effort::Medium, None, Some("NOT_A_KIND")),
+            crate::memory::MEMORY_CODE_BAD_REQUEST,
+        ),
+    ] {
+        let refusal = recall_with_vector(&memory, input, |_| panic!("the refused query embedded"))
+            .expect_err("refused");
+        assert_eq!(refusal.code, code, "{refusal:?}");
+    }
+    let mut embedded = 0;
+    recall_with_vector(&memory, request(Effort::Medium, None, None), |_| {
+        embedded += 1;
+        None
+    })
+    .expect("an admitted recall runs");
+    assert_eq!(embedded, 1);
 }
 
 #[cfg(test)]
