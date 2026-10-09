@@ -14,6 +14,8 @@ surfaces. They do not replace counsel review for jurisdiction-specific calls.
   one captured-review repair, not a response guide.
 - [Wave-6 module-split map](w6-module-split-map.md) — old→new paths for the fifteen 2026-08
   monolith splits; use it to re-anchor tickets, docs, and tooling.
+- [Import your history](import-history.md) — `oneiron import` for ChatGPT and Claude.ai exports
+  and Claude Code and Codex sessions: what lands, what is counted, and how re-imports dedup.
 - [Forked dependencies](forked-dependencies.md) — the crates pinned by `rev` to the org forks
   (sudachi, formualizer): upstream base, fork branch, our commits, and how to change one.
 - [Code map](../CODEMAP.md) — generated crate/module/file map (`python3 scripts/codemap/codemap.py`);
