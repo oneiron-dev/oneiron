@@ -139,6 +139,12 @@ fn backup_rehearse_restore_and_doctor_through_the_cli() {
     assert_eq!(location["backups"]["keep"], 3);
     assert_eq!(location["last_export"]["format"], "md");
     assert_eq!(location["secret_scan"], "on");
+    // The restore the vault came from is on record (OF-296); the rehearsal,
+    // which restored into scratch, is not.
+    let restores = location["backups"]["restores"].as_array().unwrap();
+    assert_eq!(restores.len(), 1, "{restores:?}");
+    assert_eq!(restores[0]["checkpoint_id"], taken["checkpoint_id"]);
+    assert_eq!(restores[0]["reason"], "restore");
 }
 
 #[test]
