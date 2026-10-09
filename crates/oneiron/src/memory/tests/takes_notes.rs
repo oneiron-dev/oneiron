@@ -1982,3 +1982,32 @@ fn empty_or_revoked_diary_link_does_not_use_a_neighbor_slot() {
             .is_none()
     );
 }
+
+/// ARCH-0038 delete ladder (REV-9 item 10): discarding a NOTE's history is
+/// the erase, an Owner's own act. Writing the note does not reach it.
+#[test]
+fn note_history_purge_refuses_a_writer_who_is_not_the_owner() {
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x81);
+    let writer = put_person(&vault, 0x82);
+    let note = EntityId::from_hex(
+        &facade_for(&vault, writer)
+            .author_take(TakeTarget::Subject(writer), "draft prose")
+            .expect("the writer authors the note")
+            .id_hex,
+    )
+    .expect("note id");
+    root_vault_binding(&vault, 0x83, owner, "human");
+    let frontier = vault.note_document(note).expect("note document").frontier;
+
+    let refused = facade_for(&vault, writer)
+        .purge_note_history(note, &frontier)
+        .expect_err("a note writer who is not the owner cannot erase its history");
+    assert_eq!(
+        refused.code,
+        crate::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
+    );
+    facade_for(&vault, owner)
+        .purge_note_history(note, &frontier)
+        .expect("the owner erases the note's history");
+}

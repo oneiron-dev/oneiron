@@ -624,8 +624,8 @@
      "path": "src/agent_dispatch/dispatch.rs",
      "purpose": "Core dispatch admission: dispatchability, depth bound, enqueue, dedupe",
      "surface": {
-      "crate-vis": 8,
-      "fn": 5,
+      "crate-vis": 7,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -812,7 +812,7 @@
      "surface": {
       "crate-vis": 13,
       "enum": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 2
      }
     },
@@ -1228,7 +1228,7 @@
      "purpose": "Retry/intervene/manifest append plus lease-cleanup mutation doors",
      "surface": {
       "crate-vis": 5,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -3093,7 +3093,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1
      }
     },
@@ -10826,6 +10826,24 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "BypassActive",
+      "BypassExtent",
+      "BypassGrantWarning",
+      "BypassScope"
+     ],
+     "path": "src/consent/bypass.rs",
+     "purpose": "The scoped catastrophe bypass (DEC-0006 invariant 7, `#bypass-grant`)",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 1,
+      "fn": 7,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/consent/codec.rs",
      "purpose": "—",
@@ -10845,7 +10863,7 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 17,
       "fn": 17,
       "struct": 2
      }
@@ -10855,10 +10873,12 @@
      "kind": "src",
      "notable": [
       "CatastropheClass",
+      "CatastropheFloor",
       "ComposedEffect",
       "ConsentDecision",
       "EffectDigest",
       "EffectFacts",
+      "EffectPlace",
       "ReversibilityClass",
       "UndoFidelity"
      ],
@@ -10866,10 +10886,10 @@
      "purpose": "—",
      "surface": {
       "const": 3,
-      "crate-vis": 4,
+      "crate-vis": 7,
       "enum": 4,
-      "fn": 22,
-      "struct": 3
+      "fn": 31,
+      "struct": 5
      }
     },
     {
@@ -10890,7 +10910,7 @@
      "path": "src/consent/grant.rs",
      "purpose": "—",
      "surface": {
-      "const": 6,
+      "const": 8,
       "enum": 4,
       "fn": 16,
       "struct": 5,
@@ -10904,9 +10924,9 @@
      "path": "src/consent/mod.rs",
      "purpose": "DEC-0006 unified consent-mode — bounded standing grants",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 1,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -10973,6 +10993,14 @@
      "notable": [],
      "path": "src/consent/tests.rs",
      "purpose": "DEC-0006 unified consent-mode conformance",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/consent/tests/bypass.rs",
+     "purpose": "DEC-0006 invariant 7 and `#bypass-grant` (REV-9 item 4): the catastrophe floor is a versioned default policy…",
      "surface": {}
     },
     {
@@ -13179,13 +13207,14 @@
       "MemoryTimeline",
       "MemoryTimelineRecord",
       "MemoryTimelineRecordState",
-      "NamedMemoryVerb"
+      "NamedMemoryVerb",
+      "NamedMemoryVerbRefusal"
      ],
      "path": "src/deletion/timeline.rs",
      "purpose": "—",
      "surface": {
       "crate-vis": 8,
-      "enum": 5,
+      "enum": 6,
       "fn": 4,
       "struct": 3
      }
@@ -13798,7 +13827,7 @@
      "path": "src/dreamer_consolidation/resources/write.rs",
      "purpose": "Sealed resource handoff",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 2,
       "struct": 1
      }
@@ -13902,7 +13931,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_consolidation/tests/prior_heads.rs",
@@ -13928,6 +13957,14 @@
      "surface": {
       "crate-vis": 4
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/dreamer_consolidation/tests/weave_grant.rs",
+     "purpose": "The Dreamer is warm by default (ARCH-0026): a fresh vault's wake pass lands its claim Auto through the owned…",
+     "surface": {}
     },
     {
      "bucket": "XL",
@@ -14155,8 +14192,21 @@
      "surface": {
       "const": 1,
       "fn": 4,
-      "re-export": 2,
+      "re-export": 4,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AttemptPromotionSink"
+     ],
+     "path": "src/dreamer_promotion/attempt_sink.rs",
+     "purpose": "An owned promotion sink for a long-lived host",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -17582,7 +17632,7 @@
      "path": "src/gate/default_manifest.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -17683,6 +17733,20 @@
      "purpose": "Recorded claim decisions retained until transaction commit or selective denial rollback",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DreamerWeaveReach"
+     ],
+     "path": "src/gate/dreamer_grant.rs",
+     "purpose": "The Dreamer's weave rows, the owner's grant that adds them to a vault seeded without them, and the read-only…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -17817,8 +17881,8 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 54,
-      "re-export": 7
+      "crate-vis": 55,
+      "re-export": 8
      }
     },
     {
@@ -17988,7 +18052,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 65
+      "crate-vis": 66
      }
     },
     {
@@ -18040,6 +18104,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/resolution/weave_reach.rs",
+     "purpose": "What a resolved policy lets one Dreamer actor do: read the whole vault, and land a `Generated`-lineage claim…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -22426,7 +22500,7 @@
       "ArchivePurgePreview"
      ],
      "path": "src/memory/archive_purge.rs",
-     "purpose": "Owner-only archive impact preview and confirmed ARCH-0038 erasure",
+     "purpose": "Owner-only archive impact preview and confirmed ARCH-0038 delete",
      "surface": {
       "fn": 4,
       "struct": 2
@@ -23365,7 +23439,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "MessageStreamPump"
@@ -23374,7 +23448,7 @@
      "purpose": "Terminal transitions and the host-driven quiet-stream pump",
      "surface": {
       "crate-vis": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -24073,7 +24147,7 @@
      "path": "src/off_record/lifecycle/telemetry.rs",
      "purpose": "Retrieval-run registration door (register/finalize/discard, staged/published arms)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -27130,7 +27204,7 @@
      "path": "src/ppr/cache_store.rs",
      "purpose": "PPR cache constants, TTL policy, cache IO, and binary codec",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -28289,7 +28363,7 @@
      "path": "src/recovery/checkpoint/decisions/tests/reads.rs",
      "purpose": "Census cases for who a read admits",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -29961,13 +30035,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/serialize/credential_nulling.rs",
      "purpose": "Unconditional credential removal before any context/export format writer",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -30256,7 +30330,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/session_overlay/journal.rs",
@@ -32353,7 +32427,7 @@
      "path": "src/store/gate_decision/claim_refs.rs",
      "purpose": "Inbox-bundle claim references and uncommitted batch-preflight markers: the two gate-decision sidecars…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -32367,13 +32441,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/store/gate_decision/ledger.rs",
      "purpose": "Gate-decision ledger Store methods plus the row append and record codec",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "fn": 1
      }
     },
@@ -32405,7 +32479,7 @@
      "path": "src/store/gate_decision/orcb.rs",
      "purpose": "ORCB v1: schema-only dictionary, per-claim hot-value AEAD and exterior key custody",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 15
      }
     },
     {
@@ -32415,8 +32489,8 @@
      "path": "src/store/gate_decision/retention.rs",
      "purpose": "Opt-in gate-decision age sweep over the actual ORCB custody unit",
      "surface": {
-      "crate-vis": 5,
-      "fn": 6
+      "crate-vis": 9,
+      "fn": 7
      }
     },
     {
@@ -32596,7 +32670,7 @@
      "path": "src/store/open_gates/open_existing_door.rs",
      "purpose": "Existing-only open door: `Store::open_existing` and its helpers",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -35612,7 +35686,7 @@
      "path": "src/test_util/mod.rs",
      "purpose": "Shared test helpers",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -38669,7 +38743,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 16,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -38795,7 +38869,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -38816,7 +38890,7 @@
      "purpose": "ORF-2 / OF-361 — the BudgetMem statistical PRE-FILTER: the cheap screen that decides what is worth…"
     },
     "dreamer_promotion": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -38956,7 +39030,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 131,
+     "files": 133,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -39504,7 +39578,7 @@
     "store": {
      "files": 57,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…"
     },
@@ -39670,10 +39744,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 26,
+   "over_bar": 27,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2394,
-   "test_files": 786
+   "source_files": 2398,
+   "test_files": 788
   },
   "oneiron-android": {
    "files": [
@@ -42725,6 +42799,21 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "LinkedShutdown",
+      "PassAttachment",
+      "PassAttachmentSource"
+     ],
+     "path": "src/supervisor/attachment.rs",
+     "purpose": "Pass-scoped host attachments: work a host serves alongside one wake pass",
+     "surface": {
+      "trait": 3,
+      "type": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/supervisor/budget_ids.rs",
      "purpose": "Durable per-pass budget-id derivation and occupied-row index scan",
@@ -42767,7 +42856,7 @@
      "path": "src/supervisor/factory.rs",
      "purpose": "Per-pass attempt-executor factory trait and default implementation",
      "surface": {
-      "fn": 6,
+      "fn": 7,
       "struct": 1,
       "trait": 1,
       "type": 1
@@ -42811,7 +42900,7 @@
      "path": "src/supervisor/mod.rs",
      "purpose": "The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps…",
      "surface": {
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -42839,6 +42928,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/supervisor/tests/attachment.rs",
+     "purpose": "The generic pass-attachment seam: asked after the pass meter, refusal is pre-admission, and a linked host…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -42847,14 +42944,6 @@
      "surface": {
       "crate-vis": 12
      }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/supervisor/tests/voice.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -43024,7 +43113,7 @@
      "purpose": "RT-03 (ONE-1685): the driver owns the SESSION lifecycle; apps send hints"
     },
     "supervisor": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -43054,7 +43143,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
-   "source_files": 17,
+   "source_files": 18,
    "test_files": 10
   },
   "oneiron-ffi": {
@@ -43572,7 +43661,7 @@
      "purpose": "Backend assembly: config, backend struct, LlmBackend impl, and capability gating",
      "surface": {
       "crate-vis": 2,
-      "fn": 7,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -43859,7 +43948,7 @@
      "purpose": "Backend assembly: config, backend struct, LlmBackend impl, and capability gating",
      "surface": {
       "crate-vis": 2,
-      "fn": 6,
+      "fn": 7,
       "struct": 2
      }
     },
@@ -46300,6 +46389,138 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/dreamer.rs",
+     "purpose": "The server's Dreamer: one wake supervisor for its one vault (ARCH-0026: one Dreamer per vault, on the…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AiHandle",
+      "AiHost"
+     ],
+     "path": "src/ai_host/mod.rs",
+     "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 13,
+      "re-export": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/policy.rs",
+     "purpose": "The Dreamer's extraction route: what vault policy must already allow before a pass may send a transcript to…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AiHealth",
+      "AiStatus",
+      "IdleReason",
+      "WorkState",
+      "WorkStatus"
+     ],
+     "path": "src/ai_host/status.rs",
+     "purpose": "Live state of the server's background AI work, shared between the workers that change it and the routes that…",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/step.rs",
+     "purpose": "One saved-workflow step on a model seat",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/step_failure.rs",
+     "purpose": "A failed workflow step, settled through the engine's typed failure ladder: the one door that may retry or…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/test_support.rs",
+     "purpose": "Shared fixtures for the AI host's tests: a rooted, granted vault and `[models]` pointed at the local fake…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/ai_host/tests.rs",
+     "purpose": "The host's start-up decisions and one real Dreamer pass on its own trigger, against the local fake model…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/turns.rs",
+     "purpose": "Chat turns in flight",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/workflows.rs",
+     "purpose": "The saved-workflow pump: runs each open workflow's ready step on the generative seat and advances it…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/ai/chat.rs",
+     "purpose": "`POST /v1/ai/chat`: one chat turn on the generative seat, streamed",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/ai/mod.rs",
+     "purpose": "`/v1/ai`: the server's model-backed surfaces — status, chat turns and the session hints the Dreamer's…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/artifacts.rs",
      "purpose": "—",
      "surface": {
@@ -47530,6 +47751,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "src/api/tests/ai_chat.rs",
+     "purpose": "`/v1/ai`: a chat turn streams through the bus and the socket fanout and saves its terminal once; status and…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "src/api/tests/auth_idempotency.rs",
      "purpose": "OpenAPI route auth, v1/legacy auth plane + revocation + scopes, core idempotency middleware semantics",
      "surface": {}
@@ -47615,7 +47844,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/core_memory_conversations.rs",
@@ -47912,6 +48141,8 @@
       "ApiCommand",
       "Cli",
       "Command",
+      "DreamerCommand",
+      "DreamerGrantArgs",
       "HostCommand",
       "HostInitArgs",
       "InitArgs",
@@ -47929,10 +48160,10 @@
      "path": "src/cli.rs",
      "purpose": "—",
      "surface": {
-      "enum": 4,
+      "enum": 5,
       "fn": 2,
       "re-export": 1,
-      "struct": 13
+      "struct": 14
      }
     },
     {
@@ -47963,7 +48194,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DictSearchResolution"
@@ -47974,7 +48205,7 @@
       "const": 1,
       "crate-vis": 1,
       "fn": 10,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 1
      }
     },
@@ -47986,6 +48217,16 @@
      "purpose": "`oneiron api …` — the bash/curl lane of the packaging ladder",
      "surface": {
       "crate-vis": 15,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/dreamer.rs",
+     "purpose": "`oneiron dreamer grant`: the owner's weave grant, made offline, for a vault created before the Dreamer's…",
+     "surface": {
       "fn": 1
      }
     },
@@ -48075,6 +48316,16 @@
      "path": "src/commands/reembed/tests.rs",
      "purpose": "Rows for the `reembed` door",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/serve.rs",
+     "purpose": "The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then…",
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "L",
@@ -48197,9 +48448,68 @@
      "path": "src/config/mod.rs",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
-      "mod": 7,
-      "re-export": 7
+      "mod": 8,
+      "re-export": 8
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ModelRef",
+      "Rung"
+     ],
+     "path": "src/config/models/levels.rs",
+     "purpose": "The three config levels and their expansion into per-role ladders",
+     "surface": {
+      "const": 1,
+      "crate-vis": 5,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ChatSettings",
+      "DreamerSettings",
+      "ModelsConfig",
+      "WorkflowSettings"
+     ],
+     "path": "src/config/models/mod.rs",
+     "purpose": "`[models]`: which model serves each role, at three levels of detail",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1,
+      "re-export": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OutputLimitField",
+      "ProviderConfig",
+      "ProviderKind"
+     ],
+     "path": "src/config/models/provider.rs",
+     "purpose": "One provider entry: how to reach a model server, as data",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/config/models/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -48701,7 +49011,7 @@
      "purpose": "Oneiron CRDT sync server library",
      "surface": {
       "fn": 1,
-      "mod": 15,
+      "mod": 17,
       "re-export": 1
      }
     },
@@ -49396,6 +49706,157 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/anthropic.rs",
+     "purpose": "The Anthropic-compatible transport: any `/v1/messages` server",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/catalog.rs",
+     "purpose": "Config model references to engine catalog rows",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/http.rs",
+     "purpose": "The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/ladder.rs",
+     "purpose": "One role's ladder as one backend: the engine sees a single seat model; the ladder hands each call to its…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ModelRuntime",
+      "Seat"
+     ],
+     "path": "src/models/mod.rs",
+     "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
+     "surface": {
+      "fn": 5,
+      "re-export": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/openai.rs",
+     "purpose": "The OpenAI-compatible transport: any `/v1/chat/completions` server",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/output_cap.rs",
+     "purpose": "A provider's output ceiling on the wire",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoleCall",
+      "RoleRefusal",
+      "RoleRoute"
+     ],
+     "path": "src/models/role_route.rs",
+     "purpose": "A role-bound call's model under the vault's live model manifest",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ModelRouter"
+     ],
+     "path": "src/models/router.rs",
+     "purpose": "A backend over every configured model and seat, chosen by the request's own model id: the raw `/v1/llm`…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/served.rs",
+     "purpose": "Which model actually answered: the receipt field a ladder fills in",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/sse.rs",
+     "purpose": "An incremental server-sent-events decoder (WHATWG event-stream parsing): LF, CRLF or lone CR line ends, a…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ModelsStatus",
+      "ProviderStatus",
+      "RungStatus",
+      "SeatState",
+      "SeatStatus"
+     ],
+     "path": "src/models/status.rs",
+     "purpose": "What the model runtime built, for the owner-facing status route",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/models/tests.rs",
+     "purpose": "Every provider kind against a local fake server, the ladder's fallback and receipt, and one config edit…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -49669,8 +50130,8 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 10,
-      "fn": 6,
+      "crate-vis": 11,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -49695,7 +50156,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/server/lifecycle.rs",
@@ -49899,6 +50360,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/voice_host/attachment.rs",
+     "purpose": "The voice host as a wake-pass attachment: it serves the owner's admitted stream beside one pass and spends…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/voice_host/connection.rs",
      "purpose": "One private, pre-admitted UDS connection on the existing Tokio runtime",
      "surface": {
@@ -49958,6 +50429,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/voice_host/tests/pass_attachment.rs",
+     "purpose": "The voice host attached to a real wake supervisor through the driver's generic pass-attachment seam (moved…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -50014,6 +50493,14 @@
      "notable": [],
      "path": "tests/it/agent_credentials.rs",
      "purpose": "A local agent's identity and read credential, from the shipped CLI",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/ai_serve.rs",
+     "purpose": "The shipped binary with no model, and with one: without `[models]` every model-free path works and the…",
      "surface": {}
     },
     {
@@ -50140,6 +50627,16 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/support/fake_llm.rs",
+     "purpose": "A scripted local model server speaking the OpenAI-compatible (`/v1/chat/completions`) and…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/ws_app_tier.rs",
      "purpose": "New app-tier socket tests",
      "surface": {}
@@ -50153,8 +50650,15 @@
      "layout": "file",
      "purpose": "Host-bound UI and agent action executor over the engine's one verb registry"
     },
+    "ai_host": {
+     "files": 10,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
+    },
     "api": {
-     "files": 163,
+     "files": 166,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -50182,14 +50686,14 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 13,
+     "files": 15,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 15,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50265,6 +50769,13 @@
      "layout": "dir",
      "purpose": "MCP connector actor registry"
     },
+    "models": {
+     "files": 13,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "The one provider abstraction: `[models]` in, one backend per seat out"
+    },
     "oauth_relay": {
      "files": 1,
      "impl_vault": false,
@@ -50336,7 +50847,7 @@
      "purpose": "Provider-list metering and host-pushed vault budget limits"
     },
     "voice_host": {
-     "files": 6,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -50350,10 +50861,10 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 4,
+   "over_bar": 3,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 263,
-   "test_files": 106
+   "source_files": 292,
+   "test_files": 113
   },
   "oneiron-uniffi": {
    "files": [

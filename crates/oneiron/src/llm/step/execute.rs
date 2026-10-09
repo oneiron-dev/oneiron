@@ -8,7 +8,8 @@ use super::step_claim::{
     step_claim_matches_request, step_index_lookup, step_index_lookup_in_txn,
 };
 use super::step_state::{step_state_delete, step_state_read, step_state_write};
-use super::trap::{open_trap, trap_park_owner};
+use super::trap::{open_trap_in_txn, trap_park_owner};
+use super::trap_binding::TrapBindingScope;
 use super::types::{
     DREAMER_STEP_RETRY_BACKOFF_MS, DreamerTrapKind, DurableStepContext, DurableStepError,
     DurableStepResult, StepOutcome, StepProgression,
@@ -176,19 +177,30 @@ pub async fn call_as_step_with_fallbacks(
         Err(BudgetDenied::Exhausted) => {
             let failure_policy =
                 resolve_failure_policy(ctx.vault, super::super::DreamerFailureClass::Budget)?;
-            let trap = open_trap(
-                ctx.vault,
-                ctx,
-                DreamerTrapKind::Budget,
-                step_hash,
-                "durable step budget exhausted",
-            )?;
+            // The trap and its park land in one transaction: an open trap
+            // over an unparked attempt reads as plain leased work, which boot
+            // recovery requeues and a fresh budget runs without the signal.
             let store = crate::dreamer_runner::DreamerRunnerStore::new(ctx.vault);
-            store.park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
-                attempt_id: ctx.attempt_id,
-                reason: "durable step budget exhausted".to_owned(),
-                park_owner: trap_park_owner(&trap.trap_claim_id),
-                now: ctx.now_s(),
+            let trap = ctx.vault.with_write_txn(|wtxn| {
+                let trap = open_trap_in_txn(
+                    ctx.vault,
+                    wtxn,
+                    ctx,
+                    DreamerTrapKind::Budget,
+                    step_hash,
+                    "durable step budget exhausted",
+                    TrapBindingScope::Attempt,
+                )?;
+                store.park_attempt_in_txn(
+                    wtxn,
+                    crate::dreamer_runner::ParkDreamerAttempt {
+                        attempt_id: ctx.attempt_id,
+                        reason: "durable step budget exhausted".to_owned(),
+                        park_owner: trap_park_owner(&trap.trap_claim_id),
+                        now: ctx.now_s(),
+                    },
+                )?;
+                Ok(trap)
             })?;
             step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
             return Ok(StepOutcome::Trapped {
