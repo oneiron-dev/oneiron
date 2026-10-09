@@ -337,6 +337,13 @@ impl DisclosureContext {
         &self.interlocutors
     }
 
+    /// The met contact clearance a scoped admission checks a record against:
+    /// `None` where the mode admits without one, or where no non-owner is
+    /// present to clear anything.
+    pub(crate) fn scope(&self) -> Option<&Scope> {
+        self.scope.as_ref()
+    }
+
     /// The clamp's admission predicate: `OwnerAlone` admits everything;
     /// `Supervised` admits non-Tier-A records (within the room's contact
     /// clearance if in a room); `AbsenceClamp` admits only non-Tier-A records

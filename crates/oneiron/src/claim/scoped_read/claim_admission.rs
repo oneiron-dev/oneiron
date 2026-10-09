@@ -44,6 +44,12 @@ impl ScopedRead<'_> {
         self
     }
 
+    /// Whether a claim whose principal audience is `principal` admits this
+    /// reader: one that names a principal admits that principal alone.
+    pub(crate) fn principal_admits(&self, principal: Option<EntityId>) -> bool {
+        principal.is_none() || principal == EntityId::from_hex(self.actor_key.actor_ref()).ok()
+    }
+
     pub(super) fn is_claim_raw_readable_with_policy_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -64,7 +70,7 @@ impl ScopedRead<'_> {
             return Ok(false);
         }
         let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-        self.is_claim_readable_with_body_and_policy_in(rtxn, policy, id, &body, filter)
+        self.is_claim_readable_with_body_and_policy_in(rtxn, policy, id, raw, &body, filter)
     }
 
     fn is_claim_readable_with_body_and_policy_in(
@@ -72,6 +78,7 @@ impl ScopedRead<'_> {
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         id: &EntityId,
+        raw: &[u8],
         body: &ClaimBody,
         filter: &ResolvedRetrievalFilter,
     ) -> Result<bool> {
@@ -84,8 +91,7 @@ impl ScopedRead<'_> {
             return Ok(false);
         }
         let principal = claim_principal_id(body)?;
-        let reader = EntityId::from_hex(self.actor_key.actor_ref()).ok();
-        if principal.is_some() && principal != reader {
+        if !self.principal_admits(principal) {
             return Ok(false);
         }
         if crate::edit_distance::miner::is_mined_preference(&body.predicate) {
@@ -131,7 +137,7 @@ impl ScopedRead<'_> {
         let admitted = self.claim_status.admits(filter, body)
             && crate::pipeline::claim_ceiling_allowed(filter, body);
         if !admitted
-            || !self.audience_readable_in(rtxn, id)?
+            || !self.audience_readable_raw_in(rtxn, id, raw)?
             || !self.relationship_claim_allowed_in(rtxn, body)?
         {
             return Ok(false);

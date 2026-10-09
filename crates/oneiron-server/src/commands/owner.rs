@@ -15,7 +15,9 @@ use crate::cli::{
     BackupArgs, DoctorArgs, ExportArgs, ImportCommand, RestoreArgs, RunsCommand, SecretScanArgs,
     SecretScanSwitch, WhoamiArgs,
 };
-use crate::config::{ServeArgs, ServeConfig, resolve_serve_config};
+use crate::config::{
+    BackupConfig, ServeArgs, ServeConfig, resolve_backup_config, resolve_serve_config,
+};
 use crate::owner::backup::{self, BackupPlan};
 use crate::owner::{imports, local_owner, location, runs};
 
@@ -61,40 +63,73 @@ fn open_vault(config: &ServeConfig, route: &str) -> anyhow::Result<oneiron::Vaul
 }
 
 pub fn doctor(args: DoctorArgs) -> anyhow::Result<()> {
-    let config = resolve_serve_config(&ServeArgs {
+    emit(&doctor_report(args)?)
+}
+
+/// Where the vault lives and how it is, then the rest of its health. Serve
+/// settings never stop this report: one that does not resolve is listed in
+/// `config_errors` beside it, and backups are read with the defaults if the
+/// `[backup]` section itself is what fails.
+fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Value> {
+    let serve = ServeArgs {
         config: args.config,
         vault_path: Some(args.vault.path.clone()),
         ..ServeArgs::default()
-    })?;
-    let plan = backup_plan(&config);
-    let every = config.backup.enabled.then_some(config.backup.every_hours);
+    };
+    let mut config_errors = Vec::new();
+    let mut note_error = |error: anyhow::Error| {
+        let error = format!("{error:#}");
+        if !config_errors.contains(&error) {
+            config_errors.push(error);
+        }
+    };
+    if let Err(error) = resolve_serve_config(&serve) {
+        note_error(error);
+    }
+    let backup = resolve_backup_config(&serve).unwrap_or_else(|error| {
+        note_error(error.context(
+            "the [backup] settings did not resolve, so the backups shown are at the default location",
+        ));
+        BackupConfig::default()
+    });
+    let plan = BackupPlan::new(
+        &args.vault.path,
+        backup.dir_for(&args.vault.path),
+        backup.keep,
+    );
+    let every = backup.enabled.then_some(backup.every_hours);
     let mut vault_config = oneiron::VaultConfig::server();
     vault_config.dimensions = args.vault.dimensions;
     vault_config.map_size = args.vault.map_size;
     vault_config.dict_search_paths =
         super::resolve_dict_search_paths(&args.vault.dict_search_paths.clone().unwrap_or_default())
             .paths;
-    let vault = match oneiron::Vault::open_owned(&args.vault.path, vault_config) {
-        Ok(vault) => vault,
+    let mut report = match oneiron::Vault::open_owned(&args.vault.path, vault_config) {
+        Ok(vault) => {
+            let mut report = serde_json::to_value(vault.doctor()?)?;
+            report["location"] = serde_json::to_value(location::locate(
+                &args.vault.path,
+                Some(&vault),
+                &plan,
+                every,
+            )?)?;
+            report
+        }
         Err(oneiron::Error::ConcurrentWrite(oneiron::VAULT_WRITER_LEASE_HELD)) => {
             // The filesystem facts still answer "where is my data".
-            let mut report = location::locate(&args.vault.path, None, &plan, every)?;
-            report.note = Some(
+            let mut location = location::locate(&args.vault.path, None, &plan, every)?;
+            location.note = Some(
                 "a running `oneiron serve` holds this vault; `oneiron api raw GET /v1/owner/status` reads the rest"
                     .to_owned(),
             );
-            return emit(&serde_json::json!({ "location": report }));
+            serde_json::json!({ "location": location })
         }
         Err(error) => anyhow::bail!("open vault {} failed: {error}", args.vault.path.display()),
     };
-    let mut report = serde_json::to_value(vault.doctor()?)?;
-    report["location"] = serde_json::to_value(location::locate(
-        &args.vault.path,
-        Some(&vault),
-        &plan,
-        every,
-    )?)?;
-    emit(&report)
+    if !config_errors.is_empty() {
+        report["config_errors"] = serde_json::to_value(config_errors)?;
+    }
+    Ok(report)
 }
 
 pub fn backup(args: BackupArgs) -> anyhow::Result<()> {
@@ -260,28 +295,41 @@ fn read_batch(source: &str) -> anyhow::Result<imports::ImportBatch> {
 }
 
 pub fn import(command: ImportCommand) -> anyhow::Result<()> {
-    let serve = match &command {
-        ImportCommand::Preview(args) => &args.serve,
-        ImportCommand::Approve(args) | ImportCommand::Decline(args) => &args.serve,
+    use oneiron::ingest::history::HistorySource;
+    // A batch decision: preview, or approve / decline with the digest.
+    let (batch, digest, serve) = match command {
+        ImportCommand::Chatgpt(args) => {
+            return super::history_import::import_history(HistorySource::Chatgpt, *args);
+        }
+        ImportCommand::Claude(args) => {
+            return super::history_import::import_history(HistorySource::Claude, *args);
+        }
+        ImportCommand::ClaudeCode(args) => {
+            return super::history_import::import_history(HistorySource::ClaudeCode, *args);
+        }
+        ImportCommand::Codex(args) => {
+            return super::history_import::import_history(HistorySource::Codex, *args);
+        }
+        ImportCommand::Preview(args) => (args.batch, None, args.serve),
+        ImportCommand::Approve(args) => (args.batch, Some((true, args.digest)), args.serve),
+        ImportCommand::Decline(args) => (args.batch, Some((false, args.digest)), args.serve),
     };
-    let config = resolve_serve_config(serve)?;
+    let config = resolve_serve_config(&serve)?;
     let vault = open_vault(&config, "POST /v1/owner/imports/<preview|approve|decline>")?;
     let owner = local_owner(&vault)?;
-    match command {
-        ImportCommand::Preview(args) => {
-            emit(&imports::preview(&vault, &owner, read_batch(&args.batch)?)?)
-        }
-        ImportCommand::Approve(args) => emit(&imports::approve(
+    match digest {
+        None => emit(&imports::preview(&vault, &owner, read_batch(&batch)?)?),
+        Some((true, digest)) => emit(&imports::approve(
             &vault,
             &owner,
-            &read_batch(&args.batch)?,
-            &args.digest,
+            &read_batch(&batch)?,
+            &digest,
         )?),
-        ImportCommand::Decline(args) => emit(&imports::decline(
+        Some((false, digest)) => emit(&imports::decline(
             &vault,
             &owner,
-            &read_batch(&args.batch)?,
-            &args.digest,
+            &read_batch(&batch)?,
+            &digest,
         )?),
     }
 }
@@ -297,22 +345,29 @@ pub fn runs(command: RunsCommand) -> anyhow::Result<()> {
     match command {
         RunsCommand::Pending(_) => emit(&runs::pending(&vault)?),
         RunsCommand::Show(args) => {
-            emit(&runs::review(&vault, &local_owner(&vault)?, &args.run_id)?)
+            let run = runs::RunName::from_fields(args.run_id.as_deref(), args.run_ref.as_deref())?;
+            emit(&runs::review(&vault, &local_owner(&vault)?, run)?)
         }
-        RunsCommand::Approve(args) => emit(&runs::resolve(
-            &vault,
-            &local_owner(&vault)?,
-            &args.run_id,
-            &args.bundle,
-            GateConsentBundleAction::Approve,
-        )?),
-        RunsCommand::Decline(args) => emit(&runs::resolve(
-            &vault,
-            &local_owner(&vault)?,
-            &args.run_id,
-            &args.bundle,
-            GateConsentBundleAction::Decline,
-        )?),
+        RunsCommand::Approve(args) => {
+            let run = runs::RunName::from_fields(args.run_id.as_deref(), args.run_ref.as_deref())?;
+            emit(&runs::resolve(
+                &vault,
+                &local_owner(&vault)?,
+                run,
+                &args.bundle,
+                GateConsentBundleAction::Approve,
+            )?)
+        }
+        RunsCommand::Decline(args) => {
+            let run = runs::RunName::from_fields(args.run_id.as_deref(), args.run_ref.as_deref())?;
+            emit(&runs::resolve(
+                &vault,
+                &local_owner(&vault)?,
+                run,
+                &args.bundle,
+                GateConsentBundleAction::Decline,
+            )?)
+        }
     }
 }
 

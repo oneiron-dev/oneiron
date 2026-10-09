@@ -1,6 +1,7 @@
 use rmpv::Value;
 
 use super::support::invalid_consolidation;
+use super::turn_text::MessageSpan;
 use super::watermark::entity_ref_from_value;
 use crate::Vault;
 use crate::claim::{ClaimSource, claim_evidence_taint};
@@ -194,12 +195,18 @@ pub fn encode_consolidation_evidence(evidence: &ConsolidationEvidenceEnvelope) -
     ])
 }
 
+/// One parent-verified citation as stored: the locator, its quote hash and
+/// the MESSAGE words a witnessed TURN range covers (empty otherwise).
+pub(crate) type VerifiedLocator = (super::SwarmEvidenceRef, [u8; 32], Vec<MessageSpan>);
+
 /// Adds parent-computed source+range/claim hashes to the persisted evidence
 /// envelope without changing the established refs/chain/source-meet fields.
+/// A witnessed TURN range also stores the MESSAGE-local slices it covers
+/// under `messages`; any other locator keeps its exact earlier bytes.
 #[must_use]
 pub(crate) fn encode_consolidation_evidence_with_locators(
     evidence: &ConsolidationEvidenceEnvelope,
-    locators: &[(super::SwarmEvidenceRef, [u8; 32])],
+    locators: &[VerifiedLocator],
 ) -> Value {
     let Value::Map(mut fields) = encode_consolidation_evidence(evidence) else {
         unreachable!("evidence envelope is a map")
@@ -210,7 +217,7 @@ pub(crate) fn encode_consolidation_evidence_with_locators(
             Value::Array(
                 locators
                     .iter()
-                    .map(|(locator, hash)| {
+                    .map(|(locator, hash, messages)| {
                         let mut row = vec![
                             (
                                 Value::from("source_id"),
@@ -233,6 +240,12 @@ pub(crate) fn encode_consolidation_evidence_with_locators(
                                 ]),
                             ));
                         }
+                        if !messages.is_empty() {
+                            row.push((
+                                Value::from(LOCATOR_MESSAGES_KEY),
+                                Value::Array(messages.iter().map(encode_message_span).collect()),
+                            ));
+                        }
                         Value::Map(row)
                     })
                     .collect(),
@@ -242,11 +255,113 @@ pub(crate) fn encode_consolidation_evidence_with_locators(
     Value::Map(fields)
 }
 
-/// Strictly decodes the parent-verified locator set on an attachment. The
-/// ordinary evidence-envelope decoder ignores this additive key for readers.
+const LOCATOR_MESSAGES_KEY: &str = "messages";
+
+fn encode_message_span(span: &MessageSpan) -> Value {
+    let mut row = vec![
+        (
+            Value::from("message"),
+            Value::Binary(span.message.as_bytes().to_vec()),
+        ),
+        (
+            Value::from("span"),
+            Value::Array(vec![
+                Value::from(span.start as u64),
+                Value::from(span.end as u64),
+            ]),
+        ),
+        (
+            Value::from("revision"),
+            Value::Binary(span.revision.to_vec()),
+        ),
+    ];
+    if let Some(frontier) = &span.frontier {
+        row.push((Value::from("frontier"), Value::Binary(frontier.clone())));
+    }
+    Value::Map(row)
+}
+
+fn decode_offset(value: &Value) -> Result<usize> {
+    usize::try_from(
+        value
+            .as_u64()
+            .ok_or_else(|| invalid_consolidation("invalid locator offset"))?,
+    )
+    .map_err(|_| invalid_consolidation("locator offset overflow"))
+}
+
+fn decode_message_spans(value: &Value) -> Result<Vec<MessageSpan>> {
+    let Value::Array(rows) = value else {
+        return Err(invalid_consolidation("locator messages must be an array"));
+    };
+    if rows.is_empty() {
+        return Err(invalid_consolidation("locator messages are empty"));
+    }
+    rows.iter()
+        .map(|row| {
+            let Value::Map(fields) = row else {
+                return Err(invalid_consolidation("locator message must be a map"));
+            };
+            let (mut message, mut span, mut revision, mut frontier) = (None, None, None, None);
+            for (key, value) in fields {
+                match (key.as_str(), value) {
+                    (Some("message"), value) if message.is_none() => {
+                        message = Some(
+                            entity_ref_from_value(value)
+                                .ok_or_else(|| invalid_consolidation("invalid locator message"))?,
+                        );
+                    }
+                    (Some("span"), Value::Array(pair)) if span.is_none() => {
+                        let [start, end] = pair.as_slice() else {
+                            return Err(invalid_consolidation("invalid locator message span"));
+                        };
+                        span = Some((decode_offset(start)?, decode_offset(end)?));
+                    }
+                    (Some("revision"), Value::Binary(bytes)) if revision.is_none() => {
+                        revision = Some(<[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| {
+                            invalid_consolidation("locator message revision must have 32 bytes")
+                        })?);
+                    }
+                    (Some("frontier"), Value::Binary(bytes)) if frontier.is_none() => {
+                        frontier = Some(bytes.clone());
+                    }
+                    _ => {
+                        return Err(invalid_consolidation(
+                            "unknown, duplicate or mistyped locator message key",
+                        ));
+                    }
+                }
+            }
+            let (start, end) =
+                span.ok_or_else(|| invalid_consolidation("missing locator message span"))?;
+            if start >= end {
+                return Err(invalid_consolidation("empty locator message span"));
+            }
+            Ok(MessageSpan {
+                message: message.ok_or_else(|| invalid_consolidation("missing locator message"))?,
+                start,
+                end,
+                revision: revision
+                    .ok_or_else(|| invalid_consolidation("missing locator message revision"))?,
+                frontier,
+            })
+        })
+        .collect()
+}
+
+/// [`decode_verified_citations`] without the MESSAGE slices.
 pub(crate) fn decode_verified_locators(
     evidence: &Value,
 ) -> Result<Vec<(super::SwarmEvidenceRef, [u8; 32])>> {
+    Ok(decode_verified_citations(evidence)?
+        .into_iter()
+        .map(|(locator, hash, _)| (locator, hash))
+        .collect())
+}
+
+/// Strictly decodes the parent-verified locator set on an attachment. The
+/// ordinary evidence-envelope decoder ignores this additive key for readers.
+pub(crate) fn decode_verified_citations(evidence: &Value) -> Result<Vec<VerifiedLocator>> {
     let Value::Map(fields) = evidence else {
         return Err(invalid_consolidation("verified evidence must be a map"));
     };
@@ -273,6 +388,7 @@ pub(crate) fn decode_verified_locators(
             let mut claim_id = None;
             let mut byte_range = None;
             let mut hash = None;
+            let mut messages = None;
             for (key, value) in fields {
                 match key.as_str() {
                     Some("source_id") if source_id.is_none() => {
@@ -308,6 +424,9 @@ pub(crate) fn decode_verified_locators(
                             .map_err(|_| invalid_consolidation("locator end overflow"))?,
                         ));
                     }
+                    Some(LOCATOR_MESSAGES_KEY) if messages.is_none() => {
+                        messages = Some(decode_message_spans(value)?);
+                    }
                     Some("content_hash") if hash.is_none() => {
                         let Value::Binary(bytes) = value else {
                             return Err(invalid_consolidation("invalid locator hash"));
@@ -327,6 +446,7 @@ pub(crate) fn decode_verified_locators(
                     byte_range,
                 },
                 hash.ok_or_else(|| invalid_consolidation("missing locator hash"))?,
+                messages.unwrap_or_default(),
             ))
         })
         .collect()

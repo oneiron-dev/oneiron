@@ -1,26 +1,36 @@
-//! Stateless ROOM projection and ordinary world-scope intersection.
+//! Stateless ROOM projection and the one roster-to-Scope function.
 
 use super::{BoardFrameError, BoardSection, SectionPolicy, one_line_token};
+use crate::federation::{Scope, ScopeAxis, ScopeId};
 use crate::pipeline::WorldAuthoritySet;
 use crate::{EntityId, Result};
+use std::collections::BTreeSet;
 
-/// Host-resolved presence; authority comes from the normal turn resolver.
-#[derive(Debug, Clone)]
+#[cfg(test)]
+mod tests;
+
+/// One roster entry. The engine builds every entry from the Conversation's
+/// `memberIds` and each member's own grants; no request supplies one.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoomPresence {
     pub actor: EntityId,
-    /// Class authenticated by the host; validated against the actor entity on each read.
+    /// The bound caller's class. Other members carry none, so a peer read
+    /// matches only class-agnostic grants.
     pub actor_class: Option<crate::EdgeActorClass>,
     pub label: String,
     pub present: bool,
+    /// The worlds this member reads by default (ARCH-0022).
     pub active_worlds: WorldAuthoritySet,
 }
 
-/// This is the SAME authority-set type `PipelineBuilder::active_worlds` takes.
-/// A room intersects already narrowed per-turn sets; joining can never widen.
-pub fn room_scope(roster: &[RoomPresence]) -> Result<WorldAuthoritySet> {
+/// ARCH-0067 §8: the only function from a roster to a Scope. It meets the
+/// present members' world sets into the ordinary Scope; every other axis
+/// stays open here and each member's own grants still bind at the read door.
+/// A member who joins can only narrow the result.
+pub fn room_scope(roster: &[RoomPresence]) -> Result<Scope> {
     let mut present = roster.iter().filter(|member| member.present);
     let Some(first) = present.next() else {
-        return Ok(WorldAuthoritySet::default());
+        return Ok(Scope::default());
     };
     let mut base = first.active_worlds.include_base();
     let mut worlds = first.active_worlds.worlds().clone();
@@ -28,7 +38,37 @@ pub fn room_scope(roster: &[RoomPresence]) -> Result<WorldAuthoritySet> {
         base &= member.active_worlds.include_base();
         worlds.retain(|id| member.active_worlds.worlds().contains(id));
     }
-    WorldAuthoritySet::new(base, worlds)
+    // Keep the world-set bound at this door too.
+    let meet = WorldAuthoritySet::new(base, worlds)?;
+    // Base has its own boolean. A world id equal to the reserved base id
+    // cannot stand in for it.
+    let mut ids: BTreeSet<_> = meet
+        .worlds()
+        .iter()
+        .filter(|id| **id != crate::claim::base_world_id())
+        .map(|id| ScopeId(*id))
+        .collect();
+    if meet.include_base() {
+        ids.insert(ScopeId(crate::claim::base_world_id()));
+    }
+    let mut scope = Scope::top();
+    scope.worlds = ids.into_iter().collect();
+    Ok(scope)
+}
+
+/// The world axis of a room Scope as a retrieval world set, or `None` when
+/// the axis is open.
+pub(crate) fn scope_worlds(scope: &Scope) -> Result<Option<WorldAuthoritySet>> {
+    let base = ScopeId(crate::claim::base_world_id());
+    match &scope.worlds {
+        ScopeAxis::All => Ok(None),
+        ScopeAxis::Bottom => WorldAuthoritySet::new(false, []).map(Some),
+        ScopeAxis::Some(ids) => WorldAuthoritySet::new(
+            ids.contains(&base),
+            ids.iter().filter(|id| **id != base).map(|id| id.0),
+        )
+        .map(Some),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
@@ -63,7 +103,7 @@ impl RoomPosture {
 pub struct RoomSection {
     pub room: EntityId,
     pub roster: Vec<RoomPresence>,
-    pub scope: WorldAuthoritySet,
+    pub scope: Scope,
     pub posture: RoomPosture,
     pub claims: Vec<crate::memory::ClaimView>,
     /// The caller's read of the room's rules. Rules the caller could read but
@@ -84,15 +124,20 @@ impl RoomSection {
                 one_line_token(&member.label)
             )
         }));
+        let base = ScopeId(crate::claim::base_world_id());
         rows.push(format!(
             "scope: base={} worlds={}",
-            self.scope.include_base(),
-            self.scope
-                .worlds()
-                .iter()
-                .map(EntityId::to_hex)
-                .collect::<Vec<_>>()
-                .join(",")
+            self.scope.worlds.contains(&base),
+            match &self.scope.worlds {
+                ScopeAxis::All => "all".to_owned(),
+                ScopeAxis::Bottom => String::new(),
+                ScopeAxis::Some(ids) => ids
+                    .iter()
+                    .filter(|id| **id != base)
+                    .map(|id| id.0.to_hex())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            }
         ));
         let mode = match self.posture.mode {
             RoomMode::Chime => "chime",

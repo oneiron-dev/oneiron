@@ -207,6 +207,26 @@ impl OneironClient {
         }
     }
 
+    /// A new handle whose every verb runs as a turn in `room_ref`
+    /// (ARCH-0067 §8). It names only the room. Each verb is one turn: the
+    /// engine reads the roster as it stands at that call, runs the verb inside
+    /// that roster's Scope, and refuses any verb that would read around the
+    /// room.
+    pub fn in_room_turn(&self, room_ref: &str) -> Result<Self, MemoryError> {
+        let room = oneiron::EntityId::from_hex(room_ref).map_err(|_| {
+            crate::error::bad_request(
+                "invalid room reference",
+                &["Name the room as its 32-hex id."],
+            )
+        })?;
+        Ok(Self {
+            backend: match &self.backend {
+                Backend::Embedded(embedded) => Backend::Embedded(embedded.in_room_turn(room)?),
+                Backend::Remote(remote) => Backend::Remote(remote.in_room_turn(room)?),
+            },
+        })
+    }
+
     /// Whether this handle talks to a remote server.
     #[must_use]
     pub fn is_remote(&self) -> bool {

@@ -58,6 +58,7 @@ roomsSpeak(input: unknown): unknown
 // END GENERATED AGENT VERBS
 
   asActor(actorKey: string): NativeClient
+  inRoomTurn(roomRef: string): NativeClient
 }
 
 /** The static half napi-rs generates for a `#[napi(factory)]` constructor. */
