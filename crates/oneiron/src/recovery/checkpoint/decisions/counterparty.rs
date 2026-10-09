@@ -273,26 +273,32 @@ impl Known {
                     known.senders.insert((id, actor));
                 }
             }
-            for (_, ruling) in
-                vault.claims_with_predicate_in_txn(&txn, PREDICATE_COMM_DO_NOT_CONTACT)?
-            {
-                known
-                    .classes
-                    .extend(field(&ruling.value, "channel").map(normalize_channel_class));
-                known
-                    .verbs
-                    .extend(field(&ruling.value, "scope").map(str::to_owned));
-            }
-            for (_, ruling) in
-                vault.claims_with_predicate_in_txn(&txn, PREDICATE_COMM_SEND_OVERRIDE)?
-            {
-                known
-                    .classes
-                    .extend(field(&ruling.value, "channel_class").map(normalize_channel_class));
-                known
-                    .sends
-                    .extend(field(&ruling.value, "send_ref").map(|send| Some(send.to_owned())));
-            }
+            vault.for_each_claim_with_predicate_in_txn(
+                &txn,
+                PREDICATE_COMM_DO_NOT_CONTACT,
+                |_, ruling| {
+                    known
+                        .classes
+                        .extend(field(&ruling.value, "channel").map(normalize_channel_class));
+                    known
+                        .verbs
+                        .extend(field(&ruling.value, "scope").map(str::to_owned));
+                    Ok(())
+                },
+            )?;
+            vault.for_each_claim_with_predicate_in_txn(
+                &txn,
+                PREDICATE_COMM_SEND_OVERRIDE,
+                |_, ruling| {
+                    known
+                        .classes
+                        .extend(field(&ruling.value, "channel_class").map(normalize_channel_class));
+                    known
+                        .sends
+                        .extend(field(&ruling.value, "send_ref").map(|send| Some(send.to_owned())));
+                    Ok(())
+                },
+            )?;
         }
         Ok(known)
     }

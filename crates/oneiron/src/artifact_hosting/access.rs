@@ -223,6 +223,13 @@ impl Vault {
             if header.entity_type != ENTITY_TYPE_FEDERATION_GRANT {
                 return Err(Error::CorruptedIndex("artifact membership grant type"));
             }
+            // A deleted grant is no membership: its shell is skipped here, and a
+            // stored body counts only while its row is live, checked last.
+            if raw.len() == ENTITY_METADATA_HEADER_LEN
+                && !crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live()
+            {
+                continue;
+            }
             let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
             if grant.scope == FederationGrantScope::vault(world_id)
                 && grant.member_ref == principal
@@ -237,6 +244,7 @@ impl Vault {
                     target_scope,
                     &crate::federation::Scope::top(),
                 )
+                && crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live()
             {
                 return Ok(true);
             }

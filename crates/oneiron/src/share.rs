@@ -429,6 +429,7 @@ pub(crate) fn active_brief_shares_for(
         if let Some((share, _)) = read_share_in_txn(store, txn, &share_id)?
             && EntityId::from_hex(&share.brief_ref).ok() == Some(*id)
             && share.grant().effective_status_at(now) == AccessGrantStatus::Active
+            && crate::vault::live_entity_row_in_txn(store, txn, &share_id)?.is_live()
         {
             shares.push((share_id, share.recipient_ref));
         }
@@ -627,8 +628,12 @@ impl Vault {
         let Some((share, _)) = read_share_in_txn(&self.store, &txn, share_id)? else {
             return Ok(None);
         };
+        // A share whose grant row is deleted grants nothing, even while an
+        // unapplied delete leaves its body stored. `get_share` and the share
+        // receipts keep the historical answer.
         if share.grant().effective_status_at(now) != AccessGrantStatus::Active
             || share.recipient_ref != *viewer
+            || !crate::vault::live_entity_row_in_txn(&self.store, &txn, share_id)?.is_live()
         {
             return Ok(None);
         }

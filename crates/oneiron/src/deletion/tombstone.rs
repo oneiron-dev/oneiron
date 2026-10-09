@@ -368,6 +368,24 @@ pub(crate) const HARD_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
 pub(crate) const IDENTITY_SOFT_DELETE_MARKER: SideTable<HexId, Vec<u8>, Raw> =
     SideTable::new(&side_table::DELETION_IDENTITY_SOFT_DELETE_MARKER);
 
+/// The current row's applied-deletion fence (`df:{entity_hex}`).
+///
+/// [`IDENTITY_SOFT_DELETE_MARKER`] is identity history: an id once soft
+/// deleted stays recorded. This fence answers a different question, whether
+/// the row stored under the id is deleted NOW. Every soft erase writes it in
+/// the scrub transaction, and so does a peer tombstone accepted here whose
+/// local apply failed. Only a local recreation lifts it, in the transaction
+/// that writes the new row. A peer's put never lifts it and is refused while
+/// it stands, so delete wins whatever a window's mutable tombstone map or the
+/// payload length later say. Presence-only, empty value.
+pub(crate) const ROW_DELETION_FENCE: SideTable<HexId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::DELETION_ROW_FENCE);
+
+/// Set once [`ROW_DELETION_FENCE`] has been backfilled from the applied
+/// soft-delete markers of a vault written before the fence existed.
+pub(crate) const ROW_DELETION_FENCE_BACKFILLED: SideTable<(), Vec<u8>, Raw> =
+    SideTable::new(&side_table::DELETION_ROW_FENCE_BACKFILLED);
+
 // ─── Cleanup-archive marker (`ac:`) — durable LOCAL archive truth ───────────
 //
 // ARCH-0073 / ONE-1931. Key = `ac:{entity_id_hex}` (32-char lowercase hex,

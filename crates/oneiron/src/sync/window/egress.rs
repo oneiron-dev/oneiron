@@ -4,8 +4,8 @@ use std::collections::HashSet;
 
 use super::bridge::{BRIDGE_ORIGIN, encode_edge_value_for_crdt, format_edge_key};
 use super::loro_support::{
-    export_snapshot, map_contains_binary, map_delete, map_for_each_value_bytes, map_get_bytes,
-    map_insert_bytes, tombstone_map_contains_id,
+    export_snapshot, map_contains_binary, map_delete, map_for_each_tombstone_value,
+    map_for_each_value_bytes, map_get_bytes, map_insert_bytes, tombstone_map_contains_id,
 };
 use super::pack_sync;
 use super::quarantine::{self, QuarantineContainer};
@@ -266,6 +266,75 @@ pub(super) fn scrub_local_claim_carriers(
     Ok(removed)
 }
 
+/// The entity carriers of `doc` (map key and id) whose rows this vault's own
+/// markers hold deleted while the window's tombstone map no longer names
+/// them: a delete a peer withdrew, putting the body back. This vault refused
+/// the restore, so it must not hand the carrier on either; a receiver that
+/// never saw the delete would make the row live.
+pub(in crate::sync) fn withdrawn_delete_carriers(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    doc: &LoroDoc,
+) -> Result<Vec<(String, EntityId)>> {
+    let mut deleted = Vec::new();
+    let mut failure = None;
+    map_for_each_value_bytes(&doc.get_map("entities"), |raw_key, _| {
+        let Ok(id) = EntityId::from_hex(raw_key) else {
+            return;
+        };
+        if failure.is_some() {
+            return;
+        }
+        let marked = vault
+            .store
+            .entities
+            .get(rtxn, id.as_bytes())
+            .and_then(|raw| {
+                crate::deletion::row_deletion_marked(&vault.store, rtxn, &id, raw.as_deref())
+            });
+        match marked {
+            Ok(true) => deleted.push((raw_key.to_owned(), id)),
+            Ok(false) => {}
+            Err(error) => failure = Some(error),
+        }
+    });
+    if let Some(error) = failure {
+        return Err(error);
+    }
+    if deleted.is_empty() {
+        return Ok(deleted);
+    }
+    let mut tombstoned = HashSet::new();
+    map_for_each_tombstone_value(&doc.get_map("tombstones"), |raw_key, _| {
+        if let Ok(id) = EntityId::from_hex(raw_key) {
+            tombstoned.insert(id);
+        }
+    });
+    deleted.retain(|(_, id)| !tombstoned.contains(id));
+    Ok(deleted)
+}
+
+/// Scrubs every [`withdrawn_delete_carriers`] entry from the live document.
+/// The window is pinned history-free first, so neither the body nor the
+/// withdrawal's operations ship.
+pub(super) fn scrub_withdrawn_delete_carriers(
+    vault: &Vault,
+    key: &WindowKey,
+    doc: &LoroDoc,
+) -> Result<bool> {
+    let withdrawn = withdrawn_delete_carriers(vault, &vault.store.env.read_txn()?, doc)?;
+    if withdrawn.is_empty() {
+        return Ok(false);
+    }
+    require_history_free_window(vault, key)?;
+    let entities = doc.get_map("entities");
+    for (raw_key, _) in &withdrawn {
+        map_delete(&entities, raw_key)?;
+    }
+    doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    Ok(true)
+}
+
 /// Remove attribution carriers defeated by permanent author-redaction facts.
 /// Check both local LMDB and the document: a redaction newly received in this
 /// window may not yet have been materialized, while its earlier attribution
@@ -329,7 +398,8 @@ pub fn export_window_updates_since(
     let secret_scrubbed = scrub_local_only_carriers(vault, key, doc)?;
     let claims_scrubbed = scrub_local_claim_carriers(vault, key, doc)?;
     let authors_scrubbed = scrub_redacted_attribution_carriers(vault, key, doc)?;
-    let scrubbed = secret_scrubbed || claims_scrubbed || authors_scrubbed;
+    let withdrawn_scrubbed = scrub_withdrawn_delete_carriers(vault, key, doc)?;
+    let scrubbed = secret_scrubbed || claims_scrubbed || authors_scrubbed || withdrawn_scrubbed;
     if scrubbed || history_free_window_required(vault, key)? || doc.is_shallow() {
         export_history_free_window_snapshot(doc)
     } else {
@@ -357,7 +427,8 @@ pub(in crate::sync) fn export_promoted_window_updates_since(
     crate::sync::note::refresh(vault, doc, key)?;
     let secret_scrubbed = scrub_local_only_carriers(vault, key, doc)?;
     let claims_scrubbed = scrub_local_claim_carriers(vault, key, doc)?;
-    let scrubbed = secret_scrubbed || claims_scrubbed;
+    let withdrawn_scrubbed = scrub_withdrawn_delete_carriers(vault, key, doc)?;
+    let scrubbed = secret_scrubbed || claims_scrubbed || withdrawn_scrubbed;
     if scrubbed || history_free_window_required(vault, key)? {
         export_history_free_window_snapshot(doc)
     } else {
@@ -388,6 +459,7 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     scrub_local_claim_carriers(vault, key, doc)?;
     scrub_local_only_carriers(vault, key, doc)?;
     scrub_redacted_attribution_carriers(vault, key, doc)?;
+    scrub_withdrawn_delete_carriers(vault, key, doc)?;
     if history_free_window_required(vault, key)? || doc.is_shallow() {
         export_history_free_window_snapshot(doc)
     } else {

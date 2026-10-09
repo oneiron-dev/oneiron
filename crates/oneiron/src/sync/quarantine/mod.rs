@@ -84,7 +84,7 @@ pub(in crate::sync) use self::writes_batch::{
 };
 
 #[cfg(test)]
-pub(in crate::sync) use self::reassert_drain::{INJECT_PURGE_FAILURES, INJECT_PURGE_FAILURES_SKIP};
+pub(crate) use self::reassert_drain::{INJECT_PURGE_FAILURES, INJECT_PURGE_FAILURES_SKIP};
 // Test-only paths (named from `*_tests.rs` / `tests.rs` suites, never from
 // shipped code): same `gate/mod.rs` precedent — gate them `cfg(test)` so the
 // plain-lib build sees no unreferenced re-export.

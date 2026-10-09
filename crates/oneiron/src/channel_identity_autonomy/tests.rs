@@ -906,6 +906,35 @@ fn autonomy_mode_rejects_expired_read_grant_even_with_historical_at() {
     );
 }
 
+/// Review repro (access deletion fences): a read grant whose delete was
+/// accepted but not applied keeps its Active body. The autonomy mode it backs
+/// no longer resolves, as for a revoked grant.
+#[test]
+fn autonomy_mode_rejects_a_read_grant_deleted_here() {
+    let clock = crate::ports::ManualClock::new(1_000);
+    let mut config = embedding_test_config();
+    config.store_clock = clock.bundle();
+    let (_dir, vault, owner, request) =
+        fixture_with_config(ChannelIdentityAutonomyRung::ScopedRead, config);
+    let state = vault
+        .apply_channel_identity_autonomy(&request, &owner)
+        .unwrap();
+    let reference = state.mode.read_grant_ref.unwrap();
+    let resolve = || {
+        vault.resolve_channel_identity_autonomy_mode(
+            &request.read_envelope.identity_ref,
+            &request.relationship_context,
+            1_000,
+        )
+    };
+    assert!(resolve().is_ok());
+    vault
+        .with_write_txn(|txn| vault.fence_unapplied_delete_in_txn(txn, &reference, &[1; 25]))
+        .unwrap();
+    assert!(vault.get_access_grant(&reference).unwrap().is_some());
+    assert!(resolve().is_err(), "a deleted read grant backs no mode");
+}
+
 #[test]
 fn revoked_read_action_and_unified_grants_fail_closed() {
     for which in 0..3 {

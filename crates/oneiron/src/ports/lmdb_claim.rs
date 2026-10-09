@@ -7,6 +7,56 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 use crate::{EdgeKind, EntityId, TimeRange, Vault};
 use heed::{RoTxn, RwTxn};
+/// The most claims one predicate's list holds before it refuses. A reader
+/// that must see every such claim, however many a vault holds, walks them
+/// with `Vault::for_each_claim_with_predicate_in_txn` instead.
+#[cfg(not(test))]
+pub(crate) const MAX_PREDICATE_LIST_ROWS: usize = 100_000;
+#[cfg(test)]
+pub(crate) const MAX_PREDICATE_LIST_ROWS: usize = 64;
+
+impl Vault {
+    /// Hands each stored CLAIM carrying `predicate` to `visit`, one at a time
+    /// in type-index order, reserved predicates included. Nothing is held
+    /// between claims, so the walk has no count past which it refuses.
+    pub(crate) fn for_each_claim_with_predicate_in_txn(
+        &self,
+        rtxn: &RoTxn<'_>,
+        predicate: &str,
+        mut visit: impl FnMut(EntityId, ClaimBody) -> Result<()>,
+    ) -> Result<()> {
+        for entry in self
+            .store
+            .type_index
+            .prefix_iter(rtxn, &[ENTITY_TYPE_CLAIM])?
+        {
+            let (key, _) = entry?;
+            let id = crate::vault::entity_id_from_type_index_key(&key)?;
+            let raw = self
+                .store
+                .entities
+                .get(rtxn, id.as_bytes())?
+                .ok_or(Error::CorruptedIndex("claim type index"))?;
+            let header =
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != ENTITY_TYPE_CLAIM {
+                return Err(Error::CorruptedIndex("claim type index"));
+            }
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            // A soft-deleted claim keeps its header alone, and no predicate.
+            if body.is_empty() && TombstoneStoreRead::port_deletion_state(self, rtxn, &id)?.deleted
+            {
+                continue;
+            }
+            let body = decode_claim_body(body, true)?;
+            if body.predicate == predicate {
+                visit(id, body)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 impl ClaimStore for Vault {
     fn port_claim_get(&self, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<ClaimBody>> {
         let Some(raw) = self.store.entities.get(rtxn, id.as_bytes())? else {
@@ -48,37 +98,13 @@ impl ClaimStore for Vault {
         predicate: &str,
     ) -> Result<Vec<(EntityId, ClaimBody)>> {
         let mut rows = Vec::new();
-        for entry in self
-            .store
-            .type_index
-            .prefix_iter(rtxn, &[ENTITY_TYPE_CLAIM])?
-        {
-            let (key, _) = entry?;
-            let id = crate::vault::entity_id_from_type_index_key(&key)?;
-            let raw = self
-                .store
-                .entities
-                .get(rtxn, id.as_bytes())?
-                .ok_or(Error::CorruptedIndex("claim type index"))?;
-            let header =
-                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-            if header.entity_type != ENTITY_TYPE_CLAIM {
-                return Err(Error::CorruptedIndex("claim type index"));
+        self.for_each_claim_with_predicate_in_txn(rtxn, predicate, |id, body| {
+            if rows.len() >= MAX_PREDICATE_LIST_ROWS {
+                return Err(Error::IndexOverflow("claim predicate"));
             }
-            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-            // A soft-deleted claim keeps its header alone, and no predicate.
-            if body.is_empty() && TombstoneStoreRead::port_deletion_state(self, rtxn, &id)?.deleted
-            {
-                continue;
-            }
-            let body = decode_claim_body(body, true)?;
-            if body.predicate == predicate {
-                if rows.len() >= 100_000 {
-                    return Err(Error::IndexOverflow("claim predicate"));
-                }
-                rows.push((id, body));
-            }
-        }
+            rows.push((id, body));
+            Ok(())
+        })?;
         Ok(rows)
     }
     fn port_claim_get_active(

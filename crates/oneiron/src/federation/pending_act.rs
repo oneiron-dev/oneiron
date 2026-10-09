@@ -308,6 +308,13 @@ impl Vault {
             {
                 return Err(invalid());
             }
+            // A deleted grant is no membership: its shell is skipped here, and a
+            // stored body counts only while its row is live, checked last.
+            if raw.len() == ENTITY_METADATA_HEADER_LEN
+                && !crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live()
+            {
+                continue;
+            }
             let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
             if grant.scope == FederationGrantScope::vault(vault_id)
                 && grant.confers_at(now)
@@ -316,6 +323,7 @@ impl Vault {
                     FederationGrantActivation::Unpacted | FederationGrantActivation::Active
                 )
                 && crate::consent::person_is_live_in_txn(self, txn, &grant.member_ref)?
+                && crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live()
             {
                 // A pact can further restrict the grant's content ceiling. A
                 // non-universal pact cannot confer base authority operations.
