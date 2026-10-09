@@ -2,13 +2,17 @@
 //! default its `claim_of` edges reach, as the world-authority fold reads them
 //! at an instant.
 use super::{Decision, held_by_both};
-use crate::claim::ClaimSubject;
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::claim::{ClaimBody, ClaimSubject, decode_claim_body};
 use crate::pipeline::{
     ActiveWorldSelection, PREDICATE_WORLD_ACCESS_ALLOWED_SET,
     PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET, WorldAuthoritySet,
 };
-use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
-use crate::{EntityId, Result, Vault};
+use crate::ports::{EntityStoreRead, TombstoneStoreRead};
+use crate::registry::{
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON,
+};
+use crate::{EntityId, Error, Result, Vault};
 use std::collections::BTreeSet;
 
 /// The worlds a principal may select and the ones a turn that selects none
@@ -50,21 +54,22 @@ impl Decision for WorldSelections {
         let mut subjects = BTreeSet::new();
         for vault in vaults {
             let txn = vault.store.env.read_txn()?;
-            for predicate in [
-                PREDICATE_WORLD_ACCESS_ALLOWED_SET,
-                PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET,
-            ] {
-                for (_, claim) in vault.claims_with_predicate_in_txn(&txn, predicate)? {
-                    if let ClaimSubject::Entity(principal) = claim.subject
-                        && principals.contains(&principal)
-                    {
-                        subjects.extend(
-                            [Some(0), Some(now), claim.valid_from, claim.valid_to]
-                                .into_iter()
-                                .flatten()
-                                .map(|at| (principal, at)),
-                        );
-                    }
+            for id in vault
+                .store
+                .port_entity_ids_by_type(&txn, ENTITY_TYPE_CLAIM, None)?
+            {
+                let Some(claim) = world_access_claim(vault, &txn, &id?)? else {
+                    continue;
+                };
+                if let ClaimSubject::Entity(principal) = claim.subject
+                    && principals.contains(&principal)
+                {
+                    subjects.extend(
+                        [Some(0), Some(now), claim.valid_from, claim.valid_to]
+                            .into_iter()
+                            .flatten()
+                            .map(|at| (principal, at)),
+                    );
                 }
             }
         }
@@ -105,4 +110,33 @@ impl Decision for WorldSelections {
             default: WorldAuthoritySet::default(),
         })
     }
+}
+
+/// Claim `id` when it is a world-access claim, read as the predicate scan
+/// reads each claim (`claims_with_predicate_in_txn`) but one at a time: that
+/// scan's list stops at a count a vault may hold, and its restore is still
+/// asked.
+fn world_access_claim(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<ClaimBody>> {
+    let raw = vault
+        .store
+        .port_entity_raw(txn, id)?
+        .ok_or(Error::CorruptedIndex("claim type index"))?;
+    let body = raw
+        .get(ENTITY_METADATA_HEADER_LEN..)
+        .ok_or(Error::CorruptedIndex("entity header"))?;
+    // A soft-deleted claim keeps its header alone, and no predicate.
+    if body.is_empty() && vault.port_deletion_state(txn, id)?.deleted {
+        return Ok(None);
+    }
+    let claim = decode_claim_body(body, true)?;
+    Ok([
+        PREDICATE_WORLD_ACCESS_ALLOWED_SET,
+        PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET,
+    ]
+    .contains(&claim.predicate.as_str())
+    .then_some(claim))
 }
