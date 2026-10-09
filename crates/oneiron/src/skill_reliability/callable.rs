@@ -19,7 +19,7 @@ use crate::attempt_queue::{AttemptQueue, AttemptRecord, AttemptState, ManifestKi
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
-use crate::skill::SkillRole;
+use crate::skill::{SkillRecord, SkillRole};
 
 /// One caller step's invocation witness: the MessagePack map [`encode_value`] spells. Key: the
 /// [`invocation_prefix`] bytes, then the step seq (u64be).
@@ -109,6 +109,34 @@ pub(crate) fn record_callable_invocation(
     })
 }
 
+/// The executors that invoked `record`'s revision of callable `skill` under
+/// `receipt_ref`, each with whether any of its invocations returned within its
+/// contract — the pairs a routed outcome on that attempt lands on.
+pub(super) fn callable_invokers_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+    record: &SkillRecord,
+    receipt_ref: &str,
+) -> Result<BTreeMap<String, bool>> {
+    let prefix = invocation_prefix(skill, receipt_ref)?;
+    let mut executors = BTreeMap::<String, bool>::new();
+    for row in INVOCATIONS.iter_from(&vault.store, txn, &prefix)? {
+        let (_, raw) = row?;
+        let witness = decode_value(&raw)?;
+        if map_str(&witness, "version") != Some(record.version.as_str()) {
+            continue;
+        }
+        let executor =
+            map_str(&witness, "executor").ok_or(invalid("callable invocation lacks executor"))?;
+        let success = map_entry(&witness, "success")
+            .and_then(Value::as_bool)
+            .ok_or(invalid("callable invocation lacks result state"))?;
+        *executors.entry(executor.to_owned()).or_default() |= success;
+    }
+    Ok(executors)
+}
+
 /// Applies an already-routed receipt outcome to every executor that invoked
 /// this callable revision under that attempt. A win credits only executors
 /// whose invocation returned within its contract; a routed defect charges
@@ -144,27 +172,13 @@ pub(crate) fn project_callable_receipt_outcome(
             "a contributing win requires a completed attempt receipt",
         ));
     }
-    let prefix = invocation_prefix(skill, receipt_ref)?;
     let credited = vault.with_write_txn_grouped(|txn| {
-        let mut executors = BTreeMap::<String, bool>::new();
-        for row in INVOCATIONS.iter_from(&vault.store, txn, &prefix)? {
-            let (_, raw) = row?;
-            let witness = decode_value(&raw)?;
-            if map_str(&witness, "version") != Some(record.version.as_str()) {
-                continue;
-            }
-            let executor = map_str(&witness, "executor")
-                .ok_or(invalid("callable invocation lacks executor"))?;
-            let success = map_entry(&witness, "success")
-                .and_then(Value::as_bool)
-                .ok_or(invalid("callable invocation lacks result state"))?;
-            *executors.entry(executor.to_owned()).or_default() |= success;
-        }
-        let credited: Vec<String> = executors
-            .into_iter()
-            .filter(|(_, succeeded)| !win || *succeeded)
-            .map(|(executor, _)| executor)
-            .collect();
+        let credited: Vec<String> =
+            callable_invokers_in_txn(vault, txn, skill, &record, receipt_ref)?
+                .into_iter()
+                .filter(|(_, succeeded)| !win || *succeeded)
+                .map(|(executor, _)| executor)
+                .collect();
         for executor in &credited {
             record_outcome_in_txn(
                 vault,

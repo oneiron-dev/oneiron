@@ -16,8 +16,8 @@ use crate::temporal::TimeRange;
 use super::codec::{KEY_SCHEMA_VERSION, decode_value, encode_value, invalid, map_u64};
 use super::floor::floor_check_in_txn;
 use super::ledger::{
-    ExecutorArm, OutcomeRef, receipt_executor, receipt_manifest_names_skill, record_outcome_in_txn,
-    tally_outcomes,
+    ExecutorArm, OutcomeRef, outcome_is_local, receipt_executor, receipt_manifest_names_skill,
+    record_outcome_in_txn, tally_outcomes,
 };
 use super::posterior::{
     KEY_ALPHA, KEY_BETA, SKILL_RELIABILITY_SCHEMA_VERSION, SkillReliabilityPosterior,
@@ -220,7 +220,7 @@ pub fn project_skill_reliability_for_executor(
     })
 }
 
-fn project_in_txn(
+pub(super) fn project_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     skill: &EntityId,
@@ -373,7 +373,7 @@ fn cites_receipts_absent_locally(
         let Some(receipt) = receipt.as_str() else {
             continue;
         };
-        if !OutcomeRef::new(skill, executor, receipt).contains(vault, rtxn)? {
+        if !outcome_is_local(vault, rtxn, &OutcomeRef::new(skill, executor, receipt))? {
             return Ok(true);
         }
     }
