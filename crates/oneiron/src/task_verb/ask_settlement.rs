@@ -323,10 +323,11 @@ pub(super) fn is_stale(vault: &Vault, txn: &heed::RoTxn<'_>, group: &AskGroup) -
 }
 
 /// Where an ask group stands for the cut [`settle_in`] makes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct AskStanding {
-    /// A settlement already closes the ask, whatever it would read now.
-    pub(crate) settled: bool,
+    /// The settlement that already closes the ask, whatever it would read
+    /// now: [`settle_in`] returns it and cuts no other.
+    pub(crate) settlement: Option<Box<TaskAskResult>>,
     /// [`is_stale`] holds it: it settles as stale, with no decision.
     pub(crate) stale: bool,
 }
@@ -343,7 +344,7 @@ pub(crate) fn ask_standing_in(
         return Ok(None);
     };
     Ok(Some(AskStanding {
-        settled: read_result(vault, txn, id)?.is_some(),
+        settlement: read_result(vault, txn, id)?.map(Box::new),
         stale: is_stale(vault, txn, &group)?,
     }))
 }

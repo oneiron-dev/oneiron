@@ -103,7 +103,10 @@ const DECISIONS: &[(&str, Check)] = &[
         "task owners and cancellations",
         loosened::<tasks::TaskAuthority>,
     ),
-    ("stale task asks", loosened::<tasks::StaleAsks>),
+    (
+        "settled and stale task asks",
+        loosened::<tasks::AskStandings>,
+    ),
     ("dispatchable agents", loosened::<tasks::DispatchableAgents>),
     ("resident agent wakes", loosened::<tasks::ResidentWakes>),
     ("agent approval ceilings", loosened::<tasks::AgentCeilings>),

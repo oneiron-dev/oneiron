@@ -15,7 +15,8 @@ use crate::task_authority::{
     TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
 };
 use crate::task_verb::{
-    ConsultPayloadRef, TaskAskDefault, TaskAskQuestion, TaskAskSpec, TaskAskTarget,
+    ConsultPayloadRef, TaskAskDefault, TaskAskQuestion, TaskAskSpec, TaskAskStatus, TaskAskTarget,
+    TaskAskWord, TaskAssignee,
 };
 use crate::test_util::entity;
 use crate::{EntityId, Error, Result, TimeRange, Vault, VaultConfig};
@@ -162,10 +163,49 @@ pub(super) fn stale_asks() -> Result<Case> {
         ))
         .map_err(memory)?;
     Case::after_backup(
-        "stale task asks",
+        "settled and stale task asks",
         (dir, vault),
         |vault| put_turn(vault, entity(0x63), "aside", 20),
         move |vault| put_turn(vault, question, "revised question", 30),
+    )
+}
+
+/// An ask its responder answered since the backup is settled, and that
+/// settlement is the one cut it gets. A restore would bring the ask back
+/// open, for a second settlement to decide it again (#1307 review).
+pub(super) fn settled_asks() -> Result<Case> {
+    let (dir, vault) = open_vault();
+    let owner = vault.ensure_embedded_owner_actor().map_err(memory)?;
+    let question = entity(0x64);
+    put_turn(&vault, question, "question", 10)?;
+    let ask = vault
+        .memory(owner, EdgeActorClass::Human)
+        .tasks_ask(&TaskAskSpec::shorthand(
+            Some(TaskAskTarget::Responder(TaskAssignee::Human {
+                actor_ref: owner,
+            })),
+            TaskAskQuestion::new(ConsultPayloadRef::Turn(question)),
+            Some(crate::unix_seconds_now() + 3_600),
+            TaskAskDefault::AskMe,
+        ))
+        .map_err(memory)?
+        .handle;
+    Case::after_backup(
+        "settled and stale task asks",
+        (dir, vault),
+        |vault| put_turn(vault, entity(0x65), "aside", 20),
+        move |vault| {
+            let responder = vault.memory(owner, EdgeActorClass::Human);
+            responder
+                .tasks_answer(&ask, &TaskAskWord::new(owner))
+                .map_err(memory)?;
+            match responder.tasks_ask_status(ask).map_err(memory)? {
+                TaskAskStatus::Settled(_) => Ok(()),
+                _ => Err(Error::InvalidConfig(
+                    "the answered ask is still open".into(),
+                )),
+            }
+        },
     )
 }
 

@@ -49,15 +49,17 @@ impl Decision for TaskAuthority {
     }
 }
 
-/// Whether an ask is stale, which settles it with no decision and closes its
-/// option links: its question's bytes, its members' presence, the holders of
-/// the authority it was put to, and the task it is bound to
-/// (`task_verb::ask_standing_in`, which reads them as the settlement cut
-/// does). Every TASK both vaults hold is asked; the ask groups among them
-/// answer. One the restored vault has settled reads nothing more.
-pub(super) struct StaleAsks;
+/// Whether an ask is settled, and whether it is stale, which settles it with
+/// no decision and closes its option links: its question's bytes, its
+/// members' presence, the holders of the authority it was put to, and the
+/// task it is bound to (`task_verb::ask_standing_in`, which reads them as the
+/// settlement cut does). Every TASK both vaults hold is asked; the ask groups
+/// among them answer. A settlement closes its ask for good, so one the live
+/// vault holds the restored vault must hold as it is, or the ask would be
+/// settled again; one the restored vault has settled reads nothing more.
+pub(super) struct AskStandings;
 
-impl Decision for StaleAsks {
+impl Decision for AskStandings {
     type Subject = EntityId;
     type Answer = AskStanding;
 
@@ -81,7 +83,10 @@ impl Decision for StaleAsks {
     }
 
     fn loosens(live: &AskStanding, restored: &AskStanding) -> bool {
-        live.stale && !restored.stale && !restored.settled
+        match &live.settlement {
+            Some(settlement) => restored.settlement.as_ref() != Some(settlement),
+            None => live.stale && !restored.stale && restored.settlement.is_none(),
+        }
     }
 }
 

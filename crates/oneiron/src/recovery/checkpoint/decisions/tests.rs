@@ -70,6 +70,7 @@ const CASES: &[fn() -> Result<Case>] = &[
     reads::record_positions,
     tasks::task_authority,
     tasks::stale_asks,
+    tasks::settled_asks,
     tasks::dispatchable_agents,
     tasks::resident_wakes,
     tasks::agent_ceilings,
