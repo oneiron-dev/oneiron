@@ -278,7 +278,8 @@ The session lives in the server process: a restart ends it, and only saved turns
 `/entities`, `/claims` (by time and by id) and `/backlinks`. `op` is `ls` (default), `cat`,
 `head` (`lines`), `wc`, `find` (`newer_than`), `grep` (`pattern`, `recursive`) or `readlink`.
 Listings and searches are bounded; pass `next_cursor` back as `cursor` for the next page. Reads
-go through your own scoped read, so scopes excluded from you are absent.
+go through your own scoped read, so scopes excluded from you are absent. Sealed secret custody
+is never part of the tree: walks pass over it, and a direct read of it is refused.
 
 ## Send feedback
 
@@ -293,10 +294,11 @@ endpoint = "https://…"        # ONEIRON_FEEDBACK_ENDPOINT; HTTPS, or HTTP on l
 The destination's token, if any, comes from `ONEIRON_FEEDBACK_TOKEN`. `POST
 /v1/owner/feedback/preview` with `{"category": "bug"}` (or `papercut`, `confusion`,
 `feature-wish`) returns the bundle exactly as it would leave, its `digest`, the `approval` that
-names this bundle going to this destination, and `previewed_at`. `POST
+names this bundle going to this destination on your approval, and `previewed_at`. `POST
 /v1/owner/feedback/send` with the same body plus those three fields sends that bundle once to
-that destination: repeating the request is the same send, a changed destination or bundle is
-refused (409), and a preview older than an hour is refused. The send is an ordinary outbound effect: until the vault's policy grants
+that destination: repeating the request is the same send, a changed destination or bundle, or
+another owner's preview, is refused (409), and a preview older than an hour is refused. Two
+owners sending the same bundle are two sends. The send is an ordinary outbound effect: until the vault's policy grants
 `external:send` on the feedback channel to you, it is held (`"outcome": "held"`) and nothing
 leaves. A bundle carries no vault text. A written note is refused until the engine redacts notes
 in the vault (OF-420).
@@ -307,7 +309,9 @@ When a new source of an installed pack is activated, the saved queries that read
 dropped or remapped go through the repair ladder in the same transaction (ARCH-0059 §4). A
 rename in the pack's migration map migrates the query; an equivalent rewrite migrates it with a
 notice; a rewrite that changes meaning waits as a proposal; a predicate with no rewrite pauses
-the query with its error. `GET /v1/owner/pack-drift` lists what the ladder did, query by query;
+the query with its error. A map names a move between two versions, so a source changed under the
+same version applies none, and no rewrite lands on a predicate the update drops.
+`GET /v1/owner/pack-drift` lists what the ladder did, query by query;
 a paused query shows its error on the query itself.
 
 ## Calling the owner routes
@@ -317,9 +321,10 @@ the vault. That is the slip the first-owner link from `oneiron token bootstrap` 
 Other credentials get the same 403: another person, an agent-class slip, a slip narrowed to
 some verbs, or the host root. Managed vaults are owned through their supervisor, and these
 routes refuse there. Each act rechecks the slip and your ownership in the transaction that
-commits it, so a request still queued when its slip is revoked changes nothing. Off-record
-controls and feedback sends keep no row of their own to recheck in, so they recheck the slip
-when they start. From a shell, with the slip in `ONEIRON_SECRET` and its binding seed in
+commits it, so a request still queued when its slip is revoked changes nothing; an off-record
+witness and promote recheck it where the turn lands. Entering, flipping and closing a room, and
+feedback sends, keep no row of their own to recheck in, so they recheck the slip when they
+start. From a shell, with the slip in `ONEIRON_SECRET` and its binding seed in
 `ONEIRON_BINDING_KEY`:
 
 ```sh
