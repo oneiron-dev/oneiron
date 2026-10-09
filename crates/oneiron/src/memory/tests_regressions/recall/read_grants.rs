@@ -274,7 +274,7 @@ fn scoped_recall_provenance_does_not_name_a_denied_supersedes_target() {
         },
         RecallScope {
             facet: Some(facet.to_hex()),
-            kinds: messages.clone(),
+            kinds: messages,
             ..Default::default()
         },
     ] {
