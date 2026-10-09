@@ -469,7 +469,7 @@
      "path": "src/agent_def/mod.rs",
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 13,
       "mod": 1,
       "re-export": 3
      }
@@ -481,7 +481,7 @@
      "path": "src/agent_def/portable.rs",
      "purpose": "Canonical, inert AGENT_PACK facets derived from real definitions and selected rows",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -492,6 +492,16 @@
      "purpose": "Frozen source tree identity at genuine local birth",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_def/portable_knowledge.rs",
+     "purpose": "The selected-knowledge facet's bytes (`knowledge/selected.json`)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -2523,7 +2533,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/batch/export/bundle_tests.rs",
@@ -26889,7 +26899,9 @@
      "notable": [],
      "path": "src/ports/lmdb_claim.rs",
      "purpose": "Claim adapter preserves the history door; current-state queries exclude stale claims",
-     "surface": {}
+     "surface": {
+      "crate-vis": 3
+     }
     },
     {
      "bucket": "s",
@@ -27055,7 +27067,7 @@
      "path": "src/ports/mod.rs",
      "purpose": "Transaction-composable storage ports",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 6
      }
     },
@@ -38546,7 +38558,7 @@
      "purpose": "—"
     },
     "agent_def": {
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39878,7 +39890,7 @@
    },
    "over_bar": 27,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2398,
+   "source_files": 2399,
    "test_files": 809
   },
   "oneiron-android": {
