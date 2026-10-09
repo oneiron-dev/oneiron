@@ -11,6 +11,7 @@ use serde::Deserialize;
 use super::backup::{BackupConfig, BackupConfigOverride, lookup_backup_override};
 use super::embedder::{EmbedderConfig, EmbedderProvider};
 use super::embedder::{EmbedderConfigOverride, lookup_embedder_override};
+use super::import::ImportConfigOverride;
 use super::lookup::{
     DEFAULT_CONFIG_DIR, DEFAULT_CONFIG_FILE, expand_home, lookup_bool, lookup_list, lookup_parse,
     lookup_path, lookup_path_list, normalize_list, redacted_secret,
@@ -454,6 +455,7 @@ struct FileServeConfig {
     embedder: Option<EmbedderConfigOverride>,
     oneironer: Option<OneironerConfigOverride>,
     backup: Option<BackupConfigOverride>,
+    import: Option<ImportConfigOverride>,
     models: Option<ModelsFile>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
@@ -497,6 +499,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             embedder: value.embedder,
             oneironer: value.oneironer,
             backup: value.backup,
+            import: value.import,
             models: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
@@ -541,6 +544,7 @@ struct PartialServeConfig {
     embedder: Option<EmbedderConfigOverride>,
     oneironer: Option<OneironerConfigOverride>,
     backup: Option<BackupConfigOverride>,
+    import: Option<ImportConfigOverride>,
     /// `[models]` is file-only: it is too structured for env or argv.
     models: Option<ModelsConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
@@ -597,6 +601,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("embedder", &self.embedder)
             .field("oneironer", &self.oneironer)
             .field("backup", &self.backup)
+            .field("import", &self.import)
             .field("models", &self.models)
             .field("privacy_posture", &self.privacy_posture)
             .field(
@@ -717,6 +722,9 @@ impl PartialServeConfig {
         if let Some(value) = self.backup {
             resolved.backup.apply_override(value);
         }
+        if let Some(value) = self.import {
+            resolved.import.apply_override(value);
+        }
         if let Some(value) = self.models {
             resolved.models = Some(value);
         }
@@ -778,6 +786,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             oneironer: Some(OneironerConfigOverride::from(&value.oneironer))
                 .filter(|over| !over.is_empty()),
             backup: None,
+            import: None,
             models: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
