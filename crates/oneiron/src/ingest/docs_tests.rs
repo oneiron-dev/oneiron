@@ -432,7 +432,7 @@ fn mixed_summary_producers_do_not_abort_or_starve_document_hits() -> Result<()> 
             conv, None, true, actor,
         ))?
         .id;
-    let dag = vault.mint_dag_scope_summary(
+    let (dag, _) = vault.mint_and_land_scope_summary(
         &crate::conversation_dag::fixtures::scope(
             conv,
             crate::conversation_dag::ScopePath::Canonical,
@@ -440,6 +440,8 @@ fn mixed_summary_producers_do_not_abort_or_starve_document_hits() -> Result<()> 
         ),
         "Gravity in the DAG",
         actor,
+        None,
+        false,
     )?;
     // Promotion keeps the witness's MessagePack `content` body and matching
     // text index entry; neither belongs to the document-summary schema.
