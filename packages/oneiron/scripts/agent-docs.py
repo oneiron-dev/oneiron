@@ -13,7 +13,7 @@ def artifacts():
     py = (ROOT / "crates/oneiron-py/python/oneiron/__init__.pyi").read_text()
     manifest = json.loads((ROOT / "scripts/sdk/agent-verbs.json").read_text())
     verbs = [row["name"] for row in manifest["verbs"] if row.get("context", "memory") == "memory"]
-    errors = (ROOT / "crates/oneiron/src/memory/error.rs").read_text()
+    errors = (ROOT / "crates/oneiron-contracts/src/memory/error.rs").read_text()
     codes = re.findall(r'pub const MEMORY_CODE_\w+: &str = "([A-Z_]+)";', errors)
     remedies = {
         "BAD_REQUEST": "Correct input fields, types and units. Timestamps are Unix seconds.",

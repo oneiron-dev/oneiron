@@ -245,11 +245,12 @@
       "name": "recall",
       "input": "RecallRequest",
       "output": "crate::memory::MemoryPack",
-      "call": "memory.recall(&input.query, input.effort.unwrap_or(crate::memory::Effort::Medium), &input.scope.unwrap_or_default(), input.limit.unwrap_or(10), input.format.as_deref(), None)?",
+      "call": "crate::task_verb::sdk::recall_with_vector(memory, input, |_| None)?",
+      "server_door": "recall_off_runtime",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true,
-        "validate": "crate::memory::caps::check_query(&input.query)?; crate::memory::caps::check_limit(input.limit.unwrap_or(10))?;"
+        "validate": "crate::memory::caps::check_query(&input.query)?; crate::memory::caps::check_limit(input.limit.unwrap_or(10))?; crate::memory::caps::check_as_of(input.as_of)?;"
       },
       "mcp": "none",
       "section": false,
@@ -278,6 +279,10 @@
           {
             "name": "format",
             "kind": "format"
+          },
+          {
+            "name": "as_of",
+            "kind": "as_of"
           }
         ],
         "docs": {
@@ -292,7 +297,8 @@
           "effort": "Effort",
           "scope": "Option<RecallScope>",
           "limit": "u32",
-          "format": "Option<String>"
+          "format": "Option<String>",
+          "as_of": "Option<u64>"
         },
         "output": "MemoryPack"
       }

@@ -43,6 +43,7 @@ fn recall_scope_honesty_stays_bounded_on_a_large_claim_index() {
             &RecallScope {
                 world_ref: Some(world.to_hex()),
                 facet: None,
+                kinds: None,
             },
             5,
             None,
