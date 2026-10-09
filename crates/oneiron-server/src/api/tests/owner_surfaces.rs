@@ -455,41 +455,56 @@ async fn graph_fs_reads_the_vault_as_a_tree_for_the_owner_only() {
         "writes poems about engines",
     );
     // A sealed secret is absent from the tree, and the listing still works.
-    let secrets = tempfile::tempdir().unwrap();
-    let declared = secrets
-        .path()
-        .canonicalize()
-        .unwrap()
-        .join(".secrets/api.key");
-    std::fs::create_dir_all(declared.parent().unwrap()).unwrap();
+    // The value field is crate-private, so the record goes through the one
+    // public body codec, as the manifest flow writes it.
     let custody = {
-        use oneiron::secret_custody::{
-            CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SecretBinding,
-            SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
+        use rmpv::Value;
+        let band = |min: u64, max: u64| {
+            Value::Map(vec![
+                (Value::from("min"), Value::from(min)),
+                (Value::from("max"), Value::from(max)),
+            ])
         };
-        server
-            .vault()
-            .register_secret(SecretCustodyRecord {
-                schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
-                name: "graph-fs-secret".to_owned(),
-                class: CustodyClass::CustodyPortable,
-                device_only: false,
-                value_bytes: b"never-in-the-tree".to_vec(),
-                status: SecretCustodyStatus::Active,
-                registered_at: 1,
-                rotated_at: None,
-                rotation_generation: 0,
-                bindings: vec![SecretBinding {
-                    effector: "connector:graph-fs-test".to_owned(),
-                    tier_ceiling: CustodyTier::T2LocalRegistered,
-                    scopes: vec!["read".to_owned()],
-                }],
-                manifest_ref: "secrets.toml".to_owned(),
-                declared_paths: vec![declared.to_string_lossy().into_owned()],
-                policy_floor_snapshot: SecretCustodyFloor::default(),
-            })
-            .unwrap()
-            .to_hex()
+        let floor = Value::Map(vec![
+            (Value::from("portable"), band(0, 2)),
+            (Value::from("device_bound"), band(0, 2)),
+            (Value::from("cross_vault"), band(0, 0)),
+            (Value::from("rotation_max_age_secs"), Value::Nil),
+            (Value::from("env_bindings"), Value::Map(vec![])),
+        ]);
+        let binding = Value::Map(vec![
+            (
+                Value::from("effector"),
+                Value::from("connector:graph-fs-test"),
+            ),
+            (Value::from("tier_ceiling"), Value::from(0_u64)),
+            (
+                Value::from("scopes"),
+                Value::Array(vec![Value::from("read")]),
+            ),
+        ]);
+        let body = Value::Map(vec![
+            (Value::from("schema_version"), Value::from(1_u64)),
+            (Value::from("name"), Value::from("graph-fs-secret")),
+            (Value::from("class"), Value::from("custody-portable")),
+            (Value::from("device_only"), Value::from(false)),
+            (
+                Value::from("value_bytes"),
+                Value::Binary(b"never-in-the-tree".to_vec()),
+            ),
+            (Value::from("status"), Value::from("active")),
+            (Value::from("registered_at"), Value::from(1_u64)),
+            (Value::from("rotated_at"), Value::Nil),
+            (Value::from("rotation_generation"), Value::from(0_u64)),
+            (Value::from("bindings"), Value::Array(vec![binding])),
+            (Value::from("manifest_ref"), Value::from("")),
+            (Value::from("declared_paths"), Value::Array(vec![])),
+            (Value::from("policy_floor_snapshot"), floor),
+        ]);
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &body).unwrap();
+        let record = oneiron::secret_custody::decode_secret_custody_body(&bytes).unwrap();
+        server.vault().register_secret(record).unwrap().to_hex()
     };
     for recipe in refused_recipes(&server) {
         let (status, _) = call(
