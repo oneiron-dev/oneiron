@@ -70,8 +70,7 @@ pub use self::types::{
 use self::dispatcher::{SELF_PROVENANCE_CALL_KEY, edge_operation_gate_id};
 #[cfg(test)]
 use self::payload::{
-    decode_self_dispatch_outcome, durable_wait_reason_from_str, durable_wait_reason_str,
-    self_call_request_value, self_dispatch_outcome_value, self_effect_from_str,
+    decode_self_dispatch_outcome, self_call_request_value, self_dispatch_outcome_value,
 };
 #[cfg(test)]
 use crate::{

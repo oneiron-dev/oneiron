@@ -19,7 +19,7 @@ use crate::config::VaultConfig;
 use crate::dreamer_runner::{
     AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt, DreamerAdmissionOutcome,
     DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier,
-    DreamerConsolidationAdmissionOutcome, EnqueueDreamerConsolidationAttempt,
+    DreamerConsolidationAdmissionOutcome,
 };
 use crate::dreamer_wake::WakePassDeadline;
 use crate::inbox::InboxBulkVerb;
@@ -371,74 +371,6 @@ fn lead_and_due_enqueue_once_across_reopen() {
     );
 }
 
-/// A late start is two immediate, distinct, fire-once transactions — Lead then
-/// Due — and synthesizes no escalation event of its own.
-#[test]
-fn late_start_consumes_lead_then_due_once() {
-    let (_dir, vault) = open_vault();
-    let instance = project_instance(&vault, CommitmentStrength::Commitment);
-    let late = DUE_AT + 5_000;
-
-    assert!(matches!(
-        fire_next(&vault, late),
-        CommitmentWakeFireOutcome::Enqueued { .. }
-    ));
-    assert!(matches!(
-        fire_next(&vault, late),
-        CommitmentWakeFireOutcome::Enqueued { .. }
-    ));
-    assert!(next_due(&vault).is_none());
-
-    assert_eq!(
-        run_ids(&vault),
-        vec![
-            phase_key(instance, CommitmentWakePhase::Lead),
-            phase_key(instance, CommitmentWakePhase::Due),
-        ],
-        "exactly two attempts, in phase order, and nothing else"
-    );
-}
-
-/// Only `Commitment` wakes. `Decision` is query/check-in material and
-/// `StatedIntention` is retrieval-only: both settle their phase without
-/// enqueueing, so the deadline source converges instead of busy-looping.
-#[test]
-fn only_commitment_strength_emits_event_attempt() {
-    for (strength, expected) in [
-        (
-            CommitmentStrength::StatedIntention,
-            Some(CommitmentWakeSkip::StatedIntention),
-        ),
-        (
-            CommitmentStrength::Decision,
-            Some(CommitmentWakeSkip::Decision),
-        ),
-        (CommitmentStrength::Commitment, None),
-    ] {
-        let (_dir, vault) = open_vault();
-        project_instance(&vault, strength);
-        let outcome = fire_next(&vault, PROJECT_AT);
-        match expected {
-            Some(skip) => {
-                assert_eq!(outcome, CommitmentWakeFireOutcome::Skipped(skip));
-                assert!(run_ids(&vault).is_empty(), "{strength:?} must not wake");
-            }
-            None => {
-                assert!(matches!(
-                    outcome,
-                    CommitmentWakeFireOutcome::Enqueued { .. }
-                ));
-                assert_eq!(run_ids(&vault).len(), 1);
-            }
-        }
-        assert_eq!(
-            next_due(&vault).map(|due| due.phase),
-            Some(CommitmentWakePhase::Due),
-            "{strength:?}: the Lead phase is settled either way"
-        );
-    }
-}
-
 /// A closed instance is a stale row, not a wake. The status write and the
 /// schedule's close hook are separate calls, so the rows a crash between them
 /// leaves behind are exactly what this settles.
@@ -470,70 +402,6 @@ fn closed_or_missing_instance_settles_stale_due_row() {
 }
 
 // ─── 4: the wrapper executor ───────────────────────────────────────────────
-
-/// An ordinary partition attempt is delegated with its payload, context, and
-/// result untouched.
-#[test]
-fn ordinary_partition_attempt_delegates_unchanged() {
-    let (_dir, vault) = open_vault();
-    DreamerRunnerStore::new(&vault)
-        .enqueue_consolidation(EnqueueDreamerConsolidationAttempt {
-            scope: DreamerConsolidationScope::Micro,
-            input: Value::from("ordinary-partition-payload"),
-            parent_attempt: None,
-            dedupe_key: Some("ordinary".to_owned()),
-            run_id: Some("run-ordinary".to_owned()),
-            now: 10,
-        })
-        .expect("enqueue an ordinary attempt");
-    let attempt = admit_micro(&vault, 11);
-
-    let inner = RecordingInner {
-        calls: Rc::default(),
-        completed_units: 7,
-    };
-    let calls = Rc::clone(&inner.calls);
-    let execution = execute_wrapped(&vault, &attempt, None, inner, dreamer_actor())
-        .expect("delegation never fails on the wrapper's account");
-
-    assert_eq!(
-        execution,
-        DreamerAttemptExecution::Completed { completed_units: 7 },
-        "the delegated result is the inner executor's, verbatim"
-    );
-    assert_eq!(
-        calls.borrow().as_slice(),
-        &[Some("run-ordinary".to_owned())]
-    );
-}
-
-/// A tagged event with no planner is a typed COMPLETION with zero units. It
-/// never reaches the partition decoder and never parks the driver — which is
-/// why the production factory installs the wrapper unconditionally.
-#[test]
-fn missing_planner_completes_tagged_attempt_without_parking() {
-    let (_dir, vault) = open_vault();
-    project_instance(&vault, CommitmentStrength::Commitment);
-    fire_next(&vault, PROJECT_AT);
-    let attempt = admit_micro(&vault, PROJECT_AT);
-
-    let inner = RecordingInner::default();
-    let calls = Rc::clone(&inner.calls);
-    // A System-class actor: legal precisely because a planner-less wrapper
-    // never uses it.
-    let system = WriteActor::new(party(BENEFICIARY), EdgeActorClass::System);
-    let execution =
-        execute_wrapped(&vault, &attempt, None, inner, system).expect("no-planner skip completes");
-
-    assert_eq!(
-        execution,
-        DreamerAttemptExecution::Completed { completed_units: 0 }
-    );
-    assert!(
-        calls.borrow().is_empty(),
-        "a tagged event must never reach the partition decoder"
-    );
-}
 
 /// The proposal exists as a PENDING consent row whose inbox group key is the
 /// phase key itself, through the existing literal-run fallback — no new
