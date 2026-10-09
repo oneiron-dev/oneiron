@@ -52,6 +52,8 @@ mod authority_tests;
 // every pipeline-internal item the tests name bare. After the directory split
 // the seam re-imports both so `tests.rs` resolves exactly as it did before.
 #[cfg(test)]
+use self::trace::retrieval_trace_fused_scores;
+#[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
 use crate::codebase::RepoRef;
