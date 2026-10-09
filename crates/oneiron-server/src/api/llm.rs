@@ -127,8 +127,17 @@ fn admit(
         )));
     };
     let original_purpose = request.envelope.purpose.clone();
+    // A model `[models]` configured is attested by this host; any other id
+    // must have a registered catalog row.
+    let binding = match server.ai.model_locality(&request.model) {
+        Some(locality) => oneiron::llm::HostInferenceBinding::Advertised {
+            model: request.model.clone(),
+            locality,
+        },
+        None => oneiron::llm::HostInferenceBinding::Registered,
+    };
     let context = oneiron::llm::HostInferenceContext {
-        binding: oneiron::llm::HostInferenceBinding::Registered,
+        binding,
         extraction_egress: server.extraction_egress.as_deref(),
     };
     let authorized = server

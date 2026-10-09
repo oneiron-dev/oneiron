@@ -19,7 +19,7 @@ pub struct OpenAiCompatConfig {
 
 impl OpenAiCompatConfig {
     pub fn from_registry(vault: &oneiron::Vault) -> oneiron::Result<Self> {
-        Ok(Self::with_models(vault.model_catalog_entries(
+        Ok(Self::from_catalog(vault.model_catalog_entries(
             oneiron::llm::registry::ModelWireFormat::OpenaiCompat,
         )?))
     }
@@ -35,8 +35,10 @@ impl OpenAiCompatConfig {
         }
     }
 
+    /// Builds the adapter config from host-supplied catalog rows: a host that
+    /// keeps its model list in its own configuration needs no registry rows.
     #[must_use]
-    fn with_models(models: impl IntoIterator<Item = LlmCatalogEntry>) -> Self {
+    pub fn from_catalog(models: impl IntoIterator<Item = LlmCatalogEntry>) -> Self {
         Self {
             endpoint_path: "/v1/chat/completions".to_owned(),
             models: models
