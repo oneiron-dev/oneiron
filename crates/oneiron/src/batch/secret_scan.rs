@@ -132,6 +132,12 @@ pub(crate) fn sensitive_field_name(key: &str) -> bool {
     shapes::sensitive_key(key)
 }
 
+/// A value the release doors read as no secret even under a credential name:
+/// empty, `null`, or a redaction marker.
+pub(crate) fn release_placeholder(value: &str) -> bool {
+    shapes::field_placeholder(value, Door::Release)
+}
+
 /// Identifiers and records outside the batch door (refs, paths, telemetry
 /// keys, session tags, question rows) keep their scan in both modes: they land
 /// in keys, indexes and receipts that a later mask cannot reach.

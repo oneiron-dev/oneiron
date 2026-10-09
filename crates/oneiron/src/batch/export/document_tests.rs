@@ -319,9 +319,11 @@ fn byte_array(bytes: &[u8]) -> Value {
 
 /// Secrets invariant beside the repro above: an id slot keeps bytes that only
 /// parse as a container, never bytes that encode a credential. Each claim
-/// value's `actor_entity_ref` holds 16 bytes encoding one credential form. The
-/// release-policy name, the binary map and the byte arrays escaped review
-/// (Astra and Greptile on #1331).
+/// value's `actor_entity_ref` holds 16 bytes encoding one credential form, and
+/// an edge subject's source id holds one more. The release-policy names, the
+/// binary map, the byte arrays and the edge subject escaped review (Astra and
+/// Greptile on #1331). A required id nulled this way leaves its claim
+/// unimportable, so the archive is read as JSON text here.
 #[test]
 fn whole_vault_json_nulls_an_id_slot_whose_bytes_encode_a_credential() -> Result<()> {
     let text = Value::from;
@@ -347,55 +349,66 @@ fn whole_vault_json_nulls_an_id_slot_whose_bytes_encode_a_credential() -> Result
         encode(&byte_array(b"pwd=Ab9Q7t2Lxyz")),
         encode(&byte_array(br#"{"bearer":"x"} "#)),
     ];
+    let edge_source = encode(&Value::Map(vec![(text("db_password"), text("Ab"))]));
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());
     let person = crate::EntityId::now();
     vault.put_entity(&person, ENTITY_TYPE_PERSON, range(), 789, b"person")?;
-    let mut claims = Vec::new();
-    for forged in forms {
-        assert_eq!(forged.len(), 16, "{forged:?}");
-        let mut body = ClaimBody::new(
+    let about = |subject| {
+        ClaimBody::new(
             "preference.food",
-            ClaimSubject::Entity(person),
+            subject,
             Value::from("matcha"),
             0.75,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        )?;
+        )
+    };
+    let mut bodies = Vec::new();
+    for forged in &forms {
+        assert_eq!(forged.len(), 16, "{forged:?}");
+        let mut body = about(ClaimSubject::Entity(person))?;
         body.value = Value::Map(vec![(
             Value::from("actor_entity_ref"),
             Value::Binary(forged.clone()),
         )]);
+        bodies.push(body);
+    }
+    // 33 bytes: one whole MessagePack reading stops after the source id.
+    bodies.push(about(ClaimSubject::Edge {
+        source: crate::EntityId::from_bytes(edge_source.as_slice().try_into().unwrap())?,
+        kind: EdgeKind::BelongsTo,
+        target: crate::EntityId::from_bytes(*b"public-target-id")?,
+    })?);
+    let mut claims = Vec::new();
+    for body in &bodies {
         // Residue already on disk, as above: the write wall is not under test.
         let claim = crate::EntityId::now();
-        let encoded = crate::claim::encode_claim_body(&body)?;
+        let encoded = crate::claim::encode_claim_body(body)?;
         raw_residue(&vault, &claim, crate::registry::ENTITY_TYPE_CLAIM, &encoded)?;
-        claims.push((claim, forged));
+        claims.push(claim);
     }
     let export = vault.export_whole_vault(PackFormat::Json)?;
-    let document = vault.read_whole_vault_json(export.bytes())?;
-    let mut exported_forms = Vec::new();
-    for (claim, forged) in claims {
-        let row = document
-            .claims
-            .iter()
-            .find(|row| row.id == claim.to_hex())
-            .unwrap();
-        let ExportBody::MessagePack(exported) = &row.body else {
-            panic!("MessagePack body expected");
-        };
-        let exported = exported.to_msgpack()?;
-        if !field(field(&exported, "val"), "actor_entity_ref").is_nil() {
-            exported_forms.push(format!("{forged:02x?}"));
-        }
+    let json = std::str::from_utf8(export.bytes()).unwrap();
+    for claim in claims {
+        assert!(json.contains(&claim.to_hex()), "claim row missing");
     }
+    let exported_forms = forms
+        .iter()
+        .chain([&edge_source])
+        .filter(|forged| {
+            let bytes = forged.iter().map(u8::to_string).collect::<Vec<_>>();
+            json.contains(&bytes.join(","))
+        })
+        .map(|forged| format!("{forged:02x?}"))
+        .collect::<Vec<_>>();
     assert_eq!(exported_forms, Vec::<String>::new());
     Ok(())
 }
 
 /// Bug repro (review of #1331): an id that holds no credential survives the
 /// archive whatever container its bytes parse as, and the archive imports. A
-/// world id whose bytes read as JSON was still nulled, so its claim failed to
-/// import.
+/// world id whose bytes read as JSON was still nulled, and so was one naming a
+/// credential field that holds nothing; either claim failed to import.
 #[test]
 fn whole_vault_json_reimports_credential_free_ids_of_every_container_shape() -> Result<()> {
     let text = Value::from;
@@ -406,6 +419,13 @@ fn whole_vault_json_reimports_credential_free_ids_of_every_container_shape() -> 
         encode(&Value::Ext(5, b"plain bytes13".to_vec())),
         b"[128]           ".to_vec(),
         br#"{"a":[145,1]}   "#.to_vec(),
+        // The release policy reads nil and `null` under a credential name as
+        // no secret.
+        br#"{"pwd":null}    "#.to_vec(),
+        encode(&Value::Map(vec![
+            (text("token"), Value::Nil),
+            (text("a"), text("hello")),
+        ])),
     ];
     let (_source_dir, source) = open_test_vault_with(VaultConfig::default());
     let (_target_dir, target) = open_test_vault_with(VaultConfig::default());

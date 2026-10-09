@@ -1,6 +1,7 @@
 //! Unconditional credential removal before any context/export format writer.
 use crate::batch::secret_scan::{
-    sanitize_credentials, sanitize_messagepack_credentials, scan_file_content, sensitive_field_name,
+    release_placeholder, sanitize_credentials, sanitize_messagepack_credentials, scan_file_content,
+    sensitive_field_name,
 };
 use serde_json::{Map, Value};
 
@@ -60,7 +61,7 @@ fn null_at_depth(key: &str, value: &Value, depth: usize, document: bool) -> Valu
         && let Some(bytes) = entity_reference_bytes(fields)
     {
         // A credential-bearing id is nulled whole, as the typed serializer does.
-        return if id_carries_credential(&bytes, depth) {
+        return if reference_carries_credential(&bytes, depth) {
             Value::Null
         } else {
             value.clone()
@@ -106,12 +107,24 @@ fn json_bytes(values: &[Value]) -> Option<Vec<u8>> {
         .collect()
 }
 
+/// An edge subject's reference holds two ids around its edge kind, and each is
+/// read as an id too: a whole-value reading of the 33 bytes stops after one.
+fn reference_carries_credential(bytes: &[u8], depth: usize) -> bool {
+    id_carries_credential(bytes, depth)
+        || matches!(
+            crate::claim::ClaimSubject::decode(bytes),
+            Ok(crate::claim::ClaimSubject::Edge { source, target, .. })
+                if id_carries_credential(source.as_bytes(), depth)
+                    || id_carries_credential(target.as_bytes(), depth)
+        )
+}
+
 /// Whether an id's bytes carry a credential. Every reading of them is judged
 /// by the release policy's own detector: the raw text, a JSON document, a
 /// whole MessagePack value, and inside those each string, binary, extension
-/// and numeric byte array read again as bytes. A field name counts when the
-/// release policy or this serializer redacts it. Container shape alone is no
-/// credential, so a credential-free id survives the archive.
+/// and numeric byte array read again as bytes, and every field the release
+/// policy's rule names. Container shape alone is no credential, so a
+/// credential-free id survives the archive.
 fn id_carries_credential(bytes: &[u8], depth: usize) -> bool {
     if depth >= 128 || scan_file_content("", bytes).is_some() {
         return true;
@@ -143,7 +156,7 @@ fn json_names_credential(value: &Value, depth: usize) -> bool {
                     .any(|value| json_names_credential(value, depth + 1))
         }
         Value::Object(fields) => fields.iter().any(|(key, value)| {
-            credential_name(key)
+            credential_field(key, value.is_null(), value.as_str())
                 || id_carries_credential(key.as_bytes(), depth)
                 || json_names_credential(value, depth + 1)
         }),
@@ -167,7 +180,8 @@ fn names_credential(value: &rmpv::Value, depth: usize) -> bool {
                     .any(|value| names_credential(value, depth + 1))
         }
         rmpv::Value::Map(entries) => entries.iter().any(|(key, value)| {
-            key_name(key).is_some_and(|name| credential_name(&name))
+            key_name(key)
+                .is_some_and(|name| credential_field(&name, value.is_nil(), value.as_str()))
                 || names_credential(key, depth + 1)
                 || names_credential(value, depth + 1)
         }),
@@ -175,10 +189,13 @@ fn names_credential(value: &rmpv::Value, depth: usize) -> bool {
     }
 }
 
-/// One vocabulary: every name the release policy redacts, and the names this
-/// serializer nulls anywhere else in the document.
-fn credential_name(name: &str) -> bool {
-    sensitive_field_name(name) || credential_key(name)
+/// The release policy's field rule: a credential name holding anything but
+/// nil or a placeholder. One vocabulary: every name the release policy
+/// redacts, and the names this serializer nulls anywhere else in the document.
+fn credential_field(name: &str, nil: bool, text: Option<&str>) -> bool {
+    (sensitive_field_name(name) || credential_key(name))
+        && !nil
+        && !text.is_some_and(release_placeholder)
 }
 
 /// A map key read as a field name, whether text, binary, extension or bytes.
