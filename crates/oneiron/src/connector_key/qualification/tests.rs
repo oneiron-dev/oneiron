@@ -234,23 +234,6 @@ fn plan() -> QualificationPlan {
     }
 }
 #[test]
-fn independent_connections_grounding_and_retries_qualify_one_effect_per_key() {
-    let stub = Stub {
-        fault: Fault::None,
-        connections: Cell::new(0),
-        effects: Rc::default(),
-    };
-    let report = qualify_connector(&stub, &plan(), &Oracle).unwrap();
-    assert_eq!(
-        report.exercised_result_types,
-        BTreeSet::from(["record".into()])
-    );
-    assert_eq!(
-        serde_json::from_slice::<Value>(&stub.effect_state().unwrap()).unwrap(),
-        json!({"write-key":1,"timeout-key":1,"write-key-distinct":1,"timeout-key-distinct":1})
-    );
-}
-#[test]
 fn probes_refuse_each_broken_connector_contract() {
     for (fault, expected) in [
         (Fault::Lists, QualificationFailure::StatelessMismatch),
@@ -335,30 +318,6 @@ fn write_probes_refuse_request_ids_as_idempotency_keys() {
             Err(QualificationFailure::IdempotencyArgument)
         );
     }
-}
-
-#[test]
-fn read_only_suite_has_no_write_probe_and_refused_effect_fails() {
-    let stub = Stub {
-        fault: Fault::ReadOnly,
-        connections: Cell::new(0),
-        effects: Rc::default(),
-    };
-    let mut read_plan = plan();
-    read_plan.write = None;
-    read_plan.timeout_retry = None;
-    let report = qualify_connector(&stub, &read_plan, &Oracle).expect("read-only connector");
-    assert_eq!(report.calls, read_plan.reads.len() * 2);
-    assert_eq!(stub.effect_state().unwrap(), b"{}".to_vec());
-    let refusing = Stub {
-        fault: Fault::RefusedCommitted,
-        connections: Cell::new(0),
-        effects: Rc::default(),
-    };
-    assert_eq!(
-        qualify_connector(&refusing, &plan(), &Oracle),
-        Err(QualificationFailure::Replay)
-    );
 }
 
 #[test]

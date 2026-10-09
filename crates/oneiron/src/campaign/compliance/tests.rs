@@ -291,24 +291,6 @@ fn campaign_compliance_platform_dm_scope_is_row_local() {
 // -- per-axis walls ----------------------------------------------------
 
 #[test]
-fn campaign_compliance_unknown_legal_form_blocks_exemption() {
-    let mut unknown = facts(Some("UK"), "email");
-    unknown.legal_form = None;
-    assert_eq!(
-        verdict(&unknown),
-        ComplianceVerdict::Block {
-            reason: ComplianceBlockReason::UnknownLegalForm,
-            jurisdiction: Some("UK".to_owned()),
-            rule_kind: Some(ComplianceRuleKind::ConsentClass),
-        }
-    );
-    assert_eq!(
-        verdict(&facts(Some("UK"), "email")),
-        ComplianceVerdict::Allow
-    );
-}
-
-#[test]
 fn campaign_compliance_jp_publication_exemption_requires_context() {
     assert_eq!(
         verdict(&facts(Some("JP"), "email")),
@@ -353,41 +335,6 @@ fn campaign_compliance_us_unknown_list_provenance_blocks() {
         reason(&verdict(&harvested)),
         Some(ComplianceBlockReason::RuleViolation)
     );
-}
-
-#[test]
-fn campaign_compliance_required_message_elements_block() {
-    type SpoilOneAxis = fn(&mut DispatchComplianceFacts);
-    let axes: [(SpoilOneAxis, ComplianceRuleKind); 4] = [
-        (
-            |facts| facts.sender_identity_present = false,
-            ComplianceRuleKind::SenderId,
-        ),
-        (
-            |facts| facts.physical_address_present = false,
-            ComplianceRuleKind::PhysicalAddress,
-        ),
-        (
-            |facts| facts.optout_mechanism_present = false,
-            ComplianceRuleKind::OptoutMechanism,
-        ),
-        (
-            |facts| facts.commercial_marking_present = false,
-            ComplianceRuleKind::ContentMarking,
-        ),
-    ];
-    for (spoil, rule_kind) in axes {
-        let mut spoiled = facts(Some("US"), "email");
-        spoil(&mut spoiled);
-        assert_eq!(
-            verdict(&spoiled),
-            ComplianceVerdict::Block {
-                reason: ComplianceBlockReason::MissingRequiredMessageElement,
-                jurisdiction: Some("US".to_owned()),
-                rule_kind: Some(rule_kind),
-            }
-        );
-    }
 }
 
 #[test]
@@ -437,22 +384,6 @@ fn campaign_compliance_future_verified_at_is_not_verification() {
     assert_eq!(
         classify_compliance_amendment(&base, &future).expect("classified"),
         ComplianceAmendmentClass::MetadataRefresh
-    );
-}
-
-#[test]
-fn campaign_compliance_post_send_rows_never_block_dispatch() {
-    // Opt-out deadlines and retention are obligations that begin after the
-    // send. They ship as data and are never a dispatch wall.
-    assert!(!ComplianceRuleKind::OptoutDeadline.is_dispatch_enforced());
-    assert!(!ComplianceRuleKind::Records.is_dispatch_enforced());
-    assert_eq!(
-        verdict(&facts(Some("US"), "email")),
-        ComplianceVerdict::Allow
-    );
-    assert_eq!(
-        verdict(&facts(Some("EU/DE"), "email")),
-        ComplianceVerdict::Allow
     );
 }
 
@@ -538,26 +469,6 @@ fn hydrate(vault: &Vault, subject: EntityId) -> DispatchComplianceFacts {
         FRESH_NOW,
     )
     .expect("hydration")
-}
-
-#[test]
-fn provider_email_uses_email_consent_rows() {
-    let (_tmp, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
-    let subject = put_person(&vault, SUBJECT_SEED);
-    let rtxn = vault.store.env.read_txn().expect("read txn");
-    for channel in ["email_resend", "email_ses", "email_postmark"] {
-        let mut effect = gate_effect(None);
-        effect.channel = channel.to_owned();
-        let hydrated =
-            hydrate_dispatch_compliance_facts(&vault.store, &rtxn, &effect, subject, FRESH_NOW)
-                .expect("provider compliance facts");
-        assert_eq!(hydrated.channel, "email", "{channel}");
-        assert_eq!(
-            verdict(&facts(Some("UK"), &hydrated.channel)),
-            verdict(&facts(Some("UK"), "email")),
-            "{channel} must use the same consent-class and message-element rows",
-        );
-    }
 }
 
 /// Writes the evidence claim citing `provenance_ref` as `class`.

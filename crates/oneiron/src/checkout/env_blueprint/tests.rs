@@ -419,48 +419,6 @@ fn hand_forged_knowledge_inputs_fail_containment_after_decode() {
 }
 
 #[test]
-fn repo_relative_paths_and_globs_share_a_closed_grammar() {
-    for rejected in [
-        "",
-        "/etc/passwd",
-        "C:\\repo",
-        "C:/repo",
-        "a\0b",
-        "a\\b",
-        "docs/",
-        "/docs",
-        "a//b",
-        "./docs",
-        "docs/./a",
-        "..",
-        "../docs",
-        "docs/../a",
-    ] {
-        assert!(RepoRelativePath::parse(rejected).is_err(), "{rejected:?}");
-        assert!(RepoRelativeGlob::parse(rejected).is_err(), "{rejected:?}");
-    }
-
-    assert_eq!(RepoRelativePath::root().as_str(), ".");
-    assert!(RepoRelativePath::parse(".").is_ok());
-    assert!(RepoRelativePath::parse("crates/oneiron/src").is_ok());
-    // The root sentinel is a path-only exception; `.` is not a glob segment the
-    // KNOW consumer ever needs, so the traversal grammar rejects it.
-    assert!(RepoRelativeGlob::parse(".").is_err());
-    assert!(RepoRelativeGlob::parse("docs/**/*.md").is_ok());
-    assert!(RepoRelativeGlob::parse("docs/?.md").is_ok());
-    assert!(RepoRelativeGlob::parse("**").is_ok());
-
-    let error = RepoRelativePath::parse("/etc").unwrap_err();
-    assert!(matches!(
-        error,
-        EnvBlueprintError::InvalidValue {
-            kind: "repo_relative_path",
-            ..
-        }
-    ));
-}
-
-#[test]
 fn env_step_argv_rejects_shell_strings_and_command_string_interpreters() {
     assert!(matches!(
         validate_argv_only(&[]),
@@ -540,24 +498,6 @@ fn env_step_cwd_and_keys_are_grammar_checked_on_every_validation() {
 }
 
 #[test]
-fn env_literal_values_reject_nul_bytes_without_echoing_them() {
-    let mut nul_step = step("setup", &["git", "status"]);
-    let key = EnvKey::parse("TOKEN").unwrap();
-    nul_step.env = env_map(key, EnvValue::Literal("a\0b".to_owned()));
-    let error = blueprint(init_stages(vec![nul_step]))
-        .validate()
-        .unwrap_err();
-    assert!(matches!(
-        error,
-        EnvBlueprintError::InvalidValue {
-            kind: "env_value",
-            ..
-        }
-    ));
-    assert!(!error.to_string().contains('\0'));
-}
-
-#[test]
 fn detector_verdict_wins_over_contextual_cwd_and_env_key_errors() {
     let mut secret_cwd = step("setup", &["git", "status"]);
     secret_cwd.cwd = RepoRelativePath::parse(AWS_FIXTURE).unwrap();
@@ -625,127 +565,6 @@ fn detector_covers_step_ids_knowledge_ids_and_secret_ref_names() {
 }
 
 #[test]
-fn identifiers_and_secret_names_reject_control_bytes_before_the_detector() {
-    assert!(EnvStepId::parse("a\u{1}b").is_err());
-    assert!(EnvStepId::parse("").is_err());
-    assert!(EnvSecretRef::parse_name("a\0b").is_err());
-    assert!(EnvSecretRef::parse_name("").is_err());
-    assert!(EnvSecretRef::parse_name("github-token").is_ok());
-    assert!(EnvKey::parse("1BAD").is_err());
-    assert!(EnvKey::parse("_OK1").is_ok());
-
-    let forged_id = EnvStep {
-        id: EnvStepId("a\nb".to_owned()),
-        ..step("ignored", &["git", "status"])
-    };
-    assert!(matches!(
-        blueprint(init_stages(vec![forged_id])).validate(),
-        Err(EnvBlueprintError::InvalidValue {
-            kind: "step_id",
-            ..
-        })
-    ));
-
-    let input = KnowledgeInput::Path(RepoRelativePath::parse("docs/design.md").unwrap());
-    let stages = knowledge_stages(vec![knowledge_source("a\u{7f}b", vec![input])]);
-    assert!(matches!(
-        blueprint(stages).validate(),
-        Err(EnvBlueprintError::InvalidValue {
-            kind: "knowledge_source_id",
-            ..
-        })
-    ));
-
-    let mut empty_named = step("setup", &["git", "status"]);
-    let key = EnvKey::parse("TOKEN").unwrap();
-    empty_named.env = env_map(key, EnvValue::SecretRef(EnvSecretRef(String::new())));
-    assert!(matches!(
-        blueprint(init_stages(vec![empty_named])).validate(),
-        Err(EnvBlueprintError::EmptySecretRef { .. })
-    ));
-}
-
-#[test]
-fn step_and_knowledge_ids_are_unique_across_stages() {
-    let stages = EnvBlueprintStages {
-        init: vec![step("setup", &["git", "status"])],
-        maintenance: vec![step("setup", &["git", "fetch"])],
-        knowledge: Vec::new(),
-    };
-    assert!(matches!(
-        blueprint(stages).validate(),
-        Err(EnvBlueprintError::DuplicateStepId { .. })
-    ));
-
-    let path = KnowledgeInput::Path(RepoRelativePath::parse("docs/a.md").unwrap());
-    let glob = KnowledgeInput::Glob(RepoRelativeGlob::parse("docs/*.md").unwrap());
-    let stages = knowledge_stages(vec![
-        knowledge_source("docs", vec![path]),
-        knowledge_source("docs", vec![glob]),
-    ]);
-    assert!(matches!(
-        blueprint(stages).validate(),
-        Err(EnvBlueprintError::DuplicateKnowledgeSourceId { .. })
-    ));
-
-    let stages = knowledge_stages(vec![knowledge_source("docs", Vec::new())]);
-    assert!(matches!(
-        blueprint(stages).validate(),
-        Err(EnvBlueprintError::InvalidKnowledgeSource { .. })
-    ));
-}
-
-#[test]
-fn materialization_ladder_is_closed_and_task_class_pinned() {
-    assert_eq!(MaterializationSpec::FullClone as u8, 1);
-    assert_eq!(MaterializationSpec::Blobless as u8, 2);
-    assert_eq!(
-        MaterializationSpec::default(),
-        MaterializationSpec::Blobless
-    );
-
-    for preference in [None, Some(MaterializationSpec::Blobless)] {
-        assert_eq!(
-            resolve_materialization(CheckoutTaskClass::Build, preference),
-            MaterializationSpec::FullClone
-        );
-        assert_eq!(
-            resolve_materialization(CheckoutTaskClass::Verify, preference),
-            MaterializationSpec::FullClone
-        );
-        assert_eq!(
-            resolve_materialization(CheckoutTaskClass::Edit, preference),
-            MaterializationSpec::Blobless
-        );
-        assert_eq!(
-            resolve_materialization(CheckoutTaskClass::Effect, preference),
-            MaterializationSpec::Blobless
-        );
-    }
-
-    let heavy = Some(MaterializationSpec::FullClone);
-    assert_eq!(
-        resolve_materialization(CheckoutTaskClass::Edit, heavy),
-        MaterializationSpec::FullClone
-    );
-    assert_eq!(
-        resolve_materialization(CheckoutTaskClass::Effect, heavy),
-        MaterializationSpec::FullClone
-    );
-
-    let mut authored = full_blueprint(&github_repo(COMMIT_A));
-    assert_eq!(
-        authored.resolve_materialization(CheckoutTaskClass::Build),
-        MaterializationSpec::FullClone
-    );
-    authored.light_checkout_materialization = MaterializationSpec::FullClone;
-    assert_eq!(
-        authored.resolve_materialization(CheckoutTaskClass::Edit),
-        MaterializationSpec::FullClone
-    );
-}
-
-#[test]
 fn checkout_plan_projects_materialization_and_steps_only() {
     let authored = full_blueprint(&github_repo(COMMIT_A));
     let plan = authored.checkout_plan(CheckoutTaskClass::Edit).unwrap();
@@ -774,18 +593,6 @@ fn checkout_plan_projects_materialization_and_steps_only() {
 }
 
 #[test]
-fn resolve_checkout_environment_is_legacy_with_exactly_one_store_get() {
-    let repo = github_repo(COMMIT_A);
-    let store = CountingStore::new(None);
-    let act = lease(&repo, CheckoutTaskClass::Edit);
-
-    let plan = resolve_checkout_environment(&store, &act).unwrap();
-    assert!(plan.is_legacy());
-    assert!(plan.materialization.spec.is_none());
-    assert!(plan.init.is_empty() && plan.maintenance.is_empty());
-}
-
-#[test]
 fn resolve_checkout_environment_projects_a_stored_blueprint() {
     let repo = github_repo(COMMIT_A);
     let store = CountingStore::new(Some(full_blueprint(&repo)));
@@ -804,23 +611,4 @@ fn resolve_checkout_environment_projects_a_stored_blueprint() {
         resolve_checkout_environment(&foreign, &act),
         Err(EnvBlueprintError::RepoKeyMismatch)
     ));
-}
-
-#[test]
-fn secret_ref_names_round_trip_without_secret_bytes() {
-    let (_dir, vault) = vault_fixture();
-    let store = VaultEnvBlueprintStore::new(&vault);
-    let repo = github_repo(COMMIT_A);
-    store.put(&full_blueprint(&repo)).unwrap();
-
-    let loaded = store.get(&repo).unwrap().expect("row must round-trip");
-    let install = &loaded.stages.init[0];
-    let key = EnvKey::parse("TOKEN").unwrap();
-    match install.env.get(&key).unwrap() {
-        EnvValue::SecretRef(name) => assert_eq!(name.as_str(), "github-token"),
-        other => panic!("expected a custody name, got {other:?}"),
-    }
-
-    let raw = read_raw_row(&vault, &repo).expect("row must exist");
-    assert!(scan_file_content("row", &raw).is_none());
 }

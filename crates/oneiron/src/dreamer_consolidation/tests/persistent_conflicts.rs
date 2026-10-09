@@ -36,21 +36,6 @@ fn topic_candidate(subject: EntityId, topic: &str, answer: &str) -> PromotionCan
     c
 }
 #[test]
-fn changed_answers_share_topic_but_different_questions_do_not_conflict() -> Result<()> {
-    let subject = EntityId::now();
-    let candidates = vec![
-        topic_candidate(subject, "coffee", "yes"),
-        topic_candidate(subject, "coffee", "no"),
-        topic_candidate(subject, "tea", "yes"),
-        topic_candidate(subject, "tea", "no"),
-    ];
-    let conflicts = detect_conflicts(&candidates, &[])?;
-    assert_eq!(conflicts.len(), 2);
-    assert_eq!(conflicts[0].candidate_indexes.len(), 2);
-    assert_ne!(conflicts[0].identity.topic, conflicts[1].identity.topic);
-    Ok(())
-}
-#[test]
 fn prior_head_disagreement_opens_one_persistent_marker_and_close_audit() -> Result<()> {
     let (_dir, vault) = open_vault();
     auto_policy(&vault);

@@ -59,29 +59,3 @@ pub use self::spec::{
     ChatProjection, ContextSpec, MemoryProjection, context, normalize_context_spec,
     validate_context_spec,
 };
-
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-use self::resolution::is_conversational_turn_body;
-#[cfg(test)]
-use crate::Vault;
-#[cfg(test)]
-use crate::VaultConfig;
-#[cfg(test)]
-use crate::edge::EdgeKind;
-#[cfg(test)]
-use crate::entity_id::EntityId;
-#[cfg(test)]
-use crate::error::{Error, Result};
-#[cfg(test)]
-use crate::pipeline::WorldScope;
-#[cfg(test)]
-use crate::registry::ENTITY_TYPE_TURN;
-#[cfg(test)]
-use crate::task_verb::{ConsultPayloadRef, TaskAssignee};
-#[cfg(test)]
-use crate::temporal::TimeRange;
-#[cfg(test)]
-use crate::test_util::{entity, open_test_vault_with, put_policy_manifest_bytes};

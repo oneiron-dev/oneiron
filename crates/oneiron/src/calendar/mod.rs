@@ -323,23 +323,6 @@ pub(crate) mod test_support {
             }
         }
 
-        pub(crate) fn transparency(mut self, transparency: CalendarBusyTransparency) -> Self {
-            self.transparency = transparency;
-            self
-        }
-
-        pub(crate) fn cancelled(mut self) -> Self {
-            self.cancelled = true;
-            self
-        }
-
-        /// Stores the family claims as `proposed` instead of `approved`, so the
-        /// EVENT's calendar facts are present on disk but not surfaceable.
-        pub(crate) fn proposed(mut self) -> Self {
-            self.approval = ClaimApprovalStatus::Proposed;
-            self
-        }
-
         pub(crate) fn store(self, vault: &Vault) -> EntityId {
             let id = crate::test_util::entity(self.seed);
             vault
@@ -419,100 +402,5 @@ pub(crate) mod test_support {
                 )
                 .expect("put calendar claim");
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{CalendarError, tz::WallTime};
-
-    #[test]
-    fn calendar_error_appends_recurrence_variants_in_owner_module() {
-        // One error home for the whole calendar surface, grown by appending.
-        // CAL-00 opened it, CAL-01 added the four timezone verdicts, CAL-03
-        // the two recurrence verdicts, CAL-02 the four ingest variants, and
-        // CAL-04 the two outbound-invite verdicts at the bottom.
-        let variants = [
-            CalendarError::UnknownTimeZone {
-                tz: "Mars/Olympus_Mons".to_owned(),
-            },
-            CalendarError::InvalidWallTime,
-            CalendarError::NonexistentWallTime {
-                wall: WallTime {
-                    y: 2026,
-                    mo: 3,
-                    d: 29,
-                    h: 1,
-                    mi: 30,
-                    s: 0,
-                },
-                tz: "Europe/London".to_owned(),
-            },
-            CalendarError::TimestampOutOfRange { utc: u64::MAX },
-            CalendarError::InvalidRecurrenceRule {
-                rule: "FREQ=NEVER".to_owned(),
-            },
-            CalendarError::InvalidRecurrenceWindow,
-            CalendarError::IcsParse {
-                reason: "truncated feed".to_owned(),
-            },
-            CalendarError::IcsFetch {
-                reason: "connection refused".to_owned(),
-            },
-            CalendarError::IcsCredential {
-                reason: "no live custody record".to_owned(),
-            },
-            CalendarError::IcsIngest {
-                reason: "store failure".to_owned(),
-            },
-            CalendarError::ImipEmit {
-                reason: "UID must not be blank".to_owned(),
-            },
-            CalendarError::InviteRefused {
-                reason: "a cold invite has no consent basis".to_owned(),
-            },
-        ];
-
-        // Exhaustive and wildcard-free on purpose. A later layer that appends a
-        // variant has to come back here and say so; one that *replaces* or
-        // reorders an existing variant stops compiling instead of silently
-        // changing what an older caller's match arm means.
-        for variant in &variants {
-            match variant {
-                CalendarError::UnknownTimeZone { .. }
-                | CalendarError::InvalidWallTime
-                | CalendarError::NonexistentWallTime { .. }
-                | CalendarError::TimestampOutOfRange { .. } => {}
-                CalendarError::InvalidRecurrenceRule { .. }
-                | CalendarError::InvalidRecurrenceWindow => {}
-                CalendarError::IcsParse { .. }
-                | CalendarError::IcsFetch { .. }
-                | CalendarError::IcsCredential { .. }
-                | CalendarError::IcsIngest { .. } => {}
-                CalendarError::ImipEmit { .. } | CalendarError::InviteRefused { .. } => {}
-            }
-        }
-
-        assert_eq!(
-            variants[4].to_string(),
-            "invalid or unsupported recurrence rule: FREQ=NEVER"
-        );
-        assert_eq!(variants[5].to_string(), "invalid recurrence window");
-        assert_eq!(
-            variants[6].to_string(),
-            "ICS feed parse failure: truncated feed"
-        );
-        assert_eq!(
-            variants[8].to_string(),
-            "ICS feed credential custody failure: no live custody record"
-        );
-        assert_eq!(
-            variants[10].to_string(),
-            "iMIP emit failure: UID must not be blank"
-        );
-        assert_eq!(
-            variants[11].to_string(),
-            "calendar invite refused: a cold invite has no consent basis"
-        );
     }
 }

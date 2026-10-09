@@ -700,14 +700,10 @@ mod cb_s {
         assert_eq!(floor.emission_verbs_reachable_from_foreign_content, 0);
     }
 
-    // ONE-1703 · RELOCATED to the owning crate. The `WakeAdapterInstall`
-    // observation struct, its fixture arm, and the test
-    // `wake_adapters_install_per_instance_over_durable_mailbox` now live —
-    // un-ignored, with all 7 reserved asserts byte-identical — in
-    // `oneiron::context_board::stream`'s `#[cfg(test)] mod tests`. The arm
-    // needs real queued wakes, and the only writer to a connection's wake
-    // queue is `route_event` over a field-private `VerifiedOwnTaskEvent` with
-    // no crate-external construction path; the header rule above lets the
-    // arming ticket move a test to the owning crate rather than open a wake
-    // injection door. Decision W6-DP-ONE-1703.
+    // ONE-1703 · no arm here. It needs real queued wakes, and the only writer
+    // to a connection's wake queue is `route_event` over a field-private
+    // `VerifiedOwnTaskEvent` with no crate-external construction path; the
+    // header rule above let the arming ticket move the test to the owning
+    // crate rather than open a wake injection door (Decision W6-DP-ONE-1703).
+    // The 2026-10 test prune removed that in-crate copy as a MIRROR test.
 }

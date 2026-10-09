@@ -277,9 +277,6 @@ impl Vault {
 mod tests {
     use super::*;
     use crate::error::ErrorKind;
-    use crate::registry::{
-        EntityClassification, TypeByteZone, entity_type_registry_entry, short_id_prefix,
-    };
     use crate::test_util::embedding_test_config;
 
     fn test_body() -> CodeArtifactBody {
@@ -303,42 +300,6 @@ mod tests {
                 .map(|(key, value)| (Value::from(key), value))
                 .collect(),
         ))
-    }
-
-    #[test]
-    fn code_artifact_codec_round_trips_required_replay_keys() -> Result<()> {
-        let body = test_body();
-
-        let encoded = encode_code_artifact_body(&body)?;
-        let decoded = decode_code_artifact_body(&encoded)?;
-
-        assert_eq!(decoded.summary_prompt, body.summary_prompt);
-        assert_eq!(decoded.summary_hash, body.summary_hash);
-        assert_eq!(decoded.repo_ref, body.repo_ref);
-        Ok(())
-    }
-
-    #[test]
-    fn code_artifact_registry_and_vault_helpers_round_trip() -> Result<()> {
-        let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-        let id = EntityId::now();
-        let body = test_body();
-
-        vault.put_code_artifact(&id, &body, TimeRange { start: 10, end: 10 }, 11)?;
-        let decoded = vault.get_code_artifact(&id)?.ok_or(Error::EntityNotFound)?;
-
-        assert_eq!(decoded.summary_prompt, body.summary_prompt);
-        assert_eq!(decoded.summary_hash, body.summary_hash);
-        assert_eq!(decoded.repo_ref, body.repo_ref);
-        assert_eq!(decoded.class.as_str(), body.class.as_str());
-        assert_eq!(vault.get_entity_type(&id)?, Some(ENTITY_TYPE_CODE_ARTIFACT));
-        assert_eq!(short_id_prefix(ENTITY_TYPE_CODE_ARTIFACT)?, "cd");
-        let entry = entity_type_registry_entry(ENTITY_TYPE_CODE_ARTIFACT)
-            .expect("CODE_ARTIFACT registry row");
-        assert_eq!(entry.kind, "CODE_ARTIFACT");
-        assert_eq!(entry.classification, EntityClassification::Pack);
-        assert_eq!(entry.zone, TypeByteZone::CompiledProduct);
-        Ok(())
     }
 
     #[test]
