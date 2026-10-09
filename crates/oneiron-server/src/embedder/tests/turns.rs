@@ -19,8 +19,8 @@ struct Served {
     server: Arc<crate::server::SyncServer>,
     vault: Arc<oneiron::Vault>,
     owner: oneiron::EntityId,
-    slip: String,
-    key: String,
+    slip: oneiron::authority::CapabilitySlip,
+    key: ed25519_dalek::SigningKey,
     _mock: MockEndpoint,
     _dir: tempfile::TempDir,
 }

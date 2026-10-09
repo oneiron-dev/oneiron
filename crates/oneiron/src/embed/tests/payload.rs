@@ -166,7 +166,9 @@ fn read_payload_text(payload: &PendingEmbeddingPayload) -> Result<String> {
             let claim = crate::claim::decode_claim_body(bytes, true)?;
             Ok(claim.value.as_str().expect("fixture claim text").to_owned())
         }
-        PendingEmbeddingPayload::SummaryText(text) => Ok(text.clone()),
+        PendingEmbeddingPayload::SummaryText(text) | PendingEmbeddingPayload::TurnText(text) => {
+            Ok(text.clone())
+        }
     }
 }
 
@@ -211,6 +213,7 @@ impl Embedder for TypedEmbedder {
                         assert_eq!(text, "the native epoch prose");
                         vec![0.0, 1.0, 0.0, 0.0]
                     }
+                    PendingEmbeddingPayload::TurnText(_) => unreachable!("this vault has no turn"),
                 };
                 self.seen.lock().unwrap().push(input.clone());
                 Ok(vector)
@@ -235,6 +238,7 @@ impl EgressPredicate for TypedEgress {
         match &input.payload {
             PendingEmbeddingPayload::ClaimBody(_) => EgressDecision::Allow,
             PendingEmbeddingPayload::SummaryText(_) => self.summary_decision,
+            PendingEmbeddingPayload::TurnText(_) => unreachable!("this vault has no turn"),
         }
     }
 }
