@@ -55,7 +55,14 @@ pub struct BackupArgs {
 #[derive(Args, Clone, Debug)]
 pub struct RestoreArgs {
     /// The backup file.
-    pub backup: PathBuf,
+    #[arg(required_unless_present = "activate")]
+    pub backup: Option<PathBuf>,
+
+    /// Activate the previous vault a restore set aside at this path, which
+    /// is archived and refuses writes, as a side vault of the configured
+    /// vault: it gets key custody of its own and opens for writing again.
+    #[arg(long, value_name = "PREVIOUS_VAULT", conflicts_with_all = ["backup", "rehearse"])]
+    pub activate: Option<PathBuf>,
 
     /// Restore into a scratch copy, open and check it, and report. The vault
     /// itself is never opened, so this also works while `serve` runs.

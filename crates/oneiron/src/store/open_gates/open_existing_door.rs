@@ -15,7 +15,7 @@ use crate::store::{
     Diagnostics, GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY,
     GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE, GATE_DECISION_KEY_PREFIX,
     GATE_DECISION_LEDGER_VERSION, GateDecisionRecord, GateSystemNoticeRecord,
-    PENDING_GATE_CONSENT_KEY_PREFIX, RawDatabases, Store, StoreCore, StoreOwner,
+    PENDING_GATE_CONSENT_KEY_PREFIX, RawDatabases, Store, StoreCore, StoreEnv, StoreOwner,
     decode_pending_gate_consent, gate_decision_upper_bound, load_structural_kind_registry,
     pending_gate_consent_claim_id_from_key, pending_gate_consent_upper_bound,
     seed_default_policy_manifest_in_txn,
@@ -145,7 +145,7 @@ impl Store {
         let shared_env: Env = (*env).clone();
         let core = Arc::new(StoreCore {
             gate_custody_root,
-            env: shared_env,
+            env: StoreEnv::new(shared_env),
             raw,
             kind_registry,
             off_record_sessions: OffRecordSessionRegistry::default(),

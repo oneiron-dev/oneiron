@@ -359,6 +359,11 @@ impl Vault {
     pub(crate) fn finish_gate_decision_retirements(&self) -> Result<()> {
         let txn = self.store.env.read_txn()?;
         let pending = RETIRE_PENDING.scan(&self.store, &txn)?;
+        // An archived vault shares its custody with the vault that replaced
+        // it, and shreds none of it until an owner activates it.
+        if !pending.is_empty() && self.store.archived_in_txn(&txn)? {
+            return Err(Error::Store(crate::error::StoreError::ArchivedVault));
+        }
         // Only the custody this vault is bound to is ever shredded. A
         // restore's first handle still names its destination while the
         // image's binding already sits in LMDB; the reopened vault finishes.

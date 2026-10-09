@@ -381,7 +381,9 @@ pub(crate) struct Restored {
 /// leases of both, so no server opens either half-way. A filesystem that
 /// cannot exchange two directories refuses the restore with nothing changed.
 /// The old vault is kept whole as `<vault>.pre-restore-<stamp>`; nothing is
-/// deleted.
+/// deleted. It still binds the key custody the restored vault keeps, so it is
+/// archived: it opens and reads, and refuses every write, erase and key
+/// retirement until `oneiron restore --activate` gives it custody of its own.
 ///
 /// Once the swap is done the restore has happened, so a failed sync of the
 /// directory after it is reported in `durability_warning`, never as an error
@@ -468,6 +470,22 @@ fn restore_over_syncing(
             vault_path.display()
         );
     }
+    // The old vault still binds the key custody the restored copy now holds.
+    // Archived, it reads but never writes, erases or shreds a key until the
+    // owner activates it as a side vault with custody of its own.
+    if let Err(error) = live.archive_replaced() {
+        let undone = exchange(&restored_path, vault_path);
+        drop(restored);
+        if undone.is_ok() {
+            staging.remove();
+            anyhow::bail!("cannot archive the vault being replaced ({error}); nothing was changed");
+        }
+        anyhow::bail!(
+            "the restore is in place, but the previous vault at {} could not be archived \
+             ({error}) and still shares the restored vault's key custody; do not open it",
+            restored_path.display()
+        );
+    }
     // The old vault now sits inside the staging directory; give it its own
     // name. If that fails it stays where it is, whole, and is reported there.
     let previous = match std::fs::rename(&restored_path, &previous) {
@@ -502,6 +520,35 @@ fn restore_over_syncing(
         entities: kinds.values().sum(),
         kinds,
         durability_warning,
+    })
+}
+
+/// What `oneiron restore --activate` did.
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct Activated {
+    /// The previous vault, now a side vault with key custody of its own.
+    pub(crate) vault: PathBuf,
+    /// The vault that replaced it, whose custody it forked.
+    pub(crate) replaced_by: PathBuf,
+}
+
+/// Activates the archived vault a restore over `vault_path` set aside at
+/// `previous`, as a side vault of the vault that replaced it. Its key custody
+/// forks as a rehearsal's does: from then on an erase in either vault never
+/// reaches the other's keys. `vault_path` is read off the disk, so a `serve`
+/// may hold it.
+pub(crate) fn activate(
+    previous: &Path,
+    vault_path: &Path,
+    config: oneiron::VaultConfig,
+) -> anyhow::Result<Activated> {
+    let source = SideRestoreSource::read(vault_path)
+        .map_err(|error| anyhow::anyhow!("read vault {}: {error}", vault_path.display()))?;
+    oneiron::Vault::activate_archived(previous, config, &source)
+        .map_err(|error| anyhow::anyhow!("activate {}: {error}", previous.display()))?;
+    Ok(Activated {
+        vault: previous.to_path_buf(),
+        replaced_by: vault_path.to_path_buf(),
     })
 }
 

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     io::{Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
 pub use tiers::{StorageTier, storage_tier};
 type CanonicalRows = Vec<(Vec<u8>, Vec<u8>)>;
@@ -67,18 +67,50 @@ impl Drop for ForkedCustody {
         }
     }
 }
-/// The live key-custody state of the vault a side restore copies, read when
-/// the restore starts: where its custody is, and the key retirements it has
-/// committed. The copy never holds a key that state says is destroyed or
-/// committed to be, though the image predates the retirement.
-pub struct SideRestoreSource(Option<LiveCustody>);
-impl SideRestoreSource {
-    /// Reads the vault at `vault_dir` without opening it, so a running server
-    /// may hold it. A vault open in this process reads its own state through
-    /// [`Vault::side_restore_source`]. No vault at `vault_dir` has committed
-    /// nothing.
+/// The vault a side restore copies. Each restore reads its live key-custody
+/// state when it starts: where its custody is, and the key retirements it
+/// has committed. The copy never holds a key that state says is destroyed or
+/// committed to be, though the image predates the retirement. A source that
+/// cannot be read refuses the restore; an archived vault is no source, its
+/// custody being its replacement's.
+pub struct SideRestoreSource<'a>(Source<'a>);
+enum Source<'a> {
+    /// A vault open in this process, read through its own handle.
+    Open(&'a Vault),
+    /// A vault read off its directory, whose custody root was `root` when
+    /// [`SideRestoreSource::read`] verified it.
+    Disk { dir: PathBuf, root: PathBuf },
+}
+impl SideRestoreSource<'static> {
+    /// The vault at `vault_dir`, read without opening it, so a running
+    /// server may hold it; a vault open in this process is
+    /// [`Vault::side_restore_source`]. Refuses when no vault is there, when
+    /// it cannot be read, or when it is archived. Each restore reads it again
+    /// at its start, and refuses if the vault there no longer binds the
+    /// custody it bound here.
     pub fn read(vault_dir: &Path) -> Result<Self> {
-        crate::store::read_live_custody(vault_dir).map(Self)
+        let live = crate::store::read_live_custody(vault_dir)?;
+        Ok(Self(Source::Disk {
+            dir: vault_dir.to_path_buf(),
+            root: live.root().to_path_buf(),
+        }))
+    }
+}
+impl SideRestoreSource<'_> {
+    /// The source's live custody state, read now, at a restore's start.
+    fn capture(&self) -> Result<LiveCustody> {
+        match &self.0 {
+            Source::Open(vault) => vault.store.live_custody(),
+            Source::Disk { dir, root } => {
+                let live = crate::store::read_live_custody(dir)?;
+                if live.root() != root {
+                    return Err(Error::InvalidConfig(
+                        "the vault read as this side restore's source has changed".into(),
+                    ));
+                }
+                Ok(live)
+            }
+        }
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -331,9 +363,10 @@ impl Vault {
         path: &Path,
         destination: &Path,
         config: VaultConfig,
-        source: &SideRestoreSource,
+        source: &SideRestoreSource<'_>,
         restored_at: u64,
     ) -> Result<(Self, RestoreReport)> {
+        let live = source.capture()?;
         let (image, checkpoint_id) = read_image(path)?;
         let (vault, report, forked) = Self::restore_image(
             image,
@@ -342,17 +375,51 @@ impl Vault {
             config,
             RestoreReason::Restore,
             restored_at,
-            Custody::Fork(source.0.as_ref()),
+            Custody::Fork(Some(&live)),
         )?;
         forked.keep();
         Ok((vault, report))
     }
-    /// The live key-custody state of this vault, for a restore beside it
-    /// ([`Vault::restore_checkpoint_beside`]).
-    pub fn side_restore_source(&self) -> Result<SideRestoreSource> {
-        self.store
-            .live_custody()
-            .map(|live| SideRestoreSource(Some(live)))
+    /// This vault as the source of a restore beside it
+    /// ([`Vault::restore_checkpoint_beside`]). Refuses an archived vault.
+    pub fn side_restore_source(&self) -> Result<SideRestoreSource<'_>> {
+        self.store.refuse_archived()?;
+        Ok(SideRestoreSource(Source::Open(self)))
+    }
+    /// Archives this vault once a restore swapped its replacement
+    /// ([`Vault::restore_checkpoint_replacing`]) into its place. The
+    /// replacement keeps the key custody this vault binds to, so this vault
+    /// is set aside as an archive: this handle, and every later open of it,
+    /// reads, and refuses every write, erase and key retirement, until
+    /// [`Vault::activate_archived`] gives it custody of its own.
+    pub fn archive_replaced(&self) -> Result<()> {
+        self.store.archive_replaced()
+    }
+    /// An owner's activation of the archived vault at `path` as a side vault
+    /// of `source`, the vault that replaced it. Its key custody forks as a
+    /// side restore's does ([`Vault::restore_checkpoint_beside`]): a key
+    /// `source` destroyed or has committed to destroy is not copied and the
+    /// receipts under it are dropped, and from then on an erase or age sweep
+    /// in either vault never reaches the other's keys. Refuses a vault that
+    /// is not archived, and a `source` whose custody is not the one it binds.
+    pub fn activate_archived(
+        path: &Path,
+        config: VaultConfig,
+        source: &SideRestoreSource<'_>,
+    ) -> Result<Self> {
+        let live = source.capture()?;
+        let archive = Self::open_owned(path, config.clone())?;
+        archive.store.activate_archived(&live)?;
+        drop(archive);
+        let vault = Self::open_owned(path, config)?;
+        // Every receipt it kept decrypts under its own keys.
+        {
+            let txn = vault.store.env.read_txn()?;
+            vault
+                .store
+                .for_each_gate_decision_in_txn(&txn, |_| Ok(()))?;
+        }
+        Ok(vault)
     }
     /// Historical content restore beside a live vault: the image's content
     /// with `current`'s live authority, consent, policy, credential and
@@ -387,7 +454,8 @@ impl Vault {
     }
     /// [`Vault::restore_checkpoint_keeping_authority`] for a restore that
     /// replaces `current`: the caller swaps the result into `current`'s path,
-    /// so it keeps `current`'s key custody rather than forking it.
+    /// so it keeps `current`'s key custody rather than forking it, and then
+    /// archives `current` ([`Vault::archive_replaced`]).
     pub fn restore_checkpoint_replacing(
         path: &Path,
         staging: &Path,
@@ -412,6 +480,8 @@ impl Vault {
         restored_at: u64,
         custody: Custody<'_>,
     ) -> Result<(Self, RestoreReport)> {
+        // An archived vault's live state is not its custody's.
+        current.store.refuse_archived()?;
         let (mut image, checkpoint_id) = read_image(path)?;
         // The carried rows hold `current`'s custody binding and retirements.
         authority_plane::carry_current_authority(&mut image.databases, current)?;

@@ -9,6 +9,7 @@ mod manifest_storage_gates;
 mod open_create_door;
 mod open_existing_door;
 mod open_version_keys;
+mod read_only_door;
 mod vault_root_bind;
 
 pub(crate) use self::embedding_transform_gates::{
@@ -20,6 +21,7 @@ pub(crate) use self::hnsw_model_gates::{
     parse_utf8_bytes, read_hnsw_compatibility,
 };
 pub(in crate::store) use self::manifest_storage_gates::RegisteredPath;
+pub(in crate::store) use self::read_only_door::read_existing_vault_meta;
 pub(crate) use self::manifest_storage_gates::{
     OwnedEnv, lmdb_database_open_guard, materialized_database_names,
 };

@@ -473,10 +473,13 @@ pub(super) fn custody_present(root: &Path) -> Result<bool> {
 }
 
 /// A custody directory a side restore's fork created, named by device and
-/// inode so its cleanup never removes a directory that replaced it.
+/// inode so its cleanup never removes a directory that replaced it. The
+/// directory stays open for the fork's life, so no other directory can take
+/// its inode number while the cleanup may still compare against it.
 pub(crate) struct ForkedCustodyDir {
     path: PathBuf,
     identity: (u64, u64),
+    directory: File,
 }
 
 impl ForkedCustodyDir {
@@ -559,6 +562,7 @@ pub(super) fn fork_custody(
     let forked = ForkedCustodyDir {
         identity: directory_identity(&directory.metadata()?).ok_or_else(corrupt)?,
         path: dir.clone(),
+        directory,
     };
     // The directory is synced once at the end; a marker carries no bytes.
     let mark = |claim_id: &[u8; 16], generation| match safe_open(
@@ -591,7 +595,7 @@ pub(super) fn fork_custody(
                 }
             }
         }
-        directory.sync_all()?;
+        forked.directory.sync_all()?;
         Ok(())
     })();
     match copied {

@@ -13,7 +13,7 @@ use heed::{Database, Env, RwTxn};
 use crate::authority::AuthorityLocalClock;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, StoreError};
 use crate::off_record::OffRecordSessionRegistry;
 use crate::overlay_db::{OverlayDb, OverlayStrDb};
 use crate::registry::{ENTITY_TYPE_POLICY_MANIFEST, StructuralKindRegistration};
@@ -95,6 +95,51 @@ pub struct RawDatabases {
     pub(crate) attempt_dedupe: Database<Bytes, Bytes>,
 }
 
+/// The environment a store opens its transactions in. A vault archived by a
+/// restore in its place is sealed once its open is done: from then on every
+/// write transaction refuses, so neither its rows nor the key custody it
+/// shares with its replacement change through any handle on it.
+pub(crate) struct StoreEnv {
+    env: Env,
+    sealed: std::sync::atomic::AtomicBool,
+}
+
+impl StoreEnv {
+    pub(in crate::store) fn new(env: Env) -> Self {
+        Self {
+            env,
+            sealed: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// A write transaction, refused on a sealed (archived) vault.
+    pub(crate) fn write_txn(&self) -> Result<RwTxn<'_>> {
+        if self.sealed.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(Error::Store(StoreError::ArchivedVault));
+        }
+        Ok(self.env.write_txn()?)
+    }
+
+    /// The one write past the seal: an owner's activation of an archived
+    /// vault, which forks its custody and lifts the archive in one commit.
+    pub(in crate::store) fn activation_write_txn(&self) -> Result<RwTxn<'_>> {
+        Ok(self.env.write_txn()?)
+    }
+
+    pub(in crate::store) fn seal(&self) {
+        self.sealed
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+}
+
+impl std::ops::Deref for StoreEnv {
+    type Target = Env;
+
+    fn deref(&self) -> &Env {
+        &self.env
+    }
+}
+
 /// Arc-shared substrate of an open vault (ARCH-0052 store split).
 ///
 /// Everything here is safe to share across handles: the environment handle
@@ -115,7 +160,7 @@ pub struct StoreCore {
     pub(in crate::store) gate_retirement_lock: std::sync::RwLock<()>,
     /// Shared environment handle used to open transactions. The close-on-
     /// last-clone semantics live in the owner's [`OwnedEnv`] (ONE-1142).
-    pub(crate) env: Env,
+    pub(crate) env: StoreEnv,
     /// Raw handles; runtime access goes through the [`Store`] accessors.
     /// `pub(in crate::store)` so no code outside `crate::store` can bypass the
     /// [`OverlayDb`] seam — open-time machinery and accessor construction both

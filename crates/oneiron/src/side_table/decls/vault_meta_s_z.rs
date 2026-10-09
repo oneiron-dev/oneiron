@@ -372,6 +372,11 @@ side_tables! {
     /// Legacy per-entity VAD annotation metadata row (entity_type byte then subject id); no current
     /// write path, only read and deleted for headerless-delete cleanup. Key: u8 + id16.
     AFFECT_VAD_ANNOTATION_META: VaultMeta b"vad_ann:" Named;
+    /// Marks the image a restore in this vault's place set aside: an archived vault that shares
+    /// key custody with its replacement, so its handles refuse every write until an owner
+    /// activates it as a side vault. Runtime, never checkpointed. Value: the single byte 1. Key:
+    /// ().
+    VAULT_ARCHIVED_BY_RESTORE: VaultMeta b"vault_archived:v1" Raw;
     /// Marks a completed queue-record attempt as archived, pinned to the exact bytes archived. Key:
     /// id16 (AttemptId).
     VAULT_CLEANUP_ATTEMPT_ARCHIVE: VaultMeta b"vault_cleanup.attempt_archive.v1/" Raw;
