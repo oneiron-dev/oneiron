@@ -25,7 +25,10 @@ const VERSIONS: SideTable<(EntityId, u64), BlobArtifactVersion, Raw> =
 /// only under the stale-publish dial (`allow_stale_publish_in_txn`); the
 /// cache admits a clean blob version only. A taint attached since the backup
 /// to an output the backup holds unchanged is one a restore would drop,
-/// admitting the output again.
+/// admitting the output again. Publication serves a project at a fork from
+/// the one owner it selects there, so that route is asked as well: a restore
+/// that selects another owner can admit a route whose owners' taints it
+/// leaves unchanged.
 pub(super) struct ArtifactTaints;
 
 /// A retained output a door admits by its taint.
@@ -33,6 +36,9 @@ pub(super) struct ArtifactTaints;
 pub(super) enum TaintSubject {
     /// A code artifact, served as its snapshot of one project at one fork.
     Code(EntityId, String, CodebaseForkHash),
+    /// One project at one fork, published from the owner publication selects
+    /// there (`resolve_artifact_snapshot_by_fork_in_txn`).
+    Route(String, CodebaseForkHash),
     /// One version of a blob artifact, which a cached result names.
     Blob(EntityId, u64),
 }
@@ -48,21 +54,28 @@ impl Decision for ArtifactTaints {
     type Answer = TaintAdmission;
 
     /// Each code snapshot both vaults hold for the same artifact, project and
-    /// fork, where either serves it, and each version of a blob artifact both
-    /// vaults hold. An output, snapshot or version only one vault holds
-    /// returns or leaves with the restore, its taint with it.
+    /// fork, where either serves it, the route of each such snapshot, and each
+    /// version of a blob artifact both vaults hold. An output, snapshot or
+    /// version only one vault holds returns or leaves with the restore, its
+    /// taint with it.
     fn subjects(vaults: [&Vault; 2]) -> Result<BTreeSet<TaintSubject>> {
         let code = held_by_both(vaults, ENTITY_TYPE_CODE_ARTIFACT)?;
         let blobs = held_by_both(vaults, ENTITY_TYPE_BLOB_ARTIFACT)?;
         let [live, restored] = vaults.map(|vault| outputs(vault, &code, &blobs));
         let restored = restored?;
-        Ok(live?
-            .into_iter()
-            .filter_map(|(output, served)| {
-                let served_restored = restored.get(&output)?;
-                (served || *served_restored).then_some(output)
-            })
-            .collect())
+        let mut subjects = BTreeSet::new();
+        for (output, served) in live? {
+            let Some(served_restored) = restored.get(&output) else {
+                continue;
+            };
+            if let TaintSubject::Code(_, project, fork) = &output {
+                subjects.insert(TaintSubject::Route(project.clone(), *fork));
+            }
+            if served || *served_restored {
+                subjects.insert(output);
+            }
+        }
+        Ok(subjects)
     }
 
     fn answers(
@@ -137,7 +150,8 @@ fn outputs(
 /// What the doors admit of `subject` in `txn`, the stale-publish dial read
 /// once into `stale_publish` and only for a stale taint, as the publication
 /// door reads it; `None` where `vault` no longer holds the snapshot or
-/// version the subject names.
+/// version the subject names. A route no owner is selected for publishes
+/// nothing.
 fn admission(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -152,7 +166,15 @@ fn admission(
             {
                 return Ok(None);
             }
-            (id, false)
+            (*id, false)
+        }
+        TaintSubject::Route(project, fork) => {
+            let Some(selected) =
+                vault.resolve_artifact_snapshot_by_fork_in_txn(txn, project, fork)?
+            else {
+                return Ok(ArtifactTaints::refusal());
+            };
+            (selected.code_artifact_id, false)
         }
         TaintSubject::Blob(id, version) => {
             // The exact version and its ledger claim, as a cache hit binds them.
@@ -162,10 +184,10 @@ fn admission(
             {
                 return Ok(None);
             }
-            (id, true)
+            (*id, true)
         }
     };
-    let refs = exhaust_taint_refs_in_txn(&vault.store, txn, id)?;
+    let refs = exhaust_taint_refs_in_txn(&vault.store, txn, &id)?;
     let state = taint_state_for_refs_in_txn(&vault.store, txn, &refs)?;
     let publish = match state {
         ArtifactTaintState::Clean | ArtifactTaintState::TaintedLive => true,

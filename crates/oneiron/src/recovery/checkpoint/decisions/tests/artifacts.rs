@@ -281,3 +281,59 @@ fn a_restore_does_not_lift_a_taint_attached_since_the_backup() -> Result<()> {
     );
     Ok(())
 }
+
+/// Puts the code artifact `id` back as `class`, learned at `learned_at`.
+fn reclass(vault: &Vault, id: EntityId, class: CodeArtifactClass, learned_at: u64) -> Result<()> {
+    let body = vault.get_code_artifact(&id)?.ok_or(Error::EntityNotFound)?;
+    vault.put_code_artifact(&id, &body.with_class(class), AT, learned_at)
+}
+
+/// Greptile on #1330. Publication serves a site at a fork from the first
+/// artifact-class owner in fork-index order. Of two owners of the site, the
+/// first stale-tainted and a codebase in the backup and the second clean, the
+/// first made an artifact since the backup holds the site's publication on
+/// its taint. An unguarded restore makes it a codebase again and publishes
+/// the second, neither owner's taint changed, so the guarded restore is
+/// refused.
+#[test]
+fn a_restore_does_not_publish_a_held_site_through_another_owner() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    revoked_secret(&vault)?;
+    let (tainted, clean) = (entity(0xD1), entity(0xD2));
+    let fork = publishable_site(&vault, tainted)?;
+    publishable_site(&vault, clean)?;
+    vault.mark_artifact_tainted(&tainted, &stale_taint())?;
+    reclass(&vault, tainted, CodeArtifactClass::Codebase, 11)?;
+    let selected = vault.resolve_artifact_snapshot_by_fork(SITE, &fork)?;
+    assert_eq!(selected.map(|found| found.code_artifact_id), Some(clean));
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100)?;
+
+    reclass(&vault, tainted, CodeArtifactClass::Artifact, 12)?;
+    assert!(publish_refused_stale(&vault, &fork));
+
+    let (unguarded, _) = Vault::restore_checkpoint(
+        &image,
+        &backups.path().join("unguarded"),
+        vault.config.clone(),
+        RestoreReason::Restore,
+        1_000,
+    )?;
+    unguarded.publish_artifact_pointer(SITE, ArtifactPointerChannel::Preview, &fork)?;
+
+    let refused = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &backups.path().join("guarded"),
+        vault.config.clone(),
+        &vault,
+        1_000,
+    )
+    .map(drop)
+    .expect_err("a restore that publishes the held site is refused");
+    assert!(
+        refused.to_string().contains("artifact taint admissions"),
+        "{refused}"
+    );
+    Ok(())
+}
