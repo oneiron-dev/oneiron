@@ -11,7 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/analyzer/chinese.rs` | src | m | 2 struct · 1 enum · 10 fn · 2 const | CharByteTable, ChineseAnalyzer, DictLoadError | Chinese analyzer |
+| `src/analyzer/chinese.rs` | src | s | 2 struct · 1 enum · 10 fn · 2 const | CharByteTable, ChineseAnalyzer, DictLoadError | Chinese analyzer |
 | `src/analyzer/cjk_ngram.rs` | src | s | 1 fn · 1 crate-vis | — | Script-safe CJK n-gram generator |
 | `src/analyzer/detect.rs` | src | s | 3 fn · 1 const | — | Language detection + `LanguageHint` resolution |
 | `src/analyzer/emoji.rs` | src | s | 1 crate-vis | — | Portable-lane emoji handling: grapheme per token |
@@ -19,19 +19,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/analyzer/japanese.rs` | src | m | 1 struct · 1 enum · 7 fn · 2 const | DictLoadError, JapaneseAnalyzer | Japanese analyzer |
 | `src/analyzer/japanese/tests.rs` | test | s | — | — | — |
 | `src/analyzer/korean.rs` | src | s | 1 struct · 1 enum · 7 fn · 2 const | DictLoadError, KoreanAnalyzer | Korean analyzer |
-| `src/analyzer/latin.rs` | src | m | 2 fn | — | Latin / European analyzer |
-| `src/analyzer/manifest.rs` | src | m | 4 struct · 1 enum · 9 fn · 1 const | AnalyzerAssetManifest, AnalyzerManifest, AnalyzerMode, LangPolicy, NormalizationPolicy | Analyzer + asset manifest types, plus the canonical-JSON hasher that gates LMDB text-index compatibility |
+| `src/analyzer/latin.rs` | src | s | 2 fn | — | Latin / European analyzer |
+| `src/analyzer/manifest.rs` | src | s | 4 struct · 1 enum · 9 fn · 1 const | AnalyzerAssetManifest, AnalyzerManifest, AnalyzerMode, LangPolicy, NormalizationPolicy | Analyzer + asset manifest types, plus the canonical-JSON hasher that gates LMDB text-index compatibility |
 | `src/analyzer/mod.rs` | src | m | 1 struct · 1 enum · 8 fn · 11 mod · 5 re-export · 1 crate-vis | DiscoverError, MultilingualAnalyzer | Multilingual analyzer subsystem |
-| `src/analyzer/normalize.rs` | src | m | 1 struct · 9 fn | NormalizedText | Pre-tokenization normalization helpers |
+| `src/analyzer/normalize.rs` | src | s | 1 struct · 9 fn | NormalizedText | Pre-tokenization normalization helpers |
 | `src/analyzer/script.rs` | src | s | 2 struct · 1 enum · 6 fn | ScriptClass, ScriptRun, ScriptRunSplitter | Script-run splitter |
 | `src/analyzer/script/tests.rs` | test | s | — | — | — |
-| `src/analyzer/tests.rs` | test | m | — | — | — |
+| `src/analyzer/tests.rs` | test | s | — | — | — |
 | `src/analyzer/token.rs` | src | m | 2 struct · 3 enum · 11 fn · 2 const | AnalyzerChannel, AnalyzerContext, LanguageHint, Token, TokenKind | Token primitives emitted by analyzers |
 | `src/distance.rs` | src | s | 2 fn · 1 re-export | — | Cosine distance and similarity over `f32` vectors, with AVX2/FMA and NEON kernels picked at run time and a… |
 | `src/distance/prepared.rs` | src | m | 1 struct · 2 fn · 1 crate-vis | PreparedCosine | — |
-| `src/distance/tests.rs` | test | m | — | — | — |
 | `src/fusion.rs` | src | m | 2 struct · 5 fn · 2 const · 2 crate-vis | LinearLogBlendScores, RetrievalBlendInput | Score fusion: the linear-log blend of channel relevance with the recency, salience, confidence and gravity… |
-| `src/fusion/tests.rs` | test | m | — | — | — |
+| `src/fusion/tests.rs` | test | s | — | — | — |
 | `src/lib.rs` | src | s | 4 mod | — | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion |
 | `src/pipeline.rs` | src | s | 1 struct | ScoredEntity | Value types the retrieval pipeline's kernels share |
 | `tests/widened_seams.rs` | test | s | — | — | Direct calls into the items `oneiron-retrieval` made `pub` so `oneiron` can reach them across the crate split |
