@@ -88,13 +88,22 @@ impl Store {
         }
     }
 
-    /// Every staged key-retirement intent, so a caller-owned write
-    /// transaction can tell whether it staged one and must finish it.
+    /// Every staged key-retirement intent and whether it is an erase's, so a
+    /// caller-owned write transaction can tell whether it staged one and must
+    /// finish it. An erase can mark an intent without changing its
+    /// generation.
     pub(crate) fn gate_retirements_staged_in_txn(
         &self,
         txn: &RoTxn<'_>,
-    ) -> Result<Vec<([u8; 16], u64)>> {
-        RETIRE_PENDING.scan(self, txn)
+    ) -> Result<Vec<([u8; 16], u64, bool)>> {
+        RETIRE_PENDING
+            .scan(self, txn)?
+            .into_iter()
+            .map(|(claim, generation)| {
+                let erase = self.gate_partition_erase_pending_in_txn(txn, &claim)?;
+                Ok((claim, generation, erase))
+            })
+            .collect()
     }
 
     pub(crate) fn reject_held_gate_partition_in_txn(
