@@ -109,22 +109,30 @@ pub(super) fn walk_notes(
     walk(&open_root(root)?, root, 0, NOTES, visit)
 }
 
-/// The files a walk visits: their extension, and whether hidden entries
-/// count.
+/// The files a walk visits: their extension, whether hidden entries count,
+/// and how deep it goes. Past `depth`, a log walk passes over the folder; a
+/// notes walk refuses, since a batch without those notes would read as the
+/// whole folder.
 #[derive(Clone, Copy)]
 struct Wanted {
     extension: &'static str,
     hidden: bool,
+    depth: usize,
+    refuse_deeper: bool,
 }
 
 const LOGS: Wanted = Wanted {
     extension: "jsonl",
     hidden: true,
+    depth: MAX_WALK_DEPTH,
+    refuse_deeper: false,
 };
 
 const NOTES: Wanted = Wanted {
     extension: "md",
     hidden: false,
+    depth: 32,
+    refuse_deeper: true,
 };
 
 fn walk(
@@ -134,7 +142,13 @@ fn walk(
     wanted: Wanted,
     visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
-    if depth > MAX_WALK_DEPTH {
+    if depth > wanted.depth {
+        anyhow::ensure!(
+            !wanted.refuse_deeper,
+            "{} is more than {} folders deep; nothing was imported",
+            shown.display(),
+            wanted.depth
+        );
         return Ok(());
     }
     let mut entries: Vec<(OsString, FileType)> = Vec::new();
