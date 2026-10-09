@@ -596,3 +596,65 @@ fn replicated_sheet_answer_limit_cannot_raise_shipped_default_when_owner_omits_r
     );
     Ok(())
 }
+
+/// ASTRA-9A-2 F1: a quarantine is live policy. A restore over the vault keeps
+/// the owner's later quarantine of a trusted manifest, so the permission it
+/// carried does not come back with the image's trust sidecar.
+#[test]
+fn restore_keeps_a_quarantine_the_owner_placed_since() -> Result<()> {
+    let (_dir, vault) = temp_vault();
+    let owner_ref = test_id(0x75);
+    vault.put_entity(
+        &owner_ref,
+        crate::registry::ENTITY_TYPE_PERSON,
+        test_time(1),
+        1,
+        b"owner",
+    )?;
+    let owner = vault.authenticate_owner(
+        owner_ref,
+        &owner_ref.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let legacy = test_id(0x76);
+    let trusted = test_id(0x77);
+    let data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::ToolOutput, 2)]);
+    vault.put_entity(
+        &legacy,
+        crate::registry::ENTITY_TYPE_TASK_LIST,
+        test_time(1),
+        1,
+        &data,
+    )?;
+    vault.reauthor_legacy_policy_manifest(&owner, legacy, trusted, 2)?;
+    let body = source_trust_claim(ClaimSource::ToolOutput);
+    crate::gate::resolution::check_claim_source_trust(&body, None, &resolve(&vault)?, None)?;
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100)?;
+    vault.quarantine_manifest_contribution(&owner, trusted)?;
+    assert!(
+        crate::gate::resolution::check_claim_source_trust(&body, None, &resolve(&vault)?, None)
+            .is_err()
+    );
+
+    let (restored, _) = crate::Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &backups.path().join("restored"),
+        crate::VaultConfig::default(),
+        &vault,
+        200,
+    )?;
+    assert!(
+        restored
+            .manifest_contributions()?
+            .iter()
+            .any(|row| row.id == trusted.to_hex() && row.quarantined)
+    );
+    assert!(
+        crate::gate::resolution::check_claim_source_trust(&body, None, &resolve(&restored)?, None)
+            .is_err()
+    );
+    Ok(())
+}

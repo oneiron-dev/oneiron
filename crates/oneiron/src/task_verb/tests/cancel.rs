@@ -1073,3 +1073,147 @@ fn repeated_refusal_surfaces_on_the_owner_board_and_ordinary_rows_are_unchanged(
         "a settled attempt is history, not an open decision"
     );
 }
+
+/// SOL-9A-2-R2 F23: a cancellation is an authority fact of its task. A
+/// restore over the vault goes ahead past a task created since the backup,
+/// and is refused once a task the backup holds was cancelled.
+#[test]
+fn a_restore_never_drops_a_cancellation_made_since() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    grant_cancel(&vault, own, 0xD1);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
+    let task = facade
+        .tasks_create(&spec(120))
+        .expect("task")
+        .task_ref
+        .expect("task ref");
+    let backups = tempfile::tempdir().expect("backups");
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100).expect("backup");
+    let restore = |destination: &std::path::Path| {
+        Vault::restore_checkpoint_keeping_authority(
+            &image,
+            destination,
+            vault.config.clone(),
+            &vault,
+            200,
+        )
+    };
+
+    facade.tasks_create(&spec(130)).expect("a later task");
+    drop(restore(&backups.path().join("first")).expect("restored"));
+
+    assert!(
+        facade
+            .cancel(TaskCancelTarget::Task(task))
+            .expect("cancel")
+            .effected
+    );
+    let destination = backups.path().join("second");
+    let error = restore(&destination)
+        .err()
+        .expect("the restore must be refused");
+    assert!(error.to_string().contains("task authority"), "{error}");
+    assert!(!destination.exists());
+}
+
+/// ASTRA-9A-2-R2 F7: whom a task is assigned to authorizes the asks bound to
+/// it. A restore over the vault from before a reassignment of a task the
+/// backup holds is refused.
+#[test]
+fn a_restore_never_reverses_a_task_reassignment_made_since() {
+    let (_dir, vault) = open_vault();
+    let owner = own_agent(&vault);
+    let first = EntityId::from_bytes([0xE3; 16]).expect("first id");
+    let second = EntityId::from_bytes([0xE4; 16]).expect("second id");
+    put_person(&vault, first);
+    put_person(&vault, second);
+    let task = vault
+        .memory(owner, EdgeActorClass::Human)
+        .tasks_create(&spec(120).with_assignee(TaskAssignee::Peer { actor_ref: first }))
+        .expect("task")
+        .task_ref
+        .expect("task ref");
+    let backups = tempfile::tempdir().expect("backups");
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100).expect("backup");
+
+    let mut reassigned = crate::task_verb::wire_decode::task_verb_body(&vault, task)
+        .expect("task body")
+        .expect("typed task body");
+    reassigned.assignee = Some(TaskAssignee::Peer { actor_ref: second });
+    let now = crate::unix_seconds_now() + 5;
+    vault
+        .put_entity(
+            &task,
+            crate::registry::ENTITY_TYPE_TASK,
+            crate::temporal::TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+            &crate::task_verb::wire_encode::encode_task_verb_body(reassigned),
+        )
+        .expect("reassign");
+
+    let destination = backups.path().join("restored");
+    let error = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &destination,
+        vault.config.clone(),
+        &vault,
+        200,
+    )
+    .err()
+    .expect("the restore must be refused");
+    assert!(error.to_string().contains("task authority"), "{error}");
+    assert!(!destination.exists());
+}
+
+/// SOL-9A-2-R2 F25: a task body replaced since the backup by one that binds
+/// no ask leaves the asks bound to the task stale. A restore over the vault
+/// that would bring the task's binding back is refused.
+#[test]
+fn a_restore_never_rebinds_a_task_whose_body_was_replaced_since() {
+    let (_dir, vault) = open_vault();
+    let owner = own_agent(&vault);
+    let agent = EntityId::from_bytes([0xE3; 16]).expect("agent id");
+    put_person(&vault, agent);
+    let task = vault
+        .memory(owner, EdgeActorClass::Human)
+        .tasks_create(&spec(120).with_assignee(TaskAssignee::Peer { actor_ref: agent }))
+        .expect("task")
+        .task_ref
+        .expect("task ref");
+    let backups = tempfile::tempdir().expect("backups");
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100).expect("backup");
+
+    let now = crate::unix_seconds_now() + 5;
+    vault
+        .put_entity(
+            &task,
+            crate::registry::ENTITY_TYPE_TASK,
+            crate::temporal::TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+            &crate::habit::task_body_for_test(TaskRole::Task),
+        )
+        .expect("replace the task body");
+
+    let destination = backups.path().join("restored");
+    let error = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &destination,
+        vault.config.clone(),
+        &vault,
+        200,
+    )
+    .err()
+    .expect("the restore must be refused");
+    assert!(error.to_string().contains("task authority"), "{error}");
+    assert!(!destination.exists());
+}

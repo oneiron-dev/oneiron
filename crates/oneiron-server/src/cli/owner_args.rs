@@ -176,7 +176,13 @@ pub struct ServeOnlyArgs {
 
 #[derive(Args, Clone, Debug)]
 pub struct RunArgs {
-    pub run_id: String,
+    /// The run id.
+    #[arg(required_unless_present = "run_ref")]
+    pub run_id: Option<String>,
+
+    /// The `run_ref` `runs pending` printed for the run, in place of its id.
+    #[arg(long = "ref", value_name = "RUN_REF", conflicts_with = "run_id")]
+    pub run_ref: Option<String>,
 
     #[command(flatten)]
     pub serve: ServeArgs,
@@ -184,7 +190,13 @@ pub struct RunArgs {
 
 #[derive(Args, Clone, Debug)]
 pub struct RunDecisionArgs {
-    pub run_id: String,
+    /// The run id.
+    #[arg(required_unless_present = "run_ref")]
+    pub run_id: Option<String>,
+
+    /// The `run_ref` `runs pending` printed for the run, in place of its id.
+    #[arg(long = "ref", value_name = "RUN_REF", conflicts_with = "run_id")]
+    pub run_ref: Option<String>,
 
     /// The bundle id `runs show` printed for exactly these proposals.
     #[arg(long)]

@@ -46,7 +46,17 @@ fn ceiling(auto: bool) -> PolicyApprovalCeiling {
         PolicyApprovalCeiling::Proposed
     }
 }
-pub(super) fn resolve(
+/// Every actor an owner has introduced, by the id its introduction is
+/// resolved under.
+pub(crate) fn introduced_foreign_agents(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<EntityId>> {
+    INTRODUCTION.scan_keys(store, txn, &[])
+}
+/// The bound an owner's introduction of `actor` puts on its writes, through
+/// the introducer's own bound and chain; `None` when no owner introduced it.
+pub(crate) fn resolve(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     actor: WriteActor,
