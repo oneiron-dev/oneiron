@@ -485,6 +485,37 @@ fn budget_denied_opens_budget_trap_and_parks() -> Result<()> {
     Ok(())
 }
 
+/// Astra R2 #1304: the budget trap and its park committed in two
+/// transactions, so a crash or a refused park between them left an open trap
+/// over an unparked attempt; boot recovery requeued it and a fresh budget ran
+/// it without the signal. The trap now lands only with its park.
+#[test]
+fn a_budget_trap_lands_only_with_its_park() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    install_failure_rules(&vault, &[("budget", "budget_trap", true, false)])?;
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    // Another owner holds the park, so this trap's park is refused.
+    DreamerRunnerStore::new(&vault).park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
+        attempt_id: fixture.attempt_id,
+        reason: "driver park".to_owned(),
+        park_owner: "wake-worker".to_owned(),
+        now: 10,
+    })?;
+    let backend = ScriptedBackend::new(Vec::new()); // must never be called
+    let guard = guard_with_limit(100); // reserve 500 > limit 100 → Exhausted
+
+    block_on(call_as_step(&ctx, &backend, &guard, request_fixture()))
+        .expect_err("a refused park fails the trapped step");
+    assert_eq!(
+        claims_with_predicate(&vault, &fixture.subject, DREAMER_TRAP_PREDICATE)?,
+        0,
+        "no trap may stay open over an attempt it did not park"
+    );
+    assert_eq!(backend.calls(), 0);
+    Ok(())
+}
+
 #[test]
 fn signal_before_wait_ordering() -> Result<()> {
     let (_dir, vault) = open_vault();

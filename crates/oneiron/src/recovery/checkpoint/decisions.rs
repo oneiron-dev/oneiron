@@ -13,6 +13,13 @@
 //! it brings back; so does one that only narrows an answer, as dropping a
 //! contact made since the backup leaves that party's sends held as cold.
 //!
+//! A decision that reads the policy reads, in each vault, the policy that
+//! vault decides with once it is next opened (`Store::policy_as_next_opened`).
+//! The restored vault's open seeds the default policy where no manifest is in
+//! force. A live vault left with none seeds that same default at its own next
+//! open, so it is judged by the default, not by the fail-closed policy it
+//! holds until then.
+//!
 //! A decision about one entity (who may read a claim, whether a task's ask
 //! is stale) is asked only of entities both vaults hold: one only one vault
 //! holds is content the restore returns or drops (RD-20). A settlement is the
