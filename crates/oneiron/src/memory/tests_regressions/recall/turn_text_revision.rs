@@ -79,3 +79,58 @@ fn a_pack_pinned_at_a_recalled_turn_revision_keeps_the_turn() {
         item.reference()
     );
 }
+
+/// Astra 1333 re-check R2 (P2): a turn's reference still hydrates after its
+/// row takes new metadata of its own, which moves the content hash its short
+/// name is filed under, while its messages stand. Bug repro: a text revision
+/// found its turn by the name and the hash the reference carries, which the
+/// row no longer has, so the lookup failed before the retained row it names
+/// was ever read.
+#[test]
+fn a_turn_reference_hydrates_after_its_row_takes_new_metadata() {
+    const MEANING: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
+    let (_dir, vault) = open_embedding_vault();
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let facade = facade_for(&vault, owner);
+    let turn = witness_turn(&facade, 0xA7, &["the boiler hums at night"], 1_900);
+    fill_turn(&vault, &turn, &MEANING);
+    let item = recalled_turn(&facade, "boiler", &MEANING);
+    let reference = item.reference();
+    let (_, hash) = crate::entity_id::parse_short_ref_syntax(&item.short_id).expect("short ref");
+
+    let record = {
+        let rtxn = vault.store.env.read_txn().expect("read txn");
+        crate::ports::EntityStoreRead::port_entity_record(&vault.store, &rtxn, &turn)
+            .expect("read the turn row")
+            .expect("the turn row")
+    };
+    let titled = |title: &str| {
+        let rmpv::Value::Map(mut fields) =
+            rmpv::decode::read_value(&mut std::io::Cursor::new(&record.body)).expect("turn body")
+        else {
+            panic!("a turn body is a map");
+        };
+        fields.push((rmpv::Value::from("title"), rmpv::Value::from(title)));
+        let mut body = Vec::new();
+        rmpv::encode::write_value(&mut body, &rmpv::Value::Map(fields)).expect("encode");
+        body
+    };
+    let body = (0..)
+        .map(|n| titled(&format!("night noises {n}")))
+        .find(|body| (xxhash_rust::xxh32::xxh32(body, 0) % 256) as u8 != hash)
+        .expect("a title that moves the hash");
+    vault
+        .put_entity(
+            &turn,
+            crate::registry::ENTITY_TYPE_TURN,
+            record.occurred,
+            record.learned_at,
+            &body,
+        )
+        .expect("give the turn row a title");
+
+    let views = facade
+        .hydrate(std::slice::from_ref(&reference))
+        .expect("the reference hydrates");
+    assert_eq!(views[0].id_hex, turn.to_hex());
+}

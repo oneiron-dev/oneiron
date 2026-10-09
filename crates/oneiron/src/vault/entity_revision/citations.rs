@@ -215,6 +215,9 @@ fn resolve_reference(
 /// The TURN `reference` names, when `revision` is a text revision of it that
 /// still resolves (`turn_text`). No row revision indexes a text revision, so
 /// it is found from the reference, which the caller then checks as any pin's.
+/// The name is looked up whatever its hash: the hash is the one the row had
+/// when the revision was served, which the caller checks against that row,
+/// and the live row may have moved since.
 fn turn_of_text_revision(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -222,10 +225,21 @@ fn turn_of_text_revision(
     revision: RevisionRef,
 ) -> Result<Option<EntityId>> {
     let id = match crate::entity_id::parse_short_ref_syntax(reference) {
-        Ok((short, hash)) => match vault.hydrate_short_id_in(txn, short, hash)? {
-            Some(entry) => entry.id,
-            None => return Ok(None),
-        },
+        Ok((short, hash)) => {
+            let mut named = None;
+            for candidate in
+                std::iter::once(hash).chain((0..=u8::MAX).filter(|other| *other != hash))
+            {
+                if let Some(entry) = vault.hydrate_short_id_in(txn, short, candidate)? {
+                    named = Some(entry.id);
+                    break;
+                }
+            }
+            match named {
+                Some(id) => id,
+                None => return Ok(None),
+            }
+        }
         Err(_) => match EntityId::from_hex(reference) {
             Ok(id) => id,
             Err(_) => return Ok(None),
