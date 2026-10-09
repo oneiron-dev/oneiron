@@ -24,8 +24,6 @@ mod tests;
 // the lines below restore the crate/std names the old module header imported
 // for them.
 #[cfg(test)]
-use crate::entity_id::EntityId;
-#[cfg(test)]
 use crate::error::{Error, Result};
 #[cfg(test)]
 use crate::serialize::WHOLE_VAULT_EXPORT_SERIALIZER;

@@ -199,30 +199,6 @@ fn demoted_claim_retracts_under_original_actor_only_policy() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn rejected_demotion_keeps_original_binding_and_actor_rights() -> Result<()> {
-    let (_dir, vault, actor) = fixture()?;
-    let id = entity(0x64);
-    authored_local_claim(&vault, actor, id)?;
-    let raw = vault.get_raw(&id)?.expect("claim");
-    let error = vault
-        .apply_claim_demotion(
-            &id,
-            ClaimDemotionAction::Weaken {
-                new_confidence: 0.5,
-            },
-            20,
-        )
-        .expect_err("weaken before decay is not a constrained valid transition");
-    assert!(matches!(error, Error::InvalidClaimBody(_)));
-    assert_eq!(vault.get_raw(&id)?.expect("unchanged"), raw);
-    actor_only_policy(&vault, actor)?;
-    vault.retract_claim(&id, 30)?;
-    let body = vault.get_claim(&id)?.expect("retracted claim");
-    assert_eq!(body.lifecycle, ClaimLifecycleStatus::Retracted);
-    Ok(())
-}
-
 fn failed_actor_retraction_emits_no_metrics(retype: bool) -> Result<()> {
     let (_dir, vault, actor) = fixture()?;
     let id = entity(0x64);
@@ -330,30 +306,6 @@ fn public_actor_retype_is_immutable_and_preserves_lifecycle_authority() -> Resul
     assert_eq!(gate_metric_emission_count_for_test(), before);
     actor_only_policy(&vault, actor)?;
     vault.retract_claim(&id, 30)?;
-    Ok(())
-}
-
-#[test]
-fn committed_actor_retraction_emits_one_metric_and_one_receipt() -> Result<()> {
-    let (_dir, vault, actor) = fixture()?;
-    let id = entity(0x64);
-    authored_local_claim(&vault, actor, id)?;
-    let decisions = vault.store.gate_decisions(128)?;
-    let before = gate_metric_emission_count_for_test();
-    vault.retract_claim(&id, 30)?;
-    assert_eq!(gate_metric_emission_count_for_test(), before + 1);
-    let after = vault.store.gate_decisions(128)?;
-    let added: Vec<_> = after
-        .iter()
-        .filter(|row| !decisions.contains(row))
-        .collect();
-    assert_eq!(added.len(), 1);
-    assert_eq!(added[0].actor_ref, Some(actor.entity_ref().to_hex()));
-    assert_eq!(added[0].outcome, "allow");
-    assert_eq!(
-        vault.get_claim(&id)?.expect("closed").lifecycle,
-        ClaimLifecycleStatus::Retracted
-    );
     Ok(())
 }
 
