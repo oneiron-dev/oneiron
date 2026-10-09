@@ -45,36 +45,24 @@ pub(super) fn fold_messages_into_turns(
     let mut placed = HashSet::new();
     let mut folded = Vec::with_capacity(scores.len());
     for hit in scores.drain(..) {
-        let is_message = metadata_cache
-            .get(store, rtxn, &hit.id)?
-            .is_some_and(|meta| meta.entity_type == ENTITY_TYPE_MESSAGE);
-        let mut id = hit.id;
-        if is_message && let Some(turn) = turn_of(store, rtxn, &hit.id, metadata_cache)? {
-            let admits = match admitted.get(&turn) {
-                Some(admits) => *admits,
-                None => {
-                    let admits = pipeline_candidate_matches_filters_and_gate(
-                        store,
-                        rtxn,
-                        &turn,
-                        filter_config,
-                        metadata_cache,
-                        claim_gate,
-                    )?;
-                    admitted.insert(turn, admits);
-                    admits
-                }
-            };
-            if admits {
-                cited.entry(turn).or_default().push(hit.id);
-                if let Some(evidence) = signal_components.get(&hit.id).cloned() {
-                    carry_evidence(signal_components.entry(turn).or_default(), &evidence);
-                }
-                id = turn;
-            }
-        }
-        if is_message && id == hit.id && fold == TurnFold::TurnsOnly {
+        let Some(id) = folded_row(
+            &hit.id,
+            fold,
+            store,
+            rtxn,
+            filter_config,
+            metadata_cache,
+            claim_gate,
+            &mut admitted,
+        )?
+        else {
             continue;
+        };
+        if id != hit.id {
+            cited.entry(id).or_default().push(hit.id);
+            if let Some(evidence) = signal_components.get(&hit.id).cloned() {
+                carry_evidence(signal_components.entry(id).or_default(), &evidence);
+            }
         }
         if placed.insert(id) {
             folded.push(ScoredEntity { id, ..hit });
@@ -82,6 +70,53 @@ pub(super) fn fold_messages_into_turns(
     }
     *scores = folded;
     Ok(cited)
+}
+
+/// The row `hit` stands as once folded: its TURN when the run admits that
+/// turn (`filter_config`, the run's own filters and gate), else itself, or
+/// `None` for a MESSAGE that [`TurnFold::TurnsOnly`] drops. `admitted` keeps
+/// each turn's answer for the run.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the fold and its bound read the same filters, caches and turn answers"
+)]
+fn folded_row(
+    hit: &EntityId,
+    fold: TurnFold,
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    filter_config: PipelineFilterConfig<'_>,
+    metadata_cache: &mut EntityMetadataCache,
+    claim_gate: &mut ClaimStatusGateCache,
+    admitted: &mut HashMap<EntityId, bool>,
+) -> Result<Option<EntityId>> {
+    let is_message = metadata_cache
+        .get(store, rtxn, hit)?
+        .is_some_and(|meta| meta.entity_type == ENTITY_TYPE_MESSAGE);
+    if !is_message {
+        return Ok(Some(*hit));
+    }
+    if let Some(turn) = turn_of(store, rtxn, hit, metadata_cache)? {
+        let admits = match admitted.get(&turn) {
+            Some(admits) => *admits,
+            None => {
+                let admits = pipeline_candidate_matches_filters_and_gate(
+                    store,
+                    rtxn,
+                    &turn,
+                    filter_config,
+                    metadata_cache,
+                    claim_gate,
+                )?;
+                admitted.insert(turn, admits);
+                admits
+            }
+        };
+        if admits {
+            return Ok(Some(turn));
+        }
+    }
+    Ok((fold != TurnFold::TurnsOnly).then_some(*hit))
 }
 
 /// Adds a message's channel evidence to its turn's, keeping the better score
@@ -97,26 +132,43 @@ fn carry_evidence(turn: &mut Vec<RetrievalScoreComponent>, message: &[RetrievalS
 }
 
 /// How many leading `rows` it takes to hold `bound` distinct results once
-/// each MESSAGE stands as its TURN, or `None` when all of them hold fewer.
+/// folded, or `None` when all of them hold fewer. Each row counts as what
+/// the fold makes of it ([`folded_row`], the same turn admission): a message
+/// whose turn the run refuses counts as itself, or not at all under
+/// [`TurnFold::TurnsOnly`], so it cannot fill the bound with a result the
+/// fold then drops.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the bound reads the run's filters and caches as the fold does"
+)]
 pub(super) fn rows_holding_distinct_turns(
     rows: &[ScoredEntity],
     bound: usize,
+    fold: TurnFold,
     store: &Store,
     rtxn: &RoTxn<'_>,
+    filter_config: PipelineFilterConfig<'_>,
     metadata_cache: &mut EntityMetadataCache,
+    claim_gate: &mut ClaimStatusGateCache,
 ) -> Result<Option<usize>> {
     if bound == 0 {
         return Ok(Some(0));
     }
+    let mut admitted = HashMap::new();
     let mut distinct = HashSet::new();
     for (index, row) in rows.iter().enumerate() {
-        let is_message = metadata_cache
-            .get(store, rtxn, &row.id)?
-            .is_some_and(|meta| meta.entity_type == ENTITY_TYPE_MESSAGE);
-        let result = if is_message {
-            turn_of(store, rtxn, &row.id, metadata_cache)?.unwrap_or(row.id)
-        } else {
-            row.id
+        let Some(result) = folded_row(
+            &row.id,
+            fold,
+            store,
+            rtxn,
+            filter_config,
+            metadata_cache,
+            claim_gate,
+            &mut admitted,
+        )?
+        else {
+            continue;
         };
         if distinct.insert(result) && distinct.len() == bound {
             return Ok(Some(index + 1));

@@ -185,3 +185,64 @@ fn several_messages_of_one_turn_leave_room_for_the_next_turn() {
     let turns = pack.items.iter().filter(|item| item.kind == "TURN").count();
     assert_eq!(turns, 2, "both conversations' turns: {:?}", pack.items);
 }
+
+/// Greptile 1333 (allowed turns get skipped): the text channel reads on
+/// until its rows hold `limit` results as the fold leaves them. A message
+/// whose turn the reader may not retrieve is no such result in a TURN-only
+/// recall, which drops it. Bug repro: the bound counted that message's turn,
+/// stopped reading at it, and the fold then dropped it, so a scoped reader's
+/// TURN-only recall returned nothing while a later turn it may read matched.
+#[test]
+fn a_turn_the_reader_may_not_retrieve_leaves_room_for_one_it_may() {
+    const ALLOWED: &str = "we walked along the harbor after the ferry and talked for hours";
+    let (_dir, vault, owner, scoped) =
+        recall_after_control_writes_fixture_in(true, crate::config::VaultConfig::default());
+    let space = EntityId::from_bytes([0x68; 16]).unwrap();
+    let in_space = |order, text| {
+        let mut message = witness_message(order, WitnessAuthor::User, text);
+        message.metadata = Some(serde_json::json!({"rel": space.to_hex()}));
+        message
+    };
+    let occurred_at = crate::unix_seconds_now() - 28 * 86_400;
+    let owner_facade = facade_for(&vault, owner);
+    // The best match, in a turn whose other message the reader may not read.
+    owner_facade
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::from_bytes([0xF1; 16]).unwrap().to_hex(),
+            turn_ref: None,
+            messages: vec![
+                in_space(0, "harbor harbor"),
+                witness_message(1, WitnessAuthor::User, "harbor locker code is 4471"),
+            ],
+            occurred_at,
+        })
+        .expect("witness the partly withheld turn");
+    owner_facade
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::from_bytes([0xF2; 16]).unwrap().to_hex(),
+            turn_ref: None,
+            messages: vec![in_space(0, ALLOWED)],
+            occurred_at,
+        })
+        .expect("witness the readable turn");
+
+    let pack = facade_for(&vault, scoped)
+        .recall(
+            "harbor",
+            Effort::Light,
+            &RecallScope {
+                kinds: Some(vec!["TURN".to_owned()]),
+                ..RecallScope::default()
+            },
+            1,
+            None,
+            None,
+        )
+        .expect("scoped turn-only recall");
+    let found: Vec<_> = pack
+        .items
+        .iter()
+        .map(|item| (item.kind.as_str(), item.value_text.as_str()))
+        .collect();
+    assert_eq!(found, [("TURN", ALLOWED)], "{:?}", pack.items);
+}

@@ -150,6 +150,13 @@ impl PipelineBuilder<'_> {
             } else {
                 scoped_text_limit
             };
+            // The bound below admits turns as the fold does, in caches of its
+            // own: the scan closure holds the run's.
+            let mut fold_claim_gate = ClaimStatusGateCache {
+                include_stale: inputs.filter_config.authority_filter.include_stale,
+                private_note_ids: inputs.claim_gate_widening_probe.private_note_ids.clone(),
+                ..ClaimStatusGateCache::default()
+            };
             let mut prefix_probe_claim_gate = inputs.claim_gate_widening_probe;
             let mut exact_posting_matches_scope = |id: &EntityId| {
                 pipeline_candidate_matches_filters_and_gate(
@@ -215,9 +222,12 @@ impl PipelineBuilder<'_> {
                 if let Some(held) = turn_fold::rows_holding_distinct_turns(
                     &rows,
                     candidate_limit,
+                    self.turn_fold,
                     &self.vault.store,
                     rtxn,
+                    inputs.filter_config,
                     &mut fold_metadata,
+                    &mut fold_claim_gate,
                 )? {
                     rows.truncate(held);
                     break rows;
