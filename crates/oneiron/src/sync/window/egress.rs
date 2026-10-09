@@ -289,7 +289,6 @@ pub(in crate::sync) fn withdrawn_delete_carriers(
             .store
             .entities
             .get(rtxn, id.as_bytes())
-            .map_err(Error::from)
             .and_then(|raw| {
                 crate::deletion::row_deletion_marked(&vault.store, rtxn, &id, raw.as_deref())
             });
