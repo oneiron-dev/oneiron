@@ -25,6 +25,8 @@ pub use query::*;
 mod integrity;
 mod lmdb_aux;
 mod lmdb_claim;
+#[cfg(test)]
+pub(crate) use lmdb_claim::MAX_PREDICATE_LIST_ROWS;
 mod lmdb_entity;
 pub(crate) use lmdb_entity::reindex_named_entities;
 mod lmdb_index;

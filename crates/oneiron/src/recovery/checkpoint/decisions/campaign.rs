@@ -47,19 +47,22 @@ impl Decision for CampaignCompliance {
             let txn = vault.store.env.read_txn()?;
             let store = &vault.store;
             addresses.extend(crate::comm::comm_party_keys_in_txn(store, &txn)?);
-            for (elements, _) in vault
-                .claims_with_predicate_in_txn(&txn, PREDICATE_CRM_COMPLIANCE_MESSAGE_ELEMENTS)?
-            {
-                for edge in store.port_edges(
-                    &txn,
-                    &elements,
-                    EdgeDirection::Out,
-                    Some(EdgeKind::ClaimOf),
-                    None,
-                )? {
-                    identities.insert(Some(edge?.target));
-                }
-            }
+            vault.for_each_claim_with_predicate_in_txn(
+                &txn,
+                PREDICATE_CRM_COMPLIANCE_MESSAGE_ELEMENTS,
+                |elements, _| {
+                    for edge in store.port_edges(
+                        &txn,
+                        &elements,
+                        EdgeDirection::Out,
+                        Some(EdgeKind::ClaimOf),
+                        None,
+                    )? {
+                        identities.insert(Some(edge?.target));
+                    }
+                    Ok(())
+                },
+            )?;
         }
         let mut subjects = BTreeSet::new();
         for address in &addresses {

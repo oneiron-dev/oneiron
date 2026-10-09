@@ -105,6 +105,93 @@ fn no_restore_loosens_a_decision_and_one_that_loosens_none_restores() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// A real bug: the rows below read their claims through the predicate list,
+/// which refuses past a fixed count, so a vault holding more claims of one
+/// of these predicates than that could not be restored at all. The guard now
+/// walks them one claim at a time. Test builds lower the list's cap; each
+/// row's claim is copied from the census case that writes it through its own
+/// door, or built where no case writes one. Booking publications are the one
+/// row left out: only the owner's memory door may write one, so a copy is
+/// refused; that row reads through the same walk.
+#[test]
+fn a_vault_holding_more_claims_of_a_predicate_than_a_list_holds_restores() -> Result<()> {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
+    use crate::{EntityId, TimeRange, VaultConfig};
+    let stored = |case: fn() -> Result<Case>, predicate: &str| -> Result<ClaimBody> {
+        let case = case()?;
+        let txn = case.vault.store.env.read_txn()?;
+        let mut claims = case.vault.claims_with_predicate_in_txn(&txn, predicate)?;
+        claims
+            .pop()
+            .map(|(_, claim)| claim)
+            .ok_or(crate::Error::EntityNotFound)
+    };
+    let person = crate::test_util::entity(0x51);
+    let built = |predicate: &str, value: rmpv::Value| {
+        ClaimBody::new(
+            predicate,
+            ClaimSubject::Entity(person),
+            value,
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        )
+    };
+    let claims = [
+        stored(
+            consent::shared_coreference,
+            crate::claim::PREDICATE_COREFERENCE_SHARE_CONSENT,
+        )?,
+        stored(
+            consent::delivery_windows,
+            crate::delivery_window::PREDICATE_DELIVERY_WINDOW_QUIET,
+        )?,
+        stored(
+            counterparty::do_not_contact,
+            crate::campaign::claims::PREDICATE_COMM_DO_NOT_CONTACT,
+        )?,
+        stored(
+            counterparty::send_overrides,
+            crate::comm::PREDICATE_COMM_SEND_OVERRIDE,
+        )?,
+        built(
+            crate::campaign::compliance::PREDICATE_CRM_COMPLIANCE_MESSAGE_ELEMENTS,
+            rmpv::Value::Map(vec![("sender_identity".into(), true.into())]),
+        )?,
+        built(
+            crate::federation::PREDICATE_RELATIONSHIP_PERSON_REF,
+            person.to_hex().into(),
+        )?,
+    ];
+    let (dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let at = TimeRange { start: 1, end: 1 };
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, at, 1, b"person")?;
+    let mut batch = vault.batch();
+    for (row, claim) in claims.iter().enumerate() {
+        let body = crate::claim::encode_claim_body(claim)?;
+        for n in 0..=crate::ports::MAX_PREDICATE_LIST_ROWS {
+            let mut id = [0x01, 0x52, row as u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+            id[8..].copy_from_slice(&(n as u64).to_be_bytes());
+            batch =
+                batch.put_replicated(&EntityId::from_bytes(id)?, ENTITY_TYPE_CLAIM, at, 1, &body);
+        }
+    }
+    batch.commit()?;
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100)?;
+    Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &backups.path().join("restored"),
+        vault.config.clone(),
+        &vault,
+        1_000,
+    )?;
+    drop(dir);
+    Ok(())
+}
+
 /// Runs one census case, naming its row when it holds.
 fn run(case: fn() -> Result<Case>) -> std::result::Result<&'static str, String> {
     let Case {
