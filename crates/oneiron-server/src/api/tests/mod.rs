@@ -1,5 +1,6 @@
 use super::*;
 
+mod ai_chat;
 mod depth_quality;
 mod memory_reason_repairs;
 use axum::body::{Body, to_bytes};

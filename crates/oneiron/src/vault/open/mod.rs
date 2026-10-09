@@ -322,9 +322,30 @@ impl Vault {
                 "default test policy has no source trust",
             ));
         };
-        let Some(Value::Map(permit)) = rows.iter_mut().find_map(|(key, value)| {
+        // The stock Generated rows bind the commitment projector and, since
+        // ARCH-0026's warm default, the Dreamer; the projector's is rebound.
+        let projector = Value::from(
+            crate::commitment_schedule::commitment_projection_actor()?
+                .entity_ref()
+                .to_hex(),
+        );
+        let permit = match rows.iter_mut().find_map(|(key, value)| {
             (key.as_str() == Some(ClaimSource::Generated.as_str())).then_some(value)
-        }) else {
+        }) {
+            Some(Value::Map(permit)) => Some(permit),
+            Some(Value::Array(permits)) => permits.iter_mut().find_map(|permit| match permit {
+                Value::Map(fields)
+                    if fields.iter().any(|(key, value)| {
+                        key.as_str() == Some("actor_ref") && *value == projector
+                    }) =>
+                {
+                    Some(fields)
+                }
+                _ => None,
+            }),
+            _ => None,
+        };
+        let Some(permit) = permit else {
             return Err(Error::InvariantViolation(
                 "default test policy has no Generated permit",
             ));
@@ -559,6 +580,8 @@ impl Vault {
         let lfs_recovery_cutoff = crate::unix_seconds_now().saturating_sub(24 * 60 * 60);
         while vault.recover_lfs_uploads_before(lfs_recovery_cutoff)? != 0 {}
         while vault.collect_lfs_garbage(32)? != 0 {}
+        // An erase or sweep interrupted after its commit resumes here.
+        vault.finish_gate_decision_retirements_after_commit();
         vault.recover_message_streams().map_err(|error| {
             crate::error::Error::Record(crate::error::RecordError::MessageStreamRecoveryFailed(
                 error.to_string(),

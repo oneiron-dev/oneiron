@@ -4123,26 +4123,15 @@ fn scoped_read_in_session_sees_session_staged_out_edges() -> Result<()> {
         use std::collections::BTreeSet;
         let mut scope = crate::federation::scope_codec::read_preset();
         scope.bands = ScopeAxis::Some(BTreeSet::from([crate::registry::ENTITY_TYPE_PERSON]));
-        let bytes = crate::gate::default_policy_manifest()?;
-        let Value::Map(mut entries) =
-            rmpv::decode::read_value(&mut bytes.as_slice()).expect("default manifest")
-        else {
-            unreachable!("default policy manifest is a map");
-        };
-        entries.push((
-            Value::from("scoped_grants"),
-            Value::Array(vec![Value::Map(vec![
-                (Value::from("actor_ref"), Value::from("agent:reader")),
-                (Value::from("effector"), Value::from("core:read")),
-                (
-                    Value::from("scope"),
-                    crate::federation::scope_codec::encode_scope_value(&scope)?,
-                ),
-                (Value::from("receipt_required"), Value::Boolean(false)),
-            ])]),
-        ));
-        let mut out = Vec::new();
-        rmpv::encode::write_value(&mut out, &Value::Map(entries)).expect("grant manifest");
+        let out = crate::gate::default_policy_manifest_with_scoped_grants(vec![Value::Map(vec![
+            (Value::from("actor_ref"), Value::from("agent:reader")),
+            (Value::from("effector"), Value::from("core:read")),
+            (
+                Value::from("scope"),
+                crate::federation::scope_codec::encode_scope_value(&scope)?,
+            ),
+            (Value::from("receipt_required"), Value::Boolean(false)),
+        ])])?;
         crate::test_util::put_policy_manifest_bytes(
             &vault,
             crate::gate::default_policy_manifest_id()?,

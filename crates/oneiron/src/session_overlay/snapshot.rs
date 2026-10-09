@@ -252,8 +252,9 @@ impl OverlaySnapshot {
     ///
     /// The closure is: the requested turn's own scoped entries (its
     /// materialized TURN put, its `PartOf` MESSAGE puts, its `DerivedFrom`
-    /// SUMMARY puts, its closure-internal attribution edges — see
-    /// [`attribution_edge_is_closure_internal`] — and every op explicitly
+    /// SUMMARY puts, its attribution edges — `BelongsTo` to the shell and
+    /// `AuthoredBy` to the base actor (ARCH-0052 #d4), whose existence in
+    /// base the promote checks — and every op explicitly
     /// tagged as that turn's owned artifact) plus the room's one fresh
     /// CONVERSATION shell, which is selected by the shell role against the
     /// turn's OWN conversation. The shell is staged once per room, under the first

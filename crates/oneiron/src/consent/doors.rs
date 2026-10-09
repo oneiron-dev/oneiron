@@ -102,7 +102,7 @@ impl AuthenticatedOwner {
         Ok(())
     }
 
-    fn stamp(&self) -> ConsentOwnerStamp {
+    pub(super) fn stamp(&self) -> ConsentOwnerStamp {
         ConsentOwnerStamp {
             actor: self.actor,
             principal_ref: self.principal_ref.clone(),
@@ -370,6 +370,7 @@ impl Vault {
             status: ConsentGrantStatus::Active,
             owner_stamp: owner.stamp(),
             created_at: mutation_recorded_at,
+            bypass: None,
         };
         let receipt = ConsentReceipt::Approved {
             decision_id: crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?),
@@ -616,9 +617,29 @@ impl Vault {
         {
             spend_approve_once_in_txn(&self.store, &mut wtxn, authorization)?;
         }
+        // DEC-0006 invariant 7: inside its scope, the owner's live bypass
+        // grant replaces the floor's ask, and the act is receipted as
+        // bypassed in this same transaction.
+        if context.decision == ConsentDecision::Ask {
+            let floor =
+                crate::gate::resolve_policy_manifest(&self.store, &wtxn)?.catastrophe_floor();
+            let bypasses = super::bypass::live_bypasses_in_txn(&self.store, &wtxn)?;
+            if let Some(bypass) = super::bypass::covering_bypass(effect, &floor, &bypasses, &grants)
+            {
+                self.record_bypassed_act_in_txn(&mut wtxn, bypass, effect.digest())?;
+                let evaluation = ConsentEvaluation {
+                    decision: ConsentDecision::Auto,
+                    reason_codes: Vec::new(),
+                    bypassed_by: Some(bypass.grant_ref.clone()),
+                };
+                wtxn.commit()?;
+                return Ok(evaluation);
+            }
+        }
         let evaluation = ConsentEvaluation {
             decision: context.decision,
             reason_codes: crate::gate::consent_gate_reason_codes(&context),
+            bypassed_by: None,
         };
         wtxn.commit()?;
         Ok(evaluation)
@@ -669,7 +690,7 @@ impl Vault {
     /// `diff_handle` holds the effect/bound digest and `grant_ref` joins
     /// standing use, exactly as every other Gate receipt does — no second
     /// receipt ledger is minted.
-    fn append_consent_gate_decision_in_txn(
+    pub(super) fn append_consent_gate_decision_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         stamp: &ConsentOwnerStamp,
@@ -726,6 +747,8 @@ pub struct ConsentEvaluation {
     /// Stable `gate.`-namespaced pending reason codes; empty iff `decision`
     /// is [`ConsentDecision::Auto`].
     pub reason_codes: Vec<String>,
+    /// The bypass grant this op ran under instead of asking, if one did.
+    pub bypassed_by: Option<String>,
 }
 
 /// The catastrophe class a bound would cover, if any.
@@ -759,7 +782,9 @@ pub fn load_active_standing_grants(
     Ok(GRANTS
         .scan(store, txn)?
         .into_iter()
-        .filter_map(|(_, row)| row.is_active().then_some(row.grant))
+        // A bypass row covers only catastrophe-floor ops inside its scope,
+        // through the bypass arm; it is never an ordinary standing grant.
+        .filter_map(|(_, row)| (row.is_active() && row.bypass.is_none()).then_some(row.grant))
         .collect())
 }
 
