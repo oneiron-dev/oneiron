@@ -65,6 +65,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_lease.rs` | src | s | 1 enum · 2 fn | SecretLeaseStatus | Secret lease status |
 | `src/serialize.rs` | src | s | 1 mod | — | Serde adapters shared by the engine crates' serialized envelopes |
 | `src/serialize/entity_ref.rs` | src | s | 6 fn · 2 mod | — | Hex adapters for typed entity references in host-side serialized envelopes |
-| `src/temporal.rs` | src | m | 1 struct · 3 enum · 5 fn | TemporalExpression, TemporalExpressionParseError, TemporalGranularity, TimeRange | `TimeRange`, temporal expressions/parsing, granularity |
+| `src/temporal.rs` | src | L | 3 struct · 6 enum · 6 fn · 1 const | QueryTemporalHints, TemporalExpression, TemporalExpressionParseError, TemporalGranularity, TemporalHintReport, TemporalHintStatus, TemporalUnit, TimeRange +1 | `TimeRange`, temporal expressions/parsing, granularity |
 | `src/write_envelope.rs` | src | s | 1 struct · 5 fn | WriteActor | The write actor every write path stamps |
 | `tests/widened_seams.rs` | test | s | — | — | Direct calls into the items `oneiron-contracts` made `pub` so `oneiron` can reach them across the crate split |
