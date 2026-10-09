@@ -34,6 +34,9 @@ use crate::cli::ImportNotesArgs;
 use crate::config::resolve_serve_config;
 use crate::owner::note_imports::{self, NoteBatch, NoteFile, NoteLink};
 
+mod markdown;
+use markdown::{Front, Link};
+
 /// The largest note the vault holds; a larger file is passed over and counted.
 const MAX_NOTE_BYTES: u64 = 1024 * 1024;
 
@@ -54,12 +57,6 @@ struct Note {
     /// The frontmatter's `type` or `metadata.type`.
     label: Option<String>,
     links: Vec<Link>,
-}
-
-/// A `[[link]]` as written: its target, and whether it embeds (`![[...]]`).
-struct Link {
-    target: String,
-    embed: bool,
 }
 
 #[derive(Serialize, Default)]
@@ -127,7 +124,8 @@ struct Outcome {
     notes: NoteCounts,
     /// New notes per kind.
     kinds: BTreeMap<String, usize>,
-    /// New notes per frontmatter `type`; `""` when they have none.
+    /// New notes per frontmatter `type`: `""` when they have none,
+    /// `(other)` when it is not a short name.
     types: BTreeMap<String, usize>,
     titles: TitleCounts,
     links: LinkCounts,
@@ -145,6 +143,11 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
         serve,
     } = args;
     let started = Instant::now();
+    anyhow::ensure!(
+        !out.exists(),
+        "{} exists; the batch goes to a new file",
+        out.display()
+    );
     let config = resolve_serve_config(&serve)?;
     let folder = std::fs::canonicalize(&path)
         .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
@@ -197,7 +200,7 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
         };
         *kinds.entry(kind.clone()).or_insert(0) += 1;
         *types
-            .entry(note.label.clone().unwrap_or_default())
+            .entry(shown_label(note.label.as_deref()).to_owned())
             .or_insert(0) += 1;
         let title = choose_title(&vault, &owner, note, &mut taken, &mut titles)?;
         files.push(NoteFile {
@@ -228,16 +231,19 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
             drop(writer);
             file.sync_all()
         })?;
+        // The vault this preview read, named outright: a config alone could
+        // name another one.
         let config_flag = serve
             .config
             .as_ref()
-            .map(|config| format!(" --config {}", config.display()))
+            .map(|config| format!(" --config {}", quoted(&config.to_string_lossy())))
             .unwrap_or_default();
         let decision = |verb: &str| {
             format!(
-                "oneiron import {verb} {} --digest {}{config_flag}",
-                out.display(),
-                preview.digest
+                "oneiron import {verb} {} --digest {}{config_flag} --vault-path {}",
+                quoted(&out.to_string_lossy()),
+                preview.digest,
+                quoted(&config.vault_path.to_string_lossy()),
             )
         };
         Some(BatchOut {
@@ -292,16 +298,18 @@ fn read_folder(folder: &Path, counts: &mut NoteCounts) -> anyhow::Result<Vec<Not
             .ok()
             .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
             .map_or(0, |since| since.as_secs());
-        let (front, body) = split_frontmatter(&text);
-        let (title, label) = match front.map(frontmatter) {
-            Some(None) => {
-                counts.unreadable_frontmatter += 1;
-                (None, None)
-            }
+        let (front, body) = markdown::split_frontmatter(&text);
+        let Front { title, label } = match front.map(markdown::frontmatter) {
             Some(Some(found)) => found,
-            None => (None, None),
+            unread => {
+                counts.unreadable_frontmatter += usize::from(unread.is_some());
+                Front {
+                    title: None,
+                    label: None,
+                }
+            }
         };
-        let links = wikilinks(body);
+        let links = markdown::wikilinks(body);
         counts.found += 1;
         notes.push(Note {
             path: relative(folder, shown),
@@ -316,6 +324,36 @@ fn read_folder(folder: &Path, counts: &mut NoteCounts) -> anyhow::Result<Vec<Not
     Ok(notes)
 }
 
+/// A frontmatter `type` as stdout shows it: a short name as it is, anything
+/// else (prose, a long value) as `(other)`, so no note text reaches stdout.
+fn shown_label(label: Option<&str>) -> &str {
+    match label {
+        None => "",
+        Some(label)
+            if label.len() <= 64
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"._/-".contains(&b)) =>
+        {
+            label
+        }
+        Some(_) => "(other)",
+    }
+}
+
+/// `text` as one shell word.
+fn quoted(text: &str) -> String {
+    if !text.is_empty()
+        && text
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._/-:=@+,".contains(&b))
+    {
+        text.to_owned()
+    } else {
+        format!("'{}'", text.replace('\'', "'\\''"))
+    }
+}
+
 /// `shown` under `folder`, `/`-separated.
 fn relative(folder: &Path, shown: &Path) -> String {
     shown
@@ -328,112 +366,6 @@ fn relative(folder: &Path, shown: &Path) -> String {
         })
         .collect::<Vec<_>>()
         .join("/")
-}
-
-/// The YAML a note opens with, between a first line `---` and the next line
-/// `---` or `...`, and the body after it.
-fn split_frontmatter(text: &str) -> (Option<&str>, &str) {
-    let rest = text.strip_prefix('\u{feff}').unwrap_or(text);
-    let Some(after) = rest
-        .strip_prefix("---\n")
-        .or_else(|| rest.strip_prefix("---\r\n"))
-    else {
-        return (None, text);
-    };
-    let mut offset = 0;
-    for line in after.split_inclusive('\n') {
-        let bare = line.trim_end_matches(['\r', '\n']);
-        if bare == "---" || bare == "..." {
-            return (Some(&after[..offset]), &after[offset + line.len()..]);
-        }
-        offset += line.len();
-    }
-    (None, text)
-}
-
-/// The frontmatter's title (`title`, else `name`) and type (`type`, else
-/// `metadata.type`); `None` when it is not YAML.
-fn frontmatter(yaml: &str) -> Option<(Option<String>, Option<String>)> {
-    let value: serde_yaml_ng::Value = serde_yaml_ng::from_str(yaml).ok()?;
-    let text = |value: Option<&serde_yaml_ng::Value>| {
-        value
-            .and_then(serde_yaml_ng::Value::as_str)
-            .map(str::trim)
-            .filter(|text| !text.is_empty())
-            .map(str::to_owned)
-    };
-    let title = text(value.get("title")).or_else(|| text(value.get("name")));
-    let label = text(value.get("type")).or_else(|| {
-        text(
-            value
-                .get("metadata")
-                .and_then(|metadata| metadata.get("type")),
-        )
-    });
-    Some((title, label))
-}
-
-/// Every `[[link]]` in `body` outside fenced code and inline code.
-fn wikilinks(body: &str) -> Vec<Link> {
-    let mut links = Vec::new();
-    let mut fence: Option<(char, usize)> = None;
-    for line in body.lines() {
-        let trimmed = line.trim_start();
-        let run = |mark: char| trimmed.chars().take_while(|&c| c == mark).count();
-        if let Some((mark, opened)) = fence {
-            if run(mark) >= opened && trimmed.trim_start_matches(mark).trim().is_empty() {
-                fence = None;
-            }
-            continue;
-        }
-        if let Some(mark) = ['`', '~'].into_iter().find(|&mark| run(mark) >= 3) {
-            fence = Some((mark, run(mark)));
-            continue;
-        }
-        line_links(line, &mut links);
-    }
-    links
-}
-
-fn line_links(line: &str, links: &mut Vec<Link>) {
-    let bytes = line.as_bytes();
-    let mut at = 0;
-    while at < bytes.len() {
-        if bytes[at] == b'`' {
-            // An inline code span runs to the next run of as many backticks.
-            let ticks = bytes[at..].iter().take_while(|&&b| b == b'`').count();
-            let fence = "`".repeat(ticks);
-            let after = at + ticks;
-            at = line[after..]
-                .match_indices(&fence)
-                .find(|(found, _)| {
-                    bytes.get(after + found + ticks) != Some(&b'`')
-                        && (*found == 0 || bytes[after + found - 1] != b'`')
-                })
-                .map_or(after, |(found, _)| after + found + ticks);
-            continue;
-        }
-        if bytes[at..].starts_with(b"[[")
-            && let Some(close) = line[at + 2..].find("]]")
-        {
-            let inner = &line[at + 2..at + 2 + close];
-            if !inner.contains('[') {
-                links.push(Link {
-                    target: inner
-                        .split('|')
-                        .next()
-                        .and_then(|target| target.split(['#', '^']).next())
-                        .unwrap_or_default()
-                        .trim()
-                        .to_owned(),
-                    embed: at > 0 && bytes[at - 1] == b'!',
-                });
-                at += close + 4;
-                continue;
-            }
-        }
-        at += 1;
-    }
 }
 
 /// A title for a new note that no other note holds: the frontmatter's, else
@@ -478,36 +410,21 @@ fn choose_title(
     Ok(None)
 }
 
-/// Resolves every note's links. The batch carries the links that end at a
-/// new note or start at one; a changed note's links wait with its text.
+/// Resolves every note's links. The batch carries the links that start at a
+/// new note, and those of an unchanged note that resolve only now, to a new
+/// note: a link an earlier import resolved keeps its note. A changed note's
+/// links wait with its text.
 fn resolve_links(
     notes: &[Note],
     standings: &[ImportedNoteStanding],
 ) -> (Vec<NoteLink>, LinkCounts) {
-    let key = |text: &str| text.strip_suffix(".md").unwrap_or(text).to_lowercase();
-    let mut by_path = HashMap::new();
-    let mut by_title: HashMap<String, Vec<usize>> = HashMap::new();
-    let mut by_stem: HashMap<String, Vec<usize>> = HashMap::new();
-    for (index, note) in notes.iter().enumerate() {
-        by_path.insert(key(&note.path), index);
-        if let Some(title) = &note.title {
-            by_title
-                .entry(title.to_lowercase())
-                .or_default()
-                .push(index);
-        }
-        let stem = note.path.rsplit('/').next().unwrap_or(&note.path);
-        by_stem.entry(key(stem)).or_default().push(index);
-    }
-    let resolve = |target: &str| -> Option<usize> {
-        let wanted = key(target);
-        by_path.get(&wanted).copied().or_else(|| {
-            [&by_title, &by_stem]
-                .into_iter()
-                .find_map(|index| index.get(&wanted))
-                .and_then(|found| found.first().copied())
-        })
-    };
+    let now = Index::new(notes, |_| true);
+    let before = Index::new(notes, |index| {
+        matches!(
+            standings[index],
+            ImportedNoteStanding::Unchanged | ImportedNoteStanding::Changed
+        )
+    });
     let mut counts = LinkCounts::default();
     let mut batch = Vec::new();
     let mut seen = HashSet::new();
@@ -518,11 +435,11 @@ fn resolve_links(
                 counts.to_itself += 1;
                 continue;
             }
-            let attachment = link.embed
-                && Path::new(&link.target)
-                    .extension()
-                    .is_some_and(|extension| extension != "md");
-            let Some(to) = resolve(&link.target) else {
+            let Some(to) = now.resolve(&link.target) else {
+                let attachment = link.embed
+                    && Path::new(&link.target)
+                        .extension()
+                        .is_some_and(|extension| !extension.eq_ignore_ascii_case("md"));
                 if attachment {
                     counts.attachments += 1;
                 } else {
@@ -544,7 +461,10 @@ fn resolve_links(
             }
             let lands = match standings[from] {
                 ImportedNoteStanding::New => true,
-                ImportedNoteStanding::Unchanged => standings[to] == ImportedNoteStanding::New,
+                ImportedNoteStanding::Unchanged => {
+                    standings[to] == ImportedNoteStanding::New
+                        && before.resolve(&link.target).is_none()
+                }
                 ImportedNoteStanding::Changed
                 | ImportedNoteStanding::Removed
                 | ImportedNoteStanding::Refused => false,
@@ -559,4 +479,46 @@ fn resolve_links(
     }
     counts.new = batch.len();
     (batch, counts)
+}
+
+/// The notes a link can name: by path, title or file name, ignoring case and
+/// a `.md` ending; the first in path order wins a tie.
+struct Index {
+    by_path: HashMap<String, usize>,
+    by_title: HashMap<String, usize>,
+    by_stem: HashMap<String, usize>,
+}
+
+impl Index {
+    fn new(notes: &[Note], include: impl Fn(usize) -> bool) -> Self {
+        let mut index = Self {
+            by_path: HashMap::new(),
+            by_title: HashMap::new(),
+            by_stem: HashMap::new(),
+        };
+        for (at, note) in notes.iter().enumerate().filter(|(at, _)| include(*at)) {
+            index.by_path.entry(key(&note.path)).or_insert(at);
+            if let Some(title) = &note.title {
+                index.by_title.entry(key(title)).or_insert(at);
+            }
+            let stem = note.path.rsplit('/').next().unwrap_or(&note.path);
+            index.by_stem.entry(key(stem)).or_insert(at);
+        }
+        index
+    }
+
+    fn resolve(&self, target: &str) -> Option<usize> {
+        let wanted = key(target);
+        [&self.by_path, &self.by_title, &self.by_stem]
+            .into_iter()
+            .find_map(|names| names.get(&wanted).copied())
+    }
+}
+
+fn key(name: &str) -> String {
+    let name = name.to_lowercase();
+    match name.strip_suffix(".md") {
+        Some(stem) => stem.to_owned(),
+        None => name,
+    }
 }

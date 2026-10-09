@@ -109,13 +109,13 @@ impl Home {
     }
 }
 
-/// Six notes (one holds a credential), a blank file and a hidden folder. Ten
-/// links: eight resolve (one to the credential's note), one names no note,
-/// one embeds a picture; two more sit in code.
+/// Six notes (one holds a credential), a blank file and a hidden folder.
+/// Eleven links: nine resolve (one to the credential's note), one names no
+/// note, one embeds a picture; two more sit in code.
 fn write_folder(home: &Home) {
     home.write(
         "MEMORY.md",
-        "# Index\n\n- [[alpha]]\n- [[beta]]\n- [[notes/gamma]]\n- [[secret]]\n",
+        "# Index\n\n- [[alpha]]\n- [[BETA.MD]]\n- [[notes/gamma]]\n- [[secret]]\n",
     );
     home.write(
         "alpha.md",
@@ -125,7 +125,8 @@ fn write_folder(home: &Home) {
     );
     home.write(
         "beta.md",
-        "---\nname: beta\ntype: research\n---\nBeta answers [[alpha#Why]].\n\n![[photo.png]]\n",
+        "---\nname: beta\ntype: research\n---\nBeta answers [[alpha#Why]], see [[gamma]].\n\n\
+         ![[photo.png]]\n",
     );
     home.write("notes/gamma.md", "Gamma links back to [[Alpha]].\n");
     home.write("other/alpha.md", "---\nname: alpha\n---\nA second alpha.\n");
@@ -135,6 +136,15 @@ fn write_folder(home: &Home) {
     );
     home.write("empty.md", "  \n");
     home.write(".obsidian/workspace.md", "[[alpha]]\n");
+}
+
+/// The notes `id` mentions, sorted.
+fn mentions_of(vault: &Vault, id: EntityId) -> Vec<EntityId> {
+    let mut targets = vault
+        .targets(&id, EdgeKind::Mentions, Some(ENTITY_TYPE_NOTE))
+        .expect("test fixture");
+    targets.sort();
+    targets
 }
 
 fn note_count(vault: &Vault) -> u64 {
@@ -167,14 +177,14 @@ fn a_notes_folder_lands_as_one_approved_batch_and_a_reimport_adds_nothing() {
         "a taken title falls back to the path"
     );
     let links = &first["links"];
-    assert_eq!(links["found"], 10, "links in code are not links");
-    assert_eq!(links["resolved"], 8);
+    assert_eq!(links["found"], 11, "links in code are not links");
+    assert_eq!(links["resolved"], 9);
     assert_eq!(links["unresolved"], 1);
     assert_eq!(links["attachments"], 1);
     assert_eq!(links["to_left_out"], 1);
-    assert_eq!(links["new"], 7);
+    assert_eq!(links["new"], 8);
     assert_eq!(first["batch"]["notes"], 5);
-    assert_eq!(first["batch"]["links"], 7);
+    assert_eq!(first["batch"]["links"], 8);
     assert_eq!(note_count(&home.open()), 0);
 
     // Declined: nothing is admitted, and the decision is final.
@@ -195,7 +205,7 @@ fn a_notes_folder_lands_as_one_approved_batch_and_a_reimport_adds_nothing() {
     );
     let approved: Value = serde_json::from_slice(&approved.stdout).expect("a JSON receipt");
     assert_eq!(approved["notes"], 5);
-    assert_eq!(approved["links"], 7);
+    assert_eq!(approved["links"], 8);
     assert!(!home.decide("approve", &second).status.success());
 
     let vault = home.open();
@@ -227,19 +237,14 @@ fn a_notes_folder_lands_as_one_approved_batch_and_a_reimport_adds_nothing() {
         alpha_body.starts_with("---\nname: alpha\ndescription: the first note\n"),
         "a note keeps its file as written"
     );
-    let mentions = |id: EntityId| {
-        let mut targets = vault
-            .targets(&id, EdgeKind::Mentions, Some(ENTITY_TYPE_NOTE))
-            .expect("test fixture");
-        targets.sort();
-        targets
-    };
     let mut alpha_links = vec![beta, gamma];
     alpha_links.sort();
-    assert_eq!(mentions(alpha), alpha_links);
-    assert_eq!(mentions(beta), vec![alpha]);
-    assert_eq!(mentions(gamma), vec![alpha]);
-    assert_eq!(mentions(index).len(), 3);
+    assert_eq!(mentions_of(&vault, alpha), alpha_links);
+    let mut beta_links = vec![alpha, gamma];
+    beta_links.sort();
+    assert_eq!(mentions_of(&vault, beta), beta_links);
+    assert_eq!(mentions_of(&vault, gamma), vec![alpha]);
+    assert_eq!(mentions_of(&vault, index).len(), 3);
     drop(vault);
 
     // The same folder again: nothing is new, no batch is written.
@@ -251,20 +256,23 @@ fn a_notes_folder_lands_as_one_approved_batch_and_a_reimport_adds_nothing() {
     assert!(!home.dir.path().join("again.json").exists());
     assert_eq!(note_count(&home.open()), 5);
 
-    // A new note lands with its links; a changed one waits as it is.
+    // A new note lands with its links; a changed one waits as it is. A new
+    // `gamma.md` does not take beta's `[[gamma]]` from notes/gamma.md.
     home.write("delta.md", "Delta follows [[alpha]].\n");
+    home.write("gamma.md", "A second gamma.\n");
     home.write(
         "alpha.md",
         "---\nname: alpha\n---\nAlpha now points at [[delta]] too.\n",
     );
     let later = home.import("later.json");
-    assert_eq!(later["notes"]["new"], 1);
+    assert_eq!(later["notes"]["new"], 2);
     assert_eq!(later["notes"]["changed"], 1);
     assert_eq!(later["notes"]["unchanged"], 4);
     assert_eq!(later["batch"]["links"], 1, "only delta's link lands");
     assert!(home.decide("approve", &later).status.success());
     let vault = home.open();
-    assert_eq!(note_count(&vault), 6);
+    assert_eq!(note_count(&vault), 7);
+    assert_eq!(mentions_of(&vault, beta), beta_links);
     assert_eq!(
         vault
             .targets(&home.id("delta.md"), EdgeKind::Mentions, None)
