@@ -215,9 +215,10 @@ pub(super) fn diary_links() -> Result<Case> {
     )
 }
 
-/// A note is read and selected at the facet its `FacetOf` edge names. That
-/// edge taken off it since the backup, its body unchanged, is one a restore
-/// would put back.
+/// A facet-scoped connector covers a turn by the facet its `FacetOf` stamp
+/// names. That stamp taken off it since the backup, its body unchanged, is
+/// one a restore would put back. (A live NOTE or ASSET keeps the stamp it was
+/// born with: no door takes it off, #1322.)
 pub(super) fn record_positions() -> Result<Case> {
     let (dir, vault) = open_vault();
     let author = put_person(&vault, 0xC9)?;
@@ -228,13 +229,24 @@ pub(super) fn record_positions() -> Result<Case> {
         .find(|edge| edge.kind == EdgeKind::FacetOf)
         .map(|edge| edge.target)
         .ok_or(Error::EntityNotFound)?;
+    let turn = entity(0xCA);
+    let body = rmp_serde::to_vec_named(&serde_json::json!({ "role": "user" }))
+        .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+    vault.put_entity(
+        &turn,
+        crate::registry::ENTITY_TYPE_TURN,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &body,
+    )?;
+    vault.put_edge(&turn, EdgeKind::FacetOf, &facet, 1.0)?;
     Case::after_backup(
         "record positions",
         (dir, vault),
         move |vault| diary(vault, author).map(drop),
         move |vault| {
             vault
-                .delete_edge(&note, EdgeKind::FacetOf, &facet)
+                .delete_edge(&turn, EdgeKind::FacetOf, &facet)
                 .map(drop)
         },
     )
