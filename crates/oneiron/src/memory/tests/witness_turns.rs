@@ -1593,3 +1593,77 @@ fn non_person_witness_author_does_not_block_another_persons_room_erasure() {
         .expect("owner may delete an AGENT_DEF-authored room turn");
     assert!(vault.get(&agent_message).unwrap().is_none());
 }
+
+/// Sol 9B #5: embedding work leased before the vault's first owner binding
+/// never lands under that owner, for a TURN as for a CLAIM
+/// (`pipeline_reports_pending_vector_state_for_retrieved_claim`). Bug repro:
+/// a turn's marker counted as current by its length alone and the binding
+/// resealed only claims and summaries, so the older lease filled the turn and
+/// cleared its pending work.
+#[test]
+fn a_turn_fill_leased_before_the_owner_binding_does_not_land() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = crate::Vault::open(
+        dir.path(),
+        VaultConfig {
+            embedding_model: Some("test/model@v1".to_owned()),
+            dimensions: 4,
+            ..VaultConfig::default()
+        },
+    )
+    .expect("open vault");
+    let receipt = facade_for(&vault, put_person(&vault, 0xD1))
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::from_bytes([0xD2; 16])
+                .expect("conversation id")
+                .to_hex(),
+            turn_ref: None,
+            messages: vec![witness_message(
+                0,
+                WitnessAuthor::User,
+                "The mechanic says the car needs new brakes.",
+            )],
+            occurred_at: 500,
+        })
+        .expect("witness turn");
+    let turn = EntityId::from_hex(
+        receipt
+            .receipt_ref
+            .strip_prefix("witness:")
+            .expect("witness ref"),
+    )
+    .expect("turn id");
+    let pending = || {
+        let rtxn = vault.store.env.read_txn().expect("read txn");
+        vault
+            .store
+            .pending_embedding_token(&rtxn, &turn)
+            .expect("pending marker")
+    };
+    let leased = pending().expect("the witness marks the turn");
+
+    vault
+        .bind_derivation_owner(crate::federation::derivation::DerivationOwner([7; 32]))
+        .expect("bind the derivation owner");
+    vault
+        .batch()
+        .vector_for_pending_embedding(&turn, &[1.0, 0.0, 0.0, 0.0], &leased)
+        .commit()
+        .expect("stale fill");
+    assert_eq!(
+        vault.get_vector(&turn).expect("read vector"),
+        None,
+        "a fill leased before the binding lands under the owner"
+    );
+    let sealed = pending().expect("the turn's work stays pending under the owner");
+    assert_ne!(sealed, leased);
+    vault
+        .batch()
+        .vector_for_pending_embedding(&turn, &[1.0, 0.0, 0.0, 0.0], &sealed)
+        .commit()
+        .expect("fill under the owner");
+    assert!(
+        vault.get_vector(&turn).expect("read vector").is_some(),
+        "work leased under the owner lands"
+    );
+}
