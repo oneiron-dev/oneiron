@@ -210,6 +210,8 @@ pub(super) fn apply_ops_with_origin(
     require_gated_claim_materializations(claim_gate_prechecked, &claim_materializations)?;
     let mut preflight_gate_decision_ids =
         std::mem::take(&mut gate_mode.preflight_gate_decision_ids);
+    let mut pre_analyzed_text = std::mem::take(&mut gate_mode.pre_analyzed_text);
+    let mut nsw_plans = std::mem::take(&mut gate_mode.nsw_plans);
 
     // The owner's `secrets` switch is read in this transaction, so a batch
     // and the mode it was admitted under are one snapshot.
@@ -581,15 +583,18 @@ pub(super) fn apply_ops_with_origin(
                 let same_batch_token = pending_embedding_token
                     .as_deref()
                     .or_else(|| pending_embedding_tokens_written.get(&id).map(Vec::as_slice));
+                let plan = nsw_plans.get_mut(&id).and_then(VecDeque::pop_front);
                 let applied = apply_vector(store, config, wtxn, id, &vector, same_batch_token)?;
                 if applied.wrote_vector {
-                    crate::hnsw::hnsw_insert_batched(
+                    // A plan searched the committed graph; after an earlier
+                    // graph write in this batch it no longer describes it.
+                    crate::hnsw::hnsw_insert_planned(
                         store,
                         config,
                         wtxn,
-                        &id,
-                        &vector,
+                        (&id, vector.as_slice()),
                         &mut pending_hnsw_rebuild,
+                        plan.as_ref().filter(|_| !had_vector_mutation),
                     )?;
                     had_vector_mutation = true;
                 }
@@ -610,10 +615,14 @@ pub(super) fn apply_ops_with_origin(
             }
             BatchOp::Text { id, fields } => {
                 let fields = Zeroizing::new(fields);
+                let analyzed = pre_analyzed_text
+                    .get_mut(&id)
+                    .and_then(VecDeque::pop_front)
+                    .flatten();
                 apply_text_index_update(
                     store,
                     wtxn,
-                    analyzer,
+                    (analyzer, analyzed.as_ref()),
                     &id,
                     &fields,
                     text_index_trusted,

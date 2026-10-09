@@ -85,6 +85,15 @@ impl Vault {
         if budget == 0 {
             return Ok(0);
         }
+        // Every committed batch asks; almost always there is nothing to
+        // collect, and a read snapshot says so without a turn at the writer.
+        // The writer re-checks. A thread already holding a snapshot asks the
+        // writer directly.
+        if let Ok(rtxn) = self.store.env.read_txn()
+            && GC.iter_from(&self.store, &rtxn, &[])?.next().is_none()
+        {
+            return Ok(0);
+        }
         self.with_write_txn(|txn| {
             let pending = GC.iter_from(&self.store, txn, &[])?.next().transpose()?;
             let Some((owner, ())) = pending else {

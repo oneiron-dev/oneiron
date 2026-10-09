@@ -41,8 +41,32 @@ pub const ATTRIBUTION_UNCLEAR_FLOOR: SettingSpec = SettingSpec {
     seed: 0.6,
 };
 
+/// How long the vault's single writer holds a group commit open for writes
+/// already on their way, in milliseconds (ARCH-0019 group-commit invariant,
+/// OF-536). A group never waits when no write is on its way, so a lone writer
+/// pays nothing; zero closes every group as soon as its queue is empty.
+pub const GROUP_COMMIT_WINDOW_MS: SettingSpec = SettingSpec {
+    key: "group_commit_window_ms",
+    min: 0.0,
+    max: 50.0,
+    seed: 2.0,
+};
+
+/// The most logical writes one group commit carries before it closes. One
+/// gives every logical write its own transaction and fsync.
+pub const GROUP_COMMIT_MAX_WRITES: SettingSpec = SettingSpec {
+    key: "group_commit_max_writes",
+    min: 1.0,
+    max: 4096.0,
+    seed: 256.0,
+};
+
 /// Every learned knob the engine reads.
-pub const SETTING_CATALOG: &[SettingSpec] = &[ATTRIBUTION_UNCLEAR_FLOOR];
+pub const SETTING_CATALOG: &[SettingSpec] = &[
+    ATTRIBUTION_UNCLEAR_FLOOR,
+    GROUP_COMMIT_WINDOW_MS,
+    GROUP_COMMIT_MAX_WRITES,
+];
 
 /// The catalog row named `key`, if the engine knows it.
 #[must_use]
@@ -211,8 +235,17 @@ pub fn clear_setting_row(
 /// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
 pub fn setting_value(vault: &Vault, spec: &SettingSpec) -> Result<f64> {
     let rtxn = vault.store.env.read_txn()?;
+    setting_value_in_txn(&vault.store, &rtxn, spec)
+}
+
+/// [`setting_value`] inside a transaction the caller already holds.
+pub(crate) fn setting_value_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    spec: &SettingSpec,
+) -> Result<f64> {
     for mode in [SettingMode::Pin, SettingMode::Seed] {
-        if let Some(row) = SETTING.get(&vault.store, &rtxn, &row_key(spec.key, mode))?
+        if let Some(row) = SETTING.get(store, txn, &row_key(spec.key, mode))?
             // A row written under wider bounds than today's catalog is not a
             // value this reader can stand behind; the next row down is.
             && (spec.min..=spec.max).contains(&row.value)

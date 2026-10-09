@@ -8,7 +8,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
-use crate::store::{GRAPH_VERSION_KEY, ManifestDbs, Store};
+use crate::store::{GRAPH_VERSION_KEY, ManifestDbs, Rows, Store};
 
 use super::query::DeferredPprCacheWrite;
 use super::walk::{CachedPprRow, PprCacheState, PprFrontierEntry, SCORE_EPSILON};
@@ -103,64 +103,81 @@ pub(super) fn recency_tiered_cache_ttl_secs(
         CACHE_TTL_DORMANT_SECS
     })
 }
+/// Publishes a retrieval's deferred PPR cache writes as ONE logical write in
+/// the vault's group commit (RESEARCH-1115 Bend 2), so a read's cache rows
+/// share the fsync of the writes around it. Each cache write keeps its own
+/// all-or-nothing in a nested transaction: a graph-version mismatch skips it,
+/// and an error drops it and stops the flush with the earlier ones kept, as
+/// when each committed alone.
 pub(crate) fn flush_deferred_ppr_cache_writes(
     store: &Store,
     writes: &[DeferredPprCacheWrite],
 ) -> Result<()> {
-    for write in writes {
-        if let Some(snapshot) = &write.community_snapshot {
-            // Both local caches describe the same read snapshot. Never publish
-            // either after a concurrent graph mutation, and never publish a
-            // partially replaced logical family.
-            let mut txn = store.env.write_txn()?;
-            if read_graph_version(store, &txn)? != write.graph_version {
-                continue;
+    if writes.is_empty() {
+        return Ok(());
+    }
+    store.group_write(None, |txn| {
+        for write in writes {
+            let mut each = match store.env.nested_write_txn(txn) {
+                Ok(each) => each,
+                Err(err) => return Rows::Refuse(err.into()),
+            };
+            match publish_deferred_ppr_cache_write(store, &mut each, write) {
+                Ok(true) => {
+                    if let Err(err) = each.commit() {
+                        return Rows::Refuse(err.into());
+                    }
+                }
+                Ok(false) => each.abort(),
+                Err(err) => {
+                    each.abort();
+                    return Rows::Refuse(err);
+                }
             }
-            store.replace_ppr_community_cache_in_txn(&mut txn, snapshot)?;
-            if let Some(state) = &write.state {
-                store_cache_entry(
-                    store,
-                    &mut txn,
-                    &write.seed_hash,
-                    write.computed_at,
-                    write.graph_version,
-                    state,
-                )?;
-            }
-            txn.commit()?;
-        } else if let Some(state) = &write.state {
-            // Literal legacy write path for beta zero and Specificity.
-            write_ppr_cache(
+        }
+        Rows::Commit(())
+    })
+}
+
+/// Stages one deferred cache write; `false` when it no longer applies.
+fn publish_deferred_ppr_cache_write(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    write: &DeferredPprCacheWrite,
+) -> Result<bool> {
+    if let Some(snapshot) = &write.community_snapshot {
+        // Both local caches describe the same read snapshot. Never publish
+        // either after a concurrent graph mutation, and never publish a
+        // partially replaced logical family.
+        if read_graph_version(store, txn)? != write.graph_version {
+            return Ok(false);
+        }
+        store.replace_ppr_community_cache_in_txn(txn, snapshot)?;
+        if let Some(state) = &write.state {
+            store_cache_entry(
                 store,
+                txn,
                 &write.seed_hash,
                 write.computed_at,
                 write.graph_version,
                 state,
             )?;
         }
+        Ok(true)
+    } else if let Some(state) = &write.state {
+        // Literal legacy write path for beta zero and Specificity. The version
+        // check in store_cache_entry is atomic with the cache write.
+        store_cache_entry(
+            store,
+            txn,
+            &write.seed_hash,
+            write.computed_at,
+            write.graph_version,
+            state,
+        )
+    } else {
+        Ok(false)
     }
-    Ok(())
-}
-fn write_ppr_cache(
-    store: &Store,
-    seed_hash: &[u8; SEED_HASH_LEN],
-    computed_at: u64,
-    graph_version: u64,
-    state: &PprCacheState,
-) -> Result<()> {
-    // The version check in store_cache_entry is atomic with the cache write.
-    let mut wtxn = store.env.write_txn()?;
-    if store_cache_entry(
-        store,
-        &mut wtxn,
-        seed_hash,
-        computed_at,
-        graph_version,
-        state,
-    )? {
-        wtxn.commit()?;
-    }
-    Ok(())
 }
 /// SLIM (ONE-1933 / OF-447) concrete PPR drop producer: clears the whole
 /// derived cache inside the caller's write transaction.

@@ -14,7 +14,9 @@ mod types;
 
 pub(crate) use self::delete::hnsw_deindex;
 pub(crate) use self::discipline::{LinkDiscipline, read_link_discipline};
-pub(crate) use self::insert::{hnsw_insert_batched, run_pending_legacy_rebuild};
+pub(crate) use self::insert::{
+    InsertPlan, hnsw_insert_batched, hnsw_insert_planned, run_pending_legacy_rebuild,
+};
 pub(crate) use self::keys::COUNT_KEY;
 pub(crate) use self::rebuild::{
     build_hnsw_graph_from_snapshot, clear_hnsw_graph_in_txn, collect_vector_ids, write_rebuilt_hnsw,
