@@ -3889,7 +3889,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/bm25/scoped.rs",
-     "purpose": "Bounded exact top-k over the existing BM25F scorer, under one read snapshot",
+     "purpose": "Exact top-k over the existing BM25F scorer for a scoped read, under one read snapshot: one pass over the…",
      "surface": {
       "crate-vis": 3
      }
@@ -7935,7 +7935,7 @@
      "path": "src/claim/scoped_read/search.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 6
      }
     },
@@ -7962,7 +7962,7 @@
      "path": "src/claim/scoped_read/versions.rs",
      "purpose": "Explicit read frontiers keep the scoped lane's current and historic gates",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -22655,8 +22655,8 @@
      "path": "src/memory/caps.rs",
      "purpose": "The boundary cap contract (ONE-1441 §Binding cap contract, I11)",
      "surface": {
-      "const": 10,
-      "fn": 8
+      "const": 11,
+      "fn": 9
      }
     },
     {
@@ -23086,7 +23086,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "Effort",
@@ -23100,10 +23100,10 @@
      "path": "src/memory/recall/mod.rs",
      "purpose": "Recall and `MemoryPack` assembly (S6): recall/recall_in_session and the scope-honesty + provenance plumbing",
      "surface": {
-      "const": 1,
+      "const": 2,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 10,
+      "fn": 11,
       "struct": 6
      }
     },
@@ -26099,6 +26099,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/execution/channels/entity_rank.rs",
+     "purpose": "Named entities below the content a query matched",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -26316,7 +26326,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/pipeline/tests/retrieval_blend.rs",
@@ -35400,6 +35410,7 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "enum": 1,
+      "fn": 1,
       "struct": 18
      }
     },
@@ -39218,7 +39229,7 @@
     "memory": {
      "files": 96,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade"
     },
@@ -39300,7 +39311,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 54,
+     "files": 55,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -39769,9 +39780,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 23,
+   "over_bar": 24,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2368,
+   "source_files": 2369,
    "test_files": 838
   },
   "oneiron-android": {
@@ -42072,20 +42083,26 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
+      "QueryTemporalHints",
       "TemporalExpression",
       "TemporalExpressionParseError",
       "TemporalGranularity",
-      "TimeRange"
+      "TemporalHintReport",
+      "TemporalHintStatus",
+      "TemporalUnit",
+      "TimeRange",
+      "WeekdayRelation"
      ],
      "path": "src/temporal.rs",
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity",
      "surface": {
-      "enum": 3,
-      "fn": 5,
-      "struct": 1
+      "const": 1,
+      "enum": 6,
+      "fn": 6,
+      "struct": 3
      }
     },
     {
@@ -42254,7 +42271,7 @@
     "temporal": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity"
     },
@@ -42266,7 +42283,7 @@
      "purpose": "The write actor every write path stamps"
     }
    },
-   "over_bar": 0,
+   "over_bar": 1,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
    "source_files": 54,
    "test_files": 3
@@ -44959,6 +44976,7 @@
       "NapiScopeHonesty",
       "NapiStructuralEdgeSpec",
       "NapiStructuralPutInput",
+      "NapiTemporalHint",
       "NapiTextIndexField",
       "NapiWitnessMessage",
       "NapiWitnessReceipt",
@@ -44967,7 +44985,7 @@
      "path": "src/facade/dtos.rs",
      "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
-      "struct": 50
+      "struct": 51
      }
     },
     {
@@ -48070,6 +48088,7 @@
       "TokenBootstrapArgs",
       "TokenCommand",
       "TokenPairArgs",
+      "TokenReadArgs",
       "TokenRevokeArgs",
       "VaultArgs"
      ],
@@ -48079,7 +48098,7 @@
       "enum": 4,
       "fn": 2,
       "re-export": 1,
-      "struct": 12
+      "struct": 13
      }
     },
     {
@@ -48098,17 +48117,18 @@
       "RunsCommand",
       "SecretScanArgs",
       "SecretScanSwitch",
-      "ServeOnlyArgs"
+      "ServeOnlyArgs",
+      "WhoamiArgs"
      ],
      "path": "src/cli/owner_args.rs",
      "purpose": "Flags for the owner's own commands: doctor, backup, restore, export, the secret scan switch, import consent…",
      "surface": {
       "enum": 3,
-      "struct": 10
+      "struct": 11
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DictSearchResolution"
@@ -48118,7 +48138,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 9,
+      "fn": 10,
       "re-export": 5,
       "struct": 1
      }
@@ -48165,13 +48185,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/commands/owner.rs",
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, export, the secret scan switch, import…",
      "surface": {
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -49846,8 +49866,18 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/recall.rs",
+     "purpose": "The recall verb as every server transport runs it",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -50124,6 +50154,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/agent_credentials.rs",
+     "purpose": "A local agent's identity and read credential, from the shipped CLI",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -50283,7 +50321,7 @@
     "commands": {
      "files": 11,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
@@ -50407,7 +50445,7 @@
      "purpose": "—"
     },
     "server": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -50449,10 +50487,10 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 2,
+   "over_bar": 3,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 260,
-   "test_files": 104
+   "source_files": 261,
+   "test_files": 105
   },
   "oneiron-uniffi": {
    "files": [
@@ -50519,6 +50557,7 @@
       "ScopeHonesty",
       "StructuralEdgeSpec",
       "StructuralPutInput",
+      "TemporalHint",
       "TextIndexField",
       "WireJson",
       "WitnessAuthor",
@@ -50530,7 +50569,7 @@
      "purpose": "The complete DTO inventory for the WIRE head contract",
      "surface": {
       "enum": 3,
-      "struct": 43
+      "struct": 44
      }
     },
     {
