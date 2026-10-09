@@ -95,13 +95,12 @@ const _: fn(EntityId) -> String = booking_page_token;
 /// Which transport carried one booking request.
 ///
 /// The variant changes nothing about admission, parsing, solving, or the
-/// lifecycle: it exists so logs and the MCP result envelope can say which door
-/// a request came through, and so a future transport has a name to add.
+/// lifecycle: it exists so logs can say which door a request came through, and
+/// so a future transport has a name to add.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum BookingTransport {
     PublicHttp,
     AnonymousHttp,
-    Mcp,
 }
 
 impl BookingTransport {
@@ -109,7 +108,6 @@ impl BookingTransport {
         match self {
             Self::PublicHttp => "public_http",
             Self::AnonymousHttp => "anonymous_http",
-            Self::Mcp => "mcp",
         }
     }
 }
@@ -127,9 +125,8 @@ pub(crate) struct BookingTransportContext {
 }
 
 impl BookingTransportContext {
-    /// The actor key mixed into admission. An authenticated connector actor
-    /// keys its own budget; an owner-bearer HTTP caller keys on the source
-    /// address alone, exactly as the MCP door would with no actor.
+    /// The actor key mixed into admission. An authenticated actor keys its own
+    /// budget; an owner-bearer HTTP caller keys on the source address alone.
     fn actor_key(&self) -> Option<String> {
         self.authenticated_actor_ref.as_ref().map(EntityId::to_hex)
     }
@@ -733,32 +730,4 @@ fn unexpected_receipt(verb: &str, receipt: &BookingVerbReceipt) -> ApiError {
         "booking lifecycle answered a verb with another verb's receipt"
     );
     ApiError::internal_server_error("booking lifecycle returned an unexpected receipt")
-}
-
-// -------------------------------------------------------------------------
-// Constraint normalization
-// -------------------------------------------------------------------------
-
-// -------------------------------------------------------------------------
-// MCP adapter
-// -------------------------------------------------------------------------
-
-/// Runs one MCP booking operation through the SAME executor the HTTP routes
-/// use, and projects the shared response into the MCP result envelope.
-///
-/// The gateway performs no admission pre-check: it hands the request here and
-/// the executor makes the one and only ONE-1817 call.
-pub(crate) async fn execute_booking_operation_for_mcp(
-    server: &Arc<SyncServer>,
-    page_token: &str,
-    request: BookingOperationRequest,
-    actor_ref: EntityId,
-    source_ip: IpAddr,
-) -> Result<BookingOperationResponse, ApiError> {
-    let transport = BookingTransportContext {
-        source_ip,
-        authenticated_actor_ref: Some(actor_ref),
-        transport: BookingTransport::Mcp,
-    };
-    execute_booking_operation(server, page_token, request, &transport).await
 }

@@ -34,7 +34,6 @@ mod mcp_quickjs;
 mod mcp_results_carrier;
 mod mcp_scoping;
 mod mcp_tool_endpoints;
-mod mcp_write_guards;
 mod reactive;
 mod relay_widen;
 mod retrieval_depth_quality;
@@ -366,22 +365,6 @@ fn with_default_recipe(mut request: Request<Body>) -> Request<Body> {
         );
     }
     request
-}
-
-/// One call against a RETIRED plain-verb adapter.
-///
-/// ONE-1704 M1 took the seven `oneiron.*` names off the wire: neither
-/// registered endpoint resolves them, which
-/// `mcp_legacy_catalog_is_unknown_tool_on_both_endpoints` proves at the wire on
-/// both routes. Their executor BODIES survive as private adapters over the same
-/// gated vault API, and the rows below drive those adapters directly — the
-/// gate, idempotency, and stale-target semantics they pin belong to the
-/// adapter, not to a wire name.
-pub(super) struct McpLegacyCall {
-    credential: String,
-    id: String,
-    name: String,
-    arguments: Value,
 }
 
 pub(super) fn error_envelope(body: &Value) -> &Value {
@@ -863,48 +846,6 @@ pub(super) fn seed_reactive_turn(vault: &oneiron::Vault, id: &oneiron::EntityId,
             b"reactive local write",
         )
         .expect("seed reactive turn");
-}
-
-// ── ONE-1936: MCP write-verb validity guard ──────────────────────────────
-
-/// Seeds `subject`, an active claim, and its replacement, then supersedes —
-/// leaving `old` as a stale target whose head is `new`.
-pub(super) fn seed_superseded_claim_pair(
-    server: &SyncServer,
-    subject: oneiron::EntityId,
-    old: oneiron::EntityId,
-    new: oneiron::EntityId,
-) {
-    server
-        .vault
-        .put_entity(
-            &subject,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            b"subject",
-        )
-        .expect("seed subject");
-    seed_active_claim(server, old, subject, "before", 100);
-    seed_active_claim(server, new, subject, "after", 200);
-    server
-        .vault
-        .supersede_claim(&new, &old, 300)
-        .expect("supersede claim");
-}
-
-/// Resolves a reported `successor_short_id` back through the SAME public
-/// short-ref door a client would use. A ref that does not round-trip is not a
-/// ref the caller can re-get with.
-pub(super) fn resolve_short_ref(server: &SyncServer, short_ref: &str) -> oneiron::EntityId {
-    let (short_id, content_hash) =
-        crate::api::parse_short_ref(short_ref).expect("successor ref must be a public short ref");
-    server
-        .vault
-        .hydrate_short_id(&short_id, content_hash)
-        .expect("hydrate successor ref")
-        .expect("successor ref must resolve")
-        .id
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

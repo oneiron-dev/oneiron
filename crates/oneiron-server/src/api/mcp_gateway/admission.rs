@@ -52,10 +52,6 @@ pub(crate) fn mcp_admit_scoped_call(
             return mcp_admit_unscoped_execution(actor, crate::mcp::MCP_EXECUTE_CODE_TOOL, "name");
         }
         McpValidatedToolArgs::Verb(verb) => verb,
-        // The retired plain-verb adapters carry no scope projection either, so
-        // a narrowed credential is refused on them by the same rule. After M1
-        // no wire name resolves onto them at all.
-        _ => return mcp_admit_unscoped_execution(actor, tool_name, "name"),
     };
     mcp_admit_verb_scope(server, verb.tool, &verb.payload.arguments, actor)
 }
@@ -148,8 +144,6 @@ fn mcp_called_tool_name(args: &McpValidatedToolArgs) -> &'static str {
         McpValidatedToolArgs::Setup(_) => crate::mcp::MCP_SETUP_TOOL,
         McpValidatedToolArgs::ExecuteCode(_) => crate::mcp::MCP_EXECUTE_CODE_TOOL,
         McpValidatedToolArgs::Verb(verb) => verb.tool.name,
-        // Unreachable from the wire after M1: no unlisted name resolves.
-        _ => "",
     }
 }
 

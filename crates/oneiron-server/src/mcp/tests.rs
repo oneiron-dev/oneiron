@@ -2,7 +2,6 @@ use super::*;
 use serde::Deserialize;
 
 const ACTOR_ID: &str = "11111111111111111111111111111111";
-const RESULT_ID: &str = "77777777777777777777777777777777";
 
 /// The server-owned validation fixture.
 ///
@@ -65,35 +64,6 @@ fn unexpected_actor_ceiling_lookup(_: &str, _: &str) -> bool {
     panic!("actor ceiling lookup should not run after credential failure")
 }
 
-#[test]
-fn propose_entity_rejects_impossible_occurrence_range() {
-    let error = validate_mcp_tool_args(
-        McpToolName::Edit,
-        json!({
-            "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
-            "actor": actor_json(),
-            "consent": consent_json("write_memory"),
-            "verb": "propose_entity",
-            "idempotency_key": "mcp-test-impossible-range",
-            "entity_type": 1,
-            "occurred": { "start": 20, "end": 10 },
-            "data": {
-                "txt": "Impossible range"
-            },
-        }),
-    )
-    .expect_err("start greater than end should fail");
-
-    assert!(matches!(
-        error,
-        McpToolValidationError::Field {
-            tool: "oneiron.edit",
-            field: "occurred.start",
-            ..
-        }
-    ));
-}
-
 fn assert_closed_object_schemas(value: &Value, path: &str) {
     match value {
         Value::Object(map) => {
@@ -124,122 +94,6 @@ fn assert_closed_object_schemas(value: &Value, path: &str) {
         }
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
     }
-}
-
-fn calendar_args(operation: Value) -> Value {
-    json!({
-        "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
-        "actor": actor_json(),
-        "consent": consent_json("read_calendar"),
-        "operation": operation,
-    })
-}
-
-#[test]
-fn oneiron_calendar_schema_is_closed_and_op_specific() {
-    let catalog = mcp_tool_schemas();
-    assert_eq!(
-        catalog
-            .iter()
-            .filter(|schema| schema.name == "oneiron.calendar")
-            .count(),
-        1,
-        "the catalog carries exactly one calendar tool"
-    );
-    assert_eq!(
-        McpToolName::Calendar.operations(),
-        &["read", "search", "freebusy", "invite"],
-        "the operation set is closed at exactly four ops"
-    );
-
-    let schema = mcp_tool_schema(McpToolName::Calendar).input_schema;
-
-    // Every accepted op decodes and is admitted by the schema.
-    for operation in [
-        json!({ "op": "read", "event_ref": RESULT_ID }),
-        json!({ "op": "search", "text": "review", "limit": 5 }),
-        json!({ "op": "freebusy", "range": { "start": 10, "end": 20 } }),
-        json!({
-            "op": "invite",
-            "method": "REQUEST",
-            "uid": "uid-1",
-            "sequence": 0,
-            "ics_blob_ref": "blob:one-1791",
-            "recipient": "guest@example.test",
-        }),
-        json!({
-            "op": "invite",
-            "method": "CANCEL",
-            "uid": "uid-1",
-            "sequence": 0,
-            "ics_blob_ref": "blob:one-1791",
-            "recipient": "guest@example.test",
-        }),
-    ] {
-        let args = calendar_args(operation);
-        assert!(
-            draft2020_12_accepts(&schema, &args),
-            "calendar schema must admit: {args}"
-        );
-        validate_mcp_tool_args(McpToolName::Calendar, args).expect("closed calendar op validates");
-    }
-
-    for rejected in [
-        // Unknown op.
-        json!({ "op": "delete", "event_ref": RESULT_ID }),
-        // Field from another arm.
-        json!({ "op": "read", "event_ref": RESULT_ID, "range": { "start": 1, "end": 2 } }),
-        // Missing invite field.
-        json!({
-            "op": "invite",
-            "method": "REQUEST",
-            "uid": "uid-1",
-            "sequence": 0,
-            "recipient": "guest@example.test",
-        }),
-        // An outbound draft is not an invite payload.
-        json!({
-            "op": "invite",
-            "verb": "send",
-            "channel": "email",
-            "target": "guest@example.test",
-        }),
-        // Method outside REQUEST|CANCEL.
-        json!({
-            "op": "invite",
-            "method": "REPLY",
-            "uid": "uid-1",
-            "sequence": 0,
-            "ics_blob_ref": "blob:one-1791",
-            "recipient": "guest@example.test",
-        }),
-        // Malformed ref.
-        json!({ "op": "read", "event_ref": "not-an-entity-id" }),
-    ] {
-        let args = calendar_args(rejected);
-        assert!(
-            !draft2020_12_accepts(&schema, &args),
-            "calendar schema must reject: {args}"
-        );
-        assert!(
-            validate_mcp_tool_args(McpToolName::Calendar, args.clone()).is_err(),
-            "calendar op must be rejected: {args}"
-        );
-    }
-
-    // Cross-field range ordering is a runtime constraint, not a schema shape constraint.
-    let args = calendar_args(json!({
-        "op": "freebusy",
-        "range": { "start": 20, "end": 10 },
-    }));
-    assert!(
-        draft2020_12_accepts(&schema, &args),
-        "the reversed range still has a valid schema shape: {args}"
-    );
-    assert!(
-        validate_mcp_tool_args(McpToolName::Calendar, args.clone()).is_err(),
-        "calendar op must be rejected: {args}"
-    );
 }
 
 #[test]
@@ -393,34 +247,6 @@ fn missing_actor_ceiling_fails_closed_after_credential_resolves() {
         registry.resolve("connector-key", 10, |_, _| false),
         Err(McpConnectorActorResolutionError::MissingActorCeiling)
     );
-}
-
-// ── ONE-1936: explicit lifecycle-target mapping per verb ─────────────────
-
-#[test]
-fn attest_old_claim_id_is_validated_as_an_entity_ref() {
-    let error = validate_mcp_tool_args(
-        McpToolName::Edit,
-        json!({
-            "schema_version": MCP_TOOL_ARGS_SCHEMA_VERSION,
-            "actor": actor_json(),
-            "consent": consent_json("write_memory"),
-            "idempotency_key": "mcp-test-attest-bad-prior",
-            "verb": "attest_edge_provenance",
-            "subject": { "edge": { "source": ACTOR_ID, "kind": 9, "target": RESULT_ID } },
-            "old_claim_id": "not-an-entity-ref",
-            "confidence": 0.8,
-        }),
-    )
-    .expect_err("a malformed prior ref must be rejected at validation");
-    assert!(matches!(
-        error,
-        McpToolValidationError::Field {
-            tool,
-            field: "old_claim_id",
-            ..
-        } if tool == McpToolName::Edit.as_str()
-    ));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

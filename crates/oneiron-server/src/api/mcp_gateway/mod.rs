@@ -5,7 +5,6 @@ mod board_setup;
 mod code_mode_verbs;
 mod envelope;
 mod exec_board_verbs;
-mod facade_verbs;
 mod memory_response;
 mod tasks_response;
 
@@ -33,15 +32,8 @@ use self::exec_board_verbs::{execute_mcp_board_verb, mcp_verb_family_error};
 // unused in non-test builds.
 #[cfg(test)]
 pub(crate) use self::envelope::MCP_PROTOCOL_VERSION;
-// Forwards for the `super::booking` / `super::hex_bytes` paths the moved bodies
-// already used: one level down, `super` is this module, so it re-exports them.
-pub(crate) use self::facade_verbs::{
-    execute_mcp_calendar, execute_mcp_edit, execute_mcp_nav, execute_mcp_read, mcp_ask_result,
-    mcp_facade_error, mcp_routed_ask_result,
-};
-use self::tasks_response::mcp_memory;
 pub(crate) use self::tasks_response::{
     execute_mcp_generated_verb, mcp_actor_class_wire, mcp_actor_result, mcp_api_error,
-    mcp_engine_error, mcp_error_response, mcp_scoped_read, mcp_text_content,
+    mcp_engine_error, mcp_error_response, mcp_facade_error, mcp_scoped_read, mcp_text_content,
 };
-use super::{booking, hex_bytes};
+use super::hex_bytes;

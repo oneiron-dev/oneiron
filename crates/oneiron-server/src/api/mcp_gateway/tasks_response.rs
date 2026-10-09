@@ -2,8 +2,8 @@
 
 use super::{
     McpCallContext, McpCarrierPolicy, McpGatewayError, execute_mcp_board_verb, mcp_current_board,
-    mcp_endpoint_result, mcp_facade_error, mcp_page_cursor_error, mcp_preflight_page,
-    mcp_request_id, mcp_resolve_page, mcp_scoped_tasks_section,
+    mcp_endpoint_result, mcp_page_cursor_error, mcp_preflight_page, mcp_request_id,
+    mcp_resolve_page, mcp_scoped_tasks_section,
 };
 use crate::error::{ApiError, ApiErrorDetails, ErrorCode};
 use crate::mcp::McpActorClass;
@@ -247,24 +247,6 @@ fn mcp_cap_verb_rows(output: &mut Value, page: &McpPageBudget) {
     }
 }
 
-/// The facade bound to the resolved connector actor, reading under the
-/// connector's own proof when one authenticated it (ONE-1187-D6), as every
-/// other MCP scoped read does.
-pub(super) fn mcp_memory<'a>(
-    vault: &'a oneiron::Vault,
-    actor: &McpResolvedActor,
-) -> oneiron::Memory<'a> {
-    let memory = vault.memory(actor.actor_ref, actor.actor_class);
-    match actor
-        .auth
-        .as_ref()
-        .and_then(crate::auth::CoreAuth::verified_slip)
-    {
-        Some(proof) => memory.with_read_proof(proof),
-        None => memory,
-    }
-}
-
 pub(crate) fn mcp_scoped_read<'a>(
     vault: &'a oneiron::Vault,
     actor: &McpResolvedActor,
@@ -351,6 +333,28 @@ pub(crate) fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> 
             McpGatewayError::new(-32004, "entity_not_found", error.to_string())
         }
         _ => McpGatewayError::new(-32603, "engine_error", format!("{context}: {error}")),
+    }
+}
+
+/// Maps a typed engine facade error onto the gateway's JSON-RPC vocabulary.
+pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
+    let code = match error.code.as_str() {
+        oneiron::MEMORY_CODE_NOT_FOUND => -32004,
+        oneiron::MEMORY_CODE_FORBIDDEN
+        | oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
+        | oneiron::MEMORY_CODE_INVALID_STATE => -32020,
+        oneiron::MEMORY_CODE_INTERNAL => -32603,
+        _ => -32602,
+    };
+    // A facade refusal carrying a successor keeps the same stable kind and
+    // typed data the engine-error path emits (ONE-1936) — one vocabulary for
+    // one condition, whichever door reported it.
+    match error.successor_short_id {
+        Some(successor_short_id) => {
+            McpGatewayError::new(code, "write_verb_target_stale", error.message)
+                .with_successor_short_id(successor_short_id)
+        }
+        None => McpGatewayError::new(code, "facade_error", error.message),
     }
 }
 

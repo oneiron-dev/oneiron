@@ -401,21 +401,6 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
             },
             1,
         ),
-        // MCP proposed-control-record write (ONE-1936). This is NOT a raw
-        // write bypassing a stamper: the transaction wraps the write-verb
-        // target guard and a stamped `batch_in().claim_candidate(...)`, which
-        // carries the same `WriteEnvelope` the unguarded `batch()` path did.
-        // The explicit transaction is REQUIRED — guarding the target in one
-        // transaction and writing the proposal in another recreates the
-        // grounding-read race the ticket closes.
-        (
-            RawHit {
-                path: "crates/oneiron-server/src/api/mcp_gateway/facade_verbs/mod.rs".to_owned(),
-                ident: "with_write_txn".to_owned(),
-                line: ".with_write_txn(|wtxn| {".to_owned(),
-            },
-            1,
-        ),
         // W7-C09: host-owned lease and money metadata, never foreign/guest
         // entities, edges or vectors. Lease scope is minted under one fixed key.
         // Usage writes validated stamped events, vault-only derived rollups,
