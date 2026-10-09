@@ -227,7 +227,24 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
             markdown: note.markdown.clone(),
         });
     }
-    let (links, link_counts) = resolve_links(&notes, &standings);
+    // The title a changed note had when it landed: links resolved by it then.
+    let earlier_titles = notes
+        .iter()
+        .zip(&standings)
+        .map(|(note, standing)| {
+            if *standing != ImportedNoteStanding::Changed {
+                return Ok(None);
+            }
+            let id = oneiron::Vault::imported_note_id(&folder, &note.path)?;
+            Ok(vault.read_note(&id)?.and_then(|landed| {
+                markdown::split_frontmatter(&landed.markdown)
+                    .0
+                    .and_then(markdown::frontmatter)
+                    .and_then(|front| front.title)
+            }))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let (links, link_counts) = resolve_links(&notes, &standings, &earlier_titles);
 
     let batch = if files.is_empty() {
         None
@@ -436,20 +453,28 @@ fn choose_title(
 /// Resolves every note's links. The batch carries the links that start at a
 /// new note, and those of an unchanged note that resolve only now, to a new
 /// note: a link an earlier import resolved keeps its note. What resolved
-/// before is judged from the folder as it is now, so a note whose file left
-/// the folder no longer holds its name. A changed note's links wait with its
-/// text.
+/// before is judged from the notes the folder still holds, a changed one by
+/// the title it landed with, so a note whose file left the folder no longer
+/// holds its name. A changed note's links wait with its text.
 fn resolve_links(
     notes: &[Note],
     standings: &[ImportedNoteStanding],
+    earlier_titles: &[Option<String>],
 ) -> (Vec<NoteLink>, LinkCounts) {
-    let now = Index::new(notes, |_| true);
-    let before = Index::new(notes, |index| {
-        matches!(
-            standings[index],
-            ImportedNoteStanding::Unchanged | ImportedNoteStanding::Changed
-        )
-    });
+    let now = Index::new(notes, |_| true, |at| notes[at].title.as_deref());
+    let before = Index::new(
+        notes,
+        |at| {
+            matches!(
+                standings[at],
+                ImportedNoteStanding::Unchanged | ImportedNoteStanding::Changed
+            )
+        },
+        |at| match standings[at] {
+            ImportedNoteStanding::Changed => earlier_titles[at].as_deref(),
+            _ => notes[at].title.as_deref(),
+        },
+    );
     let mut counts = LinkCounts::default();
     let mut batch = Vec::new();
     let mut seen = HashSet::new();
@@ -515,7 +540,11 @@ struct Index {
 }
 
 impl Index {
-    fn new(notes: &[Note], include: impl Fn(usize) -> bool) -> Self {
+    fn new<'a>(
+        notes: &'a [Note],
+        include: impl Fn(usize) -> bool,
+        title: impl Fn(usize) -> Option<&'a str>,
+    ) -> Self {
         let mut index = Self {
             by_path: HashMap::new(),
             by_title: HashMap::new(),
@@ -523,7 +552,7 @@ impl Index {
         };
         for (at, note) in notes.iter().enumerate().filter(|(at, _)| include(*at)) {
             index.by_path.entry(key(&note.path)).or_insert(at);
-            if let Some(title) = &note.title {
+            if let Some(title) = title(at) {
                 index.by_title.entry(key(title)).or_insert(at);
             }
             let stem = note.path.rsplit('/').next().unwrap_or(&note.path);

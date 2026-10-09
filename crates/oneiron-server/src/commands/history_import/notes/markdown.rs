@@ -73,6 +73,8 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
     let mut fence: Option<Fence> = None;
     let mut indented_code = false;
     let mut in_list = false;
+    // Where the current list item's content starts.
+    let mut item_column = 0;
     let mut after_blank = true;
     for line in body.lines() {
         let line = expand_prefix(line);
@@ -81,7 +83,9 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
             // item it opened in. Quote markers past its own are code.
             let (depth, inner) = unquote(&line, Some(open.depth));
             let content = inner.trim_start();
-            let item_ended = open.in_item && !content.is_empty() && indent(inner) == 0;
+            let item_ended = open
+                .item_column
+                .is_some_and(|column| !content.is_empty() && indent(inner) < column);
             if depth == open.depth && !item_ended {
                 if run(content, open.mark) >= open.len
                     && content.trim_start_matches(open.mark).trim().is_empty()
@@ -114,11 +118,18 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
             span_links(&std::mem::take(&mut paragraph), &mut links);
             in_list = true;
             item = true;
-            content = rest.trim_start();
+            let text = rest.trim_start();
+            item_column = indent + content.len() - text.len() + usize::from(text.is_empty());
+            content = text;
         } else if indent < 2 && after_blank {
             in_list = false;
         }
         after_blank = false;
+        // A `===` line under a paragraph makes it a heading, which ends there.
+        if !paragraph.is_empty() && content.trim_end().chars().all(|c| c == '=') {
+            span_links(&std::mem::take(&mut paragraph), &mut links);
+            continue;
+        }
         // A rule or a heading is a block of its own, and one at the margin
         // ends a list.
         if thematic_break(content) || heading(content) {
@@ -136,7 +147,7 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
                 mark,
                 len: run(content, mark),
                 depth,
-                in_item: in_list,
+                item_column: in_list.then_some(item_column),
             });
             continue;
         }
@@ -148,13 +159,13 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
 }
 
 /// An open code fence: its character and length, the block-quote depth it
-/// opened at, and whether it opened in a list item.
+/// opened at, and where the content of the list item it opened in starts.
 #[derive(Clone, Copy)]
 struct Fence {
     mark: char,
     len: usize,
     depth: usize,
-    in_item: bool,
+    item_column: Option<usize>,
 }
 
 /// The line with the tabs among its leading spaces and quote markers
@@ -357,5 +368,9 @@ mod tests {
         assert_eq!(targets("> \t[[b]]\n"), ["b"]);
         assert_eq!(targets(">\t  [[a]]\n"), Vec::<String>::new());
         assert_eq!(targets("- ```\n  [[a]]\n\n[[b]]\n"), ["b"]);
+        assert_eq!(targets("- ```\n  [[a]]\n\n [[b]]\n"), ["b"]);
+        assert_eq!(targets("1. ```\n   [[a]]\n\n  [[b]]\n"), ["b"]);
+        assert_eq!(targets("1. ```\n   [[a]]\n   ```\n   [[b]]\n"), ["b"]);
+        assert_eq!(targets("Heading `\n===\nSee [[b]] and `.\n"), ["b"]);
     }
 }
