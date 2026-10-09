@@ -324,9 +324,10 @@ def outputs():
         if r.get('admission', {}).get('owner_grade'):
             # A full-vault result must carry verifier-produced owner proof into
             # same-snapshot engine admission, never generic actor-only invoke.
-            server += f'''async fn {method}(auth: CoreAuth, State(server): State<Arc<SyncServer>>, payload: Result<Json<serde_json::Value>, JsonRejection>) -> Result<Json<serde_json::Value>, FacadeApiError> {{
+            server += f'''async fn {method}(auth: CoreAuth, State(server): State<Arc<SyncServer>>, headers: HeaderMap, payload: Result<Json<serde_json::Value>, JsonRejection>) -> Result<Json<serde_json::Value>, FacadeApiError> {{
                 auth.require(CoreScope::{r["scope"]})?;
                 auth.require_unrestricted_record_scope()?;
+                facade_outside_room_turn(&headers, {json.dumps(r["name"])})?;
                 if !auth.is_owner_grade() {{
                     return Err(FacadeApiError::forbidden("full-vault export requires owner authority", ["Present a verified, unattenuated owner credential."]));
                 }}
@@ -348,22 +349,30 @@ def outputs():
             continue
         # `readable` names the credential read checks: each caller-named ref is
         # refused before the engine call, and `rows` filters the typed result.
-        guard, result = '', f'oneiron::task_verb::sdk::invoke(&server.vault.memory(actor,class), "{r["name"]}", value)?'
-        for readable in r.get('admission', {}).get('readable', []):
+        guard, result = '', f'facade_invoke(&server, &headers, actor, class, "{r["name"]}", value)?'
+        readables = r.get('admission', {}).get('readable', [])
+        # A room turn refuses an unserved verb before any credential lookup,
+        # so the refusal says nothing about the target the lookup would read.
+        if 'rows' in readables:
+            guard += f'facade_outside_room_turn(&headers, "{r["name"]}")?;'
+        elif readables:
+            guard += f'facade_room_turn_serves(&headers, "{r["name"]}", oneiron::memory::RoomTurnHandle::serves("{r["name"]}"))?;'
+        for readable in readables:
             if readable == 'rows':
                 result = f'facade_readable_task_rows(&server.vault, &auth, oneiron::task_verb::sdk::{method}(&server.vault.memory(actor,class), facade_input(value)?)?)?'
             else:
                 guard += f'facade_admit_readable_ref(&server.vault, &auth, &value, "{readable}")?;'
-        # A server door runs the verb with the host's execution inputs, off the runtime.
+        # A server door runs the verb with the host's execution inputs, off the
+        # runtime, inside the room turn the request names, if any.
         if r.get('server_door'):
-            result = f'facade_output(server.{r["server_door"]}(actor, class, auth.verified_slip().cloned(), facade_input(value)?).await?)?'
+            result = f'facade_output(server.{r["server_door"]}(actor, class, auth.verified_slip().cloned(), facade_room_turn(&headers)?, facade_input(value)?).await?)?'
         # The typed result path consumes facade_input; invoke decodes its own input.
         validation = (f'oneiron::task_verb::sdk::validate_input("{r["name"]}", &value)?;\n         '
                       if 'rows' in r.get('admission', {}).get('readable', []) or r.get('server_door') else '')
         if r['name'] == 'describe':
             validation += "if value.get(\"self\").and_then(serde_json::Value::as_bool) == Some(true) { "
-            validation += "return Ok(Json(crate::api::context_board::describe_self_for_auth(&server, &auth, &value).await?)); } "
-        server += f'''async fn {method}(auth: CoreAuth, State(server): State<Arc<SyncServer>>, payload: Result<Json<serde_json::Value>, JsonRejection>) -> Result<Json<serde_json::Value>, FacadeApiError> {{
+            validation += "facade_outside_room_turn(&headers, \"describe\")?; return Ok(Json(crate::api::context_board::describe_self_for_auth(&server, &auth, &value).await?)); } "
+        server += f'''async fn {method}(auth: CoreAuth, State(server): State<Arc<SyncServer>>, headers: HeaderMap, payload: Result<Json<serde_json::Value>, JsonRejection>) -> Result<Json<serde_json::Value>, FacadeApiError> {{
         auth.require(CoreScope::{r["scope"]})?;
         {'auth.require_unrestricted_record_scope()?;' if r.get('admission', {}).get('unrestricted_record_scope') else ''}
         let value = facade_json(payload)?;
@@ -386,7 +395,7 @@ def outputs():
         if !oneiron::task_verb::sdk::AgentVerb::from_name(verb).is_some_and(oneiron::task_verb::sdk::AgentVerb::is_facade) { return Err(crate::error::bad_request("unknown SDK agent verb", &["Use a verb from the SDK catalog."])); }
         oneiron::task_verb::sdk::validate_input(verb, &input)?;
         match &self.backend {
-            Backend::Embedded(client) => oneiron::task_verb::sdk::invoke(&client.memory(), verb, input),
+            Backend::Embedded(client) => client.invoke(verb, input),
             Backend::Remote(client) => match verb {
 '''
     for row in facade_rows:

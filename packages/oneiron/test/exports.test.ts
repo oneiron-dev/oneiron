@@ -47,7 +47,7 @@ describe("export census", () => {
     const verbs = manifest.verbs.filter((row) => (row.context ?? "memory") === "memory").map((row) => row.name)
     expect(verbs.length).toBeGreaterThan(0)
     const jsVerbs = verbs.filter((verb) => !verb.includes(".")).map((verb) => verb.replace(/_([a-z])/g, (_, ch) => ch.toUpperCase()))
-    expect(instanceMethods).toEqual(["asActor", ...jsVerbs].sort())
+    expect(instanceMethods).toEqual(["asActor", "inRoomTurn", ...jsVerbs].sort())
     // connect validates configuration only; this census sends no request.
     const instance = pkg.Oneiron.connect("http://127.0.0.1:9/", "census-unused")
     const families = [...new Set(verbs.filter((verb) => verb.includes(".")).map((verb) => verb.split(".")[0]))]

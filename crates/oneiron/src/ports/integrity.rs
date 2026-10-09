@@ -110,7 +110,8 @@ pub(super) fn mark_stale_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityI
         crate::hnsw::increment_vector_version(store, txn)?;
     }
     crate::ppr::invalidate_ppr_for_delete(store, txn, id, &[])?;
-    Ok(())
+    // A stale edge.provenance wrapper stops justifying its edge in this txn.
+    crate::provenance::refresh_stale_wrapper_in_txn(store, txn, id)
 }
 /// An entity delete erases every source version; one document-prefix scan
 /// visits only its k dependency rows. No entity or edge table is scanned.

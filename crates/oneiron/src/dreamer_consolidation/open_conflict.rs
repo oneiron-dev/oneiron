@@ -107,6 +107,7 @@ pub(super) fn park_open_conflict(
         .with_scope(super::persistence::identity_scope(&conflict.identity)?)
         .with_evidence_taint(meet)?;
     vault.with_write_txn(|txn| {
+        crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         fence.validate_in_txn(vault, txn)?;
         let mut envelope = envelope.clone();
         vault.sign_retained_machine_claim_in_txn(&*txn, &id, &candidate, &mut envelope)?;
@@ -122,7 +123,8 @@ pub(super) fn park_open_conflict(
                 },
                 now,
             )
-            .apply_recording_gate_decisions(txn)
+            .apply_recording_gate_decisions(txn)?;
+        verified.record_message_dependencies_in_txn(vault, txn, &id)
     })?;
     Ok(id)
 }
