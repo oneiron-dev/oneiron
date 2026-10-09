@@ -13,7 +13,7 @@ use oneiron::failure_ladder::{
     FailureEscalationMode, FailureLadderOutcome, FailureScope, FailureScopePolicy,
     FailureSignalClass, HandleAttemptFailure, TypedFailureEvidence, TypedFailureVerdict,
 };
-use oneiron::secret_custody::{CustodyTier, SecretBinding, SecretCustodyRecord};
+use oneiron::secret_custody::{CustodyTier, SecretBinding};
 use oneiron::{DreamerRunnerStore, TimeRange};
 
 #[tokio::test]
@@ -26,12 +26,7 @@ async fn owner_rotates_a_secret_and_nobody_else_can() {
     };
     let id = server
         .vault()
-        .register_secret(SecretCustodyRecord::for_test(
-            "deploy-token",
-            b"first value",
-            vec![binding],
-            1,
-        ))
+        .register_test_secret("deploy-token", b"first value", vec![binding], 1)
         .unwrap();
     let new_value = "c2Vjb25kIHZhbHVl"; // "second value"
     let body = json!({ "name": "deploy-token", "value_base64": new_value });
