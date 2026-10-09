@@ -15,10 +15,10 @@ use serde_json::{Value as JsonValue, json};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing_subscriber::EnvFilter;
 
-use crate::auth::revoke_token_jti;
+use crate::auth::{CoreScope, revoke_token_jti};
 use crate::cli::{
-    ProvenanceArgs, RevokeArgs, SkillsPackArgs, TokenBootstrapArgs, TokenPairArgs, TokenRevokeArgs,
-    VaultArgs,
+    ProvenanceArgs, RevokeArgs, SkillsPackArgs, TokenBootstrapArgs, TokenPairArgs, TokenReadArgs,
+    TokenRevokeArgs, VaultArgs,
 };
 #[cfg(test)]
 use crate::config::ServeConfig;
@@ -72,7 +72,7 @@ use self::serve::serve_with_config;
 mod dreamer;
 pub use self::dreamer::dreamer_grant;
 mod owner;
-pub use owner::{backup, doctor, export, import, restore, runs, secret_scan};
+pub use owner::{backup, doctor, export, import, restore, runs, secret_scan, whoami};
 mod msgpack_json;
 pub(crate) use msgpack_json::msgpack_value_json;
 
@@ -170,6 +170,105 @@ fn token_bootstrap_link(args: &TokenBootstrapArgs) -> anyhow::Result<String> {
         &link.code,
         &owner.to_hex(),
     ))
+}
+
+/// What `token read` prints: the credential in the SDK's one-string form and
+/// in the CLI's slip-plus-seed form, and the slip id `token revoke` takes.
+#[derive(serde::Serialize)]
+struct ReadCredential {
+    principal_ref: String,
+    actor_class: String,
+    expires_at: u64,
+    slip_id: String,
+    credential: String,
+    token: String,
+    binding_key: String,
+}
+
+/// A read-only credential for a local agent, minted on the stopped vault.
+///
+/// The same host-rooted doors as `token bootstrap` and `/v1/core/pairing/redeem`:
+/// the host issues a one-use link for an existing principal carrying only
+/// `core:read`, and this process redeems it at once with a fresh connection
+/// key. The slip is logged like every paired slip and revoked by its id.
+pub fn token_read(args: TokenReadArgs) -> anyhow::Result<()> {
+    use ed25519_dalek::{Signer, SigningKey};
+    anyhow::ensure!(
+        !args.serve.managed_by_hypnos,
+        "managed vaults pair through their supervisor; local minting is self-host only"
+    );
+    anyhow::ensure!(
+        args.serve.auth_secret.is_none(),
+        "set ONEIRON_AUTH_SECRET or a protected config file; never pass the issuer key in argv"
+    );
+    let config = resolve_serve_config(&args.serve)?;
+    ensure_existing_vault_for_revoke(&config.vault_path)?;
+    let secret = config
+        .sync_server_config()
+        .auth_secret
+        .ok_or_else(|| anyhow::anyhow!("configured host issuer secret is required"))?;
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+    let vault = oneiron::Vault::open_owned(&config.vault_path, config.vault_config())?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let principal_ref = args.principal_ref.unwrap_or_else(|| owner.to_hex());
+    // Pairing names an existing actor whose kind can act as the class asked
+    // for; it never manufactures one. Checked before the vault is rooted.
+    let (principal, _) =
+        oneiron::memory::parse_actor_key(&vault, &format!("{}:{principal_ref}", args.actor_class))
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "{principal_ref} cannot hold a {} credential: {}",
+                    args.actor_class,
+                    error.message
+                )
+            })?;
+    let principal = principal.to_hex();
+    vault.ensure_host_root_slip(&issuer)?;
+    let mut scope = oneiron::federation::Scope::top();
+    scope.verbs = oneiron::federation::ScopeAxis::Some(
+        [CoreScope::Read.as_str().to_owned()].into_iter().collect(),
+    );
+    let link = vault.issue_pairing_link_for_principal(
+        &issuer,
+        scope,
+        args.lifetime_secs,
+        oneiron::authority::PairingPrincipal {
+            holder_ref: Some(principal.clone()),
+            actor_class: Some(args.actor_class.clone()),
+            org_ref: None,
+        },
+    )?;
+    let key = SigningKey::generate(&mut rand_core::OsRng);
+    let binding_key = key.verifying_key().to_bytes();
+    let transcript =
+        oneiron::authority::pairing_binding_transcript(&link.code, &binding_key, &principal)?;
+    let slip = vault.redeem_pairing_link(
+        &issuer,
+        &link.code,
+        &principal,
+        binding_key,
+        &key.sign(&transcript).to_bytes(),
+    )?;
+    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let token = slip.to_token()?;
+    let seed = hex(key.as_bytes());
+    let credential = format!(
+        "v2.cred.{}.{seed}",
+        token.strip_prefix("v2.slip.").unwrap_or(&token)
+    );
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&ReadCredential {
+            principal_ref: principal,
+            actor_class: args.actor_class,
+            expires_at: slip.claims.expires_at,
+            slip_id: hex(&slip.claims.slip_id),
+            credential,
+            token,
+            binding_key: seed,
+        })?
+    );
+    Ok(())
 }
 
 /// Creates a pairing link on the running server and prints it.

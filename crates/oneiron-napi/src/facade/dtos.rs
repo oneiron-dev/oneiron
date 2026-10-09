@@ -348,6 +348,9 @@ pub struct NapiRecallScope {
     pub world_ref: Option<String>,
     /// Facet entity ref; strict facet narrowing when set.
     pub facet: Option<String>,
+    /// Registry kinds to return; unset returns every kind but turns,
+    /// conversations, sessions, facets and worlds.
+    pub kinds: Option<Vec<String>>,
 }
 
 /// One BM25 hit (engine index scores).
@@ -403,8 +406,10 @@ pub struct NapiMemoryProvenance {
 /// One memory pack item (S6).
 #[napi(object)]
 pub struct NapiMemoryItem {
-    /// Short ref, hydratable via `hydrate`.
+    /// Short ref, hydratable via `hydrate`; never revision-qualified.
     pub short_id: String,
+    /// The revision the item was read at; `shortId@sourceRevisionRef` hydrates it.
+    pub source_revision_ref: Option<String>,
     /// Registry kind string.
     pub kind: String,
     /// Predicate (claims only).
@@ -445,6 +450,21 @@ pub struct NapiRetrievalMeta {
     pub deep_pending: Option<bool>,
     /// Retrieval ended before all requested stages completed.
     pub partial: bool,
+    /// Time phrases read from the query and what recall did with each.
+    pub temporal_hints: Vec<NapiTemporalHint>,
+}
+
+/// One time phrase read from a recall query.
+#[napi(object)]
+pub struct NapiTemporalHint {
+    /// The phrase, lowercased with punctuation dropped.
+    pub phrase: String,
+    /// `used` narrowed the window; `unresolved` and `future` were skipped.
+    pub status: String,
+    /// Inclusive Unix-second start, when the phrase resolved.
+    pub start: Option<i64>,
+    /// Inclusive Unix-second end, when the phrase resolved.
+    pub end: Option<i64>,
 }
 
 /// The S6 memory pack (`packVersion: 1`).

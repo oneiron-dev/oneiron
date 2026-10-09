@@ -9,7 +9,7 @@ mod owner_args;
 pub use owner_args::{
     BackupArgs, DoctorArgs, ExportArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs,
     RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand, SecretScanArgs, SecretScanSwitch,
-    ServeOnlyArgs,
+    ServeOnlyArgs, WhoamiArgs,
 };
 
 const DEFAULT_SERVER_DIMENSIONS: usize = 4096;
@@ -48,6 +48,8 @@ pub enum Command {
     /// Open a vault and print its doctor report, with where its data lives:
     /// path, size on disk, last backup and last export.
     Doctor(DoctorArgs),
+    /// Print a stopped vault's owner principal and its vault id.
+    Whoami(Box<WhoamiArgs>),
     /// Back up a stopped vault now (`--list` shows its backups).
     Backup(Box<BackupArgs>),
     /// Restore a backup over a stopped vault, or `--rehearse` it in a
@@ -133,6 +135,8 @@ pub enum TokenCommand {
     Bootstrap(Box<TokenBootstrapArgs>),
     /// Create a one-hour pairing link on the running server and print it.
     Pair(Box<TokenPairArgs>),
+    /// Mint a read-only credential for a local agent on the stopped vault.
+    Read(Box<TokenReadArgs>),
     /// Revoke one previously minted token by its id.
     Revoke(Box<TokenRevokeArgs>),
 }
@@ -187,6 +191,29 @@ pub struct TokenPairArgs {
     /// The paired slip's lifetime in seconds.
     #[arg(long = "lifetime-secs", default_value_t = 365 * 24 * 60 * 60)]
     pub lifetime_secs: u64,
+}
+
+/// A local agent's read credential, minted through the same host-rooted
+/// pairing doors as `bootstrap` while the vault is stopped. The issuer key
+/// comes from the config or `ONEIRON_AUTH_SECRET`, never argv.
+#[derive(Args, Clone, Debug)]
+pub struct TokenReadArgs {
+    /// The principal the credential reads as: a 32-hex id or a short ref.
+    /// Defaults to the vault's owner (`oneiron whoami`).
+    #[arg(long = "principal-ref")]
+    pub principal_ref: Option<String>,
+
+    /// D13 actor class the credential binds: `human`, `agent` or `system`.
+    /// The owner reads its whole vault as `human`.
+    #[arg(long = "actor-class", default_value = "human")]
+    pub actor_class: String,
+
+    /// The credential's lifetime in seconds, capped by the vault's policy.
+    #[arg(long = "lifetime-secs", default_value_t = 30 * 24 * 60 * 60)]
+    pub lifetime_secs: u64,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
 }
 
 /// Revoking one token is an explicit act on one named identity. It is
@@ -450,6 +477,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::SkillsPack(args) => commands::skills_pack(args),
         Command::Init(args) => tokio::task::spawn_blocking(move || commands::init(args)).await?,
         Command::Doctor(args) => commands::doctor(args),
+        Command::Whoami(args) => commands::whoami(*args),
         Command::Backup(args) => commands::backup(*args),
         Command::Restore(args) => commands::restore(*args),
         Command::Export(args) => commands::export(*args),
@@ -460,6 +488,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Provenance(args) => commands::provenance(*args),
         Command::Token(TokenCommand::Bootstrap(args)) => commands::token_bootstrap(*args),
         Command::Token(TokenCommand::Pair(args)) => commands::token_pair(*args),
+        Command::Token(TokenCommand::Read(args)) => commands::token_read(*args),
         Command::Token(TokenCommand::Revoke(args)) => commands::token_revoke(*args),
         Command::Api(args) => commands::api(args).await,
         Command::Host(HostCommand::Init(args)) => commands::host_init(args),

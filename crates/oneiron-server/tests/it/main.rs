@@ -1,6 +1,7 @@
 //! Consolidated integration-test binary: five former standalone
 //! `tests/*.rs` Cargo targets compiled and linked once.
 
+mod agent_credentials;
 mod ai_serve;
 mod booking_agent_api;
 mod campaign_surface_oracle;

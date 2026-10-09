@@ -64,6 +64,11 @@ use crate::server::SyncServer;
 pub use crate::projection::View;
 
 /// Builds the complete Axum app (WebSocket + HTTP API routes).
+///
+/// Serve it on a multi-thread Tokio runtime, outside a `LocalSet`. WebSocket
+/// read RPCs run synchronously and leave the worker with `block_in_place`,
+/// which a `LocalSet` forbids; on a current-thread runtime they hold the only
+/// executor thread while they read.
 pub fn build_app(server: Arc<SyncServer>) -> Router {
     Router::new()
         .merge(handler::ws_routes(server.clone()))
