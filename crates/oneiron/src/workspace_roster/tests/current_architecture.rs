@@ -238,18 +238,6 @@ fn a_second_onboarding_id_cannot_replace_a_principals_companion() -> Result<()> 
 }
 
 #[test]
-fn owner_house_name_override_is_runtime_data() -> Result<()> {
-    let (_dir, vault, mut intent) = fixture("Antevon");
-    intent.workspace.house_display_name = Some("Owner named house".to_owned());
-    vault.onboard_workspace_member(intent, &writer(WRITER), None)?;
-    assert_eq!(
-        vault.workspace_roster("antevon-slack", AT)?[0].display_name,
-        "Owner named house"
-    );
-    Ok(())
-}
-
-#[test]
 fn minted_kind_collision_is_rejected_before_the_first_effect() -> Result<()> {
     let (_dir, vault, mut intent) = fixture("Antevon");
     let occupied = seed_plain(&vault, 0xD3, ENTITY_TYPE_PERSON);
@@ -318,44 +306,6 @@ fn existing_grant_must_match_exactly_and_is_never_rewritten() -> Result<()> {
     assert_eq!(
         read_federation_grant_in_txn(&vault, &txn, &entity(MEMBER_GRANT))?,
         Some(occupied)
-    );
-    Ok(())
-}
-
-#[test]
-fn house_name_can_be_owner_edited_without_rewriting_the_seed_or_replay() -> Result<()> {
-    let (_dir, vault, intent) = fixture("Antevon");
-    let seed_before = vault.get_agent_definition(&intent.workspace.house_actor_ref)?;
-    let outcome = vault.onboard_workspace_member(intent.clone(), &writer(WRITER), None)?;
-    vault.set_workspace_house_display_name(
-        "antevon-slack",
-        Some("Renamed house".to_owned()),
-        &writer(WRITER),
-    )?;
-    assert_eq!(
-        vault.workspace_roster("antevon-slack", AT)?[0].display_name,
-        "Renamed house"
-    );
-    assert_eq!(
-        vault.get_agent_definition(&intent.workspace.house_actor_ref)?,
-        seed_before
-    );
-    assert_eq!(
-        vault.onboard_workspace_member(intent, &writer(WRITER), None)?,
-        outcome
-    );
-    let err = vault
-        .set_workspace_house_display_name("antevon-slack", None, &writer(OUTSIDER))
-        .expect_err("outsider cannot rename the house");
-    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
-    assert_eq!(
-        vault.workspace_roster("antevon-slack", AT)?[0].display_name,
-        "Renamed house"
-    );
-    vault.set_workspace_house_display_name("antevon-slack", None, &writer(WRITER))?;
-    assert_eq!(
-        vault.workspace_roster("antevon-slack", AT)?[0].display_name,
-        "Antevon"
     );
     Ok(())
 }

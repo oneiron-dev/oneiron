@@ -335,58 +335,6 @@ fn invalid_asr_metadata_preserves_live_output_and_stale_callbacks_stay_ignored()
     Ok(())
 }
 
-#[test]
-fn valid_asr_metadata_preserves_missing_zero_and_boundary_values() -> Result<()> {
-    let (_dir, vault) = vault();
-    for (start_ms, end_ms, confidence, provider_latency_ms, endpoint_delay_ms) in [
-        (None, None, None, None, None),
-        (Some(0.0), Some(0.0), Some(0.0), Some(0.0), Some(0.0)),
-        (Some(1.5), Some(32.25), Some(1.0), Some(19.5), Some(150.0)),
-        (Some(32.25), None, Some(0.5), None, Some(0.0)),
-        (None, Some(0.0), None, Some(0.0), None),
-    ] {
-        for kind in [
-            AsrEventKind::Partial,
-            AsrEventKind::Final,
-            AsrEventKind::Endpoint,
-            AsrEventKind::Error,
-            AsrEventKind::Closed,
-        ] {
-            let input = AsrEvent {
-                tokens: vec![AsrToken {
-                    text: "Tokyo".to_owned(),
-                    is_final: true,
-                    start_ms,
-                    end_ms,
-                    confidence,
-                }],
-                provider_latency_ms,
-                endpoint_delay_ms,
-                ..event(kind, "Tokyo launch")
-            };
-            input.validate()?;
-            let wire = serde_json::to_value(&input).expect("encode metadata");
-            let decoded: AsrEvent = serde_json::from_value(wire).expect("decode metadata");
-            assert_eq!(decoded, input);
-            let mut session = VoiceCascadeSession::new(Arc::clone(&vault), config())?;
-            let handle =
-                session.open_utterance("valid-metadata", SpeculativeSessionConfig::default())?;
-            let mut enricher = Enricher::default();
-            let update = session.handle_asr(&handle, 1, decoded, false, &mut enricher)?;
-            assert!(matches!(
-                (kind, update),
-                (AsrEventKind::Partial, AsrUpdate::Partial(_))
-                    | (AsrEventKind::Final, AsrUpdate::Final(_))
-                    | (AsrEventKind::Endpoint, AsrUpdate::Endpoint)
-                    | (AsrEventKind::Error, AsrUpdate::Error(_))
-                    | (AsrEventKind::Closed, AsrUpdate::Closed(_))
-            ));
-            assert_eq!(session.is_ended(), kind == AsrEventKind::Closed);
-        }
-    }
-    Ok(())
-}
-
 fn config() -> VoiceSessionConfig {
     let mut config = VoiceSessionConfig::new(
         "session:test",

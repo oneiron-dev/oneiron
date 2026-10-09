@@ -100,30 +100,15 @@ mod tests;
 // split the seam re-imports both so `tests.rs` resolves exactly as it did
 // before.
 #[cfg(test)]
-use self::autocheck::{
-    AUTO_CHECK_HOLD_REASON_MAX_BYTES, AUTO_CHECK_MAX_HOLD_REASONS, AUTO_CHECK_PURPOSE_DEFAULT_TIER,
-    auto_check_verdict_schema,
-};
+use self::autocheck::AUTO_CHECK_PURPOSE_DEFAULT_TIER;
 #[cfg(test)]
 use crate::claim::ClaimSource;
 #[cfg(test)]
 use crate::write_envelope::SourceLineage;
 #[cfg(test)]
-use futures_core::Stream;
-#[cfg(test)]
-use serde_json::{Map as JsonMap, Value as JsonValue};
+use serde_json::Value as JsonValue;
 #[cfg(test)]
 use std::collections::BTreeMap;
-#[cfg(test)]
-use std::pin::Pin;
-#[cfg(test)]
-use std::sync::Arc;
-#[cfg(test)]
-use std::sync::atomic::Ordering;
-#[cfg(test)]
-use std::sync::mpsc;
-#[cfg(test)]
-use std::time::Duration;
 
 /// Typed question and outcome contracts.
 pub mod decision;

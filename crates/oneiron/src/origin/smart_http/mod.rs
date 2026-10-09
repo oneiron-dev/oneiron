@@ -118,9 +118,7 @@ mod tests;
 // directory split the seam re-imports both so the test files resolve exactly
 // as they did before.
 #[cfg(test)]
-use self::{
-    advertise::*, cgi_finish::*, door::*, door_window::*, evidence::*, hooks::*, paths::*, serve::*,
-};
+use self::{advertise::*, cgi_finish::*, door::*, door_window::*, evidence::*, paths::*, serve::*};
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
@@ -128,7 +126,7 @@ use crate::claim::{ClaimLifecycleStatus, encode_claim_body};
 #[cfg(test)]
 use crate::codebase::RepoRef;
 #[cfg(test)]
-use crate::credential_door::{CredentialDoorService, DoorCredential, DoorScanVerdict, PushedBlob};
+use crate::credential_door::{CredentialDoorService, DoorCredential};
 #[cfg(test)]
 use crate::entity_id::EntityId;
 #[cfg(test)]

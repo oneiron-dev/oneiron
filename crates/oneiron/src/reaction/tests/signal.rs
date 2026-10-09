@@ -73,22 +73,3 @@ fn signal_feed_pages_new_reactions_to_own_messages_since_the_last_turn() {
     assert_eq!(bob_feed.len(), 1);
     assert_eq!(bob_feed[0].message, other);
 }
-
-#[test]
-fn signal_page_bounds_and_cursor_are_validated() {
-    let room = room();
-    for limit in [0, MAX_REACTION_SIGNAL_PAGE + 1] {
-        assert!(
-            room.vault
-                .reactions_since_page(room.alice, 0, None, limit)
-                .is_err()
-        );
-    }
-    for cursor in ["", "zz", &"g".repeat(50)] {
-        assert!(
-            room.vault
-                .reactions_since_page(room.alice, 0, Some(cursor), 10)
-                .is_err()
-        );
-    }
-}

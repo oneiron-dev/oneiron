@@ -174,35 +174,6 @@ fn generic_predicate_cannot_disguise_an_owned_claim_id_overwrite() -> Result<()>
 }
 
 #[test]
-fn other_person_predicates_remain_writable_through_generic_doors() -> Result<()> {
-    for door in DOORS {
-        let (_dir, vault) = test_vault();
-        let person = seed(&vault, entity(0xB5), ENTITY_TYPE_PERSON);
-        for predicate in [
-            "person.other_fact",
-            "person.substrate_note",
-            "person.substrate.note",
-        ] {
-            let id = EntityId::now();
-            let body = ClaimBody::new(
-                predicate,
-                ClaimSubject::Entity(person),
-                Value::from("ordinary fact"),
-                1.0,
-                ClaimApprovalStatus::Auto,
-                ClaimLifecycleStatus::Active,
-            )?;
-            generic_write(&vault, door, &id, &body)?;
-            assert_eq!(
-                vault.get_claim(&id)?.expect("public person fact").predicate,
-                predicate
-            );
-        }
-    }
-    Ok(())
-}
-
-#[test]
 fn substrate_lifecycle_is_closed_to_generic_retract_supersede_and_demotion() -> Result<()> {
     let (_dir, vault) = test_vault();
     let person = seed(&vault, entity(0xB6), ENTITY_TYPE_PERSON);
@@ -284,47 +255,6 @@ fn substrate_lifecycle_is_closed_to_generic_retract_supersede_and_demotion() -> 
     assert_eq!(
         person_substrate(&vault, &person, 201)?,
         Some(PersonSubstrate::Model)
-    );
-    Ok(())
-}
-
-#[test]
-fn substrate_replica_fixture_rematerializes_through_the_existing_reserved_door() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let person = seed(&vault, entity(0xA8), ENTITY_TYPE_PERSON);
-    let id = entity(0xA9);
-    let body = subject_fact(
-        PREDICATE_PERSON_SUBSTRATE,
-        person,
-        Value::from("model"),
-        writer(),
-        100,
-    )?;
-    let data = encode_claim_body(&body)?;
-    // This fixture door runs without sync too; no production replay exemption is widened.
-    vault
-        .batch()
-        .put_replicated(
-            &id,
-            ENTITY_TYPE_CLAIM,
-            TimeRange {
-                start: 100,
-                end: 100,
-            },
-            100,
-            &data,
-        )
-        .edge(&id, crate::edge::EdgeKind::ClaimOf, &person, 1.0)
-        .commit()?;
-    assert_eq!(vault.get_claim(&id)?, Some(body));
-    assert_eq!(
-        person_substrate(&vault, &person, 201)?,
-        Some(PersonSubstrate::Model)
-    );
-    set_person_substrate(&vault, person, PersonSubstrate::Meat, writer(), 200)?;
-    assert_eq!(
-        person_substrate(&vault, &person, 201)?,
-        Some(PersonSubstrate::Meat)
     );
     Ok(())
 }

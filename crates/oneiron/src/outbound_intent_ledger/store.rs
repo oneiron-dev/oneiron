@@ -536,8 +536,6 @@ fn transition_record_with_outcome(
 }
 
 pub(crate) fn force_sync(vault: &Vault) -> IntentLedgerResult<()> {
-    #[cfg(test)]
-    vault.test_hooks().note_force_sync();
     vault.store.env.force_sync().map_err(Error::from)?;
     Ok(())
 }

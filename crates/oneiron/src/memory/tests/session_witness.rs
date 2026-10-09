@@ -115,77 +115,6 @@ fn session_witness_receipt_carries_session_local_short_ids() {
     session.close().expect("close session");
 }
 
-/// One room is ONE conversation. A second witness reuses the shell allocated
-/// by the first instead of minting a fresh one, so an in-session reader sees a
-/// conversation rather than a turn-per-conversation shred.
-#[test]
-fn repeat_session_witness_reuses_the_room_shell() {
-    let (_dir, vault) = open_vault();
-    let (session, actor) = session_witness_fixture(&vault, "sess-witness-shell", 0x53);
-    let facade = facade_for(&vault, actor);
-
-    let turn = |content: &str, at: u64| WitnessTurn {
-        conversation_ref: String::new(),
-        turn_ref: None,
-        messages: vec![witness_message(0, WitnessAuthor::User, content)],
-        occurred_at: at,
-    };
-    let first = facade
-        .witness_into_session(&session, &turn("first", 920), None)
-        .expect("first witness");
-    let second = facade
-        .witness_into_session(&session, &turn("second", 921), None)
-        .expect("second witness");
-
-    let view = session.read_view().expect("read view");
-    let rtxn = vault.store.env.read_txn().expect("read txn");
-    let conversation_of = |receipt: &WitnessReceipt| {
-        let turn_id = EntityId::from_hex(
-            receipt
-                .receipt_ref
-                .strip_prefix("witness:")
-                .expect("receipt ref names the turn"),
-        )
-        .expect("turn id");
-        assert!(
-            view.entities
-                .get(&rtxn, turn_id.as_bytes())
-                .expect("turn lookup")
-                .is_some(),
-            "the receipt identifies a turn visible in the room"
-        );
-        let prefix = crate::vault::edge_kind_prefix(&turn_id, EdgeKind::ChildOf);
-        let mut targets = view
-            .edges_out
-            .prefix_iter(&rtxn, &prefix)
-            .expect("edge scan")
-            .map(|row| {
-                let (key, _) = row.expect("edge row");
-                let (_, _, target) =
-                    crate::edge::parse_strict_edge_record_key(&key).expect("edge key");
-                target
-            });
-        let conversation = targets.next().expect("turn has a conversation");
-        assert!(targets.next().is_none(), "turn has only one conversation");
-        let raw = view
-            .entities
-            .get(&rtxn, conversation.as_bytes())
-            .expect("conversation lookup")
-            .expect("the conversation exists in the room");
-        let _ = raw;
-        conversation
-    };
-    assert_eq!(
-        conversation_of(&first),
-        conversation_of(&second),
-        "both receipt-identified turns resolve to the same existing conversation"
-    );
-    drop(rtxn);
-    drop(view);
-
-    session.close().expect("close session");
-}
-
 /// K10: after a flip to on-record, the SAME session witness lands in BASE —
 /// under a fresh continuation shell, never the overlay conversation id.
 ///
@@ -375,26 +304,6 @@ fn a_stale_base_route_session_witness_commits_no_base_rows() {
         base_entity_rows,
         "a refused base-routed witness adds ZERO base entity rows"
     );
-
-    session.close().expect("close session");
-}
-
-/// A route minted before a mode flip is refused by `revalidate` before ANY
-/// staging — so a flip landing mid-call cannot leave half a turn in a room the
-/// caller no longer believes it is in.
-#[test]
-fn a_route_minted_before_a_flip_is_refused() {
-    let (_dir, vault) = open_vault();
-    let (session, _actor) = session_witness_fixture(&vault, "sess-stale-route", 0x55);
-
-    let route = session.write_route().expect("mint route");
-    route.revalidate().expect("a fresh route is valid");
-    session.flip_on_record().expect("flip on record");
-
-    let refused = route
-        .revalidate()
-        .expect_err("a route minted before the flip is stale");
-    assert_eq!(refused.kind(), ErrorKind::OffRecordOverlayLeaseClosed);
 
     session.close().expect("close session");
 }

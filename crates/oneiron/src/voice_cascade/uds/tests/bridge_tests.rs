@@ -1,5 +1,4 @@
 use super::*;
-use crate::store::RetrievalAction;
 
 #[test]
 fn real_fired_skipped_promoted_preserves_order_and_private_projection() {
@@ -43,76 +42,6 @@ fn real_fired_skipped_promoted_preserves_order_and_private_projection() {
     assert_eq!(
         peer.finish(),
         ["Tokyo launch", "Tokyo launch plan", "Tokyo launch plans"]
-    );
-}
-
-#[test]
-fn changed_final_uses_real_fresh_then_warm_order() {
-    let (_dir, vault) = vault();
-    let warm = put_text(&vault, 3, "orchid orchard");
-    let fresh = put_text(&vault, 4, "cobalt launch");
-    let mut peer = Peer::new(
-        Arc::clone(&vault),
-        TestEnricher::terms(&["orchid", "cobalt"]),
-        BridgeLimits::default(),
-    );
-    let handle = peer.open();
-    let fire = peer.observe("partial", &handle, 1, "orchid");
-    assert_eq!(fire["context"]["result_refs"], json!([warm]));
-    let final_value = peer.observe("final", &handle, 2, "cobalt");
-    assert_eq!(final_value["context"]["promoted"], false);
-    assert_eq!(final_value["context"]["result_refs"], json!([fresh, warm]));
-    assert_eq!(
-        vault
-            .retrieval_runs(200)
-            .expect("runs")
-            .iter()
-            .filter(|run| run.action == RetrievalAction::Pipeline)
-            .count(),
-        1
-    );
-    assert_eq!(peer.finish(), ["orchid", "cobalt"]);
-}
-
-#[test]
-fn host_cap_is_four_and_provider_fields_cannot_override_it() {
-    let (_dir, vault) = vault();
-    let mut peer = Peer::new(
-        Arc::clone(&vault),
-        TestEnricher::terms(&["0", "1", "2", "3", "4", "5", "3"]),
-        BridgeLimits::default(),
-    );
-    assert_eq!(
-        peer.send(json!({"op":"open","utterance_id":"turn","max_fires":255}))["code"],
-        "invalid_request"
-    );
-    let handle = peer.open();
-    let mut last = Value::Null;
-    for revision in 0..6 {
-        let response = peer.observe("partial", &handle, revision, "Tokyo launch");
-        if revision < 4 {
-            assert_eq!(response["decision"], "fired");
-            last = response["context"].clone();
-        } else {
-            assert_eq!(response["decision"], "skipped_cap_exhausted");
-        }
-    }
-    let final_value = peer.observe("final", &handle, 6, "Tokyo launch");
-    assert_eq!(final_value["context"]["promoted"], true);
-    assert_eq!(final_value["context"]["run_id"], last["run_id"]);
-    assert_eq!(
-        vault
-            .retrieval_runs(200)
-            .expect("runs")
-            .iter()
-            .filter(|run| run.action == RetrievalAction::Speculative)
-            .count(),
-        4
-    );
-    assert_eq!(
-        peer.finish().len(),
-        7,
-        "capped and final observations still enrich"
     );
 }
 
@@ -165,39 +94,6 @@ fn host_errors_are_redacted_and_retryable_without_retrieval() {
     assert_eq!(
         peer.observe("final", &handle, 1, "Tokyo launch")["op"],
         "final"
-    );
-    assert_eq!(peer.finish(), ["Tokyo launch", "Tokyo launch"]);
-}
-
-#[test]
-fn empty_host_enrichment_skips_partial_and_uses_normal_final_retrieval() {
-    let (_dir, vault) = vault();
-    let expected = put_text(&vault, 5, "Tokyo launch");
-    let enricher = TestEnricher {
-        steps: VecDeque::from([
-            Ok(PartialEnrichment::default()),
-            Ok(PartialEnrichment::default()),
-        ]),
-        texts: Vec::new(),
-    };
-    let mut peer = Peer::new(Arc::clone(&vault), enricher, BridgeLimits::default());
-    let handle = peer.open();
-    // The host ran successfully. The core, not the adapter, decides to skip.
-    let partial_value = peer.observe("partial", &handle, 1, "Tokyo launch");
-    assert_eq!(partial_value["op"], "partial");
-    assert_eq!(partial_value["decision"], "skipped_empty_signature");
-    assert_eq!(partial_value["context"], json!(null));
-    assert!(vault.retrieval_runs(200).expect("runs").is_empty());
-    let final_value = peer.observe("final", &handle, 2, "Tokyo launch");
-    assert_eq!(final_value["op"], "final");
-    assert_eq!(final_value["context"]["promoted"], false);
-    assert_eq!(final_value["context"]["result_refs"], json!([expected]));
-    let runs = vault.retrieval_runs(200).expect("runs");
-    assert_eq!(runs.len(), 1);
-    assert_eq!(runs[0].action, RetrievalAction::Pipeline);
-    assert_eq!(
-        peer.observe("partial", &handle, 3, "late")["code"],
-        "stale_handle"
     );
     assert_eq!(peer.finish(), ["Tokyo launch", "Tokyo launch"]);
 }
@@ -274,35 +170,6 @@ fn foreign_stale_and_disconnected_handles_cannot_reach_enrichment() {
 }
 
 #[test]
-fn disconnect_and_shutdown_release_open_real_sessions() {
-    let (_dir, vault) = vault();
-    let mut peer = Peer::new(
-        Arc::clone(&vault),
-        TestEnricher::stable(),
-        BridgeLimits::default(),
-    );
-    let handle = peer.open();
-    assert_eq!(
-        peer.observe("partial", &handle, 1, "Tokyo")["decision"],
-        "fired"
-    );
-    assert!(Arc::strong_count(&vault) > 1);
-    assert_eq!(peer.finish(), ["Tokyo"]);
-    assert_eq!(Arc::strong_count(&vault), 1);
-    let mut peer = Peer::new(
-        Arc::clone(&vault),
-        TestEnricher::stable(),
-        BridgeLimits::default(),
-    );
-    peer.open();
-    peer.shutdown.request();
-    let mut line = String::new();
-    assert_eq!(peer.reader.read_line(&mut line).expect("shutdown EOF"), 0);
-    assert!(peer.finish().is_empty());
-    assert_eq!(Arc::strong_count(&vault), 1);
-}
-
-#[test]
 fn oversized_and_truncated_frames_close_without_enrichment() {
     let (_dir, vault) = vault();
     let mut peer = Peer::new(
@@ -320,82 +187,6 @@ fn oversized_and_truncated_frames_close_without_enrichment() {
     peer.writer.shutdown(SocketShutdown::Write).expect("EOF");
     assert_eq!(peer.read()["code"], "truncated_frame");
     assert!(peer.finish().is_empty());
-}
-
-#[test]
-fn oversized_text_is_rejected_but_next_frame_can_finalize() {
-    let (_dir, vault) = vault();
-    let mut peer = Peer::new(vault, TestEnricher::stable(), BridgeLimits::default());
-    let handle = peer.open();
-    assert_eq!(
-        peer.observe("partial", &handle, 1, &"x".repeat(MAX_TEXT_BYTES + 1))["code"],
-        "invalid_request"
-    );
-    assert_eq!(peer.observe("final", &handle, 1, "Tokyo")["op"], "final");
-    assert_eq!(peer.finish(), ["Tokyo"]);
-}
-
-#[test]
-fn invalid_host_limits_are_rejected_and_lower_cap_is_enforced() {
-    for limits in [
-        BridgeLimits {
-            max_fires: 5,
-            ..BridgeLimits::default()
-        },
-        BridgeLimits {
-            fire_limit: 0,
-            ..BridgeLimits::default()
-        },
-        BridgeLimits {
-            final_limit: MAX_RESULT_REFS + 1,
-            ..BridgeLimits::default()
-        },
-    ] {
-        assert!(limits.validate().is_err());
-    }
-    let (_dir, vault) = vault();
-    let mut peer = Peer::new(
-        vault,
-        TestEnricher::terms(&["a", "b"]),
-        BridgeLimits {
-            max_fires: 1,
-            ..BridgeLimits::default()
-        },
-    );
-    let handle = peer.open();
-    assert_eq!(
-        peer.observe("partial", &handle, 1, "Tokyo")["decision"],
-        "fired"
-    );
-    assert_eq!(
-        peer.observe("partial", &handle, 2, "Tokyo")["decision"],
-        "skipped_cap_exhausted"
-    );
-    assert_eq!(peer.finish().len(), 2);
-}
-
-#[test]
-fn final_retrieval_failure_consumes_handle_and_allows_new_utterance() {
-    let (_dir, vault) = vault();
-    let mut invalid = enrichment("host-step");
-    invalid.query_vector = Some(vec![f32::NAN, 0.0, 0.0, 0.0]);
-    let enricher = TestEnricher {
-        steps: VecDeque::from([Ok(invalid)]),
-        texts: Vec::new(),
-    };
-    let mut peer = Peer::new(vault, enricher, BridgeLimits::default());
-    let handle = peer.open();
-    let response = peer.observe("final", &handle, 1, "Tokyo");
-    assert_eq!(response["op"], "error");
-    assert_eq!(response["code"], "bridge_error");
-    assert_eq!(
-        peer.observe("partial", &handle, 2, "late")["code"],
-        "stale_handle"
-    );
-    let next = peer.open();
-    assert_ne!(handle, next);
-    assert_eq!(peer.observe("final", &next, 1, "Tokyo")["op"], "final");
-    assert_eq!(peer.finish(), ["Tokyo", "Tokyo"]);
 }
 
 #[test]

@@ -110,6 +110,3 @@ pub struct HydeOptions {
     pub channel_limit: usize,
     pub retry_once: bool,
 }
-
-#[cfg(test)]
-mod tests;

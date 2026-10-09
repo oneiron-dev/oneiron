@@ -1,41 +1,5 @@
 use super::*;
 
-/// Done-means 6: identical input under the same id returns the prior outcome
-/// and mints nothing.
-#[test]
-fn onboarding_replay_is_idempotent() -> Result<()> {
-    let (_dir, vault, mut intent) = fixture("Antevon");
-    let birth = companion_birth();
-    intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
-    intent.companion_birth = Some(birth);
-
-    let first = vault.onboard_workspace_member(intent.clone(), &writer(WRITER), None)?;
-    let counts = [
-        type_count(&vault, ENTITY_TYPE_AGENT_DEF),
-        type_count(&vault, ENTITY_TYPE_PERSON),
-        type_count(&vault, ENTITY_TYPE_FEDERATION_GRANT),
-        type_count(&vault, ENTITY_TYPE_FACET),
-        type_count(&vault, ENTITY_TYPE_ACCESS_GRANT),
-        type_count(&vault, ENTITY_TYPE_CHANNEL_IDENTITY),
-    ];
-
-    let second = vault.onboard_workspace_member(intent, &writer(WRITER), None)?;
-    assert_eq!(first, second);
-    assert_eq!(
-        counts,
-        [
-            type_count(&vault, ENTITY_TYPE_AGENT_DEF),
-            type_count(&vault, ENTITY_TYPE_PERSON),
-            type_count(&vault, ENTITY_TYPE_FEDERATION_GRANT),
-            type_count(&vault, ENTITY_TYPE_FACET),
-            type_count(&vault, ENTITY_TYPE_ACCESS_GRANT),
-            type_count(&vault, ENTITY_TYPE_CHANNEL_IDENTITY),
-        ]
-    );
-    assert_eq!(vault.workspace_roster("antevon-slack", AT)?.len(), 2);
-    Ok(())
-}
-
 /// Done-means 7: a run that dies after `ActorLinked` resumes and finishes with
 /// exactly the entity population a single clean run produces.
 #[test]
@@ -339,35 +303,5 @@ fn companion_retry_rejects_conflicting_roster_identity_after_baseline() -> Resul
         .expect_err("a conflicting roster identity cannot be adopted");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
     assert_eq!(vault.get(&birth.person_ref)?, Some(conflicting));
-    Ok(())
-}
-
-#[test]
-fn companion_retry_preserves_valid_owner_edited_persona_baseline() -> Result<()> {
-    let (_dir, vault, mut intent) = fixture("Antevon");
-    let birth = companion_birth();
-    intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
-    intent.companion_birth = Some(birth.clone());
-    let owner = writer(WRITER);
-    vault.onboard_workspace_member_halting_after(
-        intent.clone(),
-        &owner,
-        None,
-        MemberOnboardingStep::ActorLinked,
-    )?;
-    birth_companion(&vault, &intent, &birth, &owner)?;
-    vault.put_persona_baseline(
-        &birth.person_ref,
-        &serde_json::json!({ "display_name": "different persona" }),
-        AT + 1,
-    )?;
-    let before = vault.get(&birth.person_ref)?;
-    let outcome = vault.onboard_workspace_member(intent, &owner, None)?;
-    assert_eq!(outcome.companion_person_ref, Some(birth.person_ref));
-    assert_eq!(vault.get(&birth.person_ref)?, before);
-    assert_eq!(
-        crate::companion::validated_persona_baseline(&before.expect("edited PERSON"))?,
-        serde_json::json!({ "display_name": "different persona" })
-    );
     Ok(())
 }

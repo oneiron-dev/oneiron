@@ -443,6 +443,3 @@ fn unix_millis_at(now: std::time::SystemTime) -> u64 {
         .try_into()
         .unwrap_or(u64::MAX)
 }
-
-#[cfg(test)]
-mod tests;

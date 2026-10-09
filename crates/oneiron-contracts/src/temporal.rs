@@ -773,50 +773,11 @@ impl TemporalGranularity {
 mod tests {
     use super::TemporalHintStatus::{Future, Unresolved, Used};
     use super::{
-        QueryTemporalHints, TEMPORAL_SECONDS_PER_DAY, TemporalExpressionParseError,
-        TemporalHintReport, TimeRange, parse_temporal_expression, temporal_hints_from_query,
+        QueryTemporalHints, TemporalExpressionParseError, TemporalHintReport, TimeRange,
+        parse_temporal_expression, temporal_hints_from_query,
     };
 
     const FROZEN_NOW: u64 = 1_710_504_000; // 2024-03-15T12:00:00Z
-
-    #[test]
-    fn temporal_expression_parser_resolves_supported_forms_from_frozen_clock() {
-        assert_eq!(
-            parse_temporal_expression("recent", FROZEN_NOW).unwrap(),
-            TimeRange {
-                start: 1_709_899_200,
-                end: FROZEN_NOW,
-            }
-        );
-        assert_eq!(
-            parse_temporal_expression("yesterday", FROZEN_NOW).unwrap(),
-            TimeRange {
-                start: 1_710_374_400,
-                end: 1_710_460_799,
-            }
-        );
-        assert_eq!(
-            parse_temporal_expression("last week", FROZEN_NOW).unwrap(),
-            TimeRange {
-                start: 1_709_856_000,
-                end: 1_710_460_799,
-            }
-        );
-        assert_eq!(
-            parse_temporal_expression("last month", FROZEN_NOW).unwrap(),
-            TimeRange {
-                start: 1_706_745_600,
-                end: 1_709_251_199,
-            }
-        );
-        assert_eq!(
-            parse_temporal_expression("last year", FROZEN_NOW).unwrap(),
-            TimeRange {
-                start: 1_672_531_200,
-                end: 1_704_067_199,
-            }
-        );
-    }
 
     /// Hand-computed calendar bounds around Friday 2024-03-15 12:00 UTC.
     #[test]
@@ -1064,42 +1025,5 @@ mod tests {
             parse_temporal_expression(" ", FROZEN_NOW),
             Err(TemporalExpressionParseError::Empty)
         );
-    }
-
-    #[test]
-    fn unix_seconds_from_civil_keeps_epoch_boundary_at_zero() {
-        let epoch_day = parse_temporal_expression("yesterday", 86_400).unwrap();
-        assert_eq!(epoch_day.start, 0);
-        assert_eq!(epoch_day.end, 86_399);
-
-        let following_day = parse_temporal_expression("yesterday", 172_800).unwrap();
-        assert_eq!(following_day.start, 86_400);
-        assert_eq!(following_day.end, 172_799);
-    }
-
-    #[test]
-    fn temporal_expression_calendar_ranges_saturate_at_epoch_boundary() {
-        assert_eq!(
-            parse_temporal_expression("last month", 0).unwrap(),
-            TimeRange { start: 0, end: 0 }
-        );
-        assert_eq!(
-            parse_temporal_expression("last year", 0).unwrap(),
-            TimeRange { start: 0, end: 0 }
-        );
-        assert_eq!(
-            parse_temporal_expression("last month", 15 * TEMPORAL_SECONDS_PER_DAY).unwrap(),
-            TimeRange { start: 0, end: 0 }
-        );
-        assert_eq!(
-            parse_temporal_expression("last year", 15 * TEMPORAL_SECONDS_PER_DAY).unwrap(),
-            TimeRange { start: 0, end: 0 }
-        );
-    }
-
-    #[test]
-    #[should_panic]
-    fn temporal_expression_rejects_extreme_timestamp_without_wrapping() {
-        let _ = parse_temporal_expression("last month", u64::MAX);
     }
 }

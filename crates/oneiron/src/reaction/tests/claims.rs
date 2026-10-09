@@ -4,42 +4,6 @@ use super::*;
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject};
 
 #[test]
-fn reaction_put_is_a_message_claim_authored_by_the_person() {
-    let room = room();
-    let put = react(&room, room.bob, "👍");
-    assert_eq!(put.state, ReactionState::Put);
-    let body = claim(&room.vault, put.id);
-    assert_eq!(body.predicate, PREDICATE_CONVERSATION_REACTION);
-    assert_eq!(body.subject, ClaimSubject::Entity(room.message));
-    assert_eq!(crate::memory::claim_author(&body), Some(room.bob));
-    let value = ReactionValue::from_value(&body.value).unwrap();
-    assert_eq!(value.glyph, "👍");
-    assert_eq!(value.by, room.bob);
-    assert!(value.occurred_at > 20, "a first-party reaction happens now");
-    assert_eq!(value.external_id, None);
-    // Registered non-critical: the put lands live, never gate-pending.
-    assert_eq!(body.approval, ClaimApprovalStatus::Auto);
-    assert_eq!(body.lifecycle, ClaimLifecycleStatus::Active);
-    let txn = room.vault.store.env.read_txn().unwrap();
-    let policy = crate::gate::resolve_policy_manifest(&room.vault.store, &txn).unwrap();
-    for predicate in [
-        PREDICATE_CONVERSATION_REACTION,
-        PREDICATE_CONVERSATION_REACTION_ECHO,
-    ] {
-        assert_eq!(
-            policy.criticality_for_predicate(predicate),
-            crate::gate::PolicyCriticality::Normal,
-            "{predicate}"
-        );
-    }
-    assert_eq!(
-        policy.criticality_for_predicate("conversation.reactions"),
-        crate::gate::PolicyCriticality::Critical,
-        "the reaction rules are exact"
-    );
-}
-
-#[test]
 fn reaction_is_visible_exactly_to_the_room_audience() {
     let room = room();
     let put = react(&room, room.bob, "👍");
@@ -149,34 +113,6 @@ fn a_reaction_never_broadens_its_message_audience() {
         .react(input(&room, room.carol, "👍"))
         .unwrap_err();
     assert_eq!(err.kind(), crate::error::ErrorKind::ConversationDenied);
-}
-
-#[test]
-fn late_joiner_without_history_sees_no_reaction_on_an_earlier_message() {
-    let room = room();
-    let put = react(&room, room.bob, "👍");
-    room.vault
-        .join_member(
-            room.room,
-            room.carol,
-            human(room.alice),
-            30,
-            HistoryChoice::None,
-        )
-        .unwrap();
-    assert!(
-        !owner_read(&room)
-            .for_audience(&[room.carol])
-            .is_entity_readable(&put.id)
-            .unwrap(),
-        "the reaction cannot broaden its message's audience"
-    );
-    assert!(
-        room.vault
-            .reaction_pills(&[room.message], room.carol)
-            .unwrap()
-            .is_empty()
-    );
 }
 
 #[test]

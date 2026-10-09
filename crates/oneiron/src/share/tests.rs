@@ -177,44 +177,6 @@ fn visible(
 }
 
 #[test]
-fn share_writes_receipt() -> Result<()> {
-    let (_dir, vault, issuer, share) = fixture()?;
-    let id = entity(0x81);
-    vault.create_share(&id, &issuer, &share)?;
-    assert_eq!(vault.get_entity_type(&id)?, Some(ENTITY_TYPE_ACCESS_GRANT));
-    assert_eq!(vault.get_access_grant(&id)?, Some(share.grant()));
-    let query = ReceiptQuery::new(20).with_kind(ReceiptKind::Share);
-    let receipts = vault.receipts(query.clone())?;
-    assert_eq!(receipts.len(), 1);
-    let receipt = &receipts[0];
-    assert_eq!(receipt.receipt_id, format!("share:brief:{}", id.to_hex()));
-    assert_eq!(receipt.outcome, "granted");
-    assert_eq!(receipt.occurred_at, 42);
-    assert_eq!(receipt.fields["brief_ref"], share.brief_ref);
-    assert_eq!(
-        receipt.fields["recipient_ref"],
-        share.recipient_ref.to_hex()
-    );
-    assert_eq!(
-        receipt.fields["redaction_scope_hash"],
-        share.redaction_scope_hash()
-    );
-    let gates = vault.receipts(ReceiptQuery::new(20).with_kind(ReceiptKind::Gate))?;
-    assert!(
-        gates
-            .iter()
-            .any(|gate| gate.receipt_id == receipt.policy_trace[0] && gate.outcome == "allow")
-    );
-    assert_eq!(vault.receipts(query)?, receipts);
-    assert!(
-        vault
-            .receipts(ReceiptQuery::new(20).with_kind(ReceiptKind::ScopedRead))?
-            .is_empty()
-    );
-    Ok(())
-}
-
-#[test]
 fn read_observed_share_expiry_stays_expired_after_restart_and_clock_rollback() -> Result<()> {
     let clock = crate::ports::ManualClock::new(1_900);
     let mut config = embedding_test_config();

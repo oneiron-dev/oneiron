@@ -82,17 +82,6 @@ impl FanoutApprovalMode {
             Self::Manual => "manual",
         }
     }
-
-    /// Parses a wire token, rejecting anything outside the closed ladder.
-    #[cfg(test)]
-    pub(crate) fn parse(value: &str) -> Option<Self> {
-        match value {
-            "auto" => Some(Self::Auto),
-            "full-access" => Some(Self::FullAccess),
-            "manual" => Some(Self::Manual),
-            _ => None,
-        }
-    }
 }
 
 /// One directed consult edge with the count it plans to spend.

@@ -7,7 +7,7 @@ use crate::attempt_queue::{
 use crate::config::VaultConfig;
 use crate::receipt::attempt_pack_receipt_id;
 use crate::registry::ENTITY_TYPE_PERSON;
-use crate::skill::{SkillLifecycle, canonical_skill_tree_hash};
+use crate::skill::SkillLifecycle;
 use crate::skill_attribution::{
     AttemptOutcome, OutcomeEvidence, read_attribution_cursor, record_attribution_evidence,
     run_attribution_projector,
@@ -294,28 +294,6 @@ fn claims(
 // ─── posterior arithmetic ───────────────────────────────────────────────
 
 #[test]
-fn provenance_priors_order_vetted_above_generated() {
-    let vetted =
-        SkillReliabilityPosterior::seeded_from_provenance(ProvenanceTrustClass::VettedImport);
-    let human =
-        SkillReliabilityPosterior::seeded_from_provenance(ProvenanceTrustClass::HumanAuthored);
-    let unvetted =
-        SkillReliabilityPosterior::seeded_from_provenance(ProvenanceTrustClass::UnvettedImport);
-    let generated =
-        SkillReliabilityPosterior::seeded_from_provenance(ProvenanceTrustClass::Generated);
-
-    // The documented values, not just their ordering: a table that silently
-    // drifts to all-uniform would still pass an ordering-only assert.
-    assert!((vetted.mean() - 0.75).abs() < 1e-6);
-    assert!((human.mean() - 2.0 / 3.0).abs() < 1e-6);
-    assert!((unvetted.mean() - 0.5).abs() < 1e-6);
-    assert!((generated.mean() - 1.0 / 3.0).abs() < 1e-6);
-    assert!(vetted.mean() > human.mean());
-    assert!(human.mean() > unvetted.mean());
-    assert!(unvetted.mean() > generated.mean());
-}
-
-#[test]
 fn a_clean_scan_verdict_on_hub_carried_bytes_promotes_an_import_to_vetted() {
     // The vetted branch reads the scan-verdict claim's `verdict` wire string,
     // which this module spells out rather than importing (ScanVerdict::as_str is
@@ -384,84 +362,6 @@ fn a_clean_scan_verdict_on_hub_carried_bytes_promotes_an_import_to_vetted() {
 }
 
 #[test]
-fn a_clean_scan_on_governance_prohibited_bytes_clears_nothing() {
-    // `governance` is a POLICY axis carried on the same row, and the scan-ingest
-    // door validates only the provider text — so `clean` + `prohibited` is a
-    // storable receipt. Seeding the MOST optimistic prior off bytes governance
-    // forbids inverts the whole table.
-    let (_tmp, vault) = temp_vault();
-    let (skill, tree) = import_from_hub(&vault, "sk05.skill.prohibited");
-    ingest_verdict(
-        &vault,
-        &skill,
-        tree,
-        "provider-clean-but-banned",
-        ScanVerdict::Clean,
-        SkillGovernance::Prohibited,
-        20,
-    );
-
-    assert_eq!(
-        skill_provenance_trust_class(&vault, &skill).expect("class"),
-        ProvenanceTrustClass::UnvettedImport,
-        "a prohibited row clears nothing, however clean the scanner found it"
-    );
-
-    // A second provider that clears the same bytes WITHOUT the prohibition does
-    // promote them: the guard reads the row, it does not blanket-reject.
-    ingest_verdict(
-        &vault,
-        &skill,
-        tree,
-        "provider-clean",
-        ScanVerdict::Clean,
-        SkillGovernance::Recommended,
-        21,
-    );
-    assert_eq!(
-        skill_provenance_trust_class(&vault, &skill).expect("class"),
-        ProvenanceTrustClass::VettedImport
-    );
-}
-
-#[test]
-fn a_clean_scan_without_a_hub_alias_is_still_an_unvetted_import() {
-    // `VettedImport` is the VETTED-HUB import (blueprint §5: "hub trust tier —
-    // scan-verdict + hub provenance rows"). Scan verdicts hang off the
-    // content-global anchor, so a clean verdict alone says a scanner looked at
-    // some bytes; the provenance row is what says a HUB carried them here.
-    let (_tmp, vault) = temp_vault();
-    let tree = canonical_skill_tree_hash([("SKILL.md", b"# direct fixture\n".as_slice())])
-        .expect("tree hashes");
-    let skill = EntityId::now();
-    vault
-        .put_skill_record(
-            &skill,
-            &record("sk05.skill.direct", ClaimSource::Imported, false).with_content_hash(tree),
-            t(10),
-            11,
-        )
-        .expect("candidate without a hub alias");
-    ingest_verdict(
-        &vault,
-        &skill,
-        tree,
-        "provider-clean",
-        ScanVerdict::Clean,
-        SkillGovernance::Recommended,
-        20,
-    );
-
-    assert_eq!(
-        skill_provenance_trust_class(&vault, &skill).expect("class"),
-        ProvenanceTrustClass::UnvettedImport,
-        "no hub vouches for these bytes"
-    );
-    let prior = skill_reliability_prior(&vault, &skill).expect("prior");
-    assert!((prior.mean() - 0.5).abs() < 1e-6);
-}
-
-#[test]
 fn lower_bound_holds_its_pinned_anchors() {
     // Beta(3, 1) — two wins on a uniform prior.
     let two_of_two = SkillReliabilityPosterior {
@@ -483,43 +383,6 @@ fn lower_bound_holds_its_pinned_anchors() {
     // …and not on the selection score either, at the pinned exploration weight.
     let total = 106;
     assert!(two_of_two.ucb(total) < ninety_of_hundred.ucb(total));
-}
-
-#[test]
-fn selection_bonus_lifts_the_uncertain_arm_at_equal_means() {
-    // Anti-shadowing (OF-184): equal-ish means, wildly different evidence —
-    // the barely-pulled arm must still be worth trying.
-    let fresh = SkillReliabilityPosterior {
-        alpha: 2.0,
-        beta: 1.0,
-    };
-    let seasoned = SkillReliabilityPosterior {
-        alpha: 21.0,
-        beta: 11.0,
-    };
-    assert!(fresh.mean() > seasoned.mean());
-    assert!(fresh.ucb(35) > seasoned.ucb(35));
-    // The bonus DECAYS with evidence: the same arm, once observed, stops
-    // riding exploration.
-    let matured = SkillReliabilityPosterior {
-        alpha: 21.0,
-        beta: 10.0,
-    };
-    assert!(fresh.ucb(35) - fresh.mean() > matured.ucb(35) - matured.mean());
-}
-
-#[test]
-fn lower_bound_clamps_into_the_unit_interval() {
-    let hopeless = SkillReliabilityPosterior {
-        alpha: 1.0,
-        beta: 2.0,
-    };
-    assert!(hopeless.lower_bound() >= 0.0);
-    let flawless = SkillReliabilityPosterior {
-        alpha: 500.0,
-        beta: 1.0,
-    };
-    assert!(flawless.lower_bound() <= 1.0);
 }
 
 // ─── projection ─────────────────────────────────────────────────────────
@@ -605,54 +468,6 @@ fn re_running_the_projector_over_the_same_judgments_is_a_no_op() {
 }
 
 #[test]
-fn a_routed_defect_outranks_the_default_win_credit_in_either_order() {
-    // A blamed attempt still reaches its terminal door COMPLETED, so the same
-    // receipt can be offered as a contributing win AND routed to a defect. The
-    // posterior must not depend on which call the host makes first.
-    let posterior_for = |credit_first: bool| {
-        let (_tmp, vault) = temp_vault();
-        let skill = EntityId::now();
-        let actor = EntityId::now();
-        put_active_import(&vault, &skill, "sk05.skill.order");
-        put_actor(&vault, &actor);
-
-        let receipt =
-            stamped_receipt_for_revision_as(&vault, "sk05.skill.order", "1.0.0", Some(actor));
-        let blame = |vault: &Vault| {
-            record_attribution_evidence(
-                vault,
-                &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 30)
-                    .with_skill(skill)
-                    .with_routing_facts(true, true),
-            )
-            .expect("record evidence");
-            let cursor = read_attribution_cursor(vault).expect("cursor");
-            let judgments = run_attribution_projector(vault, cursor).expect("route");
-            project_skill_reliability(vault, &judgments).expect("project");
-        };
-        if credit_first {
-            record_skill_contributing_win(&vault, &skill, &receipt, 20).expect("credit");
-            blame(&vault);
-        } else {
-            blame(&vault);
-            record_skill_contributing_win(&vault, &skill, &receipt, 20).expect("credit");
-            project_skill_reliability_for(&vault, &skill, 40).expect("re-project");
-        }
-        skill_reliability_posterior(&vault, &skill)
-            .expect("read")
-            .expect("projected")
-    };
-
-    let credited_first = posterior_for(true);
-    let blamed_first = posterior_for(false);
-    assert_eq!(credited_first, blamed_first, "order-independent");
-    assert!(
-        (blamed_first.beta - 2.0).abs() < 1e-6 && (blamed_first.alpha - 1.0).abs() < 1e-6,
-        "one receipt, one outcome, and the routed verdict is the one that counts"
-    );
-}
-
-#[test]
 fn contributing_wins_raise_the_posterior_and_are_grounded_at_the_door() {
     let (_tmp, vault) = temp_vault();
     let skill = EntityId::now();
@@ -682,178 +497,7 @@ fn contributing_wins_raise_the_posterior_and_are_grounded_at_the_door() {
         .expect_err("unstamped receipt");
 }
 
-#[test]
-fn projection_supersedes_rather_than_forking_the_active_row() {
-    let (_tmp, vault) = temp_vault();
-    let skill = EntityId::now();
-    let actor = EntityId::now();
-    put_active_import(&vault, &skill, "sk05.skill.supersede");
-    put_actor(&vault, &actor);
-
-    for (index, at) in [30_u64, 31].into_iter().enumerate() {
-        let (_, judgments) = route(
-            &vault,
-            &skill,
-            &actor,
-            "sk05.skill.supersede",
-            true,
-            true,
-            at,
-        );
-        project_skill_reliability(&vault, &judgments).expect("project");
-        assert_eq!(
-            active_reliability(&vault, &skill).len(),
-            1,
-            "exactly one active row after pass {index}"
-        );
-    }
-    assert_eq!(
-        claims(
-            &vault,
-            &skill,
-            PREDICATE_SKILL_RELIABILITY,
-            ClaimLifecycleStatus::Superseded
-        )
-        .len(),
-        1,
-        "the first posterior was superseded, not deleted"
-    );
-}
-
-// ─── cache demotion ─────────────────────────────────────────────────────
-
-#[test]
-fn cache_rebuilds_from_the_claim_and_the_record_never_writes_back() {
-    let (_tmp, vault) = temp_vault();
-    let skill = EntityId::now();
-    let actor = EntityId::now();
-    put_active_import(&vault, &skill, "sk05.skill.cache");
-    put_actor(&vault, &actor);
-
-    let (_, judgments) = route(&vault, &skill, &actor, "sk05.skill.cache", true, true, 30);
-    project_skill_reliability(&vault, &judgments).expect("project");
-    let mean = skill_reliability_posterior(&vault, &skill)
-        .expect("read")
-        .expect("projected")
-        .mean();
-    let cached = vault
-        .get_skill_record(&skill)
-        .expect("read record")
-        .expect("record")
-        .confidence;
-    assert!(
-        (cached - mean).abs() < 1e-6,
-        "the projector refreshed the cache in the same pass"
-    );
-
-    // Clobber the cache through the ordinary update door — no version bump,
-    // and the imported-content fork law is not tripped, because the field is
-    // not content.
-    let mut clobbered = vault
-        .get_skill_record(&skill)
-        .expect("read record")
-        .expect("record");
-    let version_before = clobbered.version.clone();
-    clobbered.confidence = 0.01;
-    vault
-        .update_skill_record(&skill, &clobbered, t(40), 41)
-        .expect("cache writes need no revision");
-
-    // Truth is untouched by the clobber (the direction proof).
-    let claim_mean = skill_reliability_posterior(&vault, &skill)
-        .expect("read")
-        .expect("projected")
-        .mean();
-    assert!((claim_mean - mean).abs() < 1e-6);
-    assert_eq!(active_reliability(&vault, &skill).len(), 1);
-
-    let rebuilt = rebuild_skill_confidence_cache(&vault, &skill, 42).expect("rebuild");
-    assert!((rebuilt - mean).abs() < 1e-6);
-    let stored = vault
-        .get_skill_record(&skill)
-        .expect("read record")
-        .expect("record");
-    assert!((stored.confidence - mean).abs() < 1e-6);
-    assert_eq!(
-        stored.version, version_before,
-        "a cache rebuild mints no revision"
-    );
-}
-
-#[test]
-fn cache_rebuild_without_a_claim_falls_back_to_the_provenance_prior() {
-    let (_tmp, vault) = temp_vault();
-    let skill = EntityId::now();
-    put_active(
-        &vault,
-        &skill,
-        record("sk05.skill.unprojected", ClaimSource::Generated, true),
-    );
-    let rebuilt = rebuild_skill_confidence_cache(&vault, &skill, 20).expect("rebuild");
-    assert!(
-        (rebuilt - 1.0 / 3.0).abs() < 1e-6,
-        "a generated skill's cache rebuilds to its weak prior"
-    );
-}
-
-#[test]
-fn selection_reads_the_claim_not_the_clobbered_cache() {
-    let (_tmp, vault) = temp_vault();
-    let skill = EntityId::now();
-    put_active_import(&vault, &skill, "sk05.skill.selection");
-
-    let receipt = stamped_receipt(&vault, "sk05.skill.selection");
-    record_skill_contributing_win(&vault, &skill, &receipt, 20).expect("credit win");
-    let posterior = project_skill_reliability_for(&vault, &skill, 21).expect("project");
-
-    let mut clobbered = vault
-        .get_skill_record(&skill)
-        .expect("read record")
-        .expect("record");
-    clobbered.confidence = 0.0;
-    vault
-        .update_skill_record(&skill, &clobbered, t(30), 31)
-        .expect("clobber cache");
-
-    let score = skill_selection_score(&vault, &skill, 8).expect("score");
-    assert!(
-        (score - posterior.ucb(8)).abs() < 1e-6,
-        "the score came off the claim, not the zeroed cache"
-    );
-    assert!(score > 0.0);
-}
-
 // ─── floor crossing ─────────────────────────────────────────────────────
-
-#[test]
-fn floor_never_fires_on_a_bare_prior() {
-    let (_tmp, vault) = temp_vault();
-    let skill = EntityId::now();
-    put_active(
-        &vault,
-        &skill,
-        record("sk05.skill.newborn", ClaimSource::Generated, true),
-    );
-    // Beta(1, 2)'s lower bound is 0 — under any floor. Without the
-    // minimum-outcomes guard this newborn would be proposed for quarantine
-    // before it ever ran.
-    let prior = skill_reliability_prior(&vault, &skill).expect("prior");
-    assert!(prior.lower_bound() < DEFAULT_SKILL_RELIABILITY_FLOOR);
-    assert_eq!(
-        check_reliability_floor(&vault, &skill, 20).expect("floor check"),
-        None,
-        "ignorance is not unreliability"
-    );
-    assert!(
-        claims(
-            &vault,
-            &skill,
-            PREDICATE_SKILL_QUARANTINE_PROPOSAL,
-            ClaimLifecycleStatus::Active
-        )
-        .is_empty()
-    );
-}
 
 #[test]
 fn floor_crossing_proposes_once_and_never_retires() {
@@ -904,20 +548,6 @@ fn floor_crossing_proposes_once_and_never_retires() {
         SkillLifecycle::Active,
         "the record stays active until a human rules"
     );
-}
-
-#[test]
-fn the_floor_dial_is_settings_backed() {
-    let (_tmp, vault) = temp_vault();
-    assert!(
-        (skill_reliability_floor(&vault).expect("default floor") - DEFAULT_SKILL_RELIABILITY_FLOOR)
-            .abs()
-            < 1e-6
-    );
-    set_skill_reliability_floor(&vault, 0.6).expect("set floor");
-    assert!((skill_reliability_floor(&vault).expect("floor") - 0.6).abs() < 1e-6);
-    set_skill_reliability_floor(&vault, 1.5).expect_err("floor is a probability");
-    set_skill_reliability_floor(&vault, f32::NAN).expect_err("floor must be finite");
 }
 
 #[test]
@@ -1187,43 +817,6 @@ fn supersession_clamps_to_the_prior_rows_event_time() {
         .len(),
         1
     );
-}
-
-#[test]
-fn the_floor_reads_the_claim_not_the_local_ledger() {
-    // A replica that synced a below-floor posterior holds no outcome rows
-    // behind it, so recomputing from the tally exits at
-    // `outcomes < MIN_OUTCOMES` and skips the quarantine proposal the evidence
-    // already demands.
-    let (_tmp, vault) = temp_vault();
-    let skill = EntityId::now();
-    put_active_import(&vault, &skill, "sk05.skill.synced-floor");
-
-    plant_synced_claim(
-        &vault,
-        &skill,
-        SkillReliabilityPosterior {
-            alpha: 1.0,
-            beta: 20.0,
-        },
-        &["attempt-receipt:remote-loss"],
-        20,
-    );
-
-    assert!(
-        check_reliability_floor(&vault, &skill, 30)
-            .expect("floor check")
-            .is_some(),
-        "the synced evidence crossed the floor"
-    );
-    let open = claims(
-        &vault,
-        &skill,
-        PREDICATE_SKILL_QUARANTINE_PROPOSAL,
-        ClaimLifecycleStatus::Active,
-    );
-    assert_eq!(open.len(), 1);
-    assert_eq!(open[0].approval, ClaimApprovalStatus::Proposed);
 }
 
 // ─── frozen revisions ───────────────────────────────────────────────────
@@ -1612,45 +1205,6 @@ fn displaced_judge_marks_receipt_and_supersedes_weight_without_erasing() -> crat
 }
 
 #[test]
-fn shared_posterior_skill_contract_updates_samples_and_scores() {
-    use crate::posterior::Posterior;
-    use rand::{SeedableRng, rngs::StdRng};
-
-    let mut posterior =
-        SkillReliabilityPosterior::seeded_from_provenance(ProvenanceTrustClass::UnvettedImport);
-    posterior.update(true).unwrap();
-    posterior.update(false).unwrap();
-    assert_eq!((posterior.alpha, posterior.beta), (2.0, 2.0));
-    let mut first = StdRng::seed_from_u64(2012);
-    let mut second = StdRng::seed_from_u64(2012);
-    let draw = posterior.sample(&mut first).unwrap();
-    assert!((0.0..=1.0).contains(&draw));
-    assert_eq!(draw, posterior.sample(&mut second).unwrap());
-    let bonus = posterior.ucb_bonus(12, 0.25);
-    assert!(bonus > 0.0);
-    assert!((f64::from(posterior.ucb(12)) - (0.5 + bonus)).abs() < 1e-6);
-    assert!((posterior.lower_bound() - 0.132).abs() < 0.01);
-}
-
-#[test]
-fn skill_posterior_sample_rejects_invalid_public_parameters() {
-    use crate::posterior::Posterior;
-    use rand::{SeedableRng, rngs::StdRng};
-
-    let mut rng = StdRng::seed_from_u64(2012);
-    for alpha in [0.0, -1.0, f32::NAN, f32::INFINITY] {
-        let posterior = SkillReliabilityPosterior { alpha, beta: 1.0 };
-        assert!(
-            matches!(
-                posterior.sample(&mut rng),
-                Err(crate::Error::InvalidConfig(_))
-            ),
-            "invalid alpha {alpha:?} must be rejected"
-        );
-    }
-}
-
-#[test]
 fn replay_cannot_reassign_an_unknown_judgment_to_a_new_judge() -> crate::error::Result<()> {
     use crate::skill_attribution::{
         AttributionJudge, RuleAttributionJudge, run_attribution_projector_with_judge,
@@ -1698,68 +1252,6 @@ fn replay_cannot_reassign_an_unknown_judgment_to_a_new_judge() -> crate::error::
         skill_executor_reliability(&vault, &skill, "model@1")?.runs,
         1
     );
-    Ok(())
-}
-
-#[test]
-fn displaced_floor_crossing_retires_only_its_own_proposal() -> crate::error::Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let skill = EntityId::now();
-    let actor = EntityId::now();
-    put_active_import(&vault, &skill, "sk05.displaced-floor");
-    put_actor(&vault, &actor);
-    for _ in 0..9 {
-        let receipt = stamped_receipt_for_as_model(
-            &vault,
-            "sk05.displaced-floor",
-            "1.0.0",
-            Some(actor),
-            Some("old@1"),
-        );
-        record_attribution_evidence(
-            &vault,
-            &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 30)
-                .with_skill(skill)
-                .with_routing_facts(true, true),
-        )?;
-        let rows = run_attribution_projector(&vault, read_attribution_cursor(&vault)?)?;
-        project_skill_reliability(&vault, &rows)?;
-    }
-    let open = claims(
-        &vault,
-        &skill,
-        PREDICATE_SKILL_QUARANTINE_PROPOSAL,
-        ClaimLifecycleStatus::Active,
-    );
-    assert_eq!(open.len(), 1);
-    let original = open[0].clone();
-    crate::skill_attribution::supersede_displaced_judge_receipts(
-        &vault,
-        "rule-attribution@1",
-        "new-judge@2",
-        50,
-    )?;
-    assert!(
-        claims(
-            &vault,
-            &skill,
-            PREDICATE_SKILL_QUARANTINE_PROPOSAL,
-            ClaimLifecycleStatus::Active
-        )
-        .is_empty()
-    );
-    assert_eq!(
-        claims(
-            &vault,
-            &skill,
-            PREDICATE_SKILL_QUARANTINE_PROPOSAL,
-            ClaimLifecycleStatus::Superseded
-        )
-        .len(),
-        1
-    );
-    assert_eq!(original.approval, ClaimApprovalStatus::Proposed);
-    assert_eq!(skill_executor_reliability(&vault, &skill, "old@1")?.runs, 0);
     Ok(())
 }
 

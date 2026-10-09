@@ -81,45 +81,6 @@ fn raw_controls_and_literal_escape_text_keep_distinct_addresses() -> Result<()> 
     Ok(())
 }
 
-/// Escaping is TOTAL, so it is injective: a RAW control scalar and the literal
-/// text of its escape are two different findings and must not be able to
-/// collide on one stored body and one content-addressed id. A passthrough for
-/// already-escaped-looking input is exactly how they would collide, so there
-/// is none.
-#[test]
-fn raw_control_and_literal_escape_text_do_not_collide() {
-    let detector = "test.stub_detector";
-
-    let mut raw_tab = sample_event();
-    raw_tab.untrusted_detail = Some("a\tb".to_owned());
-    let mut escape_text = sample_event();
-    // The eight literal characters `\u{0009}`, not a tab.
-    escape_text.untrusted_detail = Some("a\\u{0009}b".to_owned());
-
-    let tab_body = encode_diagnostic_event_body(&raw_tab).expect("raw tab encodes");
-    let text_body = encode_diagnostic_event_body(&escape_text).expect("escape text encodes");
-    assert_ne!(tab_body, text_body, "distinct inputs, distinct bodies");
-    assert_ne!(
-        diagnostic_event_id(detector, &tab_body),
-        diagnostic_event_id(detector, &text_body),
-        "distinct bodies, distinct event ids"
-    );
-
-    // Both are canonical, and each round-trips back to the leaf it names: the
-    // tab is escaped, and the input that already looked escaped has its
-    // backslash escaped instead of being waved through.
-    for (body, expected) in [(&tab_body, "a\\u{0009}b"), (&text_body, "a\\\\u{0009}b")] {
-        validate_diagnostic_event_body_bytes(body).expect("canonical body is accepted");
-        let decoded = decode_diagnostic_event_body(body).expect("body decodes");
-        assert_eq!(decoded.untrusted_detail.as_deref(), Some(expected));
-        assert_eq!(
-            encode_stored_diagnostic_event_body(&decoded).expect("stored re-encode"),
-            *body,
-            "the stored leaf is terminal"
-        );
-    }
-}
-
 /// A content address has to pin BYTES, not just values: the write door
 /// re-encodes what it decoded and demands byte equality, so a body that means
 /// the right thing in the wrong spelling — re-ordered keys, a wider

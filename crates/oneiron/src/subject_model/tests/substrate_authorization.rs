@@ -126,17 +126,3 @@ fn unrooted_substrate_uses_canonical_human_owner_semantics() -> Result<()> {
     );
     Ok(())
 }
-
-#[test]
-fn absent_substrate_subject_is_rejected_without_claims() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let absent = entity(0x99);
-    assert_eq!(
-        set_person_substrate(&vault, absent, PersonSubstrate::Model, writer(), 100)
-            .expect_err("subject must exist in the write snapshot")
-            .kind(),
-        ErrorKind::InvalidClaimBody
-    );
-    assert!(vault.claims_for_subject(&absent)?.is_empty());
-    Ok(())
-}

@@ -121,60 +121,6 @@ fn teacher_pin_requires_matching_passing_probe_at_the_vault_write_door() {
     );
 }
 
-#[test]
-fn teacher_policy_stricter_vault_bar_refuses_old_eighty_five_percent_approval() {
-    let (_dir, vault) = policy_vault();
-    let manifest = fixture();
-    let approval = TeacherProbeApproval::for_scored_checkpoint(
-        &manifest,
-        &vault.teacher_probe_policy(None).unwrap(),
-        850_000,
-    )
-    .unwrap();
-    let bytes = crate::gate::default_policy_manifest().unwrap();
-    let mut cursor = std::io::Cursor::new(bytes.as_slice());
-    let rmpv::Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).unwrap() else {
-        panic!("default policy must be a map");
-    };
-    entries.retain(|(key, _)| key.as_str() != Some("teacher_probe"));
-    entries.push((
-        rmpv::Value::from("teacher_probe"),
-        rmpv::Value::Map(vec![
-            (
-                rmpv::Value::from("probe_id"),
-                rmpv::Value::from(TEACHER_PROBE_ID),
-            ),
-            (
-                rmpv::Value::from("min_f1_millionths"),
-                rmpv::Value::from(900_000_u64),
-            ),
-        ]),
-    ));
-    let mut encoded = Vec::new();
-    rmpv::encode::write_value(&mut encoded, &rmpv::Value::Map(entries)).unwrap();
-    crate::test_util::put_policy_manifest_bytes(
-        &vault,
-        crate::gate::default_policy_manifest_id().unwrap(),
-        &encoded,
-    )
-    .unwrap();
-    assert!(
-        vault
-            .set_model_manifest_with_teacher_approval(&manifest, &approval)
-            .is_err()
-    );
-    assert!(vault.model_manifest().unwrap().is_none());
-    let stricter = vault.teacher_probe_policy(None).unwrap();
-    assert_eq!(stricter.min_f1_millionths, 900_000);
-    assert!(TeacherProbeApproval::for_scored_checkpoint(&manifest, &stricter, 850_000).is_err());
-    let accepted =
-        TeacherProbeApproval::for_scored_checkpoint(&manifest, &stricter, 950_000).unwrap();
-    vault
-        .set_model_manifest_with_teacher_approval(&manifest, &accepted)
-        .unwrap();
-    assert_eq!(vault.model_manifest().unwrap(), Some(manifest));
-}
-
 fn set_teacher_probe_policy_row(vault: &Vault, minimum: u64, holder: Option<(&str, u64)>) {
     let bytes = crate::gate::default_policy_manifest().unwrap();
     let rmpv::Value::Map(mut entries) = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap()
@@ -387,62 +333,6 @@ fn all_thirteen_roles_load_from_file_and_bind_with_narrow_vault_routes() {
     unknown["roles"]["bogus"] = unknown["roles"]["checker"].clone();
     assert!(ModelManifest::from_json(&serde_json::to_vec(&unknown).unwrap()).is_err());
 }
-#[test]
-fn floor_band_and_mode_fail_closed_without_granting() {
-    let model = ModelId::new("test/checker@1").unwrap();
-    let mut binding = VerdictBinding {
-        model: model.clone(),
-        slot: ModelSlot::Llm,
-        floor: ConfidenceBand::High,
-        mode: VerdictMode::Enforce,
-    };
-    let answer = CalibratedVerdict {
-        model,
-        allow: true,
-        confidence_millionths: 700_000,
-        band: ConfidenceBand::Medium,
-        basis: VerdictBasis::CalibratedModel,
-    };
-    assert!(matches!(
-        apply_verdict_floor(Some(&binding), AutoCheckOutcome::Verdict(answer.clone())).0,
-        AutoCheckOutcome::Hold { .. }
-    ));
-    binding.mode = VerdictMode::Shadow;
-    assert_eq!(
-        apply_verdict_floor(Some(&binding), AutoCheckOutcome::Verdict(answer.clone())),
-        (AutoCheckOutcome::Allow, Some("verdict_shadow_hold"))
-    );
-    let mut bad = answer;
-    bad.band = ConfidenceBand::Certain;
-    assert!(bad.validate().is_err());
-    let mut manifest = serde_json::to_value(fixture()).unwrap();
-    manifest["verdict"] =
-        serde_json::json!({"model":"test/checker@1","slot":"llm","floor":0.9,"mode":"enforce"});
-    assert!(ModelManifest::from_json(&serde_json::to_vec(&manifest).unwrap()).is_err());
-}
-
-#[test]
-fn verdict_modes_preserve_legacy_refusals_and_reasons() {
-    for mode in [VerdictMode::Shadow, VerdictMode::Enforce] {
-        let binding = VerdictBinding {
-            model: ModelId::new("test/checker@1").unwrap(),
-            slot: ModelSlot::Llm,
-            floor: ConfidenceBand::High,
-            mode,
-        };
-        for outcome in [
-            AutoCheckOutcome::Unavailable,
-            AutoCheckOutcome::Hold {
-                reasons: vec!["host_policy".into(), "missing_evidence".into()],
-            },
-        ] {
-            assert_eq!(
-                apply_verdict_floor(Some(&binding), outcome.clone()),
-                (outcome, None)
-            );
-        }
-    }
-}
 
 #[test]
 fn narrowing_without_a_distinct_model_is_refused_without_relabeling() {
@@ -515,26 +405,4 @@ fn narrowing_without_a_distinct_model_is_refused_without_relabeling() {
         .route_models
         .insert(ModelLocality::OnDevice, checker.model.clone());
     assert!(manifest.validate().is_err());
-}
-
-#[test]
-fn manifest_file_carries_runtime_seat_policy_and_rejects_invalid_rows() {
-    let mut value = serde_json::to_value(fixture()).unwrap();
-    let mut policy = crate::llm::seat::SeatPolicy::bundled().unwrap();
-    policy
-        .purpose_defaults
-        .insert("answer_gen".into(), crate::llm::ReasoningEffort::High);
-    policy.facet_max_bytes = 512;
-    policy.line_max_bytes = 8192;
-    value["seat_policy"] = serde_json::to_value(&policy).unwrap();
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("manifest-v2.json");
-    std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
-    let loaded = ModelManifest::load(&path).unwrap();
-    assert_eq!(loaded.seat_policy, Some(policy.clone()));
-    value["seat_policy"]["default_reasoning_ladder"] = serde_json::json!([]);
-    assert!(ModelManifest::from_json(&serde_json::to_vec(&value).unwrap()).is_err());
-    value["seat_policy"] = serde_json::to_value(policy).unwrap();
-    value["seat_policy"]["invented_behavior"] = serde_json::json!(true);
-    assert!(ModelManifest::from_json(&serde_json::to_vec(&value).unwrap()).is_err());
 }

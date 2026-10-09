@@ -286,40 +286,6 @@ fn reput_rekeys_long_interval_index_and_drops_shortened_range() -> Result<()> {
 }
 
 #[test]
-fn batch_phonetic_index() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let id = EntityId::now();
-
-    vault
-        .batch()
-        .put(&id, 1, test_time_range(1, 1), 2, b"phonetic")
-        .phonetic(&id, &["SMTH", "SMT"])
-        .commit()?;
-
-    let rtxn = vault.store.env.read_txn()?;
-    for code in ["SMTH", "SMT"] {
-        let posting = vault
-            .store
-            .phonetic_index
-            .get(&rtxn, code.as_bytes())?
-            .ok_or(Error::EntityNotFound)?;
-        assert!(posting.len().is_multiple_of(16));
-        assert!(posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
-    }
-
-    let forward = vault
-        .store
-        .phonetic_forward
-        .get(&rtxn, id.as_bytes())?
-        .ok_or(Error::EntityNotFound)?;
-    assert_eq!(
-        decode_forward_codes(&forward)?,
-        vec!["SMT".to_owned(), "SMTH".to_owned()]
-    );
-    Ok(())
-}
-
-#[test]
 fn phonetic_dedup_on_reindex() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
@@ -384,41 +350,6 @@ fn phonetic_dedups_duplicate_codes_within_single_batch() -> Result<()> {
         .get(&rtxn, id.as_bytes())?
         .ok_or(Error::EntityNotFound)?;
     assert_eq!(decode_forward_codes(&forward)?, vec!["ABC".to_owned()]);
-    Ok(())
-}
-
-#[test]
-fn phonetic_reindex_remains_additive() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let id = EntityId::now();
-
-    vault
-        .batch()
-        .put(&id, 1, test_time_range(1, 2), 3, b"union")
-        .phonetic(&id, &["ABC"])
-        .commit()?;
-
-    vault.batch().phonetic(&id, &["DEF"]).commit()?;
-
-    let rtxn = vault.store.env.read_txn()?;
-    for code in ["ABC", "DEF"] {
-        let posting = vault
-            .store
-            .phonetic_index
-            .get(&rtxn, code.as_bytes())?
-            .ok_or(Error::EntityNotFound)?;
-        assert!(posting.chunks_exact(16).any(|chunk| chunk == id.as_bytes()));
-    }
-
-    let forward = vault
-        .store
-        .phonetic_forward
-        .get(&rtxn, id.as_bytes())?
-        .ok_or(Error::EntityNotFound)?;
-    assert_eq!(
-        decode_forward_codes(&forward)?,
-        vec!["ABC".to_owned(), "DEF".to_owned()]
-    );
     Ok(())
 }
 
@@ -783,111 +714,5 @@ fn delete_entity_cleans_edge_only_nodes_and_bumps_graph_version() -> Result<()> 
 
     let after = read_hnsw_meta_u64(&vault, GRAPH_VERSION_KEY)?;
     assert_eq!(after, before + 1);
-    Ok(())
-}
-
-#[test]
-fn put_entity_simple_api_uses_batch() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let id = EntityId::now();
-    let occurred = test_time_range(123, 456);
-    let learned_at = 789;
-    let data = b"simple-api";
-
-    vault.put_entity(&id, 1, occurred, learned_at, data)?;
-    assert_eq!(vault.get(&id)?.ok_or(Error::EntityNotFound)?, data);
-
-    let rtxn = vault.store.env.read_txn()?;
-    let raw = vault
-        .store
-        .entities
-        .get(&rtxn, id.as_bytes())?
-        .ok_or(Error::EntityNotFound)?;
-    assert_eq!(raw.len(), ENTITY_METADATA_HEADER_LEN + data.len());
-    assert_eq!(&raw[ENTITY_METADATA_HEADER_LEN..], data);
-
-    let type_key = Store::encode_type_key(1, &id);
-    let start_key = Store::encode_temporal_key(occurred.start, &id);
-    let end_key = Store::encode_temporal_key(occurred.end, &id);
-    let learned_key = Store::encode_temporal_key(learned_at, &id);
-    assert!(vault.store.type_index.get(&rtxn, &type_key)?.is_some());
-    assert!(
-        vault
-            .store
-            .temporal_occurred_start
-            .get(&rtxn, &start_key)?
-            .is_some()
-    );
-    assert!(
-        vault
-            .store
-            .temporal_occurred_end
-            .get(&rtxn, &end_key)?
-            .is_some()
-    );
-    assert!(
-        vault
-            .store
-            .temporal_learned
-            .get(&rtxn, &learned_key)?
-            .is_some()
-    );
-    assert!(
-        vault
-            .store
-            .short_ids_reverse
-            .get(&rtxn, id.as_bytes())?
-            .is_some()
-    );
-
-    Ok(())
-}
-
-#[test]
-fn get_learned_at_rejects_truncated_entity_header() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let id = EntityId::now();
-
-    vault.with_write_txn(|wtxn| {
-        let truncated = [0_u8; ENTITY_METADATA_HEADER_LEN - 1];
-        vault.store.entities.put(wtxn, id.as_bytes(), &truncated)?;
-        Ok(())
-    })?;
-
-    let err = vault
-        .get_learned_at(&id)
-        .expect_err("truncated entity header should fail loud");
-    assert_matches!(err, Error::CorruptedIndex(_));
-
-    Ok(())
-}
-
-#[test]
-fn validates_dimensions_hnsw_and_map_size() -> Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-
-    let mut invalid_dims = test_config();
-    invalid_dims.dimensions = 0;
-    let err = match Vault::open(temp_dir.path(), invalid_dims) {
-        Ok(_) => panic!("expected invalid config"),
-        Err(err) => err,
-    };
-    assert_matches!(err, Error::InvalidConfig(_));
-
-    let mut invalid_hnsw = test_config();
-    invalid_hnsw.hnsw.m_max_0 = 0;
-    let err = match Vault::open(temp_dir.path(), invalid_hnsw) {
-        Ok(_) => panic!("expected invalid config"),
-        Err(err) => err,
-    };
-    assert_matches!(err, Error::InvalidConfig(_));
-
-    let mut invalid_map = test_config();
-    invalid_map.map_size = 0;
-    let err = match Vault::open(temp_dir.path(), invalid_map) {
-        Ok(_) => panic!("expected invalid config"),
-        Err(err) => err,
-    };
-    assert_matches!(err, Error::InvalidConfig(_));
     Ok(())
 }

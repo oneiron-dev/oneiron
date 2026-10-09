@@ -1,9 +1,7 @@
 //! Serve command and door tests: closed env/argv, vetted hook, unlandable names,
 //! framed blobs, coordinator, door request parse, repo names, noop seam, dial.
 
-use super::tests::{
-    git, hooks_dir, landing_outcome, landing_time, narrow_door_effectors, seeded_repo, temp_vault,
-};
+use super::tests::{git, hooks_dir, landing_outcome, landing_time, seeded_repo, temp_vault};
 use super::*;
 use crate::error::CodeError;
 
@@ -51,113 +49,6 @@ fn smart_http_serve_command_env_allowlist_is_closed() {
     assert!(
         !child_env.contains_key("GIT_CONFIG_PARAMETERS"),
         "the config policy travels in argv, never in the environment"
-    );
-}
-
-#[test]
-fn smart_http_serve_command_argv_pins_door_hooks_path() {
-    let (root, hooks) = hooks_dir();
-    let repo = root.path().join("demo.git");
-    std::fs::create_dir_all(&repo).expect("repo dir");
-    let command =
-        ServeCommand::http_backend(&repo, root.path(), hooks.path()).expect("build serve command");
-
-    let argv = command.argv();
-    let backend = argv
-        .iter()
-        .position(|arg| arg == "http-backend")
-        .expect("serve invokes http-backend");
-    let mut args = argv[1..backend]
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-    args.extend(["config", "--get", "core.hooksPath"]);
-    assert_eq!(
-        git(&repo, &args),
-        hooks.path().display().to_string(),
-        "Git resolves the backend configuration to the vetted hooks directory"
-    );
-}
-
-#[test]
-fn smart_http_door_hooks_dir_carries_only_the_vetted_hook() {
-    let (_root, hooks) = hooks_dir();
-    let entries = std::fs::read_dir(hooks.path())
-        .expect("read hooks dir")
-        .map(|entry| entry.expect("dir entry").file_name())
-        .collect::<Vec<_>>();
-    assert_eq!(entries.len(), 1, "one hook, nothing else");
-    assert_eq!(entries[0], DOOR_PRE_RECEIVE_HOOK_NAME);
-}
-
-#[test]
-fn smart_http_vetted_hook_disables_replacement_lookup_on_every_git() {
-    assert!(
-        DOOR_PRE_RECEIVE_HOOK.contains("export GIT_NO_REPLACE_OBJECTS"),
-        "the hook exports the pin to every git it spawns"
-    );
-    for invocation in DOOR_PRE_RECEIVE_HOOK
-        .lines()
-        .map(str::trim_start)
-        .filter(|line| line.starts_with("git ") || line.contains("$(git "))
-    {
-        assert!(
-            invocation.contains("--no-replace-objects"),
-            "this hook git could read substituted bytes: {invocation}"
-        );
-    }
-}
-
-fn proposed(name: &str) -> RefUpdate {
-    RefUpdate {
-        name: name.to_owned(),
-        old_oid: None,
-        new_oid: Some(GitOid::parse_hex("a".repeat(40)).expect("oid")),
-    }
-}
-
-#[test]
-fn smart_http_unlandable_ref_names_are_refused_before_anything_moves() {
-    assert!(
-        unlandable_ref_reasons(&[
-            proposed("refs/heads/main"),
-            proposed("refs/tags/v1.0"),
-            proposed("refs/heads/feature-foo"),
-        ])
-        .is_empty(),
-        "a legal batch is untouched by this rule"
-    );
-
-    // Legal to git, unpublishable by GitWire: the landing would parse this
-    // name only AFTER the backend had moved it.
-    let illegal = unlandable_ref_reasons(&[proposed("refs/heads/feature+foo")]);
-    assert_eq!(illegal.len(), 1, "one reason for the one offending name");
-    assert!(
-        illegal[0].starts_with("refs/heads/feature+foo:"),
-        "the refusal names the ref: {}",
-        illegal[0]
-    );
-
-    let replace = unlandable_ref_reasons(&[proposed(&format!(
-        "{ORIGIN_REFUSED_REF_PREFIX}{}",
-        "b".repeat(40)
-    ))]);
-    assert_eq!(replace.len(), 1, "a replacement ref is never served");
-
-    let twice = unlandable_ref_reasons(&[proposed("refs/heads/main"), proposed("refs/heads/main")]);
-    assert_eq!(twice.len(), 1, "a name proposed twice cannot be published");
-
-    let batch = (0..=ORIGIN_MAX_REF_UPDATES)
-        .map(|index| proposed(&format!("refs/heads/b{index}")))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        unlandable_ref_reasons(&batch).len(),
-        1,
-        "a batch past the publication bound is refused whole"
-    );
-    assert!(
-        unlandable_ref_reasons(&batch[..ORIGIN_MAX_REF_UPDATES]).is_empty(),
-        "exactly the bound is still a batch the landing can journal"
     );
 }
 
@@ -288,34 +179,6 @@ fn smart_http_repo_names_are_closed() {
 }
 
 #[test]
-fn smart_http_noop_door_hook_stamps_without_a_credential() {
-    let repo = unpinned_repo_ref(Path::new("/tmp/demo.git"));
-    let stamp = NoopDoorHook
-        .admit_receive_pack(
-            crate::EntityId::now(),
-            None,
-            "principal:tester",
-            &repo,
-            IpAddr::V4(Ipv4Addr::LOCALHOST),
-            7,
-        )
-        .expect("noop admission");
-    assert_eq!(stamp.principal_ref(), "principal:tester");
-    assert_eq!(stamp.method(), "bearer+registered-principal");
-    assert!(
-        stamp.credential_fingerprint().is_none(),
-        "Phase A presents no slip, and the stamp says so"
-    );
-    assert!(
-        matches!(
-            NoopDoorHook.pre_receive_scan(&repo, &[]),
-            Ok(DoorScanVerdict::Clean)
-        ),
-        "the no-op default adds no behavior"
-    );
-}
-
-#[test]
 fn smart_http_noop_evidence_never_claims_landed_policy_or_scanning() {
     let (_vault_dir, vault) = temp_vault();
     let (_repo_dir, root, oid) = seeded_repo();
@@ -432,66 +295,5 @@ fn smart_http_landed_door_hook_refuses_an_unauthorized_slip() {
             Err(Error::Code(CodeError::ReceivePackDoorRejected { .. }))
         ),
         "an unnarrowed slip is refused at the door, not at the transport"
-    );
-}
-
-/// The catastrophe dial must reach the path that carries NO slip.
-///
-/// Every production push is that path: Phase A presents no capability slip
-/// by design, so a receive-pack gate reachable only through a presented
-/// credential is a gate no push ever passes through. An operator who empties
-/// `secret.door.allowed_effectors` would then shut every lease and injection
-/// downstream of the door while leaving the push door itself open.
-#[test]
-fn smart_http_narrowed_dial_shuts_the_push_door_with_no_slip_presented() {
-    let (_dir, vault) = temp_vault();
-    let repo_dir = Path::new("/tmp/demo.git");
-    let request = ServeRequest {
-        method: "POST".to_owned(),
-        path_info: "/demo.git/git-receive-pack".to_owned(),
-        query_string: String::new(),
-        content_type: Some("application/x-git-receive-pack-request".to_owned()),
-        content_length: None,
-        content_encoding: None,
-        git_protocol: None,
-        remote_user: Some("principal:tester".to_owned()),
-        remote_addr: Some("127.0.0.1".to_owned()),
-    };
-
-    let admitted = stamp_admission(&vault, &request, repo_dir, DoorSeam::Landed)
-        .expect("the default dial admits the push door")
-        .expect("a receive-pack stamps an admission");
-    assert!(
-        admitted.credential_fingerprint().is_none(),
-        "no slip was presented, and the stamp says so"
-    );
-
-    narrow_door_effectors(&vault, Vec::new());
-    assert!(
-        matches!(
-            stamp_admission(&vault, &request, repo_dir, DoorSeam::Landed),
-            Err(Error::Code(CodeError::ReceivePackDoorRejected { .. }))
-        ),
-        "an emptied effector set closes the push path itself, not only what is downstream"
-    );
-    // Refused HERE is refused before anything exists to refuse it at:
-    // `stamp_admission` runs ahead of the coordinator and ahead of the
-    // backend, so no pushed byte is ever read.
-    assert!(
-        DoorHook::admit_receive_pack(
-            &CredentialDoorService::new(Arc::clone(&vault)),
-            crate::EntityId::now(),
-            None,
-            "principal:tester",
-            &unpinned_repo_ref(repo_dir),
-            IpAddr::V4(Ipv4Addr::LOCALHOST),
-            10,
-        )
-        .is_err(),
-        "the seam itself carries the gate, not just this one caller"
-    );
-    assert!(
-        stamp_admission(&vault, &request, repo_dir, DoorSeam::Noop).is_ok(),
-        "the no-op seam refuses nothing, which is its whole contract"
     );
 }

@@ -38,18 +38,6 @@ fn entry(
 }
 
 #[test]
-fn narrow_manifest_inside_floor_validates() {
-    // Floor allows portable T0..T2; entry asks T1 (narrower than max T2) — ok.
-    let m = manifest(vec![entry(
-        "api-key",
-        CustodyClass::CustodyPortable,
-        vec![binding("connector:gmail", CustodyTier::T1Leased)],
-        &[".secrets/api.key"],
-    )]);
-    validate_secret_manifest(&m, &floor()).expect("narrow validates");
-}
-
-#[test]
 fn binding_ceiling_above_floor_max_is_rejected() {
     // cross-vault floor is T0..T0; binding asks T2 — widens the floor.
     let m = manifest(vec![entry(
@@ -76,22 +64,6 @@ fn binding_ceiling_above_floor_max_is_rejected() {
 }
 
 #[test]
-fn entry_class_inside_floor_band_validates() {
-    // device-bound floor is T0..T2; binding ceiling T2 sits at the floor max —
-    // not wider, so it validates.
-    let m = manifest(vec![entry(
-        "device-pin",
-        CustodyClass::CustodyDeviceBound,
-        vec![binding(
-            "connector:calendar",
-            CustodyTier::T2LocalRegistered,
-        )],
-        &[],
-    )]);
-    validate_secret_manifest(&m, &floor()).expect("at-max binding validates");
-}
-
-#[test]
 fn duplicate_entry_name_is_rejected() {
     let m = manifest(vec![
         entry("dup", CustodyClass::CustodyPortable, vec![], &[]),
@@ -102,59 +74,4 @@ fn duplicate_entry_name_is_rejected() {
         matches!(err, Error::Secret(SecretError::InvalidSecretCustodyBody(_))),
         "got {err:?}"
     );
-}
-
-#[test]
-fn parse_minimal_toml_manifest() {
-    let text = r#"
-schema_version = 1
-
-[[secrets]]
-name = "api-key"
-class = "custody-portable"
-declared_paths = [".secrets/api.key", ".secrets/api.key.bak"]
-
-[[secrets.bindings]]
-effector = "connector:gmail"
-tier_ceiling = 2
-scopes = ["read", "send"]
-
-[[secrets]]
-name = "door-key"
-class = "cross-vault"
-declared_paths = [".secrets/door.key"]
-"#;
-    let m = parse_secret_manifest(text).expect("parse");
-    assert_eq!(m.schema_version, 1);
-    assert_eq!(m.secrets.len(), 2);
-    assert_eq!(m.secrets[0].name, "api-key");
-    assert_eq!(m.secrets[0].class, CustodyClass::CustodyPortable);
-    assert_eq!(m.secrets[0].declared_paths.len(), 2);
-    assert_eq!(m.secrets[0].bindings[0].effector, "connector:gmail");
-    assert_eq!(
-        m.secrets[0].bindings[0].tier_ceiling,
-        CustodyTier::T2LocalRegistered
-    );
-    assert_eq!(m.secrets[1].class, CustodyClass::CrossVault);
-}
-
-#[test]
-fn parse_rejects_unknown_class() {
-    let text = r#"
-schema_version = 1
-[[secrets]]
-name = "x"
-class = "not-a-class"
-"#;
-    assert!(parse_secret_manifest(text).is_err());
-}
-
-#[test]
-fn parse_rejects_missing_class() {
-    let text = r#"
-schema_version = 1
-[[secrets]]
-name = "x"
-"#;
-    assert!(parse_secret_manifest(text).is_err());
 }

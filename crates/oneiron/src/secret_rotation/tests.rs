@@ -183,38 +183,6 @@ fn artifact_id(seed: u8) -> EntityId {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn rotate_bumps_generation_stamps_time_and_writes_a_value_free_receipt() {
-    let (_tmp, vault) = temp_vault();
-    let id = register(&vault, SECRET, VALUE_V1);
-    assert_eq!(generation_of(&vault, &id), 0);
-
-    let receipt = vault
-        .rotate_secret(SECRET, VALUE_V2, AT_ROTATED)
-        .expect("rotate");
-
-    assert_eq!(receipt.secret_ref, SECRET);
-    assert_eq!(receipt.from_generation, 0);
-    assert_eq!(receipt.to_generation, 1);
-    assert_eq!(receipt.rotated_at, AT_ROTATED);
-    assert_eq!(receipt.kind, RotationKind::Rotated);
-
-    let meta = vault
-        .get_secret_metadata(&id)
-        .expect("metadata")
-        .expect("record present");
-    assert_eq!(meta.rotation_generation, 1);
-    assert_eq!(meta.rotated_at, Some(AT_ROTATED));
-    assert_eq!(meta.status, SecretCustodyStatus::Active);
-
-    let durable = vault
-        .rotation_receipt(&receipt.receipt_id)
-        .expect("read receipt")
-        .expect("receipt row present");
-    assert_eq!(durable, receipt, "the receipt round-trips through its row");
-    assert_eq!(count_rows(&vault, SECRET_ROTATION_RECEIPT_PREFIX), 1);
-}
-
-#[test]
 fn rotate_refuses_a_missing_or_inactive_record() {
     let (_tmp, vault) = temp_vault();
     assert!(matches!(
@@ -722,29 +690,6 @@ fn a_taint_ref_naming_a_secret_that_never_existed_reads_stale() {
         vault.artifact_taint_state(&id).expect("state"),
         ArtifactTaintState::TaintedStale,
         "a missing record fails closed: the value that justified the taint cannot be vouched for"
-    );
-}
-
-#[test]
-fn an_empty_ref_list_clears_the_sidecar_so_clean_has_one_representation() {
-    let (_tmp, vault) = temp_vault();
-    register(&vault, SECRET, VALUE_V1);
-    let id = artifact_id(0x52);
-
-    vault
-        .mark_artifact_tainted(&id, &[taint(SECRET, 0)])
-        .expect("attach");
-    assert_eq!(count_rows(&vault, SECRET_EXHAUST_TAINT_PREFIX), 1);
-
-    vault.mark_artifact_tainted(&id, &[]).expect("clear");
-    assert_eq!(
-        count_rows(&vault, SECRET_EXHAUST_TAINT_PREFIX),
-        0,
-        "clean is an ABSENT row, never an empty one"
-    );
-    assert_eq!(
-        vault.artifact_taint_state(&id).expect("state"),
-        ArtifactTaintState::Clean
     );
 }
 

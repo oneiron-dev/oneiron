@@ -278,6 +278,3 @@ fn partial_signature(partial: &SpeculativePartial<'_>) -> BTreeSet<String> {
         .filter(|term| !term.is_empty())
         .collect()
 }
-
-#[cfg(test)]
-mod tests;

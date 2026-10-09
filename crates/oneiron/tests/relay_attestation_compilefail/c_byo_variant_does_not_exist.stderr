@@ -1,7 +1,7 @@
 error[E0603]: module `relay` is private
-  --> tests/relay_attestation_compilefail/c_byo_variant_does_not_exist.rs:15:36
+  --> tests/relay_attestation_compilefail/c_byo_variant_does_not_exist.rs:13:36
    |
-15 |     let _ = oneiron::policy_model::relay::trust::HostedDomain::LocalViaByoConnector;
+13 |     let _ = oneiron::policy_model::relay::trust::HostedDomain::LocalViaByoConnector;
    |                                    ^^^^^         ------------ enum `HostedDomain` is not publicly re-exported
    |                                    |
    |                                    private module
@@ -13,13 +13,13 @@ note: the module `relay` is defined here
    | ^^^^^^^^^
 
 error[E0599]: no variant, associated function, or constant named `LocalViaByoConnector` found for enum `policy_model::relay::trust::HostedDomain` in the current scope
-  --> tests/relay_attestation_compilefail/c_byo_variant_does_not_exist.rs:15:64
+  --> tests/relay_attestation_compilefail/c_byo_variant_does_not_exist.rs:13:64
    |
-15 |     let _ = oneiron::policy_model::relay::trust::HostedDomain::LocalViaByoConnector;
+13 |     let _ = oneiron::policy_model::relay::trust::HostedDomain::LocalViaByoConnector;
    |                                                                ^^^^^^^^^^^^^^^^^^^^ variant, associated function, or constant not found in `policy_model::relay::trust::HostedDomain`
    |
 help: there is a variant with a similar name
    |
-15 -     let _ = oneiron::policy_model::relay::trust::HostedDomain::LocalViaByoConnector;
-15 +     let _ = oneiron::policy_model::relay::trust::HostedDomain::LocalViaHostedConnector;
+13 -     let _ = oneiron::policy_model::relay::trust::HostedDomain::LocalViaByoConnector;
+13 +     let _ = oneiron::policy_model::relay::trust::HostedDomain::LocalViaHostedConnector;
    |

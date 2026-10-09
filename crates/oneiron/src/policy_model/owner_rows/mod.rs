@@ -209,6 +209,4 @@ impl Memory<'_> {
 }
 
 #[cfg(test)]
-mod notify_tests;
-#[cfg(test)]
 mod tests;

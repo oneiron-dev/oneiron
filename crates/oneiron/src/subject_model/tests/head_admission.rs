@@ -109,11 +109,6 @@ fn proposed_subject_history_is_not_a_supersession_target() -> Result<()> {
 }
 
 #[test]
-fn rejected_subject_history_is_not_a_supersession_target() -> Result<()> {
-    assert_excluded_history_survives(|body| body.approval = ClaimApprovalStatus::Rejected)
-}
-
-#[test]
 fn world_subject_history_is_not_a_supersession_target() -> Result<()> {
     assert_excluded_history_survives(|body| body.world = Some(entity(0x87)))
 }

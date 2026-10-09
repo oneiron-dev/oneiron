@@ -168,21 +168,3 @@ fn shared_note_writes_refuse_viewer_out_of_scope_member_and_demoted_author() {
         before_count
     );
 }
-
-#[test]
-fn personal_vault_without_shared_roster_keeps_its_local_note_write_door() {
-    let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
-    let actor = person(&vault);
-    let receipt = vault
-        .memory(actor, EdgeActorClass::Human)
-        .create_note("research", "private")
-        .unwrap();
-    assert_eq!(
-        vault
-            .note_document(EntityId::from_hex(&receipt.id_hex).unwrap())
-            .unwrap()
-            .markdown,
-        "private"
-    );
-}

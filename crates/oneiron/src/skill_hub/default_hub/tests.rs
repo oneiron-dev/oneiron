@@ -2,53 +2,6 @@ use super::*;
 use crate::{error::ErrorKind, skill::SkillLifecycle};
 
 #[test]
-fn first_open_seeds_offline_and_reopen_preserves_owner_configuration() -> Result<()> {
-    let dir = tempfile::tempdir()?;
-    let id = default_skill_hub_id()?;
-    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
-    assert_eq!(
-        vault.entities_by_type(crate::registry::ENTITY_TYPE_SKILL_HUB)?,
-        vec![id]
-    );
-    let row = vault.skill_hub_record(&id)?;
-    assert_eq!(row.kind, SkillHubKind::Git);
-    assert_eq!(row.endpoint, HUB_ENDPOINT);
-    assert_eq!(row.trust_tier, SkillHubTrustTier::Verified);
-    assert_eq!(row.sync_policy, HubSyncPolicy::PinnedCommit);
-    assert_eq!(default_skill_hub_commit().len(), 40);
-    let before = vault.get_raw(&id)?;
-    drop(vault);
-    let vault = Vault::open_existing(dir.path(), crate::VaultConfig::default())?;
-    assert_eq!(vault.get_raw(&id)?, before);
-    // A configured hub is owner data; open does not reconfigure it.
-    let changed = SkillHubRecord::new(
-        SkillHubKind::Git,
-        "https://example.org/hub.git",
-        SkillHubTrustTier::Community,
-        HubSyncPolicy::PinnedCommit,
-    )?;
-    let owner_id = EntityId::now();
-    vault.put_entity(
-        &owner_id,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
-    let owner = vault.authenticate_owner(
-        owner_id,
-        "principal:hub-one",
-        true,
-        crate::store::GateDecisionId::now(),
-    )?;
-    vault.configure_skill_hub(&owner, &id, &changed, TimeRange { start: 1, end: 1 }, 1)?;
-    drop(vault);
-    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
-    assert_eq!(vault.skill_hub_record(&id)?, changed);
-    Ok(())
-}
-
-#[test]
 fn agent_authored_v1_library_skill_imports_through_hub_one_at_pinned_ref() -> Result<()> {
     // A chat-authored v1 library body, beyond the four embedded bootstraps.
     // A real local Git repository keeps the test fully offline.

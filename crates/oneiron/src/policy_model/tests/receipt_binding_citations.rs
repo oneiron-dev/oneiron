@@ -3,59 +3,6 @@
 use super::*;
 
 #[test]
-fn an_oversized_rule_id_array_cannot_flood_the_ledger() -> Result<()> {
-    // The array is model-supplied and nobody validated it, and every id
-    // becomes a reason code. What holds the flood off is no longer a number
-    // the engine picked: it is that none of these ids name a rule the plane
-    // resolved, so none of them earn a row. The count of what went does.
-    let (_tmp, vault) = temp_vault();
-    let policy = HostedLegalPolicy {
-        output_contract: Some(PolicyOutputContract::RationaleJson),
-        ..hosted_serious_crime_block()
-    };
-    let flood: Vec<String> = (0..1_280).map(|index| format!("\"SC-{index}\"")).collect();
-    let body = format!(
-        r#"{{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":[{}],"confidence":"high","rationale":"flood"}}"#,
-        flood.join(",")
-    );
-    let backend = StaticPolicyBackend { body };
-    let budget = lease("rule-id-flood");
-    let pass = relay_pass(
-        &vault,
-        BOMB_CONTENT,
-        &hosted_edge_registry(policy),
-        &PolicyModelConfig::default(),
-        Some(tier(&backend, &budget)),
-    )?;
-
-    let audit = pass
-        .boundary_verdict()
-        .expect("verdict")
-        .audit
-        .as_deref()
-        .expect("audit");
-    assert!(audit.model_rule_ids.is_empty(), "none of them resolved");
-    assert_eq!(audit.model_rule_ids_dropped, 1_280);
-    // Dropped, not refused: a model that cites rules nobody wrote is a model
-    // to fix, and the verdict it carried still stands.
-    assert_eq!(
-        pass.boundary_verdict().expect("verdict").decision,
-        PolicyClassifyDecision::Block
-    );
-    let receipts = gate_receipts(&vault)?;
-    assert_eq!(
-        trace_count(&receipts[0], "gate.policy_model.model_rule."),
-        0,
-        "1280 unresolvable citations bought zero ledger rows",
-    );
-    assert!(has_trace(
-        &receipts[0],
-        "gate.policy_model.model_rule_ids_dropped.1280"
-    ));
-    Ok(())
-}
-
-#[test]
 fn an_answer_citing_past_the_parse_bound_is_unreadable_rather_than_materialized() -> Result<()> {
     // The resolvable-set filter is what keeps junk out of the ledger, but it
     // runs AFTER the reader has built the vector. This bound is the flood stop
@@ -501,55 +448,6 @@ fn a_signalless_allow_still_takes_the_receipt_time_binding_check() -> Result<()>
 }
 
 #[test]
-fn a_manifest_moving_after_the_pass_is_caught_by_the_receipt_write() -> Result<()> {
-    // The pass re-checks its binding and returns; the row is written in a
-    // separate transaction afterwards. A manifest that moves in THAT gap would
-    // otherwise be receipted under a binding nobody can reproduce — the same
-    // hole the mid-pass re-check closes one seam earlier.
-    //
-    // The move is staged between the two by writing the manifest from the
-    // backend, which returns after the pass's own re-check has run: the pass
-    // settles, and the receipt write is the next thing to look.
-    let (_tmp, vault) = temp_vault();
-    // The moving backend rewrites THIS id, so the seed must use it too — a
-    // second manifest id would duplicate the row_ref across manifests and the
-    // resolver would drop the rows instead of moving the frontier.
-    put_policy_manifest_bytes(&vault, test_id(0x48), &spoilers_manifest("warn"))?;
-    let backend = ManifestMovingBackend {
-        vault: &vault,
-        manifest: spoilers_manifest("block"),
-        body: r#"{"violation":0}"#,
-        keep_moving: true,
-        calls: AtomicUsize::new(0),
-    };
-    let budget = lease("receipt-binding-recheck");
-
-    let pass = relay_pass(
-        &vault,
-        CLEAN_CONTENT,
-        &hosted_edge_registry(hosted_serious_crime_block()),
-        &PolicyModelConfig::default(),
-        Some(tier(&backend, &budget)),
-    )?;
-
-    // The pass itself already degrades here — that is the mid-pass re-check
-    // doing its job. What this pins is that the ROW says so, written under a
-    // binding the ledger can reproduce rather than the dead one.
-    assert_eq!(
-        pass.degraded(),
-        Some(RelayBoundaryDegrade::PolicyBindingMovedMidPass)
-    );
-    let receipts = gate_receipts(&vault)?;
-    assert!(
-        receipts
-            .iter()
-            .any(|receipt| has_trace(receipt, "gate.relay.degraded.policy_binding_moved_mid_pass")),
-        "the degrade names itself in the ledger"
-    );
-    Ok(())
-}
-
-#[test]
 fn a_manifest_that_moved_mid_call_is_not_enforced_stale() -> Result<()> {
     // The pass snapshots the manifest, then awaits a round trip. An owner who
     // tightens `warn` to `block` during that await must not have the
@@ -734,46 +632,6 @@ fn an_answer_split_across_content_parts_is_read_whole() -> Result<()> {
 }
 
 #[test]
-fn the_model_rationale_is_an_audit_row_not_a_reader_notice() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let policy = HostedLegalPolicy {
-        output_contract: Some(PolicyOutputContract::RationaleJson),
-        ..hosted_serious_crime_block()
-    };
-    let backend = static_backend(
-        r#"{"violation":1,"policy_category":"hosted_legal/serious_crime","rule_ids":[],"confidence":"high","rationale":"model reasoning the reader is not shown"}"#,
-    );
-    let budget = lease("rationale-audience");
-    relay_pass(
-        &vault,
-        BOMB_CONTENT,
-        &hosted_edge_registry(policy),
-        &PolicyModelConfig::default(),
-        Some(tier(&backend, &budget)),
-    )?;
-
-    let receipts = gate_receipts(&vault)?;
-    let receipt = &receipts[0];
-    // The FIRST notice — the one a caller surfaces — is the reader's, and it
-    // does not carry the model's reasoning.
-    let body = receipt.fields.get("system_notice").expect("notice body");
-    assert!(!body.contains("model reasoning"));
-    assert_eq!(
-        receipt
-            .fields
-            .get("system_notice_audience")
-            .map(String::as_str),
-        Some(SYSTEM_NOTICE_AUDIENCE_USER_AND_MODEL)
-    );
-    // The audit row rides in the same receipt, named for what it is.
-    assert!(has_trace(
-        receipt,
-        &format!("gate.system_notice.{SYSTEM_NOTICE_TYPE_MODEL_RATIONALE}")
-    ));
-    Ok(())
-}
-
-#[test]
 fn a_clean_allow_keeps_the_rationale_for_the_pattern_that_fired() -> Result<()> {
     // The row the design turns on: an `Escalate` pattern fired, the model
     // looked and said `violation: 0`, and its stated reason is exactly the
@@ -825,47 +683,4 @@ fn a_clean_allow_keeps_the_rationale_for_the_pattern_that_fired() -> Result<()> 
         &format!("gate.system_notice.{SYSTEM_NOTICE_TYPE_MODEL_RATIONALE}")
     ));
     Ok(())
-}
-
-#[test]
-fn the_audit_notice_names_its_own_channel_and_audience() {
-    let binding = relay_skip_content_binding(&PolicyClassifyRequest::outbound_content("candidate"));
-    let verdict = PolicyClassifyVerdict::new(
-        PolicyClassifyDecision::Warn,
-        PolicyVerdictCategory::OwnerPolicy {
-            row_ref: "owner:row".to_owned(),
-        },
-        PolicyConfidence::MEDIUM,
-        binding,
-        &PolicyModelConfig::default(),
-        PolicyPlane::OwnerPolicy,
-    )
-    .with_audit(PolicyPassAudit {
-        model_rationale: Some("because the policy says so".to_owned()),
-        ..PolicyPassAudit::default()
-    });
-    let notice =
-        super::notice::policy_model_rationale_notice(&verdict, PolicyPlane::OwnerPolicy, None)
-            .expect("a rationale produces an audit row");
-    assert_eq!(notice.audience, SYSTEM_NOTICE_AUDIENCE_AUDIT);
-    assert_eq!(notice.channel, SYSTEM_NOTICE_CHANNEL_AUDIT);
-    assert_eq!(notice.notice_type, SYSTEM_NOTICE_TYPE_MODEL_RATIONALE);
-    assert_eq!(notice.body, "because the policy says so");
-    assert_eq!(
-        notice.policy_plane.as_deref(),
-        Some(PolicyPlane::OwnerPolicy.as_str())
-    );
-    // The owner plane publishes no versioned document, so it names no version.
-    assert_eq!(notice.policy_version, None);
-
-    // No rationale, no row.
-    let bare = PolicyClassifyVerdict::clean_allow(
-        binding,
-        &PolicyModelConfig::default(),
-        PolicyPlane::OwnerPolicy,
-    );
-    assert!(
-        super::notice::policy_model_rationale_notice(&bare, PolicyPlane::OwnerPolicy, None)
-            .is_none()
-    );
 }

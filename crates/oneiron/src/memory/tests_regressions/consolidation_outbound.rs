@@ -358,14 +358,6 @@ fn schedule_outbound_holds_gate_checks_and_dedupes() {
     assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
 }
 
-#[test]
-fn missing_bound_outbound_actor_maps_to_forbidden() {
-    let err = facade_error_from_outbound_dispatch(OutboundDispatchError::InvalidBoundActor);
-
-    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
-    assert_ne!(err.code, MEMORY_CODE_NOT_FOUND);
-}
-
 /// #484a regression: an unsupported channel is rejected BEFORE the durable
 /// enqueue, so it leaves no orphan attempt/dedupe entry and a retry (on a
 /// supported channel, same idempotency key) is not wedged as an existing

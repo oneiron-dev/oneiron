@@ -45,8 +45,6 @@ mod tests;
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
-use crate::attempt_queue::AttemptState;
-#[cfg(test)]
 use crate::channel_identity::{ChannelIdentityBinding, ChannelIdentityState};
 #[cfg(test)]
 use crate::entity_id::EntityId;

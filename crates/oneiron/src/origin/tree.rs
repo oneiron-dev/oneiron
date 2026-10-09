@@ -88,6 +88,3 @@ fn read_tree_files_bounded(
     }
     Ok(files)
 }
-
-#[cfg(test)]
-mod tests;

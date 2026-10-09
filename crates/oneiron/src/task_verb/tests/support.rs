@@ -864,30 +864,6 @@ pub(super) fn route_spec(assignee: Option<TaskAssignee>) -> TaskCreateSpec {
     }
 }
 
-/// A synthetic type-index id. Big-endian bytes order numerically exactly
-/// as `EntityId`'s byte order does, so index order IS type-index order.
-pub(super) fn synthetic_task_id(index: u128) -> EntityId {
-    EntityId::from_bytes(index.to_be_bytes()).expect("synthetic id from 16 bytes")
-}
-
-pub(super) fn synthetic_index(id: &EntityId) -> u128 {
-    u128::from_be_bytes(*id.as_bytes())
-}
-
-/// A pager over `1..=rows` that answers the exclusive `after` cursor the
-/// way `Vault::entities_by_type_page` does, without holding the rows.
-pub(super) fn synthetic_pager(
-    rows: u128,
-    fetched: &mut usize,
-) -> impl FnMut(Option<&EntityId>, usize) -> Result<Vec<EntityId>> + '_ {
-    move |after, limit| {
-        let start = after.map_or(1, |id| synthetic_index(id) + 1);
-        let page: Vec<EntityId> = (start..=rows).take(limit).map(synthetic_task_id).collect();
-        *fetched += page.len();
-        Ok(page)
-    }
-}
-
 pub(super) fn created_task_refs(facade: &Memory<'_>, count: usize) -> Vec<EntityId> {
     let mut refs: Vec<EntityId> = (0..count)
         .map(|index| {

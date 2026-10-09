@@ -1,10 +1,9 @@
 use core::assert_matches;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 use std::str;
 #[cfg(feature = "sync")]
 use std::sync::Arc;
-use std::time::Instant;
 
 use crate::edge::{
     EDGE_VALUE_SEMANTIC_LEN, EDGE_VALUE_SEMANTIC_PROVENANCED_LEN, EDGE_VALUE_STRUCTURAL_LEN,
@@ -15,20 +14,16 @@ use crate::edge::{
 use crate::embed::{Embedder, EmbedderLocality, PendingEmbeddingInput, PendingEmbeddingReconciler};
 use crate::entity_id::ENTITY_ID_LEN;
 use crate::habit::TaskRole;
-use crate::limits::{MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 #[cfg(feature = "sync")]
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::registry::{
-    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COUNTERPARTY_CONTACT,
-    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL,
-    ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_PERSON,
-    ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_PSYCH_PROFILE,
-    ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_FEDERATION_GRANT,
+    ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_MODEL, ENTITY_TYPE_OUTBOUND_GRANT,
+    ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_REDACTION_AUDIT, ENTITY_TYPE_TASK,
+    ENTITY_TYPE_TASK_LIST, ENTITY_TYPE_TURN,
 };
 use heed::EnvOpenOptions;
 use heed::types::{Bytes, Str};
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
 use sha2::{Digest, Sha256};
 use xxhash_rust::xxh32::xxh32;
 
@@ -43,7 +38,6 @@ use crate::analyzer::{ANALYZER_VERSION, AnalyzerManifest};
 use crate::batch::{
     ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS,
 };
-use crate::claim::CLAIM_BODY_KEYS;
 use crate::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use crate::deletion::DeleteEntityOutcome;
 use crate::deletion::{
@@ -51,8 +45,6 @@ use crate::deletion::{
     ReplayedTombstoneOutcome, encode_hard_erase_sweep_job, encode_hard_erase_sweep_key,
 };
 use crate::edge::EdgeValueLayout;
-#[cfg(feature = "sync")]
-use crate::error::{SyncRollbackError, SyncSelectorValidation};
 use crate::error::{VaultRootEntry, VaultRootProblem};
 use crate::hnsw::COUNT_KEY;
 use crate::provenance::{
@@ -71,7 +63,6 @@ use crate::store::{
 };
 #[cfg(feature = "sync")]
 use crate::sync::SyncQueue;
-use crate::vault::VaultDoctorHnswRecordState;
 
 pub(crate) mod batch_temporal;
 pub(crate) mod claim_lifecycle;
@@ -162,48 +153,11 @@ fn block_on_ready<F: std::future::Future>(future: F) -> F::Output {
     }
 }
 
-fn sample_assembled_context(tokens_used: u64, tokens_limit: u64) -> AssembledContext {
-    AssembledContext::new(
-        SessionContext {
-            api_version: "v1".to_owned(),
-            counts: BTreeMap::from([("16".to_owned(), 1)]),
-            last_activity: Some(42),
-        },
-        vec![NotificationItem {
-            id: seeded_entity_id(0x2141).to_hex(),
-            learned_at: 42,
-            body: serde_json::json!({"message": "fresh"}),
-        }],
-        Vec::new(),
-        HydrationBudget::from_meter(tokens_used, tokens_limit),
-        MemoriesCursor::new("default"),
-        None,
-    )
-}
-
 fn seeded_entity_id(counter: u128) -> EntityId {
     let mut bytes = counter.to_be_bytes();
     bytes[0] = 0x7e;
     EntityId::from_bytes(bytes).expect("seeded test id should be valid")
 }
-
-// ═══════════════════════════════════════════════════════════════════════
-// ONE-1149 — delete TOCTOU: receipt/sweep/`pt:` emission is serialized with
-// the txn that actually erases. Two genuinely different cases must never
-// collapse into one:
-//   • FULLY-MISSING (an id that never had scope) = strict no-op, no publish
-//     at all — not even a propagating tombstone.
-//   • RACED-TO-NOTHING (scope existed at the read-probe, raced away before
-//     the purge txn) = the already-published CRDT tombstone + `d:`/`q:`
-//     propagation rows + a guarded `dt:` marker for hard reasons legitimately
-//     survive as idempotent propagation intent; ONLY the receipt + `h:` sweep
-//     + `pt:` marker are suppressed (the in-txn full-scope ownership probe).
-//     It is NEVER "`dt:`-only": the propagating CRDT tombstone is the
-//     cross-device convergence net (a peer that still holds the id needs it).
-// A delete that erased NOTHING must never claim it did (no receipt, no `h:`
-// sweep row, no `pt:` marker); a delete that erased a PARTIAL residue must
-// still audit it (the false-NEGATIVE mirror).
-// ═══════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════
 // ONE-1133 — reason-aware tombstone replay primitive
@@ -255,49 +209,12 @@ const PINNED_EDGE_KIND_DISCRIMINANTS: [(u8, EdgeKind); 31] = [
     (30, EdgeKind::RepliesTo),
 ];
 
-// ─── Phase 2A: Productivity Entity Types ──────────────────
-
 // ─── Phase 2A: Tree Query API ─────────────────────────────
 
 // Shared helper for both `batch()` and `batch_in()` reparent variants.
 // `apply_reparent` is a closure that, given the vault and the three entity ids,
 // performs the reparent operation (add edge to parent_b + delete edge to parent_a)
 // via the API surface under test.
-
-// ═══════════════════════════════════════════════════════════════════════
-// ONE-1104 — CLAIM body ABI + typed Claim API spec tests
-// (D11 pinned keys · D17 predicate gate · D18 fail-closed type-0 writes)
-// ═══════════════════════════════════════════════════════════════════════
-
-// ═══════════════════════════════════════════════════════════════════════
-// ONE-1105: edge.provenance module + atomic provenanced-write API
-// ═══════════════════════════════════════════════════════════════════════
-
-// ═══════════════════════════════════════════════════════════════════════
-// ONE-1108: general Claim supersession / retraction mechanics (ARCH-0003
-// lifecycle — active | superseded | retracted; supersedes edge u8 = 3).
-// ═══════════════════════════════════════════════════════════════════════
-
-// ═══════════════════════════════════════════════════════════════════════
-// ONE-1106: provenance retract + supersede lifecycle
-// (retractionRules RETRACT / SUPERSEDE / DERIVE · D14 winner · D15 envelope)
-// ═══════════════════════════════════════════════════════════════════════
-
-// ═══════════════════════════════════════════════════════════════════════
-// ONE-1113: reject-and-route + operational setters + session-bound actor
-// (ARCH-0034 #write-protection ruling, ratified 2026-06-13)
-// ═══════════════════════════════════════════════════════════════════════
-
-// ═══════════════════════════════════════════════════════════════════════
-// ONE-1107: ARCH-0038 delete interplay
-// (retractionRules DELETE · D16 downgrade/restamp · sweep-scope seam)
-// ═══════════════════════════════════════════════════════════════════════
-
-// ═══════════════════════════════════════════════════════════════════════
-// ONE-1138: provenance substrate vocabulary bump
-// (substrate_ref + reasoning_effort + actor_class relocation · MODEL kind
-//  121 · legacy-evid transition semantics)
-// ═══════════════════════════════════════════════════════════════════════
 
 // ─── ONE-1930: the two-layer id lane (parse is syntax, resolve is registry) ───
 

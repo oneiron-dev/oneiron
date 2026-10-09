@@ -63,8 +63,6 @@ mod tests;
 // private index prefix the tests probe directly. After the directory split the
 // seam re-imports them so `tests.rs` resolves exactly as it did before.
 #[cfg(test)]
-use self::stale::SOURCE_INDEX;
-#[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
@@ -77,7 +75,7 @@ use crate::error::Result;
 #[cfg(test)]
 use crate::llm::CallPurpose;
 #[cfg(test)]
-use crate::registry::{ENTITY_TYPE_SKILL, ENTITY_TYPE_TURN};
+use crate::registry::ENTITY_TYPE_SKILL;
 #[cfg(test)]
 use crate::skill::{
     SkillContentHash, SkillDependency, SkillLifecycle, SkillRecord, canonical_skill_tree_hash,

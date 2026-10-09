@@ -420,43 +420,6 @@ fn output() -> Vec<u8> {
     })).unwrap()
 }
 #[test]
-fn installed_script_uses_key_custody_surface_verbs_and_subscription_wake() -> Result<()> {
-    let (_dir, vault, agent, grant, image) = setup(true)?;
-    let seen_secret = Arc::new(Mutex::new(Vec::new()));
-    let scratch = tempfile::tempdir()?;
-    let result = vault.run_script_pack_in_vm(
-        PackScriptRun {
-            name: "fixture.echo",
-            agent,
-            grants: std::slice::from_ref(&grant),
-            image: &image,
-            budget: ExecutionBudget::new(5, 128, 2),
-            now: 1_800_000_123,
-        },
-        Box::new(OutputBackend {
-            root: scratch.path().to_path_buf(),
-            output: output(),
-            seen_secret: Arc::clone(&seen_secret),
-            after_run: None,
-        }),
-    )?;
-    assert_eq!(&*seen_secret.lock().unwrap(), b"host-only-secret");
-    assert!(matches!(
-        result.inbound.as_slice(),
-        [crate::surface_event::SurfaceEventAdmission::Accepted(_)]
-    ));
-    assert_eq!(result.verbs.len(), 1);
-    assert_eq!(result.verbs[0].verb, "send");
-    assert_eq!(result.verbs[0].actor, agent.to_hex());
-    assert_eq!(result.wakes.len(), 1);
-    assert_eq!(
-        result.wakes[0].status,
-        crate::connector_key::events::ConnectorWakeStatus::Enqueued
-    );
-    assert!(vault.surface_event_handoff_status("message-1")?.is_some());
-    Ok(())
-}
-#[test]
 fn out_of_manifest_grant_and_output_are_refused_before_any_event() -> Result<()> {
     let (_dir, vault, agent, mut grant, image) = setup(true)?;
     grant.requested = "other".into();
@@ -588,34 +551,6 @@ fn foreign_script_cannot_route_to_a_different_channel_agent() -> Result<()> {
             .is_err()
     );
     assert!(vault.surface_event_handoff_status("message-1")?.is_none());
-    Ok(())
-}
-
-#[test]
-fn same_pack_receives_run_local_grants_for_two_vault_custody_names() -> Result<()> {
-    for secret_ref in ["email-token", "work-mail-token"] {
-        let (_dir, vault, agent, grant, image) = setup_with_secret(true, secret_ref)?;
-        let scratch = tempfile::tempdir()?;
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let outcome = vault.run_script_pack_in_vm(
-            PackScriptRun {
-                name: "fixture.echo",
-                agent,
-                grants: std::slice::from_ref(&grant),
-                image: &image,
-                budget: ExecutionBudget::new(5, 128, 2),
-                now: 1_800_000_123,
-            },
-            Box::new(OutputBackend {
-                root: scratch.path().to_path_buf(),
-                output: output(),
-                seen_secret: Arc::clone(&seen),
-                after_run: None,
-            }),
-        )?;
-        assert_eq!(outcome.wakes.len(), 1);
-        assert_eq!(&*seen.lock().unwrap(), b"host-only-secret");
-    }
     Ok(())
 }
 

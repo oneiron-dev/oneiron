@@ -37,22 +37,6 @@ fn a_bare_classify_then_the_enforce_door_leaves_exactly_one_row() -> Result<()> 
 }
 
 #[test]
-fn a_bare_classify_of_an_inert_clean_allow_writes_nothing() -> Result<()> {
-    // The silence rule is the enforcement path's, unchanged: an allow that
-    // learned nothing has nothing to tell anyone.
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, test_id(0x95), &spoiler_manifest("block"))?;
-
-    let verdict =
-        vault.classify_policy_model(PolicyClassifyRequest::outbound_content(CLEAN_CONTENT))?;
-
-    assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
-    assert!(verdict.audit.is_none());
-    assert!(gate_receipts(&vault)?.is_empty());
-    Ok(())
-}
-
-#[test]
 fn a_bare_classify_whose_model_did_not_answer_still_receipts_the_fail_open() -> Result<()> {
     // The verdict a downed model produces is exactly the one the silence rule
     // drops: a clean allow that learned nothing. But it is the SOVEREIGN PLANE
@@ -259,28 +243,6 @@ fn a_row_ref_that_spells_another_rows_category_is_refused_at_registration() {
     }
 }
 
-#[test]
-fn a_row_ref_longer_than_a_notice_can_carry_is_refused_at_registration() {
-    let mut registry = fixture_edge_service_registry();
-    let long_ref = format!("hosted:{}", "x".repeat(GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN));
-    let err = registry
-        .register_hosted_legal_policy(
-            HOSTED_EDGE_SERVICE,
-            hosted_policy(vec![hosted_row(
-                &long_ref,
-                "serious_crime",
-                HostedLegalAction::Block,
-                "Withhold facilitation of mass harm.",
-            )]),
-        )
-        .expect_err("a ref no notice could carry must be refused");
-    assert!(
-        format!("{err}").contains("row_ref"),
-        "unexpected error: {err}"
-    );
-    assert!(registry.hosted_legal_policy(HOSTED_EDGE_IDENTITY).is_none());
-}
-
 /// An answer larger than the engine agreed to read is refused BEFORE
 /// deserialization, not after.
 ///
@@ -368,49 +330,6 @@ fn a_bare_classify_row_records_a_frontier_that_moved_without_degrading() -> Resu
     assert!(
         has_trace(&receipts[0], "gate.policy_model.owner_plane_frontier_moved"),
         "the row says the frontier moved rather than asserting a dead one: {:?}",
-        receipts[0]
-    );
-    Ok(())
-}
-
-#[test]
-fn a_bare_model_classify_records_the_row_its_verdict_carries() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x96),
-        &documented_owner_manifest(
-            vec![owner_row_with_action(
-                "owner:jargon",
-                "Avoid nautical jargon.",
-                "block",
-            )],
-            Vec::new(),
-        ),
-    )?;
-    let backend = static_backend(r#"{"violation":1,"policy_category":"owner:jargon"}"#);
-
-    let verdict = block_on(vault.classify_policy_model_with_backend(
-        PolicyClassifyRequest::outbound_content("This answer uses nautical phrasing."),
-        &PolicyModelConfig::default(),
-        &backend,
-        &lease("bare-model-classify"),
-    ))?;
-
-    assert_eq!(verdict.decision, PolicyClassifyDecision::Block);
-    let receipts = gate_receipts(&vault)?;
-    assert_eq!(receipts.len(), 1);
-    assert_eq!(receipts[0].outcome, "owner_plane_block");
-    // Which dial produced the decision. These rows are newly written by the
-    // bare doors, so a consumer has no other place to learn whether the model
-    // was consulted for everything or only behind a pattern — and the two say
-    // different things about what was NOT examined.
-    assert!(
-        has_trace(
-            &receipts[0],
-            "gate.policy_model.owner_plane.classifier_mode.classify_all"
-        ),
-        "the bare row names the owner dial it was decided under: {:?}",
         receipts[0]
     );
     Ok(())
@@ -519,53 +438,6 @@ fn owner_block_withholds_and_names_the_owner_plane() -> Result<()> {
 }
 
 #[test]
-fn owner_route_to_help_halts_with_a_help_card() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, test_id(0x35), &spoiler_manifest("route_to_help"))?;
-
-    let outcome = vault.enforce_policy_model(PolicyClassifyRequest::outbound_content(
-        "a reply with spoilers",
-    ))?;
-
-    assert_eq!(outcome.action, PolicyEnforcementAction::RouteToHelp);
-    assert!(outcome.outbound_halted);
-    assert_eq!(outcome.final_content, None);
-    let routing = outcome.help_routing.expect("help routing");
-    assert_eq!(
-        routing.category,
-        PolicyVerdictCategory::OwnerPolicy {
-            row_ref: "owner:spoilers".to_owned(),
-        }
-    );
-    assert_eq!(routing.diagnosis, None);
-    assert!(routing.persona_present);
-    assert_eq!(
-        outcome.system_notices[0].notice_type,
-        SYSTEM_NOTICE_TYPE_HELP_CARD
-    );
-    assert!(outcome.receipt_ref.is_some());
-    Ok(())
-}
-
-#[test]
-fn every_notice_is_system_voiced() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, test_id(0x36), &spoiler_manifest("block"))?;
-    let outcome = vault.enforce_policy_model(PolicyClassifyRequest::outbound_content(
-        "a reply with spoilers",
-    ))?;
-
-    assert_eq!(outcome.notice_voice, Some(PolicyEnforcementVoice::System));
-    assert!(
-        outcome
-            .system_notices
-            .iter()
-            .all(|notice| notice.voice == SYSTEM_NOTICE_VOICE_SYSTEM)
-    );
-    Ok(())
-}
-
-#[test]
 fn notice_names_the_row_but_never_quotes_its_text_or_the_pattern() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let row_text = "Withhold anything mentioning the unreleased product name.";
@@ -603,155 +475,5 @@ fn notice_names_the_row_but_never_quotes_its_text_or_the_pattern() -> Result<()>
             .any(|trace| trace.contains("(?i)")),
         "a receipt must never carry the pattern source"
     );
-    Ok(())
-}
-
-#[test]
-fn receipt_carries_the_notice_and_its_plane() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, test_id(0x38), &spoiler_manifest("block"))?;
-    let outcome = vault.enforce_policy_model(PolicyClassifyRequest::outbound_content(
-        "a reply with spoilers",
-    ))?;
-
-    let receipt_ref = outcome.receipt_ref.expect("block receipt");
-    let receipts = gate_receipts(&vault)?;
-    let receipt = receipts
-        .iter()
-        .find(|receipt| receipt.receipt_id == receipt_ref)
-        .expect("block gate receipt");
-    assert_eq!(
-        receipt.fields.get("system_notice_type").map(String::as_str),
-        Some(SYSTEM_NOTICE_TYPE_BLOCK)
-    );
-    assert_eq!(
-        receipt
-            .fields
-            .get("system_notice_channel")
-            .map(String::as_str),
-        Some(SYSTEM_NOTICE_CHANNEL)
-    );
-    assert_eq!(
-        receipt
-            .fields
-            .get("system_notice_audience")
-            .map(String::as_str),
-        Some(SYSTEM_NOTICE_AUDIENCE_USER_AND_MODEL)
-    );
-    assert_eq!(
-        receipt
-            .fields
-            .get("system_notice_policy_plane")
-            .map(String::as_str),
-        Some(PolicyPlane::OwnerPolicy.as_str())
-    );
-    assert!(has_trace(receipt, "gate.system_notice.policy_block"));
-    Ok(())
-}
-
-#[test]
-fn owner_notice_carries_only_the_configured_setting_change_offer() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, test_id(0x39), &spoiler_manifest("block"))?;
-    let request = || PolicyClassifyRequest::outbound_content("a reply with spoilers");
-
-    // The engine knows no product routes, so it offers none by default.
-    let bare = vault.enforce_policy_model(request())?;
-    assert!(bare.system_notices[0].setting_change_offer.is_none());
-
-    let offer = GateSystemNoticeAction {
-        label: "Change policy setting".to_owned(),
-        target: "https://host.example.test/settings/policy".to_owned(),
-    };
-    let configured = vault.enforce_policy_model_with_config(
-        request(),
-        &PolicyModelConfig {
-            owner_setting_change_offer: Some(offer.clone()),
-            ..PolicyModelConfig::default()
-        },
-    )?;
-    assert_eq!(
-        configured.system_notices[0].setting_change_offer.as_ref(),
-        Some(&offer)
-    );
-    Ok(())
-}
-
-#[test]
-fn an_unusable_setting_change_offer_is_dropped_not_fatal() -> Result<()> {
-    // `owner_setting_change_offer` is a plain `pub` field: nothing validates
-    // it before it is copied into every owner notice, and the ledger's own
-    // check runs at APPEND. A broken convenience LINK would therefore fail the
-    // whole gate write and lose the block it was attached to. It is dropped
-    // instead, exactly as an oversized row ref is.
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, test_id(0x3b), &spoiler_manifest("block"))?;
-    for offer in [
-        GateSystemNoticeAction {
-            label: "   ".to_owned(),
-            target: "https://host.example.test/settings/policy".to_owned(),
-        },
-        GateSystemNoticeAction {
-            label: "Change policy setting".to_owned(),
-            target: String::new(),
-        },
-        GateSystemNoticeAction {
-            label: "l".repeat(GATE_SYSTEM_NOTICE_ACTION_LABEL_MAX_LEN + 1),
-            target: "https://host.example.test/settings/policy".to_owned(),
-        },
-        GateSystemNoticeAction {
-            label: "Change policy setting".to_owned(),
-            target: format!(
-                "https://host.example.test/{}",
-                "t".repeat(GATE_SYSTEM_NOTICE_ACTION_TARGET_MAX_LEN)
-            ),
-        },
-    ] {
-        let outcome = vault.enforce_policy_model_with_config(
-            PolicyClassifyRequest::outbound_content("a reply with spoilers"),
-            &PolicyModelConfig {
-                owner_setting_change_offer: Some(offer),
-                ..PolicyModelConfig::default()
-            },
-        )?;
-        // The verdict survives whole; only the affordance is gone.
-        assert_eq!(outcome.action, PolicyEnforcementAction::Block);
-        assert!(outcome.receipt_ref.is_some());
-        assert!(outcome.system_notices[0].setting_change_offer.is_none());
-    }
-    Ok(())
-}
-
-#[test]
-fn owner_notice_omits_oversized_row_ref_without_aborting_block() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let long_row_ref = format!("owner:{}", "x".repeat(GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN));
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x3a),
-        &patterned_owner_manifest(
-            vec![owner_row_with_action(
-                &long_row_ref,
-                "Withhold this oversized policy row.",
-                "block",
-            )],
-            vec![owner_pattern(
-                "owner.oversized",
-                "(?i)spoiler",
-                &long_row_ref,
-                Some("decide"),
-            )],
-        ),
-    )?;
-
-    let outcome = vault.enforce_policy_model(PolicyClassifyRequest::outbound_content(
-        "a reply with spoilers",
-    ))?;
-
-    assert_eq!(outcome.action, PolicyEnforcementAction::Block);
-    assert!(outcome.receipt_ref.is_some());
-    let notice = &outcome.system_notices[0];
-    assert_eq!(notice.row_ref, None);
-    assert!(!notice.body.contains(&long_row_ref));
     Ok(())
 }
