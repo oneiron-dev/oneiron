@@ -855,7 +855,7 @@ fn a_bypass_grant_never_skips_another_owners_objection_window() -> Result<()> {
         crate::registry::ENTITY_TYPE_CONVERSATION,
         TimeRange { start: 1, end: 1 },
         1,
-        b"thread",
+        b"\x80",
     )?;
     let bound = GrantBound::action(
         ActorBound::new(owner.actor().to_hex())?,

@@ -21,7 +21,7 @@ fn thread(vault: &Vault, seed: u8) -> EntityId {
             crate::registry::ENTITY_TYPE_CONVERSATION,
             at(1),
             1,
-            b"thread",
+            b"\x80",
         )
         .expect("seed thread");
     id
