@@ -6,6 +6,7 @@ mod embedder_shape;
 mod embedder_space;
 mod lookup;
 pub mod merge;
+pub mod models;
 pub mod oneironer;
 pub mod remote_embedder;
 pub mod serve_args;
@@ -21,6 +22,7 @@ pub use merge::{
     EnvConfig, default_config_path, resolve_backup_config, resolve_serve_config,
     resolve_serve_config_with_sources,
 };
+pub use models::ModelsConfig;
 pub use oneironer::{
     OneironerArgs, OneironerConfig, OneironerConfigOverride, OneironerMode, OneironerProvider,
 };
