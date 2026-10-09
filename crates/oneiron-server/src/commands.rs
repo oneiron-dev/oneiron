@@ -63,6 +63,7 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
     serve_with_config(config).await
 }
 
+mod history_import;
 mod init;
 pub use init::init;
 mod reembed;

@@ -3065,7 +3065,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1
      }
     },
@@ -19926,6 +19926,134 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/history/chatgpt.rs",
+     "purpose": "ChatGPT export: `conversations.json`, a list of conversations whose `mapping` is a message tree",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/history/claude.rs",
+     "purpose": "Claude.ai export: `conversations.json`, a list of conversations with their `chat_messages` in order",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/history/claude_code.rs",
+     "purpose": "Claude Code session logs: one JSONL file per session in a project directory, and one per subagent under…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/history/codex.rs",
+     "purpose": "Codex session rollouts: one JSONL file per session under `sessions/YYYY/MM/DD/`",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HistoryImportReport"
+     ],
+     "path": "src/ingest/history/land.rs",
+     "purpose": "Landing a decoded conversation as an imported transcript (ARCH-0027)",
+     "surface": {
+      "crate-vis": 8,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/history/ledger.rs",
+     "purpose": "The history import ledger: one row per imported source message, keyed by the source and the message's native…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HistoryConversation",
+      "HistoryFile",
+      "HistoryMessage",
+      "HistoryRole",
+      "HistorySkips",
+      "HistorySource",
+      "HistoryThreadKind"
+     ],
+     "path": "src/ingest/history/mod.rs",
+     "purpose": "The owner's own history, imported (ARCH-0027): ChatGPT and Claude.ai exports and the on-device Claude Code…",
+     "surface": {
+      "const": 1,
+      "enum": 3,
+      "fn": 5,
+      "re-export": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HistoryDryRun",
+      "HistoryLedgerSnapshot"
+     ],
+     "path": "src/ingest/history/plan.rs",
+     "purpose": "A dry run: what an import would do, read from the vault's files with LMDB opened read-only",
+     "surface": {
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/ingest/history/tests.rs",
+     "purpose": "Substrate invariants of an imported transcript (ARCH-0027, ARCH-0040): whose words they are, when the vault…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/history/text.rs",
+     "purpose": "Field readers the history decoders share: records, times and text",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/history/tree.rs",
+     "purpose": "Threads of a branching export: the main path, and each edit or regeneration the source kept beside it",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -20228,7 +20356,7 @@
      "purpose": "Ingest source registry and source-local normalization",
      "surface": {
       "crate-vis": 4,
-      "mod": 3,
+      "mod": 4,
       "re-export": 14
      }
     },
@@ -22659,7 +22787,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "mod": 2,
       "re-export": 24
      }
@@ -23222,7 +23350,7 @@
      "path": "src/memory/witness/base.rs",
      "purpose": "Base witness landing: container resolve, K7 door, batch write, text ops, session bump",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 1
      }
     },
@@ -23233,7 +23361,7 @@
      "path": "src/memory/witness/codec.rs",
      "purpose": "Turn-speaker and message-envelope codec plus session alias formatting",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 13
      }
     },
     {
@@ -23243,7 +23371,7 @@
      "path": "src/memory/witness/mod.rs",
      "purpose": "Witness/turn-ingestion verbs: one witness program (`program`) landing in base (`base`) or in an off-record…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "re-export": 2
      }
     },
@@ -23254,7 +23382,7 @@
      "path": "src/memory/witness/program.rs",
      "purpose": "The one witness program: request checks, one plan, the ONE-1686 ceiling door and the ONE-1767 mint contract…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -23396,7 +23524,7 @@
      "path": "src/memory/witness/validation.rs",
      "purpose": "Idempotency validators: turn/message existence, parent/actor binding, order collision axes",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -39118,7 +39246,7 @@
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
     "ingest": {
-     "files": 40,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39750,8 +39878,8 @@
    },
    "over_bar": 26,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2388,
-   "test_files": 808
+   "source_files": 2398,
+   "test_files": 809
   },
   "oneiron-android": {
    "files": [
@@ -41540,7 +41668,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 30,
+      "const": 33,
       "crate-vis": 1
      }
     },
@@ -48063,6 +48191,7 @@
       "ImportBatchArgs",
       "ImportCommand",
       "ImportDecisionArgs",
+      "ImportSourceArgs",
       "RestoreArgs",
       "RunArgs",
       "RunDecisionArgs",
@@ -48073,10 +48202,10 @@
       "WhoamiArgs"
      ],
      "path": "src/cli/owner_args.rs",
-     "purpose": "Flags for the owner's own commands: doctor, backup, restore, export, the secret scan switch, import consent…",
+     "purpose": "Flags for the owner's own commands: doctor, backup, restore, export, the secret scan switch, importing…",
      "surface": {
       "enum": 3,
-      "struct": 11
+      "struct": 12
      }
     },
     {
@@ -48104,6 +48233,26 @@
      "surface": {
       "crate-vis": 15,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/history_import.rs",
+     "purpose": "`oneiron import <source> <path>`: the owner's own history, imported into a stopped vault (ARCH-0027)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/history_import/confined.rs",
+     "purpose": "Reading under one folder without leaving it",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -50146,6 +50295,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/history_import.rs",
+     "purpose": "`oneiron import <source> <path>` through the shipped binary, for each of the four sources (owner…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -50271,7 +50428,7 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 11,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -50441,8 +50598,8 @@
    },
    "over_bar": 4,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 261,
-   "test_files": 105
+   "source_files": 263,
+   "test_files": 106
   },
   "oneiron-uniffi": {
    "files": [
