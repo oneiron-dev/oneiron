@@ -181,7 +181,27 @@ agent's cap, its purpose's) counts those charges too, and a try the
 remainder cannot admit ends the step. `models.workflows.enabled = false` turns the pump
 off.
 
-## 6. Raw calls
+## 6. Code mode (MCP `execute_code`)
+
+`execute_code` runs a task as generated JavaScript: each step's program comes
+from the `generative_reasoner` seat and runs in the checked-in QuickJS
+component, calling the vault through `self.memory.<verb>` under the
+connector's own grants. It is listed on `tools/list` only when the seat has a
+rung and a prompt package for the executor is named:
+
+```toml
+[models.code_mode]
+prompt_package = "prompts"   # holds blocks/engine-executor-wire.md; relative to this file
+budget_units = 10000000      # optional; process-lifetime meter for its model calls
+```
+
+Each step's call is admitted like a chat turn, against the vault's model
+manifest and route, and spends from `budget_units`. A run's clock is the time
+it started, and a run resumed after a restart keeps it. A vault with a model
+manifest needs a seat judge this server does not bind yet, so its runs are
+refused with `code_run_binding_failed`.
+
+## 7. Raw calls
 
 With `[models]` set, `/v1/llm/generate` and `/v1/llm/stream` call any
 configured model by its engine id (`<provider>/<model>@<revision>`, shown in

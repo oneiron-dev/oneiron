@@ -714,3 +714,81 @@ async fn quickjs_code_mode_cannot_witness_a_users_words() {
         assert!(!row.windows(6).any(|word| word == b"sencha"), "{steps}");
     }
 }
+
+/// Done means (U16): the server the serve path builds serves `execute_code`.
+/// With `[models]` filling the generative seat and `[models.code_mode]` naming
+/// a prompt package, `AiHost::attach` binds the checked-in component; a run's
+/// model step is that seat's model, and its `self.memory.recall` reads back a
+/// phrase saved in the vault. The run's clock is the time it started.
+#[tokio::test]
+async fn the_served_vault_runs_execute_code_on_its_generative_seat() {
+    let fake =
+        crate::fake_llm::FakeLlm::start(vec![crate::fake_llm::Reply::text(CODE_MODE_RECALL)], None)
+            .await;
+    let prompts = oneiron::prompt::workspace_test_prompt_package_root().unwrap();
+    let models = crate::ai_host::test_support::models(
+        &fake.base_url,
+        &format!(
+            "[dreamer]\nenabled = false\n[workflows]\nenabled = false\n\
+             [code_mode]\nprompt_package = {:?}\n",
+            prompts.display().to_string()
+        ),
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let server = SyncServer::new(
+        vault.clone(),
+        SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let (server, _host) = crate::ai_host::AiHost::attach(server, Some(&models)).await;
+    let server = Arc::new(server);
+    let actor = seeded_test_entity_id(0x0024_6581);
+    let credential = "served-code-mode";
+    register_mcp_actor(&server, credential, actor, oneiron::EdgeActorClass::Human).await;
+    let (_, listing) =
+        route_json(server.clone(), mcp_list_request("/mcp", credential, "list")).await;
+    assert!(
+        mcp_listed_tool_names(&listing).contains(&"execute_code"),
+        "{listing}"
+    );
+    witness_through_tool_list(
+        &server,
+        credential,
+        actor,
+        "The heron lantern hangs by the north gate.",
+    )
+    .await;
+
+    let started = vault.now_recorded_at() * 1000;
+    let args = mcp_merge_args(
+        mcp_endpoint_envelope(actor, "read_memory"),
+        json!({"run_ref": "served-recall", "task": "recall the heron lantern"}),
+    );
+    let (_, body) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request("/mcp", credential, "recall", "execute_code", args),
+    )
+    .await;
+    assert!(body.get("error").is_none(), "{body}");
+    let structured = &body["result"]["structuredContent"];
+    assert_eq!(structured["result"]["status"], "complete", "{structured}");
+    let recalled = structured["steps"][0]["outcome"]["output"]
+        .as_str()
+        .expect("recall output");
+    assert!(recalled.contains("north gate"), "{recalled}");
+    let seen = fake.seen();
+    assert_eq!(seen.len(), 1, "one model step");
+    assert_eq!(seen[0].body["model"], "test-model");
+
+    let run_id = oneiron::EntityId::from_hex(structured["run_id"].as_str().unwrap()).unwrap();
+    let record = vault.get_code_run_replay_record(&run_id).unwrap().unwrap();
+    let clock = record.determinism.frozen_unix_ms;
+    assert!(
+        (started..=vault.now_recorded_at() * 1000).contains(&clock),
+        "{clock}"
+    );
+}

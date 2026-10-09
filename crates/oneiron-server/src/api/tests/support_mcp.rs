@@ -333,12 +333,13 @@ impl crate::mcp::McpCodeModeProvider for McpFixtureCodeProvider {
 
     fn executor_config(
         &self,
+        _: &oneiron::Vault,
         run_id: oneiron::EntityId,
         task: &str,
-    ) -> oneiron::engine_executor::EngineExecutorConfig {
+    ) -> oneiron::Result<oneiron::engine_executor::EngineExecutorConfig> {
         // The earliest point the injected host is entered for a run at all.
         MCP_FIXTURE_CODE_RUNS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        oneiron::engine_executor::EngineExecutorConfig {
+        Ok(oneiron::engine_executor::EngineExecutorConfig {
             run_id,
             task: task.to_owned(),
             // ONE-1929: the executor wire teaching comes from the DEPLOYED
@@ -354,7 +355,7 @@ impl crate::mcp::McpCodeModeProvider for McpFixtureCodeProvider {
                 [7; oneiron::code_run::CODE_RUN_RNG_SEED_LEN],
             ),
             limits: oneiron::engine_executor::EngineExecutorLimits::default(),
-        }
+        })
     }
 }
 

@@ -242,8 +242,13 @@ impl McpCodeModeProvider for OracleCodeProvider {
         })
     }
 
-    fn executor_config(&self, run_id: EntityId, task: &str) -> EngineExecutorConfig {
-        EngineExecutorConfig {
+    fn executor_config(
+        &self,
+        _: &Vault,
+        run_id: EntityId,
+        task: &str,
+    ) -> oneiron::Result<EngineExecutorConfig> {
+        Ok(EngineExecutorConfig {
             run_id,
             task: task.to_owned(),
             // ONE-1929: the executor wire teaching comes from the DEPLOYED
@@ -256,7 +261,7 @@ impl McpCodeModeProvider for OracleCodeProvider {
             global_tier: ModelTierRef("fixture-tier".to_owned()),
             determinism: CodeRunDeterminism::new(1_000, [7; CODE_RUN_RNG_SEED_LEN]),
             limits: EngineExecutorLimits::default(),
-        }
+        })
     }
 }
 
