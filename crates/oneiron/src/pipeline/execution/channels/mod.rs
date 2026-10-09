@@ -29,7 +29,9 @@ use super::super::filters::{apply_claim_status_gate, apply_relationship_filter};
 use super::super::trace::{
     capture_replay_inputs, record_ppr_cache_outcome, retrieval_trace_fused_scores,
 };
-use super::super::types::{ClaimStatusGateCache, EntityMetadataCache, PPR_DAMPING, RelMode};
+use super::super::types::{
+    ClaimStatusGateCache, EntityMetadataCache, PPR_DAMPING, RelMode, TurnFold,
+};
 use super::super::world_authority::resolve_active_world_authority;
 use super::types::{HydeAttemptOverrides, RetrievalTxnOutput, pending_vectors_for_scores};
 use crate::bm25::Bm25Config;
@@ -584,17 +586,18 @@ impl PipelineBuilder<'_> {
                 )?;
             }
 
-            let cited_messages = if self.turn_fold {
+            let cited_messages = if self.turn_fold == TurnFold::Off {
+                HashMap::new()
+            } else {
                 turn_fold::fold_messages_into_turns(
                     &mut scores,
+                    self.turn_fold,
                     &self.vault.store,
                     rtxn,
                     filter_config,
                     &mut metadata_cache,
                     &mut claim_gate,
                 )?
-            } else {
-                HashMap::new()
             };
 
             let capabilities = self.prepare_pack_candidates(

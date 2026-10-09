@@ -158,7 +158,7 @@ pub(in crate::pipeline) fn capture_replay_inputs(
         }),
         corpus_snapshot_ref: builder.corpus_snapshot_ref.clone(),
     };
-    // `json!` above is at its recursion limit, so the flag joins after it.
-    inputs.config["turn_fold"] = serde_json::Value::Bool(builder.turn_fold);
+    // `json!` above is at its recursion limit, so the mode joins after it.
+    inputs.config["turn_fold"] = json!(builder.turn_fold.as_str());
     inputs
 }

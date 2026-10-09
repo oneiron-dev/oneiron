@@ -20,7 +20,7 @@ use crate::temporal::{TemporalAnchorMode, TemporalGranularity, TimeRange};
 use super::support::normalize_range;
 use super::types::{
     ActiveWorldSelection, DEFAULT_RESULT_LIMIT, DEFAULT_SIGMA_SECS, FacetMode, RelMode,
-    ScoredEntity, TemporalSearchConfig, WorldAuthoritySet, WorldScope,
+    ScoredEntity, TemporalSearchConfig, TurnFold, WorldAuthoritySet, WorldScope,
 };
 
 #[derive(Clone)]
@@ -73,7 +73,7 @@ pub struct PipelineBuilder<'a> {
     pub(super) result_limit: usize,
     pub(super) temporal_adaptive_default: bool,
     pub(super) temporal_now: Option<u64>,
-    pub(super) turn_fold: bool,
+    pub(super) turn_fold: TurnFold,
     pub(super) telemetry_action: RetrievalAction,
     pub(super) capture_retrieval_trace: bool,
     pub(super) retrieval_state: Option<crate::store::RetrievalState>,
@@ -134,7 +134,7 @@ impl<'a> PipelineBuilder<'a> {
             result_limit: DEFAULT_RESULT_LIMIT,
             temporal_adaptive_default: true,
             temporal_now: None,
-            turn_fold: false,
+            turn_fold: TurnFold::Off,
             telemetry_action: RetrievalAction::Pipeline,
             capture_retrieval_trace: false,
             retrieval_state: None,
@@ -409,8 +409,9 @@ impl<'a> PipelineBuilder<'a> {
     /// Returns each MESSAGE hit as the TURN it is part of, one row per turn,
     /// and reports the messages each turn took in. ARCH-0004 makes the turn
     /// the unit recall returns; a lexical hit on its message is a hit on it.
-    pub(crate) fn fold_messages_into_turns(mut self) -> Self {
-        self.turn_fold = true;
+    /// [`TurnFold::TurnsOnly`] also drops a message no admitted turn took in.
+    pub(crate) fn fold_messages_into_turns(mut self, fold: TurnFold) -> Self {
+        self.turn_fold = fold;
         self
     }
 

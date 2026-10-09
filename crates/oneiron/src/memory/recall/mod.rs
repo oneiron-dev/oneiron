@@ -588,6 +588,16 @@ impl Memory<'_> {
             });
         }
         let kinds = recall_kinds(scope)?;
+        // A scope that names TURN but not MESSAGE still finds a turn by its
+        // messages' words: each message comes back as its turn or not at all.
+        let messages_only_as_turns = kinds.as_ref().is_some_and(|kinds| {
+            kinds.contains(&ENTITY_TYPE_TURN) && !kinds.contains(&ENTITY_TYPE_MESSAGE)
+        });
+        let turn_fold = if messages_only_as_turns {
+            crate::pipeline::TurnFold::TurnsOnly
+        } else {
+            crate::pipeline::TurnFold::Fold
+        };
         // Admission runs in each candidate's retrieval transaction before ranking.
         let admitted = |store: &crate::store::Store, txn: &heed::RoTxn<'_>, id: &EntityId| {
             // Reject irrelevant kind/predicate rows before the actor gate.
@@ -604,7 +614,10 @@ impl Memory<'_> {
                     return Ok(false);
                 };
                 let wanted = match &kinds {
-                    Some(kinds) => kinds.contains(&kind),
+                    Some(kinds) => {
+                        kinds.contains(&kind)
+                            || (messages_only_as_turns && kind == ENTITY_TYPE_MESSAGE)
+                    }
                     None => !CONTAINER_KINDS.contains(&kind),
                 };
                 if !wanted {
@@ -668,7 +681,7 @@ impl Memory<'_> {
                     .vault
                     .query()
                     .search_text(query, limit)
-                    .fold_messages_into_turns();
+                    .fold_messages_into_turns(turn_fold);
                 if let Some(as_of) = execution.as_of {
                     pipeline = pipeline.with_temporal_now(as_of);
                 }
@@ -745,7 +758,7 @@ impl Memory<'_> {
                     .vault
                     .context_pack()
                     .search_text(query, limit)
-                    .fold_messages_into_turns();
+                    .fold_messages_into_turns(turn_fold);
                 if let Some(as_of) = execution.as_of {
                     builder = builder.with_temporal_now(as_of);
                 }

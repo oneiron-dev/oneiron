@@ -5,7 +5,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::pipeline::filters::pipeline_candidate_matches_filters_and_gate;
 use crate::pipeline::types::{
-    ClaimStatusGateCache, EntityMetadataCache, PipelineFilterConfig, ScoredEntity,
+    ClaimStatusGateCache, EntityMetadataCache, PipelineFilterConfig, ScoredEntity, TurnFold,
 };
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
@@ -21,9 +21,10 @@ use std::collections::{HashMap, HashSet};
 /// meaning, and a lexical hit on one of its messages is a hit on it. A turn
 /// stands in for its message only when the run would admit the turn itself
 /// (`filter_config`, the run's own filters and gate); a message with no such
-/// turn stays as it is.
+/// turn stays as it is, or under [`TurnFold::TurnsOnly`] leaves the run.
 pub(super) fn fold_messages_into_turns(
     scores: &mut Vec<ScoredEntity>,
+    fold: TurnFold,
     store: &Store,
     rtxn: &RoTxn<'_>,
     filter_config: PipelineFilterConfig<'_>,
@@ -59,6 +60,9 @@ pub(super) fn fold_messages_into_turns(
                 cited.entry(turn).or_default().push(hit.id);
                 id = turn;
             }
+        }
+        if is_message && id == hit.id && fold == TurnFold::TurnsOnly {
+            continue;
         }
         if placed.insert(id) {
             folded.push(ScoredEntity { id, ..hit });
