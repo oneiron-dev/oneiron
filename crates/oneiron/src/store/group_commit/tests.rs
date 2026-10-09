@@ -118,10 +118,10 @@ fn concurrent_writers_land_with_their_own_outcomes_in_fewer_commits() {
             })
         })
         .collect();
-    let accepted: usize = threads
-        .into_iter()
-        .map(|thread| thread.join().expect("writer"))
-        .sum();
+    let mut accepted = 0;
+    for thread in threads {
+        accepted += thread.join().expect("writer");
+    }
 
     for writer in 0..WRITERS {
         for write in 0..WRITES {
