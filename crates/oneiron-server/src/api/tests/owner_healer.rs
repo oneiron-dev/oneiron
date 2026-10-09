@@ -7,7 +7,10 @@ use oneiron::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
 use oneiron::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, DispatchAgent, HealerSlot,
 };
-use oneiron::attempt_queue::{AttemptQueue, ClaimAttempt, ClaimOutcome};
+use oneiron::attempt_queue::{
+    AttemptInterventionKind, AttemptQueue, AttemptResultRef, ClaimAttempt, ClaimOutcome,
+    InterveneAttempt, SetAttemptResult,
+};
 use oneiron::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use oneiron::failure_ladder::{
     FailureEscalationMode, FailureLadderOutcome, FailureScope, FailureScopePolicy,
@@ -208,7 +211,9 @@ async fn owner_reviews_a_custom_agent_failure_the_ladder_ended() {
             target: AgentDispatchTarget::Custom(agent),
             parent_attempt: None,
             dedupe_key: None,
-            run_id: Some("owner-review-run".to_owned()),
+            // No run id, so no run-tree read reaches this attempt: the drill
+            // has to carry its evidence itself.
+            run_id: None,
             now: 10,
         })
         .unwrap()
@@ -225,6 +230,26 @@ async fn owner_reviews_a_custom_agent_failure_the_ladder_ended() {
         panic!("expected a claim");
     };
     assert_eq!(leased.id, dispatched.attempt.id);
+    // An operator note on the live try, then the output it made durable before
+    // it failed.
+    AttemptQueue::new(vault)
+        .intervene(InterveneAttempt {
+            id: leased.id,
+            kind: AttemptInterventionKind::Interrupt,
+            actor: "operator".to_owned(),
+            note: Some("stalled on the deploy step".to_owned()),
+            now: 11,
+        })
+        .unwrap();
+    AttemptQueue::new(vault)
+        .set_result(SetAttemptResult {
+            id: leased.id,
+            lease_owner: WORKER.to_owned(),
+            attempt_count: leased.attempt_count,
+            result_ref: AttemptResultRef::new("artifact:owner-review-output@1").unwrap(),
+            now: 11,
+        })
+        .unwrap();
 
     // The door a host's failed step goes through: the typed failure ladder.
     let outcome = DreamerRunnerStore::new(vault)
@@ -297,6 +322,18 @@ async fn owner_reviews_a_custom_agent_failure_the_ladder_ended() {
     assert_eq!(drill["attempt"], attempt);
     assert_eq!(drill["state"], "Failed");
     assert_eq!(drill["last_error"], "step_failed");
+    // The stored evidence, as stored.
+    assert_eq!(drill["result_ref"], "artifact:owner-review-output@1");
+    assert_eq!(
+        drill["events"],
+        json!([{
+            "sequence": 1,
+            "at": 11,
+            "actor": "operator",
+            "kind": "interrupt",
+            "note": "stalled on the deploy step",
+        }])
+    );
 
     // A member is only reachable under the class it is listed in.
     let (status, _) = call(

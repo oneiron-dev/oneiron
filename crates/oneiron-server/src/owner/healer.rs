@@ -2,7 +2,7 @@
 //! oversight receipts the vault emits, and the custom-agent dispatches the
 //! failure ladder ended, grouped by failure class, with a drill into one.
 
-use oneiron::attempt_queue::{AttemptId, AttemptState};
+use oneiron::attempt_queue::{AttemptEvent, AttemptId, AttemptResultRef, AttemptState};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::failure_ladder::FailureSignalClass;
 use oneiron::failure_ladder::oversight::OversightCounts;
@@ -72,7 +72,9 @@ pub(crate) struct DrillQuery {
     pub(crate) attempt: String,
 }
 
-/// The ended attempt and the receipts its run left.
+/// The ended attempt as the vault stores it, and the receipts its run left.
+/// The output reference and the intervention trace are the evidence a review
+/// reads; a drill is the only owner read of an attempt that has no run id.
 #[derive(Debug, Serialize)]
 pub(crate) struct FailureDrill {
     pub(crate) attempt: String,
@@ -85,6 +87,11 @@ pub(crate) struct FailureDrill {
     pub(crate) retry_of: Option<String>,
     pub(crate) created_at: u64,
     pub(crate) updated_at: u64,
+    /// The artifact version the try's durable output lives in, if it left one.
+    pub(crate) result_ref: Option<String>,
+    /// Every interrupt, pause, resume, cancel and redirect, with its actor and
+    /// note, in order.
+    pub(crate) events: Vec<AttemptEvent>,
     pub(crate) receipt_refs: Vec<String>,
 }
 
@@ -107,6 +114,8 @@ pub(crate) fn drill(
         retry_of: trace.retry_of.as_ref().map(attempt_hex),
         created_at: trace.created_at,
         updated_at: trace.updated_at,
+        result_ref: trace.result_ref.map(AttemptResultRef::into_string),
+        events: trace.events,
         receipt_refs: drill.receipt_refs,
     })
 }
