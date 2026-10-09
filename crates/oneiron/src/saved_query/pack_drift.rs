@@ -328,9 +328,23 @@ pub(crate) fn repair_saved_queries_after_pack_move_in_txn(
         to_version: moved.to_version.to_owned(),
         affected_predicates: Vec::new(),
     };
-    let map = PACK_MIGRATION_MAPS
-        .get(&vault.store, wtxn, &migration_map_key(&drift))?
-        .unwrap_or_default();
+    // A migration map names a move between two versions. A source changed
+    // under the same version has no map of its own, so it never reuses one
+    // an earlier move recorded: what it drops pauses with no rewrite.
+    let mut map = if moved.from_version == moved.to_version {
+        PackMigrationMap::default()
+    } else {
+        PACK_MIGRATION_MAPS
+            .get(&vault.store, wtxn, &migration_map_key(&drift))?
+            .unwrap_or_default()
+    };
+    // A rewrite onto a predicate this very move drops is no rewrite.
+    map.rewrites.retain(|_, rewrite| {
+        let (PackPredicateRewrite::Rename { to }
+        | PackPredicateRewrite::Equivalent { to, .. }
+        | PackPredicateRewrite::SemanticsChanging { to, .. }) = rewrite;
+        moved.to_predicates.contains(to) || !moved.from_predicates.contains(to)
+    });
     let touched: BTreeSet<&String> = moved
         .from_predicates
         .difference(moved.to_predicates)

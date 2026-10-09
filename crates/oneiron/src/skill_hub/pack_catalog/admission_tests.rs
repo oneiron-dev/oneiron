@@ -1968,5 +1968,57 @@ fn pack_update_runs_the_drift_ladder_on_saved_queries() -> Result<()> {
     assert!(error.contains("alice.tools.subject"), "{error}");
     // The query paused earlier keeps its own cause: this move did not touch it.
     assert_eq!(read(tag.query_ref)?.definition.lifecycle, tag_lifecycle);
+
+    // An update never applies a map that is not its own, nor a rewrite onto
+    // a predicate it drops: a query reading a predicate the new source keeps
+    // stays as it was.
+    let map_move = |from: &str, to: &str, predicate: &str, target: &str| {
+        crate::saved_query::put_pack_migration_map(
+            &vault,
+            &PackDrift {
+                from_pack_id: "alice.tools".to_owned(),
+                from_version: from.to_owned(),
+                to_pack_id: "alice.tools".to_owned(),
+                to_version: to.to_owned(),
+                affected_predicates: Vec::new(),
+            },
+            &PackMigrationMap {
+                rewrites: [(
+                    predicate.to_owned(),
+                    PackPredicateRewrite::Rename {
+                        to: target.to_owned(),
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            },
+        )
+    };
+    let install = |source: &PackSource, pin: &str, at: u64| -> Result<()> {
+        let pinned = HubRef::new(
+            reference.hub_id,
+            pin,
+            HubPin::ContentHash(source.content_hash().to_hex()),
+        )?;
+        let id = fetched_fixture(&vault, source, &pinned, &publisher, at)?;
+        let ask = vault.prepare_pack_install(id, &pinned, &publisher, &policy())?;
+        assert!(matches!(
+            vault.install_pack(&ask)?,
+            PackInstallDisposition::Installed(_)
+        ));
+        Ok(())
+    };
+    let other = reads("alice.tools.other")?;
+    map_move("2", "2", "alice.tools.other", "alice.tools.kept")?;
+    install(
+        &versioned(2, "\"alice.tools.other\", \"alice.tools.extra\"")?,
+        "pack/v2c",
+        6,
+    )?;
+    map_move("2", "3", "alice.tools.other", "alice.tools.extra")?;
+    install(&versioned(3, "\"alice.tools.other\"")?, "pack/v3", 7)?;
+    let kept = read(other.query_ref)?;
+    assert_eq!(kept.definition.filter, term("alice.tools.other"));
+    assert_eq!(kept.definition.lifecycle, SavedQueryLifecycle::Active);
     Ok(())
 }
