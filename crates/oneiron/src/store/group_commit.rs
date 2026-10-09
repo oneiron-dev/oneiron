@@ -10,16 +10,26 @@
 //! once and only then settles the members: no caller hears "committed" before
 //! the shared transaction is durable.
 //!
-//! A group closes at its size bound, at the end of its window, or as soon as
-//! no announced write is still on its way, so a lone writer never waits. Both
-//! bounds are learned-setting rows ([`GROUP_COMMIT_WINDOW_MS`],
-//! [`GROUP_COMMIT_MAX_WRITES`]) that the leader reads in the transaction it
-//! opens.
+//! A group takes every write already queued, in order, until it carries its
+//! size bound. When its queue runs empty it waits only while a write is
+//! announced as on its way, and only until its window, counted from when the
+//! group opened, has passed. With nothing announced it closes at once, so a
+//! lone writer never waits. The window bounds that idle wait, not how long a
+//! group stays open: a group whose queue never empties runs past its window
+//! until its size bound. Both bounds are learned-setting rows
+//! ([`GROUP_COMMIT_WINDOW_MS`], [`GROUP_COMMIT_MAX_WRITES`]) that the leader
+//! reads in the transaction it opens.
 //!
-//! A write that leaves a session-overlay segment installed holds that
-//! segment's permit until it commits the segment after the base commit, so the
-//! group closes right after it: no later member of the same group can wait on
-//! that permit.
+//! A member's answer, and whatever its calling thread holds, stay alive until
+//! the group commits, so no member may wait on another's. Only engine writes
+//! audited to hold nothing across the commit ([`Callback::Audited`]) share a
+//! group freely. A caller's opaque callback ([`Callback::Opaque`]) runs as a
+//! group of its own, as every write did before group commit: it joins no open
+//! group, so it never waits on what an earlier member's caller holds, and its
+//! group closes after it, so no later write waits on what its result carries.
+//! A write that leaves a session-overlay segment installed also closes its
+//! group: it holds that segment's permit until it commits the segment after
+//! the base commit.
 //!
 //! This is the store's existing single writer taking many rows per commit. It
 //! is not a lock: correctness is still LMDB's one write transaction, and a
@@ -41,6 +51,21 @@ use crate::learning_setting::{
 };
 
 use super::{Store, active_write_txn_depth};
+
+/// Whose closure a write runs, which decides whether its group may go on
+/// after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Callback {
+    /// Engine code audited to hold nothing across the shared commit: neither
+    /// its answer nor its caller keeps a lock or permit that another write's
+    /// closure takes. The group goes on after it.
+    Audited,
+    /// A caller's callback the engine cannot see into. Its answer and its
+    /// caller may hold what another member waits for, and its closure may wait
+    /// for what another member's caller holds, so it runs as a group of its
+    /// own.
+    Opaque,
+}
 
 /// What a member's closure does with the rows it staged.
 pub(crate) enum Rows<T, E> {
@@ -111,8 +136,8 @@ struct Waiting {
 }
 
 /// One queued logical write and its hand-offs with the leader.
-#[derive(Default)]
 struct Ticket {
+    callback: Callback,
     turn: Mutex<Turn>,
     changed: Condvar,
 }
@@ -217,8 +242,12 @@ impl GroupCommit {
         let deadline = opened + limits.window;
         let mut waiting = self.lock();
         loop {
-            if let Some(ticket) = waiting.queue.pop_front() {
-                return Some(ticket);
+            match waiting.queue.front() {
+                // An opaque callback joins no group: this one closes, and the
+                // hand-off makes it the next leader, alone.
+                Some(ticket) if ticket.callback == Callback::Opaque => return None,
+                Some(_) => return waiting.queue.pop_front(),
+                None => {}
             }
             let (keep_open, deadline) = self.keep_open(size, limits, (opened, deadline));
             let now = Instant::now();
@@ -272,6 +301,14 @@ impl GroupCommit {
 }
 
 impl Ticket {
+    fn new(callback: Callback) -> Self {
+        Self {
+            callback,
+            turn: Mutex::default(),
+            changed: Condvar::new(),
+        }
+    }
+
     fn lock(&self) -> MutexGuard<'_, Turn> {
         self.turn.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -347,12 +384,14 @@ impl Store {
     /// it leads, a nested one when it joins) and says through [`Rows`] whether
     /// its rows stay. The answer arrives only after the shared transaction
     /// committed. A panic in the closure drops its rows and resumes on the
-    /// caller's thread.
+    /// caller's thread. A [`Callback::Opaque`] write runs as a group of its
+    /// own.
     ///
     /// A thread already inside a write transaction keeps its own, as before.
     pub(crate) fn group_write<T, E>(
         &self,
         announced: Option<Announced<'_>>,
+        callback: Callback,
         write: impl FnOnce(&mut RwTxn<'_>) -> Rows<T, E>,
     ) -> std::result::Result<T, E>
     where
@@ -366,7 +405,7 @@ impl Store {
         let ticket = {
             let mut waiting = group.lock();
             if waiting.leading {
-                let ticket = Arc::new(Ticket::default());
+                let ticket = Arc::new(Ticket::new(callback));
                 waiting.queue.push_back(Arc::clone(&ticket));
                 group.arrival.notify_all();
                 Some(ticket)
@@ -377,21 +416,21 @@ impl Store {
         };
         drop(announced);
         let Some(ticket) = ticket else {
-            return self.lead(write);
+            return self.lead(callback, write);
         };
         match ticket.wait_for_turn() {
-            Assigned::Lead => self.lead(write),
+            Assigned::Lead => self.lead(callback, write),
             Assigned::Run(shared) => self.join(&ticket, shared, write),
         }
     }
 
-    /// [`Self::group_write`] for a write whose `Ok` keeps its rows and whose
-    /// `Err` drops them.
+    /// [`Self::group_write`] for an audited engine write whose `Ok` keeps its
+    /// rows and whose `Err` drops them.
     pub(crate) fn write_in_group<T>(
         &self,
         write: impl FnOnce(&mut RwTxn<'_>) -> crate::error::Result<T>,
     ) -> crate::error::Result<T> {
-        self.group_write(None, |txn| match write(txn) {
+        self.group_write(None, Callback::Audited, |txn| match write(txn) {
             Ok(value) => Rows::Commit(value),
             Err(err) => Rows::Discard(Err(err)),
         })
@@ -420,6 +459,7 @@ impl Store {
 
     fn lead<T, E>(
         &self,
+        callback: Callback,
         write: impl FnOnce(&mut RwTxn<'_>) -> Rows<T, E>,
     ) -> std::result::Result<T, E>
     where
@@ -453,7 +493,8 @@ impl Store {
         };
         let mut members = Vec::new();
         let mut kept = 1;
-        let mut closes = holds_postcommit_permit();
+        // An opaque leader runs alone (no member is ever opaque).
+        let mut closes = callback == Callback::Opaque || holds_postcommit_permit();
         while !closes && let Some(ticket) = group.next_member(1 + members.len(), &limits, opened) {
             let (joined, closed) = ticket.run(SharedTxn::lend(&mut shared));
             kept += usize::from(joined);
@@ -462,7 +503,10 @@ impl Store {
         }
         #[cfg(test)]
         group.hooks.before_commit(1 + members.len());
+        #[cfg(not(test))]
         let committed = shared.commit();
+        #[cfg(test)]
+        let committed = group.hooks.commit(shared);
         if committed.is_ok() {
             self.diagnostics.group_commit.record(kept as u64);
         }
@@ -565,8 +609,10 @@ fn replicate(err: &heed::Error) -> heed::Error {
 #[cfg(test)]
 pub(crate) mod hooks {
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::time::Duration;
+
+    use heed::RwTxn;
 
     /// How long a test may hold a group open waiting for its members.
     pub(super) const HOLD_OPEN_LIMIT: Duration = Duration::from_secs(30);
@@ -580,6 +626,8 @@ pub(crate) mod hooks {
         hold_until: AtomicUsize,
         /// Called with the number of writes that ran, just before a commit.
         before_commit: Mutex<Option<BeforeCommit>>,
+        /// Fails the next shared commit.
+        fail_commit: AtomicBool,
     }
 
     impl GroupCommitHooks {
@@ -594,6 +642,22 @@ pub(crate) mod hooks {
                 .before_commit
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Box::new(hook));
+        }
+
+        /// Makes the next shared commit fail the way a failed data sync does:
+        /// LMDB discards the transaction and the leader gets an I/O error.
+        pub(crate) fn fail_next_commit(&self) {
+            self.fail_commit.store(true, Ordering::Release);
+        }
+
+        pub(super) fn commit(&self, txn: RwTxn<'_>) -> heed::Result<()> {
+            if self.fail_commit.swap(false, Ordering::AcqRel) {
+                drop(txn);
+                return Err(heed::Error::Io(std::io::Error::other(
+                    "injected: the shared commit's data sync failed",
+                )));
+            }
+            txn.commit()
         }
 
         pub(super) fn take_hold(&self) -> usize {

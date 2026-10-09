@@ -41,10 +41,13 @@ pub const ATTRIBUTION_UNCLEAR_FLOOR: SettingSpec = SettingSpec {
     seed: 0.6,
 };
 
-/// How long the vault's single writer holds a group commit open for writes
-/// already on their way, in milliseconds (ARCH-0019 group-commit invariant,
-/// OF-536). A group never waits when no write is on its way, so a lone writer
-/// pays nothing; zero closes every group as soon as its queue is empty.
+/// How long a group commit at the vault's single writer may wait, with its
+/// queue empty, for writes already on their way, in milliseconds counted from
+/// when the group opened (ARCH-0019 group-commit invariant, OF-536). It bounds
+/// that idle wait only: writes already queued always join, up to
+/// [`GROUP_COMMIT_MAX_WRITES`]. A group never waits when no write is on its
+/// way, so a lone writer pays nothing; zero closes every group as soon as its
+/// queue is empty.
 pub const GROUP_COMMIT_WINDOW_MS: SettingSpec = SettingSpec {
     key: "group_commit_window_ms",
     min: 0.0,
@@ -200,7 +203,7 @@ pub fn put_setting_row(vault: &Vault, owner: &WriteActor, row: &SettingRow) -> R
         at: row.at,
         why: row.why.clone(),
     };
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         vault.verify_owner_write_actor_in_txn(wtxn, owner)?;
         SETTING.put(&vault.store, wtxn, &row_key(spec.key, row.mode), &stored)?;
         Ok(())
@@ -220,7 +223,7 @@ pub fn clear_setting_row(
     key: &str,
     mode: SettingMode,
 ) -> Result<()> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         vault.verify_owner_write_actor_in_txn(wtxn, owner)?;
         SETTING.delete(&vault.store, wtxn, &row_key(key, mode))?;
         Ok(())

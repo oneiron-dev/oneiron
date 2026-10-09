@@ -10,7 +10,9 @@ use crate::hnsw;
 use crate::maintain::MaintenanceBuilder;
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
-use crate::store::{EMBEDDING_TRANSFORM_KEY, MODEL_ID_KEY, Rows, validate_embedding_model_id};
+use crate::store::{
+    Callback, EMBEDDING_TRANSFORM_KEY, MODEL_ID_KEY, Rows, validate_embedding_model_id,
+};
 
 /// Cap for `sync_state_keys_with_prefix` to prevent unbounded allocation when
 /// a pathological prefix scans a very large sync_state database.
@@ -300,13 +302,12 @@ impl Vault {
     /// callers to return their own error type.
     ///
     /// The transaction commits on `Ok` return and rolls back on `Err`. It is
-    /// this write's share of the vault's group commit (OF-536): concurrent
-    /// writes commit together with one fsync, a failing one rolls back only
-    /// its own rows, and `Ok` returns once the shared commit is durable. The
-    /// closure runs on the calling thread. Its result is held until the whole
-    /// group commits, so it must not carry a lock or permit that another
-    /// write's closure takes (an installed session-overlay segment closes its
-    /// group instead).
+    /// this write's share of the vault's group commit (OF-536): it may join
+    /// writes already in progress and commit with them in one fsync, a
+    /// failing one rolls back only its own rows, and `Ok` returns once the
+    /// shared commit is durable. The closure runs on the calling thread. Its
+    /// result is held until that commit, so the group closes right after the
+    /// closure: no later write waits on a lock or permit the result carries.
     /// Explicit Dreamer approvals applied through [`Self::batch_in`] run VAD
     /// consolidation after commit. A postcommit error retains Approved; retry
     /// [`Self::consolidate_claim_vad_now`] to finish that work.
@@ -315,11 +316,48 @@ impl Vault {
         F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
         E: From<Error>,
     {
+        self.write_txn_door(Callback::Opaque, f)
+    }
+
+    /// [`Self::with_write_txn`] for the engine's own write paths, audited to
+    /// hold nothing across the group commit.
+    #[doc(hidden)]
+    pub fn with_write_txn_grouped<F, T>(&self, f: F) -> Result<T>
+    where
+        F: FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
+    {
+        self.try_with_write_txn_grouped(f)
+    }
+
+    /// [`Self::try_with_write_txn`] for the engine's own write paths, audited
+    /// to hold nothing across the group commit: the group goes on after this
+    /// write, so more writes share its fsync.
+    ///
+    /// The caller promises that neither the closure's result (`Ok` or `Err`)
+    /// nor anything the calling thread holds while it waits keeps a lock,
+    /// permit or guard that another write's closure takes. Those stay alive
+    /// until the whole group commits, and the group cannot commit while a
+    /// later member waits on them. A write that breaks the promise deadlocks
+    /// the vault's writer. Hosts use [`Self::try_with_write_txn`].
+    #[doc(hidden)]
+    pub fn try_with_write_txn_grouped<F, T, E>(&self, f: F) -> std::result::Result<T, E>
+    where
+        F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
+        E: From<Error>,
+    {
+        self.write_txn_door(Callback::Audited, f)
+    }
+
+    fn write_txn_door<F, T, E>(&self, callback: Callback, f: F) -> std::result::Result<T, E>
+    where
+        F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
+        E: From<Error>,
+    {
         // One logical write in the single writer's group commit: the closure
         // runs in a transaction of its own, and `Ok` comes back only once the
         // shared commit is durable.
         let (result, approved_vad_ids, proactivity_changed) =
-            self.store.group_write(None, |wtxn| {
+            self.store.group_write(None, callback, |wtxn| {
                 let (result, postcommit) = {
                     let _active_write_txn = crate::store::active_write_txn_guard();
                     let vad_scope = crate::batch::VadPostcommitScope::new(self, wtxn);

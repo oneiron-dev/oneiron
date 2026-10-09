@@ -3,11 +3,12 @@
 //! from the vault, after a reopen where a crash is involved.
 
 use std::io::Write;
-use std::sync::{Arc, Barrier};
+use std::sync::{Arc, Barrier, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::store::{Callback, Rows};
 use crate::temporal::TimeRange;
 use crate::{Vault, VaultConfig};
 
@@ -50,6 +51,27 @@ fn wait_until_leading(vault: &Vault) {
     }
 }
 
+fn wait_until_queued(vault: &Vault, writes: usize) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while vault.store.group_commit.lock().queue.len() < writes {
+        assert!(Instant::now() < deadline, "the write never queued");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// How long a check waits for a write that would hang if its group
+/// deadlocked.
+const DEADLOCK_BOUND: Duration = Duration::from_secs(20);
+
+/// Runs `write` on its own thread and returns the receiving end of its answer.
+fn spawn_write<T: Send + 'static>(write: impl FnOnce() -> T + Send + 'static) -> mpsc::Receiver<T> {
+    let (answer, received) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = answer.send(write());
+    });
+    received
+}
+
 #[derive(Debug, PartialEq)]
 enum Answer {
     Refused { writer: usize, write: usize },
@@ -62,9 +84,10 @@ impl From<Error> for Answer {
     }
 }
 
-/// e2e: N concurrent writers through both write doors. Every accepted write
-/// lands whole, every refused one leaves nothing, each caller gets exactly its
-/// own answer, and LMDB committed fewer transactions than there were writes.
+/// e2e: N concurrent writers through the batch terminal and the engine's
+/// caller-transaction door. Every accepted write lands whole, every refused
+/// one leaves nothing, each caller gets exactly its own answer, and LMDB
+/// committed fewer transactions than there were writes.
 #[test]
 fn concurrent_writers_land_with_their_own_outcomes_in_fewer_commits() {
     const WRITERS: usize = 24;
@@ -97,16 +120,18 @@ fn concurrent_writers_land_with_their_own_outcomes_in_fewer_commits() {
                                 .expect("batch commits");
                             accepted += 1;
                         }
-                        // The caller-transaction door.
+                        // The engine's caller-transaction door.
                         1 => {
                             vault
-                                .with_write_txn(|txn| put_rows(vault.batch_in(), &ids).apply(txn))
+                                .with_write_txn_grouped(|txn| {
+                                    put_rows(vault.batch_in(), &ids).apply(txn)
+                                })
                                 .expect("write commits");
                             accepted += 1;
                         }
                         // Stages its rows, then refuses inside the transaction.
                         _ => {
-                            let answer = vault.try_with_write_txn(|txn| {
+                            let answer = vault.try_with_write_txn_grouped(|txn| {
                                 put_rows(vault.batch_in(), &ids).apply(txn)?;
                                 Err::<(), _>(Answer::Refused { writer, write })
                             });
@@ -162,7 +187,7 @@ fn refused_and_panicking_members_leave_their_group_committed() {
     let refused = {
         let vault = Arc::clone(&vault);
         std::thread::spawn(move || {
-            vault.try_with_write_txn(|txn| {
+            vault.try_with_write_txn_grouped(|txn| {
                 put_rows(vault.batch_in(), &rows(1, 0)).apply(txn)?;
                 Err::<(), _>(Answer::Refused {
                     writer: 1,
@@ -174,7 +199,7 @@ fn refused_and_panicking_members_leave_their_group_committed() {
     let panicking = {
         let vault = Arc::clone(&vault);
         std::thread::spawn(move || {
-            vault.with_write_txn(|txn| -> crate::error::Result<()> {
+            vault.with_write_txn_grouped(|txn| -> crate::error::Result<()> {
                 put_rows(vault.batch_in(), &rows(2, 0)).apply(txn)?;
                 panic!("a member panics after staging its rows");
             })
@@ -217,6 +242,283 @@ fn refused_and_panicking_members_leave_their_group_committed() {
             stats.writes - stats_before.writes
         ),
         (1, 2),
+        "{stats:?}"
+    );
+}
+
+/// The engine's audited door keeps coalescing: concurrent writes through it
+/// share one durable commit. A caller's opaque callbacks, with the same
+/// writes, each run as a group of their own.
+#[test]
+fn audited_writes_share_a_commit_and_opaque_callbacks_run_alone() {
+    const WRITES: usize = 6;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::default()).expect("open vault"));
+    for (round, callback) in [Callback::Audited, Callback::Opaque]
+        .into_iter()
+        .enumerate()
+    {
+        let before = lmdb_commits(&vault);
+        let stats_before = vault.diagnostics().group_commit_snapshot();
+        vault.store.group_commit.hooks.hold_next_group_until(WRITES);
+        let start = Arc::new(Barrier::new(WRITES));
+        let writers: Vec<_> = (0..WRITES)
+            .map(|writer| {
+                let (vault, start) = (Arc::clone(&vault), Arc::clone(&start));
+                std::thread::spawn(move || {
+                    let ids = rows(writer, round);
+                    start.wait();
+                    match callback {
+                        Callback::Audited => vault.with_write_txn_grouped(|txn| {
+                            put_rows(vault.batch_in(), &ids).apply(txn)
+                        }),
+                        Callback::Opaque => {
+                            vault.with_write_txn(|txn| put_rows(vault.batch_in(), &ids).apply(txn))
+                        }
+                    }
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().expect("writer").expect("write commits");
+        }
+        for writer in 0..WRITES {
+            assert_eq!(
+                present(&vault, &rows(writer, round)),
+                3,
+                "{callback:?} {writer}"
+            );
+        }
+        let commits = lmdb_commits(&vault) - before;
+        let stats = vault.diagnostics().group_commit_snapshot();
+        let groups = stats.groups - stats_before.groups;
+        match callback {
+            Callback::Audited => assert_eq!((commits, groups), (1, 1), "{stats:?}"),
+            Callback::Opaque => assert_eq!((commits, groups), (WRITES, WRITES as u64), "{stats:?}"),
+        }
+    }
+}
+
+/// A caller's callback may return a permit that another write's closure
+/// takes. Its group closes after it, so its caller gets its answer, drops
+/// the permit, and the other write goes on. In a shared group the other
+/// write would wait on the permit while the permit waited on the group's
+/// commit.
+#[test]
+fn opaque_callback_returning_a_permit_never_deadlocks_its_group() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::default()).expect("open vault"));
+    let permit = Arc::new(Mutex::new(()));
+    let before = lmdb_commits(&vault);
+    vault.store.group_commit.hooks.hold_next_group_until(3);
+
+    let leader = {
+        let vault = Arc::clone(&vault);
+        spawn_write(move || put_rows(vault.batch(), &rows(0, 0)).commit())
+    };
+    wait_until_leading(&vault);
+    let (holding, held) = mpsc::channel();
+    let holder = {
+        let (vault, permit) = (Arc::clone(&vault), Arc::clone(&permit));
+        spawn_write(move || {
+            let guard = vault.try_with_write_txn(|txn| {
+                put_rows(vault.batch_in(), &rows(1, 0)).apply(txn)?;
+                let guard = permit.lock().expect("permit");
+                holding.send(()).expect("report the permit");
+                Ok::<_, Error>(guard)
+            })?;
+            drop(guard);
+            Ok::<(), Error>(())
+        })
+    };
+    held.recv_timeout(DEADLOCK_BOUND).expect("the callback ran");
+    let taker = {
+        let (vault, permit) = (Arc::clone(&vault), Arc::clone(&permit));
+        spawn_write(move || {
+            vault.with_write_txn_grouped(|txn| {
+                let _permit = permit.lock().expect("permit");
+                put_rows(vault.batch_in(), &rows(2, 0)).apply(txn)
+            })
+        })
+    };
+
+    for (name, answer) in [("leader", leader), ("holder", holder), ("taker", taker)] {
+        answer
+            .recv_timeout(DEADLOCK_BOUND)
+            .unwrap_or_else(|_| panic!("the {name} deadlocked"))
+            .unwrap_or_else(|err| panic!("the {name} failed: {err}"));
+    }
+    for writer in 0..3 {
+        assert_eq!(present(&vault, &rows(writer, 0)), 3, "writer {writer}");
+    }
+    assert_eq!(
+        lmdb_commits(&vault) - before,
+        3,
+        "each in a group of its own"
+    );
+}
+
+/// A caller's callback may wait on a lock that an earlier writer's caller
+/// holds until its write returns. The callback joins no open group, so that
+/// write commits and returns first. Inside the same group the callback would
+/// wait on the lock while the lock waited on the group's commit.
+#[test]
+fn opaque_callback_never_joins_a_group_whose_caller_holds_its_lock() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::default()).expect("open vault"));
+    let lock = Arc::new(Mutex::new(()));
+    vault.store.group_commit.hooks.hold_next_group_until(2);
+
+    let (holding, held) = mpsc::channel();
+    let holder = {
+        let (vault, lock) = (Arc::clone(&vault), Arc::clone(&lock));
+        spawn_write(move || {
+            let _held = lock.lock().expect("lock");
+            holding.send(()).expect("report the lock");
+            put_rows(vault.batch(), &rows(0, 0)).commit()
+        })
+    };
+    held.recv_timeout(DEADLOCK_BOUND).expect("the lock is held");
+    wait_until_leading(&vault);
+    let callback = {
+        let (vault, lock) = (Arc::clone(&vault), Arc::clone(&lock));
+        spawn_write(move || {
+            vault.with_write_txn(|txn| {
+                let _lock = lock.lock().expect("lock");
+                put_rows(vault.batch_in(), &rows(1, 0)).apply(txn)
+            })
+        })
+    };
+
+    for (name, answer) in [("holder", holder), ("callback", callback)] {
+        answer
+            .recv_timeout(DEADLOCK_BOUND)
+            .unwrap_or_else(|_| panic!("the {name} deadlocked"))
+            .unwrap_or_else(|err| panic!("the {name} failed: {err}"));
+    }
+    assert_eq!(present(&vault, &rows(0, 0)), 3);
+    assert_eq!(present(&vault, &rows(1, 0)), 3);
+}
+
+/// A shared commit that fails reaches every member as that failure: the
+/// leader, a kept write, a kept refusal receipt and a success read from an
+/// earlier member's rows all get the commit's error, no caller hears success,
+/// none of the group's rows survive, and the write queued behind it leads the
+/// next group and commits.
+#[test]
+fn failed_shared_commit_fails_every_member_and_the_next_group_commits() {
+    const GROUP: usize = 4;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::default()).expect("open vault"));
+    let before = lmdb_commits(&vault);
+    let stats_before = vault.diagnostics().group_commit_snapshot();
+    let (staged, group_staged) = mpsc::channel();
+    let (release, released) = mpsc::channel::<()>();
+    let (staged, released) = (Mutex::new(staged), Mutex::new(released));
+    vault.store.group_commit.hooks.on_before_commit(move |ran| {
+        if ran == GROUP {
+            let _ = staged.lock().expect("hook").send(());
+            let _ = released.lock().expect("hook").recv_timeout(DEADLOCK_BOUND);
+        }
+    });
+    vault.store.group_commit.hooks.fail_next_commit();
+    vault.store.group_commit.hooks.hold_next_group_until(GROUP);
+
+    let leader = {
+        let vault = Arc::clone(&vault);
+        spawn_write(move || put_rows(vault.batch(), &rows(0, 0)).commit())
+    };
+    wait_until_leading(&vault);
+    let kept = {
+        let vault = Arc::clone(&vault);
+        spawn_write(move || {
+            vault.with_write_txn_grouped(|txn| put_rows(vault.batch_in(), &rows(1, 0)).apply(txn))
+        })
+    };
+    let receipt = {
+        let vault = Arc::clone(&vault);
+        spawn_write(move || {
+            vault
+                .store
+                .group_write(None, Callback::Audited, |txn| -> Rows<(), Answer> {
+                    if let Err(err) = put_rows(vault.batch_in(), &rows(2, 0)).apply(txn) {
+                        return Rows::Discard(Err(Answer::from(err)));
+                    }
+                    Rows::Refuse(Answer::Refused {
+                        writer: 2,
+                        write: 0,
+                    })
+                })
+        })
+    };
+    let reader = {
+        let vault = Arc::clone(&vault);
+        spawn_write(move || {
+            vault
+                .store
+                .group_write(None, Callback::Audited, |txn| -> Rows<(), Answer> {
+                    let staged_by_leader = vault
+                        .store
+                        .entities
+                        .get(txn, rows(0, 0)[0].as_bytes())
+                        .map(|row| row.is_some())
+                        .map_err(|err| Answer::from(Error::from(err)));
+                    Rows::Discard(staged_by_leader.and_then(|seen| {
+                        assert!(seen, "a member reads the rows the leader staged");
+                        Ok(())
+                    }))
+                })
+        })
+    };
+    group_staged
+        .recv_timeout(DEADLOCK_BOUND)
+        .expect("the group staged every write");
+    let next = {
+        let vault = Arc::clone(&vault);
+        spawn_write(move || put_rows(vault.batch(), &rows(4, 0)).commit())
+    };
+    wait_until_queued(&vault, 1);
+    release.send(()).expect("release the commit");
+
+    let failed = |name: &str, answer: Result<(), Answer>| match answer {
+        Err(Answer::Engine(err)) if err.contains("injected") => {}
+        other => panic!("the {name} must get the commit's error, got {other:?}"),
+    };
+    let answer = |name: &str, received: &mpsc::Receiver<Result<(), Error>>| {
+        received
+            .recv_timeout(DEADLOCK_BOUND)
+            .unwrap_or_else(|_| panic!("the {name} never answered"))
+            .map_err(Answer::from)
+    };
+    failed("leader", answer("leader", &leader));
+    failed("kept write", answer("kept write", &kept));
+    for (name, received) in [("refusal receipt", receipt), ("reader", reader)] {
+        failed(
+            name,
+            received.recv_timeout(DEADLOCK_BOUND).expect("answered"),
+        );
+    }
+    for writer in 0..GROUP {
+        assert_eq!(
+            present(&vault, &rows(writer, 0)),
+            0,
+            "failed-group write {writer}"
+        );
+    }
+    answer("next write", &next).expect("the next group commits");
+    assert_eq!(present(&vault, &rows(4, 0)), 3);
+    assert_eq!(
+        lmdb_commits(&vault) - before,
+        1,
+        "only the next group committed"
+    );
+    let stats = vault.diagnostics().group_commit_snapshot();
+    assert_eq!(
+        (
+            stats.groups - stats_before.groups,
+            stats.writes - stats_before.writes
+        ),
+        (1, 1),
         "{stats:?}"
     );
 }
