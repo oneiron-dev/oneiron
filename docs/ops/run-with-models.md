@@ -90,9 +90,10 @@ carries `max_tokens`, 4096 when nothing else names it.
 
 A reply may name its model differently from the request (a proxy that strips a
 login prefix, say). The answer is kept, and the receipt records both names under
-`usage.raw_provider` (`requested_model`, `reported_model`, `rung`). `rung` is the
-answering rung's place in the role's ladder as configured, counted from 0, the
-same numbering `GET /v1/ai/status` lists.
+`usage.raw_provider` (`requested_model`, `reported_model`, `rung`,
+`failed_rungs`). `rung` is the answering rung's place in the role's ladder as
+configured, counted from 0, the same numbering `GET /v1/ai/status` lists;
+`failed_rungs` counts the rungs that were tried and failed before it.
 
 ## 3. Let the Dreamer work
 
@@ -196,8 +197,12 @@ budget_units = 10000000      # optional; process-lifetime meter for its model ca
 ```
 
 Each step's call is admitted like a chat turn, against the vault's model
-manifest and route, and spends from `budget_units`. A run's clock is the time
-it started, and a run resumed after a restart keeps it. A vault with a model
+manifest and route, and spends from `budget_units`: the tokens the reply
+reports, or one call's 8000-unit reservation when it reports none, plus one
+reservation for each rung that failed before it. A call that every rung failed
+spends one reservation per rung. A run's clock and config are saved when it
+starts, so a run resumed after a restart keeps its clock and refuses another
+task. A vault with a model
 manifest needs a seat judge this server does not bind yet, so its runs are
 refused with `code_run_binding_failed`.
 

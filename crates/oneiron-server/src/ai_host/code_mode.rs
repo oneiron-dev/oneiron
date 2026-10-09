@@ -13,13 +13,13 @@ use oneiron::engine_executor::{
 use oneiron::llm::BudgetDenied;
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmError,
-    LlmGenerateFuture, LlmRequest, LlmStreamResult, ModelTierRef, Vault,
+    LlmGenerateFuture, LlmRequest, LlmStreamResult, LlmUsage, ModelTierRef, Vault,
 };
 
 use super::CHAT_ROLE;
 use crate::config::models::ModelsConfig;
 use crate::mcp::McpQuickJsProvider;
-use crate::models::ModelRuntime;
+use crate::models::{FAILED_RUNGS_KEY, ModelRuntime};
 use crate::server::SyncServer;
 
 /// Binds `execute_code` on `server` when `models` asks for it and the
@@ -82,6 +82,7 @@ pub(super) async fn bind(
         vault: Arc::clone(server.vault()),
         models: Arc::clone(runtime),
         guard,
+        rungs: seat.rung_count as u64,
     });
     let config = EngineExecutorConfig {
         // Each run's id and task replace these.
@@ -111,6 +112,29 @@ struct CodeModeBackend {
     vault: Arc<Vault>,
     models: Arc<ModelRuntime>,
     guard: BudgetGuard,
+    /// How many rungs the seat's ladder tries; a failed call tried them all.
+    rungs: u64,
+}
+
+/// What one provider call costs on the meter when it reports no usage: the
+/// reservation every call is admitted against.
+const CALL_FLOOR_UNITS: u64 = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
+
+/// An answer's charge: its tokens, or the call floor when it reports none,
+/// plus the call floor for each rung that failed before it.
+fn answered_units(usage: &LlmUsage) -> u64 {
+    let tokens = usage.input.total.saturating_add(usage.output.total);
+    let failed = usage
+        .raw_provider
+        .get(FAILED_RUNGS_KEY)
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let answer = if tokens == 0 {
+        CALL_FLOOR_UNITS
+    } else {
+        tokens
+    };
+    answer.saturating_add(failed.saturating_mul(CALL_FLOOR_UNITS))
 }
 
 impl LlmBackend for CodeModeBackend {
@@ -126,11 +150,14 @@ impl LlmBackend for CodeModeBackend {
             let lease = self.guard.admit_for_request(&call.request)?.lease;
             match call.backend.generate(call.request, &lease).await {
                 Ok(response) => {
-                    self.guard.settle_per_call(&lease, &response.usage)?;
+                    self.guard
+                        .settle_usage(&lease, answered_units(&response.usage))?;
                     Ok(response)
                 }
                 Err(error) => {
-                    let _ = self.guard.settle_reserved(&lease);
+                    let _ = self
+                        .guard
+                        .settle_usage(&lease, self.rungs.saturating_mul(CALL_FLOOR_UNITS));
                     Err(error)
                 }
             }

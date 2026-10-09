@@ -715,25 +715,35 @@ async fn quickjs_code_mode_cannot_witness_a_users_words() {
     }
 }
 
-/// Done means (U16): the server the serve path builds serves `execute_code`.
-/// With `[models]` filling the generative seat and `[models.code_mode]` naming
-/// a prompt package, `AiHost::attach` binds the checked-in component; a run's
-/// model step is that seat's model, and its `self.memory.recall` reads back a
-/// phrase saved in the vault. The run's clock is the time it started.
-#[tokio::test]
-async fn the_served_vault_runs_execute_code_on_its_generative_seat() {
-    let fake =
-        crate::fake_llm::FakeLlm::start(vec![crate::fake_llm::Reply::text(CODE_MODE_RECALL)], None)
-            .await;
+/// `[models]` filling the generative seat as `seat` says, on the local fake
+/// model at `base_url`, and serving code mode from the workspace's test
+/// prompt package on a meter of `budget_units`.
+fn code_mode_models(
+    base_url: &str,
+    seat: &str,
+    budget_units: u64,
+) -> crate::config::models::ModelsConfig {
     let prompts = oneiron::prompt::workspace_test_prompt_package_root().unwrap();
-    let models = crate::ai_host::test_support::models(
-        &fake.base_url,
-        &format!(
-            "[dreamer]\nenabled = false\n[workflows]\nenabled = false\n\
-             [code_mode]\nprompt_package = {:?}\n",
-            prompts.display().to_string()
-        ),
-    );
+    crate::ai_host::test_support::models_toml(&format!(
+        "{seat}\n[dreamer]\nenabled = false\n[workflows]\nenabled = false\n\
+         [code_mode]\nprompt_package = {:?}\nbudget_units = {budget_units}\n\
+         [providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{base_url}\"\n",
+        prompts.display().to_string(),
+    ))
+}
+
+/// A vault served as the serve path builds it, its AI host attached from
+/// `models`, with `credential` registered for the human `actor`.
+async fn serve_with_models(
+    models: &crate::config::models::ModelsConfig,
+    credential: &str,
+    actor: oneiron::EntityId,
+) -> (
+    tempfile::TempDir,
+    Arc<oneiron::Vault>,
+    Arc<SyncServer>,
+    crate::ai_host::AiHost,
+) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
     let server = SyncServer::new(
@@ -744,11 +754,46 @@ async fn the_served_vault_runs_execute_code_on_its_generative_seat() {
         },
     )
     .unwrap();
-    let (server, _host) = crate::ai_host::AiHost::attach(server, Some(&models)).await;
+    let (server, host) = crate::ai_host::AiHost::attach(server, Some(models)).await;
     let server = Arc::new(server);
+    register_mcp_actor(&server, credential, actor, oneiron::EdgeActorClass::Human).await;
+    (dir, vault, server, host)
+}
+
+/// One `execute_code` call by `actor`, its run named `run_ref`.
+async fn execute_code(
+    server: &Arc<SyncServer>,
+    credential: &str,
+    actor: oneiron::EntityId,
+    run_ref: &str,
+    task: &str,
+) -> Value {
+    let args = mcp_merge_args(
+        mcp_endpoint_envelope(actor, "read_memory"),
+        json!({"run_ref": run_ref, "task": task}),
+    );
+    route_json(
+        server.clone(),
+        mcp_endpoint_call_request("/mcp", credential, run_ref, "execute_code", args),
+    )
+    .await
+    .1
+}
+
+/// Done means (U16): the server the serve path builds serves `execute_code`.
+/// With `[models]` filling the generative seat and `[models.code_mode]` naming
+/// a prompt package, `AiHost::attach` binds the checked-in component; a run's
+/// model step is that seat's model, and its `self.memory.recall` reads back a
+/// phrase saved in the vault. The run's clock is the time it started.
+#[tokio::test]
+async fn the_served_vault_runs_execute_code_on_its_generative_seat() {
+    let fake =
+        crate::fake_llm::FakeLlm::start(vec![crate::fake_llm::Reply::text(CODE_MODE_RECALL)], None)
+            .await;
+    let models = code_mode_models(&fake.base_url, "default = \"local:test-model\"", 10_000_000);
     let actor = seeded_test_entity_id(0x0024_6581);
     let credential = "served-code-mode";
-    register_mcp_actor(&server, credential, actor, oneiron::EdgeActorClass::Human).await;
+    let (_dir, vault, server, _host) = serve_with_models(&models, credential, actor).await;
     let (_, listing) =
         route_json(server.clone(), mcp_list_request("/mcp", credential, "list")).await;
     assert!(
@@ -764,13 +809,12 @@ async fn the_served_vault_runs_execute_code_on_its_generative_seat() {
     .await;
 
     let started = vault.now_recorded_at() * 1000;
-    let args = mcp_merge_args(
-        mcp_endpoint_envelope(actor, "read_memory"),
-        json!({"run_ref": "served-recall", "task": "recall the heron lantern"}),
-    );
-    let (_, body) = route_json(
-        server.clone(),
-        mcp_endpoint_call_request("/mcp", credential, "recall", "execute_code", args),
+    let body = execute_code(
+        &server,
+        credential,
+        actor,
+        "served-recall",
+        "recall the heron lantern",
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
@@ -791,4 +835,81 @@ async fn the_served_vault_runs_execute_code_on_its_generative_seat() {
         (started..=vault.now_recorded_at() * 1000).contains(&clock),
         "{clock}"
     );
+}
+
+const CODE_MODE_DONE: &str = "finish('done');";
+
+/// Runs `execute_code` twice on fresh runs against a fake model scripted with
+/// `replies`, code mode's meter `budget_units` and the generative seat's
+/// ladder `rungs`. Returns how many provider requests the fake saw after the
+/// first run and after the second.
+async fn provider_requests_across_two_runs(
+    replies: Vec<crate::fake_llm::Reply>,
+    budget_units: u64,
+    rungs: &str,
+) -> (usize, usize) {
+    let fake = crate::fake_llm::FakeLlm::start(replies, None).await;
+    let models = code_mode_models(
+        &fake.base_url,
+        &format!("[roles.generative_reasoner]\nrungs = [{rungs}]"),
+        budget_units,
+    );
+    let actor = seeded_test_entity_id(0x0024_6591);
+    let credential = "metered-code-mode";
+    let (_dir, _vault, server, _host) = serve_with_models(&models, credential, actor).await;
+    execute_code(&server, credential, actor, "metered-1", "finish").await;
+    let first = fake.seen().len();
+    execute_code(&server, credential, actor, "metered-2", "finish").await;
+    (first, fake.seen().len())
+}
+
+/// Review repro (Astra R7, #1338): a code-mode reply that reports no usage
+/// is charged one call's reservation, never nothing. With a meter of exactly
+/// one reservation, the second run's model call never reaches the provider.
+#[tokio::test]
+async fn a_code_mode_reply_without_usage_still_spends_the_meter() {
+    let no_usage = || crate::fake_llm::Reply::NoUsage {
+        deltas: vec![CODE_MODE_DONE.to_owned()],
+        model: "fake-model".to_owned(),
+    };
+    let (first, second) = provider_requests_across_two_runs(
+        vec![no_usage(), no_usage()],
+        oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS,
+        "{ model = \"local:test-model\" }",
+    )
+    .await;
+    assert_eq!((first, second), (1, 1));
+}
+
+/// Review repro (Astra R6, #1338): a rung that fails before another answers
+/// was a provider call too, charged one reservation; a call every rung failed
+/// is charged one per rung. With a meter of two reservations, either first
+/// run leaves too little for the second run's call.
+#[tokio::test]
+async fn failed_rungs_spend_code_modes_meter() {
+    use crate::fake_llm::Reply;
+    let two_rungs = "{ model = \"local:first\" }, { model = \"local:second\" }";
+    let budget = 2 * oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
+    let fell_through = provider_requests_across_two_runs(
+        vec![
+            Reply::Status(500),
+            Reply::text(CODE_MODE_DONE),
+            Reply::text(CODE_MODE_DONE),
+        ],
+        budget,
+        two_rungs,
+    )
+    .await;
+    assert_eq!(fell_through, (2, 2), "the answering rung's run, then none");
+    let all_failed = provider_requests_across_two_runs(
+        vec![
+            Reply::Status(500),
+            Reply::Status(500),
+            Reply::text(CODE_MODE_DONE),
+        ],
+        budget,
+        two_rungs,
+    )
+    .await;
+    assert_eq!(all_failed, (2, 2), "the failed run, then none");
 }
