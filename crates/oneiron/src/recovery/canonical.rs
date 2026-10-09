@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::document::{self, CanonicalDocument, CanonicalHead, CanonicalHeadMove};
 use super::validation;
 use super::{decode_recovery_artifact, encode_recovery_artifact};
-use crate::deletion::{HARD_DELETE_MARKER, PENDING_TOMBSTONE, ROW_DELETION_FENCE};
+use crate::deletion::{HARD_DELETE_MARKER, PENDING_TOMBSTONE};
 use crate::error::{ArtifactError, Error, Result};
 use crate::side_table::HexId;
 use crate::{EntityId, Vault};
@@ -324,14 +324,20 @@ pub fn capture_canonical_window(
     // A row this vault fenced as deleted, whose tombstone the window no longer
     // holds, was a delete a peer withdrew. A soft tombstone cannot be rebuilt
     // faithfully, and exporting the row would make it live wherever the
-    // artifact lands, so the snapshot is refused.
+    // artifact lands, so the snapshot is refused. The stored row decides, as
+    // on every read: a delete-protected record stays live under a fence a
+    // peer's tombstone planted before it arrived.
     for row in &snapshot.entity_blobs {
-        if !snapshot
+        if snapshot
             .tombstones
             .iter()
             .any(|tombstone| tombstone.id == row.id)
-            && ROW_DELETION_FENCE.contains(&vault.store, &txn, &HexId(id(row.id)?))?
         {
+            continue;
+        }
+        let entity = id(row.id)?;
+        let stored = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &entity)?;
+        if crate::deletion::row_deletion_marked(&vault.store, &txn, &entity, stored.as_deref())? {
             return Err(invalid("deleted row without its tombstone"));
         }
     }
