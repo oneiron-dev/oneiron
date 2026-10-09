@@ -3,7 +3,7 @@
 //! Every provider kind is reached over HTTP through the matching adapter
 //! crate (`oneiron-llm-openai` for OpenAI-compatible and local servers,
 //! `oneiron-llm-anthropic` for Anthropic-compatible ones). Each role's ladder
-//! becomes a [`LadderBackend`] behind one seat model id, so the engine pins a
+//! becomes a `LadderBackend` behind one seat model id, so the engine pins a
 //! single identity while the ladder falls back across rungs.
 //!
 //! Building never fails the server: a provider that cannot start (its key

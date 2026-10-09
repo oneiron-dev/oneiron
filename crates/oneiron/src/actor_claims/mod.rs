@@ -107,7 +107,7 @@ pub use self::write::{project_actor_claims_from_judgments, skill_fit_for, write_
 pub(crate) use self::distill::register_session_end_distill_in_txn;
 pub(crate) use self::rows::edit_cost_scope;
 pub(crate) use self::validate::{edit_cost_scope_name, validate_actor_claim_structure};
-pub(crate) use self::write::require_actor_entity;
+pub(crate) use self::write::{ground_actor_claim, require_actor_entity, write_actor_claim_in_txn};
 
 use crate::error::Error;
 
