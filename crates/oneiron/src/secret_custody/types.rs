@@ -290,6 +290,34 @@ impl SecretCustodyRecord {
     pub fn manifest_ref(&self) -> &str {
         &self.manifest_ref
     }
+
+    /// An active custody-portable record from outside any manifest flow, for
+    /// out-of-crate tests to register: the value field has no public
+    /// constructor, and no door outside the crate registers a record yet.
+    #[cfg(feature = "test-support")]
+    #[must_use]
+    pub fn for_test(
+        name: &str,
+        value: &[u8],
+        bindings: Vec<SecretBinding>,
+        registered_at: u64,
+    ) -> Self {
+        Self {
+            schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
+            name: name.to_owned(),
+            class: CustodyClass::CustodyPortable,
+            device_only: false,
+            value_bytes: value.to_vec(),
+            status: SecretCustodyStatus::Active,
+            registered_at,
+            rotated_at: None,
+            rotation_generation: 0,
+            bindings,
+            manifest_ref: String::new(),
+            declared_paths: Vec::new(),
+            policy_floor_snapshot: SecretCustodyFloor::default(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

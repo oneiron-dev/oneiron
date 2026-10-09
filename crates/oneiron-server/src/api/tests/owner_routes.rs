@@ -4,7 +4,7 @@ use crate::owner::schedule::OwnerHost;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 
 /// The vault's embedded owner, holding an unattenuated human slip.
-fn owner_recipe(server: &SyncServer) -> String {
+pub(super) fn owner_recipe(server: &SyncServer) -> String {
     let owner = server.vault().ensure_embedded_owner_actor().unwrap();
     test_bearer(&format!(
         "principal_ref={};actor_class=human",
@@ -28,7 +28,7 @@ fn person(server: &SyncServer, body: &[u8]) -> oneiron::EntityId {
 }
 
 /// Every credential that is not the live human owner's own full slip.
-fn refused_recipes(server: &SyncServer) -> Vec<String> {
+pub(super) fn refused_recipes(server: &SyncServer) -> Vec<String> {
     let owner = server
         .vault()
         .ensure_embedded_owner_actor()
@@ -51,7 +51,7 @@ fn refused_recipes(server: &SyncServer) -> Vec<String> {
     ]
 }
 
-async fn call(
+pub(super) async fn call(
     server: &Arc<SyncServer>,
     method: &str,
     path: &str,

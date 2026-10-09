@@ -7,10 +7,12 @@
 //! owner acts once and the engine writes the receipt.
 
 pub(crate) mod backup;
+pub(crate) mod healer;
 pub(crate) mod imports;
 pub(crate) mod location;
 pub(crate) mod runs;
 pub(crate) mod schedule;
+pub(crate) mod secrets;
 pub(crate) mod stamp;
 
 use oneiron::consent::AuthenticatedOwner;

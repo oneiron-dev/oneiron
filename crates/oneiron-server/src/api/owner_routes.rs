@@ -29,7 +29,7 @@ use super::{json_payload, query_params};
 use crate::auth::CoreAuth;
 use crate::error::{ApiError, ApiErrorDetails, EnvelopedApiError};
 use crate::owner::schedule::OwnerHost;
-use crate::owner::{OwnerError, backup, imports, location, runs};
+use crate::owner::{OwnerError, backup, healer, imports, location, runs, secrets};
 use crate::server::SyncServer;
 
 type OwnerReply<T> = Result<Json<T>, EnvelopedApiError>;
@@ -40,6 +40,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/backups", get(list_backups).post(take_backup))
         .route("/backups/rehearse", post(rehearse_backup))
         .route("/secret-scan", get(secret_scan).post(set_secret_scan))
+        .route("/secrets/rotate", post(rotate_secret))
+        .route("/healer/oversight", get(healer_oversight))
+        .route("/healer/failures", get(healer_failures))
+        .route("/healer/failures/drill", get(drill_failure))
         .route("/imports/preview", post(preview_import))
         .route("/imports/approve", post(approve_import))
         .route("/imports/decline", post(decline_import))
@@ -222,6 +226,48 @@ async fn set_secret_scan(
     })
     .await?;
     Ok(Json(receipt))
+}
+
+async fn rotate_secret(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<secrets::RotateSecret>, JsonRejection>,
+) -> OwnerReply<secrets::Rotated> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let rotated = blocking(move || secrets::rotate(server.vault(), &owner, request)).await?;
+    Ok(Json(rotated))
+}
+
+async fn healer_oversight(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<Vec<healer::OversightRead>> {
+    owner(&auth, &server)?;
+    Ok(Json(
+        blocking(move || healer::oversight(server.vault())).await?,
+    ))
+}
+
+async fn healer_failures(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<Vec<healer::FailureGroup>> {
+    owner(&auth, &server)?;
+    Ok(Json(
+        blocking(move || healer::failure_groups(server.vault())).await?,
+    ))
+}
+
+async fn drill_failure(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<healer::DrillQuery>, QueryRejection>,
+) -> OwnerReply<healer::FailureDrill> {
+    let owner = owner(&auth, &server)?;
+    let query = query_params(query)?;
+    let drill = blocking(move || healer::drill(server.vault(), &owner, query)).await?;
+    Ok(Json(drill))
 }
 
 async fn preview_import(

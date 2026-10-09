@@ -39,6 +39,13 @@ pub enum OversightKind {
     ReviewLatency,
     EscalationRate,
 }
+/// The three receipts, in the order builders read them.
+const KINDS: [OversightKind; 3] = [
+    OversightKind::Coverage,
+    OversightKind::ReviewLatency,
+    OversightKind::EscalationRate,
+];
+
 impl OversightKind {
     fn tag(self) -> u8 {
         match self {
@@ -180,11 +187,7 @@ impl Vault {
                 }
             }
             let mut receipts = Vec::new();
-            for kind in [
-                OversightKind::Coverage,
-                OversightKind::ReviewLatency,
-                OversightKind::EscalationRate,
-            ] {
+            for kind in KINDS {
                 let counts = OversightCounts {
                     kind,
                     ..counts.clone()
@@ -203,5 +206,32 @@ impl Vault {
             }
             Ok(receipts)
         })
+    }
+    /// The latest receipts [`Vault::emit_healer_oversight`] stored, coverage
+    /// first, then latency, then escalation rate, each paired with whether it
+    /// verifies against this vault device's own signing key. Empty until the
+    /// host first emits.
+    pub fn healer_oversight_receipts(&self) -> Result<Vec<(OversightReceipt, bool)>> {
+        let stored = {
+            let txn = self.store.env.read_txn()?;
+            KINDS
+                .into_iter()
+                .filter_map(|kind| RECEIPT.get(&self.store, &txn, &[kind.tag()]).transpose())
+                .collect::<Result<Vec<_>>>()?
+        };
+        if stored.is_empty() {
+            return Ok(Vec::new());
+        }
+        let signer = crate::identity::ensure_device_identity(self)?
+            .signing_key
+            .verifying_key()
+            .to_bytes();
+        Ok(stored
+            .into_iter()
+            .map(|receipt| {
+                let verified = receipt.verify(&signer);
+                (receipt, verified)
+            })
+            .collect())
     }
 }
