@@ -95,7 +95,7 @@ const DECISIONS: &[(&str, Check)] = &[
     ("leader chat admissions", loosened::<audience::LeaderChats>),
     ("project verdicts", loosened::<audience::ProjectVerdicts>),
     ("relationship reads", loosened::<reads::RelationshipReads>),
-    ("claim read grants", loosened::<reads::ClaimGrants>),
+    ("claim read grants", reads::ClaimGrants::loosened),
     ("private note reads", loosened::<reads::NoteReads>),
     ("diary link reads", loosened::<reads::DiaryLinks>),
     ("record positions", loosened::<reads::RecordPositions>),

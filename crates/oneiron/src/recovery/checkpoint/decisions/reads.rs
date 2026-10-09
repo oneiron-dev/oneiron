@@ -126,12 +126,38 @@ impl Decision for RelationshipReads {
 /// each claim is asked at its most permissive on those.
 pub(super) struct ClaimGrants;
 
-impl Decision for ClaimGrants {
-    type Subject = (EntityId, Reader);
-    type Answer = bool;
-
-    fn subjects(vaults: [&Vault; 2]) -> Result<BTreeSet<Self::Subject>> {
+impl ClaimGrants {
+    /// Whether the restored vault lets a reader read a claim the live one
+    /// does not; a reader the live vault fails to ask reads nothing there.
+    /// Every claim is asked of every reader, so the claims are asked one at a
+    /// time: neither the pairs nor either vault's answers to them are held
+    /// whole, which a vault of many claims and readers could not afford.
+    pub(super) fn loosened(current: &Vault, restored: &Vault) -> Result<bool> {
+        let vaults = [current, restored];
         let claims = kept(vaults, &[ENTITY_TYPE_CLAIM])?;
+        let readers = Self::readers(vaults, &claims)?;
+        let [live, restored] = vaults.map(GrantCheck::open);
+        let (live, restored) = (live?, restored?);
+        for claim in &claims {
+            let admitted = restored.admits(claim, &readers);
+            if !admitted.contains(&Some(true)) {
+                continue;
+            }
+            if admitted
+                .iter()
+                .zip(live.admits(claim, &readers))
+                .any(|(restored, live)| *restored == Some(true) && live != Some(true))
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Every reader a claim is asked of: each actor a policy grant names, or
+    /// a claim's principal or typed question binds, and one no key names, in
+    /// each class a grant names and in none; and every owner.
+    fn readers(vaults: [&Vault; 2], claims: &BTreeSet<EntityId>) -> Result<BTreeSet<Reader>> {
         let mut actors = BTreeSet::new();
         let mut classes = BTreeSet::from([None]);
         for vault in vaults {
@@ -141,7 +167,7 @@ impl Decision for ClaimGrants {
                 actors.extend(grant.actor_ref.clone());
                 classes.insert(grant.actor_class.clone());
             }
-            for id in &claims {
+            for id in claims {
                 let Some(body) = stored_claim(vault, &txn, id) else {
                     continue;
                 };
@@ -160,7 +186,7 @@ impl Decision for ClaimGrants {
             }
         }
         actors.insert(stranger(&actors));
-        let readers: Vec<Reader> = actors
+        Ok(actors
             .iter()
             .flat_map(|actor| {
                 classes
@@ -168,56 +194,47 @@ impl Decision for ClaimGrants {
                     .map(move |class| Reader::Asserted(actor.clone(), class.clone()))
             })
             .chain(owners(vaults)?.into_iter().map(Reader::Owner))
-            .collect();
-        Ok(claims
-            .iter()
-            .flat_map(|claim| readers.iter().map(move |reader| (*claim, reader.clone())))
             .collect())
     }
+}
 
-    fn answers(
-        vault: &Vault,
-        subjects: &BTreeSet<Self::Subject>,
-    ) -> Result<Vec<Option<Self::Answer>>> {
+/// One vault's grant check, its policy read once.
+struct GrantCheck<'a> {
+    vault: &'a Vault,
+    txn: heed::RoTxn<'a>,
+    /// `None` where the policy does not load, which asks no reader.
+    policy: Option<crate::gate::PolicyManifestResolution>,
+}
+
+impl<'a> GrantCheck<'a> {
+    fn open(vault: &'a Vault) -> Result<Self> {
         let txn = vault.store.env.read_txn()?;
-        let Ok(policy) = crate::gate::resolve_policy_manifest(&vault.store, &txn) else {
-            return Ok(vec![None; subjects.len()]);
+        let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn).ok();
+        Ok(Self { vault, txn, policy })
+    }
+
+    /// Whether each of `readers` may read claim `id`, in order; `None` for
+    /// one the vault fails to ask.
+    fn admits(&self, id: &EntityId, readers: &BTreeSet<Reader>) -> Vec<Option<bool>> {
+        let Some(policy) = &self.policy else {
+            return vec![None; readers.len()];
         };
-        let mut claim: Option<(EntityId, Option<GrantInputs>)> = None;
-        let mut answers = Vec::with_capacity(subjects.len());
-        for (id, reader) in subjects {
-            let Some(key) = reader.key() else {
-                answers.push(None);
-                continue;
-            };
-            let read = vault.scoped_read(key.clone());
-            if claim.as_ref().is_none_or(|(held, _)| held != id) {
-                claim = Some((*id, permissive_claim(vault, &txn, &read, id)));
-            }
-            answers.push(
-                claim
-                    .as_ref()
-                    .and_then(|(_, claim)| claim.as_ref())
-                    .and_then(|(body, facets)| {
-                        let principal = crate::claim::claim_principal_id(body).ok()?;
-                        Some(
-                            read.principal_admits(principal)
-                                && crate::gate::scoped_read_claim_allowed(
-                                    &policy, &key, body, facets,
-                                ),
-                        )
-                    }),
-            );
-        }
-        Ok(answers)
-    }
-
-    fn loosens(live: &bool, restored: &bool) -> bool {
-        !live && *restored
-    }
-
-    fn refusal() -> Option<bool> {
-        Some(false)
+        let mut claim: Option<Option<GrantInputs>> = None;
+        readers
+            .iter()
+            .map(|reader| {
+                let key = reader.key()?;
+                let read = self.vault.scoped_read(key.clone());
+                let (body, facets) = claim
+                    .get_or_insert_with(|| permissive_claim(self.vault, &self.txn, &read, id))
+                    .as_ref()?;
+                let principal = crate::claim::claim_principal_id(body).ok()?;
+                Some(
+                    read.principal_admits(principal)
+                        && crate::gate::scoped_read_claim_allowed(policy, &key, body, facets),
+                )
+            })
+            .collect()
     }
 }
 
