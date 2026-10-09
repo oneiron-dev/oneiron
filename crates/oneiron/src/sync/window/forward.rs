@@ -360,6 +360,9 @@ fn forward_with_recovery(
             for id in &tombstone_outcome.purge_failures {
                 quarantine::set_remat_marker_in_txn(vault, wtxn, window_key.as_str(), id)?;
             }
+            for (id, value) in &tombstone_outcome.unapplied {
+                vault.fence_unapplied_delete_in_txn(wtxn, id, value)?;
+            }
             if !tombstone_outcome.receiver_scrub_candidates.is_empty() {
                 scrub_receiver_outbox_on_remote_hard_delete_in_txn(
                     vault,
@@ -386,6 +389,9 @@ fn forward_with_recovery(
                         .chain(tombstone_outcome.receiver_scrub_candidates.iter())
                     {
                         quarantine::set_remat_marker_in_txn(vault, wtxn, window_key.as_str(), id)?;
+                    }
+                    for (id, value) in &tombstone_outcome.unapplied {
+                        vault.fence_unapplied_delete_in_txn(wtxn, id, value)?;
                     }
                     Ok(())
                 })?;

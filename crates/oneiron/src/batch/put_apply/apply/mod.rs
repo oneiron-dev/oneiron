@@ -27,6 +27,7 @@ use crate::registry::{
     ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_SKILL, ENTITY_TYPE_TASK,
 };
 use crate::secret_custody::plan_replicated_name_index;
+use crate::side_table::HexId;
 use crate::skill_hub::validate_refinement_admission;
 use crate::store::Store;
 
@@ -348,6 +349,21 @@ pub(in crate::batch) fn apply_put(
     // between here and the write is LOCAL-class (storage/overflow), which
     // aborts the whole batch instead of committing — so it cannot strand this
     // mutation either.
+    // Delete wins over a peer: no replicated put brings back a row this vault
+    // deleted, whatever the window's tombstone map now says. Checked once the
+    // body has passed its own validation, so a refused body still reports its
+    // own error. The refusal is local-class: the batch aborts, and nothing
+    // staged above survives it. A delete-protected record is never deleted, so
+    // a fence planted at its id before it arrived refuses nothing.
+    if replicated
+        && !crate::registry::is_delete_protected_engine_record(entity_type)
+        && id != crate::dreamer_runner::authority::dreamer_actor_id()?
+        && crate::deletion::ROW_DELETION_FENCE.contains(store, wtxn, &HexId(id))?
+    {
+        return Err(Error::InvariantViolation(
+            "a replicated put cannot restore an entity deleted here",
+        ));
+    }
     let evicted_shell_sources = if authority_dominates_key_squatter {
         evict_authority_log_store_key_squatter(store, wtxn, &id)?
     } else {
@@ -645,6 +661,17 @@ pub(in crate::batch) fn apply_put(
     crate::skill_hub::stage_refinement_carrier_put(store, wtxn, &id, entity_type, data)?;
     if entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
         crate::channel_identity::maintain_assignment_put(store, wtxn, &id, data)?;
+    }
+    // A local put over an erased row is a sanctioned recreation: the row it
+    // writes is live, so the fence goes in the same commit. A row that still
+    // has its body is fenced by an accepted delete awaiting its retry, and a
+    // local edit does not withdraw that delete.
+    if !replicated
+        && crate::deletion::ROW_DELETION_FENCE.contains(store, wtxn, &HexId(id))?
+        && crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &id)?
+            .is_none_or(|old| old.len() == ENTITY_METADATA_HEADER_LEN)
+    {
+        crate::deletion::ROW_DELETION_FENCE.delete(store, wtxn, &HexId(id))?;
     }
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
     crate::skill_hub::stage_refinement_origin(

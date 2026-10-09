@@ -15,7 +15,8 @@
 //! - **refused** families hold authority entangled with content (grants,
 //!   policy manifests, room roles and membership, e-sign ceremonies). A
 //!   restore that would change one is refused before anything is created,
-//!   rather than half-applied.
+//!   rather than half-applied. A refused row's deletion fence is part of it:
+//!   a delete accepted but not yet applied leaves the row's bytes unchanged.
 //!
 //! Membership is checked on the result: a restore may not make anyone an
 //! owner or member who is not one now, whether by reviving a deleted or
@@ -50,6 +51,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// The `vault_meta` row holding a store's random id (`vault::identity`).
 const VAULT_STORE_ID: &[u8] = b"vault_identity:local:v1";
+
+/// The `sync_state` prefix of a row's deletion fence (`deletion::ROW_DELETION_FENCE`).
+const ROW_DELETION_FENCE_PREFIX: &[u8] = b"df:";
+
+/// The hex id a `sync_state` key fences as deleted, if it is a fence.
+fn fenced_id(key: &[u8]) -> Option<Vec<u8>> {
+    key.strip_prefix(ROW_DELETION_FENCE_PREFIX)
+        .map(<[u8]>::to_vec)
+}
 
 /// Rewrites `databases` so every live row is `current`'s, or refuses when a
 /// refused family moved since the checkpoint.
@@ -94,17 +104,22 @@ pub(super) fn carry_current_authority(
         .iter()
         .map(|(key, _)| key.as_slice())
         .collect();
+    let image_fences: BTreeSet<Vec<u8>> = databases["sync_state"]
+        .iter()
+        .filter_map(|(key, _)| fenced_id(key))
+        .collect();
     let mut moved = authority_moved(
         &classes,
         &databases["entities"],
         &image_entities,
+        &image_fences,
         &live,
         databases.get("edges_in").map_or(&[][..], Vec::as_slice),
     );
     for (database, live_rows) in &live.rows {
-        let scoped = |rows| refused(&classes, database, rows, &image_entities);
-        let image = scoped(&databases[*database]);
-        let current = scoped(live_rows);
+        let scoped = |rows, fenced| refused(&classes, database, rows, &image_entities, fenced);
+        let image = scoped(&databases[*database], &image_fences);
+        let current = scoped(live_rows, &live.fences);
         for what in image.keys().chain(current.keys()) {
             if image.get(what) != current.get(what) {
                 moved.insert(*what);
@@ -143,6 +158,8 @@ struct LiveRows {
     /// The `edges_in` keys of the `claim_of` edges through which the campaign
     /// gate finds a subject's jurisdiction and membership claims.
     claim_of: Vec<Vec<u8>>,
+    /// The hex ids of the rows the live vault fences as deleted.
+    fences: BTreeSet<Vec<u8>>,
 }
 
 /// Entity ids with the authority their bodies carry and the class's name.
@@ -154,6 +171,7 @@ fn current_rows(current: &Vault, classes: &Classes) -> Result<LiveRows> {
         rows: BTreeMap::new(),
         authority: BTreeMap::new(),
         claim_of: Vec::new(),
+        fences: BTreeSet::new(),
     };
     for entry in crate::store::DB_MANIFEST {
         if !Classes::has_authority(entry.name) {
@@ -169,6 +187,11 @@ fn current_rows(current: &Vault, classes: &Classes) -> Result<LiveRows> {
             let (key, value) = row?;
             if super::storage_tier(entry.name, key) != super::StorageTier::Canonical {
                 continue;
+            }
+            if entry.name == "sync_state"
+                && let Some(id) = fenced_id(key)
+            {
+                live.fences.insert(id);
             }
             match classes.row(entry.name, key, value).0 {
                 Class::Content => {}
@@ -232,11 +255,14 @@ fn claim_of_edge(key: &[u8]) -> Option<(&[u8], &[u8])> {
 /// back: an entity both vaults hold whose authority differs; one the image
 /// holds and the live vault deleted, or one only the live vault holds, when
 /// that presence is itself authority (an outbound grant, a claim of an
-/// authority family). An entity only one side holds is otherwise content.
+/// authority family). An entity only one side holds is otherwise content. As
+/// in the live vault, an entity the image fences as deleted is not held
+/// there.
 fn authority_moved(
     classes: &Classes,
     image: &CanonicalRows,
     image_entities: &BTreeSet<&[u8]>,
+    image_fences: &BTreeSet<Vec<u8>>,
     current: &LiveRows,
     image_claim_of: &[(Vec<u8>, Vec<u8>)],
 ) -> BTreeSet<&'static str> {
@@ -258,6 +284,11 @@ fn authority_moved(
         else {
             continue;
         };
+        if projection != Projection::OutboundGrant
+            && image_fences.contains(crate::entity_id::bytes_to_hex_lower(key).as_bytes())
+        {
+            continue;
+        }
         let Some(authority) = project(projection, value) else {
             continue;
         };
@@ -819,12 +850,15 @@ fn jurisdiction(claim: &crate::claim::ClaimBody) -> Observation {
 type Family<'a> = Vec<(&'a [u8], &'a [u8])>;
 
 /// The rows of each refused family that its scope compares, by name. The
-/// projected entity kinds are compared by [`authority_moved`].
+/// projected entity kinds are compared by [`authority_moved`]. An entity row
+/// the same vault fences (`fenced`) is compared with its fence: an accepted
+/// delete whose apply failed changes no byte of the row itself.
 fn refused<'a>(
     classes: &Classes,
     database: &str,
     rows: &'a CanonicalRows,
     image_entities: &BTreeSet<&[u8]>,
+    fenced: &BTreeSet<Vec<u8>>,
 ) -> BTreeMap<&'static str, Family<'a>> {
     let mut families: BTreeMap<_, Vec<_>> = BTreeMap::new();
     for (key, value) in rows {
@@ -841,10 +875,13 @@ fn refused<'a>(
             }
             Scope::Authority(_) => continue,
         }
-        families
-            .entry(what)
-            .or_default()
-            .push((key.as_slice(), value.as_slice()));
+        let family = families.entry(what).or_default();
+        family.push((key.as_slice(), value.as_slice()));
+        if database == "entities"
+            && fenced.contains(crate::entity_id::bytes_to_hex_lower(key).as_bytes())
+        {
+            family.push((key.as_slice(), ROW_DELETION_FENCE_PREFIX));
+        }
     }
     families
 }

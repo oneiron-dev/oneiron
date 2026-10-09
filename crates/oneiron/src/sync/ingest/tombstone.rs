@@ -3,7 +3,7 @@
 use loro::LoroMap;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::deletion::decode_tombstone_value;
+use crate::deletion::{TombstoneReason, decode_tombstone_value};
 use crate::entity_id::EntityId;
 use crate::error::{Error, RegistryError};
 use crate::sync::loro_support::map_get_bytes;
@@ -45,6 +45,17 @@ pub(in crate::sync) fn classify_tombstone(
     if let Err(err) = crate::dreamer_runner::authority::guard_actor_delete(&id) {
         return TombstoneStep::Refuse { id: Some(id), err };
     }
+    // A cleanup archive is local visibility, never replicated deletion intent.
+    // Refused before replay, so it erases nothing and fences no row here.
+    let decoded = decode_tombstone_value(value);
+    if decoded.reason == Some(TombstoneReason::ArchivedByCleanup) {
+        return TombstoneStep::Refuse {
+            id: Some(id),
+            err: Error::InvariantViolation(
+                "cleanup archives cannot be replayed as deletion intent",
+            ),
+        };
+    }
     if matches!(vault.read_entity_header(&id), Ok(None))
         && let Some(entity_blob) = map_get_bytes(entities_map, &id.to_hex())
         && let Some(header) = admitted_concurrent_delete_protected_header(&id, &entity_blob)
@@ -58,7 +69,7 @@ pub(in crate::sync) fn classify_tombstone(
     }
     TombstoneStep::Replay {
         id,
-        hard: decode_tombstone_value(value).is_hard(),
+        hard: decoded.is_hard(),
     }
 }
 

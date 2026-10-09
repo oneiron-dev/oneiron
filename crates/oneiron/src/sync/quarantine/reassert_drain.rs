@@ -334,13 +334,13 @@ pub(in crate::sync) fn drain_reassert_markers_for_window(
 // fire synchronously on the committing thread).
 #[cfg(test)]
 thread_local! {
-    pub(in crate::sync) static INJECT_PURGE_FAILURES: std::cell::Cell<u32> =
+    pub(crate) static INJECT_PURGE_FAILURES: std::cell::Cell<u32> =
         const { std::cell::Cell::new(0) };
     /// Purge attempts to let THROUGH before [`INJECT_PURGE_FAILURES`] starts
     /// counting down. A batch applies N tombstones under one transaction
     /// (ONE-521), so targeting a specific item — the middle one — needs a
     /// skip count, not just a failure count.
-    pub(in crate::sync) static INJECT_PURGE_FAILURES_SKIP: std::cell::Cell<u32> =
+    pub(crate) static INJECT_PURGE_FAILURES_SKIP: std::cell::Cell<u32> =
         const { std::cell::Cell::new(0) };
 }
 

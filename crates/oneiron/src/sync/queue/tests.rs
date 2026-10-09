@@ -879,8 +879,12 @@ fn receiver_live_failed_hard_apply_keeps_outbox_and_sets_rm_retry() {
     doc.commit();
 
     assert!(
-        vault.get(&victim).unwrap().is_some(),
+        vault.get_raw(&victim).unwrap().is_some(),
         "failed hard replay must not purge active state"
+    );
+    assert!(
+        vault.get(&victim).unwrap().is_none(),
+        "the accepted delete is not served while its retry is pending"
     );
     assert_receiver_outbox_intact(&vault, &outbox);
     assert_eq!(
