@@ -2,7 +2,7 @@
 export_facade! {
 "witness" => fn witness(&self, turn: WitnessTurn) -> WitnessReceipt;
 "claimUpsert" => fn claim_upsert(&self, claim: ClaimInput) -> CommitReceipt;
-"recall" => fn recall(&self, query: String, effort: Effort, scope: Option<RecallScope>, limit: u32, format: Option<String>) -> MemoryPack;
+"recall" => fn recall(&self, query: String, effort: Effort, scope: Option<RecallScope>, limit: u32, format: Option<String>, as_of: Option<u64>) -> MemoryPack;
 "receipts" => fn receipts(&self, limit: u32) -> Vec<FacadeReceipt>;
 "commit" => fn commit(&self, claims: Vec<ClaimInput>) -> Vec<CommitReceipt>;
 "remember" => fn remember(&self, claim: ClaimInput) -> CommitReceipt;

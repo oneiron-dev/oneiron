@@ -172,9 +172,9 @@ def test_remote_sdk_parity():
     # Both identical messages must survive. The newer Python message must
     # precede the older Node message, not their creation/ID order. This makes
     # the age separation load-bearing without normalizing away engine ranking.
-    # Recall cites the exact revision it ranked (`ref@revision`); a witness
-    # receipt names the ref alone.
-    short_ids = [item["short_id"].split("@")[0] for item in recalled["items"]]
+    # Recall and witness name a message by the same short id; recall carries
+    # the revision it ranked beside it.
+    short_ids = [item["short_id"] for item in recalled["items"]]
     older = normalize(node_written)["witnessed"]["message_short_ids"][0]
     newer = witnessed["message_short_ids"][0]
     assert older in short_ids

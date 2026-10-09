@@ -83,8 +83,6 @@ use crate::store::{
 #[cfg(test)]
 use crate::temporal::TemporalAnchorMode;
 #[cfg(test)]
-use crate::temporal::TemporalExpressionParseError;
-#[cfg(test)]
 use crate::temporal::TemporalGranularity;
 #[cfg(test)]
 use crate::temporal::TimeRange;

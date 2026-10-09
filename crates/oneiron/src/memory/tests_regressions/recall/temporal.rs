@@ -52,17 +52,12 @@ fn recall_default_effort_reads_last_week_from_the_query() {
         "window seat next weekend",
         "window seat this weekend",
     ] {
-        assert!(
-            matches!(
-                vault
-                    .query()
-                    .search_text(query, 10)
-                    .retrieval_effort(Effort::Medium, &[])
-                    .run(),
-                Err(crate::Error::InvalidTemporalExpression(_))
-            ),
-            "{query}"
-        );
+        vault
+            .query()
+            .search_text(query, 10)
+            .retrieval_effort(Effort::Medium, &[])
+            .run()
+            .unwrap_or_else(|error| panic!("{query}: {error}"));
     }
 }
 

@@ -156,6 +156,8 @@ enum MockBehaviour {
     WrongWidth,
     /// List a model the configured key is not among.
     UnknownModel,
+    /// Embed into [`concept_vector`]'s meaning space.
+    Concepts,
 }
 
 struct EmbeddingPause {
@@ -261,6 +263,34 @@ fn mock_vector(text: &str, width: usize) -> Vec<f32> {
     vector
 }
 
+/// A tiny meaning space: the words of one concept share an axis, so a
+/// paraphrase that shares no word with its document still lands on it. Text
+/// with no concept word points along the last axis.
+fn concept_vector(text: &str, width: usize) -> Vec<f32> {
+    const CONCEPTS: [&[&str]; 3] = [
+        &["car", "automobile", "vehicle"],
+        &["repair", "mechanic", "garage", "fix"],
+        &["lunch", "meal", "noon"],
+    ];
+    let mut vector = vec![0.0f32; width];
+    for word in text
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .map(str::to_ascii_lowercase)
+    {
+        if let Some(axis) = CONCEPTS
+            .iter()
+            .position(|words| words.contains(&word.as_str()))
+        {
+            vector[axis] += 1.0;
+        }
+    }
+    if vector.iter().all(|value| *value == 0.0) {
+        vector[width - 1] = 1.0;
+    }
+    let norm = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
+    vector.iter().map(|value| value / norm).collect()
+}
+
 async fn mock_embeddings(
     State(state): State<Arc<MockState>>,
     axum::Json(body): axum::Json<Value>,
@@ -294,7 +324,14 @@ async fn mock_embeddings(
     let mut rows: Vec<Value> = inputs
         .iter()
         .enumerate()
-        .map(|(index, text)| json!({ "index": index, "embedding": mock_vector(text, width) }))
+        .map(|(index, text)| {
+            let embedding = if state.behaviour() == MockBehaviour::Concepts {
+                concept_vector(text, width)
+            } else {
+                mock_vector(text, width)
+            };
+            json!({ "index": index, "embedding": embedding })
+        })
         .collect();
     if state.behaviour() == MockBehaviour::Reversed {
         rows.reverse();
@@ -1227,6 +1264,139 @@ fn busy_embedding_worker_publishes_due_staged_revisions_between_passes() {
         assert!(paused.is_ok(), "worker must reach its second nonempty pass");
         assert!(pending, "the global queue was not empty at publication");
         assert_eq!(indexed, Some(expected));
+    });
+    runtime.shutdown_background();
+}
+
+/// Wave 9 long-context A/B: the recall verb ran `RecallExecution::default()`,
+/// so a vault served with an embedder still recalled sparse, and a paraphrase
+/// that shares no word with its memory found nothing. Both server doors, the
+/// HTTP facade and the WebSocket read RPC, now embed the query, so a claim
+/// written through the facade is found by a paraphrase.
+#[test]
+fn recall_doors_embed_the_query_when_the_vault_has_an_embedder() {
+    use axum::body::{Body, to_bytes};
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    const SECRET: &str = "embedder-recall-secret";
+    let mock = MockEndpoint::start(MockBehaviour::Concepts);
+    let dir = tempfile::tempdir().unwrap();
+    let vault = test_vault(dir.path());
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let config = EmbedderConfig {
+        idle_interval_ms: 20,
+        ..endpoint_config(&mock.base)
+    };
+    let slot = EmbedderSlot::from_config(&config).unwrap().unwrap();
+    let server = Arc::new(
+        crate::server::SyncServer::new(
+            Arc::clone(&vault),
+            crate::config::SyncServerConfig {
+                auth_secret: Some(SECRET.to_owned()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .with_embedder(Some(slot)),
+    );
+    let recipe = format!(
+        "scope=core:read,core:write;principal_ref={};actor_class=human",
+        owner.to_hex()
+    );
+    let (slip, key) = crate::test_credentials::credential(&server, &recipe);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let worker = server.spawn_embedding_worker().unwrap();
+        let post = |verb: &str, payload: Value| {
+            let request = crate::test_credentials::bind_slip_request(
+                &server,
+                &slip,
+                &key,
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/core/facade/{verb}"))
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(payload.to_string()))
+                    .unwrap(),
+            );
+            let app = crate::build_app(Arc::clone(&server));
+            async move {
+                let response = app.oneshot(request).await.unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                let bytes = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+                serde_json::from_slice::<Value>(&bytes).unwrap()
+            }
+        };
+        // The target is the oldest claim. With no vector channel, recall
+        // falls back to recency and the newer decoys fill every slot.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let mut claimed = Vec::new();
+        for (hour, value) in [
+            "The mechanic says the automobile needs new brakes.",
+            "The quarterly report is due on the fifth.",
+            "Remember to water the basil on the balcony.",
+            "The flight to Lisbon boards at gate twelve.",
+            "Our team retro covered flaky integration tests.",
+            "The library closes early on Sundays.",
+            "Pack the blue umbrella for the trip.",
+            "The piano tuner visits in spring.",
+            "Renew the passport before October.",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let at = now - 3_600 * (10 - hour as u64);
+            let receipt = post(
+                "claim_upsert",
+                json!({"predicate": format!("note.n{hour}"), "subject_ref": owner.to_hex(),
+                    "value": value, "confidence": 0.9, "source": "user_stated",
+                    "occurred_at": at, "learned_at": at}),
+            )
+            .await;
+            claimed.push(receipt["claim_short_id"].as_str().unwrap().to_owned());
+        }
+        let target = claimed[0].clone();
+
+        let found = |pack: &Value| -> (Value, bool) {
+            let mut ids = pack["items"].as_array().into_iter().flatten();
+            (
+                pack["retrieval_meta"]["sparse"].clone(),
+                ids.any(|item| item["short_id"].as_str() == Some(target.as_str())),
+            )
+        };
+        // Wait until the claim vectors are filled and the HTTP door answers.
+        let request = json!({"query": "car repair garage", "limit": 3});
+        let mut http = Value::Null;
+        for _ in 0..600 {
+            http = post("recall", request.clone()).await;
+            if found(&http).1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert_eq!(found(&http), (json!(false), true), "{target}: {http}");
+
+        let auth = crate::test_credentials::authenticate(&server, &recipe);
+        let frames = crate::livequery::bound_rpc(
+            &server,
+            &auth,
+            crate::livequery::RpcRequest {
+                request_id: 9,
+                method: "recall".to_owned(),
+                params: request,
+            },
+        )
+        .unwrap();
+        let ws = crate::livequery::test_wire::reply(&frames);
+        assert_eq!(found(&ws["result"]), (json!(false), true), "{target}: {ws}");
+        worker.abort();
     });
     runtime.shutdown_background();
 }

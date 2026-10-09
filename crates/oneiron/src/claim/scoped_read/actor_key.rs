@@ -12,6 +12,9 @@ pub struct ScopedReadActorKey {
     pub(super) principal_ref: Option<EntityId>,
     pub(super) enforce_access_grants: bool,
     pub(super) proof: Option<crate::authority::VerifiedSlip>,
+    /// The proof's Scope as every read door checks it; see
+    /// [`Self::authority_scope`].
+    authority: Option<crate::federation::Scope>,
     /// Set only on the vault owner's own key; see [`Self::vault_owner`].
     owner: Option<EntityId>,
 }
@@ -42,6 +45,7 @@ impl ScopedReadActorKey {
             principal_ref: None,
             enforce_access_grants: false,
             proof: None,
+            authority: None,
             owner: None,
         })
     }
@@ -70,6 +74,7 @@ impl ScopedReadActorKey {
             principal_ref: None,
             enforce_access_grants: false,
             proof: None,
+            authority: None,
             owner: Some(owner),
         }
     }
@@ -99,6 +104,13 @@ impl ScopedReadActorKey {
             proof.claims().holder_ref.clone(),
             proof.claims().actor_class.clone(),
         )?;
+        let mut authority = proof.scope().clone();
+        if let crate::federation::ScopeAxis::Some(verbs) = &mut authority.verbs
+            && verbs.contains("core:read")
+        {
+            verbs.insert("read".to_owned());
+        }
+        key.authority = Some(authority);
         key.proof = Some(proof.clone());
         Some(key)
     }
@@ -111,10 +123,11 @@ impl ScopedReadActorKey {
         }
     }
 
+    /// The proof's Scope. A host slip spells the read verb `core:read`; every
+    /// read door takes it as the `read` class it names, as
+    /// [`Self::from_verified_slip`] already does.
     pub(crate) fn authority_scope(&self) -> Option<&crate::federation::Scope> {
-        self.proof
-            .as_ref()
-            .map(crate::authority::VerifiedSlip::scope)
+        self.authority.as_ref()
     }
 
     #[must_use]

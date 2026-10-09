@@ -160,6 +160,37 @@ pub struct RecallRequest {
     pub limit: Option<usize>,
     #[serde(default)]
     pub format: Option<String>,
+    /// Unix seconds the query's time words resolve against: `yesterday` is
+    /// the day before it. Omitted, they resolve against now.
+    #[serde(default)]
+    pub as_of: Option<u64>,
+}
+
+/// `recall` with a host's query vector. Every SDK door lands here: the
+/// generated [`recall`] embeds nothing, and a server whose embedder is serving
+/// embeds the query. `embed` runs only once the request is admitted.
+pub fn recall_with_vector(
+    memory: &Memory<'_>,
+    input: RecallRequest,
+    embed: impl FnOnce(&str) -> Option<Vec<f32>>,
+) -> MemoryResult<crate::memory::MemoryPack> {
+    crate::memory::caps::check_query(&input.query)?;
+    crate::memory::caps::check_limit(input.limit.unwrap_or(10))?;
+    crate::memory::caps::check_as_of(input.as_of)?;
+    let embedding = embed(&input.query);
+    memory.recall_with_execution(
+        &input.query,
+        input.effort.unwrap_or(crate::memory::Effort::Medium),
+        &input.scope.unwrap_or_default(),
+        input.limit.unwrap_or(10),
+        input.format.as_deref(),
+        None,
+        &crate::retrieval_depth::RecallExecution {
+            embedding: embedding.as_deref(),
+            as_of: input.as_of,
+            ..Default::default()
+        },
+    )
 }
 
 /// `receipts`'s one input.

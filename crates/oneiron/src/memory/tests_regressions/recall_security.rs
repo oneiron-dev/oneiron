@@ -127,6 +127,7 @@ fn world_grant_recall_returns_only_admitted_claims_and_worlds_with_receipt() {
                 &RecallScope {
                     world_ref: Some(allowed_world.to_hex()),
                     facet: None,
+                    kinds: None,
                 },
                 10,
                 Some("json"),

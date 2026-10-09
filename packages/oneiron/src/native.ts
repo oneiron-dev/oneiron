@@ -33,7 +33,7 @@ tasksCreate(input: unknown): unknown
 tasksUpdate(input: unknown): unknown
 witness(turn: WitnessTurn): WitnessReceipt
 claimUpsert(claim: ClaimInput): CommitReceipt
-recall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined): MemoryPack
+recall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined): MemoryPack
 export(input: unknown): unknown
 receipts(limit: number | undefined): FacadeReceipt[]
 keyValueGet(requestJson: string): string

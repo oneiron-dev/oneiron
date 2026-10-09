@@ -100,12 +100,18 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     /// Filter the actor's pack before rendering or finalizing telemetry, including rooms.
-    pub(crate) fn run_scoped_with_vector_status(
+    /// Also returns whether the vector channel completed and the query's temporal phrases.
+    pub(crate) fn run_scoped_with_run_status(
         self,
         lane: &crate::claim::ScopedRead<'_>,
-    ) -> Result<(crate::claim::ScopedReadResult<ContextPack>, bool)> {
+    ) -> Result<(
+        crate::claim::ScopedReadResult<ContextPack>,
+        bool,
+        Vec<crate::temporal::TemporalHintReport>,
+    )> {
         let run = self.run_unfinalized()?;
         let vector_completed = run.vector_completed;
+        let temporal_hints = run.temporal_hints;
         let mut pending = UnfinalizedContextPack {
             value: run.pack,
             telemetry_run_id: run.telemetry_run_id,
@@ -132,6 +138,7 @@ impl<'a> ContextPackBuilder<'a> {
                 receipt,
             },
             vector_completed,
+            temporal_hints,
         ))
     }
 
@@ -565,6 +572,7 @@ impl<'a> ContextPackBuilder<'a> {
 
             Ok(ContextPackRun {
                 vector_completed: pipeline_output.vector_completed,
+                temporal_hints: pipeline_output.temporal_hints,
                 pack: ContextPack {
                     capabilities,
                     l2_base,

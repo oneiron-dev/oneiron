@@ -367,6 +367,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let input: RecallRequest = decode(value.clone())?;
             crate::memory::caps::check_query(&input.query)?;
             crate::memory::caps::check_limit(input.limit.unwrap_or(10))?;
+            crate::memory::caps::check_as_of(input.as_of)?;
         }
         "export" => {
             let _input: crate::memory::ExportOptions = decode(value.clone())?;
@@ -581,14 +582,8 @@ pub fn recall(
 ) -> MemoryResult<crate::memory::MemoryPack> {
     crate::memory::caps::check_query(&input.query)?;
     crate::memory::caps::check_limit(input.limit.unwrap_or(10))?;
-    memory.recall(
-        &input.query,
-        input.effort.unwrap_or(crate::memory::Effort::Medium),
-        &input.scope.unwrap_or_default(),
-        input.limit.unwrap_or(10),
-        input.format.as_deref(),
-        None,
-    )
+    crate::memory::caps::check_as_of(input.as_of)?;
+    crate::task_verb::sdk::recall_with_vector(memory, input, |_| None)
 }
 pub fn export(
     memory: &Memory<'_>,

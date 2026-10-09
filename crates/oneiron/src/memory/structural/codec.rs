@@ -9,7 +9,7 @@ use crate::registry::ENTITY_TYPE_REGISTRY;
 pub(super) fn registered_edge_weight(kind: EdgeKind) -> f32 {
     kind.default_weight().unwrap_or(1.0)
 }
-pub(super) fn type_byte_for_kind(kind: &str) -> MemoryResult<u8> {
+pub(in crate::memory) fn type_byte_for_kind(kind: &str) -> MemoryResult<u8> {
     ENTITY_TYPE_REGISTRY
         .iter()
         .find(|entry| entry.kind == kind)

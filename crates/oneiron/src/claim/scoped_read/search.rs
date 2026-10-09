@@ -78,7 +78,19 @@ impl ScopedRead<'_> {
         limit: usize,
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
-        let result = self.search_text_revisioned(query, limit, requested)?;
+        self.search_text_as_of(query, limit, requested, None)
+    }
+
+    /// [`Self::search_text`] with the query's time words read against
+    /// `as_of` (unix seconds) instead of now.
+    pub(crate) fn search_text_as_of(
+        &self,
+        query: &str,
+        limit: usize,
+        requested: Option<&RetrievalFilter>,
+        as_of: Option<u64>,
+    ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
+        let result = self.search_text_revisioned_as_of(query, limit, requested, as_of)?;
         Ok(ScopedReadResult {
             value: result.hits,
             receipt: result.receipt,

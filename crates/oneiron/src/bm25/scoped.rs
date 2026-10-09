@@ -1,7 +1,7 @@
-//! Bounded exact top-k over the existing BM25F scorer, under one read snapshot.
+//! Exact top-k over the existing BM25F scorer for a scoped read, under one
+//! read snapshot: one pass over the query's postings, each matching document
+//! admitted once.
 use super::*;
-
-const CANDIDATE_PAGE: usize = 256;
 
 pub(crate) fn search_text_filtered_with_recency<F>(
     store: &impl ManifestDbs,
@@ -95,35 +95,25 @@ where
         &tokens,
         options.scope.exact_posting_matches_scope,
     )?;
-    let mut rows = store.text_doc_field_lengths().iter(rtxn)?;
-    let mut best = Vec::new();
-    loop {
-        let mut page = BTreeSet::new();
-        for row in rows.by_ref().take(CANDIDATE_PAGE) {
-            let (key, _) = row?;
-            let bytes: [u8; ENTITY_ID_LEN] = key[..]
-                .try_into()
-                .map_err(|_| corrupted("field-length document id"))?;
-            page.insert(EntityId::from_bytes(bytes)?);
-        }
-        if page.is_empty() {
-            break;
-        }
-        let scores =
-            scoring::score_query_terms(store, rtxn, config, &terms, options.scope.recency, |id| {
-                if !page.contains(id) {
-                    return Ok(false);
-                }
-                let Some(target) = lexical_query_hint_scope_id(store, rtxn, id)? else {
-                    return Ok(false);
-                };
-                match options.category.as_mut() {
-                    Some(category) => category(&target),
-                    None => (options.scope.exact_posting_matches_scope)(&target),
-                }
-            })?;
-        best.extend(scores);
-        scoring::retain_best(&mut best, limit);
-    }
+    // One scoring pass. Scoring the corpus a page at a time re-read every
+    // query term's whole posting list once per page, so a common term cost
+    // the square of the vault size.
+    let mut admitted = HashMap::<EntityId, bool>::new();
+    let mut best =
+        scoring::score_query_terms(store, rtxn, config, &terms, options.scope.recency, |id| {
+            if let Some(admit) = admitted.get(id) {
+                return Ok(*admit);
+            }
+            let admit = match lexical_query_hint_scope_id(store, rtxn, id)? {
+                None => false,
+                Some(target) => match options.category.as_mut() {
+                    Some(category) => category(&target)?,
+                    None => (options.scope.exact_posting_matches_scope)(&target)?,
+                },
+            };
+            admitted.insert(*id, admit);
+            Ok(admit)
+        })?;
+    scoring::retain_best(&mut best, limit);
     Ok(scoring::scored_entities(best))
 }

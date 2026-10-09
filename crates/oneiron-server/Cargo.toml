@@ -53,6 +53,7 @@ anyhow = "1"
 serde_bytes = "0.11"
 blake3 = { workspace = true }
 ed25519-dalek = { workspace = true }
+rand_core = { workspace = true }
 subtle = "2"
 libc = "0.2"
 jsonwebtoken = { version = "9", default-features = false, features = ["use_pem"] }

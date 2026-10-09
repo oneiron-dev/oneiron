@@ -100,8 +100,8 @@ pub use outbound::{
 };
 pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts};
 pub use recall::{
-    Effort, MEMORY_PACK_VERSION, MemoryItem, MemoryPack, MemoryProvenance, RecallScope,
-    RetrievalMeta, ScopeHonesty,
+    CONTAINER_KINDS, Effort, MEMORY_PACK_VERSION, MemoryItem, MemoryPack, MemoryProvenance,
+    RecallScope, RetrievalMeta, ScopeHonesty,
 };
 pub use skill_authoring::SkillAuthoringReceipt;
 pub(crate) use skill_authoring::skill_author_proof_is_live_in_txn;

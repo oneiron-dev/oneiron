@@ -2,6 +2,7 @@
 
 mod admit;
 mod categories;
+mod entity_rank;
 mod post_blend;
 mod ppr_expand;
 mod rerank;
@@ -560,6 +561,14 @@ impl PipelineBuilder<'_> {
                     capture_retrieval_trace,
                     trace_candidate_limit,
                 },
+            )?;
+
+            entity_rank::rank_unmatched_entities_below_matches(
+                &mut scores,
+                &acc.signal_components,
+                &self.vault.store,
+                rtxn,
+                &mut metadata_cache,
             )?;
 
             if let Some((relationship, RelMode::Demote)) = self.relationship_filter {

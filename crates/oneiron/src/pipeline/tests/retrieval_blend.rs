@@ -511,114 +511,71 @@ fn explicit_time_range_overrides_unsupported_last_phrase() -> Result<()> {
     Ok(())
 }
 
+/// Time words never fail a run: a phrase the parser cannot use is left out
+/// and the text channel still answers.
 #[test]
-fn unsupported_last_friday_query_fails_closed() -> Result<()> {
+fn time_words_a_query_cannot_use_never_fail_the_run() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = entity_id(0x15);
-    put_text(&vault, id, "last friday failclosed")?;
+    put_text(&vault, id, "rollout degrade")?;
 
-    let err = vault
-        .query()
-        .search_text("last friday failclosed", 10)
-        .with_temporal_now(1_710_504_000)
-        .run()
-        .expect_err("unsupported temporal expression must fail closed");
-
-    assert_eq!(
-        err.kind(),
-        crate::error::ErrorKind::InvalidTemporalExpression
-    );
-    assert_matches!(
-        err,
-        Error::InvalidTemporalExpression(
-            TemporalExpressionParseError::Unsupported { expression }
-        ) if expression == "last friday"
-    );
-    Ok(())
-}
-
-#[test]
-fn unsupported_last_two_weeks_query_fails_closed() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let id = entity_id(0x16);
-    put_text(&vault, id, "last 2 weeks failclosed")?;
-
-    let err = vault
-        .query()
-        .search_text("last 2 weeks failclosed", 10)
-        .with_temporal_now(1_710_504_000)
-        .run()
-        .expect_err("unsupported temporal expression must fail closed");
-
-    assert_eq!(
-        err.kind(),
-        crate::error::ErrorKind::InvalidTemporalExpression
-    );
-    assert_matches!(
-        err,
-        Error::InvalidTemporalExpression(
-            TemporalExpressionParseError::Unsupported { expression }
-        ) if expression == "last 2 weeks"
-    );
-    Ok(())
-}
-
-#[test]
-fn unsupported_last_spelled_quantity_query_fails_closed() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let id = entity_id(0x17);
-    put_text(&vault, id, "last two weeks failclosed")?;
-
-    let err = vault
-        .query()
-        .search_text("last two weeks failclosed", 10)
-        .with_temporal_now(1_710_504_000)
-        .run()
-        .expect_err("unsupported temporal expression must fail closed");
-
-    assert_eq!(
-        err.kind(),
-        crate::error::ErrorKind::InvalidTemporalExpression
-    );
-    assert_matches!(
-        err,
-        Error::InvalidTemporalExpression(
-            TemporalExpressionParseError::Unsupported { expression }
-        ) if expression == "last two weeks"
-    );
-    Ok(())
-}
-
-#[test]
-fn unsupported_last_subday_quantity_query_fails_closed() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    for (offset, query, expected) in [
-        (0, "last 24 hours failclosed", "last 24 hours"),
-        (
-            1,
-            "last twenty four hours failclosed",
-            "last twenty four hours",
-        ),
+    for query in [
+        "rollout degrade tomorrow",
+        "rollout degrade over the last several weeks",
+        "rollout degrade next 2 weeks",
     ] {
-        put_text(&vault, entity_id(0x18 + offset), query)?;
-
-        let err = vault
+        let results = vault
             .query()
             .search_text(query, 10)
             .with_temporal_now(1_710_504_000)
-            .run()
-            .expect_err("unsupported temporal expression must fail closed");
+            .run()?;
+        assert!(results.iter().any(|hit| hit.id == id), "{query}");
+    }
+    Ok(())
+}
 
-        assert_eq!(
-            err.kind(),
-            crate::error::ErrorKind::InvalidTemporalExpression
-        );
-        assert_matches!(
-            err,
-            Error::InvalidTemporalExpression(
-                TemporalExpressionParseError::Unsupported { expression }
-            ) if expression == expected
-        );
+/// A quantity hint `main` refused now bounds the text channel: the row inside
+/// the window is found and the row outside it is not.
+fn quantity_hint_bounds_text_retrieval(query: &str, inside: u64, outside: u64) -> Result<()> {
+    const NOW: u64 = 1_710_504_000;
+    let (_dir, vault) = open_test_vault();
+    let (kept, dropped) = (entity_id(0x16), entity_id(0x26));
+    for (id, ago) in [(kept, inside), (dropped, outside)] {
+        let at = NOW - ago;
+        put_text_with_time(
+            &vault,
+            id,
+            "quantitybounds",
+            TimeRange { start: at, end: at },
+            at,
+        )?;
+    }
+
+    let results = vault
+        .query()
+        .search_text(&format!("{query} quantitybounds"), 10)
+        .with_temporal_now(NOW)
+        .run()?;
+
+    let ids: Vec<EntityId> = results.iter().map(|hit| hit.id).collect();
+    assert_eq!(ids, [kept], "{query}");
+    Ok(())
+}
+
+#[test]
+fn last_two_weeks_query_bounds_text_retrieval() -> Result<()> {
+    quantity_hint_bounds_text_retrieval("last 2 weeks", 3 * 86_400, 30 * 86_400)
+}
+
+#[test]
+fn last_spelled_quantity_query_bounds_text_retrieval() -> Result<()> {
+    quantity_hint_bounds_text_retrieval("last two weeks", 3 * 86_400, 30 * 86_400)
+}
+
+#[test]
+fn last_subday_quantity_query_bounds_text_retrieval() -> Result<()> {
+    for query in ["last 24 hours", "last twenty four hours"] {
+        quantity_hint_bounds_text_retrieval(query, 3_600, 2 * 86_400)?;
     }
     Ok(())
 }

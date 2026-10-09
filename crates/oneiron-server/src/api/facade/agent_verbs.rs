@@ -133,7 +133,9 @@ async fn claim_upsert(
         value,
     )?))
 }
-/// `POST /v1/core/facade/recall` → `Memory::recall`.
+/// `POST /v1/core/facade/recall` → `SyncServer::recall`, the recall door every
+/// server transport shares: it embeds the query whenever the vault's embedder
+/// is serving.
 ///
 /// The lease argument is `None` and is not a client input: no lease-issuer
 /// exists, and a bearer slip is not one. `Effort::High` therefore returns the
@@ -147,11 +149,17 @@ async fn recall(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let value = facade_json(payload)?;
+    oneiron::task_verb::sdk::validate_input("recall", &value)?;
     let (actor, class) = facade_actor(&auth)?;
-    Ok(Json(oneiron::task_verb::sdk::invoke(
-        &server.vault.memory(actor, class),
-        "recall",
-        value,
+    Ok(Json(facade_output(
+        server
+            .recall_off_runtime(
+                actor,
+                class,
+                auth.verified_slip().cloned(),
+                facade_input(value)?,
+            )
+            .await?,
     )?))
 }
 async fn export(

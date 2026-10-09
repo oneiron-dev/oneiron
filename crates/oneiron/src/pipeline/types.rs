@@ -234,6 +234,8 @@ pub(crate) struct PipelineOutput {
     pub(crate) empty_reason: Option<EmptyReason>,
     pub(crate) telemetry_run_id: Option<RetrievalRunId>,
     pub(crate) signals: Vec<RetrievalSignal>,
+    /// Temporal phrases read from the query and what the run did with each.
+    pub(crate) temporal_hints: Vec<crate::temporal::TemporalHintReport>,
 }
 
 #[derive(Debug, Clone)]

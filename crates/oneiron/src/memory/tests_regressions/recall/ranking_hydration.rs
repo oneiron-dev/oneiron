@@ -119,11 +119,11 @@ fn recall_short_ids_hydrate_and_formats_render() {
         .expect("recall");
     assert!(pack.rendered.as_deref().is_some_and(|r| !r.is_empty()));
 
-    // Every shortId round-trips through hydrate (OF-096).
+    // Every item reference round-trips through hydrate (OF-096).
     let refs: Vec<String> = pack
         .items
         .iter()
-        .map(|item| item.short_id.clone())
+        .map(crate::memory::MemoryItem::reference)
         .collect();
     assert!(!refs.is_empty());
     let views = facade.hydrate(&refs).expect("hydrate round-trip");

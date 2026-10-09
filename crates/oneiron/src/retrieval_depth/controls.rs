@@ -50,4 +50,7 @@ pub struct RecallExecution<'a> {
     pub reranker: Option<&'a dyn Reranker>,
     pub embedding: Option<&'a [f32]>,
     pub phonetic_codes: &'a [&'a str],
+    /// Unix seconds the query's time words resolve against (`yesterday`
+    /// is the day before it), and the clock recency ages from. `None` is now.
+    pub as_of: Option<u64>,
 }

@@ -93,6 +93,7 @@ fn scoped_recall_hides_world_ids_without_claim_read_authority() {
     let scope = RecallScope {
         world_ref: Some(requested.to_hex()),
         facet: None,
+        kinds: None,
     };
     let owner_pack = facade_for(&vault, owner)
         .recall("hidden world record", Effort::Light, &scope, 10, None, None)
@@ -155,7 +156,8 @@ fn scoped_recall_never_renders_an_unreadable_edge_neighbor() {
         &facade
             .get_entity(&hidden.message_short_ids[0])
             .unwrap()
-            .value.unwrap()
+            .value
+            .unwrap()
             .id_hex,
     )
     .unwrap();
@@ -222,7 +224,8 @@ fn scoped_recall_provenance_does_not_name_a_denied_supersedes_target() {
         &facade_for(&vault, owner)
             .get_entity(&anchor.message_short_ids[0])
             .unwrap()
-            .value.unwrap()
+            .value
+            .unwrap()
             .id_hex,
     )
     .unwrap();
@@ -241,7 +244,8 @@ fn scoped_recall_provenance_does_not_name_a_denied_supersedes_target() {
         &facade_for(&vault, owner)
             .get_entity(&receipt.message_short_ids[0])
             .unwrap()
-            .value.unwrap()
+            .value
+            .unwrap()
             .id_hex,
     )
     .unwrap();

@@ -166,7 +166,7 @@ pub(super) fn claim(server: &SyncServer) -> oneiron::memory::CommitReceipt {
 
 fn rpc(server: &SyncServer, auth: &CoreAuth, method: &str, params: Value) -> Value {
     let frame = bound_rpc(
-        server.vault(),
+        server,
         auth,
         RpcRequest {
             request_id: 7,
@@ -352,6 +352,64 @@ async fn all_eight_production_rpc_reads_return_the_engine_dtos() {
     }
 }
 
+/// Wave 9: `oneiron token read` and `token pair --scope core:read` mint the
+/// read verb as the host spells it, `core:read`. The WebSocket door reads
+/// under the presented slip, and a `core:read` slip resolved a deny-all read
+/// floor, so its recall came back empty.
+#[tokio::test]
+async fn a_paired_core_read_slip_recalls_over_the_websocket() {
+    use ed25519_dalek::{Signer, SigningKey};
+
+    let (_dir, server) = server();
+    let said = witness(&server, "solar panel maintenance").message_short_ids[0].clone();
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+    let mut scope = oneiron::federation::Scope::top();
+    scope.verbs = oneiron::federation::ScopeAxis::Some(["core:read".to_owned()].into());
+    let link = server
+        .vault()
+        .issue_pairing_link_for_principal(
+            &issuer,
+            scope,
+            3_600,
+            oneiron::authority::PairingPrincipal {
+                holder_ref: Some(ACTOR.to_owned()),
+                actor_class: Some("human".to_owned()),
+                org_ref: None,
+            },
+        )
+        .unwrap();
+    let key = SigningKey::from_bytes(&[7; 32]);
+    let binding = key.verifying_key().to_bytes();
+    let transcript =
+        oneiron::authority::pairing_binding_transcript(&link.code, &binding, ACTOR).unwrap();
+    let slip = server
+        .vault()
+        .redeem_pairing_link(
+            &issuer,
+            &link.code,
+            ACTOR,
+            binding,
+            &key.sign(&transcript).to_bytes(),
+        )
+        .unwrap();
+    let request = crate::test_credentials::bind_slip_request(
+        &server,
+        &slip,
+        &key,
+        axum::http::Request::new(axum::body::Body::empty()),
+    );
+    let auth =
+        CoreAuth::from_headers(request.headers(), &server.config, server.vault().as_ref()).unwrap();
+
+    let pack = rpc(&server, &auth, "recall", json!({"query": "solar panel"}))["result"].clone();
+    let found = pack["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["short_id"].as_str() == Some(said.as_str()));
+    assert!(found, "{said}: {pack}");
+}
+
 #[tokio::test]
 async fn http_recall_and_receipts_defaults_limits_and_error_order_are_preserved() {
     let (_dir, server) = server();
@@ -529,6 +587,7 @@ async fn production_source_derives_real_channels_and_rechecks_revocation_before_
             &RecallScope {
                 world_ref: None,
                 facet: missing_facet.facet.clone(),
+                kinds: None,
             },
             100,
             None,
@@ -705,7 +764,7 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
             .commit()
             .unwrap();
         let revision = server.vault().indexed_revision(&id).unwrap().unwrap();
-        expected.push(format!("{}@{}", receipt.claim_short_id, revision.to_hex()));
+        expected.push((receipt.claim_short_id, revision.to_hex()));
     }
     // More than 1,000 base-scope decoys outrank both targets even when
     // Light widens lexical admission for its temporal anchor and blends
@@ -724,7 +783,7 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
     assert!(
         !old.items
             .iter()
-            .any(|item| expected.contains(&item.short_id)),
+            .any(|item| expected.iter().any(|(id, _)| *id == item.short_id)),
         "unfiltered recall returned a filtered match among {} items ({} candidates)",
         old.items.len(),
         old.retrieval_meta.total_candidates,
@@ -748,14 +807,19 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
         let rows = derived.value.as_array().unwrap();
         let ids: Vec<_> = rows
             .iter()
-            .map(|row| row["short_id"].as_str().unwrap())
+            .map(|row| {
+                (
+                    row["short_id"].as_str().unwrap(),
+                    row["source_revision_ref"].as_str().unwrap(),
+                )
+            })
             .collect();
         assert_eq!(
             ids,
             expected
                 .iter()
                 .take(limit)
-                .map(String::as_str)
+                .map(|(id, revision)| (id.as_str(), revision.as_str()))
                 .collect::<Vec<_>>()
         );
         assert!(rows.iter().all(|row| row["world"].is_null()));

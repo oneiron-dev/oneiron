@@ -41,7 +41,10 @@ fn recall_items_and_document_chat_keep_the_indexed_revision() {
         )
         .unwrap();
     assert_eq!(pack.items.len(), 1);
-    assert_eq!(pack.items[0].short_id, reference);
+    // The item carries the pin beside a bare short id; together they are the
+    // pinned reference hydrate reads.
+    assert_eq!(pack.items[0].reference(), reference);
+    assert!(!pack.items[0].short_id.contains('@'));
     assert_eq!(pack.items[0].value_text, "revisionanchor original evidence");
     let rendered: serde_json::Value =
         serde_json::from_str(pack.rendered.as_ref().unwrap()).unwrap();
@@ -78,7 +81,7 @@ fn recall_items_and_document_chat_keep_the_indexed_revision() {
         )
         .unwrap();
     assert_eq!(scoped_pack.items.len(), 1);
-    assert_eq!(scoped_pack.items[0].short_id, reference);
+    assert_eq!(scoped_pack.items[0].reference(), reference);
     assert_eq!(
         scoped_pack.items[0].value_text,
         "revisionanchor original evidence"
@@ -113,7 +116,7 @@ fn recall_items_and_document_chat_keep_the_indexed_revision() {
         panic!("the pinned document must answer");
     };
     assert_eq!(source_short_ids, vec![reference.clone()]);
-    assert_eq!(retrieval.items[0].short_id, reference);
+    assert_eq!(retrieval.items[0].reference(), reference);
     assert_eq!(
         facade.hydrate(&source_short_ids).unwrap()[0]
             .body
