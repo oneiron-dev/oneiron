@@ -195,7 +195,13 @@ impl Vault {
                 IdentityTopologyRejection::NotUndoable { event: *event },
             )));
         };
-        let fork_writer = facet_fork_writer(record.actor, record.source);
+        // A local event keeps its deciding actor in the attribution sidecar,
+        // not its immutable core. A redacted one re-derives no actor, so its
+        // forks read as touched: undo fails closed.
+        let fork_writer = facet_fork_writer(
+            super::effective_author_in_txn(&self.store, &*wtxn, *event)?,
+            record.source,
+        );
         // Only an event the effective ledger admitted and applied, and no
         // counter-event has reverted, undoes. A stored row still waiting for
         // its signed admission fact (or refused one) never applied, so it has

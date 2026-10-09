@@ -234,7 +234,10 @@ fn demotion_preserves_lineage_scope_and_session_and_rechecks_current_policy() ->
     assert_eq!(binding_digest(&vault, id)?, digest);
     permit_rows(
         &vault,
-        &[(ClaimSource::ToolOutput, None), (ClaimSource::Generated, None)],
+        &[
+            (ClaimSource::ToolOutput, None),
+            (ClaimSource::Generated, None),
+        ],
     )?;
     // The successor is the Dreamer's, never the original author's, so the
     // Dreamer's lineage-bound policy governs its later lifecycle.
@@ -439,5 +442,62 @@ fn a_dreamer_weakening_never_closes_user_truth() -> Result<()> {
     );
     assert_eq!(vault.get_raw(&id)?.expect("unchanged"), raw);
     assert_current_actor(&vault, id, actor)?;
+    Ok(())
+}
+
+/// Astra #1336 R2 repro: a host's unattributed successor carries no
+/// envelope, so its predecessor's restricted history must still clear the
+/// Gate under the host. A ToolOutput claim whose ToolOutput permit names
+/// only its author cannot be forked by an actor-less Generated decision.
+#[test]
+fn an_unattributed_successor_keeps_its_predecessors_restricted_history() -> Result<()> {
+    let (_dir, vault, actor) = fixture()?;
+    let id = entity(0x64);
+    candidate(&vault, actor, id)?;
+    permit_rows(
+        &vault,
+        &[
+            (ClaimSource::ToolOutput, Some(actor.entity_ref())),
+            (ClaimSource::Generated, None),
+        ],
+    )?;
+    let mask = entity(0x67);
+    let mut facet = Vec::new();
+    rmpv::encode::write_value(
+        &mut facet,
+        &Value::Map(vec![
+            ("label".into(), "work".into()),
+            ("sensitivity".into(), "sensitive".into()),
+        ]),
+    )
+    .expect("facet body");
+    vault.put_entity(
+        &mask,
+        crate::registry::ENTITY_TYPE_FACET,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &facet,
+    )?;
+    let fork = entity(0x68);
+    let host = crate::batch::SuccessionWriter::new(None, ClaimSource::Generated, "test.fork");
+    let error = vault
+        .with_write_txn(|txn| {
+            vault.fork_claim_to_facet_in_txn(txn, (id, fork), mask, true, host, 15)
+        })
+        .expect_err("the host has no permit for the inherited tool output");
+    assert!(
+        matches!(
+            error,
+            Error::Gate(GateError::SourceNotTrustedForAuto {
+                claim_source: "tool_output"
+            })
+        ),
+        "{error:?}"
+    );
+    assert!(vault.get_raw(&fork)?.is_none());
+    assert_eq!(
+        vault.get_claim(&id)?.expect("origin").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
     Ok(())
 }

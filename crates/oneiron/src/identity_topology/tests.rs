@@ -3382,12 +3382,32 @@ fn a_facet_fork_is_the_deciding_actors_claim() {
     let fork = facet_fork_id(&event, &origin).expect("fork id");
     let body = vault.get_claim(&fork).expect("read").expect("fork");
     assert_eq!(body.source, Some(ClaimSource::UserStated));
-    let txn = vault.store.env.read_txn().expect("read txn");
-    assert_eq!(
-        crate::batch::authenticated_claim_author_in_txn(&vault.store, &txn, &fork, &body)
-            .expect("author"),
-        Some(decider)
+    let author_of = |claim: &EntityId| {
+        let body = vault.get_claim(claim).expect("read").expect("claim");
+        let txn = vault.store.env.read_txn().expect("read txn");
+        crate::batch::authenticated_claim_author_in_txn(&vault.store, &txn, claim, &body)
+            .expect("author")
+    };
+    assert_eq!(author_of(&fork), Some(decider));
+    // Astra #1336 R2: the event keeps its decider in the attribution
+    // sidecar, so its undo re-derives the fork it birthed and sends it home.
+    expect_applied(
+        vault
+            .undo_identity_topology_event(
+                &event,
+                &IdentityOpWrite::auto(ClaimSource::UserStated).with_actor(decider),
+                300,
+            )
+            .expect("the decider undoes its own facet"),
     );
+    let restore = vault
+        .edges_in(&fork)
+        .expect("fork in-edges")
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::Supersedes)
+        .expect("the fork is superseded by its restore")
+        .target;
+    assert_eq!(author_of(&restore), Some(decider));
 }
 
 /// Astra #1336 P1 repro: a machine's facet op forks under the machine's own

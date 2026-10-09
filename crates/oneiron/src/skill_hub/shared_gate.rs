@@ -69,6 +69,15 @@ pub struct SharedSkillMergeReceipt {
     pub displaced_by_revision: Option<String>,
     pub at: u64,
 }
+/// What a shared-skill rollback did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SharedSkillRollback {
+    /// The rollback needs the owner's answer (see
+    /// [`Vault::roll_back_shared_skill_merge`]): nothing changed.
+    PendingOwner,
+    /// The restoring revision, now the active one.
+    Restored(EntityId),
+}
 #[derive(Debug, Clone, PartialEq)]
 pub enum SharedSkillMergeDisposition {
     /// The owner must answer this exact effect once: the delta widens the
@@ -299,7 +308,13 @@ impl Vault {
     /// canon again, so the displaced revision is not revived: a new revision
     /// carrying its content, under a fresh version, supersedes the merged one
     /// and links `DerivedFrom` the revision it restores. Both earlier
-    /// revisions stay readable. Returns the restoring revision.
+    /// revisions stay readable.
+    ///
+    /// A rollback asks only where a review is required, as a merge does: when
+    /// the restoring revision declares capabilities beyond the active
+    /// revision's admitted surface, or the scan of its bytes sets
+    /// `ProposedRequired`. Then only `owner` rolls back: without one, nothing
+    /// changes and the result is [`SharedSkillRollback::PendingOwner`].
     ///
     /// Refuses unless `merged` is the active revision a shared merge admitted.
     /// Once a later revision has superseded it, roll that one back instead.
@@ -308,16 +323,27 @@ impl Vault {
     pub fn roll_back_shared_skill_merge(
         &self,
         merged: &EntityId,
+        owner: Option<&AuthenticatedOwner>,
         occurred: TimeRange,
         learned_at: u64,
-    ) -> Result<EntityId> {
+    ) -> Result<SharedSkillRollback> {
+        /// A pending rollback leaves the transaction without committing.
+        enum Stop {
+            PendingOwner,
+            Failed(crate::error::Error),
+        }
+        impl From<crate::error::Error> for Stop {
+            fn from(error: crate::error::Error) -> Self {
+                Self::Failed(error)
+            }
+        }
         let restore = EntityId::now();
-        self.with_write_txn(|txn| {
+        let restored = self.try_with_write_txn(|txn| -> std::result::Result<EntityId, Stop> {
             let not_rollbackable =
                 || invalid("only the active revision a shared merge admitted rolls back");
             let control = read_control(&self.store, txn, merged)?.ok_or_else(not_rollbackable)?;
             let RefinementTarget::Skill { base, .. } = &control.target else {
-                return Err(not_rollbackable());
+                return Err(not_rollbackable().into());
             };
             let base = EntityId::from_hex(base).map_err(|_| invalid("merge base is malformed"))?;
             let current = self.read_skill_record_in_txn(txn, merged)?;
@@ -333,7 +359,7 @@ impl Vault {
                 || protected(&current)
                 || protected(&displaced)
             {
-                return Err(not_rollbackable());
+                return Err(not_rollbackable().into());
             }
             let mut record = displaced.clone();
             record.version = restore_version(&displaced.version, merged);
@@ -365,8 +391,39 @@ impl Vault {
                     txn, &restore, hash, package, occurred, learned_at,
                 )?;
             }
-            if let Some(surface) = self.read_admitted_capability_surface_in_txn(txn, &base)? {
-                self.write_admitted_capability_surface_in_txn(txn, &restore, &surface)?;
+            let surface = self.read_admitted_capability_surface_in_txn(txn, &base)?;
+            if let Some(surface) = &surface {
+                self.write_admitted_capability_surface_in_txn(txn, &restore, surface)?;
+            }
+            let active = self
+                .read_admitted_capability_surface_in_txn(txn, merged)?
+                .unwrap_or_default();
+            let scan = match record.content_hash {
+                Some(hash) => {
+                    crate::skill_scan::scan_gate_for_activation_in_txn(&self.store, txn, hash)?
+                }
+                None => crate::skill_scan::ActivationPosture::AutoEligible,
+            };
+            if !surface
+                .unwrap_or_default()
+                .is_same_or_narrower_than(&active)
+                || matches!(
+                    scan,
+                    crate::skill_scan::ActivationPosture::ProposedRequired { .. }
+                )
+            {
+                let owner = owner.ok_or(Stop::PendingOwner)?;
+                let effect = ComposedEffect::new(EffectFacts::new(format!(
+                    "skill.rollback:{}:{}:{scan:?}",
+                    merged.to_hex(),
+                    restore.to_hex(),
+                ))?)
+                .digest();
+                self.approve_once_in_txn(txn, owner, effect)?;
+                let answer =
+                    crate::consent::approve_once_authorization_in_txn(&self.store, txn, &effect)?
+                        .ok_or_else(|| invalid("the owner's rollback answer is missing"))?;
+                crate::consent::spend_approve_once_in_txn(&self.store, txn, &answer)?;
             }
             record.lifecycle_status = SkillLifecycle::Active;
             record.approval_status = crate::claim::ClaimApprovalStatus::Approved;
@@ -385,7 +442,12 @@ impl Vault {
                 .apply(txn)?;
             self.supersede_skill_record_in_txn(txn, merged, &restore, occurred, learned_at)?;
             Ok(restore)
-        })
+        });
+        match restored {
+            Ok(restore) => Ok(SharedSkillRollback::Restored(restore)),
+            Err(Stop::PendingOwner) => Ok(SharedSkillRollback::PendingOwner),
+            Err(Stop::Failed(error)) => Err(error),
+        }
     }
     pub fn shared_skill_merge_receipt(
         &self,

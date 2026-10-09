@@ -25,7 +25,8 @@ use crate::{EntityId, Vault};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct SuccessionWriter {
     /// `None` is the host's own unattributed act, written unbound like any
-    /// raw local write.
+    /// raw local write; the predecessor's restricted history still has to
+    /// clear the Gate under it.
     actor: Option<WriteActor>,
     /// A machine act: a non-human actor, or a decision declared `Generated`.
     /// Its successor is `Generated`, so it never supersedes user truth.
@@ -95,10 +96,7 @@ impl SuccessionWriter {
             return Ok((next, None));
         };
         let source = source.unwrap_or(ClaimSource::UserStated);
-        let mut lineage = SourceLineage::of(source);
-        for carried in prior_lineage(prior) {
-            lineage = lineage.with(carried);
-        }
+        let lineage = inherited_lineage(source, prior);
         let provenance = WriteProvenance::new(Value::Map(vec![
             (Value::from("surface"), Value::from(self.surface)),
             (
@@ -140,6 +138,13 @@ fn carried_evidence(prior: &ClaimBody) -> Option<Value> {
         }
         evidence => evidence.clone(),
     }
+}
+
+/// `source` joined with every class the predecessor's history drew on.
+fn inherited_lineage(source: ClaimSource, prior: &ClaimBody) -> SourceLineage {
+    prior_lineage(prior)
+        .into_iter()
+        .fold(SourceLineage::of(source), SourceLineage::with)
 }
 
 /// The source classes the predecessor's history drew on: its declared source
@@ -215,6 +220,17 @@ impl ClaimMaterialization {
         }
         writer.require_may_succeed(&prior)?;
         let (mut next, mut envelope) = writer.successor(predecessor, &prior, succession)?;
+        if envelope.is_none() {
+            // The host's own act is unbound, so no envelope carries the
+            // predecessor's history to the Gate: its restricted classes must
+            // still clear the unattributed source-trust rows.
+            let mut sources = prior_lineage(&prior).into_iter().chain(next.source);
+            if let Some(first) = sources.next() {
+                let lineage = sources.fold(SourceLineage::of(first), SourceLineage::with);
+                let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+                crate::gate::check_unattributed_claim_lineage(&next, &lineage, &policy)?;
+            }
+        }
         let mut claim_of = None;
         if let crate::claim::ClaimSubject::Entity(subject) = prior.subject {
             let mut weight = None;

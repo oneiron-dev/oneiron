@@ -35,7 +35,10 @@ fn fixture() -> Result<(tempfile::TempDir, Vault, WriteActor)> {
 
 /// Grants `actor` an explicit auto permit for each of `sources`.
 fn permit(vault: &Vault, actor: EntityId, sources: &[ClaimSource]) -> Result<()> {
-    let rows: Vec<_> = sources.iter().map(|source| (*source, Some(actor))).collect();
+    let rows: Vec<_> = sources
+        .iter()
+        .map(|source| (*source, Some(actor)))
+        .collect();
     permit_rows(vault, &rows)
 }
 

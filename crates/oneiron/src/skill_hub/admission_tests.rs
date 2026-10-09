@@ -2153,9 +2153,13 @@ fn shared_merge_lands_without_approval_and_rolls_back_to_the_old_revision() -> R
     assert_eq!(lifecycle(&merged)?, SkillLifecycle::Active);
     assert_eq!(lifecycle(&fixture.baseline)?, SkillLifecycle::Superseded);
 
-    let restored = fixture
-        .vault
-        .roll_back_shared_skill_merge(&merged, at(30), 30)?;
+    let SharedSkillRollback::Restored(restored) =
+        fixture
+            .vault
+            .roll_back_shared_skill_merge(&merged, None, at(30), 30)?
+    else {
+        panic!("a rollback that widens nothing needs no answer");
+    };
     let current = fixture
         .vault
         .get_skill_record(&restored)?
@@ -2184,7 +2188,7 @@ fn shared_merge_lands_without_approval_and_rolls_back_to_the_old_revision() -> R
     assert!(
         fixture
             .vault
-            .roll_back_shared_skill_merge(&merged, at(31), 31)
+            .roll_back_shared_skill_merge(&merged, None, at(31), 31)
             .is_err(),
         "a merge rolls back once; the restoring revision is now current"
     );
@@ -2306,6 +2310,68 @@ fn shared_merge_the_scan_flags_waits_for_the_owner() -> Result<()> {
     Ok(())
 }
 
+/// Astra #1336 R2 repro: a rollback asks where a review is required, as a
+/// merge does. Rolling back a merge that narrowed the skill restores the
+/// wider admitted surface, so only the owner rolls it back.
+#[test]
+fn rollback_that_widens_permissions_waits_for_the_owner() -> Result<()> {
+    let fixture = Fixture::new();
+    fixture.vault.with_write_txn(|txn| {
+        fixture.vault.write_admitted_capability_surface_in_txn(
+            txn,
+            &fixture.baseline,
+            &widened_package().capabilities,
+        )
+    })?;
+    let merged = submit_fixture_delta(&fixture, &package("fixture.base", "2", "check result"))?;
+    let ask = fixture.vault.prepare_shared_skill_merge(
+        merged,
+        fixture.resident,
+        useful_question(merged),
+    )?;
+    let SharedSkillMergeDisposition::Ruled(receipt) = fixture.vault.merge_shared_skill_delta(
+        &ask,
+        &Useful(true),
+        &Replay::new(true),
+        at(21),
+        21,
+    )?
+    else {
+        panic!("a narrowing merge needs no answer");
+    };
+    assert!(receipt.accepted);
+    assert_eq!(
+        fixture
+            .vault
+            .roll_back_shared_skill_merge(&merged, None, at(30), 30)?,
+        SharedSkillRollback::PendingOwner
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .get_skill_record(&merged)?
+            .expect("merged")
+            .lifecycle_status,
+        SkillLifecycle::Active
+    );
+    let SharedSkillRollback::Restored(restored) =
+        fixture
+            .vault
+            .roll_back_shared_skill_merge(&merged, Some(&fixture.owner), at(31), 31)?
+    else {
+        panic!("the owner rolls back");
+    };
+    assert_eq!(
+        fixture
+            .vault
+            .get_skill_record(&restored)?
+            .expect("restoring revision")
+            .lifecycle_status,
+        SkillLifecycle::Active
+    );
+    Ok(())
+}
+
 /// Scores instructions that say "twice" above any that do not, so a delta can
 /// beat a stored revision the default fixture scorer already rates highest.
 struct PrefersTwice;
@@ -2394,9 +2460,13 @@ fn rollback_restores_a_stored_revision_in_its_own_format() -> Result<()> {
         };
         assert!(receipt.accepted);
 
-        let restored = fixture
-            .vault
-            .roll_back_shared_skill_merge(&merged, at(40), 40)?;
+        let SharedSkillRollback::Restored(restored) =
+            fixture
+                .vault
+                .roll_back_shared_skill_merge(&merged, None, at(40), 40)?
+        else {
+            panic!("restoring a stored revision widens nothing");
+        };
         let record = fixture
             .vault
             .get_skill_record(&restored)?
