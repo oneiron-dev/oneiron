@@ -108,12 +108,21 @@ fn recall_leaves_a_fresh_slip_mint_out_unless_the_kind_is_named() {
 fn recall_after_control_writes_fixture(
     grant_read: bool,
 ) -> (tempfile::TempDir, crate::Vault, EntityId, EntityId) {
+    recall_after_control_writes_fixture_in(grant_read, crate::config::VaultConfig::default())
+}
+
+/// [`recall_after_control_writes_fixture`] in a vault opened with `config`.
+fn recall_after_control_writes_fixture_in(
+    grant_read: bool,
+    config: crate::config::VaultConfig,
+) -> (tempfile::TempDir, crate::Vault, EntityId, EntityId) {
     use crate::access_grant::{
         AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
     };
     use ed25519_dalek::{Signer, SigningKey};
 
-    let (dir, vault) = open_vault();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = crate::Vault::open(dir.path(), config).expect("open vault");
     let owner = vault.ensure_embedded_owner_actor().expect("owner person");
     let scoped = put_person(&vault, 0x67);
     let space = EntityId::from_bytes([0x68; 16]).unwrap();

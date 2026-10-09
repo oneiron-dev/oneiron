@@ -348,19 +348,30 @@ fn scoped_recall_rechecks_a_grant_revoked_during_retrieval() {
     );
 }
 
-/// ARCH-0004 recall returns a matched message as its TURN, whose text is its
-/// messages'. A reader who may read the turn and one of its messages, but
-/// not the other, never reads the other's words through the turn: not in
-/// the item, not in a quote, not in the rendered pack.
+/// Sol 9B #2 (P1): a TURN's text, and so its vector, is all its messages'.
+/// A reader who may read the turn and one of its messages, but not the
+/// other, never retrieves the turn: not by the withheld message's meaning
+/// through the turn's vector, and not by the other message's words, which
+/// come back as that message alone. The owner finds the turn both ways.
+/// Bug repro: recall admitted the vector hit on the turn's own grants, so the
+/// scoped reader's paraphrase of the withheld message found the turn.
 #[test]
-fn a_turn_shows_a_scoped_reader_only_the_messages_it_may_read() {
-    let (_dir, vault, owner, scoped) = recall_after_control_writes_fixture(true);
+fn a_turn_reaches_a_scoped_reader_only_when_it_may_read_every_message() {
+    const WITHHELD_MEANING: [f32; 4] = [0.0, 1.0, 0.0, 0.0];
+    let (_dir, vault, owner, scoped) = recall_after_control_writes_fixture_in(
+        true,
+        crate::config::VaultConfig {
+            embedding_model: Some("test/model@v1".to_owned()),
+            dimensions: WITHHELD_MEANING.len(),
+            ..crate::config::VaultConfig::default()
+        },
+    );
     let space = EntityId::from_bytes([0x68; 16]).unwrap();
     let mut granted = witness_message(0, WitnessAuthor::User, "harbor view table for two");
     granted.metadata = Some(serde_json::json!({"rel": space.to_hex()}));
     // No space: a message only its owner's grants admit.
     let withheld = witness_message(1, WitnessAuthor::User, "harbor locker code is 4471");
-    facade_for(&vault, owner)
+    let receipt = facade_for(&vault, owner)
         .witness(&WitnessTurn {
             conversation_ref: EntityId::from_bytes([0x77; 16]).unwrap().to_hex(),
             turn_ref: None,
@@ -368,6 +379,47 @@ fn a_turn_shows_a_scoped_reader_only_the_messages_it_may_read() {
             occurred_at: crate::unix_seconds_now() - 28 * 86_400,
         })
         .expect("witness a turn of two messages");
+    let turn = EntityId::from_hex(
+        receipt
+            .receipt_ref
+            .strip_prefix("witness:")
+            .expect("witness ref"),
+    )
+    .expect("turn id");
+    fill_turn(&vault, &turn, &WITHHELD_MEANING);
+
+    // A paraphrase of the withheld message, sharing no word with the turn.
+    let by_meaning = |actor| {
+        facade_for(&vault, actor)
+            .recall_with_execution(
+                "which digits open my storage box",
+                Effort::Medium,
+                &RecallScope::default(),
+                20,
+                None,
+                None,
+                &crate::retrieval_depth::RecallExecution {
+                    embedding: Some(WITHHELD_MEANING.as_slice()),
+                    ..Default::default()
+                },
+            )
+            .expect("recall by meaning")
+    };
+    let owner_pack = by_meaning(owner);
+    assert!(
+        owner_pack
+            .items
+            .iter()
+            .any(|item| item.kind == "TURN" && item.value_text.contains("4471")),
+        "the owner finds the turn by its meaning: {:?}",
+        owner_pack.items
+    );
+    let pack = by_meaning(scoped);
+    assert!(
+        pack.items.iter().all(|item| item.kind != "TURN"),
+        "the withheld message's meaning finds its turn: {:?}",
+        pack.items
+    );
 
     let owner_pack = facade_for(&vault, owner)
         .recall(
@@ -393,13 +445,16 @@ fn a_turn_shows_a_scoped_reader_only_the_messages_it_may_read() {
             let pack = facade_for(&vault, scoped)
                 .recall("harbor", effort, &RecallScope::default(), 20, format, None)
                 .expect("scoped recall");
-            let turn = pack
-                .items
-                .iter()
-                .find(|item| item.kind == "TURN")
-                .unwrap_or_else(|| panic!("{effort:?} returns the turn: {:?}", pack.items));
-            assert_eq!(turn.value_text, "harbor view table for two", "{effort:?}");
+            assert!(
+                pack.items
+                    .iter()
+                    .any(|item| item.kind == "MESSAGE"
+                        && item.value_text == "harbor view table for two"),
+                "{effort:?} returns the message it may read: {:?}",
+                pack.items
+            );
             for item in &pack.items {
+                assert_ne!(item.kind, "TURN", "{effort:?}: {item:?}");
                 assert!(!item.value_text.contains("4471"), "{effort:?}: {item:?}");
                 assert!(
                     item.cited_messages
