@@ -57,8 +57,6 @@ pub use self::verbs::{
 // every surface-internal item the tests name bare. After the directory split
 // the seam re-imports both so `tests.rs` resolves exactly as it did before.
 #[cfg(test)]
-use self::parse::*;
-#[cfg(test)]
 use crate::saved_query::{
     CreateSavedQueryRequest, EvalMode, EvalPolicy, MatcherSpec, MembershipEvent,
     MembershipTransition, QueryScope, SAVED_QUERY_SCHEMA_VERSION, parse_filter_ast,
@@ -67,5 +65,3 @@ use crate::saved_query::{
 use crate::temporal::TimeRange;
 #[cfg(test)]
 use crate::{EntityId, Vault};
-#[cfg(test)]
-use serde_json::Value;

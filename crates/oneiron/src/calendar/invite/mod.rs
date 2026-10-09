@@ -59,7 +59,7 @@ pub use self::payload::{
 
 use super::CalendarError;
 #[cfg(test)]
-use super::claims::{CalendarPassportDirection, PREDICATE_CALENDAR_ATTENDEE};
+use super::claims::PREDICATE_CALENDAR_ATTENDEE;
 use super::{claims, ics, passport};
 #[cfg(test)]
 use crate::Vault;
