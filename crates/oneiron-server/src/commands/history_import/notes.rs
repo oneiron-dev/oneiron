@@ -151,6 +151,17 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
         out.display()
     );
     let config = resolve_serve_config(&serve)?;
+    // The approve and decline lines name these; a lossy name is another path.
+    for named in [Some(&out), serve.config.as_ref(), Some(&config.vault_path)]
+        .into_iter()
+        .flatten()
+    {
+        anyhow::ensure!(
+            named.to_str().is_some(),
+            "{} is not a UTF-8 path",
+            named.display()
+        );
+    }
     let folder = std::fs::canonicalize(&path)
         .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
     anyhow::ensure!(folder.is_dir(), "{} is not a folder", path.display());
@@ -424,8 +435,10 @@ fn choose_title(
 
 /// Resolves every note's links. The batch carries the links that start at a
 /// new note, and those of an unchanged note that resolve only now, to a new
-/// note: a link an earlier import resolved keeps its note. A changed note's
-/// links wait with its text.
+/// note: a link an earlier import resolved keeps its note. What resolved
+/// before is judged from the folder as it is now, so a note whose file left
+/// the folder no longer holds its name. A changed note's links wait with its
+/// text.
 fn resolve_links(
     notes: &[Note],
     standings: &[ImportedNoteStanding],

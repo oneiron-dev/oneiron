@@ -70,24 +70,29 @@ pub(super) fn frontmatter(yaml: &str) -> Option<Front> {
 pub(super) fn wikilinks(body: &str) -> Vec<Link> {
     let mut links = Vec::new();
     let mut paragraph = String::new();
-    // The open fence: its character and length.
-    let mut fence: Option<(char, usize)> = None;
+    let mut fence: Option<Fence> = None;
     let mut indented_code = false;
     let mut in_list = false;
     let mut after_blank = true;
     for line in body.lines() {
-        let inner = unquote(line);
-        let indent = indent(inner);
-        let content = inner.trim_start();
-        if let Some((mark, opened)) = fence {
-            if run(content, mark) >= opened && content.trim_start_matches(mark).trim().is_empty() {
-                fence = None;
+        let (quoted, inner) = unquote(line);
+        if let Some(open) = fence {
+            // A fence in a block quote ends with the quote.
+            if !open.quoted || quoted {
+                let content = inner.trim_start();
+                if run(content, open.mark) >= open.len
+                    && content.trim_start_matches(open.mark).trim().is_empty()
+                {
+                    fence = None;
+                }
+                continue;
             }
-            continue;
+            fence = None;
         }
+        let indent = indent(inner);
+        let mut content = inner.trim_start();
         if content.is_empty() {
-            span_links(&paragraph, &mut links);
-            paragraph.clear();
+            span_links(&std::mem::take(&mut paragraph), &mut links);
             after_blank = true;
             continue;
         }
@@ -95,26 +100,38 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
             continue;
         }
         indented_code = false;
-        if let Some(mark) = ['`', '~'].into_iter().find(|&mark| run(content, mark) >= 3)
-            && (indent < 4 || in_list)
-            && (mark == '~' || !content.trim_start_matches('`').contains('`'))
-        {
-            span_links(&paragraph, &mut links);
-            paragraph.clear();
-            fence = Some((mark, run(content, mark)));
-            after_blank = false;
-            continue;
-        }
         if indent >= 4 && after_blank && !in_list && paragraph.is_empty() {
             indented_code = true;
             continue;
         }
-        if list_item(content) {
+        // A rule or a heading is a block of its own, and a heading at the
+        // margin ends a list.
+        if thematic_break(content) || heading(content) {
+            span_links(&std::mem::take(&mut paragraph), &mut links);
+            span_links(content, &mut links);
+            in_list &= indent >= 2;
+            after_blank = false;
+            continue;
+        }
+        if let Some(rest) = list_item(content) {
+            span_links(&std::mem::take(&mut paragraph), &mut links);
             in_list = true;
+            content = rest.trim_start();
         } else if indent == 0 && after_blank {
             in_list = false;
         }
         after_blank = false;
+        if let Some(mark) = fence_mark(content)
+            && (indent < 4 || in_list)
+        {
+            span_links(&std::mem::take(&mut paragraph), &mut links);
+            fence = Some(Fence {
+                mark,
+                len: run(content, mark),
+                quoted,
+            });
+            continue;
+        }
         paragraph.push_str(content);
         paragraph.push('\n');
     }
@@ -122,17 +139,30 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
     links
 }
 
-/// A line without its block-quote markers.
-fn unquote(line: &str) -> &str {
+/// An open code fence: its character, its length, and whether it opened in
+/// a block quote.
+#[derive(Clone, Copy)]
+struct Fence {
+    mark: char,
+    len: usize,
+    quoted: bool,
+}
+
+/// A line without its block-quote markers, and whether it had any.
+fn unquote(line: &str) -> (bool, &str) {
     let mut rest = line;
+    let mut quoted = false;
     loop {
         let trimmed = rest.trim_start_matches(' ');
         if rest.len() - trimmed.len() > 3 {
-            return rest;
+            return (quoted, rest);
         }
         match trimmed.strip_prefix('>') {
-            Some(quoted) => rest = quoted.strip_prefix(' ').unwrap_or(quoted),
-            None => return rest,
+            Some(inner) => {
+                quoted = true;
+                rest = inner.strip_prefix([' ', '\t']).unwrap_or(inner);
+            }
+            None => return (quoted, rest),
         }
     }
 }
@@ -154,22 +184,42 @@ fn run(text: &str, mark: char) -> usize {
     text.chars().take_while(|&c| c == mark).count()
 }
 
-/// Whether `content` opens a list item: `-`, `*`, `+` or `1.` / `1)` and a
-/// space, or the marker alone.
-fn list_item(content: &str) -> bool {
+/// The fence character `content` opens a code block with: three or more
+/// backticks (and none after them) or tildes.
+fn fence_mark(content: &str) -> Option<char> {
+    ['`', '~'].into_iter().find(|&mark| {
+        run(content, mark) >= 3 && (mark == '~' || !content.trim_start_matches('`').contains('`'))
+    })
+}
+
+/// `---`, `***` or `___`, spaces allowed between.
+fn thematic_break(content: &str) -> bool {
+    ['-', '*', '_'].into_iter().any(|mark| {
+        content.chars().filter(|&c| c == mark).count() >= 3
+            && content.chars().all(|c| c == mark || c == ' ' || c == '\t')
+    })
+}
+
+/// An ATX heading: one to six `#` and a space, or nothing after them.
+fn heading(content: &str) -> bool {
+    let marks = run(content, '#');
+    (1..=6).contains(&marks)
+        && content[marks..]
+            .chars()
+            .next()
+            .is_none_or(|c| c == ' ' || c == '\t')
+}
+
+/// The rest of a line that opens a list item (`-`, `*`, `+`, or `1.` / `1)`,
+/// then a space or nothing).
+fn list_item(content: &str) -> Option<&str> {
     let digits = content.chars().take_while(char::is_ascii_digit).count();
-    let rest = if digits > 0 && digits <= 9 {
-        match content[digits..].strip_prefix(['.', ')']) {
-            Some(rest) => rest,
-            None => return false,
-        }
+    let rest = if (1..=9).contains(&digits) {
+        content[digits..].strip_prefix(['.', ')'])?
     } else {
-        match content.strip_prefix(['-', '*', '+']) {
-            Some(rest) => rest,
-            None => return false,
-        }
+        content.strip_prefix(['-', '*', '+'])?
     };
-    rest.is_empty() || rest.starts_with([' ', '\t'])
+    (rest.is_empty() || rest.starts_with([' ', '\t'])).then_some(rest)
 }
 
 /// The links in one paragraph's text, skipping its inline code spans and
@@ -239,9 +289,10 @@ mod tests {
             .collect()
     }
 
-    /// Sol review 1 (#1, #3, #6, #8): code spans over lines, indented and
-    /// quoted code, a byte-order mark before a fence and escaped brackets
-    /// hold no links; lists keep theirs.
+    /// Sol review 1 (#1, #3, #6, #8) and its re-check (#1, #3, #13-#15):
+    /// code spans over lines, indented and quoted code, a byte-order mark
+    /// before a fence and escaped brackets hold no links; lists keep theirs;
+    /// a heading, a list item or the end of a quote ends what opened in it.
     #[test]
     fn links_in_code_are_not_links() {
         assert_eq!(targets("Before `code\n[[a]]\ncode` after [[b]].\n"), ["b"]);
@@ -261,5 +312,12 @@ mod tests {
             ["y", "z"]
         );
         assert_eq!(targets("\\[[a]] [[b]] \\`[[c]]`"), ["b", "c"]);
+        assert_eq!(targets("# Heading `\nSee [[b]] and `.\n"), ["b"]);
+        assert_eq!(targets("- a `x\n- b [[b]] `y\n"), ["b"]);
+        assert_eq!(targets("- ```\n  [[a]]\n  ```\n\n[[b]]\n"), ["b"]);
+        assert_eq!(targets("> ```\n> [[a]]\n\n[[b]]\n"), ["b"]);
+        assert_eq!(targets("- - -\n\n    [[a]]\n\n[[b]]\n"), ["b"]);
+        assert_eq!(targets("- item\n# Heading\n\n    [[a]]\n\n[[b]]\n"), ["b"]);
+        assert_eq!(targets(">\t[[b]]\n"), ["b"]);
     }
 }
