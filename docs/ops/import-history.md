@@ -60,7 +60,7 @@ copies a parent thread's items into a forked or spawned thread's rollout.
 
 An export's `conversations.json` is read up to 2 GiB unzipped, and one
 conversation in it up to 128 MiB. A folder of session logs is read up to a
-million messages (or 1 GiB of them) in one import, each log up to 4 GiB. Past
+million messages (or 1 GiB of them) in one import, each log up to 1 GiB. Past
 a limit the import stops before it writes anything and says which; import one
 project folder, or one month of sessions, at a time.
 

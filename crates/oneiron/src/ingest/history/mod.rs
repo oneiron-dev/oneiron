@@ -118,7 +118,9 @@ pub struct HistoryMessage {
     pub tools: Vec<String>,
     /// The id an earlier read of a growing log gave this message: a Codex
     /// reply logged first as its event alone, with its item (and the item's
-    /// own id) after it. The import knows the message by either id.
+    /// own id) after it; a Claude Code prompt handed over from the queue
+    /// before its own copy was logged. The import knows the message by
+    /// either id.
     pub alias: Option<String>,
 }
 

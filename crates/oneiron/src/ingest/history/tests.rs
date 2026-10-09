@@ -684,6 +684,33 @@ fn a_sidechain_reply_between_a_queued_prompt_and_its_copy_lands_the_prompt_once(
     );
 }
 
+/// Greptile 1310 (claude_code.rs:328): an import that read a live log after a
+/// queued prompt's hand-over, but before its queued-command attachment was
+/// logged, landed the prompt from the queue. Once the attachment is logged
+/// the prompt is the same message, not a second one.
+#[test]
+fn a_claude_code_prompt_read_before_its_queued_copy_was_logged_lands_once() {
+    let (_dir, vault, owner) = vault_and_owner();
+    let lines = [
+        r#"{"parentUuid":null,"isSidechain":false,"userType":"external","sessionId":"5c2d8e41-1111-4222-8333-944455556666","type":"user","message":{"role":"user","content":"Repot the basil."},"uuid":"e3000000-0000-4000-8000-000000000001","timestamp":"2026-09-25T06:00:00.000Z"}"#,
+        r#"{"type":"queue-operation","operation":"enqueue","timestamp":"2026-09-25T06:00:05.000Z","sessionId":"5c2d8e41-1111-4222-8333-944455556666","content":"Move the pots to the sill too."}"#,
+        r#"{"parentUuid":"e3000000-0000-4000-8000-000000000001","isSidechain":false,"userType":"external","sessionId":"5c2d8e41-1111-4222-8333-944455556666","type":"assistant","message":{"role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"text","text":"The basil is repotted."}]},"uuid":"e3000000-0000-4000-8000-000000000002","timestamp":"2026-09-25T06:00:20.000Z"}"#,
+        r#"{"type":"queue-operation","operation":"dequeue","timestamp":"2026-09-25T06:00:21.000Z","sessionId":"5c2d8e41-1111-4222-8333-944455556666"}"#,
+        r#"{"parentUuid":"e3000000-0000-4000-8000-000000000002","isSidechain":false,"userType":"external","sessionId":"5c2d8e41-1111-4222-8333-944455556666","type":"attachment","uuid":"e3000000-0000-4000-8000-000000000003","timestamp":"2026-09-25T06:00:21.000Z","attachment":{"type":"queued_command","prompt":"Move the pots to the sill too.","commandMode":"prompt","origin":{"kind":"human"}}}"#,
+        r#"{"parentUuid":"e3000000-0000-4000-8000-000000000003","isSidechain":false,"userType":"external","sessionId":"5c2d8e41-1111-4222-8333-944455556666","type":"assistant","message":{"role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"text","text":"The pots are on the sill."}]},"uuid":"e3000000-0000-4000-8000-000000000004","timestamp":"2026-09-25T06:00:40.000Z"}"#,
+    ];
+    let stem = "5c2d8e41-1111-4222-8333-944455556666";
+    let partway = decode_log(SOURCE, stem, &lines[..4]);
+    assert_eq!(import_all(&vault, &owner, SOURCE, &partway), (3, 0, 0));
+    let whole = decode_log(SOURCE, stem, &lines);
+    assert_eq!(
+        import_all(&vault, &owner, SOURCE, &whole),
+        (1, 3, 0),
+        "the attachment is the queued prompt already imported"
+    );
+    assert_eq!(vault.history_import_ledger_len(SOURCE).expect("ledger"), 4);
+}
+
 /// One ChatGPT conversation with the given mapping nodes `(id, parent, role,
 /// time, text)`, showing `current`.
 fn chatgpt_export(current: &str, nodes: &[(&str, Option<&str>, &str, f64, &str)]) -> String {

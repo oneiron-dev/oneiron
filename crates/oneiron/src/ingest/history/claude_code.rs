@@ -109,8 +109,8 @@ pub(super) fn decode(text: &str, file: &HistoryFile) -> Vec<HistoryConversation>
     // Older logs keep a session's sidechains inline; each agent gets its own
     // conversation, in the order it first appears.
     let mut sidechains: Vec<(String, Thread)> = Vec::new();
-    let said = said_lines(text, kind);
-    let mut copied = vec![false; said.len()];
+    let said = said_lines(text, kind, &id);
+    let mut copied: Vec<Option<String>> = vec![None; said.len()];
     let mut queued: VecDeque<Queued> = VecDeque::new();
 
     for (line, raw) in text.lines().enumerate() {
@@ -174,6 +174,19 @@ pub(super) fn decode(text: &str, file: &HistoryFile) -> Vec<HistoryConversation>
             _ => thread.skipped().other += 1,
         }
     }
+    // A read of the log between a hand-over and its copy landed the prompt
+    // from the queue; the copy is known by that identity too.
+    for (said, queue_id) in said.iter().zip(copied) {
+        if let Some(queue_id) = queue_id
+            && let Some(copy) = main
+                .conversation
+                .messages
+                .iter_mut()
+                .find(|message| message.native_id == said.native_id)
+        {
+            copy.alias = Some(queue_id);
+        }
+    }
     let mut out = vec![main.conversation];
     out.extend(
         sidechains
@@ -197,13 +210,14 @@ struct Said {
     line: usize,
     role: HistoryRole,
     text: String,
+    native_id: String,
 }
 
 /// Every message the log's own thread keeps on a line of its own (typed
 /// lines, queued command attachments, replies), each read the way it lands,
 /// so a queued prompt can find the copy that is its own. An inline
 /// sidechain's lines are its agent's, not the thread the queue feeds.
-fn said_lines(text: &str, kind: HistoryThreadKind) -> Vec<Said> {
+fn said_lines(text: &str, kind: HistoryThreadKind, id: &str) -> Vec<Said> {
     let mut said = Vec::new();
     for (line, raw) in text.lines().enumerate() {
         let Some(value) = json_record(raw) else {
@@ -219,10 +233,11 @@ fn said_lines(text: &str, kind: HistoryThreadKind) -> Vec<Said> {
             HistoryThreadKind::Main,
             None,
         ));
+        let fallback_id = format!("{id}#L{line}");
         match str_field(&value, "type") {
-            Some("user") => user_line(&mut scratch, &value, "", None),
-            Some("assistant") => assistant_line(&mut scratch, &value, ""),
-            Some("attachment") => attachment_line(&mut scratch, &value, "", None),
+            Some("user") => user_line(&mut scratch, &value, &fallback_id, None),
+            Some("assistant") => assistant_line(&mut scratch, &value, &fallback_id),
+            Some("attachment") => attachment_line(&mut scratch, &value, &fallback_id, None),
             _ => {}
         }
         said.extend(
@@ -234,6 +249,7 @@ fn said_lines(text: &str, kind: HistoryThreadKind) -> Vec<Said> {
                     line,
                     role: message.role,
                     text: message.text,
+                    native_id: message.native_id,
                 }),
         );
     }
@@ -246,14 +262,15 @@ fn said_lines(text: &str, kind: HistoryThreadKind) -> Vec<Said> {
 /// did not keep), so a handed-over prompt lands from here unless the log holds
 /// its own copy: a kept typed line or queued-command attachment with its words,
 /// after it was queued and before the reply that follows the hand-over, that
-/// no other hand-over took. The same words asked at another time stay their
-/// own message. `popAll` takes the queue back into the input box: those
-/// prompts were withdrawn.
+/// no other hand-over took. The copy keeps the queued prompt's id as its
+/// alias. The same words asked at another time stay their own message.
+/// `popAll` takes the queue back into the input box: those prompts were
+/// withdrawn.
 struct Queue<'a> {
     queued: &'a mut VecDeque<Queued>,
     said: &'a [Said],
-    /// Which of `said` a hand-over has taken as its copy.
-    copied: &'a mut [bool],
+    /// The queued prompt's id, for each of `said` a hand-over took as its copy.
+    copied: &'a mut [Option<String>],
 }
 
 impl Queue<'_> {
@@ -316,14 +333,14 @@ impl Queue<'_> {
             .iter()
             .zip(self.copied.iter())
             .position(|(said, copied)| {
-                !copied
+                copied.is_none()
                     && said.role == HistoryRole::User
                     && said.line > queued.line
                     && said.line < answered
                     && said.text == queued.text
             });
         if let Some(copy) = copy {
-            self.copied[copy] = true;
+            self.copied[copy] = Some(queued.native_id);
             thread.skipped().duplicates += 1;
             return;
         }
