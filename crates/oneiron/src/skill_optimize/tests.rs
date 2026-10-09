@@ -445,7 +445,7 @@ impl HeldOutReplayScorer for UnreachableScorer {
 /// one; a runless attempt is its own cycle.
 ///
 /// The row is claimed and completed straight away rather than left READY,
-/// because [`stamped_receipt`] claims whatever the queue offers next: a wake row
+/// because [`stamped_receipt_version_as`] claims whatever the queue offers next: a wake row
 /// idling in the ready set would be leased out from under it. What proves the
 /// cycle is the stored ROW, and that outlives any lease.
 fn enqueue_attempt(vault: &Vault, run: Option<&str>, now: u64) -> AttemptId {
