@@ -84,6 +84,40 @@ pub enum Command {
     /// Scaffold a self-host node from the shipped deployment templates.
     #[command(subcommand)]
     Host(HostCommand),
+    /// Owner acts for the vault's Dreamer.
+    #[command(subcommand)]
+    Dreamer(DreamerCommand),
+}
+
+#[derive(Subcommand)]
+pub enum DreamerCommand {
+    /// Give a vault created before the Dreamer's policy rows shipped the
+    /// rows a fresh vault seeds, so its Dreamer can read the vault and land
+    /// routine consolidation (run once, with the server stopped; a vault that
+    /// has them is left as it is). `--extraction-route` also routes the
+    /// vault's extraction defaults.
+    Grant(Box<DreamerGrantArgs>),
+}
+
+#[derive(Args, Clone)]
+pub struct DreamerGrantArgs {
+    /// Also route the vault's extraction and consolidation defaults to this
+    /// locality (`own_server` for a model server you run, `third_party` for a
+    /// hosted API), raising the extraction bound to it if lower. Omit to leave
+    /// the vault's inference defaults as they are.
+    #[arg(long, value_parser = parse_route)]
+    pub extraction_route: Option<oneiron::ModelLocality>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+fn parse_route(value: &str) -> Result<oneiron::ModelLocality, String> {
+    match value {
+        "own_server" => Ok(oneiron::ModelLocality::OwnServer),
+        "third_party" => Ok(oneiron::ModelLocality::ThirdParty),
+        other => Err(format!("{other:?} is not own_server or third_party")),
+    }
 }
 
 #[derive(Subcommand)]
@@ -465,5 +499,6 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Token(TokenCommand::Revoke(args)) => commands::token_revoke(*args),
         Command::Api(args) => commands::api(args).await,
         Command::Host(HostCommand::Init(args)) => commands::host_init(args),
+        Command::Dreamer(DreamerCommand::Grant(args)) => commands::dreamer_grant(*args),
     }
 }

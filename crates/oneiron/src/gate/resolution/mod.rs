@@ -3,6 +3,7 @@ mod evaluation;
 mod frontier_hash;
 mod manifest_fold;
 mod manifest_types;
+mod weave_reach;
 
 pub(super) use self::frontier_hash::{hash_bool, hash_bytes, hash_opt_str, hash_str};
 pub(super) use self::manifest_fold::check_claim_source_trust;
