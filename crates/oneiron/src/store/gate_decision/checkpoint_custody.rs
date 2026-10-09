@@ -352,8 +352,8 @@ impl Store {
     /// whichever of the two sits at the path is the one live vault on the
     /// custody they share, at every instant and after a crash anywhere. A
     /// swap that fails lifts the mark again and changes nothing; one that
-    /// returns without the replacement's own directory at this vault's path
-    /// is refused and leaves both marks as they are. Once the
+    /// returns without the replacement's own directory found at this vault's
+    /// path is refused and leaves both marks as they are. Once the
     /// swap is on disk, this vault is archived wherever it goes and the
     /// replacement's mark is lifted; a failure there is only logged, both
     /// marks already saying the same, and the replacement keeps its mark,

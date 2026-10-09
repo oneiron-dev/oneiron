@@ -393,13 +393,14 @@ pub(crate) fn restore_over(
     vault_path: &Path,
     config: oneiron::VaultConfig,
 ) -> anyhow::Result<Restored> {
-    restore_over_syncing(backup, vault_path, config, sync_dir)
+    restore_over_syncing(backup, vault_path, config, exchange, sync_dir)
 }
 
 fn restore_over_syncing(
     backup: &Path,
     vault_path: &Path,
     config: oneiron::VaultConfig,
+    swap: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
     sync_after_swap: impl FnOnce(&Path) -> anyhow::Result<()>,
 ) -> anyhow::Result<Restored> {
     // Absolute from here on: a bare `vault` has an empty parent to sync.
@@ -470,9 +471,26 @@ fn restore_over_syncing(
     // vault path is the live one, even after a crash in the middle, and the
     // other reads but never writes, erases or shreds a key until the owner
     // activates it as a side vault with custody of its own.
-    if let Err(error) = live.swap_in_replacement(&restored, || exchange(&restored_path, vault_path))
-    {
+    let exchanged = std::cell::Cell::new(false);
+    if let Err(error) = live.swap_in_replacement(&restored, || {
+        swap(&restored_path, vault_path)?;
+        exchanged.set(true);
+        Ok(())
+    }) {
         drop(restored);
+        // Once the directories were exchanged, both stay where they are: the
+        // marks keep whichever sits at the vault path live, and the staging
+        // directory may hold the previous vault.
+        if exchanged.get() {
+            anyhow::bail!(
+                "the restored copy was exchanged with {}, but the swap could not be confirmed \
+                 ({error}); nothing was removed: the other vault is at {}, and the one at {} is \
+                 the live one",
+                vault_path.display(),
+                restored_path.display(),
+                vault_path.display()
+            );
+        }
         staging.remove();
         anyhow::bail!(
             "cannot swap the restored copy into {} ({error}); nothing was changed",

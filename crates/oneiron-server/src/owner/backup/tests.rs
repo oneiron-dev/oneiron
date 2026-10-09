@@ -110,6 +110,7 @@ fn a_failed_sync_after_the_swap_still_reports_the_restore_and_the_previous_vault
         &outcome.backup.path,
         &vault_path,
         VaultConfig::default(),
+        exchange,
         |_| Err(anyhow::anyhow!("fsync: input/output error")),
     )
     .expect("the swap happened, so the restore succeeded");
@@ -168,6 +169,52 @@ fn a_restore_over_a_symlinked_vault_path_swaps_the_directory_it_names() {
             )
             .is_err()
     );
+}
+
+/// A swap the engine cannot confirm once the directories were exchanged
+/// removes nothing: the staging directory may hold the previous vault, and
+/// the vault at the vault path stays the live one (Astra re-check: a failure
+/// after the exchange must not run the cleanup of a failure before it).
+#[test]
+fn a_restore_whose_swap_cannot_be_confirmed_removes_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    let vault_path = root.path().join("vault");
+    let vault = Vault::open_owned(&vault_path, VaultConfig::default()).unwrap();
+    let outcome = take(&vault, &plan(root.path(), 7)).unwrap();
+    let later = person(&vault, b"after the backup");
+    drop(vault);
+
+    // The exchange happens, and is undone before the engine checks it.
+    let error = restore_over_syncing(
+        &outcome.backup.path,
+        &vault_path,
+        VaultConfig::default(),
+        |a, b| {
+            exchange(a, b)?;
+            exchange(a, b)
+        },
+        |_| Ok(()),
+    )
+    .expect_err("the engine finds the replacement out of place");
+    assert!(
+        format!("{error:#}").contains("nothing was removed"),
+        "{error:#}"
+    );
+    let staging = std::fs::read_dir(root.path())
+        .unwrap()
+        .filter(|entry| {
+            entry
+                .as_ref()
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".vault.restore-")
+        })
+        .count();
+    assert_eq!(staging, 1, "the staging directory is kept");
+    let vault = Vault::open_owned(&vault_path, VaultConfig::default()).unwrap();
+    assert!(vault.get(&later).unwrap().is_some());
+    person(&vault, b"the vault in place is live");
 }
 
 #[test]
