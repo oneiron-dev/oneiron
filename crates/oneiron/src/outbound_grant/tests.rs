@@ -932,3 +932,51 @@ fn outbound_scope_migration_preserves_bounds_and_family_errors() -> Result<()> {
 }
 
 mod header_classes;
+
+/// SOL-9A-2-R2 F3: each use stamps the grant it ran under, and is no reason
+/// to refuse a restore over the vault; a revocation since the backup is.
+#[test]
+fn a_restore_goes_ahead_past_a_grant_use_and_refuses_a_revocation() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let id = EntityId::now();
+    let grant = vault.mint_standing_outbound_grant(
+        &id,
+        &intent(GrantMintIntentScope::Channel {
+            channel: "line".to_owned(),
+        }),
+        10,
+    )?;
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100)?;
+    let restore = |destination: &std::path::Path| {
+        crate::Vault::restore_checkpoint_keeping_authority(
+            &image,
+            destination,
+            crate::VaultConfig::device(),
+            &vault,
+            200,
+        )
+        .map(|(restored, _)| restored)
+    };
+
+    vault.with_write_txn(|txn| {
+        crate::ports::EntityStoreMaintenance::port_outbound_grant_touch(
+            &vault.store,
+            txn,
+            &id,
+            grant,
+            12,
+        )
+    })?;
+    drop(restore(&backups.path().join("first"))?);
+
+    vault.revoke_standing_outbound_grant(&id, 20)?;
+    let destination = backups.path().join("second");
+    let error = restore(&destination)
+        .err()
+        .expect("the restore must be refused");
+    assert!(error.to_string().contains("outbound grants"), "{error}");
+    assert!(!destination.exists());
+    Ok(())
+}

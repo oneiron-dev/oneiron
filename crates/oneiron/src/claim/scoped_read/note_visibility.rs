@@ -6,7 +6,7 @@ impl ScopedRead<'_> {
     /// Scoped actor keys are asserted by a trusted host, not bearer secrets.
     /// A private NOTE additionally requires an exact entity id and a live,
     /// class-valid actor row in the same snapshot as its body.
-    pub(super) fn note_readable_in(
+    pub(crate) fn note_readable_in(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,

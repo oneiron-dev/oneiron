@@ -14,8 +14,9 @@ use crate::{EntityId, Error, Result, Vault};
 use super::constants::{DREAMER_PROVENANCE_RUN_ID_KEY, DREAMER_PROVENANCE_RUNNER_KEY};
 
 impl Vault {
-    /// Writes one Generated `profile.name` proposal from `agent` about
-    /// `subject` under `run_id` and requires the Gate to park it for consent.
+    /// Writes one Generated `profile.name` proposal of `value` from `agent`
+    /// about `subject` under `run_id` and requires the Gate to park it for
+    /// consent.
     ///
     /// # Errors
     /// Any write failure, or the live policy not parking the proposal.
@@ -24,7 +25,28 @@ impl Vault {
         run_id: &str,
         agent: EntityId,
         subject: EntityId,
-        value: &str,
+        value: impl Into<Value>,
+    ) -> Result<EntityId> {
+        self.park_run_proposal_with_predicate_for_test(
+            run_id,
+            agent,
+            subject,
+            "profile.name",
+            value,
+        )
+    }
+
+    /// [`Vault::park_run_proposal_for_test`] with the proposal's `predicate`.
+    ///
+    /// # Errors
+    /// Any write failure, or the live policy not parking the proposal.
+    pub fn park_run_proposal_with_predicate_for_test(
+        &self,
+        run_id: &str,
+        agent: EntityId,
+        subject: EntityId,
+        predicate: &str,
+        value: impl Into<Value>,
     ) -> Result<EntityId> {
         let at = TimeRange { start: 1, end: 1 };
         for (id, body) in [(agent, b"run agent".as_slice()), (subject, b"run subject")] {
@@ -37,13 +59,9 @@ impl Vault {
             chain: Vec::new(),
             source_meet: ClaimSource::Generated,
         });
-        let candidate = ClaimCandidate::new(
-            "profile.name",
-            ClaimSubject::Entity(subject),
-            Value::from(value),
-            1.0,
-        )
-        .with_evidence(evidence);
+        let candidate =
+            ClaimCandidate::new(predicate, ClaimSubject::Entity(subject), value.into(), 1.0)
+                .with_evidence(evidence);
         let envelope = WriteEnvelope::new(
             WriteActor::new(agent, EdgeActorClass::Agent),
             ClaimSource::Generated,

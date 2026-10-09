@@ -2,9 +2,12 @@
 //!
 //! One door admits every route: a verified, unattenuated owner-grade slip
 //! whose holder is a live human owner of this vault — the server's existing
-//! owner check plus `Vault::authenticate_owner`. Nothing here prompts a second
-//! time; the engine writes each act's receipt. Managed vaults are owned
-//! through their supervisor, so these routes refuse there.
+//! owner check plus `Vault::authenticate_owner`. The proof it hands each
+//! action stays bound to that slip (`Vault::bind_owner_credential`), so the
+//! engine rechecks the slip and the ownership in the transaction that
+//! commits: a request queued behind a revocation changes nothing. Nothing
+//! here prompts a second time; the engine writes each act's receipt. Managed
+//! vaults are owned through their supervisor, so these routes refuse there.
 //!
 //! Approvals stay off the idempotency layer: a consumed approval must never
 //! replay a cached 200.
@@ -47,13 +50,14 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 }
 
 /// The owner door. Every refusal is the same 403, so a caller learns nothing
-/// about which check failed.
-fn owner(auth: &CoreAuth, server: &SyncServer) -> Result<AuthenticatedOwner, ApiError> {
+/// about which check failed. The proof it returns carries the verified slip.
+pub(super) fn owner(auth: &CoreAuth, server: &SyncServer) -> Result<AuthenticatedOwner, ApiError> {
     let refused = || ApiError::forbidden_scope("owner");
     if server.managed_issuer.is_some() || !auth.is_owner_grade() {
         return Err(refused());
     }
-    auth.verified_slip()
+    let slip = auth
+        .verified_slip()
         .filter(|_| auth.actor_class() == Some("human"))
         .ok_or_else(refused)?;
     let principal = auth.principal_ref().ok_or_else(refused)?;
@@ -62,15 +66,12 @@ fn owner(auth: &CoreAuth, server: &SyncServer) -> Result<AuthenticatedOwner, Api
         .vault()
         .authenticate_owner(actor, principal, true, GateDecisionId::now())
         .map_err(|_| refused())?;
-    if server
+    // Binding checks the slip is the owner's own full slip, still live, and
+    // that the actor owns this vault now.
+    server
         .vault()
-        .is_live_vault_owner(&owner)
-        .map_err(|_| refused())?
-    {
-        Ok(owner)
-    } else {
-        Err(refused())
-    }
+        .bind_owner_credential(owner, slip.clone())
+        .map_err(|_| refused())
 }
 
 fn host(server: &SyncServer) -> Result<Arc<OwnerHost>, ApiError> {
@@ -153,10 +154,10 @@ async fn take_backup(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
 ) -> OwnerReply<backup::BackupOutcome> {
-    owner(&auth, &server)?;
+    let owner = owner(&auth, &server)?;
     let host = host(&server)?;
     Ok(Json(
-        blocking(move || Ok(host.take(server.vault())?)).await?,
+        blocking(move || host.take(server.vault(), Some(&owner))).await?,
     ))
 }
 
@@ -176,21 +177,7 @@ async fn rehearse_backup(
     owner(&auth, &server)?;
     let host = host(&server)?;
     let request = json_payload(payload)?;
-    let rehearsal = blocking(move || {
-        let backups = backup::list(&host.backups)?;
-        // Only a file this vault's listing names: never a caller-built path.
-        let chosen = match request.file.as_deref() {
-            Some(file) => backups.into_iter().find(|record| record.file == file),
-            None => backups.into_iter().last(),
-        }
-        .ok_or_else(|| OwnerError::Invalid("no such backup for this vault".into()))?;
-        Ok(backup::rehearse(
-            &chosen.path,
-            host.vault_config.clone(),
-            None,
-        )?)
-    })
-    .await?;
+    let rehearsal = blocking(move || host.rehearse(request.file.as_deref())).await?;
     Ok(Json(rehearsal))
 }
 
@@ -290,10 +277,12 @@ async fn pending_runs(
     Ok(Json(blocking(move || runs::pending(server.vault())).await?))
 }
 
+/// A run, named by its id or by its `run_ref`, never one field read as both.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RunQuery {
-    run_id: String,
+    run_id: Option<String>,
+    run_ref: Option<String>,
 }
 
 async fn review_run(
@@ -303,14 +292,19 @@ async fn review_run(
 ) -> OwnerReply<runs::RunReview> {
     let owner = owner(&auth, &server)?;
     let query = query_params(query)?;
-    let review = blocking(move || runs::review(server.vault(), &owner, &query.run_id)).await?;
+    let review = blocking(move || {
+        let run = runs::RunName::from_fields(query.run_id.as_deref(), query.run_ref.as_deref())?;
+        runs::review(server.vault(), &owner, run)
+    })
+    .await?;
     Ok(Json(review))
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DecideRun {
-    run_id: String,
+    run_id: Option<String>,
+    run_ref: Option<String>,
     /// The bundle id review returned for exactly these proposals.
     bundle_id: String,
 }
@@ -340,13 +334,9 @@ async fn decide_run(
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
     let resolved = blocking(move || {
-        runs::resolve(
-            server.vault(),
-            &owner,
-            &request.run_id,
-            &request.bundle_id,
-            action,
-        )
+        let run =
+            runs::RunName::from_fields(request.run_id.as_deref(), request.run_ref.as_deref())?;
+        runs::resolve(server.vault(), &owner, run, &request.bundle_id, action)
     })
     .await?;
     Ok(Json(resolved))

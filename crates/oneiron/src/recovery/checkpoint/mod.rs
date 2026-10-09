@@ -4,7 +4,9 @@
 //! never copy free pages, locks, index pages, telemetry or process leases. This
 //! is distinct from the logical export's entity/claim transformation format.
 mod authority_plane;
+mod decisions;
 mod rebuild;
+mod restore_class;
 mod tiers;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault, VaultConfig, store::DB_MANIFEST};
@@ -105,8 +107,36 @@ fn read_image(path: &Path) -> Result<(CheckpointImage, String)> {
 impl Vault {
     /// Create-new output only. Checkpoint id hashes the entire canonical image.
     pub fn snapshot_checkpoint(&self, path: &Path, created_at: u64) -> Result<String> {
+        self.snapshot_checkpoint_checked(path, created_at, None)
+    }
+    /// [`Vault::snapshot_checkpoint`] on an owner's request. The proof is
+    /// rechecked in the snapshot's own read transaction, so an owner whose
+    /// person, credential or ownership went away while the request waited
+    /// writes no checkpoint.
+    ///
+    /// # Errors
+    /// As [`Vault::snapshot_checkpoint`], and
+    /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
+    /// when `owner` no longer holds.
+    pub fn snapshot_checkpoint_as(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        path: &Path,
+        created_at: u64,
+    ) -> Result<String> {
+        self.snapshot_checkpoint_checked(path, created_at, Some(owner))
+    }
+    fn snapshot_checkpoint_checked(
+        &self,
+        path: &Path,
+        created_at: u64,
+        owner: Option<&crate::consent::AuthenticatedOwner>,
+    ) -> Result<String> {
         let _custody = self.store.gate_custody_read_guard()?;
         let txn = self.store.env.read_txn()?;
+        if let Some(owner) = owner {
+            owner.revalidate_in_txn(self, &txn)?;
+        }
         // Refuse a checkpoint that cannot read CURRENT exterior custody; it
         // cannot package key bytes to paper over a missing/shredded key.
         self.store.for_each_gate_decision_in_txn(&txn, |_| Ok(()))?;
@@ -245,13 +275,16 @@ impl Vault {
         )
     }
     /// Historical content restore beside a live vault: the image's content
-    /// with `current`'s authority plane — its AUTHORITY_LOG, slip, pairing,
-    /// replay, freshness and authority-checkpoint rows. Refuses before
-    /// creating `destination` when the image is another vault's, or when a
-    /// grant, policy, custody or machine identity moved since the checkpoint,
-    /// rather than roll it back (ARCH-0038, RD-20); refuses and removes
-    /// `destination` when the result would make someone an owner or member
-    /// who is not one of `current` now.
+    /// with `current`'s live authority, consent, policy, credential and
+    /// erasure state, every row classed deny by default (`restore_class`).
+    /// Refuses before creating `destination` when the image is another
+    /// vault's, or when a family entangled with content (a grant, policy
+    /// manifest, custody, machine identity, room role or membership, e-sign
+    /// ceremony) moved since the checkpoint, rather than roll it back
+    /// (ARCH-0038, RD-20); refuses and removes `destination` when the result
+    /// would make someone an owner or member who is not one of `current` now,
+    /// or when a decision the engine makes from restored rows would permit
+    /// more than it does in `current` (`decisions`).
     pub fn restore_checkpoint_keeping_authority(
         path: &Path,
         destination: &Path,
@@ -269,7 +302,9 @@ impl Vault {
             RestoreReason::Restore,
             restored_at,
         )?;
-        if let Err(error) = authority_plane::refuse_new_members(current, &vault) {
+        if let Err(error) = authority_plane::refuse_new_members(current, &vault)
+            .and_then(|()| decisions::refuse_loosened_decisions(current, &vault))
+        {
             drop(vault);
             // This call created the destination; nothing else is in it.
             let _ = std::fs::remove_dir_all(destination);

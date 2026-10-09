@@ -65,7 +65,13 @@ impl ClaimStore for Vault {
             if header.entity_type != ENTITY_TYPE_CLAIM {
                 return Err(Error::CorruptedIndex("claim type index"));
             }
-            let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            // A soft-deleted claim keeps its header alone, and no predicate.
+            if body.is_empty() && TombstoneStoreRead::port_deletion_state(self, rtxn, &id)?.deleted
+            {
+                continue;
+            }
+            let body = decode_claim_body(body, true)?;
             if body.predicate == predicate {
                 if rows.len() >= 100_000 {
                     return Err(Error::IndexOverflow("claim predicate"));

@@ -72,3 +72,56 @@ pub(crate) fn self_held_identity_in_state(
     }
     row
 }
+
+/// A native-mail sender bound to agent `holder`, under a policy whose row for
+/// `holder` knows a recipient only by the first touches in `known`: a
+/// native-mail send to anyone else is held as cold.
+pub(crate) fn put_native_mail_sender(
+    vault: &crate::Vault,
+    id: crate::EntityId,
+    holder: crate::EntityId,
+    known: &[crate::counterparty_contact::CounterpartyFirstTouch],
+) -> crate::Result<()> {
+    use rmpv::Value;
+    let identity = self_held_identity_in_state(
+        "email",
+        &format!("mail-{}@mail.example.com", id.to_hex()),
+        crate::channel_identity::SelfHeldShape::DedicatedAddress,
+        crate::channel_identity::ChannelIdentityBinding::agent(holder),
+        crate::channel_identity::ChannelIdentityState::Active,
+        1,
+    );
+    vault.create_channel_identity(&id, &identity)?;
+    let mut row = crate::gate::mail_policy::default_row();
+    let Value::Map(axes) = &mut row else {
+        unreachable!("a policy row is a map")
+    };
+    for (key, value) in axes {
+        match key.as_str() {
+            Some("scope") => *value = Value::from("holder"),
+            Some("holder") => *value = Value::from(holder.to_hex()),
+            Some("known_first_touch") => {
+                *value = Value::Array(
+                    known
+                        .iter()
+                        .map(|touch| Value::from(touch.as_str()))
+                        .collect(),
+                );
+            }
+            _ => {}
+        }
+    }
+    let manifest = crate::gate::default_policy_manifest()?;
+    let Ok(Value::Map(mut entries)) = rmpv::decode::read_value(&mut manifest.as_slice()) else {
+        unreachable!("the default manifest is a map")
+    };
+    entries.retain(|(key, _)| key.as_str() != Some("native_mail_policy"));
+    entries.push((
+        Value::from("native_mail_policy"),
+        Value::Array(vec![crate::gate::mail_policy::default_row(), row]),
+    ));
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &Value::Map(entries))
+        .map_err(|error| crate::Error::InvalidConfig(error.to_string()))?;
+    super::put_policy_manifest_bytes(vault, crate::gate::default_policy_manifest_id()?, &bytes)
+}

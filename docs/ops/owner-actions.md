@@ -25,7 +25,9 @@ oneiron doctor /path/to/vault            # add --config FILE if it is not the XD
 | `location.secret_scan` | `on` or `off`. |
 
 While `serve` holds the vault, `doctor` still prints the path, size and backups, and says to ask
-the server for the rest: `GET /v1/owner/status` returns the same `location` object.
+the server for the rest: `GET /v1/owner/status` returns the same `location` object. A serve
+setting that does not resolve never hides where the vault is: `doctor` reports the vault and
+lists the problem under `config_errors`.
 
 ## Back up
 
@@ -37,10 +39,15 @@ oneiron backup --dir DIR --keep 14
 
 A backup is the engine's checkpoint image: the vault's own records, without indexes. A
 restore rebuilds the indexes, and vectors are re-embedded by the next `serve` that has an
-embedder. Files are named `<vault-name>-<path hash>-<UTC time>-<id>.oneiron-backup`. The path
-hash keeps two vaults that share one backup directory from listing or pruning each other's
-files. The file is owner-only (`0600`) and sits in an owner-only directory (`0700`). A backup
-is written under a hidden partial name and renamed into place only once complete.
+embedder. Files are named `<vault-name>-<path hash>-<sequence>-<UTC time>-<id>.oneiron-backup`.
+The path hash keeps two vaults that share one backup directory from listing or pruning each
+other's files. Each backup takes the next sequence number, and retention keeps the highest
+numbers, so a clock that steps back never makes a new backup look oldest, and the backup just
+taken is never the one pruned. A backup named before sequences (no `<sequence>` field) lists as
+older than every numbered one. The file is owner-only (`0600`) and sits in an owner-only directory (`0700`). A backup
+is written under a hidden partial name and renamed into place only once complete. Backups are
+not encrypted yet and include device key material, so keep `--dir` on a local disk, not a synced
+or cloud folder (see *Limits*).
 
 `oneiron serve` can take backups on its own. The schedule is opt-in; turn it on in the config
 file or environment:
@@ -71,7 +78,7 @@ A rehearsal restores the backup into a scratch directory, opens it through every
 verifies its gate receipts against the vault's current key custody, and reports:
 `checkpoint_id`, `kinds` (live entities by kind), `entities`, `text_documents`,
 `pending_embeddings`, `verified`. The live vault is never opened, so a rehearsal is safe while
-`serve` runs. `--scratch DIR` names a new directory the rehearsal creates and keeps, with the
+`serve` runs; on the server, retention waits until the rehearsal has read its backup. `--scratch DIR` names a new directory the rehearsal creates and keeps, with the
 copy in `DIR/vault`; without it the copy goes in a new temp directory that is deleted
 afterwards. A failed rehearsal removes what it created. On a running server:
 `POST /v1/owner/backups/rehearse` with `{}` (the newest backup) or `{"file": "<name>"}`.
@@ -84,11 +91,25 @@ oneiron restore FILE
 ```
 
 A restore brings back your **content** as it stood at the backup: notes, claims,
-conversations, tasks, files and receipts. It keeps the vault's **current authority**
-(ARCH-0038, RD-20): its authority log (root, devices and keys, paired slips, revocations), device
-identity and leases, freshness pins and clocks, gate-decision key custody, and one-shot
-approvals. A slip revoked after the backup stays revoked. A device added after the backup keeps
-working. An approval spent after the backup stays spent.
+conversations, tasks, files and receipts. It keeps the vault's **current authority, consent and
+policy** (ARCH-0038, RD-20). Every kind of stored row has one restore class in the engine, and
+a row nobody classed is never restored silently. What stays as it is now:
+
+- the authority log (root, devices and keys, paired slips, revocations), device identity and
+  leases, freshness pins and clocks, gate-decision key custody, and one-shot approvals;
+- policy switches and their receipts: the secret scan, manifest trust and quarantine, the
+  policy change ledger and notification rules, model and routing settings, and your `settings`
+  dials;
+- consent: voice consent and its withdrawals, consent-graduation rulings and thresholds, and
+  widening requests. Material erased by a withdrawal (voice prints, samples, reference packs)
+  stays erased;
+- erasure fences, legal holds and key-retirement intents;
+- the record of acts that already left the vault: sends and their dedupe ledgers, exports,
+  secret materializations and usage events. A send is never made twice.
+
+A slip revoked after the backup stays revoked. A device added after the backup keeps working.
+An approval spent after the backup stays spent. A secret scan switched on after the backup stays
+on.
 
 The restored copy is built beside the vault, then swapped into place in one atomic step while
 the restore holds both vaults, so a server starting meanwhile can open neither half-way. Your
@@ -102,9 +123,18 @@ A restore refuses, and changes nothing, when:
 - the vault is in use (stop `serve`);
 - the backup belongs to another vault (each vault has its own store id, minted at its first
   open);
-- grants, policy, consent grants, secret custody, connector keys, channel identities, outbound
-  grants or machine identities changed since the backup, since restoring them would roll a
-  permission back. Rehearse with `--scratch` to read the old content beside the vault instead;
+- something that holds authority together with content changed since the backup, since
+  restoring it would roll a permission back: grants, policy manifests, standing consent grants,
+  secret custody, connector keys, channel identities, outbound grants (using one is not a
+  change), machine identities, published artifacts; for a room, skill, agent, contact, claim or
+  task the backup holds: room roles and membership (who is in a room, their role, how far back
+  they read), a skill quarantine, an agent switched off or narrowed, a contact revoked, opted
+  out, rebound to another party or marked as first met in public (a contact first met in public
+  since the backup also refuses), a recipient's observed jurisdiction that moved, a
+  relationship membership retracted, a task cancelled, reassigned or its ask class narrowed; or
+  an e-sign ceremony the backup holds (a signature, rejection or void since). The refusal names
+  what moved. Content edits do not block the restore, and a room, document or claim created
+  after the backup is simply not in the restored vault. Rehearse with `--scratch` to read the old content beside the vault instead;
 - the restored vault would make someone an owner or member who is not one now: a person
   deleted, merged away or removed from a shared vault since the backup does not get their
   authority back;
@@ -181,11 +211,16 @@ oneiron runs approve RUN_ID --bundle <bundle id from show>
 oneiron runs decline RUN_ID --bundle <bundle id from show>
 ```
 
-The bundle id binds exactly the proposals you reviewed. If the run changed since, the action is
-refused (409) and you review again. Approve lands every proposal as approved; decline closes
+The bundle id binds exactly the proposals you reviewed: `show` and the route read the proposals
+and compute the id in one read. Values, predicates, run ids and labels are shown through the same
+credential redaction as serve and export, even with the secret scan off; the stored proposal is
+unchanged. Each run also has a `run_ref`, which `show`, `approve` and `decline` take as
+`--ref RUN_REF` (and the routes as `run_ref`) in place of the run id. A run id is any text, so the
+two are separate fields and one is never read as the other. If the run changed
+since, the action is refused (409) and you review again. Approve lands every proposal as approved; decline closes
 every one as rejected. Either way one receipt represents the run. Routes: `GET
-/v1/owner/runs`, `GET /v1/owner/runs/review?run_id=…`, `POST /v1/owner/runs/approve` or
-`/decline` with `{"run_id": "…", "bundle_id": "…"}`.
+/v1/owner/runs`, `GET /v1/owner/runs/review?run_id=…` (or `?run_ref=…`), `POST /v1/owner/runs/approve` or
+`/decline` with `{"run_id": "…", "bundle_id": "…"}` (or `"run_ref"` in place of `"run_id"`).
 
 ## Calling the owner routes
 
@@ -193,7 +228,8 @@ Every `/v1/owner` route needs a verified, unattenuated owner slip held by a live
 the vault. That is the slip the first-owner link from `oneiron token bootstrap` redeems to.
 Other credentials get the same 403: another person, an agent-class slip, a slip narrowed to
 some verbs, or the host root. Managed vaults are owned through their supervisor, and these
-routes refuse there. From a shell, with the slip in `ONEIRON_SECRET` and its binding seed in
+routes refuse there. Each act rechecks the slip and your ownership in the transaction that
+commits it, so a request still queued when its slip is revoked changes nothing. From a shell, with the slip in `ONEIRON_SECRET` and its binding seed in
 `ONEIRON_BINDING_KEY`:
 
 ```sh
@@ -213,5 +249,6 @@ oneiron api raw POST /v1/owner/secret-scan --data '{"mode":"off"}'
 - To cut someone's access, revoke their slip; a revocation is authority and survives a restore.
   Deleting a person who is not a vault owner or member is content, and an older backup brings
   that person back.
-- Backups are not encrypted beyond your filesystem. Keep the backup directory on a disk you
-  trust.
+- Backups are not encrypted yet, and they include device key material. Keep `--dir` (and
+  `[backup] dir`) on a local disk, not a synced or cloud folder. Encryption comes with the vault
+  cipher work.

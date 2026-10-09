@@ -231,8 +231,24 @@ impl Vault {
         actor: &WriteActor,
         dreamer_run_id: &str,
     ) -> Result<GateConsentBundle> {
+        self.review_gate_consent_bundle_with_bodies(actor, dreamer_run_id)
+            .map(|(bundle, _)| bundle)
+    }
+
+    /// [`Vault::review_gate_consent_bundle`] together with each member's claim
+    /// body, in member order, as the SAME read transaction that computed
+    /// `bundle_id` holds it. What a reviewer is shown is exactly what the id
+    /// binds, so approving it never fails on an edit the reviewer never saw.
+    ///
+    /// # Errors
+    /// As [`Vault::review_gate_consent_bundle`].
+    pub fn review_gate_consent_bundle_with_bodies(
+        &self,
+        actor: &WriteActor,
+        dreamer_run_id: &str,
+    ) -> Result<(GateConsentBundle, Vec<ClaimBody>)> {
         require_gate_consent_bundle_run_id(dreamer_run_id)?;
-        let (bundle_id, members) = {
+        let (bundle_id, members, bodies) = {
             let rtxn = self.store.env.read_txn()?;
             self.validate_session_bundle_actor_in_txn(&rtxn, actor)?;
             let members = gate_consent_bundle_members_in_txn(&self.store, &rtxn, dreamer_run_id)?;
@@ -240,23 +256,28 @@ impl Vault {
                 return Err(Error::EntityNotFound);
             }
             let bundle_id = gate_consent_bundle_id(dreamer_run_id, &members);
-            let members: Vec<GateConsentBundleMember> =
-                members.into_iter().map(|entry| entry.member).collect();
-            (bundle_id, members)
+            let (members, bodies): (Vec<GateConsentBundleMember>, Vec<ClaimBody>) = members
+                .into_iter()
+                .map(|entry| (entry.member, entry.body))
+                .unzip();
+            (bundle_id, members, bodies)
         };
         // The name is resolved after the projection transaction closes: the
         // run-tree adapter opens its own read transaction, and naming is
         // presentation metadata over an identity the digest already fixed.
         let (name, agent_label) =
             RunTreeAdapter::new(self).consent_bundle_label(dreamer_run_id, &bundle_id)?;
-        Ok(GateConsentBundle {
-            schema_version: GATE_CONSENT_BUNDLE_SCHEMA_VERSION,
-            bundle_id,
-            name,
-            dreamer_run_id: dreamer_run_id.to_owned(),
-            agent_label,
-            members,
-        })
+        Ok((
+            GateConsentBundle {
+                schema_version: GATE_CONSENT_BUNDLE_SCHEMA_VERSION,
+                bundle_id,
+                name,
+                dreamer_run_id: dreamer_run_id.to_owned(),
+                agent_label,
+                members,
+            },
+            bodies,
+        ))
     }
 
     /// Resolves one run's consent bundle as a unit, in ONE write transaction.
@@ -310,6 +331,10 @@ impl Vault {
     ) -> Result<GateConsentBundleReceipt> {
         require_gate_consent_bundle_run_id(dreamer_run_id)?;
         let (receipt, recorded_decisions) = self.with_write_txn(|wtxn| {
+            // The proof is rechecked where the decision commits: an owner
+            // whose person, credential or ownership went away while the call
+            // waited for the writer decides nothing.
+            owner.revalidate_in_txn(self, &*wtxn)?;
             let members = gate_consent_bundle_members_in_txn(&self.store, &*wtxn, dreamer_run_id)?;
             if members.is_empty() {
                 return Err(Error::EntityNotFound);
@@ -598,6 +623,8 @@ fn check_session_bundle_actor_policy(
 struct BundleDigestMember {
     member: GateConsentBundleMember,
     body_hash: [u8; 32],
+    /// The live body `body_hash` was taken over.
+    body: ClaimBody,
 }
 
 /// A nonempty run id is the bundle's only key; there is no default lane.
@@ -651,6 +678,7 @@ fn gate_consent_bundle_members_in_txn(
         let (body, _) = live_claim_parts_in_txn(store, txn, &claim_id)?;
         members.push(BundleDigestMember {
             body_hash: claim_body_hash(&body)?,
+            body,
             member: GateConsentBundleMember {
                 decision_id: record.decision_id,
                 claim_id,

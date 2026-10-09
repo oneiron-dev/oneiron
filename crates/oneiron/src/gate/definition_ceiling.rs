@@ -43,7 +43,12 @@ pub(crate) fn agent_definition_ceiling_for_actor(
     }
 }
 
-pub(super) fn definition_only_ceiling_for_actor(
+/// The bound an agent actor's own stored definition puts on its writes: its
+/// ceiling, restricted by its fork parent row's; `Proposed` for a definition
+/// that is absent or does not read; `None` for a non-agent actor or an entity
+/// that is not a definition. The effect door reads this alone, and
+/// [`agent_definition_ceiling_for_actor`] folds it with the foreign chain.
+pub(crate) fn definition_only_ceiling_for_actor(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     actor: WriteActor,

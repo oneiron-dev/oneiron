@@ -3016,3 +3016,62 @@ fn manifest_retry_limit_bounds_pending_notice_work() -> Result<()> {
     );
     Ok(())
 }
+
+/// ASTRA-9A-2-R2 F7: a task's ask class bounds every ask bound to the task. A
+/// restore over the vault from before the owner narrowed it is refused.
+#[test]
+fn a_restore_never_widens_a_task_ask_class_narrowed_since() -> Result<()> {
+    let fixture = RuledAskFixture::new(2)?;
+    let spec = |class: &TaskAskClass| -> Result<rmpv::Value> {
+        let value = rmpv::decode::read_value(&mut rmp_serde::to_vec_named(class)?.as_slice())?;
+        Ok(rmpv::Value::Map(vec![(
+            rmpv::Value::from("ask_class"),
+            value,
+        )]))
+    };
+    let class = fixture.policy(false);
+    let task = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .tasks_create(&TaskCreateSpec::new(spec(&class)?, None, None, Some(1_000)))?
+        .task_ref
+        .expect("task ref");
+    let backups = tempfile::tempdir().expect("backups");
+    let image = backups.path().join("backup");
+    fixture.vault.snapshot_checkpoint(&image, 100)?;
+
+    let mut narrowed = class;
+    let dropped = fixture.people[0];
+    narrowed.allowed_recipients.remove(&dropped);
+    narrowed.required_people.remove(&dropped);
+    narrowed.disclosure.remove(&dropped);
+    narrowed.minimum_responses -= 1;
+    let mut body =
+        super::wire_decode::task_verb_body(&fixture.vault, task)?.expect("typed task body");
+    body.spec = spec(&narrowed)?;
+    let now = 1_005;
+    fixture.vault.put_entity(
+        &task,
+        crate::registry::ENTITY_TYPE_TASK,
+        crate::temporal::TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+        &super::wire_encode::encode_task_verb_body(body),
+    )?;
+
+    let destination = backups.path().join("restored");
+    let error = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &destination,
+        fixture.vault.config.clone(),
+        &fixture.vault,
+        200,
+    )
+    .err()
+    .expect("the restore must be refused");
+    assert!(error.to_string().contains("task authority"), "{error}");
+    assert!(!destination.exists());
+    Ok(())
+}

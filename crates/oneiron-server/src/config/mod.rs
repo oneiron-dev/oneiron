@@ -18,7 +18,8 @@ pub use embedder::{
 };
 pub use embedder_shape::{EmbedderAttention, EmbedderOutputQuantization};
 pub use merge::{
-    EnvConfig, default_config_path, resolve_serve_config, resolve_serve_config_with_sources,
+    EnvConfig, default_config_path, resolve_backup_config, resolve_serve_config,
+    resolve_serve_config_with_sources,
 };
 pub use oneironer::{
     OneironerArgs, OneironerConfig, OneironerConfigOverride, OneironerMode, OneironerProvider,

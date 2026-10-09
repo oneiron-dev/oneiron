@@ -1162,3 +1162,54 @@ fn a_malformed_authority_fact_row_does_not_poison_the_board() {
         crate::error::ErrorKind::InvalidTaskBody
     );
 }
+
+/// SOL-9A-2-R2 F24: acknowledging a failed task only takes it off the board,
+/// so a restore over the vault goes ahead past an acknowledgement made since
+/// the backup.
+#[test]
+fn a_restore_goes_ahead_past_a_failure_acknowledged_since() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
+    let task_ref = facade
+        .tasks_create(&spec(120))
+        .expect("create task")
+        .task_ref
+        .expect("task ref");
+    let queue = AttemptQueue::new(&vault);
+    let ClaimOutcome::Claimed(claimed) = queue
+        .claim_kind(
+            TASK_REALIZE_ATTEMPT_KIND,
+            ClaimAttempt {
+                lease_owner: "worker".to_owned(),
+                now: 120,
+            },
+        )
+        .expect("claim")
+    else {
+        panic!("created task must be claimable");
+    };
+    queue
+        .fail(FailAttempt {
+            id: claimed.id,
+            lease_owner: "worker".to_owned(),
+            attempt_count: claimed.attempt_count,
+            reason: "failed".to_owned(),
+            now: 121,
+        })
+        .expect("fail task");
+    let backups = tempfile::tempdir().expect("backups");
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 130).expect("backup");
+
+    assert!(facade.tasks_update(task_ref).expect("ack task").acked);
+    let (restored, _) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &backups.path().join("restored"),
+        vault.config.clone(),
+        &vault,
+        200,
+    )
+    .expect("an acknowledgement does not block the restore");
+    drop(restored);
+}

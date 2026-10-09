@@ -2018,3 +2018,48 @@ fn invalid_resident_dial_is_refused_on_both_codec_doors() -> Result<()> {
     assert!(decode_agent_definition(&bytes).is_err());
     Ok(())
 }
+
+/// SOL-9A-2-R2 F4: switching an agent off is the owner's decision. A restore
+/// over the vault goes ahead past a content edit, and is refused once the
+/// agent was switched off since the backup.
+#[test]
+fn a_restore_never_switches_back_on_an_agent_switched_off_since() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let id = EntityId::now();
+    vault.put_agent_definition(
+        &id,
+        &full_agent("1.0.0"),
+        TimeRange { start: 10, end: 10 },
+        11,
+    )?;
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100)?;
+    let restore = |destination: &std::path::Path| {
+        crate::Vault::restore_checkpoint_keeping_authority(
+            &image,
+            destination,
+            embedding_test_config(),
+            &vault,
+            200,
+        )
+        .map(|(restored, _)| restored)
+    };
+
+    let mut reworded = full_agent("1.1.0");
+    reworded.desc = "Scout, reworded".to_owned();
+    vault.update_agent_definition(&id, &reworded, TimeRange { start: 12, end: 12 }, 13)?;
+    drop(restore(&backups.path().join("first"))?);
+
+    let mut off = reworded;
+    off.version = "1.2.0".to_owned();
+    off.enabled = false;
+    vault.update_agent_definition(&id, &off, TimeRange { start: 14, end: 14 }, 15)?;
+    let destination = backups.path().join("second");
+    let error = restore(&destination)
+        .err()
+        .expect("the restore must be refused");
+    assert!(error.to_string().contains("agent permissions"), "{error}");
+    assert!(!destination.exists());
+    Ok(())
+}

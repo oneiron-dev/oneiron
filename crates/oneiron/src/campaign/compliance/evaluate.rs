@@ -1,6 +1,7 @@
 //! Pure dispatch evaluator: jurisdiction selection, row matching, verdict.
 
 use crate::entity_id::EntityId;
+use std::collections::BTreeSet;
 
 use super::rules::{
     B2bExemption, CHANNEL_WILDCARD, ComplianceExemptionEvidence, CompliancePack,
@@ -167,6 +168,44 @@ pub fn evaluate_dispatch_compliance(
     rows.iter()
         .find_map(|row| evaluate_row(pack, row, facts))
         .unwrap_or(ComplianceVerdict::Allow)
+}
+
+/// What [`evaluate_dispatch_compliance`] folds into one verdict, unfolded:
+/// the rows that govern a dispatch, by `(jurisdiction, channel, rule_kind)`,
+/// and which of them block it. Only the stale-row wall is left out; it reads
+/// the clock and the governing rows, nothing of the dispatch.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ComplianceBinding {
+    /// Every row that governs the dispatch.
+    pub(crate) rows: BTreeSet<(String, String, ComplianceRuleKind)>,
+    /// None of them is a consent-class row, which blocks on its own.
+    pub(crate) uncovered: bool,
+    /// Every one of them whose requirement the dispatch's facts fail.
+    pub(crate) failed: BTreeSet<(String, String, ComplianceRuleKind)>,
+}
+
+/// The rows `pack` binds `facts` to, and which of them block it, through the
+/// steps [`evaluate_dispatch_compliance`] takes before its verdict keeps only
+/// the first block.
+pub(super) fn compliance_binding(
+    pack: &CompliancePack,
+    facts: &DispatchComplianceFacts,
+) -> ComplianceBinding {
+    let jurisdiction = effective_jurisdiction(pack, facts);
+    let rows = matching_rows(pack, &jurisdiction, &facts.channel);
+    let key = |row: &&ComplianceRuleRow| {
+        let (jurisdiction, channel, kind) = row.key();
+        (jurisdiction.to_owned(), channel.to_owned(), kind)
+    };
+    ComplianceBinding {
+        rows: rows.iter().map(key).collect(),
+        uncovered: consent_class_coverage_gap(&rows).is_some(),
+        failed: rows
+            .iter()
+            .filter(|row| evaluate_row(pack, row, facts).is_some())
+            .map(key)
+            .collect(),
+    }
 }
 
 /// The jurisdiction the rows are selected for.

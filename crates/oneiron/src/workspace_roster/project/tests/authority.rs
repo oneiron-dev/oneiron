@@ -143,7 +143,8 @@ fn child_body(
     Ok(body)
 }
 
-fn spawn_signed(
+/// A child of `parent_id` spawned by `actor` under its signed slip.
+pub(crate) fn spawn_signed(
     vault: &Vault,
     parent_id: EntityId,
     child_id: EntityId,
@@ -1026,7 +1027,8 @@ fn a_replayed_row_that_strips_the_proof_stays_quarantined() -> Result<()> {
 }
 
 /// Acceptance: every project read path goes through the read fold. Only the
-/// write doors and the fold itself decode a stored PROJECT row.
+/// write doors, the fold itself and restore's row comparison decode a stored
+/// PROJECT row.
 #[test]
 fn every_project_read_path_goes_through_the_read_fold() {
     use crate::test_util::source_scan::{SourceTree, mask_cfg_test_modules};
@@ -1045,6 +1047,9 @@ fn every_project_read_path_goes_through_the_read_fold() {
         "workspace_roster/project/goal/admission.rs",
         "workspace_roster/project/mod.rs",
         "batch/export/document_import.rs",
+        // Restore compares the authority two vaults' stored rows carry; it
+        // answers no read.
+        "recovery/checkpoint/authority_plane.rs",
     ];
     let mut raw_reads = Vec::new();
     let mut fold_reads = 0;

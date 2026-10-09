@@ -55,6 +55,7 @@ pub(crate) use self::connector_task::{
 };
 #[cfg(test)]
 pub(crate) use self::window_door::local_minute_of_day_at;
+pub(crate) use self::window_door::stored_delivery_window_policy_claims;
 
 // The flat outbound.rs module used to provide these names to the test module
 // through `use super::*`; after the directory split the seam re-imports them so
@@ -70,7 +71,6 @@ use self::connector_task::{
 #[cfg(test)]
 use self::window_door::{
     most_restrictive_delivery_window_decision, outbound_delivery_window_is_chat_like_ambient,
-    stored_delivery_window_policy_claims,
 };
 #[cfg(test)]
 use crate::Vault;

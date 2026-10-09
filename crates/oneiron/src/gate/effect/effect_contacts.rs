@@ -36,7 +36,7 @@ const COUNTERPARTY_OPT_OUT_DO_NOT_CONTACT_RECEIPT_REASON: &str =
 /// [`ExternalEffectGateInput`] stays byte-unchanged — an override is never
 /// something a caller may assert — so the match travels back as its own value
 /// and the single caller writes it onto the gate-internal context.
-pub(super) fn hydrate_external_effect_contact(
+pub(crate) fn hydrate_external_effect_contact(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     effect: &ExternalEffectGateInput,
@@ -127,7 +127,7 @@ pub(super) fn hydrate_external_effect_contact(
 /// supply "now" would hand them the lifetime too. A comm-side failure is
 /// propagated, never swallowed — an unreadable override head means the send
 /// holds, exactly like no override at all, and never becomes a silent allow.
-fn counterparty_send_override_in_txn(
+pub(crate) fn counterparty_send_override_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     party_ref: &str,

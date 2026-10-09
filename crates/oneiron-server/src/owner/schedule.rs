@@ -9,8 +9,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use super::backup::{self, BackupOutcome, BackupPlan};
+use super::backup::{self, BackupOutcome, BackupPlan, BackupRecord, Rehearsal};
 use super::stamp::now_unix_ms;
+use super::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
 
 /// How often a running server checks whether a backup is due.
@@ -52,13 +53,57 @@ impl OwnerHost {
         }
     }
 
-    /// Takes a backup now, serialized with every other backup of this vault.
-    pub(crate) fn take(&self, vault: &oneiron::Vault) -> anyhow::Result<BackupOutcome> {
-        let _one_at_a_time = self
-            .backup_lock
+    fn one_at_a_time(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.backup_lock
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        backup::take(vault, &self.backups)
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Takes a backup now, serialized with every other backup of this vault.
+    /// On an owner's request, `owner` is rechecked once the lock is held, in
+    /// the snapshot itself: a request queued behind a revocation or an
+    /// ownership change takes and prunes nothing.
+    pub(crate) fn take(
+        &self,
+        vault: &oneiron::Vault,
+        owner: Option<&oneiron::consent::AuthenticatedOwner>,
+    ) -> OwnerResult<BackupOutcome> {
+        let _one_at_a_time = self.one_at_a_time();
+        backup::take_as(vault, &self.backups, owner).map_err(|error| {
+            match error.downcast::<oneiron::Error>() {
+                Ok(engine) => OwnerError::from(engine),
+                Err(error) => OwnerError::Host(error),
+            }
+        })
+    }
+
+    /// Rehearses one of this vault's backups by its listed file name, the
+    /// newest by default; never a caller-built path. The backup lock is held
+    /// from choosing the file until the rehearsal has read it, so retention
+    /// cannot prune it in between.
+    pub(crate) fn rehearse(&self, file: Option<&str>) -> OwnerResult<Rehearsal> {
+        self.with_chosen(file, |chosen| {
+            Ok(backup::rehearse(
+                &chosen.path,
+                self.vault_config.clone(),
+                None,
+            )?)
+        })
+    }
+
+    fn with_chosen<T>(
+        &self,
+        file: Option<&str>,
+        rehearse: impl FnOnce(&BackupRecord) -> OwnerResult<T>,
+    ) -> OwnerResult<T> {
+        let _one_at_a_time = self.one_at_a_time();
+        let backups = backup::list(&self.backups)?;
+        let chosen = match file {
+            Some(file) => backups.into_iter().find(|record| record.file == file),
+            None => backups.into_iter().last(),
+        }
+        .ok_or_else(|| OwnerError::Invalid("no such backup for this vault".into()))?;
+        rehearse(&chosen)
     }
 
     /// Takes a backup when the newest one is older than the interval.
@@ -69,10 +114,7 @@ impl OwnerHost {
         let Some(every) = self.every else {
             return Ok(None);
         };
-        let _one_at_a_time = self
-            .backup_lock
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _one_at_a_time = self.one_at_a_time();
         let every_ms = u64::try_from(every.as_millis()).unwrap_or(u64::MAX);
         let due = backup::list(&self.backups)?
             .last()
@@ -109,7 +151,9 @@ impl SyncServer {
                         "scheduled backup taken"
                     ),
                     Ok(Ok(None)) => {}
-                    Ok(Err(error)) => tracing::warn!(error = %error, "scheduled backup failed"),
+                    Ok(Err(error)) => {
+                        tracing::warn!(error = %format!("{error:#}"), "scheduled backup failed");
+                    }
                     Err(error) => tracing::warn!(error = %error, "scheduled backup task failed"),
                 }
             }
@@ -183,6 +227,31 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         handle.abort();
+    }
+
+    #[test]
+    fn a_backup_waits_for_the_rehearsal_of_the_file_it_would_prune() {
+        let (_dir, _backups, server) = scheduled_server(Duration::from_secs(3_600), 1);
+        let host = Arc::clone(server.owner_host.as_ref().unwrap());
+        let only = host.take(server.vault(), None).unwrap().backup;
+        let rehearsal = host
+            .with_chosen(None, |chosen| {
+                assert_eq!(chosen.file, only.file);
+                // A backup asked for now, with keep = 1, would prune the file
+                // being rehearsed; it waits until the rehearsal is done.
+                let racing = {
+                    let (host, server) = (Arc::clone(&host), Arc::clone(&server));
+                    std::thread::spawn(move || host.take(server.vault(), None).unwrap())
+                };
+                std::thread::sleep(Duration::from_millis(500));
+                assert!(!racing.is_finished(), "the backup waited");
+                let rehearsal = backup::rehearse(&chosen.path, host.vault_config.clone(), None);
+                Ok((rehearsal?, racing))
+            })
+            .unwrap();
+        let (rehearsal, racing) = rehearsal;
+        assert!(rehearsal.verified);
+        assert_eq!(racing.join().unwrap().pruned, vec![only.file]);
     }
 
     #[test]

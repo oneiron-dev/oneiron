@@ -13,6 +13,13 @@ pub fn redact_credentials(value: &mut Value) -> bool {
     crate::batch::secret_scan::sanitize_credentials(value, false)
 }
 
+/// Replaces credential-like values and sensitive fields in decoded MessagePack
+/// before any lossy projection; safe binary and extension values keep their
+/// type. This never changes stored evidence.
+pub fn redact_messagepack_credentials(value: &mut rmpv::Value) -> bool {
+    crate::batch::secret_scan::sanitize_messagepack_credentials(value, false)
+}
+
 /// Filter a legacy raw transport without changing safe payload bytes or types.
 pub fn redacted_memory_payload(bytes: Vec<u8>) -> Result<Vec<u8>> {
     if let Ok(mut value) = serde_json::from_slice::<Value>(&bytes) {

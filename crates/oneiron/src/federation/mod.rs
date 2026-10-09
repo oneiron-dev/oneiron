@@ -13,8 +13,9 @@ mod content_write;
 pub(crate) use content_write::{ActorContentTxn, actor_for_txn};
 mod coreference;
 pub mod derivation;
+pub(crate) use coreference::coreference_shared_for_pact_in_txn;
 #[cfg(feature = "sync")]
-pub(crate) use coreference::{coreference_shared_for_pact_in_txn, person_pair_in_txn};
+pub(crate) use coreference::person_pair_in_txn;
 mod grant;
 pub(crate) mod grant_policy;
 mod membership_gate;

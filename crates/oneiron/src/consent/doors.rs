@@ -41,6 +41,11 @@ pub struct AuthenticatedOwner {
     /// The vault that authenticated this principal. A proof from a different
     /// vault must never authorize reading or acting on this vault's records.
     vault_path: std::path::PathBuf,
+    /// The verified capability that carried this owner's request, when a
+    /// transport bound one ([`Vault::bind_owner_credential`]). Every
+    /// revalidation then also requires that capability to be live and the
+    /// actor to be an owner of this vault.
+    credential: Option<Box<crate::authority::VerifiedSlip>>,
 }
 
 impl AuthenticatedOwner {
@@ -78,6 +83,21 @@ impl AuthenticatedOwner {
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                 "authenticated owner is no longer active",
             )));
+        }
+        if let Some(credential) = &self.credential {
+            // Rechecked in the caller's transaction: a capability revoked, or
+            // an owner removed, while the request waited for the writer
+            // commits nothing.
+            if !vault.capability_slip_is_live_in_txn(txn, credential)? {
+                return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                    "owner credential is no longer live",
+                )));
+            }
+            if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &self.actor)? {
+                return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                    "authenticated actor is no longer an owner of this vault",
+                )));
+            }
         }
         Ok(())
     }
@@ -198,7 +218,38 @@ impl Vault {
             principal_ref,
             decision_id,
             vault_path: self.store.env.path().to_path_buf(),
+            credential: None,
         })
+    }
+
+    /// Binds `owner` to the verified, full owner-grade capability its request
+    /// arrived with. From then on every door that revalidates the proof in
+    /// its committing transaction also refuses once that capability is
+    /// revoked or expired, or once the actor is no longer an owner of this
+    /// vault, so a request queued behind either change never lands.
+    ///
+    /// # Errors
+    /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
+    /// when the capability is not the owner's own unattenuated human slip, is
+    /// no longer live, or the actor is not an owner of this vault now.
+    pub fn bind_owner_credential(
+        &self,
+        mut owner: AuthenticatedOwner,
+        credential: crate::authority::VerifiedSlip,
+    ) -> Result<AuthenticatedOwner> {
+        let claims = credential.claims();
+        if !credential.is_full_vault_owner_grade()
+            || claims.holder_ref != owner.actor.to_hex()
+            || claims.actor_class.as_deref() != Some(CONSENT_ACTOR_CLASS)
+        {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "credential is not this owner's own full slip",
+            )));
+        }
+        owner.credential = Some(Box::new(credential));
+        let txn = self.store.env.read_txn()?;
+        owner.revalidate_in_txn(self, &txn)?;
+        Ok(owner)
     }
 
     fn is_store_truth_human_actor(&self, actor: &EntityId) -> Result<bool> {
