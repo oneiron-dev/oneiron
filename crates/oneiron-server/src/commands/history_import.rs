@@ -29,7 +29,8 @@ const MAX_WALK_DEPTH: usize = 6;
 
 /// The largest session log read whole. A log is decoded whole before a
 /// folder's decoded budget is checked, so this bounds what one log can add
-/// past that budget.
+/// past that budget. A larger log in a folder is left out with a warning and
+/// the rest of the folder lands.
 const MAX_LOG_BYTES: u64 = 1 << 30;
 
 /// The largest export read: its `conversations.json`, unzipped. The reader
@@ -46,12 +47,32 @@ const MAX_DECODED_BYTES: usize = 1 << 30;
 /// An export keeps its conversations in this file.
 const EXPORT_CONVERSATIONS: &str = "conversations.json";
 
-/// The files an import read, and the other `.jsonl` files it passed over
-/// under the given folder (a workflow journal, a tool's prompt history).
-#[derive(Serialize, Clone, Copy)]
+/// The files an import read, the other `.jsonl` files it passed over under
+/// the given folder (a workflow journal, a tool's prompt history), and the
+/// session logs it left out for being over [`MAX_LOG_BYTES`].
+#[derive(Serialize, Default)]
 struct Files {
     read: usize,
     passed: usize,
+    too_large: usize,
+    /// Each log left out, reported beside the counts.
+    #[serde(skip)]
+    warnings: Vec<ImportWarning>,
+}
+
+/// What an import left out, and why; the rest of it landed.
+#[derive(Serialize)]
+#[serde(tag = "warning", rename_all = "snake_case")]
+enum ImportWarning {
+    /// A session log over the per-log limit, never read. A rerun once the
+    /// limit allows it lands it; the import ledger lands only what is new.
+    /// The path is shown lossily, so a folder name that is not UTF-8 cannot
+    /// keep the report from being written after the rest has landed.
+    LogTooLarge {
+        path: String,
+        bytes: u64,
+        limit: u64,
+    },
 }
 
 #[derive(Serialize, Default)]
@@ -70,7 +91,8 @@ struct ImportOutcome<'a> {
     source: &'static str,
     path: &'a Path,
     dry_run: bool,
-    files: Files,
+    files: &'a Files,
+    warnings: &'a [ImportWarning],
     totals: Totals,
     /// Messages of this source the vault's import ledger holds afterwards.
     ledger: usize,
@@ -150,7 +172,8 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
         source: source.source_id(),
         path: &path,
         dry_run,
-        files,
+        files: &files,
+        warnings: &files.warnings,
         totals,
         ledger: match &target {
             Target::Plan(snapshot, _) => snapshot.ledger_len(source)?,
@@ -162,6 +185,13 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
     let mut stdout = io::stdout().lock();
     serde_json::to_writer_pretty(&mut stdout, &outcome)?;
     writeln!(stdout)?;
+    if files.too_large > 0 {
+        progress(&format!(
+            "left out {} session log(s) over {MAX_LOG_BYTES} bytes; the report's \
+             `warnings` names each",
+            files.too_large
+        ));
+    }
     Ok(())
 }
 
@@ -203,7 +233,10 @@ fn decode(source: HistorySource, path: &Path) -> anyhow::Result<(Files, Vec<Hist
             parent: None,
         };
         return Ok((
-            Files { read: 1, passed: 0 },
+            Files {
+                read: 1,
+                ..Files::default()
+            },
             decode_one(&text, &file, path)?,
         ));
     }
@@ -215,9 +248,13 @@ fn decode(source: HistorySource, path: &Path) -> anyhow::Result<(Files, Vec<Hist
             .map_err(|error| anyhow::anyhow!("open {}: {error}", path.display()))?;
         let text = read_limited(file, path, MAX_LOG_BYTES)?;
         let conversations = decode_one(&text, &history_file(source, path), path)?;
-        return Ok((Files { read: 1, passed: 0 }, conversations));
+        let files = Files {
+            read: 1,
+            ..Files::default()
+        };
+        return Ok((files, conversations));
     }
-    let mut files = Files { read: 0, passed: 0 };
+    let mut files = Files::default();
     let mut conversations = Vec::new();
     let mut decoded = Decoded::default();
     // Given the tool's whole home, only its history folder is read, never its
@@ -231,7 +268,9 @@ fn decode(source: HistorySource, path: &Path) -> anyhow::Result<(Files, Vec<Hist
             files.passed += 1;
             return Ok(());
         }
-        let text = read_limited(file, shown, MAX_LOG_BYTES)?;
+        let Some(text) = files.read_log(&file, shown)? else {
+            return Ok(());
+        };
         let read = decode_one(&text, &history_file(source, shown), shown)?;
         decoded.add(&read);
         anyhow::ensure!(
@@ -246,6 +285,38 @@ fn decode(source: HistorySource, path: &Path) -> anyhow::Result<(Files, Vec<Hist
         Ok(())
     })?;
     Ok((files, conversations))
+}
+
+impl Files {
+    /// A session log under the folder, or `None` when it is over
+    /// [`MAX_LOG_BYTES`]: that log is left out with a warning, so one huge log
+    /// does not keep the rest from landing. Its size is checked before it is
+    /// read, so a log left out costs no memory, and the read holds a log that
+    /// grew since to the same bound.
+    fn read_log(&mut self, file: &File, shown: &Path) -> anyhow::Result<Option<String>> {
+        let size = || {
+            file.metadata()
+                .map(|metadata| metadata.len())
+                .map_err(|error| anyhow::anyhow!("read {}: {error}", shown.display()))
+        };
+        if size()? <= MAX_LOG_BYTES
+            && let Some(text) = read_within(file, shown, MAX_LOG_BYTES)?
+        {
+            return Ok(Some(text));
+        }
+        let bytes = size()?.max(MAX_LOG_BYTES + 1);
+        progress(&format!(
+            "left out {}: {bytes} bytes, over the {MAX_LOG_BYTES}-byte limit for one log",
+            shown.display()
+        ));
+        self.too_large += 1;
+        self.warnings.push(ImportWarning::LogTooLarge {
+            path: shown.to_string_lossy().into_owned(),
+            bytes,
+            limit: MAX_LOG_BYTES,
+        });
+        Ok(None)
+    }
 }
 
 /// What decoded conversations hold in memory: their messages, and every
@@ -367,18 +438,28 @@ fn read_zipped_export(path: &Path) -> anyhow::Result<String> {
 
 /// Reads at most `limit` bytes, whatever a header claimed, and refuses more.
 fn read_limited(reader: impl Read, path: &Path, limit: u64) -> anyhow::Result<String> {
+    read_within(reader, path, limit)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "{} is larger than {limit} bytes; nothing was imported",
+            path.display()
+        )
+    })
+}
+
+/// Reads at most `limit` bytes, whatever a header claimed; `None` when there
+/// are more.
+fn read_within(reader: impl Read, path: &Path, limit: u64) -> anyhow::Result<Option<String>> {
     let mut bytes = Vec::new();
     reader
         .take(limit + 1)
         .read_to_end(&mut bytes)
         .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
-    anyhow::ensure!(
-        u64::try_from(bytes.len()).unwrap_or(u64::MAX) <= limit,
-        "{} is larger than {limit} bytes; nothing was imported",
-        path.display()
-    );
-    Ok(String::from_utf8(bytes)
-        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()))
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > limit {
+        return Ok(None);
+    }
+    Ok(Some(String::from_utf8(bytes).unwrap_or_else(|error| {
+        String::from_utf8_lossy(error.as_bytes()).into_owned()
+    })))
 }
 
 /// The session a Claude Code subagent log ran in: the folder above the
