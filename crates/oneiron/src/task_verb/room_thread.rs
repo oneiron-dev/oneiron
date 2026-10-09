@@ -19,16 +19,15 @@ pub(crate) fn thread_tasks(
         return Ok(Vec::new());
     }
     let vault = memory.vault();
-    let key = crate::claim::ScopedReadActorKey::with_actor_class(
-        memory.actor().to_hex(),
-        memory.actor_class().gate_actor_class(),
-    )
-    .ok_or_else(|| crate::memory::MemoryError::bad_request("invalid room reader"))?;
     let audience = members
         .iter()
         .map(|id| EntityId::from_hex(id))
         .collect::<crate::Result<Vec<_>>>()?;
-    let scoped = vault.scoped_read(key).for_audience(&audience);
+    // The caller's own read lane, proof and access grants included, narrowed
+    // to the room's audience.
+    let scoped = memory
+        .read_lane(crate::claim::ClaimReadStatus::Surfaceable)?
+        .for_audience(&audience);
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     let mut candidates = Vec::new();
     for row in vault
@@ -106,7 +105,7 @@ pub(crate) fn thread_tasks(
         // `Memory::get_entity` opens a reader of its own: finish the index
         // snapshot first or LMDB refuses recursive reuse of its reader slot.
         // Room membership alone never grants TASK visibility.
-        if !scoped.is_entity_readable(&id)? {
+        if !scoped.is_entity_readable_now(&id)? {
             continue;
         }
         let Some(view) = memory.get_entity(&id.to_hex())?.value else {
@@ -177,7 +176,7 @@ pub(crate) fn thread_tasks(
         // A visible TASK does not grant a read of its result. The room row
         // and trunk header must not disclose a foreign result ref.
         let delivered = match delivered {
-            Some((result, at)) if scoped.is_entity_readable(&result)? => Some((result, at)),
+            Some((result, at)) if scoped.is_entity_readable_now(&result)? => Some((result, at)),
             _ => None,
         };
         result.push(RoomThreadTask {

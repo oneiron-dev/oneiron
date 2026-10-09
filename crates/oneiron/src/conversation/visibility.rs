@@ -30,6 +30,23 @@ impl AudienceCache {
     ) -> Result<bool> {
         self.readable_at_depth(vault, txn, id, audience, 0)
     }
+    /// [`Self::readable`] over the exact revision being served, which for a
+    /// pinned or indexed read may be older than the current row.
+    pub(crate) fn readable_raw(
+        &mut self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        raw: &[u8],
+        audience: &[EntityId],
+    ) -> Result<bool> {
+        if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live()
+            || vault.archive_tombstone_in_txn(txn, &id)?.is_some()
+        {
+            return Ok(false);
+        }
+        self.readable_raw_at_depth(vault, txn, id, raw, audience, 0)
+    }
     fn covers_readable(
         &mut self,
         vault: &Vault,
@@ -77,15 +94,37 @@ impl AudienceCache {
         else {
             return Ok(false);
         };
-        let h =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("audience header"))?;
-        let room = match room_for_record_in(vault, txn, id) {
-            Ok(room) => room,
-            // Missing ancestry denies this candidate, not unrelated query hits.
-            Err(Error::EntityNotFound) => return Ok(false),
-            Err(error) => return Err(error),
+        self.readable_raw_at_depth(vault, txn, id, &raw, audience, depth)
+    }
+    fn readable_raw_at_depth(
+        &mut self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        raw: &[u8],
+        audience: &[EntityId],
+        depth: usize,
+    ) -> Result<bool> {
+        let h = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("audience header"))?;
+        // The room of the revision served and the room of the current row
+        // both bind: an older revision about a private channel stays that
+        // channel's, and a later move cannot widen the current read.
+        let live = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?;
+        let revisions = if live.as_deref() == Some(raw) {
+            vec![None]
+        } else {
+            vec![Some(raw), None]
         };
-        if let Some(room) = room {
+        let mut rooms = BTreeSet::new();
+        for revision in revisions {
+            match room_for_revision_in(vault, txn, id, revision) {
+                Ok(room) => rooms.extend(room),
+                // Missing ancestry denies this candidate, not unrelated query hits.
+                Err(Error::EntityNotFound) => return Ok(false),
+                Err(error) => return Err(error),
+            }
+        }
+        for room in rooms {
             if audience.is_empty() {
                 return Ok(false);
             }
@@ -234,6 +273,17 @@ pub(crate) fn room_for_record_in(
     txn: &heed::RoTxn<'_>,
     record: EntityId,
 ) -> Result<Option<EntityId>> {
+    room_for_revision_in(vault, txn, record, None)
+}
+
+/// [`room_for_record_in`] starting from `revision` of `record` when given,
+/// so a served older revision is placed by its own subject.
+fn room_for_revision_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    record: EntityId,
+    revision: Option<&[u8]>,
+) -> Result<Option<EntityId>> {
     let mut pending = vec![record];
     let mut seen = BTreeSet::new();
     let mut room = None;
@@ -244,9 +294,10 @@ pub(crate) fn room_for_record_in(
         if seen.len() > MAX_ANCESTOR_DEPTH {
             return Err(state("room ancestor depth bound"));
         }
-        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
-        else {
-            return Err(Error::EntityNotFound);
+        let raw = match revision.filter(|_| id == record) {
+            Some(raw) => raw.to_vec(),
+            None => crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
+                .ok_or(Error::EntityNotFound)?,
         };
         let h = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("room ancestor"))?;
         if h.entity_type == ENTITY_TYPE_CONVERSATION {
