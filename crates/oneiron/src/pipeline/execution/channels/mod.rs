@@ -591,6 +591,7 @@ impl PipelineBuilder<'_> {
             } else {
                 turn_fold::fold_messages_into_turns(
                     &mut scores,
+                    &mut acc.signal_components,
                     self.turn_fold,
                     &self.vault.store,
                     rtxn,

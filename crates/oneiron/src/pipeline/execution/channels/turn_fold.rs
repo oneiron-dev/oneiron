@@ -9,7 +9,7 @@ use crate::pipeline::types::{
 };
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
-use crate::store::Store;
+use crate::store::{RetrievalScoreComponent, Store};
 use heed::RoTxn;
 use std::collections::{HashMap, HashSet};
 
@@ -22,8 +22,17 @@ use std::collections::{HashMap, HashSet};
 /// stands in for its message only when the run would admit the turn itself
 /// (`filter_config`, the run's own filters and gate); a message with no such
 /// turn stays as it is, or under [`TurnFold::TurnsOnly`] leaves the run.
+///
+/// The turn also takes in each message's channel evidence
+/// (`signal_components`), so the RET-01 check and the trace see the words
+/// that matched on the row that now holds them.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the fold reads the run's filters and caches and rewrites both its rows and their evidence"
+)]
 pub(super) fn fold_messages_into_turns(
     scores: &mut Vec<ScoredEntity>,
+    signal_components: &mut HashMap<EntityId, Vec<RetrievalScoreComponent>>,
     fold: TurnFold,
     store: &Store,
     rtxn: &RoTxn<'_>,
@@ -58,6 +67,9 @@ pub(super) fn fold_messages_into_turns(
             };
             if admits {
                 cited.entry(turn).or_default().push(hit.id);
+                if let Some(evidence) = signal_components.get(&hit.id).cloned() {
+                    carry_evidence(signal_components.entry(turn).or_default(), &evidence);
+                }
                 id = turn;
             }
         }
@@ -70,6 +82,18 @@ pub(super) fn fold_messages_into_turns(
     }
     *scores = folded;
     Ok(cited)
+}
+
+/// Adds a message's channel evidence to its turn's, keeping the better score
+/// on a channel both carry.
+fn carry_evidence(turn: &mut Vec<RetrievalScoreComponent>, message: &[RetrievalScoreComponent]) {
+    for part in message {
+        match turn.iter_mut().find(|held| held.signal == part.signal) {
+            Some(held) if part.score > held.score => *held = part.clone(),
+            Some(_) => {}
+            None => turn.push(part.clone()),
+        }
+    }
 }
 
 /// The TURN a witnessed MESSAGE is `PartOf`.
