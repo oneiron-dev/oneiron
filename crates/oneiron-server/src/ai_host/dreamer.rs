@@ -33,7 +33,7 @@ pub(super) const LEASE_OWNER: &str = "oneiron-server-dreamer";
 /// Base id of the per-pass durable budget rows (`dreamer:p<n>`).
 const BUDGET_ID: &str = "dreamer";
 /// The role a pass's extraction is admitted as; a vault's manifest binds it.
-const EXTRACTION_ROLE: ModelRole = ModelRole::ExtractionTeacher;
+pub(super) const EXTRACTION_ROLE: ModelRole = ModelRole::ExtractionTeacher;
 
 /// A running Dreamer: its stop handle, its hint producer and its thread.
 pub(super) struct DreamerHost {

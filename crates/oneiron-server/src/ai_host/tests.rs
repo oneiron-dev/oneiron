@@ -6,8 +6,8 @@ use oneiron::{ClaimApprovalStatus, EntityId, TimeRange};
 use oneiron_driver::SessionHint;
 
 use super::test_support::{
-    capture_user_turn, eventually, extraction_reply, models, name_claims, pin_every_role,
-    rooted_vault, route_extraction, saved_agent,
+    capture_user_turn, eventually, extraction_reply, models, models_toml, name_claims,
+    pin_every_role, rooted_vault, route_extraction, saved_agent,
 };
 use super::*;
 use crate::fake_llm::FakeLlm;
@@ -55,6 +55,21 @@ async fn the_dreamer_states_each_missing_prerequisite() {
         Some(IdleReason::ExtractionRouteNotSet)
     );
     assert_eq!(vault.purpose_default_table().unwrap(), before);
+    host.shutdown().await;
+    // A manifest that pins the extraction teacher to a model this server does
+    // not serve: every pass would be refused, so the Dreamer stays idle.
+    let (_dir, vault) = rooted_vault();
+    route_extraction(&vault);
+    pin_every_role(
+        &vault,
+        "local/unserved@live",
+        oneiron::ModelLocality::OwnServer,
+    );
+    let host = AiHost::start(vault, Some(&models(&fake.base_url, "")), true).await;
+    assert_eq!(
+        host.handle().status().dreamer.reason,
+        Some(IdleReason::ExtractionModelNotServed)
+    );
     host.shutdown().await;
 }
 
@@ -164,6 +179,83 @@ async fn a_vault_model_manifest_names_the_model_the_dreamer_extracts_with() {
     let seen = fake.seen();
     assert_eq!(seen.len(), 1);
     assert_eq!(seen[0].body["model"], serde_json::json!("test-model"));
+    host.shutdown().await;
+}
+
+/// Greptile #1304 P1 (re-review): the Dreamer's seat is a cloud rung, the
+/// vault's manifest pins the extraction teacher to a local model this server
+/// serves, and the owner routes extraction to `own_server`. Boot checked the
+/// owner's route against the cloud seat and stayed idle with
+/// `extraction_route_not_set`, though every pass extracts on the teacher.
+#[tokio::test]
+async fn a_manifest_pinned_local_teacher_starts_the_dreamer_beside_a_cloud_seat() {
+    let local = FakeLlm::start(vec![], None).await;
+    let cloud = FakeLlm::start(vec![], None).await;
+    let (_dir, vault) = rooted_vault();
+    route_extraction(&vault);
+    pin_every_role(
+        &vault,
+        "local/teacher@live",
+        oneiron::ModelLocality::OwnServer,
+    );
+    let config = models_toml(&format!(
+        r#"
+extraction_egress = true
+[dreamer]
+idle_floor_secs = 600
+[providers.local]
+kind = "local-openai-compat"
+base_url = "{}"
+[providers.cloud]
+kind = "openai-compat"
+base_url = "{}"
+[roles.dreamer_current]
+rungs = [{{ model = "cloud:big" }}]
+[roles.extraction_teacher]
+rungs = [{{ model = "local:teacher", prompt = "teacher rung rules" }}]
+"#,
+        local.base_url, cloud.base_url
+    ));
+    let host = AiHost::start(vault.clone(), Some(&config), true).await;
+    let handle = host.handle();
+    assert_eq!(
+        handle.status().dreamer.state,
+        WorkState::Waiting,
+        "{:?}",
+        handle.status().dreamer
+    );
+
+    let subject = EntityId::now();
+    vault
+        .put_entity(
+            &subject,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )
+        .unwrap();
+    local.push(extraction_reply(subject, "Oleksii"));
+    handle.session_hint(SessionHint::AppOpen);
+    capture_user_turn(&vault, "call me Oleksii");
+    handle.session_hint(SessionHint::ExplicitEnd);
+    assert!(
+        eventually(Duration::from_secs(30), || !name_claims(&vault, &subject)
+            .is_empty())
+        .await,
+        "no claim landed; status {:?}",
+        handle.status().dreamer
+    );
+    // The teacher's own rung served the pass, with its prompt; nothing went
+    // to the cloud seat.
+    let seen = local.seen();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].body["model"], serde_json::json!("teacher"));
+    assert_eq!(
+        seen[0].body["messages"][0]["content"],
+        serde_json::json!("teacher rung rules")
+    );
+    assert!(cloud.seen().is_empty());
     host.shutdown().await;
 }
 

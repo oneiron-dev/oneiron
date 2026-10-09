@@ -381,6 +381,73 @@ rungs = [
     );
 }
 
+/// Greptile #1304 P2 (re-review): a manifest that selects a later rung got
+/// that rung alone, numbered 0, so its receipt named the first rung. A rung
+/// after an unavailable one was numbered the same way. The receipt's `rung`
+/// is the rung's place in the configured ladder, as status lists it.
+#[tokio::test]
+async fn a_receipt_names_the_selected_rungs_place_in_the_configured_ladder() {
+    let fake = FakeLlm::start(vec![], Some(Reply::text("answered"))).await;
+    let runtime = ModelRuntime::build(Some(&config(&format!(
+        r#"
+[providers.gone]
+kind = "openai-compat"
+base_url = "https://h"
+key_env = "ONEIRON_TEST_KEY_THAT_IS_NEVER_SET"
+[providers.local]
+kind = "local-openai-compat"
+base_url = "{}"
+[roles.generative_reasoner]
+rungs = [
+  {{ model = "gone:m" }},
+  {{ model = "local:first" }},
+  {{ model = "local:second" }},
+]
+"#,
+        fake.base_url
+    ))));
+    let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
+    // Rung 0 has no key, so rung 1 answers the ladder.
+    assert_eq!(
+        generate(seat, "hi").await.usage.raw_provider["rung"],
+        json!(1)
+    );
+    assert_eq!(stream(seat, "hi").await.1.raw_provider["rung"], json!(1));
+
+    let (_dir, vault) = crate::ai_host::test_support::rooted_vault();
+    crate::ai_host::test_support::pin_every_role(
+        &vault,
+        "local/second@live",
+        ModelLocality::OwnServer,
+    );
+    let route = runtime
+        .route_role(&vault, ModelRole::GenerativeReasoner, seat)
+        .unwrap();
+    let guard = BudgetGuard::new("models-test", 100_000, BudgetExhaustionPolicy::Suspend);
+    let lease = guard.admit().unwrap().lease;
+    let response = route
+        .backend
+        .generate(request(&route.model, "hi"), &lease)
+        .await
+        .unwrap();
+    assert_eq!(response.usage.raw_provider["rung"], json!(2));
+    assert_eq!(
+        response.usage.raw_provider["requested_model"],
+        json!("second")
+    );
+    let mut events = route
+        .backend
+        .stream(request(&route.model, "hi"), &lease)
+        .unwrap();
+    let mut rung = None;
+    while let Some(event) = events.next().await {
+        if let LlmStreamEvent::Done { usage, .. } = event.unwrap() {
+            rung = Some(usage.raw_provider["rung"].clone());
+        }
+    }
+    assert_eq!(rung, Some(json!(2)));
+}
+
 #[tokio::test]
 async fn an_unset_key_variable_takes_the_provider_out_and_says_why() {
     let runtime = ModelRuntime::build(Some(&config(

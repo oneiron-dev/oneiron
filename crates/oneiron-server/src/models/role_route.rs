@@ -72,8 +72,9 @@ pub struct RoleRoute {
 
 impl ModelRuntime {
     /// Resolves `role` against the vault's live manifest and route; without
-    /// a manifest, `seat` is the binding. The model is the one the engine's
-    /// admission will select, so the backend attests exactly that model.
+    /// a manifest, `seat` is the binding (the Dreamer's seat for its
+    /// teacher). The model is the one the engine's admission will select, so
+    /// the backend attests exactly that model.
     pub fn route_role(
         &self,
         vault: &Vault,
@@ -112,10 +113,15 @@ impl ModelRuntime {
             .and_then(|router| router.served(&model))
         {
             Some((served, backend)) if served == route => Ok(RoleRoute {
-                // A manifest-bound model on this role's own ladder answers as
-                // that rung, with its prompt; the bare provider behind it has
-                // none.
-                backend: seat.rung(&model).unwrap_or(backend),
+                // A manifest-bound model on this role's own ladder (else the
+                // calling seat's) answers as that rung, with its prompt and
+                // receipt; the bare provider behind it has neither.
+                backend: self
+                    .seat(role)
+                    .into_iter()
+                    .chain([seat])
+                    .find_map(|seat| seat.rung(&model))
+                    .unwrap_or(backend),
                 model,
                 locality: served,
                 seat_bound: false,

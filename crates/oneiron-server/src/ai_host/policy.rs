@@ -7,7 +7,8 @@
 //! = true` (the host predicate, which then admits only the model each pass
 //! selected: the Dreamer's seat, or the extraction teacher the vault's model
 //! manifest pins), and vault defaults that route extraction and consolidation
-//! to the seat's widest rung within the owner's extraction bound. The second is the
+//! to that model's route (the seat's widest rung, or the route the teacher is
+//! served at) within the owner's extraction bound. The second is the
 //! owner's edit of the vault table, through `oneiron dreamer grant
 //! --extraction-route` or `PUT /v1/llm/defaults`; boot only reads it, so a
 //! later owner tightening is never undone by a restart.
@@ -17,7 +18,6 @@ use oneiron::llm::ExtractionEgressPredicate;
 use oneiron::{CallPurpose, LlmRequest, ModelId, ModelLocality, Vault};
 
 use super::status::IdleReason;
-use crate::models::Seat;
 
 pub(super) enum DreamerRoute {
     /// `egress`: the owner lets extraction leave the device.
@@ -38,12 +38,12 @@ const fn rank(locality: ModelLocality) -> u8 {
 /// The Dreamer's purposes: transcript extraction and conflict merges.
 const DREAMER_PURPOSES: [CallPurpose; 2] = [CallPurpose::Extraction, CallPurpose::Consolidation];
 
+/// `locality`: where the model a pass extracts with is served.
 pub(super) fn dreamer_route(
     vault: &Vault,
-    seat: &Seat,
+    locality: ModelLocality,
     allow_egress: bool,
 ) -> oneiron::Result<DreamerRoute> {
-    let locality = seat.locality;
     if locality == ModelLocality::OnDevice {
         return Ok(DreamerRoute::Ready {
             egress: allow_egress,

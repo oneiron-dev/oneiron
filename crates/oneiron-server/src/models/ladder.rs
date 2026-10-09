@@ -15,6 +15,9 @@ use super::served::served_receipt;
 #[derive(Clone)]
 pub(super) struct LadderRung {
     pub(super) provider: String,
+    /// Where the rung sits in the configured ladder, the receipt's `rung`:
+    /// a rung served alone, or after an unavailable one, keeps its number.
+    pub(super) position: usize,
     pub(super) model: ModelId,
     pub(super) wire_model: String,
     pub(super) prompt: Option<String>,
@@ -38,8 +41,13 @@ impl LadderRung {
         request
     }
 
-    fn stamp(&self, rung: usize, raw_provider: serde_json::Value) -> serde_json::Value {
-        served_receipt(&self.provider, &self.wire_model, rung, raw_provider)
+    fn stamp(&self, raw_provider: serde_json::Value) -> serde_json::Value {
+        served_receipt(
+            &self.provider,
+            &self.wire_model,
+            self.position,
+            raw_provider,
+        )
     }
 }
 
@@ -90,7 +98,7 @@ impl LlmBackend for LadderBackend {
         Box::pin(async move {
             self.admits(&request)?;
             let mut last = None;
-            for (index, rung) in self.rungs.iter().enumerate() {
+            for rung in &self.rungs {
                 match rung
                     .backend
                     .generate(rung.bind(request.clone()), lease)
@@ -98,11 +106,11 @@ impl LlmBackend for LadderBackend {
                 {
                     Ok(mut response) => {
                         let raw = std::mem::take(&mut response.usage.raw_provider);
-                        response.usage.raw_provider = rung.stamp(index, raw);
+                        response.usage.raw_provider = rung.stamp(raw);
                         return Ok(response);
                     }
                     Err(error) if falls_through(&error) => {
-                        tracing::warn!(seat = %self.seat, rung = index, provider = %rung.provider, ?error, "rung failed; trying the next");
+                        tracing::warn!(seat = %self.seat, rung = rung.position, provider = %rung.provider, ?error, "rung failed; trying the next");
                         last = Some(error);
                     }
                     Err(error) => return Err(error),
@@ -177,7 +185,7 @@ async fn next_event(
                 finish_reason,
             })) => {
                 let raw = std::mem::take(&mut usage.raw_provider);
-                usage.raw_provider = state.ladder.rungs[index].stamp(index, raw);
+                usage.raw_provider = state.ladder.rungs[index].stamp(raw);
                 let done = LlmStreamEvent::Done {
                     message,
                     usage,
@@ -190,7 +198,7 @@ async fn next_event(
                 return Some((Ok(event), state));
             }
             Some(Err(error)) if !started && falls_through(&error) => {
-                tracing::warn!(seat = %state.ladder.seat, rung = index, ?error, "rung stream failed before its first event; trying the next");
+                tracing::warn!(seat = %state.ladder.seat, rung = state.ladder.rungs[index].position, ?error, "rung stream failed before its first event; trying the next");
                 state.last_error = Some(error);
             }
             Some(Err(error)) => return Some((Err(error), state.finished())),

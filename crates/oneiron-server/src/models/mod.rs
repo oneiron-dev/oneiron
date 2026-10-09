@@ -115,7 +115,7 @@ impl ModelRuntime {
         for (role, ladder) in &config.roles {
             let mut rungs = Vec::new();
             let mut rung_status = Vec::new();
-            for rung in ladder {
+            for (position, rung) in ladder.iter().enumerate() {
                 let provider = &config.providers[&rung.model.provider];
                 let mut entry = RungStatus::new(&rung.model, provider);
                 match (
@@ -125,6 +125,7 @@ impl ModelRuntime {
                     (Some(built), Ok(model)) if provider.kind.generates() => {
                         rungs.push(LadderRung {
                             provider: rung.model.provider.clone(),
+                            position,
                             model,
                             wire_model: rung.model.model.clone(),
                             prompt: rung.prompt.clone(),

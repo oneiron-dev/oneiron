@@ -90,7 +90,9 @@ carries `max_tokens`, 4096 when nothing else names it.
 
 A reply may name its model differently from the request (a proxy that strips a
 login prefix, say). The answer is kept, and the receipt records both names under
-`usage.raw_provider` (`requested_model`, `reported_model`, `rung`).
+`usage.raw_provider` (`requested_model`, `reported_model`, `rung`). `rung` is the
+answering rung's place in the role's ladder as configured, counted from 0, the
+same numbering `GET /v1/ai/status` lists.
 
 ## 3. Let the Dreamer work
 
@@ -103,7 +105,8 @@ missing:
 | a rung on `dreamer_current` | `no_model_configured` |
 | `ONEIRON_AUTH_SECRET` set (host root, machine identity) | `no_host_authority` |
 | `extraction_egress = true` under `[models]`, for any model reached over HTTP | `extraction_egress_not_allowed` |
-| vault defaults that route extraction and consolidation to the seat's widest rung: `oneiron dreamer grant --extraction-route own_server` (or `third_party`), or `PUT /v1/llm/defaults` | `extraction_route_not_set` |
+| vault defaults that route extraction and consolidation to where the Dreamer extracts (the seat's widest rung, or the route of the extraction teacher the vault's model manifest pins): `oneiron dreamer grant --extraction-route own_server` (or `third_party`), or `PUT /v1/llm/defaults` | `extraction_route_not_set` |
+| with a model manifest, its extraction teacher served by `[models]` at the vault's route | `extraction_model_not_served` |
 | the Dreamer's three policy rows (a fresh vault ships them) | `needs_owner_grant` |
 
 ```bash
@@ -119,7 +122,8 @@ vault created before these rows shipped has none, and the same command adds
 them to its live policy; on a vault that has them it changes nothing. The
 owner may narrow or remove the rows like any policy row. Extraction leaves the
 device only on both opt-ins (the `extraction_egress` key and the routed
-defaults), and then only to the Dreamer's own seat model. Boot reads the
+defaults), and then only to the model each pass extracts with: the Dreamer's
+seat, or the extraction teacher the vault's model manifest pins. Boot reads the
 routing and never writes it, so a later tightening by the owner is never
 undone by a restart.
 

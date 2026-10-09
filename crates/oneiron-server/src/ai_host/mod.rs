@@ -349,7 +349,20 @@ async fn start_dreamer(
             return Err(IdleReason::StartFailed);
         }
     }
-    let egress = match policy::dreamer_route(vault, &seat, models.extraction_egress) {
+    // Each pass extracts on the teacher the vault's live manifest pins (the
+    // seat without one), so the route the owner's defaults must allow is that
+    // model's, not the seat's.
+    let teacher = match runtime.route_role(vault, dreamer::EXTRACTION_ROLE, &seat) {
+        Ok(route) => route,
+        Err(RoleRefusal::RouteNotServed { .. }) => {
+            return Err(IdleReason::ExtractionModelNotServed);
+        }
+        Err(refusal) => {
+            tracing::error!(%refusal, "dreamer extraction route could not be resolved");
+            return Err(IdleReason::StartFailed);
+        }
+    };
+    let egress = match policy::dreamer_route(vault, teacher.locality, models.extraction_egress) {
         Ok(DreamerRoute::Ready { egress }) => egress,
         Ok(DreamerRoute::Blocked(reason)) => return Err(reason),
         Err(error) => {

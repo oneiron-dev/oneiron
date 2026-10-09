@@ -21,10 +21,14 @@ pub enum IdleReason {
     /// owner removed them (`oneiron dreamer grant`, once, with the server
     /// stopped).
     NeedsOwnerGrant,
-    /// The vault's extraction and consolidation defaults do not route to the
-    /// Dreamer seat's widest rung (`oneiron dreamer grant --extraction-route`,
-    /// or `PUT /v1/llm/defaults`).
+    /// The vault's extraction and consolidation defaults do not route to
+    /// where the Dreamer extracts: the extraction teacher the vault's model
+    /// manifest pins, else the Dreamer seat's widest rung (`oneiron dreamer
+    /// grant --extraction-route`, or `PUT /v1/llm/defaults`).
     ExtractionRouteNotSet,
+    /// The vault's model manifest pins an extraction teacher this server does
+    /// not serve at the vault's route: add it to `[models]`, or change the pin.
+    ExtractionModelNotServed,
     /// Turned off in `[models]`.
     Disabled,
     /// The worker failed to start; the server log has the cause.
