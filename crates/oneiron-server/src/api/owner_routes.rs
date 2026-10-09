@@ -105,6 +105,13 @@ fn owner_error(error: OwnerError) -> ApiError {
             oneiron::ErrorKind::ConsentApproveOnceSpent => {
                 ApiError::invalid_state(Some("already_decided"))
             }
+            oneiron::ErrorKind::SecretRefNotFound => ApiError::not_found("secret", None),
+            oneiron::ErrorKind::SecretCustodyNotActive => {
+                ApiError::invalid_state(Some("secret_not_active"))
+            }
+            oneiron::ErrorKind::ManifestWidensFloor => {
+                ApiError::invalid_state(Some("secret_wider_than_floor"))
+            }
             _ => core_engine_error("owner action failed", *error),
         },
         OwnerError::Host(error) => {
@@ -235,7 +242,7 @@ async fn rotate_secret(
 ) -> OwnerReply<secrets::Rotated> {
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let rotated = blocking(move || secrets::rotate(server.vault(), &owner, request)).await?;
+    let rotated = blocking(move || secrets::rotate(server.vault(), &owner, &request)).await?;
     Ok(Json(rotated))
 }
 

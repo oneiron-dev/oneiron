@@ -84,7 +84,7 @@ async fn owner_rotates_a_secret_and_nobody_else_can() {
         Some(&json!({ "name": "no-such-secret", "value_base64": new_value })),
     )
     .await;
-    assert!(status.is_client_error(), "{status}");
+    assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(generation(&server), 1);
 }
 

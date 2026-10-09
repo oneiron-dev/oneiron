@@ -11,13 +11,20 @@ use super::{OwnerError, OwnerResult};
 
 /// One rotation request. The value travels as standard base64 so binary
 /// secrets survive JSON; it reaches the vault's custody plane and no receipt,
-/// log or reply.
+/// log or reply. Its encoded form is wiped when the request drops, on every
+/// path, refused or not.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RotateSecret {
     /// The secret's custody name.
     pub(crate) name: String,
     pub(crate) value_base64: String,
+}
+
+impl Drop for RotateSecret {
+    fn drop(&mut self) {
+        self.value_base64.zeroize();
+    }
 }
 
 impl std::fmt::Debug for RotateSecret {
@@ -41,13 +48,17 @@ pub(crate) struct Rotated {
 pub(crate) fn rotate(
     vault: &oneiron::Vault,
     owner: &AuthenticatedOwner,
-    mut request: RotateSecret,
+    request: &RotateSecret,
 ) -> OwnerResult<Rotated> {
-    let decoded = base64::engine::general_purpose::STANDARD.decode(request.value_base64.as_bytes());
-    request.value_base64.zeroize();
-    let value = Zeroizing::new(
-        decoded.map_err(|_| OwnerError::Invalid("value_base64 must be standard base64".into()))?,
-    );
+    let encoded = request.value_base64.as_bytes();
+    // Sized up front so decoding never reallocates and leaves a copy behind;
+    // a decode that fails part way is wiped with the rest.
+    let mut value = Zeroizing::new(Vec::with_capacity(base64::decoded_len_estimate(
+        encoded.len(),
+    )));
+    base64::engine::general_purpose::STANDARD
+        .decode_vec(encoded, &mut value)
+        .map_err(|_| OwnerError::Invalid("value_base64 must be standard base64".into()))?;
     if value.is_empty() {
         return Err(OwnerError::Invalid("a rotated secret needs a value".into()));
     }
