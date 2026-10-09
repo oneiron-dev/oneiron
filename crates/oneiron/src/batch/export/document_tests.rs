@@ -270,6 +270,48 @@ fn whole_vault_json_roundtrip_preserves_ids_types_times_fields_graph_and_demotes
     Ok(())
 }
 
+/// Bug repro (gate flakes, 2026-10-09): a claim's scope facet id is a hash of
+/// its subject, and about 4 in 10,000 such ids parse as a whole MessagePack
+/// container. The document's credential pass nulled that id as an opaque
+/// payload, so the archive failed to parse on import.
+#[test]
+fn whole_vault_json_reimports_a_scope_id_whose_bytes_parse_as_messagepack() -> Result<()> {
+    let parses_as_container = |bytes: &[u8]| {
+        let mut cursor = std::io::Cursor::new(bytes);
+        matches!(
+            rmpv::decode::read_value(&mut cursor),
+            Ok(Value::Map(_) | Value::Array(_) | Value::Binary(_) | Value::Ext(_, _))
+        ) && cursor.position() == bytes.len() as u64
+    };
+    let person = (1_u64..)
+        .map(|n| {
+            let mut bytes = [1; 16];
+            bytes[8..].copy_from_slice(&n.to_be_bytes());
+            crate::EntityId::from_bytes(bytes).unwrap()
+        })
+        .find(|id| parses_as_container(crate::claim::substrate_facet_id(*id).unwrap().as_bytes()))
+        .unwrap();
+    let (_source_dir, source) = open_test_vault_with(VaultConfig::default());
+    let (_target_dir, target) = open_test_vault_with(VaultConfig::default());
+    source.put_entity(&person, ENTITY_TYPE_PERSON, range(), 789, b"person")?;
+    let claim = crate::EntityId::now();
+    let knowledge = ClaimBody::new(
+        "preference.food",
+        ClaimSubject::Entity(person),
+        Value::from("matcha"),
+        0.75,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )?;
+    source.put_claim(&claim, &knowledge, range(), 789)?;
+    let scope_facet = source.get_claim(&claim)?.unwrap().scope_facet;
+    assert!(parses_as_container(scope_facet.as_bytes()));
+    let export = source.export_whole_vault(PackFormat::Json)?;
+    target.import_whole_vault_json(export.bytes())?;
+    assert_eq!(target.get_claim(&claim)?.unwrap().scope_facet, scope_facet);
+    Ok(())
+}
+
 #[test]
 fn whole_vault_import_rejects_manifest_drift_false_proof_and_forged_binary() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());

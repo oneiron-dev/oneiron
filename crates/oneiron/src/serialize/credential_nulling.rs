@@ -37,11 +37,32 @@ pub(super) fn credential_key(key: &str) -> bool {
 
 /// No option can bypass this transform. Recursion stops closed, not by returning the input.
 pub(crate) fn null_credentials(key: &str, value: &Value) -> Value {
-    null_at_depth(key, value, 0)
+    null_at_depth(key, value, 0, false)
 }
-fn null_at_depth(key: &str, value: &Value, depth: usize) -> Value {
+
+/// The whole-vault document pass. Its typed MessagePack trees were judged by the
+/// serializer, which writes an `entity_reference` node only for a validated id.
+/// Those bytes keep the secret scan but not the opaque-container rule: an id
+/// hashed from its subject is random bytes, about 4 in 10,000 parse as a whole
+/// MessagePack container, and nulling one left an archive the importer refused.
+pub(super) fn null_document_credentials(value: &Value) -> Value {
+    null_at_depth("", value, 0, true)
+}
+
+fn null_at_depth(key: &str, value: &Value, depth: usize, document: bool) -> Value {
     if depth >= 128 || credential_key(key) {
         return Value::Null;
+    }
+    if document
+        && let Value::Object(fields) = value
+        && let Some(bytes) = entity_reference_bytes(fields)
+    {
+        // A secret-shaped id is nulled whole, as the typed serializer does.
+        return if scan_file_content("", &bytes).is_some() {
+            Value::Null
+        } else {
+            value.clone()
+        };
     }
     match value {
         Value::String(text) if scan_file_content("", text.as_bytes()).is_some() => Value::Null,
@@ -49,7 +70,7 @@ fn null_at_depth(key: &str, value: &Value, depth: usize) -> Value {
         Value::Array(values) => Value::Array(
             values
                 .iter()
-                .map(|value| null_at_depth("", value, depth + 1))
+                .map(|value| null_at_depth("", value, depth + 1, document))
                 .collect(),
         ),
         Value::Object(fields) => Value::Object(
@@ -59,13 +80,28 @@ fn null_at_depth(key: &str, value: &Value, depth: usize) -> Value {
                     if scan_file_content("", key.as_bytes()).is_some() {
                         ("_redacted_key".to_owned(), Value::Null)
                     } else {
-                        (key.clone(), null_at_depth(key, value, depth + 1))
+                        (key.clone(), null_at_depth(key, value, depth + 1, document))
                     }
                 })
                 .collect::<Map<_, _>>(),
         ),
         _ => value.clone(),
     }
+}
+
+/// The typed tree's `{"type": "entity_reference", "value": [byte, ...]}` node.
+fn entity_reference_bytes(fields: &Map<String, Value>) -> Option<Vec<u8>> {
+    if fields.len() != 2 || fields.get("type")?.as_str()? != "entity_reference" {
+        return None;
+    }
+    json_bytes(fields.get("value")?.as_array()?)
+}
+
+fn json_bytes(values: &[Value]) -> Option<Vec<u8>> {
+    values
+        .iter()
+        .map(|value| value.as_u64().and_then(|v| u8::try_from(v).ok()))
+        .collect()
 }
 
 // JSON byte arrays must be inspected as bytes, not as harmless decimal digits.
@@ -75,18 +111,14 @@ fn encoded_credentials(values: &[Value], depth: usize) -> bool {
     if values.is_empty() {
         return false;
     }
-    let Some(bytes): Option<Vec<u8>> = values
-        .iter()
-        .map(|value| value.as_u64().and_then(|v| u8::try_from(v).ok()))
-        .collect()
-    else {
+    let Some(bytes) = json_bytes(values) else {
         return false;
     };
     if scan_file_content("", &bytes).is_some() {
         return true;
     }
     if let Ok(value @ (Value::Object(_) | Value::Array(_))) = serde_json::from_slice(&bytes)
-        && null_at_depth("", &value, depth + 1) != value
+        && null_at_depth("", &value, depth + 1, false) != value
     {
         return true;
     }

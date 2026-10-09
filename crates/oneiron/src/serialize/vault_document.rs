@@ -2,7 +2,7 @@
 //! projection, timestamp normalization, truncation, or token budgets.
 use serde_json::Value;
 
-use super::credential_nulling::null_credentials;
+use super::credential_nulling::null_document_credentials;
 use super::export_value::{ExportBody, ExportValue};
 use super::markdown_plaintext_format::{write_markdown_groups, write_plaintext_groups};
 use super::pack_entry::{PreparedEntity, PreparedEntitySource};
@@ -163,7 +163,7 @@ fn encode_document(document: &WholeVaultDocument, format: PackFormat) -> Result<
         .map_err(|_| Error::InvariantViolation("whole-vault document serialization failed"))?;
     // This second pass covers descriptors and manifest strings too. Body keys
     // and binary values were already inspected before the typed-tree encoding.
-    let value = null_credentials("", &value);
+    let value = null_document_credentials(&value);
     if format == PackFormat::Json {
         return serde_json::to_vec(&value)
             .map_err(|_| Error::InvariantViolation("whole-vault JSON serialization failed"));
