@@ -253,10 +253,10 @@ async fn a_failed_model_call_cancels_the_message_and_reports_why() {
     host.shutdown().await;
 }
 
-/// Greptile #1304 P1 (follow-up): a first rung whose stream closed before its
-/// first event (an empty body, or a lone `[DONE]`) ended the seat's stream
-/// with no answer and no error, so chat cancelled the message ("model stream
-/// ended without a terminal") although the next rung could answer.
+/// Greptile #1304 P1 (follow-up): a first rung whose stream closes before its
+/// first event (an empty body, or a lone `[DONE]`) must not end the turn
+/// while the next rung could answer. The rung's `LlmStream` reports that EOF
+/// as a cut stream, so the ladder hands the turn on and the reply arrives.
 #[tokio::test]
 async fn a_rung_that_ends_its_stream_unspoken_hands_the_turn_to_the_next() {
     for unspoken in ["", "data: [DONE]\n\n"] {

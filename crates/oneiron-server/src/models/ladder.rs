@@ -203,11 +203,9 @@ async fn next_event(
                 state.last_error = Some(error);
             }
             Some(Err(error)) => return Some((Err(error), state.finished())),
-            // An empty stream, or a lone `[DONE]`: the rung never answered.
-            None if !started => {
-                tracing::warn!(seat = %state.ladder.seat, rung = state.ladder.rungs[index].position, "rung stream ended before its first event; trying the next");
-                state.last_error = Some(oneiron::FatalLlmError::EmptyResponse.into());
-            }
+            // Unreached: an `LlmStream` that ends before its terminal yields
+            // `StreamCut` first, so a rung that ends unspoken (an empty body,
+            // a lone `[DONE]`) falls through on the arm above.
             None => return None,
         }
     }

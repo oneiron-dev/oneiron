@@ -382,7 +382,8 @@ rungs = [
 }
 
 /// Once a rung has spoken, its stream is the answer, cut or whole: one that
-/// ends or breaks after its first event never hands the call to the next rung.
+/// ends or breaks after its first event is reported cut, and never hands the
+/// call to the next rung.
 #[tokio::test]
 async fn a_rung_that_has_spoken_keeps_the_call_when_its_stream_breaks() {
     let delta = json!({"model": "m", "choices": [{"index": 0, "delta": {"content": "partial"}, "finish_reason": null}]});
@@ -404,15 +405,17 @@ async fn a_rung_that_has_spoken_keeps_the_call_when_its_stream_breaks() {
             .stream(request(&seat.model, "hi"), &lease)
             .unwrap();
         let mut deltas = Vec::new();
+        let mut cut = false;
         while let Some(event) = events.next().await {
             match event {
                 Ok(LlmStreamEvent::TextDelta { text, .. }) => deltas.push(text),
                 Ok(LlmStreamEvent::Done { .. }) => panic!("{broken:?}: a broken stream finished"),
                 Ok(_) => {}
-                Err(_) => break,
+                Err(_) => cut = true,
             }
         }
         assert_eq!(deltas, ["partial"], "{broken:?}");
+        assert!(cut, "{broken:?}: a broken stream ended as if whole");
         assert!(
             second.seen().is_empty(),
             "{broken:?}: the call switched rungs after the first had spoken"
