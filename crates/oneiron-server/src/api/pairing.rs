@@ -240,6 +240,14 @@ pub(super) fn register_live_paired_mcp(
     let Some(slip) = verified.as_ref().ok().and_then(|auth| auth.verified_slip()) else {
         return false;
     };
+    // Redeem pairs only a holder that exists; neither does this.
+    let holder_exists = oneiron::EntityId::from_hex(&slip.claims().holder_ref)
+        .ok()
+        .and_then(|holder| server.vault().get(&holder).ok().flatten())
+        .is_some();
+    if !holder_exists {
+        return false;
+    }
     match paired_mcp_record(slip.claims()) {
         Ok(Some(record)) => registry.register(credential, record).is_ok(),
         _ => false,

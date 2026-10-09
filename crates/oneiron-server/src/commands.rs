@@ -283,13 +283,48 @@ pub fn token_agent(args: TokenAgentArgs) -> anyhow::Result<()> {
         "an agent slip needs {}: the MCP door reads before it does anything else",
         CoreScope::Read.as_str()
     );
-    if let Some(out) = &args.out {
-        anyhow::ensure!(
-            !out.exists(),
-            "{} already exists; remove it or name a new file",
-            out.display()
-        );
+    // The file exists before the slip does, so a path that cannot be written
+    // fails here rather than after a slip nobody holds is logged.
+    let out = match &args.out {
+        Some(path) => Some((path, create_owner_only(path)?)),
+        None => None,
+    };
+    match mint_agent_credential(&args, verbs) {
+        Ok((credential, ceiling)) => {
+            let Some((path, mut file)) = out else {
+                println!("{}", serde_json::to_string_pretty(&credential)?);
+                return Ok(());
+            };
+            file.write_all(format!("{}\n", credential.credential).as_bytes())
+                .and_then(|()| file.sync_all())
+                .map_err(|error| anyhow::anyhow!("write {}: {error}", path.display()))?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "principal_ref": credential.principal_ref,
+                    "actor_class": credential.actor_class,
+                    "ceiling": ceiling.as_str(),
+                    "expires_at": credential.expires_at,
+                    "slip_id": credential.slip_id,
+                    "credential_file": path,
+                }))?
+            );
+            Ok(())
+        }
+        Err(error) => {
+            if let Some((path, _)) = out {
+                let _ = std::fs::remove_file(path);
+            }
+            Err(error)
+        }
     }
+}
+
+/// `token agent`'s vault half: principal, grant and slip, on the stopped vault.
+fn mint_agent_credential(
+    args: &TokenAgentArgs,
+    verbs: std::collections::BTreeSet<String>,
+) -> anyhow::Result<(PairedCredential, oneiron::agent_def::AgentCeiling)> {
     let config = resolve_serve_config(&args.serve)?;
     ensure_existing_vault_for_revoke(&config.vault_path)?;
     let secret = config
@@ -330,23 +365,7 @@ pub fn token_agent(args: TokenAgentArgs) -> anyhow::Result<()> {
         verbs,
         args.lifetime_secs,
     )?;
-    let Some(out) = &args.out else {
-        println!("{}", serde_json::to_string_pretty(&credential)?);
-        return Ok(());
-    };
-    write_owner_only(out, format!("{}\n", credential.credential).as_bytes())?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!({
-            "principal_ref": credential.principal_ref,
-            "actor_class": credential.actor_class,
-            "ceiling": ceiling.as_str(),
-            "expires_at": credential.expires_at,
-            "slip_id": credential.slip_id,
-            "credential_file": out,
-        }))?
-    );
-    Ok(())
+    Ok((credential, ceiling))
 }
 
 /// Issues a one-use link for an existing `principal` carrying `verbs`, and
@@ -403,9 +422,9 @@ fn mint_paired_credential(
     })
 }
 
-/// A new file only its owner can read, written whole. It must not exist yet:
-/// a credential never lands on top of a file someone else may hold open.
-fn write_owner_only(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+/// A new file only its owner can read. It must not exist yet: a credential
+/// never lands on top of a file someone else may already hold open.
+fn create_owner_only(path: &Path) -> anyhow::Result<std::fs::File> {
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -413,12 +432,9 @@ fn write_owner_only(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let mut file = options
+    options
         .open(path)
-        .map_err(|error| anyhow::anyhow!("create {}: {error}", path.display()))?;
-    file.write_all(bytes)
-        .and_then(|()| file.sync_all())
-        .map_err(|error| anyhow::anyhow!("write {}: {error}", path.display()))
+        .map_err(|error| anyhow::anyhow!("create {}: {error}", path.display()))
 }
 
 /// Creates a pairing link on the running server and prints it.
