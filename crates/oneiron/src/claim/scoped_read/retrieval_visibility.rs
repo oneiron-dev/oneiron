@@ -55,7 +55,9 @@ impl<'vault> ScopedRead<'vault> {
     /// messages of this read, so a grant revoked or a message added after the
     /// turn embedded counts at once. An erased message is a shell whose words
     /// left the turn's vector in its erasing write
-    /// (`embed::erase_turn_vectors_in_txn`), so it no longer counts.
+    /// (`embed::erase_turn_vectors_in_txn`), so it no longer counts. A read by
+    /// id finds nothing by meaning: it reads the turn's row alone
+    /// (`entity_raw_with_mode_in`), whose text is the messages it may read.
     ///
     /// Each message is read under the actor's own floor, not the request's
     /// narrowing: a scope that asks for TURNs alone still may read messages.
