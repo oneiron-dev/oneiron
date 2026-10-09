@@ -197,18 +197,18 @@ fn dev_partition_reading(
     prior: SkillReliabilityPosterior,
 ) -> Result<DevPartitionReading> {
     let rtxn = vault.store.env.read_txn()?;
-    let outcomes = crate::skill_reliability::attributed_outcome_results(vault, &rtxn, skill)?;
+    let outcomes = crate::skill_reliability::attributed_outcomes_weighted(vault, &rtxn, skill)?;
     let mut reading = DevPartitionReading {
         posterior: prior,
         attributed: 0,
         reserved: 0,
     };
-    for (receipt, win) in outcomes {
+    for (receipt, outcome) in outcomes {
         if receipt_is_held_out(skill, &receipt) {
             reading.reserved = reading.reserved.saturating_add(1);
             continue;
         }
-        reading.posterior.apply(win);
+        reading.posterior.apply_attributed(outcome);
         reading.attributed = reading.attributed.saturating_add(1);
     }
     Ok(reading)

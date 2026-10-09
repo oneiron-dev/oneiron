@@ -1,16 +1,26 @@
-//! ED-03 (ONE-1759, ARCH-0056 §5): the amendment JUDGE, and the `*.edit_cost`
-//! claim rows a judged amendment earns.
+//! ED-03 (ONE-1759, ARCH-0056 §5): the amendment JUDGE, and everything a
+//! judged amendment's shares earn.
 //!
 //! ```text
 //! Δ RECEIPT (ED-01/02)  +  routing facts (recorded at the amendment door)
 //!   └─ judge_amendment_hunks ──> AmendmentJudgment (label + share split)
 //!        ├─ skill_defect %     → skill.edit_cost   (SKILL entity), its share
+//!        │                     → skill.reliability: the amended attempt's ONE
+//!        │                       record becomes a loss of this share
 //!        ├─ execution_lapse %  → actor.edit_cost   (ACTOR entity), its share
-//!        ├─ discovery %        → nothing here; SK-04 already owns its consequence
+//!        │                     → one actor.lesson citing the receipt
+//!        ├─ discovery %        → a skill EDIT PROPOSAL, minted through SK-04's door
 //!        ├─ environment %      → nothing at all — the judgment row IS the record
 //!        ├─ preference_shift % → a PREFERENCE proposal for ED-04's miner
 //!        └─ unclear %          → holds; a row in the unclear ledger for the Dreamer
 //! ```
+//!
+//! The proposal, the preference note and the unclear row ride the judgment
+//! itself. The claim rows land in the projection passes, each recomputed from
+//! the judgment ledger: [`project_edit_cost_claims`],
+//! [`project_amendment_reliability`] and [`project_amendment_lessons`].
+//! Reliability needs the attempt the amended proposal came from; the host
+//! names it at the evidence door ([`AmendmentEvidence::with_attempt`]).
 //!
 //! # A verdict is a split
 //!
@@ -71,7 +81,10 @@ pub use self::evidence_judge::{
     amendment_evidence, amendment_judgments, judge_amendment, judge_amendment_hunks,
     judge_amendment_with, pending_preference_proposals, record_amendment_evidence,
 };
-pub use self::projector::{edit_cost_for, project_edit_cost_claims};
+pub use self::projector::{
+    edit_cost_for, project_amendment_lessons, project_amendment_reliability,
+    project_edit_cost_claims,
+};
 pub use self::taxonomy::{
     AmendmentCause, AmendmentClass, AmendmentEvidence, AmendmentJudgment, AmendmentShare,
     PreferenceProposal, classify_amendment,

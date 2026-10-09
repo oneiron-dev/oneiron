@@ -172,9 +172,7 @@ pub fn run_attribution_projector_with_judge(
                 AttributionLane::Attempt,
                 &judgment.sequence.to_string(),
             )?;
-            if let Some(proposal) = edit_proposal_for(judgment) {
-                EDIT_PROPOSAL.put(&vault.store, wtxn, &proposal.judgment_sequence, &proposal)?;
-            }
+            mint_edit_proposal_in_txn(vault, wtxn, judgment)?;
         }
         if highest > since_cursor {
             CURSOR.put(&vault.store, wtxn, &(), &highest)?;
@@ -217,6 +215,47 @@ pub fn pending_edit_proposals(vault: &Vault) -> Result<Vec<SkillEditProposal>> {
         .into_iter()
         .map(|(_, proposal)| proposal)
         .collect())
+}
+
+/// Mints the skill EDIT PROPOSAL a discovery routes to, in the caller's
+/// transaction — the one minting path both lanes take. The attempt lane mints
+/// beside the judgment it persists; the amendment lane mints beside its own
+/// judgment row, under a sequence drawn by [`draw_proposal_sequence_in_txn`],
+/// so the two lanes' proposals share one keyspace and never collide. Any other
+/// verdict mints nothing.
+pub(crate) fn mint_edit_proposal_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    judgment: &AttributionJudgment,
+) -> Result<()> {
+    if let Some(proposal) = edit_proposal_for(judgment) {
+        EDIT_PROPOSAL.put(&vault.store, wtxn, &proposal.judgment_sequence, &proposal)?;
+    }
+    Ok(())
+}
+
+/// Draws a fresh sequence for a proposal minted outside this lane's evidence
+/// ledger, from the same counter evidence sequences come from.
+pub(crate) fn draw_proposal_sequence_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<u64> {
+    next_evidence_sequence_in_txn(vault, wtxn)
+}
+
+/// Withdraws the pending proposal minted under `sequence`.
+///
+/// Only the amendment lane calls this. Its judgments are overwritten when an
+/// amendment is judged again, and a proposal the new judgment no longer stands
+/// behind must not keep waiting for the gated apply. Attempt judgments are
+/// never rescored, so their proposals never move.
+pub(crate) fn withdraw_edit_proposal_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    sequence: u64,
+) -> Result<()> {
+    EDIT_PROPOSAL.delete(&vault.store, wtxn, &sequence)?;
+    Ok(())
 }
 
 /// The proposal a judgment mints, or `None` when its verdict routes to a
