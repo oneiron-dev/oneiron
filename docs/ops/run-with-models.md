@@ -199,8 +199,9 @@ budget_units = 10000000      # optional; process-lifetime meter for its model ca
 Each step's call is admitted like a chat turn, against the vault's model
 manifest and route, and spends from `budget_units`: the tokens the reply
 reports, or one call's 8000-unit reservation when it reports none, plus one
-reservation for each rung that failed before it. A call that every rung failed
-spends one reservation per rung. A run's clock and config are saved when it
+reservation for each rung that failed before it. A call that failed spends one
+reservation for each provider call it made: every rung of the seat, or the one
+model the vault's manifest pins. A run's clock and config are saved when it
 starts, so a run resumed after a restart keeps its clock and refuses another
 task. A vault with a model
 manifest needs a seat judge this server does not bind yet, so its runs are
