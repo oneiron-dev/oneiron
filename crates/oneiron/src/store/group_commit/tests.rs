@@ -458,10 +458,9 @@ fn failed_shared_commit_fails_every_member_and_the_next_group_commits() {
                     .entities
                     .get(txn, rows(0, 0)[0].as_bytes())
                     .map(|row| row.is_some())
-                    .map_err(|err| Answer::from(Error::from(err)));
-                Rows::Discard(staged_by_leader.and_then(|seen| {
+                    .map_err(Answer::from);
+                Rows::Discard(staged_by_leader.map(|seen| {
                     assert!(seen, "a member reads the rows the leader staged");
-                    Ok(())
                 }))
             })
         })
