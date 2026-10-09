@@ -17,6 +17,7 @@ mod write;
 use super::partition::ConsolidationPartitionKey;
 use super::provenance::{ConsolidationSink, PromotionCandidate};
 use super::support::invalid_consolidation;
+use super::turn_text::{MessageSpan, TurnText, cited_evidence_bytes};
 use super::watermark::{TurnBodyFacts, decode_turn_body};
 use crate::attempt_queue::AttemptId;
 use crate::claim::{
@@ -67,6 +68,8 @@ pub(super) struct BranchResources<'a> {
     partition: ConsolidationPartitionKey,
     sources: BTreeMap<EntityId, SourcePin>,
     turns: BTreeSet<EntityId>,
+    /// Each turn's frozen text and the MESSAGE pins behind it.
+    texts: BTreeMap<EntityId, TurnText>,
     bucket: ScopeResource,
     output: ScopeResource,
     scope: Scope,
@@ -113,8 +116,14 @@ impl<'a> BranchResources<'a> {
             plan.scope(),
             Some(wake),
         )?;
-        for (id, pin) in &resources.sources {
-            if plan.version(id) != Some(&pin.resource) {
+        let messages = resources.texts.values().flat_map(TurnText::versions);
+        for (id, version) in resources
+            .sources
+            .iter()
+            .map(|(id, pin)| (*id, &pin.resource))
+            .chain(messages)
+        {
+            if plan.version(&id) != Some(version) {
                 return Err(invalid_consolidation(
                     "prepared source version changed or was not admitted",
                 ));
@@ -152,7 +161,7 @@ impl<'a> BranchResources<'a> {
         let source_ids: Vec<_> = std::iter::once(partition.conversation_ref)
             .chain(turns.iter().copied())
             .collect();
-        let (source_rows, read_receipt): (Vec<_>, _) = if let Some(pin) = prepared_wake {
+        let (source_rows, read_receipt, texts): (Vec<_>, _, _) = if let Some(pin) = prepared_wake {
             // The wake's one scoped read supplied these bytes; its receipt
             // travels with the branch.
             let mut read_receipt = read.read_receipt(None, 0)?;
@@ -162,11 +171,14 @@ impl<'a> BranchResources<'a> {
             (
                 source_ids.iter().map(|id| pin.source(id)).collect(),
                 read_receipt,
+                None,
             )
         } else {
-            let ScopedReadResult { value, receipt } =
-                read.get_entities_parts_with_receipt(&source_ids, None)?;
-            (value, receipt)
+            let ScopedReadResult {
+                value: (rows, texts),
+                receipt,
+            } = super::turn_text::read_sources(&read, &source_ids)?;
+            (rows, receipt, Some(texts))
         };
         for (id, row) in source_ids.iter().zip(source_rows) {
             let (entity_type, learned_at, body) =
@@ -203,6 +215,13 @@ impl<'a> BranchResources<'a> {
                 },
             );
         }
+        let texts = match (texts, prepared_wake) {
+            (Some(texts), _) => texts,
+            (None, Some(pin)) => pin.turn_texts(turns)?,
+            (None, None) => return Err(invalid_consolidation("branch turn text not read")),
+        };
+        let messages = texts.values().flat_map(TurnText::versions);
+        readable.extend(messages.map(|(_, version)| version.clone()));
         // The queued/caller scope is an actual upper bound supplied by the
         // trusted host. It binds TURNs to relationship/project slices through
         // exact versions: neither axis is a TURN or conversation column.
@@ -230,6 +249,7 @@ impl<'a> BranchResources<'a> {
             partition,
             sources,
             turns: turns.iter().copied().collect(),
+            texts,
             bucket,
             output,
             scope,
@@ -343,7 +363,11 @@ impl<'a> BranchResources<'a> {
         }
         let (_, body) = self.source(scope, id)?;
         let (_, conversation) = self.source(scope, &self.partition.conversation_ref)?;
-        let facts = decode_turn_body(&body);
+        let mut facts = decode_turn_body(&body);
+        let text = self.texts.get(id);
+        facts.text = text
+            .ok_or_else(|| invalid_consolidation("unlisted branch turn"))?
+            .recheck(scope, &self.read, id)?;
         let parent = decode_turn_body(&conversation);
         let edges = self.read.edges_out(id)?;
         self.fold_read_receipt(&edges.receipt)?;
@@ -383,6 +407,15 @@ impl<'a> BranchResources<'a> {
             ));
         }
         Ok(transcript)
+    }
+
+    /// The MESSAGE words a citation names: the slices a witnessed TURN range
+    /// covers, at the revisions this branch froze. Any other source has none.
+    pub(super) fn message_spans(&self, entry: &SwarmEvidenceRef) -> Result<Vec<MessageSpan>> {
+        match self.texts.get(&entry.source_id) {
+            Some(text) if entry.claim_id.is_none() => text.spans(entry.byte_range),
+            _ => Ok(Vec::new()),
+        }
     }
 
     /// Parent-only evidence accounting: one actor-scoped read transaction for
@@ -458,7 +491,11 @@ impl<'a> BranchResources<'a> {
                     turn_trust_class(role, false)
                         .ok_or_else(|| invalid_consolidation("inadmissible branch evidence role"))?
                 };
-                let bytes = cited_evidence_bytes(*entry, &body)?;
+                let text = self.texts.get(&entry.source_id);
+                let text = text
+                    .map(|text| text.readable_text(&self.scope))
+                    .transpose()?;
+                let bytes = cited_evidence_bytes(*entry, &body, text.flatten())?;
                 Ok(VerifiedSwarmEvidence {
                     source_id: entry.source_id,
                     content_hash: swarm_evidence_content_hash(&bytes),
@@ -559,6 +596,7 @@ impl<'a> BranchResources<'a> {
             self.read.vault(),
             scope,
             &self.partition,
+            &self.write_fence(),
             persisted,
             now,
         )
@@ -599,7 +637,14 @@ impl<'a> BranchResources<'a> {
                 }
             }
         }
-        super::gap::upsert_branch_gap_queue(self.read.vault(), scope, &self.partition, gaps, now)
+        super::gap::upsert_branch_gap_queue(
+            self.read.vault(),
+            scope,
+            &self.partition,
+            &self.write_fence(),
+            gaps,
+            now,
+        )
     }
 
     pub(super) fn accept_verified(
@@ -633,29 +678,6 @@ impl<'a> BranchResources<'a> {
             })
             .collect::<Result<Vec<_>>>()?;
         self.accept_verified(scope, sink, verified)
-    }
-}
-
-/// A byte range is measured over the exact UTF-8 TURN text the child saw in
-/// the transcript, never over its MessagePack storage framing. Whole TURNs
-/// retain their existing body-hash identity; CLAIM ids name the stored body.
-pub(crate) fn cited_evidence_bytes(locator: SwarmEvidenceRef, body: &[u8]) -> Result<Vec<u8>> {
-    if let Some((start, end)) = locator.byte_range {
-        let text = decode_turn_body(body)
-            .text
-            .ok_or_else(|| invalid_consolidation("cited turn has no text"))?;
-        if start >= end {
-            return Err(invalid_consolidation("empty evidence byte range"));
-        }
-        let bytes = text
-            .as_bytes()
-            .get(start..end)
-            .ok_or_else(|| invalid_consolidation("invalid evidence byte range"))?;
-        std::str::from_utf8(bytes)
-            .map_err(|_| invalid_consolidation("evidence range splits UTF-8 text"))?;
-        Ok(bytes.to_vec())
-    } else {
-        Ok(body.to_vec())
     }
 }
 
