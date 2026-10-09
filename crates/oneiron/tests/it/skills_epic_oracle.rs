@@ -1065,12 +1065,11 @@ fn sk04_attempt_manifest_grows_mid_run_and_stays_append_only() {
 /// satisfy these counts without writing claims its layer must not write. The
 /// counts are untouched, per the arming law.
 ///
-/// ONE-1737 landed the routing half and it is green under
-/// `skill_attribution::tests::defect_routes_to_the_skill_and_lapse_routes_to_the_actor`:
-/// the same two fixtures route to `SkillDefect` on the SKILL and
-/// `ExecutionLapse` on the ACTOR, with each verdict citing its receipt and
-/// neither contributing to the other's subject. ONE-1739 replaces the ARM seam
-/// below with the claim writes those judgments drive.
+/// ONE-1737 landed the routing half: the same two fixtures route to
+/// `SkillDefect` on the SKILL and `ExecutionLapse` on the ACTOR, with each
+/// verdict citing its receipt and neither contributing to the other's subject.
+/// ONE-1739 replaces the ARM seam below with the claim writes those judgments
+/// drive.
 #[test]
 fn sk04_attribution_routes_defect_to_skill_and_lapse_to_actor() -> Result<()> {
     let (_tmp, vault) = temp_vault();

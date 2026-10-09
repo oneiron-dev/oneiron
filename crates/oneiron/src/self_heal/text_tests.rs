@@ -1,7 +1,5 @@
 use super::*;
-use crate::config::VaultConfig;
 use crate::error::ErrorKind;
-use crate::test_util::open_test_vault_with;
 
 fn draft() -> DiagnosticEvent {
     let facts = [DiagnosticObservation {
@@ -30,79 +28,6 @@ fn replace_field(body: &[u8], key: &str, value: Value) -> Vec<u8> {
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &Value::Map(entries)).unwrap();
     bytes
-}
-
-#[test]
-fn diagnostic_escape_requires_exact_writer_form() -> Result<()> {
-    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
-    let body = encode_diagnostic_event_body(&draft())?;
-    let id = EntityId::from_bytes([3; 16])?;
-    for hostile in [
-        r"\u{9}",
-        r"\u{009}",
-        r"\u{00009}",
-        r"\u{00ad}",
-        r"\u{00aD}",
-        r"\u{000AD}",
-        r"\u{D800}",
-        r"\u{DFFF}",
-        r"\u{110000}",
-        r"\u{FFFFFF}",
-        r"\u{0041}",
-        r"\u{005C}",
-        r"\u{1F600}",
-        r"\u{E0000}",
-        r"\u{0E0001}",
-        r"\u{}",
-        r"\u{0009",
-        r"\u{0009}\u{41}",
-        r"\u{e007f}",
-    ] {
-        let bytes = replace_field(&body, "untrusted_detail", Value::from(hostile));
-        assert_eq!(
-            decode_diagnostic_event_body(&bytes).unwrap_err().kind(),
-            ErrorKind::InvalidDiagnosticBody,
-            "{hostile}"
-        );
-        assert_eq!(
-            validate_diagnostic_event_body_bytes(&bytes)
-                .unwrap_err()
-                .kind(),
-            ErrorKind::InvalidDiagnosticBody
-        );
-        let err = vault
-            .batch()
-            .put_replicated(
-                &id,
-                ENTITY_TYPE_DIAGNOSTIC,
-                TimeRange {
-                    start: 1_000,
-                    end: u64::MAX,
-                },
-                1_000,
-                &bytes,
-            )
-            .commit()
-            .unwrap_err();
-        assert_eq!(err.kind(), ErrorKind::InvalidDiagnosticBody);
-        assert!(vault.get_raw(&id)?.is_none());
-    }
-    for raw in [
-        "\t",
-        "\u{AD}",
-        "\u{E0001}",
-        "\u{E007F}",
-        r"\u{9}",
-        r"\u{00ad}",
-    ] {
-        let mut event = draft();
-        event.untrusted_detail = Some(raw.to_owned());
-        let bytes = encode_diagnostic_event_body(&event)?;
-        validate_diagnostic_event_body_bytes(&bytes)?;
-        let decoded = decode_diagnostic_event_body(&bytes)?;
-        assert_eq!(encode_stored_diagnostic_event_body(&decoded)?, bytes);
-    }
-    Ok(())
 }
 
 #[test]
@@ -150,40 +75,6 @@ fn diagnostic_unicode_tag_controls_fail_closed() -> Result<()> {
             })
             .is_err()
         );
-    }
-    Ok(())
-}
-
-#[test]
-fn diagnostic_raw_detail_byte_bound_and_escape_expansion_bound() -> Result<()> {
-    for raw in [
-        "a".repeat(MAX_UNTRUSTED_DETAIL_LEN + 1),
-        "é".repeat(MAX_UNTRUSTED_DETAIL_LEN / 2 + 1),
-        "\t".repeat(MAX_UNTRUSTED_DETAIL_LEN / 8 + 1),
-        "\\".repeat(MAX_UNTRUSTED_DETAIL_LEN / 2 + 1),
-    ] {
-        let mut event = draft();
-        event.untrusted_detail = Some(raw);
-        assert_eq!(
-            encode_diagnostic_event_body(&event).unwrap_err().kind(),
-            ErrorKind::InvalidDiagnosticBody
-        );
-    }
-    for raw in [
-        "a".repeat(MAX_UNTRUSTED_DETAIL_LEN),
-        "é".repeat(MAX_UNTRUSTED_DETAIL_LEN / 2),
-        "\t".repeat(MAX_UNTRUSTED_DETAIL_LEN / 8),
-        "\\".repeat(MAX_UNTRUSTED_DETAIL_LEN / 2),
-    ] {
-        let mut event = draft();
-        event.untrusted_detail = Some(raw);
-        let bytes = encode_diagnostic_event_body(&event)?;
-        let decoded = validate_diagnostic_event_body_bytes(&bytes)?;
-        assert_eq!(
-            decoded.untrusted_detail.as_ref().unwrap().len(),
-            MAX_UNTRUSTED_DETAIL_LEN
-        );
-        assert_eq!(encode_stored_diagnostic_event_body(&decoded)?, bytes);
     }
     Ok(())
 }

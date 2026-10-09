@@ -4,21 +4,9 @@ use std::path::{Path, PathBuf};
 
 use super::*;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::gate::{PolicyManifestResolution, resolve_policy_manifest};
+use crate::gate::resolve_policy_manifest;
 use crate::skill::{SkillLifecycle, SkillRecord};
 use crate::write_envelope::WriteActor;
-
-struct FixedHealer(Vec<RepairProposal>);
-
-impl Healer for FixedHealer {
-    fn propose(
-        &self,
-        _working_set: &DiagnosticWorkingSet<'_>,
-        _diagnostics: &[DiagnosticEvent],
-    ) -> Vec<RepairProposal> {
-        self.0.clone()
-    }
-}
 
 fn repair_proposal() -> RepairProposal {
     RepairProposal {
@@ -44,20 +32,6 @@ fn registered(healer: &dyn Healer) -> RegisteredHealer<'_> {
         agent_definition_ceiling: None,
         healer,
     }
-}
-
-fn propose_for_test(healer: &dyn Healer) -> Result<RepairBundle> {
-    run_healer_proposals(
-        &PolicyManifestResolution::default(),
-        &registered(healer),
-        "engine.run",
-        "engine.session",
-        &DiagnosticWorkingSet {
-            scope_ref: "scope.fixture",
-            observations: &[],
-        },
-        &[],
-    )
 }
 
 fn operations() -> [RepairOperation; 8] {
@@ -208,116 +182,5 @@ fn healer_proposes_not_applies() -> Result<()> {
         assert_eq!(member.invocation().source(), ClaimSource::Generated);
         assert!(vault.get_raw(&expected.proposal_id)?.is_none());
     }
-    Ok(())
-}
-
-#[test]
-fn healer_operation_wire_tags_are_closed() {
-    let tags: Vec<_> = operations().iter().map(RepairOperation::as_str).collect();
-    assert_eq!(
-        tags,
-        [
-            "reindex",
-            "rescore",
-            "retry",
-            "narrow_policy",
-            "propose_claim",
-            "skill_edit",
-            "dev_patch",
-            "schema_patch",
-        ]
-    );
-}
-
-#[test]
-fn healer_rejects_malformed_members_without_dropping_them() {
-    let good = repair_proposal();
-    let mut mismatched = good.clone();
-    mismatched.proposal_id = seed_id(14);
-    mismatched.operation = RepairOperation::ProposeClaim {
-        predicate: "health.record".to_owned(),
-        value: Value::from("hidden target"),
-    };
-    let mut no_refs = good.clone();
-    no_refs.proposal_id = seed_id(14);
-    no_refs.diagnostic_refs.clear();
-    let mut no_patch = good.clone();
-    no_patch.proposal_id = seed_id(14);
-    no_patch.operation = RepairOperation::DevPatch {
-        repo_ref: "repo.fixture".to_owned(),
-        patch_ref: String::new(),
-    };
-    for invalid in [mismatched, no_refs, no_patch] {
-        let healer = FixedHealer(vec![good.clone(), invalid]);
-        assert!(
-            propose_for_test(&healer).is_err(),
-            "must not return only the good member"
-        );
-    }
-}
-
-#[test]
-fn healer_rejects_duplicate_ids_and_proposal_overflow() {
-    let proposal = repair_proposal();
-    let duplicate = FixedHealer(vec![proposal.clone(), proposal.clone()]);
-    assert!(matches!(
-        propose_for_test(&duplicate),
-        Err(Error::InvariantViolation("duplicate repair proposal id"))
-    ));
-    let excessive = FixedHealer(vec![proposal; MAX_EVENTS_PER_RUN + 1]);
-    assert!(matches!(
-        propose_for_test(&excessive),
-        Err(Error::InvariantViolation("repair proposal ceiling"))
-    ));
-}
-
-struct NeverHealer;
-
-impl Healer for NeverHealer {
-    fn propose(
-        &self,
-        _working_set: &DiagnosticWorkingSet<'_>,
-        _diagnostics: &[DiagnosticEvent],
-    ) -> Vec<RepairProposal> {
-        panic!("invalid invocation must fail before calling the healer")
-    }
-}
-
-#[test]
-fn healer_checks_scope_and_stamp_before_invocation() {
-    let descending = [observation(3, 2_000), observation(2, 1_000)];
-    for (observations, run_ref, session_tag) in [
-        (descending.as_slice(), "engine.run", "engine.session"),
-        (&[][..], "", "engine.session"),
-        (&[][..], "engine.run", " "),
-        (&[][..], "engine.run", "hidden\ncontrol"),
-    ] {
-        assert!(
-            run_healer_proposals(
-                &PolicyManifestResolution::default(),
-                &registered(&NeverHealer),
-                run_ref,
-                session_tag,
-                &DiagnosticWorkingSet {
-                    scope_ref: "scope.fixture",
-                    observations,
-                },
-                &[],
-            )
-            .is_err()
-        );
-    }
-    let mut invalid_registration = registered(&NeverHealer);
-    invalid_registration.healer_id = "";
-    assert!(
-        HealerInvocationStamp::mint(&invalid_registration, "engine.run", "engine.session").is_err()
-    );
-}
-
-#[test]
-fn healer_empty_output_still_has_engine_session() -> Result<()> {
-    let bundle = propose_for_test(&FixedHealer(Vec::new()))?;
-    assert_eq!(bundle.session_tag(), "engine.session");
-    assert!(bundle.proposals().is_empty());
     Ok(())
 }

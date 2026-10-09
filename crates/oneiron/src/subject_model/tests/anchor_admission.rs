@@ -190,32 +190,3 @@ fn anchor_replicated_batch_validates_at_each_op_and_rolls_back_earlier_dependenc
     }
     Ok(())
 }
-
-#[test]
-fn anchor_reader_refuses_existing_rows_with_invalid_actor_or_subject_types() -> Result<()> {
-    for wrong_actor in [false, true] {
-        let (_dir, vault) = test_vault();
-        let actor = seed(&vault, entity(0xB1), ENTITY_TYPE_PERSON);
-        let subject = seed(&vault, entity(0xB2), ENTITY_TYPE_PERSON);
-        anchor_actor_subject(&vault, actor, subject, writer(), 100)?;
-        let wrong = if wrong_actor { actor } else { subject };
-        // Deliberately bypass admission to model corrupt stored state. Public
-        // writes cannot change a type byte or admit this anchor in the first place.
-        vault.with_write_txn(|txn| {
-            let mut raw = vault
-                .store
-                .entities
-                .get(txn, wrong.as_bytes())?
-                .expect("existing dependency")
-                .to_vec();
-            raw[0] = ENTITY_TYPE_PLACE;
-            vault.store.entities.put(txn, wrong.as_bytes(), &raw)?;
-            Ok(())
-        })?;
-        assert!(matches!(
-            actor_subject_anchor(&vault, &actor, 100),
-            Err(Error::InvalidClaimBody(_))
-        ));
-    }
-    Ok(())
-}

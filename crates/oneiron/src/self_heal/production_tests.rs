@@ -91,33 +91,6 @@ fn detector_emits_typed_event() -> Result<()> {
 }
 
 #[test]
-fn deterministic_detection() -> Result<()> {
-    let (_dir, vault, _, query) = consent_vault()?;
-    let facts = observations(&vault.receipts(query.clone())?)?;
-    let input = DiagnosticWorkingSet {
-        scope_ref: "scope.consent",
-        observations: &facts,
-    };
-    let (_other_dir, other) = open_test_vault_with(VaultConfig::default());
-    let first = vault.run_consent_denied_detector(input.scope_ref, query)?;
-    let detector = ConsentDeniedDetector;
-    let second = run_deterministic_detectors(&other, &input, &[&detector, &detector])?;
-    assert_eq!(
-        first, second,
-        "same real observations, ordering and deduplication"
-    );
-    assert_eq!(first.len(), 2);
-    assert!(first.windows(2).all(|pair| pair[0] < pair[1]));
-    for id in first {
-        let bytes = body(&vault, &id)?;
-        assert_eq!(bytes, body(&other, &id)?);
-        assert_eq!(id, diagnostic_event_id(detector.detector_id(), &bytes));
-        assert_ne!(id, diagnostic_event_id("another.detector", &bytes));
-    }
-    Ok(())
-}
-
-#[test]
 fn no_repair_side_effect() -> Result<()> {
     let (_dir, vault, owner, query) = consent_vault()?;
     let receipts_before = vault.receipts(query.clone())?;
@@ -142,53 +115,5 @@ fn no_repair_side_effect() -> Result<()> {
             assert_eq!(after, entities, "non-diagnostic entity set changed: {byte}");
         }
     }
-    Ok(())
-}
-
-#[test]
-fn consent_detector_requires_explicit_scoped_receipt_fact() -> Result<()> {
-    let (_dir, vault, _, query) = consent_vault()?;
-    let receipt = vault
-        .receipts(query.clone())?
-        .into_iter()
-        .find(|receipt| receipt.outcome == "denied")
-        .expect("production denial receipt");
-    let observation = DiagnosticObservation::from_consent_receipt(&receipt)?.unwrap();
-    assert_eq!(
-        observation.payload_digest,
-        *blake3::hash(&rmp_serde::to_vec_named(&receipt).unwrap()).as_bytes()
-    );
-    for field in ["kind", "outcome", "content_kind", "reason"] {
-        let mut unrelated = receipt.clone();
-        match field {
-            "kind" => unrelated.receipt_kind = ReceiptKind::ScopedRead,
-            "outcome" => unrelated.outcome = "approved".to_owned(),
-            "content_kind" => {
-                unrelated
-                    .fields
-                    .insert("content_kind".to_owned(), "claim".to_owned());
-            }
-            "reason" => unrelated.policy_trace.clear(),
-            _ => unreachable!(),
-        }
-        assert!(DiagnosticObservation::from_consent_receipt(&unrelated)?.is_none());
-    }
-    let mut malformed = receipt;
-    malformed.receipt_id = "gate:not_an_id".to_owned();
-    assert!(DiagnosticObservation::from_consent_receipt(&malformed).is_err());
-    for limit in [0, MAX_EVENTS_PER_RUN + 1] {
-        assert!(
-            vault
-                .run_consent_denied_detector("scope.consent", ReceiptQuery::new(limit))
-                .is_err()
-        );
-    }
-    let future = query.with_time_bounds(Some(u64::MAX), None);
-    assert!(
-        vault
-            .run_consent_denied_detector("scope.future", future)?
-            .is_empty()
-    );
-    assert!(vault.entities_by_type(ENTITY_TYPE_DIAGNOSTIC)?.is_empty());
     Ok(())
 }

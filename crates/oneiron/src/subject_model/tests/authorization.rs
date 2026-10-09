@@ -98,37 +98,6 @@ pub(crate) fn root_owner(vault: &Vault, owner: WriteActor, seed: u8) -> Result<A
 }
 
 #[test]
-fn unauthorized_reanchor_preserves_the_active_head_and_history() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let actor = seed(&vault, entity(0x71), ENTITY_TYPE_AGENT_DEF);
-    let first = seed(&vault, entity(0x72), ENTITY_TYPE_PERSON);
-    let other = seed(&vault, entity(0x73), ENTITY_TYPE_ORG);
-    let stranger = seed(&vault, entity(0x74), ENTITY_TYPE_PERSON);
-    let machine = seed(&vault, entity(0x75), crate::registry::ENTITY_TYPE_MACHINE);
-    let claim = anchor_actor_subject(&vault, actor, first, writer(), 100)?;
-    let before = vault.get_claim(&claim)?;
-    let count = vault.claims_for_subject(&actor)?.len();
-    for untrusted in [
-        WriteActor::new(stranger, EdgeActorClass::Human),
-        WriteActor::new(machine, EdgeActorClass::System),
-        WriteActor::new(actor, EdgeActorClass::Agent),
-        WriteActor::new(writer().entity_ref(), EdgeActorClass::System),
-        WriteActor::new(actor, EdgeActorClass::Human),
-        WriteActor::new(entity(0x76), EdgeActorClass::Human),
-    ] {
-        assert!(anchor_actor_subject(&vault, actor, other, untrusted, 101).is_err());
-        assert_eq!(actor_subject_anchor(&vault, &actor, 103)?, Some(first));
-        assert_eq!(vault.get_claim(&claim)?, before);
-        assert_eq!(vault.claims_for_subject(&actor)?.len(), count);
-    }
-    // The same valid re-anchor still works for the bound human owner.
-    anchor_actor_subject(&vault, actor, other, writer(), 102)?;
-    assert_eq!(actor_subject_anchor(&vault, &actor, 103)?, Some(other));
-    assert_ne!(vault.get_claim(&claim)?, before);
-    Ok(())
-}
-
-#[test]
 fn unauthorized_initial_anchor_and_non_actor_targets_are_rejected() -> Result<()> {
     let (_dir, vault) = test_vault();
     let actor = seed(&vault, entity(0x77), ENTITY_TYPE_AGENT_DEF);

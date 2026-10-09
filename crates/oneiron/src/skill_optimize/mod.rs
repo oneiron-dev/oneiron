@@ -226,8 +226,6 @@ use crate::skill_attribution::pending_edit_proposals;
 #[cfg(test)]
 use crate::skill_convert::PROVENANCE_BIRTH_KEY;
 #[cfg(test)]
-use crate::skill_reliability::skill_reliability_prior;
-#[cfg(test)]
 use crate::temporal::TimeRange;
 #[cfg(test)]
 use rmpv::Value;

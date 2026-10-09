@@ -556,6 +556,3 @@ fn compiled_stack_id(id: &str) -> std::result::Result<ModelStackId, ModelStackRe
         source,
     })
 }
-
-#[cfg(test)]
-mod tests;

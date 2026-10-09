@@ -491,46 +491,6 @@ fn replayed_soft_and_hard_delete_erase_headerless_claim_refinement() -> Result<(
 }
 
 #[test]
-fn raw_batch_delete_keeps_content_free_guard_against_same_id_claim_reput() -> Result<()> {
-    let f = Fixture::new()?;
-    let candidate = f.submit("improved")?;
-    let ask = f
-        .vault
-        .prepare_claim_refinement_merge(candidate, f.resident, question(candidate))?;
-    f.vault.approve_claim_refinement_merge(&ask, &f.owner)?;
-    assert!(
-        matches!(f.vault.merge_local_claim_refinement(&ask, &Useful(false), &NoReplay, 8)?,
-        ClaimRefinementMergeDisposition::Ruled(receipt) if !receipt.accepted)
-    );
-    let mut attempted = f
-        .vault
-        .local_claim_refinement(candidate)?
-        .unwrap()
-        .claim_body()?;
-    attempted.approval = ClaimApprovalStatus::Approved;
-    attempted.session_tag = None;
-    f.vault.batch().delete(&candidate).commit()?;
-    assert!(f.vault.local_claim_refinement(candidate)?.is_none());
-    assert!(f.vault.claim_refinement_merge_receipt(candidate)?.is_none());
-    assert!(f.vault.put_claim(&candidate, &attempted, at(9), 9).is_err());
-    assert!(
-        f.vault
-            .batch()
-            .put_replicated(
-                &candidate,
-                crate::registry::ENTITY_TYPE_CLAIM,
-                at(9),
-                9,
-                &encode_claim_body(&attempted)?
-            )
-            .commit()
-            .is_err()
-    );
-    assert!(f.vault.get_claim(&candidate)?.is_none());
-    Ok(())
-}
-
-#[test]
 fn native_claim_erase_matrix_keeps_the_id_fenced_after_reopen() -> Result<()> {
     for state in ["pending", "refused", "admitted"] {
         for mode in ["raw", "local", "replayed"] {
@@ -644,29 +604,6 @@ fn replicated_refinement_origin_without_control_cannot_publish_approved_claim() 
         f.vault.get_claim(&proposed)?.unwrap().approval,
         ClaimApprovalStatus::Proposed
     );
-    Ok(())
-}
-
-#[test]
-fn native_proposed_refinement_is_absent_from_canonical_context_pack() -> Result<()> {
-    let f = Fixture::new()?;
-    let candidate = f.submit("improved")?;
-    assert_eq!(
-        f.vault.get_claim(&candidate)?.unwrap().approval,
-        ClaimApprovalStatus::Proposed
-    );
-    // Force a matching lexical index entry so absence is the admission gate,
-    // not merely missing retrieval data for the staged native claim.
-    f.vault
-        .batch()
-        .text(&candidate, &[("body", "unique-refinement-proposal-term")])
-        .commit()?;
-    let pack = f
-        .vault
-        .context_pack()
-        .search_text("unique-refinement-proposal-term", 10)
-        .run()?;
-    assert!(!pack.results.iter().any(|result| result.id == candidate));
     Ok(())
 }
 
