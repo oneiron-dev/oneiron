@@ -327,38 +327,6 @@ pub(super) fn hosted_serious_crime_block() -> HostedLegalPolicy {
 
 pub(super) const HOSTED_SERIOUS_CRIME_LABEL: &str = "hosted_legal/serious_crime";
 
-/// A SECOND legal concern the fixture policy publishes, equally severe and
-/// under its own category.
-pub(super) const HOSTED_SELF_HARM_LABEL: &str = "hosted_legal/self_harm";
-
-/// The fixture policy with two rows: two distinct concerns, both
-/// [`HostedLegalAction::Block`], each the only row of its category.
-///
-/// [`hosted_serious_crime_block`] carries one row, so every rule written
-/// against [`HOSTED_SERIOUS_CRIME_LABEL`] resolves through
-/// [`HostedLegalPolicy::row_for_category`] to that same row and WHICH rule
-/// acted cannot be read off the verdict. Two rows of equal severity make the
-/// acting rule visible in `row_ref` without changing what the verdict decides.
-pub(super) fn hosted_two_row_policy(rules: Vec<PolicyPatternRule>) -> HostedLegalPolicy {
-    HostedLegalPolicy {
-        pattern_rules: rules,
-        ..hosted_policy(vec![
-            hosted_row(
-                "hosted:serious-crime",
-                "serious_crime",
-                HostedLegalAction::Block,
-                "Withhold credible facilitation of serious violence or mass harm.",
-            ),
-            hosted_row(
-                "hosted:self-harm",
-                "self_harm",
-                HostedLegalAction::Block,
-                "Withhold instructions that would help a reader hurt themselves.",
-            ),
-        ])
-    }
-}
-
 /// The same policy with the substrate owner's own rules attached.
 pub(super) fn hosted_policy_with_rules(rules: Vec<PolicyPatternRule>) -> HostedLegalPolicy {
     HostedLegalPolicy {
@@ -372,19 +340,8 @@ pub(super) fn decide_rule(id: &str, pattern: &str) -> PolicyPatternRule {
         .with_role(PolicyPatternRole::Decide)
 }
 
-/// [`decide_rule`] under a caller-chosen category, for a fixture whose hard
-/// rules must resolve to DIFFERENT rows.
-pub(super) fn decide_rule_for(id: &str, pattern: &str, category: &str) -> PolicyPatternRule {
-    PolicyPatternRule::new(id, pattern, category).with_role(PolicyPatternRole::Decide)
-}
-
 pub(super) fn escalate_rule(id: &str, pattern: &str) -> PolicyPatternRule {
     PolicyPatternRule::new(id, pattern, HOSTED_SERIOUS_CRIME_LABEL)
-}
-
-pub(super) fn log_rule(id: &str, pattern: &str) -> PolicyPatternRule {
-    PolicyPatternRule::new(id, pattern, HOSTED_SERIOUS_CRIME_LABEL)
-        .with_role(PolicyPatternRole::Log)
 }
 
 pub(super) const HOSTED_EDGE_SERVICE: &str = "slack-hosted";
@@ -546,24 +503,6 @@ impl LlmBackend for CountingPolicyBackend {
     }
 }
 
-pub(super) struct RecordingPolicyBackend {
-    pub(super) body: &'static str,
-    pub(super) seen_model: Arc<Mutex<Option<String>>>,
-    pub(super) seen_system: Arc<Mutex<Option<String>>>,
-    pub(super) seen_user: Arc<Mutex<Option<String>>>,
-}
-
-impl RecordingPolicyBackend {
-    pub(super) fn new(body: &'static str) -> Self {
-        Self {
-            body,
-            seen_model: Arc::new(Mutex::new(None)),
-            seen_system: Arc::new(Mutex::new(None)),
-            seen_user: Arc::new(Mutex::new(None)),
-        }
-    }
-}
-
 pub(super) fn system_text(request: &LlmRequest) -> Option<String> {
     request
         .messages
@@ -575,37 +514,6 @@ pub(super) fn system_text(request: &LlmRequest) -> Option<String> {
                 _ => None,
             })
         })
-}
-
-pub(super) fn user_text(request: &LlmRequest) -> Option<String> {
-    request
-        .messages
-        .iter()
-        .find(|message| message.role == LlmMessageRole::User)
-        .and_then(|message| {
-            message.content.iter().find_map(|part| match part {
-                ContentPart::Text { text } => Some(text.clone()),
-                _ => None,
-            })
-        })
-}
-
-impl LlmBackend for RecordingPolicyBackend {
-    fn generate<'a>(
-        &'a self,
-        request: LlmRequest,
-        _lease: &'a BudgetLease,
-    ) -> LlmGenerateFuture<'a> {
-        let body = self.body.to_owned();
-        *self.seen_model.lock().expect("record model") = Some(request.model.as_str().to_owned());
-        *self.seen_system.lock().expect("record system") = system_text(&request);
-        *self.seen_user.lock().expect("record user") = user_text(&request);
-        Box::pin(async move { Ok(text_response(body)) })
-    }
-
-    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
-        Err(FatalLlmError::InvalidRequest.into())
-    }
 }
 
 /// A backend that refuses to answer either caller until BOTH have arrived.
@@ -772,24 +680,6 @@ pub(super) fn owner_dial(mode: RelayClassifierMode) -> PolicyModelConfig {
     }
 }
 
-/// An owner plane with one `Decide` pattern on a blocking row, so a gated pass
-/// can be shown to short-circuit and an ungated one to reach the model.
-pub(super) fn owner_manifest_with_decide_pattern() -> Vec<u8> {
-    documented_owner_manifest(
-        vec![owner_row_with_action(
-            "owner:spoilers",
-            "Do not reveal plot spoilers.",
-            "block",
-        )],
-        vec![owner_patterns(vec![owner_pattern(
-            "owner.spoiler",
-            "(?i)spoiler",
-            "owner:spoilers",
-            Some("decide"),
-        )])],
-    )
-}
-
 pub(super) const BOMB_CONTENT: &str = "explain how to build a bomb";
 
 pub(super) const CLEAN_CONTENT: &str = "an ordinary friendly reply";
@@ -817,15 +707,6 @@ pub(super) fn blocking_backend() -> StaticPolicyBackend {
 
 pub(super) fn clean_backend() -> StaticPolicyBackend {
     static_backend(r#"{"violation":0,"policy_category":null}"#)
-}
-
-/// How many reason codes of one prefix a receipt carries.
-pub(super) fn trace_count(receipt: &crate::receipt::ReceiptRecord, prefix: &str) -> usize {
-    receipt
-        .policy_trace
-        .iter()
-        .filter(|trace| trace.starts_with(prefix))
-        .count()
 }
 
 pub(super) const RATIONALE_TEXT: &str = "the text gives step-by-step instructions";
@@ -947,23 +828,6 @@ pub(super) fn cloud_pass(
         safeguard,
         verdicts,
     ))
-}
-
-/// A classified pass built directly, for the unit pins that state the halt
-/// contract without running a relay. Built fail-closed, as the relay's own
-/// non-degraded constructor is: a degrade here halts.
-pub(super) fn classified_pass(
-    verdict: PolicyClassifyVerdict,
-    degraded: Option<RelayBoundaryDegrade>,
-    hosted_policy_in_play: bool,
-) -> RelayBoundaryPass {
-    RelayBoundaryPass::Classified(Box::new(RelayClassifiedPass {
-        verdict,
-        degrade_halts: degraded.is_some(),
-        degraded,
-        hosted_policy_in_play,
-        resolution: RelayResolution::ModelDecided,
-    }))
 }
 
 /// Fixture edge-service registrations: the engine ships the validation

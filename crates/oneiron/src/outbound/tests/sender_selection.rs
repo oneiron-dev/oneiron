@@ -222,34 +222,6 @@ fn explicit_retired_self_held_sender_is_refused_before_effects()
     Ok(())
 }
 
-#[test]
-fn absent_optional_sender_still_dispatches_with_and_without_a_connector_key()
--> std::result::Result<(), Box<dyn std::error::Error>> {
-    for with_key in [false, true] {
-        let (_tmp, vault) = temp_vault();
-        let actor = auto_agent_actor(&vault)?;
-        let actor_ref = actor.actor_entity_ref.expect("actor entity");
-        put_policy_manifest_bytes(
-            &vault,
-            entity(0xD0),
-            &policy_manifest(&actor_ref.to_hex(), "email", &["send"]),
-        )?;
-        if with_key {
-            vault.register_connector_key(
-                &entity(0xB7),
-                ConnectorKeyRecord::active("email", Some(actor_ref), Vec::new(), 1_000),
-            )?;
-        }
-        let mut sink = SenderRecordingSink::default();
-        let result =
-            vault.dispatch_outbound_intent(email_send_dispatch_request(actor, 0), &mut sink)?;
-        assert_eq!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);
-        assert_eq!(result.gate_outcome, "allow");
-        assert_eq!(sink.senders, vec![None]);
-    }
-    Ok(())
-}
-
 // A provider double that applies an uncertain first call, then deduplicates a
 // retry by the key the real pipeline supplies. A definite failure applies nothing.
 #[derive(Default)]

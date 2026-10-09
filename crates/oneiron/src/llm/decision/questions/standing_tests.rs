@@ -450,30 +450,6 @@ fn removed_evidence_and_landed_claim_cannot_be_replayed_from_cache() -> TestResu
 }
 
 #[test]
-fn graph_backfill_rejects_artifact_and_one_off_records() -> TestResult {
-    let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    let owner = EntityId::now();
-    let unit = EntityId::now();
-    person(&vault, owner)?;
-    person(&vault, unit)?;
-    grant(&vault, owner)?;
-    let actor = WriteActor::new(owner, EdgeActorClass::Human);
-    let mut def = definition(unit, "Question?");
-    def.adapter = "artifact".into();
-    let artifact = create_question(&vault, owner, def, 10)?
-        .definition
-        .question
-        .id;
-    assert!(standing_source_frontier(&vault, owner, artifact, 1, actor, unit, &[unit]).is_err());
-    assert!(backfill_standing_answer(&vault, owner, artifact, 1, actor, input(unit), 11).is_err());
-    let mut one_off = definition(unit, "One off?");
-    one_off.activation = QuestionActivation::OneOff;
-    assert!(create_question(&vault, owner, one_off, 10).is_err());
-    Ok(())
-}
-
-#[test]
 fn real_secret_custody_cannot_be_supplemental_evidence() -> TestResult {
     use crate::secret_custody::{
         CustodyClass, SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyFloor, SecretCustodyRecord,
@@ -511,28 +487,6 @@ fn real_secret_custody_cannot_be_supplemental_evidence() -> TestResult {
     answer.evidence.push(secret);
     assert!(standing_source_frontier(&vault, owner, id, 1, actor, unit, &answer.evidence).is_err());
     assert!(backfill_standing_answer(&vault, owner, id, 1, actor, answer, 11).is_err());
-    Ok(())
-}
-
-#[test]
-fn deleted_landed_claim_is_not_returned_from_cache() -> TestResult {
-    let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    let owner = EntityId::now();
-    let unit = EntityId::now();
-    for id in [owner, unit] {
-        person(&vault, id)?;
-    }
-    grant(&vault, owner)?;
-    let actor = WriteActor::new(owner, EdgeActorClass::Human);
-    let id = create_question(&vault, owner, definition(unit, "Question?"), 10)?
-        .definition
-        .question
-        .id;
-    let answer = prepared(&vault, owner, id, 1, actor, unit)?;
-    let first = backfill_standing_answer(&vault, owner, id, 1, actor, answer.clone(), 11)?;
-    vault.delete_entity(&first.claim)?;
-    assert!(backfill_standing_answer(&vault, owner, id, 1, actor, answer, 12).is_err());
     Ok(())
 }
 

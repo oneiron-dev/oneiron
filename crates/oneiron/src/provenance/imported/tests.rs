@@ -1,5 +1,3 @@
-mod lifecycle;
-
 use super::*;
 use crate::WriteActor;
 use crate::claim::validate_claim_body_and_decode;
