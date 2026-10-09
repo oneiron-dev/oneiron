@@ -119,17 +119,32 @@ pub enum NamedMemoryVerb {
     HardDelete,
 }
 
+/// Why a route name does not resolve to a [`NamedMemoryVerb`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum NamedMemoryVerbRefusal {
+    /// No verb has this name.
+    Unknown,
+    /// `erase` and `purge` name the owner's erase (ARCH-0038 delete ladder):
+    /// an Owner's own act by hand, which clears backups and which no Grant
+    /// names. No memory verb performs it; `hard_delete` deletes, and backups
+    /// can still return a deleted record.
+    OwnerErase,
+}
+
 impl NamedMemoryVerb {
     /// Parses a public route verb, accepting stable aliases while resolving to
-    /// one canonical typed operation family.
-    pub fn parse(value: &str) -> Option<Self> {
+    /// one canonical typed operation family. The ladder's erase names refuse
+    /// rather than alias a delete.
+    pub fn parse(value: &str) -> std::result::Result<Self, NamedMemoryVerbRefusal> {
         match value.trim().to_ascii_lowercase().replace('-', "_").as_str() {
-            "remember" | "put" | "put_entity" => Some(Self::Remember),
-            "supersede" | "replace" | "revise" | "supersede_claim" => Some(Self::Supersede),
-            "retract" | "withdraw" | "retract_claim" => Some(Self::Retract),
-            "delete" | "forget" | "soft_delete" | "user_delete" => Some(Self::Delete),
-            "hard_delete" | "erase" | "purge" | "user_hard_delete" => Some(Self::HardDelete),
-            _ => None,
+            "remember" | "put" | "put_entity" => Ok(Self::Remember),
+            "supersede" | "replace" | "revise" | "supersede_claim" => Ok(Self::Supersede),
+            "retract" | "withdraw" | "retract_claim" => Ok(Self::Retract),
+            "delete" | "forget" | "soft_delete" | "user_delete" => Ok(Self::Delete),
+            "hard_delete" | "user_hard_delete" => Ok(Self::HardDelete),
+            "erase" | "purge" => Err(NamedMemoryVerbRefusal::OwnerErase),
+            _ => Err(NamedMemoryVerbRefusal::Unknown),
         }
     }
 

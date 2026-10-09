@@ -249,10 +249,18 @@ impl Memory<'_> {
 
     /// Compact only through a frontier no citation needs. Fail closed rather
     /// than silently dropping the history that makes a quote checkable.
+    /// Discarding history is the ladder's erase (ARCH-0038): an Owner's own
+    /// act, so writing the note is not enough.
     pub fn purge_note_history(&self, note: EntityId, through: &[u8]) -> MemoryResult<()> {
         self.with_actor_content_write_txn(|content| {
             content.update_note(note, |txn| {
                 require_note_writer(self, txn, note)?;
+                crate::memory::verify_deletion_authority_in_txn(
+                    self.vault(),
+                    txn,
+                    self.actor(),
+                    self.actor_class(),
+                )?;
                 let doc = load(self.vault(), txn, note)?;
                 let through = frontier(through)?;
                 let key_prefix = format!("{}:", note.to_hex()).into_bytes();
