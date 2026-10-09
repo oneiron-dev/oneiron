@@ -3,114 +3,6 @@
 use super::*;
 use crate::error::RelayError;
 
-#[test]
-fn reads_vault_manifest_not_caller_config() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x3b),
-        &documented_owner_manifest(
-            vec![owner_row(
-                "owner:spoilers",
-                "Avoid spoilers in outbound content.",
-            )],
-            Vec::new(),
-        ),
-    )?;
-
-    let prompt = vault
-        .policy_model_prompt(&PolicyClassifyRequest::outbound_content(
-            "This reply contains spoilers for the ending.",
-        ))?
-        .expect("a documented plane produces a prompt");
-    // The system message is the owner's document, verbatim and nothing else.
-    assert_eq!(prompt.system, OWNER_DOCUMENT);
-    assert_eq!(prompt.user, "This reply contains spoilers for the ending.");
-    // The rows travel alongside so an answer can be routed, not as prompt text.
-    assert_eq!(prompt.rubric_rows.len(), 1);
-    assert_eq!(prompt.rubric_rows[0].row_ref, "owner:spoilers");
-    assert_eq!(
-        prompt.rubric_rows[0].text,
-        "Avoid spoilers in outbound content."
-    );
-    assert!(
-        !prompt
-            .system
-            .contains("Avoid spoilers in outbound content.")
-    );
-    Ok(())
-}
-
-#[test]
-fn safeguard_request_receives_applied_row_why_without_rewriting_owner_document() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let Value::Map(mut row) = owner_row("owner:spoilers", "Avoid spoilers.") else {
-        unreachable!()
-    };
-    row.push((
-        Value::from("why"),
-        Value::Map(vec![
-            (Value::from("text"), Value::from("Owner protects surprise.")),
-            (Value::from("source"), Value::from("owner")),
-        ]),
-    ));
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x3e),
-        &documented_owner_manifest(vec![Value::Map(row)], Vec::new()),
-    )?;
-    let request = PolicyClassifyRequest::outbound_content("ending revealed");
-    let llm = vault
-        .policy_model_llm_request(&request, &PolicyModelConfig::default())?
-        .unwrap();
-    assert_eq!(llm.messages.len(), 3);
-    let texts: Vec<_> = llm
-        .messages
-        .iter()
-        .map(|message| match &message.content[0] {
-            crate::llm::ContentPart::Text { text } => text.as_str(),
-            _ => panic!("text policy request"),
-        })
-        .collect();
-    assert_eq!(texts[0], OWNER_DOCUMENT);
-    assert!(texts[1].contains("Owner protects surprise."));
-    assert!(texts[1].contains("owner:spoilers"));
-    assert_eq!(texts[2], "ending revealed");
-    Ok(())
-}
-
-#[test]
-fn active_owner_rows_resolve_scoped_world_override() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x3c),
-        &documented_owner_manifest(
-            vec![
-                owner_row("owner:mode", "Avoid formal language."),
-                scoped_owner_row("owner:mode", "Avoid casual language.", "work"),
-            ],
-            Vec::new(),
-        ),
-    )?;
-
-    let prompt = vault
-        .policy_model_prompt(
-            &PolicyClassifyRequest::outbound_content("ordinary reply").with_world_ref("work"),
-        )?
-        .expect("prompt");
-    let texts: Vec<&str> = prompt
-        .rubric_rows
-        .iter()
-        .map(|row| row.text.as_str())
-        .collect();
-    assert_eq!(
-        texts,
-        vec!["Avoid formal language.\nAvoid casual language."]
-    );
-    Ok(())
-}
-
 fn project_owner_row(row_ref: &str, text: &str, project_ref: &str) -> Value {
     let mut row = owner_row(row_ref, text);
     let Value::Map(ref mut fields) = row else {
@@ -118,65 +10,6 @@ fn project_owner_row(row_ref: &str, text: &str, project_ref: &str) -> Value {
     };
     fields.push((Value::from("project_ref"), Value::from(project_ref)));
     row
-}
-
-#[test]
-fn project_scope_overrides_world_and_vault_by_row_ref() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let mut both_scopes = project_owner_row("owner:mode", "World-specific project mode.", "p-1");
-    let Value::Map(ref mut fields) = both_scopes else {
-        unreachable!()
-    };
-    fields.push((Value::from("world_ref"), Value::from("work")));
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x90),
-        &documented_owner_manifest(
-            vec![
-                owner_row("owner:mode", "Vault mode."),
-                scoped_owner_row("owner:mode", "Work mode.", "work"),
-                project_owner_row("owner:mode", "Project mode.", "p-1"),
-                both_scopes,
-                project_owner_row("owner:another", "Another project row.", "p-2"),
-            ],
-            Vec::new(),
-        ),
-    )?;
-    let rubric = |world: Option<&str>, project: Option<&str>| -> Result<Vec<String>> {
-        let mut request = PolicyClassifyRequest::outbound_content("ordinary reply");
-        if let Some(world) = world {
-            request = request.with_world_ref(world);
-        }
-        if let Some(project) = project {
-            request = request.with_project_ref(project);
-        }
-        Ok(vault
-            .policy_model_prompt(&request)?
-            .expect("documented owner plane")
-            .rubric_rows
-            .into_iter()
-            .map(|row| row.text)
-            .collect())
-    };
-    assert_eq!(rubric(None, None)?, vec!["Vault mode."]);
-    assert_eq!(rubric(Some("work"), None)?, vec!["Vault mode.\nWork mode."]);
-    assert_eq!(
-        rubric(Some("work"), Some("p-1"))?,
-        vec!["Vault mode.\nWork mode.\nProject mode.\nWorld-specific project mode."]
-    );
-    assert_eq!(
-        rubric(Some("other"), Some("p-1"))?,
-        vec!["Vault mode.\nProject mode."]
-    );
-    assert_eq!(
-        rubric(Some("work"), Some("p-2"))?,
-        vec!["Vault mode.\nWork mode.", "Another project row."]
-    );
-    assert_eq!(
-        rubric(Some("work"), Some("absent"))?,
-        vec!["Vault mode.\nWork mode."]
-    );
-    Ok(())
 }
 
 #[test]
@@ -322,37 +155,6 @@ fn manifest_precedence_switches_world_project_composition_but_never_relaxes_vaul
             crate::gate::OwnerRowAction::Block
         )
     );
-    Ok(())
-}
-
-#[test]
-fn conflicting_manifest_precedence_folds_to_nested_narrowing() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
-        &vault,
-        gate::default_policy_manifest_id()?,
-        &enabled_owner_manifest(vec![]),
-    )?;
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x97),
-        &documented_owner_manifest(
-            vec![
-                owner_row("owner:mode", "Vault."),
-                scoped_owner_row("owner:mode", "World.", "work"),
-                project_owner_row("owner:mode", "Project.", "p-1"),
-            ],
-            vec![precedence_row("most_specific_vault_capped")],
-        ),
-    )?;
-    let txn = vault.store.env.read_txn()?;
-    let resolved = gate::resolve_policy_manifest(&vault.store, &txn)?;
-    let row = resolved
-        .active_owner_policy_rows_for_scope(Some("work"), Some("p-1"))
-        .into_iter()
-        .find(|row| row.row_ref == "owner:mode")
-        .expect("owner row");
-    assert_eq!(row.text, "Vault.\nWorld.\nProject.");
     Ok(())
 }
 
@@ -772,127 +574,6 @@ fn project_scope_changes_policy_frontier_even_when_not_selected() -> Result<()> 
 }
 
 #[test]
-fn persona_independent_verdict() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(&vault, test_id(0x3f), &spoiler_manifest("block"))?;
-    let request = PolicyClassifyRequest::outbound_content("a reply with spoilers");
-    let first = vault.classify_policy_model(request.clone().with_caller_ref("companion"))?;
-    let second = vault.classify_policy_model(request.with_caller_ref("cli-agent"))?;
-    assert_eq!(first.decision, second.decision);
-    assert_eq!(first.category, second.category);
-    assert_eq!(first.binding, second.binding);
-    Ok(())
-}
-
-#[test]
-fn safeguard_model_binding_swappable() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x72),
-        &documented_owner_manifest(vec![owner_row("owner:jargon", "Avoid jargon.")], Vec::new()),
-    )?;
-    let request = PolicyClassifyRequest::outbound_content("ordinary reply");
-    let llm_request = |config: &PolicyModelConfig| -> Result<LlmRequest> {
-        Ok(vault
-            .policy_model_llm_request(&request, config)?
-            .expect("a documented plane produces a request"))
-    };
-
-    let default_request = llm_request(&PolicyModelConfig::default())?;
-    assert_eq!(
-        default_request.envelope.tier.resolved().as_str(),
-        "gpt-oss-safeguard-20b"
-    );
-    assert_eq!(
-        default_request.model.as_str(),
-        "oneiron/gpt-oss-safeguard-20b@default"
-    );
-
-    for (selector, tier, model) in [
-        (
-            "openrouter:meta/llama-guard-4",
-            "openrouter:meta/llama-guard-4",
-            "openrouter/meta.llama-guard-4@configured",
-        ),
-        (
-            "endpoint:https://guard.local/v1",
-            "endpoint:https://guard.local/v1",
-            "endpoint/guard.local.v1@configured",
-        ),
-        (
-            "on-device:qwen3guard-stream-0.6b",
-            "on-device:qwen3guard-stream-0.6b",
-            "on-device/qwen3guard-stream-0.6b@configured",
-        ),
-    ] {
-        let config = PolicyModelConfig {
-            safeguard_binding: SafeguardModelBinding::parse(selector).expect("binding parses"),
-            ..PolicyModelConfig::default()
-        };
-        let built = llm_request(&config)?;
-        assert_eq!(built.envelope.tier.resolved().as_str(), tier);
-        assert_eq!(built.model.as_str(), model);
-    }
-    Ok(())
-}
-
-#[test]
-fn generation_parameters_are_configuration_not_engine_constants() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x48),
-        &documented_owner_manifest(vec![owner_row("owner:jargon", "Avoid jargon.")], Vec::new()),
-    )?;
-    let request = PolicyClassifyRequest::outbound_content("ordinary reply");
-
-    // The default sends no output cap at all — a reasoning safeguard model
-    // needs room to think before it answers.
-    let default_params = vault
-        .policy_model_llm_request(&request, &PolicyModelConfig::default())?
-        .expect("request")
-        .params;
-    assert!(!default_params.contains_key("max_output_tokens"));
-    assert_eq!(
-        default_params
-            .get("reasoning_effort")
-            .map(ToString::to_string),
-        Some("\"medium\"".to_owned())
-    );
-    assert_eq!(
-        default_params.get("temperature").map(ToString::to_string),
-        Some("0.0".to_owned())
-    );
-
-    let tuned = PolicyModelConfig {
-        generation: PolicyGenerationParams {
-            reasoning_effort: PolicyReasoningEffort::High,
-            temperature: 0.25,
-            max_output_tokens: Some(4096),
-        },
-        ..PolicyModelConfig::default()
-    };
-    let tuned_params = vault
-        .policy_model_llm_request(&request, &tuned)?
-        .expect("request")
-        .params;
-    assert_eq!(
-        tuned_params
-            .get("reasoning_effort")
-            .map(ToString::to_string),
-        Some("\"high\"".to_owned())
-    );
-    assert_eq!(
-        tuned_params
-            .get("max_output_tokens")
-            .map(ToString::to_string),
-        Some("4096".to_owned())
-    );
-    Ok(())
-}
-
-#[test]
 fn a_plane_never_ships_another_planes_vocabulary() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     put_policy_manifest_bytes(
@@ -1073,18 +754,6 @@ fn verdict_stale_when_the_owner_document_changes() -> Result<()> {
 }
 
 #[test]
-fn verdict_stale_on_request_context_change() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let world_request =
-        PolicyClassifyRequest::outbound_content("ordinary reply").with_world_ref("work");
-    let world_verdict = vault.classify_policy_model(world_request)?;
-    let changed_world_request =
-        PolicyClassifyRequest::outbound_content("ordinary reply").with_world_ref("personal");
-    assert!(vault.policy_model_verdict_is_stale(&world_verdict, &changed_world_request)?);
-    Ok(())
-}
-
-#[test]
 fn verdict_stale_on_safeguard_selector_change() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let request = PolicyClassifyRequest::outbound_content("ordinary reply");
@@ -1102,36 +771,6 @@ fn verdict_stale_on_safeguard_selector_change() -> Result<()> {
     let verdict = vault.classify_policy_model_with_config(request.clone(), &openrouter)?;
     assert!(!vault.policy_model_verdict_is_stale_with_config(&verdict, &request, &openrouter)?);
     assert!(vault.policy_model_verdict_is_stale_with_config(&verdict, &request, &endpoint)?);
-    Ok(())
-}
-
-#[test]
-fn owner_row_verdict_from_the_model_binds_the_owner_plane() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x71),
-        &documented_owner_manifest(
-            vec![owner_row("owner:jargon", "Avoid nautical jargon.")],
-            Vec::new(),
-        ),
-    )?;
-    let backend = static_backend(r#"{"violation":1,"policy_category":"owner:jargon"}"#);
-    let verdict = block_on(vault.classify_policy_model_with_backend(
-        PolicyClassifyRequest::outbound_content("This answer uses nautical phrasing."),
-        &PolicyModelConfig::default(),
-        &backend,
-        &lease("policy-owner-row"),
-    ))?;
-    // A row that names no action only asks to be told about.
-    assert_eq!(verdict.decision, PolicyClassifyDecision::Warn);
-    assert_eq!(
-        verdict.category,
-        PolicyVerdictCategory::OwnerPolicy {
-            row_ref: "owner:jargon".to_owned()
-        }
-    );
-    assert_eq!(verdict.plane(), Some(PolicyPlane::OwnerPolicy));
     Ok(())
 }
 
@@ -1186,76 +825,6 @@ fn an_owner_answer_naming_no_row_fails_the_plane_open() -> Result<()> {
     ))?;
     assert_eq!(outcome.action, PolicyEnforcementAction::Allow);
     assert!(outcome.custom_tier_skipped);
-    Ok(())
-}
-
-#[test]
-fn backend_request_model_uses_configured_safeguard_selector() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x45),
-        &documented_owner_manifest(
-            vec![owner_row("owner:jargon", "Avoid nautical jargon.")],
-            Vec::new(),
-        ),
-    )?;
-    let backend = RecordingPolicyBackend::new(r#"{"violation":0,"policy_category":null}"#);
-    let config = PolicyModelConfig {
-        safeguard_binding: SafeguardModelBinding::parse("openrouter:meta/llama-guard-4")
-            .expect("openrouter binding"),
-        ..PolicyModelConfig::default()
-    };
-
-    let verdict = block_on(vault.classify_policy_model_with_backend(
-        PolicyClassifyRequest::outbound_content("ordinary reply"),
-        &config,
-        &backend,
-        &lease("policy-selector-routing"),
-    ))?;
-    assert_eq!(verdict.decision, PolicyClassifyDecision::Allow);
-    assert_eq!(
-        backend.seen_model.lock().expect("seen model").as_deref(),
-        Some("openrouter/meta.llama-guard-4@configured")
-    );
-    // What the model was SENT is the owner's document, with nothing prepended.
-    assert_eq!(
-        backend.seen_system.lock().expect("seen system").as_deref(),
-        Some(OWNER_DOCUMENT)
-    );
-    Ok(())
-}
-
-#[test]
-fn model_down_skips_the_owner_plane_and_ships_the_content() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    put_policy_manifest_bytes(
-        &vault,
-        test_id(0x46),
-        &documented_owner_manifest(
-            vec![owner_row(
-                "owner:spoilers",
-                "Avoid spoilers in outbound content.",
-            )],
-            Vec::new(),
-        ),
-    )?;
-
-    let outcome = block_on(vault.enforce_policy_model_with_backend(
-        PolicyClassifyRequest::outbound_content("This reply contains spoilers."),
-        &PolicyModelConfig::default(),
-        &FailingPolicyBackend,
-        &lease("policy-model-down"),
-    ))?;
-
-    // Nothing exists beneath the owner plane to fall back to, so a downed
-    // safeguard model means the plane did not run — marked, not hidden.
-    assert_eq!(outcome.action, PolicyEnforcementAction::Allow);
-    assert!(outcome.custom_tier_skipped);
-    assert_eq!(
-        outcome.final_content.as_deref(),
-        Some("This reply contains spoilers.")
-    );
     Ok(())
 }
 

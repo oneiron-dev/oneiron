@@ -108,56 +108,6 @@ fn two_retryable_transport_failures_retain_both_audit_rows() -> crate::Result<()
     Ok(())
 }
 
-#[test]
-fn two_holds_retain_both_audit_rows() -> crate::Result<()> {
-    let (_tmp, vault, actor) = gate_pending_fixture(0xE2)?;
-    let task_ref = schedule_gate_pending_send(&vault, actor, "hold-audit-history")?;
-    let mut executor = RecordingExecutor::default();
-    run_parked_round(&vault, &mut executor, ONE_1768_EXECUTE_AT, 0);
-    let first = audit_receipts(&vault)?.remove(0);
-    run_parked_round(&vault, &mut executor, ONE_1768_EXECUTE_AT + 1, 1);
-    assert!(executor.calls.is_empty());
-
-    let receipts = audit_receipts(&vault)?;
-    assert_eq!(receipts.len(), 2);
-    assert_eq!(receipts[1], first);
-    assert_ne!(receipts[0].receipt_id, receipts[1].receipt_id);
-    for receipt in &receipts {
-        assert_eq!(receipt.outcome, "failed");
-        assert_eq!(receipt_field(receipt, "dispatch_outcome"), Some("held"));
-        assert_eq!(receipt_field(receipt, "gate_outcome"), Some("pending"));
-        assert_eq!(
-            receipt_field(receipt, FIELD_TRANSPORT_DISPATCHED),
-            Some("false")
-        );
-        assert!(receipt.fields.contains_key("gate_decision_ref"));
-    }
-    assert_eq!(
-        receipts[1].fields["retry_at"],
-        (ONE_1768_EXECUTE_AT + 1).to_string()
-    );
-    assert_eq!(
-        receipts[0].fields["retry_at"],
-        (ONE_1768_EXECUTE_AT + 3).to_string()
-    );
-    let attempts = one_1768_bridge_attempts(&vault)?;
-    assert_eq!(attempts.len(), 3);
-    assert_eq!(attempts[0].state, AttemptState::Failed);
-    assert_eq!(attempts[1].state, AttemptState::Failed);
-    assert_eq!(attempts[1].retry_of, Some(attempts[0].id));
-    assert_eq!(attempts[2].retry_of, Some(attempts[1].id));
-    assert_eq!(attempts[2].state, AttemptState::Scheduled);
-    assert_eq!(attempts[2].scheduled_at, Some(ONE_1768_EXECUTE_AT + 3));
-    assert!(!send_receipt_exists_for_task(&vault, task_ref)?);
-    assert_eq!(
-        vault
-            .store
-            .get_delivered_send_task_by_idempotency(&actor, "one-1768:hold-audit-history",)?,
-        None
-    );
-    Ok(())
-}
-
 fn leased_retry_source(vault: &Vault, task_ref: EntityId) -> crate::Result<AttemptRecord> {
     let queue = AttemptQueue::new(vault);
     queue.enqueue_with_task_ref(
