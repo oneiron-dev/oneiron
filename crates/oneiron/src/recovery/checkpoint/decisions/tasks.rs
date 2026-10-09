@@ -2,7 +2,7 @@
 //! prove through the `ScopedTo` edges that reach them, whether an ask is
 //! stale, whether an agent dispatches, wakes as a resident, and how far its
 //! writes are bounded, and who holds the authority a scope ask is put to.
-use super::{Decision, held_by_both};
+use super::{Decision, held, held_by_both};
 use crate::agent_dispatch::{AgentDispatchTarget, AgentDispatcher, ResidentWakeMode};
 use crate::consent::{
     ActionClass, ActionEnvelope, BoundClass, BoundEnvelope, StandingConsentGrant,
@@ -10,7 +10,7 @@ use crate::consent::{
 use crate::gate::PolicyApprovalCeiling;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_TASK};
 use crate::task_authority::TaskAuthorityFacts;
-use crate::task_verb::AskStanding;
+use crate::task_verb::{AskStanding, TaskAskResult};
 use crate::{EdgeActorClass, EntityId, Result, Vault, WriteActor};
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
@@ -49,17 +49,15 @@ impl Decision for TaskAuthority {
     }
 }
 
-/// Whether an ask is settled, and whether it is stale, which settles it with
-/// no decision and closes its option links: its question's bytes, its
-/// members' presence, the holders of the authority it was put to, and the
-/// task it is bound to (`task_verb::ask_standing_in`, which reads them as the
-/// settlement cut does). Every TASK both vaults hold is asked; the ask groups
-/// among them answer. A settlement closes its ask for good, so one the live
-/// vault holds the restored vault must hold as it is, or the ask would be
-/// settled again; one the restored vault has settled reads nothing more.
-pub(super) struct AskStandings;
+/// Whether an ask is stale, which settles it with no decision and closes its
+/// option links: its question's bytes, its members' presence, the holders of
+/// the authority it was put to, and the task it is bound to
+/// (`task_verb::ask_standing_in`, which reads them as the settlement cut
+/// does). Every TASK both vaults hold is asked; the ask groups among them
+/// answer. One the restored vault has settled reads nothing more.
+pub(super) struct StaleAsks;
 
-impl Decision for AskStandings {
+impl Decision for StaleAsks {
     type Subject = EntityId;
     type Answer = AskStanding;
 
@@ -83,9 +81,65 @@ impl Decision for AskStandings {
     }
 
     fn loosens(live: &AskStanding, restored: &AskStanding) -> bool {
-        match &live.settlement {
-            Some(settlement) => restored.settlement.as_ref() != Some(settlement),
-            None => live.stale && !restored.stale && restored.settlement.is_none(),
+        live.stale && !restored.stale && !restored.settled
+    }
+}
+
+/// Which asks are settled, and how: the receipt `settle_in` returns rather
+/// than cutting another (`task_verb::ask_settlement_in`). A settlement closes
+/// its ask for good, and an ask group's id is derived from its origin, asker
+/// and intent, so one asked again after a restore that dropped it is the same
+/// ask. Every ask the live vault has settled is asked, whether or not the
+/// restored vault holds it, and its receipt alone is read: the restored
+/// vault holds the same one, or the ask could be settled a second time. A
+/// receipt only the restored vault holds closes its ask, which narrows.
+pub(super) struct AskSettlements;
+
+/// How the settlement reader reads one ask group.
+#[derive(PartialEq)]
+pub(super) enum Settlement {
+    /// No receipt closes it.
+    Open,
+    /// The receipt that closes it.
+    Settled(Box<TaskAskResult>),
+    /// The reader fails, and nothing settles it.
+    Unread,
+}
+
+impl Decision for AskSettlements {
+    type Subject = EntityId;
+    type Answer = Settlement;
+
+    fn subjects(vaults: [&Vault; 2]) -> Result<BTreeSet<Self::Subject>> {
+        held(vaults[0], ENTITY_TYPE_TASK)
+    }
+
+    /// Every subject answers, a reader that fails included: a read that
+    /// fails in the restored vault may be one a later write mends.
+    fn answers(
+        vault: &Vault,
+        subjects: &BTreeSet<Self::Subject>,
+    ) -> Result<Vec<Option<Self::Answer>>> {
+        let txn = vault.store.env.read_txn()?;
+        Ok(subjects
+            .iter()
+            .map(|group| {
+                Some(
+                    match crate::task_verb::ask_settlement_in(vault, &txn, *group) {
+                        Ok(None) => Settlement::Open,
+                        Ok(Some(result)) => Settlement::Settled(Box::new(result)),
+                        Err(_) => Settlement::Unread,
+                    },
+                )
+            })
+            .collect())
+    }
+
+    fn loosens(live: &Settlement, restored: &Settlement) -> bool {
+        match live {
+            Settlement::Open => false,
+            Settlement::Settled(_) => restored != live,
+            Settlement::Unread => *restored == Settlement::Open,
         }
     }
 }

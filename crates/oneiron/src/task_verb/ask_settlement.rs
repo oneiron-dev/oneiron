@@ -323,11 +323,10 @@ pub(super) fn is_stale(vault: &Vault, txn: &heed::RoTxn<'_>, group: &AskGroup) -
 }
 
 /// Where an ask group stands for the cut [`settle_in`] makes.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AskStanding {
-    /// The settlement that already closes the ask, whatever it would read
-    /// now: [`settle_in`] returns it and cuts no other.
-    pub(crate) settlement: Option<Box<TaskAskResult>>,
+    /// A settlement already closes the ask, whatever it would read now.
+    pub(crate) settled: bool,
     /// [`is_stale`] holds it: it settles as stale, with no decision.
     pub(crate) stale: bool,
 }
@@ -344,9 +343,20 @@ pub(crate) fn ask_standing_in(
         return Ok(None);
     };
     Ok(Some(AskStanding {
-        settlement: read_result(vault, txn, id)?.map(Box::new),
+        settled: read_result(vault, txn, id)?.is_some(),
         stale: is_stale(vault, txn, &group)?,
     }))
+}
+
+/// The settlement that closes the ask group `id`, read as [`settle_in`]
+/// reads it before it cuts: [`settle_in`] returns it and cuts no other.
+/// `None` while no receipt is held for `id`, whether or not its group is.
+pub(crate) fn ask_settlement_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Option<TaskAskResult>> {
+    read_result(vault, txn, id)
 }
 
 fn reduce(

@@ -15,8 +15,8 @@ use crate::task_authority::{
     TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
 };
 use crate::task_verb::{
-    ConsultPayloadRef, TaskAskDefault, TaskAskQuestion, TaskAskSpec, TaskAskStatus, TaskAskTarget,
-    TaskAskWord, TaskAssignee,
+    ConsultPayloadRef, TaskAskDefault, TaskAskHandle, TaskAskQuestion, TaskAskSpec, TaskAskStatus,
+    TaskAskTarget, TaskAskWord, TaskAssignee,
 };
 use crate::test_util::entity;
 use crate::{EntityId, Error, Result, TimeRange, Vault, VaultConfig};
@@ -163,7 +163,7 @@ pub(super) fn stale_asks() -> Result<Case> {
         ))
         .map_err(memory)?;
     Case::after_backup(
-        "settled and stale task asks",
+        "stale task asks",
         (dir, vault),
         |vault| put_turn(vault, entity(0x63), "aside", 20),
         move |vault| put_turn(vault, question, "revised question", 30),
@@ -176,9 +176,38 @@ pub(super) fn stale_asks() -> Result<Case> {
 pub(super) fn settled_asks() -> Result<Case> {
     let (dir, vault) = open_vault();
     let owner = vault.ensure_embedded_owner_actor().map_err(memory)?;
+    let ask = self_ask(&vault, owner)?;
+    Case::after_backup(
+        "task ask settlements",
+        (dir, vault),
+        |vault| put_turn(vault, entity(0x65), "aside", 20),
+        move |vault| answer(vault, owner, ask),
+    )
+}
+
+/// An ask made and answered since the backup is one the backup does not
+/// hold, and its id is derived from what was asked: a restore would drop its
+/// settlement, and the same ask made again would be settled a second time
+/// under that id (Astra R5).
+pub(super) fn asks_settled_since() -> Result<Case> {
+    let (dir, vault) = open_vault();
+    let owner = vault.ensure_embedded_owner_actor().map_err(memory)?;
+    Case::after_backup(
+        "task ask settlements",
+        (dir, vault),
+        |vault| put_turn(vault, entity(0x65), "aside", 20),
+        move |vault| {
+            let ask = self_ask(vault, owner)?;
+            answer(vault, owner, ask)
+        },
+    )
+}
+
+/// An ask the vault's owner puts to themself, open for an hour.
+fn self_ask(vault: &Vault, owner: EntityId) -> Result<TaskAskHandle> {
     let question = entity(0x64);
-    put_turn(&vault, question, "question", 10)?;
-    let ask = vault
+    put_turn(vault, question, "question", 10)?;
+    Ok(vault
         .memory(owner, EdgeActorClass::Human)
         .tasks_ask(&TaskAskSpec::shorthand(
             Some(TaskAskTarget::Responder(TaskAssignee::Human {
@@ -189,24 +218,21 @@ pub(super) fn settled_asks() -> Result<Case> {
             TaskAskDefault::AskMe,
         ))
         .map_err(memory)?
-        .handle;
-    Case::after_backup(
-        "settled and stale task asks",
-        (dir, vault),
-        |vault| put_turn(vault, entity(0x65), "aside", 20),
-        move |vault| {
-            let responder = vault.memory(owner, EdgeActorClass::Human);
-            responder
-                .tasks_answer(&ask, &TaskAskWord::new(owner))
-                .map_err(memory)?;
-            match responder.tasks_ask_status(ask).map_err(memory)? {
-                TaskAskStatus::Settled(_) => Ok(()),
-                _ => Err(Error::InvalidConfig(
-                    "the answered ask is still open".into(),
-                )),
-            }
-        },
-    )
+        .handle)
+}
+
+/// `owner` answers `ask`, which settles it.
+fn answer(vault: &Vault, owner: EntityId, ask: TaskAskHandle) -> Result<()> {
+    let responder = vault.memory(owner, EdgeActorClass::Human);
+    responder
+        .tasks_answer(&ask, &TaskAskWord::new(owner))
+        .map_err(memory)?;
+    match responder.tasks_ask_status(ask).map_err(memory)? {
+        TaskAskStatus::Settled(_) => Ok(()),
+        _ => Err(Error::InvalidConfig(
+            "the answered ask is still open".into(),
+        )),
+    }
 }
 
 /// A definition deleted since the backup keeps its shell, and the

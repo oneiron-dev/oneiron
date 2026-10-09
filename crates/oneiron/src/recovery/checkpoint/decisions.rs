@@ -15,9 +15,10 @@
 //!
 //! A decision about one entity (who may read a claim, whether a task's ask
 //! is stale) is asked only of entities both vaults hold: one only one vault
-//! holds is content the restore returns or drops (RD-20). A decision about
-//! a subject no single row is (a party name, a holder set) is asked of every
-//! subject either vault names.
+//! holds is content the restore returns or drops (RD-20). A settlement is the
+//! exception: it closes its ask for good, so every ask the live vault has
+//! settled is asked. A decision about a subject no single row is (a party
+//! name, a holder set) is asked of every subject either vault names.
 use crate::ports::EntityStoreRead;
 use crate::{EntityId, Error, Result, Vault};
 use std::collections::BTreeSet;
@@ -103,10 +104,8 @@ const DECISIONS: &[(&str, Check)] = &[
         "task owners and cancellations",
         loosened::<tasks::TaskAuthority>,
     ),
-    (
-        "settled and stale task asks",
-        loosened::<tasks::AskStandings>,
-    ),
+    ("stale task asks", loosened::<tasks::StaleAsks>),
+    ("task ask settlements", loosened::<tasks::AskSettlements>),
     ("dispatchable agents", loosened::<tasks::DispatchableAgents>),
     ("resident agent wakes", loosened::<tasks::ResidentWakes>),
     ("agent approval ceilings", loosened::<tasks::AgentCeilings>),
