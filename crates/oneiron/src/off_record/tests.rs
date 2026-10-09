@@ -548,9 +548,8 @@ fn off_record_session_ref_bounds_are_enforced_everywhere() {
 ///
 /// The grant is minted from the PLAN, so the sharpest probe of its scope is a
 /// promote transaction whose op list reaches past that plan's own ids: here a
-/// trailing `AuthoredBy` edge naming a second live room's overlay member —
-/// the same shape the room's real authorship edge has, which is exactly why
-/// that edge is not in the promoted closure. It lands AFTER the shell, turn,
+/// trailing `DerivedFrom` edge naming a second live room's overlay member.
+/// It lands AFTER the shell, turn,
 /// message, and summary puts have already staged rows, so zero base delta
 /// afterwards is evidence of the single-transaction contract, not of an early
 /// bail. The unmodified closure then promotes cleanly, proving a failed
@@ -617,7 +616,7 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
         .ops
         .push(crate::batch::BatchOp::PublicEdgeWithCreatedAt {
             src: turn,
-            kind: EdgeKind::AuthoredBy,
+            kind: EdgeKind::DerivedFrom,
             tgt: foreign,
             weight: 1.0,
             created_at: 1000,
@@ -684,10 +683,73 @@ fn promote_replay_refuses_another_live_rooms_overlay_id_and_rolls_back() -> Resu
     {
         let rtxn = vault.store.env.read_txn()?;
         assert_eq!(vault.store.entities.len(&rtxn)? - entities_before, 4);
-        // ONE-1767 F2: each promoted turn closure also replays its ChildOf edge.
-        assert_eq!(vault.store.edges_out.len(&rtxn)? - edges_before, 4);
+        // ONE-1767 F2: each promoted turn closure also replays its ChildOf
+        // edge, and ARCH-0052 #d4 its message's AuthoredBy edge.
+        assert_eq!(vault.store.edges_out.len(&rtxn)? - edges_before, 5);
     }
     other.close()?;
+    session.close()?;
+    Ok(())
+}
+
+/// ARCH-0052 #d4 (REV-9 item 5): promote keeps each message's `AuthoredBy`
+/// edge. When base no longer holds the actor, the edge would dangle, so the
+/// promote refuses with a typed error and writes nothing.
+#[test]
+fn promote_refuses_a_turn_whose_author_left_base() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-author-gone", OffRecordBackendClass::Local)?;
+    let actor = EntityId::now();
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"departing author",
+    )?;
+    let receipt = vault
+        .memory(actor, EdgeActorClass::Human)
+        .witness_into_session(
+            &session,
+            &crate::memory::WitnessTurn {
+                conversation_ref: String::new(),
+                turn_ref: None,
+                messages: vec![crate::memory::WitnessMessage {
+                    id: None,
+                    author: crate::memory::WitnessAuthor::User,
+                    message_type: "utterance".to_owned(),
+                    content: "authored in the room".to_owned(),
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                }],
+                occurred_at: 1000,
+            },
+            None,
+        )
+        .unwrap_or_else(|error| panic!("session witness failed: {error:?}"));
+    let turn = EntityId::from_hex(
+        receipt
+            .receipt_ref
+            .strip_prefix("witness:")
+            .ok_or(Error::InvariantViolation("witness receipt names no turn"))?,
+    )?;
+    vault.delete_entity_with_reason(&actor, crate::DeleteReason::UserHardDelete)?;
+    let entities_before = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault.store.entities.len(&rtxn)?
+    };
+
+    let refusal = session
+        .promote_turn(&turn)
+        .expect_err("a dangling author edge must not promote");
+    assert_eq!(refusal.kind(), ErrorKind::OffRecordPromoteAuthorMissing);
+    assert!(vault.off_record_promote_receipt(&turn)?.is_none());
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(vault.store.entities.len(&rtxn)?, entities_before);
+    drop(rtxn);
     session.close()?;
     Ok(())
 }
@@ -725,6 +787,50 @@ fn seed_recallable_base_turn(vault: &Vault, needle: &str) -> EntityId {
         })
         .expect("witness base turn");
     actor
+}
+
+/// ARCH-0052 D3 (REV-9 item 6): a room's PPR cache rows never reach base.
+/// The off-record walk runs first; the same walk outside the room then shows
+/// the walk does cache, so the first assertion is not vacuous.
+#[test]
+fn off_record_ppr_walk_leaves_no_cache_row_in_base() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = seed_recallable_base_turn(&vault, "offrecordpprneedle");
+    let cache_rows = |vault: &Vault| -> Result<u64> {
+        let txn = vault.store.env.read_txn()?;
+        Ok(vault.store.ppr_cache.len(&txn)?)
+    };
+    let before = cache_rows(&vault)?;
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-ppr-cache", OffRecordBackendClass::Local)?;
+    assert_eq!(session.mode()?, OffRecordMode::OffRecord);
+    {
+        let route = session.write_route()?;
+        let telemetry = session.retrieval_telemetry(&route)?;
+        let walked = vault
+            .query()
+            .search_ppr(&[actor], 2)
+            .in_session(&telemetry)
+            .run_with_pending_vectors()?;
+        assert!(!walked.value.is_empty());
+    }
+    assert_eq!(
+        cache_rows(&vault)?,
+        before,
+        "an off-record walk leaves no PPR cache row in base"
+    );
+    session.close()?;
+    let walked = vault
+        .query()
+        .search_ppr(&[actor], 2)
+        .run_with_pending_vectors()?;
+    assert!(!walked.value.is_empty());
+    assert!(
+        cache_rows(&vault)? > before,
+        "a base walk caches its result"
+    );
+    Ok(())
 }
 
 /// ARM B ACCEPTANCE (ONE-1570 settle bar).

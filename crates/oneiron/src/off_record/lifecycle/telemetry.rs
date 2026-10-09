@@ -27,8 +27,8 @@ pub(crate) struct SessionRetrievalTelemetry<'session> {
 
 impl SessionRetrievalTelemetry<'_> {
     /// Whether the captured route permits ordinary durable retrieval work.
-    /// Only this positive Base check can authorize the embed-enqueue arm.
-    #[cfg(feature = "sync")]
+    /// Only this positive Base check can authorize the embed-enqueue arm or
+    /// a PPR cache flush.
     pub(crate) fn writes_to_base(&self) -> bool {
         self.route.target() == RouteTarget::Base
     }

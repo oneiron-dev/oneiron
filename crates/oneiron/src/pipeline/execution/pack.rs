@@ -249,9 +249,11 @@ impl PipelineBuilder<'_> {
         let mut retrieval_trace = attempt.retrieval_trace;
         let mut replay_inputs = attempt.replay_inputs;
 
-        if !self
+        // ARCH-0052 D3: a room's PPR cache rows never reach base. Only a
+        // base route or no session flushes; an overlay route drops them.
+        if self
             .session
-            .is_some_and(crate::off_record::SessionRetrievalTelemetry::discards_writes)
+            .is_none_or(crate::off_record::SessionRetrievalTelemetry::writes_to_base)
         {
             crate::ppr::flush_deferred_ppr_cache_writes(
                 &self.vault.store,
@@ -311,9 +313,9 @@ impl PipelineBuilder<'_> {
                         skip_ret01_abstain: true,
                     },
                 )?;
-                if !self
+                if self
                     .session
-                    .is_some_and(crate::off_record::SessionRetrievalTelemetry::discards_writes)
+                    .is_none_or(crate::off_record::SessionRetrievalTelemetry::writes_to_base)
                 {
                     crate::ppr::flush_deferred_ppr_cache_writes(
                         &self.vault.store,
