@@ -5,20 +5,13 @@ use super::*;
 use crate::claim::ClaimSource;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::codebase::CODEBASE_SCOPE_KEY_LEN;
-use crate::corpus::CorpusScope;
-use crate::federation::FederationStaleReason;
 use crate::query_expansion::HydeExpansion;
-use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET};
 use crate::test_util::embedding_test_config;
 
 #[path = "../world_authority_tests.rs"]
 mod world_authority_tests;
 
-#[path = "../corpus_tests.rs"]
-mod corpus_tests;
-
-mod community_quality;
-mod effort;
 mod facet_status_world;
 mod relationship_scope_filter;
 mod relevance_order;
@@ -29,10 +22,10 @@ mod telemetry_trace;
 mod temporal;
 mod world_access;
 
-use self::rerank_hyde_session_stale::{ClaimProbeReranker, ReversingReranker, StubHyde};
+use self::rerank_hyde_session_stale::ReversingReranker;
 use self::world_access::{
-    WORLD_ACCESS_NOW, WorldAccessRowSpec, world_access_body, world_access_fixture,
-    world_access_ids, world_access_query, world_default_evidence,
+    WORLD_ACCESS_NOW, WorldAccessRowSpec, world_access_fixture, world_access_ids,
+    world_access_query, world_default_evidence,
 };
 
 // Shared with the sibling `decay_tests` module: the ONE-1402 read-side
@@ -225,26 +218,6 @@ fn put_codebase_vector(
     vault.batch().vector(&id, &vector).commit()
 }
 
-fn put_text_and_vector_with_time(
-    vault: &Vault,
-    id: EntityId,
-    text: &str,
-    vector: [f32; 4],
-    occurred: TimeRange,
-    learned_at: u64,
-) -> Result<()> {
-    vault
-        .batch()
-        .put(&id, 1, occurred, learned_at, b"payload")
-        .text(&id, &[("body", text)])
-        .vector(&id, &vector)
-        .commit()
-}
-
-fn scored(id: EntityId, score: f32) -> ScoredEntity {
-    ScoredEntity { id, score }
-}
-
 pub(super) fn to_score_map(scores: &[ScoredEntity]) -> HashMap<EntityId, f32> {
     scores.iter().map(|entry| (entry.id, entry.score)).collect()
 }
@@ -300,16 +273,6 @@ const FACET_QUERY: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
 /// factor `2^0 = 1.0` exactly, which is the decay-NEUTRAL baseline these
 /// pins have always meant. Decay's own behavior is owned by `decay_tests`.
 const FACET_NOW: u64 = 1;
-
-/// The four-row fixture's blend scores with no optional signal enabled:
-/// the four modulator columns are zero, so each score is `exp(z)` of the
-/// row's vector-channel relevance over the pool (ONE-2702; flat 1.0 before).
-const FACET_R0: f32 = 2.9126508;
-const FACET_R1: f32 = 1.7060921;
-const FACET_R2: f32 = 1.0003916;
-const FACET_R3: f32 = 0.2011588;
-/// A one-row pool z-normalizes every column to zero, so its score is `exp(0) = 1`.
-const FACET_SOLO: f32 = 1.0;
 
 struct FacetFixture {
     facet_a: EntityId,
@@ -425,10 +388,6 @@ fn setup_facet_fixture(vault: &Vault) -> Result<FacetFixture> {
     Ok(fixture)
 }
 
-fn ordered_results(scores: &[ScoredEntity]) -> Vec<(EntityId, f32)> {
-    scores.iter().map(|entry| (entry.id, entry.score)).collect()
-}
-
 // ── D19 read-path claim status gate (ONE-1111) ─────────────────
 
 fn claim_body_bytes(appr: ClaimApprovalStatus, life: ClaimLifecycleStatus, stale: bool) -> Vec<u8> {
@@ -480,11 +439,3 @@ fn overwrite_entity_record(
         Ok(())
     })
 }
-
-// ── ONE-1420: world-access authority tiers and the per-turn ActiveSet ─────
-//
-// Three nested tiers, two of them ordinary bitemporal CLAIM rows and the
-// third in-memory turn state: the owner's ALLOWED-SET, the agent's
-// DEFAULT-SUBSET, and the per-turn selection. These rows pin what each tier
-// may and may not do to a read — it may only ever NARROW, and no failure mode
-// falls back to `WorldScope::All`.

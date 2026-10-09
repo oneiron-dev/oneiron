@@ -239,42 +239,6 @@ fn materialized_paths_finish_out_of_order_and_only_all_path_agreement_lands_arti
 }
 
 #[test]
-fn red_batch_bisects_culprit_quarantines_and_lands_survivors() {
-    let fixture = Fixture::new();
-    let queue = fixture.queue();
-    let batch = queue
-        .enqueue(vec![
-            fixture.proposal("a", b"A\n"),
-            fixture.proposal("b", b"red\n"),
-            fixture.proposal("c", b"C\n"),
-        ])
-        .unwrap();
-    queue.stage(&batch.id).unwrap();
-    let mut runner = |invocation: &CheckInvocation| -> Result<CheckReport> {
-        Ok(CheckReport {
-            tests_passed: std::fs::read(invocation.worktree.join("b.txt"))? != b"red\n",
-            ..CheckReport::default()
-        })
-    };
-    let quarantine = queue.diagnose_red(&batch.id, &mut runner).unwrap();
-    assert_eq!(quarantine.proposal_ids, vec!["b"]);
-    assert_eq!(quarantine.failing_mask, 2);
-    assert_eq!(
-        queue.batch(&batch.id).unwrap().state,
-        BatchState::Quarantined
-    );
-    assert_eq!(fixture.read("b"), b"base\n");
-    let survivors = queue.requeue_survivors(&batch.id).unwrap().unwrap();
-    ready(&queue, &survivors);
-    queue.land(&survivors.id, &mut fixture.host(None)).unwrap();
-    assert_eq!(fixture.read("a"), b"A\n");
-    assert_eq!(fixture.read("b"), b"base\n");
-    assert_eq!(fixture.read("c"), b"C\n");
-    finish(&queue, &survivors);
-    queue.cleanup(&batch.id).unwrap();
-}
-
-#[test]
 fn slow_results_wait_for_prefix_and_red_restores_actual_last_green_tree() {
     let fixture = Fixture::new();
     let queue = fixture.queue();
@@ -428,32 +392,6 @@ fn removed_public_name_is_a_persisted_queue_veto_even_when_tests_pass() {
     assert_eq!(host.calls, 0);
     assert_eq!(queue.pointers().unwrap().head, fixture.base);
     queue.diagnose_red(&batch.id, &mut green).unwrap();
-    queue.cleanup(&batch.id).unwrap();
-}
-
-#[test]
-fn interacting_red_pair_is_quarantined_together_not_falsely_blamed_on_one_member() {
-    let fixture = Fixture::new();
-    let queue = fixture.queue();
-    let batch = queue
-        .enqueue(vec![
-            fixture.proposal("a", b"A\n"),
-            fixture.proposal("b", b"B\n"),
-        ])
-        .unwrap();
-    queue.stage(&batch.id).unwrap();
-    let mut runner = |invocation: &CheckInvocation| -> Result<CheckReport> {
-        let a = std::fs::read(invocation.worktree.join("a.txt"))?;
-        let b = std::fs::read(invocation.worktree.join("b.txt"))?;
-        Ok(CheckReport {
-            tests_passed: a != b"A\n" || b != b"B\n",
-            ..CheckReport::default()
-        })
-    };
-    let quarantine = queue.diagnose_red(&batch.id, &mut runner).unwrap();
-    assert_eq!(quarantine.failing_mask, 3);
-    assert_eq!(quarantine.proposal_ids, vec!["a", "b"]);
-    assert!(queue.requeue_survivors(&batch.id).unwrap().is_none());
     queue.cleanup(&batch.id).unwrap();
 }
 

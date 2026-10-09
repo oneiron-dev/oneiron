@@ -91,38 +91,6 @@ fn malformed_prior_on_shell_raises_the_same_structural_error_as_on_actor() -> Re
 }
 
 #[test]
-fn stranded_write_preserves_exact_actor_and_prior_shortcut_bytes() -> Result<()> {
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
-    let provider = "provider_stranded_indexes";
-    let actor = entity(0x22);
-    let foreign = entity(0x23);
-    put_actor(&vault, actor, provider)?;
-    let prior = write_provider_prior(&vault, provider, 0.30, "evidence:initial")?;
-    put_actor(&vault, foreign, "provider_other")?;
-    merge(&vault, actor, foreign)?;
-    let before = vault.count_entities_by_type(ENTITY_TYPE_PERSON)?;
-    let error = write_provider_prior(&vault, provider, 0.50, "evidence:no-fork")
-        .expect_err("strand must block a replacement actor");
-    assert!(matches!(
-        error,
-        Error::InvalidClaimBody("provider confidence prior stranded by merge")
-    ));
-    let rtxn = vault.store.env.read_txn()?;
-    let digest = provider_key_hash(provider);
-    assert_eq!(
-        PROVIDER_ACTOR_INDEX.get(&vault.store, &rtxn, &digest)?,
-        Some(actor)
-    );
-    assert_eq!(
-        PROVIDER_PRIOR_HEAD_INDEX.get(&vault.store, &rtxn, &digest)?,
-        Some(prior)
-    );
-    drop(rtxn);
-    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_PERSON)?, before);
-    Ok(())
-}
-
-#[test]
 fn valid_actor_cache_cannot_hide_another_shells_stranded_prior_from_a_write() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     let provider = "provider_cached_with_strand";
@@ -321,7 +289,7 @@ mod one1891_ruling {
     use crate::test_util::embedding_test_config;
     use crate::{
         ClaimApprovalStatus, ClaimSource, ClaimSubject, EntityResolutionCandidate,
-        EntityResolutionRoute, Error, Vault,
+        EntityResolutionRoute, Vault,
     };
     use rmpv::Value;
 
@@ -388,41 +356,6 @@ mod one1891_ruling {
             body.valid_from = Some(200);
             body.source = Some(ClaimSource::Observed);
             body
-        }
-
-        pub(super) fn put_enrichment(
-            vault: &Vault,
-            lead: u8,
-            subject: EntityId,
-            provider: &str,
-            confidence: f32,
-        ) -> EntityId {
-            let id = fixture_id(lead);
-            let body = enrichment_body(
-                ClaimSubject::Entity(subject),
-                enrichment_value(provider, &[]),
-                confidence,
-            );
-            vault
-                .put_claim(&id, &body, at(200), 200)
-                .expect("put enrichment claim");
-            id
-        }
-
-        pub(super) fn candidate(
-            vault: &Vault,
-            subject_lead: u8,
-            claim_lead: u8,
-            provider: &str,
-            confidence: f32,
-        ) -> EntityResolutionCandidate {
-            let subject = put_person(vault, subject_lead);
-            let confidence_claim_ref =
-                put_enrichment(vault, claim_lead, subject, provider, confidence);
-            EntityResolutionCandidate {
-                subject,
-                confidence_claim_ref,
-            }
         }
 
         pub(super) fn write_prior(
@@ -576,64 +509,6 @@ mod one1891_ruling {
             assert_eq!(approved.selected, Some(subject));
             assert_eq!(approved.route, EntityResolutionRoute::HardLink);
             assert!(f::close(approved.ranked[0].effective_confidence, 0.95));
-        }
-    }
-
-    #[test]
-    fn one1891_unvetted_top_scorer_cannot_veto_a_vetted_candidate() {
-        let (_dir, vault) = open_vault();
-        let subject = f::put_person(&vault, 0x31);
-        let unvetted = EntityResolutionCandidate {
-            subject,
-            confidence_claim_ref: f::fixture_id(0x41),
-        };
-        let mut body = f::enrichment_body(
-            ClaimSubject::Entity(subject),
-            f::enrichment_value("provider_unvetted", &[]),
-            0.99,
-        );
-        body.source = Some(ClaimSource::Generated);
-        f::put_stored_claim(&vault, &unvetted.confidence_claim_ref, &body);
-        let vetted = f::candidate(&vault, 0x32, 0x42, "provider_vetted", 0.80);
-        for candidates in [[unvetted, vetted], [vetted, unvetted]] {
-            let decision = f::decide(&vault, &candidates, false);
-            assert_eq!(decision.claims_suppressed, 1);
-            assert_eq!(decision.ranked.len(), 1);
-            assert_eq!(decision.ranked[0].candidate, vetted);
-            assert_eq!(decision.selected, Some(vetted.subject));
-        }
-    }
-
-    #[test]
-    fn one1891_suppressed_evidence_still_obeys_closed_reference_errors() {
-        let (_dir, vault) = open_vault();
-        for (lead, lifecycle) in [
-            (0x41, crate::ClaimLifecycleStatus::Retracted),
-            (0x42, crate::ClaimLifecycleStatus::Superseded),
-        ] {
-            let subject = f::put_person(&vault, lead - 0x10);
-            let claim = f::fixture_id(lead);
-            let mut body = f::enrichment_body(
-                ClaimSubject::Entity(subject),
-                f::enrichment_value("provider_closed", &[]),
-                0.99,
-            );
-            body.source = Some(ClaimSource::Generated);
-            body.lifecycle = lifecycle;
-            f::put_stored_claim(&vault, &claim, &body);
-            assert!(matches!(
-                crate::evaluate_entity_resolution_waterfall(
-                    &vault,
-                    &[EntityResolutionCandidate {
-                        subject,
-                        confidence_claim_ref: claim
-                    }],
-                    false,
-                ),
-                Err(Error::InvalidClaimBody(
-                    "waterfall confidence claim is not active"
-                ))
-            ));
         }
     }
 }

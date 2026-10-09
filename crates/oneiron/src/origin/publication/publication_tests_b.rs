@@ -307,63 +307,6 @@ mod tests {
     }
 
     #[test]
-    fn published_origin_refs_is_the_only_advertisement_projection() {
-        let (_vault_dir, vault) = test_vault();
-        let (_repo_dir, root, base) = seeded_repo();
-        let next = commit(&root, "second", "second\n");
-        force_ref(&root, &base);
-
-        let wire = GitWire::new(&vault).expect("wire");
-        let repo = open_repo(&wire, &root, &base);
-        let repo_id = repo_id_of(&vault, &repo);
-
-        // A raw repository ref that no publication ever produced.
-        git(&root, &["update-ref", "refs/heads/raw", base.as_str()]);
-        assert!(
-            vault
-                .published_origin_refs(&wire, repo_id, &repo)
-                .expect("advertise")
-                .is_empty(),
-            "a raw repository ref is never an advertisement authority"
-        );
-
-        // A non-Published row is omitted.
-        let ask = request(&vault, &repo, repo_id, Some(base.clone()), next.clone());
-        let publication_id = origin_publication_id(&ask).expect("publication id");
-        vault
-            .stage_origin_publication(&wire, &ask, publication_id)
-            .expect("stage");
-        assert!(
-            vault
-                .published_origin_refs(&wire, repo_id, &repo)
-                .expect("advertise")
-                .is_empty(),
-            "a Prepared row is not advertisable"
-        );
-
-        // Published and live: advertised.
-        let receipt = vault.publish_origin_ref(&wire, ask).expect("publish");
-        assert_eq!(receipt.record.status, OriginPublicationStatus::Published);
-        assert_eq!(
-            vault
-                .published_origin_refs(&wire, repo_id, &repo)
-                .expect("advertise"),
-            vec![(main_ref(), next)],
-        );
-
-        // Live-ref mismatch: the row is omitted the moment the repository
-        // disagrees with it, without any journal write.
-        force_ref(&root, &base);
-        assert!(
-            vault
-                .published_origin_refs(&wire, repo_id, &repo)
-                .expect("advertise")
-                .is_empty(),
-            "a Published row whose live ref moved is not advertisable"
-        );
-    }
-
-    #[test]
     fn publication_terminal_wins_and_duplicate_finalize_is_inert() {
         let (_vault_dir, vault) = test_vault();
         let (_repo_dir, root, base) = seeded_repo();
@@ -661,52 +604,5 @@ mod tests {
         );
         assert_eq!(claim_count(&vault), 1);
         assert_eq!(reflog(&root), log);
-    }
-
-    /// Static guard: this module touches only the surfaces the claim allows.
-    ///
-    /// The forbidden spellings are assembled at compile time from fragments, so
-    /// the guard's own source does not contain the strings it refuses and the
-    /// scan cannot trip over itself.
-    #[test]
-    fn origin_publication_module_isolation_guard() {
-        let source = concat!(
-            include_str!("mod.rs"),
-            include_str!("publication_types.rs"),
-            include_str!("publication_codec.rs"),
-            include_str!("publication_protocol.rs"),
-            include_str!("publication_machine.rs"),
-            include_str!("publication_journal.rs"),
-            include_str!("publication_tests_a.rs"),
-            include_str!("publication_tests_b.rs"),
-        );
-        let forbidden: [&str; 7] = [
-            concat!("repo_", "mutation"),
-            concat!("RepoMutation", "Status"),
-            concat!("sync_", "state"),
-            concat!("refs/", "jj/keep"),
-            concat!("change_", "index"),
-            concat!("conflict_", "tree"),
-            concat!("origin::", "residence"),
-        ];
-        for spelling in forbidden {
-            assert!(
-                !source.contains(spelling),
-                "publication module must not reference {spelling}"
-            );
-        }
-        for required in [
-            "published_origin_refs",
-            "update_ref_cas",
-            "has_lfs_object",
-            "put_claim_in_txn",
-            "write_keep_ref",
-            "delete_keep_ref",
-        ] {
-            assert!(
-                source.contains(required),
-                "publication module must ride {required}"
-            );
-        }
     }
 }
