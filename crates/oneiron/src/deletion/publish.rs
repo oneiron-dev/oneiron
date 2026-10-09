@@ -465,6 +465,17 @@ impl Vault {
             window_ts,
             TopologyDeletePhase::Published,
         )?;
+        // A hard delete publishes before its purge, in a later transaction.
+        // The fence commits with the tombstone, so the row reads deleted from
+        // the publication on, even if the purge never lands.
+        if value.reason.is_hard() {
+            super::tombstone::ROW_DELETION_FENCE.put(
+                &self.store,
+                &mut wtxn,
+                &crate::side_table::HexId(*id),
+                &Vec::new(),
+            )?;
+        }
         Ok(wtxn)
     }
 

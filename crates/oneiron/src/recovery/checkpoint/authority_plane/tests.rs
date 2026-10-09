@@ -728,3 +728,100 @@ fn restore_compares_only_the_read_scope_of_a_claim_rewritten_into_a_jurisdiction
     let error = restore("private").expect_err("a narrowed read scope refuses the restore");
     assert!(error.to_string().contains("claim privacy"), "{error}");
 }
+
+/// Review repro (access deletion fences): a grant whose delete was accepted
+/// but not applied since the checkpoint changed no byte of its row. Its fence
+/// still refuses an authority-keeping restore that would revive it.
+#[test]
+fn restore_refuses_to_revive_a_grant_deleted_since() {
+    let root = tempfile::tempdir().unwrap();
+    let live = Vault::open(root.path().join("vault"), VaultConfig::device()).unwrap();
+    let grant = EntityId::now();
+    live.create_access_grant(
+        &grant,
+        &crate::AccessGrant::companion_profile_read(
+            EntityId::now(),
+            EntityId::now(),
+            EntityId::now(),
+            10,
+        ),
+    )
+    .unwrap();
+    let image = root.path().join("backup");
+    live.snapshot_checkpoint(&image, 100).unwrap();
+    live.with_write_txn(|txn| live.fence_unapplied_delete_in_txn(txn, &grant, &[1; 25]))
+        .unwrap();
+    let destination = root.path().join("restored");
+    let Err(error) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &destination,
+        VaultConfig::device(),
+        &live,
+        200,
+    ) else {
+        panic!("the restore must be refused");
+    };
+    assert!(error.to_string().contains("access grants"), "{error}");
+    assert!(!destination.exists());
+}
+
+/// Review repro (access deletion fences): a member binding lets its person
+/// read the relationship's claims while the relationship is live. A delete
+/// of the relationship since the checkpoint, applied or only accepted (its
+/// row's bytes unchanged), closes those reads; an authority-keeping restore
+/// that would open them again is refused.
+#[test]
+fn restore_refuses_to_revive_a_relationship_deleted_since() {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    let at = TimeRange { start: 1, end: 1 };
+    for applied in [true, false] {
+        let mut config = VaultConfig::device();
+        config.map_size = 16 * 1024 * 1024;
+        config.dimensions = 4;
+        config.embedding_model = None;
+        let (_dir, live) = crate::test_util::open_test_vault_with(config);
+        let member = person(&live, b"member");
+        let relationship = EntityId::now();
+        let body = rmp_serde::to_vec_named(&serde_json::json!({ "participant_ids": [] })).unwrap();
+        live.put_entity(&relationship, ENTITY_TYPE_RELATIONSHIP, at, 1, &body)
+            .unwrap();
+        crate::federation::bind_member_person(&live, relationship, member, at, 1).unwrap();
+        let mut fact = ClaimBody::new(
+            "event.headcount",
+            ClaimSubject::Entity(member),
+            rmpv::Value::from("12"),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        fact.rel = Some(relationship);
+        live.put_claim(&EntityId::now(), &fact, at, 1).unwrap();
+        let backups = tempfile::tempdir().unwrap();
+        let image = backups.path().join("backup");
+        live.snapshot_checkpoint(&image, 100).unwrap();
+        if applied {
+            assert!(live.delete_entity(&relationship).unwrap());
+        } else {
+            live.with_write_txn(|txn| {
+                live.fence_unapplied_delete_in_txn(txn, &relationship, &[1; 25])
+            })
+            .unwrap();
+        }
+        let destination = backups.path().join("restored");
+        let Err(error) = Vault::restore_checkpoint_keeping_authority(
+            &image,
+            &destination,
+            live.config.clone(),
+            &live,
+            1_000,
+        ) else {
+            panic!("the restore must be refused (applied: {applied})");
+        };
+        assert!(
+            error.to_string().contains("relationship reads"),
+            "applied: {applied}: {error}"
+        );
+        assert!(!destination.exists());
+    }
+}

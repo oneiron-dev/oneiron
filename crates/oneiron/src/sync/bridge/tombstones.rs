@@ -298,6 +298,14 @@ fn apply_tombstone_batch(
                     "observer-b: CRITICAL — failed to set rm: marker after tombstone item failure"
                 );
             }
+            if let Err(fence_err) = vault.fence_unapplied_delete_in_txn(parent, &work.id, &work.raw_value) {
+                tracing::error!(
+                    tombstone = %work.crdt_key,
+                    window = %window_key,
+                    error = %fence_err,
+                    "observer-b: CRITICAL — failed to fence the row of an unapplied tombstone"
+                );
+            }
             failures.push((work, stage, err));
         }
 
@@ -338,6 +346,21 @@ fn apply_tombstone_batch(
             error = %e,
             "observer-b: tombstone batch transaction FAILED — NO tombstone in this delta was applied; the CRDT tombstones map keeps gating materialization and remains the replay source"
         );
+        // The update carrying these deletes is still stored after this
+        // callback, so its rows stay fenced and flagged for retry.
+        if let Err(error) = vault.with_write_txn(|txn| {
+            for work in staged {
+                quarantine::set_remat_marker_in_txn(vault, txn, window_key, &work.id)?;
+                vault.fence_unapplied_delete_in_txn(txn, &work.id, &work.raw_value)?;
+            }
+            Ok(())
+        }) {
+            tracing::error!(
+                window = %window_key,
+                error = %error,
+                "observer-b: CRITICAL — failed to fence the rows of an unapplied tombstone batch"
+            );
+        }
         return None;
     }
 

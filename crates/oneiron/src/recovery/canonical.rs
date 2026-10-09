@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::document::{self, CanonicalDocument, CanonicalHead, CanonicalHeadMove};
 use super::validation;
 use super::{decode_recovery_artifact, encode_recovery_artifact};
-use crate::deletion::{HARD_DELETE_MARKER, PENDING_TOMBSTONE};
+use crate::deletion::{HARD_DELETE_MARKER, PENDING_TOMBSTONE, ROW_DELETION_FENCE};
 use crate::error::{ArtifactError, Error, Result};
 use crate::side_table::HexId;
 use crate::{EntityId, Vault};
@@ -319,6 +319,20 @@ pub fn capture_canonical_window(
                 deleted_at: crate::deletion::decode_tombstone_value(&value).deleted_at,
                 value,
             });
+        }
+    }
+    // A row this vault fenced as deleted, whose tombstone the window no longer
+    // holds, was a delete a peer withdrew. A soft tombstone cannot be rebuilt
+    // faithfully, and exporting the row would make it live wherever the
+    // artifact lands, so the snapshot is refused.
+    for row in &snapshot.entity_blobs {
+        if !snapshot
+            .tombstones
+            .iter()
+            .any(|tombstone| tombstone.id == row.id)
+            && ROW_DELETION_FENCE.contains(&vault.store, &txn, &HexId(id(row.id)?))?
+        {
+            return Err(invalid("deleted row without its tombstone"));
         }
     }
     // Audit identity is the validated LOCAL receipt index, not the peer's
