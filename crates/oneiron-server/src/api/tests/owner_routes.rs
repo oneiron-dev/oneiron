@@ -549,6 +549,71 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
         .unwrap();
     refused(session.promote_turn_as(&admitted, &turn).unwrap_err());
     assert!(vault.get(&turn).unwrap().is_none(), "nothing replayed");
+    assert!(vault.off_record_promote_receipt(&turn).unwrap().is_none());
+    assert_eq!(
+        vault
+            .off_record_promote_pickup_markers_for_test(&turn)
+            .unwrap(),
+        0
+    );
+    let room = vault.off_record_session("promote-room").unwrap().unwrap();
+    assert!(room.promoted_turns.is_empty());
+    // The turn is still in the room: the live proof promotes it.
+    off_record::promote(
+        vault,
+        &unbound,
+        &serde_json::from_value(json!({ "session_ref": "promote-room", "turn": turn.to_hex() }))
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(vault.get(&turn).unwrap().is_some());
+    assert!(vault.off_record_promote_receipt(&turn).unwrap().is_some());
+    assert!(
+        vault
+            .off_record_promote_pickup_markers_for_test(&turn)
+            .unwrap()
+            > 0
+    );
+
+    // A witness into a room on the record lands in the vault itself; one
+    // that passed the door and then waited lands nothing.
+    let room: off_record::Enter = serde_json::from_value(
+        json!({ "session_ref": "witness-room", "mode": "off_record", "backend": "local" }),
+    )
+    .unwrap();
+    off_record::enter(vault, &unbound, &room).unwrap();
+    let on_record: off_record::Flip =
+        serde_json::from_value(json!({ "session_ref": "witness-room", "mode": "on_record" }))
+            .unwrap();
+    off_record::flip(vault, &unbound, &on_record).unwrap();
+    let message = oneiron::EntityId::now();
+    let said: off_record::Witness = serde_json::from_value(json!({
+        "session_ref": "witness-room",
+        "turn": { "conversation_ref": "", "turn_ref": null, "occurred_at": 200,
+                  "messages": [{ "id": message.to_hex(), "author": "user",
+                                 "message_type": "utterance", "content": "on the record",
+                                 "metadata": null, "is_visible": true, "order": 0 }] },
+    }))
+    .unwrap();
+    let session = vault
+        .off_record_session_vault()
+        .bind("witness-room")
+        .unwrap();
+    let error = vault
+        .memory(owner_id, oneiron::edge::EdgeActorClass::Human)
+        .witness_into_session_as(&admitted, &session, &said.turn, None)
+        .unwrap_err();
+    assert_eq!(
+        error.code,
+        oneiron::memory::MEMORY_CODE_FORBIDDEN,
+        "{error:?}"
+    );
+    assert!(vault.get(&message).unwrap().is_none(), "nothing landed");
+    off_record::witness(vault, &unbound, &said).unwrap();
+    assert!(
+        vault.get(&message).unwrap().is_some(),
+        "the live proof lands it"
+    );
 }
 
 /// Review serves a stored proposal through the release redaction even with

@@ -10,7 +10,7 @@
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::edge::EdgeActorClass;
-use oneiron::memory::{WitnessReceipt, WitnessTurn};
+use oneiron::memory::{MemoryError, WitnessReceipt, WitnessTurn};
 use oneiron::off_record::{
     OffRecordBackendClass, OffRecordMode, OffRecordSession, OffRecordSessionRecord,
 };
@@ -186,16 +186,27 @@ pub(crate) fn witness(
     let session = bind(vault, &request.session_ref)?;
     vault
         .memory(owner.actor(), EdgeActorClass::Human)
-        .witness_into_session(&session, &request.turn, request.summary.as_deref())
-        .map_err(|error| match error.code.as_str() {
-            oneiron::memory::MEMORY_CODE_BAD_REQUEST => OwnerError::Invalid(error.message),
-            oneiron::memory::MEMORY_CODE_FORBIDDEN => OwnerError::Refused(error.message),
-            oneiron::memory::MEMORY_CODE_INVALID_STATE => OwnerError::Changed(error.message),
-            _ => OwnerError::Host(anyhow::anyhow!(
-                "witness into off-record session: {}",
-                error.message
-            )),
+        .witness_into_session_as(owner, &session, &request.turn, request.summary.as_deref())
+        .map_err(|error| {
+            // The proof is rechecked where the turn lands; one revoked while
+            // the witness waited is the same refusal as at the door.
+            if let Err(refusal) = vault.recheck_owner(owner) {
+                return OwnerError::from(refusal);
+            }
+            witness_error(error)
         })
+}
+
+fn witness_error(error: MemoryError) -> OwnerError {
+    match error.code.as_str() {
+        oneiron::memory::MEMORY_CODE_BAD_REQUEST => OwnerError::Invalid(error.message),
+        oneiron::memory::MEMORY_CODE_FORBIDDEN => OwnerError::Refused(error.message),
+        oneiron::memory::MEMORY_CODE_INVALID_STATE => OwnerError::Changed(error.message),
+        _ => OwnerError::Host(anyhow::anyhow!(
+            "witness into off-record session: {}",
+            error.message
+        )),
+    }
 }
 
 pub(crate) fn promote(

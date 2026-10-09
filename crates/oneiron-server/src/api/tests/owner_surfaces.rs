@@ -525,6 +525,28 @@ async fn graph_fs_reads_the_vault_as_a_tree_for_the_owner_only() {
     let entities = read("path=/entities".to_owned()).await;
     assert!(entities.contains(&ada), "{entities}");
     assert!(!entities.contains(&custody), "{entities}");
+    // Every other walk passes over it too, and none fails.
+    for query in [
+        "path=/backlinks",
+        "path=/claims/by-time",
+        "path=/claims/by-id",
+        "path=/claims&by_time=true",
+        "path=/&op=find",
+    ] {
+        let listing = read(query.to_owned()).await;
+        assert!(!listing.contains(&custody), "{query}: {listing}");
+    }
+    // A raw read of it still refuses, and its bytes never leave.
+    let (status, raw) = call(
+        &server,
+        "GET",
+        &format!("/v1/owner/graph-fs?path=/entities/{custody}/body&op=cat"),
+        owner.clone(),
+        None,
+    )
+    .await;
+    assert_ne!(status, StatusCode::OK, "{raw}");
+    assert!(!raw.to_string().contains("never-in-the-tree"), "{raw}");
     assert_eq!(
         read(format!("path=/entities/{ada}/body&op=cat"))
             .await

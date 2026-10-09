@@ -411,18 +411,10 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 id: time.id,
             };
             last_scanned = Some(cursor);
-            let readable = match self
-                .scoped_read
-                .is_entity_readable_with_policy_in(&rtxn, &policy, &cursor.id)
-            {
-                // Sealed secret custody is never part of the tree: absent,
-                // not a failed listing. Raw reads of it still refuse.
-                Err(error) if error.kind() == crate::error::ErrorKind::InvalidSecretCustodyBody => {
-                    false
-                }
-                readable => readable?,
-            };
-            if !readable {
+            if !sealed_is_absent(
+                self.scoped_read
+                    .is_entity_readable_with_policy_in(&rtxn, &policy, &cursor.id),
+            )? {
                 continue;
             }
             let entry = GraphFsEntry::directory(cursor.id.to_hex());
@@ -524,10 +516,11 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 id: time.id,
             };
             last_scanned = Some(temporal);
-            if !self
-                .scoped_read
-                .is_entity_readable_with_policy_in(&rtxn, &policy, &temporal.id)?
-            {
+            if !sealed_is_absent(self.scoped_read.is_entity_readable_with_policy_in(
+                &rtxn,
+                &policy,
+                &temporal.id,
+            ))? {
                 continue;
             }
             if !claim_matches_world_in(&self.scoped_read.vault().store, &rtxn, &temporal.id, world)?
@@ -578,10 +571,11 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             }
             let edge = entry?;
             let cursor = EdgeCursor::from_port(&edge);
-            if !self
-                .scoped_read
-                .is_entity_readable_with_policy_in(&rtxn, &policy, &edge.target)?
-            {
+            if !sealed_is_absent(self.scoped_read.is_entity_readable_with_policy_in(
+                &rtxn,
+                &policy,
+                &edge.target,
+            ))? {
                 continue;
             }
             let name = format!("{}-{}", edge.kind as u8, edge.target.to_hex());
@@ -626,10 +620,11 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 learned_at: time.timestamp,
                 id: time.id,
             };
-            if !self
-                .scoped_read
-                .is_entity_readable_with_policy_in(&rtxn, &policy, &temporal.id)?
-            {
+            if !sealed_is_absent(self.scoped_read.is_entity_readable_with_policy_in(
+                &rtxn,
+                &policy,
+                &temporal.id,
+            ))? {
                 continue;
             }
             let day = temporal.learned_at / 86_400;
@@ -689,10 +684,11 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 id: time.id,
             };
             last_scanned = Some(temporal);
-            if !self
-                .scoped_read
-                .is_entity_readable_with_policy_in(&rtxn, &policy, &temporal.id)?
-            {
+            if !sealed_is_absent(self.scoped_read.is_entity_readable_with_policy_in(
+                &rtxn,
+                &policy,
+                &temporal.id,
+            ))? {
                 continue;
             }
             let entry = GraphFsEntry::file(temporal.id.to_hex(), None);
@@ -762,5 +758,16 @@ fn parse_world_scope(value: &str) -> Result<Option<EntityId>> {
         Ok(None)
     } else {
         parse_entity_id(value).map(Some)
+    }
+}
+
+/// A walk passes over sealed secret custody as absent rather than failing:
+/// it is never part of the tree, and a raw read of it still refuses.
+pub(super) fn sealed_is_absent(readable: Result<bool>) -> Result<bool> {
+    match readable {
+        Err(error) if error.kind() == crate::error::ErrorKind::InvalidSecretCustodyBody => {
+            Ok(false)
+        }
+        readable => readable,
     }
 }

@@ -336,4 +336,19 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         PROMOTE_RECEIPTS.get(&self.store, &rtxn, turn_id)
     }
+
+    /// How many sync pickup markers name `turn_id`. The marker table is
+    /// crate-private, so a transport's test that pins "a refused promotion
+    /// stages nothing for sync" needs a door.
+    #[doc(hidden)]
+    #[cfg(all(feature = "sync", feature = "test-support"))]
+    pub fn off_record_promote_pickup_markers_for_test(&self, turn_id: &EntityId) -> Result<usize> {
+        let rtxn = self.store.env.read_txn()?;
+        let suffix = format!(":{}", turn_id.to_hex());
+        Ok(PROMOTE_PICKUP_MARKERS
+            .scan_keys(&self.store, &rtxn, &[])?
+            .iter()
+            .filter(|key| key.ends_with(&suffix))
+            .count())
+    }
 }

@@ -20,7 +20,7 @@ use super::model::{
     GraphFsCoreutilsDecision, GraphFsCoreutilsVerb, GraphFsEntryKind, GraphFsResolver,
 };
 
-use super::readdir::{normalize_path, parse_entity_id, path_components};
+use super::readdir::{normalize_path, parse_entity_id, path_components, sealed_is_absent};
 
 use super::paging::{CommandOutputBuilder, TemporalCursor};
 
@@ -337,10 +337,11 @@ impl GraphFsResolver<'_, '_> {
                 id: time.id,
             };
             last_scanned = Some(temporal);
-            if !self
-                .scoped_read
-                .is_entity_readable_with_policy_in(&rtxn, &policy, &temporal.id)?
-            {
+            if !sealed_is_absent(self.scoped_read.is_entity_readable_with_policy_in(
+                &rtxn,
+                &policy,
+                &temporal.id,
+            ))? {
                 continue;
             }
             if self.entity_type_in(&rtxn, &temporal.id)? != Some(ENTITY_TYPE_CLAIM) {
@@ -406,7 +407,7 @@ impl GraphFsResolver<'_, '_> {
                 id: time.id,
             };
             last_scanned = Some(temporal);
-            if !self.coreutils_entity_visible_in(&rtxn, &policy, &temporal.id)? {
+            if !sealed_is_absent(self.coreutils_entity_visible_in(&rtxn, &policy, &temporal.id))? {
                 continue;
             }
             let Some(line) = self.find_path_for_temporal_hit_in(&rtxn, path, &temporal.id)? else {
