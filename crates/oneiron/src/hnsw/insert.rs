@@ -20,13 +20,13 @@ use super::rebuild::{
     build_hnsw_graph_from_snapshot, collect_vector_ids, rebuild_dropped_graph_from_snapshot,
     rebuild_hnsw_from_current_snapshot, write_rebuilt_hnsw,
 };
-use super::search::{beam_search, score_dims_for};
+use super::search::{beam_search, beam_search_logged, score_dims_for};
 use super::slim_drop::hnsw_is_dropped;
 use super::storage::{
     decode_neighbors, load_neighbors, load_vector, prune_neighbors_for_node, read_count,
     read_entry_point, read_vector_version, write_neighbors,
 };
-use super::types::{BeamOptions, InsertOutcome};
+use super::types::{BeamOptions, ExpandedLists, HeapEntry, InsertOutcome, neighbor_list_hash};
 
 /// Direct (non-batched) insert/refresh entry point. Production writes go
 /// through [`hnsw_insert_batched`]; this wrapper keeps the historical
@@ -126,6 +126,9 @@ pub(crate) struct InsertPlan {
     count: u64,
     entry_point: EntityId,
     vector: Vec<f32>,
+    /// Every neighbour list the search expanded: the beam is a function of
+    /// these lists, the entry point and the vectors it scored.
+    expanded: ExpandedLists,
     selected: Vec<EntityId>,
 }
 
@@ -133,6 +136,7 @@ impl std::fmt::Debug for InsertPlan {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("InsertPlan")
             .field("count", &self.count)
+            .field("expanded", &self.expanded.len())
             .field("selected", &self.selected.len())
             .finish_non_exhaustive()
     }
@@ -173,49 +177,81 @@ impl InsertPlan {
         if count == 0 {
             return Ok(None);
         }
-        let selected = nearest_neighbors(store, config, rtxn, id, vector, entry_point, &mut 0)?;
+        let expanded = std::cell::RefCell::new(ExpandedLists::new());
+        let mut nearest = beam_search_logged(
+            store,
+            rtxn,
+            vector,
+            (entry_point, &expanded),
+            construction_beam(config),
+            config.dimensions,
+            &mut 0,
+        )?;
         Ok(Some(Self {
             vector_version: read_vector_version(store, rtxn)?,
             count,
             entry_point,
             vector: vector.to_vec(),
-            selected,
+            expanded: expanded.into_inner(),
+            selected: select_neighbors(config, id, &mut nearest),
         }))
     }
 
+    /// Whether the transaction's search would come out the same: the same
+    /// node count, entry point, query and vector version, and every list the
+    /// search expanded unchanged (a maintenance rebuild rewrites lists without
+    /// touching the version). Any read error means no: the transaction then
+    /// searches, and reports, itself.
     fn stands(
         &self,
         store: &impl ManifestDbs,
         txn: &RoTxn<'_>,
         (vector, count, entry_point): (&[f32], u64, EntityId),
-    ) -> Result<bool> {
-        if self.count != count
-            || self.entry_point != entry_point
-            || self.vector.len() != vector.len()
-            || self
+    ) -> bool {
+        self.count == count
+            && self.entry_point == entry_point
+            && self.vector.len() == vector.len()
+            && self
                 .vector
                 .iter()
                 .zip(vector)
-                .any(|(planned, now)| planned.to_bits() != now.to_bits())
-            || read_vector_version(store, txn)? != self.vector_version
-        {
-            return Ok(false);
-        }
-        for neighbor in &self.selected {
-            if store
-                .hnsw_neighbors()
-                .get(txn, neighbor.as_bytes())?
-                .is_none()
-            {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+                .all(|(planned, now)| planned.to_bits() == now.to_bits())
+            && read_vector_version(store, txn).is_ok_and(|version| version == self.vector_version)
+            && self.expanded.iter().all(|(node, hash)| {
+                load_neighbors(store, txn, node)
+                    .is_ok_and(|neighbors| neighbor_list_hash(&neighbors) == *hash)
+            })
+            && self.selected.iter().all(|neighbor| {
+                store
+                    .hnsw_neighbors()
+                    .get(txn, neighbor.as_bytes())
+                    .is_ok_and(|row| row.is_some())
+            })
     }
 }
 
-/// The `m_max_0` nearest live nodes to `vector`, found by the
-/// `ef_construction` beam from `entry_point`.
+fn construction_beam(config: &VaultConfig) -> BeamOptions {
+    BeamOptions {
+        ef: config.hnsw.ef_construction,
+        lenient_neighbors: false,
+        check_existence: false,
+        score_dims: score_dims_for(config),
+    }
+}
+
+/// The `m_max_0` nearest nodes of a construction beam, `id` itself excluded.
+fn select_neighbors(
+    config: &VaultConfig,
+    id: &EntityId,
+    nearest: &mut Vec<HeapEntry>,
+) -> Vec<EntityId> {
+    nearest.retain(|entry| entry.id != *id);
+    nearest.truncate(config.hnsw.m_max_0);
+    nearest.iter().map(|entry| entry.id).collect()
+}
+
+/// The `m_max_0` nearest nodes to `vector`, found by the `ef_construction`
+/// beam from `entry_point`.
 fn nearest_neighbors(
     store: &impl ManifestDbs,
     config: &VaultConfig,
@@ -230,18 +266,11 @@ fn nearest_neighbors(
         txn,
         vector,
         entry_point,
-        BeamOptions {
-            ef: config.hnsw.ef_construction,
-            lenient_neighbors: false,
-            check_existence: false,
-            score_dims: score_dims_for(config),
-        },
+        construction_beam(config),
         config.dimensions,
         ops,
     )?;
-    nearest.retain(|entry| entry.id != *id);
-    nearest.truncate(config.hnsw.m_max_0);
-    Ok(nearest.into_iter().map(|entry| entry.id).collect())
+    Ok(select_neighbors(config, id, &mut nearest))
 }
 
 fn hnsw_insert_inner(
@@ -308,7 +337,7 @@ fn hnsw_insert_inner(
     let entry_point =
         read_entry_point(store, &*wtxn)?.ok_or(Error::CorruptedIndex(ERR_ENTRY_POINT_MISSING))?;
     let selected = match plan {
-        Some(plan) if plan.stands(store, &*wtxn, (vector, count, entry_point))? => {
+        Some(plan) if plan.stands(store, &*wtxn, (vector, count, entry_point)) => {
             plan.selected.clone()
         }
         _ => nearest_neighbors(store, config, &*wtxn, id, vector, entry_point, ops)?,

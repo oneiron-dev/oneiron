@@ -22,7 +22,7 @@ use super::storage::{
     load_neighbors, load_neighbors_lenient, load_required_vector, load_vector_into, read_count,
     read_entry_point,
 };
-use super::types::{BeamOptions, GraphSource, HeapEntry};
+use super::types::{BeamOptions, ExpandedLists, GraphSource, HeapEntry, neighbor_list_hash};
 
 /// Vector search over the NSW graph.
 ///
@@ -87,7 +87,9 @@ pub(crate) fn hnsw_search(
     };
     if count == 0 {
         let graph_rows_exist = match graph {
-            GraphSource::Persisted => store.hnsw_neighbors().first(rtxn)?.is_some(),
+            GraphSource::Persisted | GraphSource::PersistedLogged(_) => {
+                store.hnsw_neighbors().first(rtxn)?.is_some()
+            }
             GraphSource::Rebuilt(neighbors_by_id) => !neighbors_by_id.is_empty(),
         };
         if entry_point.is_some() || graph_rows_exist {
@@ -213,6 +215,28 @@ pub(super) fn beam_search(
     )
 }
 
+/// [`beam_search`] over the persisted rows that also logs every neighbour list
+/// it expands (see [`ExpandedLists`]).
+pub(super) fn beam_search_logged(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    query_vector: &[f32],
+    (entry_point, log): (EntityId, &std::cell::RefCell<ExpandedLists>),
+    options: BeamOptions,
+    dimensions: usize,
+    ops: &mut u64,
+) -> Result<Vec<HeapEntry>> {
+    beam_search_graph(
+        store,
+        txn,
+        query_vector,
+        entry_point,
+        (options, GraphSource::PersistedLogged(log)),
+        dimensions,
+        ops,
+    )
+}
+
 fn beam_search_graph(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -256,7 +280,9 @@ fn beam_search_graph(
     let mut results: BinaryHeap<HeapEntry> = BinaryHeap::new();
     let mut visible: BinaryHeap<HeapEntry> = BinaryHeap::new();
     let graph_nodes = match graph {
-        GraphSource::Persisted => usize::try_from(store.hnsw_neighbors().len(txn)?).unwrap_or(0),
+        GraphSource::Persisted | GraphSource::PersistedLogged(_) => {
+            usize::try_from(store.hnsw_neighbors().len(txn)?).unwrap_or(0)
+        }
         GraphSource::Rebuilt(neighbors_by_id) => neighbors_by_id.len(),
     };
     // Reserve extra headroom so the visited set can absorb frontier growth
@@ -285,10 +311,16 @@ fn beam_search_graph(
 
         *ops += 1;
         let neighbors = match graph {
-            GraphSource::Persisted if lenient_neighbors => {
+            GraphSource::Persisted | GraphSource::PersistedLogged(_) if lenient_neighbors => {
                 load_neighbors_lenient(store, txn, &current.id)?
             }
             GraphSource::Persisted => load_neighbors(store, txn, &current.id)?,
+            GraphSource::PersistedLogged(log) => {
+                let neighbors = load_neighbors(store, txn, &current.id)?;
+                log.borrow_mut()
+                    .push((current.id, neighbor_list_hash(&neighbors)));
+                neighbors
+            }
             // The in-memory rebuild was produced by this module and carries
             // no reserved-sentinel or ragged-length rows, so the lenient and
             // strict decodes coincide.

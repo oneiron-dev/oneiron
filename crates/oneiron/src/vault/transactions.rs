@@ -303,7 +303,10 @@ impl Vault {
     /// this write's share of the vault's group commit (OF-536): concurrent
     /// writes commit together with one fsync, a failing one rolls back only
     /// its own rows, and `Ok` returns once the shared commit is durable. The
-    /// closure runs on the calling thread.
+    /// closure runs on the calling thread. Its result is held until the whole
+    /// group commits, so it must not carry a lock or permit that another
+    /// write's closure takes (an installed session-overlay segment closes its
+    /// group instead).
     /// Explicit Dreamer approvals applied through [`Self::batch_in`] run VAD
     /// consolidation after commit. A postcommit error retains Approved; retry
     /// [`Self::consolidate_claim_vad_now`] to finish that work.
