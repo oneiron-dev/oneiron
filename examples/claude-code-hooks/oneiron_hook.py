@@ -178,6 +178,16 @@ def texts(value, found: list) -> None:
             texts(child, found)
 
 
+def structural(text: str) -> bool:
+    """A record's body as JSON (an actor's name, say), not words to show."""
+    if not text.startswith("{"):
+        return False
+    try:
+        return isinstance(json.loads(text), dict)
+    except ValueError:
+        return False
+
+
 def session_start(args: argparse.Namespace) -> None:
     event = read_event()
     cwd = event.get("cwd") or os.getcwd()
@@ -224,7 +234,7 @@ def session_start(args: argparse.Namespace) -> None:
     lines, seen, size = [], set(), 0
     for text in found:
         text = " ".join(text.split())
-        if not text or text in seen:
+        if not text or text in seen or structural(text):
             continue
         seen.add(text)
         if len(text) > ITEM_CHARS:
