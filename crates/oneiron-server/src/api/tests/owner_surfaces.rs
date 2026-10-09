@@ -454,6 +454,43 @@ async fn graph_fs_reads_the_vault_as_a_tree_for_the_owner_only() {
         "profile.hobby",
         "writes poems about engines",
     );
+    // A sealed secret is absent from the tree, and the listing still works.
+    let secrets = tempfile::tempdir().unwrap();
+    let declared = secrets
+        .path()
+        .canonicalize()
+        .unwrap()
+        .join(".secrets/api.key");
+    std::fs::create_dir_all(declared.parent().unwrap()).unwrap();
+    let custody = {
+        use oneiron::secret_custody::{
+            CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SecretBinding,
+            SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
+        };
+        server
+            .vault()
+            .register_secret(SecretCustodyRecord {
+                schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
+                name: "graph-fs-secret".to_owned(),
+                class: CustodyClass::CustodyPortable,
+                device_only: false,
+                value_bytes: b"never-in-the-tree".to_vec(),
+                status: SecretCustodyStatus::Active,
+                registered_at: 1,
+                rotated_at: None,
+                rotation_generation: 0,
+                bindings: vec![SecretBinding {
+                    effector: "connector:graph-fs-test".to_owned(),
+                    tier_ceiling: CustodyTier::T2LocalRegistered,
+                    scopes: vec!["read".to_owned()],
+                }],
+                manifest_ref: "secrets.toml".to_owned(),
+                declared_paths: vec![declared.to_string_lossy().into_owned()],
+                policy_floor_snapshot: SecretCustodyFloor::default(),
+            })
+            .unwrap()
+            .to_hex()
+    };
     for recipe in refused_recipes(&server) {
         let (status, _) = call(
             &server,
@@ -485,7 +522,9 @@ async fn graph_fs_reads_the_vault_as_a_tree_for_the_owner_only() {
     for directory in ["worlds", "entities", "claims", "backlinks"] {
         assert!(root.contains(directory), "{root}");
     }
-    assert!(read("path=/entities".to_owned()).await.contains(&ada));
+    let entities = read("path=/entities".to_owned()).await;
+    assert!(entities.contains(&ada), "{entities}");
+    assert!(!entities.contains(&custody), "{entities}");
     assert_eq!(
         read(format!("path=/entities/{ada}/body&op=cat"))
             .await

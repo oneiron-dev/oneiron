@@ -525,6 +525,30 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
     .unwrap();
     refused_owner(off_record::enter(vault, &admitted, &room).unwrap_err());
     assert!(vault.off_record_session("revoked-room").unwrap().is_none());
+    // A promotion that passed the door and then waited for the writer is
+    // refused in the transaction that would replay the turn.
+    let room: off_record::Enter = serde_json::from_value(
+        json!({ "session_ref": "promote-room", "mode": "off_record", "backend": "local" }),
+    )
+    .unwrap();
+    off_record::enter(vault, &unbound, &room).unwrap();
+    let turn: off_record::Witness = serde_json::from_value(json!({
+        "session_ref": "promote-room",
+        "turn": { "conversation_ref": "", "turn_ref": null, "occurred_at": 100,
+                  "messages": [{ "id": null, "author": "user", "message_type": "utterance",
+                                 "content": "keep this", "metadata": null,
+                                 "is_visible": true, "order": 0 }] },
+    }))
+    .unwrap();
+    let receipt = off_record::witness(vault, &unbound, &turn).unwrap();
+    let turn =
+        oneiron::EntityId::from_hex(receipt.receipt_ref.strip_prefix("witness:").unwrap()).unwrap();
+    let session = vault
+        .off_record_session_vault()
+        .bind("promote-room")
+        .unwrap();
+    refused(session.promote_turn_as(&admitted, &turn).unwrap_err());
+    assert!(vault.get(&turn).unwrap().is_none(), "nothing replayed");
 }
 
 /// Review serves a stored proposal through the release redaction even with

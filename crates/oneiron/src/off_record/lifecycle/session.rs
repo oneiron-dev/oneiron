@@ -686,6 +686,30 @@ impl OffRecordSession<'_> {
     /// receipt answers the retry, and a crashed process evaporates the stale
     /// overlay outright.
     pub fn promote_turn(&self, turn: &EntityId) -> Result<PromoteOutcome> {
+        self.promote_turn_bound(turn, None)
+    }
+
+    /// [`Self::promote_turn`] for a transport: `owner`'s proof is rechecked in
+    /// the transaction that replays the turn, so a promotion queued behind a
+    /// revocation writes nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
+    /// when the proof no longer holds; otherwise as [`Self::promote_turn`].
+    pub fn promote_turn_as(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        turn: &EntityId,
+    ) -> Result<PromoteOutcome> {
+        self.promote_turn_bound(turn, Some(owner))
+    }
+
+    fn promote_turn_bound(
+        &self,
+        turn: &EntityId,
+        owner: Option<&crate::consent::AuthenticatedOwner>,
+    ) -> Result<PromoteOutcome> {
         let outcome = {
             let mut state = session_entry_state(&self.entry)?;
             if state.record.closing || state.gone {
@@ -712,6 +736,9 @@ impl OffRecordSession<'_> {
             // plan is cut from is the journal the commit below applies against.
             let plan = self.entry.overlay.snapshot()?.plan_promotion(*turn)?;
             let outcome = self.vault.with_write_txn(|wtxn| {
+                if let Some(owner) = owner {
+                    owner.revalidate_in_txn(self.vault, wtxn)?;
+                }
                 FloorWrites::new(&self.vault.store).promote(
                     self.vault,
                     wtxn,

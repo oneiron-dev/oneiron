@@ -207,7 +207,7 @@ pub(crate) fn promote(
     let turn = entity_id("turn", &request.turn)?;
     let session = bind(vault, &request.session_ref)?;
     let outcome = session
-        .promote_turn(&turn)
+        .promote_turn_as(owner, &turn)
         .map_err(|error| session_error(error, &request.session_ref))?;
     Ok(Promoted {
         replayed: outcome.replayed.iter().map(EntityId::to_hex).collect(),

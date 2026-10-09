@@ -411,10 +411,18 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 id: time.id,
             };
             last_scanned = Some(cursor);
-            if !self
+            let readable = match self
                 .scoped_read
-                .is_entity_readable_with_policy_in(&rtxn, &policy, &cursor.id)?
+                .is_entity_readable_with_policy_in(&rtxn, &policy, &cursor.id)
             {
+                // Sealed secret custody is never part of the tree: absent,
+                // not a failed listing. Raw reads of it still refuse.
+                Err(error) if error.kind() == crate::error::ErrorKind::InvalidSecretCustodyBody => {
+                    false
+                }
+                readable => readable?,
+            };
+            if !readable {
                 continue;
             }
             let entry = GraphFsEntry::directory(cursor.id.to_hex());
