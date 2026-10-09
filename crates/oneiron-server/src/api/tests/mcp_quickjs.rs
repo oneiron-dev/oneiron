@@ -536,3 +536,138 @@ async fn quickjs_code_mode_applies_the_tool_argument_rules() {
         "{steps}"
     );
 }
+
+/// Review repro (Astra P1): generated code cannot name a claim's source. A
+/// guest's `user_stated` claim through `self.memory.claim_upsert` is stored as
+/// `Generated`, under the run's provenance, and asks only the approval a
+/// generated claim may ask for.
+#[tokio::test]
+async fn quickjs_code_mode_claims_carry_the_runs_generated_source() {
+    let actor = seeded_test_entity_id(0x0024_6541);
+    let subject = seeded_test_entity_id(0x0024_6542);
+    let claim = seeded_test_entity_id(0x0024_6543);
+    let script = format!(
+        "await self.memory.claim_upsert({{id: '{}', predicate: 'profile.favorite_drink', \
+         subject_ref: '{}', value: 'sencha', confidence: 1, source: 'user_stated'}}); \
+         finish('stated');",
+        claim.to_hex(),
+        subject.to_hex()
+    );
+    let mode = code_mode_server(vec![script]);
+    mode.vault
+        .put_entity(
+            &subject,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"quickjs subject",
+        )
+        .unwrap();
+    register_mcp_actor(
+        &mode.server,
+        "quickjs-claim",
+        actor,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    let args = mcp_merge_args(
+        mcp_endpoint_envelope(actor, "write_memory"),
+        json!({"run_ref": "quickjs-claim", "task": "state a favorite drink"}),
+    );
+    let (_, body) = route_json(
+        mode.server.clone(),
+        mcp_endpoint_call_request("/mcp", "quickjs-claim", "claim", "execute_code", args),
+    )
+    .await;
+    assert!(body.get("error").is_none(), "{body}");
+    let steps = body["result"]["structuredContent"]["steps"].to_string();
+    let stored = mode
+        .vault
+        .get_claim(&claim)
+        .unwrap()
+        .unwrap_or_else(|| panic!("the guest's claim is stored: {steps}"));
+    assert_eq!(stored.source, Some(oneiron::ClaimSource::Generated));
+    assert_eq!(stored.approval, oneiron::ClaimApprovalStatus::Proposed);
+}
+
+/// Review repro (Astra P2): both doors enforce the closed schema the tool list
+/// advertises. A misspelled recall narrowing (`facet_ref` for `facet`) is
+/// refused instead of running unfiltered, on the tool list and in code mode;
+/// the listed spelling still runs.
+#[tokio::test]
+async fn quickjs_code_mode_and_tool_list_refuse_a_field_the_schema_does_not_list() {
+    let facet = seeded_test_entity_id(0x0024_6552).to_hex();
+    let script = format!(
+        "try {{ await self.memory.recall({{query: 'heron lantern', scope: {{facet_ref: '{facet}'}}}}); \
+         finish('reached'); }} catch (error) {{ finish('refused ' + String(error)); }}"
+    );
+    let mode = code_mode_server(vec![script]);
+    let actor = seeded_test_entity_id(0x0024_6551);
+    register_mcp_actor(
+        &mode.server,
+        "quickjs-closed",
+        actor,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    witness_through_tool_list(
+        &mode.server,
+        "quickjs-closed",
+        actor,
+        "The heron lantern hangs by the north gate.",
+    )
+    .await;
+
+    let recall = |scope: Value| {
+        mcp_merge_args(
+            mcp_endpoint_envelope(actor, "read_memory"),
+            json!({"arguments": {"spec": {"query": "heron lantern", "scope": scope}}}),
+        )
+    };
+    let body = mcp_refusal(
+        &mode.server,
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            "quickjs-closed",
+            "misspelled",
+            "recall",
+            recall(json!({"facet_ref": facet})),
+        ),
+    )
+    .await;
+    assert_eq!(
+        body["error"]["data"]["error_code"], "tool_args_invalid",
+        "{body}"
+    );
+    assert!(body.to_string().contains("scope.facet_ref"), "{body}");
+    let (_, body) = route_json(
+        mode.server.clone(),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            "quickjs-closed",
+            "listed",
+            "recall",
+            recall(json!({"world_ref": null, "facet": null})),
+        ),
+    )
+    .await;
+    assert!(body.get("error").is_none(), "{body}");
+    assert!(body.to_string().contains("north gate"), "{body}");
+
+    let args = mcp_merge_args(
+        mcp_endpoint_envelope(actor, "read_memory"),
+        json!({"run_ref": "quickjs-closed", "task": "recall under a misspelled facet"}),
+    );
+    let (_, body) = route_json(
+        mode.server.clone(),
+        mcp_endpoint_call_request("/mcp", "quickjs-closed", "code", "execute_code", args),
+    )
+    .await;
+    assert!(body.get("error").is_none(), "{body}");
+    let steps = body["result"]["structuredContent"]["steps"].to_string();
+    assert!(
+        steps.contains("tool_args_invalid") && steps.contains("scope.facet_ref"),
+        "{steps}"
+    );
+    assert!(!steps.contains("north gate"), "{steps}");
+}

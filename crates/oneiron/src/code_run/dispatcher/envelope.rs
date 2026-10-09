@@ -10,6 +10,7 @@ use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::SelfEffect;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::task_verb::sdk::AgentVerb;
 use crate::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EdgeKind,
     SourceLineage, Vault, WriteEnvelope, WriteProvenance,
@@ -33,6 +34,30 @@ impl HostSelfDispatcher<'_> {
         effect: SelfEffect,
         admission: Option<&consent::CodeEmissionAdmission>,
     ) -> Result<WriteEnvelope> {
+        self.write_envelope_with(effect, admission, Vec::new())
+    }
+
+    /// The envelope a code-mode verb call writes under: the run's own, naming
+    /// the verb and, in a durable run, the call's bridge position.
+    pub(super) fn agent_verb_envelope(
+        &self,
+        verb: AgentVerb,
+        seq: Option<u64>,
+    ) -> Result<WriteEnvelope> {
+        let admission = self.non_candidate_code_emission_admission()?;
+        let mut call = vec![(Value::from("verb"), Value::from(verb.as_str()))];
+        if let Some(seq) = seq {
+            call.push((Value::from("seq"), Value::from(seq)));
+        }
+        self.write_envelope_with(SelfEffect::AgentVerb, admission.as_ref(), call)
+    }
+
+    fn write_envelope_with(
+        &self,
+        effect: SelfEffect,
+        admission: Option<&consent::CodeEmissionAdmission>,
+        call: Vec<(Value, Value)>,
+    ) -> Result<WriteEnvelope> {
         let mut provenance = vec![
             (
                 Value::from(SELF_PROVENANCE_SURFACE_KEY),
@@ -47,6 +72,7 @@ impl HostSelfDispatcher<'_> {
                 Value::from(effect.as_str()),
             ),
         ];
+        provenance.extend(call);
         if let Some(admission) = admission {
             provenance.push((Value::from("runner"), Value::from("dreamer")));
             provenance.push((
@@ -59,11 +85,13 @@ impl HostSelfDispatcher<'_> {
         // effects that persist a claim/edge carry it — the fixture effect
         // persists nothing a lineage could qualify — and only when the host
         // has actually observed an external effect, so an unobserved run
-        // builds the byte-identical trivial envelope it built before.
+        // builds the byte-identical trivial envelope it built before. A verb
+        // call's claims are claims the run wrote, so they carry it too.
         let lineage = match effect {
             SelfEffect::MemoryPutClaim
             | SelfEffect::MemorySupersedeClaim
             | SelfEffect::MemoryPutEdge
+            | SelfEffect::AgentVerb
                 if self.external_effect_seen.get() =>
             {
                 SourceLineage::of(self.source()).with(ClaimSource::ToolOutput)

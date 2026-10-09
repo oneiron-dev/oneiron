@@ -1,3 +1,4 @@
+mod agent_verb;
 mod coordination;
 mod emission;
 mod envelope;
@@ -241,22 +242,25 @@ impl<'a> HostSelfDispatcher<'a> {
     ///
     /// The ordinary [`SelfDispatcher`] implementation intentionally has no run
     /// id and preserves the standalone run-ref-only speech identity. The engine
-    /// executor owns the durable id, so it enters through this crate-private
-    /// door and binds that id only to transcript identity; guest payloads still
-    /// cannot name or forge it.
+    /// executor owns the durable id and the call's bridge position `seq`, so it
+    /// enters through this crate-private door and binds them only to
+    /// transcript identity and to the receipt a verb write keeps; guest
+    /// payloads still cannot name or forge either.
     pub(crate) fn dispatch_for_executor_run(
         &self,
         run_id: EntityId,
+        seq: u64,
         call: SelfCall,
     ) -> Result<SelfDispatchOutcome> {
-        self.dispatch_bound(call, Some(run_id))
+        self.dispatch_bound(call, Some((run_id, seq)))
     }
 
     fn dispatch_bound(
         &self,
         call: SelfCall,
-        run_id: Option<EntityId>,
+        position: Option<(EntityId, u64)>,
     ) -> Result<SelfDispatchOutcome> {
+        let run_id = position.map(|(run_id, _)| run_id);
         // The descriptor bridge answers before the policy probe: that probe is
         // itself a vault read, and `self.context` must perform none.
         if !matches!(call, SelfCall::Context(_)) {
@@ -306,33 +310,8 @@ impl<'a> HostSelfDispatcher<'a> {
                 self.dispatch_inference_defaults(Some(&json))
             }
             SelfCall::WakePolicyWrite(call) => self.dispatch_wake_policy_write(call),
-            SelfCall::AgentVerb(call) => Ok(self.dispatch_agent_verb(&call)),
+            SelfCall::AgentVerb(call) => self.dispatch_agent_verb(call, position),
         }
-    }
-
-    /// A refused verb is the guest's to handle, like any typed refusal: it
-    /// does not halt the run, and the verb's own gate owns its writes.
-    fn dispatch_agent_verb(
-        &self,
-        call: &crate::code_run::SelfAgentVerbCall,
-    ) -> SelfDispatchOutcome {
-        let outcome = match &self.agent_verbs {
-            Some(door) => door.call(call),
-            None => Err(crate::code_run::AgentVerbRefusal {
-                code: "agent_verb_door_unbound".to_owned(),
-                message: "this run's host binds no SDK verb door".to_owned(),
-            }),
-        };
-        outcome.map_or_else(
-            |refusal| {
-                SelfDispatchOutcome::Denied(crate::code_run::SelfDeniedResult {
-                    effect: SelfEffect::AgentVerb,
-                    outcome: refusal.code,
-                    reason_codes: vec![refusal.message],
-                })
-            },
-            SelfDispatchOutcome::AgentVerb,
-        )
     }
 }
 

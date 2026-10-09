@@ -178,10 +178,10 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         // has made, so a write can never be sealed against a narrower history
         // than the one already recorded.
         self.gated_write.observe_bridge_history(&self.bridge_calls);
-        let outcome = match self
+        let dispatched = self
             .gated_write
-            .dispatch_for_executor_run(self.run_id, call.clone())
-        {
+            .dispatch_for_executor_run(self.run_id, seq, call.clone());
+        let outcome = match dispatched {
             Ok(outcome) => outcome,
             Err(err) => {
                 let Some(error_outcome) = dispatch_error_outcome(&call, &err) else {

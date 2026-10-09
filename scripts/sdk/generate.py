@@ -313,7 +313,7 @@ async fn execute_mcp_agent_verb(
         actor: &McpCallContext,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
         let input = mcp_agent_verb_input(args.tool.name, &args.payload.arguments)?;
-        execute_agent_verb_input(server, args.tool.name, input, actor).await
+        execute_agent_verb_input(server, args.tool.name, input, actor, None).await
     }
 
 fn mcp_agent_verb_input(tool: &str, a: &crate::mcp::McpVerbArguments) -> Result<Value, McpGatewayError> {
@@ -327,14 +327,23 @@ pub(crate) fn mcp_agent_verb_arguments(tool: &str, input: &Value) -> Result<crat
     result += '_ => return Err(invalid()), }\nserde_json::from_value(Value::Object(arguments)).map_err(|_| invalid())\n}\n'
     result += '''/// Runs one verb from its whole typed input, with the actor ceiling and
 /// gate every other door applies. Every MCP door reaches the verb table here.
+/// The input names only fields the verb's advertised closed schema lists, and
+/// a code-mode call's claims are written under its run's host `origin`.
 pub(crate) async fn execute_agent_verb_input(
         server: &Arc<SyncServer>,
         tool: &str,
         input: Value,
         actor: &McpCallContext,
+        origin: Option<oneiron::memory::HostWriteOrigin>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
 '''
-    result += invalid + 'let memory = server.vault.memory(actor.actor_ref, actor.actor_class);\nmatch tool {\n'
+    result += invalid + '''if let Some(field) = crate::mcp::verb_input_unknown_field(tool, &input) {
+        return Err(McpGatewayError::new(-32602, "tool_args_invalid", format!("{tool} input names unknown field `{field}`")));
+    }
+    let memory = server.vault.memory(actor.actor_ref, actor.actor_class);
+    let memory = match origin { Some(origin) => memory.with_host_origin(origin), None => memory };
+    match tool {
+'''
     result += ''.join(mcp_input_dispatch(row) for row in ROWS)
     result += '_ => Err(invalid()), } }\n'
     result += '''/// One typed verb result, drained in a single frame.

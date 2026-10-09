@@ -45,6 +45,7 @@ pub use self::endpoint_args::{
     McpSetupToolArgs, McpVerbArguments, McpVerbToolArgs, McpVerbToolPayload,
     validate_mcp_endpoint_tool_args,
 };
+pub(crate) use self::endpoint_schema::verb_input_unknown_field;
 pub use self::endpoint_schema::{
     MCP_BOARD_BUDGET_TOK_MAX, MCP_CACHE_TTL_MS_MAX, MCP_FRAME_EPOCH_MAX, MCP_PAGE_LIMIT_MAX,
     MCP_PAGE_LIMIT_MIN,

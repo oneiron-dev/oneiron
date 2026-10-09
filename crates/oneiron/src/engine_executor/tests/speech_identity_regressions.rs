@@ -113,7 +113,7 @@ impl JsCodeModeRuntime for ReplayConflictAfterSpeechRuntime<'_> {
     }
 }
 
-fn initial_executor_replay_record(
+pub(super) fn initial_executor_replay_record(
     vault: &Vault,
     config: &EngineExecutorConfig,
 ) -> CodeRunReplayRecord {

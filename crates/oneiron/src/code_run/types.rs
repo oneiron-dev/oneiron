@@ -451,10 +451,15 @@ pub struct AgentVerbRefusal {
 /// The engine runs no verb here. The host that binds this door runs each call
 /// with its own actor ceiling and gate, exactly as its other doors do, so code
 /// mode holds no authority a direct call lacks. Unbound, a verb call is refused.
+///
+/// The door binds `origin` onto the memory surface the verb runs on, so the
+/// verb's claims carry the run's `Generated` source, lineage and provenance,
+/// never a source the guest's input names.
 pub trait AgentVerbDoor: Send + Sync {
     fn call(
         &self,
         call: &SelfAgentVerbCall,
+        origin: &crate::memory::HostWriteOrigin,
     ) -> std::result::Result<serde_json::Value, AgentVerbRefusal>;
 }
 

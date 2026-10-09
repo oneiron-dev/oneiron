@@ -328,7 +328,7 @@ impl ActionRegistry {
             Some(proof) => dispatcher.with_authenticated_owner(proof),
             None => dispatcher,
         };
-        let result = dispatcher.dispatch_for_executor_run(run_id, call.clone());
+        let result = dispatcher.dispatch_for_executor_run(run_id, 0, call.clone());
         let recorded = match &result {
             Ok(outcome) => outcome.clone(),
             Err(Error::Gate(crate::error::GateError::GateWriteRejected {

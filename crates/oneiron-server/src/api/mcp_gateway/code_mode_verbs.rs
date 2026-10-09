@@ -5,7 +5,8 @@
 //! same argument rules, scoped admission and credential gate, then takes the
 //! one generated dispatcher every MCP door shares. Code mode holds no
 //! authority a direct tool call lacks; only the paging envelope is left out,
-//! since the guest receives the verb's whole output.
+//! since the guest receives the verb's whole output. Its writes carry the
+//! run's host-owned origin, not a source the guest's input names.
 
 use super::actor_dispatch::{mcp_tool_validation_error, mcp_verb_gate};
 use super::admission::mcp_admit_scoped_verb;
@@ -14,6 +15,7 @@ use super::{McpCallContext, McpGatewayError};
 use crate::mcp::{McpEndpointTool, McpSurfaceMode, registered_surface};
 use crate::server::SyncServer;
 use oneiron::code_run::{AgentVerbDoor, AgentVerbRefusal, SelfAgentVerbCall};
+use oneiron::memory::HostWriteOrigin;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -36,7 +38,11 @@ impl McpCodeModeVerbs {
 }
 
 impl AgentVerbDoor for McpCodeModeVerbs {
-    fn call(&self, call: &SelfAgentVerbCall) -> Result<Value, AgentVerbRefusal> {
+    fn call(
+        &self,
+        call: &SelfAgentVerbCall,
+        origin: &HostWriteOrigin,
+    ) -> Result<Value, AgentVerbRefusal> {
         // The run's worker thread drives its own reactor; the verb runs on the
         // server runtime, as a tool call would, and the worker waits for it.
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
@@ -44,8 +50,9 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         let actor = self.actor.clone();
         let verb = call.verb.as_str();
         let input = call.input.clone();
+        let origin = origin.clone();
         self.runtime.spawn(async move {
-            let _ = sender.send(execute_code_mode_verb(&server, &actor, verb, input).await);
+            let _ = sender.send(execute_code_mode_verb(&server, &actor, verb, input, origin).await);
         });
         receiver
             .recv()
@@ -65,6 +72,7 @@ async fn execute_code_mode_verb(
     actor: &McpCallContext,
     verb: &str,
     input: Value,
+    origin: HostWriteOrigin,
 ) -> Result<Value, McpGatewayError> {
     let Some(McpEndpointTool::Verb(tool)) =
         registered_surface(McpSurfaceMode::ToolFirst).resolve(verb)
@@ -81,6 +89,7 @@ async fn execute_code_mode_verb(
         .map_err(mcp_tool_validation_error)?;
     mcp_admit_scoped_verb(server, tool, &arguments, actor)?;
     mcp_verb_gate(server, tool, &arguments, actor)?;
-    let (output, ..) = execute_agent_verb_input(server, tool.name, input, actor).await?;
+    let (output, ..) =
+        execute_agent_verb_input(server, tool.name, input, actor, Some(origin)).await?;
     Ok(output)
 }
