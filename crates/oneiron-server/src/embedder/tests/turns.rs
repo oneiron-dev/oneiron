@@ -134,7 +134,7 @@ impl Served {
         self.witness(
             &"21".repeat(16),
             DAY0 + 60,
-            "assistant",
+            "companion",
             &["Thanks, I will book it for Thursday."],
         )
         .await;

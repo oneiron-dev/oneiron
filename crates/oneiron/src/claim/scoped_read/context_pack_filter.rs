@@ -132,7 +132,7 @@ impl ScopedRead<'_> {
             }
             if admission.visible() {
                 self.filter_context_entity_edges(rtxn, policy, filter, &mut entity)?;
-                self.filter_turn_content(rtxn, policy, &mut entity)?;
+                self.add_turn_content(rtxn, policy, &mut entity)?;
                 kept.push(entity);
             }
         }
@@ -255,35 +255,28 @@ impl ScopedRead<'_> {
         Ok(())
     }
 
-    /// A hydrated TURN's `content` is its messages' text (ARCH-0004), read
-    /// for no one; keep only the messages this read may see.
-    fn filter_turn_content(
+    /// A TURN's text is its messages' (ARCH-0004), which its own body does
+    /// not hold: a hydrated turn gets as `content` those this read may see.
+    /// Added after admission, whose snapshot check compares each field with
+    /// the turn's own body.
+    fn add_turn_content(
         &self,
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         entity: &mut ContextEntity,
     ) -> Result<()> {
+        if entity.entity_type != crate::registry::ENTITY_TYPE_TURN {
+            return Ok(());
+        }
         let Some(fields) = entity.fields.as_mut() else {
             return Ok(());
         };
-        if entity.entity_type != crate::registry::ENTITY_TYPE_TURN
-            || !fields.contains_key("content")
+        if let Some(text) =
+            crate::embed::readable_turn_text_in_txn(self.vault, rtxn, &entity.id, |message| {
+                self.is_entity_readable_with_policy_in(rtxn, policy, message)
+            })?
         {
-            return Ok(());
-        }
-        match crate::embed::readable_turn_text_in_txn(self.vault, rtxn, &entity.id, |message| {
-            self.is_entity_readable_with_policy_in(rtxn, policy, message)
-        })? {
-            Some(text) => {
-                fields.insert("content".to_owned(), serde_json::Value::String(text));
-            }
-            // Its messages hold words this read may not see; a `content` of
-            // the turn's own body (no messages say anything) stays.
-            None => {
-                if crate::embed::turn_text_in_txn(self.vault, rtxn, &entity.id)?.is_some() {
-                    fields.remove("content");
-                }
-            }
+            fields.insert("content".to_owned(), serde_json::Value::String(text));
         }
         Ok(())
     }

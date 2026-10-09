@@ -208,12 +208,6 @@ pub(super) fn hydrate_entity(
                         serde_json::Value::String(vault.note_text_in_txn(rtxn, id)?),
                     );
                 }
-                // A TURN's text is its messages' (ARCH-0004), not its body's.
-                if header.entity_type == crate::registry::ENTITY_TYPE_TURN
-                    && let Some(text) = crate::embed::turn_text_in_txn(vault, rtxn, &id)?
-                {
-                    fields.insert("content".to_owned(), serde_json::Value::String(text));
-                }
                 fields
             }
         })
