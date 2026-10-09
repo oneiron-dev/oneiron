@@ -384,7 +384,10 @@ pub(crate) fn enqueue_partition_attempts_in_txn(
     }
     let screen = prefilter_partition_input_in_txn(vault, wtxn, &turns)?;
     let plans = partition_screened_turns_in_txn(vault, wtxn, &screen.kept, watermark)?;
-    let carried = super::redirty::carried_orders_in_txn(vault, wtxn, scope, &turns)?;
+    let carried: BTreeMap<_, _> = turns
+        .iter()
+        .filter_map(|turn| Some((turn.turn_id, turn.carrier?)))
+        .collect();
     let store = DreamerRunnerStore::new(vault);
     let mut outcomes = Vec::with_capacity(plans.len());
     for plan in &plans {
@@ -447,19 +450,15 @@ pub(crate) fn read_partition_turns_in_txn(
             .next()
             .transpose()?
             .map(|edge| edge.target);
-        // The effective dirty position the scan ordered this TURN by, so a
+        // The effective dirty key the scan ordered this TURN by, so a
         // re-dirtied TURN's round hashes to a new attempt identity.
-        let learned_at = super::redirty::effective_learned_at_in_txn(
-            vault,
-            txn,
-            scope,
-            turn_id,
-            header.learned_at,
-        )?;
+        let carrier =
+            super::redirty::carrier_key_in_txn(vault, txn, scope, turn_id, header.learned_at)?;
         turns.push(WorkingSetTurn {
             turn_id: *turn_id,
             role,
-            learned_at,
+            learned_at: carrier.map_or(header.learned_at, |(position, _)| position),
+            carrier: carrier.map(|(_, order)| order),
             conversation,
         });
     }

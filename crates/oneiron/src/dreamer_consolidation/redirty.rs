@@ -24,7 +24,6 @@
 //!
 //! One latest row per TURN: a newer change replaces it, pending for every
 //! scope again. Like stream finality, the row is local to this vault.
-use super::watermark::WorkingSetTurn;
 use crate::Vault;
 use crate::dreamer_runner::DreamerConsolidationScope;
 use crate::entity_id::EntityId;
@@ -118,12 +117,17 @@ pub(crate) fn redirty_turn_in_txn(
 }
 
 /// Marks the carriers a settled round of `scope` selected, each `(turn,
-/// order)`, consumed for that scope at the row it read. A carrier a newer
-/// change replaced since (another order) stays pending.
+/// order)`, consumed for that scope at the row it read, capped at `through`.
+/// A carrier a newer change replaced since (another order) stays pending.
+/// The complete-second door passes its settled second as `through`: the
+/// caller enqueued its round in an earlier commit, so a row re-put past the
+/// settled seconds since is new work on its own temporal key. A fenced
+/// round passes `u64::MAX`.
 pub(super) fn consume_carriers_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     scope: DreamerConsolidationScope,
+    through: u64,
     selected: impl IntoIterator<Item = (EntityId, EntityId)>,
 ) -> Result<()> {
     for (turn, order) in selected {
@@ -131,26 +135,7 @@ pub(super) fn consume_carriers_in_txn(
             continue;
         };
         if carrier.order == order && carrier.pending(scope) {
-            consume_in_txn(vault, txn, scope, &turn, carrier, u64::MAX)?;
-        }
-    }
-    Ok(())
-}
-
-/// The complete-second door: every carrier still pending for `scope` at or
-/// before `upper` is consumed, as that settlement completes the temporal
-/// keys of those seconds. It vouches for no row past `upper`: the caller
-/// enqueued its round in an earlier commit, so a row re-put past the
-/// settled seconds since is new work on its own temporal key.
-pub(super) fn consume_carriers_through_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    scope: DreamerConsolidationScope,
-    upper: u64,
-) -> Result<()> {
-    for (turn, carrier) in REDIRTY.scan(&vault.store, txn)? {
-        if carrier.pending(scope) && carrier.position <= upper {
-            consume_in_txn(vault, txn, scope, &turn, carrier, upper)?;
+            consume_in_txn(vault, txn, scope, &turn, carrier, through)?;
         }
     }
     Ok(())
@@ -193,53 +178,19 @@ fn consume_in_txn(
     REDIRTY.put(&vault.store, txn, turn, &carrier)
 }
 
-/// The effective selection key of `turn` for `scope`, whose row carries
-/// `stored`, in the caller's snapshot: its carrier's key while that leads a
-/// live row, else the row's own temporal key `(stored, turn)`.
-pub(super) fn effective_key_in_txn(
+/// The key `(position, order)` of the carrier that keys `turn` for `scope`,
+/// whose row carries `stored`, in the caller's snapshot: `Some` while it
+/// leads a live row, else `None` and the TURN stands at its own temporal key
+/// `(stored, turn)`.
+pub(super) fn carrier_key_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     scope: DreamerConsolidationScope,
     turn: &EntityId,
     stored: u64,
-) -> Result<(u64, EntityId)> {
+) -> Result<Option<(u64, EntityId)>> {
     let carrier = REDIRTY.get(&vault.store, txn, turn)?;
-    let leading = leading_carrier(vault, txn, scope, turn, stored, carrier.as_ref())?;
-    Ok(leading.unwrap_or((stored, *turn)))
-}
-
-/// The second of [`effective_key_in_txn`].
-pub(super) fn effective_learned_at_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    scope: DreamerConsolidationScope,
-    turn: &EntityId,
-    stored: u64,
-) -> Result<u64> {
-    Ok(effective_key_in_txn(vault, txn, scope, turn, stored)?.0)
-}
-
-/// The carrier ids of those `turns` keyed by their carriers for `scope`, for
-/// the partition-round identity: a carried TURN hashes the key it was
-/// selected at.
-pub(super) fn carried_orders_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    scope: DreamerConsolidationScope,
-    turns: &[WorkingSetTurn],
-) -> Result<BTreeMap<EntityId, EntityId>> {
-    let mut orders = BTreeMap::new();
-    for turn in turns.iter().map(|turn| turn.turn_id) {
-        let Some(row) = vault.store.port_entity_record(txn, &turn)? else {
-            continue;
-        };
-        let carrier = REDIRTY.get(&vault.store, txn, &turn)?;
-        let leading = leading_carrier(vault, txn, scope, &turn, row.learned_at, carrier.as_ref())?;
-        if let Some((_, order)) = leading {
-            orders.insert(turn, order);
-        }
-    }
-    Ok(orders)
+    leading_carrier(vault, txn, scope, turn, stored, carrier.as_ref())
 }
 
 /// `carrier`'s key while it leads the live row of `turn` for `scope`; the

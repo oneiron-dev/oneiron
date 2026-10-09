@@ -307,8 +307,8 @@ impl PreparedWake {
                 }
                 // Membership and order read the effective selection key, as
                 // the scan does; the source pin keeps the row's own learned_at.
-                let (learned_at, key) =
-                    super::redirty::effective_key_in_txn(vault, &txn, scope, &id, *stored)?;
+                let carrier = super::redirty::carrier_key_in_txn(vault, &txn, scope, &id, *stored)?;
+                let (learned_at, key) = carrier.unwrap_or((*stored, id));
                 let facts = decode_turn_body(bytes);
                 let role = dreamer_turn_role(
                     facts.speaker.as_deref(),
@@ -319,7 +319,7 @@ impl PreparedWake {
                     && facts.facet_ref.or(parent.facet_ref) == partition.facet_ref
                     && (original.contains(&id) || learned_at >= watermark)
                 {
-                    turns.push((learned_at, key, id));
+                    turns.push((learned_at, key, id, carrier.map(|(_, order)| order)));
                 }
             }
             turns.sort_unstable();
@@ -333,7 +333,7 @@ impl PreparedWake {
             if turns.len() > limit
                 || !original
                     .iter()
-                    .all(|id| turns.iter().any(|(_, _, got)| got == id))
+                    .all(|id| turns.iter().any(|(_, _, got, _)| got == id))
             {
                 preparations.insert(
                     attempt,
@@ -346,7 +346,7 @@ impl PreparedWake {
             }
             let working_set: Vec<super::WorkingSetTurn> = turns
                 .into_iter()
-                .map(|(learned_at, _, turn_id)| {
+                .map(|(learned_at, _, turn_id, carrier)| {
                     let facts = decode_turn_body(&sources[&turn_id].2);
                     super::WorkingSetTurn {
                         turn_id,
@@ -355,6 +355,7 @@ impl PreparedWake {
                             &vault.config.assistant_display_names,
                         ),
                         learned_at,
+                        carrier,
                         conversation: Some(partition.conversation_ref),
                     }
                 })

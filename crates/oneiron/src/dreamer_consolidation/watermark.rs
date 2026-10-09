@@ -84,6 +84,11 @@ pub struct WorkingSetTurn {
     pub turn_id: EntityId,
     pub role: DreamerTurnRole,
     pub learned_at: u64,
+    /// The id of the re-dirty carrier this TURN was selected at, the
+    /// selection key's id beside `learned_at` (then the carrier's position);
+    /// `None` at the TURN's own temporal key. A complete-second settlement
+    /// consumes exactly the carriers its round names.
+    pub carrier: Option<EntityId>,
     /// The turn's CONVERSATION (`conversation_of(turn)`) — the consolidation
     /// grouping key. Never a SESSION entity: the canonical SESSION (type 2)
     /// is one time-bounded visit to a conversation (ONE-1685 resolved the
@@ -123,9 +128,11 @@ pub(crate) fn read_watermark_in_txn(
 }
 
 /// Complete-second administrative adapter — writes `last_turn_id = None`,
-/// treating the whole second as consumed, and consumes every re-dirty
-/// carrier still pending through it; bounded rounds must use the
-/// exact-position path.
+/// treating the whole second as consumed, and consumes the re-dirty carriers
+/// the `queued` round was selected at through it, by identity
+/// ([`WorkingSetTurn::carrier`]): a carrier a newer change put in place of
+/// one since, even in that same second, stays pending. Bounded rounds must
+/// use the exact-position path.
 ///
 /// Call ONLY after the round's attempts are enqueued+committed — a crash
 /// before this re-scans, and idempotency rides the enqueue dedupe keys
@@ -134,10 +141,20 @@ pub fn advance_watermark(
     vault: &Vault,
     scope: DreamerConsolidationScope,
     last_learned_at: u64,
+    queued: &[WorkingSetTurn],
 ) -> Result<()> {
     let mut wtxn = vault.store.env.write_txn()?;
     write_watermark_position_in_txn(vault, &mut wtxn, scope, last_learned_at, None)?;
-    super::redirty::consume_carriers_through_in_txn(vault, &mut wtxn, scope, last_learned_at)?;
+    super::redirty::consume_carriers_in_txn(
+        vault,
+        &mut wtxn,
+        scope,
+        last_learned_at,
+        queued
+            .iter()
+            .filter(|turn| turn.learned_at <= last_learned_at)
+            .filter_map(|turn| Some((turn.turn_id, turn.carrier?))),
+    )?;
     wtxn.commit()?;
     Ok(())
 }
@@ -265,6 +282,7 @@ fn settle_round_in_txn(
         vault,
         wtxn,
         scope,
+        u64::MAX,
         round
             .iter()
             .filter(|row| row.carried)
@@ -599,6 +617,7 @@ pub fn scan_dirty_turns(
             turn_id: row.turn_id,
             role: row.role,
             learned_at: row.learned_at,
+            carrier: row.carried.then_some(row.key),
             conversation: conversation_of(vault, &row.turn_id)?,
         });
     }

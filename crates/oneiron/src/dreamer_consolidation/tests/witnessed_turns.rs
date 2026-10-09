@@ -849,6 +849,7 @@ fn gap_queue_refuses_a_text_gap_whose_message_changed_after_the_scan() -> Result
             turn_id: turn,
             role: DreamerTurnRole::User,
             learned_at: 10,
+            carrier: None,
             conversation: Some(conversation),
         }];
         let (gaps, texts) = super::super::gap::scan_with_texts(&vault, &working_set, 2_000)?;

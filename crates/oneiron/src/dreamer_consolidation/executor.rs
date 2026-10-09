@@ -764,6 +764,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                     turn_id: *turn_id,
                     role,
                     learned_at: 0,
+                    carrier: None,
                     conversation: conversation_of(ctx.vault, turn_id)?,
                 });
             }

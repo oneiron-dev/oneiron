@@ -5,17 +5,22 @@
 //! learned is planned by a session end in that same second, and settling it
 //! strands no TURN learned after it. A consumed continuation hides no later
 //! re-put of its TURN, comes back on an operator's full rescan, and settles
-//! through the public complete-second door, which leaves a re-put past the
-//! settled second dirty.
+//! through the public complete-second door, which consumes only the carriers
+//! its round was selected at: a re-put past the settled second, and a newer
+//! continuation finalized in that same second, stay dirty.
 #![cfg(feature = "sync")]
 
 use super::*;
 
-/// The Micro dirty scan from the live cursor, as TURN ids in scan order.
-fn dirty(vault: &Vault) -> Result<Vec<EntityId>> {
+/// The Micro dirty round from the live cursor, in scan order.
+fn round(vault: &Vault) -> Result<Vec<WorkingSetTurn>> {
     let scope = DreamerConsolidationScope::Micro;
-    let turns = scan_dirty_turns(vault, scope, &read_watermark(vault, scope)?, 10)?;
-    Ok(turns.into_iter().map(|turn| turn.turn_id).collect())
+    scan_dirty_turns(vault, scope, &read_watermark(vault, scope)?, 10)
+}
+
+/// [`round`] as TURN ids.
+fn dirty(vault: &Vault) -> Result<Vec<EntityId>> {
+    Ok(round(vault)?.into_iter().map(|turn| turn.turn_id).collect())
 }
 
 /// Queues the dirty round, then settles the Micro cursor on its last TURN, as
@@ -23,7 +28,7 @@ fn dirty(vault: &Vault) -> Result<Vec<EntityId>> {
 fn consume(vault: &Vault) -> Result<AttemptId> {
     let scope = DreamerConsolidationScope::Micro;
     let attempt = queue_micro(vault)?;
-    let round = scan_dirty_turns(vault, scope, &read_watermark(vault, scope)?, 10)?;
+    let round = round(vault)?;
     advance_watermark_to_turn(vault, scope, round.last().expect("a round to consume"))?;
     assert!(dirty(vault)?.is_empty(), "the round consumed every turn");
     Ok(attempt)
@@ -243,12 +248,13 @@ fn a_consumed_continuation_comes_back_on_a_full_rescan_and_settles_by_second() -
     consume(&vault)?;
     let scope = DreamerConsolidationScope::Micro;
     crate::dreamer_prefilter::reopen_prefilter_rescan(&vault, scope, 0)?;
+    let reopened = round(&vault)?;
     assert_eq!(
-        dirty(&vault)?,
+        reopened.iter().map(|turn| turn.turn_id).collect::<Vec<_>>(),
         vec![turn],
         "a full rescan reopens every turn"
     );
-    crate::dreamer_consolidation::advance_watermark(&vault, scope, 50)?;
+    crate::dreamer_consolidation::advance_watermark(&vault, scope, 50, &reopened)?;
     assert!(
         dirty(&vault)?.is_empty(),
         "settling through its second consumes it"
@@ -266,6 +272,7 @@ fn a_public_settlement_leaves_a_later_re_put_dirty() -> Result<()> {
     let writer = EntityId::from_bytes([0x9B; 16])?;
     consume(&vault)?;
     end_stream(&vault, writer, &input, " Oleksii", "finalize");
+    let queued = round(&vault)?;
     queue_micro(&vault)?;
     clock.set(60);
     let row = vault.get_raw(&turn)?.expect("the turn row");
@@ -277,11 +284,41 @@ fn a_public_settlement_leaves_a_later_re_put_dirty() -> Result<()> {
         &row[crate::batch::ENTITY_METADATA_HEADER_LEN..],
     )?;
     let scope = DreamerConsolidationScope::Micro;
-    crate::dreamer_consolidation::advance_watermark(&vault, scope, 50)?;
+    crate::dreamer_consolidation::advance_watermark(&vault, scope, 50, &queued)?;
     assert_eq!(
         dirty(&vault)?,
         vec![turn],
         "the re-put past the settled second is new work"
+    );
+    Ok(())
+}
+
+/// A host queues a carried round at second 50, another continuation of the
+/// same TURN finalizes in that same second, and the host then settles its
+/// round through 50 at the public complete-second door: the settlement
+/// consumes the carrier the round was selected at, never its replacement,
+/// which the next scan selects with the newer words.
+#[test]
+fn a_public_settlement_leaves_a_same_second_replacement_pending() -> Result<()> {
+    let (_dir, vault, _clock) = open_clocked_vault();
+    let (turn, _, _, input) = stream_turn(&vault, 0x9D, "call me", "finalize")?;
+    let writer = EntityId::from_bytes([0x9D; 16])?;
+    consume(&vault)?;
+    end_stream(&vault, writer, &input, " Oleksii", "finalize");
+    let queued = round(&vault)?;
+    let attempt = queue_micro(&vault)?;
+    end_stream(&vault, writer, &input, " please", "finalize");
+    let scope = DreamerConsolidationScope::Micro;
+    crate::dreamer_consolidation::advance_watermark(&vault, scope, 50, &queued)?;
+    assert_eq!(
+        dirty(&vault)?,
+        vec![turn],
+        "the replacement continuation is still pending"
+    );
+    assert_ne!(
+        queue_micro(&vault)?,
+        attempt,
+        "the newer words get a new attempt"
     );
     Ok(())
 }
