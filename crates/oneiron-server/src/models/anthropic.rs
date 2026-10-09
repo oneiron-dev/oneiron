@@ -34,7 +34,7 @@ impl From<HttpFailure> for AnthropicMessagesTransportError {
             HttpFailure::Timeout => Self::Timeout,
             HttpFailure::Connection => Self::Connection,
             HttpFailure::StreamCut => Self::StreamCut,
-            HttpFailure::Malformed => Self::Server,
+            HttpFailure::Malformed | HttpFailure::EventTooLarge => Self::Server,
         }
     }
 }
@@ -51,8 +51,12 @@ impl AnthropicMessagesTransport for AnthropicHttp {
                 .http
                 .post_json(&request.path, &request.headers, &body)
                 .await?;
-            let served = reply.body.get("model").cloned();
-            record_served_model(reply.body.get_mut("usage"), served);
+            // A reply without usage (or with a null one) gets one carrying
+            // only the served model; the adapter reads its absent counts as
+            // zero, as it would anyway.
+            if (200..300).contains(&reply.status) {
+                carry_served_model(&mut reply.body);
+            }
             Ok(AnthropicMessagesHttpResponse {
                 status: reply.status,
                 headers: reply.headers,
@@ -79,13 +83,33 @@ impl AnthropicMessagesTransport for AnthropicHttp {
             SseItem::Event(event) => {
                 let mut data: JsonValue = serde_json::from_str(&event.data)
                     .map_err(|_| AnthropicMessagesTransportError::StreamCut)?;
+                // `message_start`: later `message_delta` usage extends the
+                // usage it opens, so the served model rides to the end.
                 if let Some(message) = data.get_mut("message") {
-                    let served = message.get("model").cloned();
-                    record_served_model(message.get_mut("usage"), served);
+                    carry_served_model(message);
                 }
                 Ok(AnthropicMessagesStreamFrame::Event(data))
             }
         });
         Ok(Box::pin(frames))
     }
+}
+
+/// Stamps the model `message` names into its usage, opening an empty usage
+/// object when it has none (or a null one), as the OpenAI-compatible
+/// transport does.
+fn carry_served_model(message: &mut JsonValue) {
+    let Some(served) = message.get("model").cloned() else {
+        return;
+    };
+    let Some(message) = message.as_object_mut() else {
+        return;
+    };
+    let usage = message
+        .entry("usage")
+        .or_insert_with(|| JsonValue::Object(Default::default()));
+    if usage.is_null() {
+        *usage = JsonValue::Object(Default::default());
+    }
+    record_served_model(Some(usage), Some(served));
 }

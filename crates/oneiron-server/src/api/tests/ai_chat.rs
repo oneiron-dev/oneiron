@@ -183,6 +183,59 @@ async fn a_credential_revoked_mid_turn_sees_no_more_of_the_reply_and_it_is_not_f
     host.shutdown().await;
 }
 
+/// Greptile #1304 P2: the keepalive ran every 10 s whatever the vault's
+/// idle timeout, so a model quiet for longer than a shorter timeout had its
+/// message closed under it and the answer was lost.
+#[tokio::test]
+async fn a_quiet_model_keeps_its_message_open_under_a_short_idle_timeout() {
+    use oneiron::memory::MessageStreamPolicy;
+    let fake = FakeLlm::start(
+        vec![Reply::Hold {
+            text: "worth the wait".into(),
+        }],
+        None,
+    )
+    .await;
+    let (_dir, server, host) = ai_server(Some(&fake.base_url)).await;
+    let vault = Arc::clone(server.vault());
+    let owner = oneiron::EntityId::now();
+    vault
+        .put_entity(
+            &owner,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"owner",
+        )
+        .unwrap();
+    crate::test_credentials::bind_owner(&vault, TEST_SECRET, owner);
+    vault
+        .memory(owner, oneiron::EdgeActorClass::Human)
+        .set_message_stream_policy(&MessageStreamPolicy {
+            idle_timeout_ms: 1_000,
+            ..MessageStreamPolicy::default()
+        })
+        .unwrap();
+    let turn = tokio::spawn({
+        let server = Arc::clone(&server);
+        let request =
+            chat(json!({"conversation_ref": oneiron::EntityId::now().to_hex(), "text": "hi"}));
+        async move { send(&server, request).await }
+    });
+    fake.wait_holding().await;
+    // The model thinks past the idle timeout, and the idle sweep runs.
+    tokio::time::sleep(std::time::Duration::from_millis(2_500)).await;
+    vault.pump_message_streams().unwrap();
+    fake.release();
+    let (status, body) = turn.await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    let lines = lines(&body);
+    let saved = lines.last().unwrap();
+    assert_eq!(saved["type"], json!("saved"), "{lines:?}");
+    assert_eq!(saved["receipt"]["finality"], json!("final"));
+    host.shutdown().await;
+}
+
 #[tokio::test]
 async fn a_failed_model_call_cancels_the_message_and_reports_why() {
     let fake = FakeLlm::start(vec![], Some(Reply::Status(500))).await;

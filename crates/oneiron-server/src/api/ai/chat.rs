@@ -46,9 +46,16 @@ use crate::server::SyncServer;
 /// The seeded definition that speaks when a request names no agent.
 const DEFAULT_AGENT: &str = "sys.default";
 const MESSAGE_TYPE: &str = "text";
-/// Under the engine's idle finalization (30 s), so a model that thinks in
-/// silence does not have its message closed under it.
-const KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(10);
+/// The slowest keepalive. Each runs at a third of the message's idle
+/// finalization (the vault's `idle_timeout_ms`, 30 s by default), so a model
+/// that thinks in silence does not have its message closed under it.
+const KEEPALIVE_MAX: std::time::Duration = std::time::Duration::from_secs(10);
+/// The fastest keepalive, for a vault whose idle timeout is tiny.
+const KEEPALIVE_MIN: std::time::Duration = std::time::Duration::from_millis(50);
+
+fn keepalive_every(idle_timeout_ms: u64) -> std::time::Duration {
+    (std::time::Duration::from_millis(idle_timeout_ms) / 3).clamp(KEEPALIVE_MIN, KEEPALIVE_MAX)
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -333,6 +340,14 @@ fn start_turn(
             ),
         })?;
 
+    // The assistant message closes after the vault's idle timeout without
+    // an append; read before anything is written.
+    let keepalive = keepalive_every(
+        vault
+            .message_stream_policy()
+            .map_err(|error| engine(&error))?
+            .idle_timeout_ms,
+    );
     server.ai.session_hint(SessionHint::AppOpen);
     let at = vault.now_recorded_at();
     let user = vault
@@ -418,6 +433,7 @@ fn start_turn(
         handle,
         credential: credential.clone(),
         streamed,
+        keepalive,
         turn,
     };
     tokio::spawn(async move {
@@ -585,6 +601,7 @@ struct Producer {
     handle: MessageStreamHandle,
     credential: TurnCredential,
     streamed: Arc<Mutex<String>>,
+    keepalive: std::time::Duration,
     turn: TurnGuard,
 }
 
@@ -619,6 +636,7 @@ async fn produce(producer: Producer) -> Result<(), String> {
         handle,
         credential,
         streamed,
+        keepalive,
         mut turn,
     } = producer;
     let memory = vault.memory(agent, EdgeActorClass::Agent);
@@ -639,7 +657,7 @@ async fn produce(producer: Producer) -> Result<(), String> {
         Ok(stream) => stream,
         Err(error) => return fail(format!("model stream did not start: {error:?}")),
     };
-    let mut keepalive = tokio::time::interval(KEEPALIVE);
+    let mut keepalive = tokio::time::interval(keepalive);
     keepalive.reset();
     loop {
         let item = tokio::select! {

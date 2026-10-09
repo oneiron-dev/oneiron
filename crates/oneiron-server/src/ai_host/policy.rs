@@ -4,22 +4,26 @@
 //! Extraction defaults to the device (ARCH-0036's counter-arrow), and a model
 //! reached over HTTP is never on the device. So two owner acts must both be
 //! there, and the server makes neither on its own: `models.extraction_egress
-//! = true` (the host predicate, which then admits only the Dreamer's own seat
-//! model), and vault defaults that route extraction and consolidation to the
-//! seat's widest rung within the owner's extraction bound. The second is the
+//! = true` (the host predicate, which then admits only the model each pass
+//! selected: the Dreamer's seat, or the extraction teacher the vault's model
+//! manifest pins), and vault defaults that route extraction and consolidation
+//! to the seat's widest rung within the owner's extraction bound. The second is the
 //! owner's edit of the vault table, through `oneiron dreamer grant
 //! --extraction-route` or `PUT /v1/llm/defaults`; boot only reads it, so a
 //! later owner tightening is never undone by a restart.
 use std::sync::Arc;
 
 use oneiron::llm::ExtractionEgressPredicate;
-use oneiron::{CallPurpose, LlmRequest, ModelLocality, Vault};
+use oneiron::{CallPurpose, LlmRequest, ModelId, ModelLocality, Vault};
 
 use super::status::IdleReason;
 use crate::models::Seat;
 
 pub(super) enum DreamerRoute {
-    Ready(Option<Arc<dyn ExtractionEgressPredicate>>),
+    /// `egress`: the owner lets extraction leave the device.
+    Ready {
+        egress: bool,
+    },
     Blocked(IdleReason),
 }
 
@@ -41,7 +45,9 @@ pub(super) fn dreamer_route(
 ) -> oneiron::Result<DreamerRoute> {
     let locality = seat.locality;
     if locality == ModelLocality::OnDevice {
-        return Ok(DreamerRoute::Ready(None));
+        return Ok(DreamerRoute::Ready {
+            egress: allow_egress,
+        });
     }
     if !allow_egress {
         return Ok(DreamerRoute::Blocked(
@@ -58,9 +64,13 @@ pub(super) fn dreamer_route(
     if !routed {
         return Ok(DreamerRoute::Blocked(IdleReason::ExtractionRouteNotSet));
     }
-    let seat_model = seat.model.clone();
-    let admits = move |request: &LlmRequest| request.model == seat_model;
-    Ok(DreamerRoute::Ready(Some(Arc::new(admits))))
+    Ok(DreamerRoute::Ready { egress: true })
+}
+
+/// One pass's nonlocal-extraction authority: the model that pass selected,
+/// and no other.
+pub(super) fn extraction_egress(model: ModelId) -> Arc<dyn ExtractionEgressPredicate> {
+    Arc::new(move |request: &LlmRequest| request.model == model)
 }
 
 /// The owner's edit behind `oneiron dreamer grant --extraction-route`: routes

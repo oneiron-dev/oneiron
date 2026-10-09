@@ -126,9 +126,12 @@ impl StepRunner {
             .admit_role(vault, CHAT_ROLE, request)
             .map_err(|refusal| Error::InvalidConfig(format!("workflow step refused: {refusal}")))?;
         let request = call.request;
-        // The agent pays: its live budget policy row, its own meter. Every
+        // The agent pays: its live budget policy rows, its own meter. Every
         // earlier try of this step failed its model call and was charged its
-        // reservation, so this try gets what they left of the one budget.
+        // reservation. Those charges are replayed into this try's meter, so
+        // the step's budget and every policy row it matches (the agent's
+        // cap, the purpose's) see them: retries share one budget, never renew
+        // it.
         let reserve = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS.min(self.budget_units);
         let earlier = AttemptQueue::new(vault).retry_chain_depth(step.attempt.id)?;
         let guard = vault.policy_budget_guard(
@@ -136,16 +139,19 @@ impl StepRunner {
                 "workflow-step:{}",
                 oneiron::EntityId::from_bytes(*step.attempt.id.as_bytes())?.to_hex()
             ),
-            self.budget_units
-                .saturating_sub(u64::from(earlier).saturating_mul(reserve)),
+            self.budget_units,
             reserve,
             BudgetExhaustionPolicy::Suspend,
             agent_dispatch_actor(&step.input)?,
         )?;
-        let lease = guard
-            .admit_for_request(&request)
-            .map_err(|denied| Error::InvalidConfig(format!("workflow step budget: {denied:?}")))?
-            .lease;
+        let budget = |denied: oneiron::llm::BudgetDenied| {
+            Error::InvalidConfig(format!("workflow step budget: {denied:?}"))
+        };
+        for _ in 0..earlier {
+            let spent = guard.admit_for_request(&request).map_err(budget)?.lease;
+            guard.settle_reserved(&spent).map_err(budget)?;
+        }
+        let lease = guard.admit_for_request(&request).map_err(budget)?.lease;
         let response = match runtime.block_on(call.backend.generate(request, &lease)) {
             Ok(response) => response,
             Err(error) => {

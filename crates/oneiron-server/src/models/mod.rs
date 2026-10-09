@@ -33,7 +33,7 @@ mod status;
 #[cfg(test)]
 mod tests;
 
-pub use role_route::{RoleCall, RoleRefusal};
+pub use role_route::{RoleCall, RoleRefusal, RoleRoute};
 pub use router::ModelRouter;
 pub use status::{ModelsStatus, ProviderStatus, RungStatus, SeatState, SeatStatus};
 

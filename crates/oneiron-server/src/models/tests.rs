@@ -273,6 +273,71 @@ async fn a_reply_without_usage_still_names_the_model_that_served_it() {
     );
 }
 
+/// Greptile #1304 P2: an Anthropic-compatible reply without usage, plain or
+/// streamed, lost the model that served it.
+#[tokio::test]
+async fn an_anthropic_reply_without_usage_still_names_the_model_that_served_it() {
+    let served = || Reply::NoUsage {
+        deltas: vec!["one ".into(), "two".into()],
+        model: "served-under-another-name".into(),
+    };
+    let fake = FakeLlm::start(vec![served(), served()], None).await;
+    let runtime = ModelRuntime::build(Some(&config(&format!(
+        "default = \"claude:proxy/claude-family-latest\"\n[providers.claude]\nkind = \"anthropic-compat\"\nbase_url = \"{}\"\n",
+        fake.base_url
+    ))));
+    let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
+    // `"usage": null` on a plain reply.
+    let response = generate(seat, "hi").await;
+    assert_eq!(text_of(&response.message), "one two");
+    assert_eq!(
+        response.usage.raw_provider["reported_model"],
+        json!("served-under-another-name")
+    );
+    // A stream whose `message_start` carries no usage.
+    let (deltas, usage, text) = stream(seat, "again").await;
+    assert_eq!(deltas, ["one ", "two"]);
+    assert_eq!(text, "one two");
+    assert_eq!(
+        usage.raw_provider["reported_model"],
+        json!("served-under-another-name")
+    );
+}
+
+/// Greptile #1304 P2: one streamed event had no size bound, so a provider
+/// that never ended it grew the decoder's buffer (and its rescans) without
+/// limit.
+#[tokio::test]
+async fn a_streamed_event_past_the_bound_is_refused_not_buffered() {
+    let fake = FakeLlm::start(
+        vec![Reply::Deltas {
+            deltas: vec!["x".repeat(super::sse::MAX_EVENT_BYTES)],
+            model: "fake-model".into(),
+        }],
+        None,
+    )
+    .await;
+    let runtime = ModelRuntime::build(Some(&config(&format!(
+        "local = \"llama:qwen3:8b\"\n[providers.llama]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n",
+        fake.base_url
+    ))));
+    let seat = runtime.seat(ModelRole::LocalReasoner).expect("local seat");
+    let guard = BudgetGuard::new("models-test", 100_000, BudgetExhaustionPolicy::Suspend);
+    let lease = guard.admit().unwrap().lease;
+    let mut events = seat
+        .backend
+        .stream(request(&seat.model, "hi"), &lease)
+        .unwrap();
+    let mut refused = false;
+    while let Some(event) = events.next().await {
+        if event.is_err() {
+            refused = true;
+            break;
+        }
+    }
+    assert!(refused, "an event past the bound was buffered and decoded");
+}
+
 #[tokio::test]
 async fn a_failing_rung_hands_the_call_to_the_next_with_its_prompt() {
     let down = FakeLlm::start(vec![], Some(Reply::Status(503))).await;
@@ -400,24 +465,19 @@ fn sse_events_decode_across_reads_and_every_line_end() {
     };
     // LF framing, an event split across reads, and a leading BOM.
     let mut decoder = SseDecoder::default();
-    assert!(decoder.push(b"\xEF\xBB").is_empty());
-    let first = decoder.push(b"\xBF\nevent: a\ndata: {\"x\":1}\n\ndata: par");
+    let mut push = |bytes: &[u8]| decoder.push(bytes).unwrap();
+    assert!(push(b"\xEF\xBB").is_empty());
+    let first = push(b"\xBF\nevent: a\ndata: {\"x\":1}\n\ndata: par");
     assert_eq!(first[0].event.as_deref(), Some("a"));
     assert_eq!(datas(first), [r#"{"x":1}"#]);
     // A CRLF pair split across two reads, and a comment.
-    assert!(decoder.push(b"tial\r").is_empty());
-    assert_eq!(datas(decoder.push(b"\n\r\n: comment\n\n")), ["partial"]);
+    assert!(push(b"tial\r").is_empty());
+    assert_eq!(datas(push(b"\n\r\n: comment\n\n")), ["partial"]);
     // Lone-CR framing: a CR ends its line at once, so an event closed by a
     // read's last CR dispatches without waiting for another byte.
-    assert_eq!(
-        datas(decoder.push(b"data: one\r\rdata: two\r\r")),
-        ["one", "two"]
-    );
+    assert_eq!(datas(push(b"data: one\r\rdata: two\r\r")), ["one", "two"]);
     // An LF opening the next read pairs with that CR; multi-line data; a last
     // event the stream ends without closing.
-    assert_eq!(
-        datas(decoder.push(b"\ndata: a\ndata: b\n\ndata: tail")),
-        ["a\nb"]
-    );
+    assert_eq!(datas(push(b"\ndata: a\ndata: b\n\ndata: tail")), ["a\nb"]);
     assert_eq!(datas(decoder.finish()), ["tail"]);
 }

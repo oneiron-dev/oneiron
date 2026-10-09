@@ -324,7 +324,7 @@ fn unix_now() -> u64 {
 
 async fn start_dreamer(
     vault: &Arc<Vault>,
-    runtime: &ModelRuntime,
+    runtime: &Arc<ModelRuntime>,
     models: &ModelsConfig,
     host_root: bool,
     status: &Arc<StatusCell>,
@@ -350,7 +350,7 @@ async fn start_dreamer(
         }
     }
     let egress = match policy::dreamer_route(vault, &seat, models.extraction_egress) {
-        Ok(DreamerRoute::Ready(egress)) => egress,
+        Ok(DreamerRoute::Ready { egress }) => egress,
         Ok(DreamerRoute::Blocked(reason)) => return Err(reason),
         Err(error) => {
             tracing::error!(%error, "dreamer route policy could not be read");
@@ -359,6 +359,7 @@ async fn start_dreamer(
     };
     DreamerHost::spawn(DreamerStart {
         vault: Arc::clone(vault),
+        runtime: Arc::clone(runtime),
         seat,
         settings: models.dreamer,
         egress,

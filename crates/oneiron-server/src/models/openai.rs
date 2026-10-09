@@ -23,7 +23,7 @@ impl From<HttpFailure> for OpenAiCompatTransportError {
             HttpFailure::Timeout => Self::Timeout,
             HttpFailure::Connection => Self::Connection,
             HttpFailure::StreamCut => Self::StreamCut,
-            HttpFailure::Malformed => Self::Server,
+            HttpFailure::Malformed | HttpFailure::EventTooLarge => Self::Server,
         }
     }
 }

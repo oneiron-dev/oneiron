@@ -11,7 +11,8 @@
 use std::sync::Arc;
 
 use oneiron::dreamer_promotion::AttemptPromotionSink;
-use oneiron::llm::{ExtractionEgressPredicate, HostInferenceBinding};
+use oneiron::llm::HostInferenceBinding;
+use oneiron::llm::manifest::ModelRole;
 use oneiron::{
     DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor,
     DreamerClaimAuthoringStrategy, DreamerRunnerStore, Vault, WakeAttemptContext, WriteActor,
@@ -22,14 +23,17 @@ use oneiron_driver::{
     ShutdownHandle, TimerTick, WakeSupervisor, WakeSupervisorConfig, WakeSupervisorReport,
 };
 
+use super::policy::extraction_egress;
 use super::status::{StatusCell, WorkState, WorkStatus};
 use crate::config::models::DreamerSettings;
-use crate::models::Seat;
+use crate::models::{ModelRuntime, Seat};
 
 /// Stamped on every admission and park this server makes.
 pub(super) const LEASE_OWNER: &str = "oneiron-server-dreamer";
 /// Base id of the per-pass durable budget rows (`dreamer:p<n>`).
 const BUDGET_ID: &str = "dreamer";
+/// The role a pass's extraction is admitted as; a vault's manifest binds it.
+const EXTRACTION_ROLE: ModelRole = ModelRole::ExtractionTeacher;
 
 /// A running Dreamer: its stop handle, its hint producer and its thread.
 pub(super) struct DreamerHost {
@@ -40,9 +44,11 @@ pub(super) struct DreamerHost {
 
 pub(super) struct DreamerStart {
     pub(super) vault: Arc<Vault>,
+    pub(super) runtime: Arc<ModelRuntime>,
     pub(super) seat: Seat,
     pub(super) settings: DreamerSettings,
-    pub(super) egress: Option<Arc<dyn ExtractionEgressPredicate>>,
+    /// The owner lets extraction leave the device.
+    pub(super) egress: bool,
     pub(super) status: Arc<StatusCell>,
 }
 
@@ -109,6 +115,7 @@ fn run(start: DreamerStart, ready: Ready) -> WakeSupervisorReport {
 async fn supervise(start: DreamerStart, ready: Ready) -> WakeSupervisorReport {
     let DreamerStart {
         vault,
+        runtime,
         seat,
         settings,
         egress,
@@ -116,19 +123,15 @@ async fn supervise(start: DreamerStart, ready: Ready) -> WakeSupervisorReport {
     } = start;
     let built = (|| -> anyhow::Result<_> {
         let node_id = claim_home_node(&vault)?;
-        let actor = vault.dreamer_authority()?;
-        let factory = ConsolidationExecutorFactory::new(
-            seat.backend.clone(),
-            DreamerClaimAuthoringStrategy::SinglePass,
-            actor,
-            seat.model.clone(),
-            HostInferenceBinding::Advertised {
-                model: seat.model.clone(),
-                locality: seat.locality,
-            },
+        let factory = ObservedFactory {
+            vault: Arc::clone(&vault),
+            runtime,
+            seat,
+            actor: vault.dreamer_authority()?,
             egress,
-            Box::new(AttemptPromotionSink::new(Arc::clone(&vault))),
-        );
+            inner: None,
+            status: Arc::clone(&status),
+        };
         let lifecycle = SessionLifecycleDriver::new(
             &vault,
             SessionLifecycleConfig::new(settings.idle_floor_secs, settings.session_ceiling_secs),
@@ -155,15 +158,7 @@ async fn supervise(start: DreamerStart, ready: Ready) -> WakeSupervisorReport {
             return WakeSupervisorReport::default();
         }
     };
-    let supervisor = WakeSupervisor::new(
-        &vault,
-        ticks,
-        ObservedFactory {
-            inner: factory,
-            status: Arc::clone(&status),
-        },
-        config,
-    );
+    let supervisor = WakeSupervisor::new(&vault, ticks, factory, config);
     // Waiting before the starter returns, so its first status read is live.
     status.update(|status| status.dreamer = WorkStatus::waiting());
     if ready
@@ -195,9 +190,16 @@ fn now_ms() -> u64 {
         })
 }
 
-/// The consolidation factory, with each pass and attempt reported to status.
+/// The consolidation factory, rebuilt for each pass on the model that pass's
+/// extraction is admitted as, with each pass and attempt reported to status.
 struct ObservedFactory {
-    inner: ConsolidationExecutorFactory,
+    vault: Arc<Vault>,
+    runtime: Arc<ModelRuntime>,
+    /// The binding when the vault has no model manifest.
+    seat: Seat,
+    actor: WriteActor,
+    egress: bool,
+    inner: Option<ConsolidationExecutorFactory>,
     status: Arc<StatusCell>,
 }
 
@@ -205,18 +207,47 @@ impl PassExecutorFactory for ObservedFactory {
     type Exec<'p> =
         ObservedExecutor<'p, <ConsolidationExecutorFactory as PassExecutorFactory>::Exec<'p>>;
 
+    /// Resolves the extraction role against the vault's live manifest and
+    /// route, as a chat turn does, so the backend attests the model the
+    /// engine's admission selects. A route this server does not serve stops
+    /// the pass before any attempt is admitted.
     fn executor<'p>(
         &'p mut self,
         guard: &'p oneiron::BudgetGuard,
     ) -> oneiron::Result<Self::Exec<'p>> {
+        let route = match self
+            .runtime
+            .route_role(&self.vault, EXTRACTION_ROLE, &self.seat)
+        {
+            Ok(route) => route,
+            Err(refusal) => {
+                let error =
+                    oneiron::Error::InvalidConfig(format!("dreamer extraction refused: {refusal}"));
+                self.status
+                    .update(|status| status.dreamer.last_error = Some(error.to_string()));
+                return Err(error);
+            }
+        };
+        let inner = self.inner.insert(ConsolidationExecutorFactory::new(
+            route.backend,
+            DreamerClaimAuthoringStrategy::SinglePass,
+            self.actor,
+            route.model.clone(),
+            HostInferenceBinding::Advertised {
+                model: route.model.clone(),
+                locality: route.locality,
+            },
+            self.egress.then(|| extraction_egress(route.model)),
+            Box::new(AttemptPromotionSink::new(Arc::clone(&self.vault))),
+        ));
         Ok(ObservedExecutor {
-            inner: self.inner.executor(guard)?,
+            inner: inner.executor(guard)?,
             status: &self.status,
         })
     }
 
     fn actor(&self) -> Option<WriteActor> {
-        self.inner.actor()
+        Some(self.actor)
     }
 }
 

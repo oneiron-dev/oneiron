@@ -6,8 +6,8 @@ use oneiron::{ClaimApprovalStatus, EntityId, TimeRange};
 use oneiron_driver::SessionHint;
 
 use super::test_support::{
-    capture_user_turn, eventually, extraction_reply, models, name_claims, rooted_vault,
-    route_extraction, saved_agent,
+    capture_user_turn, eventually, extraction_reply, models, name_claims, pin_every_role,
+    rooted_vault, route_extraction, saved_agent,
 };
 use super::*;
 use crate::fake_llm::FakeLlm;
@@ -114,6 +114,57 @@ async fn captured_turns_dream_on_session_end_and_land_through_the_promotion_writ
     assert_eq!(seen[0].body["model"], serde_json::json!("test-model"));
     host.shutdown().await;
     assert_eq!(handle.status().dreamer.reason, Some(IdleReason::Stopped));
+}
+
+/// Greptile #1304 P1: with a model manifest, extraction is admitted as the
+/// manifest's teacher model, but the Dreamer's backend still attested its
+/// seat id, so admission refused every pass and no turn consolidated.
+#[tokio::test]
+async fn a_vault_model_manifest_names_the_model_the_dreamer_extracts_with() {
+    let fake = FakeLlm::start(vec![], None).await;
+    let (_dir, vault) = rooted_vault();
+    route_extraction(&vault);
+    let host = AiHost::start(
+        vault.clone(),
+        Some(&models(&fake.base_url, "[dreamer]\nidle_floor_secs = 600")),
+        true,
+    )
+    .await;
+    let handle = host.handle();
+    assert_eq!(handle.status().dreamer.state, WorkState::Waiting);
+    // The owner pins the model `[models]` serves after the Dreamer started:
+    // each pass reads the live manifest.
+    pin_every_role(
+        &vault,
+        "local/test-model@live",
+        oneiron::ModelLocality::OwnServer,
+    );
+
+    let subject = EntityId::now();
+    vault
+        .put_entity(
+            &subject,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )
+        .unwrap();
+    fake.push(extraction_reply(subject, "Oleksii"));
+    handle.session_hint(SessionHint::AppOpen);
+    capture_user_turn(&vault, "call me Oleksii");
+    handle.session_hint(SessionHint::ExplicitEnd);
+    assert!(
+        eventually(Duration::from_secs(30), || !name_claims(&vault, &subject)
+            .is_empty())
+        .await,
+        "no claim landed; status {:?}",
+        handle.status().dreamer
+    );
+    let seen = fake.seen();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].body["model"], serde_json::json!("test-model"));
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -296,6 +347,74 @@ async fn a_failing_steps_retries_spend_one_step_budget() {
     // Each failed try is charged its reservation, so three tries spend the
     // step's budget and a fourth is never admitted.
     assert_eq!(fake.seen().len(), 3);
+    host.shutdown().await;
+}
+
+/// Greptile #1304 P1: each retry of a failing step built a fresh meter, so a
+/// policy row's cap (the agent's, the purpose's) renewed with every try.
+#[tokio::test]
+async fn a_failing_steps_retries_share_the_policy_rows_cap() {
+    use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher, DispatchAgent};
+    let fake = FakeLlm::start(vec![], Some(crate::fake_llm::Reply::Status(500))).await;
+    let (_dir, vault) = rooted_vault();
+    // The owner caps workflow steps at one call's reservation (8,000 units).
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    oneiron::conversation_dag::test_support::put_test_policy_manifest(
+        &vault,
+        oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
+        EntityId::now(),
+        &serde_json::json!({
+            "schema_version": "1.2", "pack_id": "step-cap", "pack_version": "1",
+            "min_engine_version": "0.0.0", "defaults": {}, "rules": [], "actor_ceilings": [],
+            "budget_policy": [{"purpose": "workflow_step", "cap": 8000}],
+        }),
+    )
+    .unwrap();
+    let only = saved_agent(&vault, "capped", "Say one word.");
+    let workflow = EntityId::now();
+    vault
+        .save_workflow(
+            &workflow,
+            &oneiron::agent_def::workflow::WorkflowDefinition::new("capped", vec![only]).unwrap(),
+            2,
+        )
+        .unwrap();
+    // The step's own budget would admit every try; the row's cap admits one.
+    let host = AiHost::start(
+        vault.clone(),
+        Some(&models(
+            &fake.base_url,
+            "[dreamer]\nenabled = false\n[workflows]\nretry_backoff_secs = 0\nstep_budget_units = 64000",
+        )),
+        true,
+    )
+    .await;
+    let dispatcher = AgentDispatcher::new(&vault);
+    dispatcher
+        .dispatch(DispatchAgent {
+            target: AgentDispatchTarget::Workflow(workflow),
+            parent_attempt: None,
+            dedupe_key: Some("capped-test".into()),
+            run_id: Some("capped-test".into()),
+            now: 10,
+        })
+        .unwrap();
+    assert!(
+        eventually(Duration::from_secs(20), || dispatcher
+            .open_workflow_roots()
+            .is_ok_and(|roots| roots.is_empty()))
+        .await,
+        "the workflow never stopped; status {:?}",
+        host.handle().status().workflows
+    );
+    assert_eq!(fake.seen().len(), 1);
+    let stopped = host.handle().status().workflows.last_error;
+    assert!(
+        stopped
+            .as_deref()
+            .is_some_and(|error| error.contains("workflow step budget")),
+        "{stopped:?}"
+    );
     host.shutdown().await;
 }
 

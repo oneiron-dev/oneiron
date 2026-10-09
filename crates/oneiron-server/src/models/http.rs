@@ -6,7 +6,7 @@ use std::time::Duration;
 use futures_util::Stream;
 use serde_json::Value as JsonValue;
 
-use super::sse::{SseDecoder, SseEvent};
+use super::sse::{EventTooLarge, SseDecoder, SseEvent};
 use crate::config::models::ProviderConfig;
 
 /// How a provider expects its key.
@@ -26,6 +26,8 @@ pub(super) enum HttpFailure {
     StreamCut,
     /// The reply was not the JSON the protocol promises.
     Malformed,
+    /// A streamed event grew past the decoder's bound before it ended.
+    EventTooLarge,
 }
 
 impl From<reqwest::Error> for HttpFailure {
@@ -231,7 +233,12 @@ async fn next_sse(state: SseState) -> Option<(Result<SseItem, HttpFailure>, SseS
                 ));
             }
             match response.chunk().await {
-                Ok(Some(chunk)) => ready.extend(decoder.push(&chunk)),
+                Ok(Some(chunk)) => match decoder.push(&chunk) {
+                    Ok(events) => ready.extend(events),
+                    Err(EventTooLarge) => {
+                        return Some((Err(HttpFailure::EventTooLarge), SseState::Done));
+                    }
+                },
                 Ok(None) => {
                     ready.extend(decoder.finish());
                     let event = ready.pop_front()?;

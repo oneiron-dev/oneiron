@@ -32,7 +32,8 @@ pub(crate) enum Reply {
     /// the request did not stream).
     Deltas { deltas: Vec<String>, model: String },
     /// Like `Deltas`, but with no usage: an OpenAI-compatible stream sends
-    /// no usage chunk, and a plain reply carries `"usage": null`.
+    /// no usage chunk, an Anthropic-compatible one none on any event, and a
+    /// plain reply carries `"usage": null`.
     NoUsage { deltas: Vec<String>, model: String },
     /// An HTTP error status with a protocol-shaped body.
     Status(u16),
@@ -184,7 +185,13 @@ async fn answer(
             }
             axum::Json(reply).into_response()
         }
-        (true, false) => axum::Json(anthropic_json(&deltas.concat(), &model)).into_response(),
+        (true, false) => {
+            let mut reply = anthropic_json(&deltas.concat(), &model);
+            if !usage {
+                reply["usage"] = Value::Null;
+            }
+            axum::Json(reply).into_response()
+        }
         (false, true) => {
             let mut events = openai_events(&deltas, &model);
             if !usage {
@@ -192,7 +199,20 @@ async fn answer(
             }
             sse(events)
         }
-        (true, true) => sse(anthropic_events(&deltas, &model)),
+        (true, true) => {
+            let mut events = anthropic_events(&deltas, &model);
+            if !usage {
+                for (_, event) in &mut events {
+                    if let Some(message) = event.get_mut("message").and_then(Value::as_object_mut) {
+                        message.remove("usage");
+                    }
+                    if let Some(event) = event.as_object_mut() {
+                        event.remove("usage");
+                    }
+                }
+            }
+            sse(events)
+        }
     }
 }
 

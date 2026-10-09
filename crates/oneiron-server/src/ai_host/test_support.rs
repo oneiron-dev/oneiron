@@ -29,6 +29,49 @@ pub(crate) fn route_extraction(vault: &Vault) {
     super::route_dreamer_extraction(vault, oneiron::ModelLocality::OwnServer).unwrap();
 }
 
+/// A model manifest pinning every role to `model` on the LLM slot at
+/// `route`, its extraction teacher probe-approved, as an owner pins one.
+pub(crate) fn pin_every_role(vault: &Vault, model: &str, route: oneiron::ModelLocality) {
+    use oneiron::llm::manifest::{
+        MODEL_ROLES, ModelBinding, ModelManifest, ModelSlot, TeacherProbeApproval,
+    };
+    let manifest = ModelManifest {
+        version: 2,
+        roles: MODEL_ROLES
+            .into_iter()
+            .map(|role| {
+                (
+                    role,
+                    ModelBinding {
+                        model: oneiron::ModelId::new(model).unwrap(),
+                        slot: ModelSlot::Llm,
+                        tier: oneiron::ModelTierRef("pinned".into()),
+                        route_models: Default::default(),
+                    },
+                )
+            })
+            .collect(),
+        routes: [
+            (ModelSlot::Llm, route),
+            (ModelSlot::Embedder, oneiron::ModelLocality::OnDevice),
+            (ModelSlot::Oneironer, oneiron::ModelLocality::OnDevice),
+        ]
+        .into_iter()
+        .collect(),
+        verdict: None,
+        seat_policy: None,
+    };
+    let approval = TeacherProbeApproval::for_scored_checkpoint(
+        &manifest,
+        &vault.teacher_probe_policy(None).unwrap(),
+        1_000_000,
+    )
+    .unwrap();
+    vault
+        .set_model_manifest_with_teacher_approval(&manifest, &approval)
+        .unwrap();
+}
+
 /// HIGH-level config: one local model for every seat, egress opted in.
 pub(crate) fn models(base_url: &str, extra: &str) -> ModelsConfig {
     models_toml(&format!(
