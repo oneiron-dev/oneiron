@@ -121,6 +121,10 @@ side_tables! {
     /// Private binding of a Budget/Consent trap anchor claim to its owning step. Key: id16(anchor
     /// claim).
     DREAMER_TRAP_BINDING: VaultMeta b"dreamer:trap_binding:v1:" Raw;
+    /// Latest consolidation carrier of a TURN re-dirtied without moving its row: second, a
+    /// store-minted order id, the row learned_at it was taken against and the scopes that consumed
+    /// it. Key: id16(turn).
+    DREAMER_TURN_REDIRTY: VaultMeta b"dreamer:turn-redirty:v1:" Named;
     /// Coalesced recipe input for one wake recipe. Key: u8(recipe).
     DREAMER_WAKE_RECIPE_INPUT: VaultMeta b"dreamer:wake-policy:recipe-input:v1:" LegacyJson;
     /// Wake cursor and pending state. Key: ().
@@ -388,6 +392,10 @@ side_tables! {
     /// Per-actor per-run healer receipt: submitted proposals and reversal state. Key: id16 + bytes32
     /// (actor then blake3 hash of run name).
     SELF_HEAL_HEALER_RUN: VaultMeta b"healer:run:" Named;
+    /// The history import ledger: one row per imported source message (the conversation it landed
+    /// in, its MESSAGE and TURN ids, the hash of what was imported, its revision). Key: string
+    /// (`source:native message id`).
+    INGEST_HISTORY_LEDGER: VaultMeta b"history-import:v1:" Named;
     /// Follow-up reminder/escalation cursor state for one human task. Key: id16.
     HUMAN_TASK_FOLLOWUP: VaultMeta b"human_task.followup.v1\0" Raw;
     /// Idempotency marker recording which signal/surface-event a wait's response already produced.

@@ -4,6 +4,7 @@
 //! commit CRDT operations; only indexed projections may materialize the text.
 //! Documents are loaded lazily, snapshot before ordered pending updates.
 
+mod citation_floor;
 mod document;
 mod forks;
 mod message_stream;
@@ -12,6 +13,7 @@ mod recovery;
 mod registry;
 mod side_keys;
 mod storage;
+pub(crate) use citation_floor::record_citation_floor_in_txn;
 pub(crate) use message_stream::{
     append_message_stream_in_txn, authorize_message_continuation_in_txn,
     birth_message_stream_in_txn,
@@ -53,6 +55,31 @@ use crate::error::{ArtifactError, Error};
 
 fn invalid(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidEditManifest(reason))
+}
+
+/// Fault injection for recovery checks: drops `entity`'s document head row
+/// alone, as a damaged vault can lose it, keeping the stored history. The
+/// returned closure puts the row back.
+#[cfg(all(test, feature = "sync"))]
+pub(crate) fn lose_head_for_test(
+    vault: &crate::Vault,
+    entity: &crate::EntityId,
+) -> crate::Result<impl FnOnce(&crate::Vault) -> crate::Result<()>> {
+    let entity = *entity;
+    let mut txn = vault.store.env.write_txn()?;
+    let key = crate::side_table::HexId(entity);
+    let head = storage::ENTITY_DOC_HEAD
+        .get(&vault.store, &txn, &key)?
+        .ok_or(Error::EntityNotFound)?;
+    storage::ENTITY_DOC_HEAD.delete(&vault.store, &mut txn, &key)?;
+    txn.commit()?;
+    Ok(move |vault: &crate::Vault| {
+        let mut txn = vault.store.env.write_txn()?;
+        let key = crate::side_table::HexId(entity);
+        storage::ENTITY_DOC_HEAD.put(&vault.store, &mut txn, &key, &head)?;
+        txn.commit()?;
+        Ok(())
+    })
 }
 
 #[cfg(test)]

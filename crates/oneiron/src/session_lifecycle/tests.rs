@@ -646,7 +646,8 @@ fn a_moved_watermark_skips_the_stale_planned_round_but_still_closes() {
     let wake = meso_wake(&vault); // planned against watermark 0
 
     // Another planner runs its round and advances the watermark first.
-    advance_watermark(&vault, DreamerConsolidationScope::Meso, 950).expect("concurrent planner");
+    advance_watermark(&vault, DreamerConsolidationScope::Meso, 950, &[])
+        .expect("concurrent planner");
 
     let ended = vault
         .end_session_with_wake(&id, SessionClosePredicate::Explicit, 1_100, &wake)

@@ -120,6 +120,18 @@ export class Oneiron {
     return new Oneiron(this.#call(() => this.#client.asActor(actorKey)))
   }
 
+  /**
+   * Returns a NEW handle whose every verb runs as a turn in a room.
+   *
+   * It names only the room. Each verb reads the room's roster as it stands at
+   * that call and runs inside that roster's Scope (ARCH-0067 §8); a verb that
+   * would read around the room fails with `BAD_REQUEST`, and so does
+   * rebinding the actor or naming another room.
+   */
+  inRoomTurn(roomRef: string): Oneiron {
+    return new Oneiron(this.#call(() => this.#client.inRoomTurn(roomRef)))
+  }
+
   // BEGIN GENERATED FACADE VERBS
   /** Cancels one task under the ladder's `auto` default. The receipt says what stopped and what became a proposal instead. */
   cancel(taskRef: string): TaskCancelReceipt { return this.#call(() => this.#client.cancel({task_ref: taskRef}) as TaskCancelReceipt) }

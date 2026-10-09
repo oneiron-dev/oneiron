@@ -15,6 +15,7 @@ pub use lifecycle::MessageStreamPump;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use storage::Seed;
+pub(crate) use storage::message_stream_finality_in_txn;
 pub use types::*;
 
 /// Registry lock never spans storage work. A per-handle lock serializes its

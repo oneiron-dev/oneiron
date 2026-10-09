@@ -110,8 +110,8 @@ fn expired_mint_transaction_does_not_publish_extracted_people() -> Result<()> {
             &[turn],
             &source_scope(&vault, &[turn])?,
             20,
-            None,
             Some(&deadline),
+            None,
         )
         .is_err()
     );
