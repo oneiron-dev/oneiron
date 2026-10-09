@@ -141,7 +141,8 @@ impl Store {
                 .map(|raw| crate::store::decode_custody_root(&raw))
                 .transpose()?
                 .unwrap_or_else(|| registered_path.path.clone());
-            let mark = vault_meta_view.get(&txn, crate::side_table::VAULT_ARCHIVED_BY_RESTORE.prefix)?;
+            let mark =
+                vault_meta_view.get(&txn, crate::side_table::VAULT_ARCHIVED_BY_RESTORE.prefix)?;
             let archived = crate::store::archived_by(mark.as_deref(), &registered_path.path)?;
             (root, archived)
         };

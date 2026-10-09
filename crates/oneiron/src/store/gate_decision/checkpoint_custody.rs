@@ -149,6 +149,20 @@ fn vault_meta_rows(env: &Env, txn: &RoTxn<'_>, prefixes: &[&[u8]]) -> Result<Row
     Ok(rows)
 }
 
+/// The device and inode of the directory at `path`.
+#[cfg(unix)]
+fn directory_identity(path: &Path) -> std::io::Result<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = std::fs::metadata(path)?;
+    Ok((metadata.dev(), metadata.ino()))
+}
+
+/// No directory identity here; nothing is archived to check it for.
+#[cfg(not(unix))]
+fn directory_identity(_: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
 /// Syncs the directory holding `path`, so a rename of `path` is on disk.
 fn sync_parent(path: &Path) -> std::io::Result<()> {
     match path.parent() {
@@ -337,7 +351,9 @@ impl Store {
     /// writer, and this handle is sealed before any other writer begins. So
     /// whichever of the two sits at the path is the one live vault on the
     /// custody they share, at every instant and after a crash anywhere. A
-    /// swap that fails lifts the mark again and changes nothing. Once the
+    /// swap that fails lifts the mark again and changes nothing; one that
+    /// returns without the replacement's own directory at this vault's path
+    /// is refused and leaves both marks as they are. Once the
     /// swap is on disk, this vault is archived wherever it goes and the
     /// replacement's mark is lifted; a failure there is only logged, both
     /// marks already saying the same, and the replacement keeps its mark,
@@ -357,6 +373,7 @@ impl Store {
                 "the replacement was not restored for this vault's place".into(),
             ));
         }
+        let replacement_dir = directory_identity(replacement.env.path())?;
         let mut wtxn = self.env.write_txn()?;
         ARCHIVED.put(self, &mut wtxn, &(), &mark)?;
         self.env.seal();
@@ -366,6 +383,11 @@ impl Store {
                 tracing::warn!(error = %lift, "a failed swap left its vault marked live only where it is");
             }
             return Err(err.into());
+        }
+        if directory_identity(self.env.path())? != replacement_dir {
+            return Err(Error::InvalidConfig(
+                "the swap did not put the replacement in this vault's place".into(),
+            ));
         }
         // Neither mark stops depending on where its vault sits before the
         // exchange is on disk: a crash that undid it would leave the two

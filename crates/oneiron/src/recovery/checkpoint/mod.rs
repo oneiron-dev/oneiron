@@ -398,9 +398,11 @@ impl Vault {
     ///
     /// Whichever of the two sits at this vault's path is the live one, at
     /// every instant of the swap and after a crash anywhere in it; the other
-    /// opens archived. A swap that fails changes nothing on disk, though this
-    /// handle stays sealed. Reopen the replacement before it mints or retires
-    /// a key.
+    /// opens archived. `swap` must exchange the directories the two handles
+    /// opened, not a symlink to one: a swap that returns without the
+    /// replacement's directory at this vault's path is refused. A swap that
+    /// fails changes nothing on disk, though this handle stays sealed. Reopen
+    /// the replacement before it mints or retires a key.
     pub fn swap_in_replacement(
         &self,
         replacement: &Self,

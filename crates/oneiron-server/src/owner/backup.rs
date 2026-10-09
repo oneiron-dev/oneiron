@@ -403,12 +403,15 @@ fn restore_over_syncing(
     sync_after_swap: impl FnOnce(&Path) -> anyhow::Result<()>,
 ) -> anyhow::Result<Restored> {
     // Absolute from here on: a bare `vault` has an empty parent to sync.
-    let vault_path = &std::path::absolute(vault_path)?;
+    let configured = std::path::absolute(vault_path)?;
     anyhow::ensure!(
-        vault_path.join("data.mdb").is_file(),
+        configured.join("data.mdb").is_file(),
         "vault {} does not exist; nothing to restore over",
-        vault_path.display()
+        configured.display()
     );
+    // The directory itself, not a symlink to it: the exchange below must move
+    // the very directory the vault opens from, which the archive marks name.
+    let vault_path = &configured.canonicalize()?;
     let name = vault_path
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("vault path {} has no name", vault_path.display()))?
@@ -467,7 +470,8 @@ fn restore_over_syncing(
     // vault path is the live one, even after a crash in the middle, and the
     // other reads but never writes, erases or shreds a key until the owner
     // activates it as a side vault with custody of its own.
-    if let Err(error) = live.swap_in_replacement(&restored, || exchange(&restored_path, vault_path)) {
+    if let Err(error) = live.swap_in_replacement(&restored, || exchange(&restored_path, vault_path))
+    {
         drop(restored);
         staging.remove();
         anyhow::bail!(
@@ -504,7 +508,7 @@ fn restore_over_syncing(
     Ok(Restored {
         backup: backup.to_path_buf(),
         checkpoint_id: report.epoch.checkpoint_id,
-        vault: vault_path.to_path_buf(),
+        vault: configured,
         previous_vault: previous,
         entities: kinds.values().sum(),
         kinds,
