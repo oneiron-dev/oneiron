@@ -106,6 +106,38 @@ fn no_restore_loosens_a_decision_and_one_that_loosens_none_restores() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// A restore asked from inside the live vault's own write transaction, over a
+/// vault with no manifest in force, is refused. Judging that vault by the
+/// default its next open seeds takes its writer, which the caller holds; the
+/// restore used to wait on itself there (Astra R5).
+#[test]
+fn a_restore_inside_the_live_vaults_write_transaction_refuses_rather_than_waits() {
+    let (dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let backups = tempfile::tempdir().expect("backup dir");
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100).expect("backup");
+    let (done, outcome) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let restored = vault.with_write_txn(|_| {
+            Ok(Vault::restore_checkpoint_keeping_authority(
+                &image,
+                &backups.path().join("restored"),
+                vault.config.clone(),
+                &vault,
+                1_000,
+            )
+            .map(drop))
+        });
+        let refused = matches!(restored, Ok(Err(crate::Error::ConcurrentWrite(_))));
+        let _ = done.send((refused, format!("{restored:?}")));
+        drop((dir, backups));
+    });
+    let (refused, restored) = outcome
+        .recv_timeout(std::time::Duration::from_secs(60))
+        .expect("the restore waited on the write transaction its caller holds");
+    assert!(refused, "not refused as a concurrent write: {restored}");
+}
+
 /// Runs one census case, naming its row when it holds.
 fn run(case: fn() -> Result<Case>) -> std::result::Result<&'static str, String> {
     let Case {

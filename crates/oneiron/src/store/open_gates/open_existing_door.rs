@@ -16,9 +16,9 @@ use crate::store::{
     GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE, GATE_DECISION_KEY_PREFIX,
     GATE_DECISION_LEDGER_VERSION, GateDecisionRecord, GateSystemNoticeRecord,
     PENDING_GATE_CONSENT_KEY_PREFIX, RawDatabases, Store, StoreCore, StoreOwner,
-    decode_pending_gate_consent, gate_decision_upper_bound, load_structural_kind_registry,
-    pending_gate_consent_claim_id_from_key, pending_gate_consent_upper_bound,
-    seed_default_policy_manifest_in_txn,
+    active_write_txn_depth, decode_pending_gate_consent, gate_decision_upper_bound,
+    load_structural_kind_registry, pending_gate_consent_claim_id_from_key,
+    pending_gate_consent_upper_bound, seed_default_policy_manifest_in_txn,
 };
 
 use super::embedding_transform_gates::verify_existing_embedding_transform;
@@ -253,7 +253,8 @@ impl Store {
         }
 
         let mut wtxn = self.env.write_txn()?;
-        let Some((id, post_write_policy)) = self.seed_default_policy_manifest_if_unset(&mut wtxn)?
+        let Some((id, post_write_policy)) =
+            self.seed_default_policy_manifest_if_unset(&mut wtxn)?
         else {
             return Ok(());
         };
@@ -299,7 +300,8 @@ impl Store {
     /// seeds. The seed is the open's own, in a write transaction that is then
     /// aborted, so nothing is written. A vault the owner left with no
     /// manifest in force is judged by this, not by the fail-closed policy it
-    /// holds until it next opens.
+    /// holds until it next opens. Refused inside a write transaction this
+    /// thread holds: the seed needs the writer, and would wait on itself.
     pub(crate) fn policy_as_next_opened(&self) -> Result<crate::gate::PolicyManifestResolution> {
         {
             let rtxn = self.env.read_txn()?;
@@ -307,6 +309,11 @@ impl Store {
             if !open_seeds_default(&policy) {
                 return Ok(policy);
             }
+        }
+        if active_write_txn_depth() > 0 {
+            return Err(Error::ConcurrentWrite(
+                "the seeded policy cannot be resolved inside an active write transaction",
+            ));
         }
         let mut wtxn = self.env.write_txn()?;
         let policy = match self.seed_default_policy_manifest_if_unset(&mut wtxn)? {
