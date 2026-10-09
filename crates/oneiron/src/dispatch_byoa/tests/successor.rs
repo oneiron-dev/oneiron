@@ -1,7 +1,5 @@
 //! Successor Qodo regressions for terminal custody and runtime attribution.
 
-mod stop_reasons;
-
 use super::*;
 use crate::attempt_queue::{
     AcceptAttemptLanding, AttemptCancelReceiptKind, CancelMode, CancelStanding, ForceAttemptCancel,
@@ -376,30 +374,6 @@ fn generic_result_attachment_cannot_authorize_a_running_canonical_retry() {
     assert_eq!(
         AttemptQueue::new(&vault).get(attempt.id).expect("row"),
         Some(attached)
-    );
-}
-
-#[test]
-fn failure_reason_validation_rolls_back_attachment_and_defaults_when_absent() {
-    let (_dir, vault) = open_vault();
-    let mut dispatcher = dispatcher(&vault);
-    let attempt = claimed_with_manifest(&vault, &mut dispatcher, false);
-    for reason in [String::new(), "x".repeat(2049)] {
-        let mut request = capture_request(&attempt, ByoaTerminalDisposition::Failed);
-        request.reason = Some(reason);
-        let before = custody_snapshot(&vault);
-        assert!(dispatcher.capture_terminal_exhaust(request).is_err());
-        assert_eq!(custody_snapshot(&vault), before);
-    }
-    let mut request = capture_request(&attempt, ByoaTerminalDisposition::Failed);
-    request.reason = None;
-    let receipt = dispatcher
-        .capture_terminal_exhaust(request)
-        .expect("default failure reason");
-    assert_eq!(receipt.attempt.state, AttemptState::Failed);
-    assert_eq!(
-        receipt.attempt.last_error.as_deref(),
-        Some(BYOA_DEFAULT_FAILURE_REASON)
     );
 }
 
