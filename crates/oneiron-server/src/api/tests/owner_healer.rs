@@ -9,7 +9,6 @@ use oneiron::agent_dispatch::{
 };
 use oneiron::attempt_queue::{AttemptQueue, ClaimAttempt, ClaimOutcome};
 use oneiron::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
-use oneiron::entity_id::bytes_to_hex_lower;
 use oneiron::failure_ladder::{
     FailureEscalationMode, FailureLadderOutcome, FailureScope, FailureScopePolicy,
     FailureSignalClass, HandleAttemptFailure, TypedFailureEvidence, TypedFailureVerdict,
@@ -226,7 +225,7 @@ async fn owner_reviews_a_custom_agent_failure_the_ladder_ended() {
         .record_custom_agent_failure(leased.id, FailureSignalClass::TaskFailure)
         .unwrap();
 
-    let attempt = bytes_to_hex_lower(leased.id.as_bytes());
+    let attempt = crate::owner::healer::attempt_hex(&leased.id);
     let drill_path =
         format!("/v1/owner/healer/failures/drill?class=task_failure&attempt={attempt}");
     for recipe in refused_recipes(&server) {

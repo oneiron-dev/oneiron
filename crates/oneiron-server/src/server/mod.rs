@@ -10,8 +10,8 @@ mod tagging;
 mod windows;
 
 pub(crate) use self::core::BroadcastPayload;
-pub(crate) use self::oversight::HEALER_OVERSIGHT_EVERY;
 pub use self::core::SyncServer;
+pub(crate) use self::oversight::HEALER_OVERSIGHT_EVERY;
 pub(crate) use self::recall::blocking;
 
 #[cfg(test)]

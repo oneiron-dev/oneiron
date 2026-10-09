@@ -4,12 +4,19 @@
 
 use oneiron::attempt_queue::{AttemptId, AttemptState};
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::entity_id::bytes_to_hex_lower;
 use oneiron::failure_ladder::FailureSignalClass;
 use oneiron::failure_ladder::oversight::OversightCounts;
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerResult, entity_id};
+
+/// An attempt id in the lowercase hex its drill query takes back.
+pub(crate) fn attempt_hex(id: &AttemptId) -> String {
+    id.as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
 
 /// One stored oversight receipt and whether it verifies against this vault
 /// device's own key.
@@ -27,7 +34,11 @@ pub(crate) fn oversight(vault: &oneiron::Vault) -> OwnerResult<Vec<OversightRead
         .into_iter()
         .map(|(receipt, verified)| OversightRead {
             counts: receipt.counts,
-            signer: bytes_to_hex_lower(&receipt.signer),
+            signer: receipt
+                .signer
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
             verified,
         })
         .collect())
@@ -48,11 +59,7 @@ pub(crate) fn failure_groups(vault: &oneiron::Vault) -> OwnerResult<Vec<FailureG
         .map(|group| FailureGroup {
             class: group.class,
             count: group.count,
-            attempts: group
-                .member_refs
-                .iter()
-                .map(|id| bytes_to_hex_lower(id.as_bytes()))
-                .collect(),
+            attempts: group.member_refs.iter().map(attempt_hex).collect(),
         })
         .collect())
 }
@@ -90,14 +97,14 @@ pub(crate) fn drill(
     let drill = vault.drill_custom_agent_failure(owner, query.class, attempt)?;
     let trace = drill.trace;
     Ok(FailureDrill {
-        attempt: bytes_to_hex_lower(trace.id.as_bytes()),
+        attempt: attempt_hex(&trace.id),
         kind: trace.kind,
         state: trace.state,
         tries: trace.attempt_count,
         last_error: trace.last_error,
         task_ref: trace.task_ref,
         run_id: trace.run_id,
-        retry_of: trace.retry_of.map(|id| bytes_to_hex_lower(id.as_bytes())),
+        retry_of: trace.retry_of.as_ref().map(attempt_hex),
         created_at: trace.created_at,
         updated_at: trace.updated_at,
         receipt_refs: drill.receipt_refs,
