@@ -44,6 +44,12 @@ impl ScopedRead<'_> {
         self
     }
 
+    /// Whether a claim whose principal audience is `principal` admits this
+    /// reader: one that names a principal admits that principal alone.
+    pub(crate) fn principal_admits(&self, principal: Option<EntityId>) -> bool {
+        principal.is_none() || principal == EntityId::from_hex(self.actor_key.actor_ref()).ok()
+    }
+
     pub(super) fn is_claim_raw_readable_with_policy_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -85,8 +91,7 @@ impl ScopedRead<'_> {
             return Ok(false);
         }
         let principal = claim_principal_id(body)?;
-        let reader = EntityId::from_hex(self.actor_key.actor_ref()).ok();
-        if principal.is_some() && principal != reader {
+        if !self.principal_admits(principal) {
             return Ok(false);
         }
         if crate::edit_distance::miner::is_mined_preference(&body.predicate) {

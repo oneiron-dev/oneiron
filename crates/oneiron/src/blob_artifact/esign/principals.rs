@@ -88,7 +88,7 @@ impl Vault {
             .collect())
     }
 }
-pub(super) fn automated_signing_allowed(
+pub(crate) fn automated_signing_allowed(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     principal: Option<&str>,
@@ -118,7 +118,7 @@ pub(super) fn automated_signing_allowed(
 
 /// The send-with-approval rung requires the authenticated Human to dispatch
 /// the reviewed command on the normal rail. It is not autonomous agent send.
-pub(super) fn automated_outbound_allowed(
+pub(crate) fn automated_outbound_allowed(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     principal: Option<&str>,

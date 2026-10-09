@@ -701,6 +701,30 @@ mod cb_x {
         assert_eq!(flow.suggestions_with_knob_off, 0);
         assert_eq!(flow.nag_repeats, 0);
     }
+
+    /// SOL-9A-2-R2 F27: a plugin install nobody approved authorizes nothing,
+    /// so a restore over the vault goes ahead past one proposed since the
+    /// backup, and is refused once the owner approved it.
+    #[test]
+    fn a_restore_goes_ahead_past_a_plugin_proposal_and_refuses_its_approval() {
+        let fixture = PluginFixture::open();
+        let backups = tempfile::tempdir().expect("backups");
+        let image = backups.path().join("backup");
+        fixture.back_up(&image);
+
+        let proposal = fixture.propose_from_conversation("turn_restore");
+        fixture
+            .restore(&image, &backups.path().join("first"))
+            .expect("a proposal awaiting approval does not block the restore");
+
+        fixture.owner_accepts(&proposal.claim_id);
+        let destination = backups.path().join("second");
+        let error = fixture
+            .restore(&image, &destination)
+            .expect_err("an approval since the backup refuses the restore");
+        assert!(error.to_string().contains("board plugins"), "{error}");
+        assert!(!destination.exists());
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -1018,13 +1042,17 @@ mod plugin_fixture {
     }
 
     impl PluginFixture {
-        pub(crate) fn open() -> Self {
-            let dir = tempfile::tempdir().expect("temporary vault directory");
+        fn config() -> VaultConfig {
             let mut config = VaultConfig::device();
             config.map_size = 64 * 1024 * 1024;
             config.dimensions = 4;
             config.embedding_model = None;
-            let vault = Vault::open(dir.path(), config).expect("open the fixture vault");
+            config
+        }
+
+        pub(crate) fn open() -> Self {
+            let dir = tempfile::tempdir().expect("temporary vault directory");
+            let vault = Vault::open(dir.path(), Self::config()).expect("open the fixture vault");
 
             let actor = EntityId::from_bytes([0x11; 16]).expect("actor id");
             let hub_id = EntityId::from_bytes([0x22; 16]).expect("hub id");
@@ -1059,6 +1087,30 @@ mod plugin_fixture {
                 content_hash_hex,
                 admission,
             }
+        }
+
+        /// Takes a checkpoint of the fixture vault at `image`.
+        pub(crate) fn back_up(&self, image: &std::path::Path) {
+            self.vault
+                .snapshot_checkpoint(image, 1_500)
+                .expect("checkpoint the fixture vault");
+        }
+
+        /// Restores the checkpoint at `image` beside the fixture vault, into
+        /// `destination`, keeping the fixture vault's live authority.
+        pub(crate) fn restore(
+            &self,
+            image: &std::path::Path,
+            destination: &std::path::Path,
+        ) -> oneiron::Result<()> {
+            Vault::restore_checkpoint_keeping_authority(
+                image,
+                destination,
+                Self::config(),
+                &self.vault,
+                4_000,
+            )
+            .map(drop)
         }
 
         fn hub(&self) -> CrmHub {

@@ -2571,7 +2571,7 @@
      "path": "src/batch/export/credential_filter.rs",
      "purpose": "Credential filtering at memory serve and export serialization boundaries",
      "surface": {
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -3297,7 +3297,7 @@
      "path": "src/blob_artifact/esign/capability.rs",
      "purpose": "Session-less, high-entropy capabilities",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 4,
       "struct": 1
      }
@@ -3374,7 +3374,7 @@
      "path": "src/blob_artifact/esign/mod.rs",
      "purpose": "Native signing requests on versioned blob artifacts; claims are the state machine",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "mod": 2,
       "re-export": 9
      }
@@ -5998,20 +5998,20 @@
      "path": "src/campaign/compliance/evaluate.rs",
      "purpose": "Pure dispatch evaluator: jurisdiction selection, row matching, verdict",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 2,
       "struct": 3
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/campaign/compliance/hydrate.rs",
      "purpose": "External-effect gate leg and vault-to-facts hydration (evidence, jurisdiction, message elements)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 6
      }
     },
     {
@@ -6021,7 +6021,7 @@
      "path": "src/campaign/compliance/mod.rs",
      "purpose": "CA-06's compliance pack: versioned, vault-resident legal rule rows and the dispatch gate that enforces them",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 4
      }
     },
@@ -7656,7 +7656,7 @@
      "path": "src/claim/scoped_read/access_gate.rs",
      "purpose": "Relationship access checks share the row read transaction with grant resolution",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 8
      }
     },
     {
@@ -7691,7 +7691,7 @@
      "path": "src/claim/scoped_read/claim_admission.rs",
      "purpose": "Claim admission on the scoped lane: the lane's claim-status mode, then the reader, credential, ceiling…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -7755,7 +7755,7 @@
      "path": "src/claim/scoped_read/mod.rs",
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 6,
       "struct": 1
      }
@@ -9706,7 +9706,7 @@
      "path": "src/comm/parties.rs",
      "purpose": "Node-local party shortcut vs synced PERSON truth plus twin reconciliation",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 1
      }
     },
@@ -10818,7 +10818,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 15,
-      "fn": 16,
+      "fn": 17,
       "struct": 2
      }
     },
@@ -12388,6 +12388,14 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/conversation/tests/restore.rs",
+     "purpose": "ASTRA-9A-2 F2: a restore over the live vault never brings back room authority narrowed since the checkpoint",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/conversation/visibility.rs",
@@ -12673,7 +12681,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/counterparty_contact/tests.rs",
@@ -13182,7 +13190,7 @@
      "path": "src/delivery_window/claims.rs",
      "purpose": "Policy claim parsing and per-claim restriction gating",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 1,
       "struct": 1
      }
@@ -13344,7 +13352,7 @@
      "path": "src/disclosure/vault_context.rs",
      "purpose": "vault_meta scope/tier-A rows, Vault impl, and agent-visible assembly block",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 12,
       "struct": 2
      }
@@ -16928,7 +16936,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "mod": 2,
       "re-export": 13
      }
@@ -16997,7 +17005,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Birth-facet-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -17262,14 +17270,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/gate/bundle.rs",
      "purpose": "—",
      "surface": {
       "const": 5,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -17604,7 +17612,7 @@
      "path": "src/gate/effect/effect_contacts.rs",
      "purpose": "Counterparty hydration plus send-override and do-not-contact fold",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -17624,7 +17632,7 @@
      "path": "src/gate/effect/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -17644,7 +17652,7 @@
      "path": "src/gate/foreign_agent.rs",
      "purpose": "Owner-bound foreign introductions",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3
      }
     },
@@ -17709,7 +17717,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 53,
+      "crate-vis": 54,
       "re-export": 7
      }
     },
@@ -18012,7 +18020,7 @@
      "path": "src/gate/run_proposal_fixture.rs",
      "purpose": "Test-support seam: park one Dreamer-authored proposal on a run's consent lane, as a dream pass does, so a…",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -24804,7 +24812,7 @@
      "path": "src/outbound/mod.rs",
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 7
      }
     },
@@ -26194,7 +26202,7 @@
      "path": "src/policy_model/mod.rs",
      "purpose": "Policy classification over two planes",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 13
      }
     },
@@ -26215,7 +26223,7 @@
      "path": "src/policy_model/owner_rows/authority.rs",
      "purpose": "Live policy-power holders from shared membership and owner-stamped action grants",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -26246,7 +26254,7 @@
      "path": "src/policy_model/owner_rows/mod.rs",
      "purpose": "Holder-governed owner-policy row edits, proposals, events and change log",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 5,
       "re-export": 3
@@ -28032,7 +28040,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/authority_plane.rs",
@@ -28042,12 +28050,172 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/recovery/checkpoint/authority_plane/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions.rs",
+     "purpose": "No decision the engine makes from rows a restore brings back permits more than it does now (ARCH-0038…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/audience.rs",
+     "purpose": "Who reads or witnesses what: a record's audience, the disclosure clamp a conversation runs under and the…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/campaign.rs",
+     "purpose": "What a campaign send reads about its recipient: the compliance rules the campaign gate binds a send to an…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/consent.rs",
+     "purpose": "What the engine grants on consent and standing it folds from rows a restore brings back: the ramp offer a…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/counterparty.rs",
+     "purpose": "What a send reads about its counterparty: the contacts the send gate folds for a party, the do-not-contact…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/reads.rs",
+     "purpose": "Who a read admits: the relationship reads a principal's memberships and grants decide, the policy grants a…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/skills.rs",
+     "purpose": "What the activation gate decides about a skill: the posture its bytes' scan verdicts give an entry into…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/tasks.rs",
+     "purpose": "What a task, an ask and an agent may do: the authority a task's facts prove through the `ScopedTo` edges…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/tests.rs",
+     "purpose": "The census check, a substrate invariant: no restore loosens a decision the engine makes from restored rows…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/tests/audience.rs",
+     "purpose": "Census cases for who reads or witnesses what",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/tests/campaign.rs",
+     "purpose": "Census cases for what a campaign send reads about its recipient",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/tests/consent.rs",
+     "purpose": "Census cases for consent and standing the engine grants from restored rows",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/tests/counterparty.rs",
+     "purpose": "Census cases for what a send reads about its counterparty",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/tests/reads.rs",
+     "purpose": "Census cases for who a read admits",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/tests/skills.rs",
+     "purpose": "Census cases for what the activation gate decides about a skill",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/tests/tasks.rs",
+     "purpose": "Census cases for what a task, an ask and an agent may do",
+     "surface": {
+      "crate-vis": 8
+     }
     },
     {
      "bucket": "m",
@@ -28061,7 +28229,7 @@
      "purpose": "Tier-C physical-row checkpoints and one restore/wake/migrate path",
      "surface": {
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "re-export": 1,
       "struct": 2
      }
@@ -28074,6 +28242,74 @@
      "purpose": "Rebuild mechanical projections and reset leased attempt ownership",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/restore_class/mod.rs",
+     "purpose": "What a restore over a live vault does with each canonical row: one table, deny by default",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/restore_class/sync_state.rs",
+     "purpose": "The restore class of every canonical `sync_state` family, in declaration order",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/checkpoint/restore_class/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/restore_class/vault_meta_a_c.rs",
+     "purpose": "The restore class of every canonical `vault_meta`, `a` to `c` family, in declaration order",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/restore_class/vault_meta_d_l.rs",
+     "purpose": "The restore class of every canonical `vault_meta`, `d` to `l` family, in declaration order",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/restore_class/vault_meta_m_r.rs",
+     "purpose": "The restore class of every canonical `vault_meta`, `m` to `r` family, in declaration order",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/restore_class/vault_meta_s_z.rs",
+     "purpose": "The restore class of every canonical `vault_meta`, `s` to `z` family, in declaration order",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -34552,7 +34788,7 @@
      "path": "src/task_verb/ask_settlement.rs",
      "purpose": "Atomic ask cutoffs and the fixed human-word reducers",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
@@ -34878,7 +35114,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "mod": 1,
       "re-export": 18
      }
@@ -35265,7 +35501,7 @@
      "path": "src/task_verb/wire_decode.rs",
      "purpose": "Read side of the hand-rolled rmpv wire format for typed TASK bodies",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -35298,7 +35534,7 @@
      "path": "src/test_util/channel_identity.rs",
      "purpose": "Self-held ChannelIdentity fixtures: a row in a chosen state, reached by walking its machine",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -36809,7 +37045,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 5
      }
     },
@@ -36927,7 +37163,7 @@
      "purpose": "Direct leader chats: same-vault routing, shared-ancestor rule clamp and speaker scope",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 2,
       "struct": 1
      }
@@ -36965,7 +37201,7 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 31,
+      "crate-vis": 34,
       "enum": 1,
       "fn": 15,
       "re-export": 6,
@@ -37032,7 +37268,7 @@
      "path": "src/workspace_roster/project/tests.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -37042,7 +37278,7 @@
      "path": "src/workspace_roster/project/tests/authority.rs",
      "purpose": "Leader and board authority over PROJECT rows: live doors refuse a bad proof, replay stores it, and the read…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -37513,7 +37749,7 @@
      "path": "tests/it/cb_oracle_plugin.rs",
      "purpose": "Context Board forward test oracle — epic ONE-1692, opened by ONE-1693 (CB-01)",
      "surface": {
-      "crate-vis": 53
+      "crate-vis": 55
      }
     },
     {
@@ -38464,7 +38700,7 @@
      "purpose": "Persisted, deterministic Rust API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39038,9 +39274,9 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 20,
+     "files": 43,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "Canonical Layer-1 recovery, validated rebuilds and bounded repair"
     },
@@ -39416,10 +39652,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 24,
+   "over_bar": 26,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2369,
-   "test_files": 793
+   "source_files": 2383,
+   "test_files": 803
   },
   "oneiron-android": {
    "files": [
@@ -47219,7 +47455,7 @@
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -47942,7 +48178,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "EnvConfig"
@@ -47951,7 +48187,7 @@
      "purpose": "Layered merge: file, environment, and argv values into `ServeConfig`",
      "surface": {
       "crate-vis": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -49271,7 +49507,7 @@
      "path": "src/owner/runs.rs",
      "purpose": "Agent-run batch consent: see what a run is waiting on, then approve or decline the whole run in one act…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -49281,7 +49517,7 @@
      "path": "src/owner/schedule.rs",
      "purpose": "Scheduled backups for a running `serve`",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -49948,7 +50184,7 @@
     "config": {
      "files": 15,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge"
     },
@@ -50107,7 +50343,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 3,
+   "over_bar": 4,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 261,
    "test_files": 105

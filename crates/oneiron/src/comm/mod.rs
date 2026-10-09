@@ -39,7 +39,9 @@ pub(crate) use self::consent::{
     supersede_party_opt_out_head_in_txn,
 };
 pub use self::parties::resolve_or_create_comm_party;
-pub(crate) use self::parties::{resolve_party_ref_from_store_in_txn, resolve_party_ref_in_txn};
+pub(crate) use self::parties::{
+    comm_party_keys_in_txn, resolve_party_ref_from_store_in_txn, resolve_party_ref_in_txn,
+};
 pub use self::projector::{
     record_comm_inbound_reply, record_comm_inbound_stop, record_comm_send_receipt,
     record_comm_thread_event, run_comm_projector,

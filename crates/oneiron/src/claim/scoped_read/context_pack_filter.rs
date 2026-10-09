@@ -206,7 +206,7 @@ impl ScopedRead<'_> {
     /// session's.
     ///
     /// Composes through the same session-aware edge port as reachability.
-    pub(super) fn claim_facet_refs_in(
+    pub(crate) fn claim_facet_refs_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,

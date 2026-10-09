@@ -465,7 +465,11 @@ fn machine_history_disclosure_scope(
     }
 }
 
-fn disclosure_scope_for_stored_row(
+/// The position the scoped read and export doors select the stored row of
+/// `id` at, from its body `data` of `kind`: a history control's current
+/// effective audience, or the row's birth stamp; `None` where neither door
+/// selects it.
+pub(crate) fn disclosure_scope_for_stored_row(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
