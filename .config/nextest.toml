@@ -23,19 +23,17 @@
 #   * vault_open_drop_cycles_survive_pthread_key_limit
 #     — 600 sequential Vault open/drop cycles (ONE-1142 regression guard)
 #   * hnsw_recall_at_10_vs_bruteforce
-#   * hnsw_recall_at_10_after_refresh_churn
-#     — 1k-vector recall benchmarks against brute force
+#     — 1k-vector recall benchmark against brute force
 #   * the `sync_convergence_props` module inside the `it_sync` binary
 #     — the whole ONE-1136 two-vault CRDT convergence property suite
 #       (multi-round Loro exchange per test; sync feature only)
-# The three unit tests match by name substring (`~`), not exact `=` path, so
+# The two unit tests match by name substring (`~`), not exact `=` path, so
 # a future split of the flat `tests` module cannot silently un-exclude them;
 # each name is unique workspace-wide.
 default-filter = """
 not (
   test(~vault_open_drop_cycles_survive_pthread_key_limit)
   | test(~hnsw_recall_at_10_vs_bruteforce)
-  | test(~hnsw_recall_at_10_after_refresh_churn)
   | (binary(=it_sync) & test(/^sync_convergence_props::/))
 )
 """
@@ -77,7 +75,6 @@ default-filter = """
 not (
   test(~vault_open_drop_cycles_survive_pthread_key_limit)
   | test(~hnsw_recall_at_10_vs_bruteforce)
-  | test(~hnsw_recall_at_10_after_refresh_churn)
   | (binary(=it_sync) & test(/^sync_convergence_props::/))
 )
 """

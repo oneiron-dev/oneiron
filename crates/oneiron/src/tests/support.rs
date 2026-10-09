@@ -131,15 +131,6 @@ pub(super) fn valid_claim_body_bytes(pred: &str, val: &str) -> Vec<u8> {
     crate::claim::encode_claim_body(&body).expect("encode valid claim body")
 }
 
-pub(super) fn read_meta_u16(vault: &Vault, key: &[u8]) -> Result<Option<u16>> {
-    let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault.store.vault_meta.get(&rtxn, key)? else {
-        return Ok(None);
-    };
-    let bytes: [u8; 2] = raw.as_ref().try_into().map_err(|_| Error::InvalidKey)?;
-    Ok(Some(u16::from_le_bytes(bytes)))
-}
-
 pub(super) fn vault_meta_rows_with_prefix(
     vault: &Vault,
     prefix: &[u8],

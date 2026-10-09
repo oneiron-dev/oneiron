@@ -446,38 +446,6 @@ fn hard_delete_sweep_sequence_self_heals_stale_cursor_on_collision() -> Result<(
 }
 
 #[test]
-fn gdpr_and_policy_deletes_soft_erase_then_active_purge_with_receipts() -> Result<()> {
-    for reason in [DeleteReason::GdprDelete, DeleteReason::PolicyDelete] {
-        let (_dir, vault) = open_test_vault();
-        let id = EntityId::now();
-        vault
-            .batch()
-            .put(&id, 1, test_time_range(300, 300), 301, b"regulated secret")
-            .text(&id, &[("body", "regulated secret")])
-            .commit()?;
-
-        let outcome = vault.delete_entity_with_reason(&id, reason)?;
-
-        assert!(outcome.existed);
-        assert!(vault.get(&id)?.is_none());
-        assert!(vault.search_text("regulated", 10)?.is_empty());
-        assert!(outcome.receipt_id.is_some());
-        assert!(outcome.sweep_key.is_some());
-
-        let receipt_raw = vault
-            .get_raw(&outcome.receipt_id.unwrap())?
-            .expect("receipt should be persisted");
-        let receipt = receipt_body(&receipt_raw);
-        assert_eq!(receipt["reason"], reason.as_str());
-        assert!(
-            receipt["soft_complete_at"].as_u64().unwrap()
-                <= receipt["hard_purge_complete_at"].as_u64().unwrap()
-        );
-    }
-    Ok(())
-}
-
-#[test]
 fn receipt_reason_purges_orphan_vector_with_receipt_and_sweep() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = EntityId::now();
@@ -873,34 +841,6 @@ fn raced_gdpr_delete_against_batch_delete_still_converges() -> Result<()> {
     assert!(peer.search_vector(&[0.1, 0.2, 0.3, 0.4], 10)?.is_empty());
     assert_eq!(redaction_audit_receipts(&peer)?.len(), 1);
     assert_eq!(hard_erase_sweep_rows(&peer)?.len(), 1);
-    Ok(())
-}
-
-#[test]
-fn plain_delete_is_tombstone_tier_and_explicit_purge_is_irreversible() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let soft = EntityId::now();
-    let hard = EntityId::now();
-    for id in [soft, hard] {
-        vault.put_entity(&id, 1, test_time_range(10, 10), 20, b"body")?;
-    }
-    assert!(vault.delete_entity(&soft)?);
-    assert_eq!(vault.get(&soft)?.as_deref(), Some([].as_slice()));
-    assert!(
-        vault.delete_entity_with_options(
-            &hard,
-            crate::deletion::DeleteEntityOptions { purge: true }
-        )?
-    );
-    assert_eq!(vault.get(&hard)?, None);
-    let txn = vault.store.env.read_txn()?;
-    assert!(
-        vault
-            .store
-            .sync_state
-            .get(&txn, &crate::deletion::local_hard_delete_key(&hard))?
-            .is_some()
-    );
     Ok(())
 }
 

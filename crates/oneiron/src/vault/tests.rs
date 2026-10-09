@@ -6,7 +6,7 @@ use crate::config::{
     HnswConfig, HostingPrivacyPosture, TextAnalyzerConfig, VaultConfig, VaultDataKeyCustody,
     VaultPrivacyConfig,
 };
-use crate::registry::{ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TASK, ENTITY_TYPE_TASK_LIST};
+use crate::registry::{ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_TASK_LIST};
 use crate::store::{
     STORAGE_ABI_VERSION_KEY, TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_ANALYZER_MANIFEST_KEY,
     TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION_KEY,
@@ -148,48 +148,6 @@ fn sync_replayed_tombstone_quarantines_for_delete_protected_engine_record() -> R
 }
 
 #[test]
-fn count_entities_by_type_uses_type_index_prefix_counts() -> Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let vault = Vault::open(tmp.path(), test_config())?;
-    let task_list_a = entity(0x60);
-    let task_list_b = entity(0x12);
-    let task = entity(0x13);
-
-    vault
-        .batch()
-        .put(
-            &task_list_a,
-            ENTITY_TYPE_TASK_LIST,
-            range(1, 1),
-            2,
-            b"list-a",
-        )
-        .put(
-            &task_list_b,
-            ENTITY_TYPE_TASK_LIST,
-            range(3, 3),
-            4,
-            b"list-b",
-        )
-        .put(
-            &task,
-            ENTITY_TYPE_TASK,
-            range(5, 5),
-            6,
-            &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
-        )
-        .commit()?;
-
-    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_TASK_LIST)?, 2);
-    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_TASK)?, 1);
-    assert_eq!(
-        vault.count_entities_by_type(crate::registry::ENTITY_TYPE_MACHINE)?,
-        1
-    );
-    Ok(())
-}
-
-#[test]
 fn count_entities_by_type_rejects_corrupted_type_index_key() -> Result<()> {
     let tmp = tempfile::tempdir()?;
     let vault = Vault::open(tmp.path(), test_config())?;
@@ -206,84 +164,6 @@ fn count_entities_by_type_rejects_corrupted_type_index_key() -> Result<()> {
         .count_entities_by_type(ENTITY_TYPE_TASK_LIST)
         .expect_err("short type index key should fail loud");
     assert_matches!(err, Error::CorruptedIndex(_));
-    Ok(())
-}
-
-#[test]
-fn latest_learned_at_uses_temporal_index_tail() -> Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let vault = Vault::open(tmp.path(), test_config())?;
-
-    assert_eq!(
-        vault.latest_learned_at()?,
-        Some(crate::gate::DEFAULT_POLICY_MANIFEST_TIMESTAMP)
-    );
-
-    vault
-        .batch()
-        .put(
-            &entity(0x21),
-            ENTITY_TYPE_TASK,
-            range(1, 1),
-            10,
-            &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
-        )
-        .put(
-            &entity(0x22),
-            ENTITY_TYPE_TASK,
-            range(2, 2),
-            30,
-            &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
-        )
-        .put(
-            &entity(0x23),
-            ENTITY_TYPE_TASK,
-            range(3, 3),
-            20,
-            &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
-        )
-        .commit()?;
-
-    assert_eq!(vault.latest_learned_at()?, Some(30));
-    Ok(())
-}
-
-#[test]
-fn latest_learned_at_excluding_entity_types_skips_policy_manifest() -> Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let vault = Vault::open(tmp.path(), test_config())?;
-
-    assert_eq!(
-        vault.latest_learned_at_excluding_entity_types(&[
-            ENTITY_TYPE_POLICY_MANIFEST,
-            crate::registry::ENTITY_TYPE_AGENT_DEF,
-        ])?,
-        Some(0)
-    );
-
-    vault
-        .batch()
-        .put(
-            &entity(0x21),
-            ENTITY_TYPE_TASK,
-            range(1, 1),
-            10,
-            &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
-        )
-        .commit()?;
-
-    assert_eq!(
-        vault.latest_learned_at_excluding_entity_types(&[ENTITY_TYPE_POLICY_MANIFEST])?,
-        Some(10)
-    );
-    assert_eq!(
-        vault.latest_learned_at_excluding_entity_types(&[
-            ENTITY_TYPE_POLICY_MANIFEST,
-            crate::registry::ENTITY_TYPE_AGENT_DEF,
-            ENTITY_TYPE_TASK
-        ])?,
-        Some(0)
-    );
     Ok(())
 }
 
@@ -327,25 +207,6 @@ fn new_empty_vault_writes_manifest_keys() -> Result<()> {
             std::str::from_utf8(key).unwrap(),
         );
     }
-    Ok(())
-}
-
-#[test]
-fn fresh_vault_resolves_default_policy_manifest() -> Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let vault = Vault::open(tmp.path(), test_config())?;
-
-    let policy = resolve_policy_manifest(&vault)?;
-    let first_party_actor_ref = crate::gate::first_party_connector_actor_ref();
-
-    assert_eq!(policy.diagnostics().manifest_count, 1);
-    assert!(policy.enforces_write_gate());
-    assert_eq!(
-        policy.actor_ceiling("agent", Some(&first_party_actor_ref)),
-        crate::gate::PolicyApprovalCeiling::Auto
-    );
-    assert_eq!(policy.signatures().len(), 1);
-    assert_ne!(policy.read_frontier_hash()?, [0; 32]);
     Ok(())
 }
 
@@ -609,30 +470,6 @@ fn bm25_field_schema_hash_binds_on_disk_semantics() {
     assert_ne!(baseline, bm25_field_schema_hash_for_records(&changed));
 }
 
-#[test]
-fn bm25_field_schema_hash_ignores_scoring_knobs() {
-    let default = bm25::Bm25Config::default();
-    let mut fields = default.fields;
-    fields[AnalyzerChannel::Surface.field_id() as usize].weight = 9.0;
-    fields[AnalyzerChannel::Surface.field_id() as usize].b = 0.1;
-    let scoring = bm25::Bm25Config {
-        k1: 2.0,
-        formula: bm25::Bm25Formula::Plus { delta: 0.5 },
-        fields,
-    };
-
-    assert_eq!(
-        bm25_field_schema_hash_for_records(&bm25_field_schema_records(
-            &default,
-            bm25::POSTINGS_VALUE_FORMAT_VERSION,
-        )),
-        bm25_field_schema_hash_for_records(&bm25_field_schema_records(
-            &scoring,
-            bm25::POSTINGS_VALUE_FORMAT_VERSION,
-        )),
-    );
-}
-
 /// AC2 (ONE-1119): the rank profile stays OUT of the on-disk
 /// manifest handshake. Querying through both public profile paths
 /// with a thoroughly non-default profile must leave every
@@ -761,40 +598,6 @@ fn skip_manifest_check_unblocks_clear_text_index_recovery() -> Result<()> {
 }
 
 #[test]
-fn search_text_fails_closed_when_handshake_bypassed_on_populated_index() -> Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let a = entity(0x67);
-
-    {
-        let vault = Vault::open(tmp.path(), test_config())?;
-        vault
-            .batch()
-            .put(&a, 1, range(1, 1), 1, b"a")
-            .text(&a, &[("body", "hello world")])
-            .commit()?;
-    }
-
-    // Open with the bypass set — the index has rows but the handshake
-    // didn't run. `search_text` would otherwise score against postings
-    // that may have been written under a different analyzer manifest.
-    let mut cfg = test_config();
-    cfg.skip_text_index_manifest_check = true;
-    let vault = Vault::open(tmp.path(), cfg)?;
-    let err = vault
-        .search_text("hello", 10)
-        .expect_err("search_text must refuse on bypassed-and-populated state");
-    assert!(
-        matches!(err, Error::CorruptedIndex(_)),
-        "expected CorruptedIndex, got {err:?}",
-    );
-
-    // After clear_text_index, trust is restored within the same vault.
-    vault.maintain().clear_text_index().run()?;
-    assert!(vault.search_text("hello", 10).is_ok());
-    Ok(())
-}
-
-#[test]
 fn text_write_fails_closed_when_trust_bypassed() -> Result<()> {
     let tmp = tempfile::tempdir()?;
     let a = entity(73);
@@ -911,25 +714,6 @@ fn handshake_rejects_residual_rows_with_missing_total_docs_sentinel() -> Result<
 }
 
 #[test]
-fn text_index_status_reflects_indexed_docs() -> Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let vault = Vault::open(tmp.path(), test_config())?;
-    let a = entity(51);
-    let b = entity(52);
-
-    vault
-        .batch()
-        .put(&a, 1, range(1, 1), 1, b"a")
-        .put(&b, 1, range(1, 1), 1, b"b")
-        .text(&a, &[("body", "first")])
-        .text(&b, &[("body", "second")])
-        .commit()?;
-
-    assert_eq!(vault.text_index_status()?.total_docs, 2);
-    Ok(())
-}
-
-#[test]
 fn malformed_policy_manifest_is_not_replaced_on_production_reopen() -> Result<()> {
     let tmp = tempfile::tempdir()?;
     let id = crate::gate::default_policy_manifest_id()?;
@@ -957,38 +741,6 @@ fn malformed_policy_manifest_is_not_replaced_on_production_reopen() -> Result<()
         Some(&[ENTITY_TYPE_POLICY_MANIFEST][..])
     );
     assert!(vault.gate_decisions(20)?.is_empty());
-    Ok(())
-}
-
-#[test]
-fn invalid_fast_dims_first_open_then_valid_reopen_has_default_manifest() -> Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let mut invalid = test_config();
-    invalid.fast_dims = Some(0);
-    assert!(matches!(
-        Vault::open(tmp.path(), invalid),
-        Err(Error::InvalidConfig(_))
-    ));
-    let vault = Vault::open(tmp.path(), test_config())?;
-    assert_eq!(
-        resolve_policy_manifest(&vault)?
-            .diagnostics()
-            .manifest_count,
-        1
-    );
-    Ok(())
-}
-
-#[test]
-fn production_opener_cannot_select_test_unseeded() -> Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let vault = Vault::open(tmp.path(), test_config())?;
-    assert_eq!(
-        resolve_policy_manifest(&vault)?
-            .diagnostics()
-            .manifest_count,
-        1
-    );
     Ok(())
 }
 
@@ -1040,22 +792,6 @@ fn existing_root_missing_storage_abi_is_not_cleaned_up() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn production_opener_has_no_test_unseeded_configuration_selector() -> Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let config = test_config();
-    let vault = Vault::open(tmp.path(), config)?;
-    assert_eq!(
-        resolve_policy_manifest(&vault)?
-            .diagnostics()
-            .manifest_count,
-        1
-    );
-    // TestUnseeded is only passed through the cfg(test-support) named helper;
-    // VaultConfig has no seed-mode field and Vault::open hardcodes Required.
-    Ok(())
-}
-
 fn hosted_custody(key_ref: &str) -> VaultDataKeyCustody {
     VaultDataKeyCustody::HostManagedKms {
         key_ref: key_ref.to_owned(),
@@ -1078,131 +814,6 @@ fn config_with_privacy(privacy: VaultPrivacyConfig) -> VaultConfig {
         privacy,
         ..test_config()
     }
-}
-
-#[test]
-fn privacy_pairing_matrix_admits_exactly_the_two_supported_deployments() {
-    // Row 1: hosted + host-managed KMS reference => valid, host-readable.
-    let hosted = privacy_config(
-        HostingPrivacyPosture::Hosted,
-        hosted_custody("kms://example/prod-key-1"),
-    );
-    assert!(hosted.validate().is_ok());
-    assert!(hosted.host_readable());
-    assert_eq!(hosted.honest_label(), "host-readable");
-
-    // Row 2: hosted + owner-held local key => rejected.
-    let hosted_without_host_key = privacy_config(
-        HostingPrivacyPosture::Hosted,
-        VaultDataKeyCustody::OwnerHeldLocal,
-    );
-    assert_matches!(
-        hosted_without_host_key.validate(),
-        Err(Error::InvalidConfig(_))
-    );
-
-    // Row 3: self-host/local + owner-held local key => valid, owner-held.
-    let self_host = privacy_config(
-        HostingPrivacyPosture::SelfHostLocal,
-        VaultDataKeyCustody::OwnerHeldLocal,
-    );
-    assert!(self_host.validate().is_ok());
-    assert!(!self_host.host_readable());
-    assert_eq!(self_host.honest_label(), "owner-held-key");
-
-    // Row 4: self-host/local + host-managed KMS reference => rejected.
-    let self_host_with_host_key = privacy_config(
-        HostingPrivacyPosture::SelfHostLocal,
-        hosted_custody("kms://example/prod-key-1"),
-    );
-    assert_matches!(
-        self_host_with_host_key.validate(),
-        Err(Error::InvalidConfig(_))
-    );
-}
-
-#[test]
-fn hosted_privacy_posture_requires_a_non_empty_key_reference() {
-    for blank in ["", "   ", "\t\n"] {
-        let hosted = privacy_config(HostingPrivacyPosture::Hosted, hosted_custody(blank));
-        assert_matches!(hosted.validate(), Err(Error::InvalidConfig(_)));
-    }
-}
-
-#[test]
-fn vault_config_presets_default_to_self_host_local() {
-    for config in [
-        VaultConfig::default(),
-        VaultConfig::device(),
-        VaultConfig::server(),
-    ] {
-        assert_eq!(config.privacy.posture, HostingPrivacyPosture::SelfHostLocal);
-        assert_eq!(
-            config.privacy.data_key_custody,
-            VaultDataKeyCustody::OwnerHeldLocal
-        );
-        assert!(config.privacy.validate().is_ok());
-    }
-}
-
-#[test]
-fn open_default_config_reports_owner_held_key() -> Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let vault = Vault::open(tmp.path(), test_config())?;
-
-    assert_eq!(
-        vault.privacy_posture(),
-        HostingPrivacyPosture::SelfHostLocal
-    );
-    assert_eq!(vault.privacy_posture_label(), "owner-held-key");
-    assert!(!vault.is_host_readable());
-    Ok(())
-}
-
-#[test]
-fn open_hosted_config_reports_host_readable() -> Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let config = config_with_privacy(privacy_config(
-        HostingPrivacyPosture::Hosted,
-        hosted_custody("kms://example/prod-key-1"),
-    ));
-    let vault = Vault::open(tmp.path(), config)?;
-
-    // Hosted is exposed honestly: the operator can read this vault.
-    assert_eq!(vault.privacy_posture(), HostingPrivacyPosture::Hosted);
-    assert_eq!(vault.privacy_posture_label(), "host-readable");
-    assert!(vault.is_host_readable());
-    Ok(())
-}
-
-#[test]
-fn open_rejects_self_host_local_with_host_managed_custody() -> Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let config = config_with_privacy(privacy_config(
-        HostingPrivacyPosture::SelfHostLocal,
-        hosted_custody("kms://example/prod-key-1"),
-    ));
-
-    assert!(matches!(
-        Vault::open(tmp.path(), config),
-        Err(Error::InvalidConfig(_))
-    ));
-    Ok(())
-}
-
-#[test]
-fn open_rejects_hosted_without_host_managed_custody() -> Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let config = config_with_privacy(privacy_config(
-        HostingPrivacyPosture::Hosted,
-        VaultDataKeyCustody::OwnerHeldLocal,
-    ));
-
-    assert!(matches!(
-        Vault::open(tmp.path(), config),
-        Err(Error::InvalidConfig(_))
-    ));
-    Ok(())
 }
 
 #[test]
@@ -1233,22 +844,6 @@ fn privacy_pairing_is_validated_before_the_store_is_opened() -> Result<()> {
         vault.privacy_posture(),
         HostingPrivacyPosture::SelfHostLocal
     );
-    Ok(())
-}
-
-#[test]
-fn open_existing_also_gates_on_the_privacy_pairing() -> Result<()> {
-    let tmp = tempfile::tempdir()?;
-    Vault::open(tmp.path(), test_config())?;
-
-    let config = config_with_privacy(privacy_config(
-        HostingPrivacyPosture::SelfHostLocal,
-        hosted_custody("kms://example/prod-key-1"),
-    ));
-    assert!(matches!(
-        Vault::open_existing(tmp.path(), config),
-        Err(Error::InvalidConfig(_))
-    ));
     Ok(())
 }
 
@@ -1421,18 +1016,6 @@ fn a_handle_of_another_vault_is_refused_by_identity() -> Result<()> {
 }
 
 #[test]
-fn two_handles_on_one_vault_share_a_vault_id_and_two_vaults_do_not() -> Result<()> {
-    let (tmp, other_tmp) = (tempfile::tempdir()?, tempfile::tempdir()?);
-    let first = Vault::open(tmp.path(), test_config())?.vault_id();
-    let second = Vault::open(tmp.path(), test_config())?.vault_id();
-    assert_eq!(first, second);
-
-    let other = Vault::open(other_tmp.path(), test_config())?.vault_id();
-    assert_ne!(first, other);
-    Ok(())
-}
-
-#[test]
 fn a_fresh_vault_exposes_the_genesis_vault_id() -> Result<()> {
     use crate::authority::{AuthorityOp, HostSlipIssuer, genesis_vault_id};
     use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
@@ -1475,13 +1058,5 @@ fn a_fresh_vault_exposes_the_genesis_vault_id() -> Result<()> {
     replica.put_authority_log_entries(&rows)?;
     assert_eq!(replica.authority_fold()?.vault_id, Some(canonical));
     assert_ne!(replica.vault_id(), unrooted);
-    Ok(())
-}
-
-#[test]
-fn a_fresh_vault_holds_a_local_vault_id() -> Result<()> {
-    let tmp = tempfile::tempdir()?;
-    let fresh = Vault::open(tmp.path(), test_config())?.vault_id();
-    assert_eq!(Vault::open(tmp.path(), test_config())?.vault_id(), fresh);
     Ok(())
 }

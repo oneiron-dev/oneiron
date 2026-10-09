@@ -149,7 +149,7 @@ use crate::deletion::{ARCHIVE_TOMBSTONE_PREFIX, DeleteReason, TombstoneReason};
 #[cfg(test)]
 use crate::edge::EdgeKind;
 #[cfg(test)]
-use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord, hex_lower};
+use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 #[cfg(test)]
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY};
 #[cfg(test)]

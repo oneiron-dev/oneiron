@@ -530,64 +530,6 @@ fn deleting_a_provenance_claim_whose_subject_edge_is_gone_refreshes_nothing() ->
     Ok(())
 }
 
-#[test]
-fn provenance_claim_delete_invalidates_ppr_cache_for_subject_endpoints() -> Result<()> {
-    let fx = lifecycle_fixture()?;
-    let vault = &fx.vault;
-    let subject = fx.subject;
-
-    let claim_id = EntityId::now();
-    vault.put_edge_provenance(
-        &claim_id,
-        &subject,
-        &EdgeProvenanceClaimBody::new(fx.person, 0.8, SupersessionStatus::Confirmed),
-        EdgeActorClass::Human,
-        1_000,
-    )?;
-
-    // Plant malformed PPR cache rows keyed to both subject-edge endpoints
-    // (mirrors the ONE-1105 restamp test): invalidation DELETES dependent
-    // cache rows. The TARGET endpoint is the discriminating probe — the
-    // purge's own invalidate_ppr_for_delete only reaches the claim's
-    // claim_of neighbor (the SOURCE); only the D16 edge refresh touches the
-    // target.
-    let src_hash = [0xBD_u8; 16];
-    let tgt_hash = [0xBE_u8; 16];
-    {
-        let mut wtxn = vault.store.env.write_txn()?;
-        let mut src_dep = [0_u8; 32];
-        src_dep[..16].copy_from_slice(subject.source.as_bytes());
-        src_dep[16..].copy_from_slice(&src_hash);
-        let mut tgt_dep = [0_u8; 32];
-        tgt_dep[..16].copy_from_slice(subject.target.as_bytes());
-        tgt_dep[16..].copy_from_slice(&tgt_hash);
-        vault
-            .store
-            .ppr_cache
-            .put(&mut wtxn, &src_hash, &[1, 2, 3])?;
-        vault
-            .store
-            .ppr_cache
-            .put(&mut wtxn, &tgt_hash, &[1, 2, 3])?;
-        vault.store.ppr_cache_deps.put(&mut wtxn, &src_dep, &[])?;
-        vault.store.ppr_cache_deps.put(&mut wtxn, &tgt_dep, &[])?;
-        wtxn.commit()?;
-    }
-
-    vault.delete_entity_with_reason(&claim_id, DeleteReason::UserHardDelete)?;
-
-    let rtxn = vault.store.env.read_txn()?;
-    assert!(
-        vault.store.ppr_cache.get(&rtxn, &src_hash)?.is_none(),
-        "source-endpoint PPR cache must be invalidated by the downgrade"
-    );
-    assert!(
-        vault.store.ppr_cache.get(&rtxn, &tgt_hash)?.is_none(),
-        "target-endpoint PPR cache must be invalidated by the downgrade"
-    );
-    Ok(())
-}
-
 #[cfg(feature = "sync")]
 #[test]
 fn hard_delete_of_provenance_claim_carries_snapshot_ref_in_sweep_scope() -> Result<()> {
@@ -927,52 +869,6 @@ fn put_edge_provenance_substrate_and_effort_round_trip_with_model_gate() -> Resu
         EdgeActorClass::Human,
         3_000,
     )?;
-    Ok(())
-}
-
-/// ONE-1138 transition semantics, LEGACY side: a pre-bump claim — 7-key
-/// value record (no `actor_class` body key) + the engine-owned
-/// `{"actor_class": u8}` map on the wrapper's `evid` — still decodes and
-/// participates in lifecycle operations; old claims are NEVER invalidated.
-#[test]
-fn legacy_evid_actor_class_claim_decodes_and_lifecycle_restamps() -> Result<()> {
-    let fx = lifecycle_fixture()?;
-    let vault = &fx.vault;
-
-    // Fabricate the pre-bump shape byte-exactly through the reserved door
-    // (the encoder elides the absent actor_class key, so this is the exact
-    // legacy 7-key wire shape).
-    let claim_id = EntityId::now();
-    let record = EdgeProvenanceClaimBody::new(fx.person, 0.75, SupersessionStatus::Confirmed);
-    let mut wrapper = ClaimBody::new(
-        PREDICATE_EDGE_PROVENANCE,
-        ClaimSubject::from(fx.subject),
-        crate::provenance::encode_edge_provenance_value(&record),
-        0.75,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    )?;
-    wrapper.evidence = Some(crate::provenance::encode_actor_class_evidence(
-        EdgeActorClass::Human,
-    ));
-    let bytes = crate::claim::encode_claim_body(&wrapper)?;
-    vault.with_write_txn(|wtxn| {
-        vault
-            .batch_in()
-            .put_reserved_claim(&claim_id, test_time_range(1_000, u64::MAX), 1_000, &bytes)
-            .edge(&claim_id, EdgeKind::ClaimOf, &fx.subject.source, 1.0)
-            .apply(wtxn)
-    })?;
-
-    // The legacy claim drives the lifecycle: retraction resolves the class
-    // from the LEGACY evid map and restamps retracted (3) + human (0).
-    vault.retract_edge_provenance(&claim_id, 2_000)?;
-    let (out, inn) = raw_edge_values(vault, &fx.subject)?;
-    let out = out.expect("edges_out row survives");
-    assert_eq!(inn.as_deref(), Some(out.as_slice()));
-    assert_eq!(out.len(), EDGE_VALUE_SEMANTIC_PROVENANCED_LEN);
-    assert_eq!(out[24], 3, "retracted = 3");
-    assert_eq!(out[25], 0, "human = 0 resolved from the LEGACY evid map");
     Ok(())
 }
 

@@ -78,8 +78,8 @@ pub(crate) use rendezvous::{
 };
 #[cfg(test)]
 pub(crate) use sweep_queue::{
-    HARD_ERASE_SWEEP_SLA_SECS, HardEraseSweepExtras, LAST_HARD_ERASE_SWEEP_SEQ_KEY,
-    encode_hard_erase_sweep_job, encode_hard_erase_sweep_key,
+    HardEraseSweepExtras, LAST_HARD_ERASE_SWEEP_SEQ_KEY, encode_hard_erase_sweep_job,
+    encode_hard_erase_sweep_key,
 };
 pub(crate) use tombstone::{
     parse_window_label, pending_tombstone_key, window_label_from_timestamp,

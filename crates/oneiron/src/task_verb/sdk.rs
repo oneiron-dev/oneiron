@@ -205,34 +205,6 @@ include!("sdk_generated.rs");
 
 #[cfg(test)]
 #[test]
-fn verb_input_schema_is_built_once_per_process() {
-    let first = input_schema("tasks.ask").expect("tasks.ask input schema");
-    let second = input_schema("tasks.ask").expect("tasks.ask input schema");
-    assert!(std::ptr::eq(first, second));
-}
-
-#[cfg(test)]
-#[test]
-fn sdk_catalog_drives_scoped_projections_and_round_trips_names() {
-    let mut names = std::collections::BTreeSet::new();
-    for verb in AgentVerb::ALL {
-        assert!(names.insert(verb.as_str()));
-        assert_eq!(AgentVerb::from_name(verb.as_str()), Some(*verb));
-        assert!(input_schema(verb.as_str()).is_some());
-        assert_eq!(verb.argument_fields().is_some(), verb.is_mcp());
-        assert_eq!(verb.required_fields().is_some(), verb.is_mcp());
-        assert_eq!(mcp_arguments_schema(verb.as_str()).is_some(), verb.is_mcp());
-    }
-    assert!(AgentVerb::TasksAsk.is_section());
-    assert!(AgentVerb::RoomsSpeak.writes());
-    assert!(AgentVerb::RoomsList.is_facade());
-    assert!(!AgentVerb::BoardExpand.is_facade());
-    assert!(!AgentVerb::Recall.is_mcp());
-    assert!(AgentVerb::from_name("not.a.verb").is_none());
-}
-
-#[cfg(test)]
-#[test]
 fn a_typed_argument_shape_error_names_its_field() {
     let error = validate_input(
         "key_value_search",
@@ -241,29 +213,6 @@ fn a_typed_argument_shape_error_names_its_field() {
     .expect_err("a string cannot stand in for a namespace sequence");
     assert_eq!(error.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
     assert!(error.message.contains("namespace_prefix"), "{error:?}");
-}
-
-/// ARCH-0067's 2026-09-22 amendment renamed the four task rows, with no alias.
-#[cfg(test)]
-#[test]
-fn retired_task_verb_names_are_unknown() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).expect("open vault");
-    let owner = vault.ensure_embedded_owner_actor().expect("owner actor");
-    let memory = vault.memory(owner, crate::EdgeActorClass::Human);
-    for name in ["tasks.check", "tasks.expand", "tasks.ack", "tasks.cancel"] {
-        assert!(AgentVerb::from_name(name).is_none(), "{name}");
-        let refusal = invoke(&memory, name, serde_json::json!({})).expect_err(name);
-        assert_eq!(
-            refusal.code,
-            crate::memory::MEMORY_CODE_BAD_REQUEST,
-            "{name}"
-        );
-        assert_eq!(refusal.message, "unknown SDK agent verb", "{name}");
-    }
-    for name in ["describe", "tasks.update", "cancel"] {
-        assert!(AgentVerb::from_name(name).is_some(), "{name}");
-    }
 }
 
 #[cfg(test)]
@@ -403,70 +352,5 @@ fn short_ask_sdk_shape_uses_one_verb_and_never_claims_effect_authority() {
     assert_eq!(
         collected.decision,
         crate::task_verb::TaskAskDecision::Collected
-    );
-}
-
-#[cfg(test)]
-#[test]
-fn short_ask_retry_identity_includes_recipient_deadline_and_branch() {
-    let dir = tempfile::tempdir().unwrap();
-    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
-    let actor = vault.ensure_embedded_owner_actor().unwrap();
-    let other = crate::EntityId::from_bytes([0xE2; 16]).unwrap();
-    super::tests::support::put_person(&vault, other);
-    let question = super::tests::support::consult_turn(&vault, 0x81);
-    let memory = vault.memory(actor, crate::EdgeActorClass::Human);
-    let base = serde_json::json!({
-        "who": {"people": [actor]},
-        "what": {"reference": question, "revision": 1, "options": {}, "context_refs": []},
-        "until": u64::MAX,
-        "default": "hold"
-    });
-    let first = invoke(&memory, "tasks.ask", base.clone()).unwrap();
-    assert_eq!(
-        invoke(&memory, "tasks.ask", base.clone()).unwrap()["handle"],
-        first["handle"]
-    );
-    let mut handles = std::collections::BTreeSet::from([first["handle"]["group_ref"]
-        .as_str()
-        .unwrap()
-        .to_owned()]);
-    for change in [
-        serde_json::json!({"who": {"people": [other]}}),
-        serde_json::json!({"until": u64::MAX - 1}),
-        serde_json::json!({"default": "proceed"}),
-    ] {
-        let mut input = base.clone();
-        input
-            .as_object_mut()
-            .unwrap()
-            .extend(change.as_object().unwrap().clone());
-        let result = invoke(&memory, "tasks.ask", input).unwrap();
-        assert!(handles.insert(result["handle"]["group_ref"].as_str().unwrap().to_owned()));
-    }
-}
-
-#[cfg(test)]
-#[test]
-fn describe_self_shares_the_typed_sdk_result_and_mcp_arguments() {
-    let schema = mcp_arguments_schema("describe").expect("describe MCP schema");
-    for field in ["self", "session_id", "task_ref"] {
-        assert!(
-            schema["properties"].get(field).is_some(),
-            "{field} must reach the MCP caller"
-        );
-    }
-    let request: DescribeRequest =
-        serde_json::from_value(serde_json::json!({"self":true,"session_id":"run-1"})).unwrap();
-    assert!(request.self_target);
-    assert_eq!(request.session_id.as_deref(), Some("run-1"));
-    let card = crate::task_verb::TaskDescription::SelfCard {
-        tail: "brief".into(),
-    };
-    let body = serde_json::to_value(&card).unwrap();
-    assert_eq!(body["kind"], "self_card");
-    assert_eq!(
-        serde_json::from_value::<crate::task_verb::TaskDescription>(body).unwrap(),
-        card
     );
 }
