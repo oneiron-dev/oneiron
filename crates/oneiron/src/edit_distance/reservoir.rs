@@ -66,7 +66,7 @@
 //! There is deliberately **no off-record override**: no argument, no scope
 //! field, no builder method admits fenced content. Opting in after the fact is
 //! the one thing the fence exists to make impossible, so the surface simply
-//! does not exist — enforced by `tests::no_override_api_on_the_export_surface`.
+//! does not exist.
 //!
 //! # The door
 //!

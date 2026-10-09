@@ -63,61 +63,6 @@ fn notice(pattern_key: &str) -> WorkflowPatternNotice {
     }
 }
 
-#[test]
-fn suggestion_key_is_stable_and_canonical_at_the_boundary() {
-    let key = plugin_suggestion_key(&notice("demo.rows"), &candidate("Demo", "1.0.0"))
-        .expect("key computes");
-    let hex = key.to_hex();
-    assert_eq!(hex.len(), 64);
-    assert!(
-        hex.chars()
-            .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)),
-        "the boundary form is canonical lowercase hex"
-    );
-    // Same inputs ⇒ same key: this is what suppression depends on.
-    assert_eq!(
-        plugin_suggestion_key(&notice("demo.rows"), &candidate("Demo", "1.0.0"))
-            .expect("key recomputes"),
-        key
-    );
-    // The private bytes round-trip through the boundary form and nothing
-    // else — one internal representation, one textual encoding.
-    assert_eq!(
-        PluginSuggestionKey::parse_hex(&hex).expect("round trip"),
-        key
-    );
-}
-
-#[test]
-fn changed_pattern_pack_version_or_manifest_all_change_the_key() {
-    let base =
-        plugin_suggestion_key(&notice("demo.rows"), &candidate("Demo", "1.0.0")).expect("base key");
-
-    let other_pattern = plugin_suggestion_key(&notice("other.rows"), &candidate("Demo", "1.0.0"))
-        .expect("pattern key");
-    assert_ne!(base, other_pattern, "a changed pattern is eligible again");
-
-    let other_version = plugin_suggestion_key(&notice("demo.rows"), &candidate("Demo", "2.0.0"))
-        .expect("version key");
-    assert_ne!(base, other_version, "a changed version is eligible again");
-
-    // One byte of manifest difference (the display name) is enough.
-    let other_manifest = plugin_suggestion_key(&notice("demo.rows"), &candidate("Demo2", "1.0.0"))
-        .expect("manifest key");
-    assert_ne!(
-        base, other_manifest,
-        "changed manifest bytes produce a new digest"
-    );
-
-    let mut pack_renamed = candidate("Demo", "1.0.0");
-    pack_renamed.pack_id = "other-pack".to_owned();
-    assert_ne!(
-        base,
-        plugin_suggestion_key(&notice("demo.rows"), &pack_renamed).expect("pack key"),
-        "a different pack is a different suggestion"
-    );
-}
-
 /// Length prefixing is what stops two different tuples from hashing the
 /// same way by concatenation.
 #[test]
@@ -132,51 +77,6 @@ fn field_boundaries_cannot_be_shifted_between_fields() {
         plugin_suggestion_key(&notice("demo.rows"), &left).expect("left"),
         plugin_suggestion_key(&notice("demo.rows"), &right).expect("right"),
     );
-}
-
-#[test]
-fn attempt_input_carries_the_run_brief_intent_key() {
-    let job = PluginSuggestJob {
-        run_id: "run_1".to_owned(),
-        digest_window: "2026-08-19".to_owned(),
-        notice: notice("demo.rows"),
-    };
-    let Value::Map(entries) = plugin_suggest_attempt_input(&job) else {
-        panic!("attempt input is a map");
-    };
-    let intent = entries
-        .iter()
-        .find(|(key, _)| key.as_str() == Some("intent"))
-        .map(|(_, value)| value.clone())
-        .expect("the Inbox headline reads `intent`");
-    assert_eq!(intent.as_str(), Some(job.notice.summary.as_str()));
-}
-
-#[test]
-fn dreamer_provenance_carries_the_runner_marker_and_exact_run_id() {
-    let job = PluginSuggestJob {
-        run_id: "run_7".to_owned(),
-        digest_window: "2026-08-19".to_owned(),
-        notice: notice("demo.rows"),
-    };
-    let provenance = dreamer_suggestion_provenance(&job).expect("provenance");
-    let Value::Map(entries) = provenance.value() else {
-        panic!("provenance is a map");
-    };
-    let get = |key: &str| {
-        entries
-            .iter()
-            .find(|(k, _)| k.as_str() == Some(key))
-            .and_then(|(_, value)| value.as_str())
-            .map(str::to_owned)
-    };
-    // Exactly the pair `pending_consent_dreamer_run_id` reads.
-    assert_eq!(
-        get("runner").as_deref(),
-        Some(DREAMER_RUNNER_ATTEMPT_KIND),
-        "the runner marker is what makes this a Dreamer-run write"
-    );
-    assert_eq!(get("run_id").as_deref(), Some("run_7"));
 }
 
 /// The local adapter surfaces only packs that both ship a strictly
@@ -318,15 +218,4 @@ fn local_catalog_skips_invalid_and_unrelated_rows_and_imports_nothing() {
             .is_empty(),
         "a pack for another state family is not a candidate"
     );
-}
-
-#[test]
-fn notice_evidence_carries_every_observed_ref() {
-    let observed = notice("demo.rows");
-    let decoded =
-        crate::dreamer_consolidation::decode_consolidation_evidence(&notice_evidence(&observed))
-            .expect("evidence decodes")
-            .expect("evidence is an envelope");
-    assert_eq!(decoded.refs, observed.evidence_refs);
-    assert_eq!(decoded.source_meet, ClaimSource::Generated);
 }

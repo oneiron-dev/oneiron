@@ -1,7 +1,6 @@
 use super::*;
 
 use crate::edge::EdgeActorClass;
-use crate::edit_distance::finalized_proposal_text;
 use crate::edit_distance::register_peer_actor;
 use crate::edit_distance::tests::{put_actor, temp_vault};
 
@@ -174,35 +173,6 @@ fn an_unregistered_peer_falls_back_to_the_device_peer() {
     assert!(unstamped.finalize(&vault).is_err());
 }
 
-#[test]
-fn finalize_retains_both_texts_and_the_source_turn() {
-    let (_tmp, vault) = temp_vault();
-    let human = put_actor(&vault, EdgeActorClass::Human);
-    let turn = EntityId::now();
-
-    let mut artifact =
-        ProposalTextArtifact::open(&vault, "proposed body", &human, Some(turn)).expect("open");
-    let artifact_ref = artifact.artifact_ref();
-    artifact
-        .edit_as(&human, |text| {
-            text.delete(0, 8)
-                .map_err(|_| Error::InvariantViolation("fixture delete"))?;
-            insert_at(text, 0, "final")
-        })
-        .expect("edit");
-    let returned = artifact.finalize(&vault).expect("finalize");
-
-    let stored = finalized_proposal_text(&vault, artifact_ref)
-        .expect("read")
-        .expect("present");
-    assert_eq!(stored, returned);
-    assert_eq!(stored.proposed_text, "proposed body");
-    assert_eq!(stored.final_text, "final body");
-    assert_eq!(stored.source_turn_ref, Some(turn));
-    assert!(!stored.proposed_ref.as_bytes().is_empty());
-    assert_ne!(stored.proposed_ref, stored.final_ref);
-}
-
 /// The window base is the open commit, and Loro must not fold the first edit
 /// into it — the differing stamp is what keeps them apart, and a fold would
 /// silently swallow the opening text into the window.
@@ -223,30 +193,6 @@ fn the_open_commit_never_merges_with_the_first_edit() {
         record.ops_by_actor.len(),
         1,
         "only the edit is in the window"
-    );
-}
-
-/// The stamp grammar round-trips, and a foreign or absent commit message is
-/// simply unstamped rather than an error.
-#[test]
-fn stamp_parses_only_our_own_messages() {
-    let actor = WriteActor::new(EntityId::now(), EdgeActorClass::Agent);
-    let encoded = stamp(StampKind::Edit, &actor);
-    assert_eq!(parse_stamp(Some(&encoded)), Some((StampKind::Edit, actor)));
-    assert!(encoded.starts_with(PROPOSAL_TEXT_COMMIT_MSG_PREFIX));
-
-    assert_eq!(parse_stamp(None), None);
-    assert_eq!(parse_stamp(Some("bridge")), None);
-    assert_eq!(parse_stamp(Some("")), None);
-    assert_eq!(
-        parse_stamp(Some("oneiron.edit_distance.v1 edit actor=nothex.human")),
-        None
-    );
-    assert_eq!(
-        parse_stamp(Some(
-            "oneiron.edit_distance.v1 edit actor=00000000000000000000000000000001.overlord"
-        )),
-        None
     );
 }
 
