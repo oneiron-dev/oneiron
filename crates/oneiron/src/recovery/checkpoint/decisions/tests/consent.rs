@@ -633,8 +633,9 @@ fn unreadable_booking() -> Result<Case> {
         .map_err(invalid)?;
         Ok(body)
     };
-    // An owner row that names no booker, so a booking names everyone a
-    // person row does.
+    // Person rows that name no booker, the owner's and the one written since
+    // the backup, so a booking names everyone a person row does and only the
+    // row's own unnamed recipient stands for everyone else.
     let owner = entity(0x86);
     vault.put_entity(&owner, ENTITY_TYPE_PERSON, AT, 1, &named("owner")?)?;
     let page = entity(0xB1);
@@ -675,8 +676,8 @@ fn unreadable_booking() -> Result<Case> {
     Case::after_backup(
         INVITATION_CONSENT,
         (dir, vault),
-        |vault| {
-            new_person(vault)?;
+        move |vault| {
+            vault.put_entity(&entity(0x5E), ENTITY_TYPE_PERSON, AT, 1, &named("guest")?)?;
             invitable(vault, BEN, true)
         },
         move |vault| {
