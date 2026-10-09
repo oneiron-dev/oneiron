@@ -8,9 +8,11 @@ use crate::task_verb::sdk::{AgentVerb, TaskCreateRequest};
 
 /// A host's verb door reduced to the one verb this run calls: `tasks.create`
 /// on the host's memory surface, under the origin the dispatcher hands it.
+/// Its answer is the task receipt, with `extra` fields beside it.
 struct TaskCreateDoor {
     vault: Arc<Vault>,
     actor: WriteActor,
+    extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl AgentVerbDoor for TaskCreateDoor {
@@ -31,7 +33,12 @@ impl AgentVerbDoor for TaskCreateDoor {
             .with_host_origin(origin.clone());
         let receipt = crate::task_verb::sdk::tasks_create(&memory, input)
             .map_err(|error| refused(error.code))?;
-        serde_json::to_value(receipt).map_err(|error| refused(error.to_string()))
+        let mut answer =
+            serde_json::to_value(receipt).map_err(|error| refused(error.to_string()))?;
+        if let Some(fields) = answer.as_object_mut() {
+            fields.extend(self.extra.clone());
+        }
+        Ok(answer)
     }
 }
 
@@ -87,6 +94,11 @@ struct VerbWriteRun<'a> {
 
 impl<'a> VerbWriteRun<'a> {
     fn new(vault: &'a Arc<Vault>) -> Self {
+        Self::answering(vault, serde_json::Map::new())
+    }
+
+    /// A run whose door adds `extra` fields to each answer.
+    fn answering(vault: &'a Arc<Vault>, extra: serde_json::Map<String, serde_json::Value>) -> Self {
         let actor_id = EntityId::from_bytes(crate::gate::FIRST_PARTY_CONNECTOR_ACTOR_ID)
             .expect("first-party actor id");
         vault
@@ -104,6 +116,7 @@ impl<'a> VerbWriteRun<'a> {
             .with_agent_verb_door(Arc::new(TaskCreateDoor {
                 vault: Arc::clone(vault),
                 actor,
+                extra,
             }));
         Self {
             vault,
@@ -342,6 +355,29 @@ fn a_write_recorded_after_the_bridge_halted_does_not_close_the_step() {
     let outcome = run.resume(&run.config, &mut again);
     assert_eq!(
         outcome.expect("the step made again").status,
+        EngineExecutorStatus::Complete
+    );
+}
+
+/// Review repro (Astra R12, #1338): a resumed write's answer is read back from
+/// its receipt's JSON, and a float in it may move by one unit in the last
+/// place: without serde_json's `float_roundtrip`, 2.0030397744267762e-253
+/// reads back as 2.003039774426776e-253. The step that makes the same call
+/// again still meets its receipt and completes.
+#[test]
+fn resumed_write_whose_answer_holds_a_float_still_closes_its_step() {
+    let (_dir, vault) = open_test_vault();
+    let vault = Arc::new(vault);
+    let mut extra = serde_json::Map::new();
+    extra.insert(
+        "probability".to_owned(),
+        serde_json::json!(2.0030397744267762e-253),
+    );
+    let run = VerbWriteRun::answering(&vault, extra);
+    run.stop_after(vec![create_task()]);
+    let outcome = run.resume(&run.config, &mut resumed_step(vec![create_task()]));
+    assert_eq!(
+        outcome.expect("the resumed run").status,
         EngineExecutorStatus::Complete
     );
 }

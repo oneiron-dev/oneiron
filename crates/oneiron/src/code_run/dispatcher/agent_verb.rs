@@ -106,7 +106,7 @@ impl HostSelfDispatcher<'_> {
                 .first()
                 .zip(made.next())
                 .is_some_and(|(kept, made)| {
-                    row_identity(kept) == row_identity(made) && kept.outcome == made.outcome
+                    row_identity(kept) == row_identity(made) && answered_as_kept(kept, made)
                 });
             if !met {
                 return Err(Error::InvariantViolation(
@@ -182,6 +182,25 @@ fn call_identity(verb: &str, input: &Value) -> Vec<u8> {
 fn row_identity(row: &CodeRunBridgeCall) -> Option<Vec<u8>> {
     let (verb, input) = recorded_call(row)?;
     Some(call_identity(verb, &serde_json::from_str(input).ok()?))
+}
+
+/// Whether a write row carries the answer its receipt kept: a verb's answer,
+/// which only this door gives a write (fresh, or read back from the
+/// receipt), or the same refusal. A row the bridge recorded without
+/// dispatching it carries neither. A verb's answer is matched by kind: its
+/// JSON text need not survive a decode exactly, as a float may move by one
+/// unit in the last place.
+fn answered_as_kept(kept: &CodeRunBridgeCall, made: &CodeRunBridgeCall) -> bool {
+    match (
+        decode_self_dispatch_outcome(&kept.outcome),
+        decode_self_dispatch_outcome(&made.outcome),
+    ) {
+        (Ok(SelfDispatchOutcome::AgentVerb(_)), Ok(SelfDispatchOutcome::AgentVerb(_))) => true,
+        (Ok(SelfDispatchOutcome::Denied(kept)), Ok(SelfDispatchOutcome::Denied(made))) => {
+            kept == made
+        }
+        _ => false,
+    }
 }
 
 /// Whether a recorded call is a verb write.
