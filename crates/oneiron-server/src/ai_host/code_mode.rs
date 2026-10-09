@@ -82,7 +82,6 @@ pub(super) async fn bind(
         vault: Arc::clone(server.vault()),
         models: Arc::clone(runtime),
         guard,
-        rungs: seat.rung_count as u64,
     });
     let config = EngineExecutorConfig {
         // Each run's id and task replace these.
@@ -112,8 +111,6 @@ struct CodeModeBackend {
     vault: Arc<Vault>,
     models: Arc<ModelRuntime>,
     guard: BudgetGuard,
-    /// How many rungs the seat's ladder tries; a failed call tried them all.
-    rungs: u64,
 }
 
 /// What one provider call costs on the meter when it reports no usage: the
@@ -148,6 +145,8 @@ impl LlmBackend for CodeModeBackend {
                     LlmError::BudgetDenied(BudgetDenied::AdmissionDenied)
                 })?;
             let lease = self.guard.admit_for_request(&call.request)?.lease;
+            // A call that failed made every attempt its backend makes.
+            let every_attempt = (call.attempts as u64).saturating_mul(CALL_FLOOR_UNITS);
             match call.backend.generate(call.request, &lease).await {
                 Ok(response) => {
                     self.guard
@@ -155,9 +154,7 @@ impl LlmBackend for CodeModeBackend {
                     Ok(response)
                 }
                 Err(error) => {
-                    let _ = self
-                        .guard
-                        .settle_usage(&lease, self.rungs.saturating_mul(CALL_FLOOR_UNITS));
+                    let _ = self.guard.settle_usage(&lease, every_attempt);
                     Err(error)
                 }
             }

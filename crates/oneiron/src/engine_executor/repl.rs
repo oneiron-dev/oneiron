@@ -255,6 +255,11 @@ impl EngineNativeExecutor<'_> {
                         return Err(err);
                     }
                 };
+            self.gated_write.refuse_a_step_that_dropped_a_write(
+                config.run_id,
+                bridge_start as u64,
+                &host.bridge_calls,
+            )?;
             record.bridge_calls.extend(host.bridge_calls);
             record_text_output(
                 &self.storage,
@@ -512,6 +517,11 @@ impl EngineNativeExecutor<'_> {
         healed: bool,
         config: &EngineExecutorConfig,
     ) -> EngineExecutorResult<Option<EngineExecutorStatus>> {
+        self.gated_write.refuse_a_step_that_dropped_a_write(
+            config.run_id,
+            bridge_start as u64,
+            &bridge_calls,
+        )?;
         record.bridge_calls.extend(bridge_calls);
         let failed_outcome = JsCodeModeStepOutcome::pending(observation);
         record_text_output(
@@ -602,7 +612,7 @@ impl EngineNativeExecutor<'_> {
         // resumes under them, never under a fresh clock or another task.
         let generation = self
             .storage
-            .put_code_run_replay_record_if_generation(&record, None)?;
+            .put_code_run_replay_record_if_generation_with_heal(&record, None, None)?;
         Ok(LoadedReplayRecord {
             record,
             generation: Some(generation),

@@ -112,37 +112,21 @@ impl<'a> VerbWriteRun<'a> {
         }
     }
 
-    /// Runs the step as `calls` under `config`, the process stopping before
-    /// the step's checkpoint when `stops` is set.
+    /// Runs `runtime` as the run's steps under `config`; a step that stops
+    /// the process ends the run there.
     fn run(
         &self,
         config: &EngineExecutorConfig,
-        calls: Vec<SelfCall>,
-        stops: bool,
-    ) -> (
-        std::thread::Result<EngineExecutorResult<EngineExecutorOutcome>>,
-        Vec<SelfDispatchOutcome>,
-    ) {
-        let backend = FixtureBackend::new([
-            "await self.memory.tasks.create({spec: 'summarize the open notes'});",
-        ]);
+        runtime: &mut dyn JsCodeModeRuntime,
+    ) -> std::thread::Result<EngineExecutorResult<EngineExecutorOutcome>> {
+        let script = "await self.memory.tasks.create({spec: 'summarize the open notes'});";
+        let backend = FixtureBackend::new([script, script]);
         let lease = BudgetLease::for_test("executor-lease");
-        let mut step = RecordedStep {
-            calls,
-            stops,
-            answers: Vec::new(),
-        };
-        let run = catch_unwind(AssertUnwindSafe(|| {
-            let mut executor = EngineNativeExecutor::new(
-                self.vault,
-                &backend,
-                &lease,
-                &mut step,
-                &self.gated_write,
-            );
+        catch_unwind(AssertUnwindSafe(|| {
+            let mut executor =
+                EngineNativeExecutor::new(self.vault, &backend, &lease, runtime, &self.gated_write);
             block_on_ready(executor.run(config))
-        }));
-        (run, step.answers)
+        }))
     }
 
     /// The step's calls `first`, the last of them a `tasks.create` that
@@ -150,36 +134,48 @@ impl<'a> VerbWriteRun<'a> {
     /// that call's answer.
     fn stop_after(&self, first: Vec<SelfCall>) -> SelfDispatchOutcome {
         let before = written_tasks_and_claims(self.vault);
-        let (run, mut answers) = self.run(&self.config, first, true);
-        assert!(run.is_err(), "the process stopped");
+        let mut step = RecordedStep {
+            calls: first,
+            stops: true,
+            answers: Vec::new(),
+        };
+        assert!(
+            self.run(&self.config, &mut step).is_err(),
+            "the process stopped"
+        );
         assert!(
             written_tasks_and_claims(self.vault).len() > before.len(),
             "the write committed before the process stopped"
         );
-        let first = answers.pop().expect("the first attempt's answer");
+        let first = step.answers.pop().expect("the first attempt's answer");
         assert!(matches!(first, SelfDispatchOutcome::AgentVerb(_)));
         first
     }
 
-    /// The same run resumed under `config`, its step making `calls`. Returns
-    /// the run's result and the last call's answer, after checking the resumed
-    /// run wrote nothing new.
+    /// The same run resumed under `config` as `runtime`. Returns the run's
+    /// result, after checking the resumed run wrote nothing new.
     fn resume(
         &self,
         config: &EngineExecutorConfig,
-        calls: Vec<SelfCall>,
-    ) -> (
-        EngineExecutorResult<EngineExecutorOutcome>,
-        Option<SelfDispatchOutcome>,
-    ) {
+        runtime: &mut dyn JsCodeModeRuntime,
+    ) -> EngineExecutorResult<EngineExecutorOutcome> {
         let committed = written_tasks_and_claims(self.vault);
-        let (run, mut answers) = self.run(config, calls, false);
+        let run = self.run(config, runtime);
         assert_eq!(
             written_tasks_and_claims(self.vault),
             committed,
             "the resumed run writes no second task"
         );
-        (run.expect("the resumed run returns"), answers.pop())
+        run.expect("the resumed run returns")
+    }
+}
+
+/// The step's calls as one resumed step that completes.
+fn resumed_step(calls: Vec<SelfCall>) -> RecordedStep {
+    RecordedStep {
+        calls,
+        stops: false,
+        answers: Vec::new(),
     }
 }
 
@@ -195,12 +191,13 @@ fn resume_after_a_lost_checkpoint(
     let vault = Arc::new(vault);
     let run = VerbWriteRun::new(&vault);
     let first = run.stop_after(first);
-    let (outcome, answer) = run.resume(&run.config, resumed);
+    let mut resumed = resumed_step(resumed);
+    let outcome = run.resume(&run.config, &mut resumed);
     assert_eq!(
         outcome.expect("the resumed run").status,
         EngineExecutorStatus::Complete
     );
-    (first, answer.expect("the resumed answer"))
+    (first, resumed.answers.pop().expect("the resumed answer"))
 }
 
 /// Review repro (Greptile, #1338): a code-mode `tasks.create` commits before
@@ -244,7 +241,7 @@ fn resumed_step_that_changes_its_write_is_refused_not_written_twice() {
         verb: AgentVerb::TasksCreate,
         input: serde_json::json!({"spec": "summarize the open notes"}),
     });
-    let (outcome, _) = run.resume(&run.config, vec![changed]);
+    let outcome = run.resume(&run.config, &mut resumed_step(vec![changed]));
     assert!(
         matches!(
             outcome,
@@ -274,7 +271,8 @@ fn a_run_stopped_before_its_first_checkpoint_keeps_its_clock_and_config() {
         task: "forget the project status".to_owned(),
         ..run.config.clone()
     };
-    let (outcome, answer) = run.resume(&other_task, vec![create_task()]);
+    let mut resumed = resumed_step(vec![create_task()]);
+    let outcome = run.resume(&other_task, &mut resumed);
     assert!(
         matches!(
             outcome,
@@ -282,5 +280,32 @@ fn a_run_stopped_before_its_first_checkpoint_keeps_its_clock_and_config() {
         ),
         "{outcome:?}"
     );
-    assert!(answer.is_none(), "the refused run made no call");
+    assert!(resumed.answers.is_empty(), "the refused run made no call");
+}
+
+/// Review repro (Astra R8, #1338): the resumed step's code is generated again
+/// and may leave its write out. Here it only reads and carries on, and the
+/// next step makes the write. The step's write is the one the first attempt
+/// committed, so the resumed step is refused before its checkpoint, never
+/// written again by a later step.
+#[test]
+fn resumed_step_that_leaves_its_write_out_is_refused_not_written_later() {
+    let (_dir, vault) = open_test_vault();
+    let vault = Arc::new(vault);
+    let run = VerbWriteRun::new(&vault);
+    run.stop_after(vec![create_task()]);
+    let search = SelfCall::MemorySearch(SelfMemorySearchCall::new("open notes", 4));
+    let mut resumed = FixtureRuntime::new([
+        JsCodeModeStepOutcome::pending("read"),
+        JsCodeModeStepOutcome::complete("wrote"),
+    ])
+    .with_calls([vec![search], vec![create_task()]]);
+    let outcome = run.resume(&run.config, &mut resumed);
+    assert!(
+        matches!(
+            outcome,
+            Err(EngineExecutorError::Engine(Error::InvariantViolation(_)))
+        ),
+        "{outcome:?}"
+    );
 }

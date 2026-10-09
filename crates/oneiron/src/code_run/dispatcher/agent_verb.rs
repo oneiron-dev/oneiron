@@ -2,6 +2,7 @@
 
 use serde_json::Value;
 
+use crate::EntityId;
 use crate::code_run::payload::decode_self_dispatch_outcome;
 use crate::code_run::replay::{CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayRecord};
 use crate::code_run::storage::derived_executor_id;
@@ -45,21 +46,7 @@ impl HostSelfDispatcher<'_> {
         let Some(site) = site.filter(|_| call.verb.writes()) else {
             return Ok(answered(door.call(&call, &origin)));
         };
-        let earlier_writes = site
-            .earlier
-            .iter()
-            .filter_map(recorded_call)
-            .filter(|(verb, _)| AgentVerb::from_name(verb).is_some_and(AgentVerb::writes))
-            .count();
-        let receipt_id = derived_executor_id(
-            AGENT_VERB_RECEIPT_DOMAIN,
-            &[
-                self.run_ref.as_bytes(),
-                site.run_id.as_bytes(),
-                &site.step_start.to_le_bytes(),
-                &(earlier_writes as u64).to_le_bytes(),
-            ],
-        )?;
+        let receipt_id = self.write_receipt_id(site.run_id, site.step_start, site.earlier)?;
         if let Some(receipt) = self.storage.get_code_run_replay_record(&receipt_id)? {
             let Some(row) = receipt.bridge_calls.first() else {
                 return Err(Error::ConcurrentWrite(
@@ -89,6 +76,51 @@ impl HostSelfDispatcher<'_> {
         self.storage
             .put_code_run_replay_record_if_generation_with_heal(&receipt, Some(generation), None)?;
         Ok(outcome)
+    }
+
+    /// Refuses to close a step that left out a write an earlier attempt of it
+    /// made. A resumed step makes the step's writes again in order, each
+    /// meeting its receipt; a receipt past the last of them means the step
+    /// would checkpoint without that write, and a later step could make it
+    /// again under a fresh receipt.
+    pub(crate) fn refuse_a_step_that_dropped_a_write(
+        &self,
+        run_id: EntityId,
+        step_start: u64,
+        calls: &[CodeRunBridgeCall],
+    ) -> Result<()> {
+        let next = self.write_receipt_id(run_id, step_start, calls)?;
+        if self.storage.get_code_run_replay_record(&next)?.is_some() {
+            return Err(Error::InvariantViolation(
+                "a resumed step left out a write it already made",
+            ));
+        }
+        Ok(())
+    }
+
+    /// The receipt of the step's next write: the run, the step's first bridge
+    /// position, and how many verb writes `earlier` (the step's calls so far)
+    /// holds.
+    fn write_receipt_id(
+        &self,
+        run_id: EntityId,
+        step_start: u64,
+        earlier: &[CodeRunBridgeCall],
+    ) -> Result<EntityId> {
+        let writes = earlier
+            .iter()
+            .filter_map(recorded_call)
+            .filter(|(verb, _)| AgentVerb::from_name(verb).is_some_and(AgentVerb::writes))
+            .count();
+        derived_executor_id(
+            AGENT_VERB_RECEIPT_DOMAIN,
+            &[
+                self.run_ref.as_bytes(),
+                run_id.as_bytes(),
+                &step_start.to_le_bytes(),
+                &(writes as u64).to_le_bytes(),
+            ],
+        )
     }
 }
 

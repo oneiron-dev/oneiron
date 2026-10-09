@@ -51,7 +51,7 @@ pub struct Seat {
     pub locality: ModelLocality,
     pub backend: Arc<dyn LlmBackend>,
     /// How many rungs the ladder tries before a call fails.
-    pub rung_count: usize,
+    rung_count: usize,
     /// Each rung on its own, keyed by its engine model id, so a call the
     /// vault's manifest binds to one rung's model keeps that rung's prompt.
     rungs: BTreeMap<ModelId, Arc<dyn LlmBackend>>,
