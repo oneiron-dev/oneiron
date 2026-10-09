@@ -20,19 +20,6 @@ use super::ppr_community::{
     CACHE, COMMUNITY_META_SUFFIX, MAX_COMMUNITY_CACHE_BYTES, MAX_COMMUNITY_NODES,
 };
 
-#[cfg(test)]
-thread_local! {
-    static QUERY_READ_WORK: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
-}
-
-pub(super) fn record_query_read(_bytes: usize) {
-    #[cfg(test)]
-    QUERY_READ_WORK.with(|work| {
-        let (rows, bytes) = work.get();
-        work.set((rows + 1, bytes + _bytes));
-    });
-}
-
 fn corrupt() -> Error {
     Error::CorruptedIndex("ppr community cache")
 }
@@ -49,7 +36,6 @@ impl IndexedRows<'_, '_> {
     fn get(&mut self, suffix: &str) -> Result<Option<Vec<u8>>> {
         let value = CACHE.get(self.store, self.txn, &suffix.to_owned())?;
         let bytes = CACHE.decl().prefix.len() + suffix.len() + value.as_ref().map_or(0, Vec::len);
-        record_query_read(bytes);
         self.bytes = self.bytes.checked_add(bytes).ok_or_else(corrupt)?;
         if self.bytes > MAX_COMMUNITY_CACHE_BYTES
             || value
@@ -83,11 +69,6 @@ impl Store {
         txn: &RoTxn<'_>,
     ) -> Result<Option<(CommunityCacheMeta, usize)>> {
         let raw = CACHE.get(self, txn, &COMMUNITY_META_SUFFIX.to_owned())?;
-        record_query_read(
-            CACHE.decl().prefix.len()
-                + COMMUNITY_META_SUFFIX.len()
-                + raw.as_ref().map_or(0, Vec::len),
-        );
         raw.map(|v| CommunityCacheMeta::decode_row(&v, MAX_COMMUNITY_NODES).map_err(|_| corrupt()))
             .transpose()
     }
