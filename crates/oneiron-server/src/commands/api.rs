@@ -254,29 +254,45 @@ pub(crate) fn create_pairing_link(
 /// an HTTP error status; the server's body still reached stdout.
 pub(super) const CURL_HTTP_ERROR_EXIT: i32 = 22;
 
-/// One signed JSON POST whose reply is captured, body and diagnostic both.
-/// `oneiron mcp` frames each answer itself, and its stdout is the MCP
-/// channel, so nothing curl prints may reach that stream directly.
+/// What curl writes after a captured body: a newline and the HTTP status,
+/// which is `000` when no response arrived.
+const CURL_STATUS_TRAILER: &str = "\\n%{http_code}";
+
+/// One signed JSON POST whose reply is captured, body and diagnostic both,
+/// with the HTTP status the body came with. `oneiron mcp` frames each answer
+/// itself, and its stdout is the MCP channel, so nothing curl prints may reach
+/// that stream directly.
 pub(super) fn post_json_captured(
     url: &str,
     token: &str,
     binding: &str,
     body: Vec<u8>,
-) -> anyhow::Result<Output> {
+) -> anyhow::Result<(Output, Option<u16>)> {
     let request = CurlRequest {
         method: "POST".to_owned(),
         url: url.to_owned(),
         body: Some(body),
         content_type: Some(JSON_CONTENT_TYPE.to_owned()),
     };
-    run_curl_output_with_binding(
+    let mut output = run_curl_output_inner(
         OsStr::new(CURL_PROGRAM),
         &request,
-        token,
-        binding,
+        Some(token),
+        Some(binding),
+        Some(CURL_STATUS_TRAILER),
         Stdio::piped(),
         Stdio::piped(),
-    )
+    )?;
+    let split = output.stdout.iter().rposition(|byte| *byte == b'\n');
+    let status = split.and_then(|at| {
+        let status = std::str::from_utf8(&output.stdout[at + 1..])
+            .ok()?
+            .parse()
+            .ok()?;
+        output.stdout.truncate(at);
+        Some(status).filter(|status| *status != 0)
+    });
+    Ok((output, status))
 }
 
 /// Run one request through the host's curl, streaming the response body to
@@ -302,6 +318,7 @@ fn run_curl_with_binding(
         request,
         secret,
         binding,
+        None,
         Stdio::inherit(),
         Stdio::inherit(),
     )?;
@@ -326,7 +343,7 @@ pub(crate) fn run_curl_output(
     stdout: Stdio,
     stderr: Stdio,
 ) -> anyhow::Result<Output> {
-    run_curl_output_inner(program, request, secret, None, stdout, stderr)
+    run_curl_output_inner(program, request, secret, None, None, stdout, stderr)
 }
 
 fn run_curl_output_with_binding(
@@ -337,7 +354,15 @@ fn run_curl_output_with_binding(
     stdout: Stdio,
     stderr: Stdio,
 ) -> anyhow::Result<Output> {
-    run_curl_output_inner(program, request, Some(token), Some(binding), stdout, stderr)
+    run_curl_output_inner(
+        program,
+        request,
+        Some(token),
+        Some(binding),
+        None,
+        stdout,
+        stderr,
+    )
 }
 
 fn run_curl_output_inner(
@@ -345,6 +370,7 @@ fn run_curl_output_inner(
     request: &CurlRequest,
     secret: Option<&str>,
     binding: Option<&str>,
+    write_out: Option<&str>,
     stdout: Stdio,
     stderr: Stdio,
 ) -> anyhow::Result<Output> {
@@ -372,6 +398,9 @@ fn run_curl_output_inner(
     }
     if let Some(body) = &body {
         command.arg("--data-binary").arg(body.curl_value());
+    }
+    if let Some(write_out) = write_out {
+        command.arg("--write-out").arg(write_out);
     }
     // The credential rides this channel and only this channel, and the channel
     // exists only when there is a credential to carry.

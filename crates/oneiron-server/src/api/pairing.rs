@@ -225,13 +225,19 @@ fn paired_mcp_record(
 /// first, against the log and its revocations, exactly as every request's
 /// does; then it gets the record redeem would have written. Returns whether
 /// it recorded one.
+///
+/// Only the slip as redeem minted it: a holder's caveated copy has its own
+/// token, and a fresh record for it would drop whatever the registry holds
+/// against the original.
 pub(super) fn register_live_paired_mcp(
     registry: &mut crate::mcp::McpConnectorActorRegistry,
     credential: &str,
     headers: &HeaderMap,
     server: &SyncServer,
 ) -> bool {
-    if !credential.starts_with("v2.slip.") {
+    let uncaveated = oneiron::authority::CapabilitySlip::from_token(credential)
+        .is_ok_and(|slip| slip.caveats.is_empty());
+    if !credential.starts_with("v2.slip.") || !uncaveated {
         return false;
     }
     let verified = crate::auth::BindingProof::from_headers(headers).and_then(|proof| {

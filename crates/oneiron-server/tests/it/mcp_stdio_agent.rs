@@ -274,21 +274,14 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
 
     // The agent command keeps owner powers for the owner.
     let refused = oneiron(
-        &[
-            "token",
-            "agent",
-            "--name",
-            "claude-code",
-            "--scope",
-            "core:read,core:auth",
-        ],
+        &["token", "agent", "--name", "claude-code", "--tier", "owner"],
         &config,
     )
     .output()
     .unwrap();
     assert!(
         !refused.status.success(),
-        "core:auth was minted for an agent"
+        "an owner tier was minted for an agent"
     );
 
     // Minted on the stopped vault into an owner-only file; nothing secret printed.
@@ -299,8 +292,8 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
             "agent",
             "--name",
             "claude-code",
-            "--scope",
-            "core:read,core:write",
+            "--tier",
+            "full-access",
             "--out",
             credential_file.to_str().unwrap(),
         ],
@@ -330,7 +323,7 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
         .expect("a paired v2 credential");
     let token = format!("v2.slip.{slip_hex}");
 
-    // Never owner-grade: the agent's own principal, class `agent`, two verbs.
+    // Never owner-grade: the agent's own principal, class `agent`, three verbs.
     let slip = CapabilitySlip::from_token(&token).unwrap();
     assert_eq!(slip.claims.holder_ref, principal);
     assert_ne!(Some(principal.as_str()), owner["owner_principal"].as_str());
@@ -340,9 +333,27 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
         slip.claims.scope.verbs,
         ScopeAxis::Some(BTreeSet::from([
             "core:read".to_owned(),
+            "core:propose".to_owned(),
             "core:write".to_owned()
         ]))
     );
+    // ARCH-0028's propose-only tier: write capability at ceiling `proposed`.
+    let reviewer_file = dir.path().join("reviewer.cred");
+    let reviewer: Value = serde_json::from_str(&stdout(oneiron(
+        &[
+            "token",
+            "agent",
+            "--name",
+            "reviewer",
+            "--tier",
+            "propose-only",
+            "--out",
+            reviewer_file.to_str().unwrap(),
+        ],
+        &config,
+    )))
+    .unwrap();
+    assert_eq!(reviewer["ceiling"], json!("proposed"), "{reviewer:#}");
 
     let argv_log = dir.path().join("curl-argv.log");
     let curl_dir = argv_recording_curl(dir.path(), &argv_log);
@@ -418,6 +429,36 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
     let recalled = recall(&mut bridge, 4, &version);
     assert!(recalled.to_string().contains(TEXT), "{recalled:#}");
 
+    // A propose-only agent's write reaches the write gate and its ceiling;
+    // its credential is not what refuses it.
+    let mut reviewer_bridge = Bridge::spawn(
+        &origin,
+        &reviewer_file,
+        &curl_dir,
+        &dir.path().join("reviewer.stderr"),
+    );
+    let (id, params) = tool_call(
+        1,
+        "witness",
+        &version,
+        json!({ "spec": {
+            "conversation_ref": "47474747474747474747474747474747",
+            "messages": [{
+                "author": "user", "message_type": "dialogue", "content": "reviewer draft",
+                "is_visible": true, "order": 0,
+            }],
+            "occurred_at": unix_seconds_now(),
+        }}),
+    );
+    let drafted = reviewer_bridge.call(id, "tools/call", params);
+    assert_ne!(drafted["error"]["code"], json!(-32001), "{drafted:#}");
+    assert_ne!(
+        drafted["error"]["data"]["kind"],
+        json!("mcp_auth_required"),
+        "{drafted:#}"
+    );
+    let seen_by_reviewer = reviewer_bridge.close().join("\n");
+
     // The slip opens no owner-grade door, and a proposal against a subject
     // that is not there says what to do about it.
     let key = SigningKey::from_bytes(
@@ -485,7 +526,14 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
 
     // No slip or seed in what any process printed, logged or ran.
     let mut seen = bridge.close().join("\n");
-    for log in ["mcp.stderr", "serve-1.log", "serve-2.log", "serve-3.log"] {
+    seen.push_str(&seen_by_reviewer);
+    for log in [
+        "mcp.stderr",
+        "reviewer.stderr",
+        "serve-1.log",
+        "serve-2.log",
+        "serve-3.log",
+    ] {
         seen.push_str(&std::fs::read_to_string(dir.path().join(log)).unwrap());
     }
     let argv = std::fs::read_to_string(&argv_log).expect("curl ran through the wrapper");

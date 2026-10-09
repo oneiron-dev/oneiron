@@ -264,9 +264,8 @@ impl Vault {
     /// row set to `ceiling`. Any earlier row bound to the same principal is
     /// replaced, so the owner's latest grant is the one that holds rather
     /// than the most restrictive of every grant ever made. ARCH-0028's tiers
-    /// are what `oneiron token agent` maps onto this: an agent minted with
-    /// write is `auto` (full access), one minted to read or propose is
-    /// `proposed`.
+    /// are what `oneiron token agent` maps onto this: `full-access` is
+    /// `auto`, `propose-only` and `read-only` are `proposed`.
     pub fn grant_agent_principal(
         &self,
         owner: &AuthenticatedOwner,

@@ -7,7 +7,7 @@ fresh holder proof for every request. The agent holds no secret and never
 types its own identity; the server checks both on every call.
 
 Each agent gets its own credential: a slip paired to that agent's principal
-(actor class `agent`), carrying only the verbs you name. It is never
+(actor class `agent`), carrying only the verbs its tier needs. It is never
 owner-grade, and you can revoke it on its own.
 
 ## 1. Mint the agent's credential
@@ -18,26 +18,27 @@ local owner command. Use the same config as `serve` (`--config`,
 
 ```bash
 mkdir -p ~/.config/oneiron
-oneiron token agent --name claude-code --scope core:read,core:write \
-  --out ~/.config/oneiron/claude-code.cred
-oneiron token agent --name codex --scope core:read,core:write \
-  --out ~/.config/oneiron/codex.cred
+oneiron token agent --name claude-code --out ~/.config/oneiron/claude-code.cred
+oneiron token agent --name codex --out ~/.config/oneiron/codex.cred
 ```
 
 - `--out` writes a new file that only you can read, and prints the agent's
   `principal_ref` and `slip_id`. Keep the `slip_id`: it is what you revoke.
   Without `--out` the credential is printed instead.
-- `--scope` takes `core:read` (required), `core:propose` and `core:write`.
-  Nothing else can be minted for an agent.
 - One name is one agent principal. Minting `claude-code` again gives the same
   agent a new slip; the old slip stays valid until you revoke it or it expires
   (30 days by default, `--lifetime-secs` to change, capped by the vault's
   policy).
-- The scope sets the agent's tier. With `core:write` it has full access: what
-  it writes lands at once, through the same write gate as yours (ceiling
-  `auto`). With `core:read,core:propose` its claims wait for your review
-  (ceiling `proposed`), and it cannot witness conversation. With `core:read`
-  alone it only reads. The latest mint for a name sets that agent's tier.
+- `--tier` sets what the agent may do (ARCH-0028's tiers). The latest mint
+  for a name sets that agent's tier.
+  - `full-access` (the default): what it writes lands at once, through the
+    same write gate as yours (ceiling `auto`).
+  - `propose-only`: it can write, but at ceiling `proposed`, so its claims
+    wait for your review and the gate refuses what cannot wait, such as
+    witnessed conversation.
+  - `read-only`: it only reads.
+- Nothing else can be minted for an agent: no `core:auth`, no organization
+  power, never your own owner credential.
 
 Start the server again: `oneiron serve --config <config>`.
 
@@ -85,9 +86,12 @@ The next call that agent makes is refused with JSON-RPC error `-32001`
 - `initialize` answers with the agent's own actor. `tools/list` is the server's
   tool list, with the `actor` block left out of every input schema:
   `oneiron mcp` adds that block to each call from the `initialize` answer.
-- A request the server refuses before MCP (a revoked or expired slip, a bad
-  holder proof) comes back as JSON-RPC error `-32001`, with the server's error
-  body in `error.data.server_error`. A server that cannot be reached comes back
-  as `-32000` (`server_unreachable`).
+- A request the server refuses before MCP because of the credential (HTTP 401
+  or 403: a revoked or expired slip, a bad holder proof) comes back as
+  JSON-RPC error `-32001` (`mcp_auth_required`), with the server's error body
+  in `error.data.server_error`. Any other HTTP error, or an answer that is not
+  a JSON-RPC response to that request, comes back as `-32000`
+  (`server_error`) with the status in the message. A server that cannot be
+  reached comes back as `-32000` (`server_unreachable`).
 - `oneiron mcp` prints nothing on stdout but MCP messages, and never prints the
   slip or seed anywhere.

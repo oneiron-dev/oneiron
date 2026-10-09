@@ -41,6 +41,7 @@ const MAX_IN_FLIGHT: usize = 8;
 /// before it has seen the client's own.
 const BRIDGE_INITIALIZE: &str =
     r#"{"jsonrpc":"2.0","id":"oneiron-mcp-bridge","method":"initialize","params":{}}"#;
+const BRIDGE_INITIALIZE_ID: &str = "oneiron-mcp-bridge";
 
 pub fn mcp(args: McpArgs) -> anyhow::Result<()> {
     let bridge = Arc::new(Bridge::new(&args)?);
@@ -142,7 +143,7 @@ impl Bridge {
         };
         let reply = self.post(body.into_bytes());
         let id = id?;
-        Some(match reply {
+        Some(match reply.and_then(|reply| reply.answer_to(&id)) {
             Ok(mut answer) => {
                 match method {
                     Some("initialize") => self.remember_actor(&answer),
@@ -189,7 +190,9 @@ impl Bridge {
         if let Some(actor) = actor.as_ref() {
             return Ok(actor.clone());
         }
-        let answer = self.post(BRIDGE_INITIALIZE.as_bytes().to_vec())?;
+        let answer = self
+            .post(BRIDGE_INITIALIZE.as_bytes().to_vec())?
+            .answer_to(&json!(BRIDGE_INITIALIZE_ID))?;
         let found = actor_block(&answer).ok_or_else(|| Refusal::Refused(answer.clone()))?;
         *actor = Some(found.clone());
         Ok(found)
@@ -202,23 +205,17 @@ impl Bridge {
     }
 
     /// One POST to the endpoint, signed for this request alone.
-    fn post(&self, body: Vec<u8>) -> Result<Value, Refusal> {
+    fn post(&self, body: Vec<u8>) -> Result<Reply, Refusal> {
         let binding = api::signed_binding_for_seed(&self.token, &self.seed)
             .map_err(|error| Refusal::Unreachable(error.to_string()))?;
-        let output = api::post_json_captured(&self.endpoint, &self.token, &binding, body)
+        let (output, status) = api::post_json_captured(&self.endpoint, &self.token, &binding, body)
             .map_err(|error| Refusal::Unreachable(error.to_string()))?;
-        let parsed = serde_json::from_slice::<Value>(&output.stdout);
         match output.status.code() {
-            Some(0) => parsed.map_err(|_| {
-                Refusal::Unreachable(format!(
-                    "{} answered with something other than JSON",
-                    self.endpoint
-                ))
-            }),
             // `--fail-with-body`: an HTTP error status, with the server's body.
-            Some(api::CURL_HTTP_ERROR_EXIT) => Err(Refusal::Http(parsed.unwrap_or_else(|_| {
-                Value::String(String::from_utf8_lossy(&output.stdout).into_owned())
-            }))),
+            Some(0 | api::CURL_HTTP_ERROR_EXIT) => Ok(Reply {
+                status,
+                body: output.stdout,
+            }),
             _ => Err(Refusal::Unreachable(format!(
                 "could not reach {}: {}",
                 self.endpoint,
@@ -228,13 +225,54 @@ impl Bridge {
     }
 }
 
+/// What the server sent back for one POST.
+struct Reply {
+    /// The HTTP status, when curl saw one.
+    status: Option<u16>,
+    body: Vec<u8>,
+}
+
+impl Reply {
+    /// The server's JSON-RPC answer to request `id`, whatever the HTTP status
+    /// it came with; anything else is the bridge's error for that request, so
+    /// the client is never handed a line that answers nothing it sent.
+    fn answer_to(self, id: &Value) -> Result<Value, Refusal> {
+        let body = serde_json::from_slice::<Value>(&self.body)
+            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&self.body).into_owned()));
+        let answers = body.get("jsonrpc").and_then(Value::as_str) == Some("2.0")
+            && body.get("id") == Some(id)
+            && (body.get("result").is_some() != body.get("error").is_some());
+        match self.status {
+            _ if answers => Ok(body),
+            Some(200..=299) => Err(Refusal::Server(
+                "the server's answer is not a JSON-RPC response to this request".to_owned(),
+                body,
+            )),
+            // Only these say the credential itself was refused.
+            Some(401 | 403) => Err(Refusal::Auth(body)),
+            Some(status) => Err(Refusal::Server(
+                format!("the server answered HTTP {status}"),
+                body,
+            )),
+            None => Err(Refusal::Server(
+                "the server's answer carried no HTTP status".to_owned(),
+                body,
+            )),
+        }
+    }
+}
+
 /// Why a request got no MCP answer from the server.
 enum Refusal {
-    /// The HTTP door refused it before MCP saw it: a revoked, expired or
-    /// unproven credential, say. The server's error body rides along.
-    Http(Value),
+    /// The HTTP door refused the credential before MCP saw the request (401 or
+    /// 403): revoked, expired or unproven, say. The server's error body rides
+    /// along.
+    Auth(Value),
     /// The server's `initialize` carried no actor for this credential.
     Refused(Value),
+    /// The server answered, but not with a JSON-RPC answer to this request:
+    /// any other HTTP error, or a body that answers something else.
+    Server(String, Value),
     /// No answer at all.
     Unreachable(String),
 }
@@ -242,7 +280,7 @@ enum Refusal {
 impl Refusal {
     fn rpc_error(&self, id: &Value) -> String {
         match self {
-            Self::Http(body) => rpc_error(
+            Self::Auth(body) => rpc_error(
                 id,
                 -32001,
                 "mcp_auth_required",
@@ -259,6 +297,9 @@ impl Refusal {
                     None,
                 ),
             },
+            Self::Server(message, body) => {
+                rpc_error(id, -32000, "server_error", message, Some(body.clone()))
+            }
             Self::Unreachable(message) => {
                 rpc_error(id, -32000, "server_unreachable", message, None)
             }

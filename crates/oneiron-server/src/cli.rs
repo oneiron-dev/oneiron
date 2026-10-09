@@ -235,10 +235,10 @@ pub struct TokenAgentArgs {
     #[arg(long)]
     pub name: String,
 
-    /// Verbs the slip carries, comma-separated, from `core:read` (required),
-    /// `core:propose` and `core:write`.
-    #[arg(long, value_delimiter = ',', num_args = 1.., default_values = ["core:read", "core:write"])]
-    pub scope: Vec<String>,
+    /// What the agent may do. The latest mint for a name sets that agent's
+    /// tier.
+    #[arg(long, value_enum, default_value_t = AgentTier::FullAccess)]
+    pub tier: AgentTier,
 
     /// The credential's lifetime in seconds, capped by the vault's policy.
     #[arg(long = "lifetime-secs", default_value_t = 30 * 24 * 60 * 60)]
@@ -252,6 +252,19 @@ pub struct TokenAgentArgs {
 
     #[command(flatten)]
     pub serve: ServeArgs,
+}
+
+/// ARCH-0028's registration-time authority tiers for an agent.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
+pub enum AgentTier {
+    /// Retrieve and inspect; no write capability.
+    ReadOnly,
+    /// Write capability at ceiling `proposed`: what it writes waits for the
+    /// owner's review.
+    ProposeOnly,
+    /// Write capability at ceiling `auto`: its writes land through the same
+    /// write gate as the owner's.
+    FullAccess,
 }
 
 /// Revoking one token is an explicit act on one named identity. It is
