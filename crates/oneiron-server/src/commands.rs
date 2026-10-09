@@ -269,19 +269,23 @@ pub fn token_agent(args: TokenAgentArgs) -> anyhow::Result<()> {
     anyhow::ensure!(args.lifetime_secs > 0, "--lifetime-secs must be at least 1");
     // The file exists before the slip does, so a path that cannot be written
     // fails here rather than after a slip nobody holds is logged.
-    let out = match &args.out {
+    let mut out = match &args.out {
         Some(path) => Some((path, create_owner_only(path)?)),
         None => None,
     };
-    match mint_agent_credential(&args) {
-        Ok((credential, ceiling)) => {
-            let Some((path, mut file)) = out else {
-                println!("{}", serde_json::to_string_pretty(&credential)?);
-                return Ok(());
-            };
-            file.write_all(format!("{}\n", credential.credential).as_bytes())
-                .and_then(|()| file.sync_all())
-                .map_err(|error| anyhow::anyhow!("write {}: {error}", path.display()))?;
+    let minted = mint_agent_credential(&args, |credential| match out.as_mut() {
+        Some((path, file)) => file
+            .write_all(format!("{}\n", credential.credential).as_bytes())
+            .and_then(|()| file.sync_all())
+            .map_err(|error| anyhow::anyhow!("write {}: {error}", path.display())),
+        None => {
+            let printed = serde_json::to_string_pretty(credential)?;
+            writeln!(io::stdout().lock(), "{printed}")
+                .map_err(|error| anyhow::anyhow!("print the credential: {error}"))
+        }
+    });
+    match (minted, out) {
+        (Ok((credential, ceiling)), Some((path, _))) => {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({
@@ -295,7 +299,8 @@ pub fn token_agent(args: TokenAgentArgs) -> anyhow::Result<()> {
             );
             Ok(())
         }
-        Err(error) => {
+        (Ok(_), None) => Ok(()),
+        (Err(error), out) => {
             if let Some((path, _)) = out {
                 let _ = std::fs::remove_file(path);
             }
@@ -330,8 +335,10 @@ fn agent_tier_authority(
 }
 
 /// `token agent`'s vault half: principal, slip and grant, on the stopped vault.
+/// `deliver` hands the credential to the owner between the slip and the grant.
 fn mint_agent_credential(
     args: &TokenAgentArgs,
+    deliver: impl FnOnce(&PairedCredential) -> anyhow::Result<()>,
 ) -> anyhow::Result<(PairedCredential, oneiron::agent_def::AgentCeiling)> {
     let config = resolve_serve_config(&args.serve)?;
     ensure_existing_vault_for_revoke(&config.vault_path)?;
@@ -364,9 +371,10 @@ fn mint_agent_credential(
     })?;
     vault.ensure_host_root_slip(&issuer)?;
     let (verbs, ceiling) = agent_tier_authority(args.tier);
-    // The slip first and the grant after it. Earlier slips for this agent
-    // keep reading its live ceiling, so a mint that fails must leave that
-    // ceiling as it was; a grant that fails takes the new slip back.
+    // The slip, then its delivery, then the grant. Earlier slips for this
+    // agent keep reading its live ceiling, so a mint that fails anywhere must
+    // leave that ceiling as it was; a delivery or grant that fails takes the
+    // new slip back.
     let credential = mint_paired_credential(
         &vault,
         &issuer,
@@ -375,18 +383,23 @@ fn mint_agent_credential(
         verbs,
         args.lifetime_secs,
     )?;
-    if let Err(error) = vault.grant_agent_principal(&owner, &principal, ceiling) {
+    let granted = deliver(&credential).and_then(|()| {
+        vault
+            .grant_agent_principal(&owner, &principal, ceiling)
+            .map_err(anyhow::Error::from)
+    });
+    if let Err(error) = granted {
         let slip = oneiron::authority::CapabilitySlip::from_token(&credential.token)?;
         vault
             .revoke_capability_slip_once(&issuer, slip.claims.slip_id)
             .map_err(|revoke| {
                 anyhow::anyhow!(
-                    "grant agent {}: {error}; then revoking its new slip {}: {revoke}",
+                    "agent {}: {error}; then revoking its new slip {}: {revoke}",
                     args.name,
                     credential.slip_id
                 )
             })?;
-        return Err(error.into());
+        return Err(error);
     }
     Ok((credential, ceiling))
 }

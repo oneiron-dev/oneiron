@@ -241,7 +241,14 @@ impl Reply {
             .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&self.body).into_owned()));
         let answers = body.get("jsonrpc").and_then(Value::as_str) == Some("2.0")
             && body.get("id") == Some(id)
-            && (body.get("result").is_some() != body.get("error").is_some());
+            && match (body.get("result"), body.get("error")) {
+                (Some(_), None) => true,
+                (None, Some(error)) => {
+                    error.get("code").is_some_and(Value::is_i64)
+                        && error.get("message").is_some_and(Value::is_string)
+                }
+                _ => false,
+            };
         match self.status {
             _ if answers => Ok(body),
             Some(200..=299) => Err(Refusal::Server(
