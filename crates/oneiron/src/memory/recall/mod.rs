@@ -112,7 +112,8 @@ impl Effort {
 /// means the vault floor; the scope never widens beyond it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RecallScope {
-    /// WORLD entity ref; scopes to that world plus base reality.
+    /// WORLD entity ref; scopes to that world plus base reality. Unset reads
+    /// base plus the actor's active world (ARCH-0022), never every world.
     pub world_ref: Option<String>,
     /// Facet entity ref; strict facet narrowing when set.
     pub facet: Option<String>,
@@ -226,6 +227,13 @@ impl MemoryItem {
 pub struct ScopeHonesty {
     /// Worlds holding surfaceable claims outside the requested scope.
     pub out_of_scope_worlds: Vec<String>,
+    /// The census stopped at its scan cap, so a world past it may be missing.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub census_capped: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// Retrieval accounting (S6).
@@ -521,23 +529,35 @@ impl Memory<'_> {
                 ));
             }
         }
+        let worlds = self.recall_worlds(scope)?;
         let canonical_lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let session_view = session
             .map(crate::off_record::OffRecordSession::read_view)
             .transpose()?;
+        // The census reads past the asked worlds only to name the ones left
+        // out. Every row retrieval reads, ranked or reached through the graph
+        // as a neighbour, an edge, a seed or evidence, lies in `worlds`.
+        let census = match session_view.as_ref() {
+            Some(view) => self
+                .vault
+                .scoped_read_in_session(canonical_lane.actor_key().clone(), view),
+            None => self.vault.scoped_read(canonical_lane.actor_key().clone()),
+        };
         let lane = match session_view.as_ref() {
             Some(view) => self
                 .vault
                 .scoped_read_in_session(canonical_lane.actor_key().clone(), view),
             None => canonical_lane,
-        };
+        }
+        .within_worlds(worlds.clone());
         let mut receipt = lane.read_receipt(None, 0)?;
         let (plan_filter, plan_policy) = lane.recall_plan()?;
         let effective = effort;
         let deep_pending = None;
-        let world_scope = match &scope.world_ref {
-            Some(world_ref) => WorldScope::World(self.resolve_ref(world_ref)?),
-            None => WorldScope::All,
+        let world_scope = if worlds.include_base() && worlds.worlds().is_empty() {
+            WorldScope::Base
+        } else {
+            WorldScope::WorldSet(worlds.clone())
         };
         let pack_format = format.map(parse_pack_format).transpose()?;
         if receipt.applied.deny_all {
@@ -801,13 +821,7 @@ impl Memory<'_> {
 
         let claims_returned = items.iter().filter(|item| item.kind == "CLAIM").count() as u64;
         Ok(MemoryPack {
-            scope_honesty: ScopeHonesty {
-                out_of_scope_worlds: self.out_of_scope_worlds(
-                    &lane,
-                    &mut receipt,
-                    scope.world_ref.as_deref(),
-                )?,
-            },
+            scope_honesty: self.out_of_scope_worlds(&census, &mut receipt, &worlds)?,
             retrieval_meta: RetrievalMeta {
                 quality: retrieval_quality.quality,
                 degradation: retrieval_quality.degradation,
@@ -825,6 +839,37 @@ impl Memory<'_> {
             pack_version: MEMORY_PACK_VERSION,
             rendered,
             narrowing: Box::new(receipt),
+        })
+    }
+}
+
+impl Memory<'_> {
+    /// The worlds one recall reads (ARCH-0022). A named world reads with base
+    /// reality; no name reads the actor's default, base plus its active world.
+    /// A handle bound to a room turn meets either with the room's Scope.
+    fn recall_worlds(
+        &self,
+        scope: &RecallScope,
+    ) -> MemoryResult<crate::pipeline::WorldAuthoritySet> {
+        let requested = match &scope.world_ref {
+            Some(world_ref) => {
+                crate::pipeline::WorldAuthoritySet::new(true, [self.resolve_ref(world_ref)?])?
+            }
+            None => self
+                .reading_defaults(&[self.actor])?
+                .pop()
+                .expect("one default per actor"),
+        };
+        let room = match self.room_turn_now()? {
+            Some(turn) => crate::context_board::scope_worlds(&turn.scope)?,
+            None => None,
+        };
+        Ok(match room {
+            Some(room) => crate::pipeline::WorldAuthoritySet::new(
+                requested.include_base() && room.include_base(),
+                requested.worlds().intersection(room.worlds()).copied(),
+            )?,
+            None => requested,
         })
     }
 }

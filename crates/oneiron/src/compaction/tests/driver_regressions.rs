@@ -2,13 +2,14 @@
 
 use super::*;
 
-/// Host fixture: settle Dreamer's complete-second boundary before another flight.
+/// Host fixture: settle Dreamer's complete-second boundary before another flight,
+/// over the round a host scanned and queued.
 pub(super) fn advance_test_watermark(vault: &Vault, learned_at: u64) -> Result<()> {
-    crate::dreamer_consolidation::advance_watermark(
-        vault,
-        crate::dreamer_runner::DreamerConsolidationScope::Micro,
-        learned_at,
-    )
+    let scope = crate::dreamer_runner::DreamerConsolidationScope::Micro;
+    let watermark = crate::dreamer_consolidation::read_watermark(vault, scope)?;
+    let queued =
+        crate::dreamer_consolidation::scan_dirty_turns(vault, scope, &watermark, usize::MAX)?;
+    crate::dreamer_consolidation::advance_watermark(vault, scope, learned_at, &queued)
 }
 
 /// Exercise the real integration door and observe both storage and driver state.

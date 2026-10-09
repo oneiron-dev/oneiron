@@ -378,6 +378,8 @@ pub struct Memory<'v> {
     /// The verified credential this actor presented, when a host bound one:
     /// every read verb then reads under the key that proof builds.
     pub(super) read_proof: Option<crate::authority::VerifiedSlip>,
+    /// The room turn this handle runs inside, when a host bound one.
+    pub(super) room_turn: Option<crate::claim::RoomTurnCeiling>,
 }
 
 type MachineSignFn<'a> = dyn Fn(&[u8]) -> crate::Result<[u8; 64]> + Send + Sync + 'a;
@@ -399,6 +401,7 @@ impl Vault {
             actor_class,
             machine_signer: None,
             read_proof: None,
+            room_turn: None,
         }
     }
 
@@ -418,7 +421,40 @@ impl Vault {
             actor_class: EdgeActorClass::System,
             machine_signer: Some((public_key, sign)),
             read_proof: None,
+            room_turn: None,
         }
+    }
+}
+
+impl<'v> Memory<'v> {
+    /// Opens this actor's turn in `room` (ARCH-0067 §8). The engine reads the
+    /// roster from the room's own record and each member's grants; the caller
+    /// supplies only the room. Every read through the returned turn runs
+    /// inside `room_scope(roster)` for the current roster and passes the
+    /// all-of-audience rule and every member's own read. The turn only
+    /// narrows: every check the actor's reads already make still runs.
+    pub fn for_room_turn(&self, room: EntityId) -> MemoryResult<super::RoomTurnHandle<'v>> {
+        self.verified_actor_class()?;
+        let ceiling = match self.room_turn_now()? {
+            Some(now) if now.room == room => now,
+            Some(_) => {
+                return Err(MemoryError::bad_request_with(
+                    "room differs from the bound room turn",
+                    &[],
+                ));
+            }
+            None => self.room_ceiling(room)?,
+        };
+        Ok(super::RoomTurnHandle {
+            memory: Memory {
+                vault: self.vault,
+                actor: self.actor,
+                actor_class: self.actor_class,
+                machine_signer: self.machine_signer,
+                read_proof: self.read_proof.clone(),
+                room_turn: Some(ceiling),
+            },
+        })
     }
 }
 
@@ -436,6 +472,11 @@ impl Memory<'_> {
     pub fn with_read_proof(mut self, proof: &crate::authority::VerifiedSlip) -> Self {
         self.read_proof = Some(proof.clone());
         self
+    }
+
+    /// The room turn this handle is bound to, if any.
+    pub(crate) fn room_turn(&self) -> Option<&crate::claim::RoomTurnCeiling> {
+        self.room_turn.as_ref()
     }
 
     /// The bound actor entity id.

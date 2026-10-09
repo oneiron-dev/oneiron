@@ -440,6 +440,16 @@ impl Memory<'_> {
             }
         }
         batch.apply(wtxn)?;
+        // The re-put moves the TURN only to `old + 1`, which a scope cursor a
+        // later TURN advanced can already be past; the re-dirty carrier puts it
+        // past every cursor in this same commit.
+        if matches!(admission.turn, AdmittedTurn::Existing(_)) && admission.has_new_messages() {
+            crate::dreamer_consolidation::redirty::redirty_turn_in_txn(
+                self.vault,
+                wtxn,
+                &plan.turn_id,
+            )?;
+        }
         let text_ops: Vec<BatchOp> = plan
             .messages
             .iter()
