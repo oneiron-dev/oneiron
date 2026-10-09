@@ -279,10 +279,12 @@ impl Decoded {
     }
 }
 
+pub(super) mod notes;
+
 #[cfg(unix)]
 mod confined;
 #[cfg(unix)]
-use confined::{open_in, walk_logs};
+use confined::{open_in, walk_logs, walk_notes};
 
 #[cfg(not(unix))]
 fn walk_logs(
@@ -294,6 +296,14 @@ fn walk_logs(
         "importing a folder ({}) needs a unix host; give one session log",
         path.display()
     )
+}
+
+#[cfg(not(unix))]
+fn walk_notes(
+    path: &Path,
+    _visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    anyhow::bail!("importing a folder ({}) needs a unix host", path.display())
 }
 
 #[cfg(not(unix))]

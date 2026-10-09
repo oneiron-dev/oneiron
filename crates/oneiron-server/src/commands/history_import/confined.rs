@@ -93,16 +93,45 @@ pub(super) fn walk_logs(
                 root.join(history).display()
             );
             let dir = openat(&root_dir, history_name, directory_flags(), Mode::empty())?;
-            walk(&dir, &root.join(history), 0, visit)
+            walk(&dir, &root.join(history), 0, LOGS, visit)
         }
-        Err(_) => walk(&root_dir, root, 0, visit),
+        Err(_) => walk(&root_dir, root, 0, LOGS, visit),
     }
 }
+
+/// Visits every `.md` file under `root`, passing over hidden files and
+/// folders (an editor's settings, its trash, a `.git`): the path shown, and
+/// the file.
+pub(super) fn walk_notes(
+    root: &Path,
+    visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    walk(&open_root(root)?, root, 0, NOTES, visit)
+}
+
+/// The files a walk visits: their extension, and whether hidden entries
+/// count.
+#[derive(Clone, Copy)]
+struct Wanted {
+    extension: &'static str,
+    hidden: bool,
+}
+
+const LOGS: Wanted = Wanted {
+    extension: "jsonl",
+    hidden: true,
+};
+
+const NOTES: Wanted = Wanted {
+    extension: "md",
+    hidden: false,
+};
 
 fn walk(
     dir: &OwnedFd,
     shown: &Path,
     depth: usize,
+    wanted: Wanted,
     visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     if depth > MAX_WALK_DEPTH {
@@ -112,7 +141,8 @@ fn walk(
     for entry in Dir::read_from(dir)? {
         let entry = entry?;
         let name = OsStr::from_bytes(entry.file_name().to_bytes());
-        if name != "." && name != ".." {
+        let hidden = name.as_bytes().first() == Some(&b'.');
+        if name != "." && name != ".." && (wanted.hidden || !hidden) {
             entries.push((name.to_owned(), entry.file_type()));
         }
     }
@@ -129,12 +159,12 @@ fn walk(
                             path.display()
                         )
                     })?;
-                walk(&child, &path, depth + 1, visit)?;
+                walk(&child, &path, depth + 1, wanted, visit)?;
             }
             FileType::RegularFile
                 if Path::new(&name)
                     .extension()
-                    .is_some_and(|extension| extension == "jsonl") =>
+                    .is_some_and(|extension| extension == wanted.extension) =>
             {
                 visit(&path, open_file(dir, &name, &path)?)?;
             }
