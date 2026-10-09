@@ -551,7 +551,7 @@ impl EngineNativeExecutor<'_> {
         Ok(terminal_status)
     }
 
-    /// Loads the run's replay record, or starts one.
+    /// Loads the run's replay record, or starts and saves one.
     ///
     /// Run IDENTITY is strict on every resume. Resolved-prompt drift is judged
     /// against what the resume would DO: a record that is not terminal still
@@ -597,9 +597,15 @@ impl EngineNativeExecutor<'_> {
         }
         let mut record = CodeRunReplayRecord::new(config.run_id, config.determinism);
         record_config_marker(&self.storage, &mut record, config, prompt_fingerprint)?;
+        // The run's clock and config are durable from its start: a process
+        // that stops after the first step's writes and before its checkpoint
+        // resumes under them, never under a fresh clock or another task.
+        let generation = self
+            .storage
+            .put_code_run_replay_record_if_generation(&record, None)?;
         Ok(LoadedReplayRecord {
             record,
-            generation: None,
+            generation: Some(generation),
             terminal_status: None,
         })
     }

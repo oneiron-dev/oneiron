@@ -1,6 +1,6 @@
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
-use super::speech_identity_regressions::initial_executor_replay_record;
 use super::*;
 use crate::code_run::{AgentVerbDoor, AgentVerbRefusal, SelfAgentVerbCall, SelfMemorySearchCall};
 use crate::memory::HostWriteOrigin;
@@ -35,18 +35,16 @@ impl AgentVerbDoor for TaskCreateDoor {
     }
 }
 
-/// One step that makes its bridge calls and keeps their answers. Given a
-/// competing replay record, it then loses the step checkpoint's
-/// compare-and-set: the calls' writes are committed and the step's checkpoint
-/// is not, as when the process stops between the two.
-struct RecordedStep<'a> {
-    vault: &'a Vault,
+/// One step that makes its bridge calls and keeps their answers. One that
+/// `stops` then halts the process: the calls' writes are committed and the
+/// step's checkpoint is not.
+struct RecordedStep {
     calls: Vec<SelfCall>,
-    competing_record: Option<CodeRunReplayRecord>,
+    stops: bool,
     answers: Vec<SelfDispatchOutcome>,
 }
 
-impl JsCodeModeRuntime for RecordedStep<'_> {
+impl JsCodeModeRuntime for RecordedStep {
     fn run_step(
         &mut self,
         _step: JsCodeModeStep<'_>,
@@ -55,9 +53,10 @@ impl JsCodeModeRuntime for RecordedStep<'_> {
         for call in self.calls.clone() {
             self.answers.push(host.dispatch_self(call)?.outcome);
         }
-        if let Some(record) = self.competing_record.take() {
-            self.vault.put_code_run_replay_record(&record)?;
-        }
+        assert!(
+            !self.stops,
+            "the process stops before the step's checkpoint"
+        );
         Ok(JsCodeModeStepOutcome::complete(""))
     }
 }
@@ -79,83 +78,129 @@ fn create_task() -> SelfCall {
     })
 }
 
+/// A run whose one step writes through `tasks.create` on the host's verb door.
+struct VerbWriteRun<'a> {
+    vault: &'a Vault,
+    gated_write: GatedActorWrite<'a>,
+    config: EngineExecutorConfig,
+}
+
+impl<'a> VerbWriteRun<'a> {
+    fn new(vault: &'a Arc<Vault>) -> Self {
+        let actor_id = EntityId::from_bytes(crate::gate::FIRST_PARTY_CONNECTOR_ACTOR_ID)
+            .expect("first-party actor id");
+        vault
+            .put_entity(
+                &actor_id,
+                ENTITY_TYPE_PERSON,
+                range(1),
+                1,
+                b"first-party actor",
+            )
+            .expect("seed actor");
+        let actor = WriteActor::new(actor_id, EdgeActorClass::Agent);
+        let gated_write = GatedActorWrite::new(vault, actor, "verb-write-resume")
+            .expect("gated actor write")
+            .with_agent_verb_door(Arc::new(TaskCreateDoor {
+                vault: Arc::clone(vault),
+                actor,
+            }));
+        Self {
+            vault,
+            gated_write,
+            config: executor_config(entity(0xE7), EngineExecutorLimits::default()),
+        }
+    }
+
+    /// Runs the step as `calls` under `config`, the process stopping before
+    /// the step's checkpoint when `stops` is set.
+    fn run(
+        &self,
+        config: &EngineExecutorConfig,
+        calls: Vec<SelfCall>,
+        stops: bool,
+    ) -> (
+        std::thread::Result<EngineExecutorResult<EngineExecutorOutcome>>,
+        Vec<SelfDispatchOutcome>,
+    ) {
+        let backend = FixtureBackend::new([
+            "await self.memory.tasks.create({spec: 'summarize the open notes'});",
+        ]);
+        let lease = BudgetLease::for_test("executor-lease");
+        let mut step = RecordedStep {
+            calls,
+            stops,
+            answers: Vec::new(),
+        };
+        let run = catch_unwind(AssertUnwindSafe(|| {
+            let mut executor = EngineNativeExecutor::new(
+                self.vault,
+                &backend,
+                &lease,
+                &mut step,
+                &self.gated_write,
+            );
+            block_on_ready(executor.run(config))
+        }));
+        (run, step.answers)
+    }
+
+    /// The step's calls `first`, the last of them a `tasks.create` that
+    /// commits, then the process stops before the step's checkpoint. Returns
+    /// that call's answer.
+    fn stop_after(&self, first: Vec<SelfCall>) -> SelfDispatchOutcome {
+        let before = written_tasks_and_claims(self.vault);
+        let (run, mut answers) = self.run(&self.config, first, true);
+        assert!(run.is_err(), "the process stopped");
+        assert!(
+            written_tasks_and_claims(self.vault).len() > before.len(),
+            "the write committed before the process stopped"
+        );
+        let first = answers.pop().expect("the first attempt's answer");
+        assert!(matches!(first, SelfDispatchOutcome::AgentVerb(_)));
+        first
+    }
+
+    /// The same run resumed under `config`, its step making `calls`. Returns
+    /// the run's result and the last call's answer, after checking the resumed
+    /// run wrote nothing new.
+    fn resume(
+        &self,
+        config: &EngineExecutorConfig,
+        calls: Vec<SelfCall>,
+    ) -> (
+        EngineExecutorResult<EngineExecutorOutcome>,
+        Option<SelfDispatchOutcome>,
+    ) {
+        let committed = written_tasks_and_claims(self.vault);
+        let (run, mut answers) = self.run(config, calls, false);
+        assert_eq!(
+            written_tasks_and_claims(self.vault),
+            committed,
+            "the resumed run writes no second task"
+        );
+        (run.expect("the resumed run returns"), answers.pop())
+    }
+}
+
 /// A step makes the calls `first`, the last of them a `tasks.create` that
-/// commits; the step's checkpoint is then lost, as when the process stops in
-/// that window. The same step resumes as `resumed`, whose last call is the
-/// same `tasks.create`. Returns the first attempt's answer to it and the
-/// resumed one's, after checking the resumed step wrote nothing new.
+/// commits; the process then stops before the step's checkpoint. The same
+/// step resumes as `resumed`, whose last call is the same `tasks.create`.
+/// Returns the first attempt's answer to it and the resumed one's.
 fn resume_after_a_lost_checkpoint(
     first: Vec<SelfCall>,
     resumed: Vec<SelfCall>,
 ) -> (SelfDispatchOutcome, SelfDispatchOutcome) {
     let (_dir, vault) = open_test_vault();
     let vault = Arc::new(vault);
-    let actor_id = EntityId::from_bytes(crate::gate::FIRST_PARTY_CONNECTOR_ACTOR_ID)
-        .expect("first-party actor id");
-    vault
-        .put_entity(
-            &actor_id,
-            ENTITY_TYPE_PERSON,
-            range(1),
-            1,
-            b"first-party actor",
-        )
-        .expect("seed actor");
-    let actor = WriteActor::new(actor_id, EdgeActorClass::Agent);
-    let gated_write = GatedActorWrite::new(&vault, actor, "verb-write-resume")
-        .expect("gated actor write")
-        .with_agent_verb_door(Arc::new(TaskCreateDoor {
-            vault: Arc::clone(&vault),
-            actor,
-        }));
-    let config = executor_config(entity(0xE7), EngineExecutorLimits::default());
-    let lease = BudgetLease::for_test("executor-lease");
-    let script = "await self.memory.tasks.create({spec: 'summarize the open notes'});";
-    let before = written_tasks_and_claims(&vault);
-
-    let backend = FixtureBackend::new([script]);
-    let mut stopped = RecordedStep {
-        vault: &vault,
-        calls: first,
-        competing_record: Some(initial_executor_replay_record(&vault, &config)),
-        answers: Vec::new(),
-    };
-    let error = {
-        let mut executor =
-            EngineNativeExecutor::new(&vault, &backend, &lease, &mut stopped, &gated_write);
-        block_on_ready(executor.run(&config)).expect_err("the step loses its checkpoint")
-    };
-    assert!(matches!(
-        error,
-        EngineExecutorError::Engine(Error::ConcurrentWrite(_))
-    ));
-    let committed = written_tasks_and_claims(&vault);
-    assert!(
-        committed.len() > before.len(),
-        "the write committed before the checkpoint was lost"
-    );
-
-    let backend = FixtureBackend::new([script]);
-    let mut resumed = RecordedStep {
-        vault: &vault,
-        calls: resumed,
-        competing_record: None,
-        answers: Vec::new(),
-    };
-    let outcome = {
-        let mut executor =
-            EngineNativeExecutor::new(&vault, &backend, &lease, &mut resumed, &gated_write);
-        block_on_ready(executor.run(&config)).expect("the resumed run")
-    };
-    assert_eq!(outcome.status, EngineExecutorStatus::Complete);
+    let run = VerbWriteRun::new(&vault);
+    let first = run.stop_after(first);
+    let (outcome, answer) = run.resume(&run.config, resumed);
     assert_eq!(
-        written_tasks_and_claims(&vault),
-        committed,
-        "the resumed step writes no second task"
+        outcome.expect("the resumed run").status,
+        EngineExecutorStatus::Complete
     );
-    let first = stopped.answers.pop().expect("the first attempt's answer");
-    assert!(matches!(first, SelfDispatchOutcome::AgentVerb(_)));
-    (first, resumed.answers.pop().expect("the resumed answer"))
+    (first, answer.expect("the resumed answer"))
 }
 
 /// Review repro (Greptile, #1338): a code-mode `tasks.create` commits before
@@ -183,4 +228,59 @@ fn resumed_step_that_moves_its_write_still_gets_the_first_receipt() {
         resumed, first,
         "the moved call answers with the first receipt"
     );
+}
+
+/// Review repro (Astra R4, #1338): the resumed step's code is generated again
+/// and may make its write with another input, here `label` omitted where the
+/// first attempt passed `null`. The step's first write is the one the first
+/// attempt committed, so the changed call is refused, never written again.
+#[test]
+fn resumed_step_that_changes_its_write_is_refused_not_written_twice() {
+    let (_dir, vault) = open_test_vault();
+    let vault = Arc::new(vault);
+    let run = VerbWriteRun::new(&vault);
+    run.stop_after(vec![create_task()]);
+    let changed = SelfCall::AgentVerb(SelfAgentVerbCall {
+        verb: AgentVerb::TasksCreate,
+        input: serde_json::json!({"spec": "summarize the open notes"}),
+    });
+    let (outcome, _) = run.resume(&run.config, vec![changed]);
+    assert!(
+        matches!(
+            outcome,
+            Err(EngineExecutorError::Engine(Error::InvariantViolation(_)))
+        ),
+        "{outcome:?}"
+    );
+}
+
+/// Review repro (Astra R5, #1338): a run's clock and config are saved when it
+/// starts. The process stops after the first step's write and before its
+/// checkpoint; the run's record already holds the clock it started with, and
+/// resuming it under another task is refused.
+#[test]
+fn a_run_stopped_before_its_first_checkpoint_keeps_its_clock_and_config() {
+    let (_dir, vault) = open_test_vault();
+    let vault = Arc::new(vault);
+    let run = VerbWriteRun::new(&vault);
+    run.stop_after(vec![create_task()]);
+    let record = vault
+        .get_code_run_replay_record(&run.config.run_id)
+        .expect("read the run's record")
+        .expect("the run's record outlives the stop");
+    assert_eq!(record.determinism, run.config.determinism);
+
+    let other_task = EngineExecutorConfig {
+        task: "forget the project status".to_owned(),
+        ..run.config.clone()
+    };
+    let (outcome, answer) = run.resume(&other_task, vec![create_task()]);
+    assert!(
+        matches!(
+            outcome,
+            Err(EngineExecutorError::Engine(Error::InvalidConfig(_)))
+        ),
+        "{outcome:?}"
+    );
+    assert!(answer.is_none(), "the refused run made no call");
 }

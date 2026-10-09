@@ -11,6 +11,7 @@ use crate::code_run::types::{
 };
 use crate::error::{Error, Result};
 use crate::memory::HostWriteOrigin;
+use crate::task_verb::sdk::AgentVerb;
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 
@@ -22,12 +23,12 @@ impl HostSelfDispatcher<'_> {
     ///
     /// Every call carries the run's host-owned write origin. A write in a
     /// durable run also keeps its receipt, reserved before the door runs and
-    /// keyed by the call itself within its step: the step's first position,
-    /// the verb, the input, and how many times this attempt has already made
-    /// the same call. A step resumed after the write committed but before its
-    /// checkpoint gets the first receipt back wherever the re-run places the
-    /// call; a write that may have committed without its receipt fails
-    /// closed, never repeats.
+    /// keyed by the write's place in its step: the step's first position and
+    /// how many writes the step made before it. Reads do not count, so a
+    /// re-generated step may move them. A step resumed after the write
+    /// committed but before its checkpoint gets the first receipt back when it
+    /// makes the same call there; a changed call, or a write that may have
+    /// committed without its receipt, fails closed, never repeats.
     pub(super) fn dispatch_agent_verb(
         &self,
         call: SelfAgentVerbCall,
@@ -44,11 +45,11 @@ impl HostSelfDispatcher<'_> {
         let Some(site) = site.filter(|_| call.verb.writes()) else {
             return Ok(answered(door.call(&call, &origin)));
         };
-        let identity = call_identity(call.verb.as_str(), &call.input);
-        let repeats = site
+        let earlier_writes = site
             .earlier
             .iter()
-            .filter(|row| row_identity(row).as_ref() == Some(&identity))
+            .filter_map(recorded_call)
+            .filter(|(verb, _)| AgentVerb::from_name(verb).is_some_and(AgentVerb::writes))
             .count();
         let receipt_id = derived_executor_id(
             AGENT_VERB_RECEIPT_DOMAIN,
@@ -56,8 +57,7 @@ impl HostSelfDispatcher<'_> {
                 self.run_ref.as_bytes(),
                 site.run_id.as_bytes(),
                 &site.step_start.to_le_bytes(),
-                &identity,
-                &(repeats as u64).to_le_bytes(),
+                &(earlier_writes as u64).to_le_bytes(),
             ],
         )?;
         if let Some(receipt) = self.storage.get_code_run_replay_record(&receipt_id)? {
@@ -66,6 +66,11 @@ impl HostSelfDispatcher<'_> {
                     "agent verb write is in flight or needs reconciliation",
                 ));
             };
+            if row_identity(row) != Some(call_identity(call.verb.as_str(), &call.input)) {
+                return Err(Error::InvariantViolation(
+                    "a resumed step changed a write it already made",
+                ));
+            }
             return decode_self_dispatch_outcome(&row.outcome);
         }
         let mut receipt = CodeRunReplayRecord::new(receipt_id, CodeRunDeterminism::new(0, [0; 32]));
@@ -127,8 +132,14 @@ fn call_identity(verb: &str, input: &Value) -> Vec<u8> {
     identity
 }
 
-/// The identity of an earlier verb call this attempt recorded, if the row is one.
+/// The identity of the verb call a receipt row recorded, if the row is one.
 fn row_identity(row: &CodeRunBridgeCall) -> Option<Vec<u8>> {
+    let (verb, input) = recorded_call(row)?;
+    Some(call_identity(verb, &serde_json::from_str(input).ok()?))
+}
+
+/// The verb name and JSON input of a recorded verb call, if the row is one.
+fn recorded_call(row: &CodeRunBridgeCall) -> Option<(&str, &str)> {
     if row.effect != SelfEffect::AgentVerb {
         return None;
     }
@@ -141,6 +152,5 @@ fn row_identity(row: &CodeRunBridgeCall) -> Option<Vec<u8>> {
             .find(|(key, _)| key.as_str() == Some(name))
             .and_then(|(_, value)| value.as_str())
     };
-    let input = serde_json::from_str(field("input")?).ok()?;
-    Some(call_identity(field("verb")?, &input))
+    Some((field("verb")?, field("input")?))
 }
