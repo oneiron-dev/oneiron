@@ -46,7 +46,9 @@ use self::config::Bm25RecencyConfig;
 pub(crate) use self::config::{Bm25Config, FieldLengthPolicy};
 pub(crate) use self::diagnostics::Bm25Diagnostics;
 pub use self::diagnostics::{Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot};
-pub(crate) use self::index::{deindex_text, index_text};
+pub(crate) use self::index::{
+    AnalyzedText, analyze_text, deindex_text, index_analyzed_text, index_text,
+};
 pub(crate) use self::query::{
     Bm25SearchOptions, PrefixExpansionPostingDecision, final_token_exact_posting_matches,
     final_token_prefix_expansion_has_scoped_and_rejected_postings, search_text,
