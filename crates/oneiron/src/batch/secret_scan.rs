@@ -126,6 +126,12 @@ pub(crate) fn scan_file_content(_path: &str, bytes: &[u8]) -> Option<&'static st
     detect(&haystack, Door::Release)
 }
 
+/// The field names every door treats as credentials, for a reader that finds
+/// a name where the structural scans do not look (a binary map key).
+pub(crate) fn sensitive_field_name(key: &str) -> bool {
+    shapes::sensitive_key(key)
+}
+
 /// Identifiers and records outside the batch door (refs, paths, telemetry
 /// keys, session tags, question rows) keep their scan in both modes: they land
 /// in keys, indexes and receipts that a later mask cannot reach.

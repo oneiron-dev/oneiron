@@ -312,50 +312,121 @@ fn whole_vault_json_reimports_a_scope_id_whose_bytes_parse_as_messagepack() -> R
     Ok(())
 }
 
+/// A MessagePack array of byte integers: a byte string in another container.
+fn byte_array(bytes: &[u8]) -> Value {
+    Value::Array(bytes.iter().map(|&byte| Value::from(byte)).collect())
+}
+
 /// Secrets invariant beside the repro above: an id slot keeps bytes that only
-/// parse as MessagePack, never bytes that encode a credential. Here a claim
-/// value's `actor_entity_ref` holds the 16-byte map `{"password":"hello"}`.
+/// parse as a container, never bytes that encode a credential. Each claim
+/// value's `actor_entity_ref` holds 16 bytes encoding one credential form. The
+/// release-policy name, the binary map and the byte arrays escaped review
+/// (Astra and Greptile on #1331).
 #[test]
 fn whole_vault_json_nulls_an_id_slot_whose_bytes_encode_a_credential() -> Result<()> {
+    let text = Value::from;
+    let forms = [
+        b"pwd=Ab9Q7t2Lxyz1".to_vec(),
+        br#"{"pwd":"rose12"}"#.to_vec(),
+        encode(&Value::Map(vec![(text("password"), text("hello"))])),
+        encode(&Value::Map(vec![(text("x_token"), text("Ab9Q7t"))])),
+        encode(&Value::Map(vec![(
+            Value::Binary(b"x_token".to_vec()),
+            text("Ab9Q7"),
+        )])),
+        encode(&Value::Binary(encode(&Value::Map(vec![(
+            text("x_token"),
+            text("Ab9Q"),
+        )])))),
+        encode(&byte_array(br#"{"pwd":"roses"}"#)),
+        encode(&byte_array(b"pwd=Ab9Q7t2Lxyz")),
+        encode(&byte_array(br#"{"bearer":"x"} "#)),
+    ];
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());
-    let forged = encode(&Value::Map(vec![(
-        Value::from("password"),
-        Value::from("hello"),
-    )]));
-    assert_eq!(forged.len(), 16);
     let person = crate::EntityId::now();
     vault.put_entity(&person, ENTITY_TYPE_PERSON, range(), 789, b"person")?;
-    let mut body = ClaimBody::new(
-        "preference.food",
-        ClaimSubject::Entity(person),
-        Value::from("matcha"),
-        0.75,
-        ClaimApprovalStatus::Approved,
-        ClaimLifecycleStatus::Active,
-    )?;
-    body.value = Value::Map(vec![(
-        Value::from("actor_entity_ref"),
-        Value::Binary(forged),
-    )]);
-    // Residue already on disk, as above: the write wall is not under test.
-    let claim = crate::EntityId::now();
-    let encoded = crate::claim::encode_claim_body(&body)?;
-    raw_residue(&vault, &claim, crate::registry::ENTITY_TYPE_CLAIM, &encoded)?;
+    let mut claims = Vec::new();
+    for forged in forms {
+        assert_eq!(forged.len(), 16, "{forged:?}");
+        let mut body = ClaimBody::new(
+            "preference.food",
+            ClaimSubject::Entity(person),
+            Value::from("matcha"),
+            0.75,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        )?;
+        body.value = Value::Map(vec![(
+            Value::from("actor_entity_ref"),
+            Value::Binary(forged.clone()),
+        )]);
+        // Residue already on disk, as above: the write wall is not under test.
+        let claim = crate::EntityId::now();
+        let encoded = crate::claim::encode_claim_body(&body)?;
+        raw_residue(&vault, &claim, crate::registry::ENTITY_TYPE_CLAIM, &encoded)?;
+        claims.push((claim, forged));
+    }
     let export = vault.export_whole_vault(PackFormat::Json)?;
     let document = vault.read_whole_vault_json(export.bytes())?;
-    let row = document
-        .claims
-        .iter()
-        .find(|row| row.id == claim.to_hex())
-        .unwrap();
-    let ExportBody::MessagePack(exported) = &row.body else {
-        panic!("MessagePack body expected");
-    };
-    let exported = exported.to_msgpack()?;
-    assert_eq!(
-        field(field(&exported, "val"), "actor_entity_ref"),
-        &Value::Nil
-    );
+    let mut exported_forms = Vec::new();
+    for (claim, forged) in claims {
+        let row = document
+            .claims
+            .iter()
+            .find(|row| row.id == claim.to_hex())
+            .unwrap();
+        let ExportBody::MessagePack(exported) = &row.body else {
+            panic!("MessagePack body expected");
+        };
+        let exported = exported.to_msgpack()?;
+        if !field(field(&exported, "val"), "actor_entity_ref").is_nil() {
+            exported_forms.push(format!("{forged:02x?}"));
+        }
+    }
+    assert_eq!(exported_forms, Vec::<String>::new());
+    Ok(())
+}
+
+/// Bug repro (review of #1331): an id that holds no credential survives the
+/// archive whatever container its bytes parse as, and the archive imports. A
+/// world id whose bytes read as JSON was still nulled, so its claim failed to
+/// import.
+#[test]
+fn whole_vault_json_reimports_credential_free_ids_of_every_container_shape() -> Result<()> {
+    let text = Value::from;
+    let worlds = [
+        encode(&Value::Map(vec![(text("a"), text("hello world!"))])),
+        encode(&byte_array(b"hello, world!!!")),
+        encode(&Value::Binary(b"plain bytes 14".to_vec())),
+        encode(&Value::Ext(5, b"plain bytes13".to_vec())),
+        b"[128]           ".to_vec(),
+        br#"{"a":[145,1]}   "#.to_vec(),
+    ];
+    let (_source_dir, source) = open_test_vault_with(VaultConfig::default());
+    let (_target_dir, target) = open_test_vault_with(VaultConfig::default());
+    let person = crate::EntityId::now();
+    source.put_entity(&person, ENTITY_TYPE_PERSON, range(), 789, b"person")?;
+    let mut claims = Vec::new();
+    for world in worlds {
+        let world = crate::EntityId::from_bytes(world.as_slice().try_into().unwrap())?;
+        let mut body = ClaimBody::new(
+            "preference.food",
+            ClaimSubject::Entity(person),
+            Value::from("matcha"),
+            0.75,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        )?;
+        body.world = Some(world);
+        let claim = crate::EntityId::now();
+        source.put_claim(&claim, &body, range(), 789)?;
+        claims.push((claim, world));
+    }
+    let export = source.export_whole_vault(PackFormat::Json)?;
+    target.import_whole_vault_json(export.bytes())?;
+    for (claim, world) in claims {
+        assert_eq!(target.get_claim(&claim)?.unwrap().world, Some(world));
+    }
     Ok(())
 }
 

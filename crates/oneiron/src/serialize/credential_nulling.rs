@@ -1,5 +1,7 @@
 //! Unconditional credential removal before any context/export format writer.
-use crate::batch::secret_scan::scan_file_content;
+use crate::batch::secret_scan::{
+    sanitize_credentials, sanitize_messagepack_credentials, scan_file_content, sensitive_field_name,
+};
 use serde_json::{Map, Value};
 
 pub(super) fn credential_key(key: &str) -> bool {
@@ -104,20 +106,49 @@ fn json_bytes(values: &[Value]) -> Option<Vec<u8>> {
         .collect()
 }
 
-/// An id's bytes are nulled for a secret shape, credential-bearing JSON, or a
-/// MessagePack reading that names a credential field or holds a secret, but not
-/// for container shape alone.
+/// Whether an id's bytes carry a credential. Every reading of them is judged
+/// by the release policy's own detector: the raw text, a JSON document, a
+/// whole MessagePack value, and inside those each string, binary, extension
+/// and numeric byte array read again as bytes. A field name counts when the
+/// release policy or this serializer redacts it. Container shape alone is no
+/// credential, so a credential-free id survives the archive.
 fn id_carries_credential(bytes: &[u8], depth: usize) -> bool {
     if depth >= 128 || scan_file_content("", bytes).is_some() {
         return true;
     }
-    if json_carries_credential(bytes, depth) {
+    if let Ok(value) = serde_json::from_slice::<Value>(bytes)
+        && (sanitize_credentials(&mut value.clone(), true)
+            || json_names_credential(&value, depth + 1))
+    {
         return true;
     }
     let mut cursor = std::io::Cursor::new(bytes);
     rmpv::decode::read_value(&mut cursor).is_ok_and(|value| {
-        cursor.position() == bytes.len() as u64 && names_credential(&value, depth + 1)
+        cursor.position() == bytes.len() as u64
+            && (sanitize_messagepack_credentials(&mut value.clone(), true)
+                || names_credential(&value, depth + 1))
     })
+}
+
+fn json_names_credential(value: &Value, depth: usize) -> bool {
+    if depth >= 128 {
+        return true;
+    }
+    match value {
+        Value::String(text) => id_carries_credential(text.as_bytes(), depth),
+        Value::Array(values) => {
+            json_bytes(values).is_some_and(|bytes| id_carries_credential(&bytes, depth))
+                || values
+                    .iter()
+                    .any(|value| json_names_credential(value, depth + 1))
+        }
+        Value::Object(fields) => fields.iter().any(|(key, value)| {
+            credential_name(key)
+                || id_carries_credential(key.as_bytes(), depth)
+                || json_names_credential(value, depth + 1)
+        }),
+        _ => false,
+    }
 }
 
 fn names_credential(value: &rmpv::Value, depth: usize) -> bool {
@@ -125,29 +156,47 @@ fn names_credential(value: &rmpv::Value, depth: usize) -> bool {
         return true;
     }
     match value {
-        rmpv::Value::String(text) => {
-            scan_file_content("", text.as_bytes()).is_some()
-                || json_carries_credential(text.as_bytes(), depth)
-        }
+        rmpv::Value::String(text) => id_carries_credential(text.as_bytes(), depth),
         rmpv::Value::Binary(bytes) | rmpv::Value::Ext(_, bytes) => {
             id_carries_credential(bytes, depth)
         }
-        rmpv::Value::Array(values) => values
-            .iter()
-            .any(|value| names_credential(value, depth + 1)),
+        rmpv::Value::Array(values) => {
+            messagepack_bytes(values).is_some_and(|bytes| id_carries_credential(&bytes, depth))
+                || values
+                    .iter()
+                    .any(|value| names_credential(value, depth + 1))
+        }
         rmpv::Value::Map(entries) => entries.iter().any(|(key, value)| {
-            // Key names read as the typed serializer reads them: text or UTF-8 binary.
-            key.as_str()
-                .or_else(|| {
-                    key.as_slice()
-                        .and_then(|bytes| std::str::from_utf8(bytes).ok())
-                })
-                .is_some_and(credential_key)
+            key_name(key).is_some_and(|name| credential_name(&name))
                 || names_credential(key, depth + 1)
                 || names_credential(value, depth + 1)
         }),
         _ => false,
     }
+}
+
+/// One vocabulary: every name the release policy redacts, and the names this
+/// serializer nulls anywhere else in the document.
+fn credential_name(name: &str) -> bool {
+    sensitive_field_name(name) || credential_key(name)
+}
+
+/// A map key read as a field name, whether text, binary, extension or bytes.
+fn key_name(key: &rmpv::Value) -> Option<String> {
+    let bytes = match key {
+        rmpv::Value::String(text) => text.as_bytes().to_vec(),
+        rmpv::Value::Binary(bytes) | rmpv::Value::Ext(_, bytes) => bytes.clone(),
+        rmpv::Value::Array(values) => messagepack_bytes(values)?,
+        _ => return None,
+    };
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn messagepack_bytes(values: &[rmpv::Value]) -> Option<Vec<u8>> {
+    values
+        .iter()
+        .map(|value| value.as_u64().and_then(|v| u8::try_from(v).ok()))
+        .collect()
 }
 
 fn json_carries_credential(bytes: &[u8], depth: usize) -> bool {
