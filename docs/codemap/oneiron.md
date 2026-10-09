@@ -18,6 +18,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `examples/meeting_audio_import/tests.rs` | test | m | — | — | Packaged adapter acceptance tests and host-policy regression fixtures |
 | `examples/meeting_audio_native_probe.rs` | src | s | — | — | Manual native-port proof |
 | `examples/provision_imessage_identity.rs` | src | s | — | — | Operator door that provisions the ACTIVE, agent-bound `imessage_self_host_bridge` receiving identity a… |
+| `examples/write_mix_bench.rs` | src | m | — | — | Agent write-mix bench for the vault's single writer (OF-536 group commit) |
 | `src/access_grant/codec.rs` | src | m | 2 fn · 2 const · 21 crate-vis | — | Pinned AccessGrant body/scope key sets and fail-closed MessagePack codec |
 | `src/access_grant/context.rs` | src | L | 3 struct · 3 fn · 2 crate-vis | AccessContext, AccessLimited, GrantedData | Relationship read authority built from live grants and stored membership evidence |
 | `src/access_grant/mod.rs` | src | s | 4 re-export · 1 crate-vis | — | AccessGrant control-plane record substrate |
@@ -216,7 +217,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/base_apply/validation.rs` | src | s | 5 crate-vis | — | — |
 | `src/batch/builder/apply.rs` | src | s | 1 fn · 3 crate-vis | — | Caller-transaction terminal: stages the batch into a transaction the caller owns and commits |
 | `src/batch/builder/claims.rs` | src | s | 5 fn · 1 crate-vis | — | Claim-candidate builder doors plus the gap-decay op constructor |
-| `src/batch/builder/commit.rs` | src | s | 1 fn · 2 crate-vis | — | Committing terminal: builder-time checks, its own transaction, preflight, apply, commit, VAD postcommit |
+| `src/batch/builder/commit.rs` | src | s | 1 fn · 2 crate-vis | — | Committing terminal: builder-time checks, index preparation, its share of the group commit, preflight… |
 | `src/batch/builder/edges.rs` | src | s | 13 fn · 1 crate-vis | — | Edge/vector/text/phonetic/delete doors plus edge-kind gate helpers |
 | `src/batch/builder/mod.rs` | src | s | 1 struct · 5 crate-vis | BatchBuilder | The atomic multi-database write-batch builder and its two terminals |
 | `src/batch/builder/ops.rs` | src | s | 3 crate-vis | — | Batch op vocabulary and shared op constructors |
@@ -258,7 +259,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/export/tests.rs` | test | L | — | — | — |
 | `src/batch/facet_identity.rs` | src | s | 1 crate-vis | — | FACET overwrite checks for immutable substrate identity and retired privacy axes |
 | `src/batch/facet_validation.rs` | src | s | 5 crate-vis | — | — |
-| `src/batch/gate_mode.rs` | src | s | 10 crate-vis | — | — |
+| `src/batch/gate_mode.rs` | src | s | 11 crate-vis | — | — |
 | `src/batch/gate_staging.rs` | src | s | 1 crate-vis | — | — |
 | `src/batch/gate_staging/tests.rs` | test | s | — | — | — |
 | `src/batch/leader_chat_admission.rs` | src | s | 1 crate-vis | — | Final-state leader-chat TURN candidates, independent of batch op order |
@@ -267,6 +268,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/ops_pipeline.rs` | src | m | 14 crate-vis | — | — |
 | `src/batch/person_substrate.rs` | src | s | 3 crate-vis | — | Atomic deterministic PERSON substrate masks, including replay and open-time repair |
 | `src/batch/phonetic_apply.rs` | src | s | 10 crate-vis | — | — |
+| `src/batch/prepared_index.rs` | src | s | 2 crate-vis | — | Index work a committing batch does before its write transaction opens (RESEARCH-1115 Bend 2): the BM25… |
 | `src/batch/put_apply/apply/authority.rs` | src | s | 1 crate-vis | — | — |
 | `src/batch/put_apply/apply/claim.rs` | src | s | 1 crate-vis | — | — |
 | `src/batch/put_apply/apply/mod.rs` | src | m | 1 crate-vis | — | The `apply_put` entity-put chokepoint: validation, claim gate, type dispatch, and staging |
@@ -347,7 +349,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/bm25/codec.rs` | src | m | 19 crate-vis | — | Binary codecs, stat/total-docs accessors, corruption constructors, key validation |
 | `src/bm25/config.rs` | src | s | 1 enum · 9 crate-vis | Bm25Formula | Rank-profile config: field/channel params, formula, recency, defaults |
 | `src/bm25/diagnostics.rs` | src | s | 2 struct · 1 enum · 2 fn · 3 crate-vis | Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot | Per-vault BM25 integrity diagnostics (counters, snapshot, record) |
-| `src/bm25/index.rs` | src | m | 2 crate-vis | — | Index/deindex mutation paths plus the missing-posting repair proof |
+| `src/bm25/index.rs` | src | m | 6 crate-vis | — | Index/deindex mutation paths plus the missing-posting repair proof |
 | `src/bm25/mod.rs` | src | s | 2 re-export · 7 crate-vis | — | Analyzer-driven fielded inverted index + BM25F scorer |
 | `src/bm25/query.rs` | src | m | 17 crate-vis | — | Query-side: term collection, prefix expansion, search entry points, hint collapse |
 | `src/bm25/scoped.rs` | src | s | 3 crate-vis | — | Exact top-k over the existing BM25F scorer for a scoped read, under one read snapshot: one pass over the… |
@@ -1570,16 +1572,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/hnsw/delete.rs` | src | s | 2 crate-vis | — | Node delete with symmetric/legacy backlink scrub |
 | `src/hnsw/discipline.rs` | src | s | 7 crate-vis | — | Symmetric vs legacy link discipline and rebuild counters |
 | `src/hnsw/entry_point.rs` | src | m | 3 crate-vis | — | Tarjan-SCC entry-point selection |
-| `src/hnsw/insert.rs` | src | m | 5 crate-vis | — | Insert, localized refresh, and backlink attachment |
+| `src/hnsw/insert.rs` | src | m | 8 crate-vis | — | Insert, localized refresh, and backlink attachment |
 | `src/hnsw/keys.rs` | src | s | 31 crate-vis | — | HNSW metadata key/counter literals, error strings, and the one-way prefix |
 | `src/hnsw/mod.rs` | src | s | 11 crate-vis | — | HNSW graph index over the persisted neighbor graph |
 | `src/hnsw/one_way.rs` | src | s | 5 crate-vis | — | Orphan-protection one-way exception index |
 | `src/hnsw/rebuild.rs` | src | s | 6 crate-vis | — | Snapshot graph build, persist, and SLIM rehydrate |
-| `src/hnsw/search.rs` | src | m | 6 crate-vis | — | Search, MRL rescore, and beam traversal |
+| `src/hnsw/search.rs` | src | m | 7 crate-vis | — | Search, MRL rescore, and beam traversal |
 | `src/hnsw/slim_drop.rs` | src | s | 2 crate-vis | — | SLIM derived-shape drop producer |
 | `src/hnsw/storage.rs` | src | m | 20 crate-vis | — | Metadata/counter reads and neighbor/vector codec |
 | `src/hnsw/tests.rs` | test | XL | — | — | — |
-| `src/hnsw/types.rs` | src | s | 5 crate-vis | — | Shared graph, heap, and beam option types |
+| `src/hnsw/types.rs` | src | s | 7 crate-vis | — | Shared graph, heap, and beam option types |
 | `src/human_task/followup.rs` | src | m | 1 struct · 6 fn · 4 crate-vis | HumanTaskFollowupDriver | Native-human routing, follow-up cursor lifecycle and the wake driver |
 | `src/human_task/followup_tests.rs` | test | m | 10 crate-vis | — | cfg(test) fixture and helpers plus native-route and follow-up cursor tests |
 | `src/human_task/mod.rs` | src | s | 3 re-export · 1 crate-vis | — | Human-assigned TASK follow-up and the identity-bound human response signal (ONE-1708) |
@@ -1669,7 +1671,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ingest/types.rs` | src | s | 4 struct · 1 enum · 1 type | IngestError, NormalizedIngestBatch, NormalizedIngestClaim, NormalizedIngestNote, NormalizedIngestRecord | Normalized ingest types: batch, record, claim, and note plus the ingest result and error |
 | `src/interlocutor.rs` | src | m | 4 struct · 3 enum · 25 fn | Interlocutor, InterlocutorClass, InterlocutorPartyInput, InterlocutorResolutionInput, InterlocutorSet, InterlocutorStamp, PresenceEvidence | Interlocutor resolution substrate (OF-365 ILD-1) |
 | `src/interlocutor/tests.rs` | test | s | — | — | — |
-| `src/learning_setting.rs` | src | s | 2 struct · 1 enum · 5 fn · 2 const | SettingMode, SettingRow, SettingSpec | Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows… |
+| `src/learning_setting.rs` | src | s | 2 struct · 1 enum · 5 fn · 4 const · 1 crate-vis | SettingMode, SettingRow, SettingSpec | Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows… |
 | `src/lens/atom/atom_enum.rs` | src | m | 1 enum · 5 fn · 2 crate-vis | LensAtom | LensAtom closed enum with wire codec and primitive/validate/budget dispatch |
 | `src/lens/atom/atom_leaves.rs` | src | m | 27 struct · 6 enum · 2 fn · 16 crate-vis | AnswerSheetAtom, AsofScrubberAtom, ClaimLineAtom, CollectionAtom, GeneratedUiResultSetActionEvent, GeneratedUiResultSetAtom, GeneratedUiResultSetRow, GeneratedUiResultSetSelectAll +25 | Leaf payload structs with per-atom validate, fallback, and budget impls |
 | `src/lens/atom/atom_node.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | LensNode | LensNode depth-bounded tree type with allocation-guarded Deserialize seeds |
@@ -2505,7 +2507,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/session_overlay/keyspace.rs` | src | m | 13 crate-vis | — | — |
 | `src/session_overlay/mod.rs` | src | s | 6 crate-vis | — | In-memory session write-overlay substrate (ARCH-0052, D1) |
 | `src/session_overlay/overlay/lifecycle.rs` | src | s | 11 crate-vis | — | Overlay lifecycle state machine, leases, seal/rearm/close |
-| `src/session_overlay/overlay/mod.rs` | src | s | 5 crate-vis | — | Ephemeral in-memory write overlay for one live session (ARCH-0052, D1) |
+| `src/session_overlay/overlay/mod.rs` | src | s | 6 crate-vis | — | Ephemeral in-memory write overlay for one live session (ARCH-0052, D1) |
 | `src/session_overlay/overlay/retire.rs` | src | s | 1 crate-vis | — | Promoted-closure retirement reusing Store key builders |
 | `src/session_overlay/overlay/rows.rs` | src | s | 10 crate-vis | — | Row staging, preflight, budget checks, read probes |
 | `src/session_overlay/overlay/segment.rs` | src | s | 6 crate-vis | — | Txn segment install, leases, commit/apply guards |
@@ -2673,7 +2675,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/speculative/tests.rs` | test | m | — | — | — |
 | `src/store/channel_identity_receipts.rs` | src | s | 2 struct · 4 fn · 2 crate-vis | ChannelIdentityLifecycleReceiptId, ChannelIdentityLifecycleReceiptRecord | Append-only channel-identity lifecycle receipt ledger |
 | `src/store/commitment_due.rs` | src | m | 15 crate-vis | — | The commitment due index (CMT-2, ONE-1539) |
-| `src/store/diagnostics.rs` | src | s | 1 struct · 2 fn | Diagnostics | The content-free counters one open vault owns |
+| `src/store/diagnostics.rs` | src | s | 1 struct · 3 fn | Diagnostics | The content-free counters one open vault owns |
 | `src/store/gate_decision/claim_refs.rs` | src | s | 7 crate-vis | — | Inbox-bundle claim references and uncommitted batch-preflight markers: the two gate-decision sidecars… |
 | `src/store/gate_decision/keys.rs` | src | s | 15 crate-vis | — | Gate-decision ledger key prefixes, key constructors, and the id successor |
 | `src/store/gate_decision/ledger.rs` | src | m | 1 fn · 27 crate-vis | — | Gate-decision ledger Store methods plus the row append and record codec |
@@ -2685,10 +2687,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/gate_decision/sidecar.rs` | src | s | 5 crate-vis | — | Pending-deletion recovery sidecar Store methods and codec |
 | `src/store/gate_decision/types.rs` | src | s | 4 struct · 3 fn · 14 crate-vis | GateDecisionId, GateDecisionRecord, GateSystemNoticeAction, GateSystemNoticeRecord | Gate-decision ledger record shapes, id type, and version and bound consts |
 | `src/store/gate_decision/vet.rs` | src | m | 5 crate-vis | — | Gate-decision record, notice, and receipt-reason validators |
+| `src/store/group_commit.rs` | src | m | 1 struct · 15 crate-vis | GroupCommitStats | Group commit at the vault's single LMDB writer (ARCH-0019 storage invariant, OF-536) |
+| `src/store/group_commit/tests.rs` | test | m | — | — | Group commit (OF-536), checked against outside truth: LMDB's own transaction id counts the durable commits… |
 | `src/store/handle.rs` | src | m | 4 struct · 12 crate-vis | RawDatabases, Store, StoreCore, StoreOwner | The vault handle shape: [`RawDatabases`], [`StoreCore`], [`StoreOwner`], [`Store`], [`SessionStoreView`]… |
 | `src/store/key_encoding.rs` | src | s | 3 fn · 4 crate-vis | — | Foundational byte-layout codecs with crate-wide fan-out: the edge / temporal / type index key encoders and… |
 | `src/store/local_queue_budget.rs` | src | s | 1 crate-vis | — | Byte accounting for bounded device-local queues, separate from verdict/rate policy |
-| `src/store/mod.rs` | src | s | 1 mod · 11 re-export · 8 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `src/store/mod.rs` | src | s | 1 mod · 12 re-export · 9 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `src/store/open_gates/embedding_transform_gates.rs` | src | s | 5 crate-vis | — | The embedding-transform pin: how a vault's vectors were made, beside the model that made them |
 | `src/store/open_gates/hnsw_model_gates.rs` | src | m | 1 fn · 19 crate-vis | — | HNSW compatibility encode/decode/format, embedding-model preflight and persist gates, temporal migration… |
 | `src/store/open_gates/manifest_storage_gates.rs` | src | m | 31 crate-vis | — | Process path registry, owned environment close semantics, manifest create/open/validate pairs, and storage… |
