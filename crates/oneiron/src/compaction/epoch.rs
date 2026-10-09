@@ -524,6 +524,13 @@ pub(super) fn mint_epoch_summary_with(
         vault
             .store
             .mark_pending_embedding(wtxn, &summary_id, &body)?;
+        // The compacted turns leave their boards' retained history in the
+        // same act: reconstructing one now fails explicitly (ARCH-0067).
+        crate::context_board::advance_board_horizon_past_turns_in_txn(
+            vault,
+            wtxn,
+            request.window.iter().map(|message| message.turn_id),
+        )?;
         extra(
             wtxn,
             &EpochMint {

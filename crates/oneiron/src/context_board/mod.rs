@@ -29,10 +29,10 @@ mod frame;
 mod history;
 mod hydration;
 mod self_brief;
-pub(crate) use history::validate_board_claim;
 pub use history::{
     BoardHistoryError, BoardSelection, BoardTurn, BoardTurnReceipt, ReconstructedBoard,
 };
+pub(crate) use history::{advance_board_horizon_past_turns_in_txn, validate_board_claim};
 pub use self_brief::{
     BriefPlacement, BriefSkillRow, ClassLimit, ClassVerdict, CommunicationLimits, PlacedSelfBrief,
     SelfBrief, SelfBriefInput, SelfBriefSession, SelfBriefState,

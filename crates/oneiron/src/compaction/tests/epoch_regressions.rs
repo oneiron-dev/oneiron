@@ -549,3 +549,57 @@ fn ordinary_summaries_and_other_sessions_malformed_epochs_do_not_block_compactio
     assert!(!driver.is_compacting());
     Ok(())
 }
+
+/// ARCH-0067 `#tiers`: compaction moves the board history horizon in its own
+/// mint. A board turn the compaction folded no longer reconstructs and says
+/// so explicitly; a later turn's board still reconstructs exactly.
+#[test]
+fn compaction_moves_the_board_horizon_past_the_turns_it_folds() -> Result<()> {
+    use crate::context_board::{BoardHistoryError, BoardSelection, BoardTurn};
+    let (_dir, vault) = open_vault();
+    let session = mint_session(&vault, 10);
+    let actor = loom_actor(&vault, 0x61);
+    let owner = put_actor(&vault, 0x62);
+    let pinned = put_actor(&vault, 0x63);
+    let folded = put_turn(&vault, 0x81, 1);
+    let kept = put_turn(&vault, 0x82, 2);
+    let selection = BoardSelection {
+        pinned: [pinned].into(),
+        ..BoardSelection::default()
+    };
+    for (turn, at) in [(folded, 1), (kept, 2)] {
+        vault
+            .record_board_turn(
+                &BoardTurn {
+                    turn,
+                    owner,
+                    at,
+                    selection: selection.clone(),
+                },
+                10 + at,
+            )
+            .expect("board turn records");
+    }
+    assert!(vault.reconstruct_board(&folded).is_ok());
+
+    let mut driver = engine_driver(1_000);
+    compact_once(
+        &vault,
+        &mut driver,
+        session,
+        actor,
+        vec![window_row(folded, 1)],
+    )?;
+    match vault.reconstruct_board(&folded) {
+        Err(BoardHistoryError::BeyondCompactionHorizon {
+            turn,
+            retained_from,
+        }) => assert_eq!((turn, retained_from), (folded, 2)),
+        other => panic!("a folded turn must fail explicitly, got {other:?}"),
+    }
+    let board = vault
+        .reconstruct_board(&kept)
+        .expect("a kept turn reconstructs");
+    assert_eq!(board.selection.pinned, selection.pinned);
+    Ok(())
+}

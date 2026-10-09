@@ -3,12 +3,14 @@
 //! Step two: `EmptyContext`/`memories` when retrieval is skipped: today `memories: None`; the tail always renders MEMORIES once the renderer lands.
 
 mod cursor;
+mod history;
 mod memories;
 mod prefix;
 mod session;
 mod standing;
 
 pub(crate) use cursor::*;
+pub(crate) use history::*;
 pub(crate) use memories::*;
 pub(crate) use prefix::*;
 pub(crate) use session::*;
@@ -60,6 +62,10 @@ pub(crate) struct ContextBoardRequest {
     /// Append a current describe(self) card to the tail of an existing run.
     #[serde(default)]
     describe_self: bool,
+    /// The TURN this board is assembled for: its board joins the caller's
+    /// board history (ARCH-0067 §3). Needs `core:write`.
+    #[serde(default)]
+    turn: Option<ContextBoardTurnControls>,
 }
 
 /// The assembled context for one turn.
@@ -104,6 +110,9 @@ pub(crate) struct ContextBoardResponse {
     self_brief: Option<oneiron::context_board::PlacedSelfBrief>,
     /// This turn's capability agent candidates.
     agents: Vec<String>,
+    /// What recording the named TURN's board wrote; absent without `turn`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    board_turn: Option<ContextBoardTurnRecord>,
 }
 
 /// Session prefix: API level, entity counts by numeric type, latest activity.
@@ -196,6 +205,7 @@ pub(crate) async fn context_board_hydrate(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let mut req = json_payload(payload)?;
+    let board_turn = board_turn_target(&server, &auth, req.turn.as_ref())?;
     let standing = standing::standing_prefix(&server, &auth, req.standing.as_ref()).await?;
     if let Some(prefix) = &standing
         && let Some(retrieval) = &mut req.retrieval
@@ -242,6 +252,9 @@ pub(crate) async fn context_board_hydrate(
         }
         None => (None, None, None),
     };
+    let board_turn = board_turn
+        .map(|target| record_board_turn(&server, target, memories.as_ref()))
+        .transpose()?;
 
     let installed_packs: Vec<(String, String)> = server
         .vault
@@ -380,6 +393,7 @@ pub(crate) async fn context_board_hydrate(
         skills,
         agents,
         self_brief,
+        board_turn,
     };
     if let Some(prefix) = &response.standing {
         let wire = serde_json::to_string(&response).map_err(|_| {

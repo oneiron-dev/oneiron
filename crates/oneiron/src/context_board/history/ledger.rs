@@ -135,8 +135,46 @@ impl Vault {
         input: &BoardTurn,
         learned_at: u64,
     ) -> Result<BoardTurnReceipt> {
-        validate_selection(&input.selection)?;
+        self.record_board_turn_stamped(input.turn, input.owner, &input.selection, |_| {
+            (input.at, learned_at)
+        })
+    }
+
+    /// The per-turn board path: records `turn`'s board at the vault clock.
+    /// A turn recorded in the same second as the owner's last one moves one
+    /// second past it, so turn order stays strict.
+    pub fn record_board_turn_now(
+        &self,
+        turn: EntityId,
+        owner: EntityId,
+        selection: &BoardSelection,
+    ) -> Result<BoardTurnReceipt> {
+        let now = self.now_recorded_at();
+        self.record_board_turn_stamped(turn, owner, selection, |last| match last {
+            Some((at, learned_at)) => (now.max(at.saturating_add(1)), now.max(learned_at)),
+            None => (now, now),
+        })
+    }
+
+    /// `stamp` picks `(at, learned_at)` from the owner's last committed stamp,
+    /// read inside the recording transaction.
+    fn record_board_turn_stamped(
+        &self,
+        turn: EntityId,
+        owner: EntityId,
+        selection: &BoardSelection,
+        stamp: impl FnOnce(Option<(u64, u64)>) -> (u64, u64),
+    ) -> Result<BoardTurnReceipt> {
+        validate_selection(selection)?;
         let mut txn = self.store.env.write_txn()?;
+        let last = LAST.get(&self.store, &txn, &owner)?;
+        let (at, learned_at) = stamp(last);
+        let input = &BoardTurn {
+            turn,
+            owner,
+            at,
+            selection: selection.clone(),
+        };
         let turn_raw = crate::vault::entity_revision::read_entity_revision_in_txn(
             self,
             &txn,
@@ -163,7 +201,7 @@ impl Vault {
                 "turn is already anchored",
             ));
         }
-        if let Some(last) = LAST.get(&self.store, &txn, &input.owner)?
+        if let Some(last) = last
             && (input.at <= last.0 || learned_at < last.1)
         {
             return Err(BoardHistoryError::InvalidSelection(
@@ -408,6 +446,14 @@ impl Vault {
         })
     }
 
+    /// The owner whose board `turn` anchored, if any: who may read it back.
+    pub fn board_turn_owner(&self, turn: &EntityId) -> Result<Option<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(TURN
+            .get(&self.store, &txn, turn)?
+            .map(|anchor| anchor.owner))
+    }
+
     /// Advances the retained window monotonically. Anchors remain as compact
     /// tombstones so a pre-horizon request is distinguishable from an unknown
     /// turn. The Loro history is deliberately not shallow-compacted: citations
@@ -429,6 +475,34 @@ impl Vault {
         txn.commit()?;
         Ok(())
     }
+}
+
+/// Compaction folded `turns` into a summary: every board owner that anchored
+/// one of them now retains only turns after the latest compacted one. A turn
+/// with no board anchor moves nothing, and a horizon never moves backward.
+/// Runs inside the compaction's own write transaction.
+pub(crate) fn advance_board_horizon_past_turns_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    turns: impl IntoIterator<Item = EntityId>,
+) -> crate::error::Result<()> {
+    let mut retained_from = BTreeMap::new();
+    for turn in turns {
+        if let Some(anchor) = TURN.get(&vault.store, txn, &turn)? {
+            let next = anchor.at.saturating_add(1);
+            let entry = retained_from.entry(anchor.owner).or_insert(next);
+            *entry = (*entry).max(next);
+        }
+    }
+    for (owner, next) in retained_from {
+        if HORIZON
+            .get(&vault.store, txn, &owner)?
+            .is_none_or(|current| current < next)
+        {
+            HORIZON.put(&vault.store, txn, &owner, &next)?;
+        }
+    }
+    Ok(())
 }
 
 fn write_anchor(

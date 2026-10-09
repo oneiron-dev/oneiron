@@ -17,6 +17,35 @@ pub struct BoardSelection {
     pub index_only: BTreeSet<EntityId>,
 }
 
+impl BoardSelection {
+    /// The MEMORIES a turn's board rendered: its PINNED and snippet rows, and
+    /// the index-only handles, which never persist. A row that names no
+    /// entity carries no history. The world tiers stay empty until the turn
+    /// resolves a world selection.
+    #[must_use]
+    pub fn from_memories(memories: &crate::context_board::MemoriesSection) -> Self {
+        let mut selection = Self::default();
+        for row in &memories.rows {
+            let Ok(id) = EntityId::from_hex(&row.id) else {
+                continue;
+            };
+            match row.tier {
+                crate::context_board::MemoryTier::Pinned => selection.pinned.insert(id),
+                crate::context_board::MemoryTier::Snippet => selection.top_snippet.insert(id),
+                crate::context_board::MemoryTier::IndexOnly => selection.index_only.insert(id),
+            };
+        }
+        // A row shown at two tiers persists at the stronger one.
+        selection
+            .top_snippet
+            .retain(|id| !selection.pinned.contains(id));
+        selection
+            .index_only
+            .retain(|id| !selection.pinned.contains(id) && !selection.top_snippet.contains(id));
+        selection
+    }
+}
+
 /// Turn order is strict within one board owner. `at` is the valid-time axis;
 /// `learned_at` on the writer is the independent transaction-time axis.
 #[derive(Debug, Clone, PartialEq, Eq)]
