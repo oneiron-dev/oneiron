@@ -72,6 +72,10 @@ pub(crate) fn mark_on_publication_in_txn(
 /// The turns `entity` is part of when it is a MESSAGE, read before an erase
 /// takes the message and its edges; [`erase_turn_vectors_in_txn`] settles
 /// them after.
+///
+/// Collected whatever this handle's embedding model: the vectors live in the
+/// store, and a handle opened before another process attached a model still
+/// erases from a store that holds them.
 pub(crate) fn erased_message_turns_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -81,7 +85,7 @@ pub(crate) fn erased_message_turns_in_txn(
         .store
         .port_entity_record(txn, entity)?
         .is_some_and(|row| row.entity_type == ENTITY_TYPE_MESSAGE);
-    if vault.config.embedding_model.is_none() || !is_message {
+    if !is_message {
         return Ok(Vec::new());
     }
     turns_of(vault, txn, entity)
@@ -103,7 +107,9 @@ fn mark_turns_in_txn(
 /// vector built from them goes in the erasing transaction, and the turn is
 /// marked at the text left ([`mark_turn_in_txn`]). ARCH-0038: a vector whose
 /// source span was erased is dropped, then embedded again from current text;
-/// a pending mark alone would leave it searchable until the worker ran.
+/// a pending mark alone would leave it searchable until the worker ran. The
+/// drop does not depend on this handle's embedding model; only the mark,
+/// which queues the replacement, does.
 ///
 /// An edit only marks the turn ([`mark_on_publication_in_txn`]): the vector
 /// of its older text is stale, not erased, and serves until the new one lands.
