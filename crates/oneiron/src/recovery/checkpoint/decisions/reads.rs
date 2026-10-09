@@ -253,7 +253,9 @@ impl<'a> GrantCheck<'a> {
 /// (`ScopedRead::credential_allows_id`). The claim is one generic reads
 /// serve (`claim::claim_generic_readable`), its principal audience admits
 /// the holder, and the policy grants match with the mint's Scope standing
-/// for the proof's (`gate::scoped_read_claim_allowed_with_scope`), each claim
+/// for the proof's as the key reads it, `core:read` naming `read`
+/// (`ScopedReadActorKey::read_authority`,
+/// `gate::scoped_read_claim_allowed_with_scope`), each claim
 /// asked at its most permissive on the floors that sort content. A restore
 /// loosens the claim where it lets a credential read it that the live vault
 /// does not.
@@ -305,17 +307,17 @@ impl Decision for SlipClaimGrants {
             let candidates: Vec<&SlipReader<'_>> = readers
                 .iter()
                 .flat_map(|(_, live)| live)
-                .filter(|(claims, _)| claims.records.is_empty() || claims.records.contains(&hex))
+                .filter(|(claims, ..)| claims.records.is_empty() || claims.records.contains(&hex))
                 .collect();
             let admitted: Option<BTreeSet<[u8; 32]>> = match candidates.first() {
                 None => Some(BTreeSet::new()),
-                Some((_, first)) => {
+                Some((_, _, first)) => {
                     permissive_claim(vault, &txn, first, id).and_then(|(body, facets)| {
                         let principal = crate::claim::claim_principal_id(&body).ok()?;
                         Some(
                             candidates
                                 .iter()
-                                .filter(|(claims, read)| {
+                                .filter(|(_, scope, read)| {
                                     crate::claim::claim_generic_readable(&body)
                                         && read.principal_admits(principal)
                                         && crate::gate::scoped_read_claim_allowed_with_scope(
@@ -323,10 +325,10 @@ impl Decision for SlipClaimGrants {
                                             read.actor_key(),
                                             &body,
                                             &facets,
-                                            Some(&claims.scope),
+                                            Some(scope),
                                         )
                                 })
-                                .map(|(claims, _)| claims.slip_id)
+                                .map(|(claims, ..)| claims.slip_id)
                                 .collect(),
                         )
                     })
@@ -352,9 +354,9 @@ fn instant(vault: &Vault) -> Result<VaultInstant> {
     vault.instant_in_txn(&txn)
 }
 
-/// A credential the authority log minted, and the read a verified proof of
-/// it makes.
-type SlipReader<'a> = (&'a SlipClaims, ScopedRead<'a>);
+/// A credential the authority log minted, its Scope as a verified proof of
+/// it reads, and the read that proof makes.
+type SlipReader<'a> = (&'a SlipClaims, Scope, ScopedRead<'a>);
 
 /// Every credential `fold` holds that is live at `at` and whose proof makes
 /// a generic read, with that read: an expired, revoked, consumed, readless
@@ -369,10 +371,8 @@ fn slip_readers<'a>(
         .iter()
         .filter_map(|(slip, mint)| {
             let claims = &mint.action.claims;
-            let reads = ["read", "core:read"]
-                .into_iter()
-                .any(|verb| claims.scope.verbs.contains(&verb.to_owned()));
-            if !(reads
+            let scope = ScopedReadActorKey::read_authority(&claims.scope);
+            if !(scope.verbs.contains(&"read".to_owned())
                 && claims.channels.is_empty()
                 && fold.vault_id == Some(claims.vault_id)
                 && fold.slip_is_live_at(slip, at))
@@ -384,7 +384,7 @@ fn slip_readers<'a>(
                 None => ScopedReadActorKey::new(holder),
                 Some(class) => ScopedReadActorKey::with_actor_class(holder, class),
             }?;
-            Some((claims, vault.scoped_read(key)))
+            Some((claims, scope, vault.scoped_read(key)))
         })
         .collect()
 }

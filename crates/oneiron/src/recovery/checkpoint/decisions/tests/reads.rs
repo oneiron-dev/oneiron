@@ -278,6 +278,58 @@ fn a_restore_never_hands_a_rebound_claim_back_to_a_verified_slip() -> Result<()>
     Ok(())
 }
 
+/// Greptile on #1330. A paired credential spells the read verb `core:read`,
+/// which its read key takes as `read`. Its holder, not the owner and named by
+/// no policy grant, reads a claim bound to them as a typed question's reader.
+/// Bound since the backup to another reader, the claim no longer reads
+/// through that credential, and the restore that would hand it back is
+/// refused.
+#[test]
+fn a_restore_never_hands_a_rebound_claim_back_to_a_paired_reader() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fact = (entity(0xD6), put_person(&vault, 0xD7)?);
+    crate::test_util::authorize_readers(&vault, &[]);
+    let issuer = crate::test_util::test_host_issuer();
+    let mut paired = vault.ensure_host_root_slip(&issuer)?.claims;
+    paired.slip_id = [0xD8; 32];
+    paired.holder_ref = "kai".to_owned();
+    paired.scope.verbs = ScopeAxis::Some(BTreeSet::from(["core:read".to_owned()]));
+    let paired = vault.mint_capability_slip(&issuer, paired)?;
+    let paired = vault.verify_capability_slip(
+        &issuer.public_key(),
+        &paired,
+        b"paired",
+        &issuer.binding_proof(&paired, b"paired")?,
+    )?;
+    assert!(!paired.allows_verb("read"));
+    let reader = ScopedReadActorKey::from_verified_slip(&paired).expect("read proof");
+    put_fact(&vault, fact, "first", Some("kai"), 10)?;
+    assert_eq!(
+        read_value(&vault, reader.clone(), fact.0)?.as_deref(),
+        Some("first")
+    );
+
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100)?;
+    put_fact(&vault, fact, "rebound", Some("rin"), 30)?;
+    assert_eq!(read_value(&vault, reader, fact.0)?, None);
+    let error = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &backups.path().join("rebound"),
+        vault.config.clone(),
+        &vault,
+        1_000,
+    )
+    .err()
+    .expect("the restore must be refused");
+    assert!(
+        error.to_string().contains("verified slip claim reads"),
+        "{error}"
+    );
+    Ok(())
+}
+
 /// Two diaries their authors linked and both granted, so each author reads
 /// the other's. The link taken away since the backup, both grants unchanged,
 /// is one a restore would put back.
