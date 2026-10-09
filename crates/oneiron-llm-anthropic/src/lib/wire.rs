@@ -60,9 +60,18 @@ pub fn build_anthropic_messages_request(
     // Anthropic's /v1/messages defines no response_format parameter; strip any
     // caller-supplied copy so the OpenAI-shaped key never reaches the wire.
     body.remove("response_format");
+    // A catalog row may carry the provider's own spelling of the model, which
+    // need not fit the engine's `provider/name@revision` grammar.
     body.insert(
         "model".to_owned(),
-        JsonValue::String(request.model.name().to_owned()),
+        JsonValue::String(
+            catalog
+                .metadata
+                .get("wire_model")
+                .and_then(JsonValue::as_str)
+                .unwrap_or_else(|| request.model.name())
+                .to_owned(),
+        ),
     );
     body.insert("stream".to_owned(), JsonValue::Bool(stream));
     body.insert(

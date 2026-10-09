@@ -16,13 +16,6 @@ categories.workspace = true
 # doctest compile pass entirely.
 doctest = false
 
-[features]
-# Opt-in lifecycle attachment only. The default driver still has no net/io stack.
-voice = ["dep:oneiron-server"]
-
-[target.'cfg(unix)'.dependencies]
-oneiron-server = { version = "0.1.0", path = "../oneiron-server", optional = true }
-
 [dependencies]
 # The running wave lane listens to the vault's post-commit attempt signal;
 # that broadcast seam is selected by the engine's sync feature.

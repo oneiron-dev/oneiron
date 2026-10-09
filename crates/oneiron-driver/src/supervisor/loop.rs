@@ -323,8 +323,7 @@ where
     #[must_use]
     pub fn new(vault: &'v Vault, ticks: T, factory: F, config: WakeSupervisorConfig) -> Self {
         let (tx, rx) = watch::channel(false);
-        #[cfg(all(unix, feature = "voice"))]
-        let voice = factory.voice_shutdown();
+        let linked = factory.linked_shutdown();
         Self {
             vault,
             ticks,
@@ -332,14 +331,9 @@ where
             config,
             shutdown_handle: ShutdownHandle {
                 tx,
-                #[cfg(all(unix, feature = "voice"))]
-                voice: voice.clone(),
+                linked: linked.clone(),
             },
-            shutdown: ShutdownListener {
-                rx,
-                #[cfg(all(unix, feature = "voice"))]
-                voice,
-            },
+            shutdown: ShutdownListener { rx, linked },
             pass_gate: Arc::new(Semaphore::new(1)),
             now_secs: Arc::new(system_now_secs),
             wave_limits: None,

@@ -963,7 +963,40 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
     // DEC-0006 invariant 7: the catastrophe floor ships as a versioned row.
     let mut entries = entries;
     entries.push(crate::consent::CatastropheFloor::pinned().manifest_entry());
-    encode_with_native_mail_policy(entries)
+    // ARCH-0026: the Dreamer is warm by default, so its three actor-keyed
+    // rows ship here (see `dreamer_grant`); the owner may narrow or remove them.
+    super::dreamer_grant::with_shipped_dreamer_rows(encode_with_native_mail_policy(entries)?)
+}
+
+/// The shipped manifest with `rows` joined to its one scoped-grant table,
+/// beside the Dreamer's read row: the decoder refuses a second table.
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) fn default_policy_manifest_with_scoped_grants(rows: Vec<Value>) -> Result<Vec<u8>> {
+    use super::constants::POLICY_SCOPED_GRANTS_KEY;
+    let shipped = default_policy_manifest()?;
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut shipped.as_slice())
+        .map_err(|_| Error::InvariantViolation("decode default policy manifest"))?
+    else {
+        return Err(Error::InvariantViolation(
+            "default policy manifest is not a map",
+        ));
+    };
+    match entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some(POLICY_SCOPED_GRANTS_KEY))
+    {
+        Some((_, Value::Array(table))) => table.extend(rows),
+        Some(_) => {
+            return Err(Error::InvariantViolation(
+                "default scoped grants are not a list",
+            ));
+        }
+        None => entries.push((Value::from(POLICY_SCOPED_GRANTS_KEY), Value::Array(rows))),
+    }
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &Value::Map(entries))
+        .map_err(|_| Error::InvariantViolation("default policy manifest encoding"))?;
+    Ok(data)
 }
 
 /// The shipped native-mail dial is one vault row; hosts narrow it with their

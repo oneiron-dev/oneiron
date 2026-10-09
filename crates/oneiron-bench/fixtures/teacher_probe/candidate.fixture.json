@@ -26,6 +26,11 @@
       "slot": "llm",
       "tier": "configured"
     },
+    "local_reasoner": {
+      "model": "fixture/local_reasoner@v1",
+      "slot": "llm",
+      "tier": "configured"
+    },
     "checker": {
       "model": "fixture/checker@v1",
       "slot": "llm",

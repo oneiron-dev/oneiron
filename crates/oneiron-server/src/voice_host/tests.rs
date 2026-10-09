@@ -10,6 +10,7 @@ use oneiron::speculative::SpeculativeFireDecision;
 use serde_json::json;
 use tokio::sync::{mpsc, oneshot};
 
+mod pass_attachment;
 mod wire;
 
 struct Call {

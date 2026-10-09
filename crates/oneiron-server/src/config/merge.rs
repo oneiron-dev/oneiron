@@ -15,6 +15,7 @@ use super::lookup::{
     DEFAULT_CONFIG_DIR, DEFAULT_CONFIG_FILE, expand_home, lookup_bool, lookup_list, lookup_parse,
     lookup_path, lookup_path_list, normalize_list, redacted_secret,
 };
+use super::models::{ModelsConfig, ModelsFile};
 use super::oneironer::{OneironerConfig, OneironerConfigOverride, lookup_oneironer_override};
 use super::serve_args::{ServeArgs, runtime_override_from_args};
 use super::server_config::ServeConfig;
@@ -404,9 +405,17 @@ fn load_backup_section(path: &Path) -> anyhow::Result<Option<BackupConfigOverrid
 fn load_file_config(path: &Path) -> anyhow::Result<PartialServeConfig> {
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("read config file {}", path.display()))?;
-    let config: FileServeConfig =
+    let mut config: FileServeConfig =
         toml::from_str(&raw).with_context(|| format!("parse config file {}", path.display()))?;
-    Ok(config.into())
+    let models = config
+        .models
+        .take()
+        .map(|models| models.resolve(path.parent()))
+        .transpose()
+        .with_context(|| format!("config file {}", path.display()))?;
+    let mut values = PartialServeConfig::from(config);
+    values.models = models;
+    Ok(values)
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -445,6 +454,7 @@ struct FileServeConfig {
     embedder: Option<EmbedderConfigOverride>,
     oneironer: Option<OneironerConfigOverride>,
     backup: Option<BackupConfigOverride>,
+    models: Option<ModelsFile>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -487,6 +497,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             embedder: value.embedder,
             oneironer: value.oneironer,
             backup: value.backup,
+            models: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,
@@ -530,6 +541,8 @@ struct PartialServeConfig {
     embedder: Option<EmbedderConfigOverride>,
     oneironer: Option<OneironerConfigOverride>,
     backup: Option<BackupConfigOverride>,
+    /// `[models]` is file-only: it is too structured for env or argv.
+    models: Option<ModelsConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -584,6 +597,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("embedder", &self.embedder)
             .field("oneironer", &self.oneironer)
             .field("backup", &self.backup)
+            .field("models", &self.models)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
@@ -703,6 +717,9 @@ impl PartialServeConfig {
         if let Some(value) = self.backup {
             resolved.backup.apply_override(value);
         }
+        if let Some(value) = self.models {
+            resolved.models = Some(value);
+        }
         if let Some(value) = self.failure_signal_export {
             resolved.failure_signal_export = value;
         }
@@ -761,6 +778,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             oneironer: Some(OneironerConfigOverride::from(&value.oneironer))
                 .filter(|over| !over.is_empty()),
             backup: None,
+            models: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,

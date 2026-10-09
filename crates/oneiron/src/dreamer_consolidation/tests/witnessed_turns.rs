@@ -94,7 +94,7 @@ fn open_clocked_vault() -> (
     let (dir, vault) = crate::test_util::open_test_vault_with(config);
     crate::test_util::provision_engine_machines(&vault);
     authorize_test_inference(&vault).expect("owner-pinned test egress");
-    grant_fixture_reads(&vault).expect("explicit consolidation read grant");
+    install_shipped_policy(&vault).expect("shipped policy");
     (dir, vault, clock)
 }
 
@@ -181,8 +181,9 @@ fn run_context(
     }
 }
 
-/// The fixture's Dreamer read grant plus the one permit for engine-voice
-/// `system` rows: an owner-authored `auto` ceiling bound to `writer`.
+/// The shipped policy (its Dreamer read grant included) plus the one permit
+/// for engine-voice `system` rows: an owner-authored `auto` ceiling bound to
+/// `writer`.
 fn allow_system_rows(vault: &Vault, writer: EntityId) -> Result<()> {
     let Value::Map(mut entries) =
         rmpv::decode::read_value(&mut crate::gate::default_policy_manifest()?.as_slice())
@@ -201,24 +202,6 @@ fn allow_system_rows(vault: &Vault, writer: EntityId) -> Result<()> {
             ]));
         }
     }
-    entries.push((
-        "scoped_grants".into(),
-        Value::Array(vec![Value::Map(vec![
-            (
-                "actor_ref".into(),
-                vault.dreamer_authority()?.entity_ref().to_hex().into(),
-            ),
-            ("actor_class".into(), "system".into()),
-            ("effector".into(), "core:read".into()),
-            (
-                "scope".into(),
-                crate::federation::scope_codec::encode_scope_value(
-                    &crate::federation::scope_codec::read_preset(),
-                )?,
-            ),
-            ("receipt_required".into(), false.into()),
-        ])]),
-    ));
     crate::test_util::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id()?,

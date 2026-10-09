@@ -48,7 +48,7 @@ impl Fixture {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), crate::VaultConfig::device())?;
         crate::test_util::provision_engine_machines(&vault);
-        let actor = vault.dreamer_authority()?;
+        vault.dreamer_authority()?;
         let agent = EntityId::now();
         let owner = EntityId::now();
         let subject = EntityId::now();
@@ -107,13 +107,16 @@ impl Fixture {
                 &turn("retained evidence")?,
             )?;
         }
-        if let Some(class) = read_grant {
-            let granted = match class {
-                EdgeActorClass::System => actor,
-                EdgeActorClass::Agent => WriteActor::new(agent, class),
-                _ => return Err(invalid()),
-            };
-            vault.install_read_permit_for_test(granted)?;
+        // ARCH-0026: the stock policy already lets the System Dreamer read.
+        // Any other case withholds that row, as a vault seeded earlier holds.
+        match read_grant {
+            Some(EdgeActorClass::System) => {}
+            None => crate::test_util::withhold_dreamer_read(&vault)?,
+            Some(class @ EdgeActorClass::Agent) => {
+                vault.install_read_permit_for_test(WriteActor::new(agent, class))?;
+                crate::test_util::withhold_dreamer_read(&vault)?;
+            }
+            Some(_) => return Err(invalid()),
         }
         let skill = EntityId::now();
         let proposal = SkillRecord::new(
@@ -247,11 +250,7 @@ fn read_grant_is_live_and_bound_to_the_system_class() -> Result<()> {
     let fixture = Fixture::new(Some(EdgeActorClass::System))?;
     // The owner may revoke the scoped grant after admission. Neither the
     // cached policy frontier nor the queued skill grants evidence access.
-    crate::test_util::put_policy_manifest_bytes(
-        &fixture.vault,
-        crate::gate::default_policy_manifest_id()?,
-        &crate::gate::default_policy_manifest()?,
-    )?;
+    crate::test_util::withhold_dreamer_read(&fixture.vault)?;
     let mut runtime = CountingRuntime::new();
     assert!(fixture.run(&mut runtime).is_err());
     assert_eq!(runtime.calls.get(), 0);
