@@ -89,6 +89,8 @@ impl MemoriesSection {
                 world: claim.as_ref().and_then(|c| c.world).map(|id| id.to_hex()),
                 tier: MemoryTier::Pinned,
                 snippet: None,
+                // A pin is read LIVE: its board records the live revision.
+                source_revision: None,
             };
             if !foreign_row(&row)
                 && let Some(claim) = claim

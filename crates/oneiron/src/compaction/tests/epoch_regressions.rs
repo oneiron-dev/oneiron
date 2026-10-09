@@ -550,24 +550,28 @@ fn ordinary_summaries_and_other_sessions_malformed_epochs_do_not_block_compactio
     Ok(())
 }
 
-/// ARCH-0067 `#tiers`: compaction moves the board history horizon in its own
-/// mint. A board turn the compaction folded no longer reconstructs and says
-/// so explicitly; a later turn's board still reconstructs exactly.
+/// ARCH-0067 `#tiers`: compaction folds its turns' boards in its own mint.
+/// A board turn the compaction folded no longer reconstructs and says so
+/// explicitly; a later turn's board still reconstructs exactly. Sol F3 (REV-9
+/// D2a): the fold is per turn, never owner-wide, so the owner's earlier board
+/// in another session, which this compaction did not fold, still reconstructs.
 #[test]
-fn compaction_moves_the_board_horizon_past_the_turns_it_folds() -> Result<()> {
+fn compaction_folds_only_the_boards_of_the_turns_it_compacts() -> Result<()> {
     use crate::context_board::{BoardHistoryError, BoardSelection, BoardTurn};
     let (_dir, vault) = open_vault();
     let session = mint_session(&vault, 10);
     let actor = loom_actor(&vault, 0x61);
     let owner = put_actor(&vault, 0x62);
     let pinned = put_actor(&vault, 0x63);
+    let other_session = put_turn(&vault, 0x80, 1);
     let folded = put_turn(&vault, 0x81, 1);
     let kept = put_turn(&vault, 0x82, 2);
     let selection = BoardSelection {
         pinned: [pinned].into(),
         ..BoardSelection::default()
     };
-    for (turn, at) in [(folded, 1), (kept, 2)] {
+    // Board positions interleave: the other session's turn comes first.
+    for (turn, at) in [(other_session, 1), (folded, 2), (kept, 3)] {
         vault
             .record_board_turn(
                 &BoardTurn {
@@ -591,15 +595,14 @@ fn compaction_moves_the_board_horizon_past_the_turns_it_folds() -> Result<()> {
         vec![window_row(folded, 1)],
     )?;
     match vault.reconstruct_board(&folded) {
-        Err(BoardHistoryError::BeyondCompactionHorizon {
-            turn,
-            retained_from,
-        }) => assert_eq!((turn, retained_from), (folded, 2)),
+        Err(BoardHistoryError::Compacted(turn)) => assert_eq!(turn, folded),
         other => panic!("a folded turn must fail explicitly, got {other:?}"),
     }
-    let board = vault
-        .reconstruct_board(&kept)
-        .expect("a kept turn reconstructs");
-    assert_eq!(board.selection.pinned, selection.pinned);
+    for turn in [other_session, kept] {
+        let board = vault
+            .reconstruct_board(&turn)
+            .expect("a turn the compaction did not fold reconstructs");
+        assert_eq!(board.selection.pinned, selection.pinned);
+    }
     Ok(())
 }

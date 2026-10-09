@@ -134,6 +134,7 @@ fn memory_row(entity: &ContextEntity, source: MemorySource) -> MemoryRow {
             }),
         tier: MemoryTier::Snippet,
         snippet: None,
+        source_revision: entity.source_revision_ref.map(crate::vault::RevisionRef),
     }
 }
 

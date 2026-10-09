@@ -4,8 +4,8 @@ use super::claims::{PREDICATES, decode_value, sets, validate_board_claim, value}
 use super::types::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    decode_claim_body,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, ScopedRead,
+    ScopedReadActorKey, decode_claim_body,
 };
 use crate::error::Error;
 use crate::side_table::{self, LegacyCompact, Named, Raw, SideTable};
@@ -107,6 +107,12 @@ fn selection_hash(items: &std::collections::BTreeSet<EntityId>) -> [u8; 32] {
     *hash.finalize().as_bytes()
 }
 
+/// The board owner's own proof-less key: the trusted embedded door's reader.
+fn owner_key(owner: &EntityId) -> Result<ScopedReadActorKey> {
+    ScopedReadActorKey::new(owner.to_hex())
+        .ok_or(BoardHistoryError::InvalidSelection("invalid owner"))
+}
+
 fn validate_selection(selection: &BoardSelection) -> Result<()> {
     if !selection.active.is_subset(&selection.allowed)
         || !selection.default_on.is_subset(&selection.allowed)
@@ -135,34 +141,50 @@ impl Vault {
         input: &BoardTurn,
         learned_at: u64,
     ) -> Result<BoardTurnReceipt> {
-        self.record_board_turn_stamped(input.turn, input.owner, &input.selection, |_| {
+        self.record_board_turn_stamped(input.turn, input.owner, &input.selection, None, |_| {
             (input.at, learned_at)
         })
     }
 
-    /// The per-turn board path: records `turn`'s board at the vault clock.
-    /// A turn recorded in the same second as the owner's last one moves one
-    /// second past it, so turn order stays strict.
+    /// The per-turn board path: `caller`, the board owner, records the board
+    /// `memories` rendered for its own `turn`, at the vault clock. A turn
+    /// recorded in the same second as the owner's last one moves one second
+    /// past it, so turn order stays strict.
+    ///
+    /// The TURN must carry `owner` as the author its door stamped, so a
+    /// reader of someone else's turn cannot claim its board. Every selected
+    /// document, of every type, must be readable under `caller`'s current
+    /// scope, and each is recorded at the revision the board served it at.
     pub fn record_board_turn_now(
         &self,
         turn: EntityId,
         owner: EntityId,
-        selection: &BoardSelection,
+        memories: Option<&crate::context_board::MemoriesSection>,
+        caller: &ScopedRead<'_>,
     ) -> Result<BoardTurnReceipt> {
+        let selection =
+            memories.map_or_else(BoardSelection::default, BoardSelection::from_memories);
+        let served = memories.map_or_else(BTreeMap::new, |memories| {
+            selection.served_revisions(memories)
+        });
         let now = self.now_recorded_at();
-        self.record_board_turn_stamped(turn, owner, selection, |last| match last {
-            Some((at, learned_at)) => (now.max(at.saturating_add(1)), now.max(learned_at)),
-            None => (now, now),
+        self.record_board_turn_stamped(turn, owner, &selection, Some((caller, &served)), |last| {
+            match last {
+                Some((at, learned_at)) => (now.max(at.saturating_add(1)), now.max(learned_at)),
+                None => (now, now),
+            }
         })
     }
 
     /// `stamp` picks `(at, learned_at)` from the owner's last committed stamp,
-    /// read inside the recording transaction.
+    /// read inside the recording transaction. Without a `caller` this is the
+    /// trusted embedded door: the owner's own key, checking CLAIM documents.
     fn record_board_turn_stamped(
         &self,
         turn: EntityId,
         owner: EntityId,
         selection: &BoardSelection,
+        caller: Option<(&ScopedRead<'_>, &BTreeMap<EntityId, RevisionRef>)>,
         stamp: impl FnOnce(Option<(u64, u64)>) -> (u64, u64),
     ) -> Result<BoardTurnReceipt> {
         validate_selection(selection)?;
@@ -195,6 +217,20 @@ impl Vault {
             return Err(BoardHistoryError::InvalidSelection(
                 "anchor must name a TURN",
             ));
+        }
+        if let Some((caller, _)) = caller {
+            if !caller.is_entity_readable_in(&txn, &input.turn)? {
+                return Err(BoardHistoryError::UnknownTurn(input.turn));
+            }
+            // The author the TURN's own door stamped owns its board. An
+            // unparsable body or an imported turn names no author.
+            let author =
+                crate::conversation::record_author(&turn_raw[ENTITY_METADATA_HEADER_LEN..])
+                    .ok()
+                    .flatten();
+            if author != Some(input.owner) {
+                return Err(BoardHistoryError::NotTurnAuthor(input.turn));
+            }
         }
         if TURN.contains(&self.store, &txn, &input.turn)? {
             return Err(BoardHistoryError::InvalidSelection(
@@ -238,9 +274,16 @@ impl Vault {
             .into_iter()
             .flat_map(|set| set.iter().copied())
             .collect::<std::collections::BTreeSet<_>>();
-        let actor = crate::claim::ScopedReadActorKey::new(input.owner.to_hex())
-            .ok_or(BoardHistoryError::InvalidSelection("invalid owner"))?;
-        let scoped = self.scoped_read(actor);
+        let owner_read;
+        let (scoped, served) = match caller {
+            Some((caller, served)) => (caller, Some(served)),
+            None => {
+                owner_read = self.scoped_read(owner_key(&input.owner)?);
+                (&owner_read, None)
+            }
+        };
+        // A caller's scope checks every document; the owner's own key, CLAIMs.
+        let gated = |raw: &[u8]| caller.is_some() || raw[0] == crate::registry::ENTITY_TYPE_CLAIM;
         for id in all {
             let live = crate::vault::entity_revision::read_entity_revision_in_txn(
                 self,
@@ -249,13 +292,39 @@ impl Vault {
                 ReadMode::Live,
             )?
             .ok_or(BoardHistoryError::UnreadableDocument(id))?;
-            if live[0] == crate::registry::ENTITY_TYPE_CLAIM
-                && !scoped.is_claim_raw_readable_in(&txn, &id, &live)?
-            {
+            if gated(&live) && !scoped.is_claim_raw_readable_in(&txn, &id, &live)? {
                 return Err(BoardHistoryError::UnreadableDocument(id));
             }
-            let (revision, _) =
+            let (live_revision, _) =
                 crate::vault::entity_revision::ensure_document(self, &mut txn, &id)?;
+            // The board showed this revision; its history keeps exactly it,
+            // never the live text in its place.
+            let revision = match served.and_then(|served| served.get(&id)) {
+                None => live_revision,
+                Some(&revision) => {
+                    let owned = crate::vault::entity_revision::entity_owns_revision_in_txn(
+                        &self.store,
+                        &txn,
+                        &id,
+                        revision,
+                    )?;
+                    let raw = if owned {
+                        crate::vault::entity_revision::read_entity_revision_in_txn(
+                            self,
+                            &txn,
+                            &id,
+                            ReadMode::Pinned(revision),
+                        )?
+                    } else {
+                        None
+                    };
+                    let raw = raw.ok_or(BoardHistoryError::UnreadableDocument(id))?;
+                    if !scoped.is_claim_raw_readable_in(&txn, &id, &raw)? {
+                        return Err(BoardHistoryError::UnreadableDocument(id));
+                    }
+                    revision
+                }
+            };
             map_insert(&doc, "documents", &id.to_hex(), &revision.0)?;
         }
         let read_receipt = scoped.read_receipt_in(&txn, None, 0)?;
@@ -307,6 +376,7 @@ impl Vault {
             learned_at,
             source_revision_ref: anchor_ref,
             frontier,
+            folded: false,
         };
         write_anchor(self, &mut txn, &input.turn, &anchor)?;
         let snapshot = doc
@@ -325,7 +395,28 @@ impl Vault {
 
     /// Folds valid bitemporal claims from the TURN's exact CRDT frontier.
     /// No current-state fallback is permitted, including a missing document.
+    /// The trusted embedded door: the owner's own key checks CLAIM documents.
     pub fn reconstruct_board(&self, turn: &EntityId) -> Result<ReconstructedBoard> {
+        self.reconstruct_board_with(turn, None)
+    }
+
+    /// [`Self::reconstruct_board`] for an authenticated caller. The TURN and
+    /// every document, of every type, pass `caller`'s CURRENT read scope at
+    /// the pinned revision and live: a past board never re-grants a read the
+    /// caller has since lost. An unreadable document refuses the whole board.
+    pub fn reconstruct_board_for(
+        &self,
+        turn: &EntityId,
+        caller: &ScopedRead<'_>,
+    ) -> Result<ReconstructedBoard> {
+        self.reconstruct_board_with(turn, Some(caller))
+    }
+
+    fn reconstruct_board_with(
+        &self,
+        turn: &EntityId,
+        caller: Option<&ScopedRead<'_>>,
+    ) -> Result<ReconstructedBoard> {
         let txn = self.store.env.read_txn()?;
         let turn_raw = crate::vault::entity_revision::read_entity_revision_in_txn(
             self,
@@ -339,9 +430,17 @@ impl Vault {
         if turn_header.entity_type != crate::registry::ENTITY_TYPE_TURN {
             return Err(BoardHistoryError::UnknownTurn(*turn));
         }
+        if let Some(caller) = caller
+            && !caller.is_entity_readable_in(&txn, turn)?
+        {
+            return Err(BoardHistoryError::UnknownTurn(*turn));
+        }
         let anchor = TURN
             .get(&self.store, &txn, turn)?
             .ok_or(BoardHistoryError::UnknownTurn(*turn))?;
+        if anchor.folded {
+            return Err(BoardHistoryError::Compacted(*turn));
+        }
         if let Some(retained_from) = HORIZON.get(&self.store, &txn, &anchor.owner)?
             && anchor.at < retained_from
         {
@@ -400,9 +499,14 @@ impl Vault {
         };
         validate_selection(&selection)?;
         let mut documents = BTreeMap::new();
-        let actor = crate::claim::ScopedReadActorKey::new(anchor.owner.to_hex())
-            .ok_or(BoardHistoryError::InvalidSelection("invalid owner"))?;
-        let scoped = self.scoped_read(actor);
+        let owner_read;
+        let scoped = match caller {
+            Some(caller) => caller,
+            None => {
+                owner_read = self.scoped_read(owner_key(&anchor.owner)?);
+                &owner_read
+            }
+        };
         for id in sets(&selection).into_iter().flat_map(|set| set.iter()) {
             let raw = map_bytes(&doc, "documents", &id.to_hex())?
                 .ok_or(BoardHistoryError::MissingFrontier)?;
@@ -418,7 +522,7 @@ impl Vault {
                 ReadMode::Pinned(revision),
             )?
             .ok_or(BoardHistoryError::MissingFrontier)?;
-            if raw[0] == crate::registry::ENTITY_TYPE_CLAIM {
+            if caller.is_some() || raw[0] == crate::registry::ENTITY_TYPE_CLAIM {
                 let live = crate::vault::entity_revision::read_entity_revision_in_txn(
                     self,
                     &txn,
@@ -477,29 +581,21 @@ impl Vault {
     }
 }
 
-/// Compaction folded `turns` into a summary: every board owner that anchored
-/// one of them now retains only turns after the latest compacted one. A turn
-/// with no board anchor moves nothing, and a horizon never moves backward.
-/// Runs inside the compaction's own write transaction.
-pub(crate) fn advance_board_horizon_past_turns_in_txn(
+/// Compaction folded `turns` into a summary: exactly those turns' boards stop
+/// reconstructing. Each anchor is marked on its own, so folding one session
+/// leaves the owner's boards in every other session whole. A turn with no
+/// board anchor marks nothing. Runs inside the compaction's own transaction.
+pub(crate) fn fold_board_turns_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     turns: impl IntoIterator<Item = EntityId>,
 ) -> crate::error::Result<()> {
-    let mut retained_from = BTreeMap::new();
     for turn in turns {
-        if let Some(anchor) = TURN.get(&vault.store, txn, &turn)? {
-            let next = anchor.at.saturating_add(1);
-            let entry = retained_from.entry(anchor.owner).or_insert(next);
-            *entry = (*entry).max(next);
-        }
-    }
-    for (owner, next) in retained_from {
-        if HORIZON
-            .get(&vault.store, txn, &owner)?
-            .is_none_or(|current| current < next)
+        if let Some(mut anchor) = TURN.get(&vault.store, txn, &turn)?
+            && !anchor.folded
         {
-            HORIZON.put(&vault.store, txn, &owner, &next)?;
+            anchor.folded = true;
+            TURN.put(&vault.store, txn, &turn, &anchor)?;
         }
     }
     Ok(())

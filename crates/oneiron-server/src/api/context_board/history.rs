@@ -16,7 +16,6 @@ use axum::response::Json;
 use base64::Engine;
 use oneiron::EntityId;
 use oneiron::context_board::BoardHistoryError;
-use oneiron::context_board::BoardSelection;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -71,6 +70,24 @@ pub(crate) struct ContextBoardTurnHistory {
     documents: BTreeMap<String, String>,
 }
 
+/// The selection families a turn can change: allowed, default-on, active,
+/// pinned and top-snippet.
+const SELECTION_FAMILIES: usize = 5;
+
+impl ContextBoardTurnRecord {
+    /// The record at its fullest, every selection family changed, each id as
+    /// long as a real one. A response is budget-checked before its turn is
+    /// recorded, with this in its place.
+    pub(super) fn largest(turn: &EntityId) -> Self {
+        let id = turn.to_hex();
+        Self {
+            turn: id.clone(),
+            source_revision_ref: id.clone(),
+            changed_claims: vec![id; SELECTION_FAMILIES],
+        }
+    }
+}
+
 /// The board owner and TURN a hydration records, checked before any work.
 pub(super) fn board_turn_target(
     server: &SyncServer,
@@ -97,17 +114,18 @@ pub(super) fn board_turn_target(
     Ok(Some((turn, owner)))
 }
 
-/// Records the board this hydration rendered for its TURN. The engine writes
-/// selection claims only for families that changed.
+/// Records the board this hydration served for the caller's own TURN, under
+/// the caller's read capability. The engine writes selection claims only for
+/// families that changed, and pins each document at the revision served.
 pub(super) fn record_board_turn(
     server: &SyncServer,
+    read: &oneiron::claim::ScopedRead<'_>,
     (turn, owner): (EntityId, EntityId),
     memories: Option<&oneiron::MemoriesSection>,
 ) -> Result<ContextBoardTurnRecord, ApiError> {
-    let selection = memories.map_or_else(BoardSelection::default, BoardSelection::from_memories);
     let receipt = server
         .vault
-        .record_board_turn_now(turn, owner, &selection)
+        .record_board_turn_now(turn, owner, memories, read)
         .map_err(|error| board_history_error(&turn, error))?;
     Ok(ContextBoardTurnRecord {
         turn: receipt.turn.to_hex(),
@@ -157,9 +175,12 @@ pub(crate) async fn context_board_turn_history(
     if owner.is_none() || (caller != owner && !auth.is_owner_grade()) {
         return Err(ApiError::not_found("board turn", Some(&turn)).into());
     }
+    // Every item passes the caller's read scope as it stands now: a past
+    // board never hands back a document the caller can no longer read.
+    let read = super::super::scoped_read_for_core_auth(&server.vault, &auth)?;
     let board = server
         .vault
-        .reconstruct_board(&id)
+        .reconstruct_board_for(&id, &read)
         .map_err(|error| board_history_error(&id, error))?;
     let ids = |set: &BTreeSet<EntityId>| set.iter().map(EntityId::to_hex).collect();
     let engine = base64::engine::general_purpose::STANDARD;
@@ -190,13 +211,18 @@ fn hex(bytes: &[u8]) -> String {
 fn board_history_error(turn: &EntityId, error: BoardHistoryError) -> ApiError {
     let id = turn.to_hex();
     match error {
-        BoardHistoryError::BeyondCompactionHorizon { .. } => ApiError::new(
-            format!("turn {id} predates the board's compaction horizon"),
-            crate::error::ApiErrorDetails::InvalidState {
-                state: Some("beyond_compaction_horizon".to_owned()),
-            },
-            ["Only turns inside the retained board history reconstruct."],
-        ),
+        BoardHistoryError::BeyondCompactionHorizon { .. } | BoardHistoryError::Compacted(_) => {
+            ApiError::new(
+                format!("turn {id} is beyond the board's compaction horizon"),
+                crate::error::ApiErrorDetails::InvalidState {
+                    state: Some("beyond_compaction_horizon".to_owned()),
+                },
+                ["Only turns inside the retained board history reconstruct."],
+            )
+        }
+        BoardHistoryError::NotTurnAuthor(_) => {
+            ApiError::invalid_state(Some("board_turn_of_another_actor"))
+        }
         BoardHistoryError::UnreadableDocument(_) => {
             ApiError::invalid_state(Some("board_document_unreadable"))
         }

@@ -44,6 +44,32 @@ impl BoardSelection {
             .retain(|id| !selection.pinned.contains(id) && !selection.top_snippet.contains(id));
         selection
     }
+
+    /// The revision each persisted row of `memories` was served at, where
+    /// its read pinned one. A row read LIVE names none, and records the live
+    /// revision. A row shown at two tiers keeps its persisted tier's revision.
+    pub(crate) fn served_revisions(
+        &self,
+        memories: &crate::context_board::MemoriesSection,
+    ) -> BTreeMap<EntityId, RevisionRef> {
+        let mut served = BTreeMap::new();
+        for row in &memories.rows {
+            let Ok(id) = EntityId::from_hex(&row.id) else {
+                continue;
+            };
+            let persisted = match row.tier {
+                crate::context_board::MemoryTier::Pinned => true,
+                crate::context_board::MemoryTier::Snippet => !self.pinned.contains(&id),
+                crate::context_board::MemoryTier::IndexOnly => false,
+            };
+            match row.source_revision.filter(|_| persisted) {
+                Some(revision) => served.insert(id, revision),
+                None if persisted => served.remove(&id),
+                None => None,
+            };
+        }
+        served
+    }
 }
 
 /// Turn order is strict within one board owner. `at` is the valid-time axis;
@@ -64,6 +90,10 @@ pub(super) struct TurnAnchor {
     pub learned_at: u64,
     pub source_revision_ref: RevisionRef,
     pub frontier: Vec<u8>,
+    /// Compaction folded this turn: its board no longer reconstructs. Only
+    /// the folded turns are marked; the owner's other turns keep theirs.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub folded: bool,
 }
 
 /// Claims written by this turn. Empty on an unchanged selection.
@@ -72,8 +102,8 @@ pub struct BoardTurnReceipt {
     pub turn: EntityId,
     pub source_revision_ref: RevisionRef,
     pub changed_claims: Vec<EntityId>,
-    /// The owner's scoped read of the selected claims, resolved in the
-    /// recording transaction. A claim the owner cannot read refuses the turn.
+    /// The recorder's scoped read of the selected documents, resolved in the
+    /// recording transaction. A document it cannot read refuses the turn.
     pub read_receipt: crate::claim::ScopedReadReceipt,
 }
 
@@ -87,8 +117,8 @@ pub struct ReconstructedBoard {
     pub selection: BoardSelection,
     /// Exact body bytes at the frontier recorded by this turn.
     pub documents: BTreeMap<EntityId, Vec<u8>>,
-    /// The owner's scoped read of the reconstructed claims, resolved in the
-    /// reconstruction snapshot. A claim the owner cannot read refuses it.
+    /// The reader's scoped read of the reconstructed documents, resolved in
+    /// the reconstruction snapshot. A document it cannot read refuses it.
     pub read_receipt: crate::claim::ScopedReadReceipt,
 }
 
@@ -97,6 +127,10 @@ pub struct ReconstructedBoard {
 pub enum BoardHistoryError {
     #[error("turn {turn:?} predates board retention horizon {retained_from}")]
     BeyondCompactionHorizon { turn: EntityId, retained_from: u64 },
+    #[error("board turn {0:?} was folded by compaction")]
+    Compacted(EntityId),
+    #[error("board turn {0:?} was written by another actor")]
+    NotTurnAuthor(EntityId),
     #[error("board turn {0:?} has no frontier anchor")]
     UnknownTurn(EntityId),
     #[error("board owner {0:?} is no longer live")]

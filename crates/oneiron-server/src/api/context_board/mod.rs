@@ -193,7 +193,9 @@ pub(crate) struct ContextBoardBudget {
         (status = 200, description = "Context board hydrated.", body = ContextBoardResponse, content_type = "application/json"),
         (status = 400, description = "Malformed context-board request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read, or core:write when naming a turn.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "The named turn is not readable.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "The named turn's board is already recorded, the turn is another actor's, or a selected document is not readable.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Context-board hydration failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -252,9 +254,6 @@ pub(crate) async fn context_board_hydrate(
         }
         None => (None, None, None),
     };
-    let board_turn = board_turn
-        .map(|target| record_board_turn(&server, target, memories.as_ref()))
-        .transpose()?;
 
     let installed_packs: Vec<(String, String)> = server
         .vault
@@ -379,7 +378,7 @@ pub(crate) async fn context_board_hydrate(
     } else {
         None
     };
-    let response = ContextBoardResponse {
+    let mut response = ContextBoardResponse {
         standing,
         session,
         notifications,
@@ -393,7 +392,8 @@ pub(crate) async fn context_board_hydrate(
         skills,
         agents,
         self_brief,
-        board_turn,
+        // Counted at its largest until the turn is recorded below.
+        board_turn: board_turn.map(|(turn, _)| ContextBoardTurnRecord::largest(&turn)),
     };
     if let Some(prefix) = &response.standing {
         let wire = serde_json::to_string(&response).map_err(|_| {
@@ -407,6 +407,11 @@ pub(crate) async fn context_board_hydrate(
             .into());
         }
     }
+    // The turn's board is recorded only once the response passed every check
+    // above: a refused hydration leaves the turn free to record its board.
+    response.board_turn = board_turn
+        .map(|target| record_board_turn(&server, &read, target, response.memories.as_ref()))
+        .transpose()?;
     let prefix_committed = staged_prefix.is_some();
     if let Some((key, render, epoch)) = staged_prefix {
         let run = runs
