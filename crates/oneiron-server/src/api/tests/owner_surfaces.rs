@@ -1,5 +1,6 @@
 //! `/v1/owner` surfaces wired from built engine doors: cleanup review,
-//! persona export, off-record sessions, the Graph-FS read, and feedback.
+//! persona export, off-record sessions, the Graph-FS read, feedback and pack
+//! drift.
 use super::owner_routes::{call, owner_recipe, person, refused_recipes};
 use super::*;
 use oneiron::attempt_queue::AttemptId;
@@ -440,7 +441,7 @@ async fn off_record_room_keeps_turns_out_until_promoted_and_close_drops_the_rest
 }
 
 /// OF-355: the owner reads the vault as a file tree. Paths resolve lazily,
-/// file reads return the stored bytes, and grep runs as an engine search.
+/// file reads return the stored bytes, and grep searches them.
 #[tokio::test]
 async fn graph_fs_reads_the_vault_as_a_tree_for_the_owner_only() {
     let (_dir, server) = auth_test_server();
@@ -493,11 +494,8 @@ async fn graph_fs_reads_the_vault_as_a_tree_for_the_owner_only() {
     );
     let claims = read(format!("path=/entities/{ada}/claims")).await;
     assert!(!claims.trim().is_empty(), "{claims}");
-    let found = read(format!(
-        "path=/entities/{ada}/claims&op=grep&pattern=poems&recursive=true"
-    ))
-    .await;
-    assert!(found.contains("poems"), "{found}");
+    let found = read(format!("path=/entities/{ada}/body&op=grep&pattern=engines")).await;
+    assert!(found.contains("engines"), "{found}");
     // grep needs something to look for.
     let (status, _) = call(
         &server,
