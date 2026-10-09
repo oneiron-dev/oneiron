@@ -467,30 +467,6 @@ pub(crate) fn mint_core_token_v2(auth_secret: &str, claims: &str) -> String {
     format!("{CORE_TOKEN_V2_PREFIX}{claims}.{}", mac.to_hex())
 }
 
-/// Mints a v2 token carrying a freshly generated `jti`, and returns both.
-///
-/// Every issued token gets an identity, so every issued token can be revoked
-/// individually. A side effect: minting is no longer a pure function of
-/// claims and secret — two mints of identical claims produce two distinct
-/// tokens, and revoking one leaves its sibling live.
-#[cfg(test)]
-pub(crate) fn mint_identified_core_token_v2(auth_secret: &str, claims: &str) -> (String, String) {
-    let jti = mint_token_jti();
-    let identified = if claims.is_empty() {
-        format!("jti={jti}")
-    } else {
-        format!("{claims};jti={jti}")
-    };
-    (mint_core_token_v2(auth_secret, &identified), jti)
-}
-
-/// Checks a claims string against the grammar the server will enforce, so a
-/// mint surface can reject before emitting a token that would only ever 401.
-#[cfg(test)]
-pub(crate) fn validate_bearer_claims(claims: &str) -> Result<(), ApiError> {
-    parse_bearer_claims(claims).map(drop)
-}
-
 fn bearer_token(headers: &HeaderMap) -> Result<Option<&str>, ApiError> {
     let Some(value) = headers.get(AUTHORIZATION) else {
         return Ok(None);

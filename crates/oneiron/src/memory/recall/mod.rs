@@ -108,14 +108,58 @@ impl Effort {
     }
 }
 
-/// Recall scoping (S5): world/facet narrowing only — unset means the vault
-/// floor; the scope never widens beyond it.
+/// Recall scoping (S5): world/facet narrowing and the kinds returned — unset
+/// means the vault floor; the scope never widens beyond it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RecallScope {
     /// WORLD entity ref; scopes to that world plus base reality.
     pub world_ref: Option<String>,
     /// Facet entity ref; strict facet narrowing when set.
     pub facet: Option<String>,
+    /// Registry kinds to return (`MESSAGE`, `CLAIM`, `PERSON`, ...). Unset
+    /// returns every kind but the ones with no text of their own
+    /// ([`CONTAINER_KINDS`]), so `limit` slots go to rows that say something.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kinds: Option<Vec<String>>,
+}
+
+/// Kinds that hold no text of their own: conversations and sessions, and the
+/// worlds and facets that scope memories. Recall returns them only when
+/// [`RecallScope::kinds`] names them.
+///
+/// TURN is here only until turns are embedded: ARCH-0004 makes the turn the
+/// embedding unit, but today a turn's text repeats its messages, so a turn hit
+/// would take the slot of the message it copies.
+pub const CONTAINER_KINDS: [u8; 5] = [
+    crate::registry::ENTITY_TYPE_TURN,
+    crate::registry::ENTITY_TYPE_CONVERSATION,
+    crate::registry::ENTITY_TYPE_SESSION,
+    crate::registry::ENTITY_TYPE_FACET,
+    crate::registry::ENTITY_TYPE_WORLD,
+];
+
+/// The kinds a recall admits, resolved once from its scope. `None` is the
+/// default: every kind but [`CONTAINER_KINDS`].
+fn recall_kinds(scope: &RecallScope) -> MemoryResult<Option<Vec<u8>>> {
+    let Some(kinds) = &scope.kinds else {
+        return Ok(None);
+    };
+    if kinds.is_empty() || kinds.len() > crate::registry::ENTITY_TYPE_REGISTRY.len() {
+        return Err(MemoryError::bad_request_with(
+            format!(
+                "scope.kinds must name between 1 and {} registry kinds",
+                crate::registry::ENTITY_TYPE_REGISTRY.len()
+            ),
+            &["Name each kind once, or omit kinds for the default kinds."],
+        ));
+    }
+    let mut types = kinds
+        .iter()
+        .map(|kind| type_byte_for_kind(kind))
+        .collect::<MemoryResult<Vec<u8>>>()?;
+    types.sort_unstable();
+    types.dedup();
+    Ok(Some(types))
 }
 
 /// Item provenance (S6, default-on).
@@ -133,8 +177,13 @@ pub struct MemoryProvenance {
 /// One memory pack item (S6 schema).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MemoryItem {
-    /// Short ref, hydratable via [`Memory::hydrate`].
+    /// Short ref, hydratable via [`Memory::hydrate`]: the same `name:hash`
+    /// a witness receipt returns, never revision-qualified.
     pub short_id: String,
+    /// The retained revision (32 hex) retrieval read this item at, when it
+    /// pinned one. [`Self::reference`] joins it to `short_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_revision_ref: Option<String>,
     /// Registry kind string.
     pub kind: String,
     /// Predicate (claims only).
@@ -158,6 +207,18 @@ pub struct MemoryItem {
     /// glyph (`👍×8 (Anna, Ben, +6)`); empty for every other item.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reactions: Vec<String>,
+}
+
+impl MemoryItem {
+    /// The ref that hydrates exactly the revision this item was read at:
+    /// `short_id@source_revision_ref`, or `short_id` when nothing was pinned.
+    #[must_use]
+    pub fn reference(&self) -> String {
+        match &self.source_revision_ref {
+            Some(revision) => format!("{}@{revision}", self.short_id),
+            None => self.short_id.clone(),
+        }
+    }
 }
 
 /// Scope honesty (S6): what the scope excluded.
@@ -188,6 +249,11 @@ pub struct RetrievalMeta {
     /// Requested stages skipped at the explicit deadline.
     #[serde(default)]
     pub partial: bool,
+    /// Time phrases read from the query, in order. `used` ones narrowed the
+    /// occurred-time window; `unresolved` and `future` ones were skipped and
+    /// recall ran on its other signals.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub temporal_hints: Vec<crate::temporal::TemporalHintReport>,
 }
 
 /// The facade projection of a `ContextPack` (S6, `pack_version: 1`).
@@ -239,8 +305,14 @@ impl Memory<'_> {
             let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
                 return Ok(false);
             };
-            if kind.is_some_and(|kind| kind_string_for_type(header.entity_type) != kind) {
-                return Ok(false);
+            match kind {
+                Some(kind) if kind_string_for_type(header.entity_type) != kind => return Ok(false),
+                // A view that names no kind takes the scope's kinds, which
+                // recall applies, or else the default kinds.
+                None if scope.kinds.is_none() && CONTAINER_KINDS.contains(&header.entity_type) => {
+                    return Ok(false);
+                }
+                _ => {}
             }
             if header.entity_type != ENTITY_TYPE_CLAIM {
                 return Ok(world.is_none() && predicate.is_none());
@@ -407,6 +479,7 @@ impl Memory<'_> {
         if limit == 0 {
             return Err(MemoryError::bad_request("recall limit must be at least 1"));
         }
+        crate::memory::caps::check_as_of(execution.as_of)?;
         if let Some(session) = session {
             // A session handle names a room in ONE store, and this facade's
             // vault is an independent borrow — nothing in the lifetimes ties
@@ -481,11 +554,29 @@ impl Memory<'_> {
                 narrowing: Box::new(receipt),
             });
         }
+        let kinds = recall_kinds(scope)?;
         // Admission runs in each candidate's retrieval transaction before ranking.
         let admitted = |store: &crate::store::Store, txn: &heed::RoTxn<'_>, id: &EntityId| {
             // Reject irrelevant kind/predicate rows before the actor gate.
             if !candidate_filter.map_or(Ok(true), |filter| filter(store, txn, id))? {
                 return Ok(false);
+            }
+            // A caller's own filter already chose its kinds; otherwise the
+            // scope's kinds, or the default kinds, decide.
+            if kinds.is_some() || candidate_filter.is_none() {
+                let Some(kind) = store
+                    .port_entity_record(txn, id)?
+                    .map(|row| row.entity_type)
+                else {
+                    return Ok(false);
+                };
+                let wanted = match &kinds {
+                    Some(kinds) => kinds.contains(&kind),
+                    None => !CONTAINER_KINDS.contains(&kind),
+                };
+                if !wanted {
+                    return Ok(false);
+                }
             }
             lane.recall_candidate_in(txn, &plan_policy, &plan_filter, id)
         };
@@ -506,12 +597,13 @@ impl Memory<'_> {
                 _ => {
                     // A deadline's text-stage hook belongs to the principal
                     // retrieval, not its preparatory seed lookup. Still
-                    // admit every seed through the actor's read lane.
+                    // admit every seed through the actor's read lane, and
+                    // read the query's time words on the recall's clock.
                     let scored = if execution.deadline.is_some() {
                         let limit = lane.search_candidate_limit(PPR_SEED_LIMIT, true, false)?;
                         lane.filter_scored_entities(self.vault.search_text(query, limit)?)?
                     } else {
-                        lane.search_text(query, PPR_SEED_LIMIT, None)?
+                        lane.search_text_as_of(query, PPR_SEED_LIMIT, None, execution.as_of)?
                     };
                     receipt.restrict_with(&scored.receipt);
                     scored.value
@@ -525,19 +617,25 @@ impl Memory<'_> {
             Vec::new()
         };
 
-        let (items, total_candidates, rendered, retrieval_quality, vector_completed) = match &scope
-            .facet
-        {
+        let (
+            items,
+            total_candidates,
+            rendered,
+            retrieval_quality,
+            vector_completed,
+            temporal_hints,
+        ) = match &scope.facet {
             Some(facet_ref) => {
                 // Facet-strict narrowing rides the raw retrieval pipeline:
                 // ContextPackBuilder exposes no facet passthrough and
                 // pipeline.rs/context_pack.rs are consume-only for this
                 // chain. No pack rendering on this path.
                 let facet_id = self.resolve_ref(facet_ref)?;
-                let mut pipeline = self
-                    .vault
-                    .query()
-                    .search_text(query, limit)
+                let mut pipeline = self.vault.query().search_text(query, limit);
+                if let Some(as_of) = execution.as_of {
+                    pipeline = pipeline.with_temporal_now(as_of);
+                }
+                pipeline = pipeline
                     .facet(&facet_id, FacetMode::Strict)
                     .world(world_scope)
                     .retrieval_effort(effective, &seeds)
@@ -593,13 +691,15 @@ impl Memory<'_> {
                     None,
                     retrieval.retrieval_quality,
                     retrieval.vector_completed,
+                    retrieval.temporal_hints,
                 )
             }
             None => {
-                let mut builder = self
-                    .vault
-                    .context_pack()
-                    .search_text(query, limit)
+                let mut builder = self.vault.context_pack().search_text(query, limit);
+                if let Some(as_of) = execution.as_of {
+                    builder = builder.with_temporal_now(as_of);
+                }
+                builder = builder
                     .limit(limit)
                     .world(world_scope)
                     .retrieval_effort(effective, &seeds)
@@ -648,7 +748,8 @@ impl Memory<'_> {
                             .boost_confidence();
                     }
                 }
-                let (scoped, vector_completed) = builder.run_scoped_with_vector_status(&lane)?;
+                let (scoped, vector_completed, temporal_hints) =
+                    builder.run_scoped_with_run_status(&lane)?;
                 receipt.restrict_with(&scoped.receipt);
                 let mut pack = scoped.value;
                 lane.attach_reactions(&mut pack)?;
@@ -693,6 +794,7 @@ impl Memory<'_> {
                     rendered,
                     pack.retrieval_quality,
                     vector_completed,
+                    temporal_hints,
                 )
             }
         };
@@ -717,6 +819,7 @@ impl Memory<'_> {
                 total_candidates,
                 claims_returned,
                 deep_pending,
+                temporal_hints,
             },
             items,
             pack_version: MEMORY_PACK_VERSION,
