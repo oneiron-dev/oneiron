@@ -96,6 +96,35 @@ fn carry_evidence(turn: &mut Vec<RetrievalScoreComponent>, message: &[RetrievalS
     }
 }
 
+/// How many leading `rows` it takes to hold `bound` distinct results once
+/// each MESSAGE stands as its TURN, or `None` when all of them hold fewer.
+pub(super) fn rows_holding_distinct_turns(
+    rows: &[ScoredEntity],
+    bound: usize,
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    metadata_cache: &mut EntityMetadataCache,
+) -> Result<Option<usize>> {
+    if bound == 0 {
+        return Ok(Some(0));
+    }
+    let mut distinct = HashSet::new();
+    for (index, row) in rows.iter().enumerate() {
+        let is_message = metadata_cache
+            .get(store, rtxn, &row.id)?
+            .is_some_and(|meta| meta.entity_type == ENTITY_TYPE_MESSAGE);
+        let result = if is_message {
+            turn_of(store, rtxn, &row.id, metadata_cache)?.unwrap_or(row.id)
+        } else {
+            row.id
+        };
+        if distinct.insert(result) && distinct.len() == bound {
+            return Ok(Some(index + 1));
+        }
+    }
+    Ok(None)
+}
+
 /// The TURN a witnessed MESSAGE is `PartOf`.
 fn turn_of(
     store: &Store,

@@ -150,3 +150,38 @@ fn a_turn_only_scope_finds_a_turn_by_its_messages_words() {
         );
     }
 }
+
+/// Sol 9B #6: recall's limit counts the turns it returns, not the messages
+/// that found them. Bug repro: the text channel fetched `limit` messages,
+/// three of one turn filled it and folded into one item, and the other
+/// conversation's turn never became a candidate.
+#[test]
+fn several_messages_of_one_turn_leave_room_for_the_next_turn() {
+    let (_dir, vault) = open_vault();
+    let facade = facade_for(&vault, put_person(&vault, 0xE7));
+    witness_turn(
+        &facade,
+        0xE8,
+        &["solar", "solar panels", "solar roof"],
+        1_900,
+    );
+    witness_turn(
+        &facade,
+        0xE9,
+        &["we spent the whole afternoon talking about the solar array on the barn roof"],
+        1_900,
+    );
+
+    let pack = facade
+        .recall(
+            "solar",
+            Effort::Light,
+            &RecallScope::default(),
+            3,
+            None,
+            None,
+        )
+        .expect("recall");
+    let turns = pack.items.iter().filter(|item| item.kind == "TURN").count();
+    assert_eq!(turns, 2, "both conversations' turns: {:?}", pack.items);
+}
