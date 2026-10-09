@@ -41,7 +41,7 @@ fn kind(dir: &OwnedFd, name: &OsStr, listed: FileType) -> anyhow::Result<FileTyp
 /// not block, so an entry swapped for a FIFO after it was listed is refused
 /// by the type check rather than waited on; reading a regular file is the
 /// same either way.
-fn open_file(dir: &OwnedFd, name: &OsStr, shown: &Path) -> anyhow::Result<File> {
+pub(super) fn open_file(dir: &OwnedFd, name: &OsStr, shown: &Path) -> anyhow::Result<File> {
     let file = File::from(
         openat(
             dir,

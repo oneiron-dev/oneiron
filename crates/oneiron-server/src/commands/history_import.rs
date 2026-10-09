@@ -307,12 +307,15 @@ pub(super) mod queue;
 /// `path` must name a session log there, and every folder between `root` and
 /// it is opened relative to the one above and never through a link. A Claude
 /// Code session brings its own subagent logs from the folder beside it.
+///
+/// Also says whether the log ended mid-line: a live log whose last record
+/// was still being written, which a later pass reads whole.
 #[cfg(unix)]
 fn read_queued(
     source: HistorySource,
     root: &Path,
     path: &Path,
-) -> anyhow::Result<Vec<HistoryConversation>> {
+) -> anyhow::Result<(Vec<HistoryConversation>, bool)> {
     let relative = below(root, path)?;
     anyhow::ensure!(
         session_log_name(source, path),
@@ -325,10 +328,23 @@ fn read_queued(
             .decode(text, &history_file(source, shown))
             .map_err(|error| anyhow::anyhow!("{}: {error}", shown.display()))
     };
-    let (dir, file) = confined::open_below(root, relative)?;
-    let mut conversations = decode_one(&read_limited(file, path, MAX_LOG_BYTES)?, path)?;
     let mut decoded = Decoded::default();
-    decoded.add(&conversations);
+    let mut keep = |read: &[HistoryConversation]| {
+        decoded.add(read);
+        anyhow::ensure!(
+            decoded.messages <= MAX_DECODED_MESSAGES && decoded.bytes <= MAX_DECODED_BYTES,
+            "the session {} and its subagent logs hold more than {MAX_DECODED_MESSAGES} \
+             messages or {MAX_DECODED_BYTES} bytes of them; nothing was imported",
+            path.display()
+        );
+        Ok(())
+    };
+    let (dir, file) = confined::open_below(root, relative)?;
+    let text = read_limited(file, path, MAX_LOG_BYTES)?;
+    let mid_line = !text.is_empty() && !text.ends_with('\n');
+    let mut conversations = decode_one(&text, path)?;
+    drop(text);
+    keep(&conversations)?;
     if source == HistorySource::ClaudeCode
         && let Some(stem) = path.file_stem()
         && let Some(folder) = confined::open_dir_in(&dir, stem)?
@@ -342,20 +358,13 @@ fn read_queued(
                     return Ok(());
                 }
                 let read = decode_one(&read_limited(file, shown, MAX_LOG_BYTES)?, shown)?;
-                decoded.add(&read);
-                anyhow::ensure!(
-                    decoded.messages <= MAX_DECODED_MESSAGES && decoded.bytes <= MAX_DECODED_BYTES,
-                    "the session {} and its subagent logs hold more than {MAX_DECODED_MESSAGES} \
-                 messages or {MAX_DECODED_BYTES} bytes of them; nothing was imported",
-                    path.display()
-                );
+                keep(&read)?;
                 conversations.extend(read);
                 Ok(())
             },
         )?;
     }
-    earliest_first(&mut conversations);
-    Ok(conversations)
+    Ok((conversations, mid_line))
 }
 
 /// `path` relative to `root`, in plain names only, so it can name nothing

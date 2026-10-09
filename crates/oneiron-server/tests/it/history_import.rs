@@ -593,10 +593,11 @@ fn session_logs_whose_titles_pass_the_decoded_limit_are_refused() {
     assert_eq!(home.vault_bytes(), before, "nothing was written");
 }
 
-/// Done-means (Wave 9b, Claude Code hooks): a session handed over with
-/// `--queue` while `serve` runs lands in the running vault, its subagent logs
-/// with it; handed over again after it grew, only the new messages land; and
-/// a queued path that leaves the root through a link lands nothing.
+/// Done-means (Wave 9b, Claude Code hooks): sessions handed over with
+/// `--queue` while `serve` is down land when it starts, a session's subagent
+/// logs with it and a resumed session's copies once; a session handed over
+/// again while `serve` runs, after it grew, adds only its new messages; and a
+/// queued path that leaves the root through a link lands nothing.
 #[cfg(unix)]
 #[test]
 fn a_session_queued_while_serve_runs_lands_and_a_grown_one_adds_only_new_messages() {
@@ -657,7 +658,7 @@ fn a_session_queued_while_serve_runs_lands_and_a_grown_one_adds_only_new_message
                 .expect("spawn oneiron serve"),
         )
     };
-    let queue_and_wait = |logs: &[&Path]| {
+    let queue_logs = |logs: &[&Path]| {
         for log in logs {
             let mut command = Command::new(env!("CARGO_BIN_EXE_oneiron"));
             command
@@ -675,6 +676,8 @@ fn a_session_queued_while_serve_runs_lands_and_a_grown_one_adds_only_new_message
                 String::from_utf8_lossy(&output.stderr)
             );
         }
+    };
+    let drained = || {
         let deadline = Instant::now() + Duration::from_secs(120);
         while std::fs::read_dir(&queue)
             .expect("the queue folder")
@@ -698,13 +701,16 @@ fn a_session_queued_while_serve_runs_lands_and_a_grown_one_adds_only_new_message
         }
     };
 
+    let resumed = project.join("9a8b7c6d-2222-4333-8444-a55566667777.jsonl");
     let linked = project.join("linked/0f0e0d0c-0b0a-4908-8706-050403020100.jsonl");
+    queue_logs(&[&resumed, &session, &linked]);
     let server = start();
-    queue_and_wait(&[&session, &linked]);
+    drained();
     stop(server);
-    // The session 9 and its inline sidechain 2, its subagent 2 and its
-    // workflow run's agent 2; nothing of the log behind the link.
-    assert_eq!(home.count(ENTITY_TYPE_MESSAGE), 15);
+    // The session 9 and its inline sidechain 2, its subagent 2, its workflow
+    // run's agent 2, and the resumed session's own 2 beside the 2 copies it
+    // carries; nothing of the log behind the link.
+    assert_eq!(home.count(ENTITY_TYPE_MESSAGE), 17);
     assert_eq!(home.search("watering reminder fires twice"), 1);
     assert_eq!(
         home.search("chili peppers"),
@@ -714,11 +720,12 @@ fn a_session_queued_while_serve_runs_lands_and_a_grown_one_adds_only_new_message
 
     append(&session, &fixtures().join("claude-code/append.jsonl"));
     let server = start();
-    queue_and_wait(&[&session]);
+    queue_logs(&[&session]);
+    drained();
     stop(server);
     assert_eq!(
         home.count(ENTITY_TYPE_MESSAGE),
-        17,
+        19,
         "only the two new messages"
     );
     assert_eq!(home.search("chili peppers"), 2);

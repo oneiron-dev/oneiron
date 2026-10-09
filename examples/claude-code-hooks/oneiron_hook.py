@@ -21,6 +21,7 @@ import argparse
 import json
 import os
 import select
+import signal
 import subprocess
 import sys
 import time
@@ -57,7 +58,8 @@ def project_name(cwd: str) -> str:
 
 
 class Bridge:
-    """One `oneiron mcp` process, spoken to one request at a time."""
+    """One `oneiron mcp` process, spoken to one request at a time. It runs in
+    its own process group, so giving up also ends the `curl` it started."""
 
     def __init__(self, command: list[str], deadline: float):
         self.deadline = deadline
@@ -66,6 +68,7 @@ class Bridge:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
         self.buffer = b""
 
@@ -108,9 +111,11 @@ class Bridge:
             self.process.wait(timeout=max(0.1, self.deadline - time.monotonic()))
         except (OSError, subprocess.SubprocessError):
             pass
-        if self.process.poll() is None:
-            self.process.kill()
-            self.process.wait()
+        try:
+            os.killpg(self.process.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        self.process.wait()
 
 
 def tool_call(tools: list, query: str, limit: int) -> tuple[str, dict]:
@@ -139,19 +144,35 @@ def tool_call(tools: list, query: str, limit: int) -> tuple[str, dict]:
     }
 
 
+def hit_text(item: dict):
+    """One hit's words: a recall pack item's `value_text`; in a query result,
+    a message's `body.content` or a claim's `body.pred` and `body.val`."""
+    if isinstance(item.get("value_text"), str):
+        return item["value_text"]
+    body = item.get("body")
+    if not isinstance(body, dict):
+        return None
+    if isinstance(body.get("content"), str):
+        return body["content"]
+    if isinstance(body.get("val"), (str, int, float)) and not isinstance(body.get("val"), bool):
+        predicate = body.get("pred")
+        value = str(body["val"])
+        return f"{predicate}: {value}" if isinstance(predicate, str) else value
+    return None
+
+
 def texts(value, found: list) -> None:
-    """Every hit's text, in order: `value_text` in a recall pack,
-    `body.content` in a query result."""
+    """Every hit's text, in order, from the result's `items` lists."""
     if isinstance(value, dict):
-        text = value.get("value_text")
-        body = value.get("body")
-        if isinstance(text, str):
-            found.append(text)
-        elif isinstance(body, dict) and isinstance(body.get("content"), str):
-            found.append(body["content"])
-        else:
-            for child in value.values():
-                texts(child, found)
+        items = value.get("items")
+        if isinstance(items, list):
+            for item in items:
+                text = hit_text(item) if isinstance(item, dict) else None
+                if text:
+                    found.append(text)
+            return
+        for child in value.values():
+            texts(child, found)
     elif isinstance(value, list):
         for child in value:
             texts(child, found)
@@ -194,6 +215,12 @@ def session_start(args: argparse.Namespace) -> None:
         return
     found: list = []
     texts(result.get("structuredContent"), found)
+    if not found:
+        for block in result.get("content") or []:
+            try:
+                texts(json.loads(block.get("text", "")), found)
+            except (AttributeError, TypeError, ValueError):
+                continue
     lines, seen, size = [], set(), 0
     for text in found:
         text = " ".join(text.split())

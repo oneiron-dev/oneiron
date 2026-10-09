@@ -259,6 +259,7 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
         oneironer.validate()?;
     }
     config.backup.validate()?;
+    config.import.validate(&config.vault_path)?;
     // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
     // refused while it is still a config error with an operator-facing
     // remedy, not only at open time.

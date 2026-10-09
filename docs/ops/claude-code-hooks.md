@@ -65,9 +65,16 @@ queue = true
 under `claude_code_root` as if you had run `oneiron import claude-code` on
 it. It reads nothing outside that folder. Every folder below the root is
 opened without following a link, so a link under it leads nowhere. The queue
-folder is created readable and writable by you alone. `serve` does not read a
-queue folder that another user owns or can write. The queue is off by default,
-and a hosted node never runs it.
+folder is created readable and writable by you alone. `serve` opens it
+without following a link and does not read it when another user owns it or
+can write it. With the queue on, `queue_dir` and both roots must be absolute
+paths (`~/` is expanded). The queue is off by default, and a hosted node never
+runs it.
+
+Each pass takes every waiting log, up to a million messages, and lands them
+together, earliest first: a session lands before a resumed copy of it, as in
+a folder import. A log whose last line was still being written is read again
+on the next pass, up to three times.
 
 You can queue a log by hand too:
 

@@ -52,6 +52,33 @@ impl ImportConfig {
         )
     }
 
+    /// With the queue on, its folder and both roots must be absolute: the
+    /// hooks queue from the session's folder and `serve` reads from its own,
+    /// so a relative path would name two places.
+    pub(super) fn validate(&self, vault_path: &Path) -> anyhow::Result<()> {
+        if !self.queue {
+            return Ok(());
+        }
+        let queue_dir = self.queue_dir_for(vault_path);
+        anyhow::ensure!(
+            queue_dir.is_absolute(),
+            "import.queue_dir must be an absolute path (it is {})",
+            queue_dir.display()
+        );
+        for source in [HistorySource::ClaudeCode, HistorySource::Codex] {
+            if let Some(root) = self.root_for(source) {
+                anyhow::ensure!(
+                    root.is_absolute(),
+                    "the {} root under [import] must be an absolute path (it is {}); \
+                     set it, or set HOME for the default",
+                    source.source_id(),
+                    root.display()
+                );
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn apply_override(&mut self, over: ImportConfigOverride) {
         if let Some(value) = over.queue {
             self.queue = value;
