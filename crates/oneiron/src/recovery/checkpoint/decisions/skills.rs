@@ -8,7 +8,7 @@ use super::{Decision, held_by_either};
 use crate::claim::ClaimApprovalStatus;
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::skill::SkillContentHash;
-use crate::skill_hub::pack_catalog::{PackAdapter, PackRuntimeRecipe};
+use crate::skill_hub::pack_catalog::PackRuntimeRecipe;
 use crate::skill_scan::ActivationPosture;
 use crate::{EntityId, Result, Vault};
 use std::collections::BTreeSet;
@@ -126,12 +126,7 @@ impl Decision for InstalledScriptPacks {
     fn subjects(vaults: [&Vault; 2]) -> Result<BTreeSet<Self::Subject>> {
         let mut selected = BTreeSet::new();
         for vault in vaults {
-            for receipt in vault.installed_packs()? {
-                if matches!(receipt.adapter, Some(PackAdapter::Script(_))) {
-                    let source = EntityId::from_hex(&receipt.source_id)?;
-                    selected.insert((receipt.pack_name, source));
-                }
-            }
+            selected.extend(vault.script_pack_selections()?);
         }
         let [live, restored] = vaults;
         let mut subjects = BTreeSet::new();
