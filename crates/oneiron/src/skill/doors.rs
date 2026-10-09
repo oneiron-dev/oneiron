@@ -498,12 +498,21 @@ impl Vault {
 
     pub fn get_skill_record(&self, id: &EntityId) -> Result<Option<SkillRecord>> {
         let txn = self.store.env.read_txn()?;
+        self.get_skill_record_in_txn(&txn, id)
+    }
+
+    /// [`Self::get_skill_record`] on the caller's snapshot.
+    pub(crate) fn get_skill_record_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<SkillRecord>> {
         // A user delete may leave a type-7 tombstone shell whose erased body
         // is not MessagePack. Return absence rather than decoding that shell.
-        if crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, &txn, id)?.deleted {
+        if crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, txn, id)?.deleted {
             return Ok(None);
         }
-        let Some(raw) = self.get_raw_in(&txn, id)? else {
+        let Some(raw) = self.get_raw_in(txn, id)? else {
             return Ok(None);
         };
         let header =
