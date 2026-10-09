@@ -278,6 +278,24 @@ impl Default for VectorEvidenceFloors {
     }
 }
 
+impl VectorEvidenceFloors {
+    /// Both are cosine similarities, so each lies in `0.0..=1.0`, and a strong
+    /// match is no weaker than the floor: `0 <= floor <= strong <= 1`. A value
+    /// outside that, or not a number, would admit evidence the check exists
+    /// to withhold, so it is refused, never clamped.
+    pub fn validate(&self) -> crate::error::Result<()> {
+        let in_range = |value: f32| value.is_finite() && (0.0..=1.0).contains(&value);
+        if !in_range(self.floor) || !in_range(self.strong) || self.floor > self.strong {
+            return Err(crate::Error::InvalidConfig(format!(
+                "vector evidence floors must satisfy 0 <= floor <= strong <= 1, \
+                 got floor {} and strong {}",
+                self.floor, self.strong
+            )));
+        }
+        Ok(())
+    }
+}
+
 /// Vault runtime configuration.
 ///
 /// The struct is `#[non_exhaustive]`, so downstream callers cannot build it
@@ -335,7 +353,8 @@ pub struct VaultConfig {
     /// adopts it. `None` checks nothing.
     pub embedding_transform: Option<String>,
     /// Where vector evidence starts in this vault's embedding space
-    /// ([`VectorEvidenceFloors`]), as the host's embedder states it.
+    /// ([`VectorEvidenceFloors`]), as the host's embedder states it. Opening
+    /// a vault refuses floors outside [`VectorEvidenceFloors::validate`].
     pub vector_evidence: VectorEvidenceFloors,
     /// Arms the tagging marker (ARCH-0036, serving the tagger): a base witness
     /// commits one marker per touched turn inside its own transaction, keyed

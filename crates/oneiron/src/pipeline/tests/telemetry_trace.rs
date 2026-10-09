@@ -1444,3 +1444,39 @@ fn opted_in_search_persists_retrieval_telemetry_across_reopen() -> Result<()> {
     assert_eq!(reopened.retrieval_runs(10)?.len(), 1);
     Ok(())
 }
+
+/// Greptile 1333 (bad floors admit weak matches): the floors are cosine
+/// similarities, `0 <= floor <= strong <= 1`, and opening a vault refuses any
+/// other pair. Bug repro: a NaN floor was accepted, and no score is below
+/// NaN, so a pack of weak vector matches never abstained.
+#[test]
+fn a_vault_refuses_vector_evidence_floors_outside_their_range() {
+    use crate::config::VectorEvidenceFloors;
+    let floors = |floor, strong| VectorEvidenceFloors { floor, strong };
+    for refused in [
+        floors(f32::NAN, 0.5),
+        floors(0.3, f32::NAN),
+        floors(f32::NEG_INFINITY, 0.5),
+        floors(0.3, f32::INFINITY),
+        floors(-0.1, 0.5),
+        floors(0.3, 1.5),
+        floors(0.6, 0.5),
+    ] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut config = embedding_test_config();
+        config.vector_evidence = refused;
+        let opened = crate::Vault::open(dir.path(), config);
+        assert!(
+            matches!(opened, Err(crate::Error::InvalidConfig(_))),
+            "{refused:?} opened: {:?}",
+            opened.err()
+        );
+    }
+    // The engine's calibration and a compressed space's both open.
+    for accepted in [VectorEvidenceFloors::default(), floors(0.15, 0.25)] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut config = embedding_test_config();
+        config.vector_evidence = accepted;
+        crate::Vault::open(dir.path(), config).expect("valid floors open");
+    }
+}
