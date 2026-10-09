@@ -11,9 +11,9 @@
 //! while it is being imported waits as a new entry. A pass lands what it
 //! claimed earliest first across entries, so a session lands before a
 //! resumed copy of it, as in a folder import. An entry is removed once it
-//! landed whole or was refused: queueing the log again tries again, and the
-//! import ledger lands only what is new. A claim stays while landing fails,
-//! and the next pass takes it up.
+//! landed or was refused: queueing the log again tries again, and the import
+//! ledger lands only what is new. A claim stays while landing fails, and
+//! for a few passes while its log ends mid-line; the next pass takes it up.
 
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
@@ -26,9 +26,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::ingest::history::{HistoryConversation, HistorySource};
-use rustix::fs::{
-    AtFlags, CWD, Dir, Mode, OFlags, fstat, linkat, openat, renameat, statat, unlinkat,
-};
+use rustix::fs::{AtFlags, CWD, Dir, Mode, OFlags, fstat, openat, renameat, statat, unlinkat};
 use rustix::io::Errno;
 use serde::{Deserialize, Serialize};
 
@@ -131,8 +129,6 @@ struct Claimed {
     /// Where its earliest conversation sorts.
     first: (u64, u64, String),
     mid_line: bool,
-    /// Every conversation it holds lands in this pass.
-    whole: bool,
 }
 
 impl ImportQueue {
@@ -176,11 +172,12 @@ impl ImportQueue {
         })
     }
 
-    /// One pass: claims and reads every entry waiting, lands them earliest
-    /// first, and removes each that landed whole. Past the decoded budget,
-    /// only the earliest entries are read again to land, and a conversation
-    /// that sorts after the first entry left waiting waits with it, so no
-    /// pass lands a resumed copy before its original.
+    /// One pass: claims and reads every entry waiting, then lands them
+    /// together, earliest first, and removes them. Entries land whole, in the
+    /// order of their earliest conversation: a resumed or forked session
+    /// starts with its original's first line, time and all, so its entry
+    /// never sorts before the original's. Past the decoded budget, only the
+    /// earliest entries that fit are read again to land; the rest wait.
     fn pass(&self, vault: &oneiron::Vault) -> anyhow::Result<()> {
         let Some(dir) = self.open_checked()? else {
             return Ok(());
@@ -205,19 +202,16 @@ impl ImportQueue {
             claimed.push(read);
         }
         claimed.sort_by(|one, other| one.first.cmp(&other.first));
-        let mut cutoff = None;
         if over {
             let mut decoded = Decoded::default();
             let mut ready = Vec::new();
             for held in claimed {
-                let first = held.first;
                 let Some(read) = self.read(&dir, held.name, held.entry) else {
                     continue;
                 };
                 decoded.add(&read.conversations);
                 if !decoded.fits() {
                     // This claim and every later one wait for the next pass.
-                    cutoff = Some(first.min(read.first));
                     break;
                 }
                 ready.push(read);
@@ -229,27 +223,14 @@ impl ImportQueue {
         }
         let mut sources: Vec<(HistorySource, Vec<HistoryConversation>)> = Vec::new();
         for read in &mut claimed {
-            let (now, later): (Vec<_>, Vec<_>) = std::mem::take(&mut read.conversations)
-                .into_iter()
-                .partition(|conversation| {
-                    cutoff
-                        .as_ref()
-                        .is_none_or(|cutoff| order_key(conversation) <= *cutoff)
-                });
-            read.whole = later.is_empty();
+            let conversations = std::mem::take(&mut read.conversations);
             match sources.iter_mut().find(|(known, _)| *known == read.source) {
-                Some((_, landing)) => landing.extend(now),
-                None => sources.push((read.source, now)),
+                Some((_, landing)) => landing.extend(conversations),
+                None => sources.push((read.source, conversations)),
             }
         }
         let totals = land(vault, sources)
             .map_err(|error| error.context("its claimed logs are read again next pass"))?;
-        for done in claimed.into_iter().filter(|done| done.whole) {
-            if done.mid_line && done.entry.passes < MID_LINE_PASSES {
-                again(&dir, &done.name, done.entry);
-            }
-            remove(&dir, &done.name);
-        }
         tracing::info!(
             conversations = totals.conversations,
             new = totals.new,
@@ -258,7 +239,15 @@ impl ImportQueue {
             refused = totals.refused,
             "queued import landed"
         );
-        Ok(())
+        let mut kept = Ok(());
+        for done in claimed {
+            if done.mid_line && done.entry.passes < MID_LINE_PASSES {
+                kept = kept.and(again(&dir, &done.name, done.entry));
+            } else {
+                remove(&dir, &done.name);
+            }
+        }
+        kept.map_err(|error| anyhow::anyhow!("a log that ended mid-line is read again: {error}"))
     }
 
     /// The queue folder, opened without following a link and checked on that
@@ -310,17 +299,16 @@ impl ImportQueue {
             });
         match read {
             Ok((source, (conversations, mid_line))) => Some(Claimed {
-                first: conversations
-                    .iter()
-                    .map(order_key)
-                    .min()
-                    .unwrap_or((u64::MAX, u64::MAX, String::new())),
+                first: conversations.iter().map(order_key).min().unwrap_or((
+                    u64::MAX,
+                    u64::MAX,
+                    String::new(),
+                )),
                 name,
                 entry,
                 source,
                 conversations,
                 mid_line,
-                whole: true,
             }),
             Err(error) => {
                 tracing::warn!(
@@ -358,8 +346,9 @@ fn waiting(dir: &OwnedFd) -> anyhow::Result<Vec<String>> {
     Ok(names.into_iter().collect())
 }
 
-/// Claims one entry by renaming it, and reads it. An entry claimed by a pass
-/// that did not finish is read again.
+/// Claims one entry by renaming it, and reads it. A claim a pass kept, or
+/// left when it did not finish, is read again; a hand-over queued since
+/// replaces it.
 fn claim(dir: &OwnedFd, name: &str) -> anyhow::Result<Option<Entry>> {
     let taking = format!("{name}.taking");
     match renameat(dir, format!("{name}.json"), dir, &taking) {
@@ -387,9 +376,10 @@ fn remove(dir: &OwnedFd, name: &str) {
     let _ = unlinkat(dir, format!("{name}.taking"), AtFlags::empty());
 }
 
-/// Queues a log that ended mid-line for one more pass. It is linked in, never
-/// renamed over: an entry queued meanwhile is newer and stays.
-fn again(dir: &OwnedFd, name: &str, mut entry: Entry) {
+/// Keeps the claim on a log that ended mid-line for the next pass, counting
+/// this one. A hand-over queued meanwhile replaces it when that pass claims
+/// it. Unwritten, the claim stays as it was.
+fn again(dir: &OwnedFd, name: &str, mut entry: Entry) -> std::io::Result<()> {
     entry.passes += 1;
     let staged = format!(".{name}.again.tmp");
     let flags =
@@ -399,11 +389,14 @@ fn again(dir: &OwnedFd, name: &str, mut entry: Entry) {
         .and_then(|body| {
             let file = openat(dir, &staged, flags, Mode::RUSR | Mode::WUSR)?;
             fs::File::from(file).write_all(&body)
+        })
+        .and_then(|()| {
+            renameat(dir, &staged, dir, format!("{name}.taking")).map_err(std::io::Error::from)
         });
-    if written.is_ok() {
-        let _ = linkat(dir, &staged, dir, format!("{name}.json"), AtFlags::empty());
+    if written.is_err() {
+        let _ = unlinkat(dir, &staged, AtFlags::empty());
     }
-    let _ = unlinkat(dir, &staged, AtFlags::empty());
+    written
 }
 
 /// Lands every claimed conversation, earliest first within each source.
