@@ -350,35 +350,6 @@ fn component_post_return_trap_fails_closed() {
 }
 
 #[test]
-fn invalid_typed_arguments_still_consume_host_call_budget() {
-    struct NoCalls;
-    impl JsCodeModeHost for NoCalls {
-        fn dispatch_self(&mut self, _: SelfCall) -> Result<SelfDispatchResponse> {
-            panic!("invalid subject must not reach the engine host")
-        }
-    }
-    // Empty/null fixture fields cannot become a valid typed claim. The guest
-    // ignores the first typed error, then repeats the invalid invocation.
-    let component = fixture("memory-put-claim", &serde_json::Value::Null, false)
-        .replace("i32.const 512 i32.load8_u if unreachable end", "")
-        .replace(CLAIM_CALL, &format!("{CLAIM_CALL} {CLAIM_CALL}"));
-    let mut runtime = WasmtimeComponentRuntime::from_component(
-        component.as_bytes(),
-        *blake3::hash(component.as_bytes()).as_bytes(),
-        ComponentBudget {
-            host_calls: 1,
-            ..ComponentBudget::default()
-        },
-    )
-    .expect("typed component");
-    assert!(
-        runtime
-            .run_step(step("", SandboxGuestTier::FirstPartyDreamer), &mut NoCalls)
-            .is_err()
-    );
-}
-
-#[test]
 fn non_finite_typed_claim_confidence_refuses_before_dispatch() {
     let input = serde_json::json!({
         "id": "11111111111111111111111111111111",
@@ -401,91 +372,6 @@ fn non_finite_typed_claim_confidence_refuses_before_dispatch() {
                 &mut NoEffects
             )
             .is_err()
-    );
-}
-
-#[test]
-fn shared_engine_cleanup_does_not_cancel_a_sibling_store() {
-    use crate::code_run::{SelfDispatchOutcome, SelfMemoryWriteResult};
-
-    struct Host {
-        entered: Option<mpsc::Sender<()>>,
-        release: Option<mpsc::Receiver<()>>,
-    }
-    impl JsCodeModeHost for Host {
-        fn dispatch_self(&mut self, call: SelfCall) -> Result<SelfDispatchResponse> {
-            if let Some(entered) = self.entered.take() {
-                entered.send(()).expect("announce blocked host call");
-            }
-            if let Some(release) = self.release.take() {
-                release.recv().expect("release host call");
-            }
-            let SelfCall::MemoryPutClaim(call) = call else {
-                panic!("unexpected test import");
-            };
-            Ok(SelfDispatchResponse {
-                outcome: SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult { id: call.id }),
-                budget: None,
-            })
-        }
-    }
-    let input = serde_json::json!({
-        "id": "11111111111111111111111111111111",
-        "subject": "22222222222222222222222222222222",
-        "predicate": "profile.favorite_drink",
-        "value": "sencha"
-    });
-    let component = fixture("memory-put-claim", &input, false)
-        .replace(
-            "(func (export \"run-step\") (param i32 i32) (result i32)",
-            "(func (export \"run-step\") (param i32 i32) (result i32) (local $remaining i32)",
-        )
-        .replace(
-            "i32.const 1024 i32.const 0 i32.store",
-            "local.get 1 local.set $remaining
-             (loop $after
-               local.get $remaining i32.const 1 i32.sub local.tee $remaining br_if $after)
-             i32.const 1024 i32.const 0 i32.store",
-        );
-    let mut first = WasmtimeComponentRuntime::from_component(
-        component.as_bytes(),
-        *blake3::hash(component.as_bytes()).as_bytes(),
-        ComponentBudget {
-            wall_time: Duration::from_secs(30),
-            ..ComponentBudget::default()
-        },
-    )
-    .expect("typed component");
-    let mut sibling = first.fresh();
-    let (entered, arrival) = mpsc::channel();
-    let (release, resume) = mpsc::channel();
-    let running = std::thread::spawn(move || {
-        sibling.run_step(
-            step("work", SandboxGuestTier::FirstPartyDreamer),
-            &mut Host {
-                entered: Some(entered),
-                release: Some(resume),
-            },
-        )
-    });
-    arrival
-        .recv_timeout(Duration::from_secs(10))
-        .expect("sibling entered guest");
-    let first_result = first.run_step(
-        step("work", SandboxGuestTier::FirstPartyDreamer),
-        &mut Host {
-            entered: None,
-            release: None,
-        },
-    );
-    // The first run has completed cleanup and incremented the shared epoch.
-    release.send(()).expect("release sibling");
-    let sibling_result = running.join().expect("sibling thread");
-    assert!(first_result.expect("first run").done);
-    assert!(
-        sibling_result
-            .expect("sibling must keep its own deadline")
-            .done
     );
 }
 

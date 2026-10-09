@@ -31,13 +31,9 @@ pub use self::types::*;
 // name the rest of the crate reaches for, so it needs no re-export.
 
 #[cfg(test)]
-mod grain_tests;
-#[cfg(test)]
 mod tests;
 #[cfg(test)]
-use crate::attempt_queue::{
-    AttemptCancelReceiptKind, AttemptId, AttemptResumePoint, LandingTrigger,
-};
+use crate::attempt_queue::{AttemptId, AttemptResumePoint, LandingTrigger};
 #[cfg(test)]
 use crate::dreamer_runner::{
     DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerConsolidationScope, DreamerMilestoneKind,

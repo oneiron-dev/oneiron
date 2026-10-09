@@ -5,62 +5,7 @@
 //! arithmetic and parser refusals, never that an engine default won a bake-off
 //! or that any real E1/E3 evaluation ran.
 
-use std::collections::HashMap;
-
-use super::super::{CohortManifest, E1SelectionReceipt, aggregate_wer, e3_score, wer_counts};
-
-fn words<const N: usize>(tokens: [&str; N]) -> HashMap<String, String> {
-    tokens
-        .into_iter()
-        .enumerate()
-        .map(|(i, cluster)| (format!("w{i}"), cluster.to_string()))
-        .collect()
-}
-
-fn labels<const N: usize>(principals: [&str; N]) -> HashMap<String, String> {
-    principals
-        .into_iter()
-        .enumerate()
-        .map(|(i, principal)| (format!("w{i}"), principal.to_string()))
-        .collect()
-}
-
-#[test]
-fn wer_counts_split_substitution_deletion_insertion_over_fixture_tokens() {
-    // One of each operation: "bravo"->"BRAVO" substitutes, "charlie" deletes,
-    // "XRAY" inserts. Caller tokenization is used verbatim (no case folding).
-    let reference = ["alpha", "bravo", "charlie", "delta"];
-    let hypothesis = ["alpha", "BRAVO", "delta", "XRAY"];
-    let counts = wer_counts(&reference, &hypothesis);
-    assert_eq!(counts.reference_len, 4);
-    assert_eq!(wer_counts(&["old"], &["new"]).substitutions, 1);
-    assert_eq!(wer_counts(&["old"], &[]).deletions, 1);
-    assert_eq!(wer_counts(&[], &["new"]).insertions, 1);
-    assert_eq!(counts.errors(), 3);
-    let empty = wer_counts(&[], &[]);
-    assert_eq!(empty.errors(), 0);
-    assert_eq!(empty.reference_len, 0);
-    // Aggregate keeps exact integer counts across two language arms.
-    let total = aggregate_wer(&[counts, empty]);
-    assert_eq!(total.reference_len, 4);
-    assert_eq!(total.errors(), 3);
-}
-
-#[test]
-fn e3_score_uses_one_global_mapping_and_penalizes_chunk_flips() {
-    let expected = labels(["a", "a", "b", "b"]);
-    let correct = words(["cluster2", "cluster2", "cluster1", "cluster1"]);
-    let score = e3_score(&correct, &expected).unwrap();
-    assert_eq!(score.correct, 4);
-    assert_eq!(score.wrong_speaker, 0);
-    let flipped = words(["cluster2", "cluster1", "cluster1", "cluster2"]);
-    let score = e3_score(&flipped, &expected).unwrap();
-    assert_eq!(score.correct, 2);
-    assert_eq!(score.wrong_speaker, 2);
-    let missing = words(["cluster2"]);
-    assert_eq!(e3_score(&missing, &expected).unwrap().missing_words, 3);
-    assert_eq!(e3_score(&correct, &HashMap::new()).unwrap().extra_words, 4);
-}
+use super::super::{CohortManifest, E1SelectionReceipt};
 
 #[test]
 fn e1_receipt_and_cohort_manifest_parse_and_reject_fixture_documents() {

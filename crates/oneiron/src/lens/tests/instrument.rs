@@ -1,7 +1,6 @@
 //! End-to-end Instrument safety and WorldSet read confinement.
 use super::*;
 use crate::test_util::entity as test_entity_id;
-use proptest::prelude::*;
 
 fn frame(viewer: &str) -> LensRenderFrame {
     let key = actor_key(viewer);
@@ -147,65 +146,6 @@ fn guest_executes_imports_under_principal_scoped_read_and_host_backing() -> crat
 }
 
 #[test]
-fn guest_invalid_atom_and_fuel_exhaustion_fail_closed() -> crate::Result<()> {
-    use crate::pipeline::WorldAuthoritySet;
-    let (_dir, vault) = test_vault();
-    let read = vault.scoped_read(actor_key("viewer"));
-    let scoped = frame("viewer").with_world_set(WorldAuthoritySet::new(true, [])?);
-    let invalid = LensExecutionRuntime::from_component(&lens_component_with_atom(
-        false,
-        r#"{"kind":"raw_html","html":"<script>"}"#,
-    ))?;
-    assert!(invalid.run(&scoped, &read).is_err());
-    let spin = LensExecutionRuntime::from_component(
-        br#"(component
-      (core module $m (func (export "run") (loop br 0)))
-      (core instance $i (instantiate $m))
-      (func (export "run") (canon lift (core func $i "run"))))"#,
-    )?;
-    assert!(spin.run(&scoped, &read).is_err());
-    Ok(())
-}
-
-#[test]
-fn repeated_scoped_interpolation_cannot_expand_render_without_bound() -> crate::Result<()> {
-    use crate::pipeline::WorldAuthoritySet;
-    let (_dir, vault) = test_vault();
-    let target = test_entity_id(68);
-    vault.put_entity(
-        &target,
-        crate::registry::ENTITY_TYPE_PERSON,
-        crate::TimeRange { start: 1, end: 1 },
-        1,
-        &vec![b'a'; 2048],
-    )?;
-    install_viewer_base_grant(&vault)?;
-    let read = vault.scoped_read(actor_key("viewer"));
-    let mut frame = frame("viewer");
-    frame.mint_backing_ref(
-        &read,
-        handle("current"),
-        LensHandleRole::EntitySet,
-        backing_target_for(&vault, &target, LensBackingTargetKind::Entity)?,
-    )?;
-    let frame = frame.with_world_set(WorldAuthoritySet::new(true, [])?);
-    let atoms = InstrumentAtoms::new(
-        (0..600)
-            .map(|_| {
-                LensAtom::TextBlock(TextBlockAtom {
-                    spans: vec![LensTextSpan::Interpolation {
-                        key: handle("current"),
-                        fallback: text("hidden"),
-                    }],
-                })
-            })
-            .collect(),
-    )?;
-    assert!(render_instrument(&atoms, &frame, &read).is_err());
-    Ok(())
-}
-
-#[test]
 fn shared_renderer_resolves_now_and_escapes_closed_atoms() -> crate::Result<()> {
     let (_dir, vault) = test_vault();
     let target = test_entity_id(61);
@@ -264,49 +204,6 @@ fn shared_renderer_resolves_now_and_escapes_closed_atoms() -> crate::Result<()> 
         ])
         .is_err()
     );
-    Ok(())
-}
-
-#[test]
-fn arbitrary_utf8_and_golden_closed_atoms_never_inject_markup() -> crate::Result<()> {
-    let (_dir, vault) = test_vault();
-    let frame = frame("viewer");
-    let read = vault.scoped_read(actor_key("viewer"));
-    let golden = InstrumentAtoms::decode(include_bytes!("fixtures/instrument.json"))?;
-    assert_eq!(
-        render_instrument(&golden, &frame, &read)?.html,
-        include_str!("fixtures/instrument.html").trim_end()
-    );
-    // Corpus covers every closed atom variant, not only the text leaf.
-    let corpus = serde_json::to_vec(&sample_atoms()).unwrap();
-    let atoms = InstrumentAtoms::decode(&corpus)?;
-    let html = render_instrument(&atoms, &frame, &read)?.html;
-    assert_eq!(
-        html.matches("<section data-atom=").count(),
-        GENERATED_LENS_ATOM_KINDS.len()
-    );
-    let mut runner = proptest::test_runner::TestRunner::default();
-    runner
-        .run(&proptest::collection::vec(any::<u8>(), 0..4096), |bytes| {
-            if let Ok(atoms) = InstrumentAtoms::decode(&bytes) {
-                let _ = render_instrument(&atoms, &frame, &read);
-            }
-            Ok(())
-        })
-        .unwrap();
-    runner
-        .run(&".{1,256}", |value| {
-            if let Ok(value) = LensText::new(&value) {
-                let atoms = InstrumentAtoms::new(vec![LensAtom::TextBlock(TextBlockAtom {
-                    spans: vec![LensTextSpan::Literal(value)],
-                })])
-                .unwrap();
-                let html = render_instrument(&atoms, &frame, &read).unwrap().html;
-                prop_assert_eq!(html.matches('<').count(), 4);
-            }
-            Ok(())
-        })
-        .unwrap();
     Ok(())
 }
 

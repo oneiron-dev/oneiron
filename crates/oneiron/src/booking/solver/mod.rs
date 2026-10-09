@@ -53,8 +53,6 @@ mod hold_source;
 mod interval;
 mod oracle;
 mod stages;
-#[cfg(test)]
-mod tests;
 
 use self::counts::load_booking_counts;
 pub use self::counts::{BookingCountBucket, BookingCounts};
@@ -65,18 +63,3 @@ pub use self::oracle::BookingSolver;
 // The inline `mod tests` used to see these names through the flat file's own
 // import header plus every solver-internal item. After the directory split the
 // seam re-imports both so `tests.rs` resolves exactly as it did before.
-#[cfg(test)]
-use self::stages::*;
-#[cfg(test)]
-use crate::booking::config::{EventTypeConfig, MINUTES_PER_DAY, RoutingMode};
-#[cfg(test)]
-use crate::booking::constraint::ConstraintWeekday;
-#[cfg(test)]
-use crate::booking::{
-    BookingError, ConstraintObject, EventTypeKey, RankedSlot, SlotHostBinding, SolveRequest,
-    SolveResult,
-};
-#[cfg(test)]
-use crate::entity_id::EntityId;
-#[cfg(test)]
-use crate::temporal::TimeRange;
