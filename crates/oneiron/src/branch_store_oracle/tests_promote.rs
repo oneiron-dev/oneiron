@@ -56,13 +56,13 @@ fn promote_replays_exactly_one_turn_subgraph() -> Result<()> {
 }
 
 /// §4 exact attribution-edge set: base gains the promoted turn's three
-/// ratified attribution edges plus its structural `ChildOf(turn -> shell)` —
-/// no extras, none missing.
+/// ratified attribution edges, its authorship edge and its structural
+/// `ChildOf(turn -> shell)` — no extras, none missing.
 ///
-/// The room ALSO journals `AuthoredBy(message -> actor)` for a non-`System`
-/// author, and that edge is deliberately NOT promoted: its target is a base
-/// identity the closure does not own, so it points out of the subgraph the
-/// user consented to publish. It stays in the overlay and evaporates at close.
+/// ARCH-0052 #d4 (REV-9 item 5): promote selects the turn's attribution
+/// edges, `AuthoredBy(message -> actor)` included, so a promoted message
+/// lands in base with its author. The actor is a base identity, not a
+/// closure member.
 #[test]
 fn promote_attribution_edge_set_is_exact() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -84,14 +84,15 @@ fn promote_attribution_edge_set_is_exact() -> Result<()> {
     let rtxn = vault.store.env.read_txn()?;
     // The FULL promoted edge set, every edge with exact endpoints
     // (codex F9): PartOf(msg -> turn), DerivedFrom(summary -> turn),
-    // BelongsTo(msg -> shell), and ChildOf(turn -> shell) — and nothing else.
+    // BelongsTo(msg -> shell), AuthoredBy(msg -> actor) and
+    // ChildOf(turn -> shell) — and nothing else.
     assert_eq!(
         vault.store.edges_out.len(&rtxn)? - edges_before,
-        4,
-        "three attribution edges plus the structural ChildOf replay — no extras"
+        5,
+        "four attribution edges plus the structural ChildOf replay — no extras"
     );
     // Base census delta == exactly the promoted subgraph: 4 entities in,
-    // 4 edges each direction (three attribution edges plus structural ChildOf),
+    // 5 edges each direction (four attribution edges plus structural ChildOf),
     // nothing else entity/edge-shaped.
     assert_eq!(
         vault.store.entities.len(&rtxn)? - entities_before,
@@ -100,8 +101,8 @@ fn promote_attribution_edge_set_is_exact() -> Result<()> {
     );
     assert_eq!(
         vault.store.edges_in.len(&rtxn)? - edges_before,
-        4,
-        "the reverse-edge mirror carries the same four edges"
+        5,
+        "the reverse-edge mirror carries the same five edges"
     );
     drop(rtxn);
     assert_eq!(
@@ -117,17 +118,16 @@ fn promote_attribution_edge_set_is_exact() -> Result<()> {
         vec![shell],
         "the message belongs to exactly the fresh conversation shell"
     );
-    assert!(
-        vault
-            .targets(&msg, crate::edge::EdgeKind::AuthoredBy, None)?
-            .is_empty(),
-        "the authorship edge leaves the closure and must not reach base"
+    assert_eq!(
+        vault.targets(&msg, crate::edge::EdgeKind::AuthoredBy, None)?,
+        vec![actor],
+        "the promoted message keeps its author"
     );
     assert!(
         vault
             .sources(&actor, crate::edge::EdgeKind::AuthoredBy, None)?
-            .is_empty(),
-        "the actor gains no promoted in-edge"
+            .contains(&msg),
+        "the actor gains the promoted authorship in-edge"
     );
     session.close()?;
     Ok(())

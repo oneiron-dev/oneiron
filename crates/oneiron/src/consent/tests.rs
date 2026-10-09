@@ -15,6 +15,7 @@ use crate::registry::ENTITY_TYPE_PERSON;
 use crate::temporal::TimeRange;
 use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
 
+mod bypass;
 mod owner_reason;
 mod shared_brief;
 
@@ -1110,6 +1111,7 @@ fn projected_contact_scope_preserves_lattice_containment_and_silent_reuse() {
             decision_id: GateDecisionId::now(),
         },
         created_at: 1,
+        bypass: None,
     };
     let stored =
         decode_consent_grant_row(&encode_consent_grant_row(&row).expect("encode")).expect("decode");
@@ -1278,6 +1280,7 @@ fn consent_grant_row_round_trips_and_rejects_malformed_bodies() {
             status: ConsentGrantStatus::Active,
             owner_stamp: owner_stamp.clone(),
             created_at: 99,
+            bypass: None,
         };
         let bytes = encode_consent_grant_row(&row).expect("encode");
         assert_eq!(decode_consent_grant_row(&bytes).expect("decode"), row);
