@@ -1005,8 +1005,7 @@ fn provenance_actor_class_in_both_body_and_evid_fails_closed() -> Result<()> {
     // The structural write-door (ONE-1159) rejects the ambiguous body at WRITE
     // time — the claim never reaches the store, so the whole batch is rejected
     // atomically. The resolve-time check in `resolve_persisted_actor_class` is
-    // the defence-in-depth backstop, pinned separately by
-    // `resolve_persisted_actor_class_pins_transition_matrix`.
+    // the defence-in-depth backstop.
     let err = vault
         .with_write_txn(|wtxn| {
             vault

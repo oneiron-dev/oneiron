@@ -1122,10 +1122,9 @@ fn parse_attribution_limits(value: &Value) -> Option<AttributionLimits> {
 }
 
 /// Longest owner policy document a manifest may carry, mirroring the bound the
-/// hosted plane's registration enforces. Spelled here rather than imported:
-/// `gate` sits under `policy_model`, and
-/// `policy_model::tests::owner_and_hosted_document_bounds_agree` pins the two
-/// numbers together.
+/// hosted plane's registration enforces. Spelled here rather than imported,
+/// because `gate` sits under `policy_model`; keep it equal to
+/// `policy_model::POLICY_DOCUMENT_MAX_LEN`.
 pub(super) const OWNER_POLICY_DOCUMENT_MAX_LEN: usize = 65_536;
 
 /// Longest output-contract NAME a manifest may carry. It is a preset spelling

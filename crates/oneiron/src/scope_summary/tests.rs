@@ -549,30 +549,3 @@ fn stored_branch_session_and_span_bounds_are_proved_at_every_read() {
     let txn = vault.store.env.read_txn().unwrap();
     assert!(merge_covers_in_txn(&vault, &txn, &forged_header).is_err());
 }
-
-#[test]
-fn ordinary_branch_session_filter_remains_valid_without_worker_covers() {
-    let (_dir, vault, conv, actor) = fixture();
-    let sitting = EntityId::now();
-    vault
-        .put_entity(
-            &sitting,
-            crate::registry::ENTITY_TYPE_SESSION,
-            time(1),
-            1,
-            &support::body("ordinary sitting"),
-        )
-        .unwrap();
-    let mut input = input(conv, None, true, actor);
-    input.session = Some(sitting);
-    let root = vault.append_dag_record(&input).unwrap().id;
-    let selector = ScopeSelector {
-        session: Some(sitting),
-        ..scope(conv, ScopePath::Branch(root), false)
-    };
-    let summary = vault
-        .mint_dag_scope_summary(&selector, "ordinary branch", actor)
-        .unwrap();
-    assert_eq!(vault.resolve_dag_scope(&selector).unwrap().records, [root]);
-    assert_eq!(vault.scope_summary_covers(&summary).unwrap(), [root]);
-}

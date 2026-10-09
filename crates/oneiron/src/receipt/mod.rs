@@ -103,21 +103,12 @@ pub(crate) fn validate_put(
 // through `use super::*`; after the directory split the seam re-imports them so
 // the extracted sibling `tests.rs` resolves exactly as it did inline.
 #[cfg(test)]
-use self::family::{SYSTEM_NOTICE_AUDIENCE_ALL, SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY};
-#[cfg(test)]
 use self::kernel::{
-    DEFAULT_RECEIPT_QUERY_LIMIT, FIELD_ACTIVATED_MEMORY_IDS, FIELD_BOARD_STATE_REF,
-    FIELD_DISCLOSURE_STAMP, FIELD_MODEL, FIELD_PERSONA_COMPILE_STAMP, FIELD_PROMPT_INPUT_REF,
-    FIELD_REASONING_EFFORT, FIELD_SUBSTRATE_REF, RECEIPT_VIEW_COMPONENT, attempt_pack_scan_capped,
-    gate_receipt_max_buffered, reset_attempt_pack_scan_capped, reset_gate_receipt_pages_scanned,
+    attempt_pack_scan_capped, gate_receipt_max_buffered, reset_attempt_pack_scan_capped,
+    reset_gate_receipt_pages_scanned,
 };
 #[cfg(test)]
 use self::ledgers::{attempt_pack_receipts, decode_durable_send_receipt};
-#[cfg(test)]
-use self::projection::{
-    counterparty_contact_records_for_receipts, finalize_receipt_query_records,
-    project_receipts_by_counterparty_with_contacts, project_receipts_by_grant_limited,
-};
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
@@ -129,13 +120,11 @@ use crate::entity_id::EntityId;
 #[cfg(test)]
 use crate::error::{Error, Result};
 #[cfg(test)]
-use crate::outbound::OutboundIntent;
-#[cfg(test)]
 use crate::prompt::PromptRecompileStamp;
 #[cfg(test)]
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 #[cfg(test)]
-use crate::store::{GateDecisionRecord, GateSystemNoticeRecord, SEND_RECEIPT_RECORD_VERSION};
+use crate::store::{GateDecisionRecord, SEND_RECEIPT_RECORD_VERSION};
 #[cfg(test)]
 use serde::Serialize;
 #[cfg(test)]

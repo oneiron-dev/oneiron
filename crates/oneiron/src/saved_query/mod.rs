@@ -105,24 +105,12 @@ pub use self::pack_drift::{
 // module through `use super::*`; after the directory split the seam re-imports
 // them so the extracted sibling `tests.rs` resolves exactly as it did inline.
 #[cfg(test)]
-use self::evaluator::{
-    CollectedEvidence, claim_effective_at, claim_in_scope, decode_judge_decision, evidence_to_json,
-    semantic_decision,
-};
-#[cfg(test)]
-use self::lifecycle::validate_definition;
-#[cfg(test)]
-use self::membership::watermark_verdict;
-#[cfg(test)]
 use self::storage::{
-    MEMBERSHIP_EVENTS, MEMOS, decode_memo_row, decode_watermark, definition_from_json,
-    definition_to_json, encode_memo_row, encode_watermark, event_pair_prefix,
+    MEMBERSHIP_EVENTS, MEMOS, decode_memo_row, decode_watermark, encode_memo_row, encode_watermark,
+    event_pair_prefix,
 };
 #[cfg(test)]
-use self::support::{
-    EVALUATOR_VERSION, MICROS_PER_UNIT, cosine_similarity_micros, hex_lower, rmpv_to_json,
-    vector_pair_fingerprint,
-};
+use self::support::{EVALUATOR_VERSION, hex_lower, rmpv_to_json};
 
 // Referenced only by an intra-doc link in this module's header; gated so the
 // name is in scope for rustdoc without being an unused import.

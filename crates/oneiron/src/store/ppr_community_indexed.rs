@@ -76,11 +76,6 @@ impl IndexedRows<'_, '_> {
 }
 
 impl Store {
-    #[cfg(test)]
-    pub(crate) fn take_ppr_community_read_work(&self) -> (usize, usize) {
-        QUERY_READ_WORK.with(|work| work.replace((0, 0)))
-    }
-
     /// Validate metadata before choosing the current indexed path. Missing or
     /// stale metadata sends queries to the strict full-family refresh path.
     pub(crate) fn ppr_community_meta_in_txn(

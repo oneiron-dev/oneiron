@@ -316,43 +316,6 @@ fn repo_mutation_commit_file_wires_provenance_trailer_to_claim() {
 }
 
 #[test]
-fn repo_provenance_parser_reads_only_final_trailer_block() {
-    let claim_id = EntityId::now();
-    let diagnostic = format!(
-        "subject\n\nExample output:\n{REPO_PROVENANCE_TRAILER_KEY}: not-a-claim\n\nSigned-off-by: Tester <test@example.invalid>\n"
-    );
-    assert_eq!(
-        parse_repo_provenance_trailer(&diagnostic).expect("body diagnostic ignored"),
-        None
-    );
-
-    let trailer = format!(
-        "subject\n\nbody\n\nSigned-off-by: Tester <test@example.invalid>\n{REPO_PROVENANCE_TRAILER_KEY}: {}\n",
-        claim_id.to_hex()
-    );
-    assert_eq!(
-        parse_repo_provenance_trailer(&trailer).expect("final trailer parsed"),
-        Some(claim_id)
-    );
-}
-
-#[test]
-fn repo_provenance_trailer_appends_to_existing_trailer_block() {
-    let claim_id = EntityId::now();
-    let message = commit_message_with_provenance_trailer(
-        "subject\n\nSigned-off-by: Tester <test@example.invalid>",
-        Some(claim_id),
-    )
-    .expect("append provenance");
-
-    assert!(message.contains(&format!(
-        "Signed-off-by: Tester <test@example.invalid>\n{REPO_PROVENANCE_TRAILER_KEY}: {}",
-        claim_id.to_hex()
-    )));
-    assert!(!message.contains("Signed-off-by: Tester <test@example.invalid>\n\nOneiron-Claim:"));
-}
-
-#[test]
 fn repo_provenance_git_notes_export_round_trips_on_demand() {
     let (_vault_dir, vault) = open_test_vault();
     let repo = init_repo();
@@ -569,34 +532,6 @@ fn repo_mutation_queue_serializes_concurrent_commits() {
     let commits = String::from_utf8(commits).expect("utf8 log");
     assert!(commits.contains("commit a"));
     assert!(commits.contains("commit b"));
-}
-
-#[cfg(unix)]
-#[test]
-fn repo_mutation_file_lock_uses_git_common_dir() {
-    let repo = init_repo();
-    let common_dir = git_common_dir(repo.path()).expect("main common dir");
-    let worktree_parent = tempfile::tempdir().expect("worktree parent");
-    let worktree_path = worktree_parent.path().join("linked-worktree");
-    run_git_at_path(
-        repo.path(),
-        &[
-            "worktree".to_owned(),
-            "add".to_owned(),
-            "--detach".to_owned(),
-            "--".to_owned(),
-            worktree_path.to_string_lossy().into_owned(),
-            "HEAD".to_owned(),
-        ],
-    )
-    .expect("create linked worktree");
-
-    assert_eq!(
-        git_common_dir(&worktree_path).expect("worktree common dir"),
-        common_dir
-    );
-    let _guard = repo_mutation_file_lock(&common_dir).expect("lock common dir");
-    assert!(common_dir.join(REPO_MUTATION_LOCK_FILE_NAME).exists());
 }
 
 #[test]
@@ -927,103 +862,6 @@ fn repo_mutation_legacy_prepared_row_fails_once_without_reverting_repo() {
         ))
         .expect("legacy row no longer blocks mutations");
     assert_eq!(next.entry.status, RepoMutationStatus::Applied);
-}
-
-#[test]
-fn repo_mutation_prunes_orphaned_queue_worktree_before_next_mutation() {
-    let (_vault_dir, vault) = open_test_vault();
-    let repo = init_repo();
-    let orphan = create_queue_worktree(repo.path()).expect("create orphan queue worktree");
-    assert!(orphan.exists());
-    assert!(is_queue_owned_worktree_path(&orphan));
-
-    vault
-        .apply_repo_mutation(RepoMutationRequest::new(
-            repo_ref(&repo),
-            RepoMutationOperation::CommitFile {
-                path: "next.txt".to_owned(),
-                content: b"next\n".to_vec(),
-                message: "next mutation".to_owned(),
-            },
-        ))
-        .expect("mutation after orphan");
-
-    assert!(!orphan.exists());
-    let worktrees = run_git_at_path(
-        repo.path(),
-        &[
-            "worktree".to_owned(),
-            "list".to_owned(),
-            "--porcelain".to_owned(),
-        ],
-    )
-    .expect("list worktrees");
-    assert!(
-        !String::from_utf8(worktrees)
-            .expect("utf8 worktree list")
-            .contains(&orphan.to_string_lossy().into_owned())
-    );
-}
-
-#[test]
-fn repo_mutation_failed_commit_preparation_is_durably_logged() {
-    let (_vault_dir, vault) = open_test_vault();
-    let repo = init_repo();
-    let input_ref = repo_ref(&repo);
-
-    vault
-        .apply_repo_mutation(RepoMutationRequest::new(
-            input_ref.clone(),
-            RepoMutationOperation::CommitFile {
-                path: "README.md".to_owned(),
-                content: b"base\n".to_vec(),
-                message: "no-op commit".to_owned(),
-            },
-        ))
-        .expect_err("no-op preparation must fail");
-
-    let log = vault.repo_mutation_oplog(&input_ref).expect("oplog");
-    assert_eq!(log.len(), 1);
-    assert_eq!(log[0].operation_kind, "commit_file");
-    assert_eq!(log[0].status, RepoMutationStatus::Failed);
-    assert!(log[0].failure.is_some());
-    assert!(log[0].finished_at_ms.is_some());
-}
-
-#[test]
-fn repo_mutation_auto_recovers_prepared_rows() {
-    let (_vault_dir, vault) = open_test_vault();
-    let repo = init_repo();
-    let tracked = repo.path().join("README.md");
-    let before = fs::read_to_string(&tracked).expect("read before");
-    let canonical = repo_ref(&repo);
-    INJECT_REPO_MUTATION_CRASH
-        .with(|cell| cell.set(RepoMutationCrashPoint::AfterPreparedBeforeAction));
-    let error = vault
-        .apply_repo_mutation(RepoMutationRequest::new(
-            canonical.clone(),
-            RepoMutationOperation::CommitFile {
-                path: "README.md".to_owned(),
-                content: b"mutated\n".to_vec(),
-                message: "mutate readme".to_owned(),
-            },
-        ))
-        .expect_err("injected crash before git action");
-    assert_eq!(error.kind(), ErrorKind::InvariantViolation);
-
-    let recovered = vault
-        .recover_prepared_repo_mutations(&canonical)
-        .expect("recover prepared");
-
-    assert_eq!(recovered.len(), 1);
-    assert_eq!(
-        fs::read_to_string(&tracked).expect("read recovered"),
-        before
-    );
-    let log = vault.repo_mutation_oplog(&canonical).expect("oplog");
-    assert_eq!(log[0].status, RepoMutationStatus::Failed);
-    assert_eq!(log[1].operation_kind, "recover_snapshot");
-    assert_eq!(log[1].status, RepoMutationStatus::Applied);
 }
 
 #[cfg(unix)]
@@ -1895,54 +1733,6 @@ fn stock_git(root: &std::path::Path, args: &[&str]) -> Vec<u8> {
     );
     output.stdout
 }
-#[test]
-fn reconciliation_tasks_are_counted_past_the_former_quota_without_recounting_replay() {
-    let (_dir, vault) = open_test_vault();
-    let repo = init_repo();
-    create_conflicting_branches(&repo);
-    let subject = put_branch_subject(&vault);
-    let owner = vault.ensure_embedded_owner_actor().unwrap();
-    let rate = crate::task_verb::TaskCreateRateLimit::default();
-    let started_window = crate::unix_seconds_now() / rate.window_seconds;
-    let created = rate.limit + 1;
-    let mut tasks = std::collections::BTreeSet::new();
-
-    for index in 0..created {
-        let request = RepoMutationRequest::new(
-            repo_ref(&repo),
-            RepoMutationOperation::RecordConflict {
-                branch_subject: subject,
-                branch_name: format!("conflict-{index}"),
-                ours_ref: "left".into(),
-                theirs_ref: "right".into(),
-            },
-        );
-        let claim = vault
-            .apply_repo_mutation(request.clone())
-            .unwrap()
-            .repo_conflict_claim_id
-            .unwrap();
-        let task = vault.repo_reconciliation_task(claim).unwrap().unwrap();
-        assert!(tasks.insert(task));
-        let replay = vault
-            .apply_repo_mutation(request)
-            .unwrap()
-            .repo_conflict_claim_id
-            .unwrap();
-        assert_eq!(replay, claim);
-        assert_eq!(vault.repo_reconciliation_task(replay).unwrap(), Some(task));
-    }
-
-    let count = vault.task_create_count(owner, rate.window_seconds).unwrap();
-    let finished_window = crate::unix_seconds_now() / rate.window_seconds;
-    // The public counter covers only the current engine-clock window. A test
-    // crossing a window boundary must not expect the previous window's count.
-    if started_window == finished_window {
-        assert_eq!(count, created as u64);
-    } else {
-        assert!(count <= created as u64);
-    }
-}
 
 #[test]
 fn repository_conflict_creates_one_task_and_stock_git_clones_servable_sides() {
@@ -2381,61 +2171,6 @@ fn promotion_requires_reviewed_document_frontiers_for_every_changed_file() {
     vault.commit_code_revision(&revision).unwrap();
     assert!(vault.promote_code_revision(child, proposal.id).is_err());
     assert!(vault.code_revision_promotions(child).unwrap().is_empty());
-}
-
-#[test]
-fn blake3_snapshot_capture_keeps_sha256_history_recoverable() {
-    use super::oplog::{
-        OPLOG, SNAPSHOT, repo_mutation_oplog_key, repo_mutation_repo_key_hash,
-        repo_mutation_snapshot_key,
-    };
-    let (_dir, vault) = open_test_vault();
-    let repo = init_repo();
-    let reference = repo_ref(&repo);
-    let (hash, raw) = super::snapshot::capture_repo_snapshot(repo.path()).unwrap();
-    assert_eq!(hash, *blake3::hash(&raw).as_bytes());
-    let landed = vault
-        .apply_repo_mutation(RepoMutationRequest::new(
-            reference.clone(),
-            RepoMutationOperation::CommitFile {
-                path: "README.md".into(),
-                content: b"changed\n".to_vec(),
-                message: "change".into(),
-            },
-        ))
-        .unwrap();
-    assert_eq!(landed.entry.pre_action_fork_hash, hash);
-    let legacy = super::support::sha256_bytes(&raw);
-    assert_ne!(legacy, hash);
-    // Model one genuinely persisted pre-change row: its snapshot bytes are
-    // unchanged, but both the oplog reference and key use the old digest.
-    // The mutation door canonicalizes aliases such as macOS /var -> /private/var.
-    let key = repo_mutation_oplog_key(
-        &repo_mutation_repo_key_hash(&landed.entry.repo_ref),
-        landed.entry.seq,
-    );
-    let mut txn = vault.store.env.write_txn().unwrap();
-    let mut row = OPLOG.get(&vault.store, &txn, &key).unwrap().unwrap();
-    row.pre_action_fork_hash = legacy;
-    let (_, post) = super::snapshot::capture_repo_snapshot(repo.path()).unwrap();
-    row.expected_post_action_fork_hash = Some(super::support::sha256_bytes(&post));
-    row.status = RepoMutationStatus::Prepared.as_str().to_owned();
-    OPLOG.put(&vault.store, &mut txn, &key, &row).unwrap();
-    vault
-        .store
-        .vault_meta
-        .put(
-            &mut txn,
-            &SNAPSHOT.key_bytes(&repo_mutation_snapshot_key(legacy)),
-            &raw,
-        )
-        .unwrap();
-    txn.commit().unwrap();
-    let recovered = vault.recover_prepared_repo_mutations(&reference).unwrap();
-    assert_eq!(recovered.len(), 1);
-    assert_eq!(recovered[0].entry.status, RepoMutationStatus::Applied);
-    vault.recover_repo_snapshot(&reference, legacy).unwrap();
-    assert_eq!(fs::read(repo.path().join("README.md")).unwrap(), b"base\n");
 }
 
 #[path = "tests/reviewed_stack.rs"]

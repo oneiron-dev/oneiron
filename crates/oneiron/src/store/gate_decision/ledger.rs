@@ -190,30 +190,6 @@ impl Store {
         Ok(())
     }
 
-    /// Removes the run sidecar for a test fixture's intentionally deleted
-    /// primary attempt row in the same transaction. Readers remain fail-closed
-    /// when a dangling sidecar is observed.
-    #[cfg(test)]
-    pub(crate) fn delete_attempt_run_index_in_txn(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        run_id: Option<&str>,
-        attempt_id: &[u8; 16],
-    ) -> Result<()> {
-        let Some(run_id) = run_id else {
-            return Ok(());
-        };
-        ATTEMPT_RUN_INDEX.delete(
-            self,
-            wtxn,
-            &suffix_of(
-                attempt_run_index_key(run_id, attempt_id),
-                ATTEMPT_RUN_INDEX_PREFIX,
-            ),
-        )?;
-        Ok(())
-    }
-
     pub(crate) fn attempt_ids_for_run_in_txn(
         &self,
         txn: &RoTxn<'_>,

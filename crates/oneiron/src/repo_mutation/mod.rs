@@ -44,25 +44,19 @@ pub(crate) use self::git::canonical_mutation_scope;
 use self::conflict::tree_hash_for_ref;
 #[cfg(test)]
 use self::git::{
-    canonical_repo_ref_for_root, current_head_commit, git_common_dir, resolve_mutable_repo_root,
-    run_git, run_git_at_path, validate_base_ref, validate_relative_repo_path,
+    canonical_repo_ref_for_root, current_head_commit, resolve_mutable_repo_root, run_git,
+    run_git_at_path, validate_base_ref, validate_relative_repo_path,
 };
 #[cfg(test)]
 use self::oplog::{OPLOG, repo_mutation_oplog_key, repo_mutation_repo_key_hash};
 #[cfg(test)]
-use self::queue::{
-    INJECT_REPO_MUTATION_CRASH, REPO_MUTATION_LOCK_FILE_NAME, RepoMutationCrashPoint,
-    repo_mutation_file_lock,
-};
+use self::queue::{INJECT_REPO_MUTATION_CRASH, RepoMutationCrashPoint};
 #[cfg(test)]
 use self::support::{path_arg, utf8_trimmed};
 #[cfg(test)]
-use self::trailer::{REPO_PROVENANCE_TRAILER_PREFIX, commit_message_with_provenance_trailer};
+use self::trailer::REPO_PROVENANCE_TRAILER_PREFIX;
 #[cfg(test)]
-use self::worktree::{
-    apply_prepared_commit_file, create_queue_worktree, is_queue_owned_worktree_path,
-    write_repo_file_no_symlink,
-};
+use self::worktree::{apply_prepared_commit_file, write_repo_file_no_symlink};
 
 #[cfg(test)]
 use crate::Vault;

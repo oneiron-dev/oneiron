@@ -193,6 +193,6 @@ use self::lifecycle::closed_claim_put_payload;
 #[cfg(test)]
 use crate::claim::{ClaimApprovalStatus, ClaimSubject, encode_claim_body};
 #[cfg(test)]
-use crate::edge::{EdgeActorClass, EdgeConfirmationStatus, EdgeKind};
+use crate::edge::{EdgeActorClass, EdgeKind};
 #[cfg(test)]
 use crate::temporal::TimeRange;

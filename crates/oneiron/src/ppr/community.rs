@@ -71,20 +71,6 @@ impl CommunityPprDiversity {
         Ok(())
     }
 }
-/// Uniform-only score adapter: keep the complete PPR channel for fusion.
-#[cfg(test)]
-pub(super) fn ppr_expand_in_txn_with_community_deferred_cache(
-    store: &Store,
-    txn: &RoTxn<'_>,
-    request: CommunityPprRequest<'_>,
-) -> Result<(
-    Vec<ScoredEntity>,
-    Option<DeferredPprCacheWrite>,
-    Option<CommunityPprDiversity>,
-)> {
-    let (result, diversity) = ppr_expand_in_txn_with_community_diagnostics(store, txn, request)?;
-    Ok((result.scores, result.deferred_cache_write, diversity))
-}
 pub(crate) fn ppr_expand_in_txn_with_community_diagnostics(
     store: &Store,
     txn: &RoTxn<'_>,

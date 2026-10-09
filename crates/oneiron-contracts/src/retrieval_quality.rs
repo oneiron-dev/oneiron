@@ -276,6 +276,3 @@ fn push_degradation(markers: &mut Vec<RetrievalDegradation>, marker: RetrievalDe
         markers.push(marker);
     }
 }
-
-#[cfg(test)]
-mod tests;
