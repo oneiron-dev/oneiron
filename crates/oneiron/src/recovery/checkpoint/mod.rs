@@ -328,8 +328,10 @@ impl Vault {
             return Err(codec_error());
         }
         // Authenticate every ORCB row against LIVE exterior custody before
-        // creating a destination. A checkpoint never carries a key copy.
-        crate::store::preflight_checkpoint_rows(&image.databases["vault_meta"])?;
+        // creating a destination. A checkpoint never carries a key copy, and
+        // a row whose key an erase destroyed since is dropped, not restored.
+        let erased_gate_rows =
+            crate::store::preflight_checkpoint_rows(&image.databases["vault_meta"])?;
         // Existing content is never replaced or partially restored over.
         std::fs::create_dir(destination)?;
         let vault = Self::open_owned(destination, config.clone())?;
@@ -345,6 +347,9 @@ impl Vault {
                     db.put(txn, key, value)?;
                 }
             }
+            vault
+                .store
+                .drop_erased_gate_decisions_in_txn(txn, &erased_gate_rows)?;
             // Open-time seed/backfill gates consult type indexes. Reconstruct this
             // mechanical projection before reopening; tokenizer/model work waits
             // until those compatibility gates have passed.

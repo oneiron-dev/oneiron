@@ -355,8 +355,12 @@ impl Vault {
         // One logical write in the single writer's group commit: the closure
         // runs in a transaction of its own, and `Ok` comes back only once the
         // shared commit is durable.
-        let (result, approved_vad_ids, proactivity_changed) =
+        let (result, approved_vad_ids, proactivity_changed, retirement_staged) =
             self.store.group_write_as(callback, None, |wtxn| {
+                let retirements_before = match self.store.gate_retirements_staged_in_txn(wtxn) {
+                    Ok(staged) => staged,
+                    Err(err) => return Rows::Discard(Err(E::from(err))),
+                };
                 let (result, postcommit) = {
                     let _active_write_txn = crate::store::active_write_txn_guard();
                     let vad_scope = crate::batch::VadPostcommitScope::new(self, wtxn);
@@ -365,16 +369,30 @@ impl Vault {
                         Err(err) => return Rows::Discard(Err(err)),
                     }
                 };
-                match self.resolved_dreamer_vad_approvals_in_txn(wtxn, postcommit.vad_ids) {
-                    Ok(approved) => {
-                        Rows::Commit((result, approved, postcommit.proactivity_changed))
-                    }
+                let approved =
+                    match self.resolved_dreamer_vad_approvals_in_txn(wtxn, postcommit.vad_ids) {
+                        Ok(approved) => approved,
+                        Err(err) => return Rows::Discard(Err(E::from(err))),
+                    };
+                // A claim delete applied in this write staged its key's
+                // retirement; destroy the key after the commit, not at the
+                // next retention pass.
+                match self.store.gate_retirements_staged_in_txn(wtxn) {
+                    Ok(staged) => Rows::Commit((
+                        result,
+                        approved,
+                        postcommit.proactivity_changed,
+                        staged != retirements_before,
+                    )),
                     Err(err) => Rows::Discard(Err(E::from(err))),
                 }
             })?;
         self.store.notify_attempt_observers();
         if proactivity_changed {
             self.store.notify_proactivity_changes();
+        }
+        if retirement_staged {
+            self.finish_gate_decision_retirements_after_commit();
         }
         // Approval is durable now. The canonical consolidator opens its own
         // writer; its failure is returned without rolling back Approved. The

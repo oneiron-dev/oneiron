@@ -27,7 +27,7 @@ pub use sweep_queue::arch0038_carrier_classes;
 pub use timeline::{
     HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
     MemoryOperationKind, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState,
-    NamedMemoryVerb,
+    NamedMemoryVerb, NamedMemoryVerbRefusal,
 };
 pub use tombstone::{
     DecodedTombstoneValue, DeleteReason, TOMBSTONE_VALUE_LEGACY_LEN, TOMBSTONE_VALUE_V2_LEN,

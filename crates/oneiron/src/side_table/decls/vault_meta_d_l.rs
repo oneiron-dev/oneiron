@@ -288,14 +288,18 @@ side_tables! {
     /// Exterior-key root binding of encrypted claim-bound gate decisions. Key: ().
     GATE_DECISION_CUSTODY_ROOT: VaultMeta b"gate_decision:custody_root:v1" Raw;
     GATE_DECISION_GRANT_REF_INDEX: VaultMeta b"gate_decision:grant_ref_index:v1:" Raw;
+    /// A committed erase whose claim-partition key retirement is still pending; the value is
+    /// the single byte 1. No hold defers that retirement or lands while it stands. Key: id16
+    /// (claim).
+    GATE_DECISION_PARTITION_ERASE_PENDING: VaultMeta b"gate_decision:partition_erase_pending:v1:" Raw;
     /// Legal hold on one exterior-key partition of the gate decision ledger; the value is the
     /// single byte 1. Key: 0 (claim-free partition) or 1 + id16 (claim).
     GATE_DECISION_PARTITION_HOLD: VaultMeta b"gate_decision:partition_hold:v1:" Raw;
     /// Latest retain-until stamp (u64be seconds) of a held gate decision partition. Key: 0
     /// (claim-free partition) or 1 + id16 (claim).
     GATE_DECISION_PARTITION_RETAIN_UNTIL: VaultMeta b"gate_decision:partition_retain_until:v1:" Raw;
-    /// Committed intent to retire one claim partition's exterior key, holding the key generation
-    /// (u64be) the sweep removed rows under. Key: id16 (claim).
+    /// Committed intent to retire one claim partition's exterior key, holding the newest key
+    /// generation (u64be) an erase or the sweep removed rows under. Key: id16 (claim).
     GATE_DECISION_PARTITION_RETIRE_PENDING: VaultMeta b"gate_decision:partition_retire_pending:v1:" Raw;
     /// Append-time retention ancestry of one gate decision; the retention-scope module's own
     /// layout. Key: id16 (decision).

@@ -3093,7 +3093,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1
      }
     },
@@ -10826,6 +10826,24 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "BypassActive",
+      "BypassExtent",
+      "BypassGrantWarning",
+      "BypassScope"
+     ],
+     "path": "src/consent/bypass.rs",
+     "purpose": "The scoped catastrophe bypass (DEC-0006 invariant 7, `#bypass-grant`)",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 1,
+      "fn": 7,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/consent/codec.rs",
      "purpose": "—",
@@ -10845,7 +10863,7 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 17,
       "fn": 17,
       "struct": 2
      }
@@ -10855,10 +10873,12 @@
      "kind": "src",
      "notable": [
       "CatastropheClass",
+      "CatastropheFloor",
       "ComposedEffect",
       "ConsentDecision",
       "EffectDigest",
       "EffectFacts",
+      "EffectPlace",
       "ReversibilityClass",
       "UndoFidelity"
      ],
@@ -10866,10 +10886,10 @@
      "purpose": "—",
      "surface": {
       "const": 3,
-      "crate-vis": 4,
+      "crate-vis": 7,
       "enum": 4,
-      "fn": 22,
-      "struct": 3
+      "fn": 31,
+      "struct": 5
      }
     },
     {
@@ -10890,7 +10910,7 @@
      "path": "src/consent/grant.rs",
      "purpose": "—",
      "surface": {
-      "const": 6,
+      "const": 8,
       "enum": 4,
       "fn": 16,
       "struct": 5,
@@ -10904,9 +10924,9 @@
      "path": "src/consent/mod.rs",
      "purpose": "DEC-0006 unified consent-mode — bounded standing grants",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 1,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -10973,6 +10993,14 @@
      "notable": [],
      "path": "src/consent/tests.rs",
      "purpose": "DEC-0006 unified consent-mode conformance",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/consent/tests/bypass.rs",
+     "purpose": "DEC-0006 invariant 7 and `#bypass-grant` (REV-9 item 4): the catastrophe floor is a versioned default policy…",
      "surface": {}
     },
     {
@@ -13179,13 +13207,14 @@
       "MemoryTimeline",
       "MemoryTimelineRecord",
       "MemoryTimelineRecordState",
-      "NamedMemoryVerb"
+      "NamedMemoryVerb",
+      "NamedMemoryVerbRefusal"
      ],
      "path": "src/deletion/timeline.rs",
      "purpose": "—",
      "surface": {
       "crate-vis": 8,
-      "enum": 5,
+      "enum": 6,
       "fn": 4,
       "struct": 3
      }
@@ -17988,7 +18017,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 65
+      "crate-vis": 66
      }
     },
     {
@@ -22426,7 +22455,7 @@
       "ArchivePurgePreview"
      ],
      "path": "src/memory/archive_purge.rs",
-     "purpose": "Owner-only archive impact preview and confirmed ARCH-0038 erasure",
+     "purpose": "Owner-only archive impact preview and confirmed ARCH-0038 delete",
      "surface": {
       "fn": 4,
       "struct": 2
@@ -24073,7 +24102,7 @@
      "path": "src/off_record/lifecycle/telemetry.rs",
      "purpose": "Retrieval-run registration door (register/finalize/discard, staged/published arms)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -27130,7 +27159,7 @@
      "path": "src/ppr/cache_store.rs",
      "purpose": "PPR cache constants, TTL policy, cache IO, and binary codec",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -29961,13 +29990,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/serialize/credential_nulling.rs",
      "purpose": "Unconditional credential removal before any context/export format writer",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -30256,7 +30285,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/session_overlay/journal.rs",
@@ -32353,7 +32382,7 @@
      "path": "src/store/gate_decision/claim_refs.rs",
      "purpose": "Inbox-bundle claim references and uncommitted batch-preflight markers: the two gate-decision sidecars…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -32367,13 +32396,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/store/gate_decision/ledger.rs",
      "purpose": "Gate-decision ledger Store methods plus the row append and record codec",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "fn": 1
      }
     },
@@ -32405,7 +32434,7 @@
      "path": "src/store/gate_decision/orcb.rs",
      "purpose": "ORCB v1: schema-only dictionary, per-claim hot-value AEAD and exterior key custody",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 15
      }
     },
     {
@@ -32415,8 +32444,8 @@
      "path": "src/store/gate_decision/retention.rs",
      "purpose": "Opt-in gate-decision age sweep over the actual ORCB custody unit",
      "surface": {
-      "crate-vis": 5,
-      "fn": 6
+      "crate-vis": 9,
+      "fn": 7
      }
     },
     {
@@ -38669,7 +38698,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 16,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -39504,7 +39533,7 @@
     "store": {
      "files": 57,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…"
     },
@@ -39670,10 +39699,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 26,
+   "over_bar": 27,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2394,
-   "test_files": 786
+   "source_files": 2395,
+   "test_files": 787
   },
   "oneiron-android": {
    "files": [
@@ -47615,7 +47644,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/core_memory_conversations.rs",
@@ -49695,7 +49724,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/server/lifecycle.rs",
