@@ -1,5 +1,6 @@
 //! The owner's own commands on a stopped vault: doctor, backup, restore,
-//! export, the secret scan switch, import consent and agent-run consent.
+//! window recovery, export, the secret scan switch, import consent and
+//! agent-run consent.
 //!
 //! Holding the vault's writer lease is the owner proof here, the same local
 //! door the embedded export uses; a running `serve` answers the same actions
@@ -12,8 +13,8 @@ use oneiron::run_tree::GateConsentBundleAction;
 use serde::Serialize;
 
 use crate::cli::{
-    BackupArgs, DoctorArgs, ExportArgs, ImportCommand, RestoreArgs, RunsCommand, SecretScanArgs,
-    SecretScanSwitch, WhoamiArgs,
+    BackupArgs, DoctorArgs, ExportArgs, ImportCommand, RecoverWindowArgs, RestoreArgs, RunsCommand,
+    SecretScanArgs, SecretScanSwitch, WhoamiArgs,
 };
 use crate::config::{
     BackupConfig, ServeArgs, ServeConfig, resolve_backup_config, resolve_serve_config,
@@ -46,6 +47,12 @@ fn vault_config(config: &ServeConfig) -> oneiron::VaultConfig {
 /// Opens the configured, existing vault for one owner command. `route` names
 /// the `/v1/owner` route to use instead while a server holds the vault.
 fn open_vault(config: &ServeConfig, route: &str) -> anyhow::Result<oneiron::Vault> {
+    open_stopped_vault(config, &format!("or ask it: `oneiron api raw {route}`"))
+}
+
+/// [`open_vault`] for a command no running server answers: `instead` says
+/// what to do while one holds the vault.
+fn open_stopped_vault(config: &ServeConfig, instead: &str) -> anyhow::Result<oneiron::Vault> {
     let path = &config.vault_path;
     anyhow::ensure!(
         path.join("data.mdb").is_file(),
@@ -54,8 +61,7 @@ fn open_vault(config: &ServeConfig, route: &str) -> anyhow::Result<oneiron::Vaul
     );
     oneiron::Vault::open_owned(path, vault_config(config)).map_err(|error| match error {
         oneiron::Error::ConcurrentWrite(oneiron::VAULT_WRITER_LEASE_HELD) => anyhow::anyhow!(
-            "vault {} is open in a running `oneiron serve`; stop it first, or ask it: \
-             `oneiron api raw {route}`",
+            "vault {} is open in a running `oneiron serve`; stop it first, {instead}",
             path.display()
         ),
         error => anyhow::anyhow!("open vault {}: {error}", path.display()),
@@ -163,6 +169,51 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
         &config.vault_path,
         vault_config(&config),
     )?)
+}
+
+#[derive(Serialize)]
+struct RecoveredWindow {
+    window: String,
+    /// `healthy`, `targeted_chunk_repair` or `full_rebuild`.
+    tier: &'static str,
+    /// The window's manifest of chunk hashes, kept for the next recovery.
+    manifest: std::path::PathBuf,
+    /// A bad manifest, renamed intact beside the manifest.
+    quarantined: Option<std::path::PathBuf>,
+    /// The chunks this recovery rebuilt.
+    rebuilt: Vec<String>,
+}
+
+/// Recovers one window of the stopped vault from a canonical snapshot of its
+/// CRDT state (ARCH-0038). Holding the writer lease stops the window's
+/// writers; the engine deletes the snapshot in the same act.
+pub fn recover_window(args: RecoverWindowArgs) -> anyhow::Result<()> {
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_stopped_vault(
+        &config,
+        "since a window recovers only with its writers stopped",
+    )?;
+    let owner = local_owner(&vault)?;
+    let dir = config.vault_path.join("recovery");
+    let report = vault
+        .recover_window_from_canonical_snapshot(
+            &owner,
+            &args.window,
+            &dir,
+            oneiron::recovery::RecoveryBudget::default(),
+        )
+        .map_err(|error| anyhow::anyhow!("recover window {}: {error}", args.window))?;
+    emit(&RecoveredWindow {
+        window: report.window,
+        tier: match report.tier {
+            oneiron::recovery::RecoveryTier::Healthy => "healthy",
+            oneiron::recovery::RecoveryTier::TargetedChunkRepair => "targeted_chunk_repair",
+            oneiron::recovery::RecoveryTier::FullRebuild => "full_rebuild",
+        },
+        manifest: report.manifest_path,
+        quarantined: report.quarantine_path,
+        rebuilt: report.obligations,
+    })
 }
 
 #[derive(Serialize)]

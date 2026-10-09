@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 mod canonical;
 mod document;
 mod ladder;
+#[cfg(feature = "sync")]
+mod maintenance;
 mod quarantine;
 mod redaction;
 mod snapshot_writer;
@@ -29,6 +31,8 @@ pub use document::{CanonicalDocument, CanonicalHead, CanonicalHeadMove};
 #[cfg(feature = "sync")]
 pub(crate) use document::{materialize_window_documents, validate_window_documents};
 pub use ladder::*;
+#[cfg(feature = "sync")]
+pub use maintenance::WindowRecoveryReport;
 use quarantine::quarantine_invalid_artifact;
 pub use snapshot_writer::write_canonical_window_snapshot;
 
@@ -276,6 +280,8 @@ fn invalid_artifact_path(path: &Path, suffix: u16) -> PathBuf {
 
 #[cfg(test)]
 mod canonical_tests;
+#[cfg(all(test, feature = "sync"))]
+mod maintenance_tests;
 #[cfg(test)]
 mod tests;
 

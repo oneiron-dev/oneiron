@@ -1,6 +1,6 @@
-//! Flags for the owner's own commands: doctor, backup, restore, export, the
-//! secret scan switch, importing history, import consent and agent-run
-//! consent.
+//! Flags for the owner's own commands: doctor, backup, restore, window
+//! recovery, export, the secret scan switch, importing history, import
+//! consent and agent-run consent.
 //!
 //! Every command that opens the vault reads the same config as `serve`
 //! (`--config`, `--vault-path`, `ONEIRON_*`) and needs the vault stopped: the
@@ -66,6 +66,15 @@ pub struct RestoreArgs {
     /// copy in it, at `<DIR>/vault`.
     #[arg(long, requires = "rehearse")]
     pub scratch: Option<PathBuf>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct RecoverWindowArgs {
+    /// The sync window: `YYYY-MM`, or `YYYY-MM@<world id>`.
+    pub window: String,
 
     #[command(flatten)]
     pub serve: ServeArgs,

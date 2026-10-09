@@ -8,8 +8,8 @@ use crate::config::ServeArgs;
 mod owner_args;
 pub use owner_args::{
     BackupArgs, DoctorArgs, ExportArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs,
-    ImportSourceArgs, RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand, SecretScanArgs,
-    SecretScanSwitch, ServeOnlyArgs, WhoamiArgs,
+    ImportSourceArgs, RecoverWindowArgs, RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand,
+    SecretScanArgs, SecretScanSwitch, ServeOnlyArgs, WhoamiArgs,
 };
 
 const DEFAULT_SERVER_DIMENSIONS: usize = 4096;
@@ -55,6 +55,10 @@ pub enum Command {
     /// Restore a backup over a stopped vault, or `--rehearse` it in a
     /// scratch copy without touching the vault.
     Restore(Box<RestoreArgs>),
+    /// Rebuild one sync window of a stopped vault from a canonical snapshot
+    /// of its CRDT state, repairing its rows. The snapshot is deleted in the
+    /// same act; only the window's manifest is kept.
+    RecoverWindow(Box<RecoverWindowArgs>),
     /// Export the whole vault in one of five formats.
     Export(Box<ExportArgs>),
     /// Turn the write-door secret scan on or off, or show it.
@@ -448,6 +452,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Whoami(args) => commands::whoami(*args),
         Command::Backup(args) => commands::backup(*args),
         Command::Restore(args) => commands::restore(*args),
+        Command::RecoverWindow(args) => commands::recover_window(*args),
         Command::Export(args) => commands::export(*args),
         Command::SecretScan(args) => commands::secret_scan(*args),
         Command::Import(command) => commands::import(command),
