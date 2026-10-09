@@ -109,6 +109,9 @@ pub struct SyncServer {
     /// Attached by the serve path after construction, like the embedder.
     pub(crate) tagger: Option<TaggerSlot>,
     pub(crate) llm: Option<(Arc<dyn oneiron::LlmBackend>, oneiron::BudgetGuard)>,
+    /// Model seats, background AI status and the Dreamer's session hints.
+    /// Inert unless the serve path attaches a configured host.
+    pub(crate) ai: crate::ai_host::AiHandle,
     /// Host-injected, request-by-request egress decision for nonlocal extraction.
     pub(crate) extraction_egress: Option<Arc<dyn oneiron::llm::ExtractionEgressPredicate>>,
     /// The vault's path, backup plan and schedule, set by `serve`. `None`
@@ -146,9 +149,7 @@ impl SyncServer {
         // An empty configured secret mints nothing either: it carries no key
         // material, and every upgrade bearing it (or nothing) still 401s at
         // the auth door, so booting rootless here is fail-closed, not open.
-        if vault.privacy_posture() != oneiron::HostingPrivacyPosture::Relay
-            && let Some(secret) = config.auth_secret.as_deref().filter(|s| !s.is_empty())
-        {
+        if let Some(secret) = host_root_secret(&vault, &config) {
             let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
             vault.ensure_host_root_slip(&issuer)?;
             // The engine's MACHINE writers sign with host-held keys (ONE-1634).
@@ -254,6 +255,7 @@ impl SyncServer {
             embedder: None,
             tagger: None,
             llm: None,
+            ai: crate::ai_host::AiHandle::inert(),
             extraction_egress: None,
             owner_host: None,
             #[cfg(test)]
@@ -344,6 +346,24 @@ impl SyncServer {
         self
     }
 
+    /// Attaches the AI host's handle. When `[models]` configured any model,
+    /// the raw `/v1/llm` routes get its router and their own meter: the
+    /// config is the host injection `with_llm_backend` names.
+    #[must_use]
+    pub fn with_ai(mut self, ai: crate::ai_host::AiHandle) -> Self {
+        if let Some(raw) = ai.raw_inference() {
+            self.llm = Some(raw);
+        }
+        self.ai = ai;
+        self
+    }
+
+    /// Whether boot rooted this vault and provisioned the engine's machine
+    /// writers (the Dreamer among them).
+    pub(crate) fn host_root_provisioned(&self) -> bool {
+        host_root_secret(&self.vault, &self.config).is_some()
+    }
+
     /// Install the host's extraction egress predicate. An absent predicate
     /// refuses nonlocal extraction rather than trusting an editable default.
     pub fn with_extraction_egress(
@@ -395,6 +415,19 @@ impl SyncServer {
             })
             .expect("fetch_update closure always returns Some")
     }
+}
+
+/// Genuine host authority exists only off the relay posture and with a
+/// non-empty configured secret. Dev/no-secret and blind-relay modes mint
+/// nothing.
+fn host_root_secret<'c>(vault: &oneiron::Vault, config: &'c SyncServerConfig) -> Option<&'c str> {
+    if vault.privacy_posture() == oneiron::HostingPrivacyPosture::Relay {
+        return None;
+    }
+    config
+        .auth_secret
+        .as_deref()
+        .filter(|secret| !secret.is_empty())
 }
 
 fn mcp_registry_hash_key(config: &SyncServerConfig) -> [u8; 32] {
