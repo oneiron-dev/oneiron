@@ -953,6 +953,86 @@ mod tests {
         Ok(())
     }
 
+    /// Bug repro (Astra access follow-ups, final round, finding 2): a
+    /// relationship delete that fails to apply because a protection gate
+    /// cannot decode its own state (here the local pack-map head pin) is
+    /// undecided, not refused. The relationship is fenced and grants nothing
+    /// while the retry is pending.
+    #[cfg(feature = "sync")]
+    #[test]
+    fn a_delete_whose_protection_cannot_be_read_grants_nothing() -> Result<()> {
+        use crate::sync::bridge::Materializer;
+        use crate::sync::loro_support::{export_all_updates, import_doc, map_insert_bytes};
+
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let vault = std::sync::Arc::new(vault);
+        let share = RelationshipShare::new(&vault);
+        assert!(share.reads_as(&vault, share.member)?);
+        vault.with_write_txn(|txn| {
+            vault.store.vault_meta.put(
+                txn,
+                b"pack_byte_map:local_head:v1".as_slice(),
+                b"not a head pin".as_slice(),
+            )?;
+            Ok(())
+        })?;
+
+        let peer = loro::LoroDoc::new();
+        map_insert_bytes(
+            &peer.get_map("tombstones"),
+            &share.space.to_hex(),
+            &peer_soft_tombstone(),
+        )?;
+        peer.commit();
+        let window = base_window(&vault, &share.space)?;
+        let loaded = crate::sync::window::LoadedWindow::new(
+            "local",
+            crate::sync::WindowKey::try_new(&window).expect("a window key"),
+            &vault,
+            &std::sync::Arc::new(Materializer::new()),
+        );
+        import_doc(&loaded.doc, &export_all_updates(&peer)?)?;
+        loaded.persist_state(&vault)?;
+        assert!(has_body(&vault, &share.space)?, "the delete did not apply");
+        assert!(
+            !share.reads_as(&vault, share.member)?,
+            "an undecided delete grants nothing"
+        );
+        Ok(())
+    }
+
+    /// Bug repro (Astra access follow-ups, final round, finding 3): a window
+    /// snapshot persisted through the standalone door, from a document no
+    /// observer applied, deletes what its tombstones delete. The relationship
+    /// grants nothing at once.
+    #[cfg(feature = "sync")]
+    #[test]
+    fn a_delete_persisted_without_its_observer_grants_nothing() -> Result<()> {
+        use crate::sync::loro_support::map_insert_bytes;
+
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let share = RelationshipShare::new(&vault);
+        assert!(share.reads_as(&vault, share.member)?);
+        let key = crate::sync::WindowKey::try_new(&base_window(&vault, &share.space)?)
+            .expect("a window key");
+        let doc = crate::sync::schema::create_window_doc("standalone", &key);
+        map_insert_bytes(
+            &doc.get_map("tombstones"),
+            &share.space.to_hex(),
+            &peer_soft_tombstone(),
+        )?;
+        doc.commit();
+        crate::sync::server_state::persist_window_snapshot(&vault, &key, &doc)?;
+        assert!(has_body(&vault, &share.space)?);
+        assert!(
+            !share.reads_as(&vault, share.member)?,
+            "the persisted delete grants nothing"
+        );
+        Ok(())
+    }
+
     /// Bug repro (Astra #1322 finding 2): grants whose deletes this vault
     /// accepted but failed to apply, stored under a snapshot of their base
     /// window, authorize neither a companion profile read (the server's

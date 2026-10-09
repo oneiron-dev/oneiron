@@ -1382,16 +1382,11 @@ fn persist_received_turn_tombstone(vault: &crate::Vault, turn: EntityId, raw_val
     )
     .unwrap();
     doc.commit();
-    let snapshot = crate::sync::loro_support::export_snapshot(&doc).unwrap();
-    let vv = crate::sync::loro_support::doc_version_vector(&doc);
-    vault
-        .with_write_txn(|txn| {
-            crate::sync::window::persist_window_doc_in_txn(vault, txn, &key, &snapshot, &vv)
-        })
-        .unwrap();
+    crate::sync::server_state::persist_window_snapshot(vault, &key, &doc).unwrap();
+    assert!(vault.is_deleted_shell(&turn).unwrap());
     assert!(
         vault.get_raw_unsealed(&turn).unwrap().is_some(),
-        "a persisted tombstone scrubs nothing before its replay"
+        "window visibility precedes active-store scrub"
     );
 }
 

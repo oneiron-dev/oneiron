@@ -311,6 +311,37 @@ impl Vault {
         Ok(())
     }
 
+    /// Whether `error` from [`Self::replayed_tombstone_protection_in_txn`] is
+    /// one of its gates affirmatively refusing the delete, rather than a
+    /// failure to read or decode the state that decides it. Each refusal is
+    /// matched exactly as its gate returns it, reason included, because some
+    /// share an error variant with that gate's decode failures. Anything else
+    /// leaves the delete undecided.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    pub(super) fn is_replayed_tombstone_refusal(error: &Error) -> bool {
+        use crate::error::{ArtifactError, SyncError};
+        use crate::identity_topology::IdentityTopologyRejection;
+        matches!(
+            error,
+            Error::Registry(
+                RegistryError::DreamerActorImmutable
+                    | RegistryError::MaintenanceKindNotWritable(_)
+                    | RegistryError::InvalidPackByteMap(
+                        "current local pack map carrier cannot be deleted"
+                    )
+            ) | Error::InvalidClaimBody(
+                "administrative ruling authority or immutable history"
+                    | "esign events are append-only"
+            ) | Error::Artifact(ArtifactError::InvalidLfsObject(
+                "delete the lfs object, not a shared chunk"
+            )) | Error::Sync(SyncError::IdentityTopologyRejected(
+                IdentityTopologyRejection::ActiveMergeParticipantDeletion { .. }
+            )) | Error::InvariantViolation(
+                "cleanup archives cannot be replayed as deletion intent"
+            )
+        )
+    }
+
     /// [`Vault::read_entity_header`](crate::Vault::read_entity_header) against
     /// a caller-owned snapshot: the delete-protection gate of a batched replay
     /// must read the same state its writes will land in, not a second snapshot
