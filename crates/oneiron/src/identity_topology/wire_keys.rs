@@ -84,6 +84,10 @@ pub(super) const BODY_KEY_FACETS: &str = "facets";
 /// bodies byte-identical to their pre-ONE-1745 encoding.
 pub(super) const BODY_KEY_APPLIED_ASSIGNED: &str = "asg";
 pub(super) const BODY_KEY_APPLIED_RESIDUE: &str = "res";
+/// The origin claims a facet event forked (r9), sorted by id. Each fork's id
+/// derives from the event and its origin, so this list is the undo door's
+/// authoritative dependency set. Omitted from the wire when empty.
+pub(super) const BODY_KEY_FORKED: &str = "frk";
 /// Normalized distinct-pair keys (ONE-1746), shared by the type-76
 /// `assert_distinct` event body AND the `entity.distinct_from` claim value:
 /// one pair shape with one spelling, so the two surfaces cannot drift.

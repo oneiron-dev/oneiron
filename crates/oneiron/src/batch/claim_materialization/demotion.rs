@@ -95,7 +95,7 @@ pub(super) fn successor_body(prior: &ClaimBody, succession: ClaimSuccession) -> 
             next.confidence = confidence;
             stamp_rung(&mut next, "weakened")?;
         }
-        ClaimSuccession::Fork { facet } => {
+        ClaimSuccession::Fork { facet, .. } => {
             if facet == prior.scope_facet {
                 return Err(binding_error());
             }

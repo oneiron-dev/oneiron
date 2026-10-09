@@ -308,6 +308,12 @@ impl VerifiedClaimTransition {
             .is_some_and(|raw| blake3::hash(&raw).as_bytes() == &self.prior_hash))
     }
 
+    /// The predecessor a succession proof was derived from; `None` for an
+    /// in-place transition of its own row.
+    pub(crate) fn predecessor(&self) -> Option<EntityId> {
+        self.successor_of
+    }
+
     pub(crate) fn matches_op(&self, op: &BatchOp) -> bool {
         matches!(op, BatchOp::Put { id, entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred, learned_at, data, allow_maintenance: false,

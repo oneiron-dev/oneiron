@@ -269,6 +269,33 @@ impl RefinementAdmissionProof {
     }
 }
 
+/// A sealed transition of a stored claim that already carries the refinement
+/// marker continues that admitted refinement: the marker passed this guard
+/// once, and the proof binds this exact Put to that row. A succession (a
+/// weakening or a facet fork) continues its predecessor; an in-place
+/// transition (a demotion or a close) continues the row it rewrites.
+fn continues_admitted_refinement(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &crate::claim::ClaimBody,
+    transition: Option<&crate::batch::VerifiedClaimTransition>,
+) -> Result<bool> {
+    let Some(proof) = transition else {
+        return Ok(false);
+    };
+    if !proof.matches_body(store, txn, id, body)? {
+        return Ok(false);
+    }
+    let carrier = proof.predecessor().unwrap_or(*id);
+    let Some(raw) = store.entities.get(txn, carrier.as_bytes())? else {
+        return Ok(false);
+    };
+    let prior =
+        crate::claim::decode_claim_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], true)?;
+    Ok(declares_refinement(&prior))
+}
+
 fn declares_refinement(body: &crate::claim::ClaimBody) -> bool {
     body.evidence.as_ref().is_some_and(|evidence| {
         evidence.as_map().is_some_and(|fields| {
@@ -336,6 +363,7 @@ pub(crate) fn validate_refinement_admission(
     kind: u8,
     data: &[u8],
     proof: Option<&RefinementAdmissionProof>,
+    transition: Option<&crate::batch::VerifiedClaimTransition>,
 ) -> Result<()> {
     let origin = CLAIM_ORIGIN.get(store, txn, id)?;
     let skill_origin = SKILL_ORIGIN.get(store, txn, id)?;
@@ -400,6 +428,7 @@ pub(crate) fn validate_refinement_admission(
             if declares_refinement(&body)
                 && (body.approval != crate::claim::ClaimApprovalStatus::Proposed
                     || body.session_tag.is_none())
+                && !continues_admitted_refinement(store, txn, id, &body, transition)?
             {
                 return Err(invalid(
                     "refinement origin cannot publish without local proof",

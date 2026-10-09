@@ -30,6 +30,16 @@ fn package(name: &str, version: &str, body: &str) -> HubPackage {
     )])
     .expect("package")
 }
+/// A delta of the fixture base that also asks for a tool: a permission
+/// widening, which still needs the owner's answer to merge.
+fn widened_package() -> HubPackage {
+    super::folder::package_from_files(vec![HubFile::new(
+        "SKILL.md",
+        b"---\nname: fixture.base\ndescription: fixture\nversion: 2\nallowed-tools: [\"read_file\"]\n---\ncheck result\n"
+            .to_vec(),
+    )])
+    .expect("widened package")
+}
 struct Fixture {
     vault: Vault,
     _temp: tempfile::TempDir,
@@ -816,7 +826,8 @@ impl UsefulUpstreamJudge for WrongQuestion {
 #[test]
 fn merge_refuses_non_system_one_and_unbound_receipts_without_spending_consent() -> Result<()> {
     let fixture = Fixture::new();
-    let offered = encode_hub_package(&package("fixture.base", "2", "check result"))?;
+    // A widening delta, so the merge spends an owner answer a bad verdict must not burn.
+    let offered = encode_hub_package(&widened_package())?;
     let id = fixture.vault.submit_shared_skill_delta(
         &fixture.baseline,
         &offered,
@@ -830,6 +841,9 @@ fn merge_refuses_non_system_one_and_unbound_receipts_without_spending_consent() 
         fixture
             .vault
             .prepare_shared_skill_merge(id, fixture.resident, useful_question(id))?;
+    fixture
+        .vault
+        .approve_shared_skill_merge(&ask, &fixture.owner)?;
     assert!(
         fixture
             .vault
@@ -1153,7 +1167,8 @@ fn shared_merge_scans_questions_and_provider_receipts_before_any_ruling() -> Res
     for useful in [false, true] {
         let fixture = Fixture::new();
         let replay = Replay::new(true);
-        let offered = encode_hub_package(&package("fixture.base", "2", "check result"))?;
+        // A widening delta, so the merge spends an owner answer a secret must not burn.
+        let offered = encode_hub_package(&widened_package())?;
         let id = fixture.vault.submit_shared_skill_delta(
             &fixture.baseline,
             &offered,
@@ -1176,6 +1191,9 @@ fn shared_merge_scans_questions_and_provider_receipts_before_any_ruling() -> Res
             fixture
                 .vault
                 .prepare_shared_skill_merge(id, fixture.resident, useful_question(id))?;
+        fixture
+            .vault
+            .approve_shared_skill_merge(&ask, &fixture.owner)?;
         assert!(
             fixture
                 .vault
@@ -2178,12 +2196,7 @@ fn shared_merge_lands_without_approval_and_rolls_back_to_the_old_revision() -> R
 #[test]
 fn shared_merge_that_widens_permissions_waits_for_the_owner() -> Result<()> {
     let fixture = Fixture::new();
-    let widened = super::folder::package_from_files(vec![HubFile::new(
-        "SKILL.md",
-        b"---\nname: fixture.base\ndescription: fixture\nversion: 2\nallowed-tools: [\"read_file\"]\n---\ncheck result\n"
-            .to_vec(),
-    )])?;
-    let merged = submit_fixture_delta(&fixture, &widened)?;
+    let merged = submit_fixture_delta(&fixture, &widened_package())?;
     let ask = fixture.vault.prepare_shared_skill_merge(
         merged,
         fixture.resident,
@@ -2229,5 +2242,118 @@ fn shared_merge_that_widens_permissions_waits_for_the_owner() -> Result<()> {
             .lifecycle_status,
         SkillLifecycle::Active
     );
+    Ok(())
+}
+
+/// Scores instructions that say "twice" above any that do not, so a delta can
+/// beat a stored revision the default fixture scorer already rates highest.
+struct PrefersTwice;
+impl HeldOutReplayScorer for PrefersTwice {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
+    fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
+        assert!(!case.held_out_receipts.is_empty());
+        Ok(if case.instructions.contains("twice") {
+            0.95
+        } else {
+            0.2
+        })
+    }
+}
+
+/// Rolling back a merge over a stored revision restores that revision's own
+/// source in its own format: a native tree byte for byte (its version is
+/// native metadata), a folder tree with only its frontmatter version renewed.
+#[test]
+fn rollback_restores_a_stored_revision_in_its_own_format() -> Result<()> {
+    for format in [SkillPackageFormat::Native, SkillPackageFormat::Folder] {
+        let fixture = Fixture::new();
+        let (original, publisher) = fixture.hub(SkillHubTrustTier::Community);
+        // Version "1": the held-out reserve stamps that version on its receipts.
+        let mut stored = package("fixture.stored", "1", "check result");
+        if format == SkillPackageFormat::Native {
+            stored.files = vec![HubFile::new(
+                "SKILL.md",
+                b"---\nname: source-name\n---\ncheck result\n".to_vec(),
+            )];
+            stored.format = SkillPackageFormat::Native;
+        }
+        stored.record.content_hash = Some(stored.content_hash()?);
+        let source = HubRef::new(
+            original.hub_id,
+            "stored",
+            HubPin::ContentHash(stored.content_hash()?.to_hex()),
+        )?;
+        let base = fixture
+            .vault
+            .import_skill_from_hub(&source, &stored, at(20), 20)?;
+        let ask = fixture.vault.prepare_marketplace_activation(
+            base,
+            &source,
+            &publisher,
+            fixture.baseline,
+        )?;
+        fixture
+            .vault
+            .approve_marketplace_activation(&ask, &fixture.owner)?;
+        let HubAdmissionDisposition::Ruled(admitted) =
+            fixture
+                .vault
+                .admit_marketplace_skill(&ask, &Replay::new(true), at(22), 22)?
+        else {
+            panic!("consented stored source")
+        };
+        assert!(admitted.accepted);
+        reserve(&fixture.vault, &base, "fixture.stored");
+
+        let merged = fixture.vault.submit_shared_skill_delta(
+            &base,
+            &encode_hub_package(&package("fixture.stored", "2", "check the result twice"))?,
+            SharedSkillLane::FederationMergeBack,
+            "member:fixture",
+            &EntityId::now(),
+            at(30),
+            30,
+        )?;
+        let merge_ask = fixture.vault.prepare_shared_skill_merge(
+            merged,
+            fixture.resident,
+            useful_question(merged),
+        )?;
+        let SharedSkillMergeDisposition::Ruled(receipt) = fixture.vault.merge_shared_skill_delta(
+            &merge_ask,
+            &Useful(true),
+            &PrefersTwice,
+            at(31),
+            31,
+        )?
+        else {
+            panic!("a reversible merge needs no approval");
+        };
+        assert!(receipt.accepted);
+
+        let restored = fixture
+            .vault
+            .roll_back_shared_skill_merge(&merged, at(40), 40)?;
+        let record = fixture
+            .vault
+            .get_skill_record(&restored)?
+            .expect("restoring revision");
+        assert_eq!(record.lifecycle_status, SkillLifecycle::Active);
+        let txn = fixture.vault.store.env.read_txn()?;
+        let source = fixture
+            .vault
+            .export_hub_package_in_txn(&txn, &restored)?
+            .expect("restored source package");
+        assert_eq!(source.format, format);
+        match format {
+            SkillPackageFormat::Native => assert_eq!(source.files, stored.files),
+            SkillPackageFormat::Folder => assert_eq!(
+                source.files,
+                package("fixture.stored", &record.version, "check result").files
+            ),
+        }
+    }
     Ok(())
 }

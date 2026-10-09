@@ -80,12 +80,21 @@ impl Vault {
                 entity,
                 facets,
                 reassignment,
+                applied_assigned,
+                forked,
                 ..
             } => {
+                // A facet event from before forks existed restamped its claims
+                // and recorded no forks, so there is nothing to send home.
+                if *applied_assigned != forked.len() as u64 {
+                    return Err(Error::Sync(SyncError::IdentityTopologyRejected(
+                        IdentityTopologyRejection::NotUndoable { event: *event },
+                    )));
+                }
                 return self.undo_facet_event_in_txn(
                     wtxn,
                     event,
-                    (*entity, facets),
+                    (*entity, facets, forked),
                     reassignment,
                     write,
                     now,
@@ -164,15 +173,16 @@ impl Vault {
     /// minted masks are archived, not deleted: detached from the entity, with
     /// their rows kept, because the closed forks still name them.
     ///
-    /// The event must not be undone already, and no later write may have
-    /// touched one of its forks (closed, demoted or edited it); either is
-    /// [`IdentityTopologyRejection::NotCurrent`]. `Proposed` parks the
-    /// counter-event and moves nothing.
+    /// The event must not be undone already, every fork it lists must be
+    /// present (a replica may not have received them all yet), and no later
+    /// write may have touched one (closed, demoted, re-weighted, unlinked or
+    /// edited it); otherwise [`IdentityTopologyRejection::NotCurrent`].
+    /// `Proposed` parks the counter-event and moves nothing.
     fn undo_facet_event_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         event: &EntityId,
-        (entity, facets): (EntityId, &[EntityId]),
+        (entity, facets, forked): (EntityId, &[EntityId], &[EntityId]),
         reassignment: &ReassignmentMap,
         write: &IdentityOpWrite,
         now: u64,
@@ -190,25 +200,33 @@ impl Vault {
             return Err(not_current());
         }
         let mut forks = Vec::new();
-        for entry in &reassignment.entries {
-            let (ClaimSubject::Entity(origin), ReassignmentTarget::Facet { index }) =
-                (&entry.item, entry.target)
-            else {
-                continue;
-            };
-            let Some(mask) = facets.get(index as usize) else {
-                continue;
-            };
+        for origin in forked {
+            let mask = reassignment
+                .entries
+                .iter()
+                .find_map(|entry| match (&entry.item, entry.target) {
+                    (ClaimSubject::Entity(item), ReassignmentTarget::Facet { index })
+                        if item == origin =>
+                    {
+                        facets.get(index as usize).copied()
+                    }
+                    _ => None,
+                })
+                .ok_or_else(not_current)?;
             let fork = facet_fork_id(event, origin)?;
-            // No fork row: the apply dropped this assignment (a closed or
-            // foreign claim), so there is nothing to send home.
-            let Some(fork_body) = self.get_claim_in_txn(&*wtxn, &fork)? else {
-                continue;
-            };
+            // A listed fork that is absent has not replicated here yet, or was
+            // deleted since: the undo would strand it under an archived mask.
+            let fork_body = self
+                .get_claim_in_txn(&*wtxn, &fork)?
+                .ok_or_else(not_current)?;
             let origin_body = self
                 .get_claim_in_txn(&*wtxn, origin)?
                 .ok_or_else(not_current)?;
-            if !fork_untouched(&origin_body, &fork_body, *mask) {
+            if !fork_untouched(&origin_body, &fork_body, mask)
+                || self.claim_of_weight_in_txn(&*wtxn, origin, &origin_body)?
+                    != self.claim_of_weight_in_txn(&*wtxn, &fork, &fork_body)?
+                || !self.fork_links_intact_in_txn(&*wtxn, &fork, origin, mask)?
+            {
                 return Err(not_current());
             }
             forks.push((*origin, fork, origin_body.scope_facet));
@@ -218,17 +236,9 @@ impl Vault {
         if write.is_effective() {
             for (origin, fork, home) in forks {
                 let restore = self.store.clock.entity_id()?;
-                crate::batch::ClaimMaterialization::apply_successor(
-                    self,
-                    wtxn,
-                    &fork,
-                    &restore,
-                    ClaimSuccession::Fork { facet: home },
-                    now,
-                )?;
                 // The restore wears its origin's stamp exactly: a `facet_of`
                 // edge only where the origin carried one.
-                let stamped = crate::ports::EdgeStoreRead::port_edge_get(
+                let stamp = crate::ports::EdgeStoreRead::port_edge_get(
                     &self.store,
                     &*wtxn,
                     &origin,
@@ -236,11 +246,15 @@ impl Vault {
                     &home,
                 )?
                 .is_some();
-                let mut links = self.batch_in();
-                if stamped {
-                    links = links.edge(&restore, EdgeKind::FacetOf, &home, 1.0);
-                }
-                links
+                crate::batch::ClaimMaterialization::apply_successor(
+                    self,
+                    wtxn,
+                    &fork,
+                    &restore,
+                    ClaimSuccession::Fork { facet: home, stamp },
+                    now,
+                )?;
+                self.batch_in()
                     .edge(&restore, EdgeKind::DerivedFrom, &origin, 1.0)
                     .apply(wtxn)?;
                 self.supersede_claim_in_txn(wtxn, &restore, &fork, now)?;
@@ -263,6 +277,51 @@ impl Vault {
             effects,
             Vec::new(),
         )
+    }
+}
+
+impl Vault {
+    /// The links the facet op gave a fork: its mask stamp, its lineage to
+    /// the origin, and the supersession that closed the origin.
+    fn fork_links_intact_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fork: &EntityId,
+        origin: &EntityId,
+        mask: EntityId,
+    ) -> Result<bool> {
+        for (kind, target) in [
+            (EdgeKind::FacetOf, mask),
+            (EdgeKind::DerivedFrom, *origin),
+            (EdgeKind::Supersedes, *origin),
+        ] {
+            if crate::ports::EdgeStoreRead::port_edge_get(&self.store, txn, fork, kind, &target)?
+                .is_none()
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// The claim's `claim_of` weight onto its entity subject, if it has one.
+    fn claim_of_weight_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        claim: &EntityId,
+        body: &ClaimBody,
+    ) -> Result<Option<f32>> {
+        let ClaimSubject::Entity(subject) = body.subject else {
+            return Ok(None);
+        };
+        Ok(crate::ports::EdgeStoreRead::port_edge_get(
+            &self.store,
+            txn,
+            claim,
+            EdgeKind::ClaimOf,
+            &subject,
+        )?
+        .map(|edge| edge.weight))
     }
 }
 

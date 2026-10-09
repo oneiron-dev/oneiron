@@ -131,7 +131,15 @@ pub(in crate::batch) fn apply_put(
     // transaction rematerializing its OWN session's closure, carried on the
     // same write origin the K4 decode-point guard reads.
     reject_overlay_member_base_write(store, &id, origin)?;
-    validate_refinement_admission(store, wtxn, &id, entity_type, data, refinement_admission)?;
+    validate_refinement_admission(
+        store,
+        wtxn,
+        &id,
+        entity_type,
+        data,
+        refinement_admission,
+        transition,
+    )?;
     crate::claim::validate_claim_write_target_in_txn(store, wtxn, &id, allow_reserved_predicate)?;
     // Type-byte validation runs in `apply_ops` (public-vs-maintenance gate:
     // public writes reject engine-authored system kinds, the sync

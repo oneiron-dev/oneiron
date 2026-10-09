@@ -299,6 +299,8 @@ impl Vault {
     ///
     /// Refuses unless `merged` is the active revision a shared merge admitted.
     /// Once a later revision has superseded it, roll that one back instead.
+    /// A protected (identity/alignment) revision never rolls back here, as it
+    /// never merges here: the owner edits it by hand.
     pub fn roll_back_shared_skill_merge(
         &self,
         merged: &EntityId,
@@ -316,20 +318,23 @@ impl Vault {
             let base = EntityId::from_hex(base).map_err(|_| invalid("merge base is malformed"))?;
             let current = self.read_skill_record_in_txn(txn, merged)?;
             let displaced = self.read_skill_record_in_txn(txn, &base)?;
+            let protected = |record: &SkillRecord| {
+                record
+                    .governance_tier
+                    .is_some_and(crate::skill::SkillGovernanceTier::is_protected)
+            };
             if control.state != RefinementState::Admitted
                 || current.lifecycle_status != SkillLifecycle::Active
                 || displaced.lifecycle_status != SkillLifecycle::Superseded
+                || protected(&current)
+                || protected(&displaced)
             {
                 return Err(not_rollbackable());
             }
-            let version = format!("{}-restore-{}", displaced.version, &merged.to_hex()[..12]);
-            let package = self
-                .export_hub_package_in_txn(txn, &base)?
-                .map(|package| restored_package(&package, &version))
-                .transpose()?;
             let mut record = displaced.clone();
-            record.version = version;
-            record.content_hash = package.as_ref().map(HubPackage::content_hash).transpose()?;
+            record.version = restore_version(&displaced.version, merged);
+            // The rollback restores content; the current governance state stays.
+            record.governance_tier = current.governance_tier;
             record.lifecycle_status = SkillLifecycle::Candidate;
             record.approval_status = crate::claim::ClaimApprovalStatus::Proposed;
             let mut provenance = match &displaced.provenance {
@@ -343,6 +348,11 @@ impl Vault {
             provenance.push(("source".into(), "shared-skill-rollback".into()));
             provenance.push(("restores".into(), base.to_hex().into()));
             record.provenance = rmpv::Value::Map(provenance);
+            let package = self
+                .export_hub_package_in_txn(txn, &base)?
+                .map(|package| restored_package(&package, &record))
+                .transpose()?;
+            record.content_hash = package.as_ref().map(HubPackage::content_hash).transpose()?;
             self.put_skill_record_in_txn(txn, &restore, &record, occurred, learned_at)?;
             if let Some(package) = &package {
                 self.persist_hub_package_in_txn(txn, &restore, package)?;
@@ -581,11 +591,40 @@ pub(super) fn checked_useful_decision(
     }
 }
 
-/// The displaced revision's package under the rollback's fresh version: the
-/// one frontmatter line changes, so the restoring revision carries the same
-/// instructions with its own version and content hash.
-fn restored_package(package: &HubPackage, version: &str) -> Result<HubPackage> {
-    let mut files = package.files.clone();
+/// The rollback's version: fresh, and bounded like any skill version. It
+/// names the displaced version while that fits; provenance names the revision.
+fn restore_version(displaced: &str, merged: &EntityId) -> String {
+    let suffix = format!("restore-{}", &merged.to_hex()[..12]);
+    if displaced.len() + 1 + suffix.len() <= crate::skill::SKILL_VERSION_MAX_BYTES {
+        format!("{displaced}-{suffix}")
+    } else {
+        suffix
+    }
+}
+
+/// The displaced revision's package under the restoring record. A folder
+/// package carries its version in SKILL.md frontmatter, so that one line
+/// changes; a native package keeps its exact bytes, since its version is
+/// native metadata.
+fn restored_package(package: &HubPackage, record: &SkillRecord) -> Result<HubPackage> {
+    let (files, hash) = match package.format {
+        super::SkillPackageFormat::Native => (package.files.clone(), package.content_hash()?),
+        super::SkillPackageFormat::Folder => {
+            let files = with_frontmatter_version(&package.files, &record.version)?;
+            let hash = super::folder::package_from_files(files.clone())?.content_hash()?;
+            (files, hash)
+        }
+    };
+    let mut record = record.clone();
+    record.content_hash = Some(hash);
+    super::folder::package_from_source(&record, files, package.format)
+}
+
+fn with_frontmatter_version(
+    files: &[super::HubFile],
+    version: &str,
+) -> Result<Vec<super::HubFile>> {
+    let mut files = files.to_vec();
     let file = files
         .iter_mut()
         .find(|file| file.path == "SKILL.md")
@@ -596,13 +635,23 @@ fn restored_package(package: &HubPackage, version: &str) -> Result<HubPackage> {
         .strip_prefix("---\n")
         .and_then(|rest| rest.split_once("\n---\n"))
         .ok_or_else(|| invalid("SKILL.md needs frontmatter"))?;
+    // Only a plainly safe version is written bare; any other is written
+    // JSON-quoted, the one quoted form the frontmatter reader decodes exactly.
+    let scalar = if version
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '+' | '~'))
+    {
+        version.to_owned()
+    } else {
+        serde_json::to_string(version).map_err(|_| invalid("restored version encode failed"))?
+    };
     let mut versioned = false;
     let front = front
         .lines()
         .map(|line| {
             if !versioned && line.starts_with("version:") {
                 versioned = true;
-                format!("version: {version}")
+                format!("version: {scalar}")
             } else {
                 line.to_owned()
             }
@@ -613,5 +662,5 @@ fn restored_package(package: &HubPackage, version: &str) -> Result<HubPackage> {
         return Err(invalid("SKILL.md frontmatter has no version"));
     }
     file.content = format!("---\n{front}\n---\n{body}").into_bytes();
-    super::folder::package_from_files(files)
+    Ok(files)
 }

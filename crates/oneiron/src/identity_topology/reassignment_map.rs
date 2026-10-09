@@ -485,7 +485,8 @@ pub(super) fn clear_reassignment_rows_in_txn(
 ///   under its mask and the fork supersedes it. The fork's birth stamp is the
 ///   canonical `facet_of` edge the query filter and federation selector read,
 ///   so no index row is written. Only a current claim forks; a closed one is
-///   history, and an assignment naming it is dropped.
+///   history, and an assignment naming it is dropped. So is a stale MACHINE
+///   claim: a signed birth is never stale, so its fork cannot be born yet.
 ///
 /// The facet pairs are returned in `forks`, which the caller forks AFTER the
 /// minted FACET rows land — a fork whose facet has no entity row fails closed.
@@ -502,7 +503,7 @@ pub(super) fn apply_reassignment_in_txn(
     if let ReassignmentContext::Facets(_) = targets {
         let mut current = Vec::with_capacity(rows.len());
         for (claim, target) in rows {
-            if target.is_none() || claim_is_active_in_txn(store, &*wtxn, &claim)? {
+            if target.is_none() || claim_is_forkable_in_txn(store, &*wtxn, &claim)? {
                 current.push((claim, target));
             }
         }
@@ -527,13 +528,18 @@ pub(super) fn apply_reassignment_in_txn(
     Ok(stats)
 }
 
-fn claim_is_active_in_txn(store: &Store, txn: &heed::RoTxn<'_>, claim: &EntityId) -> Result<bool> {
+fn claim_is_forkable_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    claim: &EntityId,
+) -> Result<bool> {
     let Some(raw) = store.entities.get(txn, claim.as_bytes())? else {
         return Ok(false);
     };
     let body =
         crate::claim::decode_claim_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], true)?;
-    Ok(body.lifecycle == crate::claim::ClaimLifecycleStatus::Active)
+    Ok(body.lifecycle == crate::claim::ClaimLifecycleStatus::Active
+        && !(body.stale && crate::authority::machine_claim_needs_history(store, txn, &body)?))
 }
 
 /// Re-derives the split assignment rows of exactly `sources` from the ledger

@@ -3127,9 +3127,11 @@ fn undo_of_a_mapped_split_reverses_its_assignment_rows() {
 /// forks each reassigned claim under its mask, linked `DerivedFrom` it, and
 /// the fork supersedes the origin. Undo appends a counter-event that forks
 /// each claim home and archives the masks (detached, rows kept), so the
-/// original claims are current again. A second undo is `NotCurrent`.
+/// original claims are current again: their content, under their own facet,
+/// as fresh current claims. The original rows stay closed history, as every
+/// superseded row does. A second undo is `NotCurrent`.
 #[test]
-fn facet_forks_claims_and_undo_makes_the_originals_current_again() {
+fn facet_forks_claims_and_undo_brings_the_original_claims_back() {
     use super::op_apply::facet_fork_id;
     use crate::claim::ClaimLifecycleStatus;
     let (_dir, vault) = open_vault();
@@ -3181,6 +3183,7 @@ fn facet_forks_claims_and_undo_makes_the_originals_current_again() {
             .target;
         let current = before(&restored);
         assert_eq!(current.lifecycle, ClaimLifecycleStatus::Active);
+        assert_eq!(before(origin).lifecycle, ClaimLifecycleStatus::Superseded);
         assert_eq!(current.scope_facet, original.scope_facet);
         assert_eq!(current.value, original.value);
         assert_eq!(current.confidence, original.confidence);
@@ -3233,6 +3236,54 @@ fn facet_undo_is_not_current_once_a_fork_was_touched() {
     );
     assert_eq!(vault.facets_of(&base).expect("facets").len(), 2);
     assert_eq!(event_count(&vault), 1);
+}
+
+/// A fork that lost the supersession that closed its origin is touched too:
+/// the undo refuses rather than restoring around a broken chain.
+#[test]
+fn an_unlinked_fork_makes_the_facet_undo_stale() {
+    use super::op_apply::facet_fork_id;
+    let (_dir, vault) = open_vault();
+    let base = put_person(&vault, 0x61);
+    let origin = write_note_claim(&vault, id(0x71), base);
+    let (event, _) = seam_apply_facet(&vault, base, &["work"], &[(origin, 0)]);
+    let fork = facet_fork_id(&event, &origin).expect("fork id");
+    assert!(
+        vault
+            .delete_edge(&fork, EdgeKind::Supersedes, &origin)
+            .expect("unlink the fork")
+    );
+    let write = IdentityOpWrite::auto(ClaimSource::Inferred);
+    let err = vault
+        .undo_identity_topology_event(&event, &write, 300)
+        .expect_err("an unlinked fork makes the undo stale");
+    assert_eq!(
+        expect_rejection(err),
+        IdentityTopologyRejection::NotCurrent { event }
+    );
+}
+
+/// A write the fork's body does not show still touches it: re-weighting its
+/// `claim_of` edge in place makes the facet undo stale.
+#[test]
+fn a_reweighted_fork_makes_the_facet_undo_stale() {
+    use super::op_apply::facet_fork_id;
+    let (_dir, vault) = open_vault();
+    let base = put_person(&vault, 0x61);
+    let origin = write_note_claim(&vault, id(0x71), base);
+    let (event, _) = seam_apply_facet(&vault, base, &["work"], &[(origin, 0)]);
+    let fork = facet_fork_id(&event, &origin).expect("fork id");
+    vault
+        .set_edge_weight(&fork, EdgeKind::ClaimOf, &base, 0.1)
+        .expect("re-weight the fork");
+    let write = IdentityOpWrite::auto(ClaimSource::Inferred);
+    let err = vault
+        .undo_identity_topology_event(&event, &write, 300)
+        .expect_err("a re-weighted fork makes the undo stale");
+    assert_eq!(
+        expect_rejection(err),
+        IdentityTopologyRejection::NotCurrent { event }
+    );
 }
 
 /// The sync-ingest door never runs the apply door, so a REPLICATED split
@@ -3645,6 +3696,7 @@ fn a_parked_facet_event_is_refused_at_the_replicated_door_too() {
             reassignment: ReassignmentMap::default(),
             applied_assigned: 0,
             applied_residue: 0,
+            forked: Vec::new(),
         },
     };
 

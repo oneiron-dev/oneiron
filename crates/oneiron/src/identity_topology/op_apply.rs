@@ -326,12 +326,15 @@ impl Vault {
                     ReassignmentContext::Facets(&minted),
                     &mut forks,
                 )?;
+                let mut forked: Vec<EntityId> = forks.iter().map(|(origin, _)| *origin).collect();
+                forked.sort_unstable();
                 let action = StoredIdentityOpAction::Facet {
                     entity: facet.entity,
                     facets: minted,
                     reassignment: facet.reassignment.canonicalized(),
                     applied_assigned: stats.assigned as u64,
                     applied_residue: stats.residue as u64,
+                    forked,
                 };
                 let outcome = self.write_identity_event_in_txn(
                     wtxn,
@@ -345,8 +348,9 @@ impl Vault {
                 )?;
                 // r9: fork, never restamp. Each assigned claim is born again
                 // under its mask once the masks exist, and the fork closes the
-                // origin. The fork id is derived from (event, origin), so the
-                // undo door finds every fork from the event alone.
+                // origin. The event lists the forked origins and each fork id
+                // derives from (event, origin), so the undo door finds every
+                // fork from the event alone.
                 for (origin, mask) in forks {
                     let fork = facet_fork_id(&event_id, &origin)?;
                     self.fork_claim_to_facet_in_txn(wtxn, origin, mask, fork, true, now)?;

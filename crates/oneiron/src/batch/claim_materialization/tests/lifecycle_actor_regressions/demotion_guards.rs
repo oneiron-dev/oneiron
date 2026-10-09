@@ -308,3 +308,60 @@ fn weakening_supersedes_and_keeps_the_old_claim_as_history() -> Result<()> {
     assert_eq!(vault.get_claim(&risen)?.expect("risen").confidence, 1.0);
     Ok(())
 }
+
+/// A weakening keeps the predecessor's facet stamp: a claim forked under a
+/// mask and then weakened is still listed by that mask, as its successor.
+#[test]
+fn weakening_a_forked_claim_keeps_its_facet_stamp() -> Result<()> {
+    let (_dir, vault, actor) = fixture()?;
+    let id = entity(0x64);
+    authored_local_claim(&vault, actor, id)?;
+    let mask = entity(0x67);
+    let mut facet = Vec::new();
+    rmpv::encode::write_value(
+        &mut facet,
+        &Value::Map(vec![
+            ("label".into(), "work".into()),
+            ("sensitivity".into(), "sensitive".into()),
+        ]),
+    )
+    .expect("facet body");
+    vault.put_entity(
+        &mask,
+        crate::registry::ENTITY_TYPE_FACET,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &facet,
+    )?;
+    let fork = entity(0x68);
+    vault.with_write_txn(|txn| vault.fork_claim_to_facet_in_txn(txn, id, mask, fork, true, 15))?;
+    vault.apply_claim_demotion(
+        &fork,
+        ClaimDemotionAction::Decay {
+            new_claim_of_weight: 0.1,
+        },
+        20,
+    )?;
+    let weakened = vault.apply_claim_demotion(
+        &fork,
+        ClaimDemotionAction::Weaken {
+            new_confidence: 0.5,
+        },
+        21,
+    )?;
+    assert!(
+        vault
+            .edges_out(&weakened.claim)?
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::FacetOf && edge.target == mask)
+    );
+    assert_eq!(
+        vault
+            .get_claim(&weakened.claim)?
+            .expect("successor")
+            .scope_facet,
+        mask
+    );
+    assert!(vault.claims_assigned_to(&mask)?.contains(&weakened.claim));
+    Ok(())
+}

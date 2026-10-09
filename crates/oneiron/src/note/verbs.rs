@@ -166,11 +166,10 @@ impl Vault {
             txn,
             &origin,
             &fork,
-            crate::claim::ClaimSuccession::Fork { facet },
+            crate::claim::ClaimSuccession::Fork { facet, stamp: true },
             at,
         )?;
         self.batch_in()
-            .edge(&fork, EdgeKind::FacetOf, &facet, 1.0)
             .edge(&fork, EdgeKind::DerivedFrom, &origin, 1.0)
             .apply(txn)?;
         if supersede {
