@@ -8,14 +8,14 @@ use crate::blob_artifact::esign::{
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use crate::booking::{
     BOOKING_EVENT_TYPE_PREDICATE, BOOKING_EVENT_TYPE_SCHEMA_VERSION, BOOKING_PUBLIC_PAGE_PREDICATE,
-    BOOKING_PUBLIC_PAGE_SCHEMA_VERSION, BookingError, BookingEventTypeClaimValue,
-    BookingLandingContent, BookingLifecycleConsumerInput, BookingLifecycleTurn,
-    BookingPagePublication, BookingVerbReceipt, BookingVerbRequest, CancelSpec, ConfirmReceipt,
-    ConfirmSpec, ConstraintFieldConfig, EventTypeCard, EventTypeConfig, EventTypeKey,
-    HoldLeaseSpec, HoldSpec, HostAvailabilityConfig, PublicBookingAvailability, RankedSlot,
-    RoutingMode, SessionKey, SlotHostBinding, SlotOracle, SolveRequest, SolveResult, ThemeTokens,
-    WeeklyWallWindow, booking_config_hash, encode_event_type_claim_value, enqueue_booking_verb,
-    run_booking_lifecycle_once,
+    BOOKING_PUBLIC_PAGE_SCHEMA_VERSION, BOOKING_STATUS_PREDICATE, BookingError,
+    BookingEventTypeClaimValue, BookingLandingContent, BookingLifecycleConsumerInput,
+    BookingLifecycleTurn, BookingPagePublication, BookingVerbReceipt, BookingVerbRequest,
+    CancelSpec, ConfirmReceipt, ConfirmSpec, ConstraintFieldConfig, EventTypeCard, EventTypeConfig,
+    EventTypeKey, HoldLeaseSpec, HoldSpec, HostAvailabilityConfig, PublicBookingAvailability,
+    RankedSlot, RoutingMode, SessionKey, SlotHostBinding, SlotOracle, SolveRequest, SolveResult,
+    ThemeTokens, WeeklyWallWindow, booking_config_hash, encode_event_type_claim_value,
+    enqueue_booking_verb, run_booking_lifecycle_once,
 };
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -34,7 +34,7 @@ use crate::identity_topology::{
     IdentityOpEvidence, IdentityOpWrite, IdentityTopologyOp, MergeOp, SurvivorshipPlan,
 };
 use crate::outbound_grant::BookingPageInviteGrantMintIntent;
-use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
+use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use crate::test_util::entity;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Error, Result, TimeRange, Vault, VaultConfig};
@@ -616,6 +616,88 @@ pub(super) fn calendar_invitation_consent() -> Result<Case> {
     )
 }
 
+/// A booking page grant covers only the bookers its page's confirmed
+/// bookings name, read in EVENT order; past a booking that no longer reads it
+/// refuses everyone else, though a channel grant on the calendar covers
+/// them. A booking status that no longer reads, written since the backup on
+/// an EVENT after every booking, is one a restore would drop, letting the
+/// channel grant reach them again (Astra R5-3).
+fn unreadable_booking() -> Result<Case> {
+    let (dir, vault) = open_seeded()?;
+    let named = |name: &str| -> Result<Vec<u8>> {
+        let mut body = Vec::new();
+        rmpv::encode::write_value(
+            &mut body,
+            &Value::Map(vec![(Value::from("name"), Value::from(name))]),
+        )
+        .map_err(invalid)?;
+        Ok(body)
+    };
+    // An owner row that names no booker, so a booking names everyone a
+    // person row does.
+    let owner = entity(0x86);
+    vault.put_entity(&owner, ENTITY_TYPE_PERSON, AT, 1, &named("owner")?)?;
+    let page = entity(0xB1);
+    vault.put_entity(&page, ENTITY_TYPE_ASSET, AT, 1, b"page")?;
+    put_event_type(&vault, entity(0xB3), page, event_type(0))?;
+    {
+        let runner = crate::DreamerRunnerStore::new(&vault);
+        runner.elect_home_node(&[runner.local_home_node_candidate(true, true, true)?], 1)?;
+    }
+    let ada = booker(&vault, entity(0xB5), ADA)?;
+    book(&vault, page, ada, NOW + 3_600)?;
+    vault.mint_booking_page_invite_outbound_grant(
+        &entity(0xB7),
+        &BookingPageInviteGrantMintIntent {
+            page_ref: page,
+            publisher_principal: owner,
+        },
+        NOW,
+    )?;
+    vault.mint_standing_outbound_grant(
+        &entity(0xB8),
+        &crate::genui::GrantMintIntent {
+            principal_ref: owner.to_hex(),
+            origin_component_id: "census".to_owned(),
+            origin_action_id: "invite".to_owned(),
+            origin_receipt_ref: None,
+            scope: crate::genui::GrantMintIntentScope::Channel {
+                channel: crate::calendar::invite::CALENDAR_INVITE_CHANNEL.to_owned(),
+            },
+        },
+        NOW,
+    )?;
+    // Booking EVENT ids come from the clock, so this one reads after them.
+    let later = entity(0xFE);
+    vault.put_entity(&later, ENTITY_TYPE_EVENT, AT, 1, &named("later")?)?;
+    invitable(&vault, ADA, true)?;
+    invitable(&vault, BEN, true)?;
+    Case::after_backup(
+        INVITATION_CONSENT,
+        (dir, vault),
+        |vault| {
+            new_person(vault)?;
+            invitable(vault, BEN, true)
+        },
+        move |vault| {
+            let status = ClaimBody::new(
+                BOOKING_STATUS_PREDICATE,
+                ClaimSubject::Entity(later),
+                Value::from("confirmed"),
+                1.0,
+                ClaimApprovalStatus::Approved,
+                ClaimLifecycleStatus::Active,
+            )?;
+            vault.put_claim(&entity(0xB9), &status, AT, NOW)?;
+            invitable(vault, ADA, true)?;
+            match crate::calendar::invite::resolve_consent_basis(vault, BEN) {
+                Err(_) => Ok(()),
+                other => Err(invalid(other)),
+            }
+        },
+    )
+}
+
 /// A standing `comm.last_touch` `id` with `party` on `channel_class`.
 fn last_touch(vault: &Vault, id: EntityId, party: EntityId, channel_class: &str) -> Result<()> {
     let body = CommClaimValue::LastTouch {
@@ -668,4 +750,12 @@ fn prior_thread() -> Result<Case> {
 #[test]
 fn a_restore_does_not_reattach_a_prior_thread_an_invitation_stands_on() {
     assert_eq!(super::run(prior_thread), Ok(INVITATION_CONSENT));
+}
+
+/// Astra R5-3: a booking that no longer reads, written since the backup,
+/// refused a calendar invitation to anyone no booking names, and a restore
+/// that dropped it let a channel grant reach them.
+#[test]
+fn a_restore_does_not_drop_a_booking_read_that_refuses_unnamed_recipients() {
+    assert_eq!(super::run(unreadable_booking), Ok(INVITATION_CONSENT));
 }

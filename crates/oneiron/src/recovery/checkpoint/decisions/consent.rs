@@ -408,7 +408,9 @@ impl Decision for CalendarInviteConsent {
     /// each comm party's key, each contact a grant names and, where a booking
     /// page grant can cover a booker, each booker identity a person row of
     /// either vault carries, with the spellings that fold onto it
-    /// (`booker_spellings`). A channel grant covers every recipient alike.
+    /// (`booker_spellings`). One recipient none of these names stands for
+    /// everyone else, whom a channel grant covers alike and a booking read
+    /// that fails refuses alike (`unnamed_recipient`).
     fn subjects(vaults: [&Vault; 2]) -> Result<BTreeSet<String>> {
         let mut parties = BTreeSet::new();
         let mut subjects = BTreeSet::new();
@@ -432,8 +434,8 @@ impl Decision for CalendarInviteConsent {
             }
         }
         subjects.extend(parties.iter().map(String::as_str).filter_map(spelling));
+        let mut identities = BTreeSet::new();
         if pages {
-            let mut identities = BTreeSet::new();
             for vault in vaults {
                 let txn = vault.store.env.read_txn()?;
                 for person in vault
@@ -450,6 +452,8 @@ impl Decision for CalendarInviteConsent {
                 subjects.extend(booker_spellings(identity, &parties));
             }
         }
+        let unnamed = unnamed_recipient(&subjects, &identities);
+        subjects.insert(unnamed);
         Ok(subjects)
     }
 
@@ -470,6 +474,23 @@ impl Decision for CalendarInviteConsent {
 
     fn refusal() -> Option<bool> {
         Some(false)
+    }
+}
+
+/// A recipient address no spelling in `named` and no booker in `bookers`
+/// folds onto, under the reserved `.invalid` domain.
+fn unnamed_recipient(named: &BTreeSet<String>, bookers: &BTreeSet<String>) -> String {
+    let mut n = 0_u64;
+    loop {
+        let candidate = format!("recipient-{n}@unnamed.invalid");
+        if !named
+            .iter()
+            .chain(bookers)
+            .any(|name| normalize_identity(name) == candidate)
+        {
+            return candidate;
+        }
+        n += 1;
     }
 }
 
