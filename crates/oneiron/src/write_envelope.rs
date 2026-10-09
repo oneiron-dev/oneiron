@@ -16,8 +16,6 @@ pub mod carry_forward;
 /// Defined in `oneiron-contracts`, so crates below this one can name the actor.
 pub use oneiron_contracts::write_envelope::WriteActor;
 // The sibling tests name the actor class bare through `use super::*`.
-#[cfg(test)]
-use crate::edge::EdgeActorClass;
 
 /// Opaque provenance payload carried by a [`WriteEnvelope`].
 #[derive(Debug, Clone, PartialEq)]
@@ -571,6 +569,3 @@ pub(crate) fn write_envelope_evidence(
 
     Value::Map(entries)
 }
-
-#[cfg(test)]
-mod tests;

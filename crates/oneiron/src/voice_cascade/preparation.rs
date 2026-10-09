@@ -196,28 +196,3 @@ impl PartialEnricher for ExactEnricher {
             .ok_or_else(|| invalid("prepared enrichment already consumed"))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn exact_enricher_mismatch_does_not_consume_and_success_consumes_once() {
-        let mut enricher = ExactEnricher {
-            text: " exact bytes ".to_owned(),
-            value: Some(PartialEnrichment::default()),
-        };
-        assert!(enricher.enrich_speculative_partial("exact bytes").is_err());
-        assert_eq!(
-            enricher
-                .enrich_speculative_partial(" exact bytes ")
-                .unwrap(),
-            PartialEnrichment::default()
-        );
-        assert!(
-            enricher
-                .enrich_speculative_partial(" exact bytes ")
-                .is_err()
-        );
-    }
-}

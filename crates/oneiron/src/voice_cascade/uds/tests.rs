@@ -66,13 +66,6 @@ impl TestEnricher {
             texts: Vec::new(),
         }
     }
-
-    fn terms(terms: &[&str]) -> Self {
-        Self {
-            steps: terms.iter().map(|term| Ok(enrichment(term))).collect(),
-            texts: Vec::new(),
-        }
-    }
 }
 
 impl PartialEnricher for TestEnricher {
@@ -88,7 +81,7 @@ struct Peer {
     writer: UnixStream,
     reader: BufReader<UnixStream>,
     worker: JoinHandle<io::Result<Vec<String>>>,
-    shutdown: Shutdown,
+    _shutdown: Shutdown,
 }
 
 impl Peer {
@@ -128,7 +121,7 @@ impl Peer {
             writer: client,
             reader,
             worker,
-            shutdown,
+            _shutdown: shutdown,
         }
     }
 
