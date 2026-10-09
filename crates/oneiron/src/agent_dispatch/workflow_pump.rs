@@ -67,6 +67,7 @@ impl AgentDispatcher<'_> {
             )?;
             RECORD.put(&self.vault.store, &mut txn, &root, &record)?;
             txn.commit()?;
+            self.vault.store.notify_attempt_observers();
             return Ok(WorkflowProgress::Stopped(active.id));
         }
         let result = active
@@ -118,6 +119,7 @@ impl AgentDispatcher<'_> {
         };
         RECORD.put(&self.vault.store, &mut txn, &root, &record)?;
         txn.commit()?;
+        self.vault.store.notify_attempt_observers();
         Ok(progress)
     }
 

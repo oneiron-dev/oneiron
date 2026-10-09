@@ -153,6 +153,23 @@ pub(super) fn claim_grants() -> Result<Case> {
     )
 }
 
+/// A claim the shipped default lets the Dreamer read, in a vault with no
+/// manifest in force: its next open seeds that default, as the restored
+/// copy's open does, so a restore past a restatement goes ahead. Bound since
+/// the backup to another reader as a typed question's, it is one a restore
+/// would hand back to the Dreamer, which the default no longer lets read it.
+pub(super) fn claim_grants_under_the_seeded_default() -> Result<Case> {
+    let (dir, vault) = open_vault();
+    let fact = (entity(0xC8), put_person(&vault, 0xC7)?);
+    put_fact(&vault, fact, "first", None, 10)?;
+    Case::after_backup(
+        "claim read grants",
+        (dir, vault),
+        move |vault| put_fact(vault, fact, "restated", None, 20),
+        move |vault| put_fact(vault, fact, "restated", Some("rin"), 30),
+    )
+}
+
 /// Two diaries their authors linked and both granted, so each author reads
 /// the other's. The link taken away since the backup, both grants unchanged,
 /// is one a restore would put back.
