@@ -3,6 +3,13 @@ use super::*;
 use crate::store::Store;
 
 const PAGE_LIMIT: usize = 256;
+/// History rows one page reads at most, across all its windows. A page that
+/// would read more refuses, rather than return a short page that claims the
+/// history ended.
+const HISTORY_SCAN_CEILING: usize = 100_000;
+
+/// One HISTORY row: its `(room, at, turn)` key and the turn id.
+type HistoryRow = Result<((EntityId, u64, EntityId), EntityId)>;
 
 pub(super) fn index_turn(store: &Store, txn: &mut heed::RwTxn<'_>, turn: &RoomTurn) -> Result<()> {
     let room = EntityId::from_hex(&turn.room_id)?;
@@ -208,13 +215,18 @@ impl Memory<'_> {
         };
         let mut rows = Vec::new();
         let mut window = limit + 1;
+        let mut read = 0;
         loop {
             let scanned = self.history_after(room, start, window)?;
             let exhausted = scanned.len() < window;
+            read += scanned.len();
             start = scanned.last().map(|(key, _)| *key).or(start);
             rows.extend(self.admitted_turns(scanned.into_iter().map(|(_, turn)| turn).collect())?);
             if rows.len() > limit || exhausted {
                 break;
+            }
+            if read >= HISTORY_SCAN_CEILING {
+                return Err(Error::IndexOverflow("room history page").into());
             }
             window = window.saturating_mul(2).min(PAGE_LIMIT * 16);
         }
@@ -243,12 +255,25 @@ impl Memory<'_> {
     ) -> MemoryResult<Vec<((u64, EntityId), RoomTurn)>> {
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         require_member(self.vault(), &txn, room, self.actor())?;
-        let rows = HISTORY
-            .iter_from(&self.vault().store, &txn, room.as_bytes())?
-            .skip_while(|row| match (start, row) {
-                (Some(start), Ok(((_, at, id), _))) => (*at, *id) <= start,
-                _ => false,
-            })
+        let store = &self.vault().store;
+        // Seek straight past `start`; never walk the room from its first row.
+        let after = start.map(|(at, id)| (room, at, id));
+        let history: Box<dyn Iterator<Item = HistoryRow> + '_> = match &after {
+            Some(after) => Box::new(
+                HISTORY
+                    .iter_range(
+                        store,
+                        &txn,
+                        std::ops::Bound::Excluded(after),
+                        std::ops::Bound::Unbounded,
+                    )?
+                    .take_while(
+                        move |row| !matches!(row, Ok(((other, _, _), _)) if *other != room),
+                    ),
+            ),
+            None => Box::new(HISTORY.iter_from(store, &txn, room.as_bytes())?),
+        };
+        let rows = history
             .take(window)
             .map(|row| {
                 let ((_, at, id), turn_id) = row?;

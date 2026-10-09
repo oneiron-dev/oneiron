@@ -179,38 +179,54 @@ fn resolve_world_authority_admitting(
 /// A row filter for the authority resolver; `Ok(false)` drops the row.
 pub(crate) type RowAdmission<'a> = dyn Fn(&EntityId, &ClaimBody) -> Result<bool> + 'a;
 
-/// Grant postings read in one pass before an actor-local scan takes over.
+/// Grant rows whose subjects one pass decodes up front; past it, each actor
+/// walks the rows for itself.
+#[cfg(not(test))]
 const GRANT_POSTING_SCAN: usize = 10_000;
+#[cfg(test)]
+const GRANT_POSTING_SCAN: usize = 2;
+
+/// Grant rows one read walks at all. A vault holding more refuses the read
+/// rather than guess who is governed.
+const GRANT_ROW_CEILING: usize = 100_000;
 
 /// Which actors world-access law governs. An owner's ALLOWED-SET grant about
 /// an actor puts it under that law, and the actor stays under it after the
 /// grant closes or loses its authority: losing a grant never falls back to
 /// base reality. A row the owner never granted governs nobody.
+///
+/// Read from the grant predicate's postings, which co-commit with the grant
+/// rows, never from `claim_of` edges: an edge can go while its row stays, and
+/// a missing edge is not permission to read base.
 pub(crate) struct WorldGrantIndex {
-    /// `None` when the vault holds more grant rows than one pass reads.
+    /// Every grant row under the predicate.
+    rows: Vec<EntityId>,
+    /// The rows' subjects, decoded up front while one pass covers them.
     governed: Option<std::collections::BTreeSet<EntityId>>,
 }
 
 impl WorldGrantIndex {
-    /// One pass over the grant predicate's postings.
     pub(crate) fn read(store: &Store, rtxn: &RoTxn<'_>) -> Result<Self> {
-        let ids = match crate::claim::claim_ids_for_predicate_bounded_in_txn(
+        let rows = crate::claim::claim_ids_for_predicate_bounded_in_txn(
             store,
             rtxn,
             PREDICATE_WORLD_ACCESS_ALLOWED_SET,
-            GRANT_POSTING_SCAN,
-        ) {
-            Ok(ids) => ids,
-            Err(Error::IndexOverflow(_)) => return Ok(Self { governed: None }),
-            Err(error) => return Err(error),
-        };
+            GRANT_ROW_CEILING,
+        )?;
+        if rows.len() > GRANT_POSTING_SCAN {
+            return Ok(Self {
+                rows,
+                governed: None,
+            });
+        }
         let mut governed = std::collections::BTreeSet::new();
-        for id in ids {
-            if let Some(subject) = grant_subject(store, rtxn, &id)? {
+        for id in &rows {
+            if let Some(subject) = grant_subject(store, rtxn, id)? {
                 governed.insert(subject);
             }
         }
         Ok(Self {
+            rows,
             governed: Some(governed),
         })
     }
@@ -219,20 +235,8 @@ impl WorldGrantIndex {
         if let Some(governed) = &self.governed {
             return Ok(governed.contains(&actor));
         }
-        for (scanned, entry) in store
-            .port_edges(
-                rtxn,
-                &actor,
-                crate::ports::EdgeDirection::In,
-                Some(EdgeKind::ClaimOf),
-                None,
-            )?
-            .enumerate()
-        {
-            if scanned >= MAX_EDGE_QUERY_RESULTS {
-                return Err(Error::IndexOverflow("world access authority claims"));
-            }
-            if grant_subject(store, rtxn, &entry?.target)? == Some(actor) {
+        for id in &self.rows {
+            if grant_subject(store, rtxn, id)? == Some(actor) {
                 return Ok(true);
             }
         }

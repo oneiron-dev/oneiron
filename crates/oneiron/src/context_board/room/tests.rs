@@ -492,3 +492,59 @@ fn the_roster_is_the_channels_own_membership() -> Result<()> {
     }
     Ok(())
 }
+
+/// Greptile on #1312: past one pass of grant rows, a member whose grant row
+/// lost its `claim_of` edge is still under world-access law, so the room
+/// reads no base reality the grant withholds.
+#[test]
+fn a_grant_that_lost_its_edge_still_governs_past_one_pass() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let agent = id(0x71);
+    let fiction = id(0x72);
+    let others = [id(0x73), id(0x74), id(0x75)];
+    for person in std::iter::once(agent).chain(others) {
+        vault.put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"agent",
+        )?;
+    }
+    let row = id(0x76);
+    grant(
+        &vault,
+        row,
+        agent,
+        WorldAuthoritySet::new(false, [fiction])?,
+    )?;
+    for (other, other_row) in others.into_iter().zip([id(0x77), id(0x78), id(0x79)]) {
+        grant(&vault, other_row, other, WorldAuthoritySet::new(true, [])?)?;
+    }
+    assert!(vault.delete_edge(&row, crate::edge::EdgeKind::ClaimOf, &agent)?);
+    let (_, record) = project_room(&vault, owner, &[agent])?;
+    let room = EntityId::from_hex(&record.home_room)?;
+    let host = vault.memory(owner, EdgeActorClass::Human);
+
+    let roster = host.room_roster(room).expect("roster");
+    let seat = |actor: EntityId| {
+        roster
+            .iter()
+            .find(|member| member.actor == actor)
+            .expect("member seat")
+            .active_worlds
+            .include_base()
+    };
+    assert!(seat(owner), "an actor no grant names reads base");
+    assert!(!seat(agent), "the agent's grant withholds base");
+    let page = host
+        .rooms_messages_page(room, None, 256)
+        .expect("room history");
+    assert_eq!(
+        page.scope.worlds,
+        ScopeAxis::Bottom,
+        "the room reads nothing"
+    );
+    Ok(())
+}
