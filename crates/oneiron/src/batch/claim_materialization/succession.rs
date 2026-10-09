@@ -91,16 +91,16 @@ impl SuccessionWriter {
             prior.source
         };
         next.source = source;
-        next.evidence = carried_evidence(prior);
+        let carried = carried_evidence(prior);
         let Some(actor) = self.actor else {
             // No envelope stamps the host's unbound successor, so its body
             // records the history it continues itself: the Gate checks it
             // now, and every later successor inherits it.
-            if let Some(lineage) = lineage_of(prior_lineage(prior).into_iter().chain(source))
-                && source.is_none_or(|source| lineage != SourceLineage::of(source))
-            {
-                next.evidence = Some(unbound_lineage_evidence(&lineage, next.evidence));
-            }
+            let lineage =
+                lineage_of(prior_lineage(prior).into_iter().chain(source)).filter(|lineage| {
+                    source.is_none_or(|source| *lineage != SourceLineage::of(source))
+                });
+            next.evidence = unbound_evidence(lineage.as_ref(), carried);
             return Ok((next, None));
         };
         let source = source.unwrap_or(ClaimSource::UserStated);
@@ -124,72 +124,97 @@ impl SuccessionWriter {
             });
         }
         next.source = Some(source);
-        next.evidence = Some(write_envelope_evidence(&envelope, next.evidence.take()));
+        next.evidence = Some(write_envelope_evidence(&envelope, carried.into_value()));
         Ok((next, Some(envelope)))
     }
 }
 
-/// An unbound successor's evidence: the evidence it carries forward, with
-/// the lineage it continues recorded under the envelope's lineage key. A
-/// carried map takes the record in place of any key of that name, so its
-/// own keys stay where their readers look (typed citations, an actor
-/// claim's lane); any other evidence is wrapped beside it.
-fn unbound_lineage_evidence(lineage: &SourceLineage, carried: Option<Value>) -> Value {
-    let record = (
-        Value::from(WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY),
-        Value::Array(
-            lineage
-                .iter()
-                .map(|source| Value::from(source.as_str()))
-                .collect(),
-        ),
-    );
-    match carried {
-        Some(Value::Map(mut entries)) => {
-            entries.retain(|(key, _)| key.as_str() != Some(WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY));
-            entries.push(record);
-            Value::Map(entries)
-        }
-        carried => {
-            let mut entries = vec![record];
-            if let Some(carried) = carried {
-                entries.push((Value::from(WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY), carried));
-            }
-            Value::Map(entries)
+/// The evidence a successor carries forward from its predecessor.
+enum CarriedEvidence {
+    /// Evidence the predecessor held at its top level: a raw write's, or an
+    /// unbound successor's without its lineage record.
+    TopLevel(Option<Value>),
+    /// The evidence a writer supplied beside its stamp. Its keys are the
+    /// writer's, never the engine's own.
+    Candidate(Value),
+}
+
+impl CarriedEvidence {
+    fn into_value(self) -> Option<Value> {
+        match self {
+            Self::TopLevel(evidence) => evidence,
+            Self::Candidate(evidence) => Some(evidence),
         }
     }
+}
+
+/// An unbound successor's evidence: what it carries forward, with the
+/// lineage it continues (if any) recorded under the envelope's lineage key.
+/// A top-level map keeps its keys where their readers look (typed
+/// citations, an actor claim's lane) and takes the record beside them. A
+/// writer's evidence, or a top-level value beside a record, stays under the
+/// envelope's candidate key, so no writer key becomes an engine stamp.
+fn unbound_evidence(lineage: Option<&SourceLineage>, carried: CarriedEvidence) -> Option<Value> {
+    let record = lineage.map(|lineage| {
+        (
+            Value::from(WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY),
+            Value::Array(
+                lineage
+                    .iter()
+                    .map(|source| Value::from(source.as_str()))
+                    .collect(),
+            ),
+        )
+    });
+    let (mut entries, candidate) = match (carried, &record) {
+        (CarriedEvidence::TopLevel(evidence), None) => return evidence,
+        (CarriedEvidence::TopLevel(Some(Value::Map(entries))), Some(_)) => (entries, None),
+        (CarriedEvidence::TopLevel(evidence), Some(_)) => (Vec::new(), evidence),
+        (CarriedEvidence::Candidate(evidence), _) => (Vec::new(), Some(evidence)),
+    };
+    entries.extend(record);
+    if let Some(candidate) = candidate {
+        entries.push((
+            Value::from(WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY),
+            candidate,
+        ));
+    }
+    Some(Value::Map(entries))
 }
 
 /// The evidence a successor carries forward: the evidence its predecessor's
 /// writer supplied, without that writer's stamp or an unbound successor's
 /// lineage record. A raw predecessor's evidence carries no stamp, so it
 /// travels whole.
-fn carried_evidence(prior: &ClaimBody) -> Option<Value> {
+fn carried_evidence(prior: &ClaimBody) -> CarriedEvidence {
     let Some(Value::Map(entries)) = &prior.evidence else {
-        return prior.evidence.clone();
+        return CarriedEvidence::TopLevel(prior.evidence.clone());
     };
-    let has = |key: &str| entries.iter().any(|(entry, _)| entry.as_str() == Some(key));
-    if has(WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY) {
+    let is = |key: &Value, name: &str| key.as_str() == Some(name);
+    if entries
+        .iter()
+        .any(|(key, _)| is(key, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY))
+    {
         return entries
             .iter()
-            .find(|(key, _)| key.as_str() == Some(WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY))
-            .map(|(_, value)| value.clone());
+            .find(|(key, _)| is(key, WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY))
+            .map_or(CarriedEvidence::TopLevel(None), |(_, value)| {
+                CarriedEvidence::Candidate(value.clone())
+            });
     }
-    if !has(WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY) {
-        return prior.evidence.clone();
-    }
-    // An unbound successor's record: drop it, and unwrap what it wrapped.
+    // Drop an unbound successor's lineage record. A lone candidate entry is
+    // what a record wrapped, or a writer's evidence: it stays a writer's.
     let rest: Vec<_> = entries
         .iter()
-        .filter(|(key, _)| key.as_str() != Some(WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY))
+        .filter(|(key, _)| !is(key, WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY))
         .cloned()
         .collect();
     match rest.as_slice() {
-        [] => None,
-        [(key, value)] if key.as_str() == Some(WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY) => {
-            Some(value.clone())
+        [(key, value)] if is(key, WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY) => {
+            CarriedEvidence::Candidate(value.clone())
         }
-        _ => Some(Value::Map(rest)),
+        [] if !entries.is_empty() => CarriedEvidence::TopLevel(None),
+        _ => CarriedEvidence::TopLevel(Some(Value::Map(rest))),
     }
 }
 

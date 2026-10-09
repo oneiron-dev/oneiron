@@ -586,6 +586,86 @@ fn an_unattributed_successor_keeps_typed_citations_where_readers_look() -> Resul
     Ok(())
 }
 
+/// Astra #1336 R3 verification 2 repro: a writer's own evidence stays the
+/// writer's in a host successor. A person's tool output whose evidence holds
+/// a key named like an engine stamp still forks, with or without a lineage
+/// record, and the key never reaches the fork's top level.
+#[test]
+fn an_unattributed_successor_keeps_a_writers_evidence_under_the_writer() -> Result<()> {
+    let (_dir, vault, actor) = fixture()?;
+    // The key a MACHINE claim's top-level signature lives under.
+    let payload = Value::Map(vec![(
+        "machine_signature".into(),
+        "external receipt proof".into(),
+    )]);
+    let origins = [entity(0x64), entity(0x65)];
+    for id in origins {
+        let envelope = WriteEnvelope::with_lineage(
+            actor,
+            ClaimSource::ToolOutput,
+            WriteProvenance::new(Value::from("host operation"))?,
+            ClaimApprovalStatus::Auto,
+            SourceLineage::of(ClaimSource::ToolOutput),
+        );
+        vault
+            .batch()
+            .claim_candidate(
+                &id,
+                ClaimCandidate::new(
+                    "test.materialization",
+                    ClaimSubject::Entity(entity(0x62)),
+                    Value::from("fact"),
+                    1.0,
+                )
+                .with_evidence(payload.clone()),
+                &envelope,
+                TimeRange {
+                    start: 10,
+                    end: u64::MAX,
+                },
+                10,
+            )
+            .commit()?;
+    }
+    permit_rows(
+        &vault,
+        &[
+            (ClaimSource::ToolOutput, None),
+            (ClaimSource::Generated, None),
+        ],
+    )?;
+    let mask = entity(0x67);
+    facet_mask(&vault, mask)?;
+    // A `Generated` fork records the tool output under it; a person's
+    // declared fork keeps the origin's source and needs no record.
+    for (origin, fork, declared, recorded) in [
+        (origins[0], entity(0x68), ClaimSource::Generated, true),
+        (origins[1], entity(0x69), ClaimSource::UserStated, false),
+    ] {
+        let host = crate::batch::SuccessionWriter::new(None, declared, "test.fork");
+        vault.with_write_txn(|txn| {
+            vault.fork_claim_to_facet_in_txn(txn, (origin, fork), mask, true, host, 15)
+        })?;
+        let Some(Value::Map(entries)) = vault.get_claim(&fork)?.expect("fork").evidence else {
+            panic!("fork evidence map");
+        };
+        let keys: Vec<_> = entries.iter().filter_map(|(key, _)| key.as_str()).collect();
+        let mut expected = vec![crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY];
+        if recorded {
+            expected.insert(
+                0,
+                crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY,
+            );
+        }
+        assert_eq!(keys, expected, "{declared:?}");
+        assert!(entries.contains(&(
+            crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY.into(),
+            payload.clone()
+        )));
+    }
+    Ok(())
+}
+
 /// Writes a FACET mask row under `id`.
 fn facet_mask(vault: &Vault, id: EntityId) -> Result<()> {
     let mut facet = Vec::new();
