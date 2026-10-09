@@ -168,18 +168,22 @@ impl Totals {
 /// starts with copies of the original's lines, times and all; the original
 /// ends first.
 fn earliest_first(conversations: &mut [HistoryConversation]) {
-    conversations.sort_by_cached_key(|conversation| {
-        let ended = conversation
-            .messages
-            .iter()
-            .filter_map(|message| message.at_ms)
-            .max();
-        (
-            conversation.started_at_ms.unwrap_or(u64::MAX),
-            ended.unwrap_or(u64::MAX),
-            conversation.native_id.clone(),
-        )
-    });
+    conversations.sort_by_cached_key(order_key);
+}
+
+/// Where [`earliest_first`] puts a conversation: when it started, then when
+/// it ended.
+fn order_key(conversation: &HistoryConversation) -> (u64, u64, String) {
+    let ended = conversation
+        .messages
+        .iter()
+        .filter_map(|message| message.at_ms)
+        .max();
+    (
+        conversation.started_at_ms.unwrap_or(u64::MAX),
+        ended.unwrap_or(u64::MAX),
+        conversation.native_id.clone(),
+    )
 }
 
 /// Where conversations go: planned against a read-only ledger, or landed.
@@ -252,7 +256,7 @@ fn decode(source: HistorySource, path: &Path) -> anyhow::Result<(Files, Vec<Hist
         let read = decode_one(&text, &history_file(source, shown), shown)?;
         decoded.add(&read);
         anyhow::ensure!(
-            decoded.messages <= MAX_DECODED_MESSAGES && decoded.bytes <= MAX_DECODED_BYTES,
+            decoded.fits(),
             "the session logs under {} hold more than {MAX_DECODED_MESSAGES} messages or \
              {MAX_DECODED_BYTES} bytes of them; nothing was imported. Import one project \
              folder, or one month of sessions, at a time",
@@ -267,13 +271,18 @@ fn decode(source: HistorySource, path: &Path) -> anyhow::Result<(Files, Vec<Hist
 
 /// What decoded conversations hold in memory: their messages, and every
 /// byte they keep, titles and ids included.
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 struct Decoded {
     messages: usize,
     bytes: usize,
 }
 
 impl Decoded {
+    /// Within what one import may hold decoded.
+    fn fits(self) -> bool {
+        self.messages <= MAX_DECODED_MESSAGES && self.bytes <= MAX_DECODED_BYTES
+    }
+
     fn add(&mut self, conversations: &[HistoryConversation]) {
         for conversation in conversations {
             self.bytes += std::mem::size_of::<HistoryConversation>()
@@ -308,8 +317,9 @@ pub(super) mod queue;
 /// it is opened relative to the one above and never through a link. A Claude
 /// Code session brings its own subagent logs from the folder beside it.
 ///
-/// Also says whether the log ended mid-line: a live log whose last record
-/// was still being written, which a later pass reads whole.
+/// Also says whether a log ended mid-line, the session's or a subagent's: a
+/// live log whose last record was still being written, which a later pass
+/// reads whole.
 #[cfg(unix)]
 fn read_queued(
     source: HistorySource,
@@ -332,7 +342,7 @@ fn read_queued(
     let mut keep = |read: &[HistoryConversation]| {
         decoded.add(read);
         anyhow::ensure!(
-            decoded.messages <= MAX_DECODED_MESSAGES && decoded.bytes <= MAX_DECODED_BYTES,
+            decoded.fits(),
             "the session {} and its subagent logs hold more than {MAX_DECODED_MESSAGES} \
              messages or {MAX_DECODED_BYTES} bytes of them; nothing was imported",
             path.display()
@@ -341,7 +351,7 @@ fn read_queued(
     };
     let (dir, file) = confined::open_below(root, relative)?;
     let text = read_limited(file, path, MAX_LOG_BYTES)?;
-    let mid_line = !text.is_empty() && !text.ends_with('\n');
+    let mut mid_line = cut(&text);
     let mut conversations = decode_one(&text, path)?;
     drop(text);
     keep(&conversations)?;
@@ -357,7 +367,10 @@ fn read_queued(
                 if !session_log_name(source, shown) {
                     return Ok(());
                 }
-                let read = decode_one(&read_limited(file, shown, MAX_LOG_BYTES)?, shown)?;
+                let text = read_limited(file, shown, MAX_LOG_BYTES)?;
+                mid_line |= cut(&text);
+                let read = decode_one(&text, shown)?;
+                drop(text);
                 keep(&read)?;
                 conversations.extend(read);
                 Ok(())
@@ -365,6 +378,12 @@ fn read_queued(
         )?;
     }
     Ok((conversations, mid_line))
+}
+
+/// A log whose last record is not whole yet.
+#[cfg(unix)]
+fn cut(text: &str) -> bool {
+    !text.is_empty() && !text.ends_with('\n')
 }
 
 /// `path` relative to `root`, in plain names only, so it can name nothing

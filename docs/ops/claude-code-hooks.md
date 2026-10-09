@@ -71,10 +71,13 @@ can write it. With the queue on, `queue_dir` and both roots must be absolute
 paths (`~/` is expanded). The queue is off by default, and a hosted node never
 runs it.
 
-Each pass takes every waiting log, up to a million messages, and lands them
-together, earliest first: a session lands before a resumed copy of it, as in
-a folder import. A log whose last line was still being written is read again
-on the next pass, up to three times.
+Each pass takes every waiting log and lands them together, earliest first: a
+session lands before a resumed copy of it, as in a folder import. A pass holds
+up to a million messages; past that, the earliest logs land and the rest wait
+for the next pass. A log whose last line was still being written, the
+session's or a subagent's, is read again on the next pass, up to three times.
+When the vault cannot land a pass (a full disk, say), the logs stay queued and
+`serve` tries again, waiting longer each time, up to about five minutes.
 
 You can queue a log by hand too:
 

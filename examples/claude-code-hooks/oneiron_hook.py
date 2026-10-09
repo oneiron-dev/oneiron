@@ -145,10 +145,18 @@ def tool_call(tools: list, query: str, limit: int) -> tuple[str, dict]:
 
 
 def hit_text(item: dict):
-    """One hit's words: a recall pack item's `value_text`; in a query result,
-    a message's `body.content` or a claim's `body.pred` and `body.val`."""
-    if isinstance(item.get("value_text"), str):
-        return item["value_text"]
+    """One hit's words: a recall pack item's `value_text`, after a claim's
+    predicate; in a query result, a message's `body.content` or a claim's
+    `body.pred` and `body.val`. A pack item for a record with no words carries
+    its body as JSON (an actor's name, say); that gives none. A message's own
+    words are kept even when they read as JSON."""
+    text = item.get("value_text")
+    if isinstance(text, str):
+        if isinstance(item.get("predicate"), str):
+            return f"{item['predicate']}: {text}"
+        if item.get("kind") != "MESSAGE" and structural(text):
+            return None
+        return text
     body = item.get("body")
     if not isinstance(body, dict):
         return None
@@ -179,8 +187,8 @@ def texts(value, found: list) -> None:
 
 
 def structural(text: str) -> bool:
-    """A record's body as JSON (an actor's name, say), not words to show."""
-    if not text.startswith("{"):
+    """A record's body as JSON, not words to show."""
+    if not text.lstrip().startswith("{"):
         return False
     try:
         return isinstance(json.loads(text), dict)
@@ -234,7 +242,7 @@ def session_start(args: argparse.Namespace) -> None:
     lines, seen, size = [], set(), 0
     for text in found:
         text = " ".join(text.split())
-        if not text or text in seen or structural(text):
+        if not text or text in seen:
             continue
         seen.add(text)
         if len(text) > ITEM_CHARS:
