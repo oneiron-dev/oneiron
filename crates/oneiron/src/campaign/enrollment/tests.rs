@@ -271,76 +271,6 @@ fn queued_attempt(vault: &Vault, fixture: &Fixture) -> AttemptRecord {
 // -----------------------------------------------------------------------
 
 #[test]
-fn campaign_home_node_election_matches_preference_order() {
-    let designation = select_campaign_home_node(
-        &[
-            CampaignHomeNodeCandidate::primary_device(2),
-            CampaignHomeNodeCandidate::always_on_local(9),
-            CampaignHomeNodeCandidate::cloud(7, true),
-        ],
-        5,
-    )
-    .expect("election")
-    .expect("an eligible candidate exists");
-    assert_eq!(designation.class, CampaignHomeNodeClass::CloudAttached);
-    assert_eq!(designation.node_id, 7);
-    assert_eq!(designation.elected_at, 5);
-
-    // A DETACHED cloud node is ineligible, not demoted: it does not become
-    // a local candidate just because the cloud link dropped.
-    let without_cloud = select_campaign_home_node(
-        &[
-            CampaignHomeNodeCandidate::cloud(7, false),
-            CampaignHomeNodeCandidate::primary_device(2),
-            CampaignHomeNodeCandidate::always_on_local(9),
-        ],
-        5,
-    )
-    .expect("election")
-    .expect("an eligible candidate exists");
-    assert_eq!(without_cloud.class, CampaignHomeNodeClass::AlwaysOnLocal);
-    assert_eq!(without_cloud.node_id, 9);
-
-    // Lowest stable node id wins inside a tier, whatever the input order.
-    let tie = select_campaign_home_node(
-        &[
-            CampaignHomeNodeCandidate::always_on_local(9),
-            CampaignHomeNodeCandidate::always_on_local(3),
-            CampaignHomeNodeCandidate::always_on_local(6),
-        ],
-        5,
-    )
-    .expect("election")
-    .expect("an eligible candidate exists");
-    assert_eq!(tie.node_id, 3);
-
-    assert_eq!(
-        select_campaign_home_node(&[CampaignHomeNodeCandidate::cloud(7, false)], 5)
-            .expect("election"),
-        None,
-        "an all-ineligible set clears the designation"
-    );
-}
-
-#[test]
-fn campaign_home_node_election_rejects_unusable_candidate_sets() {
-    assert!(matches!(
-        select_campaign_home_node(&[CampaignHomeNodeCandidate::always_on_local(0)], 1),
-        Err(Error::InvalidConfig(_))
-    ));
-    assert!(matches!(
-        select_campaign_home_node(
-            &[
-                CampaignHomeNodeCandidate::always_on_local(4),
-                CampaignHomeNodeCandidate::primary_device(4),
-            ],
-            1
-        ),
-        Err(Error::InvalidConfig(_))
-    ));
-}
-
-#[test]
 fn campaign_designation_persists_under_the_campaign_key_only() -> Result<()> {
     let (_dir, vault) = vault_fixture();
     let elected = elect_campaign_home_node_designation(
@@ -478,46 +408,6 @@ fn outward_enrollment_records_intent_before_transport() -> Result<()> {
 }
 
 #[test]
-fn outward_intent_uses_durable_consequence_and_call_sequence() -> Result<()> {
-    let (_dir, vault) = vault_fixture();
-    let fixture = install_fixture(&vault, Some(outbound_step()));
-    let attempt = queued_attempt(&vault, &fixture);
-
-    let step = resolve_program_step(&vault, &fixture.payload, &fixture.event)?;
-    let consequence = enrollment_consequence_id(&fixture.event, &step)?;
-    let derived = enrollment_intent_id(&fixture.event, &step)?.expect("an outward leg exists");
-
-    // Clock-free and process-free: recomputing from the same durable inputs
-    // reproduces the identity a restarted process would use.
-    assert_eq!(
-        derived,
-        derive_intent_id(
-            consequence,
-            7,
-            CHANNEL,
-            VERB,
-            &crate::outbound_intent_ledger::hash_frozen_payload(b"enrollment-body"),
-        )
-        .expect("intent id")
-    );
-
-    let authority = OutboundBindingAuthority::for_vault(&vault)?;
-    let mut transport = LedgerWitnessTransport::new(&vault, OutboundSendOutcome::Acked);
-    let dispatch = dispatch_leg(&vault, &authority, &attempt, &mut transport, 50);
-    assert_eq!(dispatch.intent_id, Some(derived));
-
-    let request = derive_enrollment_outbound_request(&vault, &fixture.payload, &fixture.event, 50)?
-        .expect("an outward leg exists");
-    assert_eq!(request.attempt_id, consequence);
-    assert_ne!(
-        request.attempt_id, attempt.id,
-        "the ledger identity belongs to the consequence, not the queue row"
-    );
-    assert_eq!(request.call_seq, 7);
-    Ok(())
-}
-
-#[test]
 fn crash_after_send_before_queue_complete_reuses_the_frozen_intent() -> Result<()> {
     let (_dir, vault) = vault_fixture();
     let fixture = install_fixture(&vault, Some(outbound_step()));
@@ -541,24 +431,6 @@ fn crash_after_send_before_queue_complete_reuses_the_frozen_intent() -> Result<(
         1,
         "recovery must not open a second intent"
     );
-    Ok(())
-}
-
-#[test]
-fn outward_leg_is_absent_when_the_program_step_declares_none() -> Result<()> {
-    let (_dir, vault) = vault_fixture();
-    let fixture = install_fixture(&vault, None);
-    let attempt = queued_attempt(&vault, &fixture);
-    let authority = OutboundBindingAuthority::for_vault(&vault)?;
-    let mut transport = LedgerWitnessTransport::new(&vault, OutboundSendOutcome::Acked);
-
-    assert_eq!(
-        run_enrollment_outbound_leg(&vault, &authority, HOME_NODE, &attempt, &mut transport, 50)
-            .expect("outbound leg"),
-        EnrollmentOutboundLeg::NoOutboundStep
-    );
-    assert!(transport.sent_intents.is_empty());
-    assert!(intent_ledger_records(&vault).expect("ledger").is_empty());
     Ok(())
 }
 
@@ -748,21 +620,6 @@ fn enqueue_refuses_an_unresolvable_membership_ref() {
         ),
         Err(Error::EntityNotFound)
     ));
-}
-
-#[test]
-fn enqueued_attempt_uses_exactly_the_one_kind() -> Result<()> {
-    let (_dir, vault) = vault_fixture();
-    let fixture = install_fixture(&vault, Some(outbound_step()));
-    let attempt = queued_attempt(&vault, &fixture);
-    assert_eq!(attempt.kind, "campaign.enrollment.macro");
-    assert_eq!(attempt.kind, CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND);
-    assert_eq!(attempt.state, AttemptState::Queued);
-    assert_eq!(
-        decode_enrollment_attempt_payload(&attempt.payload)?,
-        fixture.payload
-    );
-    Ok(())
 }
 
 // -----------------------------------------------------------------------

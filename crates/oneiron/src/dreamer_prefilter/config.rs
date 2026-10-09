@@ -159,16 +159,6 @@ pub fn validate_prefilter_config(config: &PrefilterConfig) -> Result<()> {
     Ok(())
 }
 
-/// Decodes a config row from its raw bytes directly. Production reads now go through
-/// [`CONFIG`], which decodes via the same [`PrefilterConfigRow`] shape; this stays for tests
-/// that build or inspect rows by hand.
-#[cfg(test)]
-pub(super) fn decode_prefilter_config(raw: &[u8]) -> Result<PrefilterConfig> {
-    let row: PrefilterConfigRow = rmp_serde::from_slice(raw)
-        .map_err(|_| invalid_prefilter_config("dreamer prefilter config row is undecodable"))?;
-    prefilter_config_from_row(row)
-}
-
 /// The validation a landed row gets on the way OUT as well as on the way in:
 /// the setter is the only sanctioned writer, but a corrupt or foreign row
 /// must not be able to hand the planner a NaN threshold.
@@ -185,19 +175,6 @@ fn prefilter_config_from_row(row: PrefilterConfigRow) -> Result<PrefilterConfig>
     };
     validate_prefilter_config(&config)?;
     Ok(config)
-}
-
-/// Encodes a config row to its raw bytes directly, for tests that build or inspect rows by
-/// hand; production writes now go through [`CONFIG`].
-#[cfg(test)]
-pub(super) fn encode_prefilter_config(config: &PrefilterConfig) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(&PrefilterConfigRow {
-        version: PREFILTER_CONFIG_VERSION,
-        enabled: config.enabled,
-        threshold: config.threshold,
-        weights: config.weights,
-    })
-    .map_err(|_| invalid_prefilter_config("dreamer prefilter config row encode failed"))
 }
 
 impl Vault {

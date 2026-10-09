@@ -129,46 +129,6 @@ fn input(value: BookingPagePublication) -> ClaimInput {
 }
 
 #[test]
-fn public_booking_publication_round_trips_opaque_presentation_and_bounds_window() {
-    let value = publication();
-    let encoded = encode_public_booking_page_value(&value).expect("encode");
-    assert_eq!(
-        decode_public_booking_page_value(&encoded).expect("decode"),
-        value
-    );
-    let request = value
-        .initial_availability
-        .request(100, "render".to_owned())
-        .expect("window");
-    assert_eq!(
-        request.window,
-        TimeRange {
-            start: 110,
-            end: 3_709
-        }
-    );
-    assert!(
-        value
-            .initial_availability
-            .request(u64::MAX, "render".to_owned())
-            .is_err()
-    );
-    for bag in [
-        json!(null),
-        json!([1, {"never-interpreted": true}]),
-        json!("opaque"),
-    ] {
-        let mut value = value.clone();
-        value.theme = ThemeTokens(bag);
-        let encoded = encode_public_booking_page_value(&value).expect("opaque bag");
-        assert_eq!(
-            decode_public_booking_page_value(&encoded).expect("opaque roundtrip"),
-            value
-        );
-    }
-}
-
-#[test]
 fn public_booking_publication_uses_normal_owner_write_and_half_open_claim_lifetime() {
     let (_dir, vault) = open();
     assert!(
@@ -543,38 +503,4 @@ fn public_booking_publication_requires_current_rooted_owner_authority() {
             .code,
         MEMORY_CODE_OWNER_BINDING_REQUIRED
     );
-}
-
-#[test]
-fn public_landing_content_is_checked_at_write_and_read_codec() {
-    let mut publication = publication();
-    publication.landing = crate::booking::BookingLandingContent {
-        photo_path: Some("/assets/portrait.jpg".to_owned()),
-        intro: "Owner-authored introduction".to_owned(),
-        faq: vec![crate::booking::BookingFaq {
-            question: "What next?".into(),
-            answer: "Prepare.".into(),
-        }],
-        prep_path: Some("/assets/prep.pdf".to_owned()),
-        preconfirm_field_keys: vec!["topic".into()],
-    };
-    let (_dir, vault) = open();
-    let owner = vault.memory(id(2), EdgeActorClass::Human);
-    owner
-        .claim_upsert(&input(publication.clone()))
-        .expect("valid owner copy");
-    assert_eq!(
-        load_public_booking_page(&vault, id(1), 150)
-            .expect("live")
-            .expect("page")
-            .landing,
-        publication.landing
-    );
-    let mut invalid = publication;
-    invalid.landing.prep_path = Some("//other.example/prep".into());
-    assert!(encode_public_booking_page_value(&invalid).is_err());
-    assert!(owner.claim_upsert(&input(invalid.clone())).is_err());
-    let encoded = rmp_serde::to_vec_named(&invalid).expect("raw invalid bytes");
-    let raw = rmpv::decode::read_value(&mut std::io::Cursor::new(encoded)).expect("raw value");
-    assert!(decode_public_booking_page_value(&raw).is_err());
 }

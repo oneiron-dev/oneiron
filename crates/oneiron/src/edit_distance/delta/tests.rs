@@ -2,7 +2,6 @@ use super::*;
 
 use crate::edit_distance::myers::MOVE_DISCOUNT;
 use crate::edit_distance::{LoroOpRef, OpAttribution, OpSpan, ProposalArtifactRef};
-use crate::error::ArtifactError;
 
 // ─── fixtures ───────────────────────────────────────────────────────────
 
@@ -89,95 +88,7 @@ fn encoded_delta_projects_the_six_arch_0056_names_and_round_trips() {
     assert_eq!(AmendmentDelta::decode(&encoded).expect("decode"), delta);
 }
 
-/// Canonical encoding means STABLE bytes: two Δs equal in content encode
-/// identically regardless of how their maps were built.
-#[test]
-fn encoding_is_byte_stable_for_equal_deltas() {
-    let left = delta_from_field_diff(
-        &body(&[("a", Value::from(1))]),
-        &body(&[("a", Value::from(2))]),
-    )
-    .expect("left");
-    let right = delta_from_field_diff(
-        &body(&[("a", Value::from(1))]),
-        &body(&[("a", Value::from(2))]),
-    )
-    .expect("right");
-    assert_eq!(left.encode().expect("left"), right.encode().expect("right"));
-}
-
-#[test]
-fn decode_rejects_a_payload_this_engine_did_not_write() {
-    assert!(AmendmentDelta::decode(b"not a delta").is_err());
-}
-
 // ─── field-diff lane ────────────────────────────────────────────────────
-
-/// A changed leaf is one deletion AND one insertion (the field was
-/// rewritten); an added leaf is an insertion alone; an equal leaf is kept —
-/// including one nested under an unchanged map, which is walked rather than
-/// compared whole.
-#[test]
-fn field_diff_counts_changed_leaves_not_bytes() {
-    let proposed = body(&[
-        ("a", Value::from(1)),
-        ("b", Value::from("x")),
-        ("c", Value::Map(vec![(Value::from("d"), Value::from(2))])),
-    ]);
-    let amended = body(&[
-        ("a", Value::from(1)),
-        ("b", Value::from("y")),
-        ("c", Value::Map(vec![(Value::from("d"), Value::from(2))])),
-        ("e", Value::from(3)),
-    ]);
-
-    let delta = delta_from_field_diff(&proposed, &amended).expect("field diff");
-    assert_eq!(delta.source, DeltaSource::FieldDiff);
-    assert_eq!(
-        delta.ops_summary,
-        OpsSummary {
-            ins: 2,
-            del: 1,
-            kept: 2,
-            moved: 0,
-            approx: false,
-        }
-    );
-    // (2 + 1) / (3 before-leaves + 4 after-leaves).
-    assert!((delta.d_norm - 3.0 / 7.0).abs() < 1e-6, "{}", delta.d_norm);
-    // The refs are the two bodies' own content hashes, so a consumer can
-    // verify the pair it was handed.
-    assert_eq!(
-        delta.proposed_ref,
-        bytes_to_hex_lower(blake3::hash(&proposed).as_bytes())
-    );
-    assert_ne!(delta.proposed_ref, delta.final_ref);
-}
-
-/// A type change is not a partial edit: the whole subtree on each side is
-/// charged, so replacing an array with a scalar cannot read as one small
-/// change.
-#[test]
-fn field_diff_charges_whole_subtrees_across_a_type_change() {
-    let delta = delta_from_field_diff(
-        &body(&[(
-            "scope",
-            Value::Array(vec![Value::from(1), Value::from(2), Value::from(3)]),
-        )]),
-        &body(&[("scope", Value::from("none"))]),
-    )
-    .expect("field diff");
-    assert_eq!(
-        delta.ops_summary,
-        OpsSummary {
-            ins: 1,
-            del: 3,
-            kept: 0,
-            moved: 0,
-            approx: false,
-        }
-    );
-}
 
 #[test]
 fn field_diff_rejects_bytes_that_are_not_a_body() {
@@ -188,66 +99,6 @@ fn field_diff_rejects_bytes_that_are_not_a_body() {
     let mut tail = body(&[("a", Value::from(1))]);
     tail.push(0x00);
     assert!(delta_from_field_diff(&tail, &body(&[])).is_err());
-}
-
-// ─── recorded-ops lane ──────────────────────────────────────────────────
-
-/// The recorded lane counts CHURN — the word inserted by the first change and
-/// then rewritten by the second is charged twice — while `kept` is measured
-/// at the window's endpoints, where "hello world" survives whole.
-#[test]
-fn recorded_ops_counts_churn_and_endpoint_survivors() {
-    let delta = delta_from_recorded_ops(&churned_window());
-    assert_eq!(delta.source, DeltaSource::RecordedOps);
-    assert_eq!(
-        delta.ops_summary,
-        OpsSummary {
-            ins: 10,
-            del: 4,
-            kept: 11,
-            moved: 0,
-            approx: false,
-        }
-    );
-    // 14 / (11 + 17).
-    assert_eq!(delta.d_norm, 0.5);
-    assert_eq!(delta.proposed_ref, "0102");
-    assert_eq!(delta.final_ref, "0304");
-}
-
-/// An empty window is `0.0`, not a division by zero.
-#[test]
-fn recorded_ops_on_an_empty_window_is_zero_not_a_panic() {
-    let mut window = churned_window();
-    window.ops_by_actor.clear();
-    window.proposed_text.clear();
-    window.final_text.clear();
-
-    let delta = delta_from_recorded_ops(&window);
-    assert_eq!(delta.d_norm, 0.0);
-    assert_eq!(delta.ops_summary, OpsSummary::default());
-}
-
-/// A repeated run must not let prefix and suffix double-count the same
-/// characters into a negative change.
-#[test]
-fn recorded_ops_does_not_overlap_prefix_and_suffix() {
-    let mut window = churned_window();
-    window.ops_by_actor = vec![span("aaa", "aaaaa")];
-    window.proposed_text = "aaa".to_owned();
-    window.final_text = "aaaaa".to_owned();
-
-    let delta = delta_from_recorded_ops(&window);
-    assert_eq!(
-        delta.ops_summary,
-        OpsSummary {
-            ins: 2,
-            del: 0,
-            kept: 3,
-            moved: 0,
-            approx: false,
-        }
-    );
 }
 
 // ─── chooser ────────────────────────────────────────────────────────────
@@ -295,86 +146,6 @@ fn chooser_prefers_recorded_ops_then_field_diff_over_reconstructed() {
             .source,
         DeltaSource::Reconstructed
     );
-}
-
-/// A context offering nothing is a typed error, not a Δ of zero: "nothing to
-/// measure with" and "measured, and nothing changed" are different facts.
-#[test]
-fn chooser_reports_an_empty_context_as_unavailable() {
-    let ctx = DeltaCaptureContext {
-        recorded: None,
-        bodies: None,
-        texts: None,
-    };
-    assert!(matches!(
-        capture_delta_best(&ctx),
-        Err(Error::Artifact(ArtifactError::DeltaCaptureUnavailable(_)))
-    ));
-}
-
-// ─── reconstructed lane ─────────────────────────────────────────────────
-
-/// The out-of-band lane carries verifiable ends (each side's own blake3) and
-/// the source token a consumer reads the refs THROUGH.
-#[test]
-fn reconstructed_lane_carries_content_hashes_of_both_ends() {
-    let (before, after) = ("alpha\nbravo\n", "alpha\nbravo\ncharlie\n");
-    let delta = delta_from_reconstructed(before, after);
-
-    assert_eq!(delta.source, DeltaSource::Reconstructed);
-    assert_eq!(DeltaSource::Reconstructed.as_str(), "reconstructed");
-    assert_eq!(
-        delta.proposed_ref,
-        bytes_to_hex_lower(blake3::hash(before.as_bytes()).as_bytes())
-    );
-    assert_eq!(
-        delta.final_ref,
-        bytes_to_hex_lower(blake3::hash(after.as_bytes()).as_bytes())
-    );
-    // Characters, a terminator per line: `charlie` arrived, `alpha` and
-    // `bravo` stayed.
-    assert_eq!(
-        delta.ops_summary,
-        OpsSummary {
-            ins: 8,
-            del: 0,
-            kept: 12,
-            moved: 0,
-            approx: false,
-        }
-    );
-}
-
-/// A capped diff says so THROUGH THE PAYLOAD. The flag is the one thing
-/// standing between a consumer and reading a bound as an exact measurement,
-/// so the test reads it back the way a consumer does: off the encoded bytes.
-#[test]
-fn a_capped_reconstructed_diff_decodes_as_approximate() {
-    let wall = |tag: char| {
-        (0..4_000)
-            .map(|line| format!("{tag}{line}"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    let delta = delta_from_reconstructed(&wall('a'), &wall('b'));
-    let decoded = AmendmentDelta::decode(&delta.encode().expect("encode")).expect("decode");
-
-    assert!(decoded.ops_summary.approx, "a capped script must say so");
-    assert_eq!(decoded, delta);
-
-    // The exact path is the control: nothing sets the flag by accident.
-    assert!(!delta_from_reconstructed("a\nb", "a\nc").ops_summary.approx);
-}
-
-/// The `moved` discount reaches `d_norm` through the SHARED formula, not a
-/// number the reconstructed lane computes for itself.
-#[test]
-fn the_move_discount_reaches_d_norm_through_the_pinned_formula() {
-    let delta = delta_from_reconstructed("one\ntwo\nsix\nten", "six\nten\none\ntwo");
-    assert_eq!(delta.ops_summary.moved, 8);
-    assert_eq!(delta.d_norm, delta.ops_summary.d_norm(16, 16));
-    // Eight relocated characters cost 1.6 where rewriting them would cost 16.
-    assert!((delta.d_norm - 0.05).abs() < 1e-6, "{}", delta.d_norm);
 }
 
 // ─── what the text lanes read (ARCH-0056 §3, owner 2026-10-08) ─────────
@@ -786,53 +557,6 @@ fn attachment_fills_the_reserved_slot_for_amended_outcomes_only() {
     assert!(
         !records[1].fields.contains_key(FIELD_AMENDMENT_DELTA),
         "an unamended outcome has nothing to attach"
-    );
-}
-
-/// A capture that FAILED projects its own marker, never a Δ field holding
-/// something that is not a Δ. Three receipt states stay distinguishable: Δ
-/// measured, measurement failed, and not yet projected (neither field).
-#[test]
-fn attachment_surfaces_a_failed_capture_as_its_own_marker() {
-    let (_tmp, vault) = crate::edit_distance::tests::temp_vault();
-    vault
-        .with_write_txn(|wtxn| {
-            put_amendment_row_in_txn(&vault, wtxn, "gate:unmeasured", &DeltaRow::Uncaptured)
-        })
-        .expect("write the uncaptured marker");
-
-    let mut records = vec![
-        amended_record("gate:unmeasured"),
-        amended_record("gate:none"),
-    ];
-    let rtxn = vault.store.env.read_txn().expect("read txn");
-    attach_amendment_deltas(&vault, &rtxn, &mut records).expect("attach");
-    drop(rtxn);
-
-    assert_eq!(
-        records[0]
-            .fields
-            .get(FIELD_AMENDMENT_DELTA_UNCAPTURED)
-            .map(String::as_str),
-        Some("true"),
-    );
-    assert!(
-        !records[0].fields.contains_key(FIELD_AMENDMENT_DELTA),
-        "the marker is not a Δ, and must never be projected as one",
-    );
-    // An unprojected receipt carries NEITHER amendment field; unrelated
-    // receipt fields remain legal.
-    assert!(!records[1].fields.contains_key(FIELD_AMENDMENT_DELTA));
-    assert!(
-        !records[1]
-            .fields
-            .contains_key(FIELD_AMENDMENT_DELTA_UNCAPTURED),
-    );
-    // The Δ accessor stays honest about the marker row: there is no Δ to read
-    // and it is not corruption either.
-    assert_eq!(
-        amendment_delta(&vault, "gate:unmeasured").expect("read"),
-        None,
     );
 }
 

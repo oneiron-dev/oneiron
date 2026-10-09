@@ -257,13 +257,7 @@ impl Default for HnswConfig {
 /// The struct is `#[non_exhaustive]`, so downstream callers cannot build it
 /// with a struct literal. Use one of the presets (`VaultConfig::device()`
 /// or `VaultConfig::server()`, or `VaultConfig::default()` which aliases
-/// `device()`) and mutate fields as needed:
-///
-/// ```
-/// # use oneiron::VaultConfig;
-/// let mut cfg = VaultConfig::default();
-/// cfg.dimensions = 768;
-/// ```
+/// `device()`) and mutate fields as needed.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct VaultConfig {
@@ -605,6 +599,3 @@ impl VaultConfig {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

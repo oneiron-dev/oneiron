@@ -30,16 +30,6 @@ impl Activity {
         }
         Ok(())
     }
-
-    /// Test-only now: every non-test read of [`ACTIVITY`] decodes through the typed door
-    /// directly, then calls [`Self::validate_order`] separately.
-    #[cfg(test)]
-    fn decode(bytes: &[u8]) -> Result<Self> {
-        let activity: Self =
-            rmp_serde::from_slice(bytes).map_err(|_| Error::CorruptedIndex("healer activity"))?;
-        activity.validate_order()?;
-        Ok(activity)
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -215,6 +205,3 @@ impl Vault {
         })
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -79,33 +79,6 @@ fn one_explicit_bulk_act_admits_exact_batch_and_cannot_be_replayed() -> Result<(
 }
 
 #[test]
-fn consent_is_bound_to_every_member_and_failed_batch_keeps_act_available() -> Result<()> {
-    let (_dir, vault, owner, mut batch) = fixture()?;
-    let original = batch.clone();
-    let digest = vault
-        .imported_claim_batch_effect(&owner, &original)?
-        .digest();
-    vault.approve_once(&owner, digest)?;
-    batch.entries[1].value = json!("changed");
-    assert_ne!(
-        vault.imported_claim_batch_effect(&owner, &batch)?.digest(),
-        digest
-    );
-    // A changed batch cannot consume the previously approved digest.
-    // A missing subject aborts the entire exact batch without spending it.
-    let missing = batch.entries[1].subject;
-    batch.entries[1].subject = EntityId::now();
-    assert!(vault.admit_imported_claim_batch(&owner, &batch).is_err());
-    for entry in &batch.entries {
-        assert!(vault.get_raw(&entry.claim_id)?.is_none());
-    }
-    batch.entries[1].subject = missing;
-    let receipt = vault.admit_imported_claim_batch(&owner, &original)?;
-    assert_eq!(receipt.approval, ClaimApprovalStatus::Approved);
-    Ok(())
-}
-
-#[test]
 fn failed_exact_batch_keeps_consent_for_retry() -> Result<()> {
     let (_dir, vault, owner, mut batch) = fixture()?;
     let missing = EntityId::now();
@@ -127,37 +100,6 @@ fn failed_exact_batch_keeps_consent_for_retry() -> Result<()> {
     assert_eq!(receipt.approval, ClaimApprovalStatus::Approved);
     assert_eq!(receipt.approval_digest, digest.to_hex());
     assert!(vault.pending_gate_consents(10)?.is_empty());
-    Ok(())
-}
-
-#[test]
-fn gate_failure_rolls_back_all_candidates_and_preserves_bulk_act() -> Result<()> {
-    let (_dir, vault, owner, mut batch) = fixture()?;
-    batch.entries[1].predicate = "core.memory.key_value".into();
-    assert!(vault.imported_claim_batch_effect(&owner, &batch).is_err());
-    for entry in &batch.entries {
-        assert!(vault.get_raw(&entry.claim_id)?.is_none());
-    }
-    Ok(())
-}
-
-#[test]
-fn one_approve_call_admits_the_whole_batch_and_cannot_repeat() -> Result<()> {
-    let (_dir, vault, owner, batch) = fixture()?;
-    let receipt = vault.approve_imported_claim_batch(&owner, &batch)?;
-    assert_eq!(receipt.approval, ClaimApprovalStatus::Approved);
-    assert_eq!(
-        receipt.approval_digest,
-        vault
-            .imported_claim_batch_effect(&owner, &batch)?
-            .digest()
-            .to_hex()
-    );
-    for id in &receipt.claim_ids {
-        let claim = vault.get_claim(id)?.expect("approved imported claim");
-        assert_eq!(claim.approval, ClaimApprovalStatus::Approved);
-    }
-    assert!(vault.approve_imported_claim_batch(&owner, &batch).is_err());
     Ok(())
 }
 

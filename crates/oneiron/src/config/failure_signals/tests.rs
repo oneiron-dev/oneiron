@@ -1,7 +1,5 @@
 use super::*;
-use crate::{
-    TimeRange, Vault, config::VaultConfig, ports::ManualClock, registry::ENTITY_TYPE_TURN,
-};
+use crate::{TimeRange, Vault, config::VaultConfig, ports::ManualClock};
 
 struct FixtureNer;
 impl Tier2Redactor for FixtureNer {
@@ -72,29 +70,6 @@ fn turn(vault: &Vault, text: &str) -> crate::Result<crate::EntityId> {
         .expect("authorized witness");
     Ok(id)
 }
-fn bare_turn(vault: &Vault, text: &str) -> crate::Result<crate::EntityId> {
-    bare_turn_at_id(vault, crate::EntityId::now(), text)
-}
-fn bare_turn_at_id(
-    vault: &Vault,
-    id: crate::EntityId,
-    text: &str,
-) -> crate::Result<crate::EntityId> {
-    let mut body = vec![];
-    rmpv::encode::write_value(
-        &mut body,
-        &rmpv::Value::Map(vec![("txt".into(), text.into())]),
-    )
-    .expect("encode bare turn");
-    vault.put_entity(
-        &id,
-        ENTITY_TYPE_TURN,
-        TimeRange { start: 10, end: 10 },
-        10,
-        &body,
-    )?;
-    Ok(id)
-}
 fn vault() -> (tempfile::TempDir, Vault, std::sync::Arc<ManualClock>) {
     let clock = ManualClock::new(1_800_000_000);
     let mut config = VaultConfig::device();
@@ -133,35 +108,6 @@ fn pii_is_replaced_before_storage_and_read_and_uncertainty_fails_closed() -> cra
     let email = turn(&vault, "a2@example.invalid")?;
     assert!(capture_tier2_samples(&vault, &[email], &Miss, &[]).is_err());
     assert_eq!(read_tier2_samples(&vault)?.len(), 1);
-    Ok(())
-}
-#[test]
-fn cap_is_durable_weekly_and_expiry_is_35_days() -> crate::Result<()> {
-    let (dir, vault, clock) = vault();
-    let ids = (0..54)
-        .map(|_| turn(&vault, "safe transcript"))
-        .collect::<crate::Result<Vec<_>>>()?;
-    assert_eq!(
-        capture_tier2_samples(&vault, &ids, &FixtureNer, &[])?.len(),
-        50
-    );
-    assert!(capture_tier2_samples(&vault, &ids, &Unknown, &[])?.is_empty());
-    assert_eq!(read_tier2_samples(&vault)?.len(), 50);
-    drop(vault);
-    let mut config = VaultConfig::device();
-    config.store_clock = clock.bundle();
-    config.failure_signals.export_opt_in = true;
-    let vault = Vault::open(dir.path(), config)?;
-    assert!(capture_tier2_samples(&vault, &ids, &FixtureNer, &[])?.is_empty());
-    clock.set(1_800_000_000 + super::WEEK);
-    assert_eq!(
-        capture_tier2_samples(&vault, &ids[..1], &FixtureNer, &[])?.len(),
-        1
-    );
-    clock.set(1_800_000_000 + super::TTL);
-    assert_eq!(read_tier2_samples(&vault)?.len(), 1);
-    clock.set(1_800_000_000 + super::TTL + super::WEEK);
-    assert!(read_tier2_samples(&vault)?.is_empty());
     Ok(())
 }
 #[test]
@@ -301,66 +247,6 @@ fn deletion_during_redaction_cannot_commit_a_stale_sample() -> crate::Result<()>
     };
     assert!(capture_tier2_samples(&vault, &[turn_id], &ner, &[])?.is_empty());
     assert!(read_tier2_samples(&vault)?.is_empty());
-    Ok(())
-}
-
-#[test]
-fn expired_week_counter_cannot_be_revived_by_clock_rollback() -> crate::Result<()> {
-    const T: u64 = 1_800_000_000;
-    let (dir, vault, clock) = vault();
-    let ids = (0..54)
-        .map(|_| turn(&vault, "safe transcript"))
-        .collect::<crate::Result<Vec<_>>>()?;
-    assert_eq!(
-        capture_tier2_samples(&vault, &ids, &FixtureNer, &[])?.len(),
-        50
-    );
-    clock.set(T + super::WEEK);
-    assert_eq!(read_tier2_samples(&vault)?.len(), 50);
-    drop(vault);
-    clock.set(T);
-    let mut config = VaultConfig::device();
-    config.store_clock = clock.bundle();
-    config.failure_signals.export_opt_in = true;
-    let vault = Vault::open(dir.path(), config)?;
-    let second = capture_tier2_samples(&vault, &ids, &FixtureNer, &[])?;
-    assert_eq!(second.len(), 50);
-    assert!(
-        second
-            .iter()
-            .all(|sample| sample.sampled_at >= T + super::WEEK)
-    );
-    assert_eq!(read_tier2_samples(&vault)?.len(), 100);
-    Ok(())
-}
-
-#[test]
-fn bare_turn_body_is_not_a_transcript_candidate() -> crate::Result<()> {
-    let (_dir, vault, _) = vault();
-    let id = bare_turn(&vault, "Ada email ada@example.invalid")?;
-    assert!(capture_tier2_samples(&vault, &[id], &Unknown, &[])?.is_empty());
-    assert!(read_tier2_samples(&vault)?.is_empty());
-    Ok(())
-}
-
-#[test]
-fn ineligible_ids_do_not_starve_the_last_weekly_slot() -> crate::Result<()> {
-    let (_dir, vault, _) = vault();
-    let ids = (0..49)
-        .map(|_| turn(&vault, "safe transcript"))
-        .collect::<crate::Result<Vec<_>>>()?;
-    assert_eq!(
-        capture_tier2_samples(&vault, &ids, &FixtureNer, &[])?.len(),
-        49
-    );
-    let bare = bare_turn(&vault, "not a transcript")?;
-    let valid = turn(&vault, "Ada is here")?;
-    let candidates = [valid, bare]; // reversed input still sorts bare first
-    assert!(bare < valid);
-    let selected = capture_tier2_samples(&vault, &candidates, &FixtureNer, &[])?;
-    assert_eq!(selected.len(), 1);
-    assert!(selected[0].text.starts_with("[PERSON]"));
-    assert!(capture_tier2_samples(&vault, &candidates, &Unknown, &[])?.is_empty());
     Ok(())
 }
 

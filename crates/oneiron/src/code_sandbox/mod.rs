@@ -54,6 +54,6 @@ pub use self::proposal::{
 mod tests;
 
 #[cfg(test)]
-use crate::{ClaimApprovalStatus, ClaimCandidate, Result, code_run::SelfEffect};
+use crate::{ClaimApprovalStatus, Result};
 #[cfg(test)]
 use std::path::Path;

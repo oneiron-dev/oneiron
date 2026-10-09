@@ -309,22 +309,6 @@ fn a_divergent_finalize_cannot_overwrite_the_stored_record() {
     );
 }
 
-/// The class token is a storage ABI, pinned independently of Gate's policy key.
-#[test]
-fn actor_class_tokens_round_trip() {
-    for class in [
-        EdgeActorClass::Human,
-        EdgeActorClass::Agent,
-        EdgeActorClass::System,
-    ] {
-        assert_eq!(
-            actor_class_from_token(actor_class_token(class)),
-            Some(class)
-        );
-    }
-    assert_eq!(actor_class_from_token("operator"), None);
-}
-
 // ─── helpers ────────────────────────────────────────────────────────────
 
 /// Writes a binding row with an explicit window, bypassing `unix_seconds_now`

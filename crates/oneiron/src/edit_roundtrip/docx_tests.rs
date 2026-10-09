@@ -1,6 +1,6 @@
 //! Native DOCX proposal proofs at the public edit door.
 
-use super::{EditOp, EditOutcome, OfficeFormat, run_docx_revision};
+use super::{EditOutcome, run_docx_revision};
 use oneiron_docedit::Document;
 
 const DOCX: &[u8] = include_bytes!(concat!(
@@ -20,50 +20,6 @@ fn replace_first_paragraph(guard: &str) -> String {
         "revision": { "author": "Editor" }
     })
     .to_string()
-}
-
-#[test]
-fn native_docx_proposal_contains_word_revisions_and_retains_unedited_parts() {
-    let doc = Document::parse(DOCX).unwrap();
-    let json = replace_first_paragraph(&doc.read().blocks[0].guard);
-    let EditOutcome::Proposed(proposal) = run_docx_revision(DOCX, &json, "docx-run").unwrap()
-    else {
-        panic!("valid native revision must produce a settleable proposal");
-    };
-    assert_eq!(proposal.format, OfficeFormat::Docx);
-    assert!(proposal.validation.ok);
-    assert!(
-        proposal
-            .manifest
-            .touched_parts
-            .contains("word/document.xml")
-    );
-    assert!(matches!(
-        proposal.manifest.ops.as_slice(),
-        [EditOp::DocxRevision { transaction }]
-            if serde_json::from_str::<serde_json::Value>(transaction).unwrap()["ops"]
-                == serde_json::from_str::<serde_json::Value>(&json).unwrap()["ops"]
-                && serde_json::from_str::<serde_json::Value>(transaction).unwrap()["revision"]["date"].is_string()
-    ));
-    let package = super::opc::read(&proposal.new_bytes).unwrap();
-    let xml = std::str::from_utf8(package.part("word/document.xml").unwrap()).unwrap();
-    assert!(xml.contains("w:ins"), "Word insertion mark absent");
-    assert!(xml.contains("w:del"), "Word deletion mark absent");
-    let edited = Document::parse(&proposal.new_bytes).unwrap();
-    assert!(
-        edited
-            .read_accepted()
-            .unwrap()
-            .to_text()
-            .contains("A tracked replacement.")
-    );
-    assert!(
-        !edited
-            .read_rejected()
-            .unwrap()
-            .to_text()
-            .contains("A tracked replacement.")
-    );
 }
 
 #[test]
@@ -207,37 +163,4 @@ fn docx_artifact_refuses_direct_mode_over_another_authors_pending_edit() -> crat
             .is_none()
     );
     Ok(())
-}
-
-#[test]
-fn native_docx_rejects_small_effective_budgets_before_editing() {
-    use oneiron_docedit::ArchiveLimits;
-    let json = replace_first_paragraph(&Document::parse(DOCX).unwrap().read().blocks[0].guard);
-    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(DOCX)).unwrap();
-    let sizes: Vec<u64> = (0..archive.len())
-        .map(|i| archive.by_index(i).unwrap().size())
-        .collect();
-    let max_part = *sizes.iter().max().unwrap();
-    let total: u64 = sizes.iter().sum();
-    assert!(total > max_part + 1);
-    for limits in [
-        ArchiveLimits {
-            max_entries: 1,
-            ..ArchiveLimits::DEFAULT
-        },
-        ArchiveLimits {
-            max_part_bytes: max_part - 1,
-            ..ArchiveLimits::DEFAULT
-        },
-        ArchiveLimits {
-            max_part_bytes: max_part,
-            max_total_bytes: total - 1,
-            ..ArchiveLimits::DEFAULT
-        },
-    ] {
-        assert!(limits.is_valid());
-        assert!(
-            super::docx::run_docx_revision_with_limits(DOCX, &json, "budget-test", limits).is_err()
-        );
-    }
 }

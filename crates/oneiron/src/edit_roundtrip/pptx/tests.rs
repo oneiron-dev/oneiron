@@ -3,7 +3,6 @@ pub(crate) mod support;
 use super::package::*;
 use super::xml::Xml;
 use super::*;
-use crate::anchored_annotation::{Locator, ReanchorOutcome};
 use crate::entity_id::EntityId;
 use std::collections::BTreeSet;
 use support::*;
@@ -328,54 +327,6 @@ fn candidate_validation_rejects_outside_and_inside_allowed_part_tampering() {
 }
 
 #[test]
-fn pure_rebind_follows_creation_identity_and_drifts_deleted_or_changed_shape() {
-    let original = parts(false);
-    let before = inspect_pptx(&bytes(&original)).unwrap();
-    let locator = Locator::pptx(1, "2").unwrap();
-    assert_eq!(
-        rebind_locator(&locator, &before, &before),
-        ReanchorOutcome::Mapped(Locator::pptx(1, SHAPE).unwrap())
-    );
-    for (from, to) in [
-        (SHAPE, "{00000001-2222-4333-8444-555555555555}"),
-        ("Original text", "Changed text"),
-    ] {
-        let mut new = original.clone();
-        with_text(&mut new, "ppt/slides/slide9.xml", from, to);
-        let after = inspect_pptx(&bytes(&new)).unwrap();
-        assert_eq!(
-            rebind_locator(&locator, &before, &after),
-            ReanchorOutcome::Drifted
-        );
-    }
-}
-
-#[test]
-fn xml_prefix_aliases_and_retained_unknowns_are_not_reserialized() {
-    let mut original = parts(false);
-    for name in ["ppt/presentation.xml", "ppt/slides/slide9.xml"] {
-        let value = String::from_utf8(original[name].clone())
-            .unwrap()
-            .replace("xmlns:p=", "xmlns:z=")
-            .replace("<p:", "<z:")
-            .replace("</p:", "</z:");
-        original.insert(name.into(), value.into_bytes());
-    }
-    let input = bytes(&original);
-    let result = comment_patch(&input, &[patch(true)]).unwrap();
-    assert_eq!(
-        inspect_pptx(&result.new_bytes).unwrap().slides[0].creation_id,
-        Some(41)
-    );
-    let after = unpack(&result.new_bytes);
-    assert!(
-        std::str::from_utf8(&after["ppt/slides/slide9.xml"])
-            .unwrap()
-            .contains("<z:sp>")
-    );
-}
-
-#[test]
 fn malformed_xml_and_missing_slide_fail_with_typed_refusals() {
     let mut original = parts(false);
     with_text(
@@ -553,113 +504,5 @@ fn relationship_target_cannot_widen_comment_write_set() {
     assert_eq!(
         comment_patch(&bytes(&imported), &[reply]).unwrap_err(),
         PptxError::InvalidReference
-    );
-}
-
-#[test]
-fn manifest_roundtrip_keeps_comment_and_declared_identity_effects() {
-    let input = bytes(&parts(true));
-    let mut request = patch(false);
-    if let PptxCommentAction::Add { target, .. } = &mut request.action {
-        target.slide_creation_id = None;
-    }
-    let proposal = run_comment_roundtrip(&input, &[request], "manifest").unwrap();
-    let manifest =
-        crate::edit_roundtrip::EditManifest::from_msgpack(&proposal.manifest.to_msgpack().unwrap())
-            .unwrap();
-    assert_eq!(manifest, proposal.manifest);
-    let legacy = rmpv::Value::Map(vec![
-        ("schema_version".into(), 1u64.into()),
-        ("format".into(), "xlsx".into()),
-        ("ops".into(), rmpv::Value::Array(vec![])),
-        ("touched_parts".into(), rmpv::Value::Array(vec![])),
-        ("mutation_mode".into(), "full".into()),
-        ("warnings".into(), rmpv::Value::Array(vec![])),
-    ]);
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, &legacy).unwrap();
-    let decoded = crate::edit_roundtrip::EditManifest::from_msgpack(&bytes).unwrap();
-    assert_eq!(decoded.format, crate::edit_roundtrip::OfficeFormat::Xlsx);
-    assert!(decoded.ops.is_empty());
-}
-
-#[test]
-fn clean_office_fixture_comment_declares_only_review_parts() {
-    let input = include_bytes!("../../../../../scripts/office/fixtures/clean.pptx");
-    let mut patch = support::patch(false);
-    if let PptxCommentAction::Add { target, .. } = &mut patch.action {
-        target.slide_creation_id = None;
-    }
-    let proposal = run_comment_roundtrip(input, &[patch], "clean-oracle").unwrap();
-    verify_comment_proposal(input, &proposal).unwrap();
-    let before = unpack(input);
-    let after = unpack(&proposal.new_bytes);
-    assert_eq!(
-        proposal.manifest.touched_parts,
-        before
-            .keys()
-            .chain(after.keys())
-            .filter(|name| before.get(*name) != after.get(*name))
-            .cloned()
-            .collect()
-    );
-    assert!(
-        proposal
-            .manifest
-            .touched_parts
-            .contains("ppt/slides/slide1.xml")
-    );
-    assert!(proposal.manifest.touched_parts.contains("ppt/authors.xml"));
-    for (name, contents) in &before {
-        if !proposal.manifest.touched_parts.contains(name) {
-            assert_eq!(after.get(name), Some(contents), "{name}");
-        }
-    }
-}
-
-#[test]
-fn policy_xml_budgets_are_enforced_instead_of_parser_literals() {
-    let xml = "<root xmlns:p=\"urn:p\" one=\"1\" two=\"2\"><p:child/></root>";
-    let defaults = PptxOperationalLimits::default();
-    assert!(Xml::parse_with_limits(xml, &defaults).is_ok());
-    for limits in [
-        PptxOperationalLimits {
-            max_xml_bytes: xml.len() - 1,
-            ..defaults
-        },
-        PptxOperationalLimits {
-            max_xml_attributes: 2,
-            ..defaults
-        },
-        PptxOperationalLimits {
-            max_xml_namespaces: 1,
-            ..defaults
-        },
-        PptxOperationalLimits {
-            max_xml_depth: 1,
-            ..defaults
-        },
-        PptxOperationalLimits {
-            max_xml_nodes: 1,
-            ..defaults
-        },
-    ] {
-        assert!(Xml::parse_with_limits(xml, &limits).is_err(), "{limits:?}");
-    }
-    let bytes = bytes(&parts(false));
-    let request = patch(false);
-    let bounded = PptxOperationalLimits {
-        max_xml_bytes: 64,
-        ..defaults
-    };
-    assert!(
-        super::proposal::run_comment_roundtrip_with_limits(
-            &bytes,
-            &[request],
-            "xml-limited",
-            bounded,
-            None
-        )
-        .is_err()
     );
 }

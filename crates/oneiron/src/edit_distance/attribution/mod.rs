@@ -101,7 +101,6 @@ use crate::error::{Error, Result};
 #[cfg(test)]
 use crate::skill_attribution::{
     AttributionJudge, AttributionVerdict, EditHunk, HunkVerdict, JudgeRequest, OutcomeEvidence,
-    RuleAttributionJudge,
 };
 #[cfg(test)]
 use crate::temporal::TimeRange;

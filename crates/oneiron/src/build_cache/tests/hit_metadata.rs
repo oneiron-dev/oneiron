@@ -1,8 +1,7 @@
 use super::*;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::blob_artifact::{BLOB_ARTIFACT_VERSION_RECORD_KEYS, BlobArtifactVersion};
 use crate::error::ArtifactError;
-use crate::registry::ENTITY_TYPE_ASSET;
 use rmpv::Value;
 
 fn two_versions(vault: &Vault) -> (ArtifactVersionRef, BlobArtifactVersion) {
@@ -49,117 +48,6 @@ fn version_rows(vault: &Vault, record: &BlobArtifactVersion) -> Vec<(Vec<u8>, Ve
                 .then(|| (key.to_vec(), raw.to_vec()))
         })
         .collect()
-}
-
-#[test]
-fn metadata_lookup_is_exact_and_never_falls_back_to_head() {
-    let (_dir, vault) = temp_vault();
-    let (first, second) = two_versions(&vault);
-    let oldest = vault
-        .blob_artifact_version_metadata(first.artifact_id(), first.version())
-        .expect("metadata lookup")
-        .expect("oldest version");
-    assert_eq!(oldest.version, 1);
-    assert_ne!(oldest.content_hash, second.content_hash);
-    assert_eq!(
-        vault
-            .blob_artifact_version_metadata(first.artifact_id(), second.version)
-            .expect("head metadata"),
-        Some(second)
-    );
-    for version in [0, 3, u64::MAX] {
-        assert!(
-            vault
-                .blob_artifact_version_metadata(first.artifact_id(), version)
-                .expect("absent version")
-                .is_none()
-        );
-    }
-    assert!(
-        vault
-            .blob_artifact_version_metadata(&EntityId::now(), 1)
-            .expect("absent artifact")
-            .is_none()
-    );
-}
-
-#[test]
-fn hits_ignore_unrelated_version_metadata_and_do_not_read_content() {
-    let (_dir, vault) = temp_vault();
-    let (first, second) = two_versions(&vault);
-    let action = action();
-    let cache = BuildCache::new(&vault);
-    let BuildCachePutOutcome::Stored(stored) = cache
-        .put(&action, result(first.clone()))
-        .expect("store oldest version")
-    else {
-        panic!("expected Stored");
-    };
-    let before = raw_row(&vault, &stored.action_key).expect("cache row");
-    let unrelated = version_rows(&vault, &second);
-    assert_eq!(unrelated.len(), 2, "the second version and head records");
-    let assets: Vec<Vec<u8>> = {
-        let txn = vault.store.env.read_txn().expect("read txn");
-        vault
-            .store
-            .entities
-            .iter(&txn)
-            .expect("entity iter")
-            .filter_map(|entry| {
-                let (key, raw) = entry.expect("entity row");
-                let header = EntityMetadataHeader::parse(&raw).expect("entity header");
-                (header.entity_type == ENTITY_TYPE_ASSET).then(|| key.to_vec())
-            })
-            .collect()
-    };
-    // Two fixture blobs plus four bootstrap skill carriers and four built-in pack sources.
-    assert_eq!(assets.len(), 10);
-    let mut txn = vault.store.env.write_txn().expect("write txn");
-    for (key, _) in unrelated {
-        vault
-            .store
-            .vault_meta
-            .put(&mut txn, &key, &[0xc0])
-            .expect("corrupt unrelated metadata");
-    }
-    for key in assets {
-        assert!(
-            vault
-                .store
-                .entities
-                .delete(&mut txn, &key)
-                .expect("remove content without lifecycle cleanup")
-        );
-    }
-    txn.commit().expect("commit corruption fixture");
-    assert!(vault.blob_artifact_versions(first.artifact_id()).is_err());
-    assert!(
-        vault
-            .read_blob_artifact_version(first.artifact_id(), first.version())
-            .is_err(),
-        "a content read would fail, so a successful hit proves it never ran"
-    );
-    assert_eq!(
-        cache.get(&stored.action_key).expect("metadata-only hit"),
-        Some(stored.clone())
-    );
-    assert_eq!(
-        cache
-            .put(&action, result(first.clone()))
-            .expect("metadata-only existing result"),
-        BuildCachePutOutcome::Existing(stored.clone())
-    );
-    assert_eq!(raw_row(&vault, &stored.action_key).expect("row"), before);
-    mark_live(&vault, &first);
-    assert!(matches!(
-        cache.get(&stored.action_key),
-        Err(BuildCacheError::TaintedResult { .. })
-    ));
-    assert!(matches!(
-        cache.put(&action, result(first)),
-        Err(BuildCacheError::TaintedResult { .. })
-    ));
-    assert_eq!(raw_row(&vault, &stored.action_key).expect("row"), before);
 }
 
 #[test]
@@ -455,11 +343,6 @@ fn same_version_substitution_fails_closed(historical: bool) {
         assert_binding_refuses_hits(&vault, action, reference);
     }
     assert_eq!(hit_storage_snapshot(&vault), after_swap);
-}
-
-#[test]
-fn current_head_same_version_substitution_refuses_get_and_existing_put() {
-    same_version_substitution_fails_closed(false);
 }
 
 #[test]

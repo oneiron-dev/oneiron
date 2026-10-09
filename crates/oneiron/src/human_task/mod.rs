@@ -55,8 +55,8 @@ mod signal_tests;
 // the seam re-imports both so the test children resolve exactly as before.
 #[cfg(test)]
 use self::{
-    model::{ESCALATION_AFTER_SECONDS, HUMAN_FOLLOWUP_VERB, REMINDER_AFTER_SECONDS},
-    storage::{FOLLOWUPS, put_followup_record_in_txn, wait_signal_marker},
+    model::{HUMAN_FOLLOWUP_VERB, REMINDER_AFTER_SECONDS},
+    storage::{put_followup_record_in_txn, wait_signal_marker},
     wait::stored_human_wait_binding,
 };
 #[cfg(test)]

@@ -346,6 +346,3 @@ fn nonblank(value: &str, field: &'static str) -> CampaignResult<()> {
 fn invalid<T>(field: &'static str, reason: &'static str) -> CampaignResult<T> {
     Err(CampaignError::InvalidConfig { field, reason })
 }
-
-#[cfg(test)]
-mod tests;

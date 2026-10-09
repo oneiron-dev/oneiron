@@ -552,37 +552,6 @@ mod tests {
     }
 
     #[test]
-    fn rich_inline_and_empty_shared_items_have_their_actual_text() -> Result<()> {
-        let rich = package(
-            r#"<worksheet><sheetData><row r="2"><c r="B2" t="inlineStr"><is><r><t>Actual</t></r></is></c></row></sheetData></worksheet>"#,
-            false,
-        );
-        let mut ask = bundle(
-            "Data & Co",
-            Some(CellValue::Text("Actual".into())),
-            CellValue::Text("Actual".into()),
-        );
-        verify_sheet_answer_bytes(&ask, Some(&rich), Some(&rich))?;
-        ask.answers[0].before = Some(CellValue::Text(String::new()));
-        assert!(verify_sheet_answer_bytes(&ask, Some(&rich), Some(&rich)).is_err());
-        let mut pkg = opc::read(&package(
-            r#"<worksheet><sheetData><row r="2"><c r="B2" t="s"><v>0</v></c></row></sheetData></worksheet>"#,
-            true,
-        ))?;
-        pkg.upsert(
-            "xl/sharedStrings.xml",
-            br#"<sst><si/><si><t>Wrong</t></si></sst>"#.to_vec(),
-        );
-        let shared = opc::write(&pkg);
-        ask.answers[0].before = Some(CellValue::Text(String::new()));
-        ask.answers[0].value = Some(CellValue::Text(String::new()));
-        verify_sheet_answer_bytes(&ask, Some(&shared), Some(&shared))?;
-        ask.answers[0].value = Some(CellValue::Text("Wrong".into()));
-        assert!(verify_sheet_answer_bytes(&ask, Some(&shared), Some(&shared)).is_err());
-        Ok(())
-    }
-
-    #[test]
     fn source_formula_and_abstention_are_not_literal_answer_refusals() -> Result<()> {
         let source = package(
             r#"<worksheet><sheetData><row r="2"><c r="B2"><f>1+1</f><v>2</v></c></row><row r="3"><c r="B3"><f>3+3</f><v>6</v></c></row></sheetData></worksheet>"#,

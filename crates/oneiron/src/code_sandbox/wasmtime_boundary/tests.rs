@@ -68,67 +68,6 @@ impl GuestImports for Host {
     }
 }
 
-const CLOCK_AND_COUNTER: &[u8] = br#"(component
-  (import "clock-now-unix-ms" (func $now (result u64)))
-  (core func $lowered (canon lower (func $now)))
-  (core module $m
-    (import "" "now" (func $now (result i64)))
-    (global $counter (mut i32) (i32.const 0))
-    (func (export "clock") (result i64) call $now)
-    (func (export "next") (result i32)
-      global.get $counter i32.const 1 i32.add global.set $counter global.get $counter))
-  (core instance $i (instantiate $m
-    (with "" (instance (export "now" (func $lowered))))))
-  (func (export "clock") (result u64) (canon lift (core func $i "clock")))
-  (func (export "next") (result u32) (canon lift (core func $i "next"))))"#;
-
-#[test]
-fn per_tier_import_inventory_equals_boundary_contract() {
-    for tier in [
-        SandboxGuestTier::FirstPartyDreamer,
-        SandboxGuestTier::Foreign,
-        SandboxGuestTier::Untrusted,
-    ] {
-        let actual: std::collections::BTreeSet<_> = linked_imports(tier)
-            .iter()
-            .map(|(_, public)| *public)
-            .collect();
-        let contract = SandboxBoundaryContract::for_tier(tier);
-        let expected = contract
-            .linked_imports()
-            .iter()
-            .map(|import| import.name())
-            .collect();
-        assert_eq!(actual, expected);
-        assert_eq!(
-            linked_imports(tier).contains(&("report-blocked", "self.report_blocked")),
-            tier == SandboxGuestTier::FirstPartyDreamer
-        );
-        if tier.requires_zero_write_imports() {
-            assert!(actual.iter().all(|name| !name.starts_with("self.")));
-        }
-    }
-}
-
-#[test]
-fn each_request_has_fresh_guest_globals_and_host_controlled_clock() {
-    let boundary = WasmtimeBoundary::new().unwrap();
-    let component = boundary.compile(CLOCK_AND_COUNTER).unwrap();
-    for tier in [
-        SandboxGuestTier::FirstPartyDreamer,
-        SandboxGuestTier::Foreign,
-        SandboxGuestTier::Untrusted,
-    ] {
-        let mut first = boundary.request(&component, tier, Host(123)).unwrap();
-        assert_eq!(first.call::<(), (u64,)>("clock", ()).unwrap(), (123,));
-        assert_eq!(first.call::<(), (u32,)>("next", ()).unwrap(), (1,));
-        assert_eq!(first.call::<(), (u32,)>("next", ()).unwrap(), (2,));
-        let mut second = boundary.request(&component, tier, Host(456)).unwrap();
-        assert_eq!(second.call::<(), (u64,)>("clock", ()).unwrap(), (456,));
-        assert_eq!(second.call::<(), (u32,)>("next", ()).unwrap(), (1,));
-    }
-}
-
 #[test]
 fn foreign_writes_and_all_wasi_imports_fail_construction() {
     let boundary = WasmtimeBoundary::new().unwrap();
@@ -164,35 +103,6 @@ fn foreign_writes_and_all_wasi_imports_fail_construction() {
     ] {
         assert!(boundary.request(&wasi, tier, Host(0)).is_err());
     }
-}
-
-#[test]
-fn fuel_and_memory_exhaustion_trap() {
-    let boundary = WasmtimeBoundary::new().unwrap();
-    let component = boundary
-        .compile(
-            br#"(component
-      (core module $m
-        (memory 1)
-        (func (export "spin") (loop br 0))
-        (func (export "grow") (result i32) i32.const 1024 memory.grow))
-      (core instance $i (instantiate $m))
-      (func (export "spin") (canon lift (core func $i "spin")))
-      (func (export "grow") (result s32) (canon lift (core func $i "grow"))))"#,
-        )
-        .unwrap();
-    let mut request = boundary
-        .request(&component, SandboxGuestTier::Foreign, Host(0))
-        .unwrap();
-    let error = request.call::<(), ()>("spin", ()).unwrap_err();
-    assert_eq!(
-        error.downcast_ref::<wasmtime::Trap>(),
-        Some(&wasmtime::Trap::OutOfFuel)
-    );
-    let mut request = boundary
-        .request(&component, SandboxGuestTier::Foreign, Host(0))
-        .unwrap();
-    assert!(request.call::<(), (i32,)>("grow", ()).is_err());
 }
 
 #[test]

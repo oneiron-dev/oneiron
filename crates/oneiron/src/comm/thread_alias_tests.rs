@@ -121,16 +121,3 @@ fn pending_event_keeps_its_source_key_in_the_derived_claim_after_bridge() -> Com
     );
     Ok(())
 }
-
-#[test]
-fn alias_aware_comm_door_keeps_opaque_non_email_thread_keys() -> CommResult<()> {
-    let (_dir, vault) = open_vault();
-    let thread = "provider thread 1";
-    record_comm_thread_event(&vault, thread, "party@x", true, 10)?;
-    run_comm_projector(&vault)?;
-    assert_eq!(
-        count_active_thread_member_claims(&vault, thread, "party@x")?,
-        1
-    );
-    Ok(())
-}

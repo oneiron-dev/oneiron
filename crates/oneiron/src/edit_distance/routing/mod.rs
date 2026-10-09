@@ -87,8 +87,6 @@ mod tests;
 // bare. After the directory split the seam re-imports them so `tests.rs`
 // resolves exactly as it did before.
 #[cfg(test)]
-use self::keys::DRAFTING_ROLE;
-#[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
 use crate::error::{Error, Result};

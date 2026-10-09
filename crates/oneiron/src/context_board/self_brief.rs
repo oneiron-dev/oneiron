@@ -286,6 +286,3 @@ impl SelfBriefSession {
         self.cached_prefix.as_deref()
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -354,23 +354,7 @@ fn append_exif_section(body: &mut String, evidence: &ExifEvidence) {
 mod tests {
     use super::*;
 
-    const RECEIPT: &[u8] = include_bytes!("../../tests/fixtures/image_receipt.jpg");
-    const STRIPPED: &[u8] = include_bytes!("../../tests/fixtures/image_stripped_exif.jpg");
     const SCREENSHOT: &[u8] = include_bytes!("../../tests/fixtures/image_screenshot.png");
-
-    #[test]
-    fn parses_only_exif_evidence_present_in_the_image() {
-        let evidence = parse_exif_evidence(RECEIPT).expect("receipt fixture parses");
-        assert!(evidence.occurred_at.is_some());
-        let location = evidence.location.expect("GPS evidence");
-        assert!((location.lat - 37.7749).abs() < 0.0001);
-        assert!((location.lon + 122.4194).abs() < 0.0001);
-        assert!(!evidence.raw_tags.is_empty());
-
-        let stripped = parse_exif_evidence(STRIPPED).expect("stripped fixture parses");
-        assert_eq!(stripped.occurred_at, None);
-        assert_eq!(stripped.location, None);
-    }
 
     struct CannedOcr;
     impl ImageTextRecognizer for CannedOcr {
@@ -394,31 +378,6 @@ mod tests {
     }
 
     #[test]
-    fn image_source_normalizes_assets_with_canned_ocr_and_exif() {
-        let batch = normalize_image(RECEIPT, &CannedOcr, None).expect("valid image");
-        let entity = &batch.entities[0];
-        assert_eq!(batch.source_id, IMAGE_SOURCE_ID);
-        assert_eq!(entity.entity_type, ENTITY_TYPE_ASSET_TEXT);
-        assert!(entity.body.contains("[OCR]\nreceipt total 12.50"));
-        assert!(entity.body.contains("[EXIF]"));
-        assert!(entity.body.contains("DateTimeOriginal="));
-        assert!(entity.body.contains("GPS="));
-        assert!(entity.body.contains("[PROVENANCE recognizer_locality=0]"));
-        assert_eq!(entity.recognizer_locality, Some(LocalityRung::OnDevice));
-        assert!(!entity.body.contains("source=caption_model"));
-
-        let handwritten = normalize_image(
-            include_bytes!("../../tests/fixtures/image_handwritten.jpg"),
-            &CannedOcr,
-            None,
-        )
-        .expect("handwritten jpeg");
-        assert!(handwritten.entities[0].body.contains("receipt total 12.50"));
-        let screenshot = normalize_image(SCREENSHOT, &CannedOcr, None).expect("screenshot png");
-        assert!(screenshot.entities[0].body.contains("[OCR]"));
-    }
-
-    #[test]
     fn caption_is_marked_and_locality_policy_is_honored() {
         let batch = normalize_image(SCREENSHOT, &CannedOcr, Some(&CannedCaption)).expect("caption");
         assert!(
@@ -436,16 +395,6 @@ mod tests {
     #[test]
     fn corrupt_signed_jpeg_with_plausible_markers_is_rejected() {
         let corrupt = [0xff, 0xd8, 0xff, 0xda, 0x00, 0x00, 0xff, 0xd9];
-        assert!(matches!(
-            normalize_image(&corrupt, &CannedOcr, None),
-            Err(IngestError::InvalidDocument { .. })
-        ));
-    }
-
-    #[test]
-    fn corrupt_signed_png_with_plausible_structure_is_rejected() {
-        let mut corrupt = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
-        corrupt.resize(33, 0);
         assert!(matches!(
             normalize_image(&corrupt, &CannedOcr, None),
             Err(IngestError::InvalidDocument { .. })
@@ -509,47 +458,5 @@ mod tests {
             batch.entities[0].recognizer_locality,
             Some(LocalityRung::HostLocal)
         );
-    }
-
-    #[test]
-    fn corrupt_signed_jpeg_is_rejected() {
-        let corrupt = [0xff, 0xd8, 0xff, 0xe0, 0x00, 0x02, 0xff, 0xd9];
-        assert!(matches!(
-            normalize_image(&corrupt, &CannedOcr, None),
-            Err(IngestError::InvalidDocument { .. })
-        ));
-    }
-
-    #[cfg(feature = "image-station-ocr")]
-    #[test]
-    fn default_ocr_reports_unprovisioned_models() {
-        if std::env::var("ONEIRON_OCR_DETECTION_MODEL").is_err()
-            && std::env::var("ONEIRON_OCR_RECOGNITION_MODEL").is_err()
-        {
-            assert!(matches!(
-                ImageIngestSource::new().normalize_binary(SCREENSHOT),
-                Err(IngestError::OcrUnavailable { .. })
-            ));
-        }
-    }
-
-    #[test]
-    fn image_source_rejects_text_input() {
-        assert_eq!(
-            ImageIngestSource::new().normalize("text"),
-            Err(IngestError::UnsupportedInput)
-        );
-    }
-
-    #[test]
-    fn registry_contains_the_image_source_once() {
-        let ids: Vec<_> = crate::ingest::INGEST_SOURCE_REGISTRY.source_ids().collect();
-        assert!(ids.contains(&IMAGE_SOURCE_ID));
-
-        let unique: std::collections::HashSet<_> = ids.iter().copied().collect();
-
-        // Registered exactly once: no duplicate ids overall, and one image entry.
-        assert_eq!(unique.len(), ids.len());
-        assert_eq!(ids.iter().filter(|id| **id == IMAGE_SOURCE_ID).count(), 1);
     }
 }

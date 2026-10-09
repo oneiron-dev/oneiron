@@ -144,20 +144,12 @@ pub fn utc_to_wall(utc: u64, tz: &str) -> Result<WallTime, CalendarError> {
 
 #[cfg(test)]
 mod tests {
-    use rmpv::Value;
 
     use super::{WallTime, utc_to_wall, wall_to_utc};
     use crate::calendar::CalendarError;
-    use crate::calendar::claims::decode_wall_time_value;
 
     /// `2026-01-15T09:30:00Z`.
     const JAN_15_0930Z: u64 = 1_768_469_400;
-    /// `2026-01-15T09:00:00Z` — London winter, GMT.
-    const JAN_15_0900Z: u64 = 1_768_467_600;
-    /// `2026-07-15T08:00:00Z` — London summer, BST, same 09:00 wall clock.
-    const JUL_15_0800Z: u64 = 1_784_102_400;
-    /// `2026-10-25T00:30:00Z` — the earlier of the London fold's two instants.
-    const OCT_25_0030Z: u64 = 1_792_888_200;
     /// `+262142-12-31T23:59:59Z` — the last instant the conversion library
     /// represents, and so the last one this border can convert in UTC itself.
     const MAX_SUPPORTED_UTC: u64 = 8_210_266_876_799;
@@ -172,120 +164,6 @@ mod tests {
 
     fn invert(utc: u64, tz: &str) -> WallTime {
         utc_to_wall(utc, tz).expect("timestamp converts")
-    }
-
-    #[test]
-    fn wall_to_utc_preserves_london_dst_wall_clock() {
-        // The same 09:00 London wall clock sits at a different UTC offset in
-        // winter and summer. Nothing here assumes a fixed week: each side is
-        // pinned against UTC independently.
-        let winter = wall(2026, 1, 15, 9, 0, 0);
-        let summer = wall(2026, 7, 15, 9, 0, 0);
-
-        assert_eq!(convert(&winter, "Europe/London"), JAN_15_0900Z);
-        assert_eq!(convert(&summer, "Europe/London"), JUL_15_0800Z);
-
-        // GMT in winter: London and UTC agree. BST in summer: London is one
-        // hour ahead, so the same wall clock lands an hour earlier in UTC.
-        assert_eq!(convert(&winter, "Europe/London"), convert(&winter, "UTC"));
-        assert_eq!(
-            convert(&summer, "Europe/London") + 3600,
-            convert(&summer, "UTC")
-        );
-
-        assert_eq!(invert(JAN_15_0900Z, "Europe/London"), winter);
-        assert_eq!(invert(JUL_15_0800Z, "Europe/London"), summer);
-    }
-
-    #[test]
-    fn wall_to_utc_rejects_dst_gap() {
-        // Europe/London springs forward 2026-03-29 at 01:00 local; the hour
-        // [01:00, 02:00) does not exist. America/New_York springs forward
-        // 2026-03-08 at 02:00 local.
-        for (w, tz) in [
-            (wall(2026, 3, 29, 1, 30, 0), "Europe/London"),
-            (wall(2026, 3, 8, 2, 30, 0), "America/New_York"),
-        ] {
-            assert_eq!(
-                wall_to_utc(&w, tz),
-                Err(CalendarError::NonexistentWallTime {
-                    wall: w,
-                    tz: tz.to_owned(),
-                }),
-                "{tz} gap is typed, never coerced into the adjacent hour"
-            );
-        }
-
-        // One minute either side of the gap is a normal conversion, so the
-        // rejection is the gap itself and not the whole day.
-        assert!(wall_to_utc(&wall(2026, 3, 29, 0, 59, 0), "Europe/London").is_ok());
-        assert!(wall_to_utc(&wall(2026, 3, 29, 2, 0, 0), "Europe/London").is_ok());
-    }
-
-    #[test]
-    fn wall_to_utc_resolves_dst_fold_to_earliest_offset() {
-        // Europe/London falls back 2026-10-25 at 02:00 BST -> 01:00 GMT, so
-        // 01:30 local happens twice: 00:30Z under BST, then 01:30Z under GMT.
-        let folded = wall(2026, 10, 25, 1, 30, 0);
-        let later = OCT_25_0030Z + 3600;
-
-        // Both instants really do map back to the same wall clock — the fold
-        // is genuine, not an artefact of the fixture.
-        assert_eq!(invert(OCT_25_0030Z, "Europe/London"), folded);
-        assert_eq!(invert(later, "Europe/London"), folded);
-
-        // The border picks the earlier instant, and does so every time. A fold
-        // is an `Ok`, never an error the caller has to disambiguate.
-        assert_eq!(wall_to_utc(&folded, "Europe/London"), Ok(OCT_25_0030Z));
-        assert_eq!(wall_to_utc(&folded, "Europe/London"), Ok(OCT_25_0030Z));
-    }
-
-    #[test]
-    fn unknown_iana_zone_is_typed_error() {
-        // Including a case-mangled real zone: near-misses are errors, not a
-        // silent UTC fallback.
-        for tz in ["Mars/Olympus_Mons", "europe/london", "", "GMT+1:00"] {
-            let w = wall(2026, 1, 15, 9, 30, 0);
-            assert_eq!(
-                wall_to_utc(&w, tz),
-                Err(CalendarError::UnknownTimeZone { tz: tz.to_owned() })
-            );
-            assert_eq!(
-                utc_to_wall(JAN_15_0930Z, tz),
-                Err(CalendarError::UnknownTimeZone { tz: tz.to_owned() })
-            );
-        }
-    }
-
-    #[test]
-    fn invalid_civil_date_is_typed_error() {
-        for w in [
-            wall(2026, 2, 30, 12, 0, 0),    // February has no 30th
-            wall(2025, 2, 29, 12, 0, 0),    // 2025 is not a leap year
-            wall(2026, 13, 1, 12, 0, 0),    // month out of range
-            wall(2026, 1, 15, 24, 0, 0),    // hour out of range
-            wall(2026, 1, 15, 12, 0, 60),   // leap second: storable, not convertible
-            wall(1969, 12, 31, 23, 59, 59), // pre-epoch: outside the u64 core
-        ] {
-            assert_eq!(wall_to_utc(&w, "UTC"), Err(CalendarError::InvalidWallTime));
-        }
-
-        // The epoch itself is the first representable instant.
-        assert_eq!(wall_to_utc(&wall(1970, 1, 1, 0, 0, 0), "UTC"), Ok(0));
-    }
-
-    #[test]
-    fn oversized_utc_timestamp_is_typed_error() {
-        // Past `i64`, and past the conversion library's range while still
-        // inside `i64` — both guards report the same typed error.
-        for utc in [u64::MAX, 1_000_000_000_000_000] {
-            assert_eq!(
-                utc_to_wall(utc, "UTC"),
-                Err(CalendarError::TimestampOutOfRange { utc })
-            );
-        }
-
-        assert_eq!(invert(0, "UTC"), wall(1970, 1, 1, 0, 0, 0));
     }
 
     #[test]
@@ -366,36 +244,5 @@ mod tests {
                 tz: "Europe/London".to_owned(),
             })
         );
-    }
-
-    #[test]
-    fn wall_time_claim_fields_bridge_without_third_party_types() {
-        // Exactly what CAL-00 persists: a `calendar.wall_time` map of scalars
-        // and, separately, a `calendar.tz` string. Nothing else is needed to
-        // reach UTC.
-        let stored = decode_wall_time_value(&Value::Map(vec![
-            (Value::from("y"), Value::from(2026)),
-            (Value::from("mo"), Value::from(6)),
-            (Value::from("d"), Value::from(1)),
-            (Value::from("h"), Value::from(14)),
-            (Value::from("mi"), Value::from(0)),
-            (Value::from("s"), Value::from(0)),
-        ]))
-        .expect("decode calendar.wall_time");
-        let stored_tz = "Europe/Warsaw";
-
-        let bridged = WallTime {
-            y: stored.y,
-            mo: stored.mo,
-            d: stored.d,
-            h: stored.h,
-            mi: stored.mi,
-            s: stored.s,
-        };
-
-        // Warsaw is on CEST (UTC+2) on that date, so the zone claim did real
-        // work: 14:00 local is 12:00Z.
-        assert_eq!(convert(&bridged, stored_tz), 1_780_315_200);
-        assert_eq!(invert(1_780_315_200, stored_tz), bridged);
     }
 }

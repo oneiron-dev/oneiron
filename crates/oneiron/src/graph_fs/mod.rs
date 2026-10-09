@@ -27,11 +27,7 @@ pub use self::model::{
 mod tests;
 
 #[cfg(test)]
-use self::paging::*;
-#[cfg(test)]
 use crate::claim::ScopedRead;
-#[cfg(test)]
-use crate::code_sandbox::SandboxImportClass;
 #[cfg(test)]
 use crate::entity_id::EntityId;
 #[cfg(test)]

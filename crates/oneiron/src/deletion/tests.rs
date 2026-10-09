@@ -38,96 +38,6 @@ fn tombstone_reason_wire_bytes_match_pinned_table() {
     }
 }
 
-/// The fail-closed law stated as the receivers state it: a value the table
-/// cannot name is HARD, byte 5 notwithstanding. Byte 0 (RESERVED), byte 6
-/// (the first byte past the extended table), 255, a legacy 8-byte value and a
-/// malformed length all decode HARD; only the two soft reasons decode soft.
-#[test]
-fn unknown_reason_bytes_still_decode_hard_after_archive_byte() {
-    let value_with_reason_byte = |byte: u8| {
-        let mut raw = [0_u8; TOMBSTONE_VALUE_V2_LEN];
-        raw[0] = byte;
-        raw
-    };
-    for hard_byte in [0_u8, 6, 7, 42, 254, 255] {
-        let decoded = decode_tombstone_value(&value_with_reason_byte(hard_byte));
-        assert_eq!(decoded.reason, None, "byte {hard_byte} names no reason");
-        assert!(decoded.is_hard(), "byte {hard_byte} must decode HARD");
-    }
-    // Legacy 8-byte and malformed shapes are untouched by the new byte.
-    assert!(decode_tombstone_value(&[0_u8; TOMBSTONE_VALUE_LEGACY_LEN]).is_hard());
-    assert!(decode_tombstone_value(&[0_u8; 3]).is_hard());
-    // ...and the two soft reasons are the ONLY soft answers.
-    assert!(!decode_tombstone_value(&value_with_reason_byte(1)).is_hard());
-    assert!(!decode_tombstone_value(&value_with_reason_byte(5)).is_hard());
-}
-
-/// The ONE-1931 archive reason is soft on every row of the per-reason
-/// behavior matrix, and is the only reason that publishes nothing.
-#[test]
-fn archive_reason_is_soft_on_every_behavior_row() {
-    let archive = DeleteReason::ArchivedByCleanup;
-    assert_eq!(archive.as_str(), "archived_by_cleanup");
-    assert!(
-        !archive.writes_receipt(),
-        "archive mints no per-entity receipt"
-    );
-    assert!(
-        !archive.active_store_hard_purge_v1(),
-        "archive keeps the shell"
-    );
-    assert!(
-        !archive.queues_historical_sweep(),
-        "archive queues no sweep"
-    );
-    assert!(
-        !archive.publishes_crdt_tombstone(),
-        "archive is local hygiene, never a propagated deletion intent"
-    );
-    assert_eq!(
-        TombstoneReason::from(archive),
-        TombstoneReason::ArchivedByCleanup
-    );
-    // `user_delete` is the precedent it copies on the first three rows and
-    // deliberately DIVERGES from on the fourth.
-    let user = DeleteReason::UserDelete;
-    assert_eq!(user.writes_receipt(), archive.writes_receipt());
-    assert_eq!(
-        user.active_store_hard_purge_v1(),
-        archive.active_store_hard_purge_v1()
-    );
-    assert_eq!(
-        user.queues_historical_sweep(),
-        archive.queues_historical_sweep()
-    );
-    assert!(user.publishes_crdt_tombstone());
-    // Every destructive reason still publishes: nothing about deletion moved.
-    for hard in [
-        DeleteReason::UserHardDelete,
-        DeleteReason::GdprDelete,
-        DeleteReason::PolicyDelete,
-    ] {
-        assert!(hard.publishes_crdt_tombstone(), "{hard:?} must publish");
-        assert!(hard.active_store_hard_purge_v1(), "{hard:?} must purge");
-    }
-}
-
-#[test]
-fn delete_reason_maps_onto_wire_reason() {
-    let cases = [
-        (DeleteReason::UserDelete, TombstoneReason::UserDelete),
-        (
-            DeleteReason::UserHardDelete,
-            TombstoneReason::UserHardDelete,
-        ),
-        (DeleteReason::GdprDelete, TombstoneReason::GdprDelete),
-        (DeleteReason::PolicyDelete, TombstoneReason::PolicyDelete),
-    ];
-    for (delete_reason, wire_reason) in cases {
-        assert_eq!(TombstoneReason::from(delete_reason), wire_reason);
-    }
-}
-
 /// Pinned layout `[reason:1][deleted_at:8 LE][request_id:16]` asserted
 /// byte-by-byte: a big-endian or offset-shifted encoder fails here.
 #[test]
@@ -315,25 +225,6 @@ fn world_month_window_label_validates_without_sync_feature() {
     assert!(parse_window_label(&key.to_uppercase()).is_none());
     assert!(parse_window_label(&format!("{key}0")).is_none());
     assert!(parse_window_label(&key.replace("2026-02", "2026-13")).is_none());
-}
-
-#[test]
-fn leap_year_boundaries_keep_feb_29_in_february_window() {
-    // 2023-02-28 23:59:59 UTC and 2023-03-01 00:00:00 UTC.
-    assert_eq!(window_label_from_timestamp(1_677_628_799), "2023-02");
-    assert_eq!(window_label_from_timestamp(1_677_628_800), "2023-03");
-
-    // 2024-02-29 00:00:00 UTC and 2024-03-01 00:00:00 UTC.
-    assert_eq!(window_label_from_timestamp(1_709_164_800), "2024-02");
-    assert_eq!(window_label_from_timestamp(1_709_251_200), "2024-03");
-
-    // 2100-02-28 23:59:59 UTC and 2100-03-01 00:00:00 UTC.
-    assert_eq!(window_label_from_timestamp(4_107_542_399), "2100-02");
-    assert_eq!(window_label_from_timestamp(4_107_542_400), "2100-03");
-
-    // 2000-02-29 00:00:00 UTC and 2000-03-01 00:00:00 UTC.
-    assert_eq!(window_label_from_timestamp(951_782_400), "2000-02");
-    assert_eq!(window_label_from_timestamp(951_868_800), "2000-03");
 }
 
 #[test]

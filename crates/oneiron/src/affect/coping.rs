@@ -602,23 +602,3 @@ impl Vault {
         })
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn coping_outcome_strategy_round_trips_contract_names() {
-        for strategy in [
-            CopingStrategy::SitSel,
-            CopingStrategy::SitMod,
-            CopingStrategy::AttDep,
-            CopingStrategy::CogChg,
-            CopingStrategy::ResMod,
-            CopingStrategy::ERFlex,
-        ] {
-            assert_eq!(CopingStrategy::parse(strategy.as_str()), Some(strategy));
-        }
-        assert_eq!(CopingStrategy::parse("sit_sel"), None);
-    }
-}

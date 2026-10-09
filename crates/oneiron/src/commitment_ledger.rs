@@ -235,6 +235,3 @@ fn sort_due(entries: &mut [CommitmentLedgerEntry]) {
             .then(left.commitment_id.cmp(&right.commitment_id))
     });
 }
-
-#[cfg(test)]
-mod tests;

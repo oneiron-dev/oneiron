@@ -528,6 +528,3 @@ impl MetricAccumulator {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

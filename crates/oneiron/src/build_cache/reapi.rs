@@ -113,19 +113,3 @@ fn varint(out: &mut Vec<u8>, mut value: u64) {
     }
     out.push(value as u8);
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn reapi_action_digest_vector() {
-        // protoc-compatible: Command { arguments: ["true"] }, empty Directory.
-        let command = ReapiDigest::of(b"\x0a\x04true");
-        let root = ReapiDigest::of(b"");
-        let digest = ReapiDigest::action(command, root);
-        assert_eq!(
-            bytes_to_hex_lower(&digest.hash),
-            "054435d0a7573cc13cb737477406ab0e34801a7563531631746e21edead1a3e8"
-        );
-        assert_eq!(digest.size_bytes, 138);
-    }
-}

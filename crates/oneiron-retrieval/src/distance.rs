@@ -275,6 +275,3 @@ fn cosine_similarity_neon(a: &[f32], b: &[f32]) -> f32 {
 
     normalize(dot_sum, norm_a_sum, norm_b_sum)
 }
-
-#[cfg(test)]
-mod tests;

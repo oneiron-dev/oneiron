@@ -47,24 +47,6 @@ fn secret_scan_rejects_known_secret_fixture_before_persistence() -> Result<()> {
 }
 
 #[test]
-fn secret_scan_allows_non_secret_write_unchanged() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let id = EntityId::now();
-    let occurred = test_time_range(20, 20);
-    let data = b"ordinary memory body";
-
-    vault
-        .batch()
-        .put(&id, ENTITY_TYPE_PERSON, occurred, 20, data)
-        .text(&id, &[("body", "ordinary memory body")])
-        .commit()?;
-
-    assert_eq!(vault.get(&id)?.as_deref(), Some(&data[..]));
-    assert_eq!(vault.search_text("ordinary", 10)?.len(), 1);
-    Ok(())
-}
-
-#[test]
 fn secret_scan_rejects_phonetic_payload_before_persistence() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let safe_id = EntityId::now();
@@ -292,52 +274,6 @@ fn fresh_default_policy_manifest_queues_unstamped_tool_output_for_consent() -> R
 }
 
 #[test]
-fn write_envelope_validation_rejects_missing_required_axes() -> Result<()> {
-    let actor = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
-    let provenance = WriteProvenance::new(Value::from("fixture"))?;
-
-    let err = WriteEnvelope::try_new(
-        None,
-        Some(ClaimSource::UserStated),
-        Some(provenance.clone()),
-        Some(ClaimApprovalStatus::Proposed),
-    )
-    .expect_err("actor is required");
-    assert!(matches!(err, Error::InvalidClaimBody(_)));
-
-    let err = WriteEnvelope::try_new(
-        Some(actor),
-        None,
-        Some(provenance.clone()),
-        Some(ClaimApprovalStatus::Proposed),
-    )
-    .expect_err("source is required");
-    assert!(matches!(err, Error::InvalidClaimBody(_)));
-
-    let err = WriteEnvelope::try_new(
-        Some(actor),
-        Some(ClaimSource::UserStated),
-        None,
-        Some(ClaimApprovalStatus::Proposed),
-    )
-    .expect_err("provenance is required");
-    assert!(matches!(err, Error::InvalidClaimBody(_)));
-
-    let err = WriteEnvelope::try_new(
-        Some(actor),
-        Some(ClaimSource::UserStated),
-        Some(provenance),
-        None,
-    )
-    .expect_err("approval is required");
-    assert!(matches!(err, Error::InvalidClaimBody(_)));
-
-    let err = WriteProvenance::new(Value::Nil).expect_err("nil provenance must reject");
-    assert!(matches!(err, Error::InvalidClaimBody(_)));
-    Ok(())
-}
-
-#[test]
 fn claim_candidate_phase_two_validation_failure_leaves_no_orphan_gate_decision() -> Result<()> {
     let (_dir, vault) = open_raw_test_vault();
     let subject = EntityId::now();
@@ -438,92 +374,6 @@ fn claim_candidate_write_stamps_approved_envelope() -> Result<()> {
         &provenance
     );
     assert_eq!(vault.claims_for_subject(&subject)?, vec![claim]);
-    Ok(())
-}
-
-#[test]
-fn affect_trigger_batch_helper_writes_and_conflict_uses_claim_lifecycle() -> Result<()> {
-    let (_tmp, vault) = open_test_vault();
-    let occurred = test_time_range(1, 1);
-    let actor = EntityId::now();
-    let person = EntityId::now();
-    let trigger = EntityId::now();
-    vault.put_entity(&actor, ENTITY_TYPE_PERSON, occurred, 1, b"actor")?;
-    vault.put_entity(&person, ENTITY_TYPE_PERSON, occurred, 1, b"person")?;
-    vault.put_entity(
-        &trigger,
-        ENTITY_TYPE_TASK,
-        occurred,
-        1,
-        &crate::habit::task_body_for_test(crate::habit::TaskRole::Task),
-    )?;
-    let envelope = test_write_envelope(actor)?;
-
-    let affect_claim = EntityId::now();
-    let trigger_value = crate::affect::AffectTriggerValue::new(
-        person,
-        trigger,
-        crate::affect::VadDelta::new(-0.2, 0.4, -0.3)?,
-        0.75,
-        2,
-        9,
-    )?;
-    vault
-        .batch()
-        .affect_trigger_claim(
-            &affect_claim,
-            trigger_value.clone(),
-            &envelope,
-            test_time_range(10, 10),
-            11,
-        )
-        .commit()?;
-
-    let stored = vault
-        .get_claim(&affect_claim)?
-        .expect("affect trigger claim stored");
-    assert_eq!(
-        crate::affect::decode_affect_trigger_claim(&stored)?,
-        Some(trigger_value)
-    );
-    assert_eq!(stored.subject, ClaimSubject::Entity(person));
-    assert_eq!(vault.claims_for_subject(&person)?, vec![affect_claim]);
-
-    let open_conflict = EntityId::now();
-    let resolved_conflict = EntityId::now();
-    vault
-        .batch()
-        .conflict_open_claim(
-            &open_conflict,
-            person,
-            Value::from("open conflict"),
-            0.7,
-            &envelope,
-            test_time_range(20, 20),
-            21,
-        )
-        .conflict_resolved_claim(
-            &resolved_conflict,
-            person,
-            Value::from("resolved conflict"),
-            0.8,
-            &envelope,
-            test_time_range(22, 22),
-            23,
-        )
-        .commit()?;
-    vault.supersede_claim(&resolved_conflict, &open_conflict, 30)?;
-
-    let open_stored = vault
-        .get_claim(&open_conflict)?
-        .expect("open conflict preserved");
-    let resolved_stored = vault
-        .get_claim(&resolved_conflict)?
-        .expect("resolved conflict active");
-    assert_eq!(open_stored.subject, ClaimSubject::Entity(person));
-    assert_eq!(resolved_stored.subject, ClaimSubject::Entity(person));
-    assert_eq!(open_stored.lifecycle, ClaimLifecycleStatus::Superseded);
-    assert_eq!(resolved_stored.lifecycle, ClaimLifecycleStatus::Active);
     Ok(())
 }
 

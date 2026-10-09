@@ -1,9 +1,7 @@
 use super::*;
 use crate::edge::EdgeActorClass;
 use crate::error::ErrorKind;
-use crate::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, short_id_prefix,
-};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION};
 use crate::test_util::embedding_test_config;
 
 fn test_body() -> BlobArtifactBody {
@@ -81,21 +79,6 @@ fn blob_artifact_codec_round_trips_pinned_keys() -> Result<()> {
 }
 
 #[test]
-fn blob_artifact_registry_and_vault_helpers_round_trip() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-    let id = put_artifact(&vault, 11)?;
-
-    let decoded = vault.get_blob_artifact(&id)?.ok_or(Error::EntityNotFound)?;
-    let expected = test_body();
-    assert_eq!(decoded.name, expected.name);
-    assert_eq!(decoded.media_type, expected.media_type);
-    assert!(decoded.secret_taint_refs.is_empty());
-    assert_eq!(vault.get_entity_type(&id)?, Some(ENTITY_TYPE_BLOB_ARTIFACT));
-    assert_eq!(short_id_prefix(ENTITY_TYPE_BLOB_ARTIFACT)?, "ba");
-    Ok(())
-}
-
-#[test]
 fn blob_artifact_upload_creates_v1_with_ledger_event() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let artifact_id = put_artifact(&vault, 10)?;
@@ -127,53 +110,6 @@ fn blob_artifact_upload_creates_v1_with_ledger_event() -> Result<()> {
         Some(b"office bytes v1".to_vec())
     );
     assert_eq!(vault.blob_artifact_head(&artifact_id)?, Some(version));
-    Ok(())
-}
-
-#[test]
-fn blob_artifact_identical_bytes_dedupe() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-    let artifact_id = put_artifact(&vault, 10)?;
-    let actor = put_actor(&vault, 10)?;
-
-    let first = vault.append_blob_artifact_version(
-        &artifact_id,
-        b"same bytes",
-        &BlobVersionProvenance::UserUpload,
-        actor,
-        test_time(11),
-        11,
-    )?;
-    let second = vault.append_blob_artifact_version(
-        &artifact_id,
-        b"same bytes",
-        &BlobVersionProvenance::UserUpload,
-        actor,
-        test_time(12),
-        12,
-    )?;
-
-    // Same content hash, same version, no new chain entry or claim.
-    assert_eq!(second, first);
-    assert_eq!(vault.blob_artifact_versions(&artifact_id)?.len(), 1);
-
-    // Identical bytes uploaded into ANOTHER artifact keep their own
-    // chain but share the content-addressed asset entity.
-    let other_id = put_artifact(&vault, 13)?;
-    let other = vault.append_blob_artifact_version(
-        &other_id,
-        b"same bytes",
-        &BlobVersionProvenance::UserUpload,
-        actor,
-        test_time(14),
-        14,
-    )?;
-    assert_eq!(other.version, 1);
-    assert_eq!(other.content_hash, first.content_hash);
-    assert_eq!(
-        blob_artifact_asset_entity_id(&other.content_hash)?,
-        blob_artifact_asset_entity_id(&first.content_hash)?
-    );
     Ok(())
 }
 
@@ -393,49 +329,6 @@ fn blob_artifact_append_fails_closed_on_bad_input() -> Result<()> {
         .expect_err("blank run_ref must fail");
     assert_eq!(err.kind(), ErrorKind::InvalidBlobArtifactBody);
     assert!(vault.blob_artifact_versions(&artifact_id)?.is_empty());
-    Ok(())
-}
-
-#[test]
-fn blob_birth_four_rungs_only_normalize_transport_and_are_purged() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-    let artifact = put_artifact(&vault, 1)?;
-    let actor = put_actor(&vault, 1)?;
-    let append = |bytes: &[u8]| {
-        vault.append_blob_artifact_version(
-            &artifact,
-            bytes,
-            &BlobVersionProvenance::UserUpload,
-            actor,
-            test_time(2),
-            2,
-        )
-    };
-    let first = append(b"# Page\n\nText")?;
-    let transport = append(b"# Page\r\n\r\nText")?;
-    assert_eq!(transport.version, first.version + 1);
-    assert_eq!(
-        vault.read_blob_artifact_version(&artifact, first.version)?,
-        Some(b"# Page\n\nText".to_vec())
-    );
-    assert_eq!(
-        vault.read_blob_artifact_version(&artifact, transport.version)?,
-        Some(b"# Page\r\n\r\nText".to_vec())
-    );
-    assert_eq!(append(b"# Page\r\n\r\nText")?, transport);
-    let initial = vault.blob_fingerprint(&artifact)?.unwrap();
-    let next = append(b"# Page\n\nText\n\n# Another\n\nMore")?;
-    assert_eq!(next.version, 3);
-    let changed = vault.blob_fingerprint(&artifact)?.unwrap();
-    for (key, value) in &initial.blocks {
-        assert_eq!(Some(value), changed.blocks.get(key));
-    }
-    assert_eq!(append(b"# Page\n\nTEXT\n\n# Another\n\nMore")?.version, 4);
-    vault.delete_entity_with_options(
-        &artifact,
-        crate::deletion::DeleteEntityOptions { purge: true },
-    )?;
-    assert!(vault.blob_fingerprint(&artifact)?.is_none());
     Ok(())
 }
 

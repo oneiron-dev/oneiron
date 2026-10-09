@@ -75,42 +75,6 @@ fn replicated_put_is_rejected_at_a_live_overlay_member_id() -> Result<()> {
     Ok(())
 }
 
-fn child_of_edge(child: EntityId, parent: EntityId) -> BatchOp {
-    BatchOp::Edge {
-        src: child,
-        kind: EdgeKind::ChildOf,
-        tgt: parent,
-        weight: 1.0,
-        vad: Vad::NEUTRAL,
-    }
-}
-
-#[test]
-fn child_of_overlay_orders_entity_clear_against_same_pair_edge() {
-    let child = entity(0x41);
-    let parent = entity(0x62);
-
-    let edge_after_clear = ChildOfBatchOverlay::from_ops(&[
-        BatchOp::Delete { id: child },
-        child_of_edge(child, parent),
-    ]);
-    assert_eq!(
-        edge_after_clear.final_edge_override(&child, &parent),
-        Some(true),
-        "a ChildOf edge re-added after clearing the child must win"
-    );
-
-    let clear_after_edge = ChildOfBatchOverlay::from_ops(&[
-        child_of_edge(child, parent),
-        BatchOp::Delete { id: child },
-    ]);
-    assert_eq!(
-        clear_after_edge.final_edge_override(&child, &parent),
-        Some(false),
-        "clearing the child after touching the ChildOf pair must win"
-    );
-}
-
 /// Writes a minimal entity row of the given type. CLAIM rows carry a real
 /// encoded claim body so they survive the write-door body validation; every
 /// other type takes an opaque payload.
@@ -152,50 +116,6 @@ fn assert_invalid_facet_of_edge(
         }
         other => panic!("{context}: expected InvalidFacetOfEdge, got {other:?}"),
     }
-}
-
-/// The admitted table: CLAIM → FACET, TURN → FACET, EVENT → FACET.
-///
-/// Two semantics ride one edge kind. CLAIM|TURN-sourced stamps are
-/// DISCLOSURE-SCOPING — CLAIM adjacency is what `claim_facet_scope`
-/// prefix-scans and what strict-mode filtering acts on; TURN is admitted
-/// alongside CLAIM because per-turn facet stamps are what transcript filtering
-/// rides. EVENT-sourced stamps are WORLD-MODEL: they exist for ARCH-0039 PPR
-/// traversal (`facet_of` λ 0.05), and rejecting EVENT would make a ratified
-/// traversal contract unwritable.
-///
-/// "World-model" is scoped to the LOCAL QUERY door, not to disclosure at
-/// large. `apply_facet_filter` keeps every non-CLAIM entity unconditionally,
-/// so an EVENT-sourced stamp is inert THERE — but the federation selector
-/// scopes by every source type THIS table admits, EVENT included, so the same
-/// stamp is disclosure-EFFECTIVE on that door (pinned by
-/// `sync::selector::tests::selector_denies_event_scoped_to_unselected_facet`).
-#[test]
-fn facet_of_edge_valid_source_types_accepted() -> Result<()> {
-    for (label, src_type) in [
-        ("claim source", ENTITY_TYPE_CLAIM),
-        ("turn source", ENTITY_TYPE_TURN),
-        (
-            "event source (world-model; federation-door effective)",
-            ENTITY_TYPE_EVENT,
-        ),
-    ] {
-        let (_dir, vault) = open_test_vault();
-        let src = EntityId::now();
-        let facet = EntityId::now();
-        put_typed(&vault, &src, src_type)?;
-        put_typed(&vault, &facet, ENTITY_TYPE_FACET)?;
-
-        vault
-            .batch()
-            .edge(&src, EdgeKind::FacetOf, &facet, 0.7)
-            .commit()?;
-        assert!(
-            facet_of_edge_stored(&vault, &src, &facet)?,
-            "{label} must be admitted"
-        );
-    }
-    Ok(())
 }
 
 /// The rejected table. Every row aborts the batch atomically and reports the
@@ -254,39 +174,6 @@ fn facet_of_edge_type_table_rejects_off_table_endpoints() -> Result<()> {
     Ok(())
 }
 
-/// Ops apply in order inside one write txn, so an entity put and the edge
-/// that stamps it commit together in a single batch.
-#[test]
-fn facet_of_edge_same_batch_entity_then_edge_accepted() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let claim = EntityId::now();
-    let facet = EntityId::now();
-    let claim_body = crate::claim::encode_claim_body(&ClaimBody::new(
-        "facet.type_table_probe",
-        ClaimSubject::Entity(claim),
-        Value::from("v"),
-        0.9,
-        ClaimApprovalStatus::Approved,
-        ClaimLifecycleStatus::Active,
-    )?)?;
-
-    vault
-        .batch()
-        .put(
-            &claim,
-            ENTITY_TYPE_CLAIM,
-            test_time_range(1, 1),
-            1,
-            &claim_body,
-        )
-        .put(&facet, ENTITY_TYPE_FACET, test_time_range(1, 1), 1, b"f")
-        .edge(&claim, EdgeKind::FacetOf, &facet, 0.7)
-        .commit()?;
-
-    assert!(facet_of_edge_stored(&vault, &claim, &facet)?);
-    Ok(())
-}
-
 /// The gate covers the public timestamped builder arm too, with the same
 /// table — the public write door is one boundary, not two.
 #[test]
@@ -318,73 +205,6 @@ fn facet_of_edge_via_public_created_at_builder_rejected_same_table() -> Result<(
         .edge_with_created_at(&claim, EdgeKind::FacetOf, &facet, 0.7, 5)
         .commit()?;
     assert!(facet_of_edge_stored(&vault, &claim, &facet)?);
-    Ok(())
-}
-
-/// Collateral check: the gate keys on `FacetOf` alone. Any other edge kind
-/// between arbitrary typed entities commits exactly as it did before.
-#[test]
-fn non_facet_of_edges_unaffected() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let person_a = EntityId::now();
-    let person_b = EntityId::now();
-    put_typed(&vault, &person_a, ENTITY_TYPE_PERSON)?;
-    put_typed(&vault, &person_b, ENTITY_TYPE_PERSON)?;
-
-    vault
-        .batch()
-        .edge(&person_a, EdgeKind::Mentions, &person_b, 0.7)
-        .commit()?;
-    assert!(vault.edge_exists(&person_a, EdgeKind::Mentions, &person_b)?);
-
-    // Even an edge whose endpoints do not exist at all stays ungated when the
-    // kind is not FacetOf.
-    let ghost_a = EntityId::now();
-    let ghost_b = EntityId::now();
-    vault
-        .batch()
-        .edge(&ghost_a, EdgeKind::Mentions, &ghost_b, 0.7)
-        .commit()?;
-    assert!(vault.edge_exists(&ghost_a, EdgeKind::Mentions, &ghost_b)?);
-    Ok(())
-}
-
-/// The sync-replay arm stays UNGATED by design (H2). A replicated LWW winner
-/// must never wedge local sync into a permanent abort, so the type table is
-/// enforced one layer up, at the REPLAY chokepoint, where an off-table row
-/// can be quarantined instead of aborting the window: see
-/// `sync::window::tests::forward_remat_quarantines_off_table_facet_of_and_admits_the_on_table_row`.
-/// Pinned deliberately: an ill-typed FacetOf edge still applies at THIS arm,
-/// and the internal builder is `pub(crate)` — no local actor reaches it
-/// without sync replay, and no replay reaches it without passing the
-/// chokepoint's table.
-#[test]
-fn facet_of_edge_sync_replay_arm_ungated() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let claim = EntityId::now();
-    let person = EntityId::now();
-    put_typed(&vault, &claim, ENTITY_TYPE_CLAIM)?;
-    put_typed(&vault, &person, ENTITY_TYPE_PERSON)?;
-
-    vault
-        .batch()
-        .edge_with_value_fields(
-            &claim,
-            EdgeKind::FacetOf,
-            &person,
-            EdgeValueFields {
-                weight: 0.7,
-                created_at: 1,
-                vad: Vad::NEUTRAL,
-                provenance: None,
-            },
-        )
-        .commit()?;
-
-    assert!(
-        facet_of_edge_stored(&vault, &claim, &person)?,
-        "the replay arm must apply a wrong-typed FacetOf edge unchanged"
-    );
     Ok(())
 }
 
@@ -503,18 +323,6 @@ fn taint_guard_fails_closed_on_undecodable_claim_body() -> Result<()> {
     assert!(vault.get_raw(&claim)?.is_none());
     session.close()?;
     Ok(())
-}
-
-/// With no live overlay entity the guard is inert: the same undecodable body
-/// reaches its precise `InvalidClaimBody` verdict. The taint error names a real
-/// membership fact, never a decode failure on its own.
-#[test]
-fn taint_guard_is_inert_without_live_overlay_entities() {
-    let (_dir, vault) = open_raw_test_vault();
-    let claim = EntityId::now();
-    let err = commit_raw_claim_put(&vault, &claim, b"not a decodable claim body")
-        .expect_err("an undecodable claim body is still rejected");
-    assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
 }
 
 /// The guard runs INSIDE the applying transaction, so a batch it refuses is

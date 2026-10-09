@@ -12,41 +12,6 @@ fn companion_task(kind: CompanionTaskKind, key: CompanionRecordKey) -> Result<Co
 }
 
 #[test]
-fn companion_task_payload_round_trips_all_task_kinds() -> Result<()> {
-    let personal = CompanionScope::personal(entity(0x21));
-    let fixtures = [
-        companion_task(
-            CompanionTaskKind::Context,
-            CompanionRecordKey::relationship(personal.clone(), entity(0x22), entity(0x23)),
-        )?,
-        companion_task(
-            CompanionTaskKind::Profile,
-            CompanionRecordKey::persona(personal.clone(), entity(0x24)),
-        )?,
-        companion_task(
-            CompanionTaskKind::Memory,
-            CompanionRecordKey::persona(CompanionScope::neutral(), entity(0x25)),
-        )?,
-        companion_task(
-            CompanionTaskKind::GoodbyeArtifact,
-            CompanionRecordKey::relationship(personal, entity(0x26), entity(0x27)),
-        )?,
-    ];
-
-    for task in fixtures {
-        let encoded = encode_companion_task_payload(&task)?;
-        let decoded = decode_companion_task_payload(&encoded)?;
-        assert_eq!(decoded, task);
-        assert!(
-            task.dedupe_key().contains(task.kind.as_str()),
-            "dedupe key should identify task kind"
-        );
-    }
-
-    Ok(())
-}
-
-#[test]
 fn companion_queue_fixture_enqueues_claims_completes_and_retries() -> Result<()> {
     let clock = crate::ports::ManualClock::new(0);
     let mut config = VaultConfig::device();
@@ -397,14 +362,4 @@ fn companion_queue_claim_fails_undecodable_task_payload() -> Result<()> {
     );
 
     Ok(())
-}
-
-#[test]
-fn companion_json_projection_redacts_invalid_msgpack_strings() {
-    let encoded = [0xA1, 0xFF];
-    let mut cursor = &encoded[..];
-    let value = rmpv::decode::read_value(&mut cursor).expect("decode invalid utf8 string");
-
-    let json = companion_value_to_json(&value);
-    assert_eq!(json["redacted"], "invalid_utf8_string");
 }

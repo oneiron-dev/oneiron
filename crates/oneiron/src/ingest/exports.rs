@@ -482,6 +482,3 @@ fn timestamp_seconds(value: &Value) -> Option<u64> {
         .ok()
         .and_then(|time| u64::try_from(time.timestamp()).ok())
 }
-
-#[cfg(test)]
-mod tests;

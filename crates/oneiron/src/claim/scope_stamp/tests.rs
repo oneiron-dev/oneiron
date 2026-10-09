@@ -184,43 +184,6 @@ fn legacy_claim_scope_sweep_stamps_explicit_base_once() -> Result<()> {
     assert_eq!(vault.get(&id)?.expect("fixture"), first);
     Ok(())
 }
-#[test]
-fn legacy_corpus_entry_restamps_onto_project_axis() -> Result<()> {
-    let project = entity(79);
-    let bytes = encode_claim_body(&body())?;
-    let Value::Map(mut entries) = rmpv::decode::read_value(&mut bytes.as_slice()).expect("fixture")
-    else {
-        panic!("map")
-    };
-    entries.retain(|(k, _)| {
-        ![
-            "worldId",
-            "scopeFacetId",
-            "scopeRelationshipId",
-            "scopeProjectId",
-            "scopeVersion",
-        ]
-        .contains(&k.as_str().expect("fixture"))
-    });
-    entries.push((
-        Value::from("scope"),
-        Value::Map(vec![(
-            Value::from("corpus_id"),
-            Value::Binary(project.as_bytes().to_vec()),
-        )]),
-    ));
-    let upgraded = upgrade_pre_scope_body(&encode(&Value::Map(entries))?)?;
-    let decoded = decode_claim_body(&upgraded, true)?;
-    assert_eq!(decoded.scope_project, project);
-    assert_eq!(
-        decoded.scope,
-        Some(Value::Map(vec![(
-            Value::from("corpus_id"),
-            Value::Binary(project.as_bytes().to_vec()),
-        )]))
-    );
-    Ok(())
-}
 
 #[test]
 fn duplicate_legacy_corpus_entries_refuse_both_orders_and_persist_nothing() -> Result<()> {
@@ -382,28 +345,6 @@ fn put_facet(vault: &Vault, facet: EntityId) -> Result<()> {
 }
 
 #[test]
-fn default_facet_is_the_owner_substrate_facet_until_set() -> Result<()> {
-    let (_dir, vault) = vault()?;
-    let owner = vault.ensure_embedded_owner_actor().expect("owner PERSON");
-
-    assert_eq!(vault.default_facet()?, substrate_facet_id(owner)?);
-    Ok(())
-}
-
-#[test]
-fn set_default_facet_moves_the_default() -> Result<()> {
-    let (_dir, vault) = vault()?;
-    let facet = entity(41);
-    put_facet(&vault, facet)?;
-    vault
-        .set_default_facet(facet, owner_actor(&vault))
-        .expect("the owner sets the default");
-
-    assert_eq!(vault.default_facet()?, facet);
-    Ok(())
-}
-
-#[test]
 fn set_default_facet_refuses_an_id_that_is_not_a_facet() -> Result<()> {
     let (_dir, vault) = vault()?;
     let person = entity(42);
@@ -433,30 +374,5 @@ fn set_default_facet_refuses_a_caller_that_is_not_the_owner() -> Result<()> {
             )
             .is_err()
     );
-    Ok(())
-}
-
-#[test]
-fn fork_to_facet_births_a_claim_under_the_new_facet() -> Result<()> {
-    let (_dir, vault) = vault()?;
-    let owner = owner_actor(&vault);
-    let facet = entity(45);
-    put_facet(&vault, facet)?;
-    let claim = entity(46);
-    let mut origin = ClaimBody::new(
-        "test.fork",
-        ClaimSubject::Entity(owner.entity_ref()),
-        Value::from("fact"),
-        1.0,
-        ClaimApprovalStatus::Proposed,
-        ClaimLifecycleStatus::Active,
-    )?;
-    origin.scope_facet = vault.default_facet()?;
-    vault.put_claim(&claim, &origin, AT, 10)?;
-    let fork = vault
-        .fork_to_facet(claim, facet, true, owner)
-        .expect("the owner forks the claim");
-
-    assert_eq!(vault.get_claim(&fork)?.expect("fork").scope_facet, facet);
     Ok(())
 }

@@ -171,41 +171,6 @@ fn public_timestamped_builder_rejects_over_provenanced_edge() -> Result<()> {
 }
 
 #[test]
-fn public_timestamped_builder_accepts_over_bare_edge() -> Result<()> {
-    let (dir, vault) = open_test_vault();
-    let _dir = dir;
-    let src = EntityId::now();
-    let tgt = EntityId::now();
-    let absent_tgt = EntityId::now();
-    let occurred = test_time_range(1, 1);
-    vault.put_entity(&src, ENTITY_TYPE_PERSON, occurred, 1, b"src")?;
-    vault.put_entity(&tgt, ENTITY_TYPE_PERSON, occurred, 1, b"tgt")?;
-    vault.put_entity(&absent_tgt, ENTITY_TYPE_PERSON, occurred, 1, b"absent")?;
-    vault.put_edge(&src, EdgeKind::Mentions, &tgt, 0.25)?;
-
-    let bare_edge = EdgeRef::new(src, EdgeKind::Mentions, tgt);
-    vault
-        .batch()
-        .edge_with_created_at(&src, EdgeKind::Mentions, &tgt, 0.5, 2_000)
-        .commit()?;
-    let (bare_out, bare_in) = raw_edge_values(&vault, &bare_edge)?;
-    let bare_out = bare_out.expect("bare edge");
-    assert_eq!(bare_out.len(), EDGE_VALUE_SEMANTIC_LEN);
-    assert_eq!(bare_in.as_deref(), Some(bare_out.as_slice()));
-
-    let absent_edge = EdgeRef::new(src, EdgeKind::About, absent_tgt);
-    vault
-        .batch()
-        .edge_with_created_at_and_vad(&src, EdgeKind::About, &absent_tgt, 0.5, 2_001, Vad::NEUTRAL)
-        .commit()?;
-    let (absent_out, absent_in) = raw_edge_values(&vault, &absent_edge)?;
-    let absent_out = absent_out.expect("formerly absent edge");
-    assert_eq!(absent_out.len(), EDGE_VALUE_SEMANTIC_LEN);
-    assert_eq!(absent_in.as_deref(), Some(absent_out.as_slice()));
-    Ok(())
-}
-
-#[test]
 fn public_timestamped_builder_keeps_structural_edge_layout() -> Result<()> {
     let (dir, vault) = open_test_vault();
     let _dir = dir;

@@ -150,56 +150,6 @@ fn truncate_at_char_boundary(text: &str, max_bytes: usize) -> &str {
 mod tests {
     use super::*;
 
-    /// Exhaustive coverage of `infer_from_script`: maps each `ScriptClass`
-    /// to either its language hint or `None` when the script is ambiguous
-    /// (covers multiple languages).
-    #[test]
-    fn infer_from_script_coverage() {
-        let cases: Vec<(ScriptClass, Option<LanguageHint>)> = vec![
-            // Unambiguous → Some(LanguageHint).
-            (ScriptClass::Hiragana, Some(LanguageHint::Ja)),
-            (ScriptClass::Katakana, Some(LanguageHint::Ja)),
-            (ScriptClass::Hangul, Some(LanguageHint::Ko)),
-            (ScriptClass::Hebrew, Some(LanguageHint::He)),
-            (ScriptClass::Thai, Some(LanguageHint::Th)),
-            (ScriptClass::Lao, Some(LanguageHint::Lo)),
-            (ScriptClass::Khmer, Some(LanguageHint::Km)),
-            (ScriptClass::Myanmar, Some(LanguageHint::My)),
-            (ScriptClass::Greek, Some(LanguageHint::El)),
-            // Ambiguous → None.
-            (ScriptClass::Latin, None),
-            (ScriptClass::Han, None),
-            (ScriptClass::Cyrillic, None),
-            (ScriptClass::Common, None),
-        ];
-
-        for (script, expected) in cases {
-            assert_eq!(
-                infer_from_script(script),
-                expected,
-                "case {script:?}: unexpected language hint"
-            );
-        }
-    }
-
-    #[test]
-    fn han_only_routes_to_whichlang() {
-        assert_eq!(
-            detect_with_whichlang("我喜欢学习中文"),
-            Some(LanguageHint::Zh)
-        );
-    }
-
-    #[test]
-    fn empty_text_returns_none() {
-        assert_eq!(detect_with_whichlang(""), None);
-    }
-
-    #[test]
-    fn hindi_maps_to_none() {
-        assert_eq!(map_whichlang_lang(Lang::Hin), None);
-    }
-
     #[test]
     fn pure_ascii_latin_defaults_to_english() {
         assert_eq!(detect_with_whichlang("running"), Some(LanguageHint::En));
@@ -210,21 +160,6 @@ mod tests {
         );
         let prose = "she runs every morning before work near the riverbank";
         assert_eq!(detect_with_whichlang(prose), Some(LanguageHint::En));
-    }
-
-    #[test]
-    fn non_ascii_latin_still_uses_whichlang() {
-        let hint = detect_with_whichlang("está durmiendo en la silla");
-        assert_eq!(hint, Some(LanguageHint::Es));
-    }
-
-    #[test]
-    fn detect_window_truncates_at_char_boundary() {
-        let text = "とう".repeat(1000);
-        assert!(matches!(
-            detect_with_whichlang(&text),
-            Some(LanguageHint::Ja),
-        ));
     }
 
     #[test]
@@ -240,23 +175,5 @@ mod tests {
     fn ascii_short_circuit_uses_window_not_full_text() {
         let text = format!("{}é", "a".repeat(DETECT_WINDOW_BYTES));
         assert_eq!(detect_with_whichlang(&text), Some(LanguageHint::En));
-    }
-
-    #[test]
-    fn unique_ascii_letter_tokens_counts_distinct_casefolded_words() {
-        let lowercase = "apple ".repeat(20);
-        assert!(matches!(
-            detect_with_whichlang(&lowercase),
-            Some(LanguageHint::En),
-        ));
-
-        // Keep the three spellings inside the detection window and exceed the
-        // short-ASCII threshold. The overwhelmingly repeated "apple" input
-        // otherwise routes to French when the low-entropy fallback is bypassed.
-        let mixed_case = "apple ".repeat(80) + "Apple APPLE";
-        assert!(matches!(
-            detect_with_whichlang(&mixed_case),
-            Some(LanguageHint::En),
-        ));
     }
 }

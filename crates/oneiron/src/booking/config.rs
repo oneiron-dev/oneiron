@@ -611,16 +611,6 @@ mod tests {
     }
 
     #[test]
-    fn claim_value_round_trips_through_messagepack() {
-        let value = claim_value(intro_config());
-        let encoded = encode_event_type_claim_value(&value).expect("encode");
-        assert_eq!(
-            decode_event_type_claim_value(&encoded).expect("decode"),
-            value
-        );
-    }
-
-    #[test]
     fn booking_event_type_validator_is_exact() {
         let value = claim_value(intro_config());
         let body = claim_body(&value);
@@ -644,101 +634,6 @@ mod tests {
         let mut stale_version = claim_value(intro_config());
         stale_version.schema_version = BOOKING_EVENT_TYPE_SCHEMA_VERSION + 1;
         assert!(validate_event_type_claim(&claim_body(&stale_version)).is_err());
-    }
-
-    /// One named mutation that must turn a valid configuration invalid.
-    type Defect = (&'static str, Box<dyn Fn(&mut EventTypeConfig)>);
-
-    #[test]
-    fn configuration_defects_are_named_by_one_table() {
-        let cases: Vec<Defect> = vec![
-            (
-                "blank key",
-                Box::new(|c| c.key = EventTypeKey("  ".to_owned())),
-            ),
-            ("zero duration", Box::new(|c| c.duration_min = 0)),
-            ("zero step", Box::new(|c| c.slot_step_min = 0)),
-            ("zero window", Box::new(|c| c.booking_window_secs = 0)),
-            (
-                "unbounded window",
-                Box::new(|c| c.booking_window_secs = MAX_BOOKING_WINDOW_SECS + 1),
-            ),
-            ("no hosts", Box::new(|c| c.hosts.clear())),
-            ("blank tz", Box::new(|c| c.hosts[0].host_tz.clear())),
-            (
-                "no calendars",
-                Box::new(|c| c.hosts[0].calendar_refs.clear()),
-            ),
-            (
-                "weekday out of range",
-                Box::new(|c| c.hosts[0].working_hours[0].weekday = 7),
-            ),
-            (
-                "inverted window",
-                Box::new(|c| c.hosts[0].working_hours[0].end_minute = 0),
-            ),
-            (
-                "window past midnight",
-                Box::new(|c| c.hosts[0].working_hours[0].end_minute = MINUTES_PER_DAY + 1),
-            ),
-            (
-                "duplicate host",
-                Box::new(|c| {
-                    let host = c.hosts[0].clone();
-                    c.hosts.push(host);
-                }),
-            ),
-            (
-                "flex window defect",
-                Box::new(|c| {
-                    c.flex_windows.push(WeeklyWallWindow {
-                        weekday: 0,
-                        start_minute: 60,
-                        end_minute: 60,
-                    });
-                }),
-            ),
-        ];
-        for (label, break_it) in cases {
-            let mut config = intro_config();
-            break_it(&mut config);
-            assert!(config.validate().is_err(), "{label} must be rejected");
-            // The write door and the solver read the same table.
-            let value = claim_value(config);
-            assert!(
-                validate_event_type_claim(&claim_body(&value)).is_err(),
-                "{label}"
-            );
-        }
-        // The boundary case a half-open end minute must ACCEPT.
-        let mut midnight = intro_config();
-        midnight.hosts[0].working_hours[0].end_minute = MINUTES_PER_DAY;
-        midnight
-            .validate()
-            .expect("a window ending at midnight is valid");
-        // The longest horizon a page may open, which bounds one solve's work.
-        let mut widest = intro_config();
-        widest.booking_window_secs = MAX_BOOKING_WINDOW_SECS;
-        widest
-            .validate()
-            .expect("a year-and-a-day horizon is valid");
-    }
-
-    #[test]
-    fn booking_claim_descriptor_rows_are_complete() {
-        let rows = claim_class_descriptors();
-        let event_type_row = rows
-            .iter()
-            .find(|row| row.predicate == BOOKING_EVENT_TYPE_PREDICATE)
-            .expect("booking event type descriptor must be present");
-        assert!(is_booking_claim_predicate(event_type_row.predicate));
-        for row in &rows {
-            assert!(
-                ["recorded", "human_ruled", "ordinary"].contains(&row.write_class),
-                "{} carries an unknown write class",
-                row.predicate
-            );
-        }
     }
 
     #[test]

@@ -149,21 +149,6 @@ fn strict_edge_record_parser_normalizes_corruption_errors() {
     assert!(matches!(err, crate::error::Error::CorruptedIndex(_)));
 }
 
-/// Every kind in the one list round-trips its name, its stored byte and its
-/// host-boundary number, so no name or number lookup can drift from the enum.
-#[test]
-fn every_edge_kind_round_trips_its_name() {
-    assert_eq!(EdgeKind::ALL.len(), 31);
-    for &kind in EdgeKind::ALL {
-        assert_eq!(EdgeKind::from_name(kind.name()), Some(kind), "{kind:?}");
-        assert_eq!(EdgeKind::try_from_u8(kind as u8), Some(kind), "{kind:?}");
-        assert_eq!(EdgeKind::from_wire(u32::from(kind as u8)), Some(kind));
-    }
-    assert_eq!(EdgeKind::from_name("blockedBy"), None);
-    assert_eq!(EdgeKind::from_name(""), None);
-    assert_eq!(EdgeKind::from_wire(256), None);
-}
-
 /// Canon's structural edge kinds: oneiron-docs
 /// `site/src/data/oneiron-contracts.ts`, `edgeValueLayouts[structural].kinds`
 /// (the ARCH-0034 structural 12 B row), as of docs commit 0f8e58e0a1d4

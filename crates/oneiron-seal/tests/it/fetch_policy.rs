@@ -1,13 +1,12 @@
-//! Fetch-policy tests (§5, §10): offline fetcher posture, policy defaults,
-//! and — with `network-fetch` — the guarded client's pre-network denials.
+//! Fetch-policy tests (§5, §10), all behind `network-fetch`: the guarded
+//! client's pre-network denials.
+#![cfg(feature = "network-fetch")]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-#[cfg(feature = "network-fetch")]
 use crate::support;
 
 use oneiron_seal::{FetchError, FetchMethod, FetchPurpose, FetchRequest, SealFetcher};
 
-#[cfg(feature = "network-fetch")]
 mod guarded {
     use oneiron_seal::{FetchPolicy, SsrfGuardedHttpFetcher};
 
@@ -50,7 +49,6 @@ mod guarded {
     }
 }
 
-#[cfg(feature = "network-fetch")]
 mod guarded_live {
     //! Loopback-socket legs: redirect hops re-run the policy, per-purpose
     //! caps abort streaming, and an explicit CIDR row admits loopback.
@@ -138,7 +136,6 @@ mod guarded_live {
     }
 }
 
-#[cfg(feature = "network-fetch")]
 mod engine_entry {
     //! `SealConfig.fetch_policy` is wired: the engine built by
     //! `with_guarded_fetcher` enforces the CONFIGURED policy — a deny bites

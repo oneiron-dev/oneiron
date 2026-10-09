@@ -118,17 +118,3 @@ pub(crate) fn changed_rows(before: &RowDump, after: &RowDump) -> Vec<RowChange> 
     }
     changes
 }
-
-/// A blake3 digest of `changes`, hex-encoded. Every field is length-prefixed
-/// so no two change sets share an encoding.
-pub(crate) fn digest_changes(changes: &[RowChange]) -> String {
-    let mut hasher = blake3::Hasher::new();
-    for (name, key, value, added) in changes {
-        hasher.update(&[u8::from(*added)]);
-        for part in [name.as_bytes(), key.as_slice(), value.as_slice()] {
-            hasher.update(&(part.len() as u64).to_be_bytes());
-            hasher.update(part);
-        }
-    }
-    hasher.finalize().to_hex().to_string()
-}

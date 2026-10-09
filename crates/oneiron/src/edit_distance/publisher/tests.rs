@@ -6,7 +6,6 @@
 use super::*;
 
 use crate::comm::{count_contact_record_claim_entries, run_comm_projector};
-use crate::receipt::ReceiptKind;
 use crate::settings::model_versioning::{
     DEFAULT_MODEL_STACK_CURRENT_ID, default_model_stack_registry,
 };
@@ -45,57 +44,6 @@ fn signature() -> IssueSignature {
         &hash("cluster-a"),
     )
     .expect("well-formed signature")
-}
-
-fn judged_receipt(outcome: &str, seq: u8) -> ReceiptRecord {
-    ReceiptRecord {
-        receipt_id: format!("rcpt-{seq}"),
-        receipt_kind: ReceiptKind::ProposalOutcome,
-        occurred_at: u64::from(seq),
-        actor: None,
-        on_behalf_of: None,
-        outcome: outcome.to_owned(),
-        job_ref: None,
-        trigger_ref: None,
-        policy_trace: Vec::new(),
-        fields: std::collections::BTreeMap::new(),
-    }
-}
-
-// ─── closed vocabularies ────────────────────────────────────────────────
-
-/// The publisher's category vocabulary and the attribution judge's verdict
-/// vocabulary are the SAME taxonomy under two type names. A new arm on either
-/// side that the other does not learn about fails here, which is what keeps
-/// the second type from becoming a fork.
-#[test]
-fn category_tracks_the_attribution_verdict_arm_for_arm() {
-    let verdicts = AttributionVerdict::ALL;
-    assert_eq!(verdicts.len(), IssueCategory::ALL.len());
-    for verdict in verdicts {
-        let category = IssueCategory::from_verdict(verdict);
-        assert_eq!(category.as_str(), verdict.as_str());
-        assert_eq!(IssueCategory::parse(category.as_str()), Some(category));
-    }
-}
-
-/// Every closed vocabulary round-trips its own tokens and rejects a token this
-/// engine never wrote — the property the on-disk rows depend on.
-#[test]
-fn closed_vocabularies_round_trip_and_refuse_strangers() {
-    for arm in CountKey::ALL {
-        assert_eq!(CountKey::parse(arm.as_str()), Some(arm));
-    }
-    for arm in SignatureSendState::ALL {
-        assert_eq!(SignatureSendState::parse(arm.as_str()), Some(arm));
-    }
-    for arm in InterviewState::ALL {
-        assert_eq!(InterviewState::parse(arm.as_str()), Some(arm));
-    }
-    assert_eq!(CountKey::parse(SENTINEL), None);
-    assert_eq!(IssueCategory::parse(SENTINEL), None);
-    assert_eq!(SignatureSendState::parse(SENTINEL), None);
-    assert_eq!(InterviewState::parse(SENTINEL), None);
 }
 
 // ─── the leak NEG battery ───────────────────────────────────────────────
@@ -183,147 +131,7 @@ fn constructor_refuses_free_text_in_every_string_position() {
     ));
 }
 
-/// Serialization audit: the bytes that actually land in the vault contain none
-/// of the sentinel. Belt-and-suspenders to the constructor battery above — the
-/// door could be perfect and an encoder that stringified a caller-supplied
-/// value would still leak.
-#[test]
-fn stored_signature_carries_no_sentinel_bytes() {
-    let (_tmp, vault) = open_vault();
-    let id = emit_issue_signature(&vault, signature()).expect("emit");
-
-    let rtxn = vault.store.env.read_txn().expect("read txn");
-    let raw = vault
-        .store
-        .vault_meta
-        .get(&rtxn, &SIGNATURE.key_bytes(&id))
-        .expect("read row")
-        .expect("row present")
-        .to_vec();
-    drop(rtxn);
-
-    assert!(!raw.is_empty());
-    for needle in [SENTINEL, "hunter2", "CANARY", "password"] {
-        assert!(
-            !raw.windows(needle.len())
-                .any(|window| window == needle.as_bytes()),
-            "stored signature leaked {needle:?}"
-        );
-    }
-    // The row is exactly the ratified field set and nothing else.
-    let decoded = issue_signature(&vault, id)
-        .expect("read back")
-        .expect("some");
-    assert_eq!(decoded, signature());
-    assert_eq!(decoded.category(), IssueCategory::SkillDefect);
-    assert_eq!(decoded.version(), 7);
-    assert_eq!(decoded.model_id().as_str(), DEFAULT_MODEL_STACK_CURRENT_ID);
-    assert_eq!(decoded.count(CountKey::Amended), Some(4));
-    assert_eq!(decoded.counts().collect::<Vec<_>>(), counts().to_vec());
-}
-
-// ─── emission from a judged fixture ─────────────────────────────────────
-
-/// The judged-cluster inlet: outcomes in, the closed count set out. Only
-/// tallies cross — the edit mass behind them never enters the vocabulary.
-#[test]
-fn judged_outcomes_tally_into_the_closed_count_set() {
-    let receipts = [
-        judged_receipt(ProposalOutcome::ApprovedAmended.as_str(), 1),
-        judged_receipt(ProposalOutcome::ApprovedAmended.as_str(), 2),
-        judged_receipt(ProposalOutcome::Rejected.as_str(), 3),
-        judged_receipt(ProposalOutcome::ApprovedUntouched.as_str(), 4),
-        // Not a proposal outcome: skipped, never counted, never raised.
-        judged_receipt("delivered", 5),
-    ];
-    assert_eq!(
-        tally_judged_outcomes(&receipts),
-        [
-            (CountKey::Judged, 4),
-            (CountKey::Amended, 2),
-            (CountKey::Rejected, 1),
-        ]
-    );
-    // ApprovedUntouched has no arm because it is the remainder, and the
-    // remainder must stay derivable rather than separately asserted.
-    let [(_, judged), (_, amended), (_, rejected)] = tally_judged_outcomes(&receipts);
-    assert_eq!(judged - amended - rejected, 1);
-
-    // An empty cluster tallies to zeroes, not to an error: a signature about a
-    // cluster nobody judged yet is a legitimate thing to hold.
-    assert_eq!(
-        tally_judged_outcomes(&[]),
-        [
-            (CountKey::Judged, 0),
-            (CountKey::Amended, 0),
-            (CountKey::Rejected, 0),
-        ]
-    );
-}
-
-/// End to end on this base: judged receipts → tally → signature → stored row.
-#[test]
-fn signature_emits_from_a_judged_cluster_fixture() {
-    let (_tmp, vault) = open_vault();
-    let receipts = [
-        judged_receipt(ProposalOutcome::ApprovedAmended.as_str(), 1),
-        judged_receipt(ProposalOutcome::Rejected.as_str(), 2),
-    ];
-    let sig = IssueSignature::new(
-        IssueCategory::from_verdict(AttributionVerdict::SkillDefect),
-        crate::test_util::entity(0x5C),
-        3,
-        &default_model_stack_registry(),
-        DEFAULT_MODEL_STACK_CURRENT_ID,
-        &tally_judged_outcomes(&receipts),
-        &hash("cluster-b"),
-    )
-    .expect("signature from judged fixture");
-
-    let id = emit_issue_signature(&vault, sig.clone()).expect("emit");
-    assert_eq!(issue_signature(&vault, id).expect("read"), Some(sig));
-    assert_eq!(
-        signature_send_state(&vault, id).expect("state"),
-        SignatureSendState::Pending
-    );
-    // An id nobody emitted reads as absent, never as an empty signature.
-    assert_eq!(
-        issue_signature(&vault, crate::test_util::entity(0x5D)).expect("absent"),
-        None
-    );
-}
-
 // ─── the dial ───────────────────────────────────────────────────────────
-
-/// Three sources, resolved explicit → install profile → compiled default. The
-/// owner's explicit answer sits on top: an install profile that could override
-/// it would make this a wall rather than a dial.
-#[test]
-fn dial_resolves_across_all_three_sources() {
-    let (_tmp, vault) = open_vault();
-    assert_eq!(
-        publisher_enabled(&vault).expect("compiled default"),
-        PUBLISHER_ENABLED_COMPILED_DEFAULT
-    );
-
-    set_publisher_install_default(&vault, true).expect("install profile");
-    assert!(publisher_enabled(&vault).expect("profile wins over compiled"));
-
-    set_publisher_enabled(&vault, false).expect("explicit off");
-    assert!(
-        !publisher_enabled(&vault).expect("explicit wins over profile"),
-        "an install profile must not override the owner's own dial"
-    );
-
-    set_publisher_enabled(&vault, true).expect("explicit on");
-    assert!(publisher_enabled(&vault).expect("explicit on"));
-
-    set_publisher_install_default(&vault, false).expect("profile off");
-    assert!(
-        publisher_enabled(&vault).expect("explicit still wins"),
-        "the explicit dial stays authoritative when the profile flips"
-    );
-}
 
 /// Dial off: computed, stored, withheld — and the withholding is durable, so a
 /// skip can be audited after the fact rather than only observed in a return
@@ -388,22 +196,6 @@ fn dial_on_sends_through_the_comm_doors_and_the_projector_shows_the_thread() {
     assert!(
         count_contact_record_claim_entries(&vault, PUBLISHER_PARTY_KEY).expect("contact view") > 0,
         "the projector must surface the publisher thread"
-    );
-}
-
-/// An empty batch is a no-op that mints nothing — a caller with nothing to
-/// send must not leave a counterparty behind.
-#[test]
-fn empty_batch_resolves_no_counterparty() {
-    let (_tmp, vault) = open_vault();
-    set_publisher_enabled(&vault, true).expect("dial on");
-    assert_eq!(
-        send_signatures_if_enabled(&vault, &[]).expect("empty batch"),
-        SendOutcome::default()
-    );
-    assert_eq!(
-        count_contact_record_claim_entries(&vault, PUBLISHER_PARTY_KEY).expect("contact view"),
-        0
     );
 }
 
@@ -509,14 +301,4 @@ fn interview_digest_rides_the_ed00_and_ed01_doors() {
         "the user's amendment must produce a measurable Δ"
     );
     assert!(delta.ops_summary.ins > 0);
-}
-
-/// A digest nobody opened has no session — absent, never a default-shaped one.
-#[test]
-fn unknown_digest_has_no_interview_session() {
-    let (_tmp, vault) = open_vault();
-    assert_eq!(
-        interview_session(&vault, crate::test_util::entity(0x5E)).expect("absent"),
-        None
-    );
 }

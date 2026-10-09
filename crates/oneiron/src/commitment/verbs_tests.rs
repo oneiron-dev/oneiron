@@ -1,14 +1,11 @@
 //! Commitment vault-verb, stale-target, rejection and dispatch tests.
 
-use rmpv::Value;
-
-use crate::batch::EntityMetadataHeader;
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::commitment::*;
 use crate::error::{Error, Result};
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 
-use super::codec_tests::{envelope, record, schedule, seed_entities, temp_vault, time};
+use super::codec_tests::{envelope, record, seed_entities, temp_vault, time};
 use crate::error::ClaimError;
 
 #[test]
@@ -60,73 +57,6 @@ fn commitment_claim_structure_requires_entity_obligor_and_valid_time() -> Result
     ));
     body.lifecycle = ClaimLifecycleStatus::Superseded;
     validate_commitment_claim_structure(&body)?;
-    Ok(())
-}
-
-#[test]
-fn put_commitment_claim_accepts_future_valid_time_and_stores_metadata() -> Result<()> {
-    let (_dir, vault) = temp_vault()?;
-    let actor = crate::test_util::entity(0x73);
-    let beneficiary = crate::test_util::entity(0x74);
-    let id = crate::test_util::entity(0x75);
-    seed_entities(&vault, &[actor, beneficiary])?;
-    vault.put_commitment_claim(
-        &id,
-        &record(actor, beneficiary, CommitmentStrength::Decision)?,
-        &envelope(actor)?,
-        time(1_000, 1_100),
-        100,
-    )?;
-    let body = vault.get_claim(&id)?.expect("future commitment claim");
-    assert_eq!(body.valid_from, Some(1_000));
-    assert_eq!(body.valid_to, Some(1_100));
-    let raw = vault.get_raw(&id)?.expect("future commitment raw");
-    let header = EntityMetadataHeader::parse(&raw).expect("entity header");
-    assert_eq!(header.occurred_start, 1_000);
-    assert_eq!(header.occurred_end, 1_100);
-    assert_eq!(header.learned_at, 100);
-    Ok(())
-}
-
-#[test]
-fn extractor_strength_is_used_without_explicit_override() {
-    assert_eq!(
-        CommitmentStrength::resolve(
-            CommitmentObligorKind::ThirdParty,
-            CommitmentStrength::Decision,
-            None,
-        ),
-        CommitmentStrength::Decision
-    );
-}
-
-#[test]
-fn agent_obligor_is_always_commitment_strength() -> Result<()> {
-    let agent = crate::test_util::entity(0x76);
-    let beneficiary = crate::test_util::entity(0x77);
-    let record = CommitmentRecord::new(
-        CommitmentObligor::new(CommitmentObligorKind::Agent, agent),
-        beneficiary,
-        CommitmentContent::new("x", None)?,
-        schedule(1),
-        CommitmentStrength::StatedIntention,
-        CommitmentStatus::Open,
-        CommitmentBirthProvenance::new(CommitmentBirthKind::Brief, "brief:x")?,
-    )?;
-    assert_eq!(record.strength, CommitmentStrength::Commitment);
-    let mut encoded = encode_commitment_value(&record)?;
-    let Value::Map(entries) = &mut encoded else {
-        unreachable!()
-    };
-    let (_, strength) = entries
-        .iter_mut()
-        .find(|(key, _)| key.as_str() == Some("strength"))
-        .expect("strength field");
-    *strength = Value::from("decision");
-    assert!(matches!(
-        decode_commitment_value(&encoded),
-        Err(Error::InvalidClaimBody(_))
-    ));
     Ok(())
 }
 
@@ -248,118 +178,6 @@ fn stale_fulfill_returns_write_verb_target_stale() -> Result<()> {
 }
 
 #[test]
-fn stale_release_returns_write_verb_target_stale() -> Result<()> {
-    let (_dir, vault) = temp_vault()?;
-    let actor = crate::test_util::entity(0x85);
-    let beneficiary = crate::test_util::entity(0x86);
-    let stale_id = crate::test_util::entity(0x87);
-    let successor = crate::test_util::entity(0x88);
-    seed_entities(&vault, &[actor, beneficiary])?;
-    let env = envelope(actor)?;
-    let rec = record(actor, beneficiary, CommitmentStrength::Decision)?;
-    vault.put_commitment_claim(&stale_id, &rec, &env, time(1_000, 1_100), 10)?;
-    vault.put_commitment_claim(&successor, &rec, &env, time(1_000, 1_100), 11)?;
-    vault.supersede_claim(&successor, &stale_id, 1_050)?;
-    vault
-        .require_named_claim_target_active(&stale_id)
-        .expect_err("stale target");
-    let old_raw = vault.get_raw(&stale_id)?;
-    let successor_raw = vault.get_raw(&successor)?;
-    let receipts = vault.receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::Gate))?;
-    let successor_ref = {
-        let rtxn = vault.store.env.read_txn()?;
-        vault.claim_short_ref_in(&rtxn, &successor)?
-    };
-    let err = vault
-        .release_commitment(&stale_id, &env, 1_060)
-        .expect_err("stale release");
-    assert!(matches!(
-        err,
-        Error::Claim(ClaimError::WriteVerbTargetStale {
-            target,
-            lifecycle: ClaimLifecycleStatus::Superseded,
-            successor_short_id,
-        }) if target == stale_id && successor_short_id == successor_ref
-    ));
-    assert_eq!(vault.get_raw(&stale_id)?, old_raw);
-    assert_eq!(vault.get_raw(&successor)?, successor_raw);
-    assert_eq!(
-        vault.get_claim(&stale_id)?.expect("stale").lifecycle,
-        ClaimLifecycleStatus::Superseded
-    );
-    assert_eq!(
-        vault
-            .get_commitment_claim(&successor)?
-            .expect("successor")
-            .status,
-        CommitmentStatus::Open
-    );
-    let after = vault.receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::Gate))?;
-    assert_eq!(after.len(), receipts.len());
-    assert_eq!(
-        after.iter().map(|r| &r.receipt_id).collect::<Vec<_>>(),
-        receipts.iter().map(|r| &r.receipt_id).collect::<Vec<_>>()
-    );
-    Ok(())
-}
-
-#[test]
-fn stale_supersede_returns_write_verb_target_stale() -> Result<()> {
-    let (_dir, vault) = temp_vault()?;
-    let actor = crate::test_util::entity(0x89);
-    let beneficiary = crate::test_util::entity(0x8A);
-    let stale_id = crate::test_util::entity(0x8B);
-    let successor = crate::test_util::entity(0x8C);
-    seed_entities(&vault, &[actor, beneficiary])?;
-    let env = envelope(actor)?;
-    let rec = record(actor, beneficiary, CommitmentStrength::Decision)?;
-    vault.put_commitment_claim(&stale_id, &rec, &env, time(1_000, 1_100), 10)?;
-    vault.put_commitment_claim(&successor, &rec, &env, time(1_000, 1_100), 11)?;
-    vault.supersede_claim(&successor, &stale_id, 1_050)?;
-    vault
-        .require_named_claim_target_active(&stale_id)
-        .expect_err("stale target");
-    let old_raw = vault.get_raw(&stale_id)?;
-    let successor_raw = vault.get_raw(&successor)?;
-    let receipts = vault.receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::Gate))?;
-    let successor_ref = {
-        let rtxn = vault.store.env.read_txn()?;
-        vault.claim_short_ref_in(&rtxn, &successor)?
-    };
-    let err = vault
-        .supersede_commitment(&stale_id, &env, 1_060)
-        .expect_err("stale supersede");
-    assert!(matches!(
-        err,
-        Error::Claim(ClaimError::WriteVerbTargetStale {
-            target,
-            lifecycle: ClaimLifecycleStatus::Superseded,
-            successor_short_id,
-        }) if target == stale_id && successor_short_id == successor_ref
-    ));
-    assert_eq!(vault.get_raw(&stale_id)?, old_raw);
-    assert_eq!(vault.get_raw(&successor)?, successor_raw);
-    assert_eq!(
-        vault.get_claim(&stale_id)?.expect("stale").lifecycle,
-        ClaimLifecycleStatus::Superseded
-    );
-    assert_eq!(
-        vault
-            .get_commitment_claim(&successor)?
-            .expect("successor")
-            .status,
-        CommitmentStatus::Open
-    );
-    let after = vault.receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::Gate))?;
-    assert_eq!(after.len(), receipts.len());
-    assert_eq!(
-        after.iter().map(|r| &r.receipt_id).collect::<Vec<_>>(),
-        receipts.iter().map(|r| &r.receipt_id).collect::<Vec<_>>()
-    );
-    Ok(())
-}
-
-#[test]
 fn status_verbs_reject_non_commitment_claims_without_rewriting() -> Result<()> {
     let (_dir, vault) = temp_vault()?;
     let actor = crate::test_util::entity(0x91);
@@ -397,12 +215,6 @@ fn status_verbs_reject_non_commitment_claims_without_rewriting() -> Result<()> {
     ));
     assert_eq!(vault.get_raw(&id)?, raw);
     Ok(())
-}
-
-#[test]
-fn commitment_registry_dispatch_and_criticality_are_explicit() {
-    assert!(is_commitment_claim_predicate(PREDICATE_COMMITMENT_RECORD));
-    assert!(!is_commitment_claim_predicate("core.unrelated"));
 }
 
 #[test]

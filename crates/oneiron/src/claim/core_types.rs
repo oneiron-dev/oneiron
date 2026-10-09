@@ -32,16 +32,6 @@ thread_local! {
         const { std::cell::Cell::new(0) };
 }
 
-#[cfg(test)]
-pub(crate) fn reset_claim_body_decode_count() {
-    CLAIM_BODY_DECODE_COUNT.with(|count| count.set(0));
-}
-
-#[cfg(test)]
-pub(crate) fn claim_body_decode_count() -> usize {
-    CLAIM_BODY_DECODE_COUNT.with(std::cell::Cell::get)
-}
-
 /// Pinned ON-DISK MessagePack key set for type-0 (CLAIM) bodies (D11).
 ///
 /// Order is canonical: the engine's encoder emits present fields in this

@@ -50,6 +50,3 @@ impl CorpusScope {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

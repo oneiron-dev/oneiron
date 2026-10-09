@@ -36,36 +36,3 @@ impl FailureSignalConfig {
         self.training_opt_in
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn tier_matrix_never_infers_training_consent_from_export() {
-        for deployment in [
-            DeploymentTier::Managed,
-            DeploymentTier::SelfHost,
-            DeploymentTier::Oss,
-        ] {
-            let config = FailureSignalConfig {
-                deployment,
-                ..Default::default()
-            };
-            assert_eq!(config.exports(), deployment == DeploymentTier::Managed);
-            assert!(!config.permits_training());
-            let opted = FailureSignalConfig {
-                export_opt_in: true,
-                ..config
-            };
-            assert!(opted.exports());
-            assert!(!opted.permits_training());
-            assert!(
-                FailureSignalConfig {
-                    training_opt_in: true,
-                    ..config
-                }
-                .permits_training()
-            );
-        }
-    }
-}

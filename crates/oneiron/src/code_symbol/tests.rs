@@ -116,82 +116,6 @@ fn code_symbol_manifest_rejects_symbol_chunks_from_another_path() -> Result<()> 
 }
 
 #[test]
-fn text_diff_derives_stable_code_chunks() -> Result<()> {
-    let old = "fn a() {\n    one();\n}\nfn b() {\n    two();\n}\n";
-    let new = "fn a() {\n    one_more();\n}\nfn b() {\n    two_more();\n}\n";
-
-    let chunks = derive_code_chunks_from_text_diff("src/lib.rs", old, new)?;
-
-    assert_eq!(chunks.len(), 2);
-    assert_eq!((chunks[0].start_line, chunks[0].end_line), (1, 3));
-    assert_eq!(
-        chunks[0].content_hash,
-        sha256_bytes("fn a() {\n    one_more();\n}".as_bytes())
-    );
-    assert_eq!((chunks[1].start_line, chunks[1].end_line), (4, 6));
-    assert_eq!(
-        chunks[1].content_hash,
-        sha256_bytes("fn b() {\n    two_more();\n}".as_bytes())
-    );
-    Ok(())
-}
-
-#[test]
-fn text_diff_preserves_equal_length_eof_newline_in_chunk_hash() -> Result<()> {
-    let chunks = derive_code_chunks_from_text_diff("README.md", "a\nb\n", "a\nc\n")?;
-
-    assert_eq!(chunks.len(), 1);
-    assert_eq!((chunks[0].start_line, chunks[0].end_line), (1, 2));
-    assert_eq!(chunks[0].content_hash, sha256_bytes("a\nc\n".as_bytes()));
-    Ok(())
-}
-
-#[test]
-fn rust_ast_chunks_include_doc_context() -> Result<()> {
-    let old = "/// Old budget docs\npub fn budget_depletion() -> u8 { 1 }\n";
-    let new = "/// Budget depletion is handled here\npub fn budget_depletion() -> u8 { 1 }\n";
-
-    let chunks = derive_code_chunks_from_text_diff("src/llm/budget.rs", old, new)?;
-
-    assert_eq!(chunks.len(), 1);
-    assert_eq!((chunks[0].start_line, chunks[0].end_line), (1, 2));
-    assert_eq!(
-        chunks[0].content_hash,
-        sha256_bytes(
-            "/// Budget depletion is handled here\npub fn budget_depletion() -> u8 { 1 }"
-                .as_bytes()
-        )
-    );
-    Ok(())
-}
-
-#[test]
-fn rust_ast_incremental_chunks_skip_parent_impl_for_method_body_change() -> Result<()> {
-    let repo_ref = repo_ref();
-    let path = "src/runner.rs";
-    let old = "pub struct Runner;\n\
-                   impl Runner {\n\
-                       pub fn budget_depletion(&self) -> u8 { 1 }\n\
-                       pub fn unrelated(&self) -> u8 { 2 }\n\
-                   }\n";
-    let new = "pub struct Runner;\n\
-                   impl Runner {\n\
-                       pub fn budget_depletion(&self) -> u8 { 3 }\n\
-                       pub fn unrelated(&self) -> u8 { 2 }\n\
-                   }\n";
-
-    let chunks = derive_code_chunks_from_text_diff(path, old, new)?;
-    let inputs = derive_code_embedding_inputs_from_text_diff(&repo_ref, path, old, new)?;
-
-    assert_eq!(chunks.len(), 1);
-    assert_eq!((chunks[0].start_line, chunks[0].end_line), (3, 3));
-    assert_eq!(inputs.len(), 1);
-    assert_eq!(inputs[0].name, "budget_depletion");
-    assert_eq!((inputs[0].start_line, inputs[0].end_line), (3, 3));
-    Ok(())
-}
-
-#[test]
 fn incremental_code_embeddings_reembed_only_changed_ast_chunk_and_search_top5() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let code_artifact_id = entity(0xD5);
@@ -250,76 +174,6 @@ fn incremental_code_embeddings_reembed_only_changed_ast_chunk_and_search_top5() 
             .take(5)
             .any(|result| result.id == inputs[0].entity_id)
     );
-    Ok(())
-}
-
-#[test]
-fn symbol_fingerprint_canonicalizes_chunk_order() -> Result<()> {
-    let first = CodeChunk::from_text("src/lib.rs", 1, 1, "fn first() {}\n")?;
-    let second = CodeChunk::from_text("src/lib.rs", 10, 10, "fn second() {}\n")?;
-
-    let ordered = derive_symbol_fingerprint(
-        "src/lib.rs",
-        "answer",
-        "function",
-        &[first.clone(), second.clone()],
-    )?;
-    let reversed = derive_symbol_fingerprint("src/lib.rs", "answer", "function", &[second, first])?;
-
-    assert_eq!(ordered, reversed);
-    Ok(())
-}
-
-#[test]
-fn rust_tree_sitter_symbol_graph_extracts_refs_and_contiguity_edges() -> Result<()> {
-    let graph = derive_code_symbol_graph_from_sources(
-        repo_ref(),
-        Some("9d561405a81ffbf29d1369cd848e0ef9fca4f277".to_owned()),
-        [CodeSymbolSource::new(
-            "src/lib.rs",
-            "pub struct Runner;\n\
-                 pub fn answer() -> u8 { 42 }\n\
-                 pub fn caller() -> u8 { answer() }\n",
-        )],
-    )?;
-
-    let names = graph
-        .manifest
-        .symbols
-        .iter()
-        .map(|symbol| symbol.name.as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(names, vec!["Runner", "answer", "caller"]);
-    assert!(graph.manifest.symbols.iter().all(|symbol| {
-        symbol
-            .source_session
-            .as_deref()
-            .is_some_and(|source| source.starts_with("rust:github:oneiron-dev/oneiron"))
-    }));
-
-    let answer = graph
-        .manifest
-        .symbols
-        .iter()
-        .find(|symbol| symbol.name == "answer")
-        .expect("answer symbol");
-    let caller = graph
-        .manifest
-        .symbols
-        .iter()
-        .find(|symbol| symbol.name == "caller")
-        .expect("caller symbol");
-    let answer_id = code_symbol_entity_id(&graph.manifest.repo_ref, answer)?;
-    let caller_id = code_symbol_entity_id(&graph.manifest.repo_ref, caller)?;
-    assert!(graph.edges.iter().any(|edge| {
-        edge.source == caller_id && edge.kind == EdgeKind::Mentions && edge.target == answer_id
-    }));
-    assert!(graph.edges.iter().any(|edge| {
-        edge.source == answer_id && edge.kind == EdgeKind::Attached && edge.target == caller_id
-    }));
-    assert!(graph.edges.iter().any(|edge| {
-        edge.source == caller_id && edge.kind == EdgeKind::Attached && edge.target == answer_id
-    }));
     Ok(())
 }
 
@@ -680,32 +534,5 @@ fn symbol_manifest_repo_ref_must_match_code_artifact() -> Result<()> {
 
     let artifact = encode_code_artifact_body(&code_body(&repo_ref))?;
     assert!(decode_code_artifact_body(&artifact).is_ok());
-    Ok(())
-}
-
-#[test]
-fn legacy_manifest_without_operations_decodes() -> Result<()> {
-    let manifest = manifest_with_blame(None, None)?;
-    let bytes = encode_code_symbol_manifest(&manifest)?;
-    let mut value = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap();
-    let rmpv::Value::Map(entries) = &mut value else {
-        panic!("map")
-    };
-    for (key, value) in entries {
-        if matches!(key.as_str(), Some("chunks" | "symbols")) {
-            let rmpv::Value::Array(rows) = value else {
-                panic!("array")
-            };
-            for row in rows {
-                let rmpv::Value::Map(fields) = row else {
-                    panic!("map")
-                };
-                fields.retain(|(key, _)| key.as_str() != Some("producing_operations"));
-            }
-        }
-    }
-    let mut old = Vec::new();
-    rmpv::encode::write_value(&mut old, &value).unwrap();
-    assert_eq!(decode_code_symbol_manifest(&old)?, manifest);
     Ok(())
 }

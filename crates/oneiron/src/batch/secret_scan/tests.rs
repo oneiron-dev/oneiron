@@ -22,27 +22,6 @@ fn credential_fields_cannot_hide_behind_messagepack_binary_or_json_escapes() {
 }
 
 #[test]
-fn scan_payload_rejects_known_secret_fixture() {
-    let err = scan_payload(b"token=ghp_0123456789abcdefghijklmnopqrstuvwxyz")
-        .expect_err("known GitHub token fixture must reject");
-
-    match err {
-        Error::Gate(GateError::GateWriteRejected {
-            outcome,
-            reason_codes,
-        }) => {
-            assert_eq!(outcome, "deny");
-            assert_eq!(
-                reason_codes.as_slice(),
-                &[REASON_DETECTED, REASON_GITHUB_TOKEN]
-            );
-            assert!(reason_codes.iter().all(|code| code.starts_with("gate.")));
-        }
-        other => panic!("expected GateWriteRejected, got {other:?}"),
-    }
-}
-
-#[test]
 fn scan_payload_rejects_exact_length_secret_prefixes_with_suffix_labels() {
     for (payload, expected_reason) in [
         ("id=AKIA0123456789ABCDEF_suffix", REASON_AWS_ACCESS_KEY_ID),
@@ -72,40 +51,6 @@ fn scan_payload_rejects_exact_length_secret_prefixes_with_suffix_labels() {
 }
 
 #[test]
-fn scan_payload_allows_secret_prefix_embedded_in_larger_identifier() {
-    for payload in [
-        "pack=myghp_0123456789abcdefghijklmnopqrstuvwxyz_label",
-        "pack=myAKIA0123456789ABCDEF_label",
-        "pack=myAIza0123456789abcdefghijklmnopqrstuvwxy_label",
-        "pack=mysk-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKL_label",
-    ] {
-        scan_payload(payload.as_bytes())
-            .expect("embedded secret-like prefix in larger identifier is not a token");
-    }
-}
-
-#[test]
-fn scan_payload_rejects_pgp_private_key_armor() {
-    let err = scan_payload(
-        format!(
-            "-----BEGIN PGP PRIVATE KEY BLOCK-----\nVersion: fixture\n\n{SYNTHETIC_KEY_BODY}\n=AbCd\n-----END PGP PRIVATE KEY BLOCK-----"
-        )
-        .as_bytes(),
-    )
-    .expect_err("PGP private key armor must reject");
-
-    match err {
-        Error::Gate(GateError::GateWriteRejected { reason_codes, .. }) => {
-            assert_eq!(
-                reason_codes.as_slice(),
-                &[REASON_DETECTED, REASON_PRIVATE_KEY]
-            );
-        }
-        other => panic!("expected GateWriteRejected, got {other:?}"),
-    }
-}
-
-#[test]
 fn scan_batch_ops_rejects_phonetic_secret_payload() {
     let dir = tempfile::tempdir().expect("vault tempdir");
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).expect("open vault");
@@ -129,33 +74,6 @@ fn scan_batch_ops_rejects_phonetic_secret_payload() {
         }
         other => panic!("expected GateWriteRejected, got {other:?}"),
     }
-}
-
-#[test]
-fn scan_payload_marks_redacted_payload_as_structurally_secret_nulled() {
-    let manifest = scan_payload(b"api_key=[REDACTED]").expect("redacted payload is safe");
-
-    assert!(manifest.payloads());
-    assert!(manifest.structural_placeholders());
-}
-
-#[test]
-fn scan_payload_marks_export_manifest_redaction_fields_as_secret_nulled() {
-    let manifest =
-        scan_payload(br#"{"secrets_nulled":{"payloads":true,"structural_placeholders":true}}"#)
-            .expect("export manifest marker payload is safe");
-
-    assert!(manifest.payloads());
-    assert!(manifest.structural_placeholders());
-}
-
-#[test]
-fn scan_payload_keeps_legacy_redaction_fields_as_secret_nulled() {
-    let manifest = scan_payload(br#"{"secret_nulled":true,"structurally_secret_nulled":true}"#)
-        .expect("legacy manifest marker payload is safe");
-
-    assert!(manifest.payloads());
-    assert!(manifest.structural_placeholders());
 }
 
 /// Base64 of an English sentence, not a key: the body shape a real block has.

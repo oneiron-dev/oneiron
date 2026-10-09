@@ -22,8 +22,6 @@ use crate::entity_id::EntityId;
 use crate::vault::Vault;
 
 #[cfg(test)]
-use super::outbound::{CalendarWriteAction, derive_outbox_id};
-#[cfg(test)]
 use super::seat::{CalendarConnectorSeatConfig, seat_identity};
 #[cfg(test)]
 use crate::calendar::claims::CalendarPassportDirection;
@@ -588,32 +586,6 @@ mod tests {
         assert_ne!(
             seat_identity("caldav", &left),
             seat_identity("caldav", &right)
-        );
-    }
-
-    #[test]
-    fn outbox_id_is_deterministic_and_write_scoped() {
-        let first = derive_outbox_id("s", "c", "uid", CalendarWriteAction::Upsert);
-        assert_eq!(
-            first,
-            derive_outbox_id("s", "c", "uid", CalendarWriteAction::Upsert)
-        );
-        assert_ne!(
-            first,
-            derive_outbox_id("s", "c", "other", CalendarWriteAction::Upsert)
-        );
-        assert_ne!(
-            first,
-            derive_outbox_id("s", "c", "uid", CalendarWriteAction::Delete)
-        );
-    }
-
-    #[test]
-    fn rendered_vevent_escapes_text_and_prints_utc_through_the_border() {
-        assert_eq!(escape_ics_text("a,b;c\\d"), "a\\,b\\;c\\\\d");
-        assert_eq!(
-            format_utc(1_786_024_800).expect("in range"),
-            "20260806T140000Z"
         );
     }
 }

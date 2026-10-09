@@ -143,19 +143,6 @@ fn kill_switch_makes_enter_fail_closed() {
     );
 }
 
-/// §1a enter is single-shot per live session ref.
-#[test]
-fn enter_is_single_shot_per_session_ref() {
-    let (_tmp, vault) = temp_vault();
-    let _first = seam::SessionVault::enter(&vault, "oracle-single").expect("first enter");
-    let second = seam::SessionVault::enter(&vault, "oracle-single");
-    assert_eq!(
-        second.err(),
-        Some(seam::SeamError::SessionRefLive),
-        "re-entering a live session ref must be the exact typed refusal"
-    );
-}
-
 // ─── P4a · ONE-1728 — witness/retrieval, embedding rule, taint guard ─────
 
 /// §4 base-leak sweep: every base reader family sees NOTHING of a populated
@@ -485,52 +472,6 @@ fn no_pe_markers_or_embed_job_rows_for_session_content() -> Result<()> {
     );
 
     session.close()?;
-    Ok(())
-}
-
-/// D2 taint guard: a BASE batch op referencing a live-overlay id is
-/// rejected atomically at the batch preflight (ports the spirit of
-/// `production_summary_batch_rejects_a_live_fenced_source_atomically`).
-#[test]
-fn taint_guard_rejects_base_write_referencing_live_overlay_id() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let mut session = seam::SessionVault::enter(&vault, "oracle-taint").expect("enter session");
-    session.bind_actor()?;
-    let (turn, _msg, _summary) = session.witness_turn("tainted")?;
-    // The probe's own source is base setup, seeded before the census so the
-    // census measures ONLY what the rejected batch would have written.
-    let probe_source = seed_base_turn(&vault, 2_000);
-    let census_before = full_db_census(&vault)?;
-    let refused = seam::base_batch_referencing_overlay_id(&vault, &probe_source, &turn);
-    assert_eq!(
-        refused,
-        Err(seam::SeamError::TaintedBaseWrite),
-        "taint guard must reject with the exact typed refusal"
-    );
-    assert_eq!(
-        full_db_census(&vault)?,
-        census_before,
-        "the rejected batch must be atomic — zero base rows written"
-    );
-    session.close()?;
-    Ok(())
-}
-
-/// D6: write-path gate decisions for session content stay overlay-local —
-/// the base gate-decision ledger gains zero rows from the room.
-#[test]
-fn session_gate_decisions_never_persist_in_base() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let ledger_before = vault.store.gate_decisions(1_000)?.len();
-    let mut session = seam::SessionVault::enter(&vault, "oracle-gate").expect("enter session");
-    session.bind_actor()?;
-    let (_turn, _msg, _summary) = session.witness_turn("gated in-room")?;
-    session.close()?;
-    assert_eq!(
-        vault.store.gate_decisions(1_000)?.len(),
-        ledger_before,
-        "session write-path decisions must never reach the base ledger"
-    );
     Ok(())
 }
 

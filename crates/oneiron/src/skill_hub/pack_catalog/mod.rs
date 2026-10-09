@@ -47,9 +47,7 @@ pub use admission_types::{
     PackPermissions, PackQualification, PackQualifier, PackRuntimeRecipe,
 };
 #[cfg(all(test, feature = "microvm-firecracker", target_os = "linux"))]
-pub(crate) use script_plan::{ScriptExecutionPlan, script_output_bytes};
-#[cfg(all(test, feature = "microvm-firecracker", target_os = "linux"))]
-pub(crate) use script_runtime::ScriptOutput;
+pub(crate) use script_plan::script_output_bytes;
 pub use script_runtime::{PackScriptGrant, PackScriptOutcome, PackScriptRun};
 #[cfg(test)]
 mod admission_tests;

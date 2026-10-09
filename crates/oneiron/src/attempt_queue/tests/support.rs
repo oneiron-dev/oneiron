@@ -209,21 +209,6 @@ pub(super) fn complete_at_14(
     Ok(())
 }
 
-pub(super) fn fail_at_14(
-    queue: &AttemptQueue<'_>,
-    id: AttemptId,
-    attempt_count: u32,
-) -> Result<()> {
-    queue.fail(FailAttempt {
-        id,
-        lease_owner: "worker".to_owned(),
-        attempt_count,
-        reason: "boom".to_owned(),
-        now: 14,
-    })?;
-    Ok(())
-}
-
 /// Enqueues, claims, and returns the leased row ready to be asked to stop.
 pub(super) fn leased_attempt(queue: &AttemptQueue<'_>, dedupe_key: &str) -> Result<AttemptRecord> {
     queue.enqueue(enqueue("sync", Some(dedupe_key), 10))?;
@@ -315,25 +300,4 @@ pub(super) fn claimed(queue: &AttemptQueue<'_>, kind: &str, owner: &str) -> Resu
 
 pub(super) fn result_ref(value: &str) -> AttemptResultRef {
     AttemptResultRef::new(value).expect("valid result reference")
-}
-
-/// A row written before `scheduled_at`/`retry_of` existed, at the unchanged
-/// record version.
-#[derive(serde::Serialize)]
-pub(super) struct PreScheduledAttemptRecord {
-    pub(super) id: AttemptId,
-    pub(super) kind: String,
-    pub(super) payload: Vec<u8>,
-    pub(super) state: AttemptState,
-    pub(super) lease_owner: Option<String>,
-    pub(super) attempt_count: u32,
-    pub(super) claimed_at: Option<u64>,
-    pub(super) backoff_until: Option<u64>,
-    pub(super) last_error: Option<String>,
-    pub(super) task_ref: Option<String>,
-    pub(super) run_id: Option<String>,
-    pub(super) dedupe_key: Option<String>,
-    pub(super) created_at: u64,
-    pub(super) updated_at: u64,
-    pub(super) events: Vec<AttemptEvent>,
 }

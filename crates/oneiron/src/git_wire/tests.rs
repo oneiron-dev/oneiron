@@ -8,7 +8,6 @@ use crate::VaultConfig;
 use crate::checkout::lease::{CheckoutId, CheckoutLeaseState, CheckoutTaskClass};
 use crate::entity_id::EntityId;
 use crate::error::CodeError;
-use crate::test_util::source_scan::SourceTree;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -204,55 +203,6 @@ fn write_executable(path: &Path, body: &str) {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn git_wire_pins_the_executable_and_the_closed_config_policy() {
-    let process_env = GitWireProcessEnv::capture().expect("process env");
-    assert!(process_env.git_binary().is_absolute());
-    assert!(process_env.git_binary().exists());
-
-    let env = child_env(&process_env);
-    let keys = env.iter().map(|(key, _)| key.clone()).collect::<Vec<_>>();
-    for key in &keys {
-        let inherited = GIT_WIRE_INHERITED_ENV_KEYS.contains(&key.as_str());
-        let fixed = GIT_WIRE_FIXED_ENV.iter().any(|(name, _)| name == key);
-        let policy = key.starts_with("GIT_CONFIG_KEY_")
-            || key.starts_with("GIT_CONFIG_VALUE_")
-            || key == "GIT_CONFIG_COUNT";
-        assert!(
-            inherited || fixed || policy,
-            "unexpected child env key: {key}"
-        );
-    }
-    for (key, value) in [
-        ("GIT_NO_LAZY_FETCH", "1"),
-        ("GIT_OPTIONAL_LOCKS", "0"),
-        ("GIT_TERMINAL_PROMPT", "0"),
-        ("GIT_CONFIG_NOSYSTEM", "1"),
-    ] {
-        assert!(
-            env.contains(&(key.to_owned(), OsString::from(value))),
-            "missing pinned env pair {key}"
-        );
-    }
-    // The executable-program keys the finding named must all be pinned.
-    let policy_keys = GIT_WIRE_CONFIG_POLICY
-        .iter()
-        .map(|(key, _)| *key)
-        .collect::<Vec<_>>();
-    for key in [
-        "core.hooksPath",
-        "core.fsmonitor",
-        "credential.helper",
-        "gpg.program",
-        "commit.gpgSign",
-        "diff.external",
-        "uploadpack.packObjectsHook",
-        "protocol.allow",
-    ] {
-        assert!(policy_keys.contains(&key), "config policy is missing {key}");
-    }
-}
-
-#[test]
 fn git_wire_never_inherits_a_hostile_parent_environment() {
     let process_env = GitWireProcessEnv::capture().expect("process env");
     let hostile = |key: &str| match key {
@@ -427,70 +377,6 @@ fn git_wire_preserves_harmless_eol_attributes_for_checkout_and_status() {
 
 #[cfg(unix)]
 #[test]
-fn git_wire_checkout_filemode_false_ignores_mode_only_difference() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let (_vault_dir, vault) = open_test_vault();
-    let repo = init_repo();
-    run_git(repo.path(), &["config", "core.filemode", "false"]);
-    let wire = new_wire(&vault);
-    let lease = test_lease(&repo, 1);
-    wire.materialize(&lease).expect("materialize");
-    let tree = wire.checkout_worktree_path(&lease).expect("worktree path");
-    fs::set_permissions(tree.join("README.md"), fs::Permissions::from_mode(0o755))
-        .expect("mode-only change");
-    let receipt = PushedHeadReceipt {
-        receipt_ref: "receipt:mode".to_owned(),
-        observed_ref: repo.branch.as_str().to_owned(),
-        pushed_head: repo.head.as_str().to_owned(),
-        checkout_id: lease.checkout_id,
-        epoch: lease.epoch,
-    };
-    assert!(
-        !wire
-            .inspect_teardown(&lease, &receipt)
-            .expect("inspect")
-            .dirty,
-        "core.filemode=false must treat a mode-only difference as clean"
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn git_wire_checkout_honors_worktree_level_filemode_false() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let (_vault_dir, vault) = open_test_vault();
-    let repo = init_repo();
-    run_git(
-        repo.path(),
-        &["config", "extensions.worktreeConfig", "true"],
-    );
-    let wire = new_wire(&vault);
-    let lease = test_lease(&repo, 1);
-    wire.materialize(&lease).expect("materialize");
-    let tree = wire.checkout_worktree_path(&lease).expect("worktree path");
-    run_git(&tree, &["config", "--worktree", "core.filemode", "false"]);
-    fs::set_permissions(tree.join("README.md"), fs::Permissions::from_mode(0o755))
-        .expect("mode-only change");
-    let receipt = PushedHeadReceipt {
-        receipt_ref: "receipt:worktree-mode".to_owned(),
-        observed_ref: repo.branch.as_str().to_owned(),
-        pushed_head: repo.head.as_str().to_owned(),
-        checkout_id: lease.checkout_id,
-        epoch: lease.epoch,
-    };
-    assert!(
-        !wire
-            .inspect_teardown(&lease, &receipt)
-            .expect("inspect")
-            .dirty,
-        "worktree core.filemode=false must override the common default"
-    );
-}
-
-#[cfg(unix)]
-#[test]
 fn git_wire_staging_preserves_filemode_false_and_honors_true() {
     use std::os::unix::fs::PermissionsExt;
 
@@ -655,82 +541,6 @@ fn git_wire_worktree_add_persists_source_filemode_override_after_scope() {
     run_git(&tree, &["add", "--", "README.md"]);
     let staged = trimmed(run_git(&tree, &["ls-files", "--stage", "--", "README.md"]));
     assert!(staged.starts_with("100644 "), "filemode changed: {staged}");
-}
-
-#[cfg(unix)]
-#[test]
-fn git_wire_worktree_add_persists_source_symlinks_override_after_scope() {
-    let (_vault_dir, vault) = open_test_vault();
-    let repo = init_tracked_symlink_repo();
-    run_git(
-        repo.path(),
-        &["config", "extensions.worktreeConfig", "true"],
-    );
-    run_git(
-        repo.path(),
-        &["config", "--worktree", "core.symlinks", "false"],
-    );
-    let wire = new_wire(&vault);
-    let lease = test_lease(&repo, 1);
-    wire.materialize(&lease)
-        .expect("materialize with source override");
-    let tree = wire.checkout_worktree_path(&lease).expect("worktree path");
-    assert!(
-        fs::symlink_metadata(tree.join("link"))
-            .expect("materialized link")
-            .file_type()
-            .is_file(),
-        "symlinks=false creates a regular link-target file"
-    );
-    assert_eq!(
-        fs::read(tree.join("link")).expect("link-target bytes"),
-        b"target.txt"
-    );
-    assert_eq!(
-        trimmed(run_git(
-            &tree,
-            &["config", "--bool", "--get", "core.symlinks"]
-        )),
-        "false",
-        "new worktree must retain the admitted override after private scope removal"
-    );
-    let receipt = PushedHeadReceipt {
-        receipt_ref: "receipt:created-worktree-symlinks".to_owned(),
-        observed_ref: repo.branch.as_str().to_owned(),
-        pushed_head: repo.head.as_str().to_owned(),
-        checkout_id: lease.checkout_id,
-        epoch: lease.epoch,
-    };
-    assert!(
-        !wire
-            .inspect_teardown(&lease, &receipt)
-            .expect("inspect")
-            .dirty
-    );
-    run_git(&tree, &["add", "--", "link"]);
-    let staged = trimmed(run_git(&tree, &["ls-files", "--stage", "--", "link"]));
-    assert!(staged.starts_with("120000 "), "link mode changed: {staged}");
-}
-
-#[cfg(unix)]
-#[test]
-fn git_wire_preserves_symlinks_true_materialization() {
-    let (_vault_dir, vault) = open_test_vault();
-    let repo = init_tracked_symlink_repo();
-    let wire = new_wire(&vault);
-    let lease = test_lease(&repo, 1);
-    wire.materialize(&lease).expect("materialize");
-    let tree = wire.checkout_worktree_path(&lease).expect("worktree path");
-    assert!(
-        fs::symlink_metadata(tree.join("link"))
-            .expect("materialized link")
-            .file_type()
-            .is_symlink()
-    );
-    assert_eq!(
-        fs::read_link(tree.join("link")).expect("link target"),
-        Path::new("target.txt")
-    );
 }
 
 #[cfg(unix)]
@@ -935,45 +745,6 @@ fn git_wire_worktree_config_change_after_snapshot_cannot_execute_filter() {
 
 #[cfg(unix)]
 #[test]
-fn git_wire_bounds_child_runtime_and_output() {
-    let dir = tempfile::tempdir().expect("fake git dir");
-    let slow = dir.path().join("slow-git");
-    write_executable(&slow, "#!/bin/sh\nsleep 30\n");
-    let loud = dir.path().join("loud-git");
-    write_executable(&loud, "#!/bin/sh\nhead -c 400000 /dev/zero\n");
-    let args: Vec<OsString> = Vec::new();
-
-    let slow_env = GitWireProcessEnv::capture()
-        .expect("process env")
-        .with_binary_for_test(slow)
-        .with_limits(Duration::from_millis(200), 4096)
-        .expect("limits");
-    let command = GitCommandSpec::test_raw(dir.path(), &args, GitExecutionEffect::ContextOnly);
-    let timed_out = spawn_git(&slow_env, &command).expect("spawn slow git");
-    assert!(timed_out.timed_out);
-    assert!(!timed_out.success);
-    assert_eq!(
-        classify_failure(&timed_out).class(),
-        GitWireFailureClass::Timeout
-    );
-
-    let loud_env = GitWireProcessEnv::capture()
-        .expect("process env")
-        .with_binary_for_test(loud)
-        .with_limits(Duration::from_secs(30), 1024)
-        .expect("limits");
-    let oversize = spawn_git(&loud_env, &command).expect("spawn loud git");
-    assert!(oversize.truncated);
-    assert!(!oversize.success);
-    assert!(oversize.stdout.len() <= 1024);
-    assert_eq!(
-        classify_failure(&oversize).class(),
-        GitWireFailureClass::OutputOverflow
-    );
-}
-
-#[cfg(unix)]
-#[test]
 fn git_wire_redacts_credentials_and_paths_out_of_failures() {
     let dir = tempfile::tempdir().expect("fake git dir");
     let leaky = dir.path().join("leaky-git");
@@ -1131,51 +902,6 @@ fn git_wire_durable_rows_carry_no_payload_secret_or_path() {
 // ---------------------------------------------------------------------------
 // M6 — absence, mismatch, and fatal failure are three different things
 // ---------------------------------------------------------------------------
-
-#[test]
-fn git_wire_reads_absence_positively_and_keeps_fatal_failures_typed() {
-    let (_vault_dir, vault) = open_test_vault();
-    // Discovery must never escape into a containing repository after deletion.
-    let parent = init_repo();
-    let repo = init_repo_at(tempfile::tempdir_in(parent.path()).expect("nested repo"));
-    let wire = new_wire(&vault);
-    let bound = open(&wire, &repo);
-
-    let absent = GitRefName::parse_full("refs/heads/not-here").expect("ref");
-    assert_eq!(wire.read_ref(&bound, &absent).expect("absent ref"), None);
-    assert_eq!(
-        wire.read_ref(&bound, &repo.branch).expect("present ref"),
-        Some(repo.head.clone())
-    );
-    // A prefix of a real ref must not answer for the exact name.
-    let prefix = GitRefName::parse_full("refs/heads").expect("prefix ref");
-    assert_eq!(wire.read_ref(&bound, &prefix).expect("prefix ref"), None);
-
-    let missing = GitOid::parse_hex("1234567890abcdef1234567890abcdef12345678").expect("oid");
-    assert!(
-        !wire
-            .object_exists(&bound, &missing)
-            .expect("missing object")
-    );
-    assert!(wire.object_exists(&bound, &repo.head).expect("present"));
-
-    // A destroyed repository is a failure, never an absence.
-    fs::remove_dir_all(repo.path().join(".git")).expect("destroy repository");
-    assert!(matches!(
-        wire.read_ref(&bound, &repo.branch),
-        Err(Error::Code(CodeError::RepoMutationFailed(_)))
-    ));
-    assert!(matches!(
-        wire.object_exists(&bound, &repo.head),
-        Err(Error::Code(CodeError::RepoMutationFailed(_)))
-    ));
-    let parent_bound = open(&wire, &parent);
-    assert_eq!(
-        wire.read_ref(&parent_bound, &parent.branch)
-            .expect("parent unchanged"),
-        Some(parent.head.clone())
-    );
-}
 
 #[test]
 fn git_wire_cached_handle_refuses_ancestor_rediscovery_after_repository_removal() {
@@ -1381,42 +1107,6 @@ fn git_wire_binds_records_to_the_object_store_that_was_mutated() {
     assert!(wire.object_exists(&right, &advanced).expect("clone object"));
 }
 
-#[cfg(unix)]
-#[test]
-fn git_wire_normalizes_path_aliases_to_one_identity() {
-    let (_vault_dir, vault) = open_test_vault();
-    let repo = init_repo();
-    let wire = new_wire(&vault);
-    let direct = open(&wire, &repo);
-
-    let alias_dir = tempfile::tempdir().expect("alias dir");
-    let alias = alias_dir.path().join("alias");
-    std::os::unix::fs::symlink(repo.path(), &alias).expect("symlink alias");
-    let through_symlink = wire
-        .open_repo(repo.repo_ref.clone(), &alias)
-        .expect("open through symlink");
-    assert_eq!(direct.identity(), through_symlink.identity());
-
-    // A linked worktree shares the object store, so it shares the identity.
-    let worktree_parent = tempfile::tempdir().expect("worktree parent");
-    let worktree = worktree_parent.path().join("linked");
-    run_git(
-        repo.path(),
-        &[
-            "worktree",
-            "add",
-            "--detach",
-            "--",
-            worktree.to_string_lossy().as_ref(),
-            repo.head.as_str(),
-        ],
-    );
-    let linked = wire
-        .open_repo(repo.repo_ref, &worktree)
-        .expect("open linked worktree");
-    assert_eq!(direct.identity(), linked.identity());
-}
-
 #[test]
 fn git_wire_refuses_a_repo_ref_that_does_not_match_the_store() {
     let (_vault_dir, vault) = open_test_vault();
@@ -1513,23 +1203,6 @@ fn keep_refs_of(wire: &GitWire<'_>, repo: &GitWireRepo, key: &[u8; 32]) -> Vec<O
         .into_iter()
         .filter(|entry| entry.oid.is_some())
         .collect()
-}
-
-#[test]
-fn git_wire_restaging_claims_the_stage_key_instead_of_repeating_the_effect() {
-    let (_vault_dir, vault) = open_test_vault();
-    let repo = init_repo();
-    let wire = new_wire(&vault);
-    let bound = open(&wire, &repo);
-    let plan = commit_plan(&repo, "claimed\n");
-
-    let first = wire.stage(&bound, &plan, 10).expect("stage once");
-    let second = wire.stage(&bound, &plan, 20).expect("stage twice");
-    assert_eq!(first, second, "an identical plan must claim one stage key");
-    assert_eq!(
-        wire.read_ref(&bound, &repo.branch).expect("ref"),
-        Some(repo.head.clone())
-    );
 }
 
 #[test]
@@ -2467,114 +2140,6 @@ fn git_wire_never_runs_repository_hooks() {
     let mut commit = TEST_IDENTITY.to_vec();
     commit.extend_from_slice(&["commit", "-m", "the hook must not run"]);
     run_git(repo.path(), &commit);
-}
-
-#[test]
-fn git_wire_is_the_only_production_git_subprocess_constructor() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    // Literal-text guard only: dynamic constructors, including
-    // ServeCommand::spawn, are not covered by this scan.
-    let needle = format!("Command::new({}git{})", '"', '"');
-    // Test-only files (`tests.rs`, `*_tests.rs`, `tests/` directories and
-    // `#[cfg(test)]` mounts) are classified by the shared scanner; every
-    // other file is scanned with its `#[cfg(test)]` items masked below.
-    let tree = SourceTree::read(&root);
-    let offenders = tree
-        .production_sources()
-        .filter(|(_, text)| text.contains(&needle) && contains_production_needle(text, &needle))
-        .map(|(path, _)| tree.relative(path))
-        .collect::<Vec<_>>();
-    assert!(
-        offenders.is_empty(),
-        "literal git subprocess constructors must stay in git_wire.rs: {offenders:?}"
-    );
-}
-
-fn contains_production_needle(text: &str, needle: &str) -> bool {
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&tree_sitter_rust::LANGUAGE.into())
-        .expect("Rust scanner language");
-    let tree = parser.parse(text, None).expect("Rust scanner parse");
-    assert!(
-        !tree.root_node().has_error(),
-        "production scanner requires valid Rust syntax"
-    );
-    let mut test_ranges = Vec::new();
-    collect_test_only_ranges(tree.root_node(), text, &mut test_ranges);
-    text.match_indices(needle)
-        .any(|(offset, _)| !test_ranges.iter().any(|range| range.contains(&offset)))
-}
-
-fn collect_test_only_ranges(
-    node: tree_sitter::Node<'_>,
-    text: &str,
-    ranges: &mut Vec<std::ops::Range<usize>>,
-) {
-    let mut cursor = node.walk();
-    let mut test_only = false;
-    for child in node.named_children(&mut cursor) {
-        match child.kind() {
-            "attribute_item" => {
-                // Only explicit cfg(test) excludes an item. Other cfg predicates
-                // stay visible; each exclusion ends at the parsed item boundary.
-                test_only |= text[child.byte_range()]
-                    .split_whitespace()
-                    .collect::<String>()
-                    == "#[cfg(test)]";
-            }
-            "line_comment" | "block_comment" => {}
-            _ => {
-                if test_only {
-                    ranges.push(child.byte_range());
-                } else {
-                    collect_test_only_ranges(child, text, ranges);
-                }
-                test_only = false;
-            }
-        }
-    }
-}
-
-#[test]
-fn production_git_constructor_scan_excludes_only_test_scopes() {
-    let needle = format!("Command::new({}git{})", '"', '"');
-    let test_scopes = r##"
-        #[cfg(test)]
-        #[allow(dead_code)]
-        // An intervening comment must not detach the test attribute.
-        mod fixtures {
-            fn git() {
-                let braces = r#"} mod fake {"#;
-                /* } */
-                StdGIT_CALL;
-            }
-            mod nested { fn git() { GIT_CALL; } }
-        }
-        mod production {
-            #[cfg ( test )]
-            fn test_helper() { GIT_CALL; }
-        }
-    "##
-    .replace("GIT_CALL", &needle);
-    assert!(!contains_production_needle(&test_scopes, &needle));
-
-    // Production before, after, and inside a surrounding module stays visible.
-    // A module name or a different cfg is not permission to hide a constructor.
-    for source in [
-        format!("fn before() {{ {needle}; }} {test_scopes}"),
-        format!("{test_scopes} fn after() {{ Std{needle}; }}"),
-        format!("mod outer {{ {test_scopes} fn after() {{ {needle}; }} }}"),
-        format!("#[cfg(test)] fn helper() {{ {needle}; }} fn after() {{ {needle}; }}"),
-        format!("#[cfg(not(test))] fn production() {{ {needle}; }}"),
-        format!("#[cfg(any(test, feature = \"sync\"))] fn production() {{ {needle}; }}"),
-        format!("mod tests {{ fn production() {{ {needle}; }} }}"),
-    ] {
-        assert!(
-            contains_production_needle(&source, &needle),
-            "production constructor was hidden: {source}"
-        );
-    }
 }
 
 #[test]

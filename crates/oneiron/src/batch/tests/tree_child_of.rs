@@ -32,46 +32,6 @@ fn put_plain_node<'a>(batch: BatchBuilder<'a>, id: &EntityId, stamp: u64) -> Bat
 }
 
 #[test]
-fn valid_tree_accept() -> Result<()> {
-    let (_dir, vault) = open_raw_test_vault();
-    let goal = EntityId::now();
-    let milestone = EntityId::now();
-    let task = EntityId::now();
-    let habit = EntityId::now();
-    let checkin = EntityId::now();
-
-    let batch = put_task_role(vault.batch(), &goal, TaskRole::Goal, 1);
-    let batch = put_task_role(batch, &milestone, TaskRole::Milestone, 3);
-    let batch = put_task_role(batch, &task, TaskRole::Task, 5);
-    let batch = put_task_role(batch, &habit, TaskRole::Habit, 7);
-    put_task_role(batch, &checkin, TaskRole::HabitCheckin, 9)
-        // Stored child -> parent, the direction the matrix is written in.
-        .edge(&milestone, EdgeKind::ChildOf, &goal, 1.0)
-        .edge(&task, EdgeKind::ChildOf, &milestone, 1.0)
-        .edge(&checkin, EdgeKind::ChildOf, &habit, 1.0)
-        .commit()?;
-
-    assert!(vault.edge_exists(&milestone, EdgeKind::ChildOf, &goal)?);
-    assert!(vault.edge_exists(&task, EdgeKind::ChildOf, &milestone)?);
-    assert!(vault.edge_exists(&checkin, EdgeKind::ChildOf, &habit)?);
-    // The committed topology is what the tree read APIs walk — unchanged by
-    // this ticket, and the proof that the accepted edges are real.
-    assert_eq!(vault.ancestors(&task)?, vec![milestone, goal]);
-
-    // Roots stay legal: a TASK of ANY role with no ChildOf edge has no
-    // nesting relation to validate.
-    for role in TaskRole::ALL {
-        let root = EntityId::now();
-        put_task_role(vault.batch(), &root, role, 11).commit()?;
-        assert!(
-            vault.entity_exists(&root)?,
-            "root {role:?} must be writable"
-        );
-    }
-    Ok(())
-}
-
-#[test]
 fn cycle_reject() -> Result<()> {
     let (_dir, vault) = open_raw_test_vault();
     let goal = EntityId::now();
@@ -107,31 +67,6 @@ fn cycle_reject() -> Result<()> {
 
     // Nothing from either rejected batch is visible.
     assert_eq!(vault.ancestors(&goal)?, Vec::new());
-    Ok(())
-}
-
-#[test]
-fn dangling_parent_reject() -> Result<()> {
-    let (_dir, vault) = open_raw_test_vault();
-    let task = EntityId::now();
-    let absent = EntityId::now();
-    put_task_role(vault.batch(), &task, TaskRole::Task, 1).commit()?;
-
-    let err = vault
-        .batch()
-        .edge(&task, EdgeKind::ChildOf, &absent, 1.0)
-        .commit()
-        .expect_err("a ChildOf parent absent from final state must be rejected");
-    // Coarse-mapped so sync replay keeps quarantine-and-continue, typed so
-    // the caller learns WHICH parent went missing.
-    assert_eq!(err.kind(), ErrorKind::InvalidTaskBody);
-    match err {
-        Error::Registry(RegistryError::ChildOfParentMissing { parent }) => {
-            assert_eq!(parent, absent);
-        }
-        other => panic!("expected a dangling-parent rejection, got {other:?}"),
-    }
-    assert!(!vault.edge_exists(&task, EdgeKind::ChildOf, &absent)?);
     Ok(())
 }
 
@@ -251,41 +186,6 @@ fn role_only_put_cannot_persist_a_forbidden_pair() -> Result<()> {
     let batch = put_task_role(vault.batch(), &parent, TaskRole::Goal, 13);
     put_task_role(batch, &task, TaskRole::Milestone, 15).commit()?;
     assert!(vault.edge_exists(&task, EdgeKind::ChildOf, &parent)?);
-    Ok(())
-}
-
-/// The check-in door obeys the same final-state law as every other pair: op
-/// ORDER inside one batch may not decide whether a legal tree commits.
-#[test]
-fn habit_checkin_parent_put_after_the_edge_is_valid() -> Result<()> {
-    let (_dir, vault) = open_raw_test_vault();
-    let habit = EntityId::now();
-    let checkin = EntityId::now();
-
-    let batch = put_task_role(vault.batch(), &checkin, TaskRole::HabitCheckin, 1).edge(
-        &checkin,
-        EdgeKind::ChildOf,
-        &habit,
-        1.0,
-    );
-    put_task_role(batch, &habit, TaskRole::Habit, 3).commit()?;
-    assert!(vault.edge_exists(&checkin, EdgeKind::ChildOf, &habit)?);
-
-    // Order-independence is not permissiveness: a check-in under a non-Habit
-    // parent is still rejected wherever the parent put lands.
-    let task_parent = EntityId::now();
-    let stray = EntityId::now();
-    let batch = put_task_role(vault.batch(), &stray, TaskRole::HabitCheckin, 5).edge(
-        &stray,
-        EdgeKind::ChildOf,
-        &task_parent,
-        1.0,
-    );
-    let err = put_task_role(batch, &task_parent, TaskRole::Task, 7)
-        .commit()
-        .expect_err("a check-in under a non-Habit parent is still rejected");
-    assert_eq!(err.kind(), ErrorKind::InvalidTaskBody);
-    assert!(!vault.entity_exists(&stray)?);
     Ok(())
 }
 

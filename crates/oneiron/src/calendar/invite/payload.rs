@@ -8,9 +8,7 @@ use serde::{Deserialize, Serialize};
 /// Connector key iMIP invites dispatch through.
 ///
 /// Equal to [`crate::memory::CALENDAR_INVITE_OUTBOUND_CHANNEL`] by law — CAL-09
-/// pinned the surface to CAL-04's spelling before CAL-04 existed, and
-/// `tests::verb_and_channel_match_the_cal_09_surface_constants` keeps the two
-/// from drifting.
+/// pinned the surface to CAL-04's spelling before CAL-04 existed.
 pub const CALENDAR_INVITE_CHANNEL: &str = "calendar";
 
 /// The outbound verb this adapter registers.

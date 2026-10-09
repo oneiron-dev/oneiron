@@ -77,12 +77,6 @@ use self::codec::{
     find_posting_dup, read_field_stats, write_field_stats, write_total_docs,
 };
 #[cfg(test)]
-use self::config::BM25_FIELD_COUNT;
-#[cfg(test)]
-pub(crate) use self::config::FieldConfig;
-#[cfg(test)]
-use self::query::search_text_with_recency;
-#[cfg(test)]
 use self::query::{
     MAX_FINAL_TOKEN_PREFIX_SCAN_TERMS, MAX_FINAL_TOKEN_PREFIX_TERMS,
     collect_final_token_prefix_terms,

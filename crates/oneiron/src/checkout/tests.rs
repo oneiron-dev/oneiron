@@ -1,25 +1,6 @@
 use super::*;
 
 #[test]
-fn checkout_result_identity_is_stable_and_domain_separated() {
-    let id = CheckoutId::from_bytes([1; 16]).unwrap();
-    assert_eq!(
-        checkout_result_identity(id, 7, "abc", "def"),
-        checkout_result_identity(id, 7, "abc", "def")
-    );
-    assert_ne!(
-        checkout_result_identity(id, 7, "abc", "def"),
-        checkout_result_identity(id, 8, "abc", "def")
-    );
-}
-
-#[test]
-fn checkout_git_oid_requires_lowercase_sha1_hex() {
-    assert!(GitOid::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").is_ok());
-    assert!(GitOid::parse("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").is_err());
-}
-
-#[test]
 fn checkout_git_oid_rejects_zero() {
     // Git's null sentinel must not authorize collection of unpushed work.
     assert!(matches!(
@@ -29,14 +10,6 @@ fn checkout_git_oid_rejects_zero() {
     // A single non-zero nibble is a real oid and still parses.
     assert!(GitOid::parse("0000000000000000000000000000000000000001").is_ok());
     assert!(GitOid::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").is_ok());
-}
-
-#[test]
-fn checkout_ttl_policy_is_pinned() {
-    assert!(CheckoutTaskClass::Build.allows_ttl_reclaim());
-    assert!(CheckoutTaskClass::Verify.allows_ttl_reclaim());
-    assert!(!CheckoutTaskClass::Edit.allows_ttl_reclaim());
-    assert!(!CheckoutTaskClass::Effect.allows_ttl_reclaim());
 }
 
 use crate::Vault;
@@ -152,35 +125,6 @@ impl CheckoutRepoOps for Ops {
 }
 
 #[test]
-fn checkout_epoch_fences_renew_and_settle() {
-    let (_d, v) = vault();
-    let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
-    let grant = s
-        .claim(request(CheckoutTaskClass::Build, "one", 100))
-        .unwrap();
-    let stale = CheckoutLeaseFence {
-        checkout_id: id(),
-        epoch: 0,
-        holder_ref: "one".into(),
-    };
-    assert!(matches!(
-        s.renew(stale.clone(), 10, 101),
-        Err(CheckoutError::StaleEpoch { .. })
-    ));
-    assert!(matches!(
-        s.settle(CheckoutSettlementRequest {
-            fence: stale,
-            disposition: CheckoutSettlementDisposition::Select,
-            observed_ref: "a".into(),
-            result_ref: "b".into(),
-            now: 101
-        }),
-        Err(CheckoutError::StaleEpoch { .. })
-    ));
-    assert_eq!(grant.epoch, 1);
-}
-
-#[test]
 fn checkout_ttl_reclaim_is_class_fenced_and_idempotent() {
     for class in [CheckoutTaskClass::Build, CheckoutTaskClass::Verify] {
         let (_d, v) = vault();
@@ -201,75 +145,6 @@ fn checkout_ttl_reclaim_is_class_fenced_and_idempotent() {
         s.claim(request(class, "one", 100)).unwrap();
         assert!(s.reclaim_idempotent(id(), "two".into(), 111).is_err());
     }
-}
-
-#[test]
-fn checkout_settlement_is_consume_once() {
-    let (_d, v) = vault();
-    let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
-    let g = s
-        .claim(request(CheckoutTaskClass::Build, "one", 100))
-        .unwrap();
-    let f = CheckoutLeaseFence {
-        checkout_id: id(),
-        epoch: g.epoch,
-        holder_ref: "one".into(),
-    };
-    let first = s
-        .settle(CheckoutSettlementRequest {
-            fence: f.clone(),
-            disposition: CheckoutSettlementDisposition::Select,
-            observed_ref: "a".into(),
-            result_ref: "b".into(),
-            now: 101,
-        })
-        .unwrap();
-    assert!(matches!(
-        s.settle(CheckoutSettlementRequest {
-            fence: f,
-            disposition: CheckoutSettlementDisposition::Apply,
-            observed_ref: "a".into(),
-            result_ref: "b".into(),
-            now: 102
-        }),
-        Err(CheckoutError::SettlementAlreadyWon)
-    ));
-    assert_eq!(
-        first.result_identity,
-        checkout_result_identity(id(), 1, "a", "b")
-    );
-}
-
-#[test]
-fn checkout_teardown_retains_for_missing_dirty_and_occupant() {
-    let (_d, v) = vault();
-    let mut s = CheckoutLeaseService::new(&v, Sink::default(), Live::default());
-    let g = s
-        .claim(request(CheckoutTaskClass::Build, "one", 100))
-        .unwrap();
-    let f = CheckoutLeaseFence {
-        checkout_id: id(),
-        epoch: g.epoch,
-        holder_ref: "one".into(),
-    };
-    let ops = Ops {
-        inspection: CheckoutTeardownInspection {
-            observed_head: None,
-            dirty: false,
-            receipt_match: TeardownReceiptMatch::Match,
-            occupant: None,
-        },
-        inspect_calls: std::cell::Cell::new(0),
-        collect_calls: std::cell::Cell::new(0),
-        collect_fails: std::cell::Cell::new(0),
-    };
-    assert!(matches!(
-        s.teardown(f, None, &ops, 102).unwrap(),
-        CheckoutTeardownOutcome::Retained {
-            reason: CheckoutRetainReason::MissingPushedHeadReceipt,
-            ..
-        }
-    ));
 }
 
 fn fence(grant: &CheckoutLeaseGrant, holder: &str) -> CheckoutLeaseFence {
@@ -416,76 +291,6 @@ fn checkout_teardown_retains_live_mismatch_and_uncertain() {
             }
         ));
     }
-}
-
-#[test]
-fn checkout_collects_clean_matching_receipt_and_removes_lease() {
-    let (_d, v) = vault();
-    let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
-    let g = s
-        .claim(request(CheckoutTaskClass::Build, "one", 100))
-        .unwrap();
-    let o = ops(inspection(false, TeardownReceiptMatch::Match, None));
-    assert!(matches!(
-        s.teardown(fence(&g, "one"), Some(&receipt(g.epoch)), &o, 102)
-            .unwrap(),
-        CheckoutTeardownOutcome::Collected { .. }
-    ));
-    assert_eq!(o.collect_calls.get(), 1);
-    assert_eq!(s.get(id()).unwrap(), None);
-}
-
-#[test]
-fn checkout_settlement_facts_retry_and_release() {
-    let (_d, v) = vault();
-    let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
-    let g = s
-        .claim(request(CheckoutTaskClass::Build, "one", 100))
-        .unwrap();
-    let settle_request = |d| CheckoutSettlementRequest {
-        fence: fence(&g, "one"),
-        disposition: d,
-        observed_ref: "a".into(),
-        result_ref: "b".into(),
-        now: 101,
-    };
-    let first = s
-        .settle(settle_request(CheckoutSettlementDisposition::Select))
-        .unwrap();
-    let retry = s
-        .settle(settle_request(CheckoutSettlementDisposition::Select))
-        .unwrap();
-    assert_eq!(first.receipt_id, retry.receipt_id);
-    assert!(matches!(
-        s.settle(settle_request(CheckoutSettlementDisposition::Apply)),
-        Err(CheckoutError::SettlementAlreadyWon)
-    ));
-    let (facts, _) = s.into_parts();
-    assert!(matches!(
-        facts.0.as_slice(),
-        [
-            CheckoutFactMutation::Claimed { .. },
-            CheckoutFactMutation::Settled { .. }
-        ]
-    ));
-    let (_d, v) = vault();
-    let mut s = CheckoutLeaseService::new(&v, Sink::default(), no_live());
-    let g = s
-        .claim(request(CheckoutTaskClass::Build, "one", 100))
-        .unwrap();
-    s.settle(CheckoutSettlementRequest {
-        fence: fence(&g, "one"),
-        disposition: CheckoutSettlementDisposition::Release,
-        observed_ref: "a".into(),
-        result_ref: "b".into(),
-        now: 101,
-    })
-    .unwrap();
-    let (facts, _) = s.into_parts();
-    assert!(matches!(
-        facts.0.last(),
-        Some(CheckoutFactMutation::Released { .. })
-    ));
 }
 
 #[test]

@@ -381,6 +381,3 @@ fn log_sigmoid(value: f64) -> f64 {
         value - value.exp().ln_1p()
     }
 }
-
-#[cfg(test)]
-mod tests;

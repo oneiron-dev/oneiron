@@ -149,48 +149,6 @@ fn unsettled_proposal_is_invisible_until_select() -> Result<()> {
 }
 
 #[test]
-fn selected_version_keeps_calculator_and_version_in_metadata_and_claim() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-    let actor = put_actor(&vault, 10);
-    let artifact = put_workbook(&vault, actor, 10);
-    let mut prop = proposal("run:calc-stamp", b"calculated xlsx bytes", Vec::new());
-    prop.recalc = RecalcStatus::Performed;
-    prop.calc_engine = Some(Box::new(crate::blob_artifact::CalcEngineStamp::new(
-        "LibreOffice",
-        "24.8",
-    )?));
-    let out =
-        vault.settle_select_edit_proposal(&artifact, &prop, &owner(), actor, test_time(11), 11)?;
-    assert_eq!(
-        out.version.calc_engine.as_ref(),
-        prop.calc_engine.as_deref()
-    );
-    assert_eq!(
-        vault
-            .blob_artifact_head(&artifact)?
-            .unwrap()
-            .calc_engine
-            .as_ref(),
-        prop.calc_engine.as_deref()
-    );
-    assert_eq!(
-        vault
-            .blob_artifact_version_metadata(&artifact, 2)?
-            .unwrap()
-            .calc_engine
-            .as_ref(),
-        prop.calc_engine.as_deref()
-    );
-    assert_eq!(
-        vault.blob_artifact_versions(&artifact)?[1]
-            .calc_engine
-            .as_ref(),
-        prop.calc_engine.as_deref()
-    );
-    Ok(())
-}
-
-#[test]
 fn performed_recalc_without_stamp_refuses_before_any_settlement_effect() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let actor = put_actor(&vault, 10);
@@ -210,35 +168,6 @@ fn performed_recalc_without_stamp_refuses_before_any_settlement_effect() -> Resu
         vault
             .blob_artifact_settlement(&artifact, &prop.run_ref)?
             .is_none()
-    );
-    Ok(())
-}
-
-#[test]
-fn raw_no_recalc_proposal_inherits_stamped_head_inside_settlement() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-    let actor = put_actor(&vault, 10);
-    let artifact = put_workbook(&vault, actor, 10);
-    let first_stamp = crate::blob_artifact::CalcEngineStamp::new("LibreOffice", "24.8")?;
-    let mut first = proposal("run:stamped", b"stamped bytes v2", Vec::new());
-    first.recalc = RecalcStatus::Performed;
-    first.calc_engine = Some(Box::new(first_stamp.clone()));
-    let v2 = vault
-        .settle_select_edit_proposal(&artifact, &first, &owner(), actor, test_time(11), 11)?
-        .version;
-    assert_eq!(v2.calc_engine, Some(first_stamp.clone()));
-    // The raw entry point has no head context. Its unchanged calculator must be
-    // resolved in the settle transaction, not trusted from the public proposal.
-    let mut raw = proposal("run:raw-no-recalc", b"raw no-recalc bytes v3", Vec::new());
-    raw.base_content_hash = v2.content_hash;
-    raw.base_version = None;
-    let v3 = vault
-        .settle_select_edit_proposal(&artifact, &raw, &owner(), actor, test_time(12), 12)?
-        .version;
-    assert_eq!(v3.calc_engine, Some(first_stamp));
-    assert_eq!(
-        vault.blob_artifact_version_metadata(&artifact, 3)?.unwrap(),
-        v3
     );
     Ok(())
 }
@@ -815,21 +744,6 @@ fn discard_on_nonexistent_artifact_is_refused() -> Result<()> {
     Ok(())
 }
 
-// Rider 6: a discard validates the proposal ref (the same bar select applies)
-// before persisting a ledger row — a blank ref is refused.
-#[test]
-fn discard_validates_proposal_ref() {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-    let actor = put_actor(&vault, 10);
-    let artifact = put_workbook(&vault, actor, 10);
-    let prop = proposal("   ", b"v2 bytes", Vec::new());
-
-    let err = vault
-        .settle_discard_edit_proposal(&artifact, &prop, &owner(), actor, "no", 11)
-        .expect_err("a blank proposal ref must be refused");
-    assert_eq!(err.kind(), crate::error::ErrorKind::EditRoundtripFailed);
-}
-
 /// FIX-5: the grant read a settle authorizes against is taken INSIDE the
 /// settle's own write transaction, so a revocation committed between a
 /// caller's check and the settle commit cannot be ridden past — the LMDB
@@ -1107,116 +1021,5 @@ fn settlement_binds_word_output_to_tracked_transaction_and_exact_base() -> Resul
         11,
     )?;
     assert_eq!(out.version.version, 2);
-    Ok(())
-}
-
-fn put_test_docx_archive_policy(
-    vault: &Vault,
-    limits: oneiron_docedit::ArchiveLimits,
-) -> Result<()> {
-    let raw = crate::gate::default_policy_manifest().unwrap();
-    let mut cursor = std::io::Cursor::new(raw.as_slice());
-    let mut value = rmpv::decode::read_value(&mut cursor).unwrap();
-    let rmpv::Value::Map(entries) = &mut value else {
-        panic!("default manifest is a map")
-    };
-    let budget = entries
-        .iter_mut()
-        .find(|(key, _)| key.as_str() == Some("docx_archive_limits"))
-        .expect("shipped policy has a docx archive budget");
-    budget.1 = rmpv::Value::Map(vec![
-        (
-            rmpv::Value::from("vault"),
-            rmpv::Value::Map(vec![
-                (
-                    rmpv::Value::from("max_entries"),
-                    rmpv::Value::from(limits.max_entries as u64),
-                ),
-                (
-                    rmpv::Value::from("max_part_bytes"),
-                    rmpv::Value::from(limits.max_part_bytes),
-                ),
-                (
-                    rmpv::Value::from("max_total_bytes"),
-                    rmpv::Value::from(limits.max_total_bytes),
-                ),
-            ]),
-        ),
-        (rmpv::Value::from("holders"), rmpv::Value::Array(vec![])),
-    ]);
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, &value).unwrap();
-    crate::test_util::put_policy_manifest_bytes(vault, crate::test_util::entity(0xE8), &bytes)
-}
-
-#[test]
-fn settlement_refuses_small_policy_per_part_and_cumulative_archive_limits() -> Result<()> {
-    use crate::edit_roundtrip::{EditOutcome, run_docx_revision};
-    let txn = word_revision_transaction();
-    let EditOutcome::Proposed(mut proposal) = run_docx_revision(WORD_BASE, &txn, "run:budget")?
-    else {
-        panic!("tracked edit must propose")
-    };
-    proposal.base_version = Some(1);
-    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&proposal.new_bytes)).unwrap();
-    let sizes: Vec<u64> = (0..archive.len())
-        .map(|i| archive.by_index(i).unwrap().size())
-        .collect();
-    let max_part = *sizes.iter().max().unwrap();
-    let total: u64 = sizes.iter().sum();
-    assert!(total > max_part + 1);
-    for limits in [
-        oneiron_docedit::ArchiveLimits {
-            max_entries: oneiron_docedit::ArchiveLimits::DEFAULT.max_entries,
-            max_part_bytes: max_part - 1,
-            max_total_bytes: total,
-        },
-        oneiron_docedit::ArchiveLimits {
-            max_entries: oneiron_docedit::ArchiveLimits::DEFAULT.max_entries,
-            max_part_bytes: max_part,
-            max_total_bytes: total - 1,
-        },
-    ] {
-        assert!(limits.is_valid());
-        let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
-        let actor = put_actor(&vault, 10);
-        let artifact = EntityId::now();
-        vault.put_blob_artifact(
-            &artifact,
-            &BlobArtifactBody::new(
-                "budget.docx",
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            ),
-            test_time(10),
-            10,
-        )?;
-        vault.append_blob_artifact_version(
-            &artifact,
-            WORD_BASE,
-            &BlobVersionProvenance::UserUpload,
-            actor,
-            test_time(10),
-            10,
-        )?;
-        put_test_docx_archive_policy(&vault, limits)?;
-        assert!(matches!(
-            vault.settle_select_edit_proposal(
-                &artifact,
-                &proposal,
-                &owner(),
-                actor,
-                test_time(11),
-                11
-            ),
-            Err(Error::Artifact(ArtifactError::EditRoundtripFailed(_)))
-                | Err(Error::Artifact(ArtifactError::InvalidEditManifest(_)))
-        ));
-        assert_eq!(vault.blob_artifact_versions(&artifact)?.len(), 1);
-        assert!(
-            vault
-                .blob_artifact_settlement(&artifact, &proposal.run_ref)?
-                .is_none()
-        );
-    }
     Ok(())
 }

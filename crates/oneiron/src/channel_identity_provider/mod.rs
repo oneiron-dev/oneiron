@@ -47,9 +47,7 @@ use self::shared_validate::{
 
 // Pre-existing `tests.rs` names these bare through `use super::*`.
 #[cfg(test)]
-use self::shared_validate::{
-    MAX_EMAIL_LOCAL_PART_BYTES, MAX_LINE_COMPONENT_BYTES, MAX_LOCAL_PART_PREFIX_BYTES,
-};
+use self::shared_validate::MAX_LINE_COMPONENT_BYTES;
 
 // The flat channel_identity_provider.rs module used to provide these names to
 // the sibling test module through `use super::*`: its own crate/std import
@@ -65,7 +63,5 @@ use crate::channel_identity_lifecycle::{
 use crate::entity_id::EntityId;
 #[cfg(test)]
 use crate::error::{Error, Result};
-#[cfg(test)]
-use serde_json::Value;
 
 pub mod native_mail;

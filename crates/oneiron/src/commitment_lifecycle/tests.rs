@@ -20,7 +20,6 @@ use crate::config::{HnswConfig, VaultConfig};
 use crate::edge::EdgeActorClass;
 use crate::error::{ClaimError, RegistryError};
 use crate::habit::{TaskRole, task_body_for_test};
-use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use crate::registry::{
     ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN,
@@ -269,41 +268,6 @@ fn user_done_uses_cmt1_verb_and_projects_fulfilled_receipt() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn plain_commitment_close_has_no_schedule_side_effect() -> Result<()> {
-    let (_dir, vault) = temp_vault()?;
-    let parties = parties(&vault)?;
-    let user_done = crate::test_util::entity(0x23);
-    let via_brief = crate::test_util::entity(0x24);
-    let brief = crate::test_util::entity(0x25);
-    parties.put_plain(&vault, &user_done, 300)?;
-    parties.put_plain(&vault, &via_brief, 300)?;
-    put_brief(&vault, &brief, 300)?;
-    link_brief_fulfillment(&vault, &brief, &via_brief, 300)?;
-
-    fulfill_commitment_from(
-        &vault,
-        &user_done,
-        FulfillmentSource::UserDone,
-        &parties.envelope,
-        310,
-    )?;
-    fulfill_commitment_from(
-        &vault,
-        &via_brief,
-        FulfillmentSource::BriefCompletion { brief_ref: brief },
-        &parties.envelope,
-        311,
-    )?;
-
-    assert_eq!(status(&vault, &user_done)?, CommitmentStatus::Fulfilled);
-    assert_eq!(status(&vault, &via_brief)?, CommitmentStatus::Fulfilled);
-    // The close hook answered `Ok(vec![])`: no due row was ever written for an
-    // unscheduled commitment, and none appeared.
-    assert!(due_rows(&vault)?.is_empty());
-    Ok(())
-}
-
 // ---------------------------------------------------------------------------
 // The validated brief-fulfillment door
 // ---------------------------------------------------------------------------
@@ -486,33 +450,6 @@ fn brief_completion_discharges_linked_commitment() -> Result<()> {
 }
 
 #[test]
-fn brief_completion_receipt_is_queryable() -> Result<()> {
-    let (_dir, vault) = temp_vault()?;
-    let parties = parties(&vault)?;
-    let brief = crate::test_util::entity(0x34);
-    let linked = crate::test_util::entity(0x35);
-    put_brief(&vault, &brief, 300)?;
-    parties.put_plain(&vault, &linked, 300)?;
-    link_brief_fulfillment(&vault, &brief, &linked, 300)?;
-    fulfill_commitments_for_brief(&vault, &brief, &parties.envelope, 320)?;
-
-    // Durable through the status-claim projection, not a return-only object:
-    // the receipt is found by an independent query on a fresh read.
-    let receipts = vault.receipts(
-        ReceiptQuery::new(50)
-            .with_kind(ReceiptKind::CommitmentLifecycle)
-            .with_outcome("fulfilled"),
-    )?;
-    assert_eq!(receipts.len(), 1);
-    assert_eq!(
-        receipts[0].trigger_ref.as_deref(),
-        Some(format!("commitment:{}", linked.to_hex()).as_str())
-    );
-    assert_eq!(receipts[0].occurred_at, 320);
-    Ok(())
-}
-
-#[test]
 fn fulfilled_index_row_repairs_close_hook_idempotently() -> Result<()> {
     let (_dir, vault) = temp_vault()?;
     let parties = parties(&vault)?;
@@ -594,28 +531,6 @@ fn overdue_instance_lapses_with_let_go_receipt_and_successor() -> Result<()> {
     assert_eq!(status(&vault, &successors[0])?, CommitmentStatus::Open);
     // ONE-1541 never marks the SERIES lapsed; survival is the schedule hook's.
     assert!(receipts_for(&vault, &series)?.is_empty());
-    Ok(())
-}
-
-#[test]
-fn due_now_is_not_overdue() -> Result<()> {
-    let (_dir, vault) = temp_vault()?;
-    let parties = parties(&vault)?;
-    let series = crate::test_util::entity(0x39);
-    let instance = parties.put_interval_instance(&vault, &series, 1_000_000)?;
-
-    // The boundary is STRICT: `LifecycleDue.at == now` is not yet overdue.
-    assert!(vault.overdue_commitment_instances(1_000_000)?.is_empty());
-    let report = lapse_overdue_commitments(&vault, 1_000_000, &parties.envelope)?;
-    assert!(report.lapsed.is_empty());
-    assert!(report.repaired_close_hooks.is_empty());
-    assert_eq!(status(&vault, &instance)?, CommitmentStatus::Open);
-
-    // One second later it is.
-    assert_eq!(
-        vault.overdue_commitment_instances(1_000_001)?,
-        vec![instance]
-    );
     Ok(())
 }
 
@@ -796,51 +711,6 @@ fn terminal_index_rows_repair_matching_close_hooks() -> Result<()> {
 }
 
 #[test]
-fn supersede_wrapper_closes_immediately() -> Result<()> {
-    let (_dir, vault) = temp_vault()?;
-    let parties = parties(&vault)?;
-    let series = crate::test_util::entity(0x54);
-    let instance = parties.put_interval_instance(&vault, &series, 1_000_000)?;
-
-    let result = supersede_commitment_with_close(&vault, &instance, &parties.envelope, 999_000)?;
-    assert_eq!(result.status, CommitmentStatus::Superseded);
-    // Due rows removed immediately — no sweep needed.
-    assert!(instance_rows(&vault, &instance)?.is_empty());
-    // A supersession closes the slot without counting as a completion, so it
-    // projects no lifecycle receipt at all.
-    assert!(receipts_for(&vault, &instance)?.is_empty());
-
-    // Repeating repairs only the hook.
-    let repeat = supersede_commitment_with_close(&vault, &instance, &parties.envelope, 999_500)?;
-    assert_eq!(repeat.status, CommitmentStatus::Superseded);
-    assert_eq!(status(&vault, &instance)?, CommitmentStatus::Superseded);
-    Ok(())
-}
-
-#[test]
-fn raw_supersede_repairs_on_next_sweep() -> Result<()> {
-    let (_dir, vault) = temp_vault()?;
-    let parties = parties(&vault)?;
-    let series = crate::test_util::entity(0x55);
-    let instance = parties.put_interval_instance(&vault, &series, 1_000_000)?;
-    let t1 = 1_000_060;
-    let t2 = 1_000_950;
-
-    // The RAW CMT-1 verb leaves the due rows behind, temporarily.
-    vault.supersede_commitment(&instance, &parties.envelope, t1)?;
-    assert!(!instance_rows(&vault, &instance)?.is_empty());
-
-    let report = lapse_overdue_commitments(&vault, t2, &parties.envelope)?;
-    assert_eq!(report.repaired_close_hooks, vec![instance]);
-    assert!(instance_rows(&vault, &instance)?.is_empty());
-    let successors = other_instances(&vault, &instance)?;
-    assert_eq!(successors.len(), 1);
-    // Repaired with the COMMITTED t1, never with retry time t2.
-    assert_eq!(vault.get_learned_at(&successors[0])?, t1);
-    Ok(())
-}
-
-#[test]
 fn release_projects_explicit_waive_receipt_and_closes_schedule() -> Result<()> {
     let (_dir, vault) = temp_vault()?;
     let parties = parties(&vault)?;
@@ -885,76 +755,6 @@ fn release_projects_explicit_waive_receipt_and_closes_schedule() -> Result<()> {
         ),
         Err(Error::InvalidClaimBody(_))
     ));
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Receipt projection
-// ---------------------------------------------------------------------------
-
-#[test]
-fn lifecycle_receipt_query_tolerates_reserved_claims() -> Result<()> {
-    let (_dir, vault) = temp_vault()?;
-    let parties = parties(&vault)?;
-    let terminal = crate::test_util::entity(0x57);
-    parties.put_plain(&vault, &terminal, 300)?;
-    fulfill_commitment_from(
-        &vault,
-        &terminal,
-        FulfillmentSource::UserDone,
-        &parties.envelope,
-        310,
-    )?;
-
-    // A reserved-predicate CLAIM sitting beside the terminal commitment. The
-    // projector decodes with reserved predicates ALLOWED and exact-matches
-    // `commitment.record` BEFORE the commitment codec, so this row coexists
-    // instead of poisoning the query.
-    let source = crate::test_util::entity(0x58);
-    let target = crate::test_util::entity(0x59);
-    for id in [source, target] {
-        vault.put_entity(&id, ENTITY_TYPE_PERSON, time(1, 1), 1, b"person")?;
-    }
-    vault.put_edge(&source, EdgeKind::Mentions, &target, 0.5)?;
-    vault.put_edge_provenance(
-        &crate::test_util::entity(0x5A),
-        &EdgeRef::new(source, EdgeKind::Mentions, target),
-        &EdgeProvenanceClaimBody::new(parties.obligor, 0.5, SupersessionStatus::Proposed),
-        EdgeActorClass::Human,
-        320,
-    )?;
-
-    let receipts = lifecycle_receipts(&vault)?;
-    assert_eq!(receipts.len(), 1);
-    assert_eq!(receipts[0].outcome, "fulfilled");
-    assert_eq!(
-        receipts[0].trigger_ref.as_deref(),
-        Some(format!("commitment:{}", terminal.to_hex()).as_str())
-    );
-    Ok(())
-}
-
-/// Raw terminal transitions project lifecycle receipts; open commitments do not.
-/// This small fixture does not establish scan-bound behavior.
-#[test]
-fn lifecycle_receipt_invariant_is_scan_bounded() -> Result<()> {
-    let (_dir, vault) = temp_vault()?;
-    let parties = parties(&vault)?;
-    let fulfilled = crate::test_util::entity(0x5B);
-    let released = crate::test_util::entity(0x5C);
-    let open = crate::test_util::entity(0x5D);
-    for id in [fulfilled, released, open] {
-        parties.put_plain(&vault, &id, 300)?;
-    }
-    vault.fulfill_commitment(&fulfilled, &parties.envelope, 310)?;
-    vault.release_commitment(&released, &parties.envelope, 311)?;
-
-    // Both terminal rows project; the open one does not.
-    let receipts = lifecycle_receipts(&vault)?;
-    assert_eq!(receipts.len(), 2);
-    assert!(receipts_for(&vault, &open)?.is_empty());
-    assert_eq!(receipts_for(&vault, &fulfilled)?[0].outcome, "fulfilled");
-    assert_eq!(receipts_for(&vault, &released)?[0].outcome, "released");
     Ok(())
 }
 

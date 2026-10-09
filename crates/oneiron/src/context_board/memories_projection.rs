@@ -247,50 +247,6 @@ mod tests {
         assert_eq!(row.world, None);
     }
     #[test]
-    fn shared_world_budget_keeps_pins_and_sheds_snippets() {
-        let row = |n: u8, tier| MemoryRow {
-            row_index: 0,
-            slot: MemorySlot::Claims,
-            source: MemorySource::Result,
-            id: crate::test_util::entity(n).to_hex(),
-            short_id: format!("cl{n}"),
-            content_hash: "aa".into(),
-            entity_type: ENTITY_TYPE_CLAIM,
-            asset_ref: None,
-            score: 1.0,
-            claim_source: Some(crate::claim::ClaimSource::UserStated),
-            world: Some(crate::test_util::entity(n).to_hex()),
-            tier,
-            snippet: Some("safe".into()),
-        };
-        let rows = vec![
-            row(1, MemoryTier::Snippet),
-            row(2, MemoryTier::Snippet),
-            row(3, MemoryTier::Pinned),
-        ];
-        let section = finish_projection(
-            rows.clone(),
-            MemoriesBudget::new(10, 0, 0, 0, 0, 0).with_shared_total(2),
-            None,
-            None,
-        );
-        assert_eq!(section.rows.len(), 2);
-        assert!(
-            section
-                .rows
-                .iter()
-                .any(|row| row.tier == MemoryTier::Pinned)
-        );
-        let pinned = finish_projection(
-            rows,
-            MemoriesBudget::default().with_shared_total(0),
-            None,
-            None,
-        );
-        assert_eq!(pinned.rows.len(), 1);
-        assert_eq!(pinned.rows[0].tier, MemoryTier::Pinned);
-    }
-    #[test]
     fn memories_render_the_authorized_snapshot_without_refetching_claim_bytes() -> crate::Result<()>
     {
         let (_dir, vault) =

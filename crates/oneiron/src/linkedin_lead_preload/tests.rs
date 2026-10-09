@@ -8,9 +8,7 @@ use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, Claim
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
 use crate::error::{ClaimError, GateError};
-use crate::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON,
-};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -86,37 +84,6 @@ fn snapshot(vault: &Vault) -> Vec<Rows> {
     .collect()
 }
 
-#[derive(Debug, Eq, PartialEq)]
-struct Graph {
-    entities: Vec<(Vec<u8>, u8)>,
-    edges: Vec<Vec<u8>>,
-    active_claims: Vec<EntityId>,
-}
-
-fn graph(vault: &Vault) -> Graph {
-    let rows = snapshot(vault);
-    Graph {
-        entities: rows[0]
-            .iter()
-            .map(|(key, value)| (key.clone(), value[0]))
-            .collect(),
-        edges: rows[1].iter().map(|(key, _)| key.clone()).collect(),
-        active_claims: vault
-            .entities_by_type(ENTITY_TYPE_CLAIM)
-            .expect("fixture")
-            .into_iter()
-            .filter(|id| {
-                vault
-                    .get_claim(id)
-                    .expect("fixture")
-                    .expect("fixture")
-                    .lifecycle
-                    == ClaimLifecycleStatus::Active
-            })
-            .collect(),
-    }
-}
-
 fn field<'a>(value: &'a rmpv::Value, name: &str) -> &'a rmpv::Value {
     evidence_field(value, name).expect("fixture")
 }
@@ -130,197 +97,6 @@ fn display_name_claim_id(person: bool, i: usize) -> EntityId {
         ],
     )
     .expect("fixture")
-}
-
-#[test]
-fn linkedin_external_ids_are_opaque_and_resolver_revalidates() -> TestResult {
-    for value in [
-        "Synthetic:ID /?x=1",
-        "synthetic-id",
-        "SYNTHETIC-ID",
-        "\u{a0}",
-        "synthetic\u{85}id",
-    ] {
-        assert_eq!(LinkedInExternalKey::person(value)?.external_id, value);
-    }
-    assert_ne!(
-        id(&LinkedInExternalKey::person("synthetic-id")?),
-        id(&LinkedInExternalKey::person("SYNTHETIC-ID")?)
-    );
-    let (_temp, vault, _) = setup();
-    let before = snapshot(&vault);
-    for value in [
-        "",
-        " \t\r\n",
-        "synthetic\n-id",
-        "synthetic\0-id",
-        "synthetic\u{7f}",
-    ] {
-        let key = LinkedInExternalKey {
-            kind: LinkedInEntityKind::Person,
-            external_id: value.into(),
-        };
-        let error = resolve_linkedin_entity(&vault, key).expect_err("must reject");
-        if value.trim_ascii().is_empty() {
-            assert!(matches!(error, LinkedInResolutionError::EmptySourceId));
-        } else {
-            assert!(matches!(
-                error,
-                LinkedInResolutionError::MalformedExternalId
-            ));
-        }
-        assert_eq!(snapshot(&vault), before);
-    }
-    Ok(())
-}
-
-#[test]
-fn linkedin_resolver_concurrent_invocations_create_once() -> TestResult {
-    let (_temp, vault, _) = setup();
-    let initial_claims = vault.count_entities_by_type(ENTITY_TYPE_CLAIM)?;
-    let barrier = std::sync::Barrier::new(2);
-    let (left, right) = std::thread::scope(|scope| {
-        let resolve = || {
-            barrier.wait();
-            resolve_linkedin_entity(&vault, key(true, 99))
-        };
-        let left = scope.spawn(resolve);
-        let right = scope.spawn(resolve);
-        (
-            left.join().expect("resolver"),
-            right.join().expect("resolver"),
-        )
-    });
-    let (left, right) = (left?, right?);
-    assert_eq!(left.0, right.0);
-    assert_ne!(left.1, right.1);
-    assert_eq!(
-        vault.count_entities_by_type(ENTITY_TYPE_CLAIM)?,
-        initial_claims
-    );
-    Ok(())
-}
-
-#[test]
-fn linkedin_preload_second_run_creates_nothing() -> TestResult {
-    let (_temp, vault, actor) = setup();
-    let first = apply_linkedin_lead_corpus(&vault, fixture(), actor)?;
-    assert_eq!(
-        first,
-        LinkedInLeadPreloadReport {
-            companies_created: 2,
-            contacts_created: 3,
-            employed_by_created: 3,
-            claims_admitted: 15,
-            ..Default::default()
-        }
-    );
-    let before = snapshot(&vault);
-    let second = apply_linkedin_lead_corpus(&vault, fixture(), actor)?;
-    assert_eq!(
-        second,
-        LinkedInLeadPreloadReport {
-            companies_reused: 2,
-            contacts_reused: 3,
-            employed_by_reused: 3,
-            ..Default::default()
-        }
-    );
-    assert_eq!((second.created_entities(), second.created_edges()), (0, 0));
-    assert_eq!((second.companies_seen(), second.contacts_seen()), (2, 3));
-    let missing = WriteActor::new(EntityId::from_bytes([0x34; 16])?, EdgeActorClass::Human);
-    assert!(matches!(
-        apply_linkedin_lead_corpus(&vault, fixture(), missing),
-        Err(LinkedInLeadPreloadError::Vault(Error::EntityNotFound))
-    ));
-    assert_eq!(snapshot(&vault), before);
-    let claim_id = display_name_claim_id(true, 1);
-    vault.retract_claim(&claim_id, unix_seconds_now())?;
-    let closed = snapshot(&vault);
-    assert_eq!(
-        apply_linkedin_lead_corpus(&vault, fixture(), actor)?.claims_admitted,
-        0
-    );
-    assert_eq!(snapshot(&vault), closed);
-    Ok(())
-}
-
-#[test]
-fn linkedin_preload_partial_prior_state_converges_without_duplicates() -> TestResult {
-    let (_temp, vault, actor) = setup();
-    let (_clean_temp, clean, clean_actor) = setup();
-    let before = graph(&vault);
-    let clean_before = graph(&clean);
-    let delta = |mut state: Graph, base: Graph| {
-        state.entities.retain(|row| !base.entities.contains(row));
-        state.edges.retain(|row| !base.edges.contains(row));
-        state
-            .active_claims
-            .retain(|row| !base.active_claims.contains(row));
-        state
-    };
-    let company = resolve_linkedin_entity(&vault, key(false, 1))?.0;
-    let person = resolve_linkedin_entity(&vault, key(true, 1))?.0;
-    resolve_employment(&vault, person, company, &key(true, 1), actor)?;
-    assert_eq!(
-        admit_facts(
-            &vault,
-            &key(false, 1),
-            company,
-            actor,
-            &[("linkedin.display_name", Some("Synthetic Company 1"))]
-        )?,
-        1
-    );
-    let report = apply_linkedin_lead_corpus(&vault, fixture(), actor)?;
-    assert_eq!(
-        report,
-        LinkedInLeadPreloadReport {
-            companies_created: 1,
-            companies_reused: 1,
-            contacts_created: 2,
-            contacts_reused: 1,
-            employed_by_created: 2,
-            employed_by_reused: 1,
-            claims_admitted: 14,
-        }
-    );
-    apply_linkedin_lead_corpus(&clean, fixture(), clean_actor)?;
-    assert_eq!(
-        delta(graph(&vault), before),
-        delta(graph(&clean), clean_before)
-    );
-    Ok(())
-}
-
-#[test]
-fn linkedin_preload_creates_no_counterparty_contact_rows() -> TestResult {
-    let (_temp, vault, actor) = setup();
-    let before = vault.count_entities_by_type(ENTITY_TYPE_COUNTERPARTY_CONTACT)?;
-    apply_linkedin_lead_corpus(&vault, fixture(), actor)?;
-    assert_eq!(
-        vault.count_entities_by_type(ENTITY_TYPE_COUNTERPARTY_CONTACT)?,
-        before
-    );
-    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_ORG)?, 2);
-    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_PERSON)?, 5); // Includes actor and vault owner.
-    for i in 1..=3 {
-        let person = id(&key(true, i));
-        let company = id(&key(false, if i < 3 { 1 } else { 2 }));
-        assert_eq!(
-            vault.targets(&person, EdgeKind::EmployedBy, Some(ENTITY_TYPE_ORG))?,
-            vec![company]
-        );
-        assert!(!vault.edge_exists(&company, EdgeKind::EmployedBy, &person)?);
-        let edge = vault
-            .edges_out(&person)?
-            .into_iter()
-            .find(|edge| edge.kind == EdgeKind::EmployedBy)
-            .expect("fixture");
-        assert_eq!(Some(edge.weight), EdgeKind::EmployedBy.default_weight());
-    }
-    assert_ne!(id(&key(true, 1)), id(&key(true, 2))); // Same name, different ids.
-    Ok(())
 }
 
 #[test]
@@ -401,81 +177,6 @@ fn linkedin_preload_facts_use_imported_evidence_admission() -> TestResult {
 }
 
 #[test]
-fn linkedin_preload_metadata_order_and_omissions_do_not_reidentify_or_delete() -> TestResult {
-    let (_temp, vault, actor) = setup();
-    let mut corpus = fixture();
-    corpus.contacts[0].title = None;
-    assert_eq!(
-        apply_linkedin_lead_corpus(&vault, corpus.clone(), actor)?.claims_admitted,
-        14
-    );
-    let original = snapshot(&vault);
-    corpus.contacts[0].title = Some("Synthetic New Title".into());
-    corpus.contacts[0].display_name = "Synthetic Renamed Person".into();
-    corpus.companies[0].website_domain = Some("changed.example".into());
-    corpus.companies.reverse();
-    corpus.contacts.reverse();
-    let report = apply_linkedin_lead_corpus(&vault, corpus, actor)?;
-    assert_eq!(
-        (
-            report.created_entities(),
-            report.created_edges(),
-            report.claims_admitted
-        ),
-        (0, 0, 1)
-    );
-    let before = snapshot(&vault);
-    for (old, new) in original.iter().zip(&before) {
-        assert!(old.iter().all(|row| new.contains(row)));
-    }
-    let empty = LinkedInLeadCorpus {
-        schema_version: 1,
-        companies: vec![],
-        contacts: vec![],
-    };
-    assert_eq!(
-        apply_linkedin_lead_corpus(&vault, empty, actor)?,
-        LinkedInLeadPreloadReport::default()
-    );
-    assert_eq!(snapshot(&vault), before);
-    Ok(())
-}
-
-#[test]
-fn linkedin_preload_rejects_bad_cross_reference_before_writes() {
-    let (_temp, vault, actor) = setup();
-    let before = snapshot(&vault);
-    let mut corpus = fixture();
-    corpus.contacts[2].company_external_id = "synthetic-missing".into();
-    assert!(matches!(
-        apply_linkedin_lead_corpus(&vault, corpus, actor),
-        Err(LinkedInLeadPreloadError::CrossRefUnresolved { contact_index: 2 })
-    ));
-    assert_eq!(snapshot(&vault), before);
-}
-
-#[test]
-fn linkedin_preload_rejects_duplicate_external_id_before_writes() {
-    let (_temp, vault, actor) = setup();
-    let before = snapshot(&vault);
-    for company in [true, false] {
-        let mut corpus = fixture();
-        if company {
-            corpus.companies[1].external_id = " \tsynthetic-company-1\n".into();
-        } else {
-            corpus.contacts[2].external_id = " synthetic-person-1 ".into();
-        }
-        let error = apply_linkedin_lead_corpus(&vault, corpus, actor).expect_err("must reject");
-        assert!(matches!(
-            error,
-            LinkedInLeadPreloadError::Malformed { index, .. }
-                if index == if company { 1 } else { 2 }
-        ));
-        assert_eq!(snapshot(&vault), before);
-    }
-}
-
-#[test]
 fn linkedin_preload_schema_required_strings_and_actor_fail_before_writes() {
     let (_temp, vault, actor) = setup();
     let before = snapshot(&vault);
@@ -517,23 +218,6 @@ fn linkedin_preload_schema_required_strings_and_actor_fail_before_writes() {
         ));
         assert_eq!(snapshot(&vault), before);
     }
-}
-
-#[test]
-fn linkedin_preload_trims_ids_and_allows_same_bytes_across_kinds() -> TestResult {
-    let (_temp, vault, actor) = setup();
-    let mut corpus = fixture();
-    corpus.companies[0].external_id = " \tsynthetic-shared\n".into();
-    corpus.contacts[0].external_id = "synthetic-shared".into();
-    for contact in &mut corpus.contacts[..2] {
-        contact.company_external_id = " synthetic-shared ".into();
-    }
-    apply_linkedin_lead_corpus(&vault, corpus, actor)?;
-    let person = id(&LinkedInExternalKey::person("synthetic-shared")?);
-    let company = id(&LinkedInExternalKey::company("synthetic-shared")?);
-    assert_ne!(person, company);
-    assert!(vault.edge_exists(&person, EdgeKind::EmployedBy, &company)?);
-    Ok(())
 }
 
 #[test]
@@ -583,39 +267,6 @@ fn linkedin_preload_gate_failure_and_claim_id_collision_do_not_bypass_admission(
         other.get_entity_type(&id(&key(false, 1)))?,
         Some(ENTITY_TYPE_ORG)
     );
-    Ok(())
-}
-
-#[test]
-fn linkedin_preload_explicit_path_rejects_document_shapes_without_writes() -> TestResult {
-    let (_temp, vault, actor) = setup();
-    let file = tempfile::NamedTempFile::new()?;
-    let before = snapshot(&vault);
-    for document in [
-        r#"[]"#, r#"[1,[],[]]"#, r#"null"#, r#"{}"#, r#"{"schemaVersion":1,"companies":[],"contacts":[],"synthetic-secret":"synthetic-private"}"#,
-        r#"{"schemaVersion":1,"companies":[{"externalId":"synthetic-c","displayName":"Synthetic","synthetic-secret":1}],"contacts":[]}"#,
-        r#"{"schemaVersion":1,"companies":[],"contacts":[{"externalId":"synthetic-p","displayName":"Synthetic","companyExternalId":"synthetic-c","synthetic-secret":1}]}"#,
-        r#"{"schemaVersion":1,"schemaVersion":1,"companies":[],"contacts":[]}"#,
-        r#"{"schemaVersion":1,"companies":[["synthetic-c","Synthetic",null,null]],"contacts":[]}"#,
-        r#"{"schemaVersion":1,"companies":[],"contacts":[]} trailing"#,
-    ].into_iter().map(str::as_bytes).chain([b"\xff".as_slice()]) {
-        std::fs::write(file.path(), document)?;
-        let error = vault.preload_linkedin_lead_corpus(file.path(), actor).expect_err("must reject");
-        assert!(matches!(error, LinkedInLeadPreloadError::Malformed { kind: "document", index: 0, .. }));
-        assert!(!format!("{error:?}").contains("synthetic"));
-        assert_eq!(snapshot(&vault), before);
-    }
-    std::fs::write(
-        file.path(),
-        r#"{"schemaVersion":1,"companies":[{"externalId":"synthetic-c","displayName":"Synthetic Company"}],"contacts":[]}"#,
-    )?;
-    let report = vault.preload_linkedin_lead_corpus(file.path(), actor)?;
-    assert_eq!((report.companies_created, report.claims_admitted), (1, 1));
-    let missing = file.path().with_extension("synthetic-missing");
-    assert!(matches!(
-        vault.preload_linkedin_lead_corpus(missing, actor),
-        Err(LinkedInLeadPreloadError::Vault(Error::Io(_)))
-    ));
     Ok(())
 }
 

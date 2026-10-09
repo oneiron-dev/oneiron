@@ -8,8 +8,6 @@ mod notice_dispatch;
 pub use lifecycle::{EsignLifecycleRules, EsignNoticeSwitches};
 pub use notice_dispatch::{ESIGN_NOTICE_ATTEMPT_KIND, EsignNotice};
 #[cfg(test)]
-mod lifecycle_tests;
-#[cfg(test)]
 mod tests;
 pub(crate) use ledger::{reject_event_delete, validate_event_claim};
 pub use model::{

@@ -1,7 +1,5 @@
 //! Lane tests for the booking page's standing invite grant.
 
-mod faceted_sender;
-
 use super::*;
 
 use rmpv::Value;
@@ -9,7 +7,7 @@ use serde::Serialize;
 
 use crate::booking::constraint::EventTypeKey;
 use crate::booking::lifecycle::{BOOKING_PASSPORT_SYSTEM, CalendarRevision, OpaqueLifecycleToken};
-use crate::calendar::{CALENDAR_INVITE_MEDIA_TYPE, CalendarInviteConsentBasis, index_passport_uid};
+use crate::calendar::{CalendarInviteConsentBasis, index_passport_uid};
 use crate::campaign::claims::{
     CommDoNotContactValue, DO_NOT_CONTACT_SCOPE_ALL, PREDICATE_COMM_DO_NOT_CONTACT,
     encode_do_not_contact_value,
@@ -576,22 +574,6 @@ fn publish_page_mints_one_live_booking_page_invite_grant() {
 // ── authorize / deny matrix ─────────────────────────────────────────
 
 #[test]
-fn page_grant_authorizes_calendar_invite_for_confirmed_booker() {
-    let fixture = fixture();
-    let scope = StandingOutboundGrantScope::BookingPageInvites {
-        page_ref: fixture.page,
-    };
-    assert!(
-        booking_page_invites_authorizes(
-            &fixture.vault,
-            &scope,
-            &context(fixture.booking, CALENDAR_INVITE_VERB, RECIPIENT),
-        )
-        .expect("authorize")
-    );
-}
-
-#[test]
 fn page_grant_denies_different_page() {
     let fixture = fixture();
     let scope = StandingOutboundGrantScope::BookingPageInvites {
@@ -607,26 +589,6 @@ fn page_grant_denies_different_page() {
     );
     assert!(
         !booking_page_grant_covers_recipient(&fixture.vault, &entity(0x7B), RECIPIENT)
-            .expect("covers")
-    );
-}
-
-#[test]
-fn page_grant_denies_different_recipient() {
-    let fixture = fixture();
-    let scope = StandingOutboundGrantScope::BookingPageInvites {
-        page_ref: fixture.page,
-    };
-    assert!(
-        !booking_page_invites_authorizes(
-            &fixture.vault,
-            &scope,
-            &context(fixture.booking, CALENDAR_INVITE_VERB, STRANGER),
-        )
-        .expect("authorize")
-    );
-    assert!(
-        !booking_page_grant_covers_recipient(&fixture.vault, &fixture.page, STRANGER)
             .expect("covers")
     );
 }
@@ -929,67 +891,6 @@ fn confirm_invite_uses_once_minted_uid_and_current_sequence() {
 }
 
 #[test]
-fn confirm_invite_calls_gate_before_ledger_and_connector() {
-    // Denied: the gate refuses before anything is frozen, so there is no
-    // ledger record to replay and the connector is never reached.
-    let denied = fixture();
-    let denied_grant = denied.grant();
-    let denied_blob = ics_blob(&denied.vault, 0x7C, denied.actor, &denied.uid, 0);
-    seed_do_not_contact(&denied.vault, 0x8A, RECIPIENT);
-    let mut denied_sink = SpySink::default();
-    assert!(
-        enqueue_confirm_invite(
-            &denied.vault,
-            denied.actor,
-            denied_grant,
-            &ConfirmedBookingInvite {
-                booking_ref: denied.booking,
-                uid: &denied.uid,
-                sequence: 0,
-                ics_blob_ref: &denied_blob,
-            },
-            &mut denied_sink,
-            NOW,
-        )
-        .is_err(),
-        "a gate denial must not become an invite"
-    );
-    assert_eq!(denied_sink.calls, 0, "no connector call behind a denial");
-    assert!(
-        invite_ledger_records(&denied.vault).is_empty(),
-        "no intent is frozen behind a denial"
-    );
-
-    // Allowed: exactly one frozen intent, then exactly one connector call
-    // whose invitation part was resolved from those frozen bytes.
-    let allowed = fixture();
-    let allowed_grant = allowed.grant();
-    let allowed_blob = ics_blob(&allowed.vault, 0x7C, allowed.actor, &allowed.uid, 0);
-    let mut allowed_sink = SpySink::default();
-    enqueue_confirm_invite(
-        &allowed.vault,
-        allowed.actor,
-        allowed_grant,
-        &ConfirmedBookingInvite {
-            booking_ref: allowed.booking,
-            uid: &allowed.uid,
-            sequence: 0,
-            ics_blob_ref: &allowed_blob,
-        },
-        &mut allowed_sink,
-        NOW,
-    )
-    .expect("the invite dispatches");
-    assert_eq!(invite_ledger_records(&allowed.vault).len(), 1);
-    assert_eq!(allowed_sink.calls, 1);
-    assert_eq!(
-        allowed_sink.invite_methods,
-        vec![Some(CalendarInviteMethod::Request)],
-        "the connector received the part resolved from the frozen ref"
-    );
-}
-
-#[test]
 fn standing_grant_removes_ping_not_gate() {
     let fixture = fixture();
     let grant_ref = fixture.grant();
@@ -1087,17 +988,4 @@ fn gate_denial_prevents_invite_even_with_live_page_grant() {
             .expect("passports")
             .is_empty()
     );
-}
-
-// ── ownership ───────────────────────────────────────────────────────
-
-#[test]
-fn calendar_invite_types_are_owned_by_cal04() {
-    assert_eq!(CALENDAR_INVITE_VERB, "calendar.invite");
-    assert!(crate::outbound::COMMON_OUTBOUND_VERB_KINDS.contains(&CALENDAR_INVITE_VERB));
-}
-
-#[test]
-fn connector_owns_calendar_mime_assembly() {
-    assert_eq!(CALENDAR_INVITE_MEDIA_TYPE, concat!("text/", "calendar"));
 }

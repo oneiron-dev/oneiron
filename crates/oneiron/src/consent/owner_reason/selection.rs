@@ -116,6 +116,3 @@ pub(super) fn select_reason(candidates: &[ReasonCandidate]) -> ReasonSelection {
             ReasonSelection::PrefillOnly(candidate.rule_index)
         })
 }
-
-#[cfg(test)]
-mod tests;

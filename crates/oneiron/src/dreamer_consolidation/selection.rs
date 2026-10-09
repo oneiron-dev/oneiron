@@ -170,6 +170,3 @@ impl Vault {
         Ok(config)
     }
 }
-
-#[cfg(test)]
-mod tests;

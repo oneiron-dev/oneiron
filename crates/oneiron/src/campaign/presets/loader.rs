@@ -31,12 +31,8 @@ pub fn load_campaign_preset(json: &str) -> Result<CampaignPresetData> {
     Ok(preset)
 }
 
-/// CA-04's ladder-subtree field names, one list per node.
-///
-/// The lists cannot go quietly stale: the round trip in
-/// `consultancy_v1_deserializes_against_ca04_schema` re-loads a SERIALIZED
-/// preset, so a field CA-04 adds and this module has not learned is rejected by
-/// the very check below, loudly, in that test.
+/// CA-04's ladder-subtree field names, one list per node. A field CA-04 adds
+/// and this module has not learned is rejected by the check below.
 const LADDER_FIELDS: [&str; 5] = [
     "key",
     "stages",

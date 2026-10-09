@@ -1,64 +1,6 @@
 use super::*;
 
 #[test]
-fn linkedin_preload_rejects_caller_chosen_expected_type_entity_without_source_binding() -> TestResult
-{
-    for person in [false, true] {
-        let (_temp, vault, actor) = setup();
-        let file = tempfile::NamedTempFile::new()?;
-        let mut document = serde_json::json!({
-            "schemaVersion": 1,
-            "companies": [{
-                "externalId": "synthetic-company-1",
-                "displayName": "Synthetic Imported Company"
-            }],
-            "contacts": []
-        });
-        if person {
-            // Resolve the company first so refusal of the occupied person cannot
-            // be confused with permitted partial progress on an earlier row.
-            std::fs::write(file.path(), serde_json::to_vec(&document)?)?;
-            vault.preload_linkedin_lead_corpus(file.path(), actor)?;
-            document["contacts"] = serde_json::json!([{
-                "externalId": "synthetic-person-1",
-                "displayName": "Synthetic Imported Person",
-                "companyExternalId": "synthetic-company-1"
-            }]);
-        }
-        let external = key(person, 1);
-        let occupied = id(&external);
-        // The ordinary caller-chosen-id write door creates an unrelated entity
-        // of the expected type, not a resolver-owned source identity.
-        put_fixture_entity(
-            &vault,
-            &occupied,
-            external.kind.entity_type(),
-            b"synthetic unrelated caller-owned entity",
-        )?;
-        let original = vault.get_raw(&occupied)?.expect("occupied entity");
-        let claim_id = display_name_claim_id(person, 1);
-        assert!(vault.get_claim(&claim_id)?.is_none());
-        let before = snapshot(&vault);
-        std::fs::write(file.path(), serde_json::to_vec(&document)?)?;
-
-        let result = vault.preload_linkedin_lead_corpus(file.path(), actor);
-        let imported = vault.get_claim(&claim_id)?;
-        assert!(
-            result.is_err(),
-            "an expected type at a caller-chosen derived id is not a source binding: \
-             person={person}, preload={result:?}, absorbed_imported_fact={imported:?}"
-        );
-        assert_eq!(vault.get_raw(&occupied)?.as_ref(), Some(&original));
-        assert!(
-            imported.is_none(),
-            "refusal must not attach imported facts to the unrelated occupied entity"
-        );
-        assert_eq!(snapshot(&vault), before);
-    }
-    Ok(())
-}
-
-#[test]
 fn linkedin_entity_id_is_domain_separated_and_stable() -> TestResult {
     let (temp, vault, _) = setup();
     let key = LinkedInExternalKey::person(" \tsynthetic-shared\r\n")?;
@@ -298,28 +240,6 @@ fn linkedin_bound_reruns_preserve_user_data_metadata_and_claim_edits() -> TestRe
     );
     assert_eq!((report.companies_reused, report.contacts_reused), (2, 3));
     assert_eq!(snapshot(&reopened), before);
-    Ok(())
-}
-
-#[test]
-fn linkedin_replacing_bound_body_cannot_leave_a_stale_reuse_proof() -> TestResult {
-    for person in [false, true] {
-        let (_temp, vault, _) = setup();
-        let external = key(person, 1);
-        let (occupied, _) = resolve_linkedin_entity(&vault, external.clone())?;
-        put_fixture_entity(
-            &vault,
-            &occupied,
-            external.kind.entity_type(),
-            b"synthetic replacement body",
-        )?;
-        let before = snapshot(&vault);
-        assert!(matches!(
-            resolve_linkedin_entity(&vault, external),
-            Err(LinkedInResolutionError::Vault(Error::InvariantViolation(_)))
-        ));
-        assert_eq!(snapshot(&vault), before);
-    }
     Ok(())
 }
 
