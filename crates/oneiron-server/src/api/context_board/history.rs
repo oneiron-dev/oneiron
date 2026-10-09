@@ -4,6 +4,7 @@
 
 use super::super::core_engine_error;
 use super::super::parse_entity_id_param;
+use super::ContextBoardResponse;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
 use crate::error::ApiError;
@@ -70,24 +71,6 @@ pub(crate) struct ContextBoardTurnHistory {
     documents: BTreeMap<String, String>,
 }
 
-/// The selection families a turn can change: allowed, default-on, active,
-/// pinned and top-snippet.
-const SELECTION_FAMILIES: usize = 5;
-
-impl ContextBoardTurnRecord {
-    /// The record at its fullest, every selection family changed, each id as
-    /// long as a real one. A response is budget-checked before its turn is
-    /// recorded, with this in its place.
-    pub(super) fn largest(turn: &EntityId) -> Self {
-        let id = turn.to_hex();
-        Self {
-            turn: id.clone(),
-            source_revision_ref: id.clone(),
-            changed_claims: vec![id; SELECTION_FAMILIES],
-        }
-    }
-}
-
 /// The board owner and TURN a hydration records, checked before any work.
 pub(super) fn board_turn_target(
     server: &SyncServer,
@@ -114,28 +97,44 @@ pub(super) fn board_turn_target(
     Ok(Some((turn, owner)))
 }
 
-/// Records the board this hydration served for the caller's own TURN, under
-/// the caller's read capability. The engine writes selection claims only for
-/// families that changed, and pins each document at the revision served.
+/// Records the board `response` served for the caller's own TURN, under the
+/// caller's read capability, and puts the record in it. The engine writes
+/// selection claims only for families that changed, and pins each document
+/// at the revision served. `check` judges the response with its record in
+/// it, inside the recording transaction: a response it refuses records
+/// nothing, and its error returns.
 pub(super) fn record_board_turn(
     server: &SyncServer,
     read: &oneiron::claim::ScopedRead<'_>,
     (turn, owner): (EntityId, EntityId),
-    memories: Option<&oneiron::MemoriesSection>,
-) -> Result<ContextBoardTurnRecord, ApiError> {
-    let receipt = server
+    response: &mut ContextBoardResponse,
+    check: impl FnOnce(&ContextBoardResponse) -> Result<(), ApiError>,
+) -> Result<(), ApiError> {
+    let memories = response.memories.clone();
+    let mut refused = None;
+    let recorded = server
         .vault
-        .record_board_turn_now(turn, owner, memories, read)
+        .record_board_turn_now(turn, owner, memories.as_ref(), read, |receipt| {
+            response.board_turn = Some(ContextBoardTurnRecord {
+                turn: receipt.turn.to_hex(),
+                source_revision_ref: hex(&receipt.source_revision_ref.0),
+                changed_claims: receipt
+                    .changed_claims
+                    .iter()
+                    .map(EntityId::to_hex)
+                    .collect(),
+            });
+            refused = check(response).err();
+            refused.is_none()
+        })
         .map_err(|error| board_history_error(&turn, error))?;
-    Ok(ContextBoardTurnRecord {
-        turn: receipt.turn.to_hex(),
-        source_revision_ref: hex(&receipt.source_revision_ref.0),
-        changed_claims: receipt
-            .changed_claims
-            .iter()
-            .map(EntityId::to_hex)
-            .collect(),
-    })
+    match (recorded, refused) {
+        (Some(_), _) => Ok(()),
+        (None, refused) => {
+            response.board_turn = None;
+            Err(refused.unwrap_or_else(|| ApiError::internal_server_error("board history failed")))
+        }
+    }
 }
 
 /// Reconstruct the caller's board as it stood at one past turn: the

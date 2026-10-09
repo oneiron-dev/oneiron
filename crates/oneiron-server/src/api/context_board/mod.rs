@@ -392,26 +392,23 @@ pub(crate) async fn context_board_hydrate(
         skills,
         agents,
         self_brief,
-        // Counted at its largest until the turn is recorded below.
-        board_turn: board_turn.map(|(turn, _)| ContextBoardTurnRecord::largest(&turn)),
+        board_turn: None,
     };
-    if let Some(prefix) = &response.standing {
-        let wire = serde_json::to_string(&response).map_err(|_| {
-            crate::error::ApiError::internal_server_error("context serialization failed")
-        })?;
-        if oneiron::count_context_pack_tokens(&wire) > prefix.total_tokens {
-            return Err(crate::error::ApiError::bad_request(
-                "session prefix and retrieval exceed the token budget",
-                Some("standing.token_budget"),
-            )
-            .into());
+    match board_turn {
+        // The turn's record is part of the response the budget counts, so the
+        // check runs inside the recording transaction, with the real record:
+        // a refused hydration leaves the turn free to record its board.
+        Some(target) => {
+            record_board_turn(
+                &server,
+                &read,
+                target,
+                &mut response,
+                within_standing_budget,
+            )?;
         }
+        None => within_standing_budget(&response)?,
     }
-    // The turn's board is recorded only once the response passed every check
-    // above: a refused hydration leaves the turn free to record its board.
-    response.board_turn = board_turn
-        .map(|target| record_board_turn(&server, &read, target, response.memories.as_ref()))
-        .transpose()?;
     let prefix_committed = staged_prefix.is_some();
     if let Some((key, render, epoch)) = staged_prefix {
         let run = runs
@@ -432,6 +429,23 @@ pub(crate) async fn context_board_hydrate(
         }
     }
     Ok(Json(response))
+}
+
+/// A standing session's response must fit its whole token budget.
+fn within_standing_budget(response: &ContextBoardResponse) -> Result<(), crate::error::ApiError> {
+    let Some(prefix) = &response.standing else {
+        return Ok(());
+    };
+    let wire = serde_json::to_string(response).map_err(|_| {
+        crate::error::ApiError::internal_server_error("context serialization failed")
+    })?;
+    if oneiron::count_context_pack_tokens(&wire) > prefix.total_tokens {
+        return Err(crate::error::ApiError::bad_request(
+            "session prefix and retrieval exceed the token budget",
+            Some("standing.token_budget"),
+        ));
+    }
+    Ok(())
 }
 
 /// The authenticated SDK describe(self) path uses the same run snapshot and

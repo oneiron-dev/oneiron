@@ -141,9 +141,12 @@ impl Vault {
         input: &BoardTurn,
         learned_at: u64,
     ) -> Result<BoardTurnReceipt> {
-        self.record_board_turn_stamped(input.turn, input.owner, &input.selection, None, |_| {
-            (input.at, learned_at)
-        })
+        let (txn, receipt) =
+            self.stage_board_turn(input.turn, input.owner, &input.selection, None, |_| {
+                (input.at, learned_at)
+            })?;
+        txn.commit()?;
+        Ok(receipt)
     }
 
     /// The per-turn board path: `caller`, the board owner, records the board
@@ -155,38 +158,50 @@ impl Vault {
     /// reader of someone else's turn cannot claim its board. Every selected
     /// document, of every type, must be readable under `caller`'s current
     /// scope, and each is recorded at the revision the board served it at.
+    ///
+    /// `accept` sees the receipt inside the recording transaction, before it
+    /// commits: a caller that declines it (a response that no longer fits
+    /// its budget with the receipt in it) records nothing, and gets `None`.
     pub fn record_board_turn_now(
         &self,
         turn: EntityId,
         owner: EntityId,
         memories: Option<&crate::context_board::MemoriesSection>,
         caller: &ScopedRead<'_>,
-    ) -> Result<BoardTurnReceipt> {
+        accept: impl FnOnce(&BoardTurnReceipt) -> bool,
+    ) -> Result<Option<BoardTurnReceipt>> {
         let selection =
             memories.map_or_else(BoardSelection::default, BoardSelection::from_memories);
         let served = memories.map_or_else(BTreeMap::new, |memories| {
             selection.served_revisions(memories)
         });
         let now = self.now_recorded_at();
-        self.record_board_turn_stamped(turn, owner, &selection, Some((caller, &served)), |last| {
-            match last {
-                Some((at, learned_at)) => (now.max(at.saturating_add(1)), now.max(learned_at)),
-                None => (now, now),
-            }
-        })
+        let (txn, receipt) =
+            self.stage_board_turn(turn, owner, &selection, Some((caller, &served)), |last| {
+                match last {
+                    Some((at, learned_at)) => (now.max(at.saturating_add(1)), now.max(learned_at)),
+                    None => (now, now),
+                }
+            })?;
+        if !accept(&receipt) {
+            return Ok(None);
+        }
+        txn.commit()?;
+        Ok(Some(receipt))
     }
 
+    /// Writes one turn's board into a transaction the caller commits.
     /// `stamp` picks `(at, learned_at)` from the owner's last committed stamp,
-    /// read inside the recording transaction. Without a `caller` this is the
-    /// trusted embedded door: the owner's own key, checking CLAIM documents.
-    fn record_board_turn_stamped(
+    /// read inside it. Without a `caller` this is the trusted embedded door:
+    /// the owner's own key, checking CLAIM documents.
+    fn stage_board_turn(
         &self,
         turn: EntityId,
         owner: EntityId,
         selection: &BoardSelection,
         caller: Option<(&ScopedRead<'_>, &BTreeMap<EntityId, RevisionRef>)>,
         stamp: impl FnOnce(Option<(u64, u64)>) -> (u64, u64),
-    ) -> Result<BoardTurnReceipt> {
+    ) -> Result<(RwTxn<'_>, BoardTurnReceipt)> {
         validate_selection(selection)?;
         let mut txn = self.store.env.write_txn()?;
         let last = LAST.get(&self.store, &txn, &owner)?;
@@ -384,13 +399,13 @@ impl Vault {
             .map_err(|_| BoardHistoryError::MissingFrontier)?;
         DOC.put(&self.store, &mut txn, &input.owner, &snapshot)?;
         LAST.put(&self.store, &mut txn, &input.owner, &(input.at, learned_at))?;
-        txn.commit()?;
-        Ok(BoardTurnReceipt {
+        let receipt = BoardTurnReceipt {
             turn: input.turn,
             source_revision_ref: anchor_ref,
             changed_claims,
             read_receipt,
-        })
+        };
+        Ok((txn, receipt))
     }
 
     /// Folds valid bitemporal claims from the TURN's exact CRDT frontier.
