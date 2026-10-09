@@ -120,6 +120,15 @@ impl Store {
     }
 }
 
+/// The `vault_meta` prefixes of the rows [`checkpoint_retirements`] reads.
+pub(super) fn retirement_prefixes() -> [&'static [u8]; 3] {
+    [
+        RETIRE_PENDING.decl().prefix,
+        ERASE_PENDING.decl().prefix,
+        HOLD.decl().prefix,
+    ]
+}
+
 /// Each key-retirement intent among a checkpoint's `vault_meta` rows, with
 /// whether the finisher would carry it out now: an erase's always, a sweep's
 /// unless its partition is held. A restore treats a carried-out one as done,
@@ -350,6 +359,15 @@ impl Vault {
     pub(crate) fn finish_gate_decision_retirements(&self) -> Result<()> {
         let txn = self.store.env.read_txn()?;
         let pending = RETIRE_PENDING.scan(&self.store, &txn)?;
+        // Only the custody this vault is bound to is ever shredded. A
+        // restore's first handle still names its destination while the
+        // image's binding already sits in LMDB; the reopened vault finishes.
+        if !pending.is_empty()
+            && let Some(bound) = super::ledger::CUSTODY_ROOT.get(&self.store, &txn, &())?
+            && bound != orcb::encode_custody_root(&self.store.core.gate_custody_root)?
+        {
+            return Err(Error::CorruptedIndex("gate decision custody binding"));
+        }
         drop(txn);
         for (claim, _) in pending {
             #[cfg(test)]

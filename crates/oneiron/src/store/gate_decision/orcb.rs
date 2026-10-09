@@ -472,40 +472,135 @@ pub(super) fn custody_present(root: &Path) -> Result<bool> {
     }
 }
 
-/// Forks claims' custody from `source` into a new custody directory beside
-/// `destination`. For each claim, every generation through its newest is
-/// marked destroyed in the copy when the source destroyed it or a committed
-/// retirement (`committed`, its newest generation) will; every other key
-/// still live in the source is copied. The copy thus counts generations as
-/// the source does, so its own erase reaches every key it holds.
+/// A custody directory a side restore's fork created, named by device and
+/// inode so its cleanup never removes a directory that replaced it.
+pub(crate) struct ForkedCustodyDir {
+    path: PathBuf,
+    identity: (u64, u64),
+}
+
+impl ForkedCustodyDir {
+    /// Removes the fork's keys and markers, for a restore that failed or was
+    /// refused after it; best effort, and only while the path still names the
+    /// directory the fork created.
+    pub(crate) fn remove(self) {
+        if fs::symlink_metadata(&self.path)
+            .ok()
+            .and_then(|meta| directory_identity(&meta))
+            == Some(self.identity)
+        {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
+#[cfg(unix)]
+fn directory_identity(meta: &fs::Metadata) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    meta.is_dir().then(|| (meta.dev(), meta.ino()))
+}
+
+#[cfg(not(unix))]
+fn directory_identity(_: &fs::Metadata) -> Option<(u64, u64)> {
+    None
+}
+
+/// Every claim generation a retirement marker in `dir` names. A name the
+/// engine would not write is not a marker it reads either, so it is skipped.
+fn retired_generations(dir: &Path) -> Result<Vec<([u8; 16], u64)>> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err.into()),
+    };
+    let mut retired = Vec::new();
+    for entry in entries {
+        let name = entry?.file_name();
+        let Some(marker) = name
+            .to_str()
+            .and_then(|name| name.strip_prefix(".retired-"))
+        else {
+            continue;
+        };
+        let (hex, generation) = marker.split_once(".g").unwrap_or((marker, "0"));
+        let (Ok(claim), Ok(generation)) = (
+            u128::from_str_radix(hex, 16),
+            u64::from_str_radix(generation, 16),
+        ) else {
+            continue;
+        };
+        let claim = claim.to_be_bytes();
+        if retired_marker(dir, &claim, generation).file_name() == Some(name.as_os_str()) {
+            retired.push((claim, generation));
+        }
+    }
+    Ok(retired)
+}
+
+/// Forks the custody beside `source` into a new custody directory beside
+/// `destination`. Every generation the source destroyed stays destroyed: its
+/// retirement marker is copied, whatever the claim. For each claim a restore
+/// needs, through its newest generation, one that a committed retirement
+/// destroys (`committed`, its newest) is marked destroyed as well, and every
+/// other key still live in the source is copied. The copy thus counts
+/// generations as the source does, so its own erase reaches every key it
+/// holds. A fork that fails removes what it created.
 pub(super) fn fork_custody(
     source: &Path,
     destination: &Path,
-    claims: impl IntoIterator<Item = ([u8; 16], u64, Option<u64>)>,
-) -> Result<()> {
+    claims: &[([u8; 16], u64, Option<u64>)],
+) -> Result<Option<ForkedCustodyDir>> {
     let source_dir = key_directory(source)?;
-    let mut claims = claims.into_iter().peekable();
-    if claims.peek().is_none() {
-        return Ok(());
+    let retired = retired_generations(&source_dir)?;
+    if retired.is_empty() && claims.is_empty() {
+        return Ok(None);
     }
     let (dir, directory) = open_key_directory(destination, true)?;
-    for (claim_id, through, committed) in claims {
-        for generation in 0..=through {
-            if committed.is_some_and(|newest| generation <= newest)
-                || is_retired(&source_dir, &claim_id, generation)?
-            {
-                mark_retired(&dir, &claim_id, generation)?;
-            } else if key_published(source, &claim_id, generation)? {
-                let key = read_key(source, &claim_id, generation)?;
-                let path = claim_key_path(destination, &claim_id, generation)?;
-                if !publish_key(&dir, &path, &claim_id, &key)? {
-                    return Err(corrupt());
+    let forked = ForkedCustodyDir {
+        identity: directory_identity(&directory.metadata()?).ok_or_else(corrupt)?,
+        path: dir.clone(),
+    };
+    // The directory is synced once at the end; a marker carries no bytes.
+    let mark = |claim_id: &[u8; 16], generation| match safe_open(
+        &retired_marker(&dir, claim_id, generation),
+        true,
+        false,
+    ) {
+        Ok(_) => Ok(()),
+        Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(err) => Err(err),
+    };
+    let copied = (|| -> Result<()> {
+        for (claim_id, generation) in &retired {
+            if is_retired(&source_dir, claim_id, *generation)? {
+                mark(claim_id, *generation)?;
+            }
+        }
+        for (claim_id, through, committed) in claims {
+            for generation in 0..=*through {
+                if committed.is_some_and(|newest| generation <= newest) {
+                    mark(claim_id, generation)?;
+                } else if !is_retired(&source_dir, claim_id, generation)?
+                    && key_published(source, claim_id, generation)?
+                {
+                    let key = read_key(source, claim_id, generation)?;
+                    let path = claim_key_path(destination, claim_id, generation)?;
+                    if !publish_key(&dir, &path, claim_id, &key)? {
+                        return Err(corrupt());
+                    }
                 }
             }
         }
+        directory.sync_all()?;
+        Ok(())
+    })();
+    match copied {
+        Ok(()) => Ok(Some(forked)),
+        Err(err) => {
+            forked.remove();
+            Err(err)
+        }
     }
-    directory.sync_all()?;
-    Ok(())
 }
 
 pub(super) fn raw_key_retired(root: &Path, raw: &[u8]) -> Result<bool> {

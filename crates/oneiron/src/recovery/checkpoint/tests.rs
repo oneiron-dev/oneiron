@@ -314,58 +314,109 @@ fn claim_with_receipt(vault: &Vault) -> (EntityId, crate::store::GateDecisionRec
     (claim, receipt)
 }
 
-/// ARCH-0038 #erasure-completeness, "Key custody in a side restore" (REV-9
-/// item 11): a copy served beside its source gets custody of its own, so an
-/// erase in either vault never reaches the other vault's keys or receipts.
-/// Both side doors: the rehearsal's, and the one that keeps live authority.
-#[test]
-fn a_side_restore_forks_key_custody_so_each_vault_shreds_only_its_own_keys() {
-    for keeping_authority in [false, true] {
-        let root = tempfile::tempdir().unwrap();
-        let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
-        let (erased_in_copy, copy_side) = claim_with_receipt(&source);
-        let (erased_in_source, source_side) = claim_with_receipt(&source);
-        let image = root.path().join("image");
-        source.snapshot_checkpoint(&image, 100).expect("image");
-        let destination = root.path().join("copy");
-        let (copy, _) = if keeping_authority {
-            Vault::restore_checkpoint_keeping_authority(
-                &image,
+/// How a side restore reads its source's live custody state: from the open
+/// vault, from disk beside whoever holds the vault (the CLI rehearsal beside
+/// a running server), or by keeping the open vault's live authority.
+#[derive(Clone, Copy, Debug)]
+enum Side {
+    Open,
+    Disk,
+    KeepingAuthority,
+}
+const SIDES: [Side; 3] = [Side::Open, Side::Disk, Side::KeepingAuthority];
+
+/// Restores `image` beside the vault at `<root>/source` into `<root>/copy`
+/// through `side`, and returns the source, reopened when `Disk` closed it.
+fn restore_beside(side: Side, source: Vault, root: &Path, image: &Path) -> (Vault, Vault) {
+    let destination = root.join("copy");
+    let (copy, _) = match side {
+        Side::Open => Vault::restore_checkpoint_beside(
+            image,
+            &destination,
+            VaultConfig::device(),
+            &source.side_restore_source().expect("source state"),
+            120,
+        ),
+        Side::Disk => {
+            drop(source);
+            let state = SideRestoreSource::read(&root.join("source")).expect("source state");
+            let restored = Vault::restore_checkpoint_beside(
+                image,
                 &destination,
                 VaultConfig::device(),
-                &source,
+                &state,
                 120,
             )
-        } else {
-            Vault::restore_checkpoint_beside(&image, &destination, VaultConfig::device(), 120)
+            .expect("side restore");
+            let source = Vault::open(root.join("source"), VaultConfig::device()).unwrap();
+            return (source, restored.0);
         }
-        .expect("side restore");
+        Side::KeepingAuthority => Vault::restore_checkpoint_keeping_authority(
+            image,
+            &destination,
+            VaultConfig::device(),
+            &source,
+            120,
+        ),
+    }
+    .expect("side restore");
+    (source, copy)
+}
 
-        copy.delete_entity_with_reason(&erased_in_copy, crate::DeleteReason::UserHardDelete)
+/// A source vault with one claim receipt, and a copy of it restored beside it.
+fn side_copy(
+    root: &Path,
+    side: Side,
+) -> (Vault, Vault, EntityId, crate::store::GateDecisionRecord) {
+    let source = Vault::open(root.join("source"), VaultConfig::device()).unwrap();
+    let (claim, receipt) = claim_with_receipt(&source);
+    let image = root.join("image");
+    source.snapshot_checkpoint(&image, 100).expect("image");
+    let (source, copy) = restore_beside(side, source, root, &image);
+    (source, copy, claim, receipt)
+}
+
+/// ARCH-0038 #erasure-completeness, "Key custody in a side restore" (REV-9
+/// item 11): custody forks at a side restore, so an erase in the copy never
+/// reaches the source's keys or receipts.
+#[test]
+fn an_erase_in_a_side_copy_never_reaches_its_source() {
+    for side in SIDES {
+        let root = tempfile::tempdir().unwrap();
+        let (source, copy, claim, receipt) = side_copy(root.path(), side);
+        copy.delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
             .expect("erase in the copy");
         assert!(
             !copy
                 .gate_decisions(100)
                 .expect("the copy's ledger reads")
-                .contains(&copy_side),
-            "the erase redacts the copy's receipt"
+                .contains(&receipt),
+            "{side:?}: the erase redacts the copy's receipt"
         );
         assert!(
             source
                 .gate_decisions(100)
                 .expect("the source's receipts still decrypt")
-                .contains(&copy_side),
-            "an erase in the copy never reaches the source"
+                .contains(&receipt),
+            "{side:?}"
         );
+    }
+}
 
+/// The other direction: an erase in the source never reaches a side copy.
+#[test]
+fn an_erase_in_the_source_never_reaches_its_side_copy() {
+    for side in SIDES {
+        let root = tempfile::tempdir().unwrap();
+        let (source, copy, claim, receipt) = side_copy(root.path(), side);
         source
-            .delete_entity_with_reason(&erased_in_source, crate::DeleteReason::UserHardDelete)
+            .delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
             .expect("erase in the source");
         assert!(
             copy.gate_decisions(100)
                 .expect("the copy's receipts still decrypt")
-                .contains(&source_side),
-            "an erase in the source never reaches the copy"
+                .contains(&receipt),
+            "{side:?}"
         );
     }
 }
@@ -377,49 +428,120 @@ fn a_side_restore_forks_key_custody_so_each_vault_shreds_only_its_own_keys() {
 #[test]
 fn a_side_restore_copies_no_key_the_source_destroyed_or_committed_to_destroy() {
     let hex = |claim: &EntityId| crate::entity_id::bytes_to_hex_lower(claim.as_bytes());
+    for side in SIDES {
+        let root = tempfile::tempdir().unwrap();
+        let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+        let (live, live_receipt) = claim_with_receipt(&source);
+        let (destroyed, destroyed_receipt) = claim_with_receipt(&source);
+        let (committed, committed_receipt) = claim_with_receipt(&source);
+        let image = root.path().join("image");
+        source.snapshot_checkpoint(&image, 100).expect("image");
+        source
+            .delete_entity_with_reason(&destroyed, crate::DeleteReason::UserHardDelete)
+            .expect("erase before the restore");
+        // An erase whose intent committed and whose finisher has not run yet
+        // (the process stopped in between): the key is still on disk.
+        let mut wtxn = source.store.env.write_txn().unwrap();
+        source
+            .store
+            .redact_gate_decisions_for_claim_in_txn(&mut wtxn, committed.as_bytes(), 50)
+            .expect("commit an erase");
+        wtxn.commit().unwrap();
+        let source_custody = root.path().join(".source.gate-decision-keys");
+        assert!(source_custody.join(hex(&committed)).exists());
+
+        let (_source, copy) = restore_beside(side, source, root.path(), &image);
+        let copy_custody = root.path().join(".copy.gate-decision-keys");
+        assert!(
+            copy_custody.join(hex(&live)).exists(),
+            "{side:?}: the copy holds its own copy of a live key"
+        );
+        for claim in [destroyed, committed] {
+            assert!(!copy_custody.join(hex(&claim)).exists(), "{side:?}");
+        }
+        let rows = copy.gate_decisions(100).expect("the copy's ledger reads");
+        assert!(rows.contains(&live_receipt), "{side:?}");
+        assert!(
+            rows.iter().all(|row| {
+                row.decision_id != destroyed_receipt.decision_id
+                    && row.decision_id != committed_receipt.decision_id
+            }),
+            "{side:?}"
+        );
+    }
+}
+
+/// A side restore refused after its fork leaves no copy of a live key: the
+/// custody it forked goes with the destination it removes.
+#[test]
+fn a_refused_side_restore_leaves_no_forked_key_behind() {
     let root = tempfile::tempdir().unwrap();
     let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
-    let (live, live_receipt) = claim_with_receipt(&source);
-    let (destroyed, destroyed_receipt) = claim_with_receipt(&source);
-    let (committed, committed_receipt) = claim_with_receipt(&source);
+    let owner = source.ensure_embedded_owner_actor().unwrap();
+    claim_with_receipt(&source);
     let image = root.path().join("image");
     source.snapshot_checkpoint(&image, 100).expect("image");
+    // Reviving an owner deleted since is refused after the restore has run.
     source
-        .delete_entity_with_reason(&destroyed, crate::DeleteReason::UserHardDelete)
-        .expect("erase before the restore");
-    // An erase whose intent committed and whose finisher has not run yet
-    // (the process stopped in between): the key is still on disk.
+        .delete_entity_with_options(&owner, crate::deletion::DeleteEntityOptions { purge: true })
+        .unwrap();
+    let destination = root.path().join("copy");
+    assert!(
+        Vault::restore_checkpoint_keeping_authority(
+            &image,
+            &destination,
+            VaultConfig::device(),
+            &source,
+            120,
+        )
+        .is_err()
+    );
+    assert!(!destination.exists());
+    assert!(!root.path().join(".copy.gate-decision-keys").exists());
+}
+
+/// A restore never shreds custody its vault is not bound to. Its first
+/// handle names the custody beside its destination while the image binds
+/// another; here that custody is a side copy's that moved away, and the
+/// restored image carries an erase its source committed but did not finish.
+#[test]
+fn a_restore_never_shreds_custody_its_vault_is_not_bound_to() {
+    let root = tempfile::tempdir().unwrap();
+    let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    let (claim, receipt) = claim_with_receipt(&source);
+    let image = root.path().join("image");
+    source.snapshot_checkpoint(&image, 100).expect("image");
+    let (source, copy) = restore_beside(Side::Open, source, root.path(), &image);
+    drop(copy);
+    std::fs::rename(root.path().join("copy"), root.path().join("moved")).unwrap();
     let mut wtxn = source.store.env.write_txn().unwrap();
     source
         .store
-        .redact_gate_decisions_for_claim_in_txn(&mut wtxn, committed.as_bytes(), 50)
+        .redact_gate_decisions_for_claim_in_txn(&mut wtxn, claim.as_bytes(), 50)
         .expect("commit an erase");
     wtxn.commit().unwrap();
-    let source_custody = root.path().join(".source.gate-decision-keys");
-    assert!(source_custody.join(hex(&committed)).exists());
+    let pending = root.path().join("pending");
+    source
+        .snapshot_checkpoint(&pending, 110)
+        .expect("image with the erase pending");
 
-    let (copy, _) = Vault::restore_checkpoint_keeping_authority(
-        &image,
+    // In its vault's place at the path the copy left: keep-mode custody.
+    let (restored, _) = Vault::restore_checkpoint(
+        &pending,
         &root.path().join("copy"),
         VaultConfig::device(),
-        &source,
-        120,
+        RestoreReason::Restore,
+        130,
     )
-    .expect("side restore");
-    let copy_custody = root.path().join(".copy.gate-decision-keys");
+    .expect("restore");
+    drop(restored);
+    let moved = Vault::open(root.path().join("moved"), VaultConfig::device()).unwrap();
     assert!(
-        copy_custody.join(hex(&live)).exists(),
-        "the copy holds its own copy of a live key"
+        moved
+            .gate_decisions(100)
+            .expect("the moved copy's receipts still decrypt")
+            .contains(&receipt)
     );
-    for claim in [destroyed, committed] {
-        assert!(!copy_custody.join(hex(&claim)).exists());
-    }
-    let rows = copy.gate_decisions(100).expect("the copy's ledger reads");
-    assert!(rows.contains(&live_receipt));
-    assert!(rows.iter().all(|row| {
-        row.decision_id != destroyed_receipt.decision_id
-            && row.decision_id != committed_receipt.decision_id
-    }));
 }
 
 #[test]

@@ -12,6 +12,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use oneiron::recovery::checkpoint::SideRestoreSource;
 use serde::Serialize;
 
 use super::stamp::{file_stamp, now_unix_ms, parse_file_stamp, rfc3339};
@@ -253,13 +254,15 @@ pub(crate) struct Rehearsal {
 }
 
 /// Restores `backup` into a scratch directory, opens it, checks it and
-/// reports. The live vault is never opened. The copy is made in a directory
-/// this call creates: `keep_at` names it and keeps it, otherwise it is a new
-/// directory under the system temp directory and is deleted afterwards.
+/// reports. The live vault is never opened; `source` is its key-custody state,
+/// read when the rehearsal starts. The copy is made in a directory this call
+/// creates: `keep_at` names it and keeps it, otherwise it is a new directory
+/// under the system temp directory and is deleted afterwards.
 pub(crate) fn rehearse(
     backup: &Path,
     config: oneiron::VaultConfig,
     keep_at: Option<&Path>,
+    source: &SideRestoreSource,
 ) -> anyhow::Result<Rehearsal> {
     let scratch = Owned::create(match keep_at {
         Some(path) => path.to_path_buf(),
@@ -269,7 +272,7 @@ pub(crate) fn rehearse(
             oneiron::EntityId::now().to_hex()
         )),
     })?;
-    let outcome = rehearse_into(backup, config, &scratch.vault());
+    let outcome = rehearse_into(backup, config, &scratch.vault(), source);
     // A failed rehearsal leaves nothing behind, even where it was told to keep.
     if keep_at.is_none() || outcome.is_err() {
         scratch.remove();
@@ -283,14 +286,18 @@ fn rehearse_into(
     backup: &Path,
     config: oneiron::VaultConfig,
     scratch: &Path,
+    source: &SideRestoreSource,
 ) -> anyhow::Result<Rehearsal> {
     // The copy sits beside the live vault, so its key custody forks: an erase
     // in a kept scratch copy never reaches the live vault's keys.
-    let (restored, report) =
-        oneiron::Vault::restore_checkpoint_beside(backup, scratch, config, now_unix_ms() / 1_000)
-            .map_err(|error| {
-            anyhow::anyhow!("backup {} does not restore: {error}", backup.display())
-        })?;
+    let (restored, report) = oneiron::Vault::restore_checkpoint_beside(
+        backup,
+        scratch,
+        config,
+        source,
+        now_unix_ms() / 1_000,
+    )
+    .map_err(|error| anyhow::anyhow!("backup {} does not restore: {error}", backup.display()))?;
     let unreadable_fields = restored.doctor()?.unreadable_fields;
     let kinds = kind_counts(&restored)?;
     Ok(Rehearsal {

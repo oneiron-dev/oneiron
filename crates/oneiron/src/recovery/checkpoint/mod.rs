@@ -9,7 +9,8 @@ mod rebuild;
 mod restore_class;
 mod tiers;
 use crate::side_table::{self, Named, SideTable};
-use crate::{EntityId, Error, Result, Vault, VaultConfig, store::DB_MANIFEST};
+use crate::store::{DB_MANIFEST, ForkedCustodyDir, LiveCustody};
+use crate::{EntityId, Error, Result, Vault, VaultConfig};
 use heed::types::Bytes;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -42,12 +43,43 @@ struct CheckpointImage {
 }
 /// Whose exterior key custody a restored vault holds (ARCH-0038
 /// #erasure-completeness, "Key custody in a side restore").
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Custody {
+#[derive(Clone, Copy)]
+enum Custody<'a> {
     /// The restored vault takes its source's place and keeps its custody.
     Keep,
-    /// A copy served beside its source gets custody of its own.
-    Fork,
+    /// A copy served beside its source gets custody of its own. It never
+    /// holds a key the source's live state, when given, says is destroyed or
+    /// committed to be.
+    Fork(Option<&'a LiveCustody>),
+}
+/// The custody a side restore forked, removed on drop unless kept: a restore
+/// that fails or is refused after its fork leaves no copy of a live key.
+struct ForkedCustody(Option<ForkedCustodyDir>);
+impl ForkedCustody {
+    fn keep(mut self) {
+        self.0 = None;
+    }
+}
+impl Drop for ForkedCustody {
+    fn drop(&mut self) {
+        if let Some(forked) = self.0.take() {
+            forked.remove();
+        }
+    }
+}
+/// The live key-custody state of the vault a side restore copies, read when
+/// the restore starts: where its custody is, and the key retirements it has
+/// committed. The copy never holds a key that state says is destroyed or
+/// committed to be, though the image predates the retirement.
+pub struct SideRestoreSource(Option<LiveCustody>);
+impl SideRestoreSource {
+    /// Reads the vault at `vault_dir` without opening it, so a running server
+    /// may hold it. A vault open in this process reads its own state through
+    /// [`Vault::side_restore_source`]. No vault at `vault_dir` has committed
+    /// nothing.
+    pub fn read(vault_dir: &Path) -> Result<Self> {
+        crate::store::read_live_custody(vault_dir).map(Self)
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RestoreReason {
@@ -276,7 +308,7 @@ impl Vault {
         restored_at: u64,
     ) -> Result<(Self, RestoreReport)> {
         let (image, checkpoint_id) = read_image(path)?;
-        Self::restore_image(
+        let (vault, report, forked) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
@@ -284,29 +316,43 @@ impl Vault {
             reason,
             restored_at,
             Custody::Keep,
-        )
+        )?;
+        forked.keep();
+        Ok((vault, report))
     }
     /// [`Vault::restore_checkpoint`] as a copy served beside its source vault.
     /// Key custody forks at restore time: the copy gets its own custody beside
     /// `destination`, holding only the keys still live in the source's, so an
     /// erase or age sweep in either vault never reaches the other's keys or
-    /// receipts. A retirement the image records as committed counts as done.
+    /// receipts. A key retirement `source` has committed, its key not yet
+    /// destroyed, counts as done. Refuses a checkpoint whose key custody is
+    /// not `source`'s.
     pub fn restore_checkpoint_beside(
         path: &Path,
         destination: &Path,
         config: VaultConfig,
+        source: &SideRestoreSource,
         restored_at: u64,
     ) -> Result<(Self, RestoreReport)> {
         let (image, checkpoint_id) = read_image(path)?;
-        Self::restore_image(
+        let (vault, report, forked) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
             config,
             RestoreReason::Restore,
             restored_at,
-            Custody::Fork,
-        )
+            Custody::Fork(source.0.as_ref()),
+        )?;
+        forked.keep();
+        Ok((vault, report))
+    }
+    /// The live key-custody state of this vault, for a restore beside it
+    /// ([`Vault::restore_checkpoint_beside`]).
+    pub fn side_restore_source(&self) -> Result<SideRestoreSource> {
+        self.store
+            .live_custody()
+            .map(|live| SideRestoreSource(Some(live)))
     }
     /// Historical content restore beside a live vault: the image's content
     /// with `current`'s live authority, consent, policy, credential and
@@ -336,7 +382,7 @@ impl Vault {
             config,
             current,
             restored_at,
-            Custody::Fork,
+            Custody::Fork(None),
         )
     }
     /// [`Vault::restore_checkpoint_keeping_authority`] for a restore that
@@ -364,11 +410,12 @@ impl Vault {
         config: VaultConfig,
         current: &Self,
         restored_at: u64,
-        custody: Custody,
+        custody: Custody<'_>,
     ) -> Result<(Self, RestoreReport)> {
         let (mut image, checkpoint_id) = read_image(path)?;
+        // The carried rows hold `current`'s custody binding and retirements.
         authority_plane::carry_current_authority(&mut image.databases, current)?;
-        let (vault, report) = Self::restore_image(
+        let (vault, report, forked) = Self::restore_image(
             image,
             checkpoint_id,
             destination,
@@ -381,10 +428,12 @@ impl Vault {
             .and_then(|()| decisions::refuse_loosened_decisions(current, &vault))
         {
             drop(vault);
-            // This call created the destination; nothing else is in it.
+            // This call created the destination; nothing else is in it. The
+            // custody it forked goes with it as `forked` drops.
             let _ = std::fs::remove_dir_all(destination);
             return Err(error);
         }
+        forked.keep();
         Ok((vault, report))
     }
     fn restore_image(
@@ -394,8 +443,8 @@ impl Vault {
         config: VaultConfig,
         reason: RestoreReason,
         restored_at: u64,
-        custody: Custody,
-    ) -> Result<(Self, RestoreReport)> {
+        custody: Custody<'_>,
+    ) -> Result<(Self, RestoreReport, ForkedCustody)> {
         // A job row of another kind in the owner-retained key range would
         // hide from that kind's scans: refused before any destination exists.
         if image.databases["job_records"].iter().any(|(key, value)| {
@@ -406,12 +455,18 @@ impl Vault {
         // Authenticate every ORCB row against LIVE exterior custody before
         // creating a destination. A checkpoint never carries a key copy, and
         // a row whose key an erase destroyed since is dropped, not restored.
-        let gate_custody = crate::store::preflight_checkpoint_rows(&image.databases["vault_meta"])?;
-        if custody == Custody::Fork {
+        let (fork, source) = match custody {
+            Custody::Keep => (false, None),
+            Custody::Fork(source) => (true, source),
+        };
+        let gate_custody =
+            crate::store::preflight_checkpoint_rows(&image.databases["vault_meta"], source)?;
+        if fork {
             crate::store::refuse_custody_beside(destination)?;
         }
         // Existing content is never replaced or partially restored over.
         std::fs::create_dir(destination)?;
+        let mut forked = ForkedCustody(None);
         let vault = Self::open_owned(destination, config.clone())?;
         vault.with_write_txn(|txn| {
             for entry in DB_MANIFEST {
@@ -425,8 +480,8 @@ impl Vault {
                     db.put(txn, key, value)?;
                 }
             }
-            if custody == Custody::Fork {
-                vault.store.fork_gate_custody_in_txn(txn, &gate_custody)?;
+            if fork {
+                forked.0 = vault.store.fork_gate_custody_in_txn(txn, &gate_custody)?;
             }
             vault
                 .store
@@ -491,7 +546,7 @@ impl Vault {
             rebuilt_text_documents,
             pending_embeddings,
         };
-        Ok((vault, report))
+        Ok((vault, report, forked))
     }
     pub fn restore_epochs(&self) -> Result<Vec<RestoreEpoch>> {
         let txn = self.store.env.read_txn()?;

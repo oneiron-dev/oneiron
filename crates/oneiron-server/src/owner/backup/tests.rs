@@ -73,7 +73,8 @@ fn rehearsal_reports_the_backup_and_restore_brings_it_back() {
     let later = person(&vault, b"after the backup");
     drop(vault);
 
-    let rehearsal = rehearse(&outcome.backup.path, VaultConfig::default(), None).unwrap();
+    let source = SideRestoreSource::read(&vault_path).unwrap();
+    let rehearsal = rehearse(&outcome.backup.path, VaultConfig::default(), None, &source).unwrap();
     assert!(rehearsal.verified);
     assert!(!rehearsal.kept);
     assert_eq!(rehearsal.checkpoint_id, outcome.checkpoint_id);
@@ -176,7 +177,8 @@ fn a_failed_rehearsal_removes_only_what_it_created() {
     std::fs::write(custody.join("key"), b"not ours").unwrap();
     let bogus = root.path().join("not-a-backup");
     std::fs::write(&bogus, b"garbage").unwrap();
-    assert!(rehearse(&bogus, VaultConfig::default(), Some(&scratch)).is_err());
+    let source = SideRestoreSource::read(&root.path().join("no-vault")).unwrap();
+    assert!(rehearse(&bogus, VaultConfig::default(), Some(&scratch), &source).is_err());
     assert!(!scratch.exists());
     assert_eq!(std::fs::read(custody.join("key")).unwrap(), b"not ours");
 }

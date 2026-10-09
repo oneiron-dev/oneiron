@@ -10,7 +10,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use heed::RwTxn;
+use heed::types::Bytes;
+use heed::{Env, EnvFlags, EnvOpenOptions, RwTxn};
 
 use crate::error::{Error, Result};
 use crate::side_table::SideKey;
@@ -18,9 +19,73 @@ use crate::store::Store;
 
 use super::keys::GATE_DECISION_KEY_PREFIX;
 use super::ledger::CUSTODY_ROOT;
-use super::orcb::{self, CUSTODY_ROOT_KEY, corrupt};
-use super::retention::checkpoint_retirements;
+use super::orcb::{self, CUSTODY_ROOT_KEY, ForkedCustodyDir, corrupt};
+use super::retention::{checkpoint_retirements, retirement_prefixes};
 use super::types::GateDecisionId;
+
+type Rows = Vec<(Vec<u8>, Vec<u8>)>;
+
+/// One vault's live key-custody state, read when a side restore of it
+/// starts: where its custody is, and its key-retirement intents with their
+/// erase marks and holds.
+pub(crate) struct LiveCustody {
+    root: PathBuf,
+    rows: Rows,
+}
+
+impl LiveCustody {
+    fn read(env: &Env, root: PathBuf) -> Result<Self> {
+        let txn = env.read_txn()?;
+        let vault_meta = env
+            .open_database::<Bytes, Bytes>(&txn, Some("vault_meta"))?
+            .ok_or(Error::CorruptedIndex("vault holds no side-table database"))?;
+        let mut rows = Vec::new();
+        for prefix in retirement_prefixes() {
+            for row in vault_meta.prefix_iter(&txn, prefix)? {
+                let (key, value) = row?;
+                rows.push((key.to_vec(), value.to_vec()));
+            }
+        }
+        Ok(Self { root, rows })
+    }
+}
+
+/// The live custody state of the vault at `vault_dir`, read without opening
+/// it as a vault. No vault there has committed nothing.
+pub(crate) fn read_live_custody(vault_dir: &Path) -> Result<Option<LiveCustody>> {
+    if !vault_dir.join("data.mdb").is_file() {
+        return Ok(None);
+    }
+    let mut options = EnvOpenOptions::new();
+    options.max_dbs(1);
+    // SAFETY: `READ_ONLY` asks LMDB for a read-only environment; heed
+    // documents no further requirement on the flag itself.
+    unsafe {
+        options.flags(EnvFlags::READ_ONLY);
+    }
+    // SAFETY: the environment is read-only, so this handle never writes the
+    // vault's data file, and LMDB's lock file registers its readers the way
+    // it does for any reader beside a live writer. heed refuses a second open
+    // of the same path in this process; a vault open here reads its own
+    // state through `Store::live_custody`.
+    let env = unsafe { options.open(vault_dir) }?;
+    let live = (|| -> Result<LiveCustody> {
+        let txn = env.read_txn()?;
+        let vault_meta = env
+            .open_database::<Bytes, Bytes>(&txn, Some("vault_meta"))?
+            .ok_or(Error::CorruptedIndex("vault holds no side-table database"))?;
+        let root = match vault_meta.get(&txn, CUSTODY_ROOT_KEY)? {
+            Some(raw) => orcb::decode_custody_root(raw)?,
+            None => vault_dir.canonicalize()?,
+        };
+        drop(txn);
+        LiveCustody::read(&env, root)
+    })();
+    // heed keeps an environment registered until it closes; close this one
+    // so the vault can still be opened in this process afterwards.
+    env.prepare_for_closing().wait();
+    live.map(Some)
+}
 
 /// The custody a checkpoint's claim-bound receipts bind to, checked before a
 /// restore creates its destination.
@@ -46,19 +111,33 @@ impl CheckpointCustody {
 ///
 /// A row whose key generation carries a retirement marker was erased (or
 /// aged out) after the image was taken. So was a row under a generation that
-/// a committed retirement among `rows` destroys, though its finisher has not
-/// run yet. Such a row is listed, not decoded, so the restore drops it: the
-/// restored vault is the vault at that time without the receipts an erase
-/// destroyed. A key that is merely missing, with no marker, is lost custody
-/// and still refuses the whole restore.
-pub(crate) fn preflight_checkpoint_rows(rows: &[(Vec<u8>, Vec<u8>)]) -> Result<CheckpointCustody> {
+/// a committed retirement destroys, though its finisher has not run yet: one
+/// among `rows`, or among `source`'s, the live state of the vault a side
+/// restore copies, which wins over the image's. Such a row is listed, not
+/// decoded, so the restore drops it: the restored vault is the vault at that
+/// time without the receipts an erase destroyed. A key that is merely
+/// missing, with no marker, is lost custody and still refuses the restore.
+pub(crate) fn preflight_checkpoint_rows(
+    rows: &[(Vec<u8>, Vec<u8>)],
+    source: Option<&LiveCustody>,
+) -> Result<CheckpointCustody> {
     let bound = rows
         .iter()
         .find(|(key, _)| key == CUSTODY_ROOT_KEY)
         .map(|(_, value)| orcb::decode_custody_root(value))
         .transpose()?;
+    let mut retirements = checkpoint_retirements(rows)?;
+    if let Some(source) = source {
+        // The source's intents say nothing about another vault's keys.
+        if bound.as_ref().is_some_and(|bound| *bound != source.root) {
+            return Err(Error::InvalidConfig(
+                "this checkpoint's key custody is not its source vault's".into(),
+            ));
+        }
+        retirements.extend(checkpoint_retirements(&source.rows)?);
+    }
     let mut claims = BTreeMap::new();
-    for (claim, through, committed) in checkpoint_retirements(rows)? {
+    for (claim, through, committed) in retirements {
         claims.insert(claim, (through, committed.then_some(through)));
     }
     let mut erased = Vec::new();
@@ -101,29 +180,43 @@ pub(crate) fn refuse_custody_beside(destination: &Path) -> Result<()> {
 }
 
 impl Store {
+    /// This vault's live custody state, for a side restore of it.
+    pub(crate) fn live_custody(&self) -> Result<LiveCustody> {
+        LiveCustody::read(&self.env, self.core.gate_custody_root.clone())
+    }
+
     /// Forks the custody `custody` binds to into this restored copy's own,
     /// beside its root, and binds the copy to it in this transaction. The
-    /// copied keys are synced before the binding commits.
+    /// copied keys are synced before the binding commits. Returns the
+    /// directory the fork created, if it had anything to copy.
     pub(crate) fn fork_gate_custody_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         custody: &CheckpointCustody,
-    ) -> Result<()> {
+    ) -> Result<Option<ForkedCustodyDir>> {
         if cfg!(not(unix)) {
             // No exterior custody exists here, so there is none to fork.
-            return Ok(());
+            return Ok(None);
         }
         let root = &self.core.gate_custody_root;
-        if let Some(source) = custody.bound.as_deref() {
-            orcb::fork_custody(
-                source,
-                root,
-                custody
+        let binding = orcb::encode_custody_root(root)?;
+        let forked = match custody.bound.as_deref() {
+            Some(source) => {
+                let claims: Vec<_> = custody
                     .claims
                     .iter()
-                    .map(|(claim, (through, committed))| (*claim, *through, *committed)),
-            )?;
+                    .map(|(claim, (through, committed))| (*claim, *through, *committed))
+                    .collect();
+                orcb::fork_custody(source, root, &claims)?
+            }
+            None => None,
+        };
+        if let Err(err) = CUSTODY_ROOT.put(self, wtxn, &(), &binding) {
+            if let Some(forked) = forked {
+                forked.remove();
+            }
+            return Err(err);
         }
-        CUSTODY_ROOT.put(self, wtxn, &(), &orcb::encode_custody_root(root)?)
+        Ok(forked)
     }
 }

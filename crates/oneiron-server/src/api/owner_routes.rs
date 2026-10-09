@@ -177,7 +177,8 @@ async fn rehearse_backup(
     owner(&auth, &server)?;
     let host = host(&server)?;
     let request = json_payload(payload)?;
-    let rehearsal = blocking(move || host.rehearse(request.file.as_deref())).await?;
+    let rehearsal =
+        blocking(move || host.rehearse(server.vault(), request.file.as_deref())).await?;
     Ok(Json(rehearsal))
 }
 

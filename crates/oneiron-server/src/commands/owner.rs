@@ -152,10 +152,13 @@ pub fn backup(args: BackupArgs) -> anyhow::Result<()> {
 pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
     let config = resolve_serve_config(&args.serve)?;
     if args.rehearse {
+        // Read off the disk, beside a `serve` that may hold the vault.
+        let source = oneiron::recovery::checkpoint::SideRestoreSource::read(&config.vault_path)?;
         return emit(&backup::rehearse(
             &args.backup,
             vault_config(&config),
             args.scratch.as_deref(),
+            &source,
         )?);
     }
     emit(&backup::restore_over(
