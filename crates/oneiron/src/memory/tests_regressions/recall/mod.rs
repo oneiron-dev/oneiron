@@ -9,4 +9,5 @@ include!("temporal.rs");
 include!("control_kinds.rs");
 include!("read_grants.rs");
 include!("turn_fold.rs");
+include!("turn_disclosure.rs");
 include!("clock_consistency.rs");

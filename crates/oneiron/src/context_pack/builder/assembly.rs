@@ -116,6 +116,7 @@ impl<'a> ContextPackBuilder<'a> {
         self,
         lane: &crate::claim::ScopedRead<'_>,
     ) -> Result<(crate::claim::ScopedReadResult<ContextPack>, PackRunStatus)> {
+        let disclosure = self.disclosure.clone();
         let run = self.run_unfinalized()?;
         let status = PackRunStatus {
             vector_completed: run.vector_completed,
@@ -132,7 +133,8 @@ impl<'a> ContextPackBuilder<'a> {
             replay_config: run.replay_config,
         };
         lane.end_recall_plan()?;
-        let receipt = match lane.filter_context_pack(&mut pending.value) {
+        let receipt = match lane.filter_context_pack_under(&mut pending.value, disclosure.as_ref())
+        {
             Ok(receipt) => receipt,
             Err(error) => {
                 pending.discard_telemetry();
