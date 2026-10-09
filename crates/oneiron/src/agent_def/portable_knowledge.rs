@@ -4,12 +4,14 @@
 //! (`entity_reference` nodes) hold their bytes as a JSON number array. The
 //! source-file credential check reads every such array as an encoded payload,
 //! so an id whose bytes happened to decode as a MessagePack container dropped
-//! its whole pack. The second form wraps the rows in a format marker and
-//! writes each typed id as lowercase hex text, which no check reads as a
-//! payload. Both forms are read; only the second is written.
+//! its whole pack. The second form leads the same array with a format marker
+//! and writes each typed id as lowercase hex text, which no check reads as a
+//! payload. The rows sit at the depth they had, so the check's depth bound
+//! reads them as it did. Both forms are read; only the second is written.
 use crate::batch::export::ExportEntity;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use serde::{Deserialize, Serialize};
+use crate::registry::ENTITY_TYPE_CLAIM;
 use serde_json::Value;
 
 const FORMAT_V2: &str = "oneiron.agent-knowledge.v2";
@@ -17,23 +19,16 @@ const FORMAT_V2: &str = "oneiron.agent-knowledge.v2";
 /// A selected-knowledge facet's form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum KnowledgeFormat {
-    /// A bare array; typed ids are byte arrays. Read, never written.
+    /// `[row, ...]`; typed ids are byte arrays. Read, never written.
     V1,
-    /// `{"format": "oneiron.agent-knowledge.v2", "claims": [...]}`; typed ids
-    /// are lowercase hex text.
+    /// `["oneiron.agent-knowledge.v2", row, ...]`; typed ids are lowercase
+    /// hex text. A row is an object, so a leading string is only a marker.
     V2,
 }
 
 impl KnowledgeFormat {
     /// The form every new facet is written in.
     pub(crate) const CURRENT: Self = Self::V2;
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct KnowledgeFile {
-    format: String,
-    claims: Value,
 }
 
 pub(crate) fn encode_agent_knowledge(
@@ -43,39 +38,58 @@ pub(crate) fn encode_agent_knowledge(
     match format {
         KnowledgeFormat::V1 => serde_json::to_vec(rows).map_err(|_| invalid()),
         KnowledgeFormat::V2 => {
-            let mut claims = serde_json::to_value(rows).map_err(|_| invalid())?;
-            rewrite_references(&mut claims, hex_reference)?;
-            serde_json::to_vec(&KnowledgeFile {
-                format: FORMAT_V2.to_owned(),
-                claims,
-            })
-            .map_err(|_| invalid())
+            let mut file = vec![Value::from(FORMAT_V2)];
+            for row in rows {
+                let mut row = serde_json::to_value(row).map_err(|_| invalid())?;
+                rewrite_references(&mut row, hex_reference)?;
+                file.push(row);
+            }
+            serde_json::to_vec(&file).map_err(|_| invalid())
         }
     }
 }
 
 /// The rows a facet carries, and the form it carries them in. A second-form
-/// id spelled any way but lowercase hex is refused, as is a byte array.
+/// id spelled any way but lowercase hex is refused, as is a byte array, and
+/// so is any row the export would not have written.
 pub(crate) fn decode_agent_knowledge(bytes: &[u8]) -> Result<(KnowledgeFormat, Vec<ExportEntity>)> {
-    match serde_json::from_slice(bytes).map_err(|_| invalid())? {
-        rows @ Value::Array(_) => Ok((
-            KnowledgeFormat::V1,
-            serde_json::from_value(rows).map_err(|_| invalid())?,
-        )),
-        file @ Value::Object(_) => {
-            let KnowledgeFile { format, mut claims } =
-                serde_json::from_value(file).map_err(|_| invalid())?;
-            if format != FORMAT_V2 {
-                return Err(invalid());
-            }
-            rewrite_references(&mut claims, byte_reference)?;
-            Ok((
-                KnowledgeFormat::V2,
-                serde_json::from_value(claims).map_err(|_| invalid())?,
-            ))
+    let Value::Array(mut rows) = serde_json::from_slice(bytes).map_err(|_| invalid())? else {
+        return Err(invalid());
+    };
+    let format = match rows.first() {
+        Some(Value::String(marker)) if marker == FORMAT_V2 => KnowledgeFormat::V2,
+        Some(Value::String(_)) => return Err(invalid()),
+        _ => KnowledgeFormat::V1,
+    };
+    if format == KnowledgeFormat::V2 {
+        rows.remove(0);
+        for row in &mut rows {
+            rewrite_references(row, byte_reference)?;
         }
-        _ => Err(invalid()),
     }
+    let rows: Vec<ExportEntity> =
+        serde_json::from_value(Value::Array(rows)).map_err(|_| invalid())?;
+    for row in &rows {
+        validate_row(row)?;
+    }
+    Ok((format, rows))
+}
+
+/// A row is a canonical claim export: its id spelled as the engine spells
+/// it, a CLAIM, an ordered range, and a body the export serializer itself
+/// writes (`ExportBody::validate`). So no node, a hex id included, holds a
+/// position the typed tree does not give it, and every reader of the facet
+/// (hub packs and birth sources alike) gets rows the export could have made.
+fn validate_row(row: &ExportEntity) -> Result<()> {
+    if EntityId::from_hex(&row.id)
+        .ok()
+        .is_none_or(|id| id.to_hex() != row.id)
+        || row.entity_type != ENTITY_TYPE_CLAIM
+        || row.occurred_start > row.occurred_end
+    {
+        return Err(invalid());
+    }
+    row.body.validate(ENTITY_TYPE_CLAIM).map_err(|_| invalid())
 }
 
 /// Rewrites the value of every typed id node under `value`. Only

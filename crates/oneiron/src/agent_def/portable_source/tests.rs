@@ -538,7 +538,8 @@ fn cyclic_archive_input_references_retire_payloads_without_recursing_through_age
 /// written.
 #[test]
 fn a_birth_source_captured_in_the_first_knowledge_form_still_decodes() -> Result<()> {
-    let child = EntityId::now();
+    // A fixed id whose first-form facet the old writer kept whole.
+    let child = EntityId::from_bytes([1, 0x52, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])?;
     let def = definition("fixture.first-form", None);
     let body = crate::ClaimBody::new(
         "test.source_note",
@@ -578,5 +579,56 @@ fn a_birth_source_captured_in_the_first_knowledge_form_still_decodes() -> Result
         decode_birth_source(&bytes)?.map(|source| source.tree),
         Some(tree)
     );
+    Ok(())
+}
+
+/// A real defect a review found in the second knowledge form: a birth source
+/// whose knowledge tags arbitrary bytes as an id inside a claim value is
+/// refused, so no payload passes the source check as hex text.
+#[test]
+fn a_birth_source_whose_knowledge_tags_a_payload_as_an_id_is_refused() -> Result<()> {
+    let child = EntityId::from_bytes([1, 0x52, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])?;
+    let def = definition("fixture.forged-reference", None);
+    let body = crate::ClaimBody::new(
+        "test.source_note",
+        crate::ClaimSubject::Entity(child),
+        Value::from("note"),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )?;
+    let knowledge = ExportEntity {
+        short_ref: None,
+        id: EntityId::now().to_hex(),
+        entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+        occurred_start: 10,
+        occurred_end: 10,
+        learned_at: 10,
+        body: ExportBody::from_bytes(
+            &crate::claim::encode_claim_body(&body)?,
+            crate::registry::ENTITY_TYPE_CLAIM,
+        ),
+    };
+    let mut files =
+        super::super::agent_pack_files(&child, &def, &[], std::slice::from_ref(&knowledge))?;
+    let selected = files
+        .iter_mut()
+        .find(|file| file.path == "knowledge/selected.json")
+        .expect("knowledge facet");
+    let text = String::from_utf8(selected.content.clone()).expect("UTF-8 facet");
+    // `AKIA0123456789ABCDEF` as hex, tagged as an id in the claim's value.
+    let forged = text.replacen(
+        r#"{"type":"string","value":"note"}"#,
+        r#"{"type":"entity_reference","value":"414b494130313233343536373839414243444546"}"#,
+        1,
+    );
+    assert_ne!(forged, text);
+    selected.content = forged.into_bytes();
+    let tree = crate::serialize::export_source_tree(&files)?;
+    assert!(
+        tree.content_hash.is_some(),
+        "the source check reads only hex"
+    );
+    assert!(encode_birth_source(&child, &def, &child, &def, tree).is_err());
     Ok(())
 }

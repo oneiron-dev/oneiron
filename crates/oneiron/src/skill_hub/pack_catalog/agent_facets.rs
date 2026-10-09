@@ -3,7 +3,7 @@ use super::{PackManifest, invalid};
 use crate::agent_def::decode_agent_definition;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM};
+use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::serialize::ExportBody;
 use crate::skill::SkillContentHash;
 use crate::skill_hub::HubFile;
@@ -119,19 +119,6 @@ impl AgentPackFacets {
                 .map_err(|_| invalid("agent knowledge facet is not typed JSON"))?;
             let id = EntityId::from_hex(&policy.entity_id)
                 .map_err(|_| invalid("agent policy entity identity is invalid"))?;
-            for row in &knowledge {
-                if EntityId::from_hex(&row.id)
-                    .ok()
-                    .is_none_or(|parsed| parsed.to_hex() != row.id)
-                    || row.entity_type != ENTITY_TYPE_CLAIM
-                    || row.occurred_start > row.occurred_end
-                {
-                    return Err(invalid("agent knowledge facet has invalid claim metadata"));
-                }
-                row.body
-                    .validate(ENTITY_TYPE_CLAIM)
-                    .map_err(|_| invalid("agent knowledge facet has unsafe claim body"))?;
-            }
             if crate::agent_def::select_agent_knowledge(&id, &knowledge) != knowledge {
                 return Err(invalid("agent knowledge facet contains foreign rows"));
             }

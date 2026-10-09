@@ -266,12 +266,61 @@ fn no_random_id_drops_an_agent_pack() -> Result<()> {
     Ok(())
 }
 
+/// The second form keeps rows at the first form's depth: a claim value
+/// nested as deep as the first form still carried whole keeps its pack whole
+/// (a review finding against an enveloped second form, which sat one level
+/// deeper and redacted it).
+#[test]
+fn knowledge_as_deep_as_the_first_form_carried_keeps_its_pack() -> Result<()> {
+    use crate::agent_def::{KnowledgeFormat, agent_pack_files_in};
+    let agent_id = EntityId::from_bytes([1, 0x52, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])?;
+    let definition = agent("fixture.agent", None);
+    let whole = |format: KnowledgeFormat, depth: usize| -> Result<bool> {
+        let mut value = Value::from("note");
+        for _ in 0..depth {
+            value = Value::Array(vec![value]);
+        }
+        let claim = ClaimBody::new(
+            "preference.format",
+            ClaimSubject::Entity(agent_id),
+            value,
+            0.7,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        )?;
+        let knowledge = [ExportEntity {
+            id: EntityId::now().to_hex(),
+            short_ref: None,
+            entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+            occurred_start: 100,
+            occurred_end: 120,
+            learned_at: 130,
+            body: crate::serialize::ExportBody::from_bytes(
+                &crate::claim::encode_claim_body(&claim)?,
+                crate::registry::ENTITY_TYPE_CLAIM,
+            ),
+        }];
+        let files = agent_pack_files_in(format, &agent_id, &definition, &[], &knowledge)?;
+        Ok(crate::serialize::export_source_tree(&files)?
+            .content_hash
+            .is_some())
+    };
+    let mut deepest = 0;
+    while whole(KnowledgeFormat::V1, deepest + 1)? {
+        deepest += 1;
+        assert!(deepest < 64, "the first form refuses some depth");
+    }
+    assert!(whole(KnowledgeFormat::CURRENT, deepest)?);
+    Ok(())
+}
+
 /// An archive an older engine wrote, its agent packs carrying the first
 /// knowledge form, still imports: stored archives read back as written.
 #[test]
 fn an_archive_with_first_form_agent_knowledge_still_imports() -> Result<()> {
     let (_source_dir, source) = open_test_vault_with(VaultConfig::default());
-    let agent_id = EntityId::now();
+    // A fixed id whose first-form facet the old writer kept whole.
+    let agent_id = EntityId::from_bytes([1, 0x52, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])?;
     seed_portable_agent(&source, agent_id)?;
     let export = source.export_whole_vault(PackFormat::Json)?;
     let mut document: WholeVaultDocument =
