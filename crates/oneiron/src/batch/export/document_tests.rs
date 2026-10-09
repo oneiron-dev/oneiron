@@ -270,6 +270,35 @@ fn whole_vault_json_roundtrip_preserves_ids_types_times_fields_graph_and_demotes
     Ok(())
 }
 
+/// A real failure: an id whose bytes also read as one whole MessagePack value
+/// (here a 14-byte bin8) lost its bytes to the document's opaque-container
+/// rule, and the export refused its own reimport.
+#[test]
+fn a_claim_about_an_entity_whose_id_reads_as_messagepack_reimports() -> Result<()> {
+    let (_source_dir, source) = open_test_vault_with(VaultConfig::default());
+    let (_target_dir, target) = open_test_vault_with(VaultConfig::default());
+    let mut bytes = [0xc4, 14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    bytes[2..].copy_from_slice(b"fixture-person");
+    let person = crate::EntityId::from_bytes(bytes).expect("fixture id");
+    let claim = crate::EntityId::now();
+    source.put_entity(&person, ENTITY_TYPE_PERSON, range(), 789, b"person")?;
+    let mut knowledge = ClaimBody::new(
+        "preference.food",
+        ClaimSubject::Entity(person),
+        Value::from("matcha"),
+        0.75,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )?;
+    source.put_claim(&claim, &knowledge, range(), 789)?;
+    let export = source.export_whole_vault(PackFormat::Json)?;
+    target.import_whole_vault_json(export.bytes())?;
+    knowledge.source = Some(ClaimSource::Imported);
+    knowledge.approval = ClaimApprovalStatus::Proposed;
+    assert_eq!(target.get_claim(&claim)?, Some(knowledge));
+    Ok(())
+}
+
 #[test]
 fn whole_vault_import_rejects_manifest_drift_false_proof_and_forged_binary() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());
