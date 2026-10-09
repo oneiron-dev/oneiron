@@ -521,6 +521,47 @@ fn an_export_that_unzips_past_the_limit_is_refused_and_nothing_lands() {
     assert_eq!(home.count(ENTITY_TYPE_MESSAGE), 0);
 }
 
+/// First try, 2026-10-10: one session log over the per-log limit (the
+/// owner's Codex folder held a 1.8 GB rollout) refused the whole folder. Now
+/// it is left out and named in the report, every other log lands, and the
+/// import succeeds, dry run or not. The big log is sparse: no disk.
+#[cfg(unix)]
+#[test]
+fn a_session_log_over_the_limit_is_left_out_and_the_rest_of_the_folder_lands() {
+    let home = Home::new();
+    let sessions = home.dir.path().join("sessions");
+    copy_tree(&fixtures().join("codex/sessions"), &sessions);
+    let big = sessions
+        .join("2026/09/08/rollout-2026-09-08T09-00-00-0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a9e.jsonl");
+    std::fs::create_dir_all(big.parent().expect("test fixture")).expect("test fixture");
+    let limit = 1_u64 << 30;
+    std::fs::File::create(&big)
+        .expect("test fixture")
+        .set_len(limit + 1)
+        .expect("test fixture");
+    let left_out = serde_json::json!([{
+        "warning": "log_too_large",
+        "path": big,
+        "bytes": limit + 1,
+        "limit": limit,
+    }]);
+
+    for dry_run in [true, false] {
+        let output = home.run_import("codex", &sessions, dry_run);
+        assert!(
+            output.status.success(),
+            "one log over the limit does not refuse the folder: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: Value = serde_json::from_slice(&output.stdout).expect("a JSON report");
+        assert_eq!(report["warnings"], left_out, "{report}");
+        assert_eq!(report["files"]["too_large"], 1, "{report}");
+        assert_eq!(report["files"]["read"], 5, "{report}");
+        assert_eq!(totals(&report), (12, 4, 0, 0), "every other log lands");
+    }
+    assert_eq!(home.count(ENTITY_TYPE_MESSAGE), 12);
+}
+
 /// Astra 1310 #5: session logs each within the per-log limit that together
 /// decode to more messages than one import holds are refused before anything
 /// lands, dry run or not.
