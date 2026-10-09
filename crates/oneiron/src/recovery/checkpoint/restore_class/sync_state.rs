@@ -24,6 +24,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::WINDOW_SNAPSHOT, CONTENT),
     (&t::DEFERRED_CHILD_OF, CONTENT),
     (&t::DEFERRED_CHILD_OF_ENDPOINT, CONTENT),
+    (&t::DELETION_ROW_FENCE, CONTENT),
     (&t::DEFERRED_PARENT_DEPENDENCY, CONTENT),
     (&t::DEFERRED_PARENT, CONTENT),
     (&t::SYNC_DS_E, CONTENT),

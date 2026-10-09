@@ -423,6 +423,15 @@ pub(crate) fn companion_profile_access_grant(
         if header.entity_type != ENTITY_TYPE_ACCESS_GRANT {
             return Err(Error::CorruptedIndex("access grant entity type"));
         }
+        // Authority is a live grant row: a deleted one grants nothing, even
+        // while an unapplied delete leaves its body stored. Its shell is
+        // skipped here; a stored body is checked last, once it matches.
+        let live = || -> Result<bool> {
+            Ok(crate::vault::live_entity_row_in_txn(store, txn, &id)?.is_live())
+        };
+        if raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN && !live()? {
+            continue;
+        }
 
         let grant = match crate::access_grant::decode_access_grant_body(
             &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
@@ -432,7 +441,9 @@ pub(crate) fn companion_profile_access_grant(
                 return Err(Error::CorruptedIndex("access grant body"));
             }
         };
-        if grant.allows_companion_profile_read(principal_ref, person_ref, persona_ref, now) {
+        if grant.allows_companion_profile_read(principal_ref, person_ref, persona_ref, now)
+            && live()?
+        {
             return Ok(Some(id));
         }
     }

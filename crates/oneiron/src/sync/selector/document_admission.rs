@@ -37,6 +37,11 @@ pub(super) fn authorize_in_txn(
     if header.entity_type != crate::registry::ENTITY_TYPE_FEDERATION_GRANT {
         return Err(selector_err(SelectorError::GrantWrongType));
     }
+    // A deleted grant confers nothing, even while an unapplied delete leaves
+    // its body stored.
+    if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &selector.grant_id)?.is_live() {
+        return Err(selector_err(SelectorError::GrantNotFound));
+    }
     let grant = decode_federation_grant_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
     if grant.role.is_guest() || !matches!(grant.scope, FederationGrantScope::Vault { .. }) {
         return Err(selector_err(SelectorError::GrantScopeMismatch));
