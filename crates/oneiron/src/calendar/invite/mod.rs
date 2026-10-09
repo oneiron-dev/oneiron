@@ -85,7 +85,7 @@ fn commit_admission(
     admission: &CalendarInviteAdmission,
     now: u64,
 ) -> Result<(), CalendarError> {
-    let mut wtxn = vault.store.env.write_txn().map_err(crate::Error::from)?;
+    let mut wtxn = vault.store.env.write_txn()?;
     admission.commit_in_txn(vault, &mut wtxn, now)?;
     wtxn.commit().map_err(crate::Error::from)?;
     Ok(())

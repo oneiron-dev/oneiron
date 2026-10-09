@@ -123,8 +123,7 @@ impl<T: IcsHttpTransport> IcsFeedFetcher for CustodyDoorIcsFeedFetcher<'_, T> {
                 .vault
                 .store
                 .env
-                .write_txn()
-                .map_err(crate::Error::from)?;
+                .write_txn()?;
             self.vault
                 .get_secret_value_in_txn(&wtxn, &custody_id, &self.effector)
                 .map_err(|err| credential("custody door refused the read", &err))?

@@ -231,8 +231,7 @@ pub(crate) fn touch_inflight(vault: &Vault, id: &IntentId) -> Result<(), IntentL
     let mut txn = vault
         .store
         .env
-        .write_txn()
-        .map_err(crate::error::Error::from)?;
+        .write_txn()?;
     let Some(key) = intent_key(vault, &txn, id)? else {
         return Ok(());
     };

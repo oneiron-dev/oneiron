@@ -642,7 +642,9 @@ fn each_side_restore_reads_its_source_when_it_starts() {
                 .exists(),
             "{side:?}"
         );
-        let rows = second.gate_decisions(100).expect("the second copy's ledger reads");
+        let rows = second
+            .gate_decisions(100)
+            .expect("the second copy's ledger reads");
         assert!(
             rows.iter()
                 .all(|row| row.decision_id != receipt.decision_id),
@@ -699,16 +701,13 @@ fn a_vault_a_restore_replaced_is_archived_until_activated() {
     // As `oneiron restore` runs it: the copy is made beside, swapped into
     // the vault's place, and the vault it replaced is archived.
     let staged = root.path().join("staged");
-    let (replacement, _) = Vault::restore_checkpoint_replacing(
-        &image,
-        &staged,
-        VaultConfig::device(),
-        &source,
-        120,
-    )
-    .expect("restore");
+    let (replacement, _) =
+        Vault::restore_checkpoint_replacing(&image, &staged, VaultConfig::device(), &source, 120)
+            .expect("restore");
     drop(replacement);
-    source.archive_replaced().expect("archive the replaced vault");
+    source
+        .archive_replaced()
+        .expect("archive the replaced vault");
     drop(source);
     std::fs::rename(&vault_path, &previous_path).unwrap();
     std::fs::rename(&staged, &vault_path).unwrap();

@@ -404,7 +404,7 @@ impl Store {
     where
         E: From<Error>,
     {
-        let mut txn = self.env.write_txn().map_err(Error::from)?;
+        let mut txn = self.env.write_txn()?;
         match write(&mut txn) {
             Rows::Commit(value) => {
                 txn.commit().map_err(Error::from)?;
@@ -430,7 +430,7 @@ impl Store {
             Ok(txn) => txn,
             Err(err) => {
                 group.hand_off();
-                return Err(E::from(Error::from(err)));
+                return Err(E::from(err));
             }
         };
         let opened = Instant::now();

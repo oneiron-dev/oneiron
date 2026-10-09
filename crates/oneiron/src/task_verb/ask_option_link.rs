@@ -328,7 +328,7 @@ impl Vault {
         source_refs: &BTreeSet<ConsultPayloadRef>,
     ) -> MemoryResult<TaskAskAnswer> {
         let digest = token_digest(token)?;
-        let mut txn = self.store.env.write_txn().map_err(crate::Error::from)?;
+        let mut txn = self.store.env.write_txn()?;
         let mut row = read_row(self, &txn, &digest)?;
         if !matches!(row.state, LinkState::Open) {
             return Err(MemoryError::bad_request(
@@ -386,7 +386,7 @@ impl Vault {
     /// "Not you?" revokes this one bearer and wakes the asking agent.
     pub fn void_ask_option_link(&self, token: &str) -> MemoryResult<()> {
         let digest = token_digest(token)?;
-        let mut txn = self.store.env.write_txn().map_err(crate::Error::from)?;
+        let mut txn = self.store.env.write_txn()?;
         let mut row = read_row(self, &txn, &digest)?;
         if !matches!(row.state, LinkState::Voided) {
             row.state = LinkState::Voided;
