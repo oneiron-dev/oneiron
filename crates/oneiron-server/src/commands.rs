@@ -244,7 +244,7 @@ pub fn token_read(args: TokenReadArgs) -> anyhow::Result<()> {
 /// The agent acts as a PERSON principal derived from its name (so a second
 /// mint for one name is the same agent with a new slip), of class `agent`,
 /// never the owner. Its tier is ARCH-0028's registration-time tier (see
-/// [`agent_tier_authority`]); the latest mint sets the agent's ceiling. The
+/// `agent_tier_authority`); the latest mint sets the agent's ceiling. The
 /// slip comes through the host-rooted pairing doors `token read` uses and
 /// carries only its tier's verbs: scoped, paired and bound to a fresh
 /// connection key, never owner-grade. `token revoke` takes its slip id.
