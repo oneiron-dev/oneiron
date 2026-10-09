@@ -390,6 +390,38 @@ pub(crate) async fn idempotency_middleware(
     Response::from_parts(parts, Body::from(response_body))
 }
 
+/// The idempotency layer for a route that mutates in one request form only.
+/// A keyed request's body tells the form: the mutating form takes
+/// [`idempotency_middleware`]; any other form runs as if the layer were
+/// absent, never cached and never replayed. The body is read up to axum's
+/// default extractor limit, so no body the route would accept is cut short.
+pub(crate) async fn idempotency_for_mutating_form(
+    state: IdempotencyLayerState,
+    request: Request,
+    next: Next,
+    mutates: impl FnOnce(&[u8]) -> bool,
+) -> Response {
+    const ROUTE_BODY_LIMIT_BYTES: usize = 2 * 1024 * 1024;
+    if !request.headers().contains_key(IDEMPOTENCY_KEY_HEADER) {
+        return next.run(request).await;
+    }
+    let (parts, body) = request.into_parts();
+    let body = match to_bytes(body, ROUTE_BODY_LIMIT_BYTES).await {
+        Ok(body) => body,
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to read keyed request body");
+            return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+        }
+    };
+    let mutating = mutates(&body);
+    let request = Request::from_parts(parts, Body::from(body));
+    if mutating {
+        idempotency_middleware(State(state), request, next).await
+    } else {
+        next.run(request).await
+    }
+}
+
 enum IdempotencyKey {
     Absent,
     Present(String),

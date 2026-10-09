@@ -97,6 +97,26 @@ pub(super) fn board_turn_target(
     Ok(Some((turn, owner)))
 }
 
+/// A hydration that names its TURN records that turn's board once, so a
+/// keyed retry after a lost response replays the first success rather than
+/// meeting `board_turn_already_recorded`. A hydration without a TURN is a
+/// read: it never enters the idempotency cache.
+pub(crate) async fn board_turn_idempotency(
+    State(state): State<crate::idempotency::IdempotencyLayerState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    #[derive(Deserialize)]
+    struct TurnForm {
+        #[serde(default)]
+        turn: Option<serde::de::IgnoredAny>,
+    }
+    crate::idempotency::idempotency_for_mutating_form(state, request, next, |body| {
+        serde_json::from_slice::<TurnForm>(body).is_ok_and(|form| form.turn.is_some())
+    })
+    .await
+}
+
 /// Records the board `response` served for the caller's own TURN, under the
 /// caller's read capability, and puts the record in it. The engine writes
 /// selection claims only for families that changed, and pins each document
@@ -150,7 +170,7 @@ pub(super) fn record_board_turn(
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "No board history for this turn and caller.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 409, description = "The turn predates the board's compaction horizon, or a selected document is no longer readable.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "The turn predates the board's compaction horizon, or a selected document is no longer readable or disclosable to the caller.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Board reconstruction failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -174,12 +194,17 @@ pub(crate) async fn context_board_turn_history(
     if owner.is_none() || (caller != owner && !auth.is_owner_grade()) {
         return Err(ApiError::not_found("board turn", Some(&turn)).into());
     }
-    // Every item passes the caller's read scope as it stands now: a past
-    // board never hands back a document the caller can no longer read.
+    // Every item passes the caller's read scope and disclosure clamp as they
+    // stand now, the ones a new board would apply: a past board never hands
+    // back a document the caller can no longer read or be shown.
     let read = super::super::scoped_read_for_core_auth(&server.vault, &auth)?;
+    let interlocutors =
+        super::super::resolve_core_interlocutor_set(&server.vault, &auth, None, None)?;
+    let disclosure =
+        super::super::resolve_core_disclosure(&server.vault, interlocutors.as_ref(), false)?;
     let board = server
         .vault
-        .reconstruct_board_for(&id, &read)
+        .reconstruct_board_for(&id, &read, disclosure.as_ref())
         .map_err(|error| board_history_error(&id, error))?;
     let ids = |set: &BTreeSet<EntityId>| set.iter().map(EntityId::to_hex).collect();
     let engine = base64::engine::general_purpose::STANDARD;

@@ -569,3 +569,143 @@ async fn a_turns_board_keeps_the_revision_it_served() {
     let recorded: Value = rmp_serde::from_slice(&bytes).unwrap();
     assert_eq!(recorded["name"], "revision needle oldalpha");
 }
+
+/// `principal`'s hydration that pins `pin` and names `turn`.
+fn pin_board(principal: oneiron::EntityId, turn: oneiron::EntityId, pin: &str) -> Value {
+    json!({
+        "retrieval": {"query": "unrelated empty query", "limit": 1},
+        "memories": {"shared_total": 0, "pinned_refs": [pin]},
+        "session": {"session_id": principal.to_hex()},
+        "turn": {"id": turn.to_hex()}
+    })
+}
+
+/// Astra 1 (REV-9 D2a): a past board never re-discloses. It passes the
+/// disclosure clamp a new board would apply now: once the owner marks a
+/// document Tier A, or revokes the reader's clearance, the board that served
+/// it is refused, though the reader keeps its credential and read grant.
+#[tokio::test]
+async fn a_past_board_never_discloses_what_its_reader_is_no_longer_cleared_for() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let principal = seeded_test_entity_id(0x2067_0701);
+    cleared_reader(&server, principal, seeded_test_entity_id(0x2067_0702));
+    let marked = seeded_test_entity_id(0x2067_0703);
+    let kept = seeded_test_entity_id(0x2067_0704);
+    put_person(&server, marked, "tier marked pin needle");
+    put_person(&server, kept, "cleared pin needle");
+    let marked_turn = seeded_test_entity_id(0x2067_0705);
+    let kept_turn = seeded_test_entity_id(0x2067_0706);
+    for (turn, document, query) in [
+        (marked_turn, marked, "tier marked pin needle"),
+        (kept_turn, kept, "cleared pin needle"),
+    ] {
+        put_turn(&server, turn, principal);
+        let pin = pin_ref(&server, document, query);
+        let (status, board) = route_json(
+            server.clone(),
+            hydrate(
+                principal,
+                "core:read,core:write",
+                &pin_board(principal, turn, &pin),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{board:#}");
+        let (status, past) = route_json(server.clone(), history(turn, principal)).await;
+        assert_eq!(status, StatusCode::OK, "{past:#}");
+        assert!(
+            past["documents"].get(document.to_hex()).is_some(),
+            "{past:#}"
+        );
+    }
+
+    // The owner marks one document Tier A: only the board that served it is
+    // withheld.
+    server.vault.set_disclosure_tier_a(&marked, 300).unwrap();
+    let (status, refused) = route_json(server.clone(), history(marked_turn, principal)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused:#}");
+    assert!(
+        refused.to_string().contains("board_document_unreadable"),
+        "{refused:#}"
+    );
+    let (status, past) = route_json(server.clone(), history(kept_turn, principal)).await;
+    assert_eq!(status, StatusCode::OK, "{past:#}");
+
+    // The owner revokes the reader's clearance: every board it was served
+    // goes with it.
+    let mut revoked = oneiron::disclosure::DisclosureScope::new(
+        oneiron::federation::Scope::top(),
+        "party planning",
+        400,
+    )
+    .unwrap();
+    revoked.status = oneiron::disclosure::DisclosureScopeStatus::Revoked;
+    server
+        .vault
+        .set_counterparty_disclosure_scope(&principal, &revoked)
+        .unwrap();
+    let (status, refused) = route_json(server.clone(), history(kept_turn, principal)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused:#}");
+    assert!(
+        refused.to_string().contains("board_document_unreadable"),
+        "{refused:#}"
+    );
+}
+
+/// Astra 3 (REV-9 D2a): a hydration that records its TURN is a keyed
+/// mutation. A retry under the same `Idempotency-Key`, after a lost response,
+/// replays the first success, where an unkeyed retry meets the recorded turn.
+/// A hydration that names no TURN stays a read the key never caches.
+#[tokio::test]
+async fn a_keyed_board_turn_retry_replays_its_first_success() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let principal = seeded_test_entity_id(0x2067_0801);
+    cleared_reader(&server, principal, seeded_test_entity_id(0x2067_0802));
+    let document = seeded_test_entity_id(0x2067_0803);
+    put_person(&server, document, "retried pin needle");
+    let pin = pin_ref(&server, document, "retried pin needle");
+    let turn = seeded_test_entity_id(0x2067_0804);
+    put_turn(&server, turn, principal);
+    let keyed = |key: &'static str, body: &Value| {
+        let mut request = hydrate(principal, "core:read,core:write", body);
+        request
+            .headers_mut()
+            .insert("Idempotency-Key", axum::http::HeaderValue::from_static(key));
+        request
+    };
+
+    let body = pin_board(principal, turn, &pin);
+    let (status, first) = route_json(server.clone(), keyed("board-turn-retry", &body)).await;
+    assert_eq!(status, StatusCode::OK, "{first:#}");
+    assert_eq!(first["board_turn"]["turn"], turn.to_hex());
+    let (status, retried) = route_json(server.clone(), keyed("board-turn-retry", &body)).await;
+    assert_eq!(status, StatusCode::OK, "{retried:#}");
+    assert_eq!(retried, first);
+    let (status, unkeyed) = route_json(
+        server.clone(),
+        hydrate(principal, "core:read,core:write", &body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{unkeyed:#}");
+    assert!(
+        unkeyed.to_string().contains("board_turn_already_recorded"),
+        "{unkeyed:#}"
+    );
+
+    // No TURN: two different reads under one key both run.
+    for query in ["first keyed read", "second keyed read"] {
+        let read = json!({
+            "retrieval": {"query": query, "limit": 1},
+            "session": {"session_id": "keyed-read"}
+        });
+        let (status, board) = route_json(server.clone(), keyed("board-read", &read)).await;
+        assert_eq!(status, StatusCode::OK, "{board:#}");
+        assert!(board.get("board_turn").is_none(), "{board:#}");
+    }
+}

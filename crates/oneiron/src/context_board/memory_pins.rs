@@ -39,11 +39,25 @@ impl MemoriesSection {
             }
             let hash = u8::from_str_radix(hash, 16)
                 .map_err(|_| crate::Error::InvalidConfig("invalid memory pin hash".into()))?;
-            let hydrated = reader
-                .read(&[PointRead::short(short_id, hash)], None)?
-                .single();
+            // The revision is taken in the read's own snapshot, so a board
+            // history records the text this pin served, not a later edit.
+            let hydrated =
+                reader.read_projected(&[PointRead::short(short_id, hash)], None, |txn, rows| {
+                    let row = rows.into_iter().next().flatten();
+                    let revision = match &row {
+                        Some(row) => crate::vault::entity_revision::revision_for_mode_in_txn(
+                            &reader.vault().store,
+                            txn,
+                            &row.id,
+                            crate::vault::ReadMode::Live,
+                        )?,
+                        None => None,
+                    };
+                    Ok::<_, crate::Error>((row, revision))
+                })?;
             let mut receipt = hydrated.receipt;
-            let Some(hydrated) = hydrated.value else {
+            let (hydrated, source_revision) = hydrated.value;
+            let Some(hydrated) = hydrated else {
                 receipts.push(receipt);
                 continue;
             };
@@ -89,8 +103,7 @@ impl MemoriesSection {
                 world: claim.as_ref().and_then(|c| c.world).map(|id| id.to_hex()),
                 tier: MemoryTier::Pinned,
                 snippet: None,
-                // A pin is read LIVE: its board records the live revision.
-                source_revision: None,
+                source_revision,
             };
             if !foreign_row(&row)
                 && let Some(claim) = claim

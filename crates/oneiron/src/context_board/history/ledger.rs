@@ -154,10 +154,11 @@ impl Vault {
     /// recorded in the same second as the owner's last one moves one second
     /// past it, so turn order stays strict.
     ///
-    /// The TURN must carry `owner` as the author its door stamped, so a
-    /// reader of someone else's turn cannot claim its board. Every selected
-    /// document, of every type, must be readable under `caller`'s current
-    /// scope, and each is recorded at the revision the board served it at.
+    /// `owner` must be `caller`'s own actor, and the TURN must carry it as
+    /// the author its door stamped, so a reader of someone else's turn cannot
+    /// claim its board. Every selected document, of every type, must be
+    /// readable under `caller`'s current scope, and each is recorded at the
+    /// revision the board served it at.
     ///
     /// `accept` sees the receipt inside the recording transaction, before it
     /// commits: a caller that declines it (a response that no longer fits
@@ -170,6 +171,9 @@ impl Vault {
         caller: &ScopedRead<'_>,
         accept: impl FnOnce(&BoardTurnReceipt) -> bool,
     ) -> Result<Option<BoardTurnReceipt>> {
+        if EntityId::from_hex(caller.actor_key().actor_ref()).ok() != Some(owner) {
+            return Err(BoardHistoryError::NotTurnAuthor(turn));
+        }
         let selection =
             memories.map_or_else(BoardSelection::default, BoardSelection::from_memories);
         let served = memories.map_or_else(BTreeMap::new, |memories| {
@@ -412,25 +416,29 @@ impl Vault {
     /// No current-state fallback is permitted, including a missing document.
     /// The trusted embedded door: the owner's own key checks CLAIM documents.
     pub fn reconstruct_board(&self, turn: &EntityId) -> Result<ReconstructedBoard> {
-        self.reconstruct_board_with(turn, None)
+        self.reconstruct_board_with(turn, None, None)
     }
 
     /// [`Self::reconstruct_board`] for an authenticated caller. The TURN and
     /// every document, of every type, pass `caller`'s CURRENT read scope at
-    /// the pinned revision and live: a past board never re-grants a read the
-    /// caller has since lost. An unreadable document refuses the whole board.
+    /// the pinned revision and live, and every document passes the caller's
+    /// CURRENT `disclosure` clamp, the one a new board would apply: a past
+    /// board never re-grants a read or a disclosure the caller has since
+    /// lost. An unreadable or withheld document refuses the whole board.
     pub fn reconstruct_board_for(
         &self,
         turn: &EntityId,
         caller: &ScopedRead<'_>,
+        disclosure: Option<&crate::disclosure::DisclosureContext>,
     ) -> Result<ReconstructedBoard> {
-        self.reconstruct_board_with(turn, Some(caller))
+        self.reconstruct_board_with(turn, Some(caller), disclosure)
     }
 
     fn reconstruct_board_with(
         &self,
         turn: &EntityId,
         caller: Option<&ScopedRead<'_>>,
+        disclosure: Option<&crate::disclosure::DisclosureContext>,
     ) -> Result<ReconstructedBoard> {
         let txn = self.store.env.read_txn()?;
         let turn_raw = crate::vault::entity_revision::read_entity_revision_in_txn(
@@ -547,6 +555,18 @@ impl Vault {
                 .ok_or(BoardHistoryError::UnreadableDocument(*id))?;
                 if !scoped.is_claim_raw_readable_in(&txn, id, &live)?
                     || !scoped.is_claim_raw_readable_in(&txn, id, &raw)?
+                {
+                    return Err(BoardHistoryError::UnreadableDocument(*id));
+                }
+            }
+            if let Some(disclosure) = disclosure {
+                // The clamp sees the stored CLAIM and the pinned one served.
+                let pinned = (raw[0] == crate::registry::ENTITY_TYPE_CLAIM)
+                    .then(|| decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true))
+                    .transpose()?;
+                if !disclosure.admits(&self.store, &txn, id, raw[0], None)?
+                    || (pinned.is_some()
+                        && !disclosure.admits(&self.store, &txn, id, raw[0], pinned.as_ref())?)
                 {
                     return Err(BoardHistoryError::UnreadableDocument(*id));
                 }
