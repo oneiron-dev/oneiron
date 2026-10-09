@@ -137,6 +137,9 @@ impl CodeRunBridgeCall {
             _ if self.effect == SelfEffect::WakePolicyWrite => Err(invalid_code_run_replay(
                 "wake policy effect carries another success outcome",
             )),
+            SelfDispatchOutcome::AgentVerb(_) if self.effect != SelfEffect::AgentVerb => Err(
+                invalid_code_run_replay("agent verb result belongs to another effect"),
+            ),
             SelfDispatchOutcome::Speech(result) => {
                 let Some(expected_order) = expected_order else {
                     return Err(invalid_code_run_replay(
@@ -596,6 +599,14 @@ impl SelfDispatcher for CodeRunReplayCursor<'_> {
         let outcome = decode_self_dispatch_outcome(&stored.outcome)?;
         self.next.set(index + 1);
         match outcome {
+            // A refused SDK verb reached the guest as a typed refusal it could
+            // handle, so replay hands back that same refusal, not a gate trap.
+            SelfDispatchOutcome::Denied(result)
+                if stored.effect == SelfEffect::AgentVerb
+                    && result.effect == SelfEffect::AgentVerb =>
+            {
+                Ok(SelfDispatchOutcome::Denied(result))
+            }
             SelfDispatchOutcome::Denied(result) => Err(replay_denied_trap_error(&result)),
             SelfDispatchOutcome::Failed(result) => Err(replay_failed_trap_error(&result)),
             outcome => Ok(outcome),

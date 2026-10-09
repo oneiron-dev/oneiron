@@ -12,6 +12,7 @@ use crate::side_table::{self, Named, SideTable};
 
 /// Format for the full-vault export; absence uses the model-injection default.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ExportOptions {
     #[serde(default)]
     pub format: Option<String>,

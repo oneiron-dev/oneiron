@@ -254,7 +254,7 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         | SelfEffect::ReportBlocked
         | SelfEffect::InferenceDefaultsRead
         | SelfEffect::InferenceDefaultsReplace => false,
-        SelfEffect::WakePolicyWrite => false,
+        SelfEffect::WakePolicyWrite | SelfEffect::AgentVerb => false,
     }
 }
 

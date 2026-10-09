@@ -10,6 +10,8 @@
     ("memory-put-claim", "self.memory.put_claim"),
     ("memory-supersede-claim", "self.memory.supersede_claim"),
     ("memory-put-edge", "self.memory.put_edge"),
+    ("verb-names", "self.verbs.names"),
+    ("verb-call", "self.verbs.call"),
     ("report-blocked", "self.report_blocked"),
     ("ask", "ask"),
     ("speak", "self.speak"),

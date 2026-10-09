@@ -150,6 +150,7 @@ pub struct RoomEntry {
 /// so an omitting client and a spelling-everything client reach the same
 /// engine call.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RecallRequest {
     pub query: String,
     #[serde(default)]
@@ -195,6 +196,7 @@ pub fn recall_with_vector(
 
 /// `receipts`'s one input.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ReceiptsRequest {
     #[serde(default)]
     pub limit: Option<usize>,
@@ -202,6 +204,142 @@ pub struct ReceiptsRequest {
 
 include!("verb_catalog.rs");
 include!("sdk_generated.rs");
+
+/// The verb table as code mode's `self.memory` declarations: one signature
+/// per row, rendered from that verb's own input schema, so the methods a
+/// model is shown are exactly the rows the host serves.
+#[must_use]
+pub fn code_mode_declarations() -> &'static str {
+    // GLOBAL STATE: rendered once from compiled verb schemas, which are
+    // immutable and vault-independent.
+    static DECLARATIONS: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        let mut tree = std::collections::BTreeMap::new();
+        for verb in AgentVerb::ALL {
+            let mut node = &mut tree;
+            let mut parts = verb.as_str().split('.').peekable();
+            while let Some(part) = parts.next() {
+                let entry = node
+                    .entry(part)
+                    .or_insert_with(|| DeclarationNode::Namespace(Default::default()));
+                if parts.peek().is_none() {
+                    *entry = DeclarationNode::Verb(*verb);
+                    break;
+                }
+                let DeclarationNode::Namespace(next) = entry else {
+                    break;
+                };
+                node = next;
+            }
+        }
+        let mut out = String::from("declare namespace self {\n  namespace memory {\n");
+        render_declarations(&tree, 2, &mut out);
+        out.push_str("  }\n}\n");
+        out
+    });
+    &DECLARATIONS
+}
+
+enum DeclarationNode {
+    Namespace(std::collections::BTreeMap<&'static str, DeclarationNode>),
+    Verb(AgentVerb),
+}
+
+fn render_declarations(
+    tree: &std::collections::BTreeMap<&'static str, DeclarationNode>,
+    depth: usize,
+    out: &mut String,
+) {
+    let indent = "  ".repeat(depth);
+    for (name, node) in tree {
+        match node {
+            DeclarationNode::Namespace(children) => {
+                out.push_str(&format!("{indent}namespace {name} {{\n"));
+                render_declarations(children, depth + 1, out);
+                out.push_str(&format!("{indent}}}\n"));
+            }
+            DeclarationNode::Verb(verb) => {
+                let input =
+                    input_schema(verb.as_str()).map_or_else(|| "object".to_owned(), schema_type);
+                out.push_str(&format!(
+                    "{indent}function {name}(input: {input}): Promise<unknown>;\n"
+                ));
+            }
+        }
+    }
+}
+
+/// A schema's TypeScript spelling, one level deep: nested objects stay `object`.
+fn schema_type(schema: &serde_json::Value) -> String {
+    let required: Vec<&str> = schema["required"]
+        .as_array()
+        .map(|fields| {
+            fields
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect()
+        })
+        .unwrap_or_default();
+    let Some(properties) = schema["properties"].as_object() else {
+        return "object".to_owned();
+    };
+    let fields: Vec<String> = properties
+        .iter()
+        .map(|(field, property)| {
+            let optional = if required.contains(&field.as_str()) {
+                ""
+            } else {
+                "?"
+            };
+            format!("{field}{optional}: {}", property_type(property))
+        })
+        .collect();
+    format!("{{ {} }}", fields.join("; "))
+}
+
+fn property_type(property: &serde_json::Value) -> String {
+    if let Some(values) = property["enum"].as_array() {
+        return values
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join(" | ");
+    }
+    if let Some(branches) = property["anyOf"]
+        .as_array()
+        .or_else(|| property["oneOf"].as_array())
+    {
+        return branches
+            .iter()
+            .map(property_type)
+            .collect::<Vec<_>>()
+            .join(" | ");
+    }
+    let types: Vec<&str> = match &property["type"] {
+        serde_json::Value::String(kind) => vec![kind.as_str()],
+        serde_json::Value::Array(kinds) => {
+            kinds.iter().filter_map(serde_json::Value::as_str).collect()
+        }
+        _ => return "unknown".to_owned(),
+    };
+    types
+        .into_iter()
+        .map(|kind| match kind {
+            "string" => "string".to_owned(),
+            "integer" | "number" => "number".to_owned(),
+            "boolean" => "boolean".to_owned(),
+            "null" => "null".to_owned(),
+            "array" => format!(
+                "{}[]",
+                match property_type(&property["items"]).as_str() {
+                    item if item.contains(' ') => format!("({item})"),
+                    item => item.to_owned(),
+                }
+            ),
+            _ => "object".to_owned(),
+        })
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
 
 #[cfg(test)]
 #[test]
@@ -219,15 +357,18 @@ fn sdk_catalog_drives_scoped_projections_and_round_trips_names() {
         assert!(names.insert(verb.as_str()));
         assert_eq!(AgentVerb::from_name(verb.as_str()), Some(*verb));
         assert!(input_schema(verb.as_str()).is_some());
-        assert_eq!(verb.argument_fields().is_some(), verb.is_mcp());
-        assert_eq!(verb.required_fields().is_some(), verb.is_mcp());
-        assert_eq!(mcp_arguments_schema(verb.as_str()).is_some(), verb.is_mcp());
+        // ARCH-0028: the tool list is the whole verb table, never a curated one.
+        assert!(
+            mcp_arguments_schema(verb.as_str()).is_some(),
+            "{}",
+            verb.as_str()
+        );
     }
     assert!(AgentVerb::TasksAsk.is_section());
     assert!(AgentVerb::RoomsSpeak.writes());
     assert!(AgentVerb::RoomsList.is_facade());
     assert!(!AgentVerb::BoardExpand.is_facade());
-    assert!(!AgentVerb::Recall.is_mcp());
+    assert_eq!(AgentVerb::Recall.argument_fields(), &["spec"]);
     assert!(AgentVerb::from_name("not.a.verb").is_none());
 }
 

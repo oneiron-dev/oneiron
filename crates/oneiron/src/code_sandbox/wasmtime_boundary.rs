@@ -185,6 +185,18 @@ fn link<H: bindings::GuestImports + 'static>(
                     Ok((verdict,))
                 },
             )?,
+            "self.verbs.names" => root.func_wrap(
+                wit,
+                |mut cx: StoreContextMut<'_, RequestState<H>>, (): ()| {
+                    Ok((cx.data_mut().host.verb_names(),))
+                },
+            )?,
+            "self.verbs.call" => root.func_wrap(
+                wit,
+                |mut cx: StoreContextMut<'_, RequestState<H>>, (verb, input): (String, String)| {
+                    Ok((cx.data_mut().host.verb_call(verb, input),))
+                },
+            )?,
             "self.memory.search" => unary!(root, wit, memory_search, SearchInput),
             "self.memory.put_claim" => unary!(root, wit, memory_put_claim, ClaimInput),
             "self.memory.supersede_claim" => {

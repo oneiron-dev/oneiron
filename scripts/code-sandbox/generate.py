@@ -58,7 +58,10 @@ def schema(source):
                 raise ValueError(f"unrecognized WIT variant case: {case}")
             variants[name].append(match.groups())
     imports = []
-    for js, name, args, result in re.findall(r"// @js ([\w.]+)\s+import ([\w-]+): func\(([^)]*)\) -> ([^;]+);", source):
+    # `@sync` returns a plain value instead of a Promise. `@abi` is bootstrap's
+    # own wiring: the guest never sees it, so no prompt declares it.
+    for js, flags, name, args, result in re.findall(r"// @js ([\w.]+)((?: @[\w-]+)*)\s+import ([\w-]+): func\(([^)]*)\) -> ([^;]+);", source):
+        flags = flags.split()
         params = []
         for arg in split_types(args):
             mode = "json" if "// @json" in arg else None
@@ -71,7 +74,8 @@ def schema(source):
                 raise ValueError("SDK error type must be string")
             result = ok
         imports.append({"js": js, "wit": name, "params": params, "result": result,
-                        "async": not js.startswith("oneiron.")})
+                        "async": not js.startswith("oneiron.") and "@sync" not in flags,
+                        "abi": "@abi" in flags})
     if len(imports) != len(re.findall(r"\bimport\s+[\w-]+:", source)):
         raise ValueError("every WIT import must have @js")
     if len({row['js'] for row in imports}) != len(imports):
@@ -111,6 +115,8 @@ def generate(source):
     dts.append("}")
     tree = {}
     for row in imports:
+        if row['abi']:
+            continue
         node = tree
         *namespaces, function = row['js'].split('.')
         for namespace in namespaces:

@@ -316,12 +316,13 @@ pub(super) fn executor_boundary_contract() -> EngineExecutorResult<SandboxBounda
 pub(super) fn executor_system_prompt(wire: &str) -> String {
     let wire = wire.trim_end();
     let runtime_types = include_str!("../../../../components/code-run-quickjs/runtime.d.ts");
+    let verbs = crate::task_verb::sdk::code_mode_declarations();
     format!(
         "You are Oneiron's engine-native executor.\n{wire}\n\
          The guest runs inside the CODE-1 Wasmtime WIT component boundary.\n\
          Clock and random values are host-controlled imports for replay determinism.\n\
          Use the prompt-side host verb types below as documentation only; runtime effects arrive \
-         as typed host imports:\n\n{PLAIN_JS_HOST_VERB_DTS}\n{runtime_types}"
+         as typed host imports:\n\n{PLAIN_JS_HOST_VERB_DTS}\n{verbs}\n{runtime_types}"
     )
 }
 

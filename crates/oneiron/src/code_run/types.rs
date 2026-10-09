@@ -62,6 +62,8 @@ pub enum SelfCall {
     InferenceDefaultsReplace(String),
     /// Host-authorized action; a guest request alone carries no owner proof.
     WakePolicyWrite(SelfWakePolicyWriteCall),
+    /// `self.memory.<verb>(input)`: one row of the SDK verb table.
+    AgentVerb(SelfAgentVerbCall),
 }
 
 impl SelfCall {
@@ -89,6 +91,7 @@ impl SelfCall {
             Self::InferenceDefaultsRead => SelfEffect::InferenceDefaultsRead,
             Self::InferenceDefaultsReplace(_) => SelfEffect::InferenceDefaultsReplace,
             Self::WakePolicyWrite(_) => SelfEffect::WakePolicyWrite,
+            Self::AgentVerb(_) => SelfEffect::AgentVerb,
         }
     }
 
@@ -149,6 +152,8 @@ pub enum SelfEffect {
     InferenceDefaultsRead,
     InferenceDefaultsReplace,
     WakePolicyWrite,
+    /// One SDK verb-table call, run by the host's bound verb door.
+    AgentVerb,
 }
 
 impl SelfEffect {
@@ -177,6 +182,7 @@ impl SelfEffect {
             Self::InferenceDefaultsRead => "self.inference_defaults.read",
             Self::InferenceDefaultsReplace => "self.inference_defaults.replace",
             Self::WakePolicyWrite => "dreamer.wake_policy.set",
+            Self::AgentVerb => "self.verbs.call",
         }
     }
 
@@ -209,7 +215,7 @@ impl SelfEffect {
             | Self::ReportBlocked
             | Self::InferenceDefaultsRead
             | Self::InferenceDefaultsReplace => None,
-            Self::WakePolicyWrite => None,
+            Self::WakePolicyWrite | Self::AgentVerb => None,
         }
     }
 
@@ -425,6 +431,33 @@ impl SelfFixtureEffectCall {
     }
 }
 
+/// One SDK verb-table call from code mode: `self.memory.<verb>(input)`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelfAgentVerbCall {
+    pub verb: crate::task_verb::sdk::AgentVerb,
+    /// The verb's whole typed input, as its REST body and SDK bindings take it.
+    pub input: serde_json::Value,
+}
+
+/// A verb call the bound door refused or could not run, as the guest sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentVerbRefusal {
+    pub code: String,
+    pub message: String,
+}
+
+/// The host's door onto the SDK verb table.
+///
+/// The engine runs no verb here. The host that binds this door runs each call
+/// with its own actor ceiling and gate, exactly as its other doors do, so code
+/// mode holds no authority a direct call lacks. Unbound, a verb call is refused.
+pub trait AgentVerbDoor: Send + Sync {
+    fn call(
+        &self,
+        call: &SelfAgentVerbCall,
+    ) -> std::result::Result<serde_json::Value, AgentVerbRefusal>;
+}
+
 /// Result of dispatching a `self.*` call.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SelfDispatchOutcome {
@@ -449,6 +482,8 @@ pub enum SelfDispatchOutcome {
     InferenceDefaults(String),
     /// The authorized v1 policy row that was persisted in the vault.
     WakePolicyWritten(crate::dreamer_wake::DreamerWakePolicy),
+    /// The verb's JSON output, exactly as its other doors return it.
+    AgentVerb(serde_json::Value),
 }
 
 /// Result of one `self.speak`/`self.think`/`self.express` call.

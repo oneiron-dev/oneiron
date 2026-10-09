@@ -287,43 +287,22 @@ pub(crate) async fn execute_mcp_tool(
     args: McpValidatedToolArgs,
     actor: &McpCallContext,
 ) -> Result<Value, McpGatewayError> {
-    let auth = actor.auth.as_ref().ok_or_else(mcp_proof_error)?;
-    if !auth.credential_is_live(server.vault().as_ref()) {
-        return Err(mcp_proof_error());
+    match &args {
+        McpValidatedToolArgs::Verb(verb) => {
+            mcp_verb_gate(server, verb.tool, &verb.payload.arguments, actor)?;
+        }
+        other => {
+            let writes = matches!(
+                other,
+                McpValidatedToolArgs::Edit(_)
+                    | McpValidatedToolArgs::Book(_)
+                    | McpValidatedToolArgs::ExecuteCode(_)
+                    | McpValidatedToolArgs::Calendar(_)
+            );
+            let filtered_read = matches!(other, McpValidatedToolArgs::Setup(_));
+            mcp_credential_gate(server, actor, filtered_read, writes)?;
+        }
     }
-    // Board/task lists are explicitly filtered row by row. Legacy adapters
-    // and task detail/write facades have no recursive proof projection, so
-    // they require an unrestricted record scope instead of dropping caveats.
-    // A filtered read that names one task reads that task's card, which is
-    // task detail too. `describe(self)` renders the whole run brief, not
-    // filtered rows, so it takes the same guard.
-    let filtered_read = matches!(&args, McpValidatedToolArgs::Setup(_))
-        || matches!(&args, McpValidatedToolArgs::Verb(verb)
-            if verb.tool.filtered_read()
-                && verb.payload.arguments.task_ref.is_none()
-                && verb.payload.arguments.self_target != Some(true));
-    if !filtered_read {
-        auth.require_unrestricted_record_scope().map_err(|_| {
-            McpGatewayError::new(
-                -32020,
-                "mcp_scope_unprojectable",
-                "this facade cannot project the credential's record bounds",
-            )
-        })?;
-    }
-    let writes = matches!(
-        &args,
-        McpValidatedToolArgs::Edit(_)
-            | McpValidatedToolArgs::Book(_)
-            | McpValidatedToolArgs::ExecuteCode(_)
-            | McpValidatedToolArgs::Calendar(_)
-    ) || matches!(&args, McpValidatedToolArgs::Verb(verb) if verb.tool.writes());
-    auth.require(if writes {
-        crate::auth::CoreScope::Write
-    } else {
-        crate::auth::CoreScope::Read
-    })
-    .map_err(|_| mcp_proof_error())?;
     match args {
         McpValidatedToolArgs::Nav(args) => execute_mcp_nav(server, args, actor),
         McpValidatedToolArgs::Read(args) => execute_mcp_read(server, args, actor),
@@ -338,6 +317,53 @@ pub(crate) async fn execute_mcp_tool(
         }
         McpValidatedToolArgs::Verb(args) => execute_mcp_generated_verb(server, *args, actor).await,
     }
+}
+
+/// One generated verb's credential gate, whichever door the call arrived at.
+///
+/// Board/task lists are explicitly filtered row by row. Task detail/write
+/// facades have no recursive proof projection, so they require an unrestricted
+/// record scope instead of dropping caveats. A filtered read that names one
+/// task reads that task's card, which is task detail too. `describe(self)`
+/// renders the whole run brief, not filtered rows, so it takes the same guard.
+pub(crate) fn mcp_verb_gate(
+    server: &Arc<SyncServer>,
+    tool: crate::mcp::McpGeneratedVerbTool,
+    arguments: &crate::mcp::McpVerbArguments,
+    actor: &McpCallContext,
+) -> Result<(), McpGatewayError> {
+    let filtered_read =
+        tool.filtered_read() && arguments.task_ref.is_none() && arguments.self_target != Some(true);
+    mcp_credential_gate(server, actor, filtered_read, tool.writes())
+}
+
+/// The connector credential is live, inside its record bounds unless the call
+/// is a filtered list, and holds Read or Write for what the call does.
+fn mcp_credential_gate(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    filtered_read: bool,
+    writes: bool,
+) -> Result<(), McpGatewayError> {
+    let auth = actor.auth.as_ref().ok_or_else(mcp_proof_error)?;
+    if !auth.credential_is_live(server.vault().as_ref()) {
+        return Err(mcp_proof_error());
+    }
+    if !filtered_read {
+        auth.require_unrestricted_record_scope().map_err(|_| {
+            McpGatewayError::new(
+                -32020,
+                "mcp_scope_unprojectable",
+                "this facade cannot project the credential's record bounds",
+            )
+        })?;
+    }
+    auth.require(if writes {
+        crate::auth::CoreScope::Write
+    } else {
+        crate::auth::CoreScope::Read
+    })
+    .map_err(|_| mcp_proof_error())
 }
 
 /// Dispatches `oneiron.book`.

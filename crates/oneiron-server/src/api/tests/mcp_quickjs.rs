@@ -94,22 +94,20 @@ fn factory() -> QuickJsRuntimeFactory {
     QuickJsRuntimeFactory::from_component(&bytes, hash, ComponentBudget::default()).unwrap()
 }
 
-#[tokio::test]
-async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes() {
+/// One server bound to the production QuickJS provider over a real component,
+/// whose code-seat model answers with `scripts`, one per executor step.
+struct CodeMode {
+    server: Arc<SyncServer>,
+    vault: Arc<oneiron::Vault>,
+    backend: Arc<Backend>,
+    judge: Arc<Judge>,
+    seat_model: ModelId,
+    _dir: tempfile::TempDir,
+}
+
+fn code_mode_server(scripts: Vec<String>) -> CodeMode {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
-    let actor_id = seeded_test_entity_id(0x0024_6501);
-    let subject = seeded_test_entity_id(0x0024_6502);
-    let claim = seeded_test_entity_id(0x0024_6503);
-    vault
-        .put_entity(
-            &subject,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            b"quickjs subject",
-        )
-        .unwrap();
     let seat_model = ModelId::new("fixture/code-seat@v2").unwrap();
     let manifest = ModelManifest {
         version: 2,
@@ -190,14 +188,6 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
         model: seat_model.clone(),
         calls: AtomicUsize::new(0),
     });
-    let scripts = [
-        format!(
-            "const receipt = await self.memory.put_claim({{id:'{}', predicate:'profile.favorite_drink', subject:'{}', value:'sencha'}}); console.log(receipt.id);",
-            claim.to_hex(),
-            subject.to_hex()
-        ),
-        "finish('recorded');".into(),
-    ];
     let backend = Arc::new(Backend {
         scripts: Mutex::new(scripts.into()),
         requests: Mutex::new(Vec::new()),
@@ -234,6 +224,46 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
         .unwrap()
         .with_mcp_quickjs_provider(provider),
     );
+    CodeMode {
+        server,
+        vault,
+        backend,
+        judge,
+        seat_model,
+        _dir: dir,
+    }
+}
+
+#[tokio::test]
+async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes() {
+    let actor_id = seeded_test_entity_id(0x0024_6501);
+    let subject = seeded_test_entity_id(0x0024_6502);
+    let claim = seeded_test_entity_id(0x0024_6503);
+    let scripts = vec![
+        format!(
+            "const receipt = await self.memory.put_claim({{id:'{}', predicate:'profile.favorite_drink', subject:'{}', value:'sencha'}}); console.log(receipt.id);",
+            claim.to_hex(),
+            subject.to_hex()
+        ),
+        "finish('recorded');".into(),
+    ];
+    let CodeMode {
+        server,
+        vault,
+        backend,
+        judge,
+        seat_model,
+        _dir,
+    } = code_mode_server(scripts);
+    vault
+        .put_entity(
+            &subject,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"quickjs subject",
+        )
+        .unwrap();
     let credential = "quickjs-wire-credential";
     register_mcp_actor(
         &server,
@@ -325,4 +355,187 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
     )
     .await;
     assert_mcp_structured_error(&body, "code_run_binding_failed");
+}
+
+const CODE_MODE_RECALL: &str = "const pack = await self.memory.recall({query: 'heron lantern', \
+    effort: 'medium', scope: {}}); finish(JSON.stringify(pack));";
+
+/// Witnesses one message through the tool list's generated `witness` tool.
+async fn witness_through_tool_list(
+    server: &Arc<SyncServer>,
+    credential: &str,
+    actor: oneiron::EntityId,
+    text: &str,
+) {
+    let args = mcp_merge_args(
+        mcp_endpoint_envelope(actor, "write_memory"),
+        json!({"arguments": {"spec": {
+            "conversation_ref": "41414141414141414141414141414141",
+            "occurred_at": 1_767_225_600,
+            "messages": [{"author": "user", "message_type": "text", "content": text, "is_visible": true, "order": 0}],
+        }}}),
+    );
+    let (_, body) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(MCP_TOOL_FIRST_PATH, credential, "witness", "witness", args),
+    )
+    .await;
+    assert!(body.get("error").is_none(), "{body}");
+}
+
+/// Done means (ARCH-0028, OF-246/OF-227): through the shipped HTTP MCP wire, an
+/// `execute_code` run calls `self.memory.recall({query, effort, scope})` and
+/// reads back a phrase saved earlier in the same vault. Before this change the
+/// method did not exist.
+#[tokio::test]
+async fn quickjs_code_mode_recall_reads_back_a_phrase_saved_in_the_vault() {
+    let mode = code_mode_server(vec![CODE_MODE_RECALL.to_owned()]);
+    let actor = seeded_test_entity_id(0x0024_6511);
+    let credential = "quickjs-recall-credential";
+    register_mcp_actor(
+        &mode.server,
+        credential,
+        actor,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    witness_through_tool_list(
+        &mode.server,
+        credential,
+        actor,
+        "The heron lantern hangs by the north gate.",
+    )
+    .await;
+
+    let args = mcp_merge_args(
+        mcp_endpoint_envelope(actor, "read_memory"),
+        json!({"run_ref": "quickjs-recall", "task": "recall the heron lantern"}),
+    );
+    let (_, body) = route_json(
+        mode.server.clone(),
+        mcp_endpoint_call_request("/mcp", credential, "recall", "execute_code", args),
+    )
+    .await;
+    assert!(body.get("error").is_none(), "{body}");
+    let structured = &body["result"]["structuredContent"];
+    assert_eq!(structured["result"]["status"], "complete", "{structured}");
+    // The recall's own output is the run's one bridge call, as recorded.
+    let steps = structured["steps"].as_array().expect("steps");
+    assert_eq!(steps.len(), 1, "{structured}");
+    assert_eq!(steps[0]["effect"], "self.verbs.call");
+    let recalled = steps[0]["outcome"]["output"]
+        .as_str()
+        .expect("recall output");
+    assert!(
+        recalled.contains("north gate"),
+        "recall did not return the saved phrase: {recalled}"
+    );
+}
+
+/// A connector narrowed to one world reaches no other world's memory through
+/// recall, on the tool list or in code mode; and a connector bound to fewer
+/// verbs cannot reach the rest through code mode. Code mode is a door onto the
+/// same gate, never around it.
+#[tokio::test]
+async fn quickjs_code_mode_keeps_connector_narrowing() {
+    let refused = "try { await self.memory.recall({query: 'heron lantern'}); finish('reached'); } \
+        catch (error) { finish('refused ' + String(error)); }";
+    let mode = code_mode_server(vec![refused.to_owned()]);
+    let owner = seeded_test_entity_id(0x0024_6521);
+    register_mcp_actor(
+        &mode.server,
+        "quickjs-owner",
+        owner,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    witness_through_tool_list(
+        &mode.server,
+        "quickjs-owner",
+        owner,
+        "The heron lantern hangs by the north gate.",
+    )
+    .await;
+
+    let narrowed = seeded_test_entity_id(0x0024_6522);
+    let scope = crate::mcp::McpConnectorScope {
+        world_ref: Some(seeded_test_entity_id(0x0024_6523)),
+        facet_ref: None,
+    };
+    register_scoped_mcp_actor(&mode.server, "quickjs-world", narrowed, scope.clone()).await;
+    let tool = mcp_merge_args(
+        mcp_scoped_envelope(narrowed, "read_memory", &scope),
+        json!({"arguments": {"spec": {"query": "heron lantern"}}}),
+    );
+    let code = mcp_merge_args(
+        mcp_scoped_envelope(narrowed, "read_memory", &scope),
+        json!({"run_ref": "quickjs-world", "task": "recall the heron lantern"}),
+    );
+    for request in [
+        mcp_endpoint_call_request(MCP_TOOL_FIRST_PATH, "quickjs-world", "tool", "recall", tool),
+        mcp_endpoint_call_request("/mcp", "quickjs-world", "code", "execute_code", code),
+    ] {
+        let body = mcp_refusal(&mode.server, request).await;
+        assert_eq!(
+            body["error"]["data"]["error_code"], "mcp_scope_refused",
+            "{body}"
+        );
+        assert!(!body.to_string().contains("north gate"), "{body}");
+    }
+    assert!(
+        mode.backend.requests.lock().unwrap().is_empty(),
+        "a refused run reaches no model"
+    );
+
+    let bound = seeded_test_entity_id(0x0024_6524);
+    register_bound_verb_mcp_actor(&mode.server, "quickjs-bound", bound, &["execute_code"]).await;
+    let args = mcp_merge_args(
+        mcp_endpoint_envelope(bound, "read_memory"),
+        json!({"run_ref": "quickjs-bound", "task": "recall the heron lantern"}),
+    );
+    let (_, body) = route_json(
+        mode.server.clone(),
+        mcp_endpoint_call_request("/mcp", "quickjs-bound", "bound", "execute_code", args),
+    )
+    .await;
+    assert!(body.get("error").is_none(), "{body}");
+    let text = body["result"]["structuredContent"].to_string();
+    assert!(
+        text.contains("refused") && text.contains("mcp_verb_not_bound"),
+        "{text}"
+    );
+    assert!(!text.contains("north gate"), "{text}");
+}
+
+/// Code mode applies the per-verb argument rules a `tools/call` of the verb
+/// applies (review repro: an empty subscription set was refused on the tool
+/// list but accepted from `self.memory.board.subscribe`).
+#[tokio::test]
+async fn quickjs_code_mode_applies_the_tool_argument_rules() {
+    let script = "try { await self.memory.board.subscribe({scopes: []}); finish('reached'); } \
+        catch (error) { finish('refused ' + String(error)); }";
+    let mode = code_mode_server(vec![script.to_owned()]);
+    let actor = seeded_test_entity_id(0x0024_6531);
+    register_mcp_actor(
+        &mode.server,
+        "quickjs-args",
+        actor,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    let args = mcp_merge_args(
+        mcp_endpoint_envelope(actor, "read_board"),
+        json!({"run_ref": "quickjs-args", "task": "subscribe to nothing"}),
+    );
+    let (_, body) = route_json(
+        mode.server.clone(),
+        mcp_endpoint_call_request("/mcp", "quickjs-args", "args", "execute_code", args),
+    )
+    .await;
+    assert!(body.get("error").is_none(), "{body}");
+    let steps = body["result"]["structuredContent"]["steps"].to_string();
+    assert!(
+        steps.contains("self.verbs.call") && steps.contains("tool_args_invalid"),
+        "{steps}"
+    );
 }

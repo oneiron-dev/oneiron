@@ -1755,18 +1755,20 @@ fn agent_verb_schemas_follow_manifest_inputs_and_argument_paths() {
         } else {
             assert_eq!(input["type"], "object", "{name}");
         }
-        if row["mcp"] == "none" {
-            assert!(oneiron::task_verb::sdk::mcp_arguments_schema(name).is_none());
-            assert!(surface.resolve(name).is_none());
-            continue;
-        }
-        let tool = surface.resolve(name).expect("projected tool");
+        // ARCH-0028: every callable row is a tool; no row carries an opt-out.
+        assert!(row.get("mcp").is_none(), "{name} curates the tool list");
+        let tool = surface
+            .resolve(name)
+            .unwrap_or_else(|| panic!("{name} is not projected"));
         let schema = tool.schema().input_schema;
         let arguments = &schema["properties"]["arguments"];
         let projected = oneiron::task_verb::sdk::mcp_arguments_schema(name).expect("arguments");
         assert_eq!(arguments["required"], projected["required"], "{name}");
         assert_eq!(arguments["additionalProperties"], false, "{name}");
-        for (field, path) in row["mcp_fields"].as_object().expect("argument paths") {
+        // A row that names no projection takes its whole input as `spec`.
+        let default_fields = json!({"spec": "$"});
+        let fields = row.get("mcp_fields").unwrap_or(&default_fields);
+        for (field, path) in fields.as_object().expect("argument paths") {
             let path = path.as_str().expect("path");
             let pointer = if path == "$" {
                 String::new()

@@ -3,6 +3,20 @@
   const abi = globalThis.__oneironAbi;
   delete globalThis.__oneironAbi;
   const sdk = createHostSdk(abi);
+  // The SDK verb table: one `self.memory` method per row the host serves, so a
+  // row added to the table reaches the guest with no component rebuild.
+  if (sdk.self?.verbs) {
+    const {names, call} = sdk.self.verbs;
+    delete sdk.self.verbs;
+    const memory = sdk.self.memory ??= Object.create(null);
+    for (const name of names()) {
+      const parts = name.split(".");
+      let target = memory;
+      for (const part of parts.slice(0, -1)) target = target[part] ??= Object.create(null);
+      if (Object.hasOwn(target, parts.at(-1))) throw new TypeError("verb row shadows a host import");
+      target[parts.at(-1)] = (input = {}) => call(name, input).then(JSON.parse);
+    }
+  }
   const {clock, random} = sdk.oneiron;
   const nativeStringify = JSON.stringify;
   const string = String;

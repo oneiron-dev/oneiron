@@ -54,6 +54,12 @@ struct JsonValidation {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct VerbCall {
+    verb: String,
+    input: Value,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Search {
     query: String,
     limit: Option<usize>,
@@ -207,6 +213,15 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
 
 fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
     Ok(match name {
+        "self.verbs.call" => {
+            let args: VerbCall = parse(input)?;
+            let verb = crate::task_verb::sdk::AgentVerb::from_name(&args.verb)
+                .ok_or_else(|| failure("unknown SDK verb"))?;
+            SelfCall::AgentVerb(crate::code_run::SelfAgentVerbCall {
+                verb,
+                input: args.input,
+            })
+        }
         "vault.agents.put" => {
             let args: AgentPut = parse(input)?;
             SelfCall::AgentsPut(Box::new(crate::code_run::parse_agent_put_request(
@@ -295,6 +310,7 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
         SelfDispatchOutcome::MemorySearch(value) => json!({"results":value.results.iter().map(|hit|
             json!({"id":hit.id.to_hex(),"score":hit.score})).collect::<Vec<_>>()}),
         SelfDispatchOutcome::DurableWait(value) => json!({"waitId":value.wait_id.to_hex()}),
+        SelfDispatchOutcome::AgentVerb(output) => json!({"output":output}),
         SelfDispatchOutcome::Denied(value) => {
             json!({"denied":value.outcome,"reasonCodes":value.reason_codes})
         }

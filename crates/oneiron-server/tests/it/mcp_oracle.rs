@@ -82,7 +82,6 @@ mod cb_x {
         // and `MEMORY_VERBS`, sorted.
         let mut expected = oneiron::task_verb::sdk::AgentVerb::ALL
             .iter()
-            .filter(|verb| verb.is_mcp())
             .map(|verb| verb.as_str())
             .chain(oneiron::code_run::vault_read::MEMORY_VERBS.iter().copied())
             .map(str::to_owned)
@@ -90,8 +89,9 @@ mod cb_x {
         expected.sort();
         // 24 since ARCH-0067's 2026-09-22 amendment folded `tasks.check` and
         // `tasks.expand` into the one `describe` row; 28 since ONE-2563 added
-        // `rooms.render`, `rooms.find`, `rooms.get` and `rooms.trunk`.
-        assert_eq!(expected.len(), 28);
+        // `rooms.render`, `rooms.find`, `rooms.get` and `rooms.trunk`; 40 since
+        // every callable row is a tool (the 12 former `mcp: none` rows).
+        assert_eq!(expected.len(), 40);
         assert_eq!(variant.verb_table, expected);
         assert_eq!(variant.generated_tool_names, expected);
         assert_eq!(variant.hand_written_tools, 0);
@@ -299,6 +299,20 @@ fn oracle_resolved_actor(actor_ref: EntityId) -> McpResolvedActor {
         .expect("resolve registered actor")
 }
 
+/// This oracle's task calls no SDK verb, so its run binds a door that refuses.
+struct OracleNoVerbs;
+impl oneiron::code_run::AgentVerbDoor for OracleNoVerbs {
+    fn call(
+        &self,
+        _: &oneiron::code_run::SelfAgentVerbCall,
+    ) -> Result<serde_json::Value, oneiron::code_run::AgentVerbRefusal> {
+        Err(oneiron::code_run::AgentVerbRefusal {
+            code: "agent_verb_door_unbound".to_owned(),
+            message: "the oracle binds no verb door".to_owned(),
+        })
+    }
+}
+
 /// Runs `execute_code` twice under ONE run handle through the SHIPPED injected
 /// host adapter.
 async fn injected_host_execute_code() -> InjectedHostRun {
@@ -335,6 +349,7 @@ async fn injected_host_execute_code() -> InjectedHostRun {
             run_ref,
             task,
             run_id,
+            verbs: Arc::new(OracleNoVerbs),
         })
         .await
         .expect("the durable run enters");
@@ -348,6 +363,7 @@ async fn injected_host_execute_code() -> InjectedHostRun {
             run_ref,
             task,
             run_id,
+            verbs: Arc::new(OracleNoVerbs),
         })
         .await
         .expect("the persisted run re-enters");

@@ -58,6 +58,8 @@ pub struct HostSelfDispatcher<'a> {
     /// set it is never cleared, so a later step cannot launder an earlier
     /// external effect out of the run.
     pub(super) external_effect_seen: Cell<bool>,
+    /// The host's door onto the SDK verb table, if it binds one.
+    pub(super) agent_verbs: Option<std::sync::Arc<dyn crate::code_run::AgentVerbDoor>>,
 }
 
 /// Explicit first-party GatedActorWrite trap surface for engine-native code.
@@ -153,7 +155,19 @@ impl<'a> HostSelfDispatcher<'a> {
             code_emission: None,
             owner_proof: None,
             external_effect_seen: Cell::new(false),
+            agent_verbs: None,
         })
+    }
+
+    /// Binds the host's door onto the SDK verb table, so `self.memory.<verb>`
+    /// runs each verb with that host's ceiling and gate.
+    #[must_use]
+    pub fn with_agent_verb_door(
+        mut self,
+        door: std::sync::Arc<dyn crate::code_run::AgentVerbDoor>,
+    ) -> Self {
+        self.agent_verbs = Some(door);
+        self
     }
 
     /// Binds a host-authenticated owner proof to one agent action dispatch.
@@ -292,7 +306,33 @@ impl<'a> HostSelfDispatcher<'a> {
                 self.dispatch_inference_defaults(Some(&json))
             }
             SelfCall::WakePolicyWrite(call) => self.dispatch_wake_policy_write(call),
+            SelfCall::AgentVerb(call) => Ok(self.dispatch_agent_verb(&call)),
         }
+    }
+
+    /// A refused verb is the guest's to handle, like any typed refusal: it
+    /// does not halt the run, and the verb's own gate owns its writes.
+    fn dispatch_agent_verb(
+        &self,
+        call: &crate::code_run::SelfAgentVerbCall,
+    ) -> SelfDispatchOutcome {
+        let outcome = match &self.agent_verbs {
+            Some(door) => door.call(call),
+            None => Err(crate::code_run::AgentVerbRefusal {
+                code: "agent_verb_door_unbound".to_owned(),
+                message: "this run's host binds no SDK verb door".to_owned(),
+            }),
+        };
+        outcome.map_or_else(
+            |refusal| {
+                SelfDispatchOutcome::Denied(crate::code_run::SelfDeniedResult {
+                    effect: SelfEffect::AgentVerb,
+                    outcome: refusal.code,
+                    reason_codes: vec![refusal.message],
+                })
+            },
+            SelfDispatchOutcome::AgentVerb,
+        )
     }
 }
 

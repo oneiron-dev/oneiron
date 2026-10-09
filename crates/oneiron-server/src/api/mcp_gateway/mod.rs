@@ -2,6 +2,7 @@ mod actor_dispatch;
 mod admission;
 mod board_observations;
 mod board_setup;
+mod code_mode_verbs;
 mod envelope;
 mod exec_board_verbs;
 mod facade_verbs;

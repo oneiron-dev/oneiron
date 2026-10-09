@@ -502,6 +502,44 @@ fn code_run_replay_denied_and_failed_bridge_rows_return_errors() -> Result<()> {
     Ok(())
 }
 
+/// Review repro: a refused SDK verb is a typed refusal the guest handles live,
+/// so replay hands back that same refusal, not an unrelated gate trap.
+#[test]
+fn code_run_replay_returns_a_refused_agent_verb_as_the_live_refusal() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_person(&vault, 0x62);
+    let dispatcher = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-agent-verb",
+    )?;
+    let call = SelfCall::AgentVerb(SelfAgentVerbCall {
+        verb: crate::task_verb::sdk::AgentVerb::Recall,
+        input: serde_json::json!({"query": "heron lantern"}),
+    });
+    // No verb door is bound, so the live answer is a typed refusal.
+    let live = dispatcher.dispatch(call.clone())?;
+    let SelfDispatchOutcome::Denied(refusal) = &live else {
+        panic!("expected a typed refusal, got {live:?}");
+    };
+    assert_eq!(refusal.outcome, "agent_verb_door_unbound");
+
+    let determinism = CodeRunDeterminism::new(1_719_000_002_000, [0xAC; 32]);
+    let run_id = EntityId::from_bytes([0x75; 16]).expect("run id");
+    let mut record = CodeRunReplayRecord::new(run_id, determinism);
+    record.bridge_calls.push(CodeRunBridgeCall::record(
+        0,
+        &call,
+        &live,
+        determinism.frozen_unix_ms,
+        determinism.frozen_unix_ms,
+    )?);
+    let decoded = decode_code_run_replay_record(&encode_code_run_replay_record(&record)?)?;
+    let replay = decoded.replay_cursor();
+    assert_eq!(replay.dispatch(call)?, live);
+    Ok(())
+}
+
 #[test]
 fn code_run_replay_large_output_persists_raw_bytes_and_compact_preview() -> Result<()> {
     let (_dir, vault) = open_test_vault();

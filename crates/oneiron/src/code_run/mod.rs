@@ -60,6 +60,7 @@ pub use self::types::{
     SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
     SelfSpeechCall, SelfSpeechResult, SelfWakePolicyWriteCall, peer_result_wait,
 };
+pub use types::{AgentVerbDoor, AgentVerbRefusal, SelfAgentVerbCall};
 
 // The flat code_run.rs module used to provide these names to the test module
 // through `use super::*`; after the directory split the seam re-imports them so

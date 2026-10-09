@@ -111,6 +111,7 @@ impl Effort {
 /// Recall scoping (S5): world/facet narrowing and the kinds returned — unset
 /// means the vault floor; the scope never widens beyond it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RecallScope {
     /// WORLD entity ref; scopes to that world plus base reality. Unset reads
     /// base plus the actor's active world (ARCH-0022), never every world.

@@ -158,36 +158,15 @@ impl AgentVerb {
                 | Self::TasksOutcomes
         )
     }
-    pub const fn is_mcp(self) -> bool {
-        matches!(
-            self,
-            Self::BoardExpand
-                | Self::BoardRefresh
-                | Self::BoardSubscribe
-                | Self::BoardUnsubscribe
-                | Self::Cancel
-                | Self::Describe
-                | Self::TasksCreate
-                | Self::TasksUpdate
-                | Self::TasksAsk
-                | Self::TasksWait
-                | Self::TasksAnswer
-                | Self::TasksOutcomes
-                | Self::RoomsList
-                | Self::RoomsMessages
-                | Self::RoomsRender
-                | Self::RoomsFind
-                | Self::RoomsGet
-                | Self::RoomsTrunk
-                | Self::RoomsClaim
-                | Self::RoomsSpeak
-        )
-    }
     pub const fn continuable(self) -> bool {
         matches!(
             self,
             Self::BoardExpand
                 | Self::Describe
+                | Self::Receipts
+                | Self::KeyValueSearch
+                | Self::KeyValueNamespaces
+                | Self::Peek
                 | Self::TasksOutcomes
                 | Self::RoomsList
                 | Self::RoomsMessages
@@ -209,6 +188,18 @@ impl AgentVerb {
         matches!(
             self,
             Self::TasksCreate
+                | Self::Witness
+                | Self::ClaimUpsert
+                | Self::Recall
+                | Self::Export
+                | Self::Receipts
+                | Self::KeyValueGet
+                | Self::KeyValuePut
+                | Self::KeyValueDelete
+                | Self::KeyValueSearch
+                | Self::KeyValueNamespaces
+                | Self::Can
+                | Self::Peek
                 | Self::TasksAsk
                 | Self::TasksWait
                 | Self::TasksAnswer
@@ -240,54 +231,76 @@ impl AgentVerb {
                 | Self::RoomsSpeak
         )
     }
-    pub const fn argument_fields(self) -> Option<&'static [&'static str]> {
+    pub const fn argument_fields(self) -> &'static [&'static str] {
         match self {
-            Self::BoardExpand => Some(&["key", "frame_epoch"]),
-            Self::BoardRefresh => Some(&["frame_epoch"]),
-            Self::BoardSubscribe => Some(&["scopes"]),
-            Self::BoardUnsubscribe => Some(&["scopes"]),
-            Self::Cancel => Some(&["task_ref"]),
-            Self::Describe => Some(&["task_ref", "self", "session_id"]),
-            Self::TasksCreate => Some(&["spec", "label"]),
-            Self::TasksUpdate => Some(&["task_ref"]),
-            Self::TasksAsk => Some(&["spec"]),
-            Self::TasksWait => Some(&["spec"]),
-            Self::TasksAnswer => Some(&["spec"]),
-            Self::TasksOutcomes => Some(&["spec"]),
-            Self::RoomsList => Some(&[]),
-            Self::RoomsMessages => Some(&["room_ref", "turn_ref"]),
-            Self::RoomsRender => Some(&["room_ref"]),
-            Self::RoomsFind => Some(&["room_ref", "turn_ref"]),
-            Self::RoomsGet => Some(&["room_ref", "turn_ref"]),
-            Self::RoomsTrunk => Some(&["room_ref", "turn_ref"]),
-            Self::RoomsClaim => Some(&["room_ref", "turn_ref"]),
-            Self::RoomsSpeak => Some(&["spec", "room_ref"]),
-            _ => None,
+            Self::BoardExpand => &["key", "frame_epoch"],
+            Self::BoardRefresh => &["frame_epoch"],
+            Self::BoardSubscribe => &["scopes"],
+            Self::BoardUnsubscribe => &["scopes"],
+            Self::Cancel => &["task_ref"],
+            Self::Describe => &["task_ref", "self", "session_id"],
+            Self::TasksCreate => &["spec", "label"],
+            Self::TasksUpdate => &["task_ref"],
+            Self::Witness => &["spec"],
+            Self::ClaimUpsert => &["spec"],
+            Self::Recall => &["spec"],
+            Self::Export => &["spec"],
+            Self::Receipts => &["spec"],
+            Self::KeyValueGet => &["spec"],
+            Self::KeyValuePut => &["spec"],
+            Self::KeyValueDelete => &["spec"],
+            Self::KeyValueSearch => &["spec"],
+            Self::KeyValueNamespaces => &["spec"],
+            Self::Can => &["spec"],
+            Self::Peek => &["spec"],
+            Self::TasksAsk => &["spec"],
+            Self::TasksWait => &["spec"],
+            Self::TasksAnswer => &["spec"],
+            Self::TasksOutcomes => &["spec"],
+            Self::RoomsList => &[],
+            Self::RoomsMessages => &["room_ref", "turn_ref"],
+            Self::RoomsRender => &["room_ref"],
+            Self::RoomsFind => &["room_ref", "turn_ref"],
+            Self::RoomsGet => &["room_ref", "turn_ref"],
+            Self::RoomsTrunk => &["room_ref", "turn_ref"],
+            Self::RoomsClaim => &["room_ref", "turn_ref"],
+            Self::RoomsSpeak => &["spec", "room_ref"],
         }
     }
-    pub const fn required_fields(self) -> Option<&'static [&'static str]> {
+    pub const fn required_fields(self) -> &'static [&'static str] {
         match self {
-            Self::BoardExpand => Some(&["key"]),
-            Self::BoardRefresh => Some(&[]),
-            Self::BoardSubscribe => Some(&["scopes"]),
-            Self::BoardUnsubscribe => Some(&["scopes"]),
-            Self::Cancel => Some(&["task_ref"]),
-            Self::Describe => Some(&[]),
-            Self::TasksCreate => Some(&["spec"]),
-            Self::TasksUpdate => Some(&["task_ref"]),
-            Self::TasksAsk => Some(&["spec"]),
-            Self::TasksWait => Some(&["spec"]),
-            Self::TasksAnswer => Some(&["spec"]),
-            Self::TasksOutcomes => Some(&["spec"]),
-            Self::RoomsList => Some(&[]),
-            Self::RoomsMessages => Some(&["room_ref"]),
-            Self::RoomsRender => Some(&["room_ref"]),
-            Self::RoomsFind => Some(&["room_ref"]),
-            Self::RoomsGet => Some(&["room_ref", "turn_ref"]),
-            Self::RoomsTrunk => Some(&["room_ref", "turn_ref"]),
-            Self::RoomsClaim => Some(&["room_ref", "turn_ref"]),
-            Self::RoomsSpeak => Some(&["spec", "room_ref"]),
-            _ => None,
+            Self::BoardExpand => &["key"],
+            Self::BoardRefresh => &[],
+            Self::BoardSubscribe => &["scopes"],
+            Self::BoardUnsubscribe => &["scopes"],
+            Self::Cancel => &["task_ref"],
+            Self::Describe => &[],
+            Self::TasksCreate => &["spec"],
+            Self::TasksUpdate => &["task_ref"],
+            Self::Witness => &["spec"],
+            Self::ClaimUpsert => &["spec"],
+            Self::Recall => &["spec"],
+            Self::Export => &["spec"],
+            Self::Receipts => &["spec"],
+            Self::KeyValueGet => &["spec"],
+            Self::KeyValuePut => &["spec"],
+            Self::KeyValueDelete => &["spec"],
+            Self::KeyValueSearch => &["spec"],
+            Self::KeyValueNamespaces => &["spec"],
+            Self::Can => &["spec"],
+            Self::Peek => &["spec"],
+            Self::TasksAsk => &["spec"],
+            Self::TasksWait => &["spec"],
+            Self::TasksAnswer => &["spec"],
+            Self::TasksOutcomes => &["spec"],
+            Self::RoomsList => &[],
+            Self::RoomsMessages => &["room_ref"],
+            Self::RoomsRender => &["room_ref"],
+            Self::RoomsFind => &["room_ref"],
+            Self::RoomsGet => &["room_ref", "turn_ref"],
+            Self::RoomsTrunk => &["room_ref", "turn_ref"],
+            Self::RoomsClaim => &["room_ref", "turn_ref"],
+            Self::RoomsSpeak => &["spec", "room_ref"],
         }
     }
 }
