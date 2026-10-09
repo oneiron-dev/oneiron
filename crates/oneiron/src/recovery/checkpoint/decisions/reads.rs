@@ -161,8 +161,8 @@ impl ClaimGrants {
         let mut actors = BTreeSet::new();
         let mut classes = BTreeSet::from([None]);
         for vault in vaults {
+            let policy = vault.store.policy_as_next_opened()?;
             let txn = vault.store.env.read_txn()?;
-            let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
             for grant in policy.scoped_grants() {
                 actors.extend(grant.actor_ref.clone());
                 classes.insert(grant.actor_class.clone());
@@ -208,8 +208,8 @@ struct GrantCheck<'a> {
 
 impl<'a> GrantCheck<'a> {
     fn open(vault: &'a Vault) -> Result<Self> {
+        let policy = vault.store.policy_as_next_opened().ok();
         let txn = vault.store.env.read_txn()?;
-        let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn).ok();
         Ok(Self { vault, txn, policy })
     }
 
@@ -324,10 +324,10 @@ impl Decision for NoteReads {
         vault: &Vault,
         subjects: &BTreeSet<Self::Subject>,
     ) -> Result<Vec<Option<Self::Answer>>> {
-        let txn = vault.store.env.read_txn()?;
-        let Ok(policy) = crate::gate::resolve_policy_manifest(&vault.store, &txn) else {
+        let Ok(policy) = vault.store.policy_as_next_opened() else {
             return Ok(vec![None; subjects.len()]);
         };
+        let txn = vault.store.env.read_txn()?;
         let mut note: Option<(EntityId, Option<Vec<u8>>)> = None;
         let mut answers = Vec::with_capacity(subjects.len());
         for (id, reader) in subjects {

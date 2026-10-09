@@ -56,9 +56,9 @@ impl Decision for SendContacts {
         vault: &Vault,
         subjects: &BTreeSet<Self::Subject>,
     ) -> Result<Vec<Option<Self::Answer>>> {
+        let policy = vault.store.policy_as_next_opened()?;
         let txn = vault.store.env.read_txn()?;
         let store = &vault.store;
-        let policy = crate::gate::resolve_policy_manifest(store, &txn)?;
         let posture = |(party, class, sender): &Self::Subject| -> Result<SendPosture> {
             let mut effect = send(party, class, "send");
             if let Some((identity, actor)) = sender {

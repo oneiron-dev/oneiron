@@ -247,34 +247,16 @@ impl Store {
         // inspect the manifest. Re-check under the writer before mutating.
         {
             let rtxn = self.env.read_txn()?;
-            let policy = crate::gate::resolve_policy_manifest(self, &rtxn)?;
-            let diagnostics = policy.diagnostics();
-            if diagnostics.manifest_count > 0 || diagnostics.loaded_manifest_forces_fail_closed() {
+            if !open_seeds_default(&crate::gate::resolve_policy_manifest(self, &rtxn)?) {
                 return Ok(());
             }
         }
 
         let mut wtxn = self.env.write_txn()?;
-        let policy = crate::gate::resolve_policy_manifest(self, &wtxn)?;
-        let diagnostics = policy.diagnostics();
-        if diagnostics.manifest_count > 0 || diagnostics.loaded_manifest_forces_fail_closed() {
+        let Some((id, post_write_policy)) = self.seed_default_policy_manifest_if_unset(&mut wtxn)?
+        else {
             return Ok(());
-        }
-        let id = crate::gate::default_policy_manifest_id()?;
-        seed_default_policy_manifest_in_txn(
-            &self.entities,
-            &self.sync_state,
-            &self.type_index,
-            &self.temporal_occurred_start,
-            &self.temporal_learned,
-            &mut wtxn,
-            &id,
-        )?;
-        let post_write_policy = crate::gate::resolve_policy_manifest(self, &wtxn)?;
-        if post_write_policy.diagnostics().manifest_count != 1 || post_write_policy.is_fail_closed()
-        {
-            return Err(Error::CorruptedIndex("default policy manifest reseed"));
-        }
+        };
         let read_frontier_hash = post_write_policy.read_frontier_hash()?;
         if read_frontier_hash == [0; 32] {
             return Err(Error::CorruptedIndex("default policy manifest frontier"));
@@ -310,6 +292,56 @@ impl Store {
         };
         self.append_gate_decision_in_txn(&mut wtxn, &receipt)?;
         Ok(wtxn.commit()?)
+    }
+
+    /// The policy this store decides with once it is next opened: the
+    /// manifests it holds, or, where none is in force, the default its open
+    /// seeds. The seed is the open's own, in a write transaction that is then
+    /// aborted, so nothing is written. A vault the owner left with no
+    /// manifest in force is judged by this, not by the fail-closed policy it
+    /// holds until it next opens.
+    pub(crate) fn policy_as_next_opened(&self) -> Result<crate::gate::PolicyManifestResolution> {
+        {
+            let rtxn = self.env.read_txn()?;
+            let policy = crate::gate::resolve_policy_manifest(self, &rtxn)?;
+            if !open_seeds_default(&policy) {
+                return Ok(policy);
+            }
+        }
+        let mut wtxn = self.env.write_txn()?;
+        let policy = match self.seed_default_policy_manifest_if_unset(&mut wtxn)? {
+            Some((_, seeded)) => seeded,
+            None => crate::gate::resolve_policy_manifest(self, &wtxn)?,
+        };
+        wtxn.abort();
+        Ok(policy)
+    }
+
+    /// Seeds the default policy manifest in `wtxn` when no manifest is in
+    /// force, returning its id and the policy it resolves to; `None` when the
+    /// open leaves the policy as it is.
+    fn seed_default_policy_manifest_if_unset(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+    ) -> Result<Option<(crate::EntityId, crate::gate::PolicyManifestResolution)>> {
+        if !open_seeds_default(&crate::gate::resolve_policy_manifest(self, wtxn)?) {
+            return Ok(None);
+        }
+        let id = crate::gate::default_policy_manifest_id()?;
+        seed_default_policy_manifest_in_txn(
+            &self.entities,
+            &self.sync_state,
+            &self.type_index,
+            &self.temporal_occurred_start,
+            &self.temporal_learned,
+            wtxn,
+            &id,
+        )?;
+        let seeded = crate::gate::resolve_policy_manifest(self, wtxn)?;
+        if seeded.diagnostics().manifest_count != 1 || seeded.is_fail_closed() {
+            return Err(Error::CorruptedIndex("default policy manifest reseed"));
+        }
+        Ok(Some((id, seeded)))
     }
 
     /// Builds RCPT-1's additive `vault_meta` sidecars before an opened store
@@ -449,4 +481,11 @@ impl Store {
             .transpose()?
             .is_none())
     }
+}
+
+/// Whether an open seeds the default policy manifest over `policy`: no
+/// manifest is in force, and none that loaded forces the policy closed.
+fn open_seeds_default(policy: &crate::gate::PolicyManifestResolution) -> bool {
+    let diagnostics = policy.diagnostics();
+    diagnostics.manifest_count == 0 && !diagnostics.loaded_manifest_forces_fail_closed()
 }
