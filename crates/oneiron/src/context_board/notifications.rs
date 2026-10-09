@@ -34,7 +34,8 @@ pub fn notification_body_json(raw_body: &[u8]) -> Option<Value> {
 
 /// The callers `body` is delivered to: those every recipient marker it
 /// carries names, or everyone when it carries none. `None` for a body that
-/// is not an object.
+/// is not an object. Delivery asks one caller at a time
+/// ([`notification_scoped_to_caller`]); this reads the same markers whole.
 pub(crate) fn notification_recipient_scope(body: &Value) -> Option<NotificationRecipientScope> {
     let object = body.as_object()?;
     let mut callers: Option<BTreeSet<&str>> = None;
@@ -59,17 +60,25 @@ pub(crate) fn notification_recipient_scope(body: &Value) -> Option<NotificationR
 /// Whether `body` is delivered to `caller`: every recipient marker it carries
 /// names them. A body that is not an object is delivered to no one.
 pub fn notification_scoped_to_caller(body: &Value, caller: &str) -> bool {
-    match notification_recipient_scope(body) {
-        Some(NotificationRecipientScope::Everyone) => true,
-        Some(NotificationRecipientScope::Callers(callers)) => callers.contains(caller),
-        None => false,
-    }
+    let Some(object) = body.as_object() else {
+        return false;
+    };
+    RECIPIENT_KEYS.iter().all(|key| {
+        object
+            .get(*key)
+            .is_none_or(|marker| caller_marker_contains(Some(marker), caller))
+    })
 }
 
 /// Whether `marker`, a recipient, acknowledgement or surfaced marker, names
-/// `caller`.
+/// `caller`, as `marker_callers` reads it.
 pub fn caller_marker_contains(marker: Option<&Value>, caller: &str) -> bool {
-    marker.is_some_and(|marker| marker_callers(marker).contains(caller))
+    match marker {
+        Some(Value::String(named)) => named == caller,
+        Some(Value::Array(items)) => items.iter().any(|item| item.as_str() == Some(caller)),
+        Some(Value::Object(map)) => map.get(caller).and_then(Value::as_bool) == Some(true),
+        _ => false,
+    }
 }
 
 /// The callers one marker names: itself for a string, its string elements

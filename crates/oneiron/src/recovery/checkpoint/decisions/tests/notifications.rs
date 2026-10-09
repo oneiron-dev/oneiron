@@ -1,6 +1,9 @@
 //! Census case for who a pending notification is delivered to.
 use super::Case;
-use crate::context_board::{notification_body_json, notification_scoped_to_caller};
+use crate::context_board::{
+    NotificationRecipientScope, notification_body_json, notification_recipient_scope,
+    notification_scoped_to_caller,
+};
 use crate::registry::ENTITY_TYPE_NOTIFICATION;
 use crate::test_util::entity;
 use crate::{EntityId, Error, Result, TimeRange, Vault, VaultConfig};
@@ -113,4 +116,49 @@ fn a_restore_does_not_deliver_a_notification_to_a_recipient_taken_off_it() -> Re
         "{refused}"
     );
     Ok(())
+}
+
+/// Greptile on #1330. The guard reads a notification's recipients whole
+/// (`notification_recipient_scope`); the board delivers by asking one caller
+/// at a time (`notification_scoped_to_caller`). On every marker shape a body
+/// can carry, alone and combined, both name the same callers, so the guard's
+/// answer is what delivery does.
+#[test]
+fn the_guard_reads_a_notification_s_recipients_as_delivery_does() {
+    let bodies = [
+        json!({ "message": "payload" }),
+        json!({ "message": "payload", "recipient": ["A", "B"] }),
+        json!({
+            "message": "edited",
+            "recipient": ["A", "B"],
+            "acked": true,
+            "surfaced_by": ["A"]
+        }),
+        json!({ "recipient": "A" }),
+        json!({ "recipient": ["A", 7, null, ["B"]] }),
+        json!({ "recipient": [] }),
+        json!({ "recipient": { "A": true, "B": false, "C": "true" } }),
+        json!({ "recipient": 7 }),
+        json!({ "recipient": null }),
+        json!({ "caller": ["A", "B"], "recipient_id": "B" }),
+        json!({ "callerId": { "A": true }, "recipientId": ["B"] }),
+        json!({ "caller_id": ["A", "C"], "recipient": { "A": true, "C": true } }),
+        json!(["A"]),
+        json!("A"),
+    ];
+    for body in &bodies {
+        let scope = notification_recipient_scope(body);
+        for caller in ["A", "B", "C", "", "true"] {
+            let named = match &scope {
+                Some(NotificationRecipientScope::Everyone) => true,
+                Some(NotificationRecipientScope::Callers(callers)) => callers.contains(caller),
+                None => false,
+            };
+            assert_eq!(
+                notification_scoped_to_caller(body, caller),
+                named,
+                "{body} to {caller:?}"
+            );
+        }
+    }
 }
