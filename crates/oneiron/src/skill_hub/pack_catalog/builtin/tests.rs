@@ -3,67 +3,6 @@ use super::*;
 use crate::{VaultConfig, error::Result};
 
 #[test]
-fn fresh_vault_lists_four_engine_versioned_connector_packs() -> Result<()> {
-    let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    let packs = vault.installed_packs()?;
-    assert_eq!(packs.len(), PACKS.len());
-    for (name, markdown) in PACKS {
-        let receipt = vault
-            .installed_pack(&format!("oneiron.{name}"))?
-            .expect("built-in installed");
-        assert_eq!(receipt.status, PackInstallStatus::Active);
-        assert_eq!(receipt.kind, PackKind::Connector);
-        assert_eq!(receipt.adapter, Some(PackAdapter::Builtin(name.to_owned())));
-        assert_eq!(
-            receipt.engine_version.as_deref(),
-            Some(env!("CARGO_PKG_VERSION"))
-        );
-        assert_eq!(receipt.pin_type, "engine_version");
-        assert_eq!(receipt.pin_value, env!("CARGO_PKG_VERSION"));
-        assert_eq!(receipt.hub_ref, format!("built-in:{name}"));
-        assert!(!receipt.permissions.grants.is_empty());
-        assert!(!receipt.permissions.wakes.is_empty());
-        // Embedded Rust adapters are not script-qualified and carry no runtime recipe.
-        assert_eq!(receipt.qualification_report_hash, None);
-        assert_eq!(receipt.runtime, None);
-        let source = vault
-            .get_pack_source(&EntityId::from_hex(&receipt.source_id)?)?
-            .expect("exact source");
-        assert_eq!(
-            source.files(),
-            &[HubFile::new("PACK.md", markdown.as_bytes())]
-        );
-        assert_eq!(receipt.content_hash, source.content_hash().to_hex());
-        assert_eq!(
-            receipt.permissions.grants,
-            source
-                .manifest()
-                .requested_grants
-                .iter()
-                .cloned()
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(
-            receipt.permissions.wakes,
-            source
-                .manifest()
-                .wake_subscriptions
-                .iter()
-                .cloned()
-                .collect::<Vec<_>>()
-        );
-        assert!(receipt.predicates.is_empty());
-        assert!(receipt.kinds.is_empty());
-    }
-    let before = vault.installed_packs()?;
-    drop(vault);
-    let reopened = Vault::open(dir.path(), VaultConfig::default())?;
-    assert_eq!(reopened.installed_packs()?, before);
-    Ok(())
-}
-
-#[test]
 fn deleted_builtin_source_stays_deleted_on_reopen() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;

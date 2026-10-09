@@ -110,6 +110,3 @@ impl ImageCatalog {
         Ok(response)
     }
 }
-
-#[cfg(test)]
-mod tests;

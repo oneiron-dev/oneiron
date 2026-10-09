@@ -18,8 +18,6 @@ mod tool_schema;
 mod tests;
 
 pub(crate) use self::authority::FrozenCallValidation;
-#[cfg(test)]
-pub(crate) use self::authority::observed_freeze_events_since;
 pub use self::authority::{
     FrozenMcpPayload, OutboundBindingAuthority, OutboundBindingValidation, ScopedMcpAuthorization,
 };
@@ -56,6 +54,6 @@ use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 #[cfg(test)]
 use crate::outbound_intent_ledger::{
-    FrozenOutboundCall, IntentState, OutboundAuthorizationBinding, OutboundCallClass,
-    OutboundSendOutcome, OutboundToolDescriptor,
+    FrozenOutboundCall, IntentState, OutboundAuthorizationBinding, OutboundSendOutcome,
+    OutboundToolDescriptor,
 };

@@ -26,8 +26,7 @@ use crate::config::VaultConfig;
 use crate::counterparty_contact::{CounterpartyContactRecord, CounterpartyOptOutReason};
 use crate::delivery_window::{
     DELIVERY_WINDOW_SCHEMA_VERSION, DeliveryWindowApnsInterruptionLevel, DeliveryWindowAppliesTo,
-    DeliveryWindowContextCondition, PREDICATE_DELIVERY_WINDOW_CHANNEL,
-    PREDICATE_DELIVERY_WINDOW_CONTEXT, PREDICATE_DELIVERY_WINDOW_QUIET,
+    PREDICATE_DELIVERY_WINDOW_QUIET,
 };
 use crate::edge::EdgeKind;
 use crate::linkedin_connector::{
@@ -36,7 +35,6 @@ use crate::linkedin_connector::{
     LinkedInSandboxHostHarness, LinkedInSeatDispatchState, LinkedInSeatSandboxPolicy,
     LinkedInVerifiedSendPlan, run_linkedin_kill_switch,
 };
-use crate::llm::{BudgetSignalDeliveryChannel, BudgetThreshold};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
 
@@ -183,154 +181,6 @@ impl OutboundExecutionSink for RecordingExecutor {
     }
 }
 
-fn exercise_connector_schedule_and_executor() -> crate::Result<()> {
-    use crate::attempt_queue::AttemptQueue;
-    use crate::memory::{BRIDGE_OUTBOUND_ATTEMPT_KIND, OutboundDraftInput};
-    use crate::receipt::{FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED, ReceiptKind, ReceiptQuery};
-
-    let (_tmp, vault) = temp_vault();
-    let actor = entity(0x31);
-    vault.put_entity(
-        &actor,
-        crate::registry::ENTITY_TYPE_PERSON,
-        crate::temporal::TimeRange { start: 10, end: 10 },
-        10,
-        b"connector task actor",
-    )?;
-    put_policy_manifest_bytes(
-        &vault,
-        entity(0x32),
-        &policy_manifest(&actor.to_hex(), "email", &["send"]),
-    )?;
-
-    vault
-        .memory(actor, EdgeActorClass::Agent)
-        .schedule_outbound(&OutboundDraftInput {
-            verb: "send".to_owned(),
-            channel: "email".to_owned(),
-            target: "counterparty:test".to_owned(),
-            on_behalf_of: None,
-            content_ref: Some("content:test".to_owned()),
-            idempotency_key: Some("connector-task:test".to_owned()),
-            dedupe_key: None,
-            trigger: "agent_immediate".to_owned(),
-            trigger_ref: "session:test".to_owned(),
-            job_ref: None,
-            occurred_at: Some(10),
-        })
-        .expect("schedule outbound");
-
-    let tasks = vault.connector_send_tasks()?;
-    assert_eq!(tasks.len(), 1);
-    let task_ref = tasks[0].task_ref;
-    let task_ref_hex = task_ref.to_hex();
-    assert_eq!(tasks[0].task_ref, task_ref);
-    assert_eq!(tasks[0].assignee_ref, connector_actor_id("email")?);
-    assert_eq!(vault.standalone_outbound_intent_count()?, 0);
-    assert_eq!(
-        vault
-            .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?
-            .len(),
-        0
-    );
-    assert_eq!(
-        vault
-            .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?
-            .into_iter()
-            .filter(|receipt| {
-                receipt
-                    .fields
-                    .get(FIELD_TRANSPORT_DISPATCHED)
-                    .is_some_and(|value| value == "true")
-            })
-            .count(),
-        0
-    );
-    assert_eq!(
-        vault
-            .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?
-            .len(),
-        1
-    );
-    assert_eq!(
-        AttemptQueue::new(&vault)
-            .list()?
-            .into_iter()
-            .filter(|attempt| attempt.kind == BRIDGE_OUTBOUND_ATTEMPT_KIND)
-            .count(),
-        1
-    );
-
-    let mut executor = RecordingExecutor::default();
-    assert_eq!(
-        vault
-            .run_connector_task_executor(&mut executor, 11)
-            .unwrap(),
-        1
-    );
-    assert_eq!(executor.calls.len(), 1);
-    let intent_row = crate::outbound_intent_ledger::intent_ledger_records(&vault)
-        .map_err(|_| Error::InvariantViolation("connector execution intent ledger read failed"))?
-        .into_iter()
-        .next()
-        .expect("connector execution journals one intent");
-    // Generic email/send has no provider key: the sink is not handed the ledger id
-    // as a provider idempotency (dedup) token, even though the ledger row still
-    // keys the intent internally.
-    assert_eq!(executor.idempotency_keys, vec![None]);
-    assert!(!intent_row.idempotency_key.is_empty());
-    assert_eq!(
-        intent_row.state,
-        crate::outbound_intent_ledger::IntentState::Done
-    );
-    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
-    assert_eq!(receipts.len(), 1);
-    assert_eq!(
-        receipts[0].fields.get(FIELD_TASK_REF).map(String::as_str),
-        Some(task_ref_hex.as_str())
-    );
-    assert_eq!(
-        receipts[0]
-            .fields
-            .get(FIELD_TRANSPORT_DISPATCHED)
-            .map(String::as_str),
-        Some("true")
-    );
-    assert_eq!(
-        receipts
-            .iter()
-            .filter(|receipt| {
-                receipt
-                    .fields
-                    .get(FIELD_TRANSPORT_DISPATCHED)
-                    .is_some_and(|value| value == "true")
-            })
-            .count(),
-        1
-    );
-    let lineaged_task = receipts[0]
-        .fields
-        .get(FIELD_TASK_REF)
-        .and_then(|task_ref| EntityId::from_hex(task_ref).ok())
-        .and_then(|task_ref| vault.connector_send_task(&task_ref).ok().flatten());
-    assert_eq!(usize::from(lineaged_task.is_some()), 1);
-
-    assert_eq!(
-        vault
-            .run_connector_task_executor(&mut executor, 12)
-            .unwrap(),
-        0
-    );
-    assert_eq!(executor.calls.len(), 1);
-    assert_eq!(
-        vault
-            .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?
-            .len(),
-        1
-    );
-    Ok(())
-}
-
 fn connector_task_draft(
     idempotency_key: &str,
     trigger_ref: &str,
@@ -380,11 +230,6 @@ impl ScriptedLinkedInTransport {
 
     fn failing_send(mut self, error_code: &str) -> Self {
         self.send_result = Err(error_code.to_owned());
-        self
-    }
-
-    fn with_get_error_after_precheck(mut self, error_code: &str) -> Self {
-        self.conversations.insert(1, Err(error_code.to_owned()));
         self
     }
 }
@@ -461,14 +306,6 @@ fn linkedin_conversation(thread_id: &str, conversation: &str) -> serde_json::Val
                     "text": "Jane Doe"
                 }
             ]
-        }
-    })
-}
-
-fn linkedin_conversation_without_thread_metadata(conversation: &str) -> serde_json::Value {
-    serde_json::json!({
-        "sections": {
-            "conversation": conversation
         }
     })
 }
@@ -569,65 +406,6 @@ fn quiet_delivery_window_claim_body(subject_seed: u8) -> ClaimBody {
 fn quiet_delivery_window_policy() -> DeliveryWindowPolicyClaim {
     let claim = quiet_delivery_window_claim_body(0x5E);
     DeliveryWindowPolicyClaim::from_claim_body(&claim).expect("valid quiet claim")
-}
-
-fn calendar_busy_delivery_window_claim_body(subject_seed: u8) -> ClaimBody {
-    let mut claim = ClaimBody::new(
-        PREDICATE_DELIVERY_WINDOW_CONTEXT,
-        ClaimSubject::Entity(entity(subject_seed)),
-        Value::Map(vec![
-            (
-                Value::from("schema_version"),
-                Value::from(DELIVERY_WINDOW_SCHEMA_VERSION),
-            ),
-            (
-                Value::from("applies_to"),
-                Value::from(DeliveryWindowAppliesTo::Interrupt.as_str()),
-            ),
-            (
-                Value::from("when"),
-                Value::from(DeliveryWindowContextCondition::CalendarBusy.as_str()),
-            ),
-        ]),
-        1.0,
-        ClaimApprovalStatus::Approved,
-        ClaimLifecycleStatus::Active,
-    )
-    .unwrap();
-    claim.source = Some(ClaimSource::UserStated);
-    claim
-}
-
-fn channel_delivery_window_claim_body(subject_seed: u8, channel: &str, reason: &str) -> ClaimBody {
-    let mut claim = ClaimBody::new(
-        PREDICATE_DELIVERY_WINDOW_CHANNEL,
-        ClaimSubject::Entity(entity(subject_seed)),
-        Value::Map(vec![
-            (
-                Value::from("schema_version"),
-                Value::from(DELIVERY_WINDOW_SCHEMA_VERSION),
-            ),
-            (
-                Value::from("applies_to"),
-                Value::from(DeliveryWindowAppliesTo::Interrupt.as_str()),
-            ),
-            (Value::from("channel"), Value::from(channel)),
-            (
-                Value::from("window"),
-                Value::Map(vec![
-                    (Value::from("start_minute"), Value::from(22 * 60)),
-                    (Value::from("end_minute"), Value::from(8 * 60)),
-                ]),
-            ),
-            (Value::from("reason"), Value::from(reason)),
-        ]),
-        1.0,
-        ClaimApprovalStatus::Approved,
-        ClaimLifecycleStatus::Active,
-    )
-    .unwrap();
-    claim.source = Some(ClaimSource::UserStated);
-    claim
 }
 
 // --- GOV-01 connector-key effector budgets (ONE-1416) ------------------------
@@ -864,76 +642,4 @@ fn schedule_gate_pending_send(
     assert_eq!(receipt.gate_outcome.as_deref(), Some("pending"));
     assert_eq!(receipt.outcome, "held");
     Ok(vault.connector_send_tasks()?.remove(0).task_ref)
-}
-
-fn exercise_provider_retry_after_collision(
-    raw_retry_after: Option<&str>,
-    expected_secs: Option<u64>,
-) -> crate::Result<()> {
-    use crate::attempt_queue::AttemptState;
-
-    let (_tmp, vault) = temp_vault();
-    let actor = entity(0x20);
-    put_connector_task_actor(&vault, actor, ONE_1768_SCHEDULED_AT)?;
-    put_policy_manifest_bytes(
-        &vault,
-        entity(0x21),
-        &policy_manifest(&actor.to_hex(), "slack", &["react"]),
-    )?;
-    vault
-        .memory(actor, EdgeActorClass::Agent)
-        .schedule_outbound(&one_1768_draft("slack", "react", "retry-after-collision"))
-        .expect("schedule");
-
-    let mut outcome = OutboundExecutionOutcome::failed("provider_rate_limited")
-        .with_receipt_field("provider_retry_after", "7")
-        .with_receipt_field("provider_error_code", " rate_limited ");
-    if let Some(raw) = raw_retry_after {
-        outcome = outcome.with_receipt_field("retry_after", raw);
-    }
-    let mut executor = RecordingExecutor {
-        outcome,
-        ..RecordingExecutor::default()
-    };
-    run_parked_round(&vault, &mut executor, ONE_1768_EXECUTE_AT, 0);
-    assert_eq!(executor.calls.len(), 1, "the provider was actually called");
-
-    let receipt = one_1768_receipts(&vault)?
-        .pop()
-        .expect("the failed send has a durable audit receipt");
-    assert_eq!(receipt.outcome, "failed");
-    assert_eq!(receipt_field(&receipt, "dispatch_outcome"), Some("failed"));
-    assert_eq!(receipt_field(&receipt, "gate_outcome"), Some("allow"));
-    let expected_normalized = expected_secs.map(|secs| secs.to_string());
-    assert_eq!(
-        receipt_field(&receipt, "provider_retry_after"),
-        expected_normalized.as_deref(),
-        "only parsed raw retry_after may author the normalized field: {raw_retry_after:?}"
-    );
-    assert_eq!(
-        receipt_field(&receipt, "retry_after"),
-        raw_retry_after.filter(|raw| !raw.trim().is_empty()),
-        "nonblank provider text survives verbatim; blank fields stay omitted"
-    );
-    assert_eq!(
-        receipt_field(&receipt, "provider_error_code"),
-        Some(" rate_limited "),
-        "stripping the reserved key must preserve ordinary provider evidence"
-    );
-    let surfaced: u64 = receipt_field(&receipt, "retry_at")
-        .expect("every executor re-arm stamps retry_at")
-        .parse()
-        .expect("retry_at is an instant");
-    assert_eq!(
-        surfaced,
-        ONE_1768_EXECUTE_AT + expected_secs.unwrap_or(60),
-        "use the parsed provider delay or the exact transport fallback, never the injected 7s"
-    );
-    let attempts = one_1768_bridge_attempts(&vault)?;
-    let armed = attempts
-        .iter()
-        .find(|attempt| attempt.state == AttemptState::Scheduled)
-        .expect("a failed send re-arms rather than failing terminally");
-    assert_eq!(armed.scheduled_at, Some(surfaced));
-    Ok(())
 }

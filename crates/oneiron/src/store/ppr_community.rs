@@ -51,7 +51,6 @@ impl Store {
         for entry in CACHE.iter_from(self, txn, &[])? {
             let (suffix, value) = entry?;
             let key = CACHE.key_bytes(&suffix);
-            super::ppr_community_indexed::record_query_read(key.len() + value.len());
             bytes = bytes
                 .checked_add(key.len())
                 .and_then(|n| n.checked_add(value.len()))

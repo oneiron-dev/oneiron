@@ -52,12 +52,6 @@ thread_local! {
 // exactly as it did before. Only the children whose items are not already kept on
 // the public seam (`pub use` above) need a glob here; the rest would warn unused.
 #[cfg(test)]
-use self::{detection::*, scoring::*, types::*};
-#[cfg(test)]
-use crate::edge::{DecodedEdgeValue, EdgeConfirmationStatus, EdgeKind};
+use self::types::*;
 #[cfg(test)]
 use crate::entity_id::EntityId;
-#[cfg(test)]
-use crate::pipeline::ScoredEntity;
-#[cfg(test)]
-use std::collections::{BTreeMap, BTreeSet, HashMap};

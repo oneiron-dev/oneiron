@@ -252,15 +252,7 @@ impl PipelineBuilder<'_> {
         let mut retrieval_trace = attempt.retrieval_trace;
         let mut replay_inputs = attempt.replay_inputs;
 
-        if !self
-            .session
-            .is_some_and(crate::off_record::SessionRetrievalTelemetry::discards_writes)
-        {
-            crate::ppr::flush_deferred_ppr_cache_writes(
-                &self.vault.store,
-                &deferred_ppr_cache_writes,
-            )?;
-        }
+        self.flush_ppr_cache_writes(&deferred_ppr_cache_writes)?;
 
         let mut claim_bodies = HashMap::new();
         let mut claims_suppressed = 0_usize;
@@ -314,15 +306,7 @@ impl PipelineBuilder<'_> {
                         skip_ret01_abstain: true,
                     },
                 )?;
-                if !self
-                    .session
-                    .is_some_and(crate::off_record::SessionRetrievalTelemetry::discards_writes)
-                {
-                    crate::ppr::flush_deferred_ppr_cache_writes(
-                        &self.vault.store,
-                        &retry.deferred_ppr_cache_writes,
-                    )?;
-                }
+                self.flush_ppr_cache_writes(&retry.deferred_ppr_cache_writes)?;
                 // A retry cache hit must not erase an earlier miss in this run.
                 merge_retrieval_diagnostics(&mut diagnostics, retry.diagnostics);
                 scores = retry.scores;
@@ -575,6 +559,24 @@ impl PipelineBuilder<'_> {
                 .ppr_expand
                 .as_ref()
                 .is_some_and(|(seeds, _)| !seeds.is_empty())
+    }
+
+    /// ARCH-0052 D3: a room's PPR cache rows never reach base. An overlay
+    /// route drops them; a base route is revalidated as the cache write's
+    /// last statement, so a room that flipped off record mid-walk drops them
+    /// too. As with the base witness, the instant between that check and the
+    /// commit stays open until a flip drains base writers.
+    fn flush_ppr_cache_writes(&self, writes: &[crate::ppr::DeferredPprCacheWrite]) -> Result<()> {
+        let store = &self.vault.store;
+        match self.session {
+            None => crate::ppr::flush_deferred_ppr_cache_writes(store, writes),
+            Some(session) if session.writes_to_base() => {
+                crate::ppr::flush_deferred_ppr_cache_writes_admitted(store, writes, || {
+                    session.admit_base_write()
+                })
+            }
+            Some(_) => Ok(()),
+        }
     }
 
     /// The occurred-time window this run filters on, and the temporal phrases
