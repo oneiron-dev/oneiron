@@ -109,7 +109,7 @@ pub(super) fn decode(text: &str, file: &HistoryFile) -> Vec<HistoryConversation>
     // Older logs keep a session's sidechains inline; each agent gets its own
     // conversation, in the order it first appears.
     let mut sidechains: Vec<(String, Thread)> = Vec::new();
-    let said = said_lines(text);
+    let said = said_lines(text, kind);
     let mut copied = vec![false; said.len()];
     let mut queued: VecDeque<Queued> = VecDeque::new();
 
@@ -199,15 +199,21 @@ struct Said {
     text: String,
 }
 
-/// Every message the log keeps on a line of its own (typed lines, queued
-/// command attachments, replies), each read the way it lands, so a queued
-/// prompt can find the copy that is its own.
-fn said_lines(text: &str) -> Vec<Said> {
+/// Every message the log's own thread keeps on a line of its own (typed
+/// lines, queued command attachments, replies), each read the way it lands,
+/// so a queued prompt can find the copy that is its own. An inline
+/// sidechain's lines are its agent's, not the thread the queue feeds.
+fn said_lines(text: &str, kind: HistoryThreadKind) -> Vec<Said> {
     let mut said = Vec::new();
     for (line, raw) in text.lines().enumerate() {
         let Some(value) = json_record(raw) else {
             continue;
         };
+        if kind == HistoryThreadKind::Main
+            && value.get("isSidechain").and_then(Value::as_bool) == Some(true)
+        {
+            continue;
+        }
         let mut scratch = Thread::new(HistoryConversation::new(
             String::new(),
             HistoryThreadKind::Main,

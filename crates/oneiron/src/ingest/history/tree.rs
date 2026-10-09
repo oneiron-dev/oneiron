@@ -7,7 +7,8 @@ use std::collections::{BTreeMap, HashMap};
 pub(super) struct TreeNode<'a> {
     pub(super) id: &'a str,
     pub(super) parent: Option<&'a str>,
-    /// Orders siblings: the source time, then the source's own order.
+    /// Orders siblings: the source's rank for it (ChatGPT: its place in its
+    /// parent's `children`; Claude.ai: its time), then the source's order.
     pub(super) order: (u64, usize),
 }
 

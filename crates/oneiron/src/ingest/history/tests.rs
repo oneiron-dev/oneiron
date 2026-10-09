@@ -662,6 +662,28 @@ fn a_claude_code_prompt_queued_again_later_lands_again() {
     assert_eq!(user_words(&conversations), ["continue", "continue"]);
 }
 
+/// Astra 1310 re-check R2: an inline sidechain's reply logged between a
+/// queued prompt's hand-over and the session's own copy of it does not
+/// answer the prompt, so the copy is still found and the prompt lands once.
+#[test]
+fn a_sidechain_reply_between_a_queued_prompt_and_its_copy_lands_the_prompt_once() {
+    let conversations = decode_log(
+        HistorySource::ClaudeCode,
+        "7e1f0a2b-3333-4444-8555-966677778888",
+        &[
+            r#"{"type":"queue-operation","operation":"enqueue","timestamp":"2026-09-24T07:30:05.000Z","sessionId":"7e1f0a2b-3333-4444-8555-966677778888","content":"Also check the frost warning."}"#,
+            r#"{"type":"queue-operation","operation":"dequeue","timestamp":"2026-09-24T07:30:40.000Z","sessionId":"7e1f0a2b-3333-4444-8555-966677778888"}"#,
+            r#"{"parentUuid":null,"isSidechain":true,"agentId":"ag1","userType":"external","sessionId":"7e1f0a2b-3333-4444-8555-966677778888","type":"assistant","message":{"role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"text","text":"Three beds need mulch."}]},"uuid":"d2000000-0000-4000-8000-000000000001","timestamp":"2026-09-24T07:30:41.000Z"}"#,
+            r#"{"parentUuid":null,"isSidechain":false,"userType":"external","sessionId":"7e1f0a2b-3333-4444-8555-966677778888","type":"attachment","uuid":"d2000000-0000-4000-8000-000000000002","timestamp":"2026-09-24T07:30:42.000Z","attachment":{"type":"queued_command","prompt":"Also check the frost warning.","commandMode":"prompt","origin":{"kind":"human"}}}"#,
+            r#"{"parentUuid":"d2000000-0000-4000-8000-000000000002","isSidechain":false,"userType":"external","sessionId":"7e1f0a2b-3333-4444-8555-966677778888","type":"assistant","message":{"role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"text","text":"No frost this week."}]},"uuid":"d2000000-0000-4000-8000-000000000003","timestamp":"2026-09-24T07:31:00.000Z"}"#,
+        ],
+    );
+    assert_eq!(
+        user_words(&conversations),
+        ["Also check the frost warning."]
+    );
+}
+
 /// One ChatGPT conversation with the given mapping nodes `(id, parent, role,
 /// time, text)`, showing `current`.
 fn chatgpt_export(current: &str, nodes: &[(&str, Option<&str>, &str, f64, &str)]) -> String {
@@ -783,6 +805,67 @@ fn a_chatgpt_reply_lands_beside_the_answer_it_follows_after_a_branch_switch() {
         );
     }
     assert_ne!(landed_in("a1"), landed_in("a1b"));
+}
+
+/// Astra 1310 re-check R3: a later export adds a regenerated answer with no
+/// time beside the answer an earlier export landed. The first answer stays
+/// the conversation's, the regeneration takes its own branch, and a follow-up
+/// to the first answer lands beside it.
+#[test]
+fn a_chatgpt_regeneration_without_a_time_does_not_take_the_first_answers_place() {
+    let (_dir, vault, owner) = vault_and_owner();
+    let source = HistorySource::Chatgpt;
+    let file = super::HistoryFile {
+        stem: "conversations.json".to_owned(),
+        parent: None,
+    };
+    let asked: [(&str, Option<&str>, &str, f64, &str); 3] = [
+        ("root", None, "", 0.0, ""),
+        (
+            "u1",
+            Some("root"),
+            "user",
+            1_757_840_010.0,
+            "Is Osaka a good day trip from Kyoto?",
+        ),
+        (
+            "a1",
+            Some("u1"),
+            "assistant",
+            1_757_840_015.0,
+            "Yes, fifteen minutes by Shinkansen.",
+        ),
+    ];
+    let first = source
+        .decode(&chatgpt_export("a1", &asked), &file)
+        .expect("decode");
+    assert_eq!(import_all(&vault, &owner, source, &first), (2, 0, 0));
+
+    let mut later = asked.to_vec();
+    later.extend([
+        (
+            "a1b",
+            Some("u1"),
+            "assistant",
+            f64::NAN,
+            "Yes; the JR Special Rapid is cheaper.",
+        ),
+        (
+            "u2",
+            Some("a1"),
+            "user",
+            1_757_926_400.0,
+            "Which car has the window seats?",
+        ),
+    ]);
+    let grown = source
+        .decode(&chatgpt_export("u2", &later), &file)
+        .expect("decode");
+    assert_eq!(import_all(&vault, &owner, source, &grown), (2, 2, 0));
+    let landed_in = |native: &str| source_ledger_row(&vault, source, native).conversation;
+    assert_eq!(landed_in("u2"), landed_in("a1"), "u2 follows a1");
+    assert_eq!(landed_in("a1"), landed_in("u1"));
+    assert_ne!(landed_in("a1b"), landed_in("a1"));
 }
 
 /// Greptile 1310 (land.rs:391): a resumed session's copy and the original

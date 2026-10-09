@@ -4,6 +4,8 @@
 //! shows) is not read: the person can switch it, and an imported message stays
 //! in the thread it landed in.
 
+use std::collections::HashMap;
+
 use serde_json::Value;
 
 use super::text::{export_conversations, join_texts, str_field, time_field};
@@ -51,18 +53,26 @@ fn decode_conversation(conversation: &Value) -> IngestResult<Vec<HistoryConversa
         .iter()
         .map(|(key, node)| (key.as_str(), node))
         .collect();
+    // A node's place in its parent's `children`, which the app only appends
+    // to: an edit or regeneration made later never sorts before the child
+    // an earlier export already had first, dated or not.
+    let mut rank: HashMap<&str, u64> = HashMap::new();
+    for (_, node) in &entries {
+        let children = node.get("children").and_then(Value::as_array);
+        for (place, child) in children.into_iter().flatten().enumerate() {
+            if let Some(child) = child.as_str() {
+                rank.entry(child)
+                    .or_insert(u64::try_from(place).unwrap_or(u64::MAX));
+            }
+        }
+    }
     let nodes: Vec<TreeNode<'_>> = entries
         .iter()
         .enumerate()
         .map(|(position, (key, node))| TreeNode {
             id: key,
             parent: str_field(node, "parent"),
-            order: (
-                node.get("message")
-                    .and_then(|message| time_field(message, "create_time"))
-                    .unwrap_or(0),
-                position,
-            ),
+            order: (rank.get(key).copied().unwrap_or(u64::MAX), position),
         })
         .collect();
     let decoded: Vec<Node> = entries

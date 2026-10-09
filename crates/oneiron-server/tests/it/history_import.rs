@@ -559,3 +559,36 @@ fn session_logs_past_the_decoded_limit_are_refused_before_anything_lands() {
     );
     assert_eq!(home.vault_bytes(), before, "nothing was written");
 }
+
+/// Astra 1310 re-check R4: what a folder's logs keep besides messages counts
+/// toward the decoded limit. Nine logs hold one 120 MiB title each and no
+/// message; together they pass 1 GiB, so the import is refused before
+/// anything lands, instead of holding every title.
+#[test]
+fn session_logs_whose_titles_pass_the_decoded_limit_are_refused() {
+    let home = Home::new();
+    let project = home
+        .dir
+        .path()
+        .join("projects/-Users-ana-code-garden-planner");
+    std::fs::create_dir_all(&project).expect("test fixture");
+    let title = "a".repeat(120 << 20);
+    for log in 0..9 {
+        let session = format!("5d0c0a7e-1111-4222-8333-94445555660{log}");
+        let mut file = std::io::BufWriter::new(
+            std::fs::File::create(project.join(format!("{session}.jsonl"))).expect("test fixture"),
+        );
+        writeln!(
+            file,
+            r#"{{"type":"custom-title","customTitle":"{title}","sessionId":"{session}"}}"#
+        )
+        .expect("test fixture");
+        file.flush().expect("test fixture");
+    }
+    let before = home.vault_bytes();
+    let dry = home.run_import("claude-code", &home.dir.path().join("projects"), true);
+    assert!(!dry.status.success(), "a dry run is refused too");
+    let output = home.run_import("claude-code", &home.dir.path().join("projects"), false);
+    assert!(!output.status.success(), "over 1 GiB of titles is refused");
+    assert_eq!(home.vault_bytes(), before, "nothing was written");
+}

@@ -27,8 +27,10 @@ use crate::config::{ServeConfig, resolve_serve_config};
 /// log sits four below `~/.claude/projects`.
 const MAX_WALK_DEPTH: usize = 6;
 
-/// The largest session log read whole.
-const MAX_LOG_BYTES: u64 = 4 << 30;
+/// The largest session log read whole. A log is decoded whole before a
+/// folder's decoded budget is checked, so this bounds what one log can add
+/// past that budget.
+const MAX_LOG_BYTES: u64 = 1 << 30;
 
 /// The largest export read: its `conversations.json`, unzipped. The reader
 /// parses one conversation at a time, so this is about what the import holds.
@@ -246,7 +248,8 @@ fn decode(source: HistorySource, path: &Path) -> anyhow::Result<(Files, Vec<Hist
     Ok((files, conversations))
 }
 
-/// What decoded conversations hold in memory.
+/// What decoded conversations hold in memory: their messages, and every
+/// byte they keep, titles and ids included.
 #[derive(Default)]
 struct Decoded {
     messages: usize,
@@ -255,6 +258,12 @@ struct Decoded {
 
 impl Decoded {
     fn add(&mut self, conversations: &[HistoryConversation]) {
+        for conversation in conversations {
+            self.bytes += std::mem::size_of::<HistoryConversation>()
+                + conversation.native_id.len()
+                + conversation.parent.as_ref().map_or(0, String::len)
+                + conversation.title.as_ref().map_or(0, String::len);
+        }
         for message in conversations
             .iter()
             .flat_map(|conversation| &conversation.messages)
