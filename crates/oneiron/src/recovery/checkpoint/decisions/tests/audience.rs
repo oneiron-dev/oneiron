@@ -90,7 +90,7 @@ fn put_scoped_fact(
 /// restore goes ahead.
 #[test]
 fn a_restore_over_records_deleted_since_the_backup_goes_ahead() -> Result<()> {
-    let (dir, vault) = open_vault();
+    let (_dir, vault) = open_vault();
     let (sora, rin) = (entity(0xB1), entity(0xB2));
     let relationship = entity(0xB3);
     put_person(&vault, sora)?;
@@ -105,8 +105,6 @@ fn a_restore_over_records_deleted_since_the_backup_goes_ahead() -> Result<()> {
     }
     let backups = tempfile::tempdir()?;
     let image = backups.path().join("backup");
-    // Reopened so it holds the policy a restored copy's open seeds.
-    let vault = crate::test_util::reopen_test_vault(&dir, vault);
     vault.snapshot_checkpoint(&image, 100)?;
     assert!(vault.delete_entity(&shell)?);
     vault.delete_entity_with_options(

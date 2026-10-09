@@ -492,9 +492,8 @@ fn enroll(live: &Vault, recipient: EntityId) -> EntityId {
 /// does not block the restore.
 #[test]
 fn restore_refuses_to_roll_back_a_recipient_jurisdiction_moved_since() {
-    // Reopened at once so it holds the policy a restored copy's open seeds.
-    let (dir, live) = crate::test_util::open_test_vault_with(VaultConfig::device());
-    let live = crate::test_util::reopen_test_vault(&dir, live);
+    // No policy manifest, as the other restore regressions run.
+    let (_dir, live) = crate::test_util::open_test_vault_with(VaultConfig::device());
     let backups = tempfile::tempdir().unwrap();
     let recipient = person(&live, b"recipient");
     let bystander = person(&live, b"bystander");
@@ -646,9 +645,7 @@ fn restore_reads_campaign_recipients_through_their_claim_of_edges() {
 /// jurisdiction of another kind of entity a membership reaches is content.
 #[test]
 fn restore_goes_ahead_past_a_moved_jurisdiction_of_a_non_person() {
-    // Reopened at once so it holds the policy a restored copy's open seeds.
-    let (dir, live) = crate::test_util::open_test_vault_with(VaultConfig::device());
-    let live = crate::test_util::reopen_test_vault(&dir, live);
+    let (_dir, live) = crate::test_util::open_test_vault_with(VaultConfig::device());
     let backups = tempfile::tempdir().unwrap();
     let org = EntityId::now();
     live.put_entity(
@@ -692,9 +689,7 @@ fn restore_goes_ahead_past_a_moved_jurisdiction_of_a_non_person() {
 /// so it does not block the restore; making it private as well does.
 #[test]
 fn restore_compares_only_the_read_scope_of_a_claim_rewritten_into_a_jurisdiction() {
-    // Reopened at once so it holds the policy a restored copy's open seeds.
-    let (dir, live) = crate::test_util::open_test_vault_with(VaultConfig::device());
-    let live = crate::test_util::reopen_test_vault(&dir, live);
+    let (_dir, live) = crate::test_util::open_test_vault_with(VaultConfig::device());
     let backups = tempfile::tempdir().unwrap();
     let subject = person(&live, b"subject");
     let claim = EntityId::now();

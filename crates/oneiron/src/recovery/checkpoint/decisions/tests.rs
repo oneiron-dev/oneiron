@@ -31,8 +31,7 @@ pub(super) struct Case {
 }
 
 impl Case {
-    /// Backs up `vault` as it stands, for the two writes that follow,
-    /// reopened first so it holds the policy a restored copy's open seeds.
+    /// Backs up `vault` as it stands, for the two writes that follow.
     pub(super) fn after_backup(
         row: &'static str,
         (dir, vault): (tempfile::TempDir, Vault),
@@ -41,7 +40,6 @@ impl Case {
     ) -> Result<Self> {
         let backups = tempfile::tempdir()?;
         let image = backups.path().join("backup");
-        let vault = crate::test_util::reopen_test_vault(&dir, vault);
         vault.snapshot_checkpoint(&image, 100)?;
         Ok(Self {
             row,

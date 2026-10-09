@@ -602,7 +602,7 @@ fn replicated_sheet_answer_limit_cannot_raise_shipped_default_when_owner_omits_r
 /// carried does not come back with the image's trust sidecar.
 #[test]
 fn restore_keeps_a_quarantine_the_owner_placed_since() -> Result<()> {
-    let (dir, vault) = temp_vault();
+    let (_dir, vault) = temp_vault();
     let owner_ref = test_id(0x75);
     vault.put_entity(
         &owner_ref,
@@ -632,8 +632,6 @@ fn restore_keeps_a_quarantine_the_owner_placed_since() -> Result<()> {
     crate::gate::resolution::check_claim_source_trust(&body, None, &resolve(&vault)?, None)?;
     let backups = tempfile::tempdir()?;
     let image = backups.path().join("backup");
-    // Reopened so it holds the policy a restored copy's open seeds.
-    let vault = crate::test_util::reopen_test_vault(&dir, vault);
     vault.snapshot_checkpoint(&image, 100)?;
     vault.quarantine_manifest_contribution(&owner, trusted)?;
     assert!(
