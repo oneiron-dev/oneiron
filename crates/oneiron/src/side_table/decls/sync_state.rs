@@ -75,6 +75,10 @@ side_tables! {
     SYNC_DS_E: SyncState b"ds:e:" Raw;
     /// Local hard-delete marker. Key: hex32.
     DELETION_HARD_DELETE_MARKER: SyncState b"dt:" Raw;
+    /// The history one derived record quotes of an entity document: the incarnation-qualified
+    /// frontiers it cites, or the birth state when the entity had no document yet. Floors owner
+    /// purges while the citer is live. Key: hex32 (entity) ":" hex32 (citer).
+    ENTITY_DOC_CITATION_FLOOR: SyncState b"entity_doc:v1:citation_floor:" Named;
     /// Durable identity/provenance/status of one open or settled document fork. Key: hex32.
     ENTITY_DOC_FORK: SyncState b"entity_doc:v1:fork:" Named;
     /// Shallow Loro snapshot of a fork's diverged content at its opening base. Key: hex32.

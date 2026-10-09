@@ -29,6 +29,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::DEFERRED_PARENT, CONTENT),
     (&t::SYNC_DS_E, CONTENT),
     (&t::DELETION_HARD_DELETE_MARKER, CONTENT),
+    (&t::ENTITY_DOC_CITATION_FLOOR, CONTENT),
     (&t::ENTITY_DOC_FORK, CONTENT),
     (&t::ENTITY_DOC_FORK_SNAPSHOT, CONTENT),
     (&t::ENTITY_DOC_PIN, CONTENT),

@@ -275,12 +275,24 @@ fn partition_screened_turns_in_txn(
 /// count is hashed so a batch can never be a prefix-ambiguous concatenation of
 /// another.
 pub(crate) fn partition_round_hash(turns: &[WorkingSetTurn]) -> [u8; 32] {
+    keyed_partition_round_hash(turns, &BTreeMap::new())
+}
+
+/// [`partition_round_hash`] over each TURN's selection key: a TURN in
+/// `carried` stood at its re-dirty carrier, whose id replaces the TURN id in
+/// the preimage. Every other TURN hashes byte-identically, and a TURN changed
+/// again, even in the same second, takes a new carrier id and a new round.
+fn keyed_partition_round_hash(
+    turns: &[WorkingSetTurn],
+    carried: &BTreeMap<EntityId, EntityId>,
+) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(DREAMER_PARTITION_ROUND_HASH_DOMAIN);
     hasher.update(&(turns.len() as u64).to_be_bytes());
     for turn in turns {
+        let id = carried.get(&turn.turn_id).unwrap_or(&turn.turn_id);
         hasher.update(&turn.learned_at.to_be_bytes());
-        hasher.update(turn.turn_id.as_bytes());
+        hasher.update(id.as_bytes());
     }
     *hasher.finalize().as_bytes()
 }
@@ -300,13 +312,14 @@ pub(crate) fn partition_round_hash(turns: &[WorkingSetTurn]) -> [u8; 32] {
 fn partition_attempt_input(
     scope: DreamerConsolidationScope,
     plan: &ConsolidationPartitionPlan,
+    carried: &BTreeMap<EntityId, EntityId>,
     run_id: Option<String>,
     now: u64,
 ) -> EnqueueDreamerConsolidationAttempt {
     let dedupe_key = format!(
         "{}:{}",
         bytes_to_hex_lower(&plan.key.partition_hash()),
-        bytes_to_hex_lower(&partition_round_hash(&plan.turns)),
+        bytes_to_hex_lower(&keyed_partition_round_hash(&plan.turns, carried)),
     );
     EnqueueDreamerConsolidationAttempt {
         scope,
@@ -363,7 +376,7 @@ pub(crate) fn enqueue_partition_attempts_in_txn(
     if planned_turn_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let turns = read_partition_turns_in_txn(vault, wtxn, planned_turn_ids)?;
+    let turns = read_partition_turns_in_txn(vault, wtxn, scope, planned_turn_ids)?;
     if turns.iter().any(|turn| turn.conversation.is_none()) {
         return Err(invalid_consolidation(
             "dreamer planned turn has no conversation",
@@ -371,12 +384,16 @@ pub(crate) fn enqueue_partition_attempts_in_txn(
     }
     let screen = prefilter_partition_input_in_txn(vault, wtxn, &turns)?;
     let plans = partition_screened_turns_in_txn(vault, wtxn, &screen.kept, watermark)?;
+    let carried: BTreeMap<_, _> = turns
+        .iter()
+        .filter_map(|turn| Some((turn.turn_id, turn.carrier?)))
+        .collect();
     let store = DreamerRunnerStore::new(vault);
     let mut outcomes = Vec::with_capacity(plans.len());
     for plan in &plans {
         outcomes.push(store.enqueue_consolidation_in_txn(
             wtxn,
-            partition_attempt_input(scope, plan, run_id.map(str::to_owned), now),
+            partition_attempt_input(scope, plan, &carried, run_id.map(str::to_owned), now),
         )?);
     }
     write_prefilter_receipts_in_txn(vault, wtxn, scope, &turns, &screen, now)?;
@@ -390,6 +407,7 @@ pub(crate) fn enqueue_partition_attempts_in_txn(
 pub(crate) fn read_partition_turns_in_txn(
     vault: &Vault,
     txn: &heed::RwTxn<'_>,
+    scope: DreamerConsolidationScope,
     turn_ids: &[EntityId],
 ) -> Result<Vec<WorkingSetTurn>> {
     let mut seen = std::collections::BTreeSet::new();
@@ -432,10 +450,15 @@ pub(crate) fn read_partition_turns_in_txn(
             .next()
             .transpose()?
             .map(|edge| edge.target);
+        // The effective dirty key the scan ordered this TURN by, so a
+        // re-dirtied TURN's round hashes to a new attempt identity.
+        let carrier =
+            super::redirty::carrier_key_in_txn(vault, txn, scope, turn_id, header.learned_at)?;
         turns.push(WorkingSetTurn {
             turn_id: *turn_id,
             role,
-            learned_at: header.learned_at,
+            learned_at: carrier.map_or(header.learned_at, |(position, _)| position),
+            carrier: carrier.map(|(_, order)| order),
             conversation,
         });
     }
