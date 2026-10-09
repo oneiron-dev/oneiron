@@ -93,6 +93,14 @@ impl SuccessionWriter {
         next.source = source;
         next.evidence = carried_evidence(prior);
         let Some(actor) = self.actor else {
+            // No envelope stamps the host's unbound successor, so its body
+            // records the history it continues itself: the Gate checks it
+            // now, and every later successor inherits it.
+            if let Some(lineage) = lineage_of(prior_lineage(prior).into_iter().chain(source))
+                && source.is_none_or(|source| lineage != SourceLineage::of(source))
+            {
+                next.evidence = Some(unbound_lineage_evidence(&lineage, next.evidence));
+            }
             return Ok((next, None));
         };
         let source = source.unwrap_or(ClaimSource::UserStated);
@@ -121,15 +129,35 @@ impl SuccessionWriter {
     }
 }
 
+/// An unbound successor's evidence: the lineage it continues, beside the
+/// evidence it carries forward, in the shape an envelope stamps them.
+fn unbound_lineage_evidence(lineage: &SourceLineage, carried: Option<Value>) -> Value {
+    let mut entries = vec![(
+        Value::from(WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY),
+        Value::Array(
+            lineage
+                .iter()
+                .map(|source| Value::from(source.as_str()))
+                .collect(),
+        ),
+    )];
+    if let Some(carried) = carried {
+        entries.push((Value::from(WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY), carried));
+    }
+    Value::Map(entries)
+}
+
 /// The evidence a successor carries forward: the evidence its predecessor's
-/// writer supplied, without that writer's stamp. A raw predecessor's
-/// evidence carries no stamp, so it travels whole.
+/// writer supplied, without that writer's stamp or an unbound successor's
+/// lineage record. A raw predecessor's evidence carries no stamp, so it
+/// travels whole.
 fn carried_evidence(prior: &ClaimBody) -> Option<Value> {
     match &prior.evidence {
         Some(Value::Map(entries))
             if entries
                 .iter()
-                .any(|(key, _)| key.as_str() == Some(WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY)) =>
+                .any(|(key, _)| key.as_str() == Some(WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY))
+                || is_unbound_lineage_evidence(entries) =>
         {
             entries
                 .iter()
@@ -140,6 +168,19 @@ fn carried_evidence(prior: &ClaimBody) -> Option<Value> {
     }
 }
 
+/// Whether `entries` are the record [`unbound_lineage_evidence`] writes.
+fn is_unbound_lineage_evidence(entries: &[(Value, Value)]) -> bool {
+    entries
+        .iter()
+        .any(|(key, _)| key.as_str() == Some(WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY))
+        && entries.iter().all(|(key, _)| {
+            matches!(
+                key.as_str(),
+                Some(WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY | WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY)
+            )
+        })
+}
+
 /// `source` joined with every class the predecessor's history drew on.
 fn inherited_lineage(source: ClaimSource, prior: &ClaimBody) -> SourceLineage {
     prior_lineage(prior)
@@ -147,8 +188,15 @@ fn inherited_lineage(source: ClaimSource, prior: &ClaimBody) -> SourceLineage {
         .fold(SourceLineage::of(source), SourceLineage::with)
 }
 
-/// The source classes the predecessor's history drew on: its declared source
-/// and its stamped lineage.
+/// The lineage of `sources`, if there are any.
+fn lineage_of(sources: impl IntoIterator<Item = ClaimSource>) -> Option<SourceLineage> {
+    let mut sources = sources.into_iter();
+    let first = sources.next()?;
+    Some(sources.fold(SourceLineage::of(first), SourceLineage::with))
+}
+
+/// The source classes a claim's history drew on: its declared source and its
+/// stamped lineage.
 fn prior_lineage(prior: &ClaimBody) -> Vec<ClaimSource> {
     let mut sources: Vec<ClaimSource> = prior.source.into_iter().collect();
     if let Some(Value::Map(entries)) = &prior.evidence
@@ -220,16 +268,14 @@ impl ClaimMaterialization {
         }
         writer.require_may_succeed(&prior)?;
         let (mut next, mut envelope) = writer.successor(predecessor, &prior, succession)?;
-        if envelope.is_none() {
-            // The host's own act is unbound, so no envelope carries the
-            // predecessor's history to the Gate: its restricted classes must
-            // still clear the unattributed source-trust rows.
-            let mut sources = prior_lineage(&prior).into_iter().chain(next.source);
-            if let Some(first) = sources.next() {
-                let lineage = sources.fold(SourceLineage::of(first), SourceLineage::with);
-                let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
-                crate::gate::check_unattributed_claim_lineage(&next, &lineage, &policy)?;
-            }
+        // The host's own act is unbound, so no envelope carries the history
+        // the successor records to the Gate: its restricted classes must
+        // still clear the unattributed source-trust rows.
+        if envelope.is_none()
+            && let Some(lineage) = lineage_of(prior_lineage(&next))
+        {
+            let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+            crate::gate::check_unattributed_claim_lineage(&next, &lineage, &policy)?;
         }
         let mut claim_of = None;
         if let crate::claim::ClaimSubject::Entity(subject) = prior.subject {

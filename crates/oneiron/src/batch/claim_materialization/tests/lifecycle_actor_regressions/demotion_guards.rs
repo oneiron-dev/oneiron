@@ -354,22 +354,7 @@ fn weakening_a_forked_claim_keeps_its_facet_stamp() -> Result<()> {
     let id = entity(0x64);
     let dreamer = dreamer_claim(&vault, id)?;
     let mask = entity(0x67);
-    let mut facet = Vec::new();
-    rmpv::encode::write_value(
-        &mut facet,
-        &Value::Map(vec![
-            ("label".into(), "work".into()),
-            ("sensitivity".into(), "sensitive".into()),
-        ]),
-    )
-    .expect("facet body");
-    vault.put_entity(
-        &mask,
-        crate::registry::ENTITY_TYPE_FACET,
-        TimeRange { start: 1, end: 1 },
-        1,
-        &facet,
-    )?;
+    facet_mask(&vault, mask)?;
     let fork = entity(0x68);
     let writer =
         crate::batch::SuccessionWriter::new(Some(dreamer), ClaimSource::Generated, "test.fork");
@@ -462,22 +447,7 @@ fn an_unattributed_successor_keeps_its_predecessors_restricted_history() -> Resu
         ],
     )?;
     let mask = entity(0x67);
-    let mut facet = Vec::new();
-    rmpv::encode::write_value(
-        &mut facet,
-        &Value::Map(vec![
-            ("label".into(), "work".into()),
-            ("sensitivity".into(), "sensitive".into()),
-        ]),
-    )
-    .expect("facet body");
-    vault.put_entity(
-        &mask,
-        crate::registry::ENTITY_TYPE_FACET,
-        TimeRange { start: 1, end: 1 },
-        1,
-        &facet,
-    )?;
+    facet_mask(&vault, mask)?;
     let fork = entity(0x68);
     let host = crate::batch::SuccessionWriter::new(None, ClaimSource::Generated, "test.fork");
     let error = vault
@@ -500,4 +470,78 @@ fn an_unattributed_successor_keeps_its_predecessors_restricted_history() -> Resu
         ClaimLifecycleStatus::Active
     );
     Ok(())
+}
+
+/// Astra #1336 R3 repro: an unbound successor records the history it
+/// continues, so the next successor inherits it. A host fork of tool output
+/// is `Generated`, yet forking that fork again still needs the host's permit
+/// for the tool output underneath.
+#[test]
+fn an_unattributed_successor_records_the_history_it_continues() -> Result<()> {
+    let (_dir, vault, actor) = fixture()?;
+    let id = entity(0x64);
+    candidate(&vault, actor, id)?;
+    permit_rows(
+        &vault,
+        &[
+            (ClaimSource::ToolOutput, None),
+            (ClaimSource::Generated, None),
+        ],
+    )?;
+    let (mask, other) = (entity(0x67), entity(0x69));
+    facet_mask(&vault, mask)?;
+    facet_mask(&vault, other)?;
+    let host = crate::batch::SuccessionWriter::new(None, ClaimSource::Generated, "test.fork");
+    let fork = entity(0x68);
+    vault.with_write_txn(|txn| {
+        vault.fork_claim_to_facet_in_txn(txn, (id, fork), mask, true, host, 15)
+    })?;
+    assert_eq!(
+        vault.get_claim(&fork)?.expect("fork").source,
+        Some(ClaimSource::Generated)
+    );
+    permit_rows(
+        &vault,
+        &[
+            (ClaimSource::ToolOutput, Some(actor.entity_ref())),
+            (ClaimSource::Generated, None),
+        ],
+    )?;
+    let refork = entity(0x6a);
+    let error = vault
+        .with_write_txn(|txn| {
+            vault.fork_claim_to_facet_in_txn(txn, (fork, refork), other, true, host, 16)
+        })
+        .expect_err("the fork still carries tool output the host may no longer write");
+    assert!(
+        matches!(
+            error,
+            Error::Gate(GateError::SourceNotTrustedForAuto {
+                claim_source: "tool_output"
+            })
+        ),
+        "{error:?}"
+    );
+    assert!(vault.get_raw(&refork)?.is_none());
+    Ok(())
+}
+
+/// Writes a FACET mask row under `id`.
+fn facet_mask(vault: &Vault, id: EntityId) -> Result<()> {
+    let mut facet = Vec::new();
+    rmpv::encode::write_value(
+        &mut facet,
+        &Value::Map(vec![
+            ("label".into(), "work".into()),
+            ("sensitivity".into(), "sensitive".into()),
+        ]),
+    )
+    .expect("facet body");
+    vault.put_entity(
+        &id,
+        crate::registry::ENTITY_TYPE_FACET,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &facet,
+    )
 }

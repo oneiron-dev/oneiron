@@ -413,6 +413,10 @@ impl Vault {
                 )
             {
                 let owner = owner.ok_or(Stop::PendingOwner)?;
+                // Only this vault's live owner answers: a proof minted
+                // elsewhere, or whose holder or credential has since lost
+                // ownership, rolls nothing back.
+                owner.revalidate_in_txn(self, txn)?;
                 let effect = ComposedEffect::new(EffectFacts::new(format!(
                     "skill.rollback:{}:{}:{scan:?}",
                     merged.to_hex(),

@@ -2354,6 +2354,21 @@ fn rollback_that_widens_permissions_waits_for_the_owner() -> Result<()> {
             .lifecycle_status,
         SkillLifecycle::Active
     );
+    // Astra #1336 R3 repro: another vault's owner proof answers nothing here.
+    let elsewhere = Fixture::new();
+    let error = fixture
+        .vault
+        .roll_back_shared_skill_merge(&merged, Some(&elsewhere.owner), at(30), 30)
+        .expect_err("another vault's owner does not roll this one back");
+    assert_eq!(error.kind(), ErrorKind::ConsentOwnerNotAuthenticated);
+    assert_eq!(
+        fixture
+            .vault
+            .get_skill_record(&merged)?
+            .expect("merged")
+            .lifecycle_status,
+        SkillLifecycle::Active
+    );
     let SharedSkillRollback::Restored(restored) =
         fixture
             .vault
