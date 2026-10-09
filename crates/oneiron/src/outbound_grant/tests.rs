@@ -937,7 +937,7 @@ mod header_classes;
 /// to refuse a restore over the vault; a revocation since the backup is.
 #[test]
 fn a_restore_goes_ahead_past_a_grant_use_and_refuses_a_revocation() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let (dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
     let id = EntityId::now();
     let grant = vault.mint_standing_outbound_grant(
         &id,
@@ -948,6 +948,8 @@ fn a_restore_goes_ahead_past_a_grant_use_and_refuses_a_revocation() -> Result<()
     )?;
     let backups = tempfile::tempdir()?;
     let image = backups.path().join("backup");
+    // Reopened so it holds the policy a restored copy's open seeds.
+    let vault = crate::test_util::reopen_test_vault(&dir, vault);
     vault.snapshot_checkpoint(&image, 100)?;
     let restore = |destination: &std::path::Path| {
         crate::Vault::restore_checkpoint_keeping_authority(

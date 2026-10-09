@@ -2024,7 +2024,7 @@ fn invalid_resident_dial_is_refused_on_both_codec_doors() -> Result<()> {
 /// agent was switched off since the backup.
 #[test]
 fn a_restore_never_switches_back_on_an_agent_switched_off_since() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let (dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
     let id = EntityId::now();
     vault.put_agent_definition(
         &id,
@@ -2034,6 +2034,8 @@ fn a_restore_never_switches_back_on_an_agent_switched_off_since() -> Result<()> 
     )?;
     let backups = tempfile::tempdir()?;
     let image = backups.path().join("backup");
+    // Reopened so it holds the policy a restored copy's open seeds.
+    let vault = crate::test_util::reopen_test_vault(&dir, vault);
     vault.snapshot_checkpoint(&image, 100)?;
     let restore = |destination: &std::path::Path| {
         crate::Vault::restore_checkpoint_keeping_authority(

@@ -313,6 +313,16 @@ pub(crate) fn open_test_vault_with(cfg: VaultConfig) -> (tempfile::TempDir, Vaul
     (dir, vault)
 }
 
+/// Closes `vault` and opens it again through every open-time gate, as a
+/// restore opens its copy. A vault whose fixture cleared the seeded policy
+/// gets it back here, as the restored copy does at its open, so a restore
+/// test that backs up after this compares the policy it gets back.
+pub(crate) fn reopen_test_vault(dir: &tempfile::TempDir, vault: Vault) -> Vault {
+    let config = vault.config.clone();
+    drop(vault);
+    Vault::open(dir.path(), config).expect("reopen vault")
+}
+
 /// The unit-test host root. Each test vault is its own trust domain, so one
 /// fixed secret lets any fixture rebuild the issuer that rooted its vault.
 pub(crate) fn test_host_issuer() -> crate::authority::HostSlipIssuer {
