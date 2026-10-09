@@ -773,6 +773,109 @@ async fn feedback_leaves_only_as_previewed_and_only_where_policy_allows() {
     assert_eq!(again["outcome"], "delivered_to_channel", "{again}");
 }
 
+/// Two owners of one shared vault preview the same bundle and send it with the
+/// same preview second: each approval names its owner, so each send is its
+/// own, neither owner can send on the other's preview, and one owner's repeat
+/// is still that owner's one send.
+#[tokio::test]
+async fn two_owners_sending_one_bundle_are_two_sends() {
+    use oneiron::federation::{FederationGrantRole, InitialSharedMember};
+    // A closed port: a send that tried to deliver would fail, not hang.
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}/ingest", closed.local_addr().unwrap());
+    drop(closed);
+    let (_dir, server) = feedback_server(&endpoint);
+    let vault = server.vault();
+    let first = vault.ensure_embedded_owner_actor().unwrap();
+    let second = person(&server, b"the other owner");
+    let proof = vault
+        .authenticate_owner(
+            first,
+            &first.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let owners = [first, second].map(|member_ref| InitialSharedMember {
+        member_ref,
+        role: Some(FederationGrantRole::Owner),
+    });
+    vault
+        .initialize_shared_vault(&proof, 42, None, &owners, 1)
+        .unwrap();
+    let recipes = [
+        owner_recipe(&server),
+        test_bearer(&format!(
+            "principal_ref={};actor_class=human",
+            second.to_hex()
+        )),
+    ];
+    let bug = json!({ "category": "bug" });
+    let mut previews = Vec::new();
+    for recipe in &recipes {
+        let (status, preview) = call(
+            &server,
+            "POST",
+            "/v1/owner/feedback/preview",
+            recipe.clone(),
+            Some(&bug),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{preview}");
+        previews.push(preview);
+    }
+    assert_eq!(previews[0]["digest"], previews[1]["digest"]);
+    assert_ne!(previews[0]["approval"], previews[1]["approval"]);
+    let previewed_at = previews[0]["previewed_at"].clone();
+    let send_body = |preview: &Value| {
+        json!({
+            "category": "bug",
+            "digest": preview["digest"],
+            "approval": preview["approval"],
+            "previewed_at": previewed_at,
+        })
+    };
+    let mut sent = Vec::new();
+    for (recipe, preview) in recipes.iter().zip(&previews) {
+        let (status, reply) = call(
+            &server,
+            "POST",
+            "/v1/owner/feedback/send",
+            recipe.clone(),
+            Some(&send_body(preview)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{reply}");
+        sent.push(reply);
+    }
+    assert_ne!(
+        sent[0]["approval_receipt_ref"],
+        sent[1]["approval_receipt_ref"]
+    );
+    assert_ne!(sent[0]["logical_send_ref"], sent[1]["logical_send_ref"]);
+    let (status, borrowed) = call(
+        &server,
+        "POST",
+        "/v1/owner/feedback/send",
+        recipes[1].clone(),
+        Some(&send_body(&previews[0])),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{borrowed}");
+    for ((recipe, preview), sent) in recipes.iter().zip(&previews).zip(&sent) {
+        let (status, again) = call(
+            &server,
+            "POST",
+            "/v1/owner/feedback/send",
+            recipe.clone(),
+            Some(&send_body(preview)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{again}");
+        assert_eq!(again["logical_send_ref"], sent["logical_send_ref"]);
+    }
+}
+
 /// ARCH-0059 §4: what the pack-drift ladder did to a saved query reaches the
 /// owner.
 #[tokio::test]

@@ -60,7 +60,8 @@ pub(crate) struct Preview {
     pub(crate) digest: String,
     pub(crate) bundle: serde_json::Value,
     pub(crate) destination: String,
-    /// Names this bundle going to this destination; send it back unchanged.
+    /// Names this bundle going to this destination on this owner's approval;
+    /// send it back unchanged.
     pub(crate) approval: String,
     /// Send it back unchanged: one preview is one send, however often the
     /// request repeats. A preview older than an hour is refused.
@@ -83,12 +84,16 @@ pub(crate) struct Sent {
 pub(crate) fn preview(
     vault: &Vault,
     host: &FeedbackHost,
+    owner: &AuthenticatedOwner,
     request: &FeedbackRequest,
 ) -> OwnerResult<Preview> {
     let preview = bundle_preview(request)?;
     Ok(Preview {
         digest: preview.digest().to_owned(),
-        approval: preview.approval_component_id(&FeedbackApprovalScope::Send(host.config.route())),
+        approval: preview.approval_component_id(
+            &FeedbackApprovalScope::Send(host.config.route()),
+            owner.principal_ref(),
+        ),
         previewed_at: vault.now_recorded_at(),
         bundle: serde_json::from_str(&preview.display_json().map_err(feedback_error)?)
             .map_err(|error| OwnerError::Host(anyhow::anyhow!("feedback bundle JSON: {error}")))?,
@@ -113,9 +118,12 @@ pub(crate) fn send(
         ));
     }
     let scope = FeedbackApprovalScope::Send(host.config.route());
-    if preview.approval_component_id(&scope) != request.approval {
+    // The approval names the owner who previewed it, so two owners' sends of
+    // one bundle are two sends, and neither can send on the other's preview.
+    if preview.approval_component_id(&scope, owner.principal_ref()) != request.approval {
         return Err(OwnerError::Changed(
-            "the feedback destination changed since the preview; preview it again".to_owned(),
+            "this preview was for another destination or another owner; preview it again"
+                .to_owned(),
         ));
     }
     let now = vault.now_recorded_at();

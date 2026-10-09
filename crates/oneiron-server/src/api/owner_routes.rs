@@ -579,11 +579,11 @@ async fn preview_feedback(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<feedback::FeedbackRequest>, JsonRejection>,
 ) -> OwnerReply<feedback::Preview> {
-    owner(&auth, &server)?;
+    let owner = owner(&auth, &server)?;
     let host = feedback_host(&server)?;
     let request = json_payload(payload)?;
     Ok(Json(
-        blocking(move || feedback::preview(server.vault(), &host, &request)).await?,
+        blocking(move || feedback::preview(server.vault(), &host, &owner, &request)).await?,
     ))
 }
 
