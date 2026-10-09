@@ -51,18 +51,20 @@ impl Decision for RelationshipReads {
                     principals.insert(Some(grant.principal_ref));
                 }
             }
-            for (_, membership) in vault.claims_with_predicate_in_txn(
+            vault.for_each_claim_with_predicate_in_txn(
                 &txn,
                 crate::federation::PREDICATE_RELATIONSHIP_PERSON_REF,
-            )? {
-                principals.extend(
-                    membership
-                        .value
-                        .as_str()
-                        .and_then(|person| EntityId::from_hex(person).ok())
-                        .map(Some),
-                );
-            }
+                |_, membership| {
+                    principals.extend(
+                        membership
+                            .value
+                            .as_str()
+                            .and_then(|person| EntityId::from_hex(person).ok())
+                            .map(Some),
+                    );
+                    Ok(())
+                },
+            )?;
         }
         Ok(records
             .iter()
