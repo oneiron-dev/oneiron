@@ -378,7 +378,103 @@ impl Store {
                 return Err(Error::CorruptedIndex("gate decision claim erasure"));
             }
         }
+        self.stage_erased_claim_key_retirement_in_txn(wtxn, claim_id)?;
         Ok(changed)
+    }
+
+    /// Erase destroys the claim's exterior key in the same act (ARCH-0038
+    /// #erasure-completeness): a restored pre-erase image must not decrypt
+    /// the rows this erase redacted. The retirement intent commits with the
+    /// redaction; the caller's post-commit finisher destroys the key, as the
+    /// age sweep's does. A future receipt that batch preflight staged in this
+    /// transaction stays readable: it moves to the generation after the
+    /// retired one before the intent lands.
+    fn stage_erased_claim_key_retirement_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        claim_id: &[u8; 16],
+    ) -> Result<()> {
+        if cfg!(not(unix)) {
+            // No exterior custody exists here, so no claim key can either.
+            return Ok(());
+        }
+        let root = &self.core.gate_custody_root;
+        let overflow = || Error::ArithmeticOverflow("gate decision key generation");
+        let first = orcb::key_generation(root, claim_id)?;
+        // An earlier erase whose key is not destroyed yet may already have
+        // moved kept receipts one generation up.
+        let mut through = None;
+        let mut generation = first;
+        while orcb::key_published(root, claim_id, generation)? {
+            through = Some(generation);
+            generation = generation.checked_add(1).ok_or_else(overflow)?;
+        }
+        let pending = super::retention::RETIRE_PENDING.get(self, &*wtxn, claim_id)?;
+        let Some(through) = through.max(pending) else {
+            return Ok(());
+        };
+        let next = through.checked_add(1).ok_or_else(overflow)?;
+        for record in self.gate_decisions_for_claim_in_txn(&*wtxn, claim_id)? {
+            if record.redacted_at.is_none() {
+                LEDGER.put(
+                    self,
+                    wtxn,
+                    &record.decision_id,
+                    &orcb::encode_hot_at(root, &record, next)?,
+                )?;
+            }
+        }
+        super::retention::RETIRE_PENDING.put(self, wtxn, claim_id, &through)
+    }
+
+    /// Drops the rows a restore must not bring back: a checkpoint row whose
+    /// key generation was retired after the image was taken, with every
+    /// index row and the pending ask that named it. Runs in the restore's
+    /// own transaction, before the restored ledger is first read.
+    pub(crate) fn drop_erased_gate_decisions_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        erased: &[(GateDecisionId, [u8; 16])],
+    ) -> Result<()> {
+        if erased.is_empty() {
+            return Ok(());
+        }
+        let ids: std::collections::HashSet<GateDecisionId> =
+            erased.iter().map(|(id, _)| *id).collect();
+        let grant_keys: Vec<Vec<u8>> = GRANT_REF_INDEX
+            .scan_keys(self, &*wtxn, &[])?
+            .into_iter()
+            .filter(|key| {
+                tail_id(key, "gate decision grant ref index")
+                    .is_ok_and(|tail| ids.contains(&GateDecisionId::from_bytes(tail)))
+            })
+            .collect();
+        for key in &grant_keys {
+            GRANT_REF_INDEX.delete(self, wtxn, key)?;
+        }
+        for (decision_id, claim_id) in erased {
+            CLAIM_INDEX.delete(
+                self,
+                wtxn,
+                &suffix_of(
+                    gate_decision_claim_index_key(claim_id, *decision_id),
+                    GATE_DECISION_CLAIM_INDEX_PREFIX,
+                ),
+            )?;
+            self.delete_gate_retention_context_in_txn(wtxn, *decision_id)?;
+            self.delete_gate_decision_claim_refs_in_txn(wtxn, *decision_id)?;
+            self.consume_unapplied_preflight_decision_in_txn(wtxn, *decision_id)?;
+            LEDGER.delete(self, wtxn, decision_id)?;
+            let id = crate::entity_id::EntityId::from_bytes(*claim_id)
+                .map_err(|_| Error::CorruptedIndex("gate decision claim id"))?;
+            if self
+                .pending_gate_consent_in_txn(&*wtxn, &id)?
+                .is_some_and(|pending| ids.contains(&pending.decision_id))
+            {
+                self.delete_pending_gate_consent_in_txn(wtxn, &id)?;
+            }
+        }
+        Ok(())
     }
 
     /// Returns every gate decision carrying this grant reference, newest

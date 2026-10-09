@@ -263,14 +263,16 @@ impl Vault {
         RETAIN_UNTIL.get(&self.store, &txn, &Partition(claim_partition))
     }
 
-    /// Complete durable key retirements left after an interrupted sweep.
-    /// Never deletes a live row: the pending marker is committed with removal
-    /// of every primary in that physical key partition.
-    fn finish_gate_decision_retirements(&self) -> Result<()> {
+    /// Complete durable key retirements staged by an erase or a sweep,
+    /// including ones an interrupted process left behind. An intent names the
+    /// newest generation to destroy; every older live generation goes with
+    /// it. Never deletes a live row: the intent is committed with the
+    /// redaction or removal of every row those generations decrypt.
+    pub(crate) fn finish_gate_decision_retirements(&self) -> Result<()> {
         let txn = self.store.env.read_txn()?;
         let pending = RETIRE_PENDING.scan(&self.store, &txn)?;
         drop(txn);
-        for (claim, generation) in pending {
+        for (claim, _) in pending {
             #[cfg(test)]
             BEFORE_RETIRE_LOCK.with(|slot| {
                 if let Some(callback) = slot.borrow_mut().take() {
@@ -286,32 +288,69 @@ impl Vault {
                     Error::InvariantViolation("gate decision custody lock poisoned")
                 })?;
             let mut txn = self.store.env.write_txn()?;
-            match self
+            // Re-read under the writer: another finisher may have consumed
+            // the intent, or a later erase may have raised it.
+            let Some(through) = self
                 .store
                 .gate_partition_retire_pending_in_txn(&txn, &claim)?
-            {
-                None => continue, // another finisher consumed the intent
-                Some(current) if current == generation => {}
-                Some(_) => return Err(Error::CorruptedIndex("gate decision retirement intent")),
-            }
+            else {
+                continue;
+            };
             if self.store.gate_partition_held_in_txn(&txn, Some(&claim))? {
                 continue;
             }
-            let mut has_live_row = false;
-            self.store.for_each_gate_decision_in_txn(&txn, |record| {
-                has_live_row |= record.claim_id == Some(claim);
-                Ok(())
-            })?;
-            if has_live_row {
-                return Err(Error::CorruptedIndex(
-                    "retiring gate decision partition has live rows",
-                ));
+            // Only ciphertext under a retiring generation needs its key.
+            // Erased rows stay as plaintext skeletons that keep the claim id.
+            for row in super::ledger::LEDGER.iter_raw_from(&self.store, &txn, &[])? {
+                let (_, raw) = row?;
+                if orcb::raw_claim_generation(&raw)
+                    .is_some_and(|(owner, generation)| owner == claim && generation <= through)
+                {
+                    return Err(Error::CorruptedIndex(
+                        "retiring gate decision partition has live rows",
+                    ));
+                }
             }
-            orcb::retire_claim_key(&self.store.core.gate_custody_root, &claim, generation)?;
+            let root = &self.store.core.gate_custody_root;
+            for generation in orcb::key_generation(root, &claim)?..=through {
+                orcb::retire_claim_key(root, &claim, generation)?;
+            }
             RETIRE_PENDING.delete(&self.store, &mut txn, &claim)?;
             txn.commit()?;
         }
         Ok(())
+    }
+
+    /// Post-commit door for an act that staged a key retirement. The intent
+    /// is durable, so a failure here is retried by the next retention pass
+    /// and never reported as a failure of the act that already committed.
+    pub(crate) fn finish_gate_decision_retirements_after_commit(&self) {
+        if let Err(error) = self.finish_gate_decision_retirements() {
+            tracing::warn!(
+                error = %error,
+                "gate decision key retirement deferred to the next retention pass"
+            );
+        }
+    }
+
+    /// One owner maintenance pass over gate-decision retention, for a host
+    /// to run on a schedule: finish every staged key retirement, then age
+    /// out rows past the owner's horizon until a pass removes nothing. A
+    /// vault with no retention manifest or no horizon prunes nothing.
+    /// Returns the number of decision rows removed.
+    pub fn maintain_gate_decision_retention(&self) -> Result<u64> {
+        self.finish_gate_decision_retirements()?;
+        if self.gate_decision_retention_secs()?.is_none() {
+            return Ok(0);
+        }
+        let mut removed = 0_u64;
+        loop {
+            let pass = self.sweep_gate_decision_retention()?;
+            if pass == 0 {
+                return Ok(removed);
+            }
+            removed = removed.saturating_add(pass);
+        }
     }
 
     /// Live state that re-reads a claim-bound receipt as its current

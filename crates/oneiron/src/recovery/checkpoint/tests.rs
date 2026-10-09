@@ -78,6 +78,113 @@ fn checkpoint_restore_binds_live_exterior_claim_keys_across_paths() {
     );
 }
 
+/// ARCH-0038 #erasure-completeness (REV-9 item 9): erase destroys the claim's
+/// gate-decision key in the same act, so a pre-erase image restores as the
+/// vault at that time without the receipts the erase redacted.
+#[test]
+fn erase_destroys_the_claim_key_so_a_pre_erase_image_restores_without_its_receipts() {
+    use crate::store::{GateDecisionId, GateDecisionRecord};
+    let root = tempfile::tempdir().unwrap();
+    let source = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
+    let erased = EntityId::now();
+    let kept = EntityId::now();
+    for id in [erased, kept] {
+        source
+            .put_entity(
+                &id,
+                crate::registry::ENTITY_TYPE_PERSON,
+                TimeRange { start: 10, end: 10 },
+                10,
+                b"erase fixture",
+            )
+            .expect("put fixture entity");
+    }
+    let receipt = |claim: EntityId| GateDecisionRecord {
+        version: 0,
+        decision_id: GateDecisionId::now(),
+        created_at: 40,
+        outcome: "approved".into(),
+        reason_codes: vec!["gate.test.erase".into()],
+        receipt_reasons: vec![],
+        system_notices: vec![],
+        actor_class: "agent".into(),
+        actor_ref: Some("private-erased-receipt".into()),
+        content_kind: "claim".into(),
+        policy_manifest_version: "v0".into(),
+        claim_id: Some(*claim.as_bytes()),
+        grant_ref: None,
+        diff_handle: vec![1],
+        read_frontier_hash: [2; 32],
+        redacted_at: None,
+    };
+    let (erased_receipt, kept_receipt) = (receipt(erased), receipt(kept));
+    source
+        .with_write_txn(|txn| {
+            source
+                .store
+                .append_gate_decision_in_txn(txn, &erased_receipt)?;
+            source.store.append_gate_decision_in_txn(txn, &kept_receipt)
+        })
+        .expect("append claim receipts");
+    let image = root.path().join("pre-erase");
+    source
+        .snapshot_checkpoint(&image, 100)
+        .expect("pre-erase image");
+    let custody = root.path().join(".source.gate-decision-keys");
+    let key = custody.join(crate::entity_id::bytes_to_hex_lower(erased.as_bytes()));
+    assert!(key.exists());
+
+    source
+        .delete_entity_with_reason(&erased, crate::DeleteReason::UserHardDelete)
+        .expect("erase the claim");
+    assert!(
+        !key.exists(),
+        "erase destroys the claim key in the same act"
+    );
+    assert!(
+        custody
+            .join(format!(
+                ".retired-{}",
+                crate::entity_id::bytes_to_hex_lower(erased.as_bytes())
+            ))
+            .exists()
+    );
+    let skeleton = source
+        .gate_decisions(10)
+        .expect("live ledger reads")
+        .into_iter()
+        .find(|row| row.decision_id == erased_receipt.decision_id)
+        .expect("the erased claim keeps its skeleton");
+    assert!(skeleton.redacted_at.is_some() && skeleton.actor_ref.is_none());
+
+    let (restored, _) = Vault::restore_checkpoint(
+        &image,
+        &root.path().join("restored"),
+        VaultConfig::device(),
+        RestoreReason::Restore,
+        120,
+    )
+    .expect("a pre-erase image still restores");
+    let rows = restored.gate_decisions(10).expect("restored ledger reads");
+    assert!(
+        rows.iter()
+            .all(|row| row.decision_id != erased_receipt.decision_id),
+        "the erased claim's receipt does not decrypt back from the image"
+    );
+    assert!(
+        rows.contains(&kept_receipt),
+        "other claims' receipts restore"
+    );
+    let txn = restored.store.env.read_txn().unwrap();
+    assert!(
+        restored
+            .store
+            .gate_decisions_for_claim_in_txn(&txn, erased.as_bytes())
+            .unwrap()
+            .is_empty()
+    );
+}
+
 #[test]
 fn canonical_snapshot_rebuilds_indexes_excludes_runtime_and_mints_epoch() {
     let root = tempfile::tempdir().unwrap();

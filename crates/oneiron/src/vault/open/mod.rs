@@ -558,6 +558,8 @@ impl Vault {
         let lfs_recovery_cutoff = crate::unix_seconds_now().saturating_sub(24 * 60 * 60);
         while vault.recover_lfs_uploads_before(lfs_recovery_cutoff)? != 0 {}
         while vault.collect_lfs_garbage(32)? != 0 {}
+        // An erase or sweep interrupted after its commit resumes here.
+        vault.finish_gate_decision_retirements_after_commit();
         vault.recover_message_streams().map_err(|error| {
             crate::error::Error::Record(crate::error::RecordError::MessageStreamRecoveryFailed(
                 error.to_string(),

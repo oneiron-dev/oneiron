@@ -57,6 +57,7 @@ impl Vault {
     ) -> Result<DeleteEntityOutcome> {
         let outcome = self.delete_entity_with_reason_impl(id, reason, None, false)?;
         while self.collect_lfs_garbage(32)? != 0 {}
+        self.finish_gate_decision_retirements_after_commit();
         Ok(outcome)
     }
 
@@ -74,6 +75,7 @@ impl Vault {
     ) -> Result<DeleteEntityOutcome> {
         let outcome = self.delete_entity_with_reason_impl(id, reason, Some(gate), false)?;
         while self.collect_lfs_garbage(32)? != 0 {}
+        self.finish_gate_decision_retirements_after_commit();
         Ok(outcome)
     }
 
@@ -90,6 +92,7 @@ impl Vault {
     ) -> Result<DeleteEntityOutcome> {
         let outcome = self.delete_entity_with_reason_impl(id, reason, None, true)?;
         while self.collect_lfs_garbage(32)? != 0 {}
+        self.finish_gate_decision_retirements_after_commit();
         Ok(outcome)
     }
 

@@ -134,6 +134,8 @@ impl BatchBuilder<'_> {
             self.vault.store.notify_proactivity_changes();
         }
         while vault.collect_lfs_garbage(32)? != 0 {}
+        // A delete in this batch staged its claim-key retirement.
+        vault.finish_gate_decision_retirements_after_commit();
         for decision in staged_gate_decisions {
             decision.record_metrics(&vault.store.diagnostics.gate);
         }
