@@ -370,7 +370,15 @@ fn codex_rollouts_keep_each_message_once_and_appended_rollouts_add_only_new() {
         2,
         "the same words typed in two forks are two messages"
     );
-    assert_eq!(home.search("Money type"), 1);
+    // Recall gives a lone text hit no lift over the entities its now-anchor
+    // adds, so whether "Money type" (one message's words alone) makes the
+    // top 20 turns on entity ids. Words the request shares with other
+    // messages rank it on its text.
+    assert_eq!(
+        home.search("Rename the ledger crate's Money type"),
+        1,
+        "the request out of its IDE wrapper"
+    );
     assert_eq!(
         home.search("not centered"),
         1,
