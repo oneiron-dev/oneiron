@@ -88,9 +88,6 @@ pub(crate) fn models_toml(text: &str) -> ModelsConfig {
 /// Captures one user turn the way the core turn door does
 /// (`POST /v1/core/conversations/{id}/turns`): the text in the TURN body,
 /// the TURN a child of a fresh conversation. Returns the TURN id.
-///
-/// Not through `Memory::witness`: a witnessed TURN keeps its text in MESSAGE
-/// children, which the Dreamer does not read yet.
 pub(crate) fn capture_user_turn(vault: &Vault, text: &str) -> EntityId {
     let conversation = EntityId::now();
     let turn = EntityId::now();
