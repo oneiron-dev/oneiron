@@ -120,8 +120,9 @@ impl LlmBackend for LadderBackend {
         })
     }
 
-    /// Falls through only before the first event: once a rung has spoken,
-    /// its stream is the answer, cut or whole.
+    /// Falls through only before the first event: a rung whose stream fails
+    /// or ends unspoken hands the call on; once a rung has spoken, its stream
+    /// is the answer, cut or whole.
     fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
         self.admits(&request)?;
         let state = StreamState {
@@ -202,6 +203,11 @@ async fn next_event(
                 state.last_error = Some(error);
             }
             Some(Err(error)) => return Some((Err(error), state.finished())),
+            // An empty stream, or a lone `[DONE]`: the rung never answered.
+            None if !started => {
+                tracing::warn!(seat = %state.ladder.seat, rung = state.ladder.rungs[index].position, "rung stream ended before its first event; trying the next");
+                state.last_error = Some(oneiron::FatalLlmError::EmptyResponse.into());
+            }
             None => return None,
         }
     }
