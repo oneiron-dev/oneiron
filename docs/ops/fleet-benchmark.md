@@ -94,7 +94,9 @@ Manifest edits still take effect without restart and never refuse a call.
 - Each round sends one HTTP `facade/witness` per agent. The response receipt and
   persisted MESSAGE content must match the submitted deterministic message.
   Then each agent calls `recall` over its own held socket, using light effort
-  and a unique alphabetic token. The result must contain that message's short ID.
+  and a unique alphabetic token. The result must contain that message: the
+  MESSAGE item at its committed revision, or the TURN item that quotes it in
+  `cited_messages`.
 - Writes and recalls run in separate phases. Concurrency is bounded, closed-loop,
   and stated in the plan. These are not 20,000 simultaneous in-flight writes.
   Per-request latency starts when its bounded-concurrency slot runs and includes
