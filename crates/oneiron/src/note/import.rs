@@ -256,19 +256,14 @@ impl Vault {
                     markdown: note.markdown.clone(),
                     source_revision_ref: revision(&batch.folder, &note.path, &note.markdown),
                 })?;
-                let written = if note.written_at == 0 {
-                    at
-                } else {
-                    note.written_at
-                };
                 content.apply_batch(
                     self.batch_in()
                         .put_authored_note(
                             id,
                             &owner.actor(),
                             TimeRange {
-                                start: written,
-                                end: written,
+                                start: note.written_at,
+                                end: note.written_at,
                             },
                             at,
                             &body,

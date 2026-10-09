@@ -23,7 +23,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{self, Write};
 use std::path::{Component, Path};
-use std::time::{Instant, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use oneiron::EntityId;
 use oneiron::consent::AuthenticatedOwner;
@@ -302,10 +302,11 @@ fn read_folder(folder: &Path, counts: &mut NoteCounts) -> anyhow::Result<Vec<Not
              folder under it at a time",
             folder.display()
         );
+        // A file whose time cannot be read was written by now at the latest.
         let written_at = metadata
             .modified()
-            .ok()
-            .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+            .unwrap_or_else(|_| SystemTime::now())
+            .duration_since(UNIX_EPOCH)
             .map_or(0, |since| since.as_secs());
         let (front, body) = markdown::split_frontmatter(&text);
         let Front { title, label } = match front.map(markdown::frontmatter) {

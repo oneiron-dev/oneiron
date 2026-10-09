@@ -8,8 +8,8 @@ use crate::config::ServeArgs;
 mod owner_args;
 pub use owner_args::{
     BackupArgs, DoctorArgs, ExportArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs,
-    ImportNotesArgs, ImportSourceArgs, RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand, SecretScanArgs,
-    SecretScanSwitch, ServeOnlyArgs, WhoamiArgs,
+    ImportNotesArgs, ImportSourceArgs, RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand,
+    SecretScanArgs, SecretScanSwitch, ServeOnlyArgs, WhoamiArgs,
 };
 
 const DEFAULT_SERVER_DIMENSIONS: usize = 4096;
