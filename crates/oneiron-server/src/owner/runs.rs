@@ -8,7 +8,9 @@
 //! Review shows each value through the release redaction, as every serve
 //! path does; the id stays bound to the stored body. A run id is free text
 //! its proposer chose, so it is shown redacted too, beside a `run_ref` that
-//! review and resolve accept in its place.
+//! review and resolve accept in its place, in a field of its own: a run id
+//! may be any text, a `run_ref` among it, so one read as the other would let
+//! one run's id select another.
 
 use oneiron::claim::ClaimBody;
 use oneiron::consent::AuthenticatedOwner;
@@ -98,31 +100,49 @@ fn run_ref(run_id: &str) -> String {
     ))
 }
 
-/// The run `run` names: a waiting run whose `run_ref` it is, or else the run
-/// id it is.
-fn run_named(vault: &Vault, run: &str) -> OwnerResult<String> {
-    if run.len() == 64
-        && run
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    {
-        let named = vault
+/// How the owner names a run: by its id, or by the `run_ref` the listing
+/// printed for it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum RunName<'a> {
+    Id(&'a str),
+    Ref(&'a str),
+}
+
+impl<'a> RunName<'a> {
+    /// The run a request names in exactly one of its two fields.
+    pub(crate) fn from_fields(
+        run_id: Option<&'a str>,
+        run_ref: Option<&'a str>,
+    ) -> OwnerResult<Self> {
+        match (run_id, run_ref) {
+            (Some(run_id), None) => Ok(Self::Id(run_id)),
+            (None, Some(run_ref)) => Ok(Self::Ref(run_ref)),
+            _ => Err(OwnerError::Invalid(
+                "name the run by exactly one of run_id or run_ref".into(),
+            )),
+        }
+    }
+}
+
+/// The id of the run `run` names: the id itself, or the waiting run whose
+/// `run_ref` it is.
+fn run_named(vault: &Vault, run: RunName<'_>) -> OwnerResult<String> {
+    match run {
+        RunName::Id(run_id) => Ok(run_id.to_owned()),
+        RunName::Ref(reference) => vault
             .pending_gate_consent_groups(PENDING_SCAN_LIMIT)?
             .into_iter()
             .filter_map(|group| group.dreamer_run_id)
-            .find(|run_id| run_ref(run_id) == run);
-        if let Some(run_id) = named {
-            return Ok(run_id);
-        }
+            .find(|run_id| run_ref(run_id) == reference)
+            .ok_or_else(|| oneiron::Error::EntityNotFound.into()),
     }
-    Ok(run.to_owned())
 }
 
 /// What one run is waiting on.
 pub(crate) fn review(
     vault: &Vault,
     owner: &AuthenticatedOwner,
-    run: &str,
+    run: RunName<'_>,
 ) -> OwnerResult<RunReview> {
     let run_id = run_named(vault, run)?;
     let actor = WriteActor::new(owner.actor(), EdgeActorClass::Human);
@@ -178,7 +198,7 @@ fn redacted(text: String) -> String {
 pub(crate) fn resolve(
     vault: &Vault,
     owner: &AuthenticatedOwner,
-    run: &str,
+    run: RunName<'_>,
     bundle_id: &str,
     action: GateConsentBundleAction,
 ) -> OwnerResult<RunResolved> {
@@ -258,7 +278,8 @@ mod tests {
                 .park_run_proposal_for_test("cli-run", agent, EntityId::now(), value)
                 .unwrap();
         }
-        let shown = serde_json::to_string(&review(&vault, &owner, "cli-run").unwrap()).unwrap();
+        let reviewed = review(&vault, &owner, RunName::Id("cli-run")).unwrap();
+        let shown = serde_json::to_string(&reviewed).unwrap();
         let hex: String = token.bytes().map(|byte| format!("{byte:02x}")).collect();
         assert!(!shown.contains(token), "{shown}");
         assert!(!shown.contains(&hex), "{shown}");

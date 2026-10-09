@@ -277,10 +277,12 @@ async fn pending_runs(
     Ok(Json(blocking(move || runs::pending(server.vault())).await?))
 }
 
+/// A run, named by its id or by its `run_ref`, never one field read as both.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RunQuery {
-    run_id: String,
+    run_id: Option<String>,
+    run_ref: Option<String>,
 }
 
 async fn review_run(
@@ -290,14 +292,19 @@ async fn review_run(
 ) -> OwnerReply<runs::RunReview> {
     let owner = owner(&auth, &server)?;
     let query = query_params(query)?;
-    let review = blocking(move || runs::review(server.vault(), &owner, &query.run_id)).await?;
+    let review = blocking(move || {
+        let run = runs::RunName::from_fields(query.run_id.as_deref(), query.run_ref.as_deref())?;
+        runs::review(server.vault(), &owner, run)
+    })
+    .await?;
     Ok(Json(review))
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DecideRun {
-    run_id: String,
+    run_id: Option<String>,
+    run_ref: Option<String>,
     /// The bundle id review returned for exactly these proposals.
     bundle_id: String,
 }
@@ -327,13 +334,9 @@ async fn decide_run(
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
     let resolved = blocking(move || {
-        runs::resolve(
-            server.vault(),
-            &owner,
-            &request.run_id,
-            &request.bundle_id,
-            action,
-        )
+        let run =
+            runs::RunName::from_fields(request.run_id.as_deref(), request.run_ref.as_deref())?;
+        runs::resolve(server.vault(), &owner, run, &request.bundle_id, action)
     })
     .await?;
     Ok(Json(resolved))

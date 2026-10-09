@@ -294,22 +294,29 @@ pub fn runs(command: RunsCommand) -> anyhow::Result<()> {
     match command {
         RunsCommand::Pending(_) => emit(&runs::pending(&vault)?),
         RunsCommand::Show(args) => {
-            emit(&runs::review(&vault, &local_owner(&vault)?, &args.run_id)?)
+            let run = runs::RunName::from_fields(args.run_id.as_deref(), args.run_ref.as_deref())?;
+            emit(&runs::review(&vault, &local_owner(&vault)?, run)?)
         }
-        RunsCommand::Approve(args) => emit(&runs::resolve(
-            &vault,
-            &local_owner(&vault)?,
-            &args.run_id,
-            &args.bundle,
-            GateConsentBundleAction::Approve,
-        )?),
-        RunsCommand::Decline(args) => emit(&runs::resolve(
-            &vault,
-            &local_owner(&vault)?,
-            &args.run_id,
-            &args.bundle,
-            GateConsentBundleAction::Decline,
-        )?),
+        RunsCommand::Approve(args) => {
+            let run = runs::RunName::from_fields(args.run_id.as_deref(), args.run_ref.as_deref())?;
+            emit(&runs::resolve(
+                &vault,
+                &local_owner(&vault)?,
+                run,
+                &args.bundle,
+                GateConsentBundleAction::Approve,
+            )?)
+        }
+        RunsCommand::Decline(args) => {
+            let run = runs::RunName::from_fields(args.run_id.as_deref(), args.run_ref.as_deref())?;
+            emit(&runs::resolve(
+                &vault,
+                &local_owner(&vault)?,
+                run,
+                &args.bundle,
+                GateConsentBundleAction::Decline,
+            )?)
+        }
     }
 }
 
