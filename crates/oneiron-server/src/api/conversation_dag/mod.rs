@@ -280,6 +280,7 @@ fn declare_summary(
         .vault
         .request_scope_summary(request)
         .map_err(|e| core_engine_error("summary declaration failed", e))?;
+    server.ai.attempt_queued();
     Ok((
         StatusCode::ACCEPTED,
         Json(DagSummaryQueuedResponse {

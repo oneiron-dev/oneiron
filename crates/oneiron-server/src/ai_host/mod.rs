@@ -183,12 +183,25 @@ impl AiHandle {
         if self.hints.is_none() {
             return;
         }
-        let vault = Arc::clone(vault);
+        let (vault, handle) = (Arc::clone(vault), self.clone());
         tokio::task::spawn_blocking(move || {
-            if let Err(error) = vault.wake_dreamer_on_turn(subject, vault.now_recorded_at()) {
-                tracing::warn!(%error, ?subject, "turn wake not queued");
+            match vault.wake_dreamer_on_turn(subject, vault.now_recorded_at()) {
+                Ok(true) => handle.attempt_queued(),
+                Ok(false) => {}
+                Err(error) => tracing::warn!(%error, ?subject, "turn wake not queued"),
             }
         });
+    }
+
+    /// A Dreamer attempt was queued outside the driver: the running Dreamer
+    /// takes a pass for it now instead of at its next deadline.
+    pub fn attempt_queued(&self) {
+        let Some(hints) = &self.hints else {
+            return;
+        };
+        if let Err(error) = hints.push_hint() {
+            tracing::warn!(?error, "dreamer pass hint dropped");
+        }
     }
 
     /// [`Self::turn_landed`] for a turn `actor` wrote: an agent with a stored

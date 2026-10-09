@@ -443,7 +443,7 @@ async fn a_landed_turn_wakes_the_dreamer_on_the_vault_grain() {
     post(
         &server,
         &format!("{path}/records"),
-        json!({"advance": true, "body": {"txt": "my sister Hana moved to Osaka last spring"}, "actor": actor}),
+        json!({"advance": true, "body": {"txt": "my sister Hana moved to Osaka last spring", "spkr": "user"}, "actor": actor}),
     )
     .await;
     assert!(
@@ -478,7 +478,10 @@ async fn a_summary_declaration_without_a_dreamer_is_refused() {
     )
     .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body:?}");
-    assert_eq!(body["code"], "SUMMARY_WRITER_UNAVAILABLE");
+    assert_eq!(
+        error_envelope(&body)["details"]["code"],
+        "SUMMARY_WRITER_UNAVAILABLE"
+    );
 }
 
 #[tokio::test]
