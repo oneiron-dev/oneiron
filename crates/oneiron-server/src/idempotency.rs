@@ -297,6 +297,18 @@ pub(crate) async fn idempotency_middleware(
     request: Request,
     next: Next,
 ) -> Response {
+    idempotent(state, request, next, |_, _, _| None).await
+}
+
+/// The idempotency layer. `release` sees a cached success before it is
+/// replayed, with the caller's authority as it stands now: a response it
+/// returns is sent in the cached one's place, and the cached entry stays.
+async fn idempotent(
+    state: IdempotencyLayerState,
+    request: Request,
+    next: Next,
+    release: impl FnOnce(&SyncServer, Option<&CoreAuth>, &[u8]) -> Option<Response>,
+) -> Response {
     let has_idempotency_header = request.headers().contains_key(IDEMPOTENCY_KEY_HEADER);
     let is_core_auth_route = is_core_auth_route(request_path(&request));
     let revoked = state.server.vault().as_ref();
@@ -337,7 +349,13 @@ pub(crate) async fn idempotency_middleware(
 
     let _guard = state.store.lock_for(&store_key).await;
     match state.store.lookup(&store_key, &request_body) {
-        Ok(IdempotencyLookup::Replay(response)) => return response.into_response(),
+        Ok(IdempotencyLookup::Replay(response)) => {
+            let auth = core_auth.as_ref().and_then(|auth| auth.as_ref().ok());
+            if let Some(refused) = release(&state.server, auth, &response.body) {
+                return refused;
+            }
+            return response.into_response();
+        }
         Ok(IdempotencyLookup::Conflict) => return conflict_response(&key, is_core_auth_route),
         Ok(IdempotencyLookup::Miss) => {}
         Err(error) => {
@@ -391,15 +409,17 @@ pub(crate) async fn idempotency_middleware(
 }
 
 /// The idempotency layer for a route that mutates in one request form only.
-/// A keyed request's body tells the form: the mutating form takes
-/// [`idempotency_middleware`]; any other form runs as if the layer were
-/// absent, never cached and never replayed. The body is read up to axum's
-/// default extractor limit, so no body the route would accept is cut short.
+/// A keyed request's body tells the form: the mutating form takes the layer,
+/// with `release` judging each replay; any other form runs as if the layer
+/// were absent, never cached and never replayed. The body is read up to
+/// axum's default extractor limit, so no body the route would accept is cut
+/// short.
 pub(crate) async fn idempotency_for_mutating_form(
     state: IdempotencyLayerState,
     request: Request,
     next: Next,
     mutates: impl FnOnce(&[u8]) -> bool,
+    release: impl FnOnce(&SyncServer, Option<&CoreAuth>, &[u8]) -> Option<Response>,
 ) -> Response {
     const ROUTE_BODY_LIMIT_BYTES: usize = 2 * 1024 * 1024;
     if !request.headers().contains_key(IDEMPOTENCY_KEY_HEADER) {
@@ -416,7 +436,7 @@ pub(crate) async fn idempotency_for_mutating_form(
     let mutating = mutates(&body);
     let request = Request::from_parts(parts, Body::from(body));
     if mutating {
-        idempotency_middleware(State(state), request, next).await
+        idempotent(state, request, next, release).await
     } else {
         next.run(request).await
     }

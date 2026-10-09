@@ -545,31 +545,10 @@ impl Vault {
                 ReadMode::Pinned(revision),
             )?
             .ok_or(BoardHistoryError::MissingFrontier)?;
-            if caller.is_some() || raw[0] == crate::registry::ENTITY_TYPE_CLAIM {
-                let live = crate::vault::entity_revision::read_entity_revision_in_txn(
-                    self,
-                    &txn,
-                    id,
-                    ReadMode::Live,
-                )?
-                .ok_or(BoardHistoryError::UnreadableDocument(*id))?;
-                if !scoped.is_claim_raw_readable_in(&txn, id, &live)?
-                    || !scoped.is_claim_raw_readable_in(&txn, id, &raw)?
-                {
-                    return Err(BoardHistoryError::UnreadableDocument(*id));
-                }
-            }
-            if let Some(disclosure) = disclosure {
-                // The clamp sees the stored CLAIM and the pinned one served.
-                let pinned = (raw[0] == crate::registry::ENTITY_TYPE_CLAIM)
-                    .then(|| decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true))
-                    .transpose()?;
-                if !disclosure.admits(&self.store, &txn, id, raw[0], None)?
-                    || (pinned.is_some()
-                        && !disclosure.admits(&self.store, &txn, id, raw[0], pinned.as_ref())?)
-                {
-                    return Err(BoardHistoryError::UnreadableDocument(*id));
-                }
+            if (caller.is_some() || raw[0] == crate::registry::ENTITY_TYPE_CLAIM)
+                && !self.document_admitted_in(&txn, id, scoped, Some(&raw), disclosure)?
+            {
+                return Err(BoardHistoryError::UnreadableDocument(*id));
             }
             documents.insert(*id, raw[ENTITY_METADATA_HEADER_LEN..].to_vec());
         }
@@ -583,6 +562,65 @@ impl Vault {
             documents,
             read_receipt,
         })
+    }
+
+    /// Whether `caller` may be shown each of `documents` as they stand now,
+    /// under its current read scope and `disclosure` clamp: the check a past
+    /// board's read-back makes, for a board response released again, such
+    /// as a keyed retry's replay. A document gone since is not admitted.
+    pub fn board_documents_admitted(
+        &self,
+        documents: &std::collections::BTreeSet<EntityId>,
+        caller: &ScopedRead<'_>,
+        disclosure: Option<&crate::disclosure::DisclosureContext>,
+    ) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        for id in documents {
+            if !self.document_admitted_in(&txn, id, caller, None, disclosure)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// One document a board hands back: readable to `scoped` live and at the
+    /// `served` revision, and admitted by `disclosure` for the stored body
+    /// and the served CLAIM.
+    fn document_admitted_in(
+        &self,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+        scoped: &ScopedRead<'_>,
+        served: Option<&[u8]>,
+        disclosure: Option<&crate::disclosure::DisclosureContext>,
+    ) -> Result<bool> {
+        let Some(live) = crate::vault::entity_revision::read_entity_revision_in_txn(
+            self,
+            txn,
+            id,
+            ReadMode::Live,
+        )?
+        else {
+            return Ok(false);
+        };
+        for raw in std::iter::once(live.as_slice()).chain(served) {
+            if !scoped.is_claim_raw_readable_in(txn, id, raw)? {
+                return Ok(false);
+            }
+        }
+        let Some(disclosure) = disclosure else {
+            return Ok(true);
+        };
+        if !disclosure.admits(&self.store, txn, id, live[0], None)? {
+            return Ok(false);
+        }
+        match served {
+            Some(raw) if raw[0] == crate::registry::ENTITY_TYPE_CLAIM => {
+                let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+                Ok(disclosure.admits(&self.store, txn, id, raw[0], Some(&body))?)
+            }
+            _ => Ok(true),
+        }
     }
 
     /// The owner whose board `turn` anchored, if any: who may read it back.

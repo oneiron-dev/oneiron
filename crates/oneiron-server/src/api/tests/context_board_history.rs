@@ -658,7 +658,9 @@ async fn a_past_board_never_discloses_what_its_reader_is_no_longer_cleared_for()
 /// Astra 3 (REV-9 D2a): a hydration that records its TURN is a keyed
 /// mutation. A retry under the same `Idempotency-Key`, after a lost response,
 /// replays the first success, where an unkeyed retry meets the recorded turn.
-/// A hydration that names no TURN stays a read the key never caches.
+/// The replay goes out only while the caller may still be shown what it
+/// disclosed (Astra re-check): a Tier-A mark or a revoked clearance refuses
+/// it. A hydration that names no TURN stays a read the key never caches.
 #[tokio::test]
 async fn a_keyed_board_turn_retry_replays_its_first_success() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
@@ -698,6 +700,23 @@ async fn a_keyed_board_turn_retry_replays_its_first_success() {
         "{unkeyed:#}"
     );
 
+    // The owner marks the pinned document Tier A: the replay is refused, and
+    // goes out again once the mark is cleared.
+    server.vault.set_disclosure_tier_a(&document, 300).unwrap();
+    let (status, refused) = route_json(server.clone(), keyed("board-turn-retry", &body)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused:#}");
+    assert!(
+        refused.to_string().contains("board_document_unreadable"),
+        "{refused:#}"
+    );
+    server
+        .vault
+        .clear_disclosure_tier_a(&document, 301)
+        .unwrap();
+    let (status, retried) = route_json(server.clone(), keyed("board-turn-retry", &body)).await;
+    assert_eq!(status, StatusCode::OK, "{retried:#}");
+    assert_eq!(retried, first);
+
     // No TURN: two different reads under one key both run.
     for query in ["first keyed read", "second keyed read"] {
         let read = json!({
@@ -708,4 +727,23 @@ async fn a_keyed_board_turn_retry_replays_its_first_success() {
         assert_eq!(status, StatusCode::OK, "{board:#}");
         assert!(board.get("board_turn").is_none(), "{board:#}");
     }
+
+    // The owner revokes the reader's clearance: the replay is refused.
+    let mut revoked = oneiron::disclosure::DisclosureScope::new(
+        oneiron::federation::Scope::top(),
+        "party planning",
+        400,
+    )
+    .unwrap();
+    revoked.status = oneiron::disclosure::DisclosureScopeStatus::Revoked;
+    server
+        .vault
+        .set_counterparty_disclosure_scope(&principal, &revoked)
+        .unwrap();
+    let (status, refused) = route_json(server.clone(), keyed("board-turn-retry", &body)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused:#}");
+    assert!(
+        refused.to_string().contains("board_document_unreadable"),
+        "{refused:#}"
+    );
 }
