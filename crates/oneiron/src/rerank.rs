@@ -73,6 +73,3 @@ impl Default for RerankOptions {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

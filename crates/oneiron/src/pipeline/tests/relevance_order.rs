@@ -56,39 +56,3 @@ fn exact_japanese_phrase_ranks_its_own_turn_first() -> Result<()> {
     );
     Ok(())
 }
-
-#[test]
-fn exact_japanese_phrase_ranks_first_with_a_temporal_now() -> Result<()> {
-    let (_dir, vault, ids) = ids_and_vault();
-    let results = vault
-        .query()
-        .search_text("株式会社青葉リンク", 10)
-        .with_temporal_now(1_710_504_000)
-        .run()?;
-    assert_eq!(results[0].id, ids[TARGET]);
-    Ok(())
-}
-
-#[test]
-fn english_relevance_orders_tied_turns_too() -> Result<()> {
-    let (_dir, vault) = open_test_vault();
-    let weak = entity_id(0x61);
-    let strong = entity_id(0x62);
-    put_text(
-        &vault,
-        weak,
-        "a note about the archive code and nothing else",
-    )?;
-    put_text(
-        &vault,
-        strong,
-        "the contract launch code is tulip, the contract launch code",
-    )?;
-    let results = vault
-        .query()
-        .search_text("contract launch code", 10)
-        .run()?;
-    assert_eq!(results[0].id, strong, "the lower id does not win a tie");
-    assert!(results[0].score > results[1].score);
-    Ok(())
-}

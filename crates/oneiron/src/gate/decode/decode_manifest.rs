@@ -103,6 +103,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) room_policy_rows: Vec<crate::gate::room_policy::RoomPolicyRow>,
     pub(in crate::gate) shared_act_policies:
         Option<std::collections::BTreeMap<String, crate::federation::SharedActPolicy>>,
+    pub(in crate::gate) catastrophe_floor: Option<crate::consent::CatastropheFloor>,
     pub(in crate::gate) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
     pub(in crate::gate) owner_policy_precedence: PolicyOwnerPrecedence,
     pub(in crate::gate) owner_policy_rows_dropped: bool,
@@ -240,6 +241,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | crate::federation::grant_policy::ROWS_KEY
                 | crate::gate::room_policy::KEY
                 | POLICY_SHARED_ACT_POLICIES_KEY
+                | crate::consent::CATASTROPHE_FLOOR_ROW_KEY
                 | POLICY_OWNER_POLICY_ROWS_KEY
                 | POLICY_OWNER_POLICY_PRECEDENCE_KEY
                 | super::super::constants::POLICY_OWNER_POLICY_NOTIFY_KEY
@@ -407,6 +409,12 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => Some(parse_shared_act_policies(value)?),
     };
+    let catastrophe_floor =
+        match single_map_value(&entries, crate::consent::CATASTROPHE_FLOOR_ROW_KEY) {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => Some(crate::consent::CatastropheFloor::decode_row(value)?),
+        };
     let owner_policy_enabled = match single_map_value(&entries, POLICY_OWNER_POLICY_ENABLED_KEY) {
         MapValue::Missing => false,
         MapValue::Duplicate => return None,
@@ -895,6 +903,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         federation_grant_rows,
         room_policy_rows,
         shared_act_policies,
+        catastrophe_floor,
         single_valued_predicates,
         owner_policy_rows,
         owner_policy_precedence,
@@ -1122,10 +1131,9 @@ fn parse_attribution_limits(value: &Value) -> Option<AttributionLimits> {
 }
 
 /// Longest owner policy document a manifest may carry, mirroring the bound the
-/// hosted plane's registration enforces. Spelled here rather than imported:
-/// `gate` sits under `policy_model`, and
-/// `policy_model::tests::owner_and_hosted_document_bounds_agree` pins the two
-/// numbers together.
+/// hosted plane's registration enforces. Spelled here rather than imported,
+/// because `gate` sits under `policy_model`; keep it equal to
+/// `policy_model::POLICY_DOCUMENT_MAX_LEN`.
 pub(super) const OWNER_POLICY_DOCUMENT_MAX_LEN: usize = 65_536;
 
 /// Longest output-contract NAME a manifest may carry. It is a preset spelling

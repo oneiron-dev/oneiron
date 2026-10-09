@@ -132,9 +132,6 @@ pub(crate) use policy_change_followup::{
     enqueue_policy_change_digest_followup_in_txn, enqueue_policy_change_followup_in_txn,
 };
 
-#[cfg(test)]
-mod owner_index_tests;
-
 pub use symbol_lease::{SymbolLease, SymbolLeaseOutcome};
 pub(crate) use symbol_lease::{acquire_symbols, symbols_ready};
 

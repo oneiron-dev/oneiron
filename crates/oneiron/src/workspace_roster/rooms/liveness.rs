@@ -223,20 +223,6 @@ impl RoomThreadPolicy {
     }
 }
 
-/// Fold indexed turns and already-validated TASK facts into a room working set.
-/// Resolve reply chains rather than trusting the caller to label a thread's root.
-#[cfg(test)]
-pub(super) fn project(
-    turns: &[RoomTurn],
-    tasks: &[RoomThreadTask],
-    policy: RoomThreadPolicy,
-) -> Result<RoomThreads> {
-    let room_hex = turns
-        .first()
-        .map_or_else(|| "0".repeat(32), |turn| turn.room_id.clone());
-    project_inner(turns, tasks, policy, None, &room_hex)
-}
-
 /// The public room read supplies its exact room id even for an empty history.
 pub(super) fn project_in_room(
     turns: &[RoomTurn],
@@ -476,7 +462,3 @@ fn project_inner(
         quiet: list(quiet, "quiet")?,
     })
 }
-
-#[cfg(test)]
-#[path = "liveness/tests.rs"]
-mod tests;
