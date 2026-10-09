@@ -58,7 +58,7 @@ mod provenance;
 mod read;
 mod resident;
 
-pub(crate) use self::amended::{AmendedOutcome, reconcile_amended_outcomes};
+pub(crate) use self::amended::{AmendedOutcome, reconcile_amended_outcomes_in_txn};
 pub(crate) use self::callable::{project_callable_receipt_outcome, record_callable_invocation};
 pub use self::floor::{
     DEFAULT_SKILL_RELIABILITY_FLOOR, PREDICATE_SKILL_QUARANTINE_PROPOSAL,

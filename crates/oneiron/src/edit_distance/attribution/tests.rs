@@ -580,6 +580,14 @@ fn terminal_attempt(vault: &Vault, actor: EntityId, skill_id: &str, failed: bool
     Ok(crate::receipt::attempt_pack_receipt_id(&row.id))
 }
 
+/// The attempt arm's reliability posterior as `(alpha, beta)`.
+fn arm_posterior(vault: &Vault, skill: &EntityId) -> Result<(f32, f32)> {
+    use crate::skill_reliability::skill_reliability_posterior_for_executor;
+    let read = skill_reliability_posterior_for_executor(vault, skill, MODEL)?
+        .expect("the attempt's arm has a posterior");
+    Ok((read.alpha, read.beta))
+}
+
 /// Packet check (canon §5, `skill_defect` → `learning.reliability`): one
 /// amended attempt moves reliability once, by the defect share, and the
 /// attempt's earlier win is replaced, not added to. A second amendment of the
@@ -589,18 +597,14 @@ fn terminal_attempt(vault: &Vault, actor: EntityId, skill_id: &str, failed: bool
 fn an_amended_attempt_counts_once_as_its_defect_share() -> Result<()> {
     use crate::skill_reliability::{
         project_skill_reliability_for_executor, record_skill_contributing_win,
-        skill_reliability_posterior_for_executor, skill_reliability_prior,
+        skill_reliability_prior,
     };
     let (_tmp, vault) = temp_vault();
     let actor = put_actor(&vault)?;
     let skill = put_skill(&vault, "ed03.reliability")?;
     let attempt = terminal_attempt(&vault, actor, "ed03.reliability", false)?;
     let prior = skill_reliability_prior(&vault, &skill)?;
-    let posterior = |vault: &Vault| -> Result<(f32, f32)> {
-        let read = skill_reliability_posterior_for_executor(vault, &skill, MODEL)?
-            .expect("the attempt's arm has a posterior");
-        Ok((read.alpha, read.beta))
-    };
+    let posterior = |vault: &Vault| arm_posterior(vault, &skill);
 
     // The attempt lane's record: the completed attempt is a contributing win.
     record_skill_contributing_win(&vault, &skill, &attempt, 20)?;
@@ -683,6 +687,54 @@ fn an_amended_attempt_counts_once_as_its_defect_share() -> Result<()> {
     judge_amendment(&vault, again)?.expect("a preference routes");
     assert_eq!(project_amendment_reliability(&vault)?, vec![skill]);
     assert_eq!(posterior(&vault)?, (prior.alpha + 1.0, prior.beta));
+    Ok(())
+}
+
+/// Sol review, 10-10: withdrawing the amendment of an attempt the attempt lane
+/// never recorded left its loss behind as imported history, and correcting the
+/// evidence to another attempt moved the old verdict there before any judge had
+/// seen the correction. A verdict stays on the attempt it was judged against,
+/// and its withdrawal leaves the prior exactly.
+#[test]
+fn a_withdrawn_or_rejoined_amendment_leaves_no_stale_loss() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = put_actor(&vault)?;
+    let skill = put_skill(&vault, "ed03.withdrawn")?;
+    let first = terminal_attempt(&vault, actor, "ed03.withdrawn", false)?;
+    let second = terminal_attempt(&vault, actor, "ed03.withdrawn", false)?;
+    let prior = crate::skill_reliability::skill_reliability_prior(&vault, &skill)?;
+    let receipt = "receipt:withdrawn";
+    measure_amendment(&vault, receipt, "Ship it Friday.", "Ship it Monday.")?;
+    let defect = |attempt: &str| {
+        AmendmentEvidence::new(receipt, actor, "outbound")
+            .at(70)
+            .with_skill(skill)
+            .with_attempt(attempt)
+            .with_cause(AmendmentCause::ProposalWrong)
+            .with_routing_facts(true, true)
+    };
+    record_amendment_evidence(&vault, &defect(&first))?;
+    judge_amendment(&vault, receipt)?.expect("a followed, covered step is the skill's defect");
+    assert_eq!(project_amendment_reliability(&vault)?, vec![skill]);
+    assert_eq!(arm_posterior(&vault, &skill)?, (prior.alpha, prior.beta + 1.0));
+
+    record_amendment_evidence(&vault, &defect(&second))?;
+    assert!(
+        project_amendment_reliability(&vault)?.is_empty(),
+        "evidence alone does not move a judged verdict"
+    );
+
+    record_amendment_evidence(
+        &vault,
+        &defect(&second).with_cause(AmendmentCause::DeciderPreference),
+    )?;
+    judge_amendment(&vault, receipt)?.expect("a preference routes");
+    assert_eq!(project_amendment_reliability(&vault)?, vec![skill]);
+    assert_eq!(
+        arm_posterior(&vault, &skill)?,
+        (prior.alpha, prior.beta),
+        "the withdrawn loss is gone, not kept as imported history"
+    );
     Ok(())
 }
 

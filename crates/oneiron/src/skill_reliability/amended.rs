@@ -15,8 +15,11 @@
 //! verdict.
 //!
 //! These rows are a projection of the amendment judgment ledger, not a second source of truth:
-//! [`reconcile_amended_outcomes`] recomputes the whole set on every pass and reprojects each arm
-//! it moved.
+//! [`reconcile_amended_outcomes_in_txn`] recomputes the whole set on every pass and reprojects
+//! each arm it moved. A withdrawn verdict is never deleted. Its row stays at share `0` and counts
+//! for nothing, for the reason a displaced judge's row stays: a reliability claim this vault wrote
+//! may cite the attempt, and a cited receipt with no local row reads as another replica's history
+//! ([`super::projector`]'s imported base).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -25,8 +28,10 @@ use rmpv::Value;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::receipt::attempt_pack_receipt_in_txn;
 use crate::side_table::{self, Raw, RawValue, SideKey, SideTable};
 
+use super::callable::callable_invokers_in_txn;
 use super::codec::{
     KEY_AT, KEY_SCHEMA_VERSION, decode_value, encode_value, invalid, map_f32, map_str, map_u64,
 };
@@ -36,7 +41,7 @@ use super::ledger::{
 };
 use super::posterior::SKILL_RELIABILITY_SCHEMA_VERSION;
 use super::projector::project_in_txn;
-use super::provenance::skill_reliability_prior;
+use super::provenance::skill_reliability_prior_in_txn;
 
 /// The amendment verdict that replaces one attempt's outcome row. Key: the outcome row's full
 /// stored key, table prefix included — the displacement mark's key shape.
@@ -95,8 +100,8 @@ impl RawValue for AmendedRow {
         let amendment = map_str(&value, KEY_AMENDMENT)
             .ok_or(invalid("skill reliability amendment is missing its receipt"))?;
         let share = map_f32(&value, KEY_SHARE)
-            .filter(|share| valid_share(*share))
-            .ok_or(invalid("skill reliability amendment share is not in (0, 1]"))?;
+            .filter(|share| (0.0..=1.0).contains(share))
+            .ok_or(invalid("skill reliability amendment share is not in [0, 1]"))?;
         let at = map_u64(&value, KEY_AT)
             .ok_or(invalid("skill reliability amendment is missing its time"))?;
         Ok(Self {
@@ -112,7 +117,18 @@ fn valid_share(share: f32) -> bool {
     share > 0.0 && share <= 1.0
 }
 
-/// Whether an amendment verdict replaces `outcome`.
+impl AmendedRow {
+    /// The same row, withdrawn: it keeps the attempt local and charges nothing.
+    fn withdrawn(&self) -> Self {
+        Self {
+            share: 0.0,
+            ..self.clone()
+        }
+    }
+}
+
+/// Whether an amendment verdict, standing or withdrawn, was ever kept for `outcome` — so this
+/// vault's own ledger knows the attempt.
 pub(super) fn is_amended(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -131,6 +147,7 @@ pub(super) fn amended_shares_in_txn(
     Ok(AMENDED
         .scan_from(&vault.store, rtxn, &outcome_arm_prefix(skill, executor))?
         .into_iter()
+        .filter(|(_, row)| row.share > 0.0)
         .map(|(outcome, row)| (outcome.receipt().to_owned(), row.share))
         .collect())
 }
@@ -143,8 +160,10 @@ pub(super) fn amended_receipts_in_txn(
 ) -> Result<BTreeSet<String>> {
     let mut receipts = BTreeSet::new();
     for prefix in outcome_skill_prefixes(skill) {
-        for (outcome, _) in AMENDED.scan_from(&vault.store, rtxn, &prefix)? {
-            receipts.insert(outcome.receipt().to_owned());
+        for (outcome, row) in AMENDED.scan_from(&vault.store, rtxn, &prefix)? {
+            if row.share > 0.0 {
+                receipts.insert(outcome.receipt().to_owned());
+            }
         }
     }
     Ok(receipts)
@@ -153,19 +172,25 @@ pub(super) fn amended_receipts_in_txn(
 /// One arm of one skill: the unit a reprojection runs over.
 type Arm = (EntityId, Option<String>);
 
+/// The row each grounded, charging verdict lands, keyed by the outcome row it replaces.
+type Desired = BTreeMap<Vec<u8>, (Arm, OutcomeRef, AmendedRow)>;
+
 /// Lands the later verdict of every amended attempt, and reprojects each arm whose record moved,
 /// returning those skills in first-seen order.
 ///
-/// `verdicts` is every joined amendment the amendment lane holds, charging or not. Per skill and
-/// attempt the LATER verdict holds, by event time and then receipt id, so an earlier amendment of
-/// the same attempt is replaced, not added to. A later verdict that charges the skill nothing
-/// leaves the attempt its own record.
+/// `verdicts` is every joined amendment the amendment lane holds, charging or not, read on this
+/// same transaction: the ledger the rows are derived from and the rows themselves are one
+/// snapshot under the writer, so a pass that read an older ledger cannot land over a newer one.
+/// Per skill and attempt the LATER verdict holds, by event time and then receipt id, so an
+/// earlier amendment of the same attempt is replaced, not added to. A later verdict that charges
+/// the skill nothing leaves the attempt its own record.
 ///
-/// Every verdict is grounded again here: the skill must exist and must not be a callable (a
-/// callable's loss belongs to the executors that invoked it, which the attempt's stamp may not
-/// name), and the attempt receipt must be a stamped pack receipt whose manifest loaded the skill.
-/// The arm is the one that receipt's executor stamp names. An ungrounded verdict is skipped,
-/// which withdraws whatever it held before.
+/// Every verdict is grounded again here. The skill must exist, and the attempt receipt must be a
+/// stamped pack receipt whose manifest loaded it. The arm is the one that receipt's executor stamp
+/// names, except for a callable, whose share charges every executor that invoked it under that
+/// attempt — the arms a routed defect charges. An ungrounded verdict lands nothing, which
+/// withdraws whatever it held before. A skill that has since been deleted has its rows withdrawn
+/// and is not reprojected: it has no prior left to fold onto.
 ///
 /// The pass is idempotent: an arm whose rows already say exactly this is neither written nor
 /// reprojected.
@@ -173,23 +198,51 @@ type Arm = (EntityId, Option<String>);
 /// # Errors
 ///
 /// Storage errors.
-pub(crate) fn reconcile_amended_outcomes(
+pub(crate) fn reconcile_amended_outcomes_in_txn(
     vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
     verdicts: &[AmendedOutcome],
 ) -> Result<Vec<EntityId>> {
-    let desired = grounded_rows(vault, &later_verdicts(verdicts))?;
+    let desired = grounded_rows_in_txn(vault, wtxn, &later_verdicts(verdicts))?;
+    let mut moved: Vec<(Arm, u64)> = Vec::new();
+    let mut note = |arm: Arm, at: u64| match moved.iter_mut().find(|(held, _)| *held == arm) {
+        Some((_, latest)) => *latest = (*latest).max(at),
+        None => moved.push((arm, at)),
+    };
+    let mut stored = BTreeSet::new();
+    for (outcome, row) in AMENDED.scan(&vault.store, wtxn)? {
+        let key = key_of(&outcome);
+        let next = match desired.get(&key) {
+            Some((_, _, wanted)) => wanted.clone(),
+            None => row.withdrawn(),
+        };
+        if next != row {
+            AMENDED.put(&vault.store, wtxn, &outcome, &next)?;
+            let (skill, executor) = outcome.arm();
+            note((skill, executor.map(str::to_owned)), row.at.max(next.at));
+        }
+        stored.insert(key);
+    }
+    for (key, (arm, outcome, row)) in &desired {
+        if !stored.contains(key) {
+            AMENDED.put(&vault.store, wtxn, outcome, row)?;
+            note(arm.clone(), row.at);
+        }
+    }
+
     let mut projected = Vec::new();
-    for (skill, executor) in moved_arms(vault, &desired)? {
-        settle_arm(vault, &desired, &skill, executor.as_deref())?;
+    for ((skill, executor), at) in moved {
+        if vault.get_skill_record_in_txn(wtxn, &skill)?.is_none() {
+            continue;
+        }
+        let prior = skill_reliability_prior_in_txn(vault, wtxn, &skill)?;
+        project_in_txn(vault, wtxn, &skill, executor.as_deref(), prior, at)?;
         if !projected.contains(&skill) {
             projected.push(skill);
         }
     }
     Ok(projected)
 }
-
-/// The row one grounded verdict lands, keyed by the outcome row it replaces.
-type Desired = BTreeMap<Vec<u8>, (Arm, OutcomeRef, AmendedRow)>;
 
 /// The later verdict per skill and attempt, by event time and then receipt id.
 fn later_verdicts(verdicts: &[AmendedOutcome]) -> Vec<&AmendedOutcome> {
@@ -205,106 +258,47 @@ fn later_verdicts(verdicts: &[AmendedOutcome]) -> Vec<&AmendedOutcome> {
     latest.into_values().collect()
 }
 
-/// The rows the charging verdicts land, each grounded and placed on the arm its attempt's
-/// executor stamp names.
-fn grounded_rows(vault: &Vault, verdicts: &[&AmendedOutcome]) -> Result<Desired> {
+/// The rows the charging verdicts land, each grounded and placed on its arms.
+fn grounded_rows_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    verdicts: &[&AmendedOutcome],
+) -> Result<Desired> {
     let mut desired = Desired::new();
     for verdict in verdicts {
         if !valid_share(verdict.defect_share) {
             continue;
         }
-        let Some(record) = vault.get_skill_record(&verdict.skill)? else {
+        let Some(record) = vault.get_skill_record_in_txn(rtxn, &verdict.skill)? else {
             continue;
         };
-        if record.role == crate::skill::SkillRole::Callable {
-            continue;
-        }
-        let Some(receipt) = crate::receipt::attempt_pack_receipt(vault, &verdict.attempt_receipt)?
-        else {
+        let attempt = verdict.attempt_receipt.as_str();
+        let Some(receipt) = attempt_pack_receipt_in_txn(&vault.store, rtxn, attempt)? else {
             continue;
         };
         if !receipt_manifest_names_skill(&receipt, &record) {
             continue;
         }
-        let executor = receipt_executor(&receipt);
-        let outcome = OutcomeRef::new(&verdict.skill, executor, &verdict.attempt_receipt);
+        let executors: Vec<Option<String>> = if record.role == crate::skill::SkillRole::Callable {
+            callable_invokers_in_txn(vault, rtxn, &verdict.skill, &record, attempt)?
+                .into_keys()
+                .map(Some)
+                .collect()
+        } else {
+            vec![receipt_executor(&receipt).map(str::to_owned)]
+        };
         let row = AmendedRow {
             amendment: verdict.amendment_receipt.clone(),
             share: verdict.defect_share,
             at: verdict.at,
         };
-        let arm = (verdict.skill, executor.map(str::to_owned));
-        desired.insert(key_of(&outcome), (arm, outcome, row));
+        for executor in executors {
+            let outcome = OutcomeRef::new(&verdict.skill, executor.as_deref(), attempt);
+            let arm = (verdict.skill, executor);
+            desired.insert(key_of(&outcome), (arm, outcome, row.clone()));
+        }
     }
     Ok(desired)
-}
-
-/// The arms whose stored rows differ from `desired`, in first-seen order.
-fn moved_arms(vault: &Vault, desired: &Desired) -> Result<Vec<Arm>> {
-    let mut arms: Vec<Arm> = Vec::new();
-    let mut held = BTreeMap::new();
-    {
-        let rtxn = vault.store.env.read_txn()?;
-        for (outcome, row) in AMENDED.scan(&vault.store, &rtxn)? {
-            let key = key_of(&outcome);
-            if desired.get(&key).map(|(_, _, wanted)| wanted) != Some(&row) {
-                let (skill, executor) = outcome.arm();
-                arms.push((skill, executor.map(str::to_owned)));
-            }
-            held.insert(key, row);
-        }
-    }
-    for (key, (arm, _, row)) in desired {
-        if held.get(key) != Some(row) {
-            arms.push(arm.clone());
-        }
-    }
-    let mut seen = BTreeSet::new();
-    arms.retain(|arm| seen.insert(arm.clone()));
-    Ok(arms)
-}
-
-/// Brings one arm's rows to `desired` and reprojects the arm, in ONE write transaction, so the
-/// rows and the claim never disagree. The rows are diffed again under the writer: the rows this
-/// moves are the ones the ledger holds now, not the ones an earlier read saw.
-fn settle_arm(
-    vault: &Vault,
-    desired: &Desired,
-    skill: &EntityId,
-    executor: Option<&str>,
-) -> Result<()> {
-    let prior = skill_reliability_prior(vault, skill)?;
-    let prefix = outcome_arm_prefix(skill, executor);
-    vault.with_write_txn(|wtxn| {
-        let mut at = 0;
-        let mut moved = false;
-        let mut kept = BTreeSet::new();
-        for (outcome, row) in AMENDED.scan_from(&vault.store, wtxn, &prefix)? {
-            let key = key_of(&outcome);
-            if desired.get(&key).map(|(_, _, wanted)| wanted) == Some(&row) {
-                kept.insert(key);
-                continue;
-            }
-            AMENDED.delete(&vault.store, wtxn, &outcome)?;
-            at = at.max(row.at);
-            moved = true;
-        }
-        let arm = desired
-            .range(prefix.clone()..)
-            .take_while(|(key, _)| key.starts_with(&prefix));
-        for (key, (_, outcome, row)) in arm {
-            if kept.contains(key) {
-                continue;
-            }
-            AMENDED.put(&vault.store, wtxn, outcome, row)?;
-            at = at.max(row.at);
-            moved = true;
-        }
-        if moved {
-            project_in_txn(vault, wtxn, skill, executor, prior, at)?;
-        }
-        Ok(())
-    })
 }
 
 /// The full stored key of an outcome row: the identity one attempt's record has in every table

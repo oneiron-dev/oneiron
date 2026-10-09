@@ -1,7 +1,9 @@
 //! Projection of judged amendments — edit-cost claims, the skill's reliability
 //! record, actor lessons — and their retraction.
 
-use super::evidence_judge::{amendment_evidence_in_txn, amendment_judgments};
+use super::evidence_judge::{
+    amendment_judgment_in_txn, amendment_judgments, amendment_judgments_in_txn,
+};
 use super::stored::{
     MAX_CITED_RECEIPTS, ROW_VERSION, StoredTarget, TARGET, TARGET_ROW_LABEL, TargetKey, hex_entity,
     invalid, normalized_scope,
@@ -10,7 +12,7 @@ use super::taxonomy::{AmendmentClass, AmendmentJudgment, cost_predicate};
 use crate::Vault;
 use crate::actor_claims::{
     ActorClaimEvidence, ActorClaimRow, PREDICATE_ACTOR_LESSON, edit_cost_scope,
-    edit_cost_scope_name, write_actor_claim,
+    edit_cost_scope_name, ground_actor_claim, write_actor_claim, write_actor_claim_in_txn,
 };
 use crate::batch::EntityMetadataHeader;
 use crate::claim::{
@@ -21,7 +23,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::side_table::HexId;
-use crate::skill_reliability::{AmendedOutcome, reconcile_amended_outcomes};
+use crate::skill_reliability::{AmendedOutcome, reconcile_amended_outcomes_in_txn};
 use crate::temporal::TimeRange;
 
 // ---------------------------------------------------------------------------
@@ -60,8 +62,8 @@ pub fn project_edit_cost_claims(
     vault: &Vault,
     judgments: &[AmendmentJudgment],
 ) -> Result<Vec<EntityId>> {
+    retract_unsupported_targets(vault)?;
     let persisted = amendment_judgments(vault)?;
-    retract_unsupported_targets(vault, &persisted)?;
     let mut targets: Vec<(&'static str, EntityId, String)> = Vec::new();
     for judgment in judgments {
         // Grounded is not authorization: this row must also BE the row this
@@ -171,29 +173,24 @@ fn write_cost_head(
 /// one standing. A later amendment that charges the skill nothing hands the
 /// attempt back its own record.
 ///
-/// The join is the evidence's attempt receipt, grounded at the door. An
-/// amendment recorded without one names no attempt, so its share reaches
-/// `skill.edit_cost` alone.
+/// The join is the attempt the evidence named when the amendment was judged,
+/// grounded at the door and kept on the judgment row. An amendment judged
+/// without one names no attempt, so its share reaches `skill.edit_cost` alone.
 ///
-/// Recomputed from the whole judgment ledger on every pass, like the cost rows:
-/// a re-judged or withdrawn amendment takes its share back on the next pass,
-/// and a pass with nothing new reprojects nothing.
+/// Recomputed from the whole judgment ledger on every pass, like the cost rows,
+/// and in ONE write transaction with the rows it derives: a re-judged or
+/// withdrawn amendment takes its share back on the next pass, a pass that read
+/// an older ledger cannot land over a newer one, and a pass with nothing new
+/// reprojects nothing.
 ///
 /// # Errors
 ///
 /// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
 pub fn project_amendment_reliability(vault: &Vault) -> Result<Vec<EntityId>> {
-    let judgments = amendment_judgments(vault)?;
-    let mut verdicts = Vec::new();
-    {
-        let rtxn = vault.store.env.read_txn()?;
-        for judgment in judgments {
-            let Some(evidence) = amendment_evidence_in_txn(vault, &rtxn, &judgment.receipt_id)?
-            else {
-                continue;
-            };
-            let (Some(attempt_receipt), Some(skill)) = (evidence.attempt_receipt, evidence.skill)
-            else {
+    vault.with_write_txn(|wtxn| {
+        let mut verdicts = Vec::new();
+        for (judgment, attempt) in amendment_judgments_in_txn(vault, wtxn)? {
+            let Some((attempt_receipt, skill)) = attempt else {
                 continue;
             };
             // A verdict that charges this skill nothing is still a verdict on
@@ -215,8 +212,8 @@ pub fn project_amendment_reliability(vault: &Vault) -> Result<Vec<EntityId>> {
                 at: judgment.at,
             });
         }
-    }
-    reconcile_amended_outcomes(vault, &verdicts)
+        reconcile_amended_outcomes_in_txn(vault, wtxn, &verdicts)
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -236,9 +233,12 @@ pub fn project_amendment_reliability(vault: &Vault) -> Result<Vec<EntityId>> {
 /// token would fold every lapse into the first.
 ///
 /// Every judgment is re-grounded, not trusted: a row counts only if it IS the
-/// row this module persisted for that receipt. Every pass reconciles first, so
-/// an amendment judged again without its lapse share retracts the lesson it
+/// row this module persisted for that receipt, checked again under the writer
+/// that lands the lesson and its retraction target together, so a re-judgment
+/// cannot slip between the check and the lesson. Every pass reconciles first,
+/// so an amendment judged again without its lapse share retracts the lesson it
 /// earned. A replay re-returns the standing lesson rather than writing another.
+/// An ungrounded row is skipped rather than fatal to the pass.
 ///
 /// # Errors
 ///
@@ -247,31 +247,36 @@ pub fn project_amendment_lessons(
     vault: &Vault,
     judgments: &[AmendmentJudgment],
 ) -> Result<Vec<EntityId>> {
-    let persisted = amendment_judgments(vault)?;
-    retract_unsupported_targets(vault, &persisted)?;
+    retract_unsupported_targets(vault)?;
     let mut written = Vec::new();
     for judgment in judgments {
-        if !persisted
-            .iter()
-            .any(|row| row.receipt_id == judgment.receipt_id && row == judgment)
-        {
-            continue;
-        }
         let Some(actor) = lapse_actor(judgment) else {
             continue;
         };
-        let evidence =
-            ActorClaimEvidence::amendment(judgment.evidence_receipts.clone(), judgment.at)?;
-        // Recorded before the head, for the reason the cost rows give.
-        record_target(vault, PREDICATE_ACTOR_LESSON, &actor, &judgment.receipt_id)?;
-        written.push(write_actor_claim(
-            vault,
-            ActorClaimRow::Lesson {
-                actor,
-                text: lapse_lesson(&judgment.receipt_id),
-            },
-            &evidence,
-        )?);
+        let row = ActorClaimRow::Lesson {
+            actor,
+            text: lapse_lesson(&judgment.receipt_id),
+        };
+        let Ok(evidence) =
+            ActorClaimEvidence::amendment(judgment.evidence_receipts.clone(), judgment.at)
+        else {
+            continue;
+        };
+        // The door's own reads, before the writer opens.
+        if ground_actor_claim(vault, &row, &evidence).is_err() {
+            continue;
+        }
+        let landed = vault.with_write_txn(|wtxn| {
+            if amendment_judgment_in_txn(vault, wtxn, &judgment.receipt_id)?.as_ref()
+                != Some(judgment)
+            {
+                return Ok(None);
+            }
+            let receipt = judgment.receipt_id.as_str();
+            record_target_in_txn(vault, wtxn, PREDICATE_ACTOR_LESSON, &actor, receipt)?;
+            write_actor_claim_in_txn(vault, wtxn, &row, &evidence).map(Some)
+        })?;
+        written.extend(landed);
     }
     Ok(written)
 }
@@ -303,24 +308,34 @@ fn record_target(
     subject: &EntityId,
     scope: &str,
 ) -> Result<()> {
+    vault.with_write_txn(|wtxn| record_target_in_txn(vault, wtxn, predicate, subject, scope))
+}
+
+/// [`record_target`] in the caller's transaction.
+fn record_target_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    predicate: &'static str,
+    subject: &EntityId,
+    scope: &str,
+) -> Result<()> {
     let row = StoredTarget {
         v: ROW_VERSION,
         predicate: predicate.to_owned(),
         subject: subject.to_hex(),
         scope: scope.to_owned(),
     };
-    let key = target_key(predicate, subject, scope);
-    vault.with_write_txn(|wtxn| {
-        TARGET.put(&vault.store, wtxn, &key, &row)?;
-        Ok(())
-    })
+    TARGET.put(&vault.store, wtxn, &target_key(predicate, subject, scope), &row)?;
+    Ok(())
 }
 
-/// Every tuple this projector has landed a head for.
-fn recorded_targets(vault: &Vault) -> Result<Vec<(&'static str, EntityId, String)>> {
-    let rtxn = vault.store.env.read_txn()?;
+/// Every tuple this projector has landed a head for, on the caller's snapshot.
+fn recorded_targets_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<(&'static str, EntityId, String)>> {
     let mut out = Vec::new();
-    for (_, row) in TARGET.scan(&vault.store, &rtxn)? {
+    for (_, row) in TARGET.scan(&vault.store, txn)? {
         let predicate =
             known_target_predicate(&row.predicate).ok_or(Error::CorruptedIndex(TARGET_ROW_LABEL))?;
         out.push((
@@ -339,75 +354,101 @@ fn recorded_targets(vault: &Vault) -> Result<Vec<(&'static str, EntityId, String
 /// tuples some judgment still points at, so without this the old charge would
 /// stand forever and [`edit_cost_for`] would keep reporting it. Retraction —
 /// not deletion — is the withdrawal: the row stays readable as history.
-fn retract_unsupported_targets(vault: &Vault, persisted: &[AmendmentJudgment]) -> Result<()> {
-    for (predicate, subject, scope) in recorded_targets(vault)? {
-        let supported = if predicate == PREDICATE_ACTOR_LESSON {
-            // A lesson's scope is the amendment it was learned from.
-            persisted
-                .iter()
-                .any(|row| row.receipt_id == scope && lapse_actor(row) == Some(subject))
-        } else {
-            aggregate_for(persisted, predicate, subject, &scope).is_some()
-        };
-        if !supported {
-            retract_target(vault, predicate, &subject, &scope)?;
+///
+/// Support is read first and decided again under the writer that retracts: a
+/// pass with nothing to withdraw — the common case — costs no write
+/// transaction, and a tuple a concurrent pass has just earned is not retracted
+/// on a stale read.
+fn retract_unsupported_targets(vault: &Vault) -> Result<()> {
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        if unsupported_targets_in_txn(vault, &rtxn)?.is_empty() {
+            return Ok(());
         }
     }
-    Ok(())
+    let now = vault.store.clock.now_recorded_at();
+    vault.with_write_txn(|wtxn| {
+        for (predicate, subject, scope) in unsupported_targets_in_txn(vault, wtxn)? {
+            retract_target_in_txn(vault, wtxn, predicate, &subject, &scope, now)?;
+        }
+        Ok(())
+    })
 }
 
-/// Retracts one tuple's active heads and forgets the tuple, in one transaction.
+/// The landed tuples no persisted judgment supports any more.
+fn unsupported_targets_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<(&'static str, EntityId, String)>> {
+    let persisted: Vec<AmendmentJudgment> = amendment_judgments_in_txn(vault, txn)?
+        .into_iter()
+        .map(|(judgment, _)| judgment)
+        .collect();
+    let mut unsupported = recorded_targets_in_txn(vault, txn)?;
+    unsupported.retain(|(predicate, subject, scope)| {
+        if *predicate == PREDICATE_ACTOR_LESSON {
+            // A lesson's scope is the amendment it was learned from.
+            !persisted
+                .iter()
+                .any(|row| row.receipt_id == *scope && lapse_actor(row) == Some(*subject))
+        } else {
+            aggregate_for(&persisted, *predicate, *subject, scope).is_none()
+        }
+    });
+    Ok(unsupported)
+}
+
+/// Retracts one tuple's active heads and forgets the tuple, in the caller's
+/// transaction.
 ///
 /// The `skill.*`/`actor.*` namespaces own their own lifecycle mechanics — the
 /// generic [`crate::Vault::retract_claim`] refuses a reserved predicate by
 /// design — so the closed body is re-put through the same engine-owned door
 /// that wrote it, exactly as the reserved supersession path does.
-fn retract_target(
+fn retract_target_in_txn(
     vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
     predicate: &'static str,
     subject: &EntityId,
     scope: &str,
+    now: u64,
 ) -> Result<()> {
-    let now = vault.store.clock.now_recorded_at();
-    let key = target_key(predicate, subject, scope);
-    vault.with_write_txn(|wtxn| {
-        let heads = if predicate == PREDICATE_ACTOR_LESSON {
-            active_lesson_heads_in_txn(vault, wtxn, subject, &lapse_lesson(scope))?
-        } else {
-            active_cost_heads_in_txn(vault, wtxn, predicate, subject, scope)?
-        };
-        for (id, mut body) in heads {
-            let header = {
-                let Some(raw) = vault
-                    .store
-                    .port_entity_record(&*wtxn, &id)?
-                    .map(|row| row.encode())
-                else {
-                    continue;
-                };
-                EntityMetadataHeader::parse(&raw)
-                    .ok_or(Error::CorruptedIndex("edit cost claim entity"))?
+    let heads = if predicate == PREDICATE_ACTOR_LESSON {
+        active_lesson_heads_in_txn(vault, wtxn, subject, &lapse_lesson(scope))?
+    } else {
+        active_cost_heads_in_txn(vault, wtxn, predicate, subject, scope)?
+    };
+    for (id, mut body) in heads {
+        let header = {
+            let Some(raw) = vault
+                .store
+                .port_entity_record(&*wtxn, &id)?
+                .map(|row| row.encode())
+            else {
+                continue;
             };
-            // The clamp mirrors the supersession path: a withdrawal stamped
-            // BEFORE the row it closes would make the re-Put range invalid and
-            // roll the whole transaction back.
-            let at = now.max(header.occurred_start);
-            body.lifecycle = ClaimLifecycleStatus::Retracted;
-            body.valid_to = Some(at);
-            vault.put_reserved_claim_in_txn(
-                wtxn,
-                &id,
-                &body,
-                TimeRange {
-                    start: header.occurred_start,
-                    end: at,
-                },
-                header.learned_at,
-            )?;
-        }
-        TARGET.delete(&vault.store, wtxn, &key)?;
-        Ok(())
-    })
+            EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("edit cost claim entity"))?
+        };
+        // The clamp mirrors the supersession path: a withdrawal stamped
+        // BEFORE the row it closes would make the re-Put range invalid and
+        // roll the whole transaction back.
+        let at = now.max(header.occurred_start);
+        body.lifecycle = ClaimLifecycleStatus::Retracted;
+        body.valid_to = Some(at);
+        vault.put_reserved_claim_in_txn(
+            wtxn,
+            &id,
+            &body,
+            TimeRange {
+                start: header.occurred_start,
+                end: at,
+            },
+            header.learned_at,
+        )?;
+    }
+    TARGET.delete(&vault.store, wtxn, &target_key(predicate, subject, scope))?;
+    Ok(())
 }
 
 /// The key of one landed tuple. The scope goes LAST: it is the only field a

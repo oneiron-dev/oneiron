@@ -2,8 +2,8 @@
 
 use super::stored::{
     EVIDENCE, EVIDENCE_ROW_LABEL, JUDGMENT, JUDGMENT_ROW_LABEL, PREFERENCE, ROW_VERSION,
-    StoredEvidence, StoredJudgment, StoredPreference, StoredShare, hex_entity, invalid,
-    normalized_scope,
+    StoredAttempt, StoredEvidence, StoredJudgment, StoredPreference, StoredShare, hex_entity,
+    invalid, normalized_scope,
 };
 use super::taxonomy::{
     AmendmentCause, AmendmentClass, AmendmentEvidence, AmendmentJudgment, AmendmentShare,
@@ -12,6 +12,7 @@ use super::taxonomy::{
 use crate::Vault;
 use crate::actor_claims::require_actor_entity;
 use crate::edit_distance::delta::amendment_delta;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::skill_attribution::{
     AttributionJudge, AttributionJudgment, AttributionLane, EditHunk, RuleAttributionJudge,
@@ -248,6 +249,14 @@ pub fn judge_amendment_hunks(
         d_norm: judgment.d_norm,
         at: judgment.at,
         proposal: None,
+        attempt: evidence
+            .attempt_receipt
+            .clone()
+            .zip(evidence.skill)
+            .map(|(receipt, skill)| StoredAttempt {
+                receipt,
+                skill: skill.to_hex(),
+            }),
     };
     let preference_share = judgment.share_of(AmendmentClass::PreferenceShift);
     let preference_row = (preference_share > 0.0).then(|| StoredPreference {
@@ -379,18 +388,61 @@ fn withdraw_judgment(vault: &Vault, receipt_id: &str) -> Result<()> {
 /// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
 pub fn amendment_judgments(vault: &Vault) -> Result<Vec<AmendmentJudgment>> {
     let rtxn = vault.store.env.read_txn()?;
-    let mut out = Vec::new();
-    for (receipt_id, row) in JUDGMENT.scan(&vault.store, &rtxn)? {
-        out.push(AmendmentJudgment {
-            receipt_id,
-            split: stored_split(&row)?,
-            scope: row.scope,
-            evidence_receipts: row.evidence_receipts,
-            d_norm: row.d_norm,
-            at: row.at,
-        });
-    }
-    Ok(out)
+    Ok(amendment_judgments_in_txn(vault, &rtxn)?
+        .into_iter()
+        .map(|(judgment, _)| judgment)
+        .collect())
+}
+
+/// An amended attempt's pack receipt, and the skill its pack loaded.
+pub(super) type AttemptJoin = (String, EntityId);
+
+/// Every persisted judgment on the caller's snapshot, each with the attempt
+/// join it was made with, in receipt-id order.
+pub(super) fn amendment_judgments_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<(AmendmentJudgment, Option<AttemptJoin>)>> {
+    JUDGMENT
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .map(|(receipt_id, row)| judgment_from_row(receipt_id, row))
+        .collect()
+}
+
+/// The judgment persisted for `receipt_id` on the caller's snapshot, if any.
+pub(super) fn amendment_judgment_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    receipt_id: &str,
+) -> Result<Option<AmendmentJudgment>> {
+    let receipt_id = receipt_id.to_owned();
+    let Some(row) = JUDGMENT.get(&vault.store, txn, &receipt_id)? else {
+        return Ok(None);
+    };
+    Ok(Some(judgment_from_row(receipt_id, row)?.0))
+}
+
+fn judgment_from_row(
+    receipt_id: String,
+    row: StoredJudgment,
+) -> Result<(AmendmentJudgment, Option<AttemptJoin>)> {
+    let attempt = match &row.attempt {
+        Some(join) => Some((
+            join.receipt.clone(),
+            hex_entity(&join.skill, JUDGMENT_ROW_LABEL)?,
+        )),
+        None => None,
+    };
+    let judgment = AmendmentJudgment {
+        receipt_id,
+        split: stored_split(&row)?,
+        scope: row.scope,
+        evidence_receipts: row.evidence_receipts,
+        d_norm: row.d_norm,
+        at: row.at,
+    };
+    Ok((judgment, attempt))
 }
 
 /// A stored row's split; a row written before split verdicts reads back as

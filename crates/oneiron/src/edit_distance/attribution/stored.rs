@@ -139,6 +139,18 @@ pub(super) struct StoredJudgment {
     /// a re-judgment re-mints under the same sequence or withdraws it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) proposal: Option<u64>,
+    /// The attempt join this judgment was made with. Kept on the judgment, not read back from the
+    /// evidence, so correcting the evidence cannot move a verdict onto another attempt before it
+    /// is judged again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) attempt: Option<StoredAttempt>,
+}
+
+/// The amended attempt's pack receipt and the skill its pack loaded (hex).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct StoredAttempt {
+    pub(super) receipt: String,
+    pub(super) skill: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
