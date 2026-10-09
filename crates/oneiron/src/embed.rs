@@ -9,7 +9,8 @@ pub(crate) use eligibility::{
 };
 pub(crate) use locality::clear_embedding_locality_in_txn;
 pub(crate) use turn::{
-    erased_message_turns_in_txn, mark_on_publication_in_txn, mark_turn_in_txn, mark_turns_in_txn,
+    erase_turn_vectors_in_txn, erased_message_turns_in_txn, mark_on_publication_in_txn,
+    mark_turn_in_txn,
 };
 
 #[cfg(feature = "sync")]

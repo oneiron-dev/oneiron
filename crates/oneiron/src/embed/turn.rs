@@ -6,9 +6,9 @@
 //! mark it here, beside the tagger's mark for the same change: a witness that
 //! mints or extends a turn, an off-record promotion, and a publication that
 //! moves a MESSAGE's or TURN's text (an entity document, an idle revision).
-//! An erased message marks its turns too, so they stop matching its words.
-//! A streamed message reaches none of them until its stream ends, so a turn
-//! embeds only finished text.
+//! An erased message drops its turns' vectors and marks them again, so they
+//! stop matching its words at once. A streamed message reaches none of them
+//! until its stream ends, so a turn embeds only finished text.
 
 use crate::Vault;
 use crate::edge::EdgeKind;
@@ -70,7 +70,8 @@ pub(crate) fn mark_on_publication_in_txn(
 }
 
 /// The turns `entity` is part of when it is a MESSAGE, read before an erase
-/// takes the message and its edges; [`mark_turns_in_txn`] marks them after.
+/// takes the message and its edges; [`erase_turn_vectors_in_txn`] settles
+/// them after.
 pub(crate) fn erased_message_turns_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -87,12 +88,32 @@ pub(crate) fn erased_message_turns_in_txn(
 }
 
 /// Marks each of `turns` at its current text ([`mark_turn_in_txn`]).
-pub(crate) fn mark_turns_in_txn(
+fn mark_turns_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     turns: Vec<EntityId>,
 ) -> Result<()> {
     for turn in turns {
+        mark_turn_in_txn(vault, wtxn, turn)?;
+    }
+    Ok(())
+}
+
+/// The erasure half: each of `turns` lost an erased message's words, so the
+/// vector built from them goes in the erasing transaction, and the turn is
+/// marked at the text left ([`mark_turn_in_txn`]). ARCH-0038: a vector whose
+/// source span was erased is dropped, then embedded again from current text;
+/// a pending mark alone would leave it searchable until the worker ran.
+///
+/// An edit only marks the turn ([`mark_on_publication_in_txn`]): the vector
+/// of its older text is stale, not erased, and serves until the new one lands.
+pub(crate) fn erase_turn_vectors_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    turns: Vec<EntityId>,
+) -> Result<()> {
+    for turn in turns {
+        crate::vault::entity_revision::drop_vector_state(vault, wtxn, &turn)?;
         mark_turn_in_txn(vault, wtxn, turn)?;
     }
     Ok(())
