@@ -232,6 +232,16 @@ pub(crate) fn resolve_policy_manifest(
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
                 }
+                // Every valid row carries its version's pinned membership, so
+                // the newest version among trusted packs is the floor.
+                if let Some(floor) = decoded.catastrophe_floor
+                    && resolution
+                        .catastrophe_floor
+                        .as_ref()
+                        .is_none_or(|current| current.version() < floor.version())
+                {
+                    resolution.catastrophe_floor = Some(floor);
+                }
                 resolution
                     .owner_policy_rows
                     .extend(decoded.owner_policy_rows);

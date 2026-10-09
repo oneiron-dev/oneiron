@@ -66,6 +66,21 @@ pub(super) const KEY_STATUS: &str = CONSENT_GRANT_BODY_KEYS[5];
 pub(super) const KEY_OWNER_STAMP: &str = CONSENT_GRANT_BODY_KEYS[6];
 pub(super) const KEY_CREATED_AT: &str = CONSENT_GRANT_BODY_KEYS[7];
 
+/// A bypass grant row carries every standing-grant key plus `bypass`. An
+/// ordinary row never has it, so its bytes are unchanged.
+const CONSENT_BYPASS_GRANT_BODY_KEYS: [&str; 9] = [
+    "schema_version",
+    "domain",
+    "subject",
+    "class",
+    "envelope",
+    "status",
+    "owner_stamp",
+    "created_at",
+    "bypass",
+];
+const KEY_BYPASS: &str = CONSENT_BYPASS_GRANT_BODY_KEYS[8];
+
 pub(super) const OWNER_STAMP_KEYS: [&str; 3] = ["actor", "principal_ref", "decision_id"];
 pub(super) const SUBJECT_KEYS: [&str; 2] = ["kind", "refs"];
 pub(super) const ENVELOPE_KEYS: [&str; 5] =
@@ -78,7 +93,7 @@ pub(super) const ENVELOPE_KEYS: [&str; 5] =
 /// Encodes a standing consent-grant row in canonical MessagePack key order.
 pub fn encode_consent_grant_row(row: &ConsentGrantRow) -> Result<Vec<u8>> {
     let bound = row.grant.bound();
-    let value = Value::Map(vec![
+    let mut fields = vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
             Value::from(CONSENT_GRANT_SCHEMA_VERSION),
@@ -99,7 +114,11 @@ pub fn encode_consent_grant_row(row: &ConsentGrantRow) -> Result<Vec<u8>> {
             encode_owner_stamp(&row.owner_stamp),
         ),
         (Value::from(KEY_CREATED_AT), Value::from(row.created_at)),
-    ]);
+    ];
+    if let Some(extent) = &row.bypass {
+        fields.push((Value::from(KEY_BYPASS), extent.encode_value()));
+    }
+    let value = Value::Map(fields);
 
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value)
@@ -120,7 +139,17 @@ pub fn decode_consent_grant_row(bytes: &[u8]) -> Result<ConsentGrantRow> {
     let Value::Map(entries) = &value else {
         return Err(invalid_row());
     };
-    validate_keys(entries, &CONSENT_GRANT_BODY_KEYS)?;
+    let bypass = entries
+        .iter()
+        .find_map(|(key, value)| (key.as_str() == Some(KEY_BYPASS)).then_some(value));
+    if bypass.is_some() {
+        validate_keys(entries, &CONSENT_BYPASS_GRANT_BODY_KEYS)?;
+    } else {
+        validate_keys(entries, &CONSENT_GRANT_BODY_KEYS)?;
+    }
+    let bypass = bypass
+        .map(|value| super::bypass::BypassExtent::decode_value(value).ok_or_else(invalid_row))
+        .transpose()?;
 
     if required_value(entries, KEY_SCHEMA_VERSION)?.as_u64() != Some(CONSENT_GRANT_SCHEMA_VERSION) {
         return Err(invalid_row());
@@ -158,6 +187,7 @@ pub fn decode_consent_grant_row(bytes: &[u8]) -> Result<ConsentGrantRow> {
         status,
         owner_stamp,
         created_at,
+        bypass,
     })
 }
 

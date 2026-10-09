@@ -960,6 +960,9 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
             ])]),
         ),
     ];
+    // DEC-0006 invariant 7: the catastrophe floor ships as a versioned row.
+    let mut entries = entries;
+    entries.push(crate::consent::CatastropheFloor::pinned().manifest_entry());
     // ARCH-0026: the Dreamer is warm by default, so its three actor-keyed
     // rows ship here (see `dreamer_grant`); the owner may narrow or remove them.
     super::dreamer_grant::with_shipped_dreamer_rows(encode_with_native_mail_policy(entries)?)
