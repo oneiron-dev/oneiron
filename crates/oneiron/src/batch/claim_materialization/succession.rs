@@ -129,10 +129,13 @@ impl SuccessionWriter {
     }
 }
 
-/// An unbound successor's evidence: the lineage it continues, beside the
-/// evidence it carries forward, in the shape an envelope stamps them.
+/// An unbound successor's evidence: the evidence it carries forward, with
+/// the lineage it continues recorded under the envelope's lineage key. A
+/// carried map takes the record in place of any key of that name, so its
+/// own keys stay where their readers look (typed citations, an actor
+/// claim's lane); any other evidence is wrapped beside it.
 fn unbound_lineage_evidence(lineage: &SourceLineage, carried: Option<Value>) -> Value {
-    let mut entries = vec![(
+    let record = (
         Value::from(WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY),
         Value::Array(
             lineage
@@ -140,11 +143,21 @@ fn unbound_lineage_evidence(lineage: &SourceLineage, carried: Option<Value>) -> 
                 .map(|source| Value::from(source.as_str()))
                 .collect(),
         ),
-    )];
-    if let Some(carried) = carried {
-        entries.push((Value::from(WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY), carried));
+    );
+    match carried {
+        Some(Value::Map(mut entries)) => {
+            entries.retain(|(key, _)| key.as_str() != Some(WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY));
+            entries.push(record);
+            Value::Map(entries)
+        }
+        carried => {
+            let mut entries = vec![record];
+            if let Some(carried) = carried {
+                entries.push((Value::from(WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY), carried));
+            }
+            Value::Map(entries)
+        }
     }
-    Value::Map(entries)
 }
 
 /// The evidence a successor carries forward: the evidence its predecessor's
@@ -152,33 +165,32 @@ fn unbound_lineage_evidence(lineage: &SourceLineage, carried: Option<Value>) -> 
 /// lineage record. A raw predecessor's evidence carries no stamp, so it
 /// travels whole.
 fn carried_evidence(prior: &ClaimBody) -> Option<Value> {
-    match &prior.evidence {
-        Some(Value::Map(entries))
-            if entries
-                .iter()
-                .any(|(key, _)| key.as_str() == Some(WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY))
-                || is_unbound_lineage_evidence(entries) =>
-        {
-            entries
-                .iter()
-                .find(|(key, _)| key.as_str() == Some(WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY))
-                .map(|(_, value)| value.clone())
-        }
-        evidence => evidence.clone(),
+    let Some(Value::Map(entries)) = &prior.evidence else {
+        return prior.evidence.clone();
+    };
+    let has = |key: &str| entries.iter().any(|(entry, _)| entry.as_str() == Some(key));
+    if has(WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY) {
+        return entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY))
+            .map(|(_, value)| value.clone());
     }
-}
-
-/// Whether `entries` are the record [`unbound_lineage_evidence`] writes.
-fn is_unbound_lineage_evidence(entries: &[(Value, Value)]) -> bool {
-    entries
+    if !has(WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY) {
+        return prior.evidence.clone();
+    }
+    // An unbound successor's record: drop it, and unwrap what it wrapped.
+    let rest: Vec<_> = entries
         .iter()
-        .any(|(key, _)| key.as_str() == Some(WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY))
-        && entries.iter().all(|(key, _)| {
-            matches!(
-                key.as_str(),
-                Some(WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY | WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY)
-            )
-        })
+        .filter(|(key, _)| key.as_str() != Some(WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY))
+        .cloned()
+        .collect();
+    match rest.as_slice() {
+        [] => None,
+        [(key, value)] if key.as_str() == Some(WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY) => {
+            Some(value.clone())
+        }
+        _ => Some(Value::Map(rest)),
+    }
 }
 
 /// `source` joined with every class the predecessor's history drew on.

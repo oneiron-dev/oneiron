@@ -526,6 +526,66 @@ fn an_unattributed_successor_records_the_history_it_continues() -> Result<()> {
     Ok(())
 }
 
+/// Astra #1336 R3 verification repro: the lineage record joins an unbound
+/// successor's carried evidence without hiding it. A host fork of a claim
+/// whose typed evidence cites a source that is not live is not supported
+/// either.
+#[test]
+fn an_unattributed_successor_keeps_typed_citations_where_readers_look() -> Result<()> {
+    use crate::dreamer_consolidation::{
+        ConsolidationEvidenceEnvelope, encode_consolidation_evidence,
+    };
+    let (_dir, vault, _) = fixture()?;
+    permit_rows(
+        &vault,
+        &[
+            (ClaimSource::ToolOutput, None),
+            (ClaimSource::Generated, None),
+        ],
+    )?;
+    let id = entity(0x64);
+    let mut body = crate::claim::ClaimBody::new(
+        "test.materialization",
+        ClaimSubject::Entity(entity(0x62)),
+        Value::from("fact"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )?;
+    body.source = Some(ClaimSource::ToolOutput);
+    body.evidence = Some(encode_consolidation_evidence(
+        &ConsolidationEvidenceEnvelope {
+            refs: vec![entity(0x6b)],
+            chain: Vec::new(),
+            source_meet: ClaimSource::ToolOutput,
+        },
+    ));
+    vault.put_claim(
+        &id,
+        &body,
+        TimeRange {
+            start: 10,
+            end: u64::MAX,
+        },
+        10,
+    )?;
+    let mask = entity(0x67);
+    facet_mask(&vault, mask)?;
+    let host = crate::batch::SuccessionWriter::new(None, ClaimSource::Generated, "test.fork");
+    let fork = entity(0x68);
+    vault.with_write_txn(|txn| {
+        vault.fork_claim_to_facet_in_txn(txn, (id, fork), mask, true, host, 15)
+    })?;
+    let forked = vault.get_claim(&fork)?.expect("fork");
+    let txn = vault.store.env.read_txn().expect("read txn");
+    assert!(!crate::claim::has_live_support_in_txn(
+        &vault.store,
+        &txn,
+        &forked
+    )?);
+    Ok(())
+}
+
 /// Writes a FACET mask row under `id`.
 fn facet_mask(vault: &Vault, id: EntityId) -> Result<()> {
     let mut facet = Vec::new();
