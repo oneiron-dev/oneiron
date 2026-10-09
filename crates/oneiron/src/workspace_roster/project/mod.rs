@@ -30,8 +30,8 @@ pub(crate) use leader_chat::CHAT_FIELD as LEADER_CHAT_FIELD;
 pub use leader_chat::{LEADER_CHAT_RULE_PREDICATE, LeaderChat};
 pub(crate) use leader_chat::{
     admit_turn as admit_leader_chat_turn, admit_witness as admit_leader_chat_witness,
-    permit_record as permit_leader_chat_record, permitted_record as leader_chat_record_permitted,
-    settle_record as settle_leader_chat_record,
+    chat_allowed as leader_chat_allowed, permit_record as permit_leader_chat_record,
+    permitted_record as leader_chat_record_permitted, settle_record as settle_leader_chat_record,
     validate_local_turns as validate_local_leader_chat_turns,
     verify_existing_turn as verify_existing_leader_chat_turn,
 };
@@ -49,6 +49,8 @@ pub(crate) use projection::{
 pub(crate) use tests::create_project_signed_for_test;
 #[cfg(test)]
 pub(crate) use tests::set_project_depth_signed_for_test;
+#[cfg(test)]
+pub(crate) use tests::spawn_signed_project_for_test;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::derived_domains::PROJECT_HOME_ROOM;
@@ -63,7 +65,11 @@ use std::collections::BTreeSet;
 /// Preferred slot in an otherwise empty compiled-pack registry. Existing
 /// vaults can assign another slot; use Vault::project_type_byte for the binding.
 pub const PROJECT_TYPE_BYTE: u8 = 103;
-const PACK: &str = "oneiron.project";
+/// The short-id prefix PROJECT is registered under at run time.
+pub(crate) const PROJECT_SHORT_ID_PREFIX: &str = "pj";
+/// The pack PROJECT is registered under at run time.
+pub(crate) const PROJECT_PACK: &str = "oneiron.project";
+const PACK: &str = PROJECT_PACK;
 
 /// The root project's entity id, seeded once at first boot. Key: ().
 const ROOT: SideTable<(), EntityId, Raw> = SideTable::new(&side_table::PROJECT_ROOT);
@@ -362,7 +368,7 @@ pub(super) fn record<T: for<'a> Deserialize<'a>>(
 pub(crate) fn is_project_type(store: &crate::store::Store, kind: u8) -> bool {
     store
         .structural_kind_registration(kind)
-        .is_some_and(|row| row.pack == PACK && row.short_id_prefix == "pj")
+        .is_some_and(|row| row.pack == PACK && row.short_id_prefix == PROJECT_SHORT_ID_PREFIX)
 }
 /// Check the dynamic compiled-pack kind through the persisted root binding.
 /// Unseeded test stores have no root and therefore no project hubs.
@@ -391,7 +397,7 @@ pub(super) fn project_type(store: &crate::store::Store) -> Option<u8> {
     store
         .structural_kind_registrations()
         .into_iter()
-        .find(|row| row.pack == PACK && row.short_id_prefix == "pj")
+        .find(|row| row.pack == PACK && row.short_id_prefix == PROJECT_SHORT_ID_PREFIX)
         .map(|row| row.type_byte)
 }
 impl Vault {
@@ -768,7 +774,12 @@ pub(crate) fn seed_root_project(vault: &Vault) -> Result<()> {
                     && vault.structural_kind_registration(*byte).is_none()
             })
             .ok_or_else(invalid)?;
-        vault.register_structural_kind(kind, "pj", TypeByteZone::CompiledProduct, PACK)?;
+        vault.register_structural_kind(
+            kind,
+            PROJECT_SHORT_ID_PREFIX,
+            TypeByteZone::CompiledProduct,
+            PACK,
+        )?;
         kind
     };
     let (leader, _) = vault
