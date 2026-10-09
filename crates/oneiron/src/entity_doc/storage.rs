@@ -441,7 +441,62 @@ pub(crate) fn resolve_record_body(
     };
     require_live(store, txn, entity)?;
     let text = load(store, txn, &h)?.text();
-    match h.field {
+    body_with_text(&h.field, body, text)
+}
+
+/// One state of an entity's document, as [`record_body_history_in_txn`]
+/// lists it.
+pub(crate) struct RetainedBody {
+    /// The frontier [`super::source_frontier_in_txn`] names the state by.
+    pub(crate) frontier: Vec<u8>,
+    /// The record body there ([`resolve_record_body`] at that state).
+    pub(crate) body: Vec<u8>,
+}
+
+/// `entity`'s record body as each retained change of its document left it,
+/// oldest first; `None` for an unmigrated row. A state that no single change
+/// ends (concurrent heads) or whose history was purged is not listed; past
+/// `limit` changes, only the newest `limit` are.
+pub(crate) fn record_body_history_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+    body: &[u8],
+    limit: usize,
+) -> Result<Option<Vec<RetainedBody>>> {
+    if !has_record_head(store, txn, entity)? {
+        return Ok(None);
+    }
+    let h = head(store, txn, entity)?;
+    let doc = load(store, txn, &h)?;
+    let mut changes = Vec::new();
+    doc.doc
+        .travel_change_ancestors(&doc.doc.oplog_frontiers().to_vec(), &mut |meta| {
+            changes.push((meta.lamport, meta.id.peer, meta.id.inc(meta.len as i32 - 1)));
+            std::ops::ControlFlow::Continue(())
+        })
+        .map_err(|_| Error::CorruptedIndex("document change history"))?;
+    changes.sort_unstable();
+    let skip = changes.len().saturating_sub(limit);
+    let mut states = Vec::with_capacity(changes.len() - skip);
+    for (_, _, last) in changes.into_iter().skip(skip) {
+        let frontier = loro::Frontiers::from_id(last).encode();
+        let Ok(text) = doc.text_at(&frontier) else {
+            continue;
+        };
+        let mut pin = h.incarnation.clone().into_bytes();
+        pin.extend_from_slice(&frontier);
+        states.push(RetainedBody {
+            frontier: pin,
+            body: body_with_text(&h.field, body, text)?,
+        });
+    }
+    Ok(Some(states))
+}
+
+/// A pointer row's `body` with `text` back in the field its document holds.
+fn body_with_text(field: &TextField, body: &[u8], text: String) -> Result<Vec<u8>> {
+    match field {
         TextField::Utf8Body => Ok(text.into_bytes()),
         TextField::MapField(field) => {
             let value = rmpv::decode::read_value(&mut std::io::Cursor::new(body))
@@ -450,7 +505,7 @@ pub(crate) fn resolve_record_body(
                 return Err(Error::CorruptedIndex("document pointer row"));
             };
             fields.retain(|(key, _)| key.as_str() != Some("entity_doc_ref"));
-            fields.push((rmpv::Value::from(field), rmpv::Value::from(text)));
+            fields.push((rmpv::Value::from(field.as_str()), rmpv::Value::from(text)));
             let mut out = Vec::new();
             rmpv::encode::write_value(&mut out, &rmpv::Value::Map(fields))
                 .map_err(|_| invalid("document view encoding"))?;

@@ -133,7 +133,8 @@ export type MemoryItem = {
   shortId: string
   /**
    * The revision the item was read at; `${shortId}@${sourceRevisionRef}` hydrates exactly it.
-   * A TURN's pins its messages' words too, and stops resolving once one of them is edited.
+   * A TURN's pins its messages' words too, and reads those words back after an edit
+   * while the messages' history holds them.
    */
   sourceRevisionRef?: string
   kind: string

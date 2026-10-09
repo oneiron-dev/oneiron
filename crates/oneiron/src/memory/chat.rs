@@ -444,9 +444,8 @@ impl Memory<'_> {
     /// text from. A turn's text is its messages' (ARCH-0004), which its own
     /// body does not hold: those this caller may read, so a named turn never
     /// shows the words of a message the caller could not name. A turn named
-    /// at a text revision (`MemoryItem::source_revision_ref`) gets its text
-    /// only while that revision still resolves in this read, so the words
-    /// are the ones it pins.
+    /// at a text revision (`MemoryItem::source_revision_ref`) gets the words
+    /// that revision pins, and none once they can no longer be found.
     fn add_turn_text(
         &self,
         views: &mut [EntityView],
@@ -484,25 +483,17 @@ impl Memory<'_> {
                     if row.is_none() {
                         return Ok(None);
                     }
-                    if let Some(pin) = *pin
-                        && !crate::vault::entity_revision::entity_owns_revision_in_txn(
-                            &self.vault.store,
-                            txn,
-                            turn,
-                            pin,
-                        )?
-                        && crate::vault::entity_revision::served_turn_revision_in_txn(
-                            self.vault,
-                            txn,
-                            turn,
-                            crate::vault::ReadMode::Pinned(pin),
-                        )? != Some(pin)
-                    {
+                    let mode =
+                        pin.map_or(crate::vault::ReadMode::Live, crate::vault::ReadMode::Pinned);
+                    let Some(served) = crate::vault::entity_revision::served_turn_text_in_txn(
+                        self.vault, txn, turn, mode,
+                    )?
+                    else {
                         return Ok(None);
-                    }
-                    crate::embed::readable_turn_text_in_txn(self.vault, txn, turn, |message| {
-                        lane.is_entity_readable_in(txn, message)
-                    })
+                    };
+                    let messages =
+                        served.readable(|message| lane.is_entity_readable_in(txn, message))?;
+                    Ok(crate::embed::joined_turn_text(&messages))
                 })
                 .collect::<crate::error::Result<Vec<_>>>()
         })?;

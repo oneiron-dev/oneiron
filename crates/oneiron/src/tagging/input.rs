@@ -139,6 +139,30 @@ pub(crate) fn turn_messages_in_txn(
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
 ) -> Result<Option<Vec<EncoderMessage>>> {
+    Ok(turn_members_in_txn(vault, txn, turn)?.map(|members| {
+        members
+            .into_iter()
+            .filter_map(|(id, text)| {
+                Some(EncoderMessage {
+                    id: id.to_hex(),
+                    text: text?,
+                })
+            })
+            .collect()
+    }))
+}
+
+/// A live MESSAGE child of a turn, with the text it shows there
+/// ([`shown_message_text`]): `None` for a hidden or empty one.
+pub(crate) type TurnMember = (EntityId, Option<String>);
+
+/// Every live MESSAGE child of a live TURN, in message order. `None` for a
+/// turn [`turn_messages_in_txn`] reads as gone.
+pub(crate) fn turn_members_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+) -> Result<Option<Vec<TurnMember>>> {
     match live_entity_row_in_txn(&vault.store, txn, turn)? {
         LiveEntityRow::Live { entity_type, .. } if entity_type == ENTITY_TYPE_TURN => {}
         _ => return Ok(None),
@@ -165,9 +189,7 @@ pub(crate) fn turn_messages_in_txn(
         let Ok(message) = rmp_serde::from_slice::<MessageText>(&body) else {
             continue;
         };
-        if message.is_visible && !message.content.is_empty() {
-            rows.push((message.order, id, message.content));
-        }
+        rows.push((message.order, id, message.shown()));
     }
     rows.sort_by(|left, right| {
         left.0
@@ -175,13 +197,21 @@ pub(crate) fn turn_messages_in_txn(
             .then_with(|| left.1.as_bytes().cmp(right.1.as_bytes()))
     });
     Ok(Some(
-        rows.into_iter()
-            .map(|(_, id, text)| EncoderMessage {
-                id: id.to_hex(),
-                text,
-            })
-            .collect(),
+        rows.into_iter().map(|(_, id, text)| (id, text)).collect(),
     ))
+}
+
+/// The text a MESSAGE body shows in its turn: its content, when the message
+/// is visible and the content is not empty. `None` for a body this build
+/// cannot decode.
+pub(crate) fn shown_message_text(body: &[u8]) -> Option<String> {
+    rmp_serde::from_slice::<MessageText>(body).ok()?.shown()
+}
+
+impl MessageText {
+    fn shown(self) -> Option<String> {
+        (self.is_visible && !self.content.is_empty()).then_some(self.content)
+    }
 }
 
 /// The live window: the conversation's earlier turns, oldest first, whole

@@ -218,8 +218,9 @@ pub struct MemoryItem {
     /// The retained revision (32 hex) retrieval read this item at, when it
     /// pinned one. [`Self::reference`] joins it to `short_id`. A TURN's is
     /// the text revision of the words it serves, its own and those its
-    /// cited messages quote: it names each source message's revision, and
-    /// hydrates while those still stand.
+    /// cited messages quote: it commits to each source message's state, and
+    /// reads those words back after an edit while the messages' history
+    /// holds them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_revision_ref: Option<String>,
     /// Registry kind string.

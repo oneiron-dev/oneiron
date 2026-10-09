@@ -342,6 +342,34 @@ pub(super) fn row_revisions_in_txn(
     Ok(revisions)
 }
 
+/// `id`'s row as stored, then as it stood at each revision its document
+/// retains, at most `limit` of those, read from one load of the document.
+pub(super) fn retained_rows_in_txn(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    limit: usize,
+) -> Result<Vec<Vec<u8>>> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        return Ok(Vec::new());
+    };
+    let mut rows = vec![raw.to_vec()];
+    if !state(store, txn, id)?.is_some_and(|current| current.has_doc) {
+        return Ok(rows);
+    }
+    let doc = load_doc(store, txn, id)?;
+    for row in FRONTIER.iter_from(store, txn, id.as_bytes())?.take(limit) {
+        let (_, encoded) = row?;
+        let frontier =
+            Frontiers::decode(&encoded).map_err(|_| Error::CorruptedIndex("entity frontier"))?;
+        let fork = doc
+            .fork_at(&frontier)
+            .map_err(|_| Error::CorruptedIndex("retained entity frontier"))?;
+        rows.push(doc_raw(&fork)?);
+    }
+    Ok(rows)
+}
+
 pub(crate) fn read_entity_revision_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,

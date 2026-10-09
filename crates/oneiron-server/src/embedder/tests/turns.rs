@@ -253,10 +253,10 @@ fn a_recall_never_returns_a_turn_beside_its_own_message() {
 ///
 /// Astra 1333 #3 (P2): the revision a TURN item names pins the words it
 /// serves. After the edit the turn serves new words under a new revision,
-/// which hydrates; the revision it showed before no longer resolves, rather
-/// than hydrating a turn whose words moved. Bug repro: the item named its
-/// row's revision, which an edit to a message never moves, so two recalls
-/// served different words under one revision.
+/// which hydrates. Bug repro: the item named its row's revision, which an
+/// edit to a message never moves, so two recalls served different words
+/// under one revision. (The engine's `turn_text_revision` checks read the
+/// earlier revision's words back.)
 #[test]
 fn an_edited_message_embeds_its_turn_again() {
     run(async |served| {
@@ -369,9 +369,5 @@ fn an_edited_message_embeds_its_turn_again() {
             "new words under the revision the old ones were served at: {before} {after}"
         );
         assert!(hydrates(&pinned(&after)), "{after}");
-        assert!(
-            !hydrates(&pinned(&before)),
-            "the old revision hydrates a turn whose words moved: {before}"
-        );
     });
 }

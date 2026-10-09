@@ -36,45 +36,18 @@ pub(crate) fn turn_text_in_txn(
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
 ) -> Result<Option<String>> {
-    readable_turn_text_in_txn(vault, txn, turn, |_| Ok(true))
-}
-
-/// [`turn_text_in_txn`] over only the messages `readable` admits: the turn as
-/// one reader is shown it. A reader who may read a turn but not one of its
-/// messages never reads that message's words through the turn.
-pub(crate) fn readable_turn_text_in_txn(
-    vault: &crate::Vault,
-    txn: &heed::RoTxn<'_>,
-    turn: &EntityId,
-    readable: impl FnMut(&EntityId) -> Result<bool>,
-) -> Result<Option<String>> {
-    Ok(readable_turn_messages_in_txn(vault, txn, turn, readable)?
-        .and_then(|messages| joined_turn_text(&messages)))
-}
-
-/// The messages [`readable_turn_text_in_txn`] joins, each with its text, in
-/// message order; `None` for a turn that is gone or archived.
-pub(crate) fn readable_turn_messages_in_txn(
-    vault: &crate::Vault,
-    txn: &heed::RoTxn<'_>,
-    turn: &EntityId,
-    mut readable: impl FnMut(&EntityId) -> Result<bool>,
-) -> Result<Option<Vec<(EntityId, String)>>> {
     let Some(messages) = crate::tagging::turn_messages_in_txn(vault, txn, turn)? else {
         return Ok(None);
     };
-    let mut readable_messages = Vec::with_capacity(messages.len());
-    for message in messages {
-        let id = EntityId::from_hex(&message.id)?;
-        if readable(&id)? {
-            readable_messages.push((id, message.text));
-        }
-    }
-    Ok(Some(readable_messages))
+    let messages = messages
+        .into_iter()
+        .map(|message| Ok((EntityId::from_hex(&message.id)?, message.text)))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(joined_turn_text(&messages))
 }
 
-/// A turn's text from its `messages` ([`readable_turn_messages_in_txn`]), one
-/// per line, or `None` when they hold nothing.
+/// A turn's text from its `messages`, one per line, or `None` when they hold
+/// nothing.
 pub(crate) fn joined_turn_text(messages: &[(EntityId, String)]) -> Option<String> {
     let text = messages
         .iter()

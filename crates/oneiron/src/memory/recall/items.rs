@@ -24,22 +24,20 @@ impl Memory<'_> {
             let body = row.body.clone();
             // A TURN's text is its messages', which its own body does not
             // hold: those this actor may read, under the text revision that
-            // pins them, both read in this snapshot.
+            // pins them, both read in this snapshot. A pin at a text revision
+            // reads the words it was served with.
             let turn = if entity_type == ENTITY_TYPE_TURN {
-                let messages =
-                    crate::embed::readable_turn_messages_in_txn(self.vault, txn, id, |message| {
-                        lane.is_entity_readable_in(txn, message)
-                    })?
-                    .unwrap_or_default();
-                let revision = match mode {
-                    crate::vault::ReadMode::Pinned(_) => {
-                        crate::vault::entity_revision::served_turn_revision_in_txn(
-                            self.vault, txn, id, mode,
-                        )?
+                match crate::vault::entity_revision::served_turn_text_in_txn(
+                    self.vault, txn, id, mode,
+                )? {
+                    Some(text) => {
+                        let revision = text.revision;
+                        let messages =
+                            text.readable(|message| lane.is_entity_readable_in(txn, message))?;
+                        Some((messages, Some(revision)))
                     }
-                    crate::vault::ReadMode::Live | crate::vault::ReadMode::Indexed => None,
-                };
-                Some((messages, revision))
+                    None => Some((Vec::new(), None)),
+                }
             } else {
                 None
             };

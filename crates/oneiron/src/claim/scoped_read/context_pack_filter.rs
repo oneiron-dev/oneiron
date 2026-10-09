@@ -275,7 +275,8 @@ impl ScopedRead<'_> {
     /// A TURN's text is its messages' (ARCH-0004), which its own body does
     /// not hold: a hydrated turn gets as `txt` those this read may see, and
     /// its revision becomes the text revision that pins them, read in this
-    /// snapshot (`entity_revision::served_turn_revision_in_txn`). Added after
+    /// snapshot (`entity_revision::served_turn_text_in_txn`). A turn read at
+    /// a text revision gets the words it was served with. Added after
     /// admission, whose snapshot check compares each field with the turn's
     /// own body. Returns whether the turn stays: under a disclosure clamp,
     /// only while the clamp still admits each of its messages.
@@ -303,21 +304,24 @@ impl ScopedRead<'_> {
         let Some(fields) = entity.fields.as_mut() else {
             return Ok(true);
         };
-        if let Some(text) =
-            crate::embed::readable_turn_text_in_txn(self.vault, rtxn, &entity.id, |message| {
-                self.is_entity_readable_with_policy_in(rtxn, policy, message)
-            })?
-        {
+        let mode = entity
+            .source_revision_ref
+            .map_or(crate::vault::ReadMode::Live, |revision| {
+                crate::vault::ReadMode::Pinned(crate::vault::RevisionRef(revision))
+            });
+        let Some(served) = crate::vault::entity_revision::served_turn_text_in_txn(
+            self.vault, rtxn, &entity.id, mode,
+        )?
+        else {
+            return Ok(true);
+        };
+        let revision = served.revision;
+        let messages = served
+            .readable(|message| self.is_entity_readable_with_policy_in(rtxn, policy, message))?;
+        if let Some(text) = crate::embed::joined_turn_text(&messages) {
             fields.insert("txt".to_owned(), serde_json::Value::String(text));
-            if let Some(revision) = entity.source_revision_ref {
-                entity.source_revision_ref =
-                    crate::vault::entity_revision::served_turn_revision_in_txn(
-                        self.vault,
-                        rtxn,
-                        &entity.id,
-                        crate::vault::ReadMode::Pinned(crate::vault::RevisionRef(revision)),
-                    )?
-                    .map(|served| served.0);
+            if entity.source_revision_ref.is_some() {
+                entity.source_revision_ref = Some(revision.0);
             }
         }
         Ok(true)
