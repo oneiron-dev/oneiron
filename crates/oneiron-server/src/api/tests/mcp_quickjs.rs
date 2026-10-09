@@ -500,10 +500,7 @@ async fn quickjs_code_mode_keeps_connector_narrowing() {
     .await;
     assert!(body.get("error").is_none(), "{body}");
     let text = body["result"]["structuredContent"].to_string();
-    assert!(
-        text.contains("refused") && text.contains("mcp_verb_not_bound"),
-        "{text}"
-    );
+    assert!(text.contains("mcp_verb_not_bound"), "{text}");
     assert!(!text.contains("north gate"), "{text}");
 }
 

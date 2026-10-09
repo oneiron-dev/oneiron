@@ -150,7 +150,6 @@ pub struct RoomEntry {
 /// so an omitting client and a spelling-everything client reach the same
 /// engine call.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct RecallRequest {
     pub query: String,
     #[serde(default)]
@@ -196,7 +195,6 @@ pub fn recall_with_vector(
 
 /// `receipts`'s one input.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct ReceiptsRequest {
     #[serde(default)]
     pub limit: Option<usize>,

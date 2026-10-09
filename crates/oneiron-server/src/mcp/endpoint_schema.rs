@@ -115,7 +115,7 @@ pub(super) fn execute_code_tool_schema() -> Value {
 /// admitting an omission the runtime rejects.
 pub(super) fn verb_tool_schema(tool: McpGeneratedVerbTool) -> Value {
     let allowed = tool.argument_fields();
-    let typed = oneiron::task_verb::sdk::mcp_arguments_schema(tool.name);
+    let typed = oneiron::task_verb::sdk::mcp_arguments_schema(tool.name).map(close_object_schemas);
     let mut properties = serde_json::Map::new();
     for field in allowed {
         let schema = match (tool.memory_method(), *field) {
@@ -158,6 +158,26 @@ pub(super) fn verb_tool_schema(tool: McpGeneratedVerbTool) -> Value {
         }),
         required,
     )
+}
+
+/// Every struct-shaped object a verb tool advertises is closed, whatever its
+/// Rust input type tolerates: the client is told exactly the fields the verb
+/// reads. Free-form values (no `properties`) stay open.
+fn close_object_schemas(mut schema: Value) -> Value {
+    fn close(value: &mut Value) {
+        match value {
+            Value::Object(map) => {
+                if map.contains_key("properties") && !map.contains_key("additionalProperties") {
+                    map.insert("additionalProperties".to_owned(), Value::Bool(false));
+                }
+                map.values_mut().for_each(close);
+            }
+            Value::Array(items) => items.iter_mut().for_each(close),
+            _ => {}
+        }
+    }
+    close(&mut schema);
+    schema
 }
 
 pub(super) fn merge_verb_argument_schema(input: Value, constraints: Value) -> Value {
