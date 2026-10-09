@@ -296,6 +296,12 @@ impl crate::Vault {
         if header.entity_type != crate::registry::ENTITY_TYPE_FEDERATION_GRANT {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
+        // A deleted parent grant delegates nothing, even while its body is stored.
+        if !crate::vault::live_entity_row_in_txn(&self.store, txn, &parent_grant_id)?.is_live() {
+            return Err(Error::InvalidConfig(
+                "delegate parent or member is not active".into(),
+            ));
+        }
         let parent =
             super::decode_federation_grant_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
         // An ask-scoped guest grant is never a delegate parent.

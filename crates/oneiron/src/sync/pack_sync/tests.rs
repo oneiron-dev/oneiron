@@ -339,3 +339,65 @@ fn foreign_asset_map_snapshot_replicates_as_data_without_authorizing_install() -
     );
     Ok(())
 }
+
+/// Bug repro (Astra access follow-ups finding 2): a peer's ordinary delete of
+/// the current pack-map carrier is refused by the carrier's custody guard.
+/// The refused delete never applies, so it fences nothing: once the peer
+/// withdraws it, the installed map still reads.
+#[test]
+fn a_refused_delete_of_the_pack_map_carrier_leaves_it_live() -> Result<()> {
+    use crate::sync::bridge::Materializer;
+    use crate::sync::loro_support::{
+        doc_from_snapshot, doc_version_vector, export_snapshot, export_updates_since, import_doc,
+        map_insert_bytes,
+    };
+    use std::sync::Arc;
+
+    let (_dir, vault) = vault();
+    let vault = Arc::new(vault);
+    install(&vault, &[kind("alpha")]);
+    let snapshot = vault.pack_byte_map_snapshot()?.unwrap();
+    let carrier = crate::codebase::entity_id_from_hash_material(
+        b"oneiron:pack-byte-map-carrier:v1",
+        &[blake3::hash(&serde_json::to_vec(&snapshot).unwrap()).as_bytes()],
+    )?;
+    let raw = vault.get_raw(&carrier)?.expect("the carrier row");
+    let header = crate::batch::EntityMetadataHeader::parse(&raw).expect("a row header");
+    let window = crate::deletion::window_label_from_timestamp(header.learned_at);
+
+    let peer = loro::LoroDoc::new();
+    let mut user_delete = vec![1u8];
+    user_delete.extend_from_slice(&1_771_027_200u64.to_le_bytes());
+    user_delete.extend_from_slice(&[0x5A; 16]);
+    map_insert_bytes(&peer.get_map("tombstones"), &carrier.to_hex(), &user_delete)?;
+    peer.commit();
+    let loaded = crate::sync::window::LoadedWindow::new(
+        "local",
+        WindowKey::try_new(&window).expect("a window key"),
+        &vault,
+        &Arc::new(Materializer::new()),
+    );
+    import_doc(
+        &loaded.doc,
+        &export_updates_since(&peer, &loro::VersionVector::default().encode())?,
+    )?;
+    loaded.persist_state(&vault)?;
+    assert!(vault.get_raw(&carrier)?.is_some_and(|raw| raw.len() > 25));
+
+    let fork = doc_from_snapshot(&export_snapshot(&loaded.doc)?)?;
+    fork.get_map("tombstones")
+        .delete(&carrier.to_hex())
+        .expect("withdraw the tombstone");
+    fork.commit();
+    import_doc(
+        &loaded.doc,
+        &export_updates_since(&fork, &doc_version_vector(&loaded.doc))?,
+    )?;
+    loaded.persist_state(&vault)?;
+    assert_eq!(
+        vault.pack_byte_map_snapshot().ok().flatten(),
+        Some(snapshot),
+        "the installed map still reads"
+    );
+    Ok(())
+}

@@ -1718,3 +1718,38 @@ fn canonical_roundtrip_keeps_suppression_record_over_quarantined_tombstone() -> 
     );
     Ok(())
 }
+
+/// Review repro (access deletion fences): a row this vault fenced as deleted
+/// whose window no longer holds its tombstone (a peer withdrew the delete)
+/// must not be captured as a live row another vault would rematerialize.
+#[test]
+fn canonical_capture_refuses_a_deleted_row_without_its_tombstone() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    let relationship = EntityId::from_bytes([0x91; 16])?;
+    let at = 1_771_027_200;
+    vault.put_entity(
+        &relationship,
+        crate::registry::ENTITY_TYPE_RELATIONSHIP,
+        TimeRange { start: at, end: at },
+        at,
+        b"relationship",
+    )?;
+    let doc = LoroDoc::new();
+    canonical::insert(
+        &doc,
+        "entities",
+        &relationship.to_hex(),
+        &vault.get_raw(&relationship)?.unwrap(),
+    )?;
+    doc.commit();
+    capture_canonical_window(&vault, "2026-02", &doc)?;
+
+    vault
+        .with_write_txn(|txn| vault.fence_unapplied_delete_in_txn(txn, &relationship, &[1; 25]))?;
+    assert!(
+        capture_canonical_window(&vault, "2026-02", &doc).is_err(),
+        "a withdrawn delete is not exported as a live row"
+    );
+    Ok(())
+}
