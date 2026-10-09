@@ -24,13 +24,10 @@ pub struct AttemptQueue<'a> {
 }
 
 use self::enqueue_claim::ERR_DEDUPE_ACTOR_MISMATCH;
-#[cfg(test)]
-pub(super) use self::mutate::RETRY_REASON_UNSPECIFIED;
 pub(crate) use self::reads::dreamer_run_root_id_in_txn;
 #[cfg(test)]
 pub(super) use self::reads::{
     ERR_RETRY_CHAIN_CYCLE, ERR_RETRY_CHAIN_MISMATCH, ERR_RETRY_CHAIN_MISSING_ROW,
-    RETRY_CHAIN_DEPTH_LIMIT,
 };
 
 impl<'a> AttemptQueue<'a> {
