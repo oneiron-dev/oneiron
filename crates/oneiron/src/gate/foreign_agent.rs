@@ -256,6 +256,23 @@ impl Vault {
         owner: &AuthenticatedOwner,
         principal: &str,
     ) -> Result<GateDecisionRecord> {
+        self.grant_agent_principal(owner, principal, AgentCeiling::Proposed)
+    }
+
+    /// [`Vault::grant_foreign_principal`] at the ceiling the owner names: the
+    /// same read and propose Grant, and the principal's one `agent` ceiling
+    /// row set to `ceiling`. Any earlier row bound to the same principal is
+    /// replaced, so the owner's latest grant is the one that holds rather
+    /// than the most restrictive of every grant ever made. ARCH-0028's tiers
+    /// are what `oneiron token agent` maps onto this: an agent minted with
+    /// write is `auto` (full access), one minted to read or propose is
+    /// `proposed`.
+    pub fn grant_agent_principal(
+        &self,
+        owner: &AuthenticatedOwner,
+        principal: &str,
+        ceiling: AgentCeiling,
+    ) -> Result<GateDecisionRecord> {
         use super::constants::{
             ACTOR_CEILING_KEY, ACTOR_CLASS_KEY, ACTOR_REF_KEY, GRANT_EFFECTOR_KEY,
             GRANT_RECEIPT_REQUIRED_KEY, GRANT_SCOPE_KEY, POLICY_ACTOR_CEILINGS_KEY,
@@ -291,8 +308,20 @@ impl Vault {
                 EdgeActorClass::Agent.gate_actor_class().into(),
             ),
             (ACTOR_REF_KEY.into(), principal.into()),
-            (ACTOR_CEILING_KEY.into(), "proposed".into()),
+            (ACTOR_CEILING_KEY.into(), ceiling.as_str().into()),
         ]);
+        let bound_here = |row: &Value| {
+            let field = |key: &str| {
+                row.as_map().and_then(|fields| {
+                    fields
+                        .iter()
+                        .find(|(name, _)| name.as_str() == Some(key))
+                        .and_then(|(_, value)| value.as_str())
+                })
+            };
+            field(ACTOR_CLASS_KEY) == Some(EdgeActorClass::Agent.gate_actor_class())
+                && field(ACTOR_REF_KEY) == Some(principal)
+        };
         self.with_write_txn(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             let id = super::default_policy_manifest_id()?;
@@ -326,6 +355,9 @@ impl Vault {
                     .find(|(key, _)| key.as_str() == Some(table))
                 {
                     Some((_, Value::Array(rows))) => {
+                        if table == POLICY_ACTOR_CEILINGS_KEY {
+                            rows.retain(|existing| !bound_here(existing));
+                        }
                         if !rows.contains(row) {
                             rows.push(row.clone());
                         }

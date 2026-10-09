@@ -242,12 +242,13 @@ const AGENT_VERBS: [CoreScope; 3] = [CoreScope::Read, CoreScope::Propose, CoreSc
 ///
 /// The agent acts as a PERSON principal derived from its name (so a second
 /// mint for one name is the same agent with a new slip), of class `agent`,
-/// never the owner. The owner grants that principal a `proposed` ceiling
-/// with read and propose, the same Grant every foreign principal holds, so
-/// its writes wait for review. The slip comes through the host-rooted pairing
-/// doors `token read` uses and carries only the verbs named, from
-/// [`AGENT_VERBS`]: scoped, paired and bound to a fresh connection key,
-/// never owner-grade. `token revoke` takes its slip id.
+/// never the owner. The owner's grant to that principal follows ARCH-0028's
+/// authority tiers: minted with `core:write` it is full access, ceiling
+/// `auto`; minted to read or propose, its writes wait for review at
+/// `proposed`. The latest mint sets the agent's ceiling. The slip comes
+/// through the host-rooted pairing doors `token read` uses and carries only
+/// the verbs named, from [`AGENT_VERBS`]: scoped, paired and bound to a fresh
+/// connection key, never owner-grade. `token revoke` takes its slip id.
 pub fn token_agent(args: TokenAgentArgs) -> anyhow::Result<()> {
     anyhow::ensure!(
         !args.serve.managed_by_hypnos,
@@ -310,7 +311,12 @@ pub fn token_agent(args: TokenAgentArgs) -> anyhow::Result<()> {
         .ensure_agent_principal(&args.name)
         .map_err(|error| anyhow::anyhow!("agent {}: {}", args.name, error.message))?;
     let principal = principal.to_hex();
-    vault.grant_foreign_principal(&owner, &principal)?;
+    let ceiling = if verbs.contains(CoreScope::Write.as_str()) {
+        oneiron::agent_def::AgentCeiling::Auto
+    } else {
+        oneiron::agent_def::AgentCeiling::Proposed
+    };
+    vault.grant_agent_principal(&owner, &principal, ceiling)?;
     // The same store-truth class check `token read` makes, before rooting.
     oneiron::memory::parse_actor_key(&vault, &format!("agent:{principal}")).map_err(|error| {
         anyhow::anyhow!("agent {} cannot hold a credential: {}", args.name, error.message)
@@ -334,6 +340,7 @@ pub fn token_agent(args: TokenAgentArgs) -> anyhow::Result<()> {
         serde_json::to_string_pretty(&json!({
             "principal_ref": credential.principal_ref,
             "actor_class": credential.actor_class,
+            "ceiling": ceiling.as_str(),
             "expires_at": credential.expires_at,
             "slip_id": credential.slip_id,
             "credential_file": out,

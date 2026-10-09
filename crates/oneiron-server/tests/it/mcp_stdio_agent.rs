@@ -303,6 +303,8 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
         let mode = std::fs::metadata(&credential_file).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600, "credential file mode {mode:o}");
     }
+    // Minted with write, the agent is ARCH-0028's full-access tier.
+    assert_eq!(minted["ceiling"], json!("auto"), "{minted:#}");
     let principal = minted["principal_ref"].as_str().unwrap().to_owned();
     let slip_id = minted["slip_id"].as_str().unwrap().to_owned();
     let stored = std::fs::read_to_string(&credential_file).unwrap();

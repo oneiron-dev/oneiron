@@ -119,6 +119,17 @@ impl Bridge {
                 ));
             }
         };
+        // A batch, or anything but one object, is not a message this MCP
+        // revision sends; answered here, it spends no holder proof.
+        if !message.is_object() {
+            return Some(rpc_error(
+                &Value::Null,
+                -32600,
+                "invalid_request",
+                "send one JSON-RPC message object per line",
+                None,
+            ));
+        }
         let id = message.get("id").cloned();
         let method = message.get("method").and_then(Value::as_str);
         let body = match method {
