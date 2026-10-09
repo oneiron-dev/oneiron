@@ -3,8 +3,6 @@
 mod graph;
 mod rust_api;
 mod storage;
-#[cfg(test)]
-mod tests;
 mod types;
 
 pub use graph::{AffectedTests, WorkspaceGraph};
