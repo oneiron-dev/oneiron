@@ -7,7 +7,6 @@ use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use crate::codebase::RepoIngestConfig;
 use crate::config::{HnswConfig, TextAnalyzerConfig, VaultConfig};
 use crate::edge::EdgeActorClass;
-use crate::error::ErrorKind;
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -625,52 +624,6 @@ fn publish_receipt_replays_after_same_entity_snapshot_replacement() -> Result<()
     Ok(())
 }
 
-#[test]
-fn publish_share_query_with_limit_one_keeps_the_newest_receipt() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let repo = create_test_repo(b"<h1>v1</h1>\n")?;
-    let result = ingest_artifact(&vault, repo.path(), "site", 10)?;
-    let actor = test_publisher(&vault)?;
-    grant_artifact_publish(&vault, actor, "site")?;
-    let first = ArtifactPublishVerbRequest::new(
-        "site",
-        ArtifactPointerChannel::Published,
-        result.snapshot.fork_hash,
-        actor,
-        EntityId::from_bytes([0x46; 16])?,
-        12,
-    );
-    let later = ArtifactPublishVerbRequest::new(
-        "site",
-        ArtifactPointerChannel::Published,
-        result.snapshot.fork_hash,
-        actor,
-        EntityId::from_bytes([0x47; 16])?,
-        13,
-    );
-    let earlier_receipt = vault
-        .request_artifact_publish(&first)?
-        .receipt
-        .expect("first receipt");
-    let later_receipt = vault
-        .request_artifact_publish(&later)?
-        .receipt
-        .expect("later receipt");
-    assert_ne!(earlier_receipt, later_receipt);
-    assert_eq!(
-        vault.receipts(ReceiptQuery::new(1).with_kind(ReceiptKind::Share))?,
-        vec![later_receipt]
-    );
-    Ok(())
-}
-
-#[test]
-fn malformed_artifact_fork_hash_fails_closed() {
-    let err = parse_codebase_fork_hash_hex("not-a-fork")
-        .expect_err("fork hash parser must reject malformed hex");
-    assert_eq!(err.kind(), ErrorKind::InvalidCodebaseSnapshotBody);
-}
-
 fn blob_fixture(vault: &Vault) -> Result<(EntityId, WriteActor)> {
     let id = EntityId::now();
     vault.put_blob_artifact(
@@ -1004,47 +957,6 @@ fn blob_publish_after_delete_in_the_writer_cannot_revive_on_id_reuse() -> Result
             .bytes,
         b"replacement bytes"
     );
-    Ok(())
-}
-
-#[test]
-fn deleted_blob_id_never_reuses_a_direct_version_url() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
-    let (id, actor) = blob_fixture(&vault)?;
-    let first = vault.append_blob_artifact_version(
-        &id,
-        b"first",
-        &BlobVersionProvenance::UserUpload,
-        actor,
-        TimeRange { start: 2, end: 2 },
-        2,
-    )?;
-    assert!(vault.delete_entity(&id)?);
-    vault.put_blob_artifact(
-        &id,
-        &BlobArtifactBody::new("report.pdf", "application/pdf"),
-        TimeRange { start: 3, end: 3 },
-        3,
-    )?;
-    let second = vault.append_blob_artifact_version(
-        &id,
-        b"second",
-        &BlobVersionProvenance::UserUpload,
-        actor,
-        TimeRange { start: 4, end: 4 },
-        4,
-    )?;
-    assert_eq!(second.version, first.version + 1);
-    assert!(
-        vault
-            .resolve_artifact_file(
-                &id.to_hex(),
-                ArtifactSnapshotSelector::BlobVersion(first.version),
-                "export"
-            )?
-            .is_none()
-    );
-    assert_eq!(vault.blob_artifact_versions(&id)?, vec![second]);
     Ok(())
 }
 

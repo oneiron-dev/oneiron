@@ -67,6 +67,16 @@ impl ScopedRead<'_> {
         limit: usize,
         requested: Option<&RetrievalFilter>,
     ) -> Result<RevisionedHits> {
+        self.search_text_revisioned_as_of(query, limit, requested, None)
+    }
+
+    pub(crate) fn search_text_revisioned_as_of(
+        &self,
+        query: &str,
+        limit: usize,
+        requested: Option<&RetrievalFilter>,
+        as_of: Option<u64>,
+    ) -> Result<RevisionedHits> {
         let (filter, policy) = self.resolve_retrieval_filter(requested)?;
         if filter.deny_all {
             return Ok(RevisionedHits {
@@ -78,14 +88,17 @@ impl ScopedRead<'_> {
         let fetch_limit = self
             .vault
             .scoped_read_search_candidate_limit(limit, true, false)?;
-        let results = self
+        let mut pipeline = self
             .vault
             .query()
             .authority_filter(filter.clone())
             .scoped_note_reader(self.actor_key.clone())
             .search_text(query, fetch_limit)
-            .limit(fetch_limit)
-            .run_for_pack()?;
+            .limit(fetch_limit);
+        if let Some(as_of) = as_of {
+            pipeline = pipeline.with_temporal_now(as_of);
+        }
+        let results = pipeline.run_for_pack()?;
         let filtered = self.filter_search_results(
             results.scores,
             limit,

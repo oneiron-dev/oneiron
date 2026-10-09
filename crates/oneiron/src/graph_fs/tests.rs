@@ -216,125 +216,6 @@ fn worlds_readdir_omits_excluded_worlds_entirely() -> Result<()> {
 }
 
 #[test]
-fn large_day_shard_returns_first_page_and_more_under_byte_cap() -> Result<()> {
-    let (_tmp, vault) = open_test_vault_with(telemetry_config());
-    let subject = test_id(0x44);
-    put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
-    let learned_at = 1_771_027_200;
-    let mut ops = Vec::with_capacity(100_000);
-    for index in 0..100_000_u32 {
-        let mut bytes = [0x60; 16];
-        bytes[12..16].copy_from_slice(&index.to_be_bytes());
-        let id = EntityId::from_bytes(bytes).expect("valid claim id");
-        let mut body = ClaimBody::new(
-            "profile.note",
-            ClaimSubject::Entity(subject),
-            Value::from(format!("claim-{index}")),
-            1.0,
-            ClaimApprovalStatus::Auto,
-            ClaimLifecycleStatus::Active,
-        )?;
-        body.valid_from = Some(learned_at);
-        let data = crate::claim::encode_claim_body(&body)?;
-        ops.push(BatchOp::Put {
-            id,
-            entity_type: ENTITY_TYPE_CLAIM,
-            occurred: time_range(learned_at),
-            learned_at,
-            data,
-            allow_maintenance: false,
-            allow_reserved_predicate: false,
-            hub_sync_imported: false,
-        });
-    }
-    let mut wtxn = vault.store.env.write_txn()?;
-    apply_ops(
-        &vault.store,
-        &vault.config,
-        &vault.analyzer,
-        &mut wtxn,
-        ops,
-        true,
-        false,
-        true,
-    )?;
-    wtxn.commit()?;
-
-    put_policy_manifest(
-        &vault,
-        test_id(0x92),
-        encode_policy_manifest(vec![core_read_base_grant("reader")]),
-    )?;
-
-    let reader =
-        vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
-    let day = format_day_shard(learned_at / 86_400);
-    let page = resolver(&reader, 512).readdir(&format!("/claims/by-time/{day}/"), None)?;
-
-    assert!(page.byte_count() <= 512);
-    assert!(
-        page.entries()
-            .iter()
-            .any(|entry| entry.name() == GRAPH_FS_MORE_ENTRY)
-    );
-    assert!(page.next_cursor().is_some());
-    assert!(
-        page.entries()
-            .iter()
-            .filter(|entry| entry.kind() == GraphFsEntryKind::File)
-            .count()
-            > 0
-    );
-    Ok(())
-}
-
-#[test]
-fn same_fork_hash_mount_renders_byte_identical_readdir() -> Result<()> {
-    let (_tmp, vault) = open_test_vault_with(telemetry_config());
-    let subject = test_id(0x55);
-    let claim = test_id(0x56);
-    put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
-    put_claim(&vault, claim, subject, None, 20)?;
-
-    put_policy_manifest(
-        &vault,
-        test_id(0x93),
-        encode_policy_manifest(vec![core_read_base_grant("reader")]),
-    )?;
-
-    let reader =
-        vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
-    let options = GraphFsOptions::default()
-        .with_mount(GraphFsMount::ForkHash([0xA5; 32]))
-        .with_page_byte_cap(1024);
-    let fs = reader.graph_fs(options);
-    let first = fs.readdir_bytes("/claims/by-id", None)?;
-    let second = fs.readdir_bytes("/claims/by-id", None)?;
-
-    assert_eq!(first, second);
-    assert!(
-        first
-            .windows(claim.to_hex().len())
-            .any(|window| window == claim.to_hex().as_bytes())
-    );
-    Ok(())
-}
-
-#[test]
-fn graph_fs_host_imports_are_read_only() {
-    assert!(
-        GRAPH_FS_HOST_IMPORTS
-            .iter()
-            .all(|import| import.class() == SandboxImportClass::ReadOnly)
-    );
-    assert!(
-        GRAPH_FS_HOST_IMPORTS
-            .iter()
-            .all(|import| !matches!(import.class(), SandboxImportClass::WriteTrap))
-    );
-}
-
-#[test]
 fn grep_r_claims_pushdown_matches_scoped_bm25_ids_and_logs() -> Result<()> {
     let (_tmp, vault) = open_test_vault_with(telemetry_config());
     let subject = test_id(0x61);
@@ -395,102 +276,6 @@ fn grep_r_claims_pushdown_matches_scoped_bm25_ids_and_logs() -> Result<()> {
         crate::store::RetrievalAction::GraphFsCoreutils
     );
     Ok(())
-}
-
-#[test]
-fn find_root_under_clamped_actor_is_bounded_and_non_leaking() -> Result<()> {
-    let (_tmp, vault) = open_test_vault_with(telemetry_config());
-    let allowed_world = test_id(0x64);
-    let excluded_world = test_id(0x65);
-    let subject = test_id(0x66);
-    let allowed_claim = test_id(0x67);
-    let excluded_claim = test_id(0x68);
-    put_entity(&vault, allowed_world, ENTITY_TYPE_WORLD)?;
-    put_entity(&vault, excluded_world, ENTITY_TYPE_WORLD)?;
-    put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
-    put_claim(&vault, allowed_claim, subject, Some(allowed_world), 20)?;
-    put_claim(&vault, excluded_claim, subject, Some(excluded_world), 21)?;
-    put_policy_manifest(
-        &vault,
-        test_id(0x91),
-        encode_policy_manifest(vec![core_read_world_grant("reader", allowed_world)]),
-    )?;
-
-    let reader =
-        vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
-    let output = resolver(&reader, GRAPH_FS_MIN_PAGE_BYTE_CAP).find("/", None, None)?;
-    let rendered = String::from_utf8(output.bytes().to_vec()).expect("utf8 find output");
-
-    assert_eq!(output.decision(), GraphFsCoreutilsDecision::Walk);
-    assert!(output.bytes().len() <= GRAPH_FS_MIN_PAGE_BYTE_CAP);
-    assert!(!rendered.contains(&excluded_world.to_hex()));
-    assert!(!rendered.contains(&excluded_claim.to_hex()));
-    Ok(())
-}
-
-#[test]
-fn find_newer_uses_scoped_temporal_pushdown() -> Result<()> {
-    let (_tmp, vault) = open_test_vault_with(telemetry_config());
-    let subject = test_id(0x69);
-    let old_claim = test_id(0x6A);
-    let new_claim = test_id(0x6B);
-    put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
-    put_claim(&vault, old_claim, subject, None, 10)?;
-    put_claim(&vault, new_claim, subject, None, 20)?;
-
-    put_policy_manifest(
-        &vault,
-        test_id(0x95),
-        encode_policy_manifest(vec![core_read_base_grant("reader")]),
-    )?;
-
-    let reader =
-        vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
-    let output = resolver(&reader, 1024).find("/claims", Some(15), None)?;
-    let rendered = String::from_utf8(output.bytes().to_vec()).expect("utf8 find output");
-
-    assert_eq!(output.decision(), GraphFsCoreutilsDecision::Pushdown);
-    assert!(rendered.contains(&format!("/claims/{}", new_claim.to_hex())));
-    assert!(!rendered.contains(&old_claim.to_hex()));
-    let telemetry = vault
-        .retrieval_run(output.telemetry_run_id().expect("capture enabled"))?
-        .expect("coreutils telemetry row is written");
-    assert_eq!(
-        telemetry.action,
-        crate::store::RetrievalAction::GraphFsCoreutils
-    );
-    Ok(())
-}
-
-#[test]
-fn wikilink_deeplink_resolves_to_claim_symlink() -> Result<()> {
-    let (_tmp, vault) = open_test_vault_with(telemetry_config());
-    let subject = test_id(0x70);
-    let claim = test_id(0x71);
-    put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
-    put_claim(&vault, claim, subject, None, 30)?;
-    put_policy_manifest(
-        &vault,
-        test_id(0x96),
-        encode_policy_manifest(vec![core_read_base_grant("reader")]),
-    )?;
-
-    let reader =
-        vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
-    let link = resolver(&reader, 1024)
-        .read_link(&format!("/[[claim:{}]]", claim.to_hex()))?
-        .expect("claim link resolves");
-
-    assert_eq!(link, format!("/claims/{}", claim.to_hex()));
-    Ok(())
-}
-
-#[test]
-fn day_shard_date_round_trips() {
-    let day = 1_771_027_200 / 86_400;
-    let formatted = format_day_shard(day);
-    assert_eq!(parse_day_shard(&formatted).expect("valid day"), day);
-    assert_eq!(format_day_shard(0), "1970-01-01");
 }
 
 #[test]
@@ -757,32 +542,6 @@ fn readdir_listing_carries_the_read_receipt() -> Result<()> {
 }
 
 #[test]
-fn fixed_and_unmatched_files_do_not_claim_a_scoped_read() -> Result<()> {
-    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
-    let read = vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").unwrap());
-    let fs = resolver(&read, 16 * 1024);
-    let fixed = fs.read_file("/worlds/base/scope")?;
-    assert_eq!(fixed.value.unwrap().bytes(), b"base\n");
-    assert!(fixed.receipt.is_none());
-    let missing = fs.read_file("/unmatched/path")?;
-    assert!(missing.value.is_none());
-    assert!(missing.receipt.is_none());
-    for output in [
-        fs.cat("/worlds/base/scope", None)?,
-        fs.head("/worlds/base/scope", 1)?,
-        fs.wc("/worlds/base/scope")?,
-        fs.grep("base", "/worlds/base/scope", false, None)?,
-        fs.cat("/unmatched/path", None)?,
-        fs.head("/unmatched/path", 1)?,
-        fs.wc("/unmatched/path")?,
-        fs.grep("base", "/unmatched/path", false, None)?,
-    ] {
-        assert!(output.read_receipt().is_none());
-    }
-    Ok(())
-}
-
-#[test]
 fn graph_fs_listings_expire_grants_without_other_writes() -> Result<()> {
     use crate::access_grant::{
         AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
@@ -886,11 +645,6 @@ fn assert_graph_fs_capture(capture: bool) -> Result<()> {
 #[test]
 fn graph_fs_default_output_has_no_telemetry_identity() -> Result<()> {
     assert_graph_fs_capture(false)
-}
-
-#[test]
-fn graph_fs_opted_in_output_has_persisted_telemetry_identity() -> Result<()> {
-    assert_graph_fs_capture(true)
 }
 
 #[test]

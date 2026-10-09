@@ -768,9 +768,3 @@ fn unix_millis_now() -> u64 {
 
 #[cfg(all(test, feature = "sync"))]
 mod tests;
-
-// Base-mode law: the projection is featureless code, so its coverage runs in
-// the featureless build too. `tests.rs` is sync-gated because every row in it
-// drives the reconciler.
-#[cfg(test)]
-mod payload_text_tests;

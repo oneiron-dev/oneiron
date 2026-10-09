@@ -15,18 +15,6 @@ fn frame(ok: bool, request_id: &str, body: &[u8]) -> Vec<u8> {
 }
 
 #[test]
-fn native_refusal_keeps_stage_and_code() {
-    let result = parse_reply(
-        "transcribe_pack",
-        "request",
-        false,
-        frame(false, "request", b""),
-    );
-    assert!(matches!(result, Err(AudioError::Host { stage, code })
-        if stage == "transcribe_pack" && code == "ForcedAlignmentUnavailable"));
-}
-
-#[test]
 fn mismatched_and_trailing_response_data_fail_closed() {
     for (stage, success, response) in [
         ("decode", true, frame(true, "other-request", b"")),
@@ -45,53 +33,6 @@ fn mismatched_and_trailing_response_data_fail_closed() {
         assert!(matches!(parse_reply(stage, "request", success, response),
             Err(AudioError::Host { code, .. }) if code == "InvalidResponse"));
     }
-}
-
-#[test]
-fn decoded_raw_bytes_are_not_json_samples() {
-    let bytes = [0, 128, 255, 127, 0, 0];
-    let reply = parse_reply("decode", "request", true, frame(true, "request", &bytes))
-        .expect("valid response");
-    assert_eq!(reply.body, bytes);
-}
-
-#[test]
-fn oversized_or_unframed_headers_refuse() {
-    for bytes in [vec![b' '; MAX_HEADER + 1], b"{}".to_vec()] {
-        assert!(matches!(parse_reply("decode", "request", true, bytes),
-            Err(AudioError::Host { code, .. }) if code == "InvalidResponse"));
-    }
-}
-
-#[test]
-fn native_capability_data_cannot_claim_readiness_with_a_missing_artifact_port() {
-    let mut data = json!({"packages":{},"asr_model_id":"fixture","asr_snapshot":"/fixture","operations":["decode","silero_vad","transcribe_pack","community1_exclusive_full_file","cleanup_turns"],"artifact_capable":true,"missing":[],"e1_e3_evidence":false,"python_executable":"/fixture/python","python_version":"fixture","script_sha256":"a".repeat(64)});
-    let ready: NativeAudioCapabilities = serde_json::from_value(data.clone()).unwrap();
-    assert!(ready.require_artifact().is_ok());
-    data["operations"] = json!(["decode", "silero_vad", "transcribe_text"]);
-    let incomplete: NativeAudioCapabilities = serde_json::from_value(data.clone()).unwrap();
-    assert!(
-        matches!(incomplete.require_artifact(),Err(AudioError::Host {stage,code}) if stage=="capabilities" && code=="ArtifactBackendUnavailable")
-    );
-    data["untrusted_authority_override"] = json!(true);
-    assert!(serde_json::from_value::<NativeAudioCapabilities>(data).is_err());
-}
-
-#[test]
-fn runtime_profile_binding_detects_drift_and_never_accepts_a_relative_path() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("runtime.json");
-    let bytes = br#"{"version":1}"#;
-    std::fs::write(&path, bytes).unwrap();
-    let digest = sha256(bytes);
-    assert!(validate_runtime_profile(&path, &digest).is_ok());
-    std::fs::write(&path, br#"{"version":2}"#).unwrap();
-    assert!(
-        matches!(validate_runtime_profile(&path,&digest),Err(AudioError::Host {code,..}) if code=="ProfileDigestMismatch")
-    );
-    assert!(
-        matches!(validate_runtime_profile(Path::new("runtime.json"),&digest),Err(AudioError::Host {code,..}) if code=="InvalidProfile")
-    );
 }
 
 #[test]

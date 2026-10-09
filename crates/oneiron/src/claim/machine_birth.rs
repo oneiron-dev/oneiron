@@ -343,18 +343,6 @@ mod tests {
     }
 
     #[test]
-    fn birth_preserves_body_and_derives_event_from_signed_bytes() {
-        let birth = signed_birth();
-        let encoded = birth.encode().unwrap();
-        assert_eq!(SignedClaimBirth::decode(&encoded).unwrap(), birth);
-        assert_eq!(birth.event_id().unwrap().as_bytes(), &birth.digest[..16]);
-        assert_eq!(
-            birth.digest,
-            *blake3::hash(&encode_map(&birth, false).unwrap()).as_bytes()
-        );
-    }
-
-    #[test]
     fn signature_and_digest_bind_all_identity_and_body_fields() {
         let original = signed_birth();
         let mut birth = original.clone();

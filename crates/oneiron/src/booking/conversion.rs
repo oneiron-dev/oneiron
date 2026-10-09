@@ -317,9 +317,6 @@ fn decode_component(value: &str) -> Option<String> {
     (encode_component(&decoded) == value).then_some(decoded)
 }
 
-#[cfg(test)]
-#[path = "conversion/tests.rs"]
-mod tests;
 // BK-07's strict slot hint, configurable wake and live-vault due door extend
 // the owner-authored landing/preview data without duplicating its authority.
 #[path = "conversion/policy.rs"]

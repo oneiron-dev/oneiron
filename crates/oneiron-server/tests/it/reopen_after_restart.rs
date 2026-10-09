@@ -108,6 +108,7 @@ fn recalled_ref(client: &OneironClient) -> String {
             &RecallScope::default(),
             10,
             None,
+            None,
         )
         .expect("recall");
     let refs: Vec<&str> = pack

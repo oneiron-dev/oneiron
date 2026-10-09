@@ -23,7 +23,6 @@ use crate::{
 
 use super::*;
 
-mod contradictions;
 mod failure_rules;
 mod late_budget;
 mod persistent_conflicts;

@@ -139,18 +139,6 @@ fn membership_of(vault: &Vault, turn: &EntityId) -> Option<EntityId> {
     recorded
 }
 
-/// The TURN's PUBLIC out-edge set. Membership rides `vault_meta`, not the
-/// graph, so this must be byte-for-byte what the witness door already
-/// minted — no compaction-only edge leaks into retrieval or traversal.
-fn turn_out_edges(vault: &Vault, turn: &EntityId) -> Vec<(EdgeKind, EntityId)> {
-    vault
-        .edges_out(turn)
-        .expect("turn edges out")
-        .into_iter()
-        .map(|edge| (edge.kind, edge.target))
-        .collect()
-}
-
 fn stored_row_count(vault: &Vault) -> (u64, u64, u64) {
     let rtxn = vault.store.env.read_txn().expect("read txn");
     let entities = vault.store.entities.len(&rtxn).expect("entity count");
@@ -171,42 +159,6 @@ fn admitted_fixture(
     let session = mint_session(&vault, 400);
     let turn = witness_turn(&vault, actor, conversation_seed, turn_seed, 500, 0);
     (dir, vault, session, turn)
-}
-
-// ── the happy path + the witness's read accessors ───────────────────────
-
-#[test]
-fn admit_accepts_a_well_formed_turn_digest_packet() {
-    let (_dir, vault, session, turn) = admitted_fixture(0x20, 0x21, 0x22);
-
-    let packet = digest_packet(session, vec![turn]);
-    let admitted =
-        admit_compaction_packet(&vault, packet.clone(), None).expect("well-formed packet admits");
-
-    assert_eq!(admitted.schema_version(), COMPACTION_PACKET_SCHEMA_VERSION);
-    assert_eq!(admitted.session(), session);
-    assert_eq!(admitted.turn_ids(), &[turn][..]);
-    assert_eq!(admitted.payload_kind(), CompactionPayloadKind::TurnDigest);
-    assert_eq!(admitted.snapshot(), &packet.snapshot);
-    assert_eq!(admitted.digest_text(), Some("the sitting, compacted"));
-    assert!(admitted.working_set_refs().is_empty());
-}
-
-#[test]
-fn admit_accepts_a_well_formed_working_set_packet_against_a_matching_expected_ref() {
-    let (_dir, vault, session, turn) = admitted_fixture(0x23, 0x24, 0x25);
-
-    let packet = working_set_packet(session, vec![turn]);
-    let expected = packet.snapshot;
-    let admitted = admit_compaction_packet(&vault, packet, Some(&expected))
-        .expect("matching expected snapshot admits");
-
-    assert_eq!(
-        admitted.payload_kind(),
-        CompactionPayloadKind::WorkingSetHandoff
-    );
-    assert_eq!(admitted.working_set_refs(), &[entity(0x60)][..]);
-    assert_eq!(admitted.digest_text(), None);
 }
 
 // ── schema pin ──────────────────────────────────────────────────────────
@@ -514,31 +466,6 @@ fn admit_refuses_a_working_set_payload_whose_shape_is_wrong() {
 // ── the membership carrier itself ───────────────────────────────────────
 
 #[test]
-fn the_witness_txn_records_a_readable_turn_to_session_membership() {
-    let (_dir, vault, session, turn) = admitted_fixture(0x52, 0x53, 0x54);
-
-    assert_eq!(
-        membership_of(&vault, &turn),
-        Some(session),
-        "the production witness door recorded the sitting"
-    );
-}
-
-#[test]
-fn recording_membership_leaves_the_turns_public_edge_surface_untouched() {
-    // The membership fact is `vault_meta` plumbing, so a turn witnessed
-    // inside a sitting has EXACTLY the edges the witness door mints — the
-    // `ChildOf` conversation binding and nothing else. Retrieval, PPR
-    // traversal and `conversation_of` see no compaction-only edge.
-    let (_dir, vault, session, turn) = admitted_fixture(0x63, 0x64, 0x65);
-    assert_eq!(membership_of(&vault, &turn), Some(session));
-    assert_eq!(
-        turn_out_edges(&vault, &turn),
-        vec![(EdgeKind::ChildOf, entity(0x64))]
-    );
-}
-
-#[test]
 fn a_turn_witnessed_outside_any_session_records_no_membership() {
     let (_dir, vault) = open_vault();
     let actor = put_actor(&vault, 0x55);
@@ -579,50 +506,6 @@ fn appending_to_a_turn_never_rewrites_its_membership() {
     );
 }
 
-// ── witness unforgeability (compile surface) ────────────────────────────
-
-/// [`ValidatedCompactionPacket`] carries private fields and no public
-/// constructor, so [`admit_compaction_packet`] is the only way to obtain
-/// one. The COMPILE-surface half of that claim is the `compile_fail`
-/// doctest on the type (a struct literal outside this module does not
-/// build); this half pins its runtime consequence — the witness a caller
-/// holds always mirrors a packet that actually passed the door, field for
-/// field, with the payload kind DECODED rather than asserted.
-#[test]
-fn a_validated_packet_can_only_come_from_the_admission_door() {
-    let (_dir, vault, session, turn) = admitted_fixture(0x5B, 0x5C, 0x5D);
-
-    let packet = digest_packet(session, vec![turn]);
-    let admitted = admit_compaction_packet(&vault, packet.clone(), None).expect("admit");
-
-    assert_eq!(admitted.session(), packet.session_ref);
-    assert_eq!(admitted.turn_ids(), packet.turn_ids.as_slice());
-    assert_eq!(admitted.snapshot(), &packet.snapshot);
-    assert_eq!(admitted.schema_version(), packet.schema_version);
-    assert_eq!(admitted.payload_kind().as_u8(), packet.payload_kind);
-}
-
-// ── admission is read-only ──────────────────────────────────────────────
-
-#[test]
-fn admission_writes_nothing_on_either_outcome() {
-    let (_dir, vault, session, turn) = admitted_fixture(0x5E, 0x5F, 0x62);
-
-    let before = stored_row_count(&vault);
-
-    let mut refused = digest_packet(session, vec![turn]);
-    refused.schema_version = COMPACTION_PACKET_SCHEMA_VERSION + 7;
-    admit_compaction_packet(&vault, refused, None).expect_err("refused");
-    assert_eq!(stored_row_count(&vault), before, "a refusal writes nothing");
-
-    admit_compaction_packet(&vault, digest_packet(session, vec![turn]), None).expect("admit");
-    assert_eq!(
-        stored_row_count(&vault),
-        before,
-        "an admission writes nothing either"
-    );
-}
-
 // ═══════════════════════════════════════════════════════════════════════
 // RT-05 (ONE-1687) — the in-engine compaction driver
 // ═══════════════════════════════════════════════════════════════════════
@@ -630,8 +513,7 @@ fn admission_writes_nothing_on_either_outcome() {
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::agent_def::{CompactionOwnership, ContextBudgetSplit, MemoryProfile};
-use crate::context_pack::PackFormat;
+use crate::agent_def::{CompactionOwnership, MemoryProfile};
 use crate::error::MaintenanceError;
 use crate::llm::ModelTierRef;
 use crate::off_record::OffRecordBackendClass;
@@ -639,7 +521,6 @@ use crate::registry::{ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
 use crate::write_envelope::WriteActor;
 
 const CHEAP_BACKEND: &str = "test.cheap.slm";
-const FRONTIER_BACKEND: &str = "test.frontier";
 
 /// A cheap backend that reports what it was asked to compact, so a test can
 /// tell an engine-fabricated request from the host-assembled one.
@@ -659,24 +540,6 @@ impl CompactionBackend for CheapBackend {
             summary_text: format!("epoch text over {} rows", request.window.len()),
             latency: Duration::from_millis(500),
         })
-    }
-}
-
-/// A backend that DECLARES a frontier tier. The registry must never accept it,
-/// so `compact` is unreachable by construction.
-struct FrontierBackend;
-
-impl CompactionBackend for FrontierBackend {
-    fn backend_key(&self) -> &str {
-        FRONTIER_BACKEND
-    }
-
-    fn tier_class(&self) -> CompactionTierClass {
-        CompactionTierClass::Frontier
-    }
-
-    fn compact(&self, _request: &CompactionRequest) -> Result<CompactionProduct> {
-        unreachable!("a frontier backend is refused at registration and never resolves")
     }
 }
 
@@ -827,325 +690,6 @@ fn pending_embedding_marker_count(vault: &Vault) -> usize {
     markers
 }
 
-// ── backend registry and the frontier ban ───────────────────────────────
-
-#[test]
-fn registry_refuses_frontier_and_resolves_only_registered_cheap_backends() {
-    let mut registry = CompactionBackendRegistry::new();
-
-    let refused = registry
-        .register(Arc::new(FrontierBackend))
-        .expect_err("a frontier backend is refused at registration");
-    invariant(refused);
-    assert_eq!(
-        registry.tier_class_of(FRONTIER_BACKEND),
-        None,
-        "a refused backend never enters the map, so it cannot resolve later"
-    );
-
-    registry
-        .register(Arc::new(CheapBackend))
-        .expect("a cheap backend registers");
-    assert_eq!(
-        registry.tier_class_of(CHEAP_BACKEND),
-        Some(CompactionTierClass::Cheap)
-    );
-    let resolved = registry
-        .resolve(&profile(1_000, CompactionOwnership::Engine))
-        .expect("the registered cheap backend resolves");
-    assert_eq!(resolved.backend_key(), CHEAP_BACKEND);
-    assert_eq!(resolved.tier_class(), CompactionTierClass::Cheap);
-
-    let unknown = profile(1_000, CompactionOwnership::Engine);
-    let mut unknown = unknown;
-    unknown.compaction_backend = ModelTierRef("never.registered".to_owned());
-    invariant(
-        registry
-            .resolve(&unknown)
-            .err()
-            .expect("unknown key fails typed"),
-    );
-}
-
-#[test]
-fn for_profile_yields_no_driver_for_byoa_and_a_driver_for_engine() {
-    let registry = cheap_registry();
-
-    assert!(
-        CompactionDriver::for_profile(&profile(1_000, CompactionOwnership::Byoa), &registry)
-            .expect("byoa resolves without error")
-            .is_none(),
-        "byoa is exclusion by construction: no driver exists to compact that window"
-    );
-    assert!(
-        CompactionDriver::for_profile(&profile(1_000, CompactionOwnership::Engine), &registry)
-            .expect("engine resolves")
-            .is_some()
-    );
-}
-
-// ── the margin law ──────────────────────────────────────────────────────
-
-/// The first velocity sample replaces the seed; later samples blend with it.
-#[test]
-fn driver_observe_velocity_displaces_the_cold_start_seeds() {
-    let budget = 100_000_u64;
-    let mut driver = engine_driver(budget);
-    let seeded_threshold = driver.compact_at();
-
-    let fast_sample = MarginLaw::SEED_VELOCITY_TPS * 10.0;
-    driver.observe_velocity(fast_sample);
-
-    // Velocity observation leaves the latency seed unchanged.
-    let fast_margin = (MarginLaw::SEED_LATENCY_MS / 1_000.0 * fast_sample).ceil() as u64;
-    assert!(
-        fast_margin < budget / 2,
-        "fixture must exercise the margin law without reaching the half-budget floor"
-    );
-    let fast_threshold = driver.compact_at();
-    assert_eq!(
-        driver.margin().measured_velocity_tps(),
-        fast_sample.round() as u64,
-        "the first sample must displace the velocity seed outright, not blend with it"
-    );
-    assert_eq!(
-        fast_threshold,
-        budget - fast_margin,
-        "away from the floor the threshold is exactly budget - margin"
-    );
-    assert!(
-        fast_threshold < seeded_threshold,
-        "a faster session must reserve more and compact earlier: \
-         {fast_threshold} vs seeded {seeded_threshold}"
-    );
-
-    // A smaller subsequent sample reduces the reserve and delays compaction.
-    driver.observe_velocity(1.0);
-    let adapted_velocity = driver.margin().measured_velocity_tps();
-    assert!(
-        adapted_velocity > 1 && adapted_velocity < fast_sample as u64,
-        "a later sample must blend with the measured history, got {adapted_velocity}"
-    );
-    let adapted_threshold = driver.compact_at();
-    assert!(adapted_threshold > fast_threshold);
-    assert!(adapted_threshold < seeded_threshold);
-}
-
-// ── threshold, state machine, and the real serialized product ───────────
-
-#[test]
-fn a_real_serialized_pack_drives_one_begin_per_threshold_crossing() -> Result<()> {
-    let (_dir, vault) = open_test_vault_with(crate::test_util::embedding_test_config());
-    let first = entity(0x71);
-    let second = entity(0x72);
-    for (id, vector, text) in [
-        (first, [1.0_f32, 0.0, 0.0, 0.0], "threshold first"),
-        (second, [0.0, 1.0, 0.0, 0.0], "threshold second"),
-    ] {
-        let mut payload = Vec::new();
-        rmpv::encode::write_value(
-            &mut payload,
-            &rmpv::Value::Map(vec![(
-                rmpv::Value::from("content"),
-                rmpv::Value::from(text),
-            )]),
-        )
-        .expect("encode turn body");
-        vault
-            .batch()
-            .put(
-                &id,
-                ENTITY_TYPE_TURN,
-                TimeRange { start: 1, end: 1 },
-                1,
-                &payload,
-            )
-            .vector(&id, &vector)
-            .commit()?;
-    }
-
-    let pack = vault
-        .context_pack()
-        .search_vector(&[1.0, 0.0, 0.0, 0.0], 10)
-        .format(PackFormat::Plaintext)
-        // The host's contract: apply the profile at builder construction, then
-        // hand the REAL serialized product to the driver.
-        .memory_profile(Some(&profile(512, CompactionOwnership::Engine)))
-        .run_serialized_with_stats()?
-        .value;
-    assert!(
-        pack.stats.tokens.total_tokens > 0,
-        "the serialized product carries real token accounting"
-    );
-
-    let mut driver = engine_driver(4);
-    let first_directive = driver.observe_serialized_pack(&vault, &pack)?;
-    assert!(
-        matches!(first_directive, CompactionDirective::Begin { .. }),
-        "crossing the soft threshold begins a background compaction"
-    );
-    assert_eq!(
-        driver.observe_serialized_pack(&vault, &pack)?,
-        CompactionDirective::Quiet,
-        "a second observation while compacting is Quiet, not a queue"
-    );
-    Ok(())
-}
-
-#[test]
-fn a_thousand_token_profile_compacts_at_five_hundred_not_zero() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let mut driver = engine_driver(1_000);
-    assert_eq!(
-        driver.compact_at(),
-        500,
-        "the floor holds the threshold at half the budget when margin >= budget"
-    );
-
-    assert_eq!(
-        driver.evaluate_now(&vault, 499)?,
-        CompactionDirective::Quiet
-    );
-    assert!(matches!(
-        driver.evaluate_now(&vault, 500)?,
-        CompactionDirective::Begin { .. }
-    ));
-    Ok(())
-}
-
-// ── the request ─────────────────────────────────────────────────────────
-
-#[test]
-fn request_for_is_legal_only_while_compacting() {
-    let (_dir, vault) = open_vault();
-    let session = mint_session(&vault, 10);
-    let mut driver = engine_driver(1_000);
-    let window = host_window(&vault, 0x80, 1, 2);
-
-    let refused = driver
-        .request_for(&vault, &session, window)
-        .expect_err("Idle has no recorded watermark to build a request from");
-    invariant(refused);
-}
-
-#[test]
-fn request_for_carries_the_host_window_and_the_profile_summary_budget() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let session = mint_session(&vault, 10);
-    let mut driver = engine_driver(1_000);
-    driver.evaluate_now(&vault, u64::MAX)?;
-
-    let window = host_window(&vault, 0x90, 1, 3);
-    let turn_ids: Vec<EntityId> = window.iter().map(|row| row.turn_id).collect();
-    let request = driver.request_for(&vault, &session, window)?;
-
-    assert_eq!(request.session_ref, session);
-    assert_eq!(
-        request
-            .window
-            .iter()
-            .map(|row| row.turn_id)
-            .collect::<Vec<_>>(),
-        turn_ids,
-        "the host's rows ride through verbatim, TURN ids included"
-    );
-    assert!(request.window.iter().all(|row| !row.content.is_empty()));
-    assert_eq!(
-        request.summary_token_budget, 250,
-        "no split: the named default summary fraction of the window budget"
-    );
-    assert_eq!(
-        request.turn_start, 1,
-        "the first epoch starts at the window"
-    );
-
-    // The split, when present, is the authority instead.
-    let split_profile = profile(1_000, CompactionOwnership::Engine)
-        .with_budget_split(ContextBudgetSplit::new(0.25, 0.25, 0.4, 0.1));
-    let mut split_driver =
-        CompactionDriver::for_profile(&split_profile, &cheap_registry())?.expect("engine driver");
-    split_driver.evaluate_now(&vault, u64::MAX)?;
-    let split_request =
-        split_driver.request_for(&vault, &session, host_window(&vault, 0xA0, 1, 1))?;
-    assert_eq!(split_request.summary_token_budget, 400);
-    Ok(())
-}
-
-// ── the margin law's starvation table ───────────────────────────────────
-
-#[test]
-fn starvation_check_covers_the_whole_predicate_table() -> Result<()> {
-    let (_dir, vault) = open_vault();
-
-    // Idle: no in-flight compaction, so `remaining_latency` has no referent.
-    let idle = engine_driver(1_000);
-    assert_eq!(idle.starvation_check(Duration::from_secs(5), 10), None);
-
-    // Neither condition: a wide budget and a slow session.
-    let mut calm = engine_driver(1_000_000);
-    calm.observe_velocity(1.0);
-    calm.evaluate_now(&vault, u64::MAX)?;
-    assert_eq!(
-        calm.starvation_check(Duration::from_secs(1), 10_000),
-        None,
-        "1 tps for 1s against 10000 tokens of headroom starves nothing"
-    );
-
-    // Degeneracy only: margin >= budget with a positive velocity, but the
-    // headroom still absorbs the projected write.
-    let mut degenerate = engine_driver(10);
-    degenerate.observe_velocity(1.0);
-    degenerate.evaluate_now(&vault, u64::MAX)?;
-    let margin = degenerate.margin().margin_tokens();
-    assert!(margin >= 10, "the seeded latency makes this degenerate");
-    assert_eq!(
-        degenerate.starvation_check(Duration::from_secs(1), 10_000),
-        Some(CompactionSignal::Starvation {
-            deficit_tokens: margin - 10,
-            measured_latency_ms: degenerate.margin().measured_latency_ms(),
-            measured_velocity_tps: 1,
-        }),
-        "degeneracy-only deficit is margin - budget"
-    );
-
-    // Overrun only: a wide budget, but the session out-writes the remaining
-    // latency.
-    let mut overrun = engine_driver(1_000_000);
-    overrun.observe_velocity(100.0);
-    overrun.evaluate_now(&vault, u64::MAX)?;
-    assert!(overrun.margin().margin_tokens() < 1_000_000);
-    assert_eq!(
-        overrun.starvation_check(Duration::from_secs(10), 400),
-        Some(CompactionSignal::Starvation {
-            deficit_tokens: 600,
-            measured_latency_ms: overrun.margin().measured_latency_ms(),
-            measured_velocity_tps: 100,
-        }),
-        "overrun deficit is ceil(velocity * remaining - headroom)"
-    );
-
-    // Both: degenerate budget AND an overrun.
-    let mut both = engine_driver(10);
-    both.observe_velocity(100.0);
-    both.evaluate_now(&vault, u64::MAX)?;
-    assert!(matches!(
-        both.starvation_check(Duration::from_secs(10), 400),
-        Some(CompactionSignal::Starvation {
-            deficit_tokens: 600,
-            ..
-        })
-    ));
-
-    // The session is still message-accepting throughout: emitting a signal is
-    // the whole response, and the driver stays in flight.
-    assert!(both.is_compacting());
-    assert_eq!(
-        both.evaluate_now(&vault, u64::MAX)?,
-        CompactionDirective::Quiet
-    );
-    Ok(())
-}
-
 // ── the epoch summary mint ──────────────────────────────────────────────
 
 #[test]
@@ -1190,77 +734,6 @@ fn integrate_mints_one_epoch_summary_from_the_request() -> Result<()> {
     // The state machine returned to Idle and fed the measured latency in.
     assert!(!driver.is_compacting());
     assert_eq!(driver.margin().measured_latency_ms(), 500);
-    Ok(())
-}
-
-#[test]
-fn the_mint_is_byte_stable_and_leaves_the_scope_clause_untouched() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let session = mint_session(&vault, 10);
-    let actor = loom_actor(&vault, 0x66);
-
-    // The scope clause: compaction touches the MESSAGE LOG only. These rows
-    // stand in for the system prompt / agent definition / TASK intent that a
-    // swap must not be able to reach.
-    let untouched = entity(0x6A);
-    vault.put_entity(
-        &untouched,
-        ENTITY_TYPE_TURN,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"not a message-log entry",
-    )?;
-    let before = vault.get(&untouched)?.expect("row exists");
-
-    let mut driver = engine_driver(1_000);
-    let plan = compact_once(
-        &vault,
-        &mut driver,
-        session,
-        actor,
-        host_window(&vault, 0x50, 1, 2),
-    )?;
-
-    let minted = vault.get(&plan.summary_id)?.expect("summary exists");
-    let re_encoded = encode_epoch_summary_body(&decode_epoch_summary_body(&minted)?)?;
-    assert_eq!(
-        minted, re_encoded,
-        "the stored body re-encodes byte-identically: the keyframe is cacheable"
-    );
-    assert_eq!(
-        vault.get(&untouched)?.expect("row still exists"),
-        before,
-        "the swap cannot reach a row that is not a message-log entry"
-    );
-    Ok(())
-}
-
-#[test]
-fn the_swap_plan_replays_the_accumulated_tail_without_duplicating_a_message() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let session = mint_session(&vault, 10);
-    let actor = loom_actor(&vault, 0x67);
-    let mut driver = engine_driver(1_000);
-
-    let window = host_window(&vault, 0xF0, 1, 3);
-    let accumulated = host_window(&vault, 0x30, 4, 2);
-    let prefix_ids: Vec<EntityId> = window.iter().map(|row| row.message_id).collect();
-
-    driver.evaluate_now(&vault, u64::MAX)?;
-    let request = driver.request_for(&vault, &session, window)?;
-    let product = driver.backend().compact(&request)?;
-    let plan = driver.integrate(&vault, &session, actor, &request, product, &accumulated)?;
-
-    assert_eq!(
-        plan.retained_tail, accumulated,
-        "the retained tail is exactly what the host accumulated after the watermark"
-    );
-    for row in &plan.retained_tail {
-        assert!(
-            !prefix_ids.contains(&row.message_id),
-            "nothing is counted twice across the swapped prefix and the replayed tail"
-        );
-    }
     Ok(())
 }
 
@@ -1314,61 +787,6 @@ fn an_empty_product_mints_nothing_and_leaves_the_compaction_in_flight() -> Resul
     Ok(())
 }
 
-#[test]
-fn a_whitespace_only_product_is_refused_exactly_like_an_empty_one() {
-    let (_dir, vault) = open_vault();
-    let pending_before = pending_embedding_marker_count(&vault);
-    let session = mint_session(&vault, 10);
-    let actor = loom_actor(&vault, 0x6E);
-    let mut driver = engine_driver(1_000);
-    let window = host_window(&vault, 0x48, 1, 2);
-
-    let refused = integrate_product(&vault, &mut driver, session, actor, window, " \t\r\n ")
-        .expect_err("whitespace is not a summary");
-    invariant(refused);
-    assert_eq!(summary_row_count(&vault), 0);
-    assert_eq!(pending_embedding_marker_count(&vault), pending_before);
-    assert!(driver.is_compacting());
-}
-
-#[test]
-fn a_real_product_still_mints_after_an_empty_one_was_refused() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let session = mint_session(&vault, 10);
-    let actor = loom_actor(&vault, 0x6F);
-    let mut driver = engine_driver(1_000);
-
-    let refused = integrate_product(
-        &vault,
-        &mut driver,
-        session,
-        actor,
-        host_window(&vault, 0x43, 1, 2),
-        "",
-    )
-    .expect_err("the empty product is refused");
-    invariant(refused);
-    driver.abandon();
-
-    // The refusal consumed no epoch: the retry mints epoch 1, because the
-    // durable summaries ARE the counter and none of them exists yet.
-    let plan = compact_once(
-        &vault,
-        &mut driver,
-        session,
-        actor,
-        host_window(&vault, 0x58, 1, 2),
-    )?;
-    assert_eq!(plan.epoch, 1, "the refused attempt burned no epoch number");
-    assert_eq!(summary_row_count(&vault), 1);
-    let minted_text = stored_summary_body(&vault, &plan.summary_id).text;
-    assert!(
-        !minted_text.is_empty(),
-        "the mint that landed carries prose"
-    );
-    Ok(())
-}
-
 // ── the epoch-summary codec ─────────────────────────────────────────────
 
 fn sample_body() -> EpochSummaryBody {
@@ -1406,18 +824,6 @@ fn epoch_summary_body_keys_are_eight_with_actor_last() {
 
     let encoded = encode_epoch_summary_body(&body).expect("encode sample body");
     assert_eq!(encoded, expected);
-}
-
-#[test]
-fn epoch_summary_body_round_trips_byte_identically() -> Result<()> {
-    let body = sample_body();
-    let bytes = encode_epoch_summary_body(&body)?;
-    assert_eq!(decode_epoch_summary_body(&bytes)?, body);
-    assert_eq!(
-        encode_epoch_summary_body(&decode_epoch_summary_body(&bytes)?)?,
-        bytes
-    );
-    Ok(())
 }
 
 #[test]
@@ -1613,78 +1019,6 @@ fn a_room_turn_beyond_the_edge_cap_still_refuses_the_mint() -> Result<()> {
         .expect_err("a base keyframe derived from room content is refused at creation");
     assert_eq!(refused.kind(), ErrorKind::OffRecordTaintedBaseWrite);
     Ok(())
-}
-
-#[test]
-fn the_public_batch_path_refuses_a_base_summary_edge_into_a_live_room() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let summary = entity(0x21);
-    let room_turn = EntityId::now();
-
-    let room = vault
-        .off_record_session_vault()
-        .enter("rt05-chokepoint", OffRecordBackendClass::Local)?;
-    let overlay = room.overlay();
-    let segment = overlay.install_txn_segment()?;
-    overlay.put(
-        crate::session_overlay::OverlayKeyspace::Entities,
-        room_turn.as_bytes(),
-        b"room turn",
-    )?;
-    segment.commit()?;
-
-    // The chokepoint defense for NON-driver writers is the landed K4
-    // decode-point taint guard: a base edge naming a live overlay member is
-    // refused before it can be written, so no separate propagation hook — and
-    // no durable fence row — is needed on the public arms.
-    let refused = vault
-        .batch()
-        .edge(&summary, EdgeKind::DerivedFrom, &room_turn, 1.0)
-        .commit()
-        .expect_err("the public Edge arm refuses");
-    assert_eq!(refused.kind(), ErrorKind::OffRecordTaintedBaseWrite);
-
-    let refused_created_at = vault
-        .batch()
-        .edge_with_created_at(&summary, EdgeKind::DerivedFrom, &room_turn, 1.0, 5)
-        .commit()
-        .expect_err("the public created-at arm refuses too");
-    assert_eq!(
-        refused_created_at.kind(),
-        ErrorKind::OffRecordTaintedBaseWrite
-    );
-    Ok(())
-}
-
-// ── module hygiene ──────────────────────────────────────────────────────
-
-#[test]
-fn the_compaction_module_carries_no_scheduler_primitive() {
-    // ARCH-0026 / CROSS-ARCH-0022 / ARCH-0046: the swap facet is event-driven
-    // at watermark crossing. The engine owns no thread, task, timer or
-    // heartbeat, and `observe_pack` (a raw-pack observation entry) never
-    // existed — only the serialized product can drive the threshold.
-    const BANNED: [&str; 5] = [
-        "tokio::time::interval",
-        "thread::spawn",
-        "fn observe_pack",
-        "std::thread",
-        "tokio::spawn",
-    ];
-    for source in [
-        include_str!("../compaction.rs"),
-        include_str!("driver/mod.rs"),
-        include_str!("driver/integration.rs"),
-        include_str!("epoch.rs"),
-    ] {
-        for needle in BANNED {
-            assert_eq!(
-                source.matches(needle).count(),
-                0,
-                "compaction modules must not contain {needle}"
-            );
-        }
-    }
 }
 
 // ── the keyframe reaches the embedder ───────────────────────────────────

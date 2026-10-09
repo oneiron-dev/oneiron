@@ -59,9 +59,7 @@ use crate::Vault;
 #[cfg(test)]
 use crate::entity_id::EntityId;
 #[cfg(test)]
-use crate::error::{Error, Result};
-#[cfg(test)]
-use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
+use crate::error::Result;
 #[cfg(test)]
 use crate::temporal::TimeRange;
 #[cfg(test)]

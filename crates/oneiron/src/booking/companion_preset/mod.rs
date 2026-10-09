@@ -65,14 +65,10 @@ mod tests;
 // the old file's import header. After the directory split the seam re-imports
 // both so `tests.rs` resolves exactly as it did before.
 #[cfg(test)]
-use self::proposal::{CompanionProposalRow, PARTICIPANT_TOKEN_HEX_LEN};
+use self::proposal::CompanionProposalRow;
 #[cfg(test)]
-use self::render::validate_participant_token;
+use crate::Vault;
 #[cfg(test)]
 use crate::booking::{BookingError, EventTypeConfig, EventTypeKey, RankedSlot, SlotOracle};
 #[cfg(test)]
-use crate::lens::LensAtom;
-#[cfg(test)]
 use crate::temporal::TimeRange;
-#[cfg(test)]
-use crate::{EntityId, Vault};

@@ -77,8 +77,6 @@ use crate::channel_identity::ChannelIdentityShape;
 #[cfg(test)]
 use crate::edge::EdgeActorClass;
 #[cfg(test)]
-use crate::entity_id::EntityId;
-#[cfg(test)]
 use crate::write_envelope::WriteActor;
 #[cfg(test)]
 use rmpv::Value;
