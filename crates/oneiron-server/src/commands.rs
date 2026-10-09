@@ -269,7 +269,9 @@ pub fn token_agent(args: TokenAgentArgs) -> anyhow::Result<()> {
     );
     let mut verbs = std::collections::BTreeSet::new();
     for verb in &args.scope {
-        let allowed = AGENT_VERBS.iter().find(|scope| scope.as_str() == verb.trim());
+        let allowed = AGENT_VERBS
+            .iter()
+            .find(|scope| scope.as_str() == verb.trim());
         let scope = allowed.ok_or_else(|| {
             anyhow::anyhow!(
                 "an agent slip carries only {}, not {verb:?}",
@@ -354,7 +356,11 @@ fn mint_agent_credential(
     vault.grant_agent_principal(&owner, &principal, ceiling)?;
     // The same store-truth class check `token read` makes, before rooting.
     oneiron::memory::parse_actor_key(&vault, &format!("agent:{principal}")).map_err(|error| {
-        anyhow::anyhow!("agent {} cannot hold a credential: {}", args.name, error.message)
+        anyhow::anyhow!(
+            "agent {} cannot hold a credential: {}",
+            args.name,
+            error.message
+        )
     })?;
     vault.ensure_host_root_slip(&issuer)?;
     let credential = mint_paired_credential(

@@ -39,7 +39,8 @@ const MAX_IN_FLIGHT: usize = 8;
 
 /// The `initialize` the bridge sends for itself when a tool call arrives
 /// before it has seen the client's own.
-const BRIDGE_INITIALIZE: &str = r#"{"jsonrpc":"2.0","id":"oneiron-mcp-bridge","method":"initialize","params":{}}"#;
+const BRIDGE_INITIALIZE: &str =
+    r#"{"jsonrpc":"2.0","id":"oneiron-mcp-bridge","method":"initialize","params":{}}"#;
 
 pub fn mcp(args: McpArgs) -> anyhow::Result<()> {
     let bridge = Arc::new(Bridge::new(&args)?);
@@ -209,7 +210,10 @@ impl Bridge {
         let parsed = serde_json::from_slice::<Value>(&output.stdout);
         match output.status.code() {
             Some(0) => parsed.map_err(|_| {
-                Refusal::Unreachable(format!("{} answered with something other than JSON", self.endpoint))
+                Refusal::Unreachable(format!(
+                    "{} answered with something other than JSON",
+                    self.endpoint
+                ))
             }),
             // `--fail-with-body`: an HTTP error status, with the server's body.
             Some(api::CURL_HTTP_ERROR_EXIT) => Err(Refusal::Http(parsed.unwrap_or_else(|_| {
@@ -255,7 +259,9 @@ impl Refusal {
                     None,
                 ),
             },
-            Self::Unreachable(message) => rpc_error(id, -32000, "server_unreachable", message, None),
+            Self::Unreachable(message) => {
+                rpc_error(id, -32000, "server_unreachable", message, None)
+            }
         }
     }
 }

@@ -9,6 +9,8 @@
 //! on the next call; the agent command never mints an owner-grade slip; and
 //! no slip or seed appears in argv, logs or error text.
 
+#![allow(clippy::unwrap_used)]
+
 use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -272,12 +274,22 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
 
     // The agent command keeps owner powers for the owner.
     let refused = oneiron(
-        &["token", "agent", "--name", "claude-code", "--scope", "core:read,core:auth"],
+        &[
+            "token",
+            "agent",
+            "--name",
+            "claude-code",
+            "--scope",
+            "core:read,core:auth",
+        ],
         &config,
     )
     .output()
     .unwrap();
-    assert!(!refused.status.success(), "core:auth was minted for an agent");
+    assert!(
+        !refused.status.success(),
+        "core:auth was minted for an agent"
+    );
 
     // Minted on the stopped vault into an owner-only file; nothing secret printed.
     let credential_file = dir.path().join("claude-code.cred");
@@ -300,7 +312,10 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
     }
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(&credential_file).unwrap().permissions().mode();
+        let mode = std::fs::metadata(&credential_file)
+            .unwrap()
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o777, 0o600, "credential file mode {mode:o}");
     }
     // Minted with write, the agent is ARCH-0028's full-access tier.
@@ -323,7 +338,10 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
     assert_ne!(slip.claims.scope, Scope::top());
     assert_eq!(
         slip.claims.scope.verbs,
-        ScopeAxis::Some(BTreeSet::from(["core:read".to_owned(), "core:write".to_owned()]))
+        ScopeAxis::Some(BTreeSet::from([
+            "core:read".to_owned(),
+            "core:write".to_owned()
+        ]))
     );
 
     let argv_log = dir.path().join("curl-argv.log");
@@ -346,17 +364,24 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
         }),
     );
     assert_eq!(
-        initialized["result"]["actor"]["actor_ref"], json!(principal),
+        initialized["result"]["actor"]["actor_ref"],
+        json!(principal),
         "{initialized:#}"
     );
-    assert_eq!(initialized["result"]["actor"]["actor_class"], json!("agent"));
+    assert_eq!(
+        initialized["result"]["actor"]["actor_class"],
+        json!("agent")
+    );
     // A notification is forwarded and never answered: the next line is the
     // answer to the next request.
     bridge.send(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }));
 
     let listed = bridge.call(2, "tools/list", json!({}));
     let tools = listed["result"]["tools"].as_array().expect("tools");
-    let names: BTreeSet<&str> = tools.iter().filter_map(|tool| tool["name"].as_str()).collect();
+    let names: BTreeSet<&str> = tools
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
     assert!(
         names.contains("witness") && names.contains("recall"),
         "{names:?}"
@@ -364,7 +389,12 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
     for tool in tools {
         let schema = &tool["inputSchema"];
         assert!(schema["properties"].get("actor").is_none(), "{tool:#}");
-        assert!(!schema["required"].as_array().unwrap().contains(&json!("actor")));
+        assert!(
+            !schema["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("actor"))
+        );
     }
     let witness = tools.iter().find(|tool| tool["name"] == "witness").unwrap();
     let version = witness["inputSchema"]["properties"]["schema_version"]["const"].clone();
@@ -403,7 +433,9 @@ fn an_agent_reaches_the_vault_over_stdio_mcp_with_a_scoped_revocable_slip() {
             .bearer_auth(&token)
             .header(
                 "x-oneiron-binding",
-                holder_proof(&slip, &key, unix_seconds_now()).unwrap().to_string(),
+                holder_proof(&slip, &key, unix_seconds_now())
+                    .unwrap()
+                    .to_string(),
             )
             .send()
             .unwrap()

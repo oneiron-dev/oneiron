@@ -71,9 +71,7 @@ pub(crate) async fn core_propose(
             crate::error::ApiErrorDetails::Forbidden {
                 required_scope: Some("proposal:subject".to_owned()),
             },
-            [
-                "Create the subject entity first, or propose against one this credential can read.",
-            ],
+            ["Create the subject entity first, or propose against one this credential can read."],
         )
         .into());
     }
