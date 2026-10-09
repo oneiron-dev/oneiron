@@ -32,15 +32,31 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     server: &Arc<SyncServer>,
 ) -> Result<McpCallContext, McpGatewayError> {
     let credential = mcp_connector_credential(headers)?;
-    let registry = server.mcp_registry.lock().await;
-    let mut actor = registry
-        .resolve(&credential, unix_seconds_now(), |actor_class, actor_ref| {
-            server
-                .vault
-                .gate_actor_ceiling_exists(actor_class, actor_ref)
-                .unwrap_or(false)
-        })
-        .map_err(mcp_actor_resolution_error)?;
+    let mut registry = server.mcp_registry.lock().await;
+    let ceiling_exists = |actor_class: &str, actor_ref: &str| {
+        server
+            .vault
+            .gate_actor_ceiling_exists(actor_class, actor_ref)
+            .unwrap_or(false)
+    };
+    // The registry is memory: it learns a credential when one is redeemed over
+    // HTTP. A live paired slip it has not seen gets its record now, by the
+    // same rule, once the slip verifies — so a restart or a credential minted
+    // on the stopped vault does not lock an agent out.
+    let mut actor = match registry.resolve(&credential, unix_seconds_now(), ceiling_exists) {
+        Err(McpConnectorActorResolutionError::UnknownCredential)
+            if crate::api::pairing::register_live_paired_mcp(
+                &mut registry,
+                &credential,
+                headers,
+                server,
+            ) =>
+        {
+            registry.resolve(&credential, unix_seconds_now(), ceiling_exists)
+        }
+        resolved => resolved,
+    }
+    .map_err(mcp_actor_resolution_error)?;
     drop(registry);
     // The connector header selects a registered instrument, not another
     // principal. Verify that exact instrument with its holder proof; never
@@ -67,7 +83,7 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     {
         return Err(mcp_proof_error());
     }
-    if auth.org_ref().is_some() || !proof.allows_verb("read") {
+    if auth.org_ref().is_some() || !auth.has_scope(crate::auth::CoreScope::Read) {
         return Err(mcp_proof_error());
     }
     // The legacy registry can represent only all or one world/facet. Refuse

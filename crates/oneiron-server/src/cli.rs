@@ -77,6 +77,10 @@ pub enum Command {
     Token(TokenCommand),
     /// Make short curl-shaped calls against the existing HTTP API.
     Api(ApiArgs),
+    /// Serve MCP on stdio for an agent that spawns a command (Claude Code,
+    /// Codex), forwarding each message to a running server with a paired
+    /// credential and a fresh holder proof.
+    Mcp(McpArgs),
     /// Scaffold a self-host node from the shipped deployment templates.
     #[command(subcommand)]
     Host(HostCommand),
@@ -105,6 +109,9 @@ pub enum TokenCommand {
     Pair(Box<TokenPairArgs>),
     /// Mint a read-only credential for a local agent on the stopped vault.
     Read(Box<TokenReadArgs>),
+    /// Mint a scoped credential for one named agent (Claude Code, Codex) on
+    /// the stopped vault, for `oneiron mcp`.
+    Agent(Box<TokenAgentArgs>),
     /// Revoke one previously minted token by its id.
     Revoke(Box<TokenRevokeArgs>),
 }
@@ -179,6 +186,35 @@ pub struct TokenReadArgs {
     /// The credential's lifetime in seconds, capped by the vault's policy.
     #[arg(long = "lifetime-secs", default_value_t = 30 * 24 * 60 * 60)]
     pub lifetime_secs: u64,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+/// A named agent's credential: a paired slip for the agent's own principal,
+/// class `agent`, carrying at most read, propose and write. Never owner-grade;
+/// `token revoke` takes the slip id it prints.
+#[derive(Args, Clone, Debug)]
+pub struct TokenAgentArgs {
+    /// The agent's name, e.g. `claude-code`. One name is one agent principal,
+    /// however many times it is minted.
+    #[arg(long)]
+    pub name: String,
+
+    /// Verbs the slip carries, comma-separated, from `core:read` (required),
+    /// `core:propose` and `core:write`.
+    #[arg(long, value_delimiter = ',', num_args = 1.., default_values = ["core:read", "core:write"])]
+    pub scope: Vec<String>,
+
+    /// The credential's lifetime in seconds, capped by the vault's policy.
+    #[arg(long = "lifetime-secs", default_value_t = 30 * 24 * 60 * 60)]
+    pub lifetime_secs: u64,
+
+    /// Write the credential to this new file, readable by its owner only, and
+    /// print only its slip id and principal. Without it the credential is
+    /// printed.
+    #[arg(long, value_name = "FILE")]
+    pub out: Option<PathBuf>,
 
     #[command(flatten)]
     pub serve: ServeArgs,
@@ -274,6 +310,53 @@ pub enum ApiCommand {
         #[arg(long, value_name = "MIME")]
         content_type: Option<String>,
     },
+}
+
+/// `oneiron mcp`: a stdio MCP server in front of a running server's MCP
+/// endpoint. The endpoint is the operator's choice, made here in the agent's
+/// MCP config; nothing the agent sends can change it.
+#[derive(Args, Clone, Debug)]
+pub struct McpArgs {
+    /// The running server's origin.
+    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:3000")]
+    pub url: String,
+
+    /// Which MCP endpoint to forward to.
+    #[arg(long, value_enum, default_value_t = McpSurface::ToolFirst)]
+    pub surface: McpSurface,
+
+    /// File holding the paired credential, as `token agent --out` writes it.
+    /// Only its owner may be able to read it. Without this flag the slip and
+    /// its seed come from the two environment variables below.
+    #[arg(long, value_name = "FILE")]
+    pub credential_file: Option<PathBuf>,
+
+    /// Environment variable holding the paired slip.
+    #[arg(long, default_value = "ONEIRON_SECRET")]
+    pub secret_env: String,
+
+    /// Environment variable holding its binding seed (64 hex characters).
+    #[arg(long, default_value = "ONEIRON_BINDING_KEY")]
+    pub binding_key_env: String,
+}
+
+/// The two MCP endpoints a server registers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
+pub enum McpSurface {
+    /// `/mcp/tool-first`: one tool per exported verb.
+    ToolFirst,
+    /// `/mcp`: the code-mode catalog (`setup_oneiron`, `execute_code`).
+    Primary,
+}
+
+impl McpSurface {
+    #[must_use]
+    pub const fn path(self) -> &'static str {
+        match self {
+            Self::ToolFirst => "/mcp/tool-first",
+            Self::Primary => "/mcp",
+        }
+    }
 }
 
 #[derive(Args, Clone, Debug)]
@@ -457,8 +540,10 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Token(TokenCommand::Bootstrap(args)) => commands::token_bootstrap(*args),
         Command::Token(TokenCommand::Pair(args)) => commands::token_pair(*args),
         Command::Token(TokenCommand::Read(args)) => commands::token_read(*args),
+        Command::Token(TokenCommand::Agent(args)) => commands::token_agent(*args),
         Command::Token(TokenCommand::Revoke(args)) => commands::token_revoke(*args),
         Command::Api(args) => commands::api(args).await,
+        Command::Mcp(args) => commands::mcp(args),
         Command::Host(HostCommand::Init(args)) => commands::host_init(args),
     }
 }

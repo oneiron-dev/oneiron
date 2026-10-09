@@ -42,6 +42,7 @@ pub use self::args::{
 };
 pub use self::codec::McpToolArguments;
 pub(crate) use self::codec::mcp_raw_call_arguments;
+pub(crate) use self::codec::mcp_raw_call_arguments_span;
 pub use self::endpoint_args::{
     MCP_CODE_TASK_MAX_CHARS, McpCacheHint, McpExecuteCodeToolArgs, McpPageRequest,
     McpSetupToolArgs, McpVerbArguments, McpVerbToolArgs, McpVerbToolPayload,

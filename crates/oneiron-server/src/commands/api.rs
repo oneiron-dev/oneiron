@@ -250,6 +250,35 @@ pub(crate) fn create_pairing_link(
     Ok((base, link))
 }
 
+/// curl's exit status under `--fail-with-body` when the server answered with
+/// an HTTP error status; the server's body still reached stdout.
+pub(super) const CURL_HTTP_ERROR_EXIT: i32 = 22;
+
+/// One signed JSON POST whose reply is captured, body and diagnostic both.
+/// `oneiron mcp` frames each answer itself, and its stdout is the MCP
+/// channel, so nothing curl prints may reach that stream directly.
+pub(super) fn post_json_captured(
+    url: &str,
+    token: &str,
+    binding: &str,
+    body: Vec<u8>,
+) -> anyhow::Result<Output> {
+    let request = CurlRequest {
+        method: "POST".to_owned(),
+        url: url.to_owned(),
+        body: Some(body),
+        content_type: Some(JSON_CONTENT_TYPE.to_owned()),
+    };
+    run_curl_output_with_binding(
+        OsStr::new(CURL_PROGRAM),
+        &request,
+        token,
+        binding,
+        Stdio::piped(),
+        Stdio::piped(),
+    )
+}
+
 /// Run one request through the host's curl, streaming the response body to
 /// this process's own stdout untouched.
 pub(crate) fn run_curl(request: &CurlRequest, secret: Option<&str>) -> anyhow::Result<()> {

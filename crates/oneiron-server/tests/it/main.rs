@@ -9,6 +9,9 @@ mod first_owner_bootstrap;
 mod history_import;
 mod mcp_booking;
 mod mcp_oracle;
+// The credential file's owner-only mode and SIGTERM are Unix-only.
+#[cfg(unix)]
+mod mcp_stdio_agent;
 mod owner_backup;
 mod remote_pairing;
 // SIGTERM through `libc::kill` is Unix-only.
