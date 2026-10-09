@@ -10,7 +10,7 @@
 
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Instant;
 
 use oneiron::consent::AuthenticatedOwner;
@@ -66,8 +66,10 @@ struct Files {
 enum ImportWarning {
     /// A session log over the per-log limit, never read. A rerun once the
     /// limit allows it lands it; the import ledger lands only what is new.
+    /// The path is shown lossily, so a folder name that is not UTF-8 cannot
+    /// keep the report from being written after the rest has landed.
     LogTooLarge {
-        path: PathBuf,
+        path: String,
         bytes: u64,
         limit: u64,
     },
@@ -309,7 +311,7 @@ impl Files {
         ));
         self.too_large += 1;
         self.warnings.push(ImportWarning::LogTooLarge {
-            path: shown.to_path_buf(),
+            path: shown.to_string_lossy().into_owned(),
             bytes,
             limit: MAX_LOG_BYTES,
         });

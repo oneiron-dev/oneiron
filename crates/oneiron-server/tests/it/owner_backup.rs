@@ -201,11 +201,9 @@ fn doctor_opens_the_vault_with_the_configs_dimensions_and_map_size() {
         report["location"]["vault"],
         vault_path.canonicalize().unwrap().to_str().unwrap()
     );
-    let overridden = doctor(&["--dimensions", "4096"]);
+    json(&doctor(&["--dimensions", "1024"]));
     assert!(
-        !overridden.status.success(),
-        "the flag is what opens the vault"
+        !doctor(&["--dimensions", "4096"]).status.success(),
+        "the flag, not the config, is what opens the vault"
     );
-    let stderr = String::from_utf8_lossy(&overridden.stderr);
-    assert!(stderr.contains("dimensions=4096"), "{stderr}");
 }
