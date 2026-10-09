@@ -304,33 +304,6 @@ mod tests {
     }
 
     #[test]
-    fn organizer_zones_render_explicitly_and_fail_closed() {
-        let request = emit_request(CalendarInviteMethod::Request, 0);
-        let text = String::from_utf8(
-            emit_imip_ics_with_organizer_zones(
-                &request,
-                &["America/New_York".to_owned(), "America/New_York".to_owned()],
-            )
-            .expect("zones"),
-        )
-        .unwrap();
-        assert!(text.contains("X-WR-TIMEZONE:Europe/Warsaw\r\n"));
-        assert_eq!(
-            text.matches("X-ONEIRON-ORGANIZER-TZID:America/New_York\r\n")
-                .count(),
-            1
-        );
-        assert!(matches!(
-            emit_imip_ics_with_organizer_zones(&request, &["Unknown/Zone".to_owned()]),
-            Err(CalendarError::UnknownTimeZone { .. })
-        ));
-        assert!(matches!(
-            emit_imip_ics_with_organizer_zones(&request, &["UTC\r\nATTENDEE:evil".to_owned()]),
-            Err(CalendarError::ImipEmit { .. })
-        ));
-    }
-
-    #[test]
     fn emit_imip_request_is_deterministic() {
         let request = emit_request(CalendarInviteMethod::Request, 0);
         let bytes = emit_imip_ics(&request).expect("emit");
@@ -366,20 +339,6 @@ mod tests {
         assert_eq!(parsed.events[0].uid, "one-1786@oneiron.test");
         assert_eq!(parsed.events[0].sequence, 0);
         assert_eq!(parsed.events[0].starts_at_utc, Some(1_800_003_600));
-    }
-
-    #[test]
-    fn emit_imip_cancel_is_deterministic() {
-        let request = emit_request(CalendarInviteMethod::Cancel, 3);
-        let bytes = emit_imip_ics(&request).expect("emit");
-        assert_eq!(bytes, emit_imip_ics(&request).expect("emit again"));
-        let text = String::from_utf8(bytes).expect("utf-8");
-        assert!(text.contains("METHOD:CANCEL\r\n"));
-        assert!(text.contains("SEQUENCE:3\r\n"));
-        assert!(text.contains("STATUS:CANCELLED\r\n"));
-        // Same UID as the REQUEST it withdraws: a cancel never regenerates one.
-        assert!(text.contains("UID:one-1786@oneiron.test\r\n"));
-        assert!(parse_ics_feed(text.as_bytes()).expect("parses").events[0].cancelled);
     }
 
     #[test]

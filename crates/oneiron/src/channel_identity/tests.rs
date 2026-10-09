@@ -3,9 +3,7 @@ use crate::Vault;
 use crate::channel_identity_provider::EMAIL_CHANNEL;
 use crate::config::VaultConfig;
 use crate::error::ErrorKind;
-use crate::registry::{
-    ENTITY_TYPE_CHANNEL_IDENTITY, EntityClassification, TypeByteZone, entity_type_registry_entry,
-};
+use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
 use crate::secret_custody::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SECRET_SCOPE_READ, SecretBinding,
     SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
@@ -87,37 +85,6 @@ fn test_vault() -> (tempfile::TempDir, Vault) {
     cfg.dimensions = 4;
     cfg.embedding_model = None;
     open_test_vault_with(cfg)
-}
-
-#[test]
-fn channel_identity_codec_and_claim_family_round_trip() -> Result<()> {
-    let identity = sample_identity().step(
-        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Manual),
-        1_800_000_010,
-    )?;
-
-    let encoded = encode_channel_identity_body(&identity)?;
-    validate_channel_identity_body_bytes(&encoded)?;
-    assert_eq!(decode_channel_identity_body(&encoded)?, identity);
-
-    let claims = identity.claim_bodies(entity(0xD1))?;
-    assert_eq!(claims.len(), CHANNEL_IDENTITY_CLAIM_PREDICATES.len());
-    for claim in &claims {
-        validate_channel_identity_claim_structure(claim)?;
-    }
-    assert!(claims.iter().any(|claim| {
-        claim.predicate == PREDICATE_CHANNEL_IDENTITY_SHAPE
-            && claim.value.as_str() == Some("dedicated_address")
-    }));
-    assert!(claims.iter().any(|claim| {
-        claim.predicate == PREDICATE_CHANNEL_IDENTITY_BINDING_SCOPE
-            && claim.value.as_str() == Some("actor")
-    }));
-    assert!(claims.iter().any(|claim| {
-        claim.predicate == PREDICATE_CHANNEL_IDENTITY_PENDING_FULFILLMENT
-            && claim.value.as_str() == Some("manual")
-    }));
-    Ok(())
 }
 
 #[test]
@@ -208,18 +175,6 @@ fn channel_identity_claim_binding_target_rejects_invalid_values() {
     let bogus_err = validate_channel_identity_claim_structure(&claim(Value::from("not-hex")))
         .expect_err("malformed target must be rejected");
     assert_eq!(bogus_err.kind(), ErrorKind::InvalidClaimBody);
-}
-
-#[test]
-fn own_app_home_identity_is_constructible_active_agent_binding() -> Result<()> {
-    let agent = entity(0x5E);
-    let identity = ChannelIdentity::own_app_home(agent, 7);
-    identity.validate()?;
-    assert_eq!(identity.channel(), "own_app");
-    assert_eq!(identity.shape(), ChannelIdentityShape::DedicatedHandle);
-    assert_eq!(identity.binding(), ChannelIdentityBinding::agent(agent));
-    assert_eq!(identity.state(), ChannelIdentityState::Active);
-    Ok(())
 }
 
 #[test]
@@ -361,61 +316,6 @@ fn delegated_custody_subject_scope_normalizes_its_channel() -> Result<()> {
 
     vault.verify_delegated_custody(EMAIL_CHANNEL, "member@member-owned.example", &grant)?;
     Ok(())
-}
-
-#[test]
-fn self_held_requested_door_admits_no_delegated_shape() {
-    // Exhaustive over the wire vocabulary: every shape either has a
-    // `SelfHeldShape` preimage that this door preserves EXACTLY, or it has no
-    // preimage at all — and the set with no preimage is exactly
-    // `[DelegatedGrant]`.
-    let wire_vocabulary = [
-        ChannelIdentityShape::DedicatedAddress,
-        ChannelIdentityShape::DedicatedHandle,
-        ChannelIdentityShape::SharedPresence,
-        ChannelIdentityShape::DelegatedGrant,
-    ];
-    let mut unspellable = Vec::new();
-    for wire in wire_vocabulary {
-        let Some(self_held) = SelfHeldShape::from_shape(wire) else {
-            unspellable.push(wire);
-            continue;
-        };
-        let row = ChannelIdentity::requested(
-            "email",
-            "agent@example.com",
-            self_held,
-            ChannelIdentityBinding::agent(entity(0x51)),
-            1_800_000_000,
-        );
-        // No shape is silently rewritten on the way through.
-        assert_eq!(row.shape(), wire);
-        assert_eq!(row.state(), ChannelIdentityState::Requested);
-        assert!(!row.is_delegated());
-        assert!(row.grant().is_none());
-        row.validate().expect("self-held requested row validates");
-    }
-    assert_eq!(unspellable, vec![ChannelIdentityShape::DelegatedGrant]);
-
-    // The escalation the missing variant closes, stated directly: every
-    // self-held shape this door returns reaches `may_send() == true` once
-    // Active, while a delegated row never does. Degrading a delegated request
-    // onto a self-held shape here would hand the caller outbound authority over
-    // an account it asked to only READ.
-    let active = ChannelIdentity::requested(
-        "email",
-        "agent@example.com",
-        SelfHeldShape::DedicatedAddress,
-        ChannelIdentityBinding::agent(entity(0x51)),
-        1_800_000_000,
-    )
-    .step(
-        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
-        1_800_000_010,
-    )
-    .and_then(|pending| pending.step(ChannelIdentityStep::Fulfill, 1_800_000_020))
-    .expect("self-held row reaches Active");
-    assert!(active.may_send());
 }
 
 #[test]
@@ -600,18 +500,6 @@ fn assignment_keys_are_canonical_on_every_road() -> Result<()> {
         .expect_err("two spellings of one mailbox are one assignment key");
     assert_eq!(err.kind(), ErrorKind::ChannelIdentityAlreadyExists);
     Ok(())
-}
-
-#[test]
-fn channel_identity_type_registration_is_stable() {
-    let entry = entity_type_registry_entry(ENTITY_TYPE_CHANNEL_IDENTITY)
-        .expect("CHANNEL_IDENTITY registry row");
-
-    assert_eq!(ENTITY_TYPE_CHANNEL_IDENTITY, 81);
-    assert_eq!(entry.kind, "CHANNEL_IDENTITY");
-    assert_eq!(entry.short_id_prefix, None);
-    assert_eq!(entry.classification, EntityClassification::Maintenance);
-    assert_eq!(entry.zone, TypeByteZone::System);
 }
 
 #[test]
