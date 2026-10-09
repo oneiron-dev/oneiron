@@ -560,7 +560,18 @@ impl Memory<'_> {
         &self,
         write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
     ) -> MemoryResult<T> {
-        self.vault.try_with_write_txn_grouped(|wtxn| {
+        self.with_verified_actor_write_txn_as(crate::store::Callback::Audited, write)
+    }
+
+    /// [`Self::with_verified_actor_write_txn`] through the door `callback`
+    /// names: a write that runs host code in its transaction is
+    /// [`crate::store::Callback::Opaque`].
+    pub(crate) fn with_verified_actor_write_txn_as<T>(
+        &self,
+        callback: crate::store::Callback,
+        write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
+    ) -> MemoryResult<T> {
+        self.vault.write_txn_door(callback, |wtxn| {
             verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
             if let Some(creation) = self.vault.shared_vault_creation_in_txn(wtxn)? {
                 self.vault.authorize_shared_vault_write_in_txn(

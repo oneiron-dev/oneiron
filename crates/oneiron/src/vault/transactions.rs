@@ -347,7 +347,13 @@ impl Vault {
         self.write_txn_door(Callback::Audited, f)
     }
 
-    fn write_txn_door<F, T, E>(&self, callback: Callback, f: F) -> std::result::Result<T, E>
+    /// The write door for a closure of either kind (`try_with_write_txn` and
+    /// `try_with_write_txn_grouped` name it).
+    pub(crate) fn write_txn_door<F, T, E>(
+        &self,
+        callback: Callback,
+        f: F,
+    ) -> std::result::Result<T, E>
     where
         F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
         E: From<Error>,

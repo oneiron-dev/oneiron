@@ -212,6 +212,33 @@ impl Memory<'_> {
         prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
         effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
     ) -> MemoryResult<WitnessReceipt> {
+        self.run_witness_as(
+            crate::store::Callback::Audited,
+            turn,
+            target,
+            door,
+            before_txn,
+            prepare,
+            effect,
+        )
+    }
+
+    /// [`Self::run_witness`] through the write door `callback` names: an
+    /// `effect` that runs host code is [`crate::store::Callback::Opaque`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the write door joins the witness program's inputs"
+    )]
+    pub(super) fn run_witness_as(
+        &self,
+        callback: crate::store::Callback,
+        turn: &WitnessTurn,
+        target: WitnessTarget<'_, '_>,
+        door: WitnessDoor,
+        before_txn: impl FnOnce(),
+        prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+        effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+    ) -> MemoryResult<WitnessReceipt> {
         validate_witness_origin(turn, door.is_host())?;
         if turn.messages.is_empty() {
             return Err(MemoryError::bad_request("witness turn carries no messages"));
@@ -294,7 +321,7 @@ impl Memory<'_> {
         };
         before_txn();
 
-        let landed = self.with_verified_actor_write_txn(|wtxn| {
+        let landed = self.with_verified_actor_write_txn_as(callback, |wtxn| {
             let mut mint_conversation = false;
             let mut leader_project = None;
             let admission = match &sink {
