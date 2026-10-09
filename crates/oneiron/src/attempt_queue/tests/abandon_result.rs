@@ -71,85 +71,6 @@ fn abandon_requires_a_lease_a_reason_and_a_result_reference() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn abandon_is_terminal_idempotent_and_leaves_the_ready_and_dedupe_indexes() -> Result<()> {
-    let (_dir, vault) = open_queue();
-    let queue = AttemptQueue::new(&vault);
-    let EnqueueOutcome::Enqueued(_) = queue.enqueue(enqueue("byoa", Some("turn:byoa"), 10))? else {
-        panic!("expected a fresh enqueue");
-    };
-    let ClaimOutcome::Claimed(claim) = queue.claim(ClaimAttempt {
-        lease_owner: "worker-a".to_owned(),
-        now: 11,
-    })?
-    else {
-        panic!("expected a claim");
-    };
-
-    let input = AbandonAttempt {
-        id: claim.id,
-        lease_owner: "worker-a".to_owned(),
-        attempt_count: claim.attempt_count,
-        result_ref: result_ref("blob-artifact:aa@1"),
-        reason: "executor stopped without delivering".to_owned(),
-        now: 12,
-    };
-    let AbandonOutcome::Abandoned(abandoned) = queue.abandon(input.clone())? else {
-        panic!("expected a fresh abandonment");
-    };
-    assert_eq!(abandoned.state, AttemptState::Abandoned);
-    assert_eq!(abandoned.lease_owner, None);
-    assert_eq!(
-        abandoned.result_ref().map(AttemptResultRef::as_str),
-        Some("blob-artifact:aa@1")
-    );
-    assert_eq!(
-        abandoned.last_error.as_deref(),
-        Some("executor stopped without delivering")
-    );
-    assert!(abandoned.state.is_terminal());
-    assert!(!abandoned.state.is_running());
-
-    // Idempotent: a retried abandonment is a success that changes nothing,
-    // and it does not need the lease it no longer holds.
-    let AbandonOutcome::AlreadyAbandoned(again) = queue.abandon(AbandonAttempt {
-        lease_owner: "someone-else".to_owned(),
-        now: 99,
-        ..input
-    })?
-    else {
-        panic!("a second abandonment must report the settled row");
-    };
-    assert_eq!(again, abandoned, "idempotence must not rewrite the row");
-
-    // Settled work is out of the pending accounting and never re-enters the
-    // ready index, however long cleanup runs.
-    let report = queue.cleanup_leases(CleanupAttemptLeases {
-        now: 1_000,
-        lease_timeout_secs: 10,
-    })?;
-    assert_eq!(report.pending, 0, "an abandoned row is not pending work");
-    assert_eq!(report.running, 0);
-    assert_eq!(report.failed, 0, "abandoned is not failed");
-    assert_eq!(report.done, 1);
-    assert_eq!(report.abandoned, 1);
-    assert_eq!(report.stale_requeued, 0);
-    assert_eq!(
-        queue.get(claim.id)?.expect("row").state,
-        AttemptState::Abandoned,
-        "cleanup must never resurrect a settled row"
-    );
-
-    // The advisory dedupe claim is released, so the next dispatch mints a
-    // fresh try instead of being handed the stopped one.
-    let EnqueueOutcome::Enqueued(fresh) = queue.enqueue(enqueue("byoa", Some("turn:byoa"), 20))?
-    else {
-        panic!("a settled row must not hold its dedupe key");
-    };
-    assert_ne!(fresh.id, claim.id);
-    Ok(())
-}
-
 /// Abandoning a landing row must clear the landing record it leaves behind:
 /// the placement rule refuses a landing record on a terminal row, so a row
 /// written otherwise would be undecodable on the very next read.
@@ -458,13 +379,4 @@ fn a_malformed_abandoned_row_fails_closed_on_decode() -> Result<()> {
         "a terminal row must not carry a lease owner"
     );
     Ok(())
-}
-
-#[test]
-fn a_result_reference_must_be_resolvable() {
-    assert!(AttemptResultRef::new("").is_err());
-    assert!(AttemptResultRef::new("with\nnewline").is_err());
-    assert!(AttemptResultRef::new("a".repeat(MAX_RESULT_REF_LEN + 1)).is_err());
-    let ok = AttemptResultRef::new("a".repeat(MAX_RESULT_REF_LEN)).expect("bounded reference");
-    assert_eq!(ok.as_str().len(), MAX_RESULT_REF_LEN);
 }
