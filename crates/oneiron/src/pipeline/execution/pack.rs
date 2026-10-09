@@ -365,6 +365,7 @@ impl PipelineBuilder<'_> {
                         &signal_components,
                         self.text_search.as_ref().map(|(query, _)| query.as_str()),
                         self.vector_search.is_some() || hyde_expansion.is_some(),
+                        self.vault.config.vector_evidence,
                     ));
             if abstain {
                 scores.clear();

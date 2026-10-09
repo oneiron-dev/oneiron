@@ -309,6 +309,57 @@ fn confidence_surfaced() -> Result<()> {
     Ok(())
 }
 
+/// 9B (#1323 follow-up 0): the shipped local model is a compressed space. A
+/// paraphrase that shares no word with its target scored 0.29 against it,
+/// unrelated text at most 0.12, so the engine's 0.3 floor withheld every
+/// paraphrase recall on a served vault. A space's own floors count it.
+#[test]
+fn a_compressed_space_counts_a_paraphrase_under_its_own_floors() -> Result<()> {
+    let query = [1.0_f32, 0.0, 0.0, 0.0];
+    let at = |cosine: f32| [cosine, (1.0 - cosine * cosine).sqrt(), 0.0, 0.0];
+    let target = entity_id(0x3C);
+    for (floors, found) in [
+        (crate::config::VectorEvidenceFloors::default(), false),
+        (
+            crate::config::VectorEvidenceFloors {
+                floor: 0.15,
+                strong: 0.25,
+            },
+            true,
+        ),
+    ] {
+        let mut config = embedding_test_config();
+        config.vector_evidence = floors;
+        let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+        put_text_and_vector(
+            &vault,
+            target,
+            "the mechanic says the automobile needs new brakes",
+            at(0.29),
+        )?;
+        put_text_and_vector(
+            &vault,
+            entity_id(0x3D),
+            "renew the passport before october",
+            at(0.12),
+        )?;
+
+        let pack = vault
+            .context_pack()
+            .search_text("who fixes my car", 10)
+            .search_vector(&query, 10)
+            .run()?;
+
+        assert_eq!(
+            pack.results.first().map(|entity| entity.id) == Some(target),
+            found,
+            "{floors:?}: {:?}",
+            pack.empty
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn poor_score_gap_abstains() -> Result<()> {
     let (_dir, vault) = open_test_vault();

@@ -256,7 +256,7 @@ impl ScopedRead<'_> {
     }
 
     /// A TURN's text is its messages' (ARCH-0004), which its own body does
-    /// not hold: a hydrated turn gets as `content` those this read may see.
+    /// not hold: a hydrated turn gets as `txt` those this read may see.
     /// Added after admission, whose snapshot check compares each field with
     /// the turn's own body.
     fn add_turn_content(
@@ -276,7 +276,7 @@ impl ScopedRead<'_> {
                 self.is_entity_readable_with_policy_in(rtxn, policy, message)
             })?
         {
-            fields.insert("content".to_owned(), serde_json::Value::String(text));
+            fields.insert("txt".to_owned(), serde_json::Value::String(text));
         }
         Ok(())
     }

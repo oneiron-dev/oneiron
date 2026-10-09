@@ -264,10 +264,17 @@ fn scoped_recall_provenance_does_not_name_a_denied_supersedes_target() {
             &rmp_serde::to_vec_named(&serde_json::json!({"name": "facet"})).unwrap(),
         )
         .unwrap();
+    // The message's own item carries its provenance: a scope that names
+    // MESSAGE keeps it from returning as its turn.
+    let messages = Some(vec!["MESSAGE".to_owned()]);
     for scope in [
-        RecallScope::default(),
+        RecallScope {
+            kinds: messages.clone(),
+            ..Default::default()
+        },
         RecallScope {
             facet: Some(facet.to_hex()),
+            kinds: messages.clone(),
             ..Default::default()
         },
     ] {

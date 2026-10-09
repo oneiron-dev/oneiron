@@ -199,18 +199,22 @@ fn recall_and_query_verbs_respect_limits() {
     let actor = put_person(&vault, 0x28);
     let facade = facade_for(&vault, actor);
 
-    // Seed limit + 3 matching docs (limit = 2).
-    let messages = (0..5)
-        .map(|i| witness_message(i, WitnessAuthor::User, &format!("pelican count {i}")))
-        .collect();
-    facade
-        .witness(&WitnessTurn {
-            conversation_ref: EntityId::from_bytes([0x29; 16]).unwrap().to_hex(),
-            turn_ref: None,
-            messages,
-            occurred_at: 1700,
-        })
-        .expect("witness");
+    // Seed limit + 3 matching docs (limit = 2), one turn each: recall
+    // returns a matched message as its turn (ARCH-0004).
+    for i in 0..5 {
+        facade
+            .witness(&WitnessTurn {
+                conversation_ref: EntityId::from_bytes([0x29; 16]).unwrap().to_hex(),
+                turn_ref: None,
+                messages: vec![witness_message(
+                    0,
+                    WitnessAuthor::User,
+                    &format!("pelican count {i}"),
+                )],
+                occurred_at: 1700,
+            })
+            .expect("witness");
+    }
 
     assert_eq!(facade.query_bm25("pelican", 2).expect("bm25").len(), 2);
     assert_eq!(

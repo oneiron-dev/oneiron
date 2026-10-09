@@ -252,6 +252,32 @@ impl Default for HnswConfig {
     }
 }
 
+/// Where vector evidence starts in one embedding space, for the check that
+/// withholds a pack with no real match (ARCH-0004, pre-assembly validation).
+///
+/// A raw cosine means different things in different models: a compressed
+/// space scores a true paraphrase below where a wide one scores noise. The
+/// host that knows its model states these; the default is the engine's
+/// original calibration.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VectorEvidenceFloors {
+    /// The similarity floor: with no keyword hit, a pack whose every vector
+    /// score sits under it abstains.
+    pub floor: f32,
+    /// The score of a strong match: under it, a top hit that barely leads
+    /// the next is uniformly mediocre and the pack abstains.
+    pub strong: f32,
+}
+
+impl Default for VectorEvidenceFloors {
+    fn default() -> Self {
+        Self {
+            floor: 0.3,
+            strong: 0.5,
+        }
+    }
+}
+
 /// Vault runtime configuration.
 ///
 /// The struct is `#[non_exhaustive]`, so downstream callers cannot build it
@@ -314,6 +340,9 @@ pub struct VaultConfig {
     /// refused (`EmbeddingTransformChanged`), and a vault that has none
     /// adopts it. `None` checks nothing.
     pub embedding_transform: Option<String>,
+    /// Where vector evidence starts in this vault's embedding space
+    /// ([`VectorEvidenceFloors`]), as the host's embedder states it.
+    pub vector_evidence: VectorEvidenceFloors,
     /// Arms the tagging marker (ARCH-0036, serving the tagger): a base witness
     /// commits one marker per touched turn inside its own transaction, keyed
     /// by the turn and this tagger checkpoint. `None` commits none.
@@ -562,6 +591,7 @@ impl VaultConfig {
             fast_dims: None,
             embedding_model: None,
             embedding_transform: None,
+            vector_evidence: VectorEvidenceFloors::default(),
             tagging: None,
             privacy: VaultPrivacyConfig::default(),
             map_size: 1 << 30,
@@ -589,6 +619,7 @@ impl VaultConfig {
             fast_dims: None,
             embedding_model: None,
             embedding_transform: None,
+            vector_evidence: VectorEvidenceFloors::default(),
             tagging: None,
             // The server preset is still self-host/local by default: running a
             // server does not by itself mean a third party hosts the vault.

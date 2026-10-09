@@ -405,6 +405,10 @@ impl ServeConfig {
         // Beside it, how the embedder turns that model's output into stored
         // vectors, when the section says so before the provider loads.
         config.embedding_transform = embedder.and_then(crate::embedder::declared_transform);
+        // And where a vector hit counts as evidence in that space.
+        config.vector_evidence = embedder
+            .map(crate::embedder::evidence_floors)
+            .unwrap_or_default();
         // An active tagger arms the outbox marker: every witnessed turn owes
         // it a pass, committed with the turn (ARCH-0036, serving the tagger).
         config.tagging = self

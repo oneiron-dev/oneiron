@@ -26,8 +26,8 @@ pub(super) fn fields_for_profile(
         (ENTITY_TYPE_CLAIM, FieldProfile::Full) => crate::claim::CLAIM_FIELDS_FULL,
 
         (ENTITY_TYPE_TURN, FieldProfile::Minimal) => &["txt"],
-        (ENTITY_TYPE_TURN, FieldProfile::Standard) => &["txt", "spkr", "at"],
-        (ENTITY_TYPE_TURN, FieldProfile::Full) => &["txt", "spkr", "at", "sess"],
+        (ENTITY_TYPE_TURN, FieldProfile::Standard) => &["txt", "spkr", "at", "reactions"],
+        (ENTITY_TYPE_TURN, FieldProfile::Full) => &["txt", "spkr", "at", "sess", "reactions"],
 
         (ENTITY_TYPE_SUMMARY, FieldProfile::Minimal) => &["txt"],
         (ENTITY_TYPE_SUMMARY, FieldProfile::Standard) => &["txt", "lvl", "at"],
