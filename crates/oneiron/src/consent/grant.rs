@@ -184,6 +184,9 @@ pub struct ConsentGrantRow {
     pub owner_stamp: ConsentOwnerStamp,
     /// Creation time in Unix seconds.
     pub created_at: u64,
+    /// Present only on a scoped catastrophe bypass grant (DEC-0006
+    /// invariant 7). Such a row is never an ordinary standing grant.
+    pub bypass: Option<super::bypass::BypassExtent>,
 }
 
 impl ConsentGrantRow {
@@ -193,10 +196,14 @@ impl ConsentGrantRow {
         matches!(self.status, ConsentGrantStatus::Active)
     }
 
-    /// The stable registry reference for this row (the bound digest hex).
+    /// The stable registry reference for this row: the bound digest hex, or
+    /// for a bypass grant the digest of its bound, scope and floor version.
     #[must_use]
     pub fn grant_ref(&self) -> String {
-        self.grant.bound().digest().to_hex()
+        match &self.bypass {
+            None => self.grant.bound().digest().to_hex(),
+            Some(extent) => extent.grant_ref(self.grant.bound()),
+        }
     }
 }
 
@@ -237,6 +244,20 @@ pub enum ConsentReceipt {
         decision_id: GateDecisionId,
         grant_ref: String,
     },
+    /// The owner created a scoped catastrophe bypass grant, after its one
+    /// warning.
+    BypassCreated {
+        decision_id: GateDecisionId,
+        grant_ref: String,
+        bound_digest: EffectDigest,
+    },
+    /// A catastrophe-floor op ran under a live bypass grant instead of
+    /// asking.
+    Bypassed {
+        decision_id: GateDecisionId,
+        grant_ref: String,
+        effect_digest: EffectDigest,
+    },
 }
 
 impl ConsentReceipt {
@@ -247,7 +268,9 @@ impl ConsentReceipt {
             Self::Approved { decision_id, .. }
             | Self::Used { decision_id, .. }
             | Self::Denied { decision_id, .. }
-            | Self::Revoked { decision_id, .. } => *decision_id,
+            | Self::Revoked { decision_id, .. }
+            | Self::BypassCreated { decision_id, .. }
+            | Self::Bypassed { decision_id, .. } => *decision_id,
         }
     }
 
@@ -255,7 +278,10 @@ impl ConsentReceipt {
     #[must_use]
     pub const fn gate_outcome(&self) -> &'static str {
         match self {
-            Self::Approved { .. } | Self::Used { .. } => "approved",
+            Self::Approved { .. }
+            | Self::Used { .. }
+            | Self::BypassCreated { .. }
+            | Self::Bypassed { .. } => "approved",
             Self::Denied { .. } => "denied",
             Self::Revoked { .. } => "revoked",
         }
@@ -276,6 +302,8 @@ impl ConsentReceipt {
             Self::Used { .. } => CONSENT_REASON_STANDING_USED,
             Self::Denied { .. } => CONSENT_REASON_DENIED,
             Self::Revoked { .. } => CONSENT_REASON_REVOKED,
+            Self::BypassCreated { .. } => CONSENT_REASON_BYPASS_CREATED,
+            Self::Bypassed { .. } => CONSENT_REASON_BYPASSED,
         }
     }
 
@@ -287,9 +315,10 @@ impl ConsentReceipt {
                 grant: ConsentGrant::Standing(grant),
                 ..
             } => Some(grant.bound().digest().to_hex()),
-            Self::Used { grant_ref, .. } | Self::Revoked { grant_ref, .. } => {
-                Some(grant_ref.clone())
-            }
+            Self::Used { grant_ref, .. }
+            | Self::Revoked { grant_ref, .. }
+            | Self::BypassCreated { grant_ref, .. }
+            | Self::Bypassed { grant_ref, .. } => Some(grant_ref.clone()),
             Self::Approved {
                 grant: ConsentGrant::ApproveOnce(_),
                 ..
@@ -311,6 +340,14 @@ impl ConsentReceipt {
                 ..
             }
             | Self::Denied {
+                effect_digest: digest,
+                ..
+            }
+            | Self::BypassCreated {
+                bound_digest: digest,
+                ..
+            }
+            | Self::Bypassed {
                 effect_digest: digest,
                 ..
             } => digest.as_bytes().to_vec(),
@@ -335,6 +372,10 @@ pub const CONSENT_REASON_STANDING_USED: &str = "gate.consent.standing_used";
 pub const CONSENT_REASON_DENIED: &str = "gate.consent.denied";
 /// Reason code for a registry revoke.
 pub const CONSENT_REASON_REVOKED: &str = "gate.consent.revoked";
+/// Reason code for an owner creating a scoped bypass grant.
+pub const CONSENT_REASON_BYPASS_CREATED: &str = "gate.consent.bypass_created";
+/// Reason code for an act that ran under a live bypass grant.
+pub const CONSENT_REASON_BYPASSED: &str = "gate.consent.bypassed";
 
 /// The pinned Gate `content_kind` for consent-registry decisions.
 pub const CONSENT_CONTENT_KIND: &str = "consent_grant";
