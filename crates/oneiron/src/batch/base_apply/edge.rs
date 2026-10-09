@@ -13,7 +13,9 @@ pub(super) fn apply_edge_op(store: &Store, wtxn: &mut RwTxn<'_>, op: BatchOp) ->
             vad,
         } => {
             validate_facet_of_edge(store, wtxn, src, kind, tgt)?;
-            apply_edge(store, wtxn, src, kind, tgt, weight, vad)?;
+            write_under_local_withdrawal(store, wtxn, src, kind, tgt, None, |wtxn| {
+                apply_edge(store, wtxn, src, kind, tgt, weight, vad)
+            })?;
             ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
             Ok(true)
         }
@@ -26,9 +28,11 @@ pub(super) fn apply_edge_op(store: &Store, wtxn: &mut RwTxn<'_>, op: BatchOp) ->
             vad,
         } => {
             validate_facet_of_edge(store, wtxn, src, kind, tgt)?;
-            apply_public_edge_with_created_at(
-                store, wtxn, src, kind, tgt, weight, created_at, vad,
-            )?;
+            write_under_local_withdrawal(store, wtxn, src, kind, tgt, None, |wtxn| {
+                apply_public_edge_with_created_at(
+                    store, wtxn, src, kind, tgt, weight, created_at, vad,
+                )
+            })?;
             ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
             Ok(true)
         }
@@ -49,6 +53,9 @@ pub(super) fn apply_edge_op(store: &Store, wtxn: &mut RwTxn<'_>, op: BatchOp) ->
         // off-table row before it ever enters the admitted document. A
         // federation peer therefore cannot replay a facet stamp local
         // writers may not write.
+        //
+        // Nor does a replayed image outrank local invalidation
+        // ([`write_under_local_withdrawal`]).
         BatchOp::EdgeWithCreatedAt {
             src,
             kind,
@@ -58,9 +65,11 @@ pub(super) fn apply_edge_op(store: &Store, wtxn: &mut RwTxn<'_>, op: BatchOp) ->
             vad,
             provenance,
         } => {
-            apply_edge_with_created_at(
-                store, wtxn, src, kind, tgt, weight, created_at, vad, provenance,
-            )?;
+            write_under_local_withdrawal(store, wtxn, src, kind, tgt, provenance, |wtxn| {
+                apply_edge_with_created_at(
+                    store, wtxn, src, kind, tgt, weight, created_at, vad, provenance,
+                )
+            })?;
             ppr::invalidate_ppr_for_edge(store, wtxn, &src, &tgt)?;
             Ok(true)
         }
@@ -109,6 +118,32 @@ pub(super) fn apply_edge_op(store: &Store, wtxn: &mut RwTxn<'_>, op: BatchOp) ->
             "only an edge op reaches the edge applier",
         )),
     }
+}
+
+/// Writes one edge image of `src -kind-> tgt` carrying `incoming` flags
+/// through `write`, then lets local invalidation outrank it: once written, an
+/// image asserting support (any but a retracted one, or a bare one over a
+/// stored bare edge) meets the local wrapper cohort, and support whose
+/// wrappers are all closed or stale here goes back to retracted, even over a
+/// removed edge. Every edge-creating arm writes through here, so neither a
+/// replay nor a public put over a deleted edge restores support that an
+/// erasure or a RETRACT withdrew.
+fn write_under_local_withdrawal(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    src: EntityId,
+    kind: crate::edge::EdgeKind,
+    tgt: EntityId,
+    incoming: Option<crate::edge::EdgeProvenanceFlags>,
+    write: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
+) -> Result<()> {
+    let subject = crate::provenance::EdgeRef::new(src, kind, tgt);
+    let check = crate::provenance::image_needs_cohort_check(store, wtxn, &subject, incoming)?;
+    write(wtxn)?;
+    if check {
+        crate::provenance::withdraw_image_support_in_txn(store, wtxn, &subject)?;
+    }
+    Ok(())
 }
 
 /// Both endpoints may acquire a PROJECT/CLAIM type later in this same batch.

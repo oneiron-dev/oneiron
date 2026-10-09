@@ -352,7 +352,14 @@ fn promote_one(
                 "consolidation write was not granted Auto; no approval queue is created",
             ));
         }
-        Ok(())
+        // The MESSAGE words the evidence names become this claim's
+        // dependencies in the claim's own transaction.
+        match verified {
+            Some(evidence) => {
+                evidence.record_message_dependencies_in_txn(vault, wtxn, &candidate.claim_id)
+            }
+            None => Ok(()),
+        }
     };
     let write = if let Some(checker) = checker {
         vault

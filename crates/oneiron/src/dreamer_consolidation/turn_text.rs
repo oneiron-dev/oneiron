@@ -1,0 +1,547 @@
+//! The read-only text of one TURN as a consolidation branch sees it.
+//!
+//! A TURN that carries `txt|text` is read exactly as stored, even when that
+//! string is empty. A TURN without it (a witnessed turn) takes its text from
+//! its MESSAGE children: the visible, final rows of the TURN's own author
+//! bucket, ordered by `(order, id)` and joined with exactly `"\n"`, never
+//! trimmed. `system` interleave, hidden rows and stream audit text never enter
+//! it, and a non-system row of another bucket refuses the turn instead of
+//! being read as its speaker. A row is final when it was committed atomically
+//! or its latest stream receipt is `Final`; a stream that ended cancelled, by
+//! idle timeout or by crash recovery leaves audit text, never words.
+//!
+//! Every child the text depends on is read as the same actor under the
+//! relationship gate (private rows and relationship rows without a live grant
+//! are withheld) in the caller's snapshot, and pinned at its exact logical
+//! version, `AuthoredBy` targets, document frontier and stream finality. Later
+//! doors re-collect and compare against that pin; they never reinterpret
+//! frozen offsets against new text. An incomplete or unreadable child set
+//! refuses; a partial transcript is never assembled. A range cited over the
+//! text is persisted as the MESSAGE-local slices it covers ([`MessageSpan`]),
+//! so the citation names its words after the turn's other rows move.
+
+use std::collections::BTreeMap;
+
+use super::SwarmEvidenceRef;
+use super::resources::document_version;
+use super::support::invalid_consolidation;
+use super::watermark::decode_turn_body;
+use crate::claim::{PointRead, ScopedRead, ScopedReadActorKey, ScopedReadResult};
+use crate::dreamer_runner::{DreamerTurnRole, dreamer_turn_role};
+use crate::edge::{EdgeActorClass, EdgeKind};
+use crate::gate::{WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER};
+use crate::llm::{Scope, ScopeResource};
+use crate::memory::StreamFinality;
+use crate::ports::EdgeDirection;
+use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::write_envelope::WriteActor;
+use crate::{EntityId, Error, Result, Vault};
+
+type SourceRow = (u8, u64, Vec<u8>);
+type BranchRead = (Vec<Option<SourceRow>>, BTreeMap<EntityId, TurnText>);
+
+/// One MESSAGE child at the exact logical revision the projection read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MessagePin {
+    id: EntityId,
+    learned_at: u64,
+    version: ScopeResource,
+    /// Content hash of the logical body `version` names.
+    revision: [u8; 32],
+    /// Exact `AuthoredBy` targets: one for a non-system row, none for system.
+    authors: Vec<EntityId>,
+    frontier: Option<Vec<u8>>,
+    /// Latest stream receipt `(finality, generation)`; `None` when atomic.
+    stream: Option<(StreamFinality, EntityId)>,
+}
+
+/// One MESSAGE-local slice behind a range of a witnessed TURN's text: the
+/// child, the byte span within that child's own content, and the exact
+/// revision (plus the document frontier when the child has a document) it
+/// was read at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MessageSpan {
+    pub(super) message: EntityId,
+    pub(super) start: usize,
+    pub(super) end: usize,
+    pub(super) revision: [u8; 32],
+    pub(super) frontier: Option<Vec<u8>>,
+}
+
+impl MessageSpan {
+    /// Folds every field into an identity hash.
+    pub(crate) fn hash_into(&self, hasher: &mut blake3::Hasher) {
+        hasher.update(self.message.as_bytes());
+        hasher.update(&(self.start as u64).to_be_bytes());
+        hasher.update(&(self.end as u64).to_be_bytes());
+        hasher.update(&self.revision);
+        if let Some(frontier) = &self.frontier {
+            hasher.update(&[1]);
+            hasher.update(&(frontier.len() as u64).to_be_bytes());
+            hasher.update(frontier);
+        } else {
+            hasher.update(&[0]);
+        }
+    }
+}
+
+/// The frozen text of one TURN and every MESSAGE it was read from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TurnText {
+    text: Option<String>,
+    /// `None` when the TURN carries its own text; otherwise the exact live
+    /// MESSAGE child set, sorted by id (possibly empty).
+    messages: Option<Vec<MessagePin>>,
+    /// Where each projected MESSAGE sits in `text`: `(id, offset, len)` in
+    /// projection order.
+    layout: Vec<(EntityId, usize, usize)>,
+}
+
+impl TurnText {
+    pub(crate) fn text(&self) -> Option<&str> {
+        self.text.as_deref()
+    }
+
+    /// The MESSAGE-local slices a byte range of this text covers (the whole
+    /// text when `range` is `None`), each at the revision it was read at.
+    /// Inline TURN text has none. A range covering no MESSAGE byte (only the
+    /// `"\n"` joins) names no words and refuses.
+    pub(crate) fn spans(&self, range: Option<(usize, usize)>) -> Result<Vec<MessageSpan>> {
+        let Some(pins) = &self.messages else {
+            return Ok(Vec::new());
+        };
+        let (start, end) = range.unwrap_or((0, self.text.as_ref().map_or(0, String::len)));
+        let mut spans = Vec::new();
+        for &(message, offset, len) in &self.layout {
+            let (from, to) = (start.max(offset), end.min(offset + len));
+            if from >= to {
+                continue;
+            }
+            let pin = pins
+                .iter()
+                .find(|pin| pin.id == message)
+                .ok_or_else(|| invalid_consolidation("projected message is not pinned"))?;
+            spans.push(MessageSpan {
+                message,
+                start: from - offset,
+                end: to - offset,
+                revision: pin.revision,
+                frontier: pin.frontier.clone(),
+            });
+        }
+        if range.is_some() && spans.is_empty() {
+            return Err(invalid_consolidation(
+                "evidence range names no message text",
+            ));
+        }
+        Ok(spans)
+    }
+
+    pub(super) fn into_text(self) -> Option<String> {
+        self.text
+    }
+
+    /// The exact MESSAGE versions this text depends on; none for inline text.
+    pub(super) fn versions(&self) -> impl Iterator<Item = (EntityId, &ScopeResource)> {
+        self.messages
+            .iter()
+            .flatten()
+            .map(|pin| (pin.id, &pin.version))
+    }
+
+    /// A supplied scope is authority, not a request: it must already read
+    /// every dependency. Returns the frozen text.
+    pub(super) fn readable_text(&self, scope: &Scope) -> Result<Option<&str>> {
+        if !self
+            .versions()
+            .all(|(_, version)| scope.allows_read(version))
+        {
+            return Err(invalid_consolidation("witnessed turn message read refused"));
+        }
+        Ok(self.text())
+    }
+
+    /// [`Self::readable_text`] plus a live re-collection in one fresh
+    /// snapshot, so drift refuses here exactly as a changed TURN does.
+    pub(super) fn recheck(
+        &self,
+        scope: &Scope,
+        read: &ScopedRead<'_>,
+        turn: &EntityId,
+    ) -> Result<Option<String>> {
+        let text = self.readable_text(scope)?.map(str::to_owned);
+        if self.messages.is_some() {
+            self.check_live_in(read, &snapshot(read.vault())?, turn)?;
+        }
+        Ok(text)
+    }
+
+    /// Re-collect the same TURN under `read` in `txn` and refuse any change to
+    /// the child set, a binding, a version, a frontier or the text. Inline
+    /// text depends only on the TURN body, which every caller pins itself.
+    pub(super) fn check_live_in(
+        &self,
+        read: &ScopedRead<'_>,
+        txn: &heed::RoTxn<'_>,
+        turn: &EntityId,
+    ) -> Result<()> {
+        if self.messages.is_none() {
+            return Ok(());
+        }
+        let Some((_, _, body)) = read
+            .get_entities_parts_in_txn(txn, std::slice::from_ref(turn))?
+            .pop()
+            .flatten()
+        else {
+            return Err(invalid_consolidation("witnessed turn is not readable"));
+        };
+        if collect_in(read, txn, turn, &body, &mut 0)? != *self {
+            return Err(invalid_consolidation("witnessed turn messages changed"));
+        }
+        Ok(())
+    }
+}
+
+/// Collect one TURN's text in the caller's snapshot. Existing children the
+/// reader may not see are added to `withheld` before the turn refuses.
+pub(super) fn collect_in(
+    read: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+    turn_body: &[u8],
+    withheld: &mut usize,
+) -> Result<TurnText> {
+    let vault = read.vault();
+    let facts = decode_turn_body(turn_body);
+    if facts.text.is_some() {
+        return Ok(TurnText {
+            text: facts.text,
+            messages: None,
+            layout: Vec::new(),
+        });
+    }
+    let bucket = match dreamer_turn_role(
+        facts.speaker.as_deref(),
+        &vault.config.assistant_display_names,
+    ) {
+        DreamerTurnRole::User => WITNESS_AUTHOR_USER,
+        DreamerTurnRole::Assistant => WITNESS_AUTHOR_COMPANION,
+        // Branch admission refuses every other role; no child is its text.
+        _ => {
+            return Ok(TurnText {
+                text: None,
+                messages: None,
+                layout: Vec::new(),
+            });
+        }
+    };
+    let parents = peers(
+        vault,
+        txn,
+        turn,
+        EdgeDirection::Out,
+        EdgeKind::ChildOf,
+        None,
+    )?;
+    let [conversation] = parents.as_slice() else {
+        return Err(invalid_consolidation(
+            "witnessed turn has no single conversation",
+        ));
+    };
+    let mut ids = Vec::new();
+    for id in peers(
+        vault,
+        txn,
+        turn,
+        EdgeDirection::In,
+        EdgeKind::PartOf,
+        Some(ENTITY_TYPE_MESSAGE),
+    )? {
+        // A deleted MESSAGE is no longer transcript; its removal still
+        // changes this set, which every later door compares.
+        if crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live() {
+            ids.push(id);
+        }
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    let rows = message_reader(read)?.get_entities_parts_in_txn(txn, &ids)?;
+    let unreadable = rows.iter().filter(|row| row.is_none()).count();
+    if unreadable != 0 {
+        *withheld += unreadable;
+        return Err(invalid_consolidation(
+            "witnessed turn message is not readable",
+        ));
+    }
+    let mut messages = Vec::with_capacity(ids.len());
+    let mut children = Vec::with_capacity(ids.len());
+    for (id, (entity_type, learned_at, body)) in ids.into_iter().zip(rows.into_iter().flatten()) {
+        let message = decode_message(&body)
+            .ok_or_else(|| invalid_consolidation("witnessed message body is malformed"))?;
+        let out = |kind| peers(vault, txn, &id, EdgeDirection::Out, kind, None);
+        let mut authors = out(EdgeKind::AuthoredBy)?;
+        authors.sort_unstable();
+        if entity_type != ENTITY_TYPE_MESSAGE
+            || out(EdgeKind::PartOf)? != [*turn]
+            || out(EdgeKind::BelongsTo)? != [*conversation]
+            || authors.len() != usize::from(message.author != WITNESS_AUTHOR_SYSTEM)
+        {
+            return Err(invalid_consolidation(
+                "witnessed turn message binding changed",
+            ));
+        }
+        #[cfg(feature = "sync")]
+        let frontier = crate::entity_doc::source_frontier_in_txn(&vault.store, txn, &id)?;
+        #[cfg(not(feature = "sync"))]
+        let frontier = None;
+        // Finality is read in this snapshot, beside the row it qualifies.
+        let stream = crate::memory::message_stream_finality_in_txn(vault, txn, &id)?;
+        let words = stream.is_none_or(|(finality, _)| finality == StreamFinality::Final);
+        messages.push(MessagePin {
+            id,
+            learned_at,
+            version: document_version(id, &body),
+            revision: super::swarm_evidence_content_hash(&body),
+            authors,
+            frontier,
+            stream,
+        });
+        children.push((id, message, words));
+    }
+    let (text, layout) = project(bucket, children)?;
+    Ok(TurnText {
+        text,
+        messages: Some(messages),
+        layout,
+    })
+}
+
+/// Branch sources read in ONE snapshot, together with the text of every
+/// TURN among them. This is the unprepared branch's single read.
+pub(super) fn read_sources(
+    read: &ScopedRead<'_>,
+    ids: &[EntityId],
+) -> Result<ScopedReadResult<BranchRead>> {
+    let reads: Vec<_> = ids.iter().copied().map(PointRead::id).collect();
+    read.read_projected(&reads, None, |txn, rows| {
+        let rows: Vec<_> = rows
+            .into_iter()
+            .map(|row| {
+                row.and_then(|row| row.body.map(|body| (row.entity_type, row.learned_at, body)))
+            })
+            .collect();
+        let mut texts = BTreeMap::new();
+        for (id, row) in ids.iter().zip(&rows) {
+            if let Some((ENTITY_TYPE_TURN, _, body)) = row {
+                texts.insert(*id, collect_in(read, txn, id, body, &mut 0)?);
+            }
+        }
+        Ok::<_, Error>((rows, texts))
+    })
+}
+
+/// The projected text of one stored TURN in a caller's transaction, read as
+/// `reader`, with the MESSAGE layout its ranges map onto. The attachment
+/// door calls it after the branch fence proved the dependency set unchanged
+/// in this same transaction.
+pub(crate) fn live_turn_text_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    reader: WriteActor,
+    turn: &EntityId,
+    turn_body: &[u8],
+) -> Result<TurnText> {
+    let read = vault.scoped_read(reader_key(reader)?);
+    collect_in(&read, txn, turn, turn_body, &mut 0)
+}
+
+/// The text of one TURN for the Dreamer's read-only side doors (gap scan,
+/// retrieval shadow), with the record a writer re-checks. Inline text keeps
+/// its existing reader; the MESSAGE fallback reads as the Dreamer, in one
+/// snapshot.
+pub(super) fn read_turn_text(vault: &Vault, id: &EntityId) -> Result<TurnText> {
+    let facts = super::watermark::read_turn_facts(vault, id)?;
+    if facts.text.is_some() {
+        return Ok(TurnText {
+            text: facts.text,
+            messages: None,
+            layout: Vec::new(),
+        });
+    }
+    let read = dreamer_read(vault)?;
+    let txn = snapshot(vault)?;
+    // A TURN the Dreamer may not read has no text here, like an absent one.
+    let Some((_, _, body)) = read
+        .get_entities_parts_in_txn(&txn, std::slice::from_ref(id))?
+        .pop()
+        .flatten()
+    else {
+        return Ok(TurnText {
+            text: None,
+            messages: None,
+            layout: Vec::new(),
+        });
+    };
+    collect_in(&read, &txn, id, &body, &mut 0)
+}
+
+/// The Dreamer's own reader for the side doors and their write re-checks.
+pub(super) fn dreamer_read(vault: &Vault) -> Result<ScopedRead<'_>> {
+    let reader = WriteActor::new(
+        crate::dreamer_runner::authority::dreamer_actor_id()?,
+        EdgeActorClass::System,
+    );
+    Ok(vault.scoped_read(reader_key(reader)?))
+}
+
+/// A read snapshot opened after the grant clock is persisted, so a grant's
+/// expiry is judged at a real floor, never inside the snapshot.
+pub(super) fn snapshot(vault: &Vault) -> Result<heed::RoTxn<'_>> {
+    vault.store.authorization_now()?;
+    Ok(vault.store.env.read_txn()?)
+}
+
+/// A byte range is measured over the exact UTF-8 turn text the child saw in
+/// the transcript (the projection above), never over MessagePack framing.
+/// Whole TURNs keep their body-hash identity; CLAIM ids name the stored body.
+pub(crate) fn cited_evidence_bytes(
+    locator: SwarmEvidenceRef,
+    body: &[u8],
+    text: Option<&str>,
+) -> Result<Vec<u8>> {
+    let Some((start, end)) = locator.byte_range else {
+        return Ok(body.to_vec());
+    };
+    let text = text.ok_or_else(|| invalid_consolidation("cited turn has no text"))?;
+    if start >= end {
+        return Err(invalid_consolidation("empty evidence byte range"));
+    }
+    let bytes = text
+        .as_bytes()
+        .get(start..end)
+        .ok_or_else(|| invalid_consolidation("invalid evidence byte range"))?;
+    std::str::from_utf8(bytes)
+        .map_err(|_| invalid_consolidation("evidence range splits UTF-8 text"))?;
+    Ok(bytes.to_vec())
+}
+
+type Layout = Vec<(EntityId, usize, usize)>;
+
+/// The projection over already-read children, each with whether its text is
+/// final, plus where each projected child sits in it. `bucket` is the TURN's
+/// own MESSAGE author string.
+fn project(
+    bucket: &str,
+    children: Vec<(EntityId, MessageText, bool)>,
+) -> Result<(Option<String>, Layout)> {
+    let mut visible = Vec::new();
+    for (id, message, words) in children {
+        if message.author == WITNESS_AUTHOR_SYSTEM {
+            continue;
+        }
+        if message.author != bucket {
+            return Err(invalid_consolidation("witnessed turn mixes author buckets"));
+        }
+        if message.is_visible && words {
+            visible.push((message.order, id, message.content));
+        }
+    }
+    if visible.is_empty() {
+        return Ok((None, Vec::new()));
+    }
+    visible.sort_unstable_by_key(|(order, id, _)| (*order, *id));
+    let mut text = String::new();
+    let mut layout = Vec::with_capacity(visible.len());
+    for (index, (_, id, content)) in visible.into_iter().enumerate() {
+        if index != 0 {
+            text.push('\n');
+        }
+        layout.push((id, text.len(), content.len()));
+        text.push_str(&content);
+    }
+    Ok((Some(text), layout))
+}
+
+struct MessageText {
+    author: String,
+    content: String,
+    is_visible: bool,
+    order: u64,
+}
+
+/// Strict reader of the four fields the projection uses. The logical body of
+/// a document-backed row carries `content` last, so key order is not checked;
+/// a duplicate, missing or mistyped field is malformed.
+fn decode_message(body: &[u8]) -> Option<MessageText> {
+    let mut cursor = body;
+    let rmpv::Value::Map(entries) = rmpv::decode::read_value(&mut cursor).ok()? else {
+        return None;
+    };
+    if !cursor.is_empty() {
+        return None;
+    }
+    let (mut author, mut content, mut is_visible, mut order) = (None, None, None, None);
+    for (key, value) in entries {
+        let fresh = match key.as_str() {
+            Some("author") => author.replace(value.as_str()?.to_owned()).is_none(),
+            Some("content") => content.replace(value.as_str()?.to_owned()).is_none(),
+            Some("is_visible") => is_visible.replace(value.as_bool()?).is_none(),
+            Some("order") => order.replace(value.as_u64()?).is_none(),
+            _ => true,
+        };
+        if !fresh {
+            return None;
+        }
+    }
+    Some(MessageText {
+        author: author?,
+        content: content?,
+        is_visible: is_visible?,
+        order: order?,
+    })
+}
+
+fn peers(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    direction: EdgeDirection,
+    kind: EdgeKind,
+    peer_type: Option<u8>,
+) -> Result<Vec<EntityId>> {
+    vault
+        .filtered_edge_peers(
+            txn,
+            direction,
+            id,
+            kind,
+            peer_type,
+            "witnessed turn message scan",
+        )
+        .map_err(|error| match error {
+            Error::IndexOverflow(_) => {
+                invalid_consolidation("witnessed turn message graph limit exceeded")
+            }
+            error => error,
+        })
+}
+
+/// MESSAGE rows are read as the same actor under the relationship gate:
+/// private rows, and relationship rows without this actor's live grant, are
+/// withheld. Rows that name neither are the vault's own and stay readable.
+fn message_reader<'v>(read: &ScopedRead<'v>) -> Result<ScopedRead<'v>> {
+    let key = read.actor_key();
+    let principal = EntityId::from_hex(key.actor_ref())
+        .map_err(|_| invalid_consolidation("turn text reader is not an entity"))?;
+    Ok(read
+        .vault()
+        .scoped_read(key.clone().require_relationship_grants(principal)))
+}
+
+fn reader_key(reader: WriteActor) -> Result<ScopedReadActorKey> {
+    ScopedReadActorKey::with_actor_class(
+        reader.entity_ref().to_hex(),
+        reader.actor_class().gate_actor_class(),
+    )
+    .ok_or_else(|| invalid_consolidation("invalid turn text reader"))
+}

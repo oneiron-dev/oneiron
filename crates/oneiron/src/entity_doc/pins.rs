@@ -147,14 +147,15 @@ impl Vault {
         }
     }
 
-    /// Computes a causal meet of citations, settlement receipts and live fork
-    /// bases. Vector clocks are intersected; encoded frontier bytes are never
-    /// sorted as if they were numeric revisions.
+    /// Computes a causal meet of citations (pins and the citation floors of
+    /// live citers), settlement receipts and live fork bases. Vector clocks
+    /// are intersected; encoded frontier bytes are never sorted as if they
+    /// were numeric revisions.
     pub fn entity_text_pin_floor(&self, entity: &EntityId) -> Result<Vec<u8>> {
         let txn = self.store.env.read_txn()?;
         let h = storage::head(&self.store, &txn, entity)?;
         let doc = storage::load(&self.store, &txn, &h)?;
-        floor(self, &txn, entity, &doc, &doc.frontier())
+        floor(self, &txn, entity, &h.incarnation, &doc, &doc.frontier())
     }
 
     /// Refuses a requested history drop beyond any pin. An equal frontier is
@@ -163,7 +164,7 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let h = storage::head(&self.store, &txn, entity)?;
         let doc = storage::load(&self.store, &txn, &h)?;
-        let allowed = floor(self, &txn, entity, &doc, requested)?;
+        let allowed = floor(self, &txn, entity, &h.incarnation, &doc, requested)?;
         if decode_frontier(&allowed)? != decode_frontier(requested)? {
             return Err(invalid("history drop crosses a document pin"));
         }
@@ -223,7 +224,7 @@ impl Vault {
             super::forks::owner_in_txn(self, txn, owner)?;
             let mut h = storage::head(&self.store, txn, entity)?;
             let doc = storage::load(&self.store, txn, &h)?;
-            let applied = floor(self, txn, entity, &doc, requested)?;
+            let applied = floor(self, txn, entity, &h.incarnation, &doc, requested)?;
             let old_state = doc.text();
             let bytes = doc.shallow_snapshot(&applied)?;
             let shallow = EntityDoc::from_snapshot(&bytes)?;
@@ -232,9 +233,14 @@ impl Vault {
                     "shallow purge changed live state",
                 ));
             }
-            for pin in pins(self, txn, entity)? {
-                let old = doc.fork(&pin.anchor.frontier)?.text();
-                if shallow.fork(&pin.anchor.frontier)?.text() != old {
+            let cited =
+                super::citation_floor::live_frontiers(&self.store, txn, entity, &h.incarnation)?;
+            let pinned = pins(self, txn, entity)?
+                .into_iter()
+                .map(|pin| pin.anchor.frontier);
+            for frontier in pinned.chain(cited) {
+                let old = doc.fork(&frontier)?.text();
+                if shallow.fork(&frontier)?.text() != old {
                     return Err(Error::InvariantViolation(
                         "shallow purge changed a pinned version",
                     ));
@@ -293,6 +299,7 @@ fn floor(
     vault: &Vault,
     txn: &RoTxn<'_>,
     entity: &EntityId,
+    incarnation: &str,
     doc: &EntityDoc,
     requested: &[u8],
 ) -> Result<Vec<u8>> {
@@ -305,6 +312,12 @@ fn floor(
         .into_iter()
         .map(|pin| pin.anchor.frontier)
         .collect();
+    protected.extend(super::citation_floor::live_frontiers(
+        &vault.store,
+        txn,
+        entity,
+        incarnation,
+    )?);
     for receipt in super::forks::receipts(&vault.store, txn, entity)? {
         protected.push(receipt.before);
         protected.push(receipt.after);

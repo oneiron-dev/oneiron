@@ -496,7 +496,7 @@ impl Vault {
         let dirty_ids =
             collect_dirty_turn_ids_in_txn(self, wtxn, scope, watermark.last_learned_at, u64::MAX)?;
 
-        let scanned = read_partition_turns_in_txn(self, wtxn, &dirty_ids)?;
+        let scanned = read_partition_turns_in_txn(self, wtxn, scope, &dirty_ids)?;
 
         // The driver's exact cut rule: the first turn without its structural
         // CONVERSATION edge truncates the round at its second, dropping the

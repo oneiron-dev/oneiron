@@ -8,22 +8,27 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimSource, claim_evidence_admissible, claim_evidence_taint, decode_claim_body,
 };
-use crate::dreamer_consolidation::decode_verified_locators;
-use crate::dreamer_consolidation::resources::{cited_evidence_bytes, native_turn_source};
+use crate::dreamer_consolidation::resources::native_turn_source;
 use crate::dreamer_consolidation::{
-    decode_consolidation_evidence, source_meet, swarm_evidence_content_hash,
+    TurnText, cited_evidence_bytes, decode_consolidation_evidence, decode_verified_citations,
+    live_turn_text_in, source_meet, swarm_evidence_content_hash,
 };
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
+use crate::write_envelope::WriteActor;
 use rmpv::Value;
 use std::collections::BTreeSet;
 
+/// `reader` is the provenance writer: a TURN range is re-sliced from the turn
+/// text it can read in this transaction, the same projection it cited, and
+/// must still cover exactly the MESSAGE slices the evidence names.
 pub(super) fn verify(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     subject: &EdgeRef,
     evidence: &Value,
+    reader: WriteActor,
 ) -> Result<ClaimSource> {
     let decoded = decode_consolidation_evidence(evidence)?.ok_or(Error::InvalidClaimBody(
         "derived edge requires typed evidence",
@@ -73,9 +78,22 @@ pub(super) fn verify(
             ));
         }
     };
-    let locators = decode_verified_locators(evidence)?;
+    let locators = decode_verified_citations(evidence)?;
+    // Every TURN source re-collects its MESSAGE text on the caller's writer,
+    // a whole-TURN locator included, so a moved or withheld row refuses here.
+    let text = if source_header.entity_type == ENTITY_TYPE_TURN {
+        Some(live_turn_text_in(
+            vault,
+            txn,
+            reader,
+            &subject.source,
+            source_body,
+        )?)
+    } else {
+        None
+    };
     let mut unique = BTreeSet::new();
-    for (locator, reported_hash) in locators {
+    for (locator, reported_hash, messages) in locators {
         if locator.source_id != subject.source || !unique.insert((locator.source_id, reported_hash))
         {
             return Err(Error::InvalidClaimBody(
@@ -93,10 +111,20 @@ pub(super) fn verify(
                 "derived support turn locator mismatch",
             ));
         }
-        let bytes = cited_evidence_bytes(locator, source_body)?;
+        let bytes =
+            cited_evidence_bytes(locator, source_body, text.as_ref().and_then(TurnText::text))?;
         if swarm_evidence_content_hash(&bytes) != reported_hash {
             return Err(Error::InvalidClaimBody(
                 "derived support locator hash mismatch",
+            ));
+        }
+        let live = match &text {
+            Some(text) => text.spans(locator.byte_range)?,
+            None => Vec::new(),
+        };
+        if live != messages {
+            return Err(Error::InvalidClaimBody(
+                "derived support message slices mismatch",
             ));
         }
     }

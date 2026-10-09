@@ -66,7 +66,13 @@ impl ScopedRead<'_> {
         if !self.actor_key.enforce_access_grants {
             return Ok(true);
         }
-        let read = relationship_read(&self.vault.store, txn, id, raw)?;
+        let read = relationship_read_keyed(
+            &self.vault.store,
+            txn,
+            id,
+            raw,
+            self.actor_key.unscoped_rows_open,
+        )?;
         if let RelationshipRead::Decided(allowed) = read {
             return Ok(allowed);
         }
@@ -126,6 +132,20 @@ pub(crate) fn relationship_read(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     raw: &[u8],
+) -> Result<RelationshipRead> {
+    relationship_read_keyed(store, txn, id, raw, false)
+}
+
+/// [`relationship_read`] for a key that may open unscoped rows: with
+/// `unscoped_rows_open` (a vault-internal reader,
+/// `require_relationship_grants`), a MESSAGE or SUMMARY that names neither a
+/// relationship nor a private scope is the vault's own and decides readable.
+fn relationship_read_keyed(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+    unscoped_rows_open: bool,
 ) -> Result<RelationshipRead> {
     let header = crate::batch::EntityMetadataHeader::parse(raw).ok_or(
         crate::error::Error::CorruptedIndex("relationship record header"),
@@ -198,6 +218,9 @@ pub(crate) fn relationship_read(
             seen_scope = true;
             private |= private_scope(Some(value));
         }
+    }
+    if unscoped_rows_open && !seen_rel && !private {
+        return Ok(RelationshipRead::Decided(true));
     }
     let Some(record) = crate::federation::record_scope::scope_for_blob(store, txn, *id, raw)?
     else {

@@ -13,7 +13,9 @@ use crate::error::{ClaimError, Error, Result};
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::store::Store;
 use crate::vault::MAX_EDGE_QUERY_RESULTS;
+use std::ops::ControlFlow;
 
 impl Vault {
     /// The write-verb validity guard for a REPLACEMENT-style
@@ -37,19 +39,20 @@ impl Vault {
         target: &EntityId,
     ) -> Result<()> {
         let claim = self.load_provenance_claim_in_txn(txn, target)?;
-        if claim.wrapper.lifecycle == ClaimLifecycleStatus::Active {
+        let lifecycle = cohort_lifecycle(&self.store, txn, target, claim.wrapper.lifecycle)?;
+        if lifecycle == ClaimLifecycleStatus::Active {
             return Ok(());
         }
         let head = match active_cohort_winner_short_ref_in(self, txn, &claim.subject)? {
             Some(head) => head,
-            None if claim.wrapper.lifecycle == ClaimLifecycleStatus::Retracted => {
+            None if lifecycle == ClaimLifecycleStatus::Retracted => {
                 self.claim_short_ref_in(txn, target)?
             }
             None => closed_cohort_head_short_ref_in(self, txn, &claim.subject, target)?,
         };
         Err(Error::Claim(ClaimError::WriteVerbTargetStale {
             target: *target,
-            lifecycle: claim.wrapper.lifecycle,
+            lifecycle,
             successor_short_id: head,
         }))
     }
@@ -113,9 +116,10 @@ impl Vault {
         })
     }
 
-    /// Enumerates the LIVE (`life` = active) `edge.provenance` Claims for
-    /// `subject` — the live cohort the D14 winner stamp is chosen from. Thin
-    /// wrapper over [`Self::edge_provenance_claims_in_txn`].
+    /// Enumerates the LIVE (`life` = active, not dependency-stale)
+    /// `edge.provenance` Claims for `subject` — the live cohort the D14
+    /// winner stamp is chosen from. Thin wrapper over
+    /// [`Self::edge_provenance_claims_in_txn`].
     pub(crate) fn live_edge_provenance_claims_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -125,7 +129,8 @@ impl Vault {
         self.edge_provenance_claims_in_txn(txn, subject, exclude, &[ClaimLifecycleStatus::Active])
     }
 
-    /// Enumerates the RETRACTED `edge.provenance` Claims for `subject` — the
+    /// Enumerates the RETRACTED `edge.provenance` Claims for `subject`, a
+    /// dependency-stale active Claim included (see [`cohort_lifecycle`]) — the
     /// surviving WITHDRAWN truth the edge's retracted dampening flag caches.
     /// The D16 delete-refresh consults this when NO active Claim survives, to
     /// decide whether the deleted Claim's EdgeRef still has a retracted
@@ -145,12 +150,9 @@ impl Vault {
         )
     }
 
-    /// Enumerates the `edge.provenance` Claims for `subject` whose wrapping
-    /// Claim `life` is one of `lifecycles`, via the inbound `claim_of` edges of
-    /// the subject edge's SOURCE entity (D12). Non-claim sources, other
-    /// predicates, claims of OTHER EdgeRefs, bodiless SoftErase shells, and
-    /// claims of any other lifecycle are skipped; corrupt rows fail closed.
-    /// `exclude` drops the claim currently being re-put or deleted.
+    /// Enumerates the `edge.provenance` Claims for `subject` whose cohort
+    /// lifecycle is one of `lifecycles`. Thin wrapper over
+    /// [`edge_provenance_cohort_in_txn`].
     pub(super) fn edge_provenance_claims_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -158,79 +160,143 @@ impl Vault {
         exclude: Option<&EntityId>,
         lifecycles: &[ClaimLifecycleStatus],
     ) -> Result<Vec<StoredProvenanceClaim>> {
-        let mut matched = Vec::new();
-        for (scanned, entry) in self
-            .store
-            .port_edges(
-                txn,
-                &subject.source,
-                crate::ports::EdgeDirection::In,
-                Some(EdgeKind::ClaimOf),
-                None,
-            )?
-            .enumerate()
-        {
-            if scanned >= MAX_EDGE_QUERY_RESULTS {
-                return Err(Error::IndexOverflow("live provenance claims"));
-            }
-            let edge_row = entry?;
-            let claim_id = edge_row.target;
-            if exclude == Some(&claim_id) {
-                continue;
-            }
-            let Some(raw) = self
-                .store
-                .port_entity_record(txn, &claim_id)?
-                .map(|row| row.encode())
-            else {
-                return Err(Error::CorruptedIndex("claim_of edge without claim entity"));
-            };
-            let header =
-                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-            if header.entity_type != ENTITY_TYPE_CLAIM {
-                continue;
-            }
-            if raw.len() == ENTITY_METADATA_HEADER_LEN {
-                // An ARCH-0038 SoftErase scrubbed this Claim's body but kept
-                // its structural edges. A bodiless 25 B Claim shell is a
-                // tombstone, never live — skip it. Safe because EVERY local
-                // SoftErase (the user_delete branch AND the gdpr/policy
-                // pre-purge step) commits the D16 edge refresh in the SAME
-                // transaction that scrubs the body, so a shell can never
-                // coexist with a stale subject-edge stamp.
-                continue;
-            }
-            let wrapper =
-                crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-            if wrapper.predicate != PREDICATE_EDGE_PROVENANCE {
-                continue;
-            }
-            let ClaimSubject::Edge {
-                source,
-                kind,
-                target,
-            } = wrapper.subject
-            else {
-                continue;
-            };
-            if EdgeRef::new(source, kind, target) != *subject {
-                continue;
-            }
-            if !lifecycles.contains(&wrapper.lifecycle) {
-                continue;
-            }
-            let record = decode_edge_provenance_body(&wrapper.value)?;
-            let actor_class = resolve_persisted_actor_class(&record, wrapper.evidence.as_ref())?;
-            matched.push(StoredProvenanceClaim {
-                id: claim_id,
-                occurred_start: header.occurred_start,
-                learned_at: header.learned_at,
-                subject: *subject,
-                wrapper,
-                record,
-                actor_class,
-            });
-        }
-        Ok(matched)
+        edge_provenance_cohort_in_txn(&self.store, txn, subject, exclude, lifecycles)
     }
+}
+
+/// A wrapper's lifecycle as cohort selection reads it. An active wrapper whose
+/// cited source was erased is dependency-stale: the support it asserted is
+/// withdrawn, so it counts as retracted and never as live. Writes, retracts,
+/// D16 deletes and the stale hook all select through this one rule.
+pub(super) fn cohort_lifecycle(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    claim_id: &EntityId,
+    lifecycle: ClaimLifecycleStatus,
+) -> Result<ClaimLifecycleStatus> {
+    if lifecycle == ClaimLifecycleStatus::Active
+        && crate::ports::stale_in_txn(store, txn, claim_id)?
+    {
+        return Ok(ClaimLifecycleStatus::Retracted);
+    }
+    Ok(lifecycle)
+}
+
+/// Enumerates the `edge.provenance` Claims for `subject` whose
+/// [`cohort_lifecycle`] is one of `lifecycles`, via the inbound `claim_of`
+/// edges of the subject edge's SOURCE entity (D12). Non-claim sources, other
+/// predicates, claims of OTHER EdgeRefs, bodiless SoftErase shells, and
+/// claims of any other lifecycle are skipped; corrupt rows fail closed.
+/// `exclude` drops the claim currently being re-put or deleted. Store-level,
+/// so the stale door (which holds no Vault) selects exactly as the Vault does.
+pub(super) fn edge_provenance_cohort_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    subject: &EdgeRef,
+    exclude: Option<&EntityId>,
+    lifecycles: &[ClaimLifecycleStatus],
+) -> Result<Vec<StoredProvenanceClaim>> {
+    let mut matched = Vec::new();
+    walk_edge_provenance_cohort_in_txn(
+        store,
+        txn,
+        subject,
+        exclude,
+        lifecycles,
+        MAX_EDGE_QUERY_RESULTS,
+        |claim, _| {
+            matched.push(claim);
+            ControlFlow::Continue(())
+        },
+    )?;
+    Ok(matched)
+}
+
+/// The rows [`edge_provenance_cohort_in_txn`] selects, handed to `visit` one
+/// at a time with their [`cohort_lifecycle`] until it breaks. Past `ceiling`
+/// scanned `claim_of` rows the walk refuses with [`Error::IndexOverflow`]:
+/// a crowded source is never read as an empty cohort.
+pub(super) fn walk_edge_provenance_cohort_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    subject: &EdgeRef,
+    exclude: Option<&EntityId>,
+    lifecycles: &[ClaimLifecycleStatus],
+    ceiling: usize,
+    mut visit: impl FnMut(StoredProvenanceClaim, ClaimLifecycleStatus) -> ControlFlow<()>,
+) -> Result<()> {
+    for (scanned, entry) in store
+        .port_edges(
+            txn,
+            &subject.source,
+            crate::ports::EdgeDirection::In,
+            Some(EdgeKind::ClaimOf),
+            None,
+        )?
+        .enumerate()
+    {
+        if scanned >= ceiling {
+            return Err(Error::IndexOverflow("live provenance claims"));
+        }
+        let edge_row = entry?;
+        let claim_id = edge_row.target;
+        if exclude == Some(&claim_id) {
+            continue;
+        }
+        let Some(raw) = store
+            .port_entity_record(txn, &claim_id)?
+            .map(|row| row.encode())
+        else {
+            return Err(Error::CorruptedIndex("claim_of edge without claim entity"));
+        };
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_CLAIM {
+            continue;
+        }
+        if raw.len() == ENTITY_METADATA_HEADER_LEN {
+            // An ARCH-0038 SoftErase scrubbed this Claim's body but kept
+            // its structural edges. A bodiless 25 B Claim shell is a
+            // tombstone, never live — skip it. Safe because EVERY local
+            // SoftErase (the user_delete branch AND the gdpr/policy
+            // pre-purge step) commits the D16 edge refresh in the SAME
+            // transaction that scrubs the body, so a shell can never
+            // coexist with a stale subject-edge stamp.
+            continue;
+        }
+        let wrapper = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        if wrapper.predicate != PREDICATE_EDGE_PROVENANCE {
+            continue;
+        }
+        let ClaimSubject::Edge {
+            source,
+            kind,
+            target,
+        } = wrapper.subject
+        else {
+            continue;
+        };
+        if EdgeRef::new(source, kind, target) != *subject {
+            continue;
+        }
+        let lifecycle = cohort_lifecycle(store, txn, &claim_id, wrapper.lifecycle)?;
+        if !lifecycles.contains(&lifecycle) {
+            continue;
+        }
+        let record = decode_edge_provenance_body(&wrapper.value)?;
+        let actor_class = resolve_persisted_actor_class(&record, wrapper.evidence.as_ref())?;
+        let claim = StoredProvenanceClaim {
+            id: claim_id,
+            occurred_start: header.occurred_start,
+            learned_at: header.learned_at,
+            subject: *subject,
+            wrapper,
+            record,
+            actor_class,
+        };
+        if visit(claim, lifecycle).is_break() {
+            break;
+        }
+    }
+    Ok(())
 }

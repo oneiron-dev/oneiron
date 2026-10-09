@@ -147,6 +147,7 @@ fn corpus_inputs(corpus: &[(&'static str, &'static str, bool)]) -> Vec<Prefilter
                 turn_id: EntityId::from_bytes(bytes).expect("fixture turn id"),
                 role: dreamer_turn_role(Some(speaker), &[]),
                 learned_at: 2_000 + ordinal as u64,
+                carrier: None,
                 conversation: None,
             };
             (turn, Some((*text).to_owned()))

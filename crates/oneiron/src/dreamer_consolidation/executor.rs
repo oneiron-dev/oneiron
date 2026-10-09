@@ -12,7 +12,7 @@ use rmpv::Value;
 
 use super::conflict::{ConflictIdentity, ConflictSet, candidate_facts, deterministic_claim_id};
 use super::failure_rules::{self, FailureRules, Stage};
-use super::gap::{ReflectionGap, ReflectionGapKind, scan_reflection_gaps, upsert_gap_queue};
+use super::gap::{ReflectionGap, ReflectionGapKind};
 use super::partition::{ConsolidationPartitionKey, decode_partition_payload};
 use super::provenance::{
     ConsolidationProvenanceHop, ConsolidationSink, PromotionCandidate, source_meet,
@@ -199,12 +199,9 @@ impl ConsolidationExecutor<'_> {
                 &turn_ids,
                 resources.scope(),
                 ctx.now_ms,
-                resources
-                    .fallback_binding()
-                    .map(|binding| (binding, self.actor.entity_ref())),
                 Some(ctx.deadline),
+                Some(&resources.write_fence()),
             )
-            .map(|_| ())
         } else {
             Ok(())
         };
@@ -767,11 +764,12 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                     turn_id: *turn_id,
                     role,
                     learned_at: 0,
+                    carrier: None,
                     conversation: conversation_of(ctx.vault, turn_id)?,
                 });
             }
-            let gaps = scan_reflection_gaps(ctx.vault, &working_set, ctx.now_ms)?;
-            upsert_gap_queue(ctx.vault, gaps, ctx.now_ms)?;
+            let (gaps, texts) = super::gap::scan_with_texts(ctx.vault, &working_set, ctx.now_ms)?;
+            super::gap::upsert_scanned_gap_queue(ctx.vault, gaps, &texts, ctx.now_ms)?;
             return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
         }
 

@@ -30,6 +30,7 @@ mod person_extraction;
 mod prior_heads;
 mod scope_enforcement;
 mod support;
+mod witnessed_turns;
 use support::ExpiringBackend;
 
 fn block_on_ready<F: Future>(future: F) -> F::Output {
@@ -389,13 +390,13 @@ fn bootstrap_round_on_empty_vault() -> Result<()> {
     assert_eq!(first_round[1].learned_at, 10);
 
     // Repeated rounds converge: each advances past what it scanned.
-    advance_watermark(&vault, scope, 10)?;
+    advance_watermark(&vault, scope, 10, &first_round)?;
     let watermark = read_watermark(&vault, scope)?;
     let second_round = scan_dirty_turns(&vault, scope, &watermark, 2)?;
     assert_eq!(second_round.len(), 1);
     assert_eq!(second_round[0].learned_at, 15);
 
-    advance_watermark(&vault, scope, 15)?;
+    advance_watermark(&vault, scope, 15, &second_round)?;
     let watermark = read_watermark(&vault, scope)?;
     assert!(scan_dirty_turns(&vault, scope, &watermark, 2)?.is_empty());
     Ok(())
@@ -901,7 +902,7 @@ fn a_fence_window_below_the_live_watermark_collects_nothing() -> Result<()> {
     let scope = DreamerConsolidationScope::Meso;
     let conversation = seed_session(&vault, 0x30, 1);
     let dirty = seed_turn(&vault, &conversation, "user", "dirty", 900);
-    advance_watermark(&vault, scope, 800)?;
+    advance_watermark(&vault, scope, 800, &[])?;
 
     let session = minted(vault.mint_session(1_000)?);
     let mut wake = meso_wake(&vault);
@@ -1171,12 +1172,14 @@ fn partition_round_hash_conformance() {
             turn_id: ordered_turn_id(0x49, 1),
             role: DreamerTurnRole::User,
             learned_at: 900,
+            carrier: None,
             conversation: None,
         },
         WorkingSetTurn {
             turn_id: ordered_turn_id(0x49, 2),
             role: DreamerTurnRole::Assistant,
             learned_at: 900,
+            carrier: None,
             conversation: None,
         },
     ];

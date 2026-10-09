@@ -463,7 +463,8 @@ impl Vault {
             imported::stamp_imported_source(&mut claim_body, evidence);
         }
         if let Some(evidence) = generated_evidence {
-            let source = super::derived_attachment::verify(self, wtxn, subject, &evidence)?;
+            let reader = crate::WriteActor::new(record.actor_entity_ref, actor_class);
+            let source = super::derived_attachment::verify(self, wtxn, subject, &evidence, reader)?;
             claim_body.source = Some(source);
             claim_body.scope = Some(Value::Map(vec![
                 (
@@ -551,16 +552,23 @@ impl Vault {
         )?;
 
         // Explicit-prior gates (supersede path): the named Claim must be a
-        // live edge.provenance Claim addressing the SAME EdgeRef.
+        // live edge.provenance Claim addressing the SAME EdgeRef. A stale
+        // prior's support is already withdrawn, so it is closed here too.
         let prior_id = explicit_prior
             .map(|prior_id| -> Result<EntityId> {
                 let prior = self.load_provenance_claim_in_txn(wtxn, prior_id)?;
                 if prior.subject != *subject {
                     return Err(Error::Claim(ClaimError::ProvenanceSubjectMismatch));
                 }
-                if prior.wrapper.lifecycle != ClaimLifecycleStatus::Active {
+                let lifecycle = super::queries::cohort_lifecycle(
+                    &self.store,
+                    wtxn,
+                    prior_id,
+                    prior.wrapper.lifecycle,
+                )?;
+                if lifecycle != ClaimLifecycleStatus::Active {
                     return Err(Error::Claim(ClaimError::ProvenanceClaimAlreadyClosed {
-                        lifecycle: prior.wrapper.lifecycle.as_str(),
+                        lifecycle: lifecycle.as_str(),
                     }));
                 }
                 Ok(prior.id)

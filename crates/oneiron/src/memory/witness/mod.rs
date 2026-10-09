@@ -8,8 +8,8 @@ mod program;
 mod session;
 mod stream;
 mod types;
-pub(crate) use stream::MessageStreamRuntime;
 pub use stream::*;
+pub(crate) use stream::{MessageStreamRuntime, message_stream_finality_in_txn};
 mod validation;
 
 pub use self::types::{WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};

@@ -20,12 +20,16 @@
 //! of the cursor that depends on it: the watermark is a POSITION in the
 //! `learned_at` temporal index, so an entity that must be re-consolidated is
 //! re-stamped with a `learned_at` AHEAD of the cursor — never backdated behind
-//! it. A re-dirtied TURN takes its new position from `now`, which is how the
-//! append path returns it to the working set. A caller-supplied `learned_at`
-//! that lands behind the cursor is simply never selected again, exactly as it
-//! is under a seconds-only watermark: the temporal-index writers (the batch
-//! layer) own that contract; this module only reads the index and cannot
-//! enforce it.
+//! it. A caller-supplied `learned_at` that lands behind the cursor is simply
+//! never selected again, exactly as it is under a seconds-only watermark: the
+//! temporal-index writers (the batch layer) own that contract; this module only
+//! reads the index and cannot enforce it. A TURN whose final words changed
+//! (a finalized stream continuation, a new MESSAGE sibling) is also re-dirtied
+//! through `redirty`: a carrier pending for each scope until a round of that
+//! scope consumes it, selected wherever the scope cursor stands and never
+//! moving it. Selection, settlement and the partition-round identity read
+//! its key in place of the row's `learned_at` while it keys the TURN. A
+//! continuation leaves the TURN row itself untouched.
 
 mod assembly;
 pub(crate) mod branch_scope;
@@ -46,11 +50,13 @@ mod open_conflict;
 mod partition;
 mod persistence;
 mod provenance;
+pub(crate) mod redirty;
 pub(crate) mod resources;
 pub mod routing;
 pub mod selection;
 mod step_charge;
 mod support;
+mod turn_text;
 mod wake_plan;
 mod watermark;
 
@@ -64,10 +70,12 @@ pub use partition::*;
 pub use persistence::close_persistent_conflict;
 pub use provenance::*;
 pub(crate) use provenance::{
-    decode_verified_locators, encode_consolidation_evidence_with_locators,
+    decode_verified_citations, decode_verified_locators,
+    encode_consolidation_evidence_with_locators,
 };
 pub use resources::ScopedConsolidationWrite;
 pub use support::*;
+pub(crate) use turn_text::{TurnText, cited_evidence_bytes, live_turn_text_in};
 pub(crate) use wake_plan::AttemptPreparation;
 pub use wake_plan::{PreparedConsolidationAttempt, PreparedWake};
 pub use watermark::*;

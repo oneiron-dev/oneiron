@@ -753,7 +753,7 @@ fn witness_append_redirties_the_same_turn() {
     let minted_raw = vault.get_raw(&turn_id).expect("turn raw").expect("turn");
 
     // The watermark moves PAST the minted turn; a scan now finds nothing.
-    crate::dreamer_consolidation::advance_watermark(&vault, scope, 1_000)
+    crate::dreamer_consolidation::advance_watermark(&vault, scope, 1_000, &[])
         .expect("advance watermark");
     let watermark = crate::read_watermark(&vault, scope).expect("watermark");
     assert!(

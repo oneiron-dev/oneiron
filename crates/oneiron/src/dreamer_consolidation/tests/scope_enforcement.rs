@@ -691,6 +691,7 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
             turn_id: turns[0],
             role: DreamerTurnRole::User,
             learned_at: 10,
+            carrier: None,
             conversation: Some(conversation),
         }],
         watermark_last_learned_at: 0,
