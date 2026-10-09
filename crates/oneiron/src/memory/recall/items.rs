@@ -23,21 +23,36 @@ impl Memory<'_> {
             let entity_type = row.entity_type;
             let body = row.body.clone();
             // A TURN's text is its messages', which its own body does not
-            // hold: those this actor may read.
-            let turn_text = if entity_type == ENTITY_TYPE_TURN {
-                crate::embed::readable_turn_text_in_txn(self.vault, txn, id, |message| {
-                    lane.is_entity_readable_in(txn, message)
-                })?
+            // hold: those this actor may read, under the text revision that
+            // pins them, both read in this snapshot.
+            let turn = if entity_type == ENTITY_TYPE_TURN {
+                let messages =
+                    crate::embed::readable_turn_messages_in_txn(self.vault, txn, id, |message| {
+                        lane.is_entity_readable_in(txn, message)
+                    })?
+                    .unwrap_or_default();
+                let revision = match mode {
+                    crate::vault::ReadMode::Pinned(_) => {
+                        crate::vault::entity_revision::served_turn_revision_in_txn(
+                            self.vault, txn, id, mode,
+                        )?
+                    }
+                    crate::vault::ReadMode::Live | crate::vault::ReadMode::Indexed => None,
+                };
+                Some((messages, revision))
             } else {
                 None
             };
             let view = self.entity_view_of_in_txn(txn, row, mode)?;
-            Ok(Some((entity_type, body, view, turn_text)))
+            Ok(Some((entity_type, body, view, turn)))
         })?;
         receipt.restrict_with(&read);
-        let Some((entity_type, Some(body), Some(view), turn_text)) = admitted else {
+        let Some((entity_type, Some(body), Some(view), turn)) = admitted else {
             return Ok(None);
         };
+        let (turn_messages, turn_revision) = turn.unzip();
+        let turn_messages = turn_messages.unwrap_or_default();
+        let turn_text = crate::embed::joined_turn_text(&turn_messages);
         let ScopedReadResult {
             value: edges,
             receipt: graph,
@@ -69,8 +84,12 @@ impl Memory<'_> {
                     .to_owned()
             },
         );
+        // A TURN names the text revision of the words it serves, not the
+        // revision of its row, which holds none of them.
         let source_revision_ref = match mode {
-            crate::vault::ReadMode::Pinned(revision) => Some(revision.to_hex()),
+            crate::vault::ReadMode::Pinned(revision) => {
+                Some(turn_revision.flatten().unwrap_or(revision).to_hex())
+            }
             crate::vault::ReadMode::Live | crate::vault::ReadMode::Indexed => None,
         };
         let kind = kind_string_for_type(entity_type);
@@ -135,12 +154,15 @@ impl Memory<'_> {
                 Vec::new()
             };
             // Each message a TURN took in is read through the same lane, so a
-            // quote is one the actor may read, and live, as the turn's own
-            // text reads it: only a live read resolves the text of a message
-            // that lives in an entity document. Its reactions ride on the
-            // turn that returns it.
+            // quote is one the actor may read. Its words are the ones the
+            // turn's text joined in the turn's own snapshot, which the turn's
+            // text revision pins; a message that text left out is not quoted.
+            // Its reactions ride on the turn that returns it.
             let mut cited_messages = Vec::with_capacity(cited.len());
             for message in cited {
+                let Some((_, text)) = turn_messages.iter().find(|(id, _)| id == message) else {
+                    continue;
+                };
                 if let Some(item) = self.memory_item_for(
                     lane,
                     message,
@@ -152,7 +174,7 @@ impl Memory<'_> {
                     reactions.extend(item.reactions);
                     cited_messages.push(CitedMessage {
                         short_id: item.short_id,
-                        value_text: item.value_text,
+                        value_text: truncate_text(text, DEFAULT_MAX_FIELD_CHARS),
                     });
                 }
             }

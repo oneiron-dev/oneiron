@@ -250,6 +250,13 @@ fn a_recall_never_returns_a_turn_beside_its_own_message() {
 
 /// 9B: an edit to a message embeds its turn again. The old words no longer
 /// find the turn first; the new ones do.
+///
+/// Astra 1333 #3 (P2): the revision a TURN item names pins the words it
+/// serves. After the edit the turn serves new words under a new revision,
+/// which hydrates; the revision it showed before no longer resolves, rather
+/// than hydrating a turn whose words moved. Bug repro: the item named its
+/// row's revision, which an edit to a message never moves, so two recalls
+/// served different words under one revision.
 #[test]
 fn an_edited_message_embeds_its_turn_again() {
     run(async |served| {
@@ -260,7 +267,24 @@ fn an_edited_message_embeds_its_turn_again() {
                 turn_item(pack, &car).is_some()
             })
             .await;
-        assert!(turn_item(&pack, &car).is_some(), "{car}: {pack}");
+        let before = turn_item(&pack, &car).unwrap_or_else(|| panic!("{car}: {pack}"));
+        let pinned = |item: &Value| {
+            format!(
+                "{}@{}",
+                item["short_id"].as_str().expect("short id"),
+                item["source_revision_ref"]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("an unpinned turn: {item}"))
+            )
+        };
+        let hydrates = |reference: &str| {
+            served
+                .vault
+                .memory(served.owner, oneiron::EdgeActorClass::Human)
+                .hydrate(&[reference.to_owned()])
+                .is_ok()
+        };
+        assert!(hydrates(&pinned(&before)), "{before}");
 
         let message = served
             .vault
@@ -338,6 +362,16 @@ fn an_edited_message_embeds_its_turn_again() {
         assert_eq!(
             cited[0]["value_text"], "We met for a meal at noon.",
             "the turn quotes the edited words: {pack}"
+        );
+        let after = first(&pack);
+        assert_ne!(
+            after["source_revision_ref"], before["source_revision_ref"],
+            "new words under the revision the old ones were served at: {before} {after}"
+        );
+        assert!(hydrates(&pinned(&after)), "{after}");
+        assert!(
+            !hydrates(&pinned(&before)),
+            "the old revision hydrates a turn whose words moved: {before}"
         );
     });
 }

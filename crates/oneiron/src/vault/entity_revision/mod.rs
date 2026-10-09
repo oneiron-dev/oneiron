@@ -10,6 +10,8 @@ mod phonetic;
 pub(crate) use pending_index::{defer_index_inputs, drop_staged_vectors};
 pub(crate) use phonetic::defer_phonetic;
 mod storage;
+mod turn_text;
+pub(crate) use turn_text::served_turn_revision_in_txn;
 mod types;
 mod vector_refill;
 pub(crate) use vector_refill::schedule_vector_refills;

@@ -317,6 +317,31 @@ pub(crate) fn entity_owns_revision_in_txn(
     Ok(reference(id, &raw) == revision || FRONTIER.contains(store, txn, &(*id, revision.0))?)
 }
 
+/// Every revision `id`'s row can be read at: its current row, its live and
+/// indexed frontiers, and each retained one.
+pub(super) fn row_revisions_in_txn(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Vec<RevisionRef>> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        return Ok(Vec::new());
+    };
+    let mut revisions = vec![reference(id, &raw)];
+    if let Some(current) = state(store, txn, id)? {
+        revisions.extend([current.live, current.indexed]);
+    }
+    revisions.extend(
+        FRONTIER
+            .scan_keys(store, txn, id.as_bytes())?
+            .into_iter()
+            .map(|(_, revision)| RevisionRef(revision)),
+    );
+    revisions.sort_unstable();
+    revisions.dedup();
+    Ok(revisions)
+}
+
 pub(crate) fn read_entity_revision_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -362,6 +387,21 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
     };
     if !current.as_ref().is_some_and(|value| value.has_doc) && reference(id, &raw) == target {
         return Ok(Some(raw.to_vec()));
+    }
+    // A TURN item names the text revision it served (`turn_text`); it reads
+    // the row that revision was read at, while its sources still stand.
+    if header.entity_type == crate::registry::ENTITY_TYPE_TURN
+        && !entity_owns_revision_in_txn(store, txn, id, target)?
+        && let Some(row) =
+            super::turn_text::turn_row_for_text_revision_in_txn(vault, txn, id, target)?
+    {
+        return read_entity_revision_from_store_in_txn(
+            vault,
+            store,
+            txn,
+            id,
+            ReadMode::Pinned(row),
+        );
     }
     Ok(Some(doc_raw(&fork_revision(store, txn, id, target)?)?))
 }

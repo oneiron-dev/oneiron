@@ -46,19 +46,42 @@ pub(crate) fn readable_turn_text_in_txn(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
-    mut readable: impl FnMut(&EntityId) -> Result<bool>,
+    readable: impl FnMut(&EntityId) -> Result<bool>,
 ) -> Result<Option<String>> {
+    Ok(readable_turn_messages_in_txn(vault, txn, turn, readable)?
+        .and_then(|messages| joined_turn_text(&messages)))
+}
+
+/// The messages [`readable_turn_text_in_txn`] joins, each with its text, in
+/// message order; `None` for a turn that is gone or archived.
+pub(crate) fn readable_turn_messages_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+    mut readable: impl FnMut(&EntityId) -> Result<bool>,
+) -> Result<Option<Vec<(EntityId, String)>>> {
     let Some(messages) = crate::tagging::turn_messages_in_txn(vault, txn, turn)? else {
         return Ok(None);
     };
-    let mut lines = Vec::with_capacity(messages.len());
+    let mut readable_messages = Vec::with_capacity(messages.len());
     for message in messages {
-        if readable(&EntityId::from_hex(&message.id)?)? {
-            lines.push(message.text);
+        let id = EntityId::from_hex(&message.id)?;
+        if readable(&id)? {
+            readable_messages.push((id, message.text));
         }
     }
-    let text = lines.join("\n");
-    Ok(has_content(&text).then_some(text))
+    Ok(Some(readable_messages))
+}
+
+/// A turn's text from its `messages` ([`readable_turn_messages_in_txn`]), one
+/// per line, or `None` when they hold nothing.
+pub(crate) fn joined_turn_text(messages: &[(EntityId, String)]) -> Option<String> {
+    let text = messages
+        .iter()
+        .map(|(_, text)| text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    has_content(&text).then_some(text)
 }
 
 /// The payload the embedding worker sends for a stored record whose text is

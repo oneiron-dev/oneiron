@@ -216,7 +216,10 @@ pub struct MemoryItem {
     /// a witness receipt returns, never revision-qualified.
     pub short_id: String,
     /// The retained revision (32 hex) retrieval read this item at, when it
-    /// pinned one. [`Self::reference`] joins it to `short_id`.
+    /// pinned one. [`Self::reference`] joins it to `short_id`. A TURN's is
+    /// the text revision of the words it serves, its own and those its
+    /// cited messages quote: it names each source message's revision, and
+    /// hydrates while those still stand.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_revision_ref: Option<String>,
     /// Registry kind string.
@@ -256,7 +259,7 @@ pub struct MemoryItem {
 pub struct CitedMessage {
     /// The message's short ref, the one its witness receipt returned.
     pub short_id: String,
-    /// The message's text (capped).
+    /// The message's text (capped), as the turn's text revision pins it.
     pub value_text: String,
 }
 

@@ -443,7 +443,10 @@ impl Memory<'_> {
     /// Gives each named TURN its text as `txt`, the field a turn renders its
     /// text from. A turn's text is its messages' (ARCH-0004), which its own
     /// body does not hold: those this caller may read, so a named turn never
-    /// shows the words of a message the caller could not name.
+    /// shows the words of a message the caller could not name. A turn named
+    /// at a text revision (`MemoryItem::source_revision_ref`) gets its text
+    /// only while that revision still resolves in this read, so the words
+    /// are the ones it pins.
     fn add_turn_text(
         &self,
         views: &mut [EntityView],
@@ -454,7 +457,12 @@ impl Memory<'_> {
             .enumerate()
             .filter(|(_, view)| document_entity_type(&view.kind) == ENTITY_TYPE_TURN)
             .map(|(index, view)| -> MemoryResult<_> {
-                Ok((index, EntityId::from_hex(&view.id_hex)?))
+                let pin = view
+                    .short_ref
+                    .as_deref()
+                    .and_then(|short_ref| short_ref.rsplit_once('@'))
+                    .and_then(|(_, revision)| crate::memory::RevisionRef::from_hex(revision).ok());
+                Ok((index, EntityId::from_hex(&view.id_hex)?, pin))
             })
             .collect::<MemoryResult<Vec<_>>>()?;
         if turns.is_empty() {
@@ -463,7 +471,7 @@ impl Memory<'_> {
         let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
         let reads: Vec<_> = turns
             .iter()
-            .map(|(_, id)| crate::claim::PointRead::id(*id))
+            .map(|(_, id, _)| crate::claim::PointRead::id(*id))
             .collect();
         let crate::claim::ScopedReadResult {
             value: texts,
@@ -472,18 +480,34 @@ impl Memory<'_> {
             turns
                 .iter()
                 .zip(rows)
-                .map(|((_, turn), row)| match row {
-                    Some(_) => {
-                        crate::embed::readable_turn_text_in_txn(self.vault, txn, turn, |message| {
-                            lane.is_entity_readable_in(txn, message)
-                        })
+                .map(|((_, turn, pin), row)| {
+                    if row.is_none() {
+                        return Ok(None);
                     }
-                    None => Ok(None),
+                    if let Some(pin) = *pin
+                        && !crate::vault::entity_revision::entity_owns_revision_in_txn(
+                            &self.vault.store,
+                            txn,
+                            turn,
+                            pin,
+                        )?
+                        && crate::vault::entity_revision::served_turn_revision_in_txn(
+                            self.vault,
+                            txn,
+                            turn,
+                            crate::vault::ReadMode::Pinned(pin),
+                        )? != Some(pin)
+                    {
+                        return Ok(None);
+                    }
+                    crate::embed::readable_turn_text_in_txn(self.vault, txn, turn, |message| {
+                        lane.is_entity_readable_in(txn, message)
+                    })
                 })
                 .collect::<crate::error::Result<Vec<_>>>()
         })?;
         super::read_lane::fold_receipt(narrowing, receipt);
-        for ((index, _), text) in turns.into_iter().zip(texts) {
+        for ((index, _, _), text) in turns.into_iter().zip(texts) {
             if let (Some(text), Some(serde_json::Value::Object(body))) =
                 (text, views[index].body.as_mut())
             {

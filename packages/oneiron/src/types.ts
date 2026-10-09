@@ -131,7 +131,10 @@ export type MemoryProvenance = {
 export type MemoryItem = {
   /** The same `name:hash` a witness receipt returns. */
   shortId: string
-  /** The revision the item was read at; `${shortId}@${sourceRevisionRef}` hydrates exactly it. */
+  /**
+   * The revision the item was read at; `${shortId}@${sourceRevisionRef}` hydrates exactly it.
+   * A TURN's pins its messages' words too, and stops resolving once one of them is edited.
+   */
   sourceRevisionRef?: string
   kind: string
   predicate?: string

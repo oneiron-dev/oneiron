@@ -273,11 +273,12 @@ impl ScopedRead<'_> {
     }
 
     /// A TURN's text is its messages' (ARCH-0004), which its own body does
-    /// not hold: a hydrated turn gets as `txt` those this read may see.
-    /// Added after admission, whose snapshot check compares each field with
-    /// the turn's own body. Returns whether the turn stays: under a
-    /// disclosure clamp, only while the clamp still admits each of its
-    /// messages.
+    /// not hold: a hydrated turn gets as `txt` those this read may see, and
+    /// its revision becomes the text revision that pins them, read in this
+    /// snapshot (`entity_revision::served_turn_revision_in_txn`). Added after
+    /// admission, whose snapshot check compares each field with the turn's
+    /// own body. Returns whether the turn stays: under a disclosure clamp,
+    /// only while the clamp still admits each of its messages.
     fn add_turn_content(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -308,6 +309,16 @@ impl ScopedRead<'_> {
             })?
         {
             fields.insert("txt".to_owned(), serde_json::Value::String(text));
+            if let Some(revision) = entity.source_revision_ref {
+                entity.source_revision_ref =
+                    crate::vault::entity_revision::served_turn_revision_in_txn(
+                        self.vault,
+                        rtxn,
+                        &entity.id,
+                        crate::vault::ReadMode::Pinned(crate::vault::RevisionRef(revision)),
+                    )?
+                    .map(|served| served.0);
+            }
         }
         Ok(true)
     }
