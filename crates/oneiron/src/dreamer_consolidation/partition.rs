@@ -278,6 +278,16 @@ pub(crate) fn partition_round_hash(turns: &[WorkingSetTurn]) -> [u8; 32] {
     keyed_partition_round_hash(turns, &BTreeMap::new())
 }
 
+/// [`partition_round_hash`] keyed by each TURN's own re-dirty carrier, so a
+/// TURN changed again in the same second hashes as new work.
+pub(crate) fn carried_round_hash(turns: &[WorkingSetTurn]) -> [u8; 32] {
+    let carried = turns
+        .iter()
+        .filter_map(|turn| Some((turn.turn_id, turn.carrier?)))
+        .collect();
+    keyed_partition_round_hash(turns, &carried)
+}
+
 /// [`partition_round_hash`] over each TURN's selection key: a TURN in
 /// `carried` stood at its re-dirty carrier, whose id replaces the TURN id in
 /// the preimage. Every other TURN hashes byte-identically, and a TURN changed

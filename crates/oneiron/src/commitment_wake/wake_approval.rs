@@ -374,6 +374,41 @@ pub fn schedule_approved_commitment_wake(
     })
 }
 
+/// The approval half of a commitment wake (ARCH-0046 O2): every approved
+/// `commitment.wake_proposal` among `claims` schedules its outbound intent as
+/// the agent that authored it. Run after an approval door commits; other
+/// claims are passed over, and a replay is idempotent on the phase key.
+///
+/// One result per wake proposal, so the door can report a proposal whose
+/// approval left it inert (a commitment closed meanwhile, a refused channel).
+pub fn schedule_approved_commitment_wakes(
+    vault: &Vault,
+    claims: &[EntityId],
+) -> Vec<(EntityId, MemoryResult<OutboundIntentReceipt>)> {
+    let dreamer = vault.dreamer_authority().ok();
+    claims
+        .iter()
+        .filter(|id| {
+            vault.get_claim(id).ok().flatten().is_some_and(|claim| {
+                claim.predicate == PREDICATE_COMMITMENT_WAKE_PROPOSAL
+                    && claim.approval == ClaimApprovalStatus::Approved
+            })
+        })
+        .map(|id| {
+            let scheduled = approved_commitment_wake(vault, id)
+                .map_err(MemoryError::from)
+                .and_then(|approved| {
+                    let class = dreamer
+                        .filter(|actor| actor.entity_ref() == approved.bound_actor)
+                        .map_or(crate::EdgeActorClass::Agent, |actor| actor.actor_class());
+                    let facade = vault.memory(approved.bound_actor, class);
+                    schedule_approved_commitment_wake(&facade, approved)
+                });
+            (*id, scheduled)
+        })
+        .collect()
+}
+
 fn stale_commitment_wake_token() -> MemoryError {
     MemoryError::from(Error::InvalidClaimBody(
         "approved commitment wake token is stale",

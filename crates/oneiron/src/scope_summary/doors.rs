@@ -9,8 +9,9 @@ use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::conversation_dag::{
     AppendRecord, ScopePath, ScopeSelector, actor_in_txn, append_in_txn, conversation_of, edge_ids,
     is_sub_session_record, prove_branch_anchor, prove_branch_span, require_type, resolve_in_txn,
-    selected_thread_in_txn,
 };
+#[cfg(test)]
+use crate::conversation_dag::selected_thread_in_txn;
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::limits::MAX_ANCESTOR_DEPTH;
@@ -107,7 +108,7 @@ fn validate_covers_in_txn(vault: &Vault, txn: &RoTxn<'_>, body: &ScopeSummaryBod
     Ok(())
 }
 
-fn validate_landing_in_txn(
+pub(super) fn validate_landing_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
     scope: &ScopeSelector,
@@ -167,9 +168,10 @@ pub(crate) fn merge_summary_ref(body: &crate::ClaimBody) -> Result<Option<(Entit
     Ok(Some((turn, summary)))
 }
 
-fn mint_in_txn(
+pub(super) fn mint_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
+    id: EntityId,
     scope: &ScopeSelector,
     text: &str,
     actor: WriteActor,
@@ -177,7 +179,6 @@ fn mint_in_txn(
 ) -> Result<EntityId> {
     actor_in_txn(&vault.store, txn, actor)?;
     let resolved = resolve_in_txn(vault, txn, scope)?;
-    let id = vault.store.clock.entity_id()?;
     let body = ScopeSummaryBody {
         v: 1,
         scope: scope.clone(),
@@ -207,7 +208,7 @@ fn mint_in_txn(
     Ok(id)
 }
 
-fn land_in_txn(
+pub(super) fn land_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     summary: &EntityId,
@@ -418,8 +419,11 @@ impl Vault {
         Ok(result)
     }
 
-    /// Resolves the selector and mints a summary in one transaction.
-    pub fn mint_dag_scope_summary(
+    /// Resolves the selector and mints a summary in one transaction. A test
+    /// fixture: outside tests the Dreamer writes every body
+    /// ([`Vault::request_scope_summary`]).
+    #[cfg(test)]
+    pub(crate) fn mint_dag_scope_summary(
         &self,
         scope: &ScopeSelector,
         text: &str,
@@ -429,6 +433,7 @@ impl Vault {
             mint_in_txn(
                 self,
                 txn,
+                self.store.clock.entity_id()?,
                 scope,
                 text,
                 actor,
@@ -437,8 +442,11 @@ impl Vault {
         })
     }
 
-    /// Projects the first thread chain and lands its header on the trunk atomically.
-    pub fn mint_and_land_thread_summary(
+    /// Projects the first thread chain and lands its header on the trunk
+    /// atomically. A test fixture: outside tests the Dreamer writes every body
+    /// ([`Vault::request_scope_summary`]).
+    #[cfg(test)]
+    pub(crate) fn mint_and_land_thread_summary(
         &self,
         trunk: EntityId,
         text: &str,
@@ -462,15 +470,25 @@ impl Vault {
                 return Err(invalid("selected thread differs from bounded span"));
             }
             let now = self.store.clock.now_recorded_at();
-            let summary = mint_in_txn(self, txn, &scope, text, actor, now)?;
+            let summary = mint_in_txn(
+                self,
+                txn,
+                self.store.clock.entity_id()?,
+                &scope,
+                text,
+                actor,
+                now,
+            )?;
             let landed = land_in_txn(self, txn, &summary, &trunk, actor, false, now)?;
             Ok((summary, landed))
         })
     }
 
-    /// Mints and optionally lands a summary atomically, for the HTTP mutation.
-    /// A gate refusal cannot leave an orphan summary behind.
-    pub fn mint_and_land_scope_summary(
+    /// Mints and optionally lands a summary atomically. A gate refusal cannot
+    /// leave an orphan summary behind. A test fixture: outside tests the
+    /// Dreamer writes every body ([`Vault::request_scope_summary`]).
+    #[cfg(test)]
+    pub(crate) fn mint_and_land_scope_summary(
         &self,
         scope: &ScopeSelector,
         text: &str,
@@ -483,7 +501,15 @@ impl Vault {
         }
         self.with_write_txn(|txn| {
             let now = self.store.clock.now_recorded_at();
-            let summary = mint_in_txn(self, txn, scope, text, actor, now)?;
+            let summary = mint_in_txn(
+                self,
+                txn,
+                self.store.clock.entity_id()?,
+                scope,
+                text,
+                actor,
+                now,
+            )?;
             let landed = land_on
                 .map(|turn| land_in_txn(self, txn, &summary, &turn, actor, as_record, now))
                 .transpose()?;

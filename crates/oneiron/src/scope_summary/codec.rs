@@ -6,14 +6,14 @@ use crate::{EntityId, limits::MAX_ANCESTOR_DEPTH};
 use rmpv::Value;
 use std::collections::HashSet;
 
-/// Version-one scope-summary payload. The caller owns the text verbatim.
+/// Version-one scope-summary payload. Outside tests the text is the Dreamer's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScopeSummaryBody {
     /// Codec version; currently exactly 1.
     pub v: u8,
     /// Selector resolved in the mint transaction.
     pub scope: ScopeSelector,
-    /// Caller-provided text, never composed or rewritten by the engine.
+    /// The body as its producer wrote it, never rewritten by the engine.
     pub text: String,
     /// Validated producer's 32-hex entity id.
     pub actor: String,
@@ -91,7 +91,7 @@ fn id(value: &Value) -> Result<EntityId> {
         .map_err(|_| invalid("invalid summary id"))
 }
 
-fn parse_scope(value: &Value) -> Result<ScopeSelector> {
+pub(super) fn parse_scope(value: &Value) -> Result<ScopeSelector> {
     let v = closed_map(value, &["conversation", "session", "path", "include_forks"])?;
     let path = if v[2].as_str() == Some("canonical") {
         ScopePath::Canonical

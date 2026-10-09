@@ -60,6 +60,8 @@ struct DreamerFile {
     idle_floor_secs: Option<u64>,
     session_ceiling_secs: Option<u64>,
     pass_budget_units: Option<u64>,
+    summary_prompt: Option<String>,
+    summary_prompt_file: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -93,7 +95,7 @@ pub struct ModelsConfig {
     pub workflows: WorkflowSettings,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DreamerSettings {
     pub enabled: bool,
     /// A sitting with no activity for this long ends, and its turns dream.
@@ -102,6 +104,10 @@ pub struct DreamerSettings {
     pub session_ceiling_secs: u64,
     /// Budget units each wake pass may spend.
     pub pass_budget_units: u64,
+    /// The instruction the Dreamer writes declared scope summaries with.
+    /// Without one, summary declarations are refused (ARCH-0006a: only the
+    /// Dreamer writes a summary body).
+    pub summary_instruction: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -163,6 +169,12 @@ impl ModelsFile {
                 .dreamer
                 .pass_budget_units
                 .unwrap_or(DEFAULT_PASS_BUDGET_UNITS),
+            summary_instruction: levels::prompt_text(
+                "models.dreamer.summary_prompt",
+                self.dreamer.summary_prompt,
+                self.dreamer.summary_prompt_file,
+                base,
+            )?,
         };
         if dreamer.idle_floor_secs == 0 || dreamer.session_ceiling_secs <= dreamer.idle_floor_secs {
             anyhow::bail!(

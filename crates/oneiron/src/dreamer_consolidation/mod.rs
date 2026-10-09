@@ -52,6 +52,7 @@ mod persistence;
 mod provenance;
 pub(crate) mod redirty;
 pub(crate) mod resources;
+mod scope_summary_attempt;
 pub mod routing;
 pub mod selection;
 mod step_charge;
@@ -74,6 +75,7 @@ pub(crate) use provenance::{
     encode_consolidation_evidence_with_locators,
 };
 pub use resources::ScopedConsolidationWrite;
+pub use scope_summary_attempt::ScopeSummaryExecutor;
 pub use support::*;
 pub(crate) use turn_text::{TurnText, cited_evidence_bytes, live_turn_text_in};
 pub(crate) use wake_plan::AttemptPreparation;

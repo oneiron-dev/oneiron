@@ -129,6 +129,7 @@ async fn supervise(start: DreamerStart, ready: Ready) -> WakeSupervisorReport {
             seat,
             actor: vault.dreamer_authority()?,
             egress,
+            summary_instruction: settings.summary_instruction.clone(),
             inner: None,
             status: Arc::clone(&status),
         };
@@ -199,6 +200,8 @@ struct ObservedFactory {
     seat: Seat,
     actor: WriteActor,
     egress: bool,
+    /// Declared scope summaries are written with this (ARCH-0006a).
+    summary_instruction: Option<String>,
     inner: Option<ConsolidationExecutorFactory>,
     status: Arc<StatusCell>,
 }
@@ -228,7 +231,7 @@ impl PassExecutorFactory for ObservedFactory {
                 return Err(error);
             }
         };
-        let inner = self.inner.insert(ConsolidationExecutorFactory::new(
+        let mut factory = ConsolidationExecutorFactory::new(
             route.backend,
             DreamerClaimAuthoringStrategy::SinglePass,
             self.actor,
@@ -239,7 +242,11 @@ impl PassExecutorFactory for ObservedFactory {
             },
             self.egress.then(|| extraction_egress(route.model)),
             Box::new(AttemptPromotionSink::new(Arc::clone(&self.vault))),
-        ));
+        );
+        if let Some(instruction) = &self.summary_instruction {
+            factory = factory.with_scope_summary_instruction(instruction.clone());
+        }
+        let inner = self.inner.insert(factory);
         Ok(ObservedExecutor {
             inner: inner.executor(guard)?,
             status: &self.status,

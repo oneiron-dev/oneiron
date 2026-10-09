@@ -3,9 +3,44 @@
 use super::*;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, WriteActor};
+use std::time::Duration;
+
+use crate::ai_host::AiHost;
+use crate::ai_host::test_support::{eventually, models, rooted_vault, route_extraction};
+use crate::fake_llm::{FakeLlm, Reply};
 
 fn setup() -> (tempfile::TempDir, Arc<SyncServer>, Value) {
     let (dir, server) = test_server();
+    let actor = author(&server);
+    (dir, server, actor)
+}
+
+/// `setup` on a server whose Dreamer writes summary bodies with a host
+/// instruction, its model the local fake.
+async fn setup_with_dreamer(fake: &FakeLlm) -> (tempfile::TempDir, Arc<SyncServer>, Value, AiHost) {
+    let (dir, vault) = rooted_vault();
+    route_extraction(&vault);
+    assert_default_policy_manifest_fixture(vault.as_ref());
+    let models = models(
+        &fake.base_url,
+        "[dreamer]\nsummary_prompt = \"Summarize these records.\"",
+    );
+    let host = AiHost::start(Arc::clone(&vault), Some(&models), true).await;
+    let config = SyncServerConfig {
+        allow_unauthenticated: true,
+        ..Default::default()
+    };
+    let server = Arc::new(
+        SyncServer::new(vault, config)
+            .expect("sync server")
+            .with_ai(host.handle()),
+    );
+    let actor = author(&server);
+    (dir, server, actor, host)
+}
+
+/// A person entity with a DAG write policy, as the wire `actor`.
+fn author(server: &SyncServer) -> Value {
     let actor = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
     server
         .vault
@@ -19,11 +54,60 @@ fn setup() -> (tempfile::TempDir, Arc<SyncServer>, Value) {
         .unwrap();
     oneiron::conversation_dag::test_support::put_dag_test_policy(&server.vault, actor, true)
         .unwrap();
-    (
-        dir,
-        server,
-        json!({"entity_ref": actor.entity_ref().to_hex(), "actor_class": "human"}),
+    json!({"entity_ref": actor.entity_ref().to_hex(), "actor_class": "human"})
+}
+
+async fn declare(server: &Arc<SyncServer>, path: &str, body: Value) -> Value {
+    let (status, value) = route_json(server.clone(), json_request("POST", path, body)).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{value:?}");
+    value
+}
+
+/// The one summary the Dreamer wrote, once it lands, and the merge header
+/// it carries on `turn`.
+async fn dreamt_summary(server: &SyncServer, turn: &Value) -> (EntityId, EntityId) {
+    let summaries = || {
+        server
+            .vault
+            .entities_by_type(oneiron::registry::ENTITY_TYPE_SUMMARY)
+            .unwrap()
+    };
+    assert!(
+        eventually(Duration::from_secs(30), || !summaries().is_empty()).await,
+        "no summary landed; status {:?}",
+        server.ai.status().dreamer
+    );
+    let [summary] = summaries()[..] else {
+        panic!("one summary expected");
+    };
+    let turn = EntityId::from_hex(turn.as_str().unwrap()).unwrap();
+    let header = server
+        .vault
+        .claims_for_subject(&turn)
+        .unwrap()
+        .into_iter()
+        .find(|id| {
+            server
+                .vault
+                .get_claim(id)
+                .unwrap()
+                .is_some_and(|claim| claim.predicate == "merge.summary")
+        })
+        .expect("merge header on the landing turn");
+    (summary, header)
+}
+
+/// The body is the model's text under the Dreamer's byline, never a caller's.
+fn assert_dreamer_body(server: &SyncServer, summary: &EntityId, text: &str) {
+    let body = oneiron::scope_summary::decode_scope_summary_body(
+        &server.vault.get(summary).unwrap().unwrap(),
     )
+    .unwrap();
+    assert_eq!(body.text, text);
+    assert_eq!(
+        body.actor,
+        server.vault.dreamer_authority().unwrap().entity_ref().to_hex()
+    );
 }
 
 async fn post(server: &Arc<SyncServer>, path: &str, body: Value) -> Value {
@@ -214,7 +298,12 @@ async fn dag_addressing_route_validates_recipients_without_limiting_listing() {
 
 #[tokio::test]
 async fn summary_routes_return_all_300_covers_drill_and_engine_bound_late_reply() {
-    let (_dir, server, actor) = setup();
+    let reply = Reply::Text {
+        text: "the Dreamer's summary".to_owned(),
+        model: "test-model".to_owned(),
+    };
+    let fake = FakeLlm::start(vec![], Some(reply)).await;
+    let (_dir, server, actor, host) = setup_with_dreamer(&fake).await;
     let conv = post(
         &server,
         "/v1/core/conversations",
@@ -281,60 +370,48 @@ async fn summary_routes_return_all_300_covers_drill_and_engine_bound_late_reply(
         json!(covers)
     );
     let current = post(&server, &format!("{path}/records"), json!({"parent": root["id"], "advance": true, "body": {"txt": "continued"}, "actor": actor})).await;
-    oneiron::conversation_dag::test_support::put_dag_test_policy(&server.vault, writer, false)
-        .unwrap();
-    let request = json!({"scope": scope, "text": "caller result", "actor": actor, "land_on": root["id"], "as_record": true});
-    let before = server
-        .vault
-        .entities_by_type(oneiron::registry::ENTITY_TYPE_SUMMARY)
-        .unwrap();
+    // ARCH-0006a: the caller declares the scope and the Dreamer writes the
+    // body, so a write-scoped caller cannot set one.
+    let request = json!({"scope": scope, "actor": actor, "land_on": root["id"], "as_record": true});
+    let mut forged = request.clone();
+    forged["text"] = json!("caller result");
     let (status, _) = route_json(
         server.clone(),
-        json_request("POST", &format!("{path}/summaries"), request.clone()),
+        json_request("POST", &format!("{path}/summaries"), forged),
     )
     .await;
-    assert_eq!(status, StatusCode::CONFLICT);
-    assert_eq!(
-        server
-            .vault
-            .entities_by_type(oneiron::registry::ENTITY_TYPE_SUMMARY)
-            .unwrap(),
-        before
-    );
-    oneiron::conversation_dag::test_support::put_dag_test_policy(&server.vault, writer, true)
-        .unwrap();
-    let summary = post(&server, &format!("{path}/summaries"), request).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let queued = declare(&server, &format!("{path}/summaries"), request).await;
+    assert_eq!(queued["coalesced"], false);
+    let (summary, header) = dreamt_summary(&server, &root["id"]).await;
+    assert_dreamer_body(&server, &summary, "the Dreamer's summary");
+    // The host's instruction, over the covered records' text.
+    assert!(fake.seen().iter().any(|seen| {
+        let messages = seen.body["messages"].to_string();
+        messages.contains("Summarize these records.") && messages.contains("retained")
+    }));
     let all = get(
         &server,
-        &format!(
-            "/v1/core/summaries/{}/covers",
-            summary["summary"].as_str().unwrap()
-        ),
+        &format!("/v1/core/summaries/{}/covers", summary.to_hex()),
     )
     .await;
     assert_eq!(all["covers"], json!(covers));
     let drilled = get(
         &server,
-        &format!(
-            "/v1/core/claims/{}/drill",
-            summary["claim"].as_str().unwrap()
-        ),
+        &format!("/v1/core/claims/{}/drill", header.to_hex()),
     )
     .await;
     assert_eq!(drilled["records"], all["covers"]);
+    let reply_id = server.vault.head(&conv_id).unwrap().unwrap();
     let reply = get(
         &server,
-        &format!(
-            "/v1/core/turns/{}?with=reply_strip",
-            summary["record"].as_str().unwrap()
-        ),
+        &format!("/v1/core/turns/{}?with=reply_strip", reply_id.to_hex()),
     )
     .await;
     assert_eq!(reply["reply_to"]["record"], root["id"]);
     assert_eq!(reply["reply_strip"]["record"], root["id"]);
     assert_eq!(reply["reply_strip"]["text"], "asking turn");
     assert_eq!(reply["reply_strip"]["stale"], false);
-    let reply_id = EntityId::from_hex(summary["record"].as_str().unwrap()).unwrap();
     assert_eq!(server.vault.head(&conv_id).unwrap(), Some(reply_id));
     assert_eq!(
         server
@@ -347,6 +424,61 @@ async fn summary_routes_return_all_300_covers_drill_and_engine_bound_late_reply(
         post(&server, &format!("{path}/scope"), scope).await["records"],
         json!(covers)
     );
+    host.shutdown().await;
+}
+
+/// ARCH-0026 RD-26: the vault wakes the Dreamer once per turn by default. A
+/// turn landed through the DAG door is read by a Micro round with no session
+/// end to trigger it.
+#[tokio::test]
+async fn a_landed_turn_wakes_the_dreamer_on_the_vault_grain() {
+    let reply = Reply::Text {
+        text: json!({"candidates": []}).to_string(),
+        model: "test-model".to_owned(),
+    };
+    let fake = FakeLlm::start(vec![], Some(reply)).await;
+    let (_dir, server, actor, host) = setup_with_dreamer(&fake).await;
+    let conv = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+    let path = format!("/v1/core/conversations/{}", conv["id"].as_str().unwrap());
+    post(
+        &server,
+        &format!("{path}/records"),
+        json!({"advance": true, "body": {"txt": "my sister Hana moved to Osaka last spring"}, "actor": actor}),
+    )
+    .await;
+    assert!(
+        eventually(Duration::from_secs(30), || fake
+            .seen()
+            .iter()
+            .any(|seen| seen.body["messages"].to_string().contains("Osaka")))
+        .await,
+        "no Micro round read the turn; status {:?}",
+        server.ai.status().dreamer
+    );
+    host.shutdown().await;
+}
+
+/// No Dreamer writes summaries here, so a declaration is refused rather than
+/// queued for a writer that never comes.
+#[tokio::test]
+async fn a_summary_declaration_without_a_dreamer_is_refused() {
+    let (_dir, server, actor) = setup();
+    let conv = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+    let path = format!("/v1/core/conversations/{}", conv["id"].as_str().unwrap());
+    let root = post(
+        &server,
+        &format!("{path}/records"),
+        json!({"advance": true, "body": {"txt": "root"}, "actor": actor}),
+    )
+    .await;
+    let request = json!({"scope": {"path": {"branch_span": {"after": root["id"], "through": root["id"]}}}, "actor": actor});
+    let (status, body) = route_json(
+        server.clone(),
+        json_request("POST", &format!("{path}/summaries"), request),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body:?}");
+    assert_eq!(body["code"], "SUMMARY_WRITER_UNAVAILABLE");
 }
 
 #[tokio::test]
@@ -447,7 +579,12 @@ async fn records_thread_and_canonical_share_the_typed_dag() {
 
 #[tokio::test]
 async fn thread_meta_and_summary_routes_roundtrip() {
-    let (_dir, server, actor) = setup();
+    let reply = Reply::Text {
+        text: "thread summary".to_owned(),
+        model: "test-model".to_owned(),
+    };
+    let fake = FakeLlm::start(vec![], Some(reply)).await;
+    let (_dir, server, actor, host) = setup_with_dreamer(&fake).await;
     let conversation = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
     let path = format!(
         "/v1/core/conversations/{}",
@@ -489,27 +626,23 @@ async fn thread_meta_and_summary_routes_roundtrip() {
         get(&server, &thread_path).await["roots"],
         json!([reply["id"]])
     );
-    let summary = post(
+    declare(
         &server,
         &format!("{thread_path}/summary"),
-        json!({"text": "thread summary", "actor": actor}),
+        json!({"actor": actor}),
     )
     .await;
+    let (summary, header) = dreamt_summary(&server, &root["id"]).await;
+    assert_dreamer_body(&server, &summary, "thread summary");
     let covers = get(
         &server,
-        &format!(
-            "/v1/core/summaries/{}/covers",
-            summary["summary"].as_str().unwrap()
-        ),
+        &format!("/v1/core/summaries/{}/covers", summary.to_hex()),
     )
     .await;
     assert_eq!(covers["covers"], json!([reply["id"]]));
     let drill = get(
         &server,
-        &format!(
-            "/v1/core/claims/{}/drill",
-            summary["claim"].as_str().unwrap()
-        ),
+        &format!("/v1/core/claims/{}/drill", header.to_hex()),
     )
     .await;
     assert_eq!(drill["records"], covers["covers"]);
@@ -522,6 +655,7 @@ async fn thread_meta_and_summary_routes_roundtrip() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    host.shutdown().await;
 }
 
 #[tokio::test]
