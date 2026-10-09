@@ -63,21 +63,24 @@ impl Decision for SharedCoreference {
         let mut subjects = BTreeSet::new();
         for vault in vaults {
             let txn = vault.store.env.read_txn()?;
-            for (_, consent) in
-                vault.claims_with_predicate_in_txn(&txn, PREDICATE_COREFERENCE_SHARE_CONSENT)?
-            {
-                if let ClaimSubject::Edge {
-                    source,
-                    kind: EdgeKind::SameAs,
-                    target,
-                } = &consent.subject
-                    && people.contains(source)
-                    && people.contains(target)
-                    && let Ok(pact) = crate::claim::coreference_share_consent_pact_id(&consent)
-                {
-                    subjects.insert((*source.min(target), *source.max(target), pact));
-                }
-            }
+            vault.for_each_claim_with_predicate_in_txn(
+                &txn,
+                PREDICATE_COREFERENCE_SHARE_CONSENT,
+                |_, consent| {
+                    if let ClaimSubject::Edge {
+                        source,
+                        kind: EdgeKind::SameAs,
+                        target,
+                    } = &consent.subject
+                        && people.contains(source)
+                        && people.contains(target)
+                        && let Ok(pact) = crate::claim::coreference_share_consent_pact_id(&consent)
+                    {
+                        subjects.insert((*source.min(target), *source.max(target), pact));
+                    }
+                    Ok(())
+                },
+            )?;
         }
         Ok(subjects)
     }
@@ -122,11 +125,12 @@ impl Decision for DeliveryWindows {
         for vault in vaults {
             let txn = vault.store.env.read_txn()?;
             for predicate in DELIVERY_WINDOW_CLAIM_PREDICATES {
-                for (_, claim) in vault.claims_with_predicate_in_txn(&txn, predicate)? {
+                vault.for_each_claim_with_predicate_in_txn(&txn, predicate, |_, claim| {
                     if let ClaimSubject::Entity(subject) = claim.subject {
                         subjects.insert(subject);
                     }
-                }
+                    Ok(())
+                })?;
             }
         }
         Ok(subjects)
@@ -178,18 +182,21 @@ impl Decision for BookingPublications {
         let mut subjects = BTreeSet::new();
         for vault in vaults {
             let txn = vault.store.env.read_txn()?;
-            for (_, publication) in vault
-                .claims_with_predicate_in_txn(&txn, crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE)?
-            {
-                if let (ClaimSubject::Entity(page), Some(from), Some(to)) = (
-                    &publication.subject,
-                    publication.valid_from,
-                    publication.valid_to,
-                ) && from.max(now) < to
-                {
-                    subjects.insert((*page, from.max(now)));
-                }
-            }
+            vault.for_each_claim_with_predicate_in_txn(
+                &txn,
+                crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE,
+                |_, publication| {
+                    if let (ClaimSubject::Entity(page), Some(from), Some(to)) = (
+                        &publication.subject,
+                        publication.valid_from,
+                        publication.valid_to,
+                    ) && from.max(now) < to
+                    {
+                        subjects.insert((*page, from.max(now)));
+                    }
+                    Ok(())
+                },
+            )?;
         }
         for vault in vaults {
             let txn = vault.store.env.read_txn()?;
