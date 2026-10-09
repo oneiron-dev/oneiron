@@ -119,15 +119,16 @@ fn reference_carries_credential(bytes: &[u8], depth: usize) -> bool {
 /// Whether an id's bytes carry a credential under the release policy's own
 /// detector: its text scan, and its field rule (`sensitive_key`, with nil and
 /// placeholders exempt). Every reading is judged: the raw text, each value of a
-/// JSON or MessagePack stream (a reader may stop after the first value or read
-/// on), and inside those each string, binary, extension and numeric byte array
-/// read again as bytes, with every map key. Container shape alone is no
-/// credential, so a credential-free id survives the archive.
+/// JSON stream over that same lossy text or of a MessagePack stream (a reader
+/// may stop after the first value or read on), and inside those each string,
+/// binary, extension and numeric byte array read again as bytes, with every
+/// map key. Container shape alone is no credential, so a credential-free id
+/// survives the archive.
 fn id_carries_credential(bytes: &[u8], depth: usize) -> bool {
     if depth >= 128 || scan_file_content("", bytes).is_some() {
         return true;
     }
-    if serde_json::Deserializer::from_slice(bytes)
+    if serde_json::Deserializer::from_str(&String::from_utf8_lossy(bytes))
         .into_iter::<Json>()
         .map_while(Result::ok)
         .any(|value| json_names_credential(&value, depth + 1))

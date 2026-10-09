@@ -355,6 +355,8 @@ fn whole_vault_json_nulls_an_id_slot_whose_bytes_encode_a_credential() -> Result
         ]
         .concat(),
         br#"["p\u0077d=A"]xx"#.to_vec(),
+        // JSON read from the same lossy text as the raw scan.
+        [br#"{"p\u0077d":""#.as_slice(), &[0xff], br#""}"#].concat(),
     ];
     // A whole MessagePack reading of an edge subject stops after its source
     // id, and a JSON object reading keeps only the last of two equal keys.
