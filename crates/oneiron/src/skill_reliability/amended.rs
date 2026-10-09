@@ -97,11 +97,14 @@ impl RawValue for AmendedRow {
         if map_u64(&value, KEY_SCHEMA_VERSION) != Some(SKILL_RELIABILITY_SCHEMA_VERSION) {
             return Err(invalid("unsupported skill reliability amendment schema").into());
         }
-        let amendment = map_str(&value, KEY_AMENDMENT)
-            .ok_or(invalid("skill reliability amendment is missing its receipt"))?;
+        let amendment = map_str(&value, KEY_AMENDMENT).ok_or(invalid(
+            "skill reliability amendment is missing its receipt",
+        ))?;
         let share = map_f32(&value, KEY_SHARE)
             .filter(|share| (0.0..=1.0).contains(share))
-            .ok_or(invalid("skill reliability amendment share is not in [0, 1]"))?;
+            .ok_or(invalid(
+                "skill reliability amendment share is not in [0, 1]",
+            ))?;
         let at = map_u64(&value, KEY_AT)
             .ok_or(invalid("skill reliability amendment is missing its time"))?;
         Ok(Self {
@@ -152,17 +155,21 @@ pub(super) fn amended_shares_in_txn(
         .collect())
 }
 
-/// The amended attempts of `skill` across every arm.
-pub(super) fn amended_receipts_in_txn(
+/// The amended attempts of `skill` across every arm: attempt receipt → defect
+/// share. A callable's arms all carry the one amendment's share.
+pub(super) fn amended_receipt_shares_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
-) -> Result<BTreeSet<String>> {
-    let mut receipts = BTreeSet::new();
+) -> Result<BTreeMap<String, f32>> {
+    let mut receipts = BTreeMap::new();
     for prefix in outcome_skill_prefixes(skill) {
         for (outcome, row) in AMENDED.scan_from(&vault.store, rtxn, &prefix)? {
             if row.share > 0.0 {
-                receipts.insert(outcome.receipt().to_owned());
+                let held = receipts
+                    .entry(outcome.receipt().to_owned())
+                    .or_insert(0.0_f32);
+                *held = held.max(row.share);
             }
         }
     }

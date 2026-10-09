@@ -10,7 +10,7 @@ use crate::receipt::ReceiptRecord;
 use crate::side_table::{self, FixedSideKey, Raw, RawValue, SideKey, SideTable};
 use crate::skill::SkillRecord;
 
-use super::amended::{amended_receipts_in_txn, amended_shares_in_txn, is_amended};
+use super::amended::{amended_receipt_shares_in_txn, amended_shares_in_txn, is_amended};
 use super::codec::{
     KEY_AT, KEY_SCHEMA_VERSION, KEY_WIN, decode_value, encode_value, invalid, map_entry, map_u64,
 };
@@ -526,13 +526,12 @@ pub(crate) fn attributed_outcome_receipts(
         .collect())
 }
 
-/// Every attributed outcome for `skill`, in ledger order, WITH its result.
+/// Every attributed outcome for `skill`, in ledger order, WITH its result —
+/// the world label a gate scores against.
 ///
-/// The same uncapped basis [`attributed_outcome_receipts`] serves, plus the one
-/// bit a partitioned aggregate needs: a consumer that may only look at one side
-/// of ONE-1449's split cannot use the projected `skill.reliability` posterior —
-/// that posterior is a fold over BOTH sides — so it has to fold its own side
-/// itself, from here.
+/// The same uncapped basis [`attributed_outcome_receipts`] serves. An amended
+/// attempt's label is a loss; a posterior fold must not read that as a whole
+/// one, and takes [`attributed_outcomes_weighted`] instead.
 ///
 /// # Errors
 ///
@@ -543,15 +542,57 @@ pub(crate) fn attributed_outcome_results(
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
 ) -> Result<Vec<(String, bool)>> {
-    // An amended attempt is one record, a loss, whatever the attempt lane recorded for it.
-    let amended = amended_receipts_in_txn(vault, rtxn, skill)?;
+    Ok(attributed_outcomes_weighted(vault, rtxn, skill)?
+        .into_iter()
+        .map(|(receipt, outcome)| (receipt, outcome.win))
+        .collect())
+}
+
+/// One attributed outcome as a fold reads it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct AttributedOutcome {
+    /// Whether the attempt won.
+    pub(crate) win: bool,
+    /// The weight its loss adds to β: one for a routed defect, the
+    /// `skill_defect` share for an amended attempt (ARCH-0056 §5), none for a
+    /// win.
+    pub(crate) loss: f32,
+}
+
+impl AttributedOutcome {
+    const fn whole(win: bool) -> Self {
+        Self {
+            win,
+            loss: if win { 0.0 } else { 1.0 },
+        }
+    }
+}
+
+/// Every attributed outcome for `skill`, in ledger order, with the weight its
+/// loss carries: what a partitioned aggregate needs. A consumer that may only
+/// look at one side of ONE-1449's split cannot use the projected
+/// `skill.reliability` posterior — that posterior is a fold over BOTH sides —
+/// so it has to fold its own side itself, from here, and fold it the way the
+/// projection does.
+///
+/// # Errors
+///
+/// As [`attributed_outcome_results`].
+pub(crate) fn attributed_outcomes_weighted(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<Vec<(String, AttributedOutcome)>> {
+    // An amended attempt is one record, a loss of its share, whatever the
+    // attempt lane recorded for it.
+    let amended = amended_receipt_shares_in_txn(vault, rtxn, skill)?;
     let mut outcomes = Vec::new();
     for (key, row) in OUTCOME.scan_from(&vault.store, rtxn, skill.as_bytes())? {
         let outcome = OutcomeRef::Unknown(key);
-        if amended.contains(outcome.receipt()) || is_displaced(vault, rtxn, &outcome)? {
+        if amended.contains_key(outcome.receipt()) || is_displaced(vault, rtxn, &outcome)? {
             continue;
         }
-        outcomes.push((outcome.into_receipt(), row.win));
+        outcomes.push((outcome.into_receipt(), AttributedOutcome::whole(row.win)));
     }
     // Optimization's split is over receipts, across all executors. Pair
     // measurements remain separate; this read only supplies the evidence basis.
@@ -560,18 +601,25 @@ pub(crate) fn attributed_outcome_results(
             return Err(Error::CorruptedIndex("skill reliability pair key"));
         }
         let outcome = OutcomeRef::Paired(key);
-        if amended.contains(outcome.receipt()) || is_displaced(vault, rtxn, &outcome)? {
+        if amended.contains_key(outcome.receipt()) || is_displaced(vault, rtxn, &outcome)? {
             continue;
         }
-        outcomes.push((outcome.into_receipt(), row.win));
+        outcomes.push((outcome.into_receipt(), AttributedOutcome::whole(row.win)));
     }
-    outcomes.extend(amended.into_iter().map(|receipt| (receipt, false)));
+    for (receipt, share) in amended {
+        let outcome = AttributedOutcome {
+            win: false,
+            loss: share,
+        };
+        outcomes.push((receipt, outcome));
+    }
     outcomes.sort_by(|a, b| a.0.cmp(&b.0));
     // One receipt is one outcome for the split, even when several executors
     // invoked a callable under it; a loss outranks a win, as in the ledger.
     outcomes.dedup_by(|next, kept| {
         next.0 == kept.0 && {
-            kept.1 &= next.1;
+            kept.1.win &= next.1.win;
+            kept.1.loss = kept.1.loss.max(next.1.loss);
             true
         }
     });

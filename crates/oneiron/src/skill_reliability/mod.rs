@@ -70,7 +70,8 @@ pub use self::ledger::{
     record_skill_contributing_win,
 };
 pub(crate) use self::ledger::{
-    attributed_outcome_receipts, attributed_outcome_results, mark_displaced_outcome_in_txn,
+    attributed_outcome_receipts, attributed_outcome_results, attributed_outcomes_weighted,
+    mark_displaced_outcome_in_txn,
 };
 pub use self::posterior::{
     ProvenanceTrustClass, SKILL_RELIABILITY_SCHEMA_VERSION, SkillReliabilityPosterior,

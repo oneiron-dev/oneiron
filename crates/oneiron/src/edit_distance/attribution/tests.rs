@@ -529,10 +529,15 @@ const MODEL: &str = "fixture/model@1";
 
 /// A terminal attempt by `actor` whose pack loaded `skill_id`@1.0.0, returning
 /// its stamped pack receipt — the receipt an amendment joins to.
-fn terminal_attempt(vault: &Vault, actor: EntityId, skill_id: &str, failed: bool) -> Result<String> {
+fn terminal_attempt(
+    vault: &Vault,
+    actor: EntityId,
+    skill_id: &str,
+    failed: bool,
+) -> Result<String> {
     use crate::attempt_queue::{
-        AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt,
-        EnqueueOutcome, FailAttempt, ManifestEntry, ManifestKind,
+        AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt, EnqueueOutcome,
+        FailAttempt, ManifestEntry, ManifestKind,
     };
     let queue = AttemptQueue::new(vault);
     let EnqueueOutcome::Enqueued(row) = queue.enqueue(EnqueueAttempt {
@@ -716,7 +721,10 @@ fn a_withdrawn_or_rejoined_amendment_leaves_no_stale_loss() -> Result<()> {
     record_amendment_evidence(&vault, &defect(&first))?;
     judge_amendment(&vault, receipt)?.expect("a followed, covered step is the skill's defect");
     assert_eq!(project_amendment_reliability(&vault)?, vec![skill]);
-    assert_eq!(arm_posterior(&vault, &skill)?, (prior.alpha, prior.beta + 1.0));
+    assert_eq!(
+        arm_posterior(&vault, &skill)?,
+        (prior.alpha, prior.beta + 1.0)
+    );
 
     record_amendment_evidence(&vault, &defect(&second))?;
     assert!(
@@ -789,7 +797,12 @@ fn a_discovery_share_mints_one_edit_proposal_shaped_like_the_attempt_lanes() -> 
     assert_eq!(attempt_lane.len(), 1);
 
     let receipt = "receipt:discovery";
-    measure_amendment(&vault, receipt, "Send the deck.", "Send the deck and the notes.")?;
+    measure_amendment(
+        &vault,
+        receipt,
+        "Send the deck.",
+        "Send the deck and the notes.",
+    )?;
     let discovered = AmendmentEvidence::new(receipt, actor, "outbound")
         .at(70)
         .with_skill(skill)
@@ -828,7 +841,10 @@ fn a_discovery_share_mints_one_edit_proposal_shaped_like_the_attempt_lanes() -> 
 
     record_amendment_evidence(&vault, &discovered.with_routing_facts(true, true))?;
     judge_amendment(&vault, receipt)?.expect("now the skill's defect");
-    assert!(minted(&vault)?.is_empty(), "the proposal leaves with its discovery");
+    assert!(
+        minted(&vault)?.is_empty(),
+        "the proposal leaves with its discovery"
+    );
     assert_eq!(pending_edit_proposals(&vault)?, attempt_lane);
     Ok(())
 }
@@ -881,7 +897,10 @@ fn an_execution_lapse_adds_one_actor_lesson_citing_its_amendment() -> Result<()>
     record_amendment_evidence(&vault, &lapse(second, 80))?;
     let again = judge_amendment(&vault, second)?.expect("a second lapse");
     project_amendment_lessons(&vault, &[again])?;
-    assert_eq!(active_rows(&vault, &actor, PREDICATE_ACTOR_LESSON)?.len(), 2);
+    assert_eq!(
+        active_rows(&vault, &actor, PREDICATE_ACTOR_LESSON)?.len(),
+        2
+    );
 
     record_amendment_evidence(
         &vault,

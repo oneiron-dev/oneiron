@@ -231,6 +231,15 @@ pub fn judge_amendment_hunks(
         at: evidence.at,
     };
 
+    // The join this judgment is made with rides its row, so a later correction
+    // of the evidence moves nothing until the amendment is judged again.
+    let attempt = match (&evidence.attempt_receipt, evidence.skill) {
+        (Some(receipt), Some(skill)) => Some(StoredAttempt {
+            receipt: receipt.clone(),
+            skill: skill.to_hex(),
+        }),
+        _ => None,
+    };
     let row = StoredJudgment {
         v: ROW_VERSION,
         class: None,
@@ -249,14 +258,7 @@ pub fn judge_amendment_hunks(
         d_norm: judgment.d_norm,
         at: judgment.at,
         proposal: None,
-        attempt: evidence
-            .attempt_receipt
-            .clone()
-            .zip(evidence.skill)
-            .map(|(receipt, skill)| StoredAttempt {
-                receipt,
-                skill: skill.to_hex(),
-            }),
+        attempt,
     };
     let preference_share = judgment.share_of(AmendmentClass::PreferenceShift);
     let preference_row = (preference_share > 0.0).then(|| StoredPreference {

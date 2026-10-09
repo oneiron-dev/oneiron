@@ -325,7 +325,12 @@ fn record_target_in_txn(
         subject: subject.to_hex(),
         scope: scope.to_owned(),
     };
-    TARGET.put(&vault.store, wtxn, &target_key(predicate, subject, scope), &row)?;
+    TARGET.put(
+        &vault.store,
+        wtxn,
+        &target_key(predicate, subject, scope),
+        &row,
+    )?;
     Ok(())
 }
 
@@ -336,8 +341,8 @@ fn recorded_targets_in_txn(
 ) -> Result<Vec<(&'static str, EntityId, String)>> {
     let mut out = Vec::new();
     for (_, row) in TARGET.scan(&vault.store, txn)? {
-        let predicate =
-            known_target_predicate(&row.predicate).ok_or(Error::CorruptedIndex(TARGET_ROW_LABEL))?;
+        let predicate = known_target_predicate(&row.predicate)
+            .ok_or(Error::CorruptedIndex(TARGET_ROW_LABEL))?;
         out.push((
             predicate,
             hex_entity(&row.subject, TARGET_ROW_LABEL)?,
@@ -392,7 +397,7 @@ fn unsupported_targets_in_txn(
                 .iter()
                 .any(|row| row.receipt_id == *scope && lapse_actor(row) == Some(*subject))
         } else {
-            aggregate_for(&persisted, *predicate, *subject, scope).is_none()
+            aggregate_for(&persisted, predicate, *subject, scope).is_none()
         }
     });
     Ok(unsupported)

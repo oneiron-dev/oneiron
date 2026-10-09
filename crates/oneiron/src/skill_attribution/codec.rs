@@ -166,7 +166,12 @@ pub(super) fn validate_evidence(vault: &Vault, evidence: &OutcomeEvidence) -> Re
             ));
         }
     }
-    ground_attempt_receipt(vault, &evidence.receipt_ref, &evidence.actor, evidence.skill)
+    ground_attempt_receipt(
+        vault,
+        &evidence.receipt_ref,
+        &evidence.actor,
+        evidence.skill,
+    )
 }
 
 /// Grounds one attempt citation: `receipt_ref` is a stamped terminal pack

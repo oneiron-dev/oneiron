@@ -127,8 +127,8 @@ pub(super) fn callable_invokers_in_txn(
         if map_str(&witness, "version") != Some(record.version.as_str()) {
             continue;
         }
-        let executor = map_str(&witness, "executor")
-            .ok_or(invalid("callable invocation lacks executor"))?;
+        let executor =
+            map_str(&witness, "executor").ok_or(invalid("callable invocation lacks executor"))?;
         let success = map_entry(&witness, "success")
             .and_then(Value::as_bool)
             .ok_or(invalid("callable invocation lacks result state"))?;
