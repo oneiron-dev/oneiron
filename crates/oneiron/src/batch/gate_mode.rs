@@ -19,6 +19,13 @@ pub(crate) struct ApplyOpsGateMode {
     /// The caller's active mask: the FACET every NOTE and ASSET born in this
     /// batch is stamped with. `None` stamps the vault default.
     pub(super) birth_mask: Option<EntityId>,
+    /// BM25 analyses of this batch's text ops, done before the write
+    /// transaction opened; consumed per id in op order.
+    pub(super) pre_analyzed_text: HashMap<EntityId, VecDeque<Option<crate::bm25::AnalyzedText>>>,
+    /// HNSW insert plans of this batch's vector ops, searched under a read
+    /// snapshot before the write transaction opened; consumed per id in op
+    /// order.
+    pub(super) nsw_plans: HashMap<EntityId, VecDeque<crate::hnsw::InsertPlan>>,
 }
 
 impl ApplyOpsGateMode {
@@ -34,6 +41,8 @@ impl ApplyOpsGateMode {
             claim_transitions: VecDeque::new(),
             preflight_gate_decision_ids: HashMap::new(),
             birth_mask: None,
+            pre_analyzed_text: HashMap::new(),
+            nsw_plans: HashMap::new(),
         }
     }
 
@@ -47,6 +56,16 @@ impl ApplyOpsGateMode {
 
     pub(super) fn with_birth_mask(mut self, mask: Option<EntityId>) -> Self {
         self.birth_mask = mask;
+        self
+    }
+
+    /// Hands the apply the work a committing batch did before its write
+    /// transaction opened (RESEARCH-1115 Bend 2): BM25 analyses and HNSW
+    /// neighbour searches. Each is checked against the transaction's own state
+    /// before use, so a stale one falls back to the in-transaction path.
+    pub(super) fn with_prepared(mut self, prepared: super::PreparedIndexWork) -> Self {
+        self.pre_analyzed_text = prepared.text;
+        self.nsw_plans = prepared.vectors;
         self
     }
 

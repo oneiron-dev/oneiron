@@ -127,17 +127,15 @@ impl<'a> AttemptQueue<'a> {
             }
         }
 
-        let mut wtxn = self.store.env.write_txn()?;
-        let outcome = match task_ref {
-            None => crate::ports::JobQueue::port_job_enqueue(self, &mut wtxn, input)?,
+        let outcome = self.store.write_in_group(|wtxn| match task_ref {
+            None => crate::ports::JobQueue::port_job_enqueue(self, wtxn, input),
             Some(task_ref) => self.enqueue_with_task_ref_and_dedupe_actor_in_txn(
-                &mut wtxn,
+                wtxn,
                 input,
                 Some(task_ref),
                 actor_ref,
-            )?,
-        };
-        wtxn.commit()?;
+            ),
+        })?;
         self.store.notify_attempt_observers();
 
         Ok(outcome)
@@ -677,9 +675,9 @@ impl<'a> AttemptQueue<'a> {
     ) -> Result<ClaimOutcome> {
         validate_lease_owner(&input.lease_owner)?;
 
-        let mut wtxn = self.store.env.write_txn()?;
-        let outcome = crate::ports::JobQueue::port_job_claim(self, &mut wtxn, kind_filter, input)?;
-        wtxn.commit()?;
+        let outcome = self.store.write_in_group(|wtxn| {
+            crate::ports::JobQueue::port_job_claim(self, wtxn, kind_filter, input)
+        })?;
         // An empty claim changes no attempt record. Broadcasting it makes a
         // notification-driven worker observe its own miss forever (ONE-2100).
         if matches!(outcome, ClaimOutcome::Claimed(_)) {

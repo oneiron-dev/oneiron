@@ -162,6 +162,7 @@ impl Store {
             machine_write_signers: Mutex::new(std::collections::HashMap::new()),
             l2_base_cache: Mutex::new(crate::context_pack::L2BaseCache::default()),
             clock,
+            group_commit: crate::store::GroupCommit::default(),
             diagnostics: Diagnostics::default(),
             proactivity_updates: tokio::sync::watch::channel(0).0,
             proactivity_suspended: Mutex::new(None),

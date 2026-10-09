@@ -1,6 +1,6 @@
 //! Insert, localized refresh, and backlink attachment.
 
-use heed::RwTxn;
+use heed::{RoTxn, RwTxn};
 
 use crate::config::VaultConfig;
 use crate::entity_id::{EntityId, parse_entity_id};
@@ -24,7 +24,7 @@ use super::search::{beam_search, score_dims_for};
 use super::slim_drop::hnsw_is_dropped;
 use super::storage::{
     decode_neighbors, load_neighbors, load_vector, prune_neighbors_for_node, read_count,
-    read_entry_point, write_neighbors,
+    read_entry_point, read_vector_version, write_neighbors,
 };
 use super::types::{BeamOptions, InsertOutcome};
 
@@ -54,7 +54,7 @@ pub(super) fn hnsw_insert_probed(
     vector: &[f32],
     ops: &mut u64,
 ) -> Result<()> {
-    match hnsw_insert_inner(store, config, wtxn, id, vector, ops)? {
+    match hnsw_insert_inner(store, config, wtxn, (id, vector, None), ops)? {
         InsertOutcome::Applied => Ok(()),
         InsertOutcome::NeedsLegacyRebuild => {
             rebuild_hnsw_from_current_snapshot(store, config, wtxn)
@@ -75,10 +75,25 @@ pub(crate) fn hnsw_insert_batched(
     vector: &[f32],
     pending_rebuild: &mut bool,
 ) -> Result<()> {
+    hnsw_insert_planned(store, config, wtxn, (id, vector), pending_rebuild, None)
+}
+
+/// [`hnsw_insert_batched`] that may take a neighbour search done before the
+/// write transaction opened. The plan is used only when it still describes
+/// this transaction's graph (see [`InsertPlan`]); otherwise the insert searches
+/// here as before.
+pub(crate) fn hnsw_insert_planned(
+    store: &impl ManifestDbs,
+    config: &VaultConfig,
+    wtxn: &mut RwTxn<'_>,
+    (id, vector): (&EntityId, &[f32]),
+    pending_rebuild: &mut bool,
+    plan: Option<&InsertPlan>,
+) -> Result<()> {
     if *pending_rebuild {
         return Ok(());
     }
-    match hnsw_insert_inner(store, config, wtxn, id, vector, &mut 0)? {
+    match hnsw_insert_inner(store, config, wtxn, (id, vector, plan), &mut 0)? {
         InsertOutcome::Applied => Ok(()),
         InsertOutcome::NeedsLegacyRebuild => {
             *pending_rebuild = true;
@@ -101,12 +116,139 @@ pub(crate) fn run_pending_legacy_rebuild(
     Ok(())
 }
 
+/// A fresh node's neighbour search, run under a read snapshot before the
+/// write transaction opens (RESEARCH-1115 Bend 2), so the writer only writes
+/// edges. It stands only while the transaction's graph is the graph it
+/// searched: same node count, entry point and vector version, no earlier graph
+/// write in the batch, and every chosen neighbour still present.
+pub(crate) struct InsertPlan {
+    vector_version: u64,
+    count: u64,
+    entry_point: EntityId,
+    vector: Vec<f32>,
+    selected: Vec<EntityId>,
+}
+
+impl std::fmt::Debug for InsertPlan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InsertPlan")
+            .field("count", &self.count)
+            .field("selected", &self.selected.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl InsertPlan {
+    /// Searches the committed graph for `id`'s neighbours. `None` when the
+    /// insert is not a fresh one into a live, non-empty graph, or when the
+    /// search fails: the transaction's own search then decides.
+    pub(crate) fn search(
+        store: &impl ManifestDbs,
+        config: &VaultConfig,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        vector: &[f32],
+    ) -> Option<Self> {
+        Self::try_search(store, config, rtxn, id, vector)
+            .ok()
+            .flatten()
+    }
+
+    fn try_search(
+        store: &impl ManifestDbs,
+        config: &VaultConfig,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        vector: &[f32],
+    ) -> Result<Option<Self>> {
+        if hnsw_is_dropped(store, rtxn)?
+            || store.hnsw_neighbors().get(rtxn, id.as_bytes())?.is_some()
+        {
+            return Ok(None);
+        }
+        let count = read_count(store, rtxn)?;
+        let Some(entry_point) = read_entry_point(store, rtxn)? else {
+            return Ok(None);
+        };
+        if count == 0 {
+            return Ok(None);
+        }
+        let selected = nearest_neighbors(store, config, rtxn, id, vector, entry_point, &mut 0)?;
+        Ok(Some(Self {
+            vector_version: read_vector_version(store, rtxn)?,
+            count,
+            entry_point,
+            vector: vector.to_vec(),
+            selected,
+        }))
+    }
+
+    fn stands(
+        &self,
+        store: &impl ManifestDbs,
+        txn: &RoTxn<'_>,
+        (vector, count, entry_point): (&[f32], u64, EntityId),
+    ) -> Result<bool> {
+        if self.count != count
+            || self.entry_point != entry_point
+            || self.vector.len() != vector.len()
+            || self
+                .vector
+                .iter()
+                .zip(vector)
+                .any(|(planned, now)| planned.to_bits() != now.to_bits())
+            || read_vector_version(store, txn)? != self.vector_version
+        {
+            return Ok(false);
+        }
+        for neighbor in &self.selected {
+            if store
+                .hnsw_neighbors()
+                .get(txn, neighbor.as_bytes())?
+                .is_none()
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+}
+
+/// The `m_max_0` nearest live nodes to `vector`, found by the
+/// `ef_construction` beam from `entry_point`.
+fn nearest_neighbors(
+    store: &impl ManifestDbs,
+    config: &VaultConfig,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    vector: &[f32],
+    entry_point: EntityId,
+    ops: &mut u64,
+) -> Result<Vec<EntityId>> {
+    let mut nearest = beam_search(
+        store,
+        txn,
+        vector,
+        entry_point,
+        BeamOptions {
+            ef: config.hnsw.ef_construction,
+            lenient_neighbors: false,
+            check_existence: false,
+            score_dims: score_dims_for(config),
+        },
+        config.dimensions,
+        ops,
+    )?;
+    nearest.retain(|entry| entry.id != *id);
+    nearest.truncate(config.hnsw.m_max_0);
+    Ok(nearest.into_iter().map(|entry| entry.id).collect())
+}
+
 fn hnsw_insert_inner(
     store: &impl ManifestDbs,
     config: &VaultConfig,
     wtxn: &mut RwTxn<'_>,
-    id: &EntityId,
-    vector: &[f32],
+    (id, vector, plan): (&EntityId, &[f32], Option<&InsertPlan>),
     ops: &mut u64,
 ) -> Result<InsertOutcome> {
     let discipline = read_link_discipline(store, &*wtxn)?;
@@ -165,25 +307,12 @@ fn hnsw_insert_inner(
 
     let entry_point =
         read_entry_point(store, &*wtxn)?.ok_or(Error::CorruptedIndex(ERR_ENTRY_POINT_MISSING))?;
-    let mut nearest = beam_search(
-        store,
-        &*wtxn,
-        vector,
-        entry_point,
-        BeamOptions {
-            ef: config.hnsw.ef_construction,
-            lenient_neighbors: false,
-            check_existence: false,
-            score_dims: score_dims_for(config),
-        },
-        config.dimensions,
-        ops,
-    )?;
-
-    nearest.retain(|entry| entry.id != *id);
-    nearest.truncate(config.hnsw.m_max_0);
-
-    let selected: Vec<EntityId> = nearest.into_iter().map(|entry| entry.id).collect();
+    let selected = match plan {
+        Some(plan) if plan.stands(store, &*wtxn, (vector, count, entry_point))? => {
+            plan.selected.clone()
+        }
+        _ => nearest_neighbors(store, config, &*wtxn, id, vector, entry_point, ops)?,
+    };
     write_neighbors(store, wtxn, id, &selected)?;
     *ops += 1;
 

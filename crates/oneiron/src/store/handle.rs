@@ -151,6 +151,9 @@ pub struct StoreCore {
     /// persisted, inferred from transport credentials, or shared across vaults.
     pub(crate) machine_write_signers: Mutex<HashMap<EntityId, ([u8; 32], MachineWriteSigner)>>,
     pub(crate) clock: crate::ports::StoreClock,
+    /// The single writer's group commit (ARCH-0019, OF-536): concurrent
+    /// logical writes share one write transaction and one fsync.
+    pub(crate) group_commit: GroupCommit,
     /// This vault's content-free diagnostic counters. Per-vault, not
     /// per-process: see [`Diagnostics`] for why the three families moved here.
     pub(crate) diagnostics: Diagnostics,
