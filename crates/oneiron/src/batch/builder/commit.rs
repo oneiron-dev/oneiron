@@ -1,5 +1,5 @@
-//! Committing terminal: builder-time checks, its own transaction, preflight,
-//! apply, commit, VAD postcommit.
+//! Committing terminal: builder-time checks, index preparation, its share of
+//! the group commit, preflight, apply, commit, VAD postcommit.
 
 use super::super::*;
 use super::preflight::preflight_gate_decisions_in_txn;
@@ -16,6 +16,11 @@ use crate::llm::BoundedAutoChecker;
 
 impl BatchBuilder<'_> {
     /// Commits all queued operations atomically in a single LMDB write transaction.
+    ///
+    /// The transaction is this batch's share of the vault's group commit
+    /// (OF-536): concurrent writes commit together with one fsync, and this
+    /// returns once the shared commit is durable. BM25 analysis and the first
+    /// fresh vector's HNSW neighbour search run before the transaction opens.
     ///
     /// Gate decisions for local claim writes are appended by the same
     /// transaction, so a later validation failure cannot leave an orphan
