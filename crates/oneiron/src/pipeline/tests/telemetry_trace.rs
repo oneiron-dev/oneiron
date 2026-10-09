@@ -360,6 +360,67 @@ fn a_compressed_space_counts_a_paraphrase_under_its_own_floors() -> Result<()> {
     Ok(())
 }
 
+/// Sol 9B #7: a run's replay identity holds every input that changes its
+/// result. The embedding space's evidence floors decide whether RET-01
+/// withholds a run, and a folding run returns a matched MESSAGE as its TURN.
+/// Bug repro: neither was in the fork hash, and the floors were not in the
+/// replay inputs, so two runs that differ in what they return shared one key.
+#[test]
+fn the_evidence_floors_and_the_turn_fold_key_the_replay() -> Result<()> {
+    let query = [1.0_f32, 0.0, 0.0, 0.0];
+    let (_dir, mut vault) = open_test_vault();
+    put_text_and_vector(
+        &vault,
+        entity_id(0x3E),
+        "the mechanic says the automobile needs new brakes",
+        [0.29, (1.0_f32 - 0.29 * 0.29).sqrt(), 0.0, 0.0],
+    )?;
+    let space = crate::config::VectorEvidenceFloors {
+        floor: 0.15,
+        strong: 0.25,
+    };
+
+    let mut keys = Vec::new();
+    for floors in [crate::config::VectorEvidenceFloors::default(), space] {
+        vault.config.vector_evidence = floors;
+        let (run_id, trace) = captured_retrieval_run_trace(
+            &vault,
+            vault
+                .query()
+                .search_text("who fixes my car", 10)
+                .search_vector(&query, 10)
+                .limit(10),
+        )?;
+        let config = vault
+            .retrieval_run(run_id)?
+            .and_then(|run| run.replay_inputs)
+            .expect("replay inputs")
+            .config;
+        for (name, value) in [("floor", floors.floor), ("strong", floors.strong)] {
+            assert_eq!(
+                config["vector_evidence"][name].as_f64().map(|v| v as f32),
+                Some(value),
+                "{floors:?}: {config}"
+            );
+        }
+        keys.push(trace.fork_hash);
+    }
+    let (_, folded) = captured_retrieval_run_trace(
+        &vault,
+        vault
+            .query()
+            .search_text("who fixes my car", 10)
+            .search_vector(&query, 10)
+            .limit(10)
+            .fold_messages_into_turns(crate::pipeline::TurnFold::Fold),
+    )?;
+    keys.push(folded.fork_hash);
+
+    assert_ne!(keys[0], keys[1], "the floors key the replay");
+    assert_ne!(keys[1], keys[2], "the turn fold keys the replay");
+    Ok(())
+}
+
 #[test]
 fn poor_score_gap_abstains() -> Result<()> {
     let (_dir, vault) = open_test_vault();
