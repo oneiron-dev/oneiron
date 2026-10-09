@@ -8,11 +8,9 @@
 //! surfaces), and NEVER weakens an assert. Count-asserts throughout —
 //! never `any()`.
 //!
-//! Seam classes used here, thinnest-first:
-//! * real shipped surfaces whose current behavior is measurably wrong;
-//! * local ARMING-SEAM stubs where the surface does not exist at all
-//!   (intent ledger) — they compile, and panic red the moment the test is
-//!   armed, so the contract can never silently rot.
+//! The one oracle left here, ONE-1691's intent ledger (`r1691_ledger`), is
+//! armed: its ARMING-SEAM helper drives the real `execute_outbound_effect`
+//! through a recording transport.
 //!
 //! Armed-ticket-owned axes (no contract-level oracle is expressible today;
 //! proving each is the ARMING ticket's job, not a stub test's):
