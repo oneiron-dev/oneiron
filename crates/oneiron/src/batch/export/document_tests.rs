@@ -299,6 +299,34 @@ fn a_claim_about_an_entity_whose_id_reads_as_messagepack_reimports() -> Result<(
     Ok(())
 }
 
+/// Astra R5-1: any claim value may carry sixteen bytes under the name an
+/// actor reference uses. Bytes that decode to a password field never leave
+/// in the export, though an id's bytes that merely decode do.
+#[test]
+fn reference_bytes_that_decode_to_a_password_are_not_exported() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    let person = crate::EntityId::now();
+    vault.put_entity(&person, ENTITY_TYPE_PERSON, range(), 789, b"person")?;
+    // {"password": "q7M2x"}, one whole MessagePack map.
+    let hidden = b"\x81\xa8password\xa5q7M2x".to_vec();
+    let body = ClaimBody::new(
+        "profile.payload",
+        ClaimSubject::Entity(person),
+        Value::Map(vec![(
+            Value::from("actor_entity_ref"),
+            Value::Binary(hidden.clone()),
+        )]),
+        0.5,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )?;
+    vault.put_claim(&crate::EntityId::now(), &body, range(), 789)?;
+    let export = vault.export_whole_vault(PackFormat::Json)?;
+    let text = std::str::from_utf8(export.bytes()).expect("JSON export");
+    assert!(!text.contains(&format!("{hidden:?}").replace(' ', "")));
+    Ok(())
+}
+
 #[test]
 fn whole_vault_import_rejects_manifest_drift_false_proof_and_forged_binary() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());

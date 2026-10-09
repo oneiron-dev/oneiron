@@ -1,5 +1,6 @@
 //! Unconditional credential removal before any context/export format writer.
-use crate::batch::secret_scan::scan_file_content;
+use crate::batch::secret_scan::{sanitize_messagepack_credentials, scan_file_content};
+use rmpv::Value as Mp;
 use serde_json::{Map, Value};
 
 pub(super) fn credential_key(key: &str) -> bool {
@@ -41,9 +42,10 @@ pub(crate) fn null_credentials(key: &str, value: &Value) -> Value {
 }
 
 /// The whole-vault document's second pass. Its typed tree writes an entity
-/// reference only where the body codec proved an id, so those bytes are an id,
-/// not a byte container: only the credential scan applies. A hit nulls the
-/// whole reference, never just its bytes, which no importer could decode.
+/// reference where the body codec reads an id, and any id's bytes may also
+/// decode as JSON or MessagePack, so a reference is nulled for a credential
+/// in what they decode to, not for decoding (`reference_carries_credentials`).
+/// It is nulled whole, never just its bytes, which no importer could decode.
 pub(crate) fn null_document_credentials(value: &Value) -> Value {
     null_at_depth("", value, 0, true)
 }
@@ -63,7 +65,7 @@ fn null_at_depth(key: &str, value: &Value, depth: usize, typed: bool) -> Value {
         ),
         Value::Object(fields) => {
             if typed && let Some(id) = entity_reference_bytes(fields) {
-                return if scan_file_content("", &id).is_some() {
+                return if reference_carries_credentials(&id, depth) {
                     Value::Null
                 } else {
                     value.clone()
@@ -98,6 +100,51 @@ fn entity_reference_bytes(fields: &Map<String, Value>) -> Option<Vec<u8>> {
         .iter()
         .map(|value| value.as_u64().and_then(|v| u8::try_from(v).ok()))
         .collect()
+}
+
+/// Whether a reference's bytes carry a credential: in their text, or in what
+/// they decode to as JSON or as one whole MessagePack value.
+fn reference_carries_credentials(bytes: &[u8], depth: usize) -> bool {
+    if depth >= 128 || scan_file_content("", bytes).is_some() {
+        return true;
+    }
+    if let Ok(value @ (Value::Object(_) | Value::Array(_))) = serde_json::from_slice(bytes)
+        && null_at_depth("", &value, depth + 1, false) != value
+    {
+        return true;
+    }
+    let mut cursor = std::io::Cursor::new(bytes);
+    let Ok(value) = rmpv::decode::read_value(&mut cursor) else {
+        return false;
+    };
+    cursor.position() == bytes.len() as u64 && messagepack_carries_credentials(&value, depth + 1)
+}
+
+/// What the MessagePack sanitizer finds, a field named as a credential, or a
+/// credential in any byte string inside, read as a reference's bytes are.
+fn messagepack_carries_credentials(value: &Mp, depth: usize) -> bool {
+    if depth >= 128 || sanitize_messagepack_credentials(&mut value.clone(), true) {
+        return true;
+    }
+    match value {
+        Mp::Binary(bytes) | Mp::Ext(_, bytes) => reference_carries_credentials(bytes, depth + 1),
+        Mp::Array(values) => {
+            values
+                .iter()
+                .map(|value| value.as_u64().and_then(|v| u8::try_from(v).ok()))
+                .collect::<Option<Vec<u8>>>()
+                .is_some_and(|bytes| reference_carries_credentials(&bytes, depth + 1))
+                || values
+                    .iter()
+                    .any(|value| messagepack_carries_credentials(value, depth + 1))
+        }
+        Mp::Map(entries) => entries.iter().any(|(key, value)| {
+            key.as_str().is_some_and(credential_key)
+                || messagepack_carries_credentials(key, depth + 1)
+                || messagepack_carries_credentials(value, depth + 1)
+        }),
+        _ => false,
+    }
 }
 
 // JSON byte arrays must be inspected as bytes, not as harmless decimal digits.
