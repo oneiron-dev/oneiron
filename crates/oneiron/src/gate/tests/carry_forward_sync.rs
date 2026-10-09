@@ -62,14 +62,18 @@ fn source_heads() -> Result<SourceHeads> {
         },
         10,
     )?;
-    vault.apply_claim_demotion(
-        &weakened,
-        crate::claim::ClaimDemotionAction::Weaken {
-            new_confidence: 0.8,
-        },
-        11,
-    )?;
-    let final_heads = [approved, rejected, weakened]
+    // A weakening supersedes: the old head closes and a successor carries
+    // the lower confidence, so both rows are part of the final state.
+    let successor = vault
+        .apply_claim_demotion(
+            &weakened,
+            crate::claim::ClaimDemotionAction::Weaken {
+                new_confidence: 0.8,
+            },
+            11,
+        )?
+        .claim;
+    let final_heads = [approved, rejected, weakened, successor]
         .into_iter()
         .map(|id| Ok((id, vault.get_raw(&id)?.expect("source current head"))))
         .collect::<Result<Vec<_>>>()?;
@@ -110,7 +114,14 @@ fn fresh_peer_and_forward_rematerialization_accept_final_care_heads() -> Result<
         ClaimApprovalStatus::Rejected
     );
     assert_eq!(
-        source.get_claim(&heads[2].0)?.expect("weakened").confidence,
+        source.get_claim(&heads[2].0)?.expect("weakened").lifecycle,
+        crate::ClaimLifecycleStatus::Superseded
+    );
+    assert_eq!(
+        source
+            .get_claim(&heads[3].0)?
+            .expect("successor")
+            .confidence,
         0.8
     );
     let key = WindowKey::new("1970-01");
@@ -154,8 +165,11 @@ fn incremental_peer_can_skip_intermediate_demotion_states() -> Result<()> {
         peer.get_claim(&id)?.expect("initial").confidence,
         CARE_CONFIDENCE_FLOOR
     );
-    // The peer misses the Decayed state and receives only the final weakened blob.
-    loro_support::map_insert_bytes(&entities, &id.to_hex(), &heads[2].1)?;
+    // The peer misses the Decayed state and receives only the final blobs:
+    // the closed head and the successor that carries the lower confidence.
+    for (head, blob) in &heads[2..] {
+        loro_support::map_insert_bytes(&entities, &head.to_hex(), blob)?;
+    }
     doc.commit();
     same_final_heads(source, &peer, &heads[2..])?;
     Ok(())

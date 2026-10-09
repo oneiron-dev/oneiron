@@ -5,7 +5,7 @@ use rmpv::Value;
 use super::binding_error;
 use crate::EntityId;
 use crate::batch::BatchOp;
-use crate::claim::{ClaimBody, ClaimLifecycleStatus};
+use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSuccession};
 use crate::error::Result;
 use crate::store::Store;
 
@@ -18,9 +18,7 @@ pub(super) fn demotion_body(
     next: &ClaimBody,
     tail: &[BatchOp],
 ) -> Result<ClaimBody> {
-    use crate::claim::{
-        CLAIM_SCOPE_DEMOTION_RUNG_KEY, ClaimDemotionRung, ClaimSubject, claim_demotion_rung,
-    };
+    use crate::claim::{ClaimDemotionRung, ClaimSubject, claim_demotion_rung};
     use crate::edge::{EdgeKind, validate_edge_weight};
 
     if prior.lifecycle != ClaimLifecycleStatus::Active {
@@ -62,24 +60,55 @@ pub(super) fn demotion_body(
             }
             "decayed"
         }
-        (
-            Some(ClaimDemotionRung::Decayed | ClaimDemotionRung::Weakened),
-            Some(ClaimDemotionRung::Weakened),
-            [],
-        ) if next.confidence.is_finite()
-            && (0.0..=1.0).contains(&next.confidence)
-            && next.confidence <= prior.confidence =>
-        {
-            expected.confidence = next.confidence;
-            "weakened"
-        }
         (Some(ClaimDemotionRung::Weakened), Some(ClaimDemotionRung::Stale), []) => {
             expected.stale = true;
             "stale"
         }
         _ => return Err(binding_error()),
     };
-    let mut scope = match expected.scope.take() {
+    stamp_rung(&mut expected, rung)?;
+    Ok(expected)
+}
+
+/// The only body a successor may carry: its active predecessor's, with the
+/// one delta its succession permits. A weakening lowers confidence and stamps
+/// `weakened`; a fork moves the facet stamp. Neither rewrites the predecessor
+/// (ARCH-0003 change policy; ARCH-0055 r9, "fork, never restamp").
+pub(super) fn successor_body(prior: &ClaimBody, succession: ClaimSuccession) -> Result<ClaimBody> {
+    use crate::claim::{ClaimDemotionRung, claim_demotion_rung};
+
+    if prior.lifecycle != ClaimLifecycleStatus::Active {
+        return Err(binding_error());
+    }
+    let mut next = prior.clone();
+    match succession {
+        ClaimSuccession::Weakening { confidence } => {
+            if !matches!(
+                claim_demotion_rung(prior)?,
+                Some(ClaimDemotionRung::Decayed | ClaimDemotionRung::Weakened)
+            ) || !confidence.is_finite()
+                || !(0.0..=1.0).contains(&confidence)
+                || confidence > prior.confidence
+            {
+                return Err(binding_error());
+            }
+            next.confidence = confidence;
+            stamp_rung(&mut next, "weakened")?;
+        }
+        ClaimSuccession::Fork { facet } => {
+            if facet == prior.scope_facet {
+                return Err(binding_error());
+            }
+            next.scope_facet = facet;
+        }
+    }
+    Ok(next)
+}
+
+fn stamp_rung(body: &mut ClaimBody, rung: &'static str) -> Result<()> {
+    use crate::claim::CLAIM_SCOPE_DEMOTION_RUNG_KEY;
+
+    let mut scope = match body.scope.take() {
         None => Vec::new(),
         Some(Value::Map(entries)) => entries,
         Some(_) => return Err(binding_error()),
@@ -89,6 +118,6 @@ pub(super) fn demotion_body(
         Value::from(CLAIM_SCOPE_DEMOTION_RUNG_KEY),
         Value::from(rung),
     ));
-    expected.scope = Some(Value::Map(scope));
-    Ok(expected)
+    body.scope = Some(Value::Map(scope));
+    Ok(())
 }

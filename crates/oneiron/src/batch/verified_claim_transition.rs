@@ -18,6 +18,9 @@ pub(crate) struct VerifiedClaimTransition {
     // Canonical decay verifies the ClaimOf mutation as part of one bundle.
     // Bind that validated edge op as well as the claim Put.
     edge_delta: Option<(EntityId, crate::edge::EdgeKind, EntityId, u32)>,
+    // A succession births a new row: `prior_hash` then pins the predecessor
+    // it was derived from, and the successor id must still be unwritten.
+    successor_of: Option<EntityId>,
 }
 
 impl VerifiedClaimTransition {
@@ -61,6 +64,49 @@ impl VerifiedClaimTransition {
             occurred: *occurred,
             learned_at: *learned_at,
             edge_delta: None,
+            successor_of: None,
+        })
+    }
+
+    /// Called only after the succession validator checks the successor body
+    /// against its predecessor. The proof binds the unwritten successor Put
+    /// to the exact predecessor row it was derived from.
+    pub(in crate::batch) fn after_validated_succession(
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        predecessor: &EntityId,
+        op: &BatchOp,
+    ) -> Result<Self> {
+        let BatchOp::Put {
+            id,
+            entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+            occurred,
+            learned_at,
+            data,
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        } = op
+        else {
+            return Err(Error::InvalidClaimBody(
+                "transition requires exact claim put",
+            ));
+        };
+        let raw = store
+            .entities
+            .get(txn, predecessor.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        if id == predecessor || store.entities.get(txn, id.as_bytes())?.is_some() {
+            return Err(Error::InvalidClaimBody("claim successor already exists"));
+        }
+        Ok(Self {
+            id: *id,
+            prior_hash: *blake3::hash(&raw).as_bytes(),
+            next_body: data.clone(),
+            occurred: *occurred,
+            learned_at: *learned_at,
+            edge_delta: None,
+            successor_of: Some(*predecessor),
         })
     }
 
@@ -247,9 +293,18 @@ impl VerifiedClaimTransition {
         if *id != self.id || encode_claim_body(body)? != self.next_body {
             return Ok(false);
         }
+        let pinned = match self.successor_of {
+            Some(predecessor) => {
+                if store.entities.get(txn, id.as_bytes())?.is_some() {
+                    return Ok(false);
+                }
+                predecessor
+            }
+            None => *id,
+        };
         Ok(store
             .entities
-            .get(txn, id.as_bytes())?
+            .get(txn, pinned.as_bytes())?
             .is_some_and(|raw| blake3::hash(&raw).as_bytes() == &self.prior_hash))
     }
 

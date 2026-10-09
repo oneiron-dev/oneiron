@@ -273,25 +273,27 @@ fn owner_accepts_low_confidence_care_without_rewriting_confidence() -> Result<()
     assert!(!has_pending_gate_consent(&vault, &id)?);
     // Owner-approved low-confidence claims must also remain curatable.
     assert_eq!(
-        vault.apply_claim_demotion(
-            &id,
-            crate::claim::ClaimDemotionAction::Decay {
-                new_claim_of_weight: 0.1
-            },
-            10
-        )?,
+        vault
+            .apply_claim_demotion(
+                &id,
+                crate::claim::ClaimDemotionAction::Decay {
+                    new_claim_of_weight: 0.1
+                },
+                10
+            )?
+            .rung,
         crate::claim::ClaimDemotionRung::Decayed
     );
-    assert_eq!(
-        vault.apply_claim_demotion(
-            &id,
-            crate::claim::ClaimDemotionAction::Weaken {
-                new_confidence: 0.6
-            },
-            11
-        )?,
-        crate::claim::ClaimDemotionRung::Weakened
-    );
+    // A weakening supersedes; its successor carries the lower confidence.
+    let weakening = vault.apply_claim_demotion(
+        &id,
+        crate::claim::ClaimDemotionAction::Weaken {
+            new_confidence: 0.6,
+        },
+        11,
+    )?;
+    assert_eq!(weakening.rung, crate::claim::ClaimDemotionRung::Weakened);
+    let id = weakening.claim;
     let weakened = vault.get_claim(&id)?.expect("approved and weakened care");
     assert_eq!(weakened.approval, ClaimApprovalStatus::Approved);
     assert_eq!(weakened.confidence, 0.6);
@@ -363,30 +365,34 @@ fn admitted_auto_care_can_decay_and_weaken_below_floor() -> Result<()> {
         ClaimApprovalStatus::Auto
     );
     assert_eq!(
-        vault.apply_claim_demotion(
-            &id,
-            crate::claim::ClaimDemotionAction::Decay {
-                new_claim_of_weight: 0.1
-            },
-            10
-        )?,
+        vault
+            .apply_claim_demotion(
+                &id,
+                crate::claim::ClaimDemotionAction::Decay {
+                    new_claim_of_weight: 0.1
+                },
+                10
+            )?
+            .rung,
         crate::claim::ClaimDemotionRung::Decayed
     );
-    assert_eq!(
-        vault.apply_claim_demotion(
-            &id,
-            crate::claim::ClaimDemotionAction::Weaken {
-                new_confidence: 0.8
-            },
-            11
-        )?,
-        crate::claim::ClaimDemotionRung::Weakened
-    );
+    // A weakening supersedes; its successor carries the lower confidence.
+    let weakening = vault.apply_claim_demotion(
+        &id,
+        crate::claim::ClaimDemotionAction::Weaken {
+            new_confidence: 0.8,
+        },
+        11,
+    )?;
+    assert_eq!(weakening.rung, crate::claim::ClaimDemotionRung::Weakened);
+    let id = weakening.claim;
     let weakened = vault.get_claim(&id)?.expect("weakened claim");
     assert_eq!(weakened.confidence, 0.8);
     assert_eq!(weakened.approval, ClaimApprovalStatus::Auto);
     assert_eq!(
-        vault.apply_claim_demotion(&id, crate::claim::ClaimDemotionAction::MarkStale, 12)?,
+        vault
+            .apply_claim_demotion(&id, crate::claim::ClaimDemotionAction::MarkStale, 12)?
+            .rung,
         crate::claim::ClaimDemotionRung::Stale
     );
     assert!(vault.get_claim(&id)?.expect("stale claim").stale);
@@ -429,13 +435,15 @@ fn weakened_auto_care_can_be_superseded() -> Result<()> {
         },
         10,
     )?;
-    vault.apply_claim_demotion(
-        &old,
-        crate::claim::ClaimDemotionAction::Weaken {
-            new_confidence: 0.8,
-        },
-        11,
-    )?;
+    let old = vault
+        .apply_claim_demotion(
+            &old,
+            crate::claim::ClaimDemotionAction::Weaken {
+                new_confidence: 0.8,
+            },
+            11,
+        )?
+        .claim;
     vault.supersede_claim(&replacement, &old, 12)?;
     let closed = vault.get_claim(&old)?.expect("superseded below-floor head");
     assert_eq!(closed.approval, ClaimApprovalStatus::Auto);
@@ -860,13 +868,15 @@ fn stricter_care_fixture() -> Result<(tempfile::TempDir, Vault, EntityId, WriteE
 fn stricter_policy_does_not_block_canonical_decay_weaken_stale_or_retract() -> Result<()> {
     let (_dir, vault, subject, _envelope, id) = stricter_care_fixture()?;
     assert_eq!(
-        vault.apply_claim_demotion(
-            &id,
-            crate::claim::ClaimDemotionAction::Decay {
-                new_claim_of_weight: 0.1
-            },
-            20
-        )?,
+        vault
+            .apply_claim_demotion(
+                &id,
+                crate::claim::ClaimDemotionAction::Decay {
+                    new_claim_of_weight: 0.1
+                },
+                20
+            )?
+            .rung,
         crate::claim::ClaimDemotionRung::Decayed
     );
     let edge = vault
@@ -875,16 +885,16 @@ fn stricter_policy_does_not_block_canonical_decay_weaken_stale_or_retract() -> R
         .find(|edge| edge.kind == EdgeKind::ClaimOf && edge.target == subject)
         .expect("claim_of edge");
     assert_eq!(edge.weight, 0.1);
-    assert_eq!(
-        vault.apply_claim_demotion(
-            &id,
-            crate::claim::ClaimDemotionAction::Weaken {
-                new_confidence: 0.8
-            },
-            21
-        )?,
-        crate::claim::ClaimDemotionRung::Weakened
-    );
+    // A weakening supersedes; its successor carries the lower confidence.
+    let weakening = vault.apply_claim_demotion(
+        &id,
+        crate::claim::ClaimDemotionAction::Weaken {
+            new_confidence: 0.8,
+        },
+        21,
+    )?;
+    assert_eq!(weakening.rung, crate::claim::ClaimDemotionRung::Weakened);
+    let id = weakening.claim;
     vault.apply_claim_demotion(&id, crate::claim::ClaimDemotionAction::MarkStale, 22)?;
     vault.retract_claim(&id, 23)?;
     let closed = vault

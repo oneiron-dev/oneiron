@@ -220,6 +220,131 @@ impl ClaimMaterialization {
         )
     }
 
+    /// Admit only a claim successor whose body is its predecessor's with the
+    /// one delta `succession` permits, plus its ClaimOf edge at the
+    /// predecessor's current (possibly decayed) weight. The successor keeps
+    /// the predecessor's attested writer. A MACHINE successor is re-signed by
+    /// that writer's retained signer and gets its own signed birth. The
+    /// caller links or closes the predecessor in the same txn.
+    pub(crate) fn apply_successor(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        predecessor: &EntityId,
+        successor: &EntityId,
+        succession: crate::claim::ClaimSuccession,
+        now: u64,
+    ) -> Result<()> {
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, predecessor)?
+            .ok_or(Error::EntityNotFound)?;
+        let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
+        if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+            return Err(binding_error());
+        }
+        let prior = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)?;
+        let mut next = successor_body(&prior, succession)?;
+        let mut claim_of = None;
+        if let crate::claim::ClaimSubject::Entity(subject) = prior.subject {
+            let mut weight = None;
+            for entry in crate::ports::EdgeStoreRead::port_edges(
+                &vault.store,
+                txn,
+                predecessor,
+                crate::ports::EdgeDirection::Out,
+                Some(crate::edge::EdgeKind::ClaimOf),
+                None,
+            )? {
+                let edge = entry?;
+                if edge.target == subject && weight.replace(edge.weight).is_some() {
+                    return Err(binding_error());
+                }
+            }
+            claim_of = Some((subject, weight.ok_or(binding_error())?));
+        }
+        let mut envelope = lifecycle_envelope(&vault.store, txn, predecessor, &prior)?;
+        let signed = crate::authority::machine_claim_needs_history(&vault.store, txn, &prior)?;
+        if signed {
+            let envelope = envelope.as_mut().ok_or(binding_error())?;
+            vault.resign_machine_successor_in_txn(txn, successor, &mut next, envelope)?;
+        }
+        let occurred = crate::temporal::TimeRange {
+            start: header.occurred_start,
+            end: now,
+        };
+        let data = encode_claim_body(&next)?;
+        let mut ops = vec![BatchOp::Put {
+            id: *successor,
+            entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+            occurred,
+            learned_at: now,
+            data: data.clone(),
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        }];
+        if let Some((subject, weight)) = claim_of {
+            ops.push(BatchOp::Edge {
+                src: *successor,
+                kind: crate::edge::EdgeKind::ClaimOf,
+                tgt: subject,
+                weight,
+                vad: crate::affect::Vad::NEUTRAL,
+            });
+        }
+        let transition = super::VerifiedClaimTransition::after_validated_succession(
+            &vault.store,
+            txn,
+            predecessor,
+            &ops[0],
+        )?;
+        let mut bindings = Vec::new();
+        if let Some(envelope) = envelope.clone() {
+            let binding = Self {
+                id: *successor,
+                occurred,
+                learned_at: now,
+                data,
+                reserved: false,
+                envelope,
+                prior: None,
+                approval: false,
+            };
+            binding.validate_actor(&vault.store, txn)?;
+            bindings.push(binding);
+        }
+        let text_index_trusted = vault
+            .text_index_trusted
+            .load(std::sync::atomic::Ordering::Acquire);
+        super::apply_ops_with_gate_mode(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            txn,
+            ops,
+            text_index_trusted,
+            ApplyOpsGateMode::new(false, false)
+                .with_claim_materializations(bindings)
+                .with_verified_claim_transitions(vec![transition]),
+        )?;
+        match envelope {
+            Some(envelope) if signed => {
+                crate::claim::history_store::stage_machine_birth_after_candidate(
+                    &vault.store,
+                    &vault.config,
+                    &vault.analyzer,
+                    txn,
+                    *successor,
+                    &next,
+                    &envelope,
+                    occurred,
+                    now,
+                    text_index_trusted,
+                    false,
+                )
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// Re-gate an exact parked replacement as Auto under its attested author.
     /// The caller checks the deferred content/frontier binding and performs
     /// closure in this same transaction. No arbitrary Put may use this path.
@@ -734,7 +859,7 @@ pub(crate) fn apply_owner_bound_claim_puts_with_transitions(
 }
 
 mod demotion;
-use demotion::demotion_body;
+use demotion::{demotion_body, successor_body};
 
 #[cfg(test)]
 mod tests;

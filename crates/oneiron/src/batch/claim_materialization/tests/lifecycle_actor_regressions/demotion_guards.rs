@@ -225,14 +225,86 @@ fn demotion_preserves_lineage_scope_and_session_and_rechecks_current_policy() ->
         actor.entity_ref(),
         &[ClaimSource::ToolOutput, ClaimSource::Generated],
     )?;
+    // The successor keeps the original author, so that author's
+    // lineage-bound policy still governs its later lifecycle.
+    let successor = vault
+        .apply_claim_demotion(
+            &id,
+            ClaimDemotionAction::Weaken {
+                new_confidence: 0.5,
+            },
+            21,
+        )?
+        .claim;
+    assert_current_actor(&vault, successor, actor)?;
+    vault.retract_claim(&successor, 30)?;
+    Ok(())
+}
+
+/// REV-9 D1 (ARCH-0003 change policy, RD-23; ARCH-0026 Curate): a confidence
+/// weakening supersedes. The weakened claim closes and stays readable as
+/// history; a successor by the same author carries the lower confidence, the
+/// rung stamp and the decayed claim_of weight; and the claim can rise again.
+#[test]
+fn weakening_supersedes_and_keeps_the_old_claim_as_history() -> Result<()> {
+    let (_dir, vault, actor) = fixture()?;
+    let id = entity(0x64);
+    authored_local_claim(&vault, actor, id)?;
+    let original = vault.get_claim(&id)?.expect("authored claim");
     vault.apply_claim_demotion(
+        &id,
+        ClaimDemotionAction::Decay {
+            new_claim_of_weight: 0.1,
+        },
+        20,
+    )?;
+    let weakened = vault.apply_claim_demotion(
         &id,
         ClaimDemotionAction::Weaken {
             new_confidence: 0.5,
         },
         21,
     )?;
-    assert_current_actor(&vault, id, actor)?;
-    vault.retract_claim(&id, 30)?;
+    assert_eq!(weakened.rung, ClaimDemotionRung::Weakened);
+    assert_ne!(weakened.claim, id);
+
+    let old = vault
+        .get_claim(&id)?
+        .expect("the weakened claim stays readable");
+    assert_eq!(old.lifecycle, ClaimLifecycleStatus::Superseded);
+    assert_eq!(old.valid_to, Some(21));
+    assert_eq!(old.confidence, original.confidence);
+    assert_eq!(old.value, original.value);
+
+    let successor = vault.get_claim(&weakened.claim)?.expect("successor");
+    assert_eq!(successor.lifecycle, ClaimLifecycleStatus::Active);
+    assert_eq!(successor.confidence, 0.5);
+    assert_eq!(
+        claim_demotion_rung(&successor)?,
+        Some(ClaimDemotionRung::Weakened)
+    );
+    assert_eq!(successor.predicate, original.predicate);
+    assert_eq!(successor.value, original.value);
+    assert_eq!(successor.evidence, original.evidence);
+    assert_current_actor(&vault, weakened.claim, actor)?;
+    let edges = vault.edges_out(&weakened.claim)?;
+    assert!(
+        edges
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::Supersedes && edge.target == id)
+    );
+    assert!(edges.iter().any(|edge| edge.kind == EdgeKind::ClaimOf
+        && edge.target == entity(0x62)
+        && edge.weight == 0.1));
+
+    // A weakening is not terminal: an ordinary supersession raises it again.
+    let risen = entity(0x66);
+    authored_local_claim(&vault, actor, risen)?;
+    vault.supersede_claim(&risen, &weakened.claim, 30)?;
+    assert_eq!(
+        vault.get_claim(&weakened.claim)?.expect("closed").lifecycle,
+        ClaimLifecycleStatus::Superseded
+    );
+    assert_eq!(vault.get_claim(&risen)?.expect("risen").confidence, 1.0);
     Ok(())
 }

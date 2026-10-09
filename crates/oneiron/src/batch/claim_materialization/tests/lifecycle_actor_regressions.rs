@@ -108,6 +108,7 @@ fn demotion_refreshes_binding_at_each_rung_and_stales_old_seal() -> Result<()> {
         let id = entity(0x64);
         authored_local_claim(&vault, actor, id)?;
         let original = vault.get_claim(&id)?.expect("authored claim");
+        let mut head = id;
         for (action, rung, now) in [
             (
                 ClaimDemotionAction::Decay {
@@ -128,15 +129,19 @@ fn demotion_refreshes_binding_at_each_rung_and_stales_old_seal() -> Result<()> {
         .into_iter()
         .take(rung_count)
         {
-            let old_op = retract_op(&vault, id)?;
+            let old_op = retract_op(&vault, head)?;
             let old_seal = {
                 let txn = vault.store.env.read_txn()?;
                 ClaimMaterialization::lifecycle(&vault.store, &txn, &old_op)?
                     .expect("seal before demotion")
             };
-            assert_eq!(vault.apply_claim_demotion(&id, action, now)?, rung);
-            let raw = vault.get_raw(&id)?.expect("demoted claim");
-            let body = vault.get_claim(&id)?.expect("demoted body");
+            let demoted = vault.apply_claim_demotion(&head, action, now)?;
+            assert_eq!(demoted.rung, rung);
+            let sealed = head;
+            let raw = vault.get_raw(&sealed)?.expect("demoted claim");
+            // A weakening supersedes, so its successor carries the rung.
+            head = demoted.claim;
+            let body = vault.get_claim(&head)?.expect("demoted body");
             assert_eq!(claim_demotion_rung(&body)?, Some(rung));
             assert_eq!(body.lifecycle, ClaimLifecycleStatus::Active);
             assert_eq!(body.evidence, original.evidence);
@@ -147,12 +152,15 @@ fn demotion_refreshes_binding_at_each_rung_and_stales_old_seal() -> Result<()> {
                     apply_owner_bound_claim_puts(&vault, txn, vec![old_op], vec![old_seal], false)
                 })
                 .expect_err("demotion must invalidate the old exact-row seal");
-            assert!(matches!(error, Error::InvalidClaimBody(_)));
-            assert_eq!(vault.get_raw(&id)?.expect("unchanged"), raw);
+            assert!(matches!(
+                error,
+                Error::InvalidClaimBody(_) | Error::Claim(_)
+            ));
+            assert_eq!(vault.get_raw(&sealed)?.expect("unchanged"), raw);
         }
         actor_only_policy(&vault, actor)?;
-        vault.retract_claim(&id, 30)?;
-        let body = vault.get_claim(&id)?.expect("retracted claim");
+        vault.retract_claim(&head, 30)?;
+        let body = vault.get_claim(&head)?.expect("retracted claim");
         assert_eq!(body.lifecycle, ClaimLifecycleStatus::Retracted);
     }
     Ok(())
@@ -168,13 +176,15 @@ fn demoted_claim_retracts_under_original_actor_only_policy() -> Result<()> {
         assert_current_actor(&vault, id, actor)?;
     }
     assert_eq!(
-        vault.apply_claim_demotion(
-            &demoted,
-            ClaimDemotionAction::Decay {
-                new_claim_of_weight: 0.1
-            },
-            20,
-        )?,
+        vault
+            .apply_claim_demotion(
+                &demoted,
+                ClaimDemotionAction::Decay {
+                    new_claim_of_weight: 0.1
+                },
+                20,
+            )?
+            .rung,
         ClaimDemotionRung::Decayed,
     );
     let evidence = vault.get_claim(&demoted)?.expect("demoted").evidence;

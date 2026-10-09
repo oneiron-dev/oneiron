@@ -9,15 +9,20 @@ use crate::{EntityId, Error, Result, Vault};
 use rmpv::Value;
 impl Vault {
     /// Demotes the active claim `claim_id` one rung — decay, weaken, or mark
-    /// stale — in ONE write transaction, and returns the rung it now carries.
-    /// Rungs only ever move forward: a decay after a weaken or a stale rung
-    /// rejects with [`Error::InvalidClaimBody`].
+    /// stale — in ONE write transaction, and returns the rung and the claim
+    /// that now carries it. Rungs only ever move forward: a decay after a
+    /// weaken or a stale rung rejects with [`Error::InvalidClaimBody`].
+    ///
+    /// Each rung writes as ARCH-0003's change policy says. Decay sets the
+    /// claim_of edge weight in place and the stale mark is an in-place flag. A
+    /// weakening changes belief, so it supersedes: a successor claim at the
+    /// lower confidence closes `claim_id`, which stays readable as history.
     pub fn apply_claim_demotion(
         &self,
         claim_id: &EntityId,
         action: ClaimDemotionAction,
         now: u64,
-    ) -> Result<ClaimDemotionRung> {
+    ) -> Result<ClaimDemotion> {
         let mut wtxn = self.store.env.write_txn()?;
         let (body, _) = self.claim_for_lifecycle_in(&wtxn, claim_id)?;
         Self::require_active_claim(&body)?;
@@ -79,11 +84,13 @@ impl Vault {
         claim_id: &EntityId,
         action: ClaimDemotionAction,
         now: u64,
-    ) -> Result<ClaimDemotionRung> {
+    ) -> Result<ClaimDemotion> {
         let (mut body, header) = self.claim_for_lifecycle_in(&*wtxn, claim_id)?;
         Self::require_active_claim(&body)?;
         let rung = claim_demotion_rung(&body)?;
-        let (next, edge_update) = match action {
+        // Only decay and the stale mark write in place; a weakening returns
+        // from its arm once its successor has superseded the claim.
+        let (next, edge_update, kind, delta) = match action {
             ClaimDemotionAction::Decay {
                 new_claim_of_weight,
             } => {
@@ -122,6 +129,8 @@ impl Vault {
                 (
                     ClaimDemotionRung::Decayed,
                     Some((subject, new_claim_of_weight)),
+                    super::transition::ClaimTransitionKind::Decay,
+                    super::transition::TransitionDelta::ClaimOfWeight(new_claim_of_weight),
                 )
             }
             ClaimDemotionAction::Weaken { new_confidence } => {
@@ -139,15 +148,34 @@ impl Vault {
                 if new_confidence > body.confidence {
                     return Err(Error::InvalidClaimBody("confidence increase"));
                 }
-                body.confidence = new_confidence;
-                (ClaimDemotionRung::Weakened, None)
+                let successor = EntityId::now();
+                crate::batch::ClaimMaterialization::apply_successor(
+                    self,
+                    wtxn,
+                    claim_id,
+                    &successor,
+                    super::ClaimSuccession::Weakening {
+                        confidence: new_confidence,
+                    },
+                    now,
+                )?;
+                self.supersede_claim_in_txn(wtxn, &successor, claim_id, now)?;
+                return Ok(ClaimDemotion {
+                    rung: ClaimDemotionRung::Weakened,
+                    claim: successor,
+                });
             }
             ClaimDemotionAction::MarkStale => {
                 if rung != Some(ClaimDemotionRung::Weakened) {
                     return Err(Error::InvalidClaimBody("stale requires weakened rung"));
                 }
                 body.stale = true;
-                (ClaimDemotionRung::Stale, None)
+                (
+                    ClaimDemotionRung::Stale,
+                    None,
+                    super::transition::ClaimTransitionKind::Stale,
+                    super::transition::TransitionDelta::None,
+                )
             }
         };
         let scope = match body.scope.take() {
@@ -175,22 +203,6 @@ impl Vault {
         };
         body.scope = Some(Value::Map(scope));
         if crate::authority::machine_claim_needs_history(&self.store, wtxn, &body)? {
-            let (kind, delta) = match action {
-                ClaimDemotionAction::Decay {
-                    new_claim_of_weight,
-                } => (
-                    super::transition::ClaimTransitionKind::Decay,
-                    super::transition::TransitionDelta::ClaimOfWeight(new_claim_of_weight),
-                ),
-                ClaimDemotionAction::Weaken { new_confidence } => (
-                    super::transition::ClaimTransitionKind::Weaken,
-                    super::transition::TransitionDelta::Confidence(new_confidence),
-                ),
-                ClaimDemotionAction::MarkStale => (
-                    super::transition::ClaimTransitionKind::Stale,
-                    super::transition::TransitionDelta::None,
-                ),
-            };
             body = super::transition::stage_owner_machine_transition(
                 self, wtxn, *claim_id, kind, delta, now,
             )?;
@@ -218,6 +230,9 @@ impl Vault {
             });
         }
         crate::batch::ClaimMaterialization::apply_demotion(self, wtxn, ops)?;
-        Ok(next)
+        Ok(ClaimDemotion {
+            rung: next,
+            claim: *claim_id,
+        })
     }
 }

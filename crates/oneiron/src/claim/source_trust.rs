@@ -30,6 +30,24 @@ pub enum ClaimDemotionAction {
     MarkStale,
 }
 
+/// The one change a claim successor may make to its predecessor's body.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum ClaimSuccession {
+    /// A lower confidence, stamped with the `weakened` rung.
+    Weakening { confidence: f32 },
+    /// The same claim under another facet.
+    Fork { facet: crate::EntityId },
+}
+
+/// One demotion step's result: the rung now carried and the claim that
+/// carries it. A weakening supersedes, so `claim` is its successor; decay and
+/// the stale mark write in place and return the demoted claim itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClaimDemotion {
+    pub rung: ClaimDemotionRung,
+    pub claim: crate::EntityId,
+}
+
 #[cfg(feature = "sync")]
 const CLAIM_SCOPE_PRE_RESTAMP_SCOPE_KEY: &str = "pre_restamp_scope";
 /// Provenance inheritance floor (ONE-1645, P3/V2): the band an UNSTAMPED
