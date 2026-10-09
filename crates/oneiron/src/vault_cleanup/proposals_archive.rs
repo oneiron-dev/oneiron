@@ -104,16 +104,22 @@ pub(super) fn accept_cleanup_proposal_in_txn(
 /// [`MaintenanceError::VaultCleanupProposalNotFound`](crate::error::MaintenanceError::VaultCleanupProposalNotFound) when no such proposal is open;
 /// storage errors.
 pub fn reject_cleanup_proposal(vault: &Vault, proposal: &EntityId) -> Result<()> {
-    vault.with_write_txn(|wtxn| {
-        if !PROPOSAL.delete(&vault.store, wtxn, proposal)? {
-            return Err(Error::Maintenance(
-                MaintenanceError::VaultCleanupProposalNotFound {
-                    proposal: proposal.to_hex(),
-                },
-            ));
-        }
-        Ok(())
-    })
+    vault.with_write_txn(|wtxn| reject_cleanup_proposal_in_txn(vault, wtxn, proposal))
+}
+
+pub(super) fn reject_cleanup_proposal_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    proposal: &EntityId,
+) -> Result<()> {
+    if !PROPOSAL.delete(&vault.store, wtxn, proposal)? {
+        return Err(Error::Maintenance(
+            MaintenanceError::VaultCleanupProposalNotFound {
+                proposal: proposal.to_hex(),
+            },
+        ));
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

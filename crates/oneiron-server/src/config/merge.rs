@@ -11,6 +11,7 @@ use serde::Deserialize;
 use super::backup::{BackupConfig, BackupConfigOverride, lookup_backup_override};
 use super::embedder::{EmbedderConfig, EmbedderProvider};
 use super::embedder::{EmbedderConfigOverride, lookup_embedder_override};
+use super::feedback::{FeedbackConfigOverride, lookup_feedback_override};
 use super::lookup::{
     DEFAULT_CONFIG_DIR, DEFAULT_CONFIG_FILE, expand_home, lookup_bool, lookup_list, lookup_parse,
     lookup_path, lookup_path_list, normalize_list, redacted_secret,
@@ -107,6 +108,7 @@ impl EnvConfig {
         values.embedder = lookup_embedder_override(&mut lookup)?;
         values.oneironer = lookup_oneironer_override(&mut lookup)?;
         values.backup = lookup_backup_override(&mut lookup)?;
+        values.feedback = lookup_feedback_override(&mut lookup)?;
         values.privacy_posture = lookup_parse(&mut lookup, "ONEIRON_PRIVACY_POSTURE")?;
         values.failure_signal_export = lookup_bool(&mut lookup, "ONEIRON_FAILURE_SIGNAL_EXPORT")?;
         values.failure_signal_training =
@@ -257,6 +259,7 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
         oneironer.validate()?;
     }
     config.backup.validate()?;
+    config.feedback.validate()?;
     // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
     // refused while it is still a config error with an operator-facing
     // remedy, not only at open time.
@@ -445,6 +448,7 @@ struct FileServeConfig {
     embedder: Option<EmbedderConfigOverride>,
     oneironer: Option<OneironerConfigOverride>,
     backup: Option<BackupConfigOverride>,
+    feedback: Option<FeedbackConfigOverride>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -487,6 +491,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             embedder: value.embedder,
             oneironer: value.oneironer,
             backup: value.backup,
+            feedback: value.feedback,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,
@@ -530,6 +535,7 @@ struct PartialServeConfig {
     embedder: Option<EmbedderConfigOverride>,
     oneironer: Option<OneironerConfigOverride>,
     backup: Option<BackupConfigOverride>,
+    feedback: Option<FeedbackConfigOverride>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
     failure_signal_training: Option<bool>,
@@ -584,6 +590,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("embedder", &self.embedder)
             .field("oneironer", &self.oneironer)
             .field("backup", &self.backup)
+            .field("feedback", &self.feedback)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
@@ -703,6 +710,9 @@ impl PartialServeConfig {
         if let Some(value) = self.backup {
             resolved.backup.apply_override(value);
         }
+        if let Some(value) = self.feedback {
+            resolved.feedback.apply_override(value);
+        }
         if let Some(value) = self.failure_signal_export {
             resolved.failure_signal_export = value;
         }
@@ -761,6 +771,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             oneironer: Some(OneironerConfigOverride::from(&value.oneironer))
                 .filter(|over| !over.is_empty()),
             backup: None,
+            feedback: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
             failure_signal_training: value.failure_signal_training,

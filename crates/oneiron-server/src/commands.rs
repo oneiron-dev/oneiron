@@ -581,7 +581,16 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
             .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
             .with_embedder(embedder)
             .with_tagger(tagger)
-            .with_owner_host(owner_host),
+            .with_owner_host(owner_host)
+            .with_feedback(config.feedback.delivery().map(|delivery| {
+                crate::feedback_delivery::FeedbackHost {
+                    config: delivery,
+                    bearer: std::env::var("ONEIRON_FEEDBACK_TOKEN")
+                        .ok()
+                        .filter(|token| !token.is_empty())
+                        .map(zeroize::Zeroizing::new),
+                }
+            })),
     );
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
     tracing::info!(%addr, "listening");

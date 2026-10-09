@@ -20,7 +20,7 @@ oneiron doctor /path/to/vault            # add --config FILE if it is not the XD
 |---|---|
 | `location.vault` | The vault directory, absolute. |
 | `location.disk_bytes`, `location.disk` | Space the vault directory takes on disk. |
-| `location.backups` | Backup directory, how many backups, the newest one, the schedule (`every_hours`, `keep`). |
+| `location.backups` | Backup directory, how many backups, the newest one, the schedule (`every_hours`, `keep`), and `restores`: every restore this vault came from, oldest first (`checkpoint_id`, `restored_at`, `reason`). |
 | `location.last_export` | The latest recorded export receipt: when, format, size, who. Writing the receipt is best effort, so an export can succeed without a new one. |
 | `location.secret_scan` | `on` or `off`. |
 
@@ -226,6 +226,90 @@ every one as rejected. Either way one receipt represents the run. Routes: `GET
 /v1/owner/runs`, `GET /v1/owner/runs/review?run_id=…` (or `?run_ref=…`), `POST /v1/owner/runs/approve` or
 `/decline` with `{"run_id": "…", "bundle_id": "…"}` (or `"run_ref"` in place of `"run_id"`).
 
+## Review cleanup
+
+The cleanup job files away husks: a person an extraction minted and never learned anything
+about, a summary with nothing left in it. Its only verb is archive, and an archived record comes
+back whole. While its integrity checks are open (ARCH-0066), the job only proposes: nothing is
+archived until you accept, and the engine refuses the automatic posture.
+
+- `GET /v1/owner/cleanup`: the posture, the done-task retention in days (`0` turns that arm
+  off), the open proposals with what accepting would archive, the digests of what was
+  archived, and the records still archived.
+- `POST /v1/owner/cleanup/accept` or `/reject` with `{"proposal": "<id>"}`. Accept archives the
+  candidates that are still empty and records one digest; a proposal already answered is a 409.
+- `POST /v1/owner/cleanup/restore` with `{"entity": "<id>"}` brings an archived record back.
+- `POST /v1/owner/cleanup` with `{"task_retention_days": 30}` or `{"posture": "propose_first"}`.
+  `auto_with_digest` is refused (409) while the integrity checks are open.
+
+## Export a persona card
+
+A persona card (OF-325, mode A) is a shareable summary of one person: an identity line, key
+relationships, and the strongest claims, each with its sources. `GET
+/v1/owner/persona?subject=<person id>` compiles it and returns its rows and a `stamp`. Claims
+about other people start struck. `POST /v1/owner/persona/export` with `{"subject": "…",
+"stamp": "…", "strike": ["<row id>"], "unstrike": ["<row id>"]}` returns the card as
+MemoryPack-lite JSON and markdown and records the export. If the card changed after your
+preview, the export is refused (409) and you preview again. A handed copy is a copy: to stop
+sharing, do not issue another.
+
+## Off-record sessions
+
+An off-record session (ARCH-0052) keeps its turns in memory, out of the vault, its indexes, sync
+and exports, until you save a turn or close the session. Close drops every turn you did not
+save. An anonymous session keeps nothing at all and cannot be saved or put on record.
+
+- `POST /v1/owner/off-record` with `{"session_ref": "…", "mode": "off_record" | "anonymous",
+  "backend": "local" | "remote_provider"}` starts one. `GET /v1/owner/off-record?session_ref=…`
+  reads it.
+- `POST /v1/owner/off-record/witness` with `{"session_ref": "…", "turn": {…}}` writes a turn
+  into it; the turn has the shape `POST /v1/core/facade/witness` takes.
+- `POST /v1/owner/off-record/promote` with `{"session_ref": "…", "turn": "<turn id>"}` saves one
+  turn through the ordinary write door.
+- `POST /v1/owner/off-record/mode` with `"on_record"` saves later turns as ordinary memory;
+  `"off_record"` goes back.
+- `POST /v1/owner/off-record/close` ends it.
+
+The session lives in the server process: a restart ends it, and only saved turns remain.
+
+## Read the vault as files
+
+`GET /v1/owner/graph-fs?path=/entities` reads the vault as a read-only tree (OF-355): `/worlds`,
+`/entities`, `/claims` (by time and by id) and `/backlinks`. `op` is `ls` (default), `cat`,
+`head` (`lines`), `wc`, `find` (`newer_than`), `grep` (`pattern`, `recursive`) or `readlink`.
+Listings and searches are bounded; pass `next_cursor` back as `cursor` for the next page. Reads
+go through your own scoped read, so scopes excluded from you are absent.
+
+## Send feedback
+
+Configure where feedback goes:
+
+```toml
+[feedback]
+destination = "collector"     # ONEIRON_FEEDBACK_DESTINATION: cloud, collector or github_issue
+endpoint = "https://…"        # ONEIRON_FEEDBACK_ENDPOINT; HTTPS, or HTTP on loopback
+```
+
+The destination's token, if any, comes from `ONEIRON_FEEDBACK_TOKEN`. `POST
+/v1/owner/feedback/preview` with `{"category": "bug"}` (or `papercut`, `confusion`,
+`feature-wish`) returns the bundle exactly as it would leave, its `digest`, the `approval` that
+names this bundle going to this destination, and `previewed_at`. `POST
+/v1/owner/feedback/send` with the same body plus those three fields sends that bundle once to
+that destination: repeating the request is the same send, a changed destination or bundle is
+refused (409), and a preview older than an hour is refused. The send is an ordinary outbound effect: until the vault's policy grants
+`external:send` on the feedback channel to you, it is held (`"outcome": "held"`) and nothing
+leaves. A bundle carries no vault text. A written note is refused until the engine redacts notes
+in the vault (OF-420).
+
+## Saved queries after a pack update
+
+When a new source of an installed pack is activated, the saved queries that read a predicate it
+dropped or remapped go through the repair ladder in the same transaction (ARCH-0059 §4). A
+rename in the pack's migration map migrates the query; an equivalent rewrite migrates it with a
+notice; a rewrite that changes meaning waits as a proposal; a predicate with no rewrite pauses
+the query with its error. `GET /v1/owner/pack-drift` lists what the ladder did, query by query;
+a paused query shows its error on the query itself.
+
 ## Calling the owner routes
 
 Every `/v1/owner` route needs a verified, unattenuated owner slip held by a live human owner of
@@ -233,7 +317,9 @@ the vault. That is the slip the first-owner link from `oneiron token bootstrap` 
 Other credentials get the same 403: another person, an agent-class slip, a slip narrowed to
 some verbs, or the host root. Managed vaults are owned through their supervisor, and these
 routes refuse there. Each act rechecks the slip and your ownership in the transaction that
-commits it, so a request still queued when its slip is revoked changes nothing. From a shell, with the slip in `ONEIRON_SECRET` and its binding seed in
+commits it, so a request still queued when its slip is revoked changes nothing. Off-record
+controls and feedback sends keep no row of their own to recheck in, so they recheck the slip
+when they start. From a shell, with the slip in `ONEIRON_SECRET` and its binding seed in
 `ONEIRON_BINDING_KEY`:
 
 ```sh

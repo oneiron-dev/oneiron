@@ -114,6 +114,8 @@ pub struct SyncServer {
     /// The vault's path, backup plan and schedule, set by `serve`. `None`
     /// on a server built without a known vault path.
     pub(crate) owner_host: Option<Arc<crate::owner::schedule::OwnerHost>>,
+    /// Where the owner's feedback goes; `None` until configured.
+    pub(crate) feedback: Option<Arc<crate::feedback_delivery::FeedbackHost>>,
     /// Instance-local booking clock override; production always reads wall time.
     #[cfg(test)]
     pub(crate) booking_test_now_secs: Option<u64>,
@@ -256,6 +258,7 @@ impl SyncServer {
             llm: None,
             extraction_egress: None,
             owner_host: None,
+            feedback: None,
             #[cfg(test)]
             booking_test_now_secs: None,
         })
@@ -373,6 +376,14 @@ impl SyncServer {
 
     pub(crate) fn with_owner_host(mut self, host: crate::owner::schedule::OwnerHost) -> Self {
         self.owner_host = Some(Arc::new(host));
+        self
+    }
+
+    pub(crate) fn with_feedback(
+        mut self,
+        host: Option<crate::feedback_delivery::FeedbackHost>,
+    ) -> Self {
+        self.feedback = host.map(Arc::new);
         self
     }
 

@@ -7,6 +7,7 @@ use oneiron::{HostingPrivacyPosture, VaultDataKeyCustody, VaultPrivacyConfig};
 
 use super::backup::BackupConfig;
 use super::embedder::EmbedderConfig;
+use super::feedback::FeedbackConfig;
 use super::lookup::{LEGACY_DEFAULT_VAULT_PATH, redacted_secret};
 use super::oneironer::OneironerConfig;
 use crate::runtime::RuntimeConfig;
@@ -229,6 +230,8 @@ pub struct ServeConfig {
     pub oneironer: Option<OneironerConfig>,
     /// The `[backup]` section: local backup directory, schedule and retention.
     pub backup: BackupConfig,
+    /// The `[feedback]` section: where the owner's feedback goes.
+    pub feedback: FeedbackConfig,
     /// Deployment posture handed to the engine through [`Self::vault_config`].
     pub privacy_posture: HostingPrivacyPosture,
     pub failure_signal_export: bool,
@@ -278,6 +281,7 @@ impl Default for ServeConfig {
             embedder: None,
             oneironer: None,
             backup: BackupConfig::default(),
+            feedback: FeedbackConfig::default(),
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
             privacy_posture: HostingPrivacyPosture::SelfHostLocal,
@@ -333,6 +337,7 @@ impl fmt::Debug for ServeConfig {
             .field("embedder", &self.embedder)
             .field("oneironer", &self.oneironer)
             .field("backup", &self.backup)
+            .field("feedback", &self.feedback)
             .field("privacy_posture", &self.privacy_posture)
             .field(
                 "hosted_kms_key_ref",
