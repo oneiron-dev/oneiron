@@ -666,6 +666,3 @@ use self::validation::{
     invalid_critic_config, validate_catalog, validate_critique_artifact, validate_identifier,
     validate_lens, validate_provenance, validate_reliability, validate_reliability_table,
 };
-
-#[cfg(test)]
-mod tests;

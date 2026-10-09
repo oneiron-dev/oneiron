@@ -153,7 +153,7 @@ export class Oneiron {
    * lease-bearing constructor exists; this package neither mints nor
    * simulates a lease.
    */
-  recall(query: string, opts: RecallOptions = {}): MemoryPack { return this.#call(() => this.#client.recall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format)) }
+  recall(query: string, opts: RecallOptions = {}): MemoryPack { return this.#call(() => this.#client.recall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf)) }
   /** Exports the live vault as toon (default), md, json, yaml, or txt. */
   export(format?: string): MemoryExport { return this.#call(() => this.#client.export({format: format}) as MemoryExport) }
   /** Governance receipts, newest first. */

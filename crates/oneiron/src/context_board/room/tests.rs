@@ -216,6 +216,7 @@ fn every_read_a_room_turn_makes_runs_inside_the_rosters_scope() -> Result<()> {
             &crate::memory::RecallScope {
                 world_ref: Some(fiction.to_hex()),
                 facet: None,
+                kinds: None,
             },
             10,
             None,

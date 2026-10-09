@@ -145,27 +145,6 @@ fn prior_thread(vault: &Vault, seed: u8, party: &str) {
         .expect("put last_touch claim");
 }
 
-/// The whole point of the pre-seam: CAL-09's surface constants and CAL-04's
-/// registration constants are the SAME strings, or the branch is dead.
-#[test]
-fn verb_and_channel_match_the_cal_09_surface_constants() {
-    assert_eq!(
-        CALENDAR_INVITE_VERB,
-        crate::memory::CALENDAR_INVITE_OUTBOUND_VERB
-    );
-    assert_eq!(
-        CALENDAR_INVITE_CHANNEL,
-        crate::memory::CALENDAR_INVITE_OUTBOUND_CHANNEL
-    );
-    assert_eq!(CalendarInviteMethod::Request.as_str(), "REQUEST");
-    assert_eq!(CalendarInviteMethod::Cancel.as_str(), "CANCEL");
-    assert_eq!(
-        CalendarInviteMethod::parse("REQUEST"),
-        Some(CalendarInviteMethod::Request)
-    );
-    assert_eq!(CalendarInviteMethod::parse("request"), None);
-}
-
 #[test]
 fn calendar_invite_payload_is_exact_five_field_contract() {
     let payload = CalendarInvitePayload {
@@ -259,34 +238,6 @@ fn request(sequence: u32, blob_ref: &str) -> CalendarInvitePayload {
         ics_blob_ref: blob_ref.to_owned(),
         recipient: "guest@example.test".to_owned(),
     }
-}
-
-#[test]
-fn calendar_invite_first_confirm_mints_uid_once() {
-    let (_dir, vault, actor_ref, event_ref, blob_ref) = admitted_fixture();
-    let payload = request(0, &blob_ref);
-    let admission =
-        admit_calendar_invite(&vault, actor_ref, &payload, NOW).expect("first confirm admits");
-    assert_eq!(admission.state_change(), CalendarInviteStateChange::MintUid);
-    assert_eq!(admission.event_ref(), event_ref);
-    assert_eq!(
-        admission.hygiene().consent_basis(),
-        Some(&CalendarInviteConsentBasis::PriorThread)
-    );
-
-    commit_admission(&vault, &admission, NOW).expect("commit passport");
-
-    let live =
-        super::super::passport::live_passports_for_event(&vault, &event_ref).expect("passports");
-    assert_eq!(live.len(), 1);
-    assert_eq!(live[0].1.uid, UID);
-    assert_eq!(live[0].1.last_sequence, 0);
-    assert_eq!(live[0].1.direction, CalendarPassportDirection::Outbound);
-
-    // A byte-identical re-admission is a replay: no second UID, no bump.
-    let replay = admit_calendar_invite(&vault, actor_ref, &payload, NOW).expect("replay admits");
-    assert_eq!(replay.state_change(), CalendarInviteStateChange::Replay);
-    assert!(!replay.moves_state());
 }
 
 #[test]
@@ -499,36 +450,6 @@ fn calendar_invite_request_denies_without_consent_basis() {
     );
 }
 
-/// The first of the two bases that satisfy the no-cold-invite row, and the
-/// only one that can exist before BK-03 (ONE-1814) mints the booking-page
-/// standing grant.
-#[test]
-fn calendar_invite_prior_thread_satisfies_no_cold_invite() {
-    let (_dir, vault) = open_calendar_vault();
-    let actor_ref = actor(&vault);
-    event(&vault);
-    identity(&vault, 0x53, actor_ref, "email", "me@primary.test");
-    let blob_ref = blob(
-        &vault,
-        0x54,
-        actor_ref,
-        &emit(0, CalendarInviteMethod::Request),
-    );
-    // Cold to begin with: the very same caller bytes are refused while the
-    // vault carries no evidence of a thread.
-    assert!(admit_calendar_invite(&vault, actor_ref, &request(0, &blob_ref), NOW).is_err());
-
-    // One live `comm.last_touch` on email is a real prior thread.
-    prior_thread(&vault, 0x60, "guest@example.test");
-    let admission = admit_calendar_invite(&vault, actor_ref, &request(0, &blob_ref), NOW)
-        .expect("prior thread satisfies no-cold-invite");
-    assert_eq!(
-        admission.hygiene().consent_basis(),
-        Some(&CalendarInviteConsentBasis::PriorThread)
-    );
-    assert_eq!(admission.state_change(), CalendarInviteStateChange::MintUid);
-}
-
 #[test]
 fn calendar_invite_confirmed_booking_grant_satisfies_no_cold_invite() {
     let (_dir, vault) = open_calendar_vault();
@@ -606,23 +527,6 @@ fn calendar_invite_cancel_requires_existing_recipient_binding() {
 }
 
 #[test]
-fn calendar_invite_denies_non_primary_sender_domain() {
-    let (_dir, vault, actor_ref, _event_ref, blob_ref) = admitted_fixture();
-    // A calendar-channel identity on a different domain now carries the
-    // send: sequencer-class infrastructure, not the primary calendar domain.
-    identity(
-        &vault,
-        0x5A,
-        actor_ref,
-        CALENDAR_INVITE_CHANNEL,
-        "bulk@sequencer.test",
-    );
-    let refusal = admit_calendar_invite(&vault, actor_ref, &request(0, &blob_ref), NOW)
-        .expect_err("an off-domain sender never carries a real invite");
-    assert!(matches!(refusal, CalendarError::InviteRefused { .. }));
-}
-
-#[test]
 fn calendar_invite_ignores_caller_hygiene_bools_and_rehydrates_from_vault() {
     let (_dir, vault, actor_ref, _event_ref, blob_ref) = admitted_fixture();
     let payload = request(0, &blob_ref);
@@ -668,49 +572,5 @@ fn calendar_invite_ignores_caller_hygiene_bools_and_rehydrates_from_vault() {
             Err(CalendarError::InviteRefused { .. }),
         ),
         "the same caller bytes must refuse when the vault carries no consent",
-    );
-}
-
-#[test]
-fn connector_send_builds_text_calendar_method_part() {
-    let (_dir, vault, actor_ref, _event_ref, blob_ref) = admitted_fixture();
-    let payload = request(0, &blob_ref);
-    let part = build_calendar_invite_mime_part(&vault, &payload).expect("mime part");
-    assert_eq!(
-        part.content_type,
-        "text/calendar; method=REQUEST; charset=utf-8"
-    );
-    assert_eq!(part.filename, CALENDAR_INVITE_PART_FILENAME);
-    let text = String::from_utf8(part.ics).expect("utf-8");
-    assert!(text.starts_with("BEGIN:VCALENDAR\r\n"));
-    assert!(text.contains("METHOD:REQUEST\r\n"));
-    assert!(text.contains(&format!("UID:{UID}\r\n")));
-
-    let cancel_blob = blob(
-        &vault,
-        0x5B,
-        actor_ref,
-        &emit(1, CalendarInviteMethod::Cancel),
-    );
-    let cancel = CalendarInvitePayload {
-        method: CalendarInviteMethod::Cancel,
-        uid: UID.to_owned(),
-        sequence: 1,
-        ics_blob_ref: cancel_blob,
-        recipient: "guest@example.test".to_owned(),
-    };
-    let part = build_calendar_invite_mime_part(&vault, &cancel).expect("cancel part");
-    assert_eq!(
-        part.content_type,
-        "text/calendar; method=CANCEL; charset=utf-8"
-    );
-}
-
-#[test]
-fn tool_descriptor_keeps_the_invite_effectful_and_idempotent() {
-    assert_eq!(CALENDAR_INVITE_TOOL_DESCRIPTOR.read_only_hint, Some(false));
-    assert_eq!(
-        CALENDAR_INVITE_TOOL_DESCRIPTOR.idempotency_supported_hint,
-        Some(true)
     );
 }

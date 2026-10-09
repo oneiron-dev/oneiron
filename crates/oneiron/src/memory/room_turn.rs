@@ -74,6 +74,17 @@ impl<'v> RoomTurnHandle<'v> {
             .recall(query, effort, scope, limit, format, lease)
     }
 
+    /// The `recall` verb with the query vector `embed` returns, for a host
+    /// that embeds the query; it reads through the same lane as
+    /// [`Self::invoke`].
+    pub fn recall_with_vector(
+        &self,
+        input: crate::task_verb::sdk::RecallRequest,
+        embed: impl FnOnce(&str) -> Option<Vec<f32>>,
+    ) -> MemoryResult<MemoryPack> {
+        crate::task_verb::sdk::recall_with_vector(&self.memory, input, embed)
+    }
+
     pub fn get_entity(
         &self,
         entity_ref: &str,

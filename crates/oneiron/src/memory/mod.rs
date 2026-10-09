@@ -101,8 +101,8 @@ pub use outbound::{
 };
 pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts};
 pub use recall::{
-    Effort, MEMORY_PACK_VERSION, MemoryItem, MemoryPack, MemoryProvenance, RecallScope,
-    RetrievalMeta, ScopeHonesty,
+    CONTAINER_KINDS, Effort, MEMORY_PACK_VERSION, MemoryItem, MemoryPack, MemoryProvenance,
+    RecallScope, RetrievalMeta, ScopeHonesty,
 };
 pub use room_turn::RoomTurnHandle;
 pub use skill_authoring::SkillAuthoringReceipt;

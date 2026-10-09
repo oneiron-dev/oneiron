@@ -13,7 +13,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `src/extraction_eval.rs` | src | m | 9 fn · 6 const · 2 re-export | — | — |
 | `src/extraction_eval/qa.rs` | src | s | 2 struct · 1 crate-vis | Of360GoldQa, Of360QaAnswer | Gold-anchored QA lane with exact normalized-answer scoring |
-| `src/extraction_eval/tests.rs` | test | s | — | — | — |
 | `src/extraction_eval/types.rs` | src | m | 17 struct · 6 enum · 4 fn | Of360Ar3MetricTier, Of360CaseEvalReport, Of360CaseExtractionOutput, Of360ConversationTurn, Of360DatasetCompleteness, Of360DerivationEnvelope, Of360EvalError, Of360EvalReport +15 | — |
 | `src/lib.rs` | src | s | 2 mod | — | Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the… |
 | `src/llm/assembly.rs` | src | s | 1 struct · 7 fn | StreamAssembly | Shared typed stream assembly |

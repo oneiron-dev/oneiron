@@ -249,6 +249,7 @@ impl OneironClient {
         scope: &oneiron::memory::RecallScope,
         limit: usize,
         format: Option<&str>,
+        as_of: Option<u64>,
     ) -> Result<oneiron::memory::MemoryPack, MemoryError> {
         let input = oneiron::task_verb::sdk::RecallRequest {
             query: query.to_owned(),
@@ -256,9 +257,11 @@ impl OneironClient {
             scope: Some(scope.clone()),
             limit: Some(limit),
             format: format.map(str::to_owned),
+            as_of,
         };
         oneiron::memory::caps::check_query(&input.query)?;
         oneiron::memory::caps::check_limit(input.limit.unwrap_or(10))?;
+        oneiron::memory::caps::check_as_of(input.as_of)?;
         let value = serde_json::to_value(&input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

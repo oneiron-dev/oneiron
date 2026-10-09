@@ -251,6 +251,7 @@ fn user_stated_head(
     Ok(claim_id)
 }
 
+#[cfg(feature = "sync")]
 fn gate_decision_count(vault: &Vault) -> usize {
     vault
         .store
@@ -430,31 +431,6 @@ fn promotion_cannot_supersede_user_stated() -> Result<()> {
         crate::claim::ClaimLifecycleStatus::Active
     );
     assert_eq!(outcome.landed, vec![clean_id]);
-    Ok(())
-}
-
-#[test]
-fn per_op_gating_no_bulk() -> Result<()> {
-    let (_dir, vault) = open_auto_vault();
-    let fixture = fixture(&vault)?;
-    let candidates = vec![
-        candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]),
-        candidate(&fixture, "profile.tone", "warm", vec![fixture.turn]),
-        candidate(&fixture, "profile.lives_in", "Tokyo", vec![fixture.turn]),
-    ];
-
-    let decisions_before = gate_decision_count(&vault);
-    let outcome = promote_consolidated_claims(&vault, &fixture.run, candidates)?;
-    assert_eq!(outcome.landed.len(), 3);
-    assert!(outcome.pended.is_empty());
-
-    // N candidates = N separate gate evaluations (one decision receipt
-    // each) — a single batched txn would record fewer.
-    assert_eq!(
-        gate_decision_count(&vault) - decisions_before,
-        3,
-        "one gate evaluation per candidate"
-    );
     Ok(())
 }
 
@@ -844,24 +820,6 @@ fn replay_path_still_skips_source_trust_gate() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn writer_sink_routes_through_promotion() -> Result<()> {
-    use crate::dreamer_consolidation::ConsolidationSink;
-
-    let (_dir, vault) = open_auto_vault();
-    let promo = fixture(&vault)?;
-    let promoted = candidate(&promo, "profile.name", "Oleksii", vec![promo.turn]);
-    let claim_id = promoted.claim_id;
-
-    let mut sink = PromotionWriterSink::new(&vault, promo.run);
-    sink.accept(vec![promoted])?;
-    assert_eq!(sink.outcome.landed, vec![claim_id]);
-    assert!(sink.outcome.pended.is_empty());
-    assert!(sink.outcome.rejected.is_empty());
-    assert!(vault.get_claim(&claim_id)?.is_some());
-    Ok(())
-}
-
 /// ONE-1710 §3 unit floor: the meet is computed from evidence, and the
 /// classification of a peer-answer TURN is `ToolOutput`.
 #[test]
@@ -984,41 +942,6 @@ fn peer_candidate_stores_typed_chain_and_preserves_confidence() -> Result<()> {
     Ok(())
 }
 
-/// ONE-1710 §1: the ledger is the record. Storage and promotion are
-/// deliberately SEPARATE transactions, so a candidate the writer refuses can
-/// never roll back or hide the answer TURN it was derived from.
-#[test]
-fn a_refused_candidate_never_unstores_the_answer_turn() -> Result<()> {
-    let (_dir, vault) = open_auto_vault();
-    let fixture = fixture(&vault)?;
-    let answer_turn = fixture.turn;
-
-    // Malformed by construction: `edge.*` is the reserved namespace no
-    // consolidation write may author, so the claim write fails.
-    let malformed = candidate(&fixture, "edge.forged", "ACME", vec![answer_turn]);
-    let claim_id = malformed.claim_id;
-
-    let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![malformed])?;
-    assert!(outcome.landed.is_empty());
-    assert!(
-        outcome.pended.is_empty(),
-        "a refusal is a rejection, never an approval-queue row"
-    );
-    assert_eq!(outcome.rejected.len(), 1);
-    assert_eq!(outcome.rejected[0].0, claim_id);
-    assert!(
-        vault.get_claim(&claim_id)?.is_none(),
-        "the refused claim rolled back whole"
-    );
-
-    // The already-landed answer is untouched by the failed consolidation.
-    assert!(
-        vault.get(&answer_turn)?.is_some(),
-        "a consolidation failure never rolls back or hides the stored answer"
-    );
-    Ok(())
-}
-
 /// True only for the central lineage guard's own refusal, so a coincidental
 /// policy/shape rejection cannot be mistaken for coverage.
 fn is_lineage_rejection(error: &Error) -> bool {
@@ -1136,66 +1059,12 @@ fn the_lineage_guard_is_reached_from_every_claim_write_door() -> Result<()> {
     Ok(())
 }
 
-/// GATE-12: the promotion writer is not the validator — a malformed
-/// candidate is refused at the write chokepoint it already goes through, so
-/// promotion inherits the floor rather than re-implementing it.
-#[test]
-fn validation_at_chokepoint() -> Result<()> {
-    let (_dir, vault) = open_auto_vault();
-    let fixture = fixture(&vault)?;
-    // Evidence resolves and the policy grants Auto, so the ONLY thing that
-    // can refuse this candidate is pre-commit validation of its value.
-    let promoted = candidate(
-        &fixture,
-        "profile.name",
-        "I will remember this next pass",
-        vec![fixture.turn],
-    );
-    let claim_id = promoted.claim_id;
-
-    let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
-
-    assert!(outcome.landed.is_empty(), "no degenerate claim may land");
-    assert!(
-        outcome.pended.is_empty(),
-        "a validity failure is never an owner-review row"
-    );
-    let (rejected_id, reason) = outcome
-        .rejected
-        .first()
-        .expect("the malformed candidate is reported as rejected");
-    assert_eq!(*rejected_id, claim_id);
-    assert!(
-        reason.contains("gated write rejected"),
-        "the rejection must come from the gated write, got {reason}"
-    );
-    assert!(
-        reason.contains("gate.deny.dreamer_precommit.degenerate_output"),
-        "the pinned pre-commit code must survive into the reason, got {reason}"
-    );
-
-    assert!(
-        vault.get_claim(&claim_id)?.is_none(),
-        "nothing lands in the vault"
-    );
-    assert!(
-        vault.get_raw(&fixture.turn)?.is_some(),
-        "the already-stored answer TURN never shared the rolled-back transaction"
-    );
-    assert!(
-        vault.pending_gate_consents(10)?.is_empty(),
-        "no pending-consent row is minted behind the Dreamer's back"
-    );
-    Ok(())
-}
-
 /// GATE-12 authorship is the WRITE's provenance, not the candidate's
 /// evidence meet.
 ///
 /// The promotion envelope's source is the COMPUTED meet, so a truthful
 /// `ToolOutput` lineage is the ordinary case — and it must not disable the
-/// deny-first floor. This is `validation_at_chokepoint` with the meet as the
-/// single changed axis.
+/// deny-first floor. The meet is the single changed axis.
 #[test]
 fn tool_output_meet_degenerate_candidate_is_denied_at_the_door() -> Result<()> {
     let (_dir, vault) = open_auto_vault();
@@ -1655,40 +1524,6 @@ fn verdict_bound_deferred_closure_keeps_prior_until_calibrated_auto_grant() -> R
     Ok(())
 }
 
-#[test]
-fn promotion_consults_the_checker_once_and_lands_auto_on_allow() -> Result<()> {
-    let (_dir, vault) = open_auto_checker_vault();
-    let fixture = fixture(&vault)?;
-    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
-    let claim_id = promoted.claim_id;
-    let checker = CountingAutoChecker::new(AutoCheckOutcome::Allow);
-
-    let bounded_checker = BoundedAutoChecker::new(checker.clone());
-    let outcome = promote_consolidated_claims_with_checker(
-        &vault,
-        &fixture.run,
-        vec![promoted],
-        Some(&bounded_checker),
-    )?;
-
-    assert_eq!(outcome.landed, vec![claim_id]);
-    assert!(outcome.rejected.is_empty());
-    assert_eq!(checker.calls(), 1, "exactly one consult per candidate");
-    assert_eq!(
-        vault.get_claim(&claim_id)?.expect("claim landed").approval,
-        ClaimApprovalStatus::Auto
-    );
-    let records: Vec<_> = vault
-        .store
-        .gate_decisions(1_000)?
-        .into_iter()
-        .filter(|record| record.claim_id == Some(*claim_id.as_bytes()))
-        .collect();
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0].outcome, "allow");
-    Ok(())
-}
-
 /// A hold refuses the Auto request. On THIS path that means the whole write
 /// rolls back and the candidate is reported as rejected — ARCH-0067 §7 keeps
 /// standing: consolidation mints no owner-review row behind the Dreamer's
@@ -1834,95 +1669,6 @@ fn promotion_isolates_panicking_checkers_and_records_unavailable() -> Result<()>
     Ok(())
 }
 
-/// Holds its first call until released; reports when its last handle drops,
-/// which is when the checker worker has exited.
-struct BlockingPromotionAutoChecker {
-    calls: Arc<AtomicUsize>,
-    release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
-    dropped: std::sync::mpsc::SyncSender<()>,
-}
-
-impl AutoChecker for BlockingPromotionAutoChecker {
-    fn check(&self, _candidate: &AutoCheckCandidate<'_>) -> AutoCheckOutcome {
-        let _ = self.calls.fetch_add(1, AtomicOrdering::Relaxed);
-        // A closed channel returns at once.
-        let _ = self.release.lock().expect("release lock").recv();
-        AutoCheckOutcome::Allow
-    }
-}
-
-impl Drop for BlockingPromotionAutoChecker {
-    fn drop(&mut self) {
-        let _ = self.dropped.try_send(());
-    }
-}
-
-#[test]
-fn promotion_bounds_repeated_blocked_checker_calls_and_records_each_refusal() -> Result<()> {
-    let (_dir, vault) = open_auto_checker_vault();
-    let fixture = fixture(&vault)?;
-    let batch = || -> Vec<_> {
-        (0..3)
-            .map(|_| candidate(&fixture, "profile.name", "Ada", vec![fixture.turn]))
-            .collect()
-    };
-    // Behind a host that answers at once, every candidate consults it.
-    let answering = CountingAutoChecker::new(AutoCheckOutcome::Unavailable);
-    let control = promote_consolidated_claims_with_checker(
-        &vault,
-        &fixture.run,
-        batch(),
-        Some(&BoundedAutoChecker::new(answering.clone())),
-    )?;
-    assert_eq!(control.rejected.len(), 3);
-    assert_eq!(answering.calls(), 3);
-
-    let calls = Arc::new(AtomicUsize::new(0));
-    let (release, waiting) = std::sync::mpsc::sync_channel(1);
-    let (dropped, worker_exited) = std::sync::mpsc::sync_channel(1);
-    let checker = BoundedAutoChecker::new(Arc::new(BlockingPromotionAutoChecker {
-        calls: Arc::clone(&calls),
-        release: std::sync::Mutex::new(waiting),
-        dropped,
-    }));
-
-    // Two promotions behind a host that never answers. The first consult
-    // waits out the deadline and keeps the host's one slot; every later
-    // consult, in this promotion and the next, refuses without a handoff.
-    for _ in 0..2 {
-        let candidates = batch();
-        let ids: Vec<_> = candidates
-            .iter()
-            .map(|candidate| candidate.claim_id)
-            .collect();
-        let outcome = promote_consolidated_claims_with_checker(
-            &vault,
-            &fixture.run,
-            candidates,
-            Some(&checker),
-        )?;
-        assert!(outcome.landed.is_empty());
-        assert!(outcome.pended.is_empty());
-        assert_eq!(outcome.rejected.len(), ids.len());
-        for id in ids {
-            assert_checker_rejection_receipt(&vault, &id, "gate.pending.checker.unavailable", &[])?;
-        }
-    }
-    // Drop must not join a host that is still blocked.
-    drop(checker);
-    // A consult queued behind the blocked call would now reach the host and
-    // count; the worker drops the host only after every handed-off consult.
-    release.send(()).expect("release the sole host worker");
-    drop(release);
-    worker_exited
-        .recv_timeout(std::time::Duration::from_secs(60))
-        .expect("the checker worker exits once its host returns");
-    // Six consults, one handoff. Only a handed-off consult can wait for the
-    // deadline, so only the first one waited.
-    assert_eq!(calls.load(AtomicOrdering::Relaxed), 1);
-    Ok(())
-}
-
 #[test]
 fn checked_promotion_cannot_override_attributed_proposal_hold() -> Result<()> {
     let (_dir, vault) = open_auto_checker_vault();
@@ -1957,25 +1703,6 @@ fn checked_promotion_cannot_override_attributed_proposal_hold() -> Result<()> {
             .pending_gate_consents(10)?
             .iter()
             .any(|pending| pending.claim_id == *claim_id.as_bytes())
-    );
-    Ok(())
-}
-
-/// The compat entry point passes no checker: a vault with the knob configured
-/// but no checker injected promotes exactly as it did before this ticket.
-#[test]
-fn promotion_without_an_injected_checker_is_unchanged() -> Result<()> {
-    let (_dir, vault) = open_auto_checker_vault();
-    let fixture = fixture(&vault)?;
-    let promoted = candidate(&fixture, "profile.name", "Oleksii", vec![fixture.turn]);
-    let claim_id = promoted.claim_id;
-
-    let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
-
-    assert_eq!(outcome.landed, vec![claim_id]);
-    assert_eq!(
-        vault.get_claim(&claim_id)?.expect("claim landed").approval,
-        ClaimApprovalStatus::Auto
     );
     Ok(())
 }

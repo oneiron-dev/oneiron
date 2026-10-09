@@ -215,6 +215,18 @@ fn facade_input<T: serde::de::DeserializeOwned>(
     })
 }
 
+/// Encodes a typed verb result in the facade's vocabulary.
+fn facade_output<T: Serialize>(output: T) -> Result<serde_json::Value, FacadeApiError> {
+    serde_json::to_value(output).map_err(|_| {
+        FacadeApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            MEMORY_CODE_INTERNAL,
+            "result encoding failed",
+            ["Report this SDK response mismatch."],
+        )
+    })
+}
+
 /// Refuses a caller-named entity this credential cannot read, with the
 /// NOT_FOUND a missing one gets, so the route never confirms that the id
 /// exists. A ref that is not an entity id is left for the engine to refuse.

@@ -65,6 +65,7 @@ class CommitReceipt(TypedDict):
 class RecallScope(TypedDict):
     world_ref: NotRequired[str | None]
     facet: NotRequired[str | None]
+    kinds: NotRequired[list[str] | None]
 
 class MemoryProvenance(TypedDict):
     source: str
@@ -73,6 +74,7 @@ class MemoryProvenance(TypedDict):
 
 class MemoryItem(TypedDict):
     short_id: str
+    source_revision_ref: NotRequired[str]
     kind: str
     predicate: str | None
     value_text: str
@@ -86,6 +88,12 @@ class MemoryItem(TypedDict):
 class ScopeHonesty(TypedDict):
     out_of_scope_worlds: list[str]
 
+class TemporalHint(TypedDict):
+    phrase: str
+    status: Literal["used", "unresolved", "future"]
+    start: int | None
+    end: int | None
+
 class RetrievalMeta(TypedDict):
     quality: Literal["full", "degraded", "passthrough"]
     degradation: NotRequired[list[Literal["ppr_cache_miss", "embedding_timeout", "bm25_stale", "temporal_signal_skipped"]]]
@@ -95,6 +103,7 @@ class RetrievalMeta(TypedDict):
     total_candidates: int
     claims_returned: int
     deep_pending: bool | None
+    temporal_hints: NotRequired[list[TemporalHint]]
 
 class MemoryPack(TypedDict):
     items: list[MemoryItem]
@@ -222,7 +231,7 @@ class Oneiron:
     def describe(self, task_ref: str | None = None) -> TaskDescription: ...
     def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
     def claim_upsert(self, claim: ClaimInput) -> CommitReceipt: ...
-    def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None) -> MemoryPack: ...
+    def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None, as_of: int | None = None) -> MemoryPack: ...
     def export(self, format: PackFormat | None = None) -> dict[str, Any]: ...
     def receipts(self, limit: int = 100) -> list[FacadeReceipt]: ...
     def key_value_get(self, request: KeyValueAddress) -> KeyValueItem | None: ...

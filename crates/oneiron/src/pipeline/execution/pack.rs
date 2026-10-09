@@ -16,7 +16,7 @@ use crate::query_expansion::{
 };
 use crate::retrieval_quality::{RetrievalDiagnostics, classify_retrieval_quality};
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalSignal};
-use crate::temporal::{TemporalExpressionParseError, temporal_expression_from_query};
+use crate::temporal::{TemporalHintReport, temporal_hints_from_query};
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -49,6 +49,7 @@ impl PipelineBuilder<'_> {
                 empty_reason: Some(EmptyReason::FilterMatchedNone),
                 telemetry_run_id: None,
                 signals: Vec::new(),
+                temporal_hints: Vec::new(),
             });
         }
         if self.ppr_search.is_some() || self.ppr_expand.is_some() {
@@ -63,7 +64,7 @@ impl PipelineBuilder<'_> {
         let started = Instant::now();
         let started_at = self.vault.store.clock.now_recorded_at();
         let temporal_now = self.temporal_now.unwrap_or(started_at);
-        let occurred_range = self.resolved_occurred_range(temporal_now)?;
+        let (occurred_range, temporal_hints) = self.resolved_occurred_range(temporal_now);
         // A parsed query range replaces the effort's default now anchor for
         // the temporal scan. Keep the effort flag: it is not a host window,
         // so the independent recency blend still applies.
@@ -226,6 +227,7 @@ impl PipelineBuilder<'_> {
                 empty_reason: None,
                 telemetry_run_id: None,
                 signals: telemetry_signals,
+                temporal_hints,
             });
         }
         let mut diagnostics = attempt.diagnostics;
@@ -484,6 +486,7 @@ impl PipelineBuilder<'_> {
             empty_reason,
             telemetry_run_id,
             signals: telemetry_signals,
+            temporal_hints,
         })
     }
 
@@ -567,29 +570,32 @@ impl PipelineBuilder<'_> {
                 .is_some_and(|(seeds, _)| !seeds.is_empty())
     }
 
-    fn resolved_occurred_range(&self, now: u64) -> Result<Option<(u64, u64)>> {
+    /// The occurred-time window this run filters on, and the temporal phrases
+    /// the query held. A host window or a host temporal search wins over the
+    /// query, which is then not read. Query phrases never fail the run: one
+    /// the parser cannot use is reported and left out.
+    fn resolved_occurred_range(&self, now: u64) -> (Option<(u64, u64)>, Vec<TemporalHintReport>) {
         if self.occurred_range.is_some()
             || self
                 .temporal_search
                 .as_ref()
                 .is_some_and(|config| !config.effort_anchor)
         {
-            return Ok(self.occurred_range);
+            return (self.occurred_range, Vec::new());
         }
 
         let Some((query, _)) = self.text_search.as_ref() else {
-            return Ok(None);
+            return (None, Vec::new());
         };
 
-        temporal_expression_from_query(query)
-            .map(|expression| expression.map(|expression| expression.resolve(now)))
-            .map(|range| range.map(|range| normalize_range(range.start, range.end)))
-            .map_err(invalid_temporal_expression)
+        let hints = temporal_hints_from_query(query, now);
+        (
+            hints
+                .range
+                .map(|range| normalize_range(range.start, range.end)),
+            hints.hints,
+        )
     }
-}
-
-fn invalid_temporal_expression(error: TemporalExpressionParseError) -> Error {
-    Error::InvalidTemporalExpression(error)
 }
 
 /// Fail-closed admission of the caller's per-entity read-side decay

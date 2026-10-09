@@ -381,8 +381,6 @@ mod pick;
 mod planning;
 
 use enumeration::enumerate_with_refusals;
-#[cfg(test)]
-use enumeration::read_fact;
 pub use enumeration::{AffectedBooking, enumerate_affected_bookings};
 pub use execution::execute_emergency_plan;
 pub use pick::{EmergencyPick, counterparty_pick};

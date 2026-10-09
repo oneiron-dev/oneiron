@@ -1,6 +1,5 @@
 //! Shared fixtures and helpers for the lens behaviour tests.
 
-use super::super::wire_ids::MAX_LENS_COLLECTION_ITEMS;
 use super::*;
 use crate::test_util::entity as test_entity_id;
 use crate::{Error, Result, claim::ScopedReadActorKey, entity_id::EntityId};
@@ -159,10 +158,6 @@ pub(super) fn action(command: &str) -> SelfUiAction {
     }
 }
 
-pub(super) fn finite(value: f64) -> FiniteF64 {
-    FiniteF64::new(value).expect("valid finite number")
-}
-
 pub(super) fn actor_key(value: &str) -> ScopedReadActorKey {
     ScopedReadActorKey::new(value).expect("valid actor key")
 }
@@ -236,37 +231,6 @@ pub(super) fn seal() -> SealAtom {
         level: SealLevel::Actor,
         label: text("actor-sealed"),
     }
-}
-
-pub(super) fn rows_at_collection_limit_with_one_cell_each() -> Vec<LedgerRowAtom> {
-    (0..MAX_LENS_COLLECTION_ITEMS)
-        .map(|index| LedgerRowAtom {
-            cells: vec![LedgerCell {
-                label: text(&format!("label-{index}")),
-                value: text("value"),
-            }],
-            status: None,
-            seal: None,
-        })
-        .collect()
-}
-
-pub(super) fn sections_at_collection_limit_with_one_line_each() -> Vec<SectionAtom> {
-    (0..MAX_LENS_COLLECTION_ITEMS)
-        .map(|index| SectionAtom {
-            title: text(&format!("section-{index}")),
-            lines: vec![text(&format!("line-{index}"))],
-        })
-        .collect()
-}
-
-pub(super) fn options_at_collection_limit() -> Vec<SelfUiOption> {
-    (0..MAX_LENS_COLLECTION_ITEMS)
-        .map(|index| SelfUiOption {
-            value: option_value(&format!("option-{index}")),
-            label: text(&format!("Option {index}")),
-        })
-        .collect()
 }
 
 pub(super) fn sample_atoms() -> Vec<LensAtom> {
