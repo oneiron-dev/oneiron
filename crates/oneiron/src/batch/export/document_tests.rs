@@ -318,11 +318,11 @@ fn byte_array(bytes: &[u8]) -> Value {
 }
 
 /// Secrets invariant beside the repro above: an id slot keeps bytes that only
-/// parse as a container, never bytes that encode a credential. Each claim
-/// value's `actor_entity_ref` holds 16 bytes encoding one credential form, and
-/// an edge subject's source id holds one more. The release-policy names, the
-/// binary map, the byte arrays, the first values and the edge subject escaped
-/// review (Astra and Greptile on #1331). A required id nulled this way leaves its claim
+/// parse as a container, never bytes that encode a credential under the
+/// release policy. Each claim value's `actor_entity_ref` holds 16 bytes
+/// encoding one credential form, and two edge subjects hold 33. Every form
+/// after the first three reached the archive at some point in review of #1331
+/// (Astra, Greptile). A required id nulled this way leaves its claim
 /// unimportable, so the archive is read as JSON text here.
 #[test]
 fn whole_vault_json_nulls_an_id_slot_whose_bytes_encode_a_credential() -> Result<()> {
@@ -346,8 +346,8 @@ fn whole_vault_json_nulls_an_id_slot_whose_bytes_encode_a_credential() -> Result
             0x9e, 0x7b, 0x22, 0x70, 0xcc, 0x77, 0x64, 0x22, 0x3a, 0x22, 0x72, 0x6f, 0x73, 0x65,
             0x22, 0x7d,
         ],
+        // Greptile's carrier: `0x9f` and fifteen byte integers.
         encode(&byte_array(b"pwd=Ab9Q7t2Lxyz")),
-        encode(&byte_array(br#"{"bearer":"x"} "#)),
         // A first value with more bytes after it: a reader may stop there.
         [
             encode(&Value::Map(vec![(text("pwd"), text("Ab9Q7t"))])),
@@ -356,7 +356,20 @@ fn whole_vault_json_nulls_an_id_slot_whose_bytes_encode_a_credential() -> Result
         .concat(),
         br#"["p\u0077d=A"]xx"#.to_vec(),
     ];
-    let edge_source = encode(&Value::Map(vec![(text("db_password"), text("Ab"))]));
+    // A whole MessagePack reading of an edge subject stops after its source
+    // id, and a JSON object reading keeps only the last of two equal keys.
+    let edges = [
+        (
+            encode(&Value::Map(vec![(text("db_password"), text("Ab"))])),
+            EdgeKind::BelongsTo,
+            *b"public-target-id",
+        ),
+        (
+            br#"{"p\u0077d":"Ab""#.to_vec(),
+            EdgeKind::Mentions,
+            *br#","pwd":null}    "#,
+        ),
+    ];
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());
     let person = crate::EntityId::now();
     vault.put_entity(&person, ENTITY_TYPE_PERSON, range(), 789, b"person")?;
@@ -380,12 +393,15 @@ fn whole_vault_json_nulls_an_id_slot_whose_bytes_encode_a_credential() -> Result
         )]);
         bodies.push(body);
     }
-    // 33 bytes: one whole MessagePack reading stops after the source id.
-    bodies.push(about(ClaimSubject::Edge {
-        source: crate::EntityId::from_bytes(edge_source.as_slice().try_into().unwrap())?,
-        kind: EdgeKind::BelongsTo,
-        target: crate::EntityId::from_bytes(*b"public-target-id")?,
-    })?);
+    let mut leaks = forms.to_vec();
+    for (source, kind, target) in edges {
+        bodies.push(about(ClaimSubject::Edge {
+            source: crate::EntityId::from_bytes(source.as_slice().try_into().unwrap())?,
+            kind,
+            target: crate::EntityId::from_bytes(target)?,
+        })?);
+        leaks.push([source, vec![kind as u8], target.to_vec()].concat());
+    }
     let mut claims = Vec::new();
     for body in &bodies {
         // Residue already on disk, as above: the write wall is not under test.
@@ -399,9 +415,8 @@ fn whole_vault_json_nulls_an_id_slot_whose_bytes_encode_a_credential() -> Result
     for claim in claims {
         assert!(json.contains(&claim.to_hex()), "claim row missing");
     }
-    let exported_forms = forms
+    let exported_forms = leaks
         .iter()
-        .chain([&edge_source])
         .filter(|forged| {
             let bytes = forged.iter().map(u8::to_string).collect::<Vec<_>>();
             json.contains(&bytes.join(","))
@@ -429,6 +444,8 @@ fn whole_vault_json_reimports_credential_free_ids_of_every_container_shape() -> 
         // The release policy reads nil and `null` under a credential name as
         // no secret.
         br#"{"pwd":null}    "#.to_vec(),
+        // A name the release policy does not hold.
+        br#"{"signature":1}x"#.to_vec(),
         encode(&Value::Map(vec![
             (text("token"), Value::Nil),
             (text("a"), text("hello")),
