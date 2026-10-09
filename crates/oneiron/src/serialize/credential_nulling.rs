@@ -120,26 +120,27 @@ fn reference_carries_credential(bytes: &[u8], depth: usize) -> bool {
 }
 
 /// Whether an id's bytes carry a credential. Every reading of them is judged
-/// by the release policy's own detector: the raw text, a JSON document, a
-/// whole MessagePack value, and inside those each string, binary, extension
-/// and numeric byte array read again as bytes, and every field the release
-/// policy's rule names. Container shape alone is no credential, so a
-/// credential-free id survives the archive.
+/// by the release policy's own detector: the raw text, each value of a JSON or
+/// MessagePack stream (a reader may stop after the first value or read on),
+/// and inside those each string, binary, extension and numeric byte array read
+/// again as bytes, and every field the release policy's rule names. Container
+/// shape alone is no credential, so a credential-free id survives the archive.
 fn id_carries_credential(bytes: &[u8], depth: usize) -> bool {
     if depth >= 128 || scan_file_content("", bytes).is_some() {
         return true;
     }
-    if let Ok(value) = serde_json::from_slice::<Value>(bytes)
-        && (sanitize_credentials(&mut value.clone(), true)
-            || json_names_credential(&value, depth + 1))
+    if serde_json::Deserializer::from_slice(bytes)
+        .into_iter::<Value>()
+        .map_while(Result::ok)
+        .any(|mut value| {
+            json_names_credential(&value, depth + 1) || sanitize_credentials(&mut value, true)
+        })
     {
         return true;
     }
     let mut cursor = std::io::Cursor::new(bytes);
-    rmpv::decode::read_value(&mut cursor).is_ok_and(|value| {
-        cursor.position() == bytes.len() as u64
-            && (sanitize_messagepack_credentials(&mut value.clone(), true)
-                || names_credential(&value, depth + 1))
+    std::iter::from_fn(|| rmpv::decode::read_value(&mut cursor).ok()).any(|mut value| {
+        names_credential(&value, depth + 1) || sanitize_messagepack_credentials(&mut value, true)
     })
 }
 

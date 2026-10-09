@@ -321,8 +321,8 @@ fn byte_array(bytes: &[u8]) -> Value {
 /// parse as a container, never bytes that encode a credential. Each claim
 /// value's `actor_entity_ref` holds 16 bytes encoding one credential form, and
 /// an edge subject's source id holds one more. The release-policy names, the
-/// binary map, the byte arrays and the edge subject escaped review (Astra and
-/// Greptile on #1331). A required id nulled this way leaves its claim
+/// binary map, the byte arrays, the first values and the edge subject escaped
+/// review (Astra and Greptile on #1331). A required id nulled this way leaves its claim
 /// unimportable, so the archive is read as JSON text here.
 #[test]
 fn whole_vault_json_nulls_an_id_slot_whose_bytes_encode_a_credential() -> Result<()> {
@@ -348,6 +348,13 @@ fn whole_vault_json_nulls_an_id_slot_whose_bytes_encode_a_credential() -> Result
         ],
         encode(&byte_array(b"pwd=Ab9Q7t2Lxyz")),
         encode(&byte_array(br#"{"bearer":"x"} "#)),
+        // A first value with more bytes after it: a reader may stop there.
+        [
+            encode(&Value::Map(vec![(text("pwd"), text("Ab9Q7t"))])),
+            vec![0xc1; 4],
+        ]
+        .concat(),
+        br#"["p\u0077d=A"]xx"#.to_vec(),
     ];
     let edge_source = encode(&Value::Map(vec![(text("db_password"), text("Ab"))]));
     let (_dir, vault) = open_test_vault_with(VaultConfig::default());
