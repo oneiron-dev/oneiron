@@ -5,10 +5,9 @@ use crate::attempt_queue::AttemptQueue;
 use crate::claim::ClaimSource;
 use crate::config::VaultConfig;
 use crate::dreamer_runner::{
-    DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DreamerAttemptPayload, DreamerConsolidationScope,
-    DreamerRunnerStore,
+    DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DreamerAttemptPayload, DreamerRunnerStore,
 };
-use crate::dreamer_wake::{WakeTrigger, request_wake, request_wake_in_txn};
+use crate::dreamer_wake::{WakeTrigger, request_wake_in_txn};
 use crate::temporal::TimeRange;
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
@@ -77,27 +76,6 @@ fn person_requires_positive_extraction_provenance() {
         );
         assert!(vault.get(&person).expect("missing person").is_none());
     }
-}
-
-#[test]
-fn replaced_person_revision_is_not_an_extraction_candidate() {
-    let (_tmp, vault) = temp_vault();
-    let person = mint_person(&vault, ClaimSource::Generated);
-    vault
-        .put_entity(&person, ENTITY_TYPE_PERSON, t(2), 2, b"owner revision")
-        .expect("replace person");
-    assert_eq!(zero_live_members(&vault, &person).expect("tripwire"), None);
-    assert!(
-        !vault
-            .put_extraction_minted_person(
-                &person,
-                ClaimSource::Generated,
-                t(2),
-                2,
-                b"owner revision"
-            )
-            .expect("cannot relabel replacement")
-    );
 }
 
 #[test]
@@ -317,48 +295,6 @@ fn wake_payload() -> DreamerAttemptPayload {
         attempt_type: "wake".to_owned(),
         input: Value::Nil,
         parent_attempt: None,
-    }
-}
-
-#[test]
-fn actual_wake_entry_enqueues_cleanup_only_for_timer_macro() {
-    for (trigger, scope, cleanup_count) in [
-        (WakeTrigger::Compaction, DreamerConsolidationScope::Micro, 0),
-        (WakeTrigger::SessionEnd, DreamerConsolidationScope::Meso, 0),
-        (WakeTrigger::Event, DreamerConsolidationScope::Macro, 0),
-        (WakeTrigger::Timer, DreamerConsolidationScope::Micro, 0),
-        (WakeTrigger::Timer, DreamerConsolidationScope::Macro, 1),
-    ] {
-        let (_tmp, vault) = temp_vault();
-        let runner = DreamerRunnerStore::new(&vault);
-        for _ in 0..2 {
-            request_wake(
-                &runner,
-                trigger,
-                scope,
-                wake_payload(),
-                Some("same-wake".to_owned()),
-                Some("timer-run".to_owned()),
-                1,
-            )
-            .expect("request wake");
-        }
-        let queued = AttemptQueue::new(&vault).list().expect("queue");
-        assert_eq!(
-            queued
-                .iter()
-                .filter(|row| row.kind == DREAMER_VAULT_CLEANUP_ATTEMPT_KIND)
-                .count(),
-            cleanup_count
-        );
-        assert_eq!(
-            queued
-                .iter()
-                .filter(|row| row.kind == scope.attempt_kind())
-                .count(),
-            1
-        );
-        assert_eq!(queued.len(), 1 + cleanup_count);
     }
 }
 

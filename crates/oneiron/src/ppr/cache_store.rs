@@ -14,8 +14,6 @@ use super::query::DeferredPprCacheWrite;
 use super::walk::{CachedPprRow, PprCacheState, PprFrontierEntry, SCORE_EPSILON};
 
 pub(super) const SEED_HASH_LEN: usize = 16;
-#[cfg(test)]
-pub(super) const LEGACY_SEED_HASH_LEN: usize = 32;
 pub(super) const CACHE_HEADER_LEN: usize = 17;
 pub(super) const CACHE_STALE_OFFSET: usize = 16;
 const CACHE_ENTRY_LEN: usize = 20;
@@ -24,8 +22,6 @@ const CACHE_STATE_VERSION: u8 = 2;
 const CACHE_STATE_PREFIX_LEN: usize = 29;
 const CACHE_FRONTIER_ENTRY_LEN: usize = ENTITY_ID_LEN + 8;
 pub(super) const CACHE_DEP_KEY_LEN: usize = ENTITY_ID_LEN + SEED_HASH_LEN;
-#[cfg(test)]
-pub(super) const LEGACY_CACHE_DEP_KEY_LEN: usize = ENTITY_ID_LEN + LEGACY_SEED_HASH_LEN;
 pub(super) const CACHE_TTL_ACTIVE_SECS: u64 = 86_400;
 pub(super) const CACHE_TTL_RECENT_SECS: u64 = 259_200;
 pub(super) const CACHE_TTL_DORMANT_SECS: u64 = 604_800;
@@ -113,29 +109,45 @@ pub(crate) fn flush_deferred_ppr_cache_writes(
     store: &Store,
     writes: &[DeferredPprCacheWrite],
 ) -> Result<()> {
+    flush_deferred_ppr_cache_writes_admitted(store, writes, || Ok(()))
+}
+
+/// [`flush_deferred_ppr_cache_writes`] with `admit` run as the write's last
+/// statement before any of its rows is kept: its error drops every row of
+/// this flush and is returned, so a writer whose authority lapsed mid-walk
+/// publishes nothing.
+pub(crate) fn flush_deferred_ppr_cache_writes_admitted(
+    store: &Store,
+    writes: &[DeferredPprCacheWrite],
+    admit: impl Fn() -> Result<()>,
+) -> Result<()> {
     if writes.is_empty() {
         return Ok(());
     }
     store.group_write(None, |txn| {
+        let keep = |rows: Rows<(), Error>| match admit() {
+            Ok(()) => rows,
+            Err(err) => Rows::Discard(Err(err)),
+        };
         for write in writes {
             let mut each = match store.env.nested_write_txn(txn) {
                 Ok(each) => each,
-                Err(err) => return Rows::Refuse(err.into()),
+                Err(err) => return keep(Rows::Refuse(err.into())),
             };
             match publish_deferred_ppr_cache_write(store, &mut each, write) {
                 Ok(true) => {
                     if let Err(err) = each.commit() {
-                        return Rows::Refuse(err.into());
+                        return keep(Rows::Refuse(err.into()));
                     }
                 }
                 Ok(false) => each.abort(),
                 Err(err) => {
                     each.abort();
-                    return Rows::Refuse(err);
+                    return keep(Rows::Refuse(err));
                 }
             }
         }
-        Rows::Commit(())
+        keep(Rows::Commit(()))
     })
 }
 
@@ -496,11 +508,6 @@ pub(super) fn parse_cache_header(bytes: &[u8]) -> Result<(u64, u64, u8)> {
     let graph_version = decode_u64(&bytes[8..16], "ppr cache header")?;
     let stale = bytes[CACHE_STALE_OFFSET];
     Ok((computed_at, graph_version, stale))
-}
-#[cfg(test)]
-pub(super) fn decode_cache_scores(payload: &[u8]) -> Result<Vec<ScoredEntity>> {
-    let decoded = decode_cache_payload(payload)?;
-    Ok(decoded.into_scores())
 }
 pub(super) fn decode_cache_payload(payload: &[u8]) -> Result<CachedPprRow> {
     if is_state_cache_payload(payload) {

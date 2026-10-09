@@ -24,6 +24,7 @@ mod docedit_resource;
 pub(crate) use docedit_resource::shipped_docedit_package_limits;
 mod docx_budget;
 mod doors;
+mod dreamer_grant;
 mod dreamer_precommit;
 mod effect;
 pub(crate) mod fanout_policy;
@@ -42,6 +43,7 @@ pub(crate) mod proposal_observation;
 mod repair;
 mod resolution;
 mod tracker_limits;
+pub use self::dreamer_grant::DreamerWeaveReach;
 pub use tracker_limits::LiveQueryTrackerLimits;
 mod retrieval_filter;
 pub(crate) mod retrieval_retention;
@@ -84,7 +86,7 @@ pub(crate) use self::connector_admission::ConnectorAdmissionQuotas;
 pub(crate) use self::constants::POLICY_OWNER_POLICY_NOTIFY_KEY;
 #[cfg(test)]
 pub(crate) use self::constants::{
-    FIRST_PARTY_CONNECTOR_ACTOR_ID, POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_OWNER_POLICY_DOCUMENT_KEY,
+    FIRST_PARTY_CONNECTOR_ACTOR_ID, POLICY_OWNER_POLICY_DOCUMENT_KEY,
     POLICY_OWNER_POLICY_ENABLED_KEY, POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY,
     POLICY_OWNER_POLICY_PATTERNS_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY,
     POLICY_ROW_ACTION_KEY, POLICY_ROW_ACTIVE_KEY, POLICY_ROW_REF_KEY, POLICY_ROW_TEXT_KEY,
@@ -103,6 +105,8 @@ pub(crate) use self::decision::{GateDecision, GateMetrics, GateOutcome, GateReas
 pub(crate) use self::decode::normalize_policy_manifest_scope;
 #[cfg(test)]
 pub(crate) use self::default_manifest::default_consult_fanout_approval_threshold;
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) use self::default_manifest::default_policy_manifest_with_scoped_grants;
 pub(crate) use self::default_manifest::{
     DEFAULT_POLICY_MANIFEST_TIMESTAMP, default_consult_fanout_policy, default_policy_manifest,
     default_policy_manifest_id, seeded_project_depth_default,

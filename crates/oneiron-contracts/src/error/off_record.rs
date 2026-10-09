@@ -103,6 +103,13 @@ pub enum OffRecordError {
     /// index keys, which are shared across turns.
     #[error("off-record promote found no journaled turn {turn_ref} to replay")]
     OffRecordTurnNotInJournal { turn_ref: String },
+    /// ARCH-0052 D4: a promoted message keeps its `AuthoredBy` edge, and the
+    /// actor it names is a base identity. When base does not hold that actor
+    /// the edge would dangle, so the turn is not promoted.
+    #[error(
+        "off-record promote of turn {turn_ref} refused: its author {actor_ref} does not exist in the vault"
+    )]
+    OffRecordPromoteAuthorMissing { turn_ref: String, actor_ref: String },
 }
 
 impl OffRecordError {
@@ -124,6 +131,7 @@ impl OffRecordError {
             Self::OffRecordGuestTurnRefRejected { .. } => ErrorKind::OffRecordGuestTurnRefRejected,
             Self::OffRecordTalkOnly { .. } => ErrorKind::OffRecordTalkOnly,
             Self::OffRecordTurnNotInJournal { .. } => ErrorKind::OffRecordTurnNotInJournal,
+            Self::OffRecordPromoteAuthorMissing { .. } => ErrorKind::OffRecordPromoteAuthorMissing,
         }
     }
 }

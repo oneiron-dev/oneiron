@@ -2,10 +2,6 @@
 use std::time::Duration;
 
 use super::{config::*, factory::*};
-#[cfg(all(unix, feature = "voice"))]
-use super::{pass::*, run::*, shutdown::*};
-#[cfg(all(unix, feature = "voice"))]
-use crate::tick::PushTick;
 use crate::tick::{Tick, TickSource};
 use oneiron::attempt_queue::AttemptId;
 use oneiron::{
@@ -14,22 +10,8 @@ use oneiron::{
     DreamerRunnerStore, EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
     ReserveDreamerBudget, Result, Vault, VaultConfig, WakeAttemptContext,
 };
-#[cfg(all(unix, feature = "voice"))]
-use oneiron::{
-    DreamerClaimAuthoringStrategy, LlmBackend, ModelId, WakeCancellation, WakePassDeadline,
-    WriteActor,
-};
-#[cfg(all(unix, feature = "voice"))]
-use oneiron_server::managed::ManagedShutdown;
-#[cfg(all(unix, feature = "voice"))]
-use oneiron_server::voice_host::{VoiceHost, VoiceHostConfig, VoiceServeConnection};
-#[cfg(all(unix, feature = "voice"))]
-use std::sync::{Arc, Mutex};
-#[cfg(all(unix, feature = "voice"))]
-use tokio::sync::watch;
 
-#[cfg(all(unix, feature = "voice"))]
-mod voice;
+mod attachment;
 
 /// Seeds a durable budget row at `budget_id` (init-if-absent via reserve).
 pub(super) fn seed_budget_row(vault: &Vault, budget_id: &str) {
