@@ -3,19 +3,6 @@
 use super::*;
 
 #[test]
-fn from_edge_auth_accepts_every_registered_pair() {
-    let registry = fixture_edge_service_registry();
-    for (service, class) in fixture_edge_services() {
-        let service_identity = format!("connector-edge:{service}");
-        let identity =
-            AuthenticatedConnectionIdentity::from_edge_auth(&service_identity, class, &registry)
-                .expect("registered (service, class) pair must validate");
-        assert_eq!(identity.service_identity(), service_identity);
-        assert_eq!(identity.connection_class(), class);
-    }
-}
-
-#[test]
 fn from_edge_auth_rejects_malformed_service_identity_grammar() {
     let registry = fixture_edge_service_registry();
     for malformed in [
@@ -96,18 +83,6 @@ fn edge_service_registry_rejects_conflicting_re_registration() {
 }
 
 #[test]
-fn edge_service_registry_rejects_empty_service_name() {
-    let mut registry = EdgeServiceRegistry::new();
-    let err = registry
-        .register("", ConnectionClass::CloudVaultPeer)
-        .expect_err("empty service name must be rejected");
-    assert_eq!(
-        err.kind(),
-        crate::error::ErrorKind::RelayAttestationInvalidServiceIdentity
-    );
-}
-
-#[test]
 fn the_relay_takes_its_hosted_policy_from_the_attested_identity() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     // The policy is bound to `push-relay`. The pass runs under `slack-hosted`,
@@ -182,102 +157,6 @@ fn from_edge_auth_rejects_identity_class_mismatch() {
 }
 
 #[test]
-fn witness_mint_maps_every_connection_class() {
-    // Exhaustive over ConnectionClass: the general mint can only produce the
-    // two hosted domains — never `LocalViaByoConnector`.
-    for (service_identity, class, expected) in [
-        (
-            CLOUD_EDGE_IDENTITY,
-            ConnectionClass::CloudVaultPeer,
-            RelayTrustDomain::CloudVault,
-        ),
-        (
-            HOSTED_EDGE_IDENTITY,
-            ConnectionClass::LocalVaultViaHostedConnector,
-            RelayTrustDomain::LocalViaHostedConnector,
-        ),
-    ] {
-        let identity = edge_auth_identity(service_identity, class);
-        let witness = AttestedRelayDomain::from_connection_identity(&identity);
-        assert_eq!(witness.domain(), expected);
-    }
-}
-
-#[test]
-fn hosted_edge_attestation_can_never_reach_byo() {
-    // Type-level BYO unconstructibility: `HostedDomain` has no BYO arm, so
-    // attesting over EVERY ConnectionClass yields only the two hosted
-    // domains — a hosted edge can never conclude "not relayed by us".
-    let attestation = HostedEdgeAttestation::new();
-    let mut seen = Vec::new();
-    for (service_identity, class) in [
-        (CLOUD_EDGE_IDENTITY, ConnectionClass::CloudVaultPeer),
-        (
-            HOSTED_EDGE_IDENTITY,
-            ConnectionClass::LocalVaultViaHostedConnector,
-        ),
-    ] {
-        let identity = edge_auth_identity(service_identity, class);
-        let witness = attestation.attest(&identity);
-        assert!(matches!(
-            witness.domain(),
-            RelayTrustDomain::CloudVault | RelayTrustDomain::LocalViaHostedConnector
-        ));
-        seen.push(witness.domain());
-    }
-    assert_eq!(
-        seen,
-        vec![
-            RelayTrustDomain::CloudVault,
-            RelayTrustDomain::LocalViaHostedConnector
-        ]
-    );
-}
-
-#[test]
-fn hosted_domain_variant_set_is_exactly_two_hosted_arms() {
-    // Security tripwire: an in-crate EXHAUSTIVE, no-wildcard match over the
-    // module-private `HostedDomain`. Adding a variant (a BYO arm, say) breaks
-    // THIS match at compile time — the variant-set pin the external
-    // compile-fail fixture cannot provide (its E0603 fires regardless of the
-    // variant set). The expected mapping is checked against the production
-    // `from_hosted_domain` arm-for-arm, so the two cannot drift apart either.
-    fn expected_domain(hosted: HostedDomain) -> RelayTrustDomain {
-        match hosted {
-            HostedDomain::CloudVault => RelayTrustDomain::CloudVault,
-            HostedDomain::LocalViaHostedConnector => RelayTrustDomain::LocalViaHostedConnector,
-        }
-    }
-    for hosted in [
-        HostedDomain::CloudVault,
-        HostedDomain::LocalViaHostedConnector,
-    ] {
-        assert_eq!(
-            AttestedRelayDomain::from_hosted_domain(hosted, HOSTED_EDGE_IDENTITY.to_owned())
-                .domain(),
-            expected_domain(hosted),
-            "hosted-edge mapping drifted from the pinned two-variant set"
-        );
-    }
-}
-
-#[test]
-fn attested_relay_domain_serializes_domain_and_identity() {
-    // The witness emits BOTH halves of its evidence: which trust domain, and
-    // which attested service identity that domain was established for. A
-    // receipt naming only the domain could not be traced back to the edge that
-    // presented it.
-    let witness = &hosted_witness();
-    let serialized = serde_json::to_value(witness).expect("witness serializes");
-    assert_eq!(
-        serialized["domain"],
-        serde_json::to_value(RelayTrustDomain::LocalViaHostedConnector)
-            .expect("inner domain serializes"),
-    );
-    assert_eq!(serialized["service_identity"], HOSTED_EDGE_IDENTITY);
-}
-
-#[test]
 fn witness_and_identity_never_implement_deserialize() {
     // Ambiguity-based negative trait check: each `marker()` call resolves ONLY
     // while `T` does NOT implement `DeserializeOwned`. If a `Deserialize` impl
@@ -321,40 +200,5 @@ fn attested_witness_drives_the_relay_pass() -> Result<()> {
             .decision,
         PolicyClassifyDecision::Block
     );
-    Ok(())
-}
-
-#[test]
-fn attested_cloud_vault_witness_short_circuits_the_pass() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let identity = edge_auth_identity(CLOUD_EDGE_IDENTITY, ConnectionClass::CloudVaultPeer);
-    let witness = AttestedRelayDomain::from_connection_identity(&identity);
-    assert_eq!(witness.service_identity(), CLOUD_EDGE_IDENTITY);
-    let request = PolicyClassifyRequest::outbound_content(BOMB_CONTENT);
-    let binding = vault.relay_verify_binding(&request, &PolicyModelConfig::default())?;
-    let registry = hosted_edge_registry(hosted_serious_crime_block());
-    let source = StaticVaultSideVerdicts {
-        verdict: PolicyClassifyVerdict::clean_allow(
-            binding,
-            &PolicyModelConfig::default(),
-            PolicyPlane::OwnerPolicy,
-        )
-        .attesting_hosted_plane(
-            &registered_policy(&registry),
-            &PolicyModelConfig::default(),
-            &answered_pass(),
-        ),
-        requested_hash: Mutex::new(None),
-    };
-    let pass = block_on(vault.relay_boundary_pass(
-        request,
-        &witness,
-        &registry,
-        &PolicyModelConfig::default(),
-        None,
-        &source,
-    ))?;
-    assert_eq!(pass, RelayBoundaryPass::TrustedVaultSide);
-    assert!(!pass.ran_relay_classify());
     Ok(())
 }

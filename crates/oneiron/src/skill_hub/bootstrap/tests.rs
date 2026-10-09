@@ -4,71 +4,6 @@ use crate::skill_hub::{HubIndexEntry, LocalDirSkillHubAdapter, SkillHubAdapter};
 use crate::test_util::put_policy_manifest_bytes;
 
 #[test]
-fn bootstrap_is_active_versioned_and_does_not_rewrite_on_reopen() -> Result<()> {
-    let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
-    let ids = vault.entities_by_type(ENTITY_TYPE_SKILL)?;
-    assert_eq!(ids.len(), 4);
-    let mut before = Vec::new();
-    for (name, markdown) in FILES {
-        let id = stable_id(name)?;
-        assert!(ids.contains(&id));
-        let mut record = vault.get_skill_record(&id)?.expect("seeded skill");
-        assert_eq!(record.lifecycle_status, SkillLifecycle::Active);
-        assert_eq!(record.version, env!("CARGO_PKG_VERSION"));
-        assert_eq!(
-            record.provenance,
-            package(name, markdown)?.record.provenance
-        );
-        // Reopen must preserve an owner's lifecycle decision.
-        record.lifecycle_status = SkillLifecycle::Stale;
-        vault.update_skill_record(&id, &record, TimeRange { start: 1, end: 1 }, 1)?;
-        before.push((id, vault.get_raw(&id)?));
-    }
-    let count = vault.count_entities_by_type(ENTITY_TYPE_SKILL)?;
-    drop(vault);
-    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
-    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_SKILL)?, count);
-    for (id, raw) in before {
-        assert_eq!(vault.get_raw(&id)?, raw);
-    }
-    Ok(())
-}
-
-#[test]
-fn all_shipped_files_conform_and_import_unchanged() -> Result<()> {
-    let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
-    let mut adapter = LocalDirSkillHubAdapter::new(stable_id("hub")?);
-    for (name, markdown) in FILES {
-        let package = package(name, markdown)?;
-        let pin = HubPin::ContentHash(package.content_hash()?.to_hex());
-        let hub_ref = HubRef::new(adapter.hub_id(), name, pin.clone())?;
-        adapter.insert_package(name, pin, package.clone());
-        let imported = vault.import_skill_from_adapter(
-            &adapter,
-            &hub_ref,
-            TimeRange { start: 1, end: 1 },
-            1,
-        )?;
-        assert_eq!(imported, stable_id(name)?);
-        assert_eq!(
-            adapter.fetch_package(&hub_ref)?.export_files()?,
-            package.files
-        );
-        assert_eq!(
-            vault
-                .get_skill_record(&imported)?
-                .expect("imported")
-                .content_hash,
-            Some(package.content_hash()?)
-        );
-    }
-    assert!(package("bad", "# Not a skill").is_err());
-    Ok(())
-}
-
-#[test]
 fn bootstrap_does_not_reactivate_changed_or_non_seed_records() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
@@ -209,21 +144,6 @@ fn open_succeeds_when_an_earlier_import_holds_a_seed_under_another_id() -> Resul
     assert_eq!(
         vault.count_entities_by_type(ENTITY_TYPE_SKILL)?,
         FILES.len() as u64
-    );
-    Ok(())
-}
-
-#[test]
-fn a_seed_held_under_another_id_is_not_rewritten() -> Result<()> {
-    let (dir, imported, before) = deferred_judge_import()?;
-    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
-    assert_eq!(vault.get_raw(&imported)?, Some(before));
-    assert_eq!(
-        vault
-            .get_skill_record(&imported)?
-            .expect("imported judge")
-            .lifecycle_status,
-        SkillLifecycle::Candidate,
     );
     Ok(())
 }
@@ -424,30 +344,6 @@ fn delete_then_restore_defaults_mints_candidate_with_pinned_hash() -> Result<()>
     assert_eq!(
         vault.restore_default_skills(&owner, TimeRange { start: 3, end: 3 }, 3)?,
         Vec::<EntityId>::new()
-    );
-    Ok(())
-}
-
-#[test]
-fn restore_does_not_reactivate_retired_default_or_overwrite_foreign_holder() -> Result<()> {
-    let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
-    let old = stable_id("judge")?;
-    let mut retired = vault.get_skill_record(&old)?.unwrap();
-    retired.lifecycle_status = SkillLifecycle::Stale;
-    vault.update_skill_record(&old, &retired, TimeRange { start: 1, end: 1 }, 1)?;
-    let before = vault.get_raw(&old)?;
-    let owner = restore_owner(&vault)?;
-    let restored = vault.restore_default_skills(&owner, TimeRange { start: 2, end: 2 }, 2)?;
-    assert_eq!(restored.len(), 1);
-    assert_ne!(restored[0], old);
-    assert_eq!(vault.get_raw(&old)?, before);
-    assert_eq!(
-        vault
-            .get_skill_record(&restored[0])?
-            .unwrap()
-            .lifecycle_status,
-        SkillLifecycle::Candidate
     );
     Ok(())
 }

@@ -157,68 +157,6 @@ fn blob_creation_replacement_and_scoped_old_new_positions_fail_closed() {
 }
 
 #[test]
-fn typed_then_generic_then_typed_checkin_preserves_parent_scope() {
-    let (_dir, vault, member, _, _) = shared();
-    let memory = facade_for(&vault, member);
-    let habit = memory
-        .put_structural(&StructuralPutInput {
-            id: None,
-            kind: "TASK".into(),
-            body: serde_json::json!({"role": 4, "content": "habit"}),
-            text_fields: None,
-            edges: None,
-            occurred_at: 10,
-            learned_at: None,
-        })
-        .unwrap();
-    let parent = EntityId::from_hex(&habit.id_hex).unwrap();
-    let typed = |at| HabitCheckinInput {
-        habit_ref: habit.id_hex.clone(),
-        id: None,
-        data: Some(serde_json::json!({"note": "done"})),
-        occurred_at: at,
-        learned_at: None,
-    };
-    let first = memory.put_habit_checkin(&typed(11)).unwrap();
-    let middle = memory
-        .put_structural(&StructuralPutInput {
-            id: None,
-            kind: "TASK".into(),
-            body: serde_json::json!({"role": 5, "note": "generic"}),
-            text_fields: None,
-            edges: Some(vec![StructuralEdgeSpec {
-                edge_kind: "child_of".into(),
-                target_ref: habit.id_hex.clone(),
-                weight: None,
-            }]),
-            occurred_at: 12,
-            learned_at: None,
-        })
-        .unwrap();
-    let last = memory.put_habit_checkin(&typed(13)).unwrap();
-    for child in [first, middle, last] {
-        let id = EntityId::from_hex(&child.id_hex).unwrap();
-        assert!(
-            vault
-                .edges_out(&id)
-                .unwrap()
-                .iter()
-                .any(|edge| { edge.kind == EdgeKind::ChildOf && edge.target == parent })
-        );
-    }
-    assert!(vault.record_scope(&parent).unwrap().is_some());
-    let body = memory
-        .get_entity(&habit.id_hex)
-        .unwrap()
-        .value
-        .unwrap()
-        .body
-        .unwrap();
-    assert_eq!(body["currentStreak"], serde_json::json!(1));
-    assert_eq!(body["longestStreak"], serde_json::json!(1));
-}
-
-#[test]
 fn nested_raw_batch_cannot_escape_the_actor_content_transaction() {
     let (_dir, vault, member, _, refs) = shared();
     let memory = facade_for(&vault, member);

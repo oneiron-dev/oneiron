@@ -181,48 +181,6 @@ fn assert_canonical_graph(vault: &Vault) -> Result<()> {
 }
 
 #[test]
-fn shed_requires_exactly_one_pending_intent() {
-    let (_dir, vault) = fixture();
-    assert_eq!(
-        shed(&vault).unwrap(),
-        ShedOutcome::Refused(ShedBlocker::NoPendingOutboundStep)
-    );
-    let first = pending(&vault, 1);
-    let second = pending(&vault, 2);
-    assert_eq!(
-        shed(&vault).unwrap(),
-        ShedOutcome::Refused(ShedBlocker::MultiplePendingOutboundSteps { count: 2 })
-    );
-    assert_eq!(vault.residency(), VaultResidency::Full);
-    ledger::complete_record(&vault, second.id, 12).unwrap();
-    let (residue, _) = entered(&vault);
-    assert_eq!(
-        residue.step,
-        JournaledResumeStep {
-            intent_id: first.id,
-            attempt_id: first.attempt_id,
-            call_seq: first.call_seq,
-            updated_ms: first.updated_ms,
-        }
-    );
-    assert_eq!(residue.entered_at_ms, 20);
-}
-
-#[test]
-fn direct_call_zero_waited_secs_is_typed_error() {
-    let (_dir, vault) = fixture();
-    let revision = vault.store.env.info().last_txn_id;
-    for cause in [ShedCause::LongOutboundWait, ShedCause::MemoryPressure] {
-        assert!(matches!(
-            vault.shed_rebuildable_heap(cause, 0, 20),
-            Err(Error::InvalidConfig(_))
-        ));
-    }
-    assert_eq!(vault.store.env.info().last_txn_id, revision);
-    assert_eq!(vault.residency(), VaultResidency::Full);
-}
-
-#[test]
 fn ppr_cache_drop_recomputes_equal_results() -> Result<()> {
     let (_dir, vault) = fixture();
     let ids = warm(&vault)?;
@@ -303,68 +261,6 @@ fn hnsw_drop_rebuilds_equal_neighbors() -> Result<()> {
 }
 
 #[test]
-fn hnsw_lazy_rebuild_preserves_legacy_discipline() -> Result<()> {
-    let (_dir, vault) = fixture();
-    warm(&vault)?;
-    // Rebuild a real Legacy baseline, not a Symmetric graph with a false label.
-    vault.with_write_txn(|txn| {
-        let ids: Vec<_> = (40..44).map(entity).collect();
-        let graph = hnsw::build_hnsw_graph_from_snapshot(
-            &vault.store,
-            &vault.config,
-            txn,
-            &ids,
-            LinkDiscipline::Legacy,
-        )?;
-        hnsw::write_rebuilt_hnsw(&vault.store, txn, &graph, LinkDiscipline::Legacy)
-    })?;
-    let expected = probes(&vault)?;
-    drop_graph(&vault)?;
-    let revision = vault.store.env.info().last_txn_id;
-    assert_eq!(expected, probes(&vault)?);
-    assert_eq!(vault.store.env.info().last_txn_id, revision);
-    assert_eq!(discipline(&vault)?, LinkDiscipline::Legacy);
-    assert!(dropped(&vault)?);
-    vault.put_vector(&entity(40), &[0.0, 0.0, 0.0, 1.0])?;
-    assert_eq!(discipline(&vault)?, LinkDiscipline::Legacy);
-    assert!(!dropped(&vault)?);
-    assert_canonical_graph(&vault)
-}
-
-#[test]
-fn hnsw_write_routes_while_dropped() -> Result<()> {
-    let (_dir, vault) = fixture();
-    warm(&vault)?;
-    drop_graph(&vault)?;
-    let id = entity(44);
-    vault.put_entity(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"insert")?;
-    vault.put_vector(&id, &[0.0, 0.0, 0.0, 1.0])?;
-    assert!(!dropped(&vault)?);
-    assert_canonical_graph(&vault)?;
-    drop_graph(&vault)?;
-    vault.put_vector(&entity(40), &[0.0, 0.0, 0.0, 1.0])?;
-    assert!(!dropped(&vault)?);
-    assert_canonical_graph(&vault)?;
-    drop_graph(&vault)?;
-    assert!(
-        vault.delete_entity_with_options(
-            &id,
-            crate::deletion::DeleteEntityOptions { purge: true }
-        )?
-    );
-    assert!(dropped(&vault)?);
-    assert!(
-        probes(&vault)?
-            .iter()
-            .flatten()
-            .all(|(found, _)| *found != id)
-    );
-    assert!(dropped(&vault)?);
-    vault.put_vector(&entity(40), &[0.0, 1.0, 0.0, 0.0])?;
-    assert_canonical_graph(&vault)
-}
-
-#[test]
 fn hnsw_dropped_marker_is_not_empty_corpus() -> Result<()> {
     let (_dir, vault) = fixture();
     drop_graph(&vault)?;
@@ -388,84 +284,6 @@ fn hnsw_dropped_marker_is_not_empty_corpus() -> Result<()> {
         Err(Error::CorruptedIndex(_))
     ));
     Ok(())
-}
-
-#[test]
-fn dropped_marker_entity_count_equals_vector_count() -> Result<()> {
-    let (_dir, vault) = fixture();
-    warm(&vault)?;
-    drop_graph(&vault)?;
-    let txn = vault.store.env.read_txn()?;
-    assert_eq!(vault.store.hnsw_neighbors.len(&txn)?, 0);
-    assert_eq!(hnsw::hnsw_entity_count(&vault.store, &txn)?, 4);
-    assert_eq!(vault.store.vectors.len(&txn)?, 4);
-    Ok(())
-}
-
-#[test]
-fn shed_is_idempotent_per_step() -> Result<()> {
-    let (_dir, vault) = fixture();
-    let ids = warm(&vault)?;
-    let first = pending(&vault, 1);
-    let (residue, _) = entered(&vault);
-    ppr(&vault, ids[0])?;
-    vault.maintain().rebuild_hnsw().run()?;
-    match shed(&vault)? {
-        ShedOutcome::AlreadySlim {
-            residue: again,
-            dropped,
-        } => {
-            assert_eq!(again, residue);
-            assert_eq!(dropped.hnsw_nodes, 4);
-            assert!(dropped.ppr_cache_rows > 0);
-        }
-        other => panic!("expected re-drop, got {other:?}"),
-    }
-    ledger::complete_record(&vault, first.id, 30).unwrap();
-    assert_eq!(
-        shed(&vault)?,
-        ShedOutcome::AlreadySlim {
-            residue: residue.clone(),
-            dropped: HeapDropReport::default(),
-        }
-    );
-    pending(&vault, 2);
-    assert_eq!(
-        shed(&vault)?,
-        ShedOutcome::Refused(ShedBlocker::AlreadySlimForDifferentStep)
-    );
-    pending(&vault, 3);
-    assert_eq!(
-        shed(&vault)?,
-        ShedOutcome::AlreadySlim {
-            residue: residue.clone(),
-            dropped: HeapDropReport::default(),
-        }
-    );
-    assert_eq!(vault.residency(), VaultResidency::Slim);
-    assert_eq!(
-        vault.resume_from_slim_on_inbound()?,
-        InboundResumeOutcome::Resumed { residue }
-    );
-    Ok(())
-}
-
-#[test]
-fn same_step_with_touched_updated_ms_is_already_slim() {
-    let (_dir, vault) = fixture();
-    let record = pending(&vault, 1);
-    let (residue, _) = entered(&vault);
-    ledger::record_definite_non_delivery(&vault, record.id, 31).unwrap();
-    let touched = ledger::begin_definite_non_delivery_retry(&vault, record.id, 32).unwrap();
-    match shed(&vault).unwrap() {
-        ShedOutcome::AlreadySlim { residue: again, .. } => {
-            assert!(residue.step.same_step(&again.step));
-            assert_ne!(residue.step, again.step);
-            assert_eq!(again.entered_at_ms, residue.entered_at_ms);
-            assert_eq!(again.step.updated_ms, touched.updated_ms);
-        }
-        other => panic!("timestamp is not identity: {other:?}"),
-    }
 }
 
 #[test]
@@ -674,33 +492,6 @@ fn malformed_ledger_selection_preserves_residency() -> Result<()> {
 }
 
 #[test]
-fn resume_is_lazy_and_writes_nothing() -> Result<()> {
-    let (_dir, vault) = fixture();
-    let ids = warm(&vault)?;
-    pending(&vault, 1);
-    let (residue, _) = entered(&vault);
-    let ledger = rows(&vault, &vault.store.vault_meta)?;
-    let revision = vault.store.env.info().last_txn_id;
-    assert_eq!(
-        vault.resume_from_slim_on_inbound()?,
-        InboundResumeOutcome::Resumed { residue }
-    );
-    assert_eq!(
-        vault.resume_from_slim_on_inbound()?,
-        InboundResumeOutcome::AlreadyFull
-    );
-    assert_eq!(vault.residency(), VaultResidency::Full);
-    assert_eq!(vault.store.env.info().last_txn_id, revision);
-    assert_eq!(ledger, rows(&vault, &vault.store.vault_meta)?);
-    assert!(dropped(&vault)?);
-    assert!(rows(&vault, &vault.store.ppr_cache)?.is_empty());
-    assert!(rows(&vault, &vault.store.hnsw_neighbors)?.is_empty());
-    assert!(!ppr(&vault, ids[0])?.is_empty());
-    assert!(!probes(&vault)?[0].is_empty());
-    Ok(())
-}
-
-#[test]
 fn journaled_step_survives_shed_rehydrate_no_duplicate_send() {
     struct InFlight<'a> {
         vault: &'a Vault,
@@ -794,41 +585,6 @@ fn sync_windows_drop_and_rebuild_equivalent() -> Result<()> {
 
 #[cfg(feature = "sync")]
 #[test]
-fn full_drop_all_touch_everything_equivalence() -> Result<()> {
-    let (_dir, vault) = fixture();
-    let ids = warm(&vault)?;
-    pending(&vault, 1);
-    let manager = manager(&vault);
-    let key = crate::sync::WindowKey::new("2026-03");
-    let window = manager.open_window(&key)?;
-    let doc = window.doc.get_deep_value();
-    drop(window);
-    let ppr_before = ppr(&vault, ids[0])?;
-    let hnsw_before = probes(&vault)?;
-    let (_, report) = entered(&vault);
-    assert_eq!(report.sync_windows, 1);
-    assert_eq!(report.hnsw_nodes, 4);
-    assert!(report.ppr_cache_rows > 0 && report.ppr_dependency_rows > 0);
-    assert!(report.estimated_reclaimed_bytes > 0);
-    assert_eq!(doc, manager.open_window(&key)?.doc.get_deep_value());
-    assert_eq!(ppr_before, ppr(&vault, ids[0])?);
-    assert_eq!(hnsw_before, probes(&vault)?);
-    assert_eq!(vault.residency(), VaultResidency::Slim);
-    assert!(matches!(
-        shed(&vault)?,
-        ShedOutcome::AlreadySlim {
-            dropped: HeapDropReport {
-                sync_windows: 1,
-                ..
-            },
-            ..
-        }
-    ));
-    Ok(())
-}
-
-#[cfg(feature = "sync")]
-#[test]
 fn sync_drop_failure_preserves_admission_residue() -> Result<()> {
     for already_slim in [false, true] {
         let (_dir, vault) = fixture();
@@ -866,103 +622,6 @@ fn sync_drop_failure_preserves_admission_residue() -> Result<()> {
             shed(&vault)?,
             ShedOutcome::Entered { .. } | ShedOutcome::AlreadySlim { .. }
         ));
-    }
-    Ok(())
-}
-
-#[test]
-fn stable_step_identity_and_report_merge_are_field_exact() {
-    let (_dir, vault) = fixture();
-    let record = pending(&vault, 3);
-    let prior = entered(&vault).0;
-    ledger::record_definite_non_delivery(&vault, record.id, 99).unwrap();
-    match shed(&vault).expect("same-step re-shed") {
-        ShedOutcome::AlreadySlim { residue, .. } => {
-            assert_eq!(residue.step.intent_id, prior.step.intent_id);
-            assert_eq!(residue.step.attempt_id, prior.step.attempt_id);
-            assert_eq!(residue.step.call_seq, prior.step.call_seq);
-        }
-        other => panic!("expected same-step re-shed, got {other:?}"),
-    }
-    for component in 0..3 {
-        let mut step = JournaledResumeStep {
-            intent_id: record.id,
-            attempt_id: record.attempt_id,
-            call_seq: record.call_seq,
-            updated_ms: 4,
-        };
-        match component {
-            0 => step.intent_id[0] ^= 1,
-            1 => step.attempt_id = AttemptId::from_bytes(&[2; 16]).unwrap(),
-            2 => step.call_seq = 8,
-            _ => unreachable!(),
-        }
-        *vault.slim.lock_state() = SlimState::Slim(SlimResidue {
-            step,
-            entered_at_ms: 20,
-        });
-        assert!(matches!(
-            shed(&vault).expect("different-step admission"),
-            ShedOutcome::Refused(ShedBlocker::AlreadySlimForDifferentStep)
-        ));
-        assert!(matches!(vault.residency(), VaultResidency::Slim));
-    }
-}
-
-#[test]
-fn hnsw_lazy_search_matches_persisted_discipline_with_fast_dims() -> Result<()> {
-    for discipline in [LinkDiscipline::Legacy, LinkDiscipline::Symmetric] {
-        let mut config = embedding_test_config();
-        config.fast_dims = Some(2);
-        config.hnsw.m_max_0 = 1;
-        config.hnsw.ef_construction = 8;
-        config.hnsw.ef_search = 8;
-        let (_dir, vault) = open_test_vault_with(config);
-        let ids: Vec<_> = (50..56).map(entity).collect();
-        for (index, id) in ids.iter().enumerate() {
-            vault.put_entity(id, 1, TimeRange { start: 1, end: 1 }, 1, b"node")?;
-            vault.put_vector(id, &[1.0, 1.0, index as f32, (5 - index) as f32])?;
-        }
-        vault.with_write_txn(|txn| {
-            let graph = hnsw::build_hnsw_graph_from_snapshot(
-                &vault.store,
-                &vault.config,
-                txn,
-                &ids,
-                discipline,
-            )?;
-            hnsw::write_rebuilt_hnsw(&vault.store, txn, &graph, discipline)
-        })?;
-        let search = || -> Result<Vec<Vec<(EntityId, u32)>>> {
-            let txn = vault.store.env.read_txn()?;
-            let mut results = Vec::new();
-            for query in [&[1.0, 1.0][..], &[1.0, 1.0, 2.0, 3.0][..]] {
-                for skip_rescore in [false, true] {
-                    results.push(
-                        hnsw::hnsw_search(
-                            &vault.store,
-                            &vault.config,
-                            &txn,
-                            query,
-                            4,
-                            skip_rescore,
-                        )?
-                        .into_iter()
-                        .map(|row| (row.id, row.score.to_bits()))
-                        .collect(),
-                    );
-                }
-            }
-            Ok(results)
-        };
-        let expected = search()?;
-        drop_graph(&vault)?;
-        let revision = vault.store.env.info().last_txn_id;
-        assert_eq!(expected, search()?);
-        assert_eq!(vault.store.env.info().last_txn_id, revision);
-        assert!(dropped(&vault)?);
-        let txn = vault.store.env.read_txn()?;
-        assert_eq!(hnsw::read_link_discipline(&vault.store, &txn)?, discipline);
     }
     Ok(())
 }

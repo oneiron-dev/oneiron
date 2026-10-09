@@ -35,7 +35,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "examples/meeting_audio_import/tests.rs",
@@ -18935,7 +18935,7 @@
      "path": "src/git_wire/mod.rs",
      "purpose": "Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 3,
       "re-export": 10
      }
     },
@@ -21570,14 +21570,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/llm/decision/local/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -21636,7 +21628,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/llm/decision/questions/graph_ask_tests.rs",
@@ -21725,7 +21717,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/llm/decision/questions/standing_tests.rs",
@@ -21798,7 +21790,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/llm/decision/tests.rs",
@@ -21988,7 +21980,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/llm/registry/tests.rs",
@@ -22037,7 +22029,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/llm/routing/tests.rs",
@@ -22132,7 +22124,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/llm/seat/tests.rs",
@@ -22329,15 +22321,7 @@
      }
     },
     {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/llm/tagger/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/llm/tests.rs",
@@ -22356,30 +22340,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/m8_forward_oracle/r1687_compaction.rs",
-     "purpose": "ONE-1687 RT-05: memory-profile-on-agent-definition oracle and cheap-backend fixture",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/m8_forward_oracle/r1689_threads.rs",
-     "purpose": "ONE-1689 RT-08: admitted per-thread replies and anchored room-DAG wiring",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/m8_forward_oracle/r1690_scoped_mcp.rs",
-     "purpose": "ONE-1690 RT-09: payload-aware scoped-grant and frozen-buffer/scrub oracles plus result transports",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
      "path": "src/m8_forward_oracle/r1691_ledger.rs",
      "purpose": "ONE-1691 RT-11: intent-ledger exactly-once/crash-recovery oracles, ledger transports, and drive_* helpers",
      "surface": {}
@@ -22391,7 +22351,7 @@
      "path": "src/m8_forward_oracle/shared.rs",
      "purpose": "Common vault/actor helpers plus the scoped-MCP fixture shared by the 1690 and 1691 oracles",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 5
      }
     },
     {
@@ -22420,7 +22380,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/maintain/hnsw_rebuild.rs",
@@ -23129,7 +23089,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/memory/tests/authority_revocation.rs",
@@ -23137,7 +23097,7 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/memory/tests/commit_claims.rs",
@@ -23187,7 +23147,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/memory/tests/session_witness.rs",
@@ -23195,7 +23155,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/memory/tests/shared_effects.rs",
@@ -23221,7 +23181,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/memory/tests/witness_policy.rs",
@@ -23309,22 +23269,6 @@
      "surface": {}
     },
     {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/memory/tests_regressions/recall/query_neighbors.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/memory/tests_regressions/recall/ranking_hydration.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -23344,14 +23288,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/memory/tests_regressions/recall_l2.rs",
-     "purpose": "Typed recall retains a ranked owner claim even when L2 also caches it",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
      "path": "src/memory/tests_regressions/recall_revision.rs",
      "purpose": "Exact revision consistency across facade recall, hydration, and document chat",
      "surface": {}
@@ -23362,14 +23298,6 @@
      "notable": [],
      "path": "src/memory/tests_regressions/recall_security.rs",
      "purpose": "Recall must not be a broader read side channel than point reads or BM25",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/memory/tests_regressions/retrieval_quality.rs",
-     "purpose": "Retrieval-quality facade metadata regressions",
      "surface": {}
     },
     {
@@ -23953,7 +23881,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/note/program_tests.rs",
@@ -24400,7 +24328,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/origin/lfs/tests.rs",
@@ -24589,7 +24517,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/origin/smart_http/door_serve_tests.rs",
@@ -24784,14 +24712,6 @@
       "fn": 1,
       "struct": 1
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/origin/tree/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "m",
@@ -25055,7 +24975,7 @@
      "path": "src/outbound/mod.rs",
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 6,
       "re-export": 7
      }
     },
@@ -25080,7 +25000,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/outbound/tests/connector_qualification.rs",
@@ -25098,7 +25018,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/outbound/tests/dispatch_budget.rs",
@@ -25106,7 +25026,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/outbound/tests/gate_window.rs",
@@ -25122,7 +25042,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/outbound/tests/linkedin_send.rs",
@@ -25130,7 +25050,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/outbound/tests/mod.rs",
@@ -25138,7 +25058,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/outbound/tests/pipeline_contract.rs",
@@ -25162,7 +25082,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/outbound/tests/sender_selection.rs",
@@ -25248,7 +25168,7 @@
      "path": "src/outbound_chokepoint/fanout.rs",
      "purpose": "Pre-execution fan-out admission",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 23,
       "enum": 1
      }
     },
@@ -25321,7 +25241,7 @@
      "path": "src/outbound_consent/authority.rs",
      "purpose": "Frozen payload, keyed binding authority, and grant-scope digest",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 5,
       "struct": 3
@@ -25347,7 +25267,7 @@
      "path": "src/outbound_consent/mod.rs",
      "purpose": "Payload-aware consent and transport boundary for scoped outbound tools",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "mod": 1,
       "re-export": 5
      }
@@ -25610,7 +25530,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/outbound_intent_ledger/tests.rs",
@@ -25765,7 +25685,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/persona_snapshot/tests.rs",
@@ -25818,7 +25738,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/pipeline/authority_tests.rs",
@@ -25915,14 +25835,6 @@
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/pipeline/corpus_coping_tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/pipeline/corpus_filter.rs",
@@ -25930,22 +25842,6 @@
      "surface": {
       "crate-vis": 7
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/pipeline/corpus_gate_tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/pipeline/corpus_tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -25958,7 +25854,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/pipeline/decay_tests.rs",
@@ -26115,14 +26011,6 @@
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/pipeline/made_by_tests.rs",
-     "purpose": "Provenance slices are membership filters, never score multipliers",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/pipeline/mod.rs",
@@ -26156,22 +26044,6 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
-     "path": "src/pipeline/tests/community_quality.rs",
-     "purpose": "PPR VAD threading, community diversification, and retrieval-quality grading",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/pipeline/tests/effort.rs",
-     "purpose": "Observable stage-preset and temporal-window laws",
-     "surface": {}
-    },
-    {
-     "bucket": "L",
-     "kind": "test",
-     "notable": [],
      "path": "src/pipeline/tests/facet_status_world.rs",
      "purpose": "Facet filter, claim-status gate, and world-scope visibility pins",
      "surface": {}
@@ -26187,7 +26059,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/pipeline/tests/relationship_scope_filter.rs",
@@ -26203,13 +26075,13 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/pipeline/tests/rerank_hyde_session_stale.rs",
      "purpose": "Rerank blocks, Hyde recall, session staging, and stale-world federation",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 1
      }
     },
     {
@@ -26221,7 +26093,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/pipeline/tests/scoring_basics.rs",
@@ -26237,7 +26109,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/pipeline/tests/temporal.rs",
@@ -26335,7 +26207,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/pipeline/world_authority_tests.rs",
@@ -26524,14 +26396,6 @@
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/policy_model/owner_rows/notify_tests.rs",
-     "purpose": "Notification queue fairness, failure isolation, and recipient digest cadence",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
      "kind": "src",
      "notable": [
       "SecretScanReceipt"
@@ -26648,7 +26512,7 @@
      "path": "src/policy_model/relay/mod.rs",
      "purpose": "The hosted relay boundary: where OUR infrastructure touches someone else's content, and the only place the…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 2,
       "re-export": 3
      }
     },
@@ -26684,7 +26548,7 @@
      "path": "src/policy_model/relay/registry.rs",
      "purpose": "Registration data and fail-closed validation: hosted-legal bounds and row checks plus the…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 4,
       "fn": 5,
       "struct": 1
      }
@@ -26729,7 +26593,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/policy_model/tests/anonymous_chat.rs",
@@ -26737,7 +26601,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/policy_model/tests/cloud_dual.rs",
@@ -26745,7 +26609,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/policy_model/tests/dial_pattern_roles.rs",
@@ -26753,7 +26617,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/policy_model/tests/edge_identity.rs",
@@ -26761,7 +26625,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/policy_model/tests/foundations.rs",
@@ -26769,7 +26633,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/policy_model/tests/hosted_registration_relay.rs",
@@ -26791,11 +26655,11 @@
      "path": "src/policy_model/tests/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 18
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/policy_model/tests/outage_contracts.rs",
@@ -26819,7 +26683,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/policy_model/tests/receipt_binding_citations.rs",
@@ -26833,7 +26697,7 @@
      "path": "src/policy_model/tests/support.rs",
      "purpose": "Shared fixtures, mock backends, and pass drivers for policy-model tests",
      "surface": {
-      "crate-vis": 87
+      "crate-vis": 77
      }
     },
     {
@@ -27266,7 +27130,7 @@
      "path": "src/ppr/cache_store.rs",
      "purpose": "PPR cache constants, TTL policy, cache IO, and binary codec",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 26
      }
     },
     {
@@ -27276,7 +27140,7 @@
      "path": "src/ppr/community.rs",
      "purpose": "Community-boost bridge adapter over ppr_community",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 6
      }
     },
     {
@@ -27315,14 +27179,6 @@
      "kind": "test",
      "notable": [],
      "path": "src/ppr/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/ppr/tests/quality_integration.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -27413,7 +27269,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/ppr_community/tests.rs",
@@ -27558,14 +27414,6 @@
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/provenance/imported/tests/lifecycle.rs",
-     "purpose": "Imported lifecycle regression through the private canonical writer",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/provenance/invalidation.rs",
@@ -27629,7 +27477,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/provenance/tests.rs",
@@ -27692,7 +27540,7 @@
      "path": "src/provider_confidence/prior_projection_tests.rs",
      "purpose": "Read-side corruption and stranding regressions; no production fixture doors",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 13
      }
     },
     {
@@ -27792,7 +27640,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/psych_profile/tests.rs",
@@ -27822,14 +27670,6 @@
       "struct": 6,
       "trait": 1
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/query_expansion/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -28912,7 +28752,7 @@
      "path": "src/repo_mutation/queue.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 18,
       "fn": 1
      }
     },
@@ -29071,14 +28911,6 @@
      "surface": {}
     },
     {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/rerank/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -29101,7 +28933,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/retrieval_depth/accumulation.rs",
@@ -29155,7 +28987,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/retrieval_depth/tests.rs",
@@ -29163,26 +28995,10 @@
      "surface": {}
     },
     {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/retrieval_depth/tests/quality.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/retrieval_depth/tests/repairs.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
-     "path": "src/retrieval_depth/tests/spend_tests.rs",
+     "path": "src/retrieval_depth/tests/repairs.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -29298,7 +29114,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/run_tree/tests.rs",
@@ -29812,7 +29628,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/self_heal/admission_tests.rs",
@@ -30026,7 +29842,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/self_heal/repair/tests.rs",
@@ -30110,7 +29926,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/self_heal/tripwire_tests.rs",
@@ -30422,7 +30238,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/session_lifecycle/tests.rs",
@@ -30550,7 +30366,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/session_overlay/tests.rs",
@@ -30608,14 +30424,6 @@
       "fn": 19,
       "struct": 8
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/settings/model_versioning/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -31023,7 +30831,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/skill_attribution/tests.rs",
@@ -31039,7 +30847,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/skill_attribution/tests/sweep.rs",
@@ -31149,7 +30957,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/skill_convert/tests.rs",
@@ -31943,7 +31751,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/skill_hub/transport_tests.rs",
@@ -32413,7 +32221,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/skill_reliability/tests.rs",
@@ -32444,7 +32252,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/skill_scan/tests.rs",
@@ -32474,7 +32282,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/slim/tests.rs",
@@ -32499,14 +32307,6 @@
       "fn": 5,
       "struct": 3
      }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/speculative/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -32573,7 +32373,7 @@
      "path": "src/store/gate_decision/ledger.rs",
      "purpose": "Gate-decision ledger Store methods plus the row append and record codec",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 26,
       "fn": 1
      }
     },
@@ -32939,7 +32739,7 @@
      "path": "src/store/ppr_community_indexed.rs",
      "purpose": "Indexed query validation is deliberately not whole-family validation",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 2
      }
     },
     {
@@ -33121,7 +32921,7 @@
      "path": "src/store/test_hooks.rs",
      "purpose": "The test seams one open vault owns, plus the two path-keyed LMDB open hooks that necessarily predate it",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 27
      }
     },
     {
@@ -33233,7 +33033,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/subject_model/tests/evaluation_time.rs",
@@ -33287,7 +33087,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/subject_model/tests/write_doors.rs",
@@ -33381,7 +33181,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/surface_event/tests.rs",
@@ -34920,7 +34720,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/task_authority/tests.rs",
@@ -35407,14 +35207,6 @@
      }
     },
     {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/task_verb/owner_index_tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -35445,7 +35237,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/production_ports_tests.rs",
@@ -35656,7 +35448,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/tests/consult_fanout.rs",
@@ -35688,7 +35480,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/tests/magistrate_route_result.rs",
@@ -35706,7 +35498,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/tests/presence_scan.rs",
@@ -35720,7 +35512,7 @@
      "path": "src/task_verb/tests/support.rs",
      "purpose": "Shared fixtures and helpers for the task_verb tests",
      "surface": {
-      "crate-vis": 60
+      "crate-vis": 57
      }
     },
     {
@@ -35844,7 +35636,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/tests/batch_temporal.rs",
@@ -35860,7 +35652,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/tests/claim_vad.rs",
@@ -35900,7 +35692,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/tests/entity_edge_kinds.rs",
@@ -35908,7 +35700,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/tests/graph_topology.rs",
@@ -35924,7 +35716,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/tests/mod.rs",
@@ -35934,7 +35726,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/tests/open_gates.rs",
@@ -35950,7 +35742,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/tests/reput_phonetic.rs",
@@ -35966,7 +35758,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/tests/short_ids.rs",
@@ -35980,7 +35772,7 @@
      "path": "src/tests/support.rs",
      "purpose": "Shared fixtures, oracles and low-level read helpers for the vault tests",
      "surface": {
-      "crate-vis": 83
+      "crate-vis": 82
      }
     },
     {
@@ -36016,7 +35808,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/tests/vectors_hnsw.rs",
@@ -36049,14 +35841,6 @@
       "fn": 10,
       "struct": 4
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/thread_lens/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "m",
@@ -36126,7 +35910,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/thread_passport/tests.rs",
@@ -36292,14 +36076,6 @@
       "crate-vis": 22,
       "fn": 2
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/vault/entity_revision/storage/tests.rs",
-     "purpose": "Revision debounce clock precision",
-     "surface": {}
     },
     {
      "bucket": "L",
@@ -36496,16 +36272,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/vault_cleanup/destructive_door_scan.rs",
-     "purpose": "Source-scan guard and fixtures for the never-automatic-hard-delete rule",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
      "path": "src/vault_cleanup/mod.rs",
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)",
      "surface": {
@@ -36601,7 +36367,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/vault_cleanup/tests.rs",
@@ -36831,7 +36597,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/voice_cascade/tests/preparation.rs",
@@ -36863,7 +36629,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/voice_cascade/tests/stream.rs",
@@ -36871,7 +36637,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AudioDelivery",
@@ -36961,7 +36727,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/voice_cascade/uds/tests/bridge_tests.rs",
@@ -37214,7 +36980,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/wave_orchestration/tests.rs",
@@ -37420,7 +37186,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/workspace_roster/project/goal/tests.rs",
@@ -37530,7 +37296,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/workspace_roster/project/review_tests.rs",
@@ -37626,19 +37392,11 @@
      "path": "src/workspace_roster/rooms/liveness.rs",
      "purpose": "Read-time room thread liveness; the room history and TASK rows remain truth",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 3,
       "struct": 5
      }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/workspace_roster/rooms/liveness/tests.rs",
-     "purpose": "Read-time room thread liveness acceptance fixtures",
-     "surface": {}
     },
     {
      "bucket": "m",
@@ -37703,7 +37461,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/workspace_roster/tests.rs",
@@ -37715,14 +37473,6 @@
      "kind": "test",
      "notable": [],
      "path": "src/workspace_roster/tests/authorization.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/workspace_roster/tests/companion_requirement.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -37779,14 +37529,6 @@
       "fn": 4,
       "struct": 1
      }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/write_envelope/tests.rs",
-     "purpose": "ONE-1314 · the source-lineage axis on the write envelope",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -39354,16 +39096,16 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 65,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Engine-facing LLM invocation seam"
     },
     "m8_forward_oracle": {
-     "files": 6,
+     "files": 3,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "dir",
      "purpose": "M8 forward test oracle — authored by the path opener (ONE-1685) for the M8-A / M8-B remainder tickets"
     },
@@ -39375,7 +39117,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 97,
+     "files": 93,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -39403,7 +39145,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "origin": {
-     "files": 47,
+     "files": 46,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39459,14 +39201,14 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 55,
+     "files": 49,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "—"
     },
     "policy_model": {
-     "files": 42,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39487,7 +39229,7 @@
      "purpose": "Shared Beta posterior bandit seam"
     },
     "ppr": {
-     "files": 9,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39508,7 +39250,7 @@
      "purpose": "—"
     },
     "provenance": {
-     "files": 17,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39529,10 +39271,10 @@
      "purpose": "PsychProfile snapshot record substrate"
     },
     "query_expansion": {
-     "files": 2,
+     "files": 1,
      "impl_vault": false,
      "largest_src_bucket": "s",
-     "layout": "file+dir",
+     "layout": "file",
      "purpose": "Host-injected HyDE query-expansion seam"
     },
     "reaction": {
@@ -39571,14 +39313,14 @@
      "purpose": "—"
     },
     "rerank": {
-     "files": 5,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "RET-010 host-injected top-N rerank seam (1186-D1/D2)"
     },
     "retrieval_depth": {
-     "files": 9,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -39676,7 +39418,7 @@
      "purpose": "In-memory session write-overlay substrate (ARCH-0052, D1)"
     },
     "settings": {
-     "files": 4,
+     "files": 3,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -39753,10 +39495,10 @@
      "purpose": "SLIM residency (ONE-1933 / OF-447): the engine half of the FULL → SLIM → REAPED ladder"
     },
     "speculative": {
-     "files": 2,
+     "files": 1,
      "impl_vault": false,
      "largest_src_bucket": "s",
-     "layout": "file+dir",
+     "layout": "file",
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
@@ -39809,7 +39551,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 72,
+     "files": 71,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -39844,10 +39586,10 @@
      "purpose": "—"
     },
     "thread_lens": {
-     "files": 2,
+     "files": 1,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file+dir",
+     "layout": "file",
      "purpose": "Channel-agnostic conversation thread lens (ONE-1567 / LNKD-5)"
     },
     "thread_passport": {
@@ -39865,14 +39607,14 @@
      "purpose": "—"
     },
     "vault": {
-     "files": 25,
+     "files": 24,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…"
     },
     "vault_cleanup": {
-     "files": 17,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39881,7 +39623,7 @@
     "voice_cascade": {
      "files": 30,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade"
     },
@@ -39914,24 +39656,24 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 38,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "write_envelope": {
-     "files": 3,
+     "files": 2,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 27,
+   "over_bar": 26,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2402,
-   "test_files": 810
+   "source_files": 2394,
+   "test_files": 786
   },
   "oneiron-android": {
    "files": [
@@ -42055,14 +41797,6 @@
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/registry/families/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/registry/mod.rs",
@@ -42156,14 +41890,6 @@
       "fn": 4,
       "struct": 3
      }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/retrieval_quality/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -42375,17 +42101,17 @@
      "purpose": "Byte layout of the entity metadata header that starts every stored entity row: the type byte, the occurred…"
     },
     "registry": {
-     "files": 9,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators"
     },
     "retrieval_quality": {
-     "files": 2,
+     "files": 1,
      "impl_vault": false,
      "largest_src_bucket": "s",
-     "layout": "file+dir",
+     "layout": "file",
      "purpose": "Shared retrieval execution quality, independent of result counts and ranking"
     },
     "retrieval_telemetry": {
@@ -42434,7 +42160,7 @@
    "over_bar": 1,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
    "source_files": 54,
-   "test_files": 3
+   "test_files": 1
   },
   "oneiron-crypto": {
    "files": [
@@ -44620,7 +44346,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/llm/budget/tests.rs",
@@ -44628,18 +44354,10 @@
      "surface": {}
     },
     {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/llm/budget/tests/per_call.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
-     "path": "src/llm/budget/tests/request_usage.rs",
+     "path": "src/llm/budget/tests/per_call.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -44677,14 +44395,6 @@
       "fn": 1,
       "struct": 1
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/llm/burst_inputs/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "m",
@@ -44838,14 +44548,6 @@
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/llm/image/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/llm/mod.rs",
@@ -44968,7 +44670,7 @@
      "purpose": "—"
     },
     "llm": {
-     "files": 32,
+     "files": 29,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -44978,7 +44680,7 @@
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
    "source_files": 30,
-   "test_files": 7
+   "test_files": 4
   },
   "oneiron-napi": {
    "files": [
