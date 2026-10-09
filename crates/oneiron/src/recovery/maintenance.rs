@@ -1,18 +1,16 @@
 //! The canonical snapshot as one owner maintenance act (ARCH-0038 escape
 //! hatch and recovery ladder): capture a window, recover it from the
-//! artifact, and keep no snapshot file.
+//! artifact held in memory, and write no snapshot file.
 
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use super::canonical::invalid;
 use super::{
-    CanonicalSnapshot, RecoveryBudget, RecoveryTier, recover_vault_window,
-    write_canonical_window_snapshot,
+    CanonicalSnapshot, RecoveryBudget, RecoveryTier, capture_canonical_window, recover_vault_window,
 };
 use crate::consent::AuthenticatedOwner;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, GateError, Result};
 use crate::sync::types::WindowKey;
 use crate::{Vault, VaultWriterLease};
 
@@ -27,7 +25,7 @@ pub struct WindowRecoveryReport {
     pub quarantine_path: Option<PathBuf>,
     /// The chunks the recovery rebuilt.
     pub obligations: Vec<String>,
-    /// blake3 of the canonical artifact the act wrote, read back and deleted.
+    /// blake3 of the canonical artifact the act captured and recovered from.
     pub snapshot_blake3: [u8; 32],
 }
 
@@ -37,12 +35,14 @@ impl Vault {
     /// this process holds the vault's writer lease and no sync window manager
     /// is live, so nothing writes the window between capture and recovery.
     ///
-    /// The snapshot is written through the artifact door, read back, and
-    /// deleted before the recovery runs, whatever the outcome. A kept snapshot
-    /// is a restorable image, and none is kept until the exterior erasure
-    /// ledger and key custody land (ARCH-0038 `#erasure-completeness`). `dir`
-    /// keeps only the window's manifest and any manifest the ladder
-    /// quarantined beside it.
+    /// The snapshot never touches disk. A snapshot file is a restorable
+    /// plaintext image that a crash between writing and unlinking it would
+    /// keep, and none may exist until the exterior erasure ledger and key
+    /// custody land (ARCH-0038 `#erasure-completeness`). The artifact is
+    /// encoded and decoded in memory instead, and a window whose artifact
+    /// exceeds `budget.max_bytes` is refused with
+    /// [`ArtifactError::OverlayLimit`] rather than spilled. `dir` holds only
+    /// the window's manifest and any manifest the ladder quarantined beside it.
     pub fn recover_window_from_canonical_snapshot(
         &self,
         owner: &AuthenticatedOwner,
@@ -73,26 +73,29 @@ impl Vault {
         {
             let txn = self.store.env.read_txn()?;
             owner.revalidate_in_txn(self, &txn)?;
+            // An authenticated human is not by that alone this vault's owner.
+            if !crate::policy_model::is_live_vault_owner_in_txn(self, &txn, &owner.actor())? {
+                return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                    "window recovery is an owner act, and the actor is no owner of this vault",
+                )));
+            }
         }
         let doc = durable_window_doc(self, &key)?;
-        create_private_dir(dir)?;
-        let snapshot_path = dir.join(format!("{window}.canonical"));
-        let manifest_path = dir.join(format!("{window}.manifest"));
-        // An interrupted act may have left its artifact behind.
-        remove_snapshot_files(dir, window)?;
-        let read = (|| {
-            let digest = write_canonical_window_snapshot(self, window, &doc, &snapshot_path)?;
-            let mut bytes = Vec::new();
-            fs::File::open(&snapshot_path)?
-                .take(budget.max_bytes.saturating_add(1) as u64)
-                .read_to_end(&mut bytes)?;
-            if *blake3::hash(&bytes).as_bytes() != digest {
-                return Err(invalid("canonical snapshot changed on disk"));
+        // The artifact envelope round trip, in memory: what recovers is what
+        // a written snapshot would have held, byte for byte.
+        let bytes = capture_canonical_window(self, window, &doc)?.encode()?;
+        if bytes.len() > budget.max_bytes {
+            return Err(ArtifactError::OverlayLimit {
+                required: bytes.len(),
+                limit: budget.max_bytes,
             }
-            Ok((digest, CanonicalSnapshot::decode(&bytes)?))
-        })();
-        remove_snapshot_files(dir, window)?;
-        let (snapshot_blake3, snapshot) = read?;
+            .into());
+        }
+        let snapshot_blake3 = *blake3::hash(&bytes).as_bytes();
+        let snapshot = CanonicalSnapshot::decode(&bytes)?;
+        drop(bytes);
+        create_private_dir(dir)?;
+        let manifest_path = dir.join(format!("{window}.manifest"));
         let prepared = recover_vault_window(
             self,
             &crate::sync::bridge::Materializer::new(),
@@ -137,28 +140,5 @@ fn create_private_dir(dir: &Path) -> Result<()> {
         builder.mode(0o700);
     }
     builder.create(dir)?;
-    Ok(())
-}
-
-/// Deletes the window's canonical artifact and any temporary file its writer
-/// left, then syncs the directory so the unlink is durable.
-fn remove_snapshot_files(dir: &Path, window: &str) -> Result<()> {
-    let published = format!("{window}.canonical");
-    let temporary = format!("{window}.snapshot-");
-    let mut removed = false;
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else {
-            continue;
-        };
-        if name == published || name.starts_with(&temporary) {
-            fs::remove_file(entry.path())?;
-            removed = true;
-        }
-    }
-    if removed {
-        super::quarantine::sync_parent(&dir.join(published))?;
-    }
     Ok(())
 }

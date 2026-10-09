@@ -2,6 +2,8 @@
 //! hatch, recovery ladder and the no-kept-snapshot ordering).
 
 use super::*;
+use crate::consent::AuthenticatedOwner;
+use crate::error::{ArtifactError, GateError};
 use crate::store::GateDecisionId;
 use crate::sync::bridge::Materializer;
 use crate::sync::types::WindowKey;
@@ -13,26 +15,37 @@ use std::sync::Arc;
 /// The recovery directory's file names, sorted.
 fn files(dir: &Path) -> Vec<String> {
     let mut names: Vec<_> = std::fs::read_dir(dir)
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .expect("recovery directory")
+        .map(|entry| {
+            entry
+                .expect("recovery directory entry")
+                .file_name()
+                .into_string()
+                .expect("utf-8 file name")
+        })
         .collect();
     names.sort();
     names
 }
 
-/// ARCH-0038 done-means: capture a window with its writers stopped, corrupt
-/// the manifest, recover, then check the tier and the quarantine file. The
-/// act also repairs a damaged LMDB row, and no snapshot file outlives it, on
-/// success or failure.
-#[test]
-fn owner_window_recovery_quarantines_a_bad_manifest_repairs_lmdb_and_keeps_no_snapshot()
--> Result<()> {
+/// A personal vault owned by this process, holding one window's durable
+/// CRDT state over two rows, as a window open mirrors and persists it; no
+/// window stays loaded afterwards.
+struct Fixture {
+    root: tempfile::TempDir,
+    vault: Arc<Vault>,
+    owner: AuthenticatedOwner,
+    rows: [EntityId; 2],
+    key: WindowKey,
+}
+
+fn fixture() -> Result<Fixture> {
     let root = tempfile::tempdir()?;
     let vault = Arc::new(Vault::open_owned(
         root.path().join("vault"),
         VaultConfig::default(),
     )?);
-    let actor = vault.ensure_embedded_owner_actor()?;
+    let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let owner = vault.authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())?;
     let learned_at = 1_772_400_000; // 2026-03
     let rows = [EntityId::now(), EntityId::now()];
@@ -49,14 +62,34 @@ fn owner_window_recovery_quarantines_a_bad_manifest_repairs_lmdb_and_keeps_no_sn
         )?;
     }
     let key = WindowKey::from_timestamp(learned_at);
-    // The window's durable CRDT state, mirrored and persisted as a window
-    // open does; no window stays loaded afterwards.
     {
         let window =
             LoadedWindow::new("local", key.clone(), &vault, &Arc::new(Materializer::new()));
         reverse_rematerialize(&vault, &window.doc, &key)?;
         window.persist_state(&vault)?;
     }
+    Ok(Fixture {
+        root,
+        vault,
+        owner,
+        rows,
+        key,
+    })
+}
+
+/// ARCH-0038 done-means: capture a window with its writers stopped, corrupt
+/// the manifest, recover, then check the tier and the quarantine file. The
+/// act also repairs a damaged LMDB row, and leaves no snapshot file behind.
+#[test]
+fn owner_window_recovery_quarantines_a_bad_manifest_repairs_lmdb_and_keeps_no_snapshot()
+-> Result<()> {
+    let Fixture {
+        root,
+        vault,
+        owner,
+        rows,
+        key,
+    } = fixture()?;
     let window = key.as_str();
     let dir = root.path().join("recovery");
     let manifest = dir.join(format!("{window}.manifest"));
@@ -79,16 +112,17 @@ fn owner_window_recovery_quarantines_a_bad_manifest_repairs_lmdb_and_keeps_no_sn
     assert_eq!(healthy.tier, RecoveryTier::Healthy);
     assert_eq!(healthy.snapshot_blake3, first.snapshot_blake3);
 
-    // Corrupt the manifest and lose one LMDB row; an interrupted act also
-    // left its artifact behind.
+    // Corrupt the manifest and lose one LMDB row. The row was cited, so its
+    // document is retained and only its live projection is lost, the shape
+    // the revision store rebuilds a row from.
     std::fs::write(&manifest, b"corrupt manifest")?;
     let original = vault.get_raw(&rows[1])?.unwrap();
+    vault.pin_entity_revision(&rows[1])?;
     vault.with_write_txn(|txn| {
         vault.store.entities.delete(txn, rows[1].as_bytes())?;
         Ok(())
     })?;
     assert_eq!(vault.get_raw(&rows[1])?, None);
-    std::fs::write(dir.join(format!("{window}.canonical")), b"left by a crash")?;
 
     let repaired = vault.recover_window_from_canonical_snapshot(
         &owner,
@@ -116,26 +150,96 @@ fn owner_window_recovery_quarantines_a_bad_manifest_repairs_lmdb_and_keeps_no_sn
         ],
         "no snapshot file remains"
     );
+    Ok(())
+}
 
-    // A failed act keeps no snapshot either, and leaves the manifest alone.
+/// Sol F1 (REV-9 D2a): the snapshot is a plaintext image, so it never
+/// touches disk, where a crash between writing and unlinking it would keep
+/// it. A healthy act recovers through a directory nothing can be written
+/// into, and a window too large for the act's memory budget is refused with
+/// a typed error rather than spilled.
+#[cfg(unix)]
+#[test]
+fn owner_window_recovery_writes_no_snapshot_byte_to_disk() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let Fixture {
+        root,
+        vault,
+        owner,
+        key,
+        ..
+    } = fixture()?;
+    let window = key.as_str();
+    let dir = root.path().join("recovery");
+    let manifest = dir.join(format!("{window}.manifest"));
+    let first = vault.recover_window_from_canonical_snapshot(
+        &owner,
+        window,
+        &dir,
+        RecoveryBudget::default(),
+    )?;
+    assert_eq!(first.tier, RecoveryTier::FullRebuild);
+
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500))?;
+    let healthy = vault.recover_window_from_canonical_snapshot(
+        &owner,
+        window,
+        &dir,
+        RecoveryBudget::default(),
+    );
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+    assert_eq!(healthy?.tier, RecoveryTier::Healthy);
+
     let kept = std::fs::read(&manifest)?;
     let starved = RecoveryBudget {
         max_bytes: 64,
         max_obligations: 4096,
     };
-    assert!(
-        vault
-            .recover_window_from_canonical_snapshot(&owner, window, &dir, starved)
-            .is_err()
-    );
+    assert!(matches!(
+        vault.recover_window_from_canonical_snapshot(&owner, window, &dir, starved),
+        Err(Error::Artifact(ArtifactError::OverlayLimit {
+            limit: 64,
+            ..
+        }))
+    ));
     assert_eq!(std::fs::read(&manifest)?, kept);
-    assert_eq!(
-        files(&dir),
-        [
-            format!("{window}.manifest"),
-            format!("{window}.manifest.invalid-1")
-        ]
-    );
+    assert_eq!(files(&dir), [format!("{window}.manifest")]);
+    Ok(())
+}
+
+/// Sol F7 (REV-9 D2a): an authenticated human is not by that alone the
+/// vault's owner. Another PERSON's proof is refused before anything is
+/// captured, even with the writer lease held and the writers stopped.
+#[test]
+fn owner_window_recovery_refuses_a_human_who_is_no_owner() -> Result<()> {
+    let Fixture {
+        root, vault, key, ..
+    } = fixture()?;
+    let stranger = EntityId::now();
+    vault.put_entity(
+        &stranger,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange {
+            start: 1_772_400_000,
+            end: 1_772_400_000,
+        },
+        1_772_400_000,
+        &crate::conversation_dag::fixtures::body("stranger"),
+    )?;
+    let proof =
+        vault.authenticate_owner(stranger, &stranger.to_hex(), true, GateDecisionId::now())?;
+    let dir = root.path().join("recovery");
+    assert!(matches!(
+        vault.recover_window_from_canonical_snapshot(
+            &proof,
+            key.as_str(),
+            &dir,
+            RecoveryBudget::default()
+        ),
+        Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_)))
+    ));
+    assert!(!dir.exists());
     Ok(())
 }
 
@@ -145,7 +249,7 @@ fn owner_window_recovery_quarantines_a_bad_manifest_repairs_lmdb_and_keeps_no_sn
 fn owner_window_recovery_refuses_a_vault_without_the_writer_lease() -> Result<()> {
     let root = tempfile::tempdir()?;
     let vault = Vault::open(root.path(), VaultConfig::default())?;
-    let actor = vault.ensure_embedded_owner_actor()?;
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault.authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())?;
     let dir = root.path().join("recovery");
     assert!(matches!(

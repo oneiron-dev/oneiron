@@ -186,7 +186,7 @@ struct RecoveredWindow {
 
 /// Recovers one window of the stopped vault from a canonical snapshot of its
 /// CRDT state (ARCH-0038). Holding the writer lease stops the window's
-/// writers; the engine deletes the snapshot in the same act.
+/// writers; the engine holds the snapshot in memory and writes none to disk.
 pub fn recover_window(args: RecoverWindowArgs) -> anyhow::Result<()> {
     let config = resolve_serve_config(&args.serve)?;
     let vault = open_stopped_vault(

@@ -56,8 +56,8 @@ pub enum Command {
     /// scratch copy without touching the vault.
     Restore(Box<RestoreArgs>),
     /// Rebuild one sync window of a stopped vault from a canonical snapshot
-    /// of its CRDT state, repairing its rows. The snapshot is deleted in the
-    /// same act; only the window's manifest is kept.
+    /// of its CRDT state, repairing its rows. The snapshot stays in memory
+    /// and never touches disk; only the window's manifest is kept.
     RecoverWindow(Box<RecoverWindowArgs>),
     /// Export the whole vault in one of five formats.
     Export(Box<ExportArgs>),
