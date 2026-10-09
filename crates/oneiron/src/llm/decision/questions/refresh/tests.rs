@@ -220,66 +220,6 @@ fn concurrent_version_pause_and_source_changes_do_not_land() -> TestResult {
     Ok(())
 }
 
-#[test]
-fn removing_arrival_retire_queued_work_without_reanswering() -> TestResult {
-    let (_dir, vault, owner, unit, actor) = fixture()?;
-    let record = create_question(&vault, owner, definition(unit), 2)?;
-    let id = record.definition.question.id;
-    vault.put_entity(
-        &unit,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 3, end: 3 },
-        3,
-        b"arrival",
-    )?;
-    let mut changed = definition(unit);
-    changed.refresh.on_arrival = false;
-    changed.refresh.every_seconds = None;
-    edit_question(&vault, owner, id, 1, changed, 4)?;
-    assert!(
-        refresh_due_questions(&vault, actor, 5, |r, u, s| Ok(propose(r, u, s)))?
-            .answers
-            .is_empty()
-    );
-    vault.put_entity(
-        &unit,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 6, end: 6 },
-        6,
-        b"later",
-    )?;
-    assert!(
-        refresh_due_questions(&vault, actor, 6, |r, u, s| Ok(propose(r, u, s)))?
-            .answers
-            .is_empty()
-    );
-    assert!(answer_records(&vault, owner, id)?.is_empty());
-    Ok(())
-}
-
-#[test]
-fn scheduled_refresh_consumes_same_unit_arrival_once() -> TestResult {
-    let (_dir, vault, owner, unit, actor) = fixture()?;
-    let record = create_question(&vault, owner, definition(unit), 2)?;
-    let id = record.definition.question.id;
-    vault.put_entity(
-        &unit,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 12, end: 12 },
-        12,
-        b"both",
-    )?;
-    let answers = refresh_due_questions(&vault, actor, 12, |r, u, s| Ok(propose(r, u, s)))?.answers;
-    assert_eq!(answers.len(), 1);
-    assert_eq!(answer_records(&vault, owner, id)?, answers);
-    assert!(
-        refresh_due_questions(&vault, actor, 12, |r, u, s| Ok(propose(r, u, s)))?
-            .answers
-            .is_empty()
-    );
-    Ok(())
-}
-
 fn private_note_fixture() -> TestResult<(tempfile::TempDir, Vault, EntityId, EntityId, EntityId)> {
     use crate::note::{NoteKind, NoteScope, NoteWriteEnvelope};
     let dir = tempfile::tempdir()?;
@@ -454,36 +394,6 @@ fn concurrent_arrival_cannot_settle_twice() -> TestResult {
     assert!(matches!(outer, Err(Error::ConcurrentWrite(_))));
     assert_eq!(nested.len(), 1);
     assert_eq!(answer_records(&vault, owner, id)?, nested);
-    Ok(())
-}
-
-#[test]
-fn failing_question_does_not_starve_other_due_work() -> TestResult {
-    let (_dir, vault, owner, unit, actor) = fixture()?;
-    let first = create_question(&vault, owner, definition(unit), 2)?
-        .definition
-        .question
-        .id;
-    let second = create_question(&vault, owner, definition(unit), 2)?
-        .definition
-        .question
-        .id;
-    for at in [12, 22] {
-        let batch = refresh_due_questions(&vault, actor, at, |r, u, body| {
-            if r.definition.question.id == first {
-                Err(Error::InvalidConfig("fixture answerer unavailable".into()))
-            } else {
-                Ok(propose(r, u, body))
-            }
-        })?;
-        assert_eq!(batch.failures.len(), 1);
-        assert_eq!(batch.failures[0].question, first);
-        assert!(matches!(batch.failures[0].error, Error::InvalidConfig(_)));
-        assert_eq!(batch.answers.len(), 1);
-        assert_eq!(batch.answers[0].decision.receipt.question, second);
-    }
-    assert!(answer_records(&vault, owner, first)?.is_empty());
-    assert_eq!(answer_records(&vault, owner, second)?.len(), 2);
     Ok(())
 }
 

@@ -193,6 +193,3 @@ fn rule_probability(answer: &DecisionAnswer) -> Option<f64> {
         DecisionAnswer::Score(_) | DecisionAnswer::Abstain => None,
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -21,6 +21,6 @@ use crate::entity_id::EntityId;
 #[cfg(test)]
 use crate::error::{Error, Result};
 #[cfg(test)]
-use crate::hnsw::{COUNT_KEY, LinkDiscipline, build_hnsw_graph_from_snapshot};
+use crate::hnsw::COUNT_KEY;
 #[cfg(test)]
 use xxhash_rust::xxh32::xxh32;

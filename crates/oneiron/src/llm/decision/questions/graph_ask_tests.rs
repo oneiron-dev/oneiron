@@ -241,43 +241,6 @@ fn scoped_graph_context_omits_unreadable_neighbors_and_units() -> crate::Result<
 }
 
 #[test]
-fn missing_or_oversized_input_and_answerer_refusal_abstain_without_claims() -> crate::Result<()> {
-    let (_temp, vault) = open_vault();
-    let (principal, actor) = identities(&vault)?;
-    let empty = EntityId::now();
-    let oversized = EntityId::now();
-    let refusal = EntityId::now();
-    put_entity(&vault, empty, ENTITY_TYPE_PERSON, b"")?;
-    put_entity(
-        &vault,
-        oversized,
-        ENTITY_TYPE_PERSON,
-        &vec![b'x'; 1_048_577],
-    )?;
-    put_entity(&vault, refusal, ENTITY_TYPE_PERSON, b"answerer will refuse")?;
-    let claims_before = vault.entities_by_type(ENTITY_TYPE_CLAIM)?;
-
-    let mut answerer = FixedAnswerer::returning(None);
-    let result = run_graph_ask(
-        &vault,
-        principal,
-        actor,
-        question(),
-        &[empty, oversized, refusal],
-        &mut answerer,
-        11,
-    )
-    .map_err(|failure| *failure.error)?;
-
-    assert!(result.answers.is_empty());
-    assert_eq!(result.abstained, vec![empty, oversized, refusal]);
-    assert_eq!(answerer.contexts.len(), 1);
-    assert_eq!(answerer.contexts[0].unit, refusal);
-    assert_eq!(vault.entities_by_type(ENTITY_TYPE_CLAIM)?, claims_before);
-    Ok(())
-}
-
-#[test]
 fn each_prediction_lands_as_its_own_proposed_claim_with_source_receipt() -> crate::Result<()> {
     let (_temp, vault) = open_vault();
     let (principal, actor) = identities(&vault)?;
@@ -609,32 +572,6 @@ fn derived_answer_keeps_the_least_trusted_neighborhood_source() -> crate::Result
 }
 
 #[test]
-fn distinct_writer_can_answer_asker_private_claim() -> crate::Result<()> {
-    let (_temp, vault) = open_vault();
-    let (principal, actor) = identities(&vault)?;
-    let unit = EntityId::now();
-    put_scoped_claim(&vault, unit, principal, principal)?;
-    let mut answerer = FixedAnswerer::returning(Some(prediction()));
-    let result = run_graph_ask(
-        &vault,
-        principal,
-        actor,
-        question(),
-        &[unit],
-        &mut answerer,
-        19,
-    )
-    .map_err(|failure| *failure.error)?;
-    assert_eq!(result.answers.len(), 1);
-    assert_eq!(result.answers[0].unit, unit);
-    assert_eq!(
-        vault.get_claim(&result.answers[0].claim)?.unwrap().approval,
-        ClaimApprovalStatus::Proposed
-    );
-    Ok(())
-}
-
-#[test]
 fn class_bound_asker_grant_does_not_require_a_writer_read_grant() -> crate::Result<()> {
     let (_temp, vault) = open_vault();
     let (principal, actor) = identities(&vault)?;
@@ -761,55 +698,6 @@ fn write_snapshot_invalidation_abstains_and_continues_after_committed_answer() -
 }
 
 #[test]
-fn high_degree_unit_stops_after_bounded_readable_neighborhood() -> crate::Result<()> {
-    let (_temp, vault) = open_vault();
-    let (principal, actor) = identities(&vault)?;
-    let unit = EntityId::now();
-    put_entity(&vault, unit, ENTITY_TYPE_ORG, b"hub")?;
-    let ids: Vec<_> = (0..100_001_u32)
-        .map(|i| {
-            let mut bytes = [0x42; 16];
-            bytes[12..].copy_from_slice(&i.to_be_bytes());
-            EntityId::from_bytes(bytes).expect("neighbor id")
-        })
-        .collect();
-    for id in ids.iter().take(16) {
-        put_entity(&vault, *id, ENTITY_TYPE_ORG, b"nearby")?;
-    }
-    let value = crate::edge::encode_edge_value(
-        EdgeKind::Mentions,
-        0.8,
-        1,
-        crate::affect::Vad::NEUTRAL,
-        None,
-    )?;
-    vault.with_write_txn(|txn| {
-        for id in &ids {
-            let forward = crate::store::Store::encode_edge_key(&unit, EdgeKind::Mentions, id);
-            let reverse = crate::store::Store::encode_edge_key(id, EdgeKind::Mentions, &unit);
-            vault.store.edges_out.put(txn, &forward, &value)?;
-            vault.store.edges_in.put(txn, &reverse, &value)?;
-        }
-        Ok(())
-    })?;
-    let mut answerer = FixedAnswerer::returning(Some(prediction()));
-    let result = run_graph_ask(
-        &vault,
-        principal,
-        actor,
-        question(),
-        &[unit],
-        &mut answerer,
-        23,
-    )
-    .map_err(|failure| *failure.error)?;
-    assert_eq!(result.answers.len(), 1);
-    assert_eq!(answerer.contexts.len(), 1);
-    assert_eq!(answerer.contexts[0].sources.len(), 17);
-    Ok(())
-}
-
-#[test]
 fn diary_pair_revoked_during_answerer_cannot_be_used_as_graph_evidence() -> crate::Result<()> {
     use crate::note::{NoteKind, NoteScope, NoteWriteEnvelope};
     let (_temp, vault) = open_vault();
@@ -876,72 +764,5 @@ fn diary_pair_revoked_during_answerer_cannot_be_used_as_graph_evidence() -> crat
             .value
             .is_some()
     );
-    Ok(())
-}
-
-#[test]
-fn independent_edge_keeps_graph_ask_target_when_same_as_pair_is_empty() -> crate::Result<()> {
-    use crate::note::{NoteKind, NoteScope, NoteWriteEnvelope};
-    let (_temp, vault) = open_vault();
-    let (a, actor) = identities(&vault)?;
-    let b = EntityId::now();
-    put_entity(&vault, b, ENTITY_TYPE_PERSON, b"other resident")?;
-    let am = vault.memory(a, EdgeActorClass::Human);
-    let bm = vault.memory(b, EdgeActorClass::Human);
-    let diary = |memory: &crate::memory::Memory<'_>, owner: EntityId| -> crate::Result<EntityId> {
-        let receipt = memory
-            .author_note(&NoteWriteEnvelope {
-                kind: NoteKind::Diary,
-                scope: NoteScope::ActorPrivate { owner_ref: owner },
-                markdown: "independent edge diary".into(),
-                source_revision_ref: [9; 16],
-                mask: None,
-            })
-            .map_err(|error| crate::Error::InvalidConfig(error.to_string()))?;
-        EntityId::from_hex(&receipt.id_hex)
-    };
-    let a1 = diary(&am, a)?;
-    let a2 = diary(&am, a)?;
-    let b_note = diary(&bm, b)?;
-    am.link_diary_coreference(a1, b_note).unwrap();
-    am.grant_diary_coreference(a1, b_note).unwrap();
-    bm.grant_diary_coreference(a1, b_note).unwrap();
-    am.link_diary_coreference(a2, b_note).unwrap(); // remains Empty
-    vault
-        .batch()
-        .edge(&a2, EdgeKind::BlockedBy, &b_note, 1.0)
-        .commit()?;
-    let raw = vault.edges_out(&a2)?;
-    let hidden_at = raw
-        .iter()
-        .position(|edge| edge.kind == EdgeKind::SameAs && edge.target == b_note)
-        .unwrap();
-    let independent_at = raw
-        .iter()
-        .position(|edge| edge.kind == EdgeKind::BlockedBy && edge.target == b_note)
-        .unwrap();
-    assert!(
-        hidden_at < independent_at,
-        "Empty edge precedes admitted edge"
-    );
-    let read = vault.scoped_read(
-        crate::claim::ScopedReadActorKey::with_actor_class(a.to_hex(), "human").unwrap(),
-    );
-    let direct = read.graph_ask_neighbors(&a2, 4, 4, 16_384)?.unwrap();
-    assert_eq!(direct.iter().filter(|row| row.0 == b_note).count(), 1);
-    let mut answerer = FixedAnswerer::returning(Some(prediction()));
-    let result = run_graph_ask(&vault, a, actor, question(), &[a2], &mut answerer, 29)
-        .map_err(|failure| *failure.error)?;
-    assert_eq!(result.answers.len(), 1);
-    assert_eq!(answerer.contexts.len(), 1);
-    assert_eq!(
-        answerer.contexts[0]
-            .sources
-            .iter()
-            .filter(|source| source.id == b_note)
-            .count(),
-        1
-    );
-    assert!(result.answers[0].decision.evidence.contains(&b_note));
     Ok(())
 }

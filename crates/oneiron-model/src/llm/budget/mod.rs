@@ -36,8 +36,6 @@ mod tests;
 // split the seam re-imports both so `tests.rs` resolves exactly as it did
 // before.
 #[cfg(test)]
-use self::ladders::*;
-#[cfg(test)]
 use super::{LlmRequest, LlmUsage, ModelLocality};
 #[cfg(test)]
 use oneiron_contracts::entity_id::EntityId;

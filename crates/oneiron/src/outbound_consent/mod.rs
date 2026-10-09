@@ -18,8 +18,6 @@ mod tool_schema;
 mod tests;
 
 pub(crate) use self::authority::FrozenCallValidation;
-#[cfg(test)]
-pub(crate) use self::authority::observed_freeze_events_since;
 pub use self::authority::{
     FrozenMcpPayload, OutboundBindingAuthority, OutboundBindingValidation, ScopedMcpAuthorization,
 };
