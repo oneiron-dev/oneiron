@@ -11,19 +11,29 @@ use super::{OwnerError, OwnerResult};
 
 /// One rotation request. The value travels as standard base64 so binary
 /// secrets survive JSON; it reaches the vault's custody plane and no receipt,
-/// log or reply. Its encoded form is wiped when the request drops, on every
-/// path, refused or not.
+/// log or reply.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RotateSecret {
     /// The secret's custody name.
     pub(crate) name: String,
-    pub(crate) value_base64: String,
+    pub(crate) value_base64: WipedString,
 }
 
-impl Drop for RotateSecret {
+/// A string that wipes itself when dropped. Serde holds each field in its own
+/// local until the whole request parses, so the wipe has to live on the field:
+/// a request refused for a missing or unknown field still wipes the value.
+pub(crate) struct WipedString(String);
+
+impl<'de> Deserialize<'de> for WipedString {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(Self)
+    }
+}
+
+impl Drop for WipedString {
     fn drop(&mut self) {
-        self.value_base64.zeroize();
+        self.0.zeroize();
     }
 }
 
@@ -50,7 +60,7 @@ pub(crate) fn rotate(
     owner: &AuthenticatedOwner,
     request: &RotateSecret,
 ) -> OwnerResult<Rotated> {
-    let encoded = request.value_base64.as_bytes();
+    let encoded = request.value_base64.0.as_bytes();
     // Sized up front so decoding never reallocates and leaves a copy behind;
     // a decode that fails part way is wiped with the rest.
     let mut value = Zeroizing::new(Vec::with_capacity(base64::decoded_len_estimate(
