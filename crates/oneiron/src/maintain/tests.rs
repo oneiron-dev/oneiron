@@ -7,6 +7,7 @@ use crate::attempt_queue::{
 };
 use crate::config::{HnswConfig, VaultConfig};
 use crate::edge::EdgeKind;
+use crate::entity_id::ENTITY_ID_LEN;
 use crate::store::{
     GRAPH_VERSION_KEY, MODEL_ID_KEY, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY, VECTOR_VERSION_KEY,
 };
@@ -45,6 +46,7 @@ fn test_time_range(start: u64, end: u64) -> TimeRange {
     TimeRange { start, end }
 }
 
+use crate::error::ArtifactError;
 use crate::test_util::entity;
 
 fn read_u64_meta(vault: &Vault, key: &[u8]) -> Result<u64> {
@@ -76,6 +78,36 @@ fn read_neighbor_bytes(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
         .get(&rtxn, id.as_bytes())?
         .ok_or(Error::EntityNotFound)?;
     Ok(raw.to_vec())
+}
+
+#[test]
+fn rebuild_hnsw_removes_dead_nodes() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let mut ids = Vec::new();
+
+    for i in 0..50_u8 {
+        let id = entity(i.saturating_add(0x50));
+        ids.push(id);
+        vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
+        vault.put_vector(&id, &[1.0, 0.0, 0.0, i as f32])?;
+    }
+
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        for id in ids.iter().take(15) {
+            vault.store.vectors.delete(&mut wtxn, id.as_bytes())?;
+        }
+        wtxn.commit()?;
+    }
+
+    let report = vault.maintain().rebuild_hnsw().run()?;
+    assert_eq!(report.hnsw_dead_nodes_removed, 15);
+    assert_eq!(report.hnsw_live_nodes, 35);
+
+    let count = read_u64_meta(&vault, COUNT_KEY)?;
+    assert_eq!(count, 35);
+    Ok(())
 }
 
 /// `rebuild_hnsw` must not touch unrelated `hnsw_meta` rows. Each variant
@@ -272,6 +304,133 @@ fn rebuild_hnsw_rejects_stale_vector_snapshot() -> Result<()> {
     assert_eq!(neighbors_before, neighbors_after);
     assert!(vector_version_after > vector_version_before);
     assert_eq!(count_entries(&vault.store.hnsw_neighbors, &vault)?, 2);
+    Ok(())
+}
+
+#[test]
+fn rebuild_hnsw_heal_invalid_vectors_skips_bad_rows() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let a = entity(88);
+    let b = entity(89);
+
+    for (id, vector) in [(a, [1.0, 0.0, 0.0, 0.0]), (b, [0.0, 1.0, 0.0, 0.0])] {
+        vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
+        vault.put_vector(&id, &vector)?;
+    }
+
+    {
+        let mut invalid = Vec::new();
+        invalid.extend_from_slice(&1.0_f32.to_le_bytes());
+        invalid.extend_from_slice(&2.0_f32.to_le_bytes());
+        invalid.extend_from_slice(&3.0_f32.to_le_bytes());
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vectors.put(&mut wtxn, b.as_bytes(), &invalid)?;
+        wtxn.commit()?;
+    }
+
+    let report = vault.maintain().rebuild_hnsw_heal_invalid_vectors().run()?;
+    assert_eq!(report.hnsw_invalid_vectors_skipped, 1);
+    assert_eq!(report.hnsw_live_nodes, 1);
+    assert_eq!(report.hnsw_dead_nodes_removed, 1);
+
+    let count = read_u64_meta(&vault, COUNT_KEY)?;
+    assert_eq!(count, 1);
+
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .hnsw_neighbors
+            .get(&rtxn, b.as_bytes())?
+            .is_none()
+    );
+    assert!(vault.store.vectors.get(&rtxn, b.as_bytes())?.is_some());
+    Ok(())
+}
+
+#[test]
+fn rebuild_hnsw_builder_modes_are_last_call_wins() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let a = entity(96);
+    let b = entity(97);
+
+    for (id, vector) in [(a, [1.0, 0.0, 0.0, 0.0]), (b, [0.0, 1.0, 0.0, 0.0])] {
+        vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
+        vault.put_vector(&id, &vector)?;
+    }
+
+    {
+        let mut invalid = Vec::new();
+        invalid.extend_from_slice(&1.0_f32.to_le_bytes());
+        invalid.extend_from_slice(&2.0_f32.to_le_bytes());
+        invalid.extend_from_slice(&3.0_f32.to_le_bytes());
+
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vectors.put(&mut wtxn, b.as_bytes(), &invalid)?;
+        wtxn.commit()?;
+    }
+
+    let err = vault
+        .maintain()
+        .rebuild_hnsw_heal_invalid_vectors()
+        .rebuild_hnsw()
+        .run()
+        .unwrap_err();
+    assert_matches!(err, Error::CorruptedIndex(_));
+    Ok(())
+}
+
+#[test]
+fn build_hnsw_graph_from_snapshot_rejects_missing_entry_point_vector() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let a = entity(98);
+    let b = entity(99);
+
+    for (id, vector) in [(a, [1.0, 0.0, 0.0, 0.0]), (b, [0.0, 1.0, 0.0, 0.0])] {
+        vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
+        vault.put_vector(&id, &vector)?;
+    }
+
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vectors.delete(&mut wtxn, a.as_bytes())?;
+        wtxn.commit()?;
+    }
+
+    let rtxn = vault.store.env.read_txn()?;
+    let err = build_hnsw_graph_from_snapshot(
+        &vault.store,
+        &vault.config,
+        &rtxn,
+        &[a, b],
+        LinkDiscipline::Symmetric,
+    )
+    .unwrap_err();
+    assert_matches!(err, Error::InvariantViolation(_));
+    Ok(())
+}
+
+#[test]
+fn cleanup_ppr_cache_evicts_stale_and_expired() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let a = entity(82);
+    let b = entity(83);
+
+    vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
+    let _ = vault.query().search_ppr(&[a], 3).limit(10).run()?;
+    vault.put_edge(&a, EdgeKind::BelongsTo, &b, 0.2)?;
+
+    let report = vault.maintain().cleanup_ppr_cache(0).run()?;
+    assert!(report.ppr_caches_evicted > 0);
+    assert!(report.ppr_deps_cleaned > 0);
+
+    assert_eq!(count_entries(&vault.store.ppr_cache, &vault)?, 0);
+    assert_eq!(count_entries(&vault.store.ppr_cache_deps, &vault)?, 0);
     Ok(())
 }
 
@@ -564,6 +723,421 @@ fn short_id_aliases_survive_prefix_rekey() -> Result<()> {
             .is_none()
             || wrong_hash == old_hash,
         "the alias must not resolve under an unrelated content hash"
+    );
+    Ok(())
+}
+
+#[test]
+fn recompute_short_id_hashes_updates_stale() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let id = entity(84);
+
+    vault
+        .batch()
+        .put(&id, 1, test_time_range(100, 100), 101, b"initial-payload")
+        .commit()?;
+
+    let (short_id_before, hash_before) = {
+        let rtxn = vault.store.env.read_txn()?;
+        let value = vault
+            .store
+            .short_ids_reverse
+            .get(&rtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let (short_id, hash) = parse_short_id_value(&value)?;
+        (short_id.to_owned(), hash)
+    };
+
+    let mut new_payload = b"updated-payload".to_vec();
+    while ((xxh32(&new_payload, 0) % 256) as u8) == hash_before {
+        new_payload.push(0);
+    }
+
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        let record = vault
+            .store
+            .entities
+            .get(&wtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let mut updated = record[..ENTITY_METADATA_HEADER_LEN].to_vec();
+        updated.extend_from_slice(&new_payload);
+        vault
+            .store
+            .entities
+            .put(&mut wtxn, id.as_bytes(), &updated)?;
+        wtxn.commit()?;
+    }
+
+    let report = vault.maintain().recompute_short_id_hashes().run()?;
+    assert_eq!(report.short_id_hashes_updated, 1);
+    assert_eq!(report.orphan_short_ids_deleted, 0);
+
+    let new_hash = (xxh32(&new_payload, 0) % 256) as u8;
+    let rtxn = vault.store.env.read_txn()?;
+    let updated_value = vault
+        .store
+        .short_ids_reverse
+        .get(&rtxn, id.as_bytes())?
+        .ok_or(Error::EntityNotFound)?;
+    let (short_id_after, hash_after) = parse_short_id_value(&updated_value)?;
+    assert_eq!(short_id_after, short_id_before);
+    assert_eq!(hash_after, new_hash);
+
+    // The hash is part of the forward KEY: the stale forward row must be
+    // gone and the refreshed one must point back at the entity.
+    let stale_forward_key = encode_short_id_forward_key(&short_id_before, hash_before);
+    let fresh_forward_key = encode_short_id_forward_key(&short_id_before, new_hash);
+    assert!(
+        vault
+            .store
+            .short_ids
+            .get(&rtxn, &stale_forward_key)?
+            .is_none(),
+        "stale forward row must be reaped on hash refresh"
+    );
+    assert_eq!(
+        vault
+            .store
+            .short_ids
+            .get(&rtxn, &fresh_forward_key)?
+            .as_deref(),
+        Some(id.as_bytes().as_slice())
+    );
+    Ok(())
+}
+
+/// `recompute_short_id_hashes` must reap orphans from both directions.
+/// Each case mutates the vault, runs the maintenance pass, and verifies the
+/// orphan row(s) are gone.
+///
+/// Cases (pinned ARCH-0019 directions — `short_ids_reverse` is keyed by
+/// entity id, `short_ids` by `(short_id ‖ content_hash)`):
+/// - `entity_row_deleted`: the entity-keyed `short_ids_reverse[id]` row
+///   exists but its backing `entities[id]` row is gone — both the reverse
+///   row and the paired forward row must be reaped.
+/// - `reverse_row_deleted`: only the entity-keyed `short_ids_reverse[id]`
+///   row is gone, leaving a forward-only orphan — the forward
+///   `short_ids[(short_id ‖ hash)]` row must be reaped.
+/// - `corrupt_forward_value`: a bogus forward row whose VALUE matches a
+///   reserved sentinel pattern (`[0xFF; 16]`). `parse_entity_id` returns
+///   `Error::InvalidKey`, which the forward-scan pass must treat as a
+///   corrupt row and prune — *not* propagate as an error.
+#[test]
+fn recompute_short_id_hashes_removes_orphans() -> Result<()> {
+    /// What the case mutates after the legit entity has been committed.
+    /// May return a follow-up forward key whose row should be checked
+    /// post-recompute instead of the legit forward key.
+    type Mutation = fn(&Vault, &EntityId) -> Result<Option<Vec<u8>>>;
+
+    struct Case {
+        name: &'static str,
+        mutate: Mutation,
+        /// Whether the legit entity-keyed `short_ids_reverse[id]` row
+        /// should be reaped.
+        expect_reverse_gone: bool,
+    }
+
+    fn delete_entity_row(vault: &Vault, id: &EntityId) -> Result<Option<Vec<u8>>> {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.entities.delete(&mut wtxn, id.as_bytes())?;
+        wtxn.commit()?;
+        Ok(None)
+    }
+    fn delete_reverse_row(vault: &Vault, id: &EntityId) -> Result<Option<Vec<u8>>> {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .short_ids_reverse
+            .delete(&mut wtxn, id.as_bytes())?;
+        wtxn.commit()?;
+        Ok(None)
+    }
+    /// Writes a `short_ids[(bogus short_id ‖ hash)] = [0xFF; 16]` forward
+    /// row. `[0xFF; 16]` is a reserved sentinel pattern (see
+    /// `is_reserved_entity_id_bytes` in `types.rs`), so `parse_entity_id`
+    /// returns `Error::InvalidKey`. The forward-scan in
+    /// `recompute_short_id_hashes` must treat that row as corrupt and
+    /// prune it, not propagate the error.
+    fn inject_corrupt_forward_value(vault: &Vault, _id: &EntityId) -> Result<Option<Vec<u8>>> {
+        // `cl-bogus99` is a synthetic short_id that won't collide with
+        // the legit row (counter-issued `cl1`).
+        let bogus_forward_key = encode_short_id_forward_key("cl-bogus99", 7);
+        let sentinel_value = [0xFF_u8; ENTITY_ID_LEN];
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .short_ids
+            .put(&mut wtxn, &bogus_forward_key, &sentinel_value)?;
+        wtxn.commit()?;
+        Ok(Some(bogus_forward_key))
+    }
+
+    let cases: Vec<Case> = vec![
+        Case {
+            name: "entity_row_deleted",
+            mutate: delete_entity_row,
+            expect_reverse_gone: true,
+        },
+        Case {
+            name: "reverse_row_deleted",
+            mutate: delete_reverse_row,
+            expect_reverse_gone: true,
+        },
+        Case {
+            name: "corrupt_forward_value",
+            mutate: inject_corrupt_forward_value,
+            // Legit reverse row stays untouched.
+            expect_reverse_gone: false,
+        },
+    ];
+
+    for case in cases {
+        let case_name = case.name;
+        let temp_dir = tempfile::tempdir()?;
+        let vault = Vault::open(temp_dir.path(), test_config())?;
+        let id = entity(93);
+
+        vault
+            .batch()
+            .put(&id, 1, test_time_range(100, 100), 101, b"payload")
+            .commit()?;
+
+        let legit_forward_key = {
+            let rtxn = vault.store.env.read_txn()?;
+            let value = vault
+                .store
+                .short_ids_reverse
+                .get(&rtxn, id.as_bytes())?
+                .ok_or(Error::EntityNotFound)?;
+            value.to_vec()
+        };
+
+        let mutator_forward_key = (case.mutate)(&vault, &id)?;
+
+        let report = vault.maintain().recompute_short_id_hashes().run()?;
+        assert_eq!(
+            report.short_id_hashes_updated, 0,
+            "case {case_name}: unexpected hash updates"
+        );
+        assert_eq!(
+            report.orphan_short_ids_deleted, 1,
+            "case {case_name}: expected exactly 1 orphan reaped"
+        );
+
+        let rtxn = vault.store.env.read_txn()?;
+        if case.expect_reverse_gone {
+            assert!(
+                vault
+                    .store
+                    .short_ids_reverse
+                    .get(&rtxn, id.as_bytes())?
+                    .is_none(),
+                "case {case_name}: entity-keyed short_ids_reverse row should be reaped"
+            );
+        }
+        // Pick the forward key to check: mutator return > legit.
+        let forward_key: Vec<u8> = mutator_forward_key
+            .clone()
+            .unwrap_or_else(|| legit_forward_key.clone());
+        assert!(
+            vault.store.short_ids.get(&rtxn, &forward_key)?.is_none(),
+            "case {case_name}: orphaned forward short_ids row should be reaped"
+        );
+        if !case.expect_reverse_gone {
+            assert_eq!(
+                vault
+                    .store
+                    .short_ids
+                    .get(&rtxn, &legit_forward_key)?
+                    .as_deref(),
+                Some(id.as_bytes().as_slice()),
+                "case {case_name}: legit forward row must survive"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn recompute_short_id_hashes_repairs_missing_forward_mapping() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let id = entity(99);
+
+    vault
+        .batch()
+        .put(&id, 1, test_time_range(100, 100), 101, b"payload")
+        .commit()?;
+
+    let forward_key = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .short_ids_reverse
+            .get(&rtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?
+            .to_vec()
+    };
+
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.short_ids.delete(&mut wtxn, &forward_key)?;
+        wtxn.commit()?;
+    }
+
+    let report = vault.maintain().recompute_short_id_hashes().run()?;
+    assert_eq!(report.short_id_hashes_updated, 0);
+    assert_eq!(report.orphan_short_ids_deleted, 0);
+
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        vault.store.short_ids.get(&rtxn, &forward_key)?.as_deref(),
+        Some(id.as_bytes().as_slice())
+    );
+    Ok(())
+}
+
+#[test]
+fn recompute_short_id_hashes_repairs_stale_forward_mapping() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let id = entity(100);
+    let wrong_id = entity(101);
+
+    vault
+        .batch()
+        .put(&id, 1, test_time_range(100, 100), 101, b"payload")
+        .commit()?;
+
+    let forward_key = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .short_ids_reverse
+            .get(&rtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?
+            .to_vec()
+    };
+
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .short_ids
+            .put(&mut wtxn, &forward_key, wrong_id.as_bytes())?;
+        wtxn.commit()?;
+    }
+
+    let report = vault.maintain().recompute_short_id_hashes().run()?;
+    assert_eq!(report.short_id_hashes_updated, 0);
+    assert_eq!(report.orphan_short_ids_deleted, 1);
+
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            vault.store.short_ids.get(&rtxn, &forward_key)?.is_none(),
+            "unowned stale forward row should be pruned before repair"
+        );
+    }
+
+    let report = vault.maintain().recompute_short_id_hashes().run()?;
+    assert_eq!(report.short_id_hashes_updated, 0);
+    assert_eq!(report.orphan_short_ids_deleted, 0);
+
+    let rtxn = vault.store.env.read_txn()?;
+    assert_eq!(
+        vault.store.short_ids.get(&rtxn, &forward_key)?.as_deref(),
+        Some(id.as_bytes().as_slice())
+    );
+    Ok(())
+}
+
+#[test]
+fn recompute_short_id_hashes_processes_custom_ids_near_sentinel_pattern() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let mut raw = [0xFF; ENTITY_ID_LEN];
+    raw[0] = 0xFE;
+    let id = EntityId::from_bytes(raw)?;
+
+    vault
+        .batch()
+        .put(&id, 1, test_time_range(100, 100), 101, b"initial-payload")
+        .commit()?;
+
+    let hash_before = {
+        let rtxn = vault.store.env.read_txn()?;
+        let value = vault
+            .store
+            .short_ids_reverse
+            .get(&rtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let (_, hash) = parse_short_id_value(&value)?;
+        hash
+    };
+
+    let mut new_payload = b"updated-payload".to_vec();
+    while ((xxh32(&new_payload, 0) % 256) as u8) == hash_before {
+        new_payload.push(0);
+    }
+
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        let record = vault
+            .store
+            .entities
+            .get(&wtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let mut updated = record[..ENTITY_METADATA_HEADER_LEN].to_vec();
+        updated.extend_from_slice(&new_payload);
+        vault
+            .store
+            .entities
+            .put(&mut wtxn, id.as_bytes(), &updated)?;
+        wtxn.commit()?;
+    }
+
+    let report = vault.maintain().recompute_short_id_hashes().run()?;
+    assert_eq!(report.short_id_hashes_updated, 1);
+    assert_eq!(report.orphan_short_ids_deleted, 0);
+    Ok(())
+}
+
+#[test]
+fn recompute_short_id_hashes_prunes_corrupt_reverse_rows() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let id = entity(102);
+
+    vault
+        .batch()
+        .put(&id, 1, test_time_range(100, 100), 101, b"payload")
+        .commit()?;
+
+    // `short_ids_reverse` is keyed by 16-byte entity ids; an 8-byte
+    // `b"deadbeef"` key is a corrupt row the reverse scan must prune
+    // (not propagate as an error).
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .short_ids_reverse
+            .put(&mut wtxn, b"deadbeef", &[0xFF; ENTITY_ID_LEN])?;
+        wtxn.commit()?;
+    }
+
+    let report = vault.maintain().recompute_short_id_hashes().run()?;
+    assert_eq!(report.orphan_short_ids_deleted, 1);
+
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .short_ids_reverse
+            .get(&rtxn, b"deadbeef")?
+            .is_none()
     );
     Ok(())
 }
@@ -894,6 +1468,158 @@ fn recompute_short_id_hashes_keeps_in_pass_reserved_refresh_one_1176() -> Result
 }
 
 #[test]
+fn recompute_short_id_hashes_prunes_forward_orphan_via_pass_two() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let id = entity(104);
+
+    vault
+        .batch()
+        .put(&id, 1, test_time_range(100, 100), 101, b"payload")
+        .commit()?;
+
+    let forward_key = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .short_ids_reverse
+            .get(&rtxn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?
+            .to_vec()
+    };
+
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault
+            .store
+            .short_ids_reverse
+            .delete(&mut wtxn, id.as_bytes())?;
+        wtxn.commit()?;
+    }
+
+    let report = vault.maintain().recompute_short_id_hashes().run()?;
+    assert_eq!(report.orphan_short_ids_deleted, 1);
+
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault.store.short_ids.get(&rtxn, &forward_key)?.is_none(),
+        "forward-only orphan should be reaped by pass 2"
+    );
+    Ok(())
+}
+
+#[test]
+fn rebuild_hnsw_heal_invalid_vectors_skips_reserved_id_rows() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let live = entity(105);
+
+    vault.put_entity(&live, 1, test_time_range(1, 1), 1, b"node")?;
+    vault.put_vector(&live, &[1.0, 0.0, 0.0, 0.0])?;
+
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        let valid_vector = [
+            1.0_f32.to_le_bytes(),
+            0.0_f32.to_le_bytes(),
+            0.0_f32.to_le_bytes(),
+            0.0_f32.to_le_bytes(),
+        ]
+        .concat();
+        vault
+            .store
+            .vectors
+            .put(&mut wtxn, &[0xFF; ENTITY_ID_LEN], &valid_vector)?;
+        wtxn.commit()?;
+    }
+
+    let report = vault.maintain().rebuild_hnsw_heal_invalid_vectors().run()?;
+    assert_eq!(report.hnsw_invalid_vectors_skipped, 1);
+    assert_eq!(report.hnsw_live_nodes, 1);
+    Ok(())
+}
+
+#[test]
+fn run_all_operations() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    let a = entity(90);
+    let b = entity(91);
+    let c = entity(92);
+
+    for id in [a, b, c] {
+        vault.put_entity(&id, 1, test_time_range(1, 1), 1, b"node")?;
+    }
+
+    vault.put_vector(&a, &[1.0, 0.0, 0.0, 0.0])?;
+    vault.put_vector(&b, &[0.0, 1.0, 0.0, 0.0])?;
+    vault.put_vector(&c, &[0.0, 0.0, 1.0, 0.0])?;
+
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.vectors.delete(&mut wtxn, c.as_bytes())?;
+        vault.store.entities.delete(&mut wtxn, c.as_bytes())?;
+        vault
+            .store
+            .text_postings
+            .put(&mut wtxn, b"empty-maintain", &[])?;
+        wtxn.commit()?;
+    }
+
+    vault.put_edge(&a, EdgeKind::BelongsTo, &b, 1.0)?;
+    let _ = vault.query().search_ppr(&[a], 3).limit(10).run()?;
+    vault.put_edge(&a, EdgeKind::BelongsTo, &b, 0.25)?;
+
+    let current_hash = {
+        let rtxn = vault.store.env.read_txn()?;
+        let value = vault
+            .store
+            .short_ids_reverse
+            .get(&rtxn, a.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let (_, hash) = parse_short_id_value(&value)?;
+        hash
+    };
+    let mut drifted_payload = b"hash-drifted".to_vec();
+    while ((xxh32(&drifted_payload, 0) % 256) as u8) == current_hash {
+        drifted_payload.push(0);
+    }
+
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        let record = vault
+            .store
+            .entities
+            .get(&wtxn, a.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let mut updated = record[..ENTITY_METADATA_HEADER_LEN].to_vec();
+        updated.extend_from_slice(&drifted_payload);
+        vault
+            .store
+            .entities
+            .put(&mut wtxn, a.as_bytes(), &updated)?;
+        wtxn.commit()?;
+    }
+
+    let report = vault
+        .maintain()
+        .rebuild_hnsw()
+        .cleanup_ppr_cache(0)
+        .compact_postings()
+        .recompute_short_id_hashes()
+        .run()?;
+
+    assert!(report.hnsw_dead_nodes_removed > 0);
+    assert!(report.hnsw_live_nodes > 0);
+    assert!(report.ppr_caches_evicted > 0);
+    assert!(report.ppr_deps_cleaned > 0);
+    assert!(report.postings_compacted > 0);
+    assert!(report.orphan_short_ids_deleted > 0);
+    assert!(report.short_id_hashes_updated > 0);
+    Ok(())
+}
+
+#[test]
 fn attempt_queue_cleanup_maintenance_reports_counts_and_requeues() -> Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let clock = crate::ports::ManualClock::new(1);
@@ -1031,6 +1757,24 @@ fn attempt_queue_maintenance_warns_a_live_lease_before_cleanup_takes_it() -> Res
 }
 
 #[test]
+fn attempt_queue_cleanup_maintenance_rejects_zero_timeout() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+
+    let err = vault
+        .maintain()
+        .cleanup_attempt_queue_leases(0)
+        .run()
+        .unwrap_err();
+    assert_matches!(
+        err,
+        Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(_))
+    );
+
+    Ok(())
+}
+
+#[test]
 fn clear_text_index_removes_all_text_rows_and_rewrites_manifest() -> Result<()> {
     use crate::store::{
         TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_BM25_FIELD_SCHEMA_HASH_KEY,
@@ -1117,5 +1861,27 @@ fn clear_text_index_removes_all_text_rows_and_rewrites_manifest() -> Result<()> 
         .commit()?;
     let hits = vault.search_text("hello", 10)?;
     assert!(!hits.is_empty());
+    Ok(())
+}
+
+#[test]
+fn backfill_op_reports_through_maintenance_builder() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+
+    let report = vault
+        .maintain()
+        .backfill_gate_decision_claim_index()
+        .run()?;
+    assert!(
+        report.gate_claim_index_backfill_already_complete,
+        "an empty ledger self-flags at open, so the op is a no-op",
+    );
+    assert_eq!(report.gate_claim_index_rows_backfilled, 0);
+
+    // Not requesting the op must leave both counters at their defaults.
+    let untouched = vault.maintain().rebuild_hnsw().run()?;
+    assert!(!untouched.gate_claim_index_backfill_already_complete);
+    assert_eq!(untouched.gate_claim_index_rows_backfilled, 0);
     Ok(())
 }

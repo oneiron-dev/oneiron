@@ -125,6 +125,8 @@ use self::doctor_manifest::{
     write_text_index_manifest_if_empty,
 };
 #[cfg(test)]
+use crate::analyzer::AnalyzerChannel;
+#[cfg(test)]
 use crate::bm25;
 #[cfg(test)]
 use crate::error::{Error, Result};

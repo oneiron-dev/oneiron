@@ -186,12 +186,50 @@ fn put_text_and_vector(vault: &Vault, id: EntityId, text: &str, vector: [f32; 4]
         .commit()
 }
 
+fn put_codebase_vector(
+    vault: &Vault,
+    id: EntityId,
+    project_id: &str,
+    repo_ref: RepoRef,
+    vector: [f32; 4],
+) -> Result<()> {
+    let canonical_repo_ref = repo_ref.canonical();
+    let commit_hash = canonical_repo_ref
+        .split_once('#')
+        .map(|(_, commit_hash)| commit_hash.to_owned());
+    let body = crate::code_artifact::CodeArtifactBody::new(
+        "Summarize the codebase snapshot.",
+        [0xA5; crate::code_artifact::CODE_ARTIFACT_SUMMARY_HASH_LEN],
+        canonical_repo_ref,
+    );
+    vault.put_code_artifact(&id, &body, TimeRange { start: 1, end: 1 }, 1)?;
+    let content = b"pub fn vector_fixture() {}".to_vec();
+    let snapshot = crate::codebase::CodebaseSnapshot::new(
+        project_id,
+        repo_ref,
+        commit_hash,
+        vec![crate::codebase::CodebaseFileEntry::new(
+            "src/lib.rs",
+            *blake3::hash(&content).as_bytes(),
+            content.len() as u64,
+        )],
+    )?;
+    vault.put_codebase_snapshot(&id, &snapshot, &|_| Some(content.clone()))?;
+    vault.batch().vector(&id, &vector).commit()
+}
+
 pub(super) fn to_score_map(scores: &[ScoredEntity]) -> HashMap<EntityId, f32> {
     scores.iter().map(|entry| (entry.id, entry.score)).collect()
 }
 
 pub(super) fn approx_eq(left: f32, right: f32, eps: f32) -> bool {
     (left - right).abs() <= eps
+}
+
+fn trace_candidates_contain(candidates: &[RetrievalScoreBreakdown], id: EntityId) -> bool {
+    candidates
+        .iter()
+        .any(|candidate| candidate.result_id == *id.as_bytes())
 }
 
 pub(super) fn captured_retrieval_trace(

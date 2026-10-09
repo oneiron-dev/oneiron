@@ -54,6 +54,8 @@ mod authority_tests;
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
+use crate::codebase::RepoRef;
+#[cfg(test)]
 use crate::edge::EdgeKind;
 #[cfg(test)]
 use crate::entity_id::EntityId;
@@ -70,7 +72,7 @@ use crate::rerank::{RerankCandidate, RerankOptions, Reranker};
 #[cfg(test)]
 use crate::store::{
     RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
-    RetrievalScoreComponent, RetrievalSignal, RetrievalTrace,
+    RetrievalScoreComponent, RetrievalSignal, RetrievalTrace, RetrievalTraceStage,
 };
 #[cfg(test)]
 use crate::temporal::TemporalAnchorMode;

@@ -1,6 +1,7 @@
 //! BRIDGE-02 retrieval surface regressions: BM25, neighbors, recall packs, scope honesty, limits.
 
 use super::*;
+use crate::memory::tests::short_id_part;
 
 include!("pack_scope.rs");
 include!("bounds_execution.rs");
