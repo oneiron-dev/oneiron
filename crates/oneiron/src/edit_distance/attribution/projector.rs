@@ -172,7 +172,7 @@ fn record_target(
         scope: scope.to_owned(),
     };
     let key = target_key(predicate, subject, scope);
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         TARGET.put(&vault.store, wtxn, &key, &row)?;
         Ok(())
     })
@@ -225,7 +225,7 @@ fn retract_target(
 ) -> Result<()> {
     let now = vault.store.clock.now_recorded_at();
     let key = target_key(predicate, subject, scope);
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         for (id, mut body) in active_cost_heads_in_txn(vault, wtxn, predicate, subject, scope)? {
             let header = {
                 let Some(raw) = vault
@@ -367,7 +367,7 @@ fn write_skill_edit_cost(
     let at = aggregate.at;
     let value = rmpv::Value::F32(aggregate.cost);
     let evidence = skill_cost_evidence(aggregate);
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let heads =
             active_cost_heads_in_txn(vault, wtxn, PREDICATE_SKILL_EDIT_COST, skill, &scope)?;
         let claim_id = vault.store.clock.entity_id()?;

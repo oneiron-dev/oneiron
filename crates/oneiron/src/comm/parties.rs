@@ -47,7 +47,7 @@ enum PartyLookup {
 }
 
 fn resolve_or_create_party(vault: &Vault, party: &str) -> CommResult<EntityId> {
-    vault.try_with_write_txn(|wtxn| resolve_or_create_party_in_txn(vault, wtxn, party))
+    vault.try_with_write_txn_grouped(|wtxn| resolve_or_create_party_in_txn(vault, wtxn, party))
 }
 
 /// Reads the `party_key` of `id` if — and only if — it is an ACTIVE comm-owned
@@ -253,7 +253,9 @@ pub(super) fn resolve_party(vault: &Vault, party: &str) -> CommResult<Option<Ent
     match lookup {
         PartyLookup::Fresh(id) => Ok(Some(id)),
         PartyLookup::Repairable(id) => {
-            vault.try_with_write_txn(|wtxn| put_party_index_in_txn(vault, wtxn, party, id))?;
+            vault.try_with_write_txn_grouped(|wtxn| {
+                put_party_index_in_txn(vault, wtxn, party, id)
+            })?;
             Ok(Some(id))
         }
         PartyLookup::Absent => Ok(None),
@@ -361,7 +363,7 @@ pub(super) fn reconcile_comm_party_twins(vault: &Vault, now: u64) -> CommResult<
         if matches!(outcome, IdentityOpOutcome::Applied { .. }) {
             merged += sources.len();
         }
-        vault.try_with_write_txn(|wtxn| {
+        vault.try_with_write_txn_grouped(|wtxn| {
             put_party_index_in_txn(vault, wtxn, &party_key, *survivor)
         })?;
     }

@@ -254,7 +254,7 @@ mod tests {
             (first, "claim:three", true),
         ] {
             vault
-                .with_write_txn(|txn| {
+                .with_write_txn_grouped(|txn| {
                     observe_submission_in_txn(
                         &vault.store,
                         txn,

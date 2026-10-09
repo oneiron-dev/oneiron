@@ -64,7 +64,7 @@ pub fn record_amendment_evidence(vault: &Vault, evidence: &AmendmentEvidence) ->
         skill_covered_step: evidence.skill_covered_step,
         at: evidence.at,
     };
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         EVIDENCE.put(&vault.store, wtxn, &evidence.receipt_id, &row)?;
         Ok(())
     })
@@ -249,7 +249,7 @@ pub fn judge_amendment_hunks(
     });
 
     let receipt_id_owned = receipt_id.to_owned();
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         JUDGMENT.put(&vault.store, wtxn, &receipt_id_owned, &row)?;
         // A note and the judgment that demanded it land together, and a
         // re-judgment that no longer carries the share withdraws the note it
@@ -292,7 +292,7 @@ fn withdraw_judgment(vault: &Vault, receipt_id: &str) -> Result<()> {
             return Ok(());
         }
     }
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         JUDGMENT.delete(&vault.store, wtxn, &receipt_id)?;
         PREFERENCE.delete(&vault.store, wtxn, &receipt_id)?;
         delete_unclear_in_txn(vault, wtxn, AttributionLane::Amendment, &receipt_id)?;

@@ -969,7 +969,7 @@ mod tests {
         let vault = std::sync::Arc::new(vault);
         let share = RelationshipShare::new(&vault);
         assert!(share.reads_as(&vault, share.member)?);
-        vault.with_write_txn(|txn| {
+        vault.with_write_txn_grouped(|txn| {
             vault.store.vault_meta.put(
                 txn,
                 b"pack_byte_map:local_head:v1".as_slice(),
@@ -1104,7 +1104,7 @@ mod tests {
             crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
         let share = RelationshipShare::new(&vault);
         assert!(share.reads_as(&vault, share.member)?);
-        vault.with_write_txn(|txn| {
+        vault.with_write_txn_grouped(|txn| {
             vault.store.vault_meta.put(
                 txn,
                 b"pack_byte_map:local_head:v1".as_slice(),
@@ -1237,7 +1237,7 @@ mod tests {
             world.to_hex()
         );
         let key = crate::sync::WindowKey::try_new(&window).expect("a window key");
-        vault.with_write_txn(|txn| {
+        vault.with_write_txn_grouped(|txn| {
             crate::sync::window::persist_window_doc_in_txn(
                 &vault,
                 txn,

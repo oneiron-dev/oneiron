@@ -615,7 +615,7 @@ impl WindowManager {
 
     /// Deletes the window-scoped `rm:w:{key}` marker.
     fn clear_sync_state_marker(&self, key: &WindowKey) -> Result<()> {
-        self.vault.with_write_txn(|wtxn| {
+        self.vault.with_write_txn_grouped(|wtxn| {
             REMAT_WINDOW_MARKER.delete(&self.vault.store, wtxn, &key.as_str().to_owned())?;
             Ok(())
         })
@@ -760,7 +760,7 @@ mod slim_drop_tests {
             seq: 0xffff_ffff,
         };
         let corrupt = b"not a loro update".to_vec();
-        manager.vault.with_write_txn(|txn| {
+        manager.vault.with_write_txn_grouped(|txn| {
             WINDOW_UPDATE.put(&manager.vault.store, txn, &corrupt_key, &corrupt)
         })?;
         let revision = manager.vault.store.env.info().last_txn_id;
@@ -781,9 +781,9 @@ mod slim_drop_tests {
             receiver.try_recv().is_ok(),
             "Observer A and outbound sink survive failure"
         );
-        manager
-            .vault
-            .with_write_txn(|txn| WINDOW_UPDATE.delete(&manager.vault.store, txn, &corrupt_key))?;
+        manager.vault.with_write_txn_grouped(|txn| {
+            WINDOW_UPDATE.delete(&manager.vault.store, txn, &corrupt_key)
+        })?;
         assert_eq!(manager.drop_rebuildable_windows()?.sync_windows, 2);
         assert!(weak.iter().all(|window| window.upgrade().is_none()));
         let reopened = manager.open_window(&keys[0])?;

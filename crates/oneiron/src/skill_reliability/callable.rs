@@ -56,7 +56,7 @@ pub(crate) fn record_callable_invocation(
     let receipt = crate::receipt::attempt_pack_receipt_id(&leased.id);
     let mut binding = invocation_prefix(skill, &receipt)?;
     binding.extend_from_slice(&seq.to_be_bytes());
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         let current = AttemptQueue::new(vault)
             .get_in_txn(txn, leased.id)?
             .ok_or(Error::EntityNotFound)?;
@@ -145,7 +145,7 @@ pub(crate) fn project_callable_receipt_outcome(
         ));
     }
     let prefix = invocation_prefix(skill, receipt_ref)?;
-    let credited = vault.with_write_txn(|txn| {
+    let credited = vault.with_write_txn_grouped(|txn| {
         let mut executors = BTreeMap::<String, bool>::new();
         for row in INVOCATIONS.iter_from(&vault.store, txn, &prefix)? {
             let (_, raw) = row?;

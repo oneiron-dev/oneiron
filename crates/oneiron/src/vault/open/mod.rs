@@ -232,7 +232,7 @@ impl Vault {
         rmpv::encode::write_value(&mut data, &manifest)
             .map_err(|_| Error::InvariantViolation("encode Imported test policy"))?;
 
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, &id)?
                 .ok_or(Error::InvariantViolation(
                     "test permit requires a seeded default policy",
@@ -360,7 +360,7 @@ impl Vault {
         rmpv::encode::write_value(&mut data, &manifest)
             .map_err(|_| Error::InvariantViolation("encode Generated test policy"))?;
 
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, &id)?
                 .ok_or(Error::InvariantViolation(
                     "test permit requires a seeded default policy",
@@ -529,7 +529,7 @@ impl Vault {
         // A published deletion must finish its request-bound topology tear
         // before any caller can apply a new merge or observe this vault.
         crate::deletion::topology_delete_intent::recover_topology_delete_intents_on_open(&vault)?;
-        vault.with_write_txn(|txn| vault.dreamer_authority_in_txn(txn, 0))?;
+        vault.with_write_txn_grouped(|txn| vault.dreamer_authority_in_txn(txn, 0))?;
         // Rebuilds the content-hash → holder index (import/sync dedup) when it
         // is missing or stale; completes before any caller receives a usable
         // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now
@@ -543,7 +543,7 @@ impl Vault {
             // row is too, and a whole-vault import between vaults finds it
             // unchanged.
             // An erased owner stays erased.
-            vault.with_write_txn(|wtxn| {
+            vault.with_write_txn_grouped(|wtxn| {
                 let owner = embedded_owner_actor_id()?;
                 if !vault.local_hard_delete_marker_exists_in_txn(wtxn, &owner)? {
                     vault.stage_embedded_owner_actor_in_txn(wtxn, 0)?;

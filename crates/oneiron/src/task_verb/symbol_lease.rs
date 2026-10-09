@@ -97,7 +97,7 @@ impl Vault {
                 "invalid symbol declaration".to_owned(),
             ));
         }
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             if self.get_entity_type_in_txn(txn, &task)? != Some(crate::registry::ENTITY_TYPE_TASK)
                 || self.get_entity_type_in_txn(txn, &holder)?.is_none()
             {
@@ -135,7 +135,7 @@ impl Vault {
     }
 
     pub fn renew_symbols(&self, task: EntityId, holder: EntityId, now: u64) -> Result<SymbolLease> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let mut lease = load(&self.store, txn, task)?.ok_or(Error::EntityNotFound)?;
             if lease.holder_ref != holder.to_hex() || !lease.held || lease.expires_at <= now {
                 return Err(Error::InvalidConfig(
@@ -151,7 +151,7 @@ impl Vault {
     }
 
     pub fn release_symbols(&self, task: EntityId, holder: EntityId) -> Result<bool> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let Some(lease) = load(&self.store, txn, task)? else {
                 return Ok(false);
             };
@@ -167,7 +167,7 @@ impl Vault {
     /// Expiry clears the hold, not its declared symbol set. A later dispatch
     /// must reacquire the declaration before it can run.
     pub fn expire_symbol_leases(&self, now: u64) -> Result<Vec<EntityId>> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let mut expired = Vec::new();
             for (_, mut lease) in LEASES.scan(&self.store, txn)? {
                 if lease.held && lease.expires_at <= now {

@@ -197,7 +197,7 @@ fn commit_terminal(
     };
     let memory = vault.memory(seed.actor, seed.class()?);
     let written: MessageStreamResult<()> = if seed.continuation {
-        vault.try_with_write_txn(|txn| -> MessageStreamResult<()> {
+        vault.try_with_write_txn_grouped(|txn| -> MessageStreamResult<()> {
             let base = admission::committed_text(vault, txn, seed)?.ok_or(Error::EntityNotFound)?;
             let text = format!("{base}{}", state.pending);
             admission::authorize(vault, txn, seed, &text)?;

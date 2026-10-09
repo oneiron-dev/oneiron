@@ -360,7 +360,7 @@ mod tests {
         );
         grant.authority_scope.audience = axis(EntityId::from_hex(&project_a)?);
         let now = vault.store.clock.now_recorded_at();
-        vault.with_write_txn(|txn| {
+        vault.with_write_txn_grouped(|txn| {
             apply_ops(
                 &vault.store,
                 &vault.config,

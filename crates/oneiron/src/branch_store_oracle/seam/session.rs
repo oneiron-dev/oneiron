@@ -360,7 +360,7 @@ impl<'vault> SessionVault<'vault> {
                 hub_sync_imported: false,
             },
         };
-        let segment = self.vault.with_write_txn(|wtxn| {
+        let segment = self.vault.with_write_txn_grouped(|wtxn| {
             let segment = overlay.install_txn_segment()?;
             crate::batch::apply_ops_session(
                 &self.session.read_view()?,
@@ -477,7 +477,7 @@ impl<'vault> SessionVault<'vault> {
             read_frontier_hash: [0xB6; 32],
             redacted_at: None,
         };
-        self.vault.with_write_txn(|wtxn| {
+        self.vault.with_write_txn_grouped(|wtxn| {
             crate::off_record::FloorWrites::new(&self.vault.store)
                 .append_egress_gate_decision(wtxn, &record)
         })

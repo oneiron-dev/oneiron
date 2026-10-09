@@ -250,7 +250,7 @@ mod slim_rebuild_tests {
             vault.put_entity(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"node")?;
             vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
         }
-        vault.with_write_txn(|txn| drop_rebuildable_hnsw(&vault.store, txn))?;
+        vault.with_write_txn_grouped(|txn| drop_rebuildable_hnsw(&vault.store, txn))?;
         let prepared =
             prepare_rebuild_hnsw_with_discipline(&vault, false, RebuildDiscipline::Persisted)?;
         // Deterministically place a production delete between prepare/commit.
@@ -278,7 +278,7 @@ mod slim_rebuild_tests {
         let revision = vault.store.env.info().last_txn_id;
         assert!(commit_dropped_hnsw(&vault, &prepared)?);
         assert_eq!(vault.store.env.info().last_txn_id, revision);
-        vault.with_write_txn(|txn| drop_rebuildable_hnsw(&vault.store, txn))?;
+        vault.with_write_txn_grouped(|txn| drop_rebuildable_hnsw(&vault.store, txn))?;
         assert!(rebuild_hnsw_if_dropped(&vault, false)?);
         assert!(!hnsw_marker_is_dropped(&vault)?);
         assert!(!rebuild_hnsw_if_dropped(&vault, false)?);
@@ -293,7 +293,7 @@ mod slim_rebuild_tests {
             vault.put_entity(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"node")?;
             vault.put_vector(&id, &[1.0, 0.0, 0.0, 0.0])?;
         }
-        vault.with_write_txn(|txn| {
+        vault.with_write_txn_grouped(|txn| {
             drop_rebuildable_hnsw(&vault.store, txn)?;
             vault
                 .store

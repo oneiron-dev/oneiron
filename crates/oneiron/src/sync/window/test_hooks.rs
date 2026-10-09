@@ -39,7 +39,7 @@ pub(super) fn run_receipt_revocation_race(vault: &Vault) -> Result<()> {
         if local_blob.is_empty() {
             return Err(Error::InvariantViolation("empty local receipt test row"));
         }
-        vault.with_write_txn(|wtxn| {
+        vault.with_write_txn_grouped(|wtxn| {
             EntityStoreMaintenance::port_raw_record_seed(&vault.store, wtxn, &id, &local_blob)
         })?;
     }

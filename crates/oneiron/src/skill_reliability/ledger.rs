@@ -321,7 +321,7 @@ pub fn record_skill_contributing_win(
             "contributing win names a skill absent from the receipt manifest",
         ));
     }
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         record_outcome_in_txn(
             vault,
             wtxn,
@@ -369,7 +369,7 @@ pub fn record_resident_skill_contributing_win(
     }) {
         return Err(invalid("resident win needs its exact revision"));
     }
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         record_outcome_in_txn(
             vault,
             txn,

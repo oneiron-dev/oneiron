@@ -487,7 +487,7 @@ fn enqueue_poll_attempt(
         not_before,
     })
     .map_err(|_| ingest("poll payload did not encode"))?;
-    Ok(vault.with_write_txn(|txn| {
+    Ok(vault.with_write_txn_grouped(|txn| {
         crate::ports::JobQueue::port_job_enqueue(
             vault,
             txn,
@@ -516,7 +516,7 @@ fn write_cursor(
     digest: &[u8; 32],
     cursor: &IcsFeedCursor,
 ) -> Result<(), CalendarError> {
-    vault.try_with_write_txn(|wtxn| {
+    vault.try_with_write_txn_grouped(|wtxn| {
         CURSOR.put(&vault.store, wtxn, digest, cursor)?;
         Ok::<_, crate::Error>(())
     })?;

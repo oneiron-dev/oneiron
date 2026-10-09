@@ -122,7 +122,7 @@ pub(crate) fn load_or_mint_client_id(vault: &Vault) -> Result<u64> {
     drop(rtxn);
 
     let mut client_id = None;
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         client_id = Some(load_or_mint_client_id_in_txn(vault, wtxn)?);
         Ok(())
     })?;
@@ -176,7 +176,7 @@ pub(crate) fn ensure_device_identity_in_txn(
 #[cfg_attr(not(feature = "sync"), allow(dead_code))]
 pub(crate) fn ensure_device_identity(vault: &Vault) -> Result<DeviceIdentity> {
     let mut identity = None;
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         identity = Some(ensure_device_identity_in_txn(vault, wtxn)?);
         Ok(())
     })?;
@@ -289,7 +289,7 @@ mod tests {
         let (_dir, vault) = test_vault();
 
         vault
-            .with_write_txn(|wtxn| {
+            .with_write_txn_grouped(|wtxn| {
                 vault
                     .store
                     .sync_state
@@ -303,7 +303,7 @@ mod tests {
         assert_matches!(err, Error::CorruptedIndex("sync client_id zero"));
 
         vault
-            .with_write_txn(|wtxn| {
+            .with_write_txn_grouped(|wtxn| {
                 vault.store.sync_state.put(wtxn, KEY_CLIENT_ID, b"short")?;
                 Ok(())
             })
@@ -314,7 +314,7 @@ mod tests {
         assert_matches!(err, Error::CorruptedIndex("sync client_id row"));
 
         vault
-            .with_write_txn(|wtxn| {
+            .with_write_txn_grouped(|wtxn| {
                 vault
                     .store
                     .sync_state
@@ -332,7 +332,7 @@ mod tests {
         assert_matches!(err, Error::CorruptedIndex("device signing key row"));
 
         vault
-            .with_write_txn(|wtxn| {
+            .with_write_txn_grouped(|wtxn| {
                 vault
                     .store
                     .sync_state

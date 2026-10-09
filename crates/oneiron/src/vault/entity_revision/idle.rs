@@ -17,7 +17,7 @@ const DEBOUNCE: SideTable<(), u64, Raw> =
 impl Vault {
     /// Seeds the host's loop policy once; never overwrites a live manifest edit.
     pub fn seed_indexed_idle_delay_ms(&self, delay_ms: u64) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             if DEBOUNCE.get(&self.store, txn, &())?.is_none() {
                 DEBOUNCE.put(&self.store, txn, &(), &delay_ms)?;
             }

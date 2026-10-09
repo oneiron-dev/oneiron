@@ -333,7 +333,7 @@ impl Vault {
         // Existing content is never replaced or partially restored over.
         std::fs::create_dir(destination)?;
         let vault = Self::open_owned(destination, config.clone())?;
-        vault.with_write_txn(|txn| {
+        vault.with_write_txn_grouped(|txn| {
             for entry in DB_MANIFEST {
                 let db = vault
                     .store
@@ -387,7 +387,7 @@ impl Vault {
             restored_at,
             reason,
         };
-        vault.with_write_txn(|txn| {
+        vault.with_write_txn_grouped(|txn| {
             let sequence = match RESTORE_EPOCH.iter_rev_from(&vault.store, txn, &[])?.next() {
                 None => 0,
                 Some(row) => {

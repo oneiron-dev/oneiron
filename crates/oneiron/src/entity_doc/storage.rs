@@ -189,7 +189,7 @@ impl Vault {
             .entity_docs
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             super::forks::validate_actor(self, txn, birth_actor)?;
             let authorizer = match authorization {
                 DocAuthorization::Owner(owner) => {

@@ -168,7 +168,7 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         validate_document(body, now)?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             if !events_in(self, txn, document)?.is_empty() {
                 return Err(invalid("document already exists"));
             }

@@ -478,7 +478,7 @@ impl PendingEmbeddingReconciler {
             return Ok(batch);
         }
 
-        self.vault.with_write_txn(|wtxn| {
+        self.vault.with_write_txn_grouped(|wtxn| {
             for job in jobs {
                 if crate::vault::entity_revision::entity_has_pending_revision(
                     &self.vault.store,
@@ -554,7 +554,7 @@ impl PendingEmbeddingReconciler {
         locality: EmbedderLocality,
     ) -> Result<bool> {
         let mut filled_current = false;
-        self.vault.with_write_txn(|wtxn| {
+        self.vault.with_write_txn_grouped(|wtxn| {
             let current_before = self
                 .vault
                 .store
@@ -644,7 +644,7 @@ pub(crate) fn enqueue_pending_embedding_jobs(
         "K6: a live-overlay id reached the embed job queue; session content \
          embeds inline and must never enqueue a background job"
     );
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         for id in ids {
             if vault
                 .store

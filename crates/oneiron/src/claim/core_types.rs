@@ -723,7 +723,7 @@ mod import_validation_tests {
                 let data = encode_claim_body(body)?;
                 #[cfg(feature = "sync")]
                 if transactional {
-                    return vault.with_write_txn(|txn| {
+                    return vault.with_write_txn_grouped(|txn| {
                         vault
                             .batch_in()
                             .put_replicated(&id, ENTITY_TYPE_CLAIM, at, 100, &data)

@@ -158,7 +158,7 @@ pub(crate) fn execute_mcp_proposed_control_record(
     let verb = args.verb;
     server
         .vault
-        .with_write_txn(|wtxn| {
+        .with_write_txn_grouped(|wtxn| {
             if let Some(target) = target {
                 match verb {
                     McpEditVerb::AttestEdgeProvenance => server

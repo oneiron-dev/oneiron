@@ -543,7 +543,7 @@ impl Memory<'_> {
                 Error::InvalidClaimBody("content actor does not match bound facade").into(),
             );
         }
-        self.vault.try_with_write_txn(|wtxn| {
+        self.vault.try_with_write_txn_grouped(|wtxn| {
             verify_actor_binding_in_txn(self.vault, wtxn, self.actor, self.actor_class)?;
             let mut content = crate::federation::ActorContentTxn::new(self.vault, wtxn, actor)?;
             let result = write(&mut content)?;
@@ -560,7 +560,7 @@ impl Memory<'_> {
         &self,
         write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
     ) -> MemoryResult<T> {
-        self.vault.try_with_write_txn(|wtxn| {
+        self.vault.try_with_write_txn_grouped(|wtxn| {
             verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
             if let Some(creation) = self.vault.shared_vault_creation_in_txn(wtxn)? {
                 self.vault.authorize_shared_vault_write_in_txn(

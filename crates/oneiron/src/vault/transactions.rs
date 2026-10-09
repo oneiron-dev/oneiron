@@ -189,7 +189,7 @@ impl Vault {
     /// adopted where none is pinned, refused (`EmbeddingTransformChanged`)
     /// where another is.
     pub fn adopt_embedding_transform(&self, transform: &str) -> Result<()> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             crate::store::admit_embedding_transform_in_txn(&self.store, wtxn, transform)
         })
     }
@@ -206,7 +206,7 @@ impl Vault {
         transform: Option<&str>,
         refill: bool,
     ) -> Result<()> {
-        let held = self.with_write_txn(|wtxn| {
+        let held = self.with_write_txn_grouped(|wtxn| {
             self.swap_embedding_space_in_txn(wtxn, new_model, transform, refill)
         })?;
         self.config.embedding_model = Some(new_model.to_owned());
@@ -435,7 +435,7 @@ impl Vault {
     #[cfg(feature = "sync")]
     pub fn sync_state_put(&self, key: &str, value: &[u8]) -> Result<()> {
         check_generic_sync_state_key(key)?;
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             crate::side_table::host_sync_state_put(&self.store, wtxn, key, value)
         })
     }
@@ -459,7 +459,7 @@ impl Vault {
     #[cfg(feature = "sync")]
     pub fn sync_state_delete(&self, key: &str) -> Result<bool> {
         check_generic_sync_state_key(key)?;
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             crate::side_table::host_sync_state_delete(&self.store, wtxn, key)
         })
     }

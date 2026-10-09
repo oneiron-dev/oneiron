@@ -50,7 +50,7 @@ impl Vault {
     /// Replacing one lens's intent never changes another's record.
     pub fn put_lens_intent(&self, lens_id: &EntityId, intent: &LensIntentRecord) -> Result<()> {
         intent.validate()?;
-        self.with_write_txn(|txn| INTENTS.put(&self.store, txn, lens_id, intent))
+        self.with_write_txn_grouped(|txn| INTENTS.put(&self.store, txn, lens_id, intent))
     }
 
     /// Decode the stored intent strictly; corrupt or missing source never becomes an empty prompt.

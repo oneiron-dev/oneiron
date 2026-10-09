@@ -71,7 +71,7 @@ impl Vault {
             // only this request's Prepared marker. Once the shared live doc
             // changed, recovery may still redeem its staged sidecar despite
             // a failed LMDB persistence; keep the interlock until replay.
-            self.with_write_txn(|txn| {
+            self.with_write_txn_grouped(|txn| {
                 if let Some(decision) = gate_decision {
                     self.store.discard_pending_deletion_gate_decision_in_txn(
                         txn,
@@ -580,7 +580,7 @@ impl Vault {
         window_ts: u64,
         value: &TombstoneValueV2,
     ) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             if value.reason.is_hard() {
                 self.guard_active_merge_hard_delete_in_txn(txn, id)?;
             }
@@ -610,7 +610,7 @@ impl Vault {
         let Some(decision) = gate_decision else {
             return Ok(());
         };
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             // The authority-required marker is what makes the CRDT tombstone
             // binding on every peer, so the owner binding is re-proven in the
             // SAME txn that stages it — a revocation landing since the gate ran

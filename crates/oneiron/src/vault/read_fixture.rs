@@ -77,7 +77,7 @@ impl Vault {
         let mut data = Vec::new();
         rmpv::encode::write_value(&mut data, &Value::Map(entries))
             .map_err(|_| Error::InvariantViolation("encode read test policy"))?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             for actor in actors {
                 let super::LiveEntityRow::Live { entity_type, .. } =
                     super::live_entity_row_in_txn(&self.store, txn, &actor.entity_ref())?
