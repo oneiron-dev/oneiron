@@ -658,9 +658,10 @@ async fn a_past_board_never_discloses_what_its_reader_is_no_longer_cleared_for()
 /// Astra 3 (REV-9 D2a): a hydration that records its TURN is a keyed
 /// mutation. A retry under the same `Idempotency-Key`, after a lost response,
 /// replays the first success, where an unkeyed retry meets the recorded turn.
-/// The replay goes out only while the caller may still be shown what it
-/// disclosed (Astra re-check): a Tier-A mark or a revoked clearance refuses
-/// it. A hydration that names no TURN stays a read the key never caches.
+/// The replay goes out only on this route, and only while the caller may
+/// still be shown what it disclosed (Astra re-checks): the key on another
+/// route is a conflict, and a Tier-A mark or a revoked clearance refuses it.
+/// A hydration that names no TURN stays a read the key never caches.
 #[tokio::test]
 async fn a_keyed_board_turn_retry_replays_its_first_success() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
@@ -698,6 +699,17 @@ async fn a_keyed_board_turn_retry_replays_its_first_success() {
     assert!(
         unkeyed.to_string().contains("board_turn_already_recorded"),
         "{unkeyed:#}"
+    );
+    // The key answers this route only: the same key and body sent to another
+    // keyed route is a conflict, never this board.
+    let mut elsewhere = keyed("board-turn-retry", &body);
+    *elsewhere.uri_mut() = axum::http::Uri::from_static("/v1/core/batch");
+    let (status, other) = route_json(server.clone(), elsewhere).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{other:#}");
+    assert!(other.get("board_turn").is_none(), "{other:#}");
+    assert!(
+        other.to_string().contains("idempotency key was replayed"),
+        "{other:#}"
     );
 
     // The owner marks the pinned document Tier A: the replay is refused, and
