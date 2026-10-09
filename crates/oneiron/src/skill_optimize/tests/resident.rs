@@ -196,22 +196,23 @@ fn optimizer_proposal_cannot_change_resident_across_recreation() -> Result<()> {
             .kind(),
         ErrorKind::InvalidSkillBody
     );
-    vault
-        .batch()
-        .put_replicated(
-            &proposal_id,
-            ENTITY_TYPE_SKILL,
-            t(304),
-            304,
-            &crate::skill::encode_skill_record(&original)?,
-        )
-        .commit()?;
-    // A hard local deletion may dominate the older same-owner replay. It
-    // never permits a new owner on this proposal ID.
-    assert!(
+    // The local deletion dominates the older same-owner replay: it is refused,
+    // and it never permits a new owner on this proposal ID.
+    assert_eq!(
         vault
-            .get_skill_record(&proposal_id)?
-            .is_none_or(|record| record == original)
+            .batch()
+            .put_replicated(
+                &proposal_id,
+                ENTITY_TYPE_SKILL,
+                t(304),
+                304,
+                &crate::skill::encode_skill_record(&original)?,
+            )
+            .commit()
+            .expect_err("a deletion here dominates the replay")
+            .kind(),
+        ErrorKind::InvariantViolation
     );
+    assert!(vault.get_skill_record(&proposal_id)?.is_none());
     Ok(())
 }

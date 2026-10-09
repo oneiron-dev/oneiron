@@ -7,6 +7,7 @@ use super::{
 use crate::side_table::{self as t, SideTableDecl};
 
 pub(super) static PART: &[(&SideTableDecl, Class)] = &[
+    (&t::DELETION_ROW_FENCE_BACKFILLED, CONTENT),
     (&t::DERIVATION_OWNER, LIVE),
     (&t::DISCLOSURE_SCOPE, DISCLOSURE_SCOPES),
     (&t::DISCLOSURE_TIER_A, DISCLOSURE_SCOPES),

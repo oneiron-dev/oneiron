@@ -84,6 +84,13 @@ impl Vault {
             }) {
                 return Err(invalid());
             }
+            // A deleted grant is no admin authority: its shell is skipped here, and a
+            // stored body counts only while its row is live, checked last.
+            if raw.len() == ENTITY_METADATA_HEADER_LEN
+                && !crate::vault::live_entity_row_in_txn(&self.store, &txn, &id)?.is_live()
+            {
+                continue;
+            }
             let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
             if !grant.role.is_guest()
                 && grant.scope == FederationGrantScope::vault(vault_id)
@@ -93,6 +100,7 @@ impl Vault {
                 && fold.pact_for_grant(&id).is_none_or(|pact| {
                     pact.status == crate::authority::FederationPactStatus::Active
                 })
+                && crate::vault::live_entity_row_in_txn(&self.store, &txn, &id)?.is_live()
             {
                 grant_ref = Some(id.to_hex());
                 break;
