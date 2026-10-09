@@ -149,14 +149,26 @@ fn custom_agent(server: &SyncServer) -> oneiron::EntityId {
         1.0,
         false,
         true,
-        rmpv::Value::Map(Vec::new()),
+        rmpv::Value::Map(vec![(
+            rmpv::Value::from("fixture"),
+            rmpv::Value::from("custom.reviewed"),
+        )]),
         None,
         true,
         None,
     );
+    let now = server.vault().now_recorded_at();
     server
         .vault()
-        .put_agent_definition(&id, &definition, TimeRange { start: 1, end: 1 }, 1)
+        .put_agent_definition(
+            &id,
+            &definition,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )
         .unwrap();
     id
 }
