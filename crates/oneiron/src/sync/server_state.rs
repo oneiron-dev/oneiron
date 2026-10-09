@@ -30,6 +30,10 @@ use crate::sync::window_rows::{
 
 /// Persists an imported window update (Observer-A-equivalent).
 ///
+/// The bytes must already have been imported into the window's observed
+/// document, whose Observer B applies or fences the deletes they carry; this
+/// half writes no deletion state of its own.
+///
 /// Atomically (one LMDB write txn), per the ARCH-0023b key layout:
 /// - bumps `m:u_seq:w:{key}` (u32 LE, crash-safe monotonic counter),
 /// - appends the raw update bytes at `u:w:{key}:{seq:08x}`,
@@ -76,11 +80,16 @@ pub fn persist_imported_window_update(
 ///
 /// Atomically writes `d:w:{key}` (Loro snapshot), `sv:w:{key}` (state
 /// vector), and `svf:w:{key}` = `[1]` (fresh). Returns the snapshot bytes.
+///
+/// `doc` need not be observed: in the same transaction, each stored row its
+/// tombstones delete is fenced as an observed import would fence it, so the
+/// persisted deletes read deleted at once.
 pub fn persist_window_snapshot(vault: &Vault, key: &WindowKey, doc: &LoroDoc) -> Result<Vec<u8>> {
     let state = crate::sync::window::export_scrubbed_window_snapshot(vault, key, doc)?;
     let vv = doc_version_vector(doc);
 
     vault.with_write_txn(|wtxn| {
+        vault.fence_published_deletes_in_txn(wtxn, key.as_str(), doc)?;
         WINDOW_SNAPSHOT.put(&vault.store, wtxn, &key.as_str().to_owned(), &state)?;
         WINDOW_STATE_VECTOR.put(&vault.store, wtxn, &key.as_str().to_owned(), &vv)?;
         WINDOW_SHALLOW_FENCE.put(&vault.store, wtxn, &key.as_str().to_owned(), &[1u8])?;

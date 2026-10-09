@@ -457,20 +457,32 @@ fn admit(
 /// value-agnostic (a non-binary tombstone decodes HARD downstream) and entity-canonical (a
 /// case-shifted hex key still names this id).
 ///
-/// The local `dt:` marker (ONE-1122) is read second: the tombstones map is mutable remote
-/// input, and a crafted update that REMOVES the tombstone and re-puts the key must not
-/// resurrect a hard-deleted body. A failed marker read fails closed.
+/// The local `dt:` marker (ONE-1122) and the row deletion fence are read second: the
+/// tombstones map is mutable remote input, and a crafted update that REMOVES the tombstone and
+/// re-puts the key must not resurrect a body deleted here, hard or soft. A failed marker read
+/// fails closed.
 fn deleted_here(ctx: &IngestCtx<'_>, txn: &heed::RoTxn<'_>, id: &EntityId) -> bool {
     if tombstone_map_contains_id(ctx.tombstones_map, id) {
         tracing::debug!(entity = %id.to_hex(), "sync ingest: entity tombstoned in CRDT (delete wins)");
         return true;
     }
-    match ctx.vault.local_hard_delete_marker_exists_in_txn(txn, id) {
+    let marked = ctx
+        .vault
+        .local_hard_delete_marker_exists_in_txn(txn, id)
+        .and_then(|hard| {
+            Ok(hard
+                || crate::deletion::ROW_DELETION_FENCE.contains(
+                    &ctx.vault.store,
+                    txn,
+                    &crate::side_table::HexId(*id),
+                )?)
+        });
+    match marked {
         Ok(false) => false,
         Ok(true) => {
             tracing::warn!(
                 entity = %id.to_hex(),
-                "sync ingest: entity locally hard-deleted (dt: marker), refusing materialization"
+                "sync ingest: entity deleted here (dt: marker or row fence), refusing materialization"
             );
             true
         }
