@@ -80,7 +80,7 @@ impl SyncServer {
             loop {
                 interval.tick().await;
                 server.run_scheduled_lifecycle_tick().await;
-                if ticks % GATE_RETENTION_EVERY_TICKS == 0 {
+                if ticks.is_multiple_of(GATE_RETENTION_EVERY_TICKS) {
                     server.maintain_gate_decision_retention_once().await;
                 }
                 ticks = ticks.wrapping_add(1);

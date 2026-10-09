@@ -798,7 +798,7 @@ fn off_record_ppr_walk_leaves_no_cache_row_in_base() -> Result<()> {
     let actor = seed_recallable_base_turn(&vault, "offrecordpprneedle");
     let cache_rows = |vault: &Vault| -> Result<u64> {
         let txn = vault.store.env.read_txn()?;
-        Ok(vault.store.ppr_cache.len(&txn)?)
+        vault.store.ppr_cache.len(&txn)
     };
     let before = cache_rows(&vault)?;
     let session = vault
