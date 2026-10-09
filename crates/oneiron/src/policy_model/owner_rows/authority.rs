@@ -159,7 +159,7 @@ impl Vault {
     pub fn is_live_vault_owner(&self, owner: &crate::consent::AuthenticatedOwner) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
-        Ok(owners_in_txn(self, &txn)?.contains(&owner.actor()))
+        is_live_vault_owner_in_txn(self, &txn, &owner.actor())
     }
 
     /// Everyone whose membership confers authority now: the embedded owner of
@@ -173,6 +173,15 @@ impl Vault {
             }
         })
     }
+}
+
+/// Whether `actor` is one of the vault's live owners in `txn`.
+pub(crate) fn is_live_vault_owner_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: &EntityId,
+) -> Result<bool> {
+    Ok(owners_in_txn(vault, txn)?.contains(actor))
 }
 
 /// The vault's live owners: the embedded owner of a personal vault, or every
