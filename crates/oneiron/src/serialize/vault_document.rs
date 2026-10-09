@@ -136,7 +136,11 @@ pub(crate) fn serialize_vault_snapshot(
             _ => document.evidence_ledger.entities.push(entity),
         }
     }
-    super::vault_bundles::populate_agent_bundles(&mut document, &snapshot.agent_fork_hashes)?;
+    super::vault_bundles::populate_agent_bundles(
+        &mut document,
+        &snapshot.agent_fork_hashes,
+        crate::agent_def::KnowledgeFormat::CURRENT,
+    )?;
     document.refresh_omissions()?;
     let bytes = encode_document(&document, format)?;
     Ok(WholeVaultExport {

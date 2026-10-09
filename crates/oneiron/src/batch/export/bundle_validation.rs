@@ -1,5 +1,6 @@
 //! Validate source identities, facet/body agreement and explicit archive-only omissions.
 use super::*;
+use crate::agent_def::KnowledgeFormat;
 use crate::error::{Error, Result};
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SKILL_CONTENT_ANCHOR,
@@ -59,9 +60,21 @@ impl WholeVaultDocument {
         // Recompute every typed facet from the native AGENT_DEF and selected
         // knowledge/skill records. A caller cannot replace policy.md or add code.
         let mut expected = self.clone();
-        crate::serialize::populate_agent_bundles(&mut expected, &bindings)?;
+        crate::serialize::populate_agent_bundles(
+            &mut expected,
+            &bindings,
+            KnowledgeFormat::CURRENT,
+        )?;
         if self.agent_packs != expected.agent_packs {
-            return Err(invalid("agent facets disagree with native rows"));
+            // An archive an older engine wrote carries the first knowledge form.
+            crate::serialize::populate_agent_bundles(
+                &mut expected,
+                &bindings,
+                KnowledgeFormat::V1,
+            )?;
+            if self.agent_packs != expected.agent_packs {
+                return Err(invalid("agent facets disagree with native rows"));
+            }
         }
         let (imports, bundles) = self.expected_omissions();
         if self.manifest.import_omissions != imports
