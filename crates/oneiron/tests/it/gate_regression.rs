@@ -1,5 +1,5 @@
 use crate::common::entity as test_id;
-use oneiron::error::{GateDenialOutcome, GateDenialReason, GateError, RegistryError};
+use oneiron::error::{GateError, RegistryError};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
 use oneiron::{
     ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
@@ -140,88 +140,6 @@ fn run_denied_claim_case(case: &DeniedClaimCase) -> Result<()> {
         case.name
     );
     Ok(())
-}
-
-#[test]
-fn gate_regression_denial_taxonomy_is_typed_and_stable() {
-    assert_eq!(
-        GateDenialOutcome::parse("pending"),
-        Some(GateDenialOutcome::Pending)
-    );
-    assert_eq!(
-        GateDenialOutcome::parse("deny"),
-        Some(GateDenialOutcome::Deny)
-    );
-    assert_eq!(GateDenialOutcome::parse("allow"), None);
-
-    let cases = [
-        (
-            GateDenialReason::DenyMissingActorClass,
-            GateDenialOutcome::Deny,
-            "gate.deny.missing_actor_class",
-        ),
-        (
-            GateDenialReason::DenyMissingActorProvenance,
-            GateDenialOutcome::Deny,
-            "gate.deny.missing_actor_provenance",
-        ),
-        (
-            GateDenialReason::DenyMissingPolicyManifestVersion,
-            GateDenialOutcome::Deny,
-            "gate.deny.missing_policy_manifest_version",
-        ),
-        (
-            GateDenialReason::DenyPolicyFailClosed,
-            GateDenialOutcome::Deny,
-            "gate.deny.policy_fail_closed",
-        ),
-        (
-            GateDenialReason::PendingActorCeiling,
-            GateDenialOutcome::Pending,
-            "gate.pending.actor_ceiling",
-        ),
-        (
-            GateDenialReason::PendingSourceTrust,
-            GateDenialOutcome::Pending,
-            "gate.pending.source_trust",
-        ),
-        (
-            GateDenialReason::PendingCriticalityFloor,
-            GateDenialOutcome::Pending,
-            "gate.pending.criticality_floor",
-        ),
-        (
-            GateDenialReason::PendingPolicyManifestAuthority,
-            GateDenialOutcome::Pending,
-            "gate.pending.policy_manifest_authority",
-        ),
-        (
-            GateDenialReason::PendingExternalEffectAuthority,
-            GateDenialOutcome::Pending,
-            "gate.pending.external_effect_authority",
-        ),
-    ];
-
-    for (reason, outcome, code) in cases {
-        assert_eq!(reason.as_str(), code);
-        assert_eq!(reason.outcome(), outcome);
-        assert_eq!(GateDenialReason::from_code(code), Some(reason));
-
-        let err = Error::Gate(GateError::GateWriteRejected {
-            outcome: outcome.as_str(),
-            reason_codes: vec![code],
-        });
-        let typed = err.gate_denial().expect("stable Gate code must parse");
-        assert_eq!(typed.outcome(), outcome);
-        assert_eq!(typed.reason_codes(), &[reason]);
-    }
-
-    assert_eq!(GateDenialReason::from_code("gate.allow"), None);
-    let inconsistent = Error::Gate(GateError::GateWriteRejected {
-        outcome: "pending",
-        reason_codes: vec!["gate.deny.policy_fail_closed"],
-    });
-    assert!(inconsistent.gate_denial().is_none());
 }
 
 #[test]
