@@ -71,7 +71,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AccessContext",
@@ -13017,7 +13017,7 @@
      "path": "src/deletion/erase/markers.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -13057,7 +13057,7 @@
      "path": "src/deletion/erase/replay.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -13087,7 +13087,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 18,
       "re-export": 5
      }
     },
@@ -13156,7 +13156,7 @@
      "path": "src/deletion/timeline.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 8,
       "enum": 5,
       "fn": 4,
       "struct": 3
@@ -13175,7 +13175,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "crate-vis": 23,
+      "crate-vis": 25,
       "enum": 2,
       "fn": 7,
       "struct": 2
@@ -28274,7 +28274,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/recovery/checkpoint/authority_plane/tests.rs",
@@ -34597,7 +34597,7 @@
      "path": "src/sync/window/egress.rs",
      "purpose": "Window egress: packing policy, local-only scrub, exports, and mirror replay",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "fn": 4
      }
     },
@@ -38527,7 +38527,7 @@
     "access_grant": {
      "files": 7,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "AccessGrant control-plane record substrate"
     },
@@ -39876,7 +39876,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 26,
+   "over_bar": 27,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2398,
    "test_files": 809
