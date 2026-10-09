@@ -61,6 +61,26 @@ pub(super) fn authorize_sync_selector_at(
     authorize_selector_export(vault, grant_scope, selector, now_secs).map(|_| ())
 }
 
+/// The stored FederationGrant row `id` names, read with its liveness in one
+/// transaction. A deleted grant is no grant, even while an unapplied delete
+/// leaves its body stored. The transaction closes before the caller folds
+/// authority on its own.
+fn live_federation_grant(vault: &Vault, id: &EntityId) -> Result<Vec<u8>> {
+    let txn = vault.store.env.read_txn()?;
+    let raw = vault
+        .get_raw_in(&txn, id)?
+        .ok_or_else(|| selector_err(SelectorError::GrantNotFound))?;
+    let header = EntityMetadataHeader::parse(&raw)
+        .ok_or_else(|| selector_err(SelectorError::GrantHeader))?;
+    if header.entity_type != ENTITY_TYPE_FEDERATION_GRANT {
+        return Err(selector_err(SelectorError::GrantWrongType));
+    }
+    if !crate::vault::live_entity_row_in_txn(&vault.store, &txn, id)?.is_live() {
+        return Err(selector_err(SelectorError::GrantNotFound));
+    }
+    Ok(raw)
+}
+
 /// [`authorize_sync_selector`], plus the resolved position the export path
 /// must then filter under.
 pub(super) fn authorize_selector_export(
@@ -69,14 +89,7 @@ pub(super) fn authorize_selector_export(
     selector: &SyncSelector,
     now_secs: u64,
 ) -> Result<Position> {
-    let raw = vault
-        .get_raw(&selector.grant_id)?
-        .ok_or_else(|| selector_err(SelectorError::GrantNotFound))?;
-    let header = EntityMetadataHeader::parse(&raw)
-        .ok_or_else(|| selector_err(SelectorError::GrantHeader))?;
-    if header.entity_type != ENTITY_TYPE_FEDERATION_GRANT {
-        return Err(selector_err(SelectorError::GrantWrongType));
-    }
+    let raw = live_federation_grant(vault, &selector.grant_id)?;
 
     let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
     if grant.role.is_guest() || !matches!(grant.scope, FederationGrantScope::Vault { .. }) {
@@ -322,14 +335,7 @@ pub(super) fn filter_window_doc(
     let refreshed = crate::sync::loro_support::doc_from_snapshot(&source_bytes)?;
     crate::sync::note::refresh(vault, &refreshed, key)?;
     let source = &refreshed;
-    let grant_raw = vault
-        .get_raw(&selector.grant_id)?
-        .ok_or_else(|| selector_err(SelectorError::GrantNotFound))?;
-    let grant_header = EntityMetadataHeader::parse(&grant_raw)
-        .ok_or_else(|| selector_err(SelectorError::GrantHeader))?;
-    if grant_header.entity_type != ENTITY_TYPE_FEDERATION_GRANT {
-        return Err(selector_err(SelectorError::GrantWrongType));
-    }
+    let grant_raw = live_federation_grant(vault, &selector.grant_id)?;
     let grant = decode_federation_grant_body(&grant_raw[ENTITY_METADATA_HEADER_LEN..])?;
     // One read snapshot for the whole export: withheld claims, facet scope, coreference
     // consent, causal admission, and record stamps all read through this
@@ -389,6 +395,12 @@ pub(super) fn filter_window_doc(
             custody_withheld.insert(id);
         }
     }
+    // A delete a peer withdrew stays withheld, as at window egress.
+    custody_withheld.extend(
+        crate::sync::window::withdrawn_delete_carriers(vault, &rtxn, source)?
+            .into_iter()
+            .map(|(_, id)| id),
+    );
     let mut candidates = BTreeSet::<EntityId>::new();
     let mut kept = BTreeSet::<EntityId>::new();
     let mut seeds = BTreeSet::<EntityId>::new();

@@ -310,11 +310,17 @@ pub(super) fn ensure_entity_materialized_from_crdt(
     //
     // Value-agnostic, entity-canonical tombstone presence (a non-binary
     // tombstone decodes HARD downstream; a case-shifted hex key still
-    // names this id) OR the permanent local `dt:` marker: an edge whose
-    // endpoint was hard-deleted must not hydrate the endpoint body back
-    // into LMDB even after hostile tombstone-map manipulation.
+    // names this id) OR the permanent local `dt:` marker OR the row deletion
+    // fence: an edge whose endpoint was deleted here must not hydrate the
+    // endpoint body back into LMDB even after hostile tombstone-map
+    // manipulation.
     if tombstone_map_contains_id(tombstones_map, id)
         || vault.local_hard_delete_marker_exists_in_txn(wtxn, id)?
+        || crate::deletion::ROW_DELETION_FENCE.contains(
+            &vault.store,
+            wtxn,
+            &crate::side_table::HexId(*id),
+        )?
     {
         return Ok(EndpointHydration::Deferred);
     }

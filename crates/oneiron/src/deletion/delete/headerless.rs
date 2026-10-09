@@ -12,8 +12,8 @@ use super::super::rendezvous::{
 };
 use super::super::sweep_queue::HardEraseSweepExtras;
 use super::super::tombstone::{
-    DeleteReason, HARD_DELETE_MARKER, IDENTITY_SOFT_DELETE_MARKER, TombstoneValueV2,
-    window_label_from_timestamp,
+    DeleteReason, HARD_DELETE_MARKER, IDENTITY_SOFT_DELETE_MARKER, ROW_DELETION_FENCE,
+    TombstoneValueV2, window_label_from_timestamp,
 };
 use super::super::topology_delete_intent::{
     TopologyDeletePhase, clear_own_topology_delete_in_txn, reserve_topology_delete_in_txn,
@@ -175,6 +175,7 @@ impl Vault {
             // A headerless soft deletion still retires proposals. Its
             // cancellation and this evidence must become visible together.
             IDENTITY_SOFT_DELETE_MARKER.put(&self.store, &mut wtxn, &HexId(*id), &Vec::new())?;
+            ROW_DELETION_FENCE.put(&self.store, &mut wtxn, &HexId(*id), &Vec::new())?;
         }
         if reason.active_store_hard_purge_v1() {
             // `dt:` local hard-delete marker (pinned: presence-only 25 B
