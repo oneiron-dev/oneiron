@@ -1,5 +1,6 @@
 //! Flags for the owner's own commands: doctor, backup, restore, export, the
-//! secret scan switch, import consent and agent-run consent.
+//! secret scan switch, importing history, import consent and agent-run
+//! consent.
 //!
 //! Every command that opens the vault reads the same config as `serve`
 //! (`--config`, `--vault-path`, `ONEIRON_*`) and needs the vault stopped: the
@@ -101,12 +102,36 @@ pub struct SecretScanArgs {
 
 #[derive(Subcommand, Clone, Debug)]
 pub enum ImportCommand {
+    /// A ChatGPT export: the zip, its `conversations.json`, or the unzipped folder.
+    Chatgpt(Box<ImportSourceArgs>),
+    /// A Claude.ai export: the zip, its `conversations.json`, or the unzipped folder.
+    Claude(Box<ImportSourceArgs>),
+    /// Claude Code history: `~/.claude/projects`, one project's folder, or one session log.
+    ClaudeCode(Box<ImportSourceArgs>),
+    /// Codex history: `~/.codex/sessions`, any folder under it, or one rollout.
+    Codex(Box<ImportSourceArgs>),
     /// Print the exact batch, ids filled in, and the digest that approves it.
     Preview(Box<ImportBatchArgs>),
     /// Admit the whole previewed batch as approved, in one act.
     Approve(Box<ImportDecisionArgs>),
     /// Decline the whole previewed batch; nothing is admitted.
     Decline(Box<ImportDecisionArgs>),
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct ImportSourceArgs {
+    /// What to import. Only this path is read: symbolic links under it are
+    /// not followed.
+    pub path: PathBuf,
+
+    /// Print, per conversation, how many messages are new, already imported
+    /// or changed, and write nothing. The vault is not opened, so this also
+    /// works while `serve` runs.
+    #[arg(long)]
+    pub dry_run: bool,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
 }
 
 #[derive(Args, Clone, Debug)]

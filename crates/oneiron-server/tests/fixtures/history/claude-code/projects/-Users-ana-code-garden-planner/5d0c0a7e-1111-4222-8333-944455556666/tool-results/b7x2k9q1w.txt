@@ -1,0 +1,1 @@
+Tool output that must never be read as a session.

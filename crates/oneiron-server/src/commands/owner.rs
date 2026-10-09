@@ -295,28 +295,41 @@ fn read_batch(source: &str) -> anyhow::Result<imports::ImportBatch> {
 }
 
 pub fn import(command: ImportCommand) -> anyhow::Result<()> {
-    let serve = match &command {
-        ImportCommand::Preview(args) => &args.serve,
-        ImportCommand::Approve(args) | ImportCommand::Decline(args) => &args.serve,
+    use oneiron::ingest::history::HistorySource;
+    // A batch decision: preview, or approve / decline with the digest.
+    let (batch, digest, serve) = match command {
+        ImportCommand::Chatgpt(args) => {
+            return super::history_import::import_history(HistorySource::Chatgpt, *args);
+        }
+        ImportCommand::Claude(args) => {
+            return super::history_import::import_history(HistorySource::Claude, *args);
+        }
+        ImportCommand::ClaudeCode(args) => {
+            return super::history_import::import_history(HistorySource::ClaudeCode, *args);
+        }
+        ImportCommand::Codex(args) => {
+            return super::history_import::import_history(HistorySource::Codex, *args);
+        }
+        ImportCommand::Preview(args) => (args.batch, None, args.serve),
+        ImportCommand::Approve(args) => (args.batch, Some((true, args.digest)), args.serve),
+        ImportCommand::Decline(args) => (args.batch, Some((false, args.digest)), args.serve),
     };
-    let config = resolve_serve_config(serve)?;
+    let config = resolve_serve_config(&serve)?;
     let vault = open_vault(&config, "POST /v1/owner/imports/<preview|approve|decline>")?;
     let owner = local_owner(&vault)?;
-    match command {
-        ImportCommand::Preview(args) => {
-            emit(&imports::preview(&vault, &owner, read_batch(&args.batch)?)?)
-        }
-        ImportCommand::Approve(args) => emit(&imports::approve(
+    match digest {
+        None => emit(&imports::preview(&vault, &owner, read_batch(&batch)?)?),
+        Some((true, digest)) => emit(&imports::approve(
             &vault,
             &owner,
-            &read_batch(&args.batch)?,
-            &args.digest,
+            &read_batch(&batch)?,
+            &digest,
         )?),
-        ImportCommand::Decline(args) => emit(&imports::decline(
+        Some((false, digest)) => emit(&imports::decline(
             &vault,
             &owner,
-            &read_batch(&args.batch)?,
-            &args.digest,
+            &read_batch(&batch)?,
+            &digest,
         )?),
     }
 }

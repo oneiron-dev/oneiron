@@ -386,6 +386,12 @@ pub(super) fn validate_domain_carriers(
     if entity_type == crate::registry::ENTITY_TYPE_TURN {
         crate::conversation_dag::validate_session_carrier(store, txn, id, data, replicated)?;
     }
+    if matches!(
+        entity_type,
+        crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_CONVERSATION
+    ) {
+        crate::memory::guard_import_stamp(store, txn, id, data)?;
+    }
     if entity_type == crate::registry::ENTITY_TYPE_EVENT {
         crate::calendar::origin::validate_event_write(store, txn, id, data, replicated)?;
     }

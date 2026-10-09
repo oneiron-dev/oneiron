@@ -127,7 +127,10 @@ pub(crate) use support::{
     facade_provenance, hard_deleted_refusal, verify_actor_binding, verify_actor_binding_in_txn,
     verify_deletion_authority_in_txn, verify_owner_actor_binding_in_txn,
 };
-pub(crate) use witness::sole_edge_target;
+pub(crate) use witness::{
+    IMPORTED_SOURCE_KEY, ImportedTurnStamp, guard_import_stamp, witness_message_body,
+};
+pub(crate) use witness::{next_witness_message_order, sole_edge_target};
 
 // Read-version, revision-change, and publication types are available under
 // the existing memory namespace; no additional crate-root surface is required.

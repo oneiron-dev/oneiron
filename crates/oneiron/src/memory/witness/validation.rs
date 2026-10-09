@@ -87,10 +87,9 @@ pub(super) fn validate_existing_witness_turn(
 /// and all three structural bindings are immutable together: exact retries are
 /// no-ops, while changed text/kind/order/visibility or a new parent/actor is a
 /// refusal rather than an overwrite or a second edge.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "body, turn, conversation, author, and actor are distinct immutable bindings of one existing MESSAGE"
-)]
+///
+/// `expected_author` is the `AuthoredBy` target the landing writes: the bound
+/// actor for an attributed row, none for a system row or an imported one.
 pub(super) fn validate_existing_witness_message(
     dbs: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
@@ -98,8 +97,7 @@ pub(super) fn validate_existing_witness_message(
     body: &[u8],
     turn_id: &EntityId,
     conversation_id: &EntityId,
-    author: WitnessAuthor,
-    actor: &EntityId,
+    expected_author: Option<EntityId>,
 ) -> MemoryResult<bool> {
     let Some(raw) = dbs.port_entity_record(txn, message_id)? else {
         return Ok(false);
@@ -129,7 +127,6 @@ pub(super) fn validate_existing_witness_message(
         ));
     }
     let authored_by = sole_edge_target(dbs, txn, message_id, EdgeKind::AuthoredBy, "message")?;
-    let expected_author = (author != WitnessAuthor::System).then_some(*actor);
     if authored_by != expected_author {
         return Err(MemoryError::bad_request(
             "the witnessed message already belongs to another actor",
@@ -208,6 +205,33 @@ pub(super) fn validate_existing_witness_message_orders(
 /// Reads the already-validated canonical MESSAGE order for append collision
 /// checks. Validation is repeated at this storage boundary so a malformed
 /// persisted sibling cannot be treated as an ordinary occupied slot.
+/// The first order after every MESSAGE a stored TURN holds (0 for a turn not
+/// stored yet), so a writer that appends later can give each new message a
+/// slot no sibling occupies, whatever positions earlier writes chose.
+pub(crate) fn next_witness_message_order(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    turn_id: &EntityId,
+) -> MemoryResult<u32> {
+    let mut next = 0;
+    for row in dbs.port_edges(
+        txn,
+        turn_id,
+        crate::ports::EdgeDirection::In,
+        Some(EdgeKind::PartOf),
+        None,
+    )? {
+        let message_id = row?.target;
+        let Some(raw) = dbs.port_entity_record(txn, &message_id)? else {
+            continue;
+        };
+        if raw.entity_type == ENTITY_TYPE_MESSAGE {
+            next = next.max(canonical_witness_message_order(&raw.body)?.saturating_add(1));
+        }
+    }
+    Ok(next)
+}
+
 fn canonical_witness_message_order(body: &[u8]) -> MemoryResult<u32> {
     // MESSAGE text-plane rows retain immutable axes with a document pointer.
     // Reconstruct an empty canonical content slot solely to validate the order

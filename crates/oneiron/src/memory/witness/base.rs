@@ -3,7 +3,9 @@
 use super::super::structural::*;
 use super::super::support::*;
 use super::super::*;
-use super::program::{AdmittedTurn, WitnessAdmission, WitnessDoor, WitnessPlan, WitnessTarget};
+use super::program::{
+    AdmittedTurn, ImportedTurnStamp, WitnessAdmission, WitnessDoor, WitnessPlan, WitnessTarget,
+};
 
 use std::sync::atomic::Ordering;
 
@@ -131,6 +133,25 @@ impl Memory<'_> {
             },
             WitnessDoor::Guest,
             before_txn,
+            |_| Ok(()),
+            effect,
+        )
+    }
+
+    /// Lands one turn of an imported transcript (ARCH-0027) through the same
+    /// program and ceiling door as [`Self::witness`], with `effect` (the import
+    /// ledger) in its transaction. See [`ImportedTurnStamp`] for what differs.
+    pub(crate) fn witness_imported(
+        &self,
+        turn: &WitnessTurn,
+        stamp: &ImportedTurnStamp,
+        effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+    ) -> MemoryResult<WitnessReceipt> {
+        self.run_witness(
+            turn,
+            WitnessTarget::Imported { stamp },
+            WitnessDoor::Guest,
+            || {},
             |_| Ok(()),
             effect,
         )
@@ -382,10 +403,7 @@ impl Memory<'_> {
             // moving the TURN watermark on every CAS retry would make
             // idempotency observable downstream.
             AdmittedTurn::Existing(record) if admission.has_new_messages() => {
-                let redirtied_at = plan
-                    .turn
-                    .occurred_at
-                    .max(record.learned_at.saturating_add(1));
+                let redirtied_at = plan.learned_at.max(record.learned_at.saturating_add(1));
                 batch = batch.put(
                     &plan.turn_id,
                     ENTITY_TYPE_TURN,
@@ -412,10 +430,12 @@ impl Memory<'_> {
             // alongside it: `put_witness_message` is reachable only with the
             // door's own value and writes exactly the bytes it proved.
             batch = batch
-                .put_witness_message(&planned.id, plan.occurred, plan.learned_at, authorized)
+                .put_witness_message(&planned.id, planned.occurred, plan.learned_at, authorized)
                 .edge(&planned.id, EdgeKind::PartOf, &plan.turn_id, 1.0)
                 .edge(&planned.id, EdgeKind::BelongsTo, &plan.conversation_id, 1.0);
-            if planned.message.author != WitnessAuthor::System {
+            // An imported row's author is the source's speaker, named in its
+            // metadata; the importer did not write it.
+            if planned.message.author != WitnessAuthor::System && plan.imported.is_none() {
                 batch = batch.edge(&planned.id, EdgeKind::AuthoredBy, &self.actor, 1.0);
             }
         }
@@ -451,6 +471,11 @@ impl Memory<'_> {
                 false,
                 true,
             )?;
+        }
+        // An imported turn happened in its source, not in the sitting that is
+        // open now: it neither bumps the session nor joins it.
+        if plan.imported.is_some() {
+            return Ok(());
         }
         // RT-03 (ONE-1685): a witnessed turn bumps the open session's
         // activity clock — atomically with the turn write, so a crash

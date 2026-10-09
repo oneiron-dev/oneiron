@@ -8326,6 +8326,7 @@ dependencies = [
  "reqwest 0.12.28",
  "rmp-serde",
  "rmpv",
+ "rustix",
  "serde",
  "serde_bytes",
  "serde_json",
@@ -8345,6 +8346,7 @@ dependencies = [
  "tracing-subscriber",
  "utoipa",
  "zeroize",
+ "zip 0.6.6",
  "zstd 0.13.3",
 ]
 

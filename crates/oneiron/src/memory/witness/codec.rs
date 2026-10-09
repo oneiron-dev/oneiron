@@ -117,6 +117,79 @@ pub(super) fn encode_witness_turn_body(
     encode_rmpv(&Value::Map(fields))
 }
 
+/// The TURN and CONVERSATION body key naming the source an imported transcript
+/// came from (ARCH-0027). Its presence is what makes a turn imported evidence:
+/// the Dreamer classifies such a turn `Imported` whatever its speaker.
+pub(crate) const IMPORTED_SOURCE_KEY: &str = "import_source";
+
+/// An imported TURN's body: the grouping speaker and the source. No PERSON
+/// byline — the source's speaker wrote these words, not whoever imported them.
+pub(super) fn encode_imported_turn_body(speaker: &str, source: &str) -> MemoryResult<Vec<u8>> {
+    encode_rmpv(&Value::Map(vec![
+        (Value::from(WITNESS_TURN_SPEAKER_KEY), Value::from(speaker)),
+        (Value::from(IMPORTED_SOURCE_KEY), Value::from(source)),
+    ]))
+}
+
+/// An imported TURN's or CONVERSATION's source is a birth fact (ARCH-0040):
+/// no later put adds, changes or removes it, so imported evidence is never
+/// relabelled the owner's live words, nor the reverse, and an import's
+/// container never becomes a live one. Every put door runs this, replay
+/// included. A tombstoned shell has no body to compare and is not a birth.
+pub(crate) fn guard_import_stamp(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: crate::EntityId,
+    body: &[u8],
+) -> crate::Result<()> {
+    use crate::ports::EntityStoreRead;
+    let refused = |reason| Err(crate::error::RecordError::InvalidConversationBody(reason).into());
+    let stamp = import_stamp(body);
+    if stamp == ImportStamp::Malformed {
+        return refused("an import source must be one non-empty string");
+    }
+    let Some(previous) = store.port_entity_record(txn, &id)? else {
+        return Ok(());
+    };
+    if !previous.body.is_empty() && import_stamp(&previous.body) != stamp {
+        return refused("an import source is a birth fact");
+    }
+    Ok(())
+}
+
+/// What a TURN or CONVERSATION body says about where its words came from.
+/// The Dreamer reads any `import_source` key as imported evidence, so a body
+/// whose stamp is present but not one non-empty string is its own state:
+/// neither live nor of any source, and no write door accepts it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum ImportStamp {
+    Live,
+    Imported(String),
+    Malformed,
+}
+
+pub(super) fn import_stamp(body: &[u8]) -> ImportStamp {
+    let mut cursor = body;
+    // An opaque or non-map body carries no stamp.
+    let Ok(ValueRef::Map(entries)) = rmpv::decode::read_value_ref(&mut cursor) else {
+        return ImportStamp::Live;
+    };
+    let mut stamp = ImportStamp::Live;
+    for (key, value) in entries {
+        if !matches!(key, ValueRef::String(ref key) if key.as_str() == Some(IMPORTED_SOURCE_KEY)) {
+            continue;
+        }
+        stamp = match (stamp, value) {
+            (ImportStamp::Live, ValueRef::String(source)) => match source.into_str() {
+                Some(source) if !source.is_empty() => ImportStamp::Imported(source.to_owned()),
+                _ => ImportStamp::Malformed,
+            },
+            _ => ImportStamp::Malformed,
+        };
+    }
+    stamp
+}
+
 pub(super) fn decode_witness_turn_person(body: &[u8]) -> MemoryResult<Option<crate::EntityId>> {
     let mut cursor = body;
     let ValueRef::Map(entries) = rmpv::decode::read_value_ref(&mut cursor)
@@ -166,6 +239,12 @@ pub(super) fn witness_message_envelope(message: &WitnessMessage) -> WitnessMessa
         is_visible: message.is_visible,
         order: message.order,
     }
+}
+
+/// The MESSAGE body bytes the write door would stage for `message`, for a
+/// planner that predicts what that door refuses.
+pub(crate) fn witness_message_body(message: &WitnessMessage) -> MemoryResult<Vec<u8>> {
+    Ok(witness_message_envelope(message).encode_body()?)
 }
 
 /// The MESSAGE body bytes for one message.

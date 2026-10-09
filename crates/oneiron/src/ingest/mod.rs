@@ -95,5 +95,6 @@ use rmpv::Value as MsgpackValue;
 use serde_json::Value;
 
 pub mod exports;
+pub mod history;
 mod parsed;
 pub use parsed::{ParsedImport, ParsedMessage};

@@ -50,7 +50,7 @@ rmpv = { workspace = true, features = ["with-serde"] }
 xxhash-rust = { workspace = true }
 serde = { workspace = true }
 schemars = "=0.8.22"
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
 jsonschema = { version = "0.33", default-features = false }
 serde_path_to_error = "0.1"
 postcard = { workspace = true, optional = true }
