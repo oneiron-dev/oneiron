@@ -14,7 +14,7 @@ pub(crate) mod row_dump;
 pub(crate) mod source_scan;
 
 mod channel_identity;
-pub(crate) use channel_identity::self_held_identity_in_state;
+pub(crate) use channel_identity::{put_native_mail_sender, self_held_identity_in_state};
 
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::config::VaultConfig;

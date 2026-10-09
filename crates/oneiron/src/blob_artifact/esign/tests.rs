@@ -2197,3 +2197,60 @@ fn completed_recipient_window_cannot_expire_a_different_pending_signer() -> Resu
     );
     Ok(())
 }
+
+/// ASTRA-9A-2 F6: a recipient's rejection closes the ceremony, and a restore
+/// over the vault from before it may not reopen it. The capability rows are
+/// unchanged by the rejection, so the restore refuses on the ceremony itself;
+/// the same link stays closed.
+#[test]
+fn a_restore_never_reopens_a_ceremony_rejected_since() -> Result<()> {
+    let (_dir, vault, id, _doc, owner) = ceremony_setup()?;
+    let tokens = vault.issue_esign_capabilities(&owner, id)?;
+    let command = EsignOutboundCommand {
+        document: id.to_hex(),
+        recipient_count: 2,
+        verb: EsignOutboundVerb::SendForSignature,
+        reason: None,
+    };
+    let request = send_request(id, owner.actor(), command.verb, "restore-send");
+    vault
+        .dispatch_esign(request, &command, None, None)
+        .expect("sent");
+    let first = &tokens[0].1;
+    assert!(matches!(
+        vault.execute_signing_action(first, &SigningAction::Load, None, None)?,
+        SigningOutcome::Page(_)
+    ));
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, crate::unix_seconds_now())?;
+    assert_eq!(
+        vault.execute_signing_action(
+            first,
+            &SigningAction::Reject {
+                reason: "declined".into()
+            },
+            None,
+            None
+        )?,
+        SigningOutcome::AwaitingSeal
+    );
+
+    let destination = backups.path().join("restored");
+    let error = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &destination,
+        VaultConfig::default(),
+        &vault,
+        crate::unix_seconds_now(),
+    )
+    .err()
+    .expect("the restore must be refused");
+    assert!(error.to_string().contains("e-sign ceremonies"), "{error}");
+    assert!(!destination.exists());
+    assert_eq!(
+        vault.execute_signing_action(first, &SigningAction::Load, None, None)?,
+        SigningOutcome::AwaitingSeal
+    );
+    Ok(())
+}

@@ -576,3 +576,295 @@ fn opt_out_receipt_reason_round_trips() {
         CounterpartyOptOutReason::from_receipt_reason("counterparty_opt_out_unknown").is_none(),
     );
 }
+
+/// SOL-9A-2-R2 F6: a party's STOP and the owner's revocation of a contact
+/// both narrow who is reached and what is disclosed. A restore over the vault
+/// from before either is refused rather than undo it.
+#[test]
+fn a_restore_never_undoes_a_stop_or_a_contact_revocation_since() -> Result<()> {
+    let (_tmp, vault) = open_vault();
+    let identity = entity(0x7A);
+    let contact = entity(0x7B);
+    put_identity(&vault, identity, "email", "owner@example.com")?;
+    vault.create_counterparty_contact(
+        &contact,
+        &CounterpartyContactRecord::user_introduction(identity, "sora@example.com", 10)?,
+    )?;
+    let backups = tempfile::tempdir()?;
+    let refused = |image: &std::path::Path, name: &str| {
+        let destination = backups.path().join(name);
+        let error = Vault::restore_checkpoint_keeping_authority(
+            image,
+            &destination,
+            vault.config.clone(),
+            &vault,
+            200,
+        )
+        .err()
+        .expect("the restore must be refused");
+        assert!(
+            error
+                .to_string()
+                .contains("counterparty contacts and their consents"),
+            "{error}"
+        );
+        assert!(!destination.exists());
+    };
+
+    let before_stop = backups.path().join("before-stop");
+    vault.snapshot_checkpoint(&before_stop, 100)?;
+    crate::comm::record_comm_inbound_stop(&vault, "sora@example.com", "email", 30)
+        .map_err(comm_fold_error)?;
+    crate::comm::run_comm_projector(&vault).map_err(comm_fold_error)?;
+    refused(&before_stop, "after-stop");
+
+    let before_revocation = backups.path().join("before-revocation");
+    vault.snapshot_checkpoint(&before_revocation, 110)?;
+    vault.revoke_counterparty_contact(&contact, 40)?;
+    refused(&before_revocation, "after-revocation");
+    Ok(())
+}
+
+/// Replaces `contact`'s live `predicate` head with `head`, naming `value`, as
+/// an owner's correction does, and rebuilds the contact from its heads.
+fn replace_contact_head(
+    vault: &Vault,
+    contact: EntityId,
+    predicate: &str,
+    value: Value,
+    head: EntityId,
+    at: u64,
+) -> Result<CounterpartyContactRecord> {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSubject};
+    let old_head = vault
+        .claims_for_subject(&contact)?
+        .into_iter()
+        .find(|id| {
+            vault.get_claim(id).ok().flatten().is_some_and(|body| {
+                body.predicate == predicate && body.lifecycle == ClaimLifecycleStatus::Active
+            })
+        })
+        .expect("the contact's live head");
+    let replacement = ClaimBody::new(
+        predicate,
+        ClaimSubject::Entity(contact),
+        value,
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )?;
+    vault.put_claim(
+        &head,
+        &replacement,
+        crate::TimeRange { start: at, end: at },
+        at,
+    )?;
+    vault.supersede_claim(&head, &old_head, at)?;
+    rematerialize_contact_cache(vault, &contact)
+}
+
+/// A restore of `image` over `vault`, into `destination`, which must be
+/// refused for counterparty contacts with nothing created.
+fn assert_contact_restore_refused(
+    vault: &Vault,
+    image: &std::path::Path,
+    destination: &std::path::Path,
+) {
+    let error = Vault::restore_checkpoint_keeping_authority(
+        image,
+        destination,
+        vault.config.clone(),
+        vault,
+        200,
+    )
+    .err()
+    .expect("the restore must be refused");
+    assert!(
+        error
+            .to_string()
+            .contains("counterparty contacts and their consents"),
+        "{error}"
+    );
+    assert!(!destination.exists());
+}
+
+/// SOL-9A-2-R3 F28: rebinding a contact to another party leaves the party it
+/// left unknown, without the contact's disclosure standing. A restore from
+/// before the rebinding is refused rather than hand that party the contact
+/// back, though its status and consents never changed.
+#[test]
+fn a_restore_never_rebinds_a_contact_to_the_party_it_left() -> Result<()> {
+    let (_tmp, vault) = open_vault();
+    let identity = entity(0x7C);
+    let contact = entity(0x7D);
+    put_identity(&vault, identity, "email", "owner@example.com")?;
+    vault.create_counterparty_contact(
+        &contact,
+        &CounterpartyContactRecord::user_introduction(identity, "sora@example.com", 10)?,
+    )?;
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("before-rebinding");
+    vault.snapshot_checkpoint(&image, 100)?;
+
+    let record = replace_contact_head(
+        &vault,
+        contact,
+        PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY,
+        Value::from("rin@example.com"),
+        entity(0x7E),
+        20,
+    )?;
+    assert_eq!(record.counterparty, "rin@example.com");
+    assert_eq!(record.status, CounterpartyContactStatus::Active);
+    assert!(record.opt_out.is_none());
+
+    assert_contact_restore_refused(&vault, &image, &backups.path().join("after-rebinding"));
+    Ok(())
+}
+
+/// ASTRA-9A-2-R3 F3: a contact first met in public holds a send for the
+/// owner rather than send it under an ordinary grant. A restore from before
+/// the owner reclassified a contact as public, or from before a public
+/// contact was made, is refused rather than drop the hold.
+#[test]
+fn a_restore_never_drops_the_hold_of_a_public_first_touch() -> Result<()> {
+    let (_tmp, vault) = open_vault();
+    let identity = entity(0x7F);
+    let contact = entity(0x80);
+    put_identity(&vault, identity, "email", "owner@example.com")?;
+    vault.create_counterparty_contact(
+        &contact,
+        &CounterpartyContactRecord::user_introduction(identity, "sora@example.com", 10)?,
+    )?;
+    let backups = tempfile::tempdir()?;
+
+    let before_correction = backups.path().join("before-correction");
+    vault.snapshot_checkpoint(&before_correction, 100)?;
+    let record = replace_contact_head(
+        &vault,
+        contact,
+        PREDICATE_COUNTERPARTY_CONTACT_FIRST_TOUCH,
+        Value::from(CounterpartyFirstTouch::Public.as_str()),
+        entity(0x81),
+        20,
+    )?;
+    assert_eq!(record.first_touch, CounterpartyFirstTouch::Public);
+    assert_eq!(record.status, CounterpartyContactStatus::Active);
+    assert!(record.opt_out.is_none());
+    assert_contact_restore_refused(
+        &vault,
+        &before_correction,
+        &backups.path().join("after-correction"),
+    );
+
+    let before_public = backups.path().join("before-public");
+    vault.snapshot_checkpoint(&before_public, 110)?;
+    vault.create_counterparty_contact(
+        &entity(0x82),
+        &CounterpartyContactRecord::public(identity, "kai@example.com", 30)?,
+    )?;
+    assert_contact_restore_refused(&vault, &before_public, &backups.path().join("after-public"));
+    Ok(())
+}
+
+/// A native-mail sender, bound to the agent every test identity is bound to,
+/// under a policy that knows only a recipient the owner introduced: a send
+/// to anyone else is held as cold.
+fn put_native_mail_sender(vault: &Vault, id: EntityId) -> Result<()> {
+    crate::test_util::put_native_mail_sender(
+        vault,
+        id,
+        entity(0x6F),
+        &[CounterpartyFirstTouch::UserIntroduction],
+    )
+}
+
+/// ASTRA-9A-2-R3 F8: the send gate reads a party's contacts in id order and
+/// takes the first one's first touch, which decides whether a native-mail
+/// send is to a recipient the policy knows or is held as cold. A contact made
+/// since the backup that the gate reads first, and that makes a known
+/// recipient cold, refuses the restore; one it reads after does not.
+#[test]
+fn a_restore_never_drops_a_contact_the_send_gate_reads_first() -> Result<()> {
+    let (_tmp, vault) = open_vault();
+    let (desk, inbox, studio) = (entity(0x8A), entity(0x8B), entity(0x8C));
+    put_identity(&vault, desk, "email", "desk@example.com")?;
+    put_identity(&vault, inbox, "email", "inbox@example.com")?;
+    put_identity(&vault, studio, "email", "studio@example.com")?;
+    put_native_mail_sender(&vault, entity(0x8E))?;
+    vault.create_counterparty_contact(
+        &entity(0x91),
+        &CounterpartyContactRecord::user_introduction(desk, "sora@example.com", 10)?,
+    )?;
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100)?;
+
+    vault.create_counterparty_contact(
+        &entity(0x95),
+        &CounterpartyContactRecord::inbound_first(studio, "sora@example.com", 20)?,
+    )?;
+    Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &backups.path().join("read-after"),
+        vault.config.clone(),
+        &vault,
+        200,
+    )
+    .map(drop)?;
+
+    vault.create_counterparty_contact(
+        &entity(0x90),
+        &CounterpartyContactRecord::inbound_first(inbox, "sora@example.com", 30)?,
+    )?;
+    assert_contact_restore_refused(&vault, &image, &backups.path().join("read-first"));
+    Ok(())
+}
+
+/// ASTRA-9A-2-R3 F9: a contact the send gate never reads first changes no
+/// send, so a restore that drops it goes ahead: one made since between the
+/// first contact and a later one, and one on another channel class, which a
+/// send on email never reads and a send on its own class reads without a
+/// hold.
+#[test]
+fn a_restore_drops_a_contact_the_send_gate_never_reads_first() -> Result<()> {
+    let (_tmp, vault) = open_vault();
+    let (desk, inbox, studio, chat) = (entity(0x8A), entity(0x8B), entity(0x8C), entity(0x8D));
+    put_identity(&vault, desk, "email", "desk@example.com")?;
+    put_identity(&vault, inbox, "email", "inbox@example.com")?;
+    put_identity(&vault, studio, "email", "studio@example.com")?;
+    put_identity(&vault, chat, "telegram", "@desk")?;
+    put_native_mail_sender(&vault, entity(0x8E))?;
+    vault.create_counterparty_contact(
+        &entity(0x90),
+        &CounterpartyContactRecord::user_introduction(desk, "sora@example.com", 10)?,
+    )?;
+    vault.create_counterparty_contact(
+        &entity(0x95),
+        &CounterpartyContactRecord::user_introduction(studio, "sora@example.com", 11)?,
+    )?;
+    vault.create_counterparty_contact(
+        &entity(0xA8),
+        &CounterpartyContactRecord::user_introduction(desk, "rin@example.com", 12)?,
+    )?;
+    let backups = tempfile::tempdir()?;
+    let image = backups.path().join("backup");
+    vault.snapshot_checkpoint(&image, 100)?;
+
+    vault.create_counterparty_contact(
+        &entity(0x91),
+        &CounterpartyContactRecord::inbound_first(inbox, "sora@example.com", 20)?,
+    )?;
+    vault.create_counterparty_contact(
+        &entity(0xA0),
+        &CounterpartyContactRecord::inbound_first(chat, "rin@example.com", 30)?,
+    )?;
+    Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &backups.path().join("restored"),
+        vault.config.clone(),
+        &vault,
+        200,
+    )
+    .map(drop)
+}

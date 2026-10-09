@@ -237,6 +237,8 @@ fn commit_terminal(
             let base = admission::committed_text(vault, txn, seed)?.ok_or(Error::EntityNotFound)?;
             let text = format!("{base}{}", state.pending);
             admission::authorize(vault, txn, seed, &text)?;
+            let was_final = storage::receipt(vault, txn, seed.message_id)?
+                .is_none_or(|prior| prior.finality == StreamFinality::Final);
             #[cfg(feature = "sync")]
             crate::entity_doc::append_message_stream_in_txn(
                 vault,
@@ -254,6 +256,11 @@ fn commit_terminal(
             }
             receipt.bytes = text.len() as u64;
             storage::finish(vault, txn, seed, &receipt)?;
+            // Readers see only final words: a finalize that adds some, or
+            // makes a non-final MESSAGE final again, re-dirties its TURN.
+            if finality == StreamFinality::Final && (!state.pending.is_empty() || !was_final) {
+                storage::redirty_turn(vault, txn, seed)?;
+            }
             Ok(())
         })
     } else {

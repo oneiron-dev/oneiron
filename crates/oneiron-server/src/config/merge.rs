@@ -8,7 +8,7 @@ use anyhow::Context;
 use oneiron::{HostingPrivacyPosture, SyncConfigField, SyncProtocolValidation};
 use serde::Deserialize;
 
-use super::backup::{BackupConfigOverride, lookup_backup_override};
+use super::backup::{BackupConfig, BackupConfigOverride, lookup_backup_override};
 use super::embedder::{EmbedderConfig, EmbedderProvider};
 use super::embedder::{EmbedderConfigOverride, lookup_embedder_override};
 use super::lookup::{
@@ -123,6 +123,37 @@ impl EnvConfig {
 
 pub fn resolve_serve_config(args: &ServeArgs) -> anyhow::Result<ServeConfig> {
     resolve_serve_config_with_sources(args, EnvConfig::from_process()?, default_config_path())
+}
+
+/// The `[backup]` settings alone: the config file's section, then the
+/// environment, the way `resolve_serve_config` layers them. A command that
+/// only reports on backups (`doctor`) uses this so a server setting it never
+/// reads cannot stop it.
+pub fn resolve_backup_config(args: &ServeArgs) -> anyhow::Result<BackupConfig> {
+    let env_path = std::env::var_os("ONEIRON_CONFIG").map(PathBuf::from);
+    let explicit = args.config.is_some() || env_path.is_some();
+    let mut backup = BackupConfig::default();
+    match args
+        .config
+        .clone()
+        .or(env_path)
+        .or_else(default_config_path)
+    {
+        Some(path) if path.exists() => {
+            if let Some(over) = load_backup_section(&path)? {
+                backup.apply_override(over);
+            }
+        }
+        Some(path) if explicit => {
+            anyhow::bail!("config file {} does not exist", path.display());
+        }
+        _ => {}
+    }
+    if let Some(over) = lookup_backup_override(&mut |key| std::env::var(key).ok())? {
+        backup.apply_override(over);
+    }
+    backup.validate()?;
+    Ok(backup)
 }
 
 /// The existing server configuration layers, from vault policy to holder.
@@ -352,6 +383,23 @@ pub fn default_config_path() -> Option<PathBuf> {
             .join(DEFAULT_CONFIG_DIR)
             .join(DEFAULT_CONFIG_FILE)
     })
+}
+
+/// The config file's `[backup]` table alone: a mistyped setting elsewhere in
+/// the file does not stop it being read.
+fn load_backup_section(path: &Path) -> anyhow::Result<Option<BackupConfigOverride>> {
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("read config file {}", path.display()))?;
+    let mut table: toml::Table =
+        toml::from_str(&raw).with_context(|| format!("parse config file {}", path.display()))?;
+    table
+        .remove("backup")
+        .map(|section| {
+            section
+                .try_into()
+                .with_context(|| format!("parse [backup] in config file {}", path.display()))
+        })
+        .transpose()
 }
 
 fn load_file_config(path: &Path) -> anyhow::Result<PartialServeConfig> {

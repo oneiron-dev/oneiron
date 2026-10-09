@@ -8,7 +8,7 @@ use super::support::{
     KEY_SCHEMA_VERSION, KEY_SUBJECT, decode_value, encode_value, expect_key, expect_map,
     invalid_consolidation,
 };
-use super::watermark::{WorkingSetTurn, entity_ref_from_value, read_turn_facts};
+use super::watermark::{WorkingSetTurn, entity_ref_from_value};
 use crate::Vault;
 use crate::dreamer_runner::DreamerTurnRole;
 use crate::entity_id::EntityId;
@@ -154,6 +154,21 @@ pub fn scan_reflection_gaps(
     working_set: &[WorkingSetTurn],
     now: u64,
 ) -> Result<Vec<ReflectionGap>> {
+    Ok(scan_with_texts(vault, working_set, now)?.0)
+}
+
+/// Text records behind text-dependent gaps, keyed by TURN. The gap write
+/// re-checks them; the role-only detector reads no text and records none.
+pub(super) type GapTexts = BTreeMap<EntityId, super::turn_text::TurnText>;
+
+/// [`scan_reflection_gaps`] plus the text record each text-dependent gap was
+/// read from, for [`upsert_scanned_gap_queue`].
+pub(super) fn scan_with_texts(
+    vault: &Vault,
+    working_set: &[WorkingSetTurn],
+    now: u64,
+) -> Result<(Vec<ReflectionGap>, GapTexts)> {
+    let mut texts = GapTexts::new();
     let mut by_conversation: BTreeMap<EntityId, Vec<&WorkingSetTurn>> = BTreeMap::new();
     for turn in working_set {
         if let Some(conversation) = turn.conversation {
@@ -184,10 +199,9 @@ pub fn scan_reflection_gaps(
             if turn.role != DreamerTurnRole::User {
                 continue;
             }
-            let text = read_turn_facts(vault, &turn.turn_id)?
-                .text
-                .unwrap_or_default()
-                .to_ascii_lowercase();
+            let record = super::turn_text::read_turn_text(vault, &turn.turn_id)?;
+            let text = record.text().unwrap_or_default().to_ascii_lowercase();
+            let before = gaps.len();
             let answered = turns[position + 1..]
                 .iter()
                 .any(|later| later.role == DreamerTurnRole::Assistant);
@@ -217,9 +231,12 @@ pub fn scan_reflection_gaps(
                     decayed: false,
                 });
             }
+            if gaps.len() > before {
+                texts.insert(turn.turn_id, record);
+            }
         }
     }
-    Ok(gaps)
+    Ok((gaps, texts))
 }
 
 /// Upserts observed gaps into the private gap queue: re-observation
@@ -231,7 +248,31 @@ pub fn upsert_gap_queue(
     gaps: Vec<ReflectionGap>,
     now: u64,
 ) -> Result<GapQueueDelta> {
-    upsert_gap_projection(vault, gaps, now, PRIVATE_GAP, |gap| {
+    upsert_scanned_gap_queue(vault, gaps, &GapTexts::new(), now)
+}
+
+/// [`upsert_gap_queue`] for a scan's own output: every text a text-dependent
+/// gap was read from must still hold in the write transaction, or nothing
+/// is written.
+pub(super) fn upsert_scanned_gap_queue(
+    vault: &Vault,
+    gaps: Vec<ReflectionGap>,
+    texts: &GapTexts,
+    now: u64,
+) -> Result<GapQueueDelta> {
+    let recheck = |wtxn: &mut heed::RwTxn<'_>| {
+        if texts.is_empty() {
+            return Ok(());
+        }
+        // Grants are judged at this writer's own clock, never a stale floor.
+        crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+        let read = super::turn_text::dreamer_read(vault)?;
+        for (turn, text) in texts {
+            text.check_live_in(&read, wtxn, turn)?;
+        }
+        Ok(())
+    };
+    upsert_gap_projection(vault, gaps, recheck, now, PRIVATE_GAP, |gap| {
         gap_hash(gap.kind, &gap.subject, "")
     })
 }
@@ -256,10 +297,14 @@ pub(super) fn branch_gap_projection(
     }
 }
 
+/// The branch's gap write holds its whole read fence: every source, TURN and
+/// MESSAGE pin the branch read must still hold in this transaction, at this
+/// writer's clock and under the branch's own reader.
 pub(super) fn upsert_branch_gap_queue(
     vault: &Vault,
     scope: &crate::llm::Scope,
     partition: &super::partition::ConsolidationPartitionKey,
+    fence: &super::resources::ConsolidationFence,
     gaps: Vec<ReflectionGap>,
     now: u64,
 ) -> Result<GapQueueDelta> {
@@ -280,15 +325,23 @@ pub(super) fn upsert_branch_gap_queue(
     )
     .expect("branch gap projection key is ASCII hex/text")
     .to_owned();
-    upsert_gap_projection(vault, gaps, now, BRANCH_GAP, move |gap| BranchGapKey {
-        scope_text: scope_text.clone(),
-        gap_hash: gap_hash(gap.kind, &gap.subject, ""),
+    let recheck = |wtxn: &mut heed::RwTxn<'_>| {
+        crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+        fence.validate_in_txn(vault, wtxn)
+    };
+    upsert_gap_projection(vault, gaps, recheck, now, BRANCH_GAP, move |gap| {
+        BranchGapKey {
+            scope_text: scope_text.clone(),
+            gap_hash: gap_hash(gap.kind, &gap.subject, ""),
+        }
     })
 }
 
+/// `recheck` runs first in the write transaction; an error writes nothing.
 fn upsert_gap_projection<K: SideKey>(
     vault: &Vault,
     gaps: Vec<ReflectionGap>,
+    recheck: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
     now: u64,
     table: SideTable<K, ReflectionGap, Raw>,
     key_of: impl Fn(&ReflectionGap) -> K,
@@ -296,6 +349,7 @@ fn upsert_gap_projection<K: SideKey>(
     let mut delta = GapQueueDelta::default();
     let mut observed: BTreeSet<Vec<u8>> = BTreeSet::new();
     let mut wtxn = vault.store.env.write_txn()?;
+    recheck(&mut wtxn)?;
 
     for gap in gaps {
         let key = key_of(&gap);

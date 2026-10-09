@@ -55,7 +55,11 @@ pub use self::rules::{
     PREDICATE_CRM_COMPLIANCE_MESSAGE_ELEMENTS, UnknownJurisdictionDefault,
 };
 
-pub(crate) use self::hydrate::campaign_compliance_gate;
+pub(crate) use self::evaluate::ComplianceBinding;
+pub(crate) use self::hydrate::{
+    JurisdictionObservation, campaign_compliance_binding, campaign_compliance_gate,
+    rank_jurisdiction_observation, select_jurisdiction,
+};
 
 #[cfg(test)]
 mod tests;
