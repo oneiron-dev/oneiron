@@ -374,6 +374,7 @@ fn apply_tombstone_batch(
             }
         }
     }
+    vault.finish_gate_decision_retirements_after_commit();
     for (work, stage, err) in &failures {
         match stage {
             TombstoneFailureStage::Replay => tracing::error!(

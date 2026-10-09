@@ -148,6 +148,16 @@ pub(super) fn generation_retired(
     is_retired(&key_directory(root)?, claim_id, generation)
 }
 
+/// Whether a key file was ever published for this generation and still
+/// exists. A missing custody directory means no claim key exists at all.
+pub(super) fn key_published(root: &Path, claim_id: &[u8; 16], generation: u64) -> Result<bool> {
+    match fs::symlink_metadata(claim_key_path(root, claim_id, generation)?) {
+        Ok(_) => Ok(true),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err.into()),
+    }
+}
+
 #[cfg(unix)]
 fn verify_permissions(file: &File, is_directory: bool) -> Result<()> {
     use std::os::unix::fs::MetadataExt;
@@ -306,7 +316,17 @@ fn first_append_key(
 
 pub(super) fn encode_hot(root: &Path, record: &GateDecisionRecord) -> Result<Vec<u8>> {
     let claim_id = record.claim_id.ok_or_else(corrupt)?;
-    let generation = key_generation(root, &claim_id)?;
+    encode_hot_at(root, record, key_generation(root, &claim_id)?)
+}
+
+/// Encrypts under one named generation. An erase uses this to move a receipt
+/// it must keep readable onto the generation after the one it retires.
+pub(super) fn encode_hot_at(
+    root: &Path,
+    record: &GateDecisionRecord,
+    generation: u64,
+) -> Result<Vec<u8>> {
+    let claim_id = record.claim_id.ok_or_else(corrupt)?;
     let key = first_append_key(root, &claim_id, generation)?;
     let plain = encode_gate_decision(record)?;
     if plain.len() > MAX_PLAINTEXT {
@@ -400,7 +420,15 @@ pub(super) fn decode_hot(
 /// Authenticate encrypted canonical rows against CURRENT exterior keys before
 /// restore creates its destination. The image supplies a pointer, not a key;
 /// deleted keys remain absent when an old checkpoint is replayed.
-pub(crate) fn preflight_checkpoint_rows(rows: &[(Vec<u8>, Vec<u8>)]) -> Result<()> {
+///
+/// A row whose key generation carries a retirement marker was erased (or
+/// aged out) after the image was taken. It is returned, not decoded, so the
+/// restore drops it: the restored vault is the vault at that time without
+/// the receipts an erase destroyed. A key that is merely missing, with no
+/// marker, is lost custody and still refuses the whole restore.
+pub(crate) fn preflight_checkpoint_rows(
+    rows: &[(Vec<u8>, Vec<u8>)],
+) -> Result<Vec<(GateDecisionId, [u8; 16])>> {
     use super::keys::GATE_DECISION_KEY_PREFIX;
     use crate::side_table::SideKey;
     let bound = rows
@@ -408,6 +436,7 @@ pub(crate) fn preflight_checkpoint_rows(rows: &[(Vec<u8>, Vec<u8>)]) -> Result<(
         .find(|(key, _)| key == CUSTODY_ROOT_KEY)
         .map(|(_, value)| decode_custody_root(value))
         .transpose()?;
+    let mut erased = Vec::new();
     for (key, value) in rows {
         if key.starts_with(GATE_DECISION_KEY_PREFIX) && is_orcb(value) {
             let root = bound.as_deref().ok_or_else(corrupt)?;
@@ -415,10 +444,15 @@ pub(crate) fn preflight_checkpoint_rows(rows: &[(Vec<u8>, Vec<u8>)]) -> Result<(
                 .strip_prefix(GATE_DECISION_KEY_PREFIX)
                 .and_then(GateDecisionId::decode_key)
                 .ok_or(Error::CorruptedIndex("gate decision ledger key"))?;
-            decode_hot(root, id, value)?;
+            if raw_key_retired(root, value)? {
+                let (claim, _) = raw_claim_generation(value).ok_or_else(corrupt)?;
+                erased.push((id, claim));
+            } else {
+                decode_hot(root, id, value)?;
+            }
         }
     }
-    Ok(())
+    Ok(erased)
 }
 
 /// Retire precisely the committed intent's generation. Later receipts use
@@ -449,20 +483,26 @@ pub(super) fn retire_claim_key(root: &Path, claim_id: &[u8; 16], generation: u64
 }
 
 pub(super) fn raw_key_retired(root: &Path, raw: &[u8]) -> Result<bool> {
-    if !is_orcb(raw) || raw.len() < HEADER_LEN + 16 {
-        return Ok(false);
+    match raw_claim_generation(raw) {
+        Some((claim, generation)) => generation_retired(root, &claim, generation),
+        None => Ok(false),
     }
-    let claim: [u8; 16] = raw[5..21].try_into().map_err(|_| corrupt())?;
+}
+
+/// The claim and key generation an ORCB header names, read without a key.
+pub(super) fn raw_claim_generation(raw: &[u8]) -> Option<([u8; 16], u64)> {
+    if !is_orcb(raw) || raw.len() < HEADER_LEN + 16 {
+        return None;
+    }
+    let claim: [u8; 16] = raw[5..21].try_into().ok()?;
     let generation = match raw[4] {
         VERSION => 0,
-        ROTATED_VERSION if raw.len() >= ROTATED_HEADER_LEN + 16 => u64::from_be_bytes(
-            raw[HEADER_LEN..ROTATED_HEADER_LEN]
-                .try_into()
-                .map_err(|_| corrupt())?,
-        ),
-        _ => return Ok(false),
+        ROTATED_VERSION if raw.len() >= ROTATED_HEADER_LEN + 16 => {
+            u64::from_be_bytes(raw[HEADER_LEN..ROTATED_HEADER_LEN].try_into().ok()?)
+        }
+        _ => return None,
     };
-    generation_retired(root, &claim, generation)
+    Some((claim, generation))
 }
 
 pub(super) fn is_orcb(raw: &[u8]) -> bool {

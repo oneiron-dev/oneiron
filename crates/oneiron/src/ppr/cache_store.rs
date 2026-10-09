@@ -109,29 +109,45 @@ pub(crate) fn flush_deferred_ppr_cache_writes(
     store: &Store,
     writes: &[DeferredPprCacheWrite],
 ) -> Result<()> {
+    flush_deferred_ppr_cache_writes_admitted(store, writes, || Ok(()))
+}
+
+/// [`flush_deferred_ppr_cache_writes`] with `admit` run as the write's last
+/// statement before any of its rows is kept: its error drops every row of
+/// this flush and is returned, so a writer whose authority lapsed mid-walk
+/// publishes nothing.
+pub(crate) fn flush_deferred_ppr_cache_writes_admitted(
+    store: &Store,
+    writes: &[DeferredPprCacheWrite],
+    admit: impl Fn() -> Result<()>,
+) -> Result<()> {
     if writes.is_empty() {
         return Ok(());
     }
     store.group_write(None, |txn| {
+        let keep = |rows: Rows<(), Error>| match admit() {
+            Ok(()) => rows,
+            Err(err) => Rows::Discard(Err(err)),
+        };
         for write in writes {
             let mut each = match store.env.nested_write_txn(txn) {
                 Ok(each) => each,
-                Err(err) => return Rows::Refuse(err.into()),
+                Err(err) => return keep(Rows::Refuse(err.into())),
             };
             match publish_deferred_ppr_cache_write(store, &mut each, write) {
                 Ok(true) => {
                     if let Err(err) = each.commit() {
-                        return Rows::Refuse(err.into());
+                        return keep(Rows::Refuse(err.into()));
                     }
                 }
                 Ok(false) => each.abort(),
                 Err(err) => {
                     each.abort();
-                    return Rows::Refuse(err);
+                    return keep(Rows::Refuse(err));
                 }
             }
         }
-        Rows::Commit(())
+        keep(Rows::Commit(()))
     })
 }
 

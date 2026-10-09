@@ -12,7 +12,7 @@ mod orcb;
 mod retention;
 mod retention_scope;
 #[cfg(test)]
-pub(in crate::store) use self::retention::arm_before_retire_lock;
+pub(crate) use self::retention::arm_before_retire_lock;
 mod sidecar;
 mod types;
 mod vet;

@@ -339,7 +339,7 @@ pub use crate::corpus::CorpusScope;
 pub use crate::deletion::{
     DeleteReason, HydratedShortIdDeletion, HydratedShortIdDeletionReason,
     HydratedShortIdDeletionSource, MemoryOperationKind, MemoryTimeline, MemoryTimelineRecordState,
-    NamedMemoryVerb,
+    NamedMemoryVerb, NamedMemoryVerbRefusal,
 };
 pub use crate::delivery_window::DeliveryWindowApnsInterruptionLevel;
 pub use crate::disclosure::{DisclosureAssembly, DisclosureContext};

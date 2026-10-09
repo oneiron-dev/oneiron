@@ -316,6 +316,26 @@ async fn v1_core_memory_verbs_resolve_aliases_to_typed_operations() {
     assert_eq!(hard_user_status, StatusCode::BAD_REQUEST);
     assert_error_envelope(&hard_user_body, "BAD_REQUEST");
 
+    // ARCH-0038 ladder: erase is the owner's own act and never a memory
+    // verb, so its names refuse instead of deleting.
+    for erase_name in ["erase", "purge"] {
+        let (erase_status, erase_body) = route_json_auth(
+            server.clone(),
+            json_request(
+                "POST",
+                &format!("/v1/core/memory/verbs/{erase_name}"),
+                json!({ "id": remembered.to_hex() }),
+            ),
+        )
+        .await;
+        assert_eq!(erase_status, StatusCode::FORBIDDEN, "{erase_body:#}");
+        assert_error_envelope(&erase_body, "FORBIDDEN");
+        assert!(
+            server.vault.get(&remembered).expect("read").is_some(),
+            "{erase_name} must not delete"
+        );
+    }
+
     let (forget_status, forget_body) = route_json_auth(
         server.clone(),
         json_request(

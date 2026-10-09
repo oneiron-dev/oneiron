@@ -1120,20 +1120,10 @@ fn witness_and_session_witness_run_one_program() {
         let rtxn = room_vault.store.env.read_txn().expect("read txn");
         ids.map(|id| rows_naming(&room_vault.store, &rtxn, &id))
     };
+    // ARCH-0052 #d4 (REV-9 item 5): promote replays the AuthoredBy edges
+    // too, so the promoted rows are the base witness's rows exactly.
     for ((id, base), promoted) in ids.iter().zip(&base_rows).zip(&promoted_rows) {
-        let mut unattributed = base.clone();
-        unattributed.edges.retain(|(key, _)| {
-            crate::edge::parse_strict_edge_record_key(key)
-                .expect("edge key")
-                .1
-                != EdgeKind::AuthoredBy
-        });
-        assert_eq!(
-            &unattributed,
-            promoted,
-            "promoted rows naming {}",
-            id.to_hex()
-        );
+        assert_eq!(base, promoted, "promoted rows naming {}", id.to_hex());
     }
     session.close().expect("close session");
 }

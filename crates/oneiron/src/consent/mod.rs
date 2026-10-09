@@ -59,6 +59,8 @@ mod registry;
 mod support;
 pub mod widen;
 
+mod bypass;
+
 #[cfg(test)]
 mod tests;
 
@@ -71,6 +73,7 @@ pub use self::bound::{
     BoundSubject, ConsentDomain, DisclosureClass, DisclosureEnvelope, GrantBound,
     MAX_AUDIENCE_MEMBERS, MAX_CONSENT_REF_LEN, MAX_ENVELOPE_SELECTORS,
 };
+pub use self::bypass::{BypassActive, BypassExtent, BypassGrantWarning, BypassScope};
 pub use self::codec::{
     CONSENT_GRANT_BODY_KEYS, CONSENT_GRANT_SCHEMA_VERSION, decode_consent_grant_row,
     encode_consent_grant_row,
@@ -78,15 +81,18 @@ pub use self::codec::{
 pub use self::doors::{
     AuthenticatedOwner, ConsentEvaluation, bound_catastrophe_class, load_active_standing_grants,
 };
+pub(crate) use self::effect::CATASTROPHE_FLOOR_ROW_KEY;
 pub use self::effect::{
     BULK_BLAST_RADIUS_FLOOR, CATASTROPHE_FLOOR_V1, CATASTROPHE_FLOOR_VERSION, CatastropheClass,
-    ComposedEffect, ConsentDecision, EffectDigest, EffectFacts, ReversibilityClass, UndoFidelity,
+    CatastropheFloor, ComposedEffect, ConsentDecision, EffectDigest, EffectFacts, EffectPlace,
+    ReversibilityClass, UndoFidelity,
 };
 pub use self::grant::{
-    ActionGrant, CONSENT_CONTENT_KIND, CONSENT_REASON_APPROVE_ONCE, CONSENT_REASON_DENIED,
-    CONSENT_REASON_REVOKED, CONSENT_REASON_STANDING_CREATED, CONSENT_REASON_STANDING_USED,
-    ConsentGrant, ConsentGrantRow, ConsentGrantStatus, ConsentGuard, ConsentOwnerStamp,
-    ConsentProposal, ConsentReceipt, DisclosureGrant, StandingConsentGrant,
+    ActionGrant, CONSENT_CONTENT_KIND, CONSENT_REASON_APPROVE_ONCE, CONSENT_REASON_BYPASS_CREATED,
+    CONSENT_REASON_BYPASSED, CONSENT_REASON_DENIED, CONSENT_REASON_REVOKED,
+    CONSENT_REASON_STANDING_CREATED, CONSENT_REASON_STANDING_USED, ConsentGrant, ConsentGrantRow,
+    ConsentGrantStatus, ConsentGuard, ConsentOwnerStamp, ConsentProposal, ConsentReceipt,
+    DisclosureGrant, StandingConsentGrant,
 };
 pub use self::owner_reason::{
     OWNER_REASON_UNDO_COMMAND, OwnerReasonConfirm, OwnerReasonConfirmation, OwnerReasonUndo,

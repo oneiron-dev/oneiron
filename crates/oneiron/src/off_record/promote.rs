@@ -11,9 +11,10 @@ use heed::RwTxn;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::batch::BatchBuilder;
+use crate::batch::{BatchBuilder, BatchOp};
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, OffRecordError, Result};
 
 use crate::session_overlay::PromotePlan;
 use crate::side_table::{self, Named, SideTable};
@@ -221,6 +222,26 @@ impl FloorWrites<'_> {
                 "off-record promote retry answered from the durable receipt"
             );
             return Ok(receipt.outcome);
+        }
+
+        // ARCH-0052 #d4: the closure carries each message's AuthoredBy edge.
+        // Its actor is a base identity outside the closure, so an actor base
+        // does not hold would leave a dangling edge: refuse the promote.
+        for op in &plan.ops {
+            if let BatchOp::PublicEdgeWithCreatedAt {
+                kind: EdgeKind::AuthoredBy,
+                tgt,
+                ..
+            } = op
+                && crate::ports::EntityStoreRead::port_entity_raw(self.store, wtxn, tgt)?.is_none()
+            {
+                return Err(Error::OffRecord(
+                    OffRecordError::OffRecordPromoteAuthorMissing {
+                        turn_ref: turn.to_hex(),
+                        actor_ref: tgt.to_hex(),
+                    },
+                ));
+            }
         }
 
         // The ordinary write door. `apply_recording_gate_decisions` is the same
