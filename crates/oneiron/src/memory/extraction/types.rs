@@ -1,9 +1,5 @@
 //! Typed serving payloads and observable extraction receipts.
-use crate::{
-    EntityId, ModelId,
-    affect::{ClaimVadConsolidation, Vad},
-    embed::EmbedderLocality,
-};
+use crate::{ModelId, affect::Vad, embed::EmbedderLocality};
 use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize)]
 pub struct EncoderMessage {
@@ -40,12 +36,16 @@ pub struct CorefLink {
     pub span: usize,
     pub antecedent: usize,
 }
+/// What a tagger returns for one input. A model returns what it has heads
+/// for: a spans-only model sends no links and no mood.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EncoderOutput {
     pub spans: Vec<NerSpan>,
+    #[serde(default)]
     pub links: Vec<CorefLink>,
-    pub vad: Vad,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vad: Option<Vad>,
 }
 /// Hosts own checkpoint execution. No engine implementation guesses model outputs.
 pub trait ExtractionEncoder: Send + Sync {
@@ -82,17 +82,6 @@ pub struct WitnessWithShadow {
     pub witness: super::super::WitnessReceipt,
     pub trace: ShadowTrace,
 }
-#[derive(Debug)]
-pub struct ExtractionReceipt {
-    pub model: String,
-    pub input_hash: String,
-    pub turn: EntityId,
-    pub mention_targets: Vec<EntityId>,
-    pub annotation: crate::affect::VadAnnotation,
-    pub consolidated: Vec<ClaimVadConsolidation>,
-    pub coref_proposals: Vec<crate::identity_topology::IdentityOpOutcome>,
-}
-
 /// A golden comparison supplied by the host's held-out conformance fixture.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]

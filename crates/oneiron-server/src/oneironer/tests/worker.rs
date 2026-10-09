@@ -1,18 +1,21 @@
-//! The worker against the stub tagger: shadow writes nothing but the job
-//! tables, a failing tagger never fails a write, and a restart resumes.
+//! The worker against the stub tagger: save mode saves each turn's tags,
+//! shadow writes nothing but the job tables, a failing tagger never fails a
+//! write, and a restart resumes.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use oneiron::attempt_queue::AttemptState;
-use oneiron::tagging::{OutputRefusal, TaggingFailure, TaggingOutcome};
+use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::tagging::{MentionLink, OutputRefusal, TaggingFailure, TaggingOutcome};
 use oneiron::{EntityId, Vault};
 
 use super::support::{
-    Answer, NOW, StubTagger, card, copy_dir, endpoint_config, markers, open_vault, server, speaker,
-    wait_until, witness, witness_at,
+    Answer, NOW, StubTagger, card, copy_dir, endpoint_config, markers, open_saving_vault,
+    open_vault, server, speaker, wait_until, witness, witness_at,
 };
+use crate::config::{OneironerConfig, OneironerMode};
 use crate::server::SyncServer;
 
 const TEXTS: [&str; 4] = [
@@ -571,5 +574,66 @@ fn timing_write_latency_and_write_to_trace() {
             "write_to_trace_during_bursts": summary(burst),
             "write_to_trace_one_at_a_time": summary(one_at_a_time),
         })
+    );
+}
+
+/// ARCH-0036: a vault with a tagger saves its tags. Served in save mode, the
+/// worker tags each turn through the HTTP tagger and saves its mention in the
+/// write that settles the marker: a name the vault does not know mints one
+/// provisional entity, the next turn naming it finds that entity instead of
+/// minting a twin, and the name finds both turns.
+#[test]
+fn a_tagger_served_in_save_mode_saves_each_turns_tags() {
+    let stub = StubTagger::start(Answer::Good);
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open_saving_vault(dir.path());
+    let config = OneironerConfig {
+        mode: OneironerMode::Save,
+        ..endpoint_config(&stub.base)
+    };
+    let tagged = server(&vault, Some(&config));
+    let running = Running::start(&tagged);
+    let saved = |turn: &EntityId| vault.turn_tags(turn).expect("tags read");
+    let first = witness(&vault, "Mirela called before dawn");
+    assert!(
+        wait_until_long(|| saved(&first).is_some()),
+        "the first turn is tagged"
+    );
+    let second = witness(&vault, "Mirela wrote back");
+    assert!(
+        wait_until_long(|| saved(&second).is_some()),
+        "the second turn is tagged"
+    );
+    running.stop();
+
+    let first_tags = saved(&first).expect("first");
+    let MentionLink::Minted { entity: mirela, .. } = first_tags.mentions[0].link.clone() else {
+        panic!("a name the vault does not know mints a provisional entity");
+    };
+    assert_eq!(
+        vault
+            .provisional_entity(&mirela)
+            .expect("read")
+            .map(|entity| entity.name),
+        Some("Mirela".to_owned())
+    );
+    assert_eq!(
+        saved(&second).expect("second").mentions[0].link,
+        MentionLink::Candidates {
+            kind: ENTITY_TYPE_PERSON,
+            entities: vec![mirela],
+        }
+    );
+    let turns: BTreeSet<_> = vault
+        .tagged_mentions_of_name(ENTITY_TYPE_PERSON, "Mirela")
+        .expect("search")
+        .into_iter()
+        .map(|hit| hit.turn)
+        .collect();
+    assert_eq!(turns, BTreeSet::from([first, second]));
+    assert!(
+        outcomes(&tagged)
+            .iter()
+            .all(|outcome| matches!(outcome, TaggingOutcome::Saved { .. }))
     );
 }

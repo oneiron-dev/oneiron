@@ -310,7 +310,9 @@ pub struct VaultConfig {
     pub embedding_transform: Option<String>,
     /// Arms the tagging marker (ARCH-0036, serving the tagger): a base witness
     /// commits one marker per touched turn inside its own transaction, keyed
-    /// by the turn and this tagger checkpoint. `None` commits none.
+    /// by the turn and this tagger checkpoint, and the answer each marker
+    /// settles on is saved as the turn's tags in its mode. `None` commits
+    /// none.
     pub tagging: Option<crate::tagging::TaggingMarkerConfig>,
     /// LMDB map size in bytes.
     pub map_size: usize,

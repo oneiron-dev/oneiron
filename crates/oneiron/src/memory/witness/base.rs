@@ -66,6 +66,40 @@ impl Memory<'_> {
         )
     }
 
+    /// [`Self::witness`] for a turn whose tags the caller already holds: an
+    /// import or a backfill that tagged it elsewhere. On a vault with a
+    /// tagger, the tags are checked against the turn's text, saved, and the
+    /// turn's tagging marker settles, all in the turn's own write, so no
+    /// worker ever calls the tagger for it. Tags that break the contract for
+    /// the turn's text leave the marker to the tagger; the turn lands either
+    /// way. The outcome says which.
+    pub fn witness_with_held_tags(
+        &self,
+        turn: &WitnessTurn,
+        tags: &crate::memory::extraction::EncoderOutput,
+    ) -> MemoryResult<(WitnessReceipt, crate::tagging::HeldTagsOutcome)> {
+        let outcome = std::cell::Cell::new(None);
+        let receipt = self.run_witness(
+            turn,
+            WitnessTarget::Held {
+                held: super::program::HeldTags {
+                    tags,
+                    outcome: &outcome,
+                },
+            },
+            WitnessDoor::Guest,
+            || {},
+            |_| Ok(()),
+            |_| Ok(()),
+        )?;
+        Ok((
+            receipt,
+            outcome
+                .take()
+                .unwrap_or(crate::tagging::HeldTagsOutcome::NoMarker),
+        ))
+    }
+
     /// [`Self::witness`] under a session write route: the base landing a
     /// session's on-record continuation takes, with the route revalidated
     /// inside the write transaction.

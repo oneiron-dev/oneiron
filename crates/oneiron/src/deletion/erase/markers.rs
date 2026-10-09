@@ -179,6 +179,7 @@ impl Vault {
             || crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, id)?.is_some()
             || self.port_retrieval_delete_scope_exists(txn, id)?
             || self.port_short_id_mapping_exists(txn, id)?
+            || crate::tagging::erase_scope_exists_in_txn(&self.store, txn, id)?
         {
             return Ok(true);
         }

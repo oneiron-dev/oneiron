@@ -146,8 +146,7 @@ impl SyncServer {
                 .with_backoff(TaggingBackoff {
                     first_secs: config.retry_backoff_secs,
                     max_secs: config.max_retry_backoff_secs,
-                })
-                .with_label_kinds(config.label_kinds());
+                });
             match reconciler.release_stale_leases() {
                 Ok(0) => {}
                 Ok(released) => tracing::info!(
