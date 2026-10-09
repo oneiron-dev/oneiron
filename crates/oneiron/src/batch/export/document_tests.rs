@@ -338,7 +338,12 @@ fn whole_vault_json_nulls_an_id_slot_whose_bytes_encode_a_credential() -> Result
             text("x_token"),
             text("Ab9Q"),
         )])))),
-        encode(&byte_array(br#"{"pwd":"roses"}"#)),
+        // `{"pwd":"rose"}` as a byte array, its `w` written as uint8 (`cc 77`)
+        // so the raw bytes never spell the key.
+        vec![
+            0x9e, 0x7b, 0x22, 0x70, 0xcc, 0x77, 0x64, 0x22, 0x3a, 0x22, 0x72, 0x6f, 0x73, 0x65,
+            0x22, 0x7d,
+        ],
         encode(&byte_array(b"pwd=Ab9Q7t2Lxyz")),
         encode(&byte_array(br#"{"bearer":"x"} "#)),
     ];
