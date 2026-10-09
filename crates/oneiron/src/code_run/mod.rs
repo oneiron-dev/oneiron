@@ -50,9 +50,7 @@ pub(crate) use self::storage::{ExecutorOutputSpan, ExecutorStorage};
 #[cfg(test)]
 use self::storage::canonical_speech_conversation_id;
 #[cfg(test)]
-pub(crate) use self::storage::{
-    canonical_speech_conversation_id_for_run, executor_speech_message_id,
-};
+pub(crate) use self::storage::executor_speech_message_id;
 pub use self::types::{
     SelfAgentDefinitionPutCall, SelfAgentDefinitionPutResult, SelfAgentSpawnCall,
     SelfAgentSpawnResult, SelfAskCall, SelfCall, SelfContextCall, SelfContextResult,
@@ -70,8 +68,7 @@ pub use self::types::{
 use self::dispatcher::{SELF_PROVENANCE_CALL_KEY, edge_operation_gate_id};
 #[cfg(test)]
 use self::payload::{
-    decode_self_dispatch_outcome, durable_wait_reason_from_str, durable_wait_reason_str,
-    self_call_request_value, self_dispatch_outcome_value, self_effect_from_str,
+    decode_self_dispatch_outcome, self_call_request_value, self_dispatch_outcome_value,
 };
 #[cfg(test)]
 use crate::{

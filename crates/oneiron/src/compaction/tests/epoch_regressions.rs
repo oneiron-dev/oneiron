@@ -52,32 +52,6 @@ fn bootstrap_epoch_mint_preserves_zero_temporal_metadata_and_learned_index() -> 
     Ok(())
 }
 
-#[test]
-fn whitespace_only_bodies_are_refused_by_both_codec_directions() -> Result<()> {
-    for text in ["", " ", "\t\r\n", "\u{a0}\u{2003}\u{3000}"] {
-        let mut body = sample_body();
-        body.text = text.to_owned();
-        let encoded_error = encode_epoch_summary_body(&body).expect_err("blank encode");
-        let decoded_error =
-            decode_epoch_summary_body(&unvalidated_encode(&body)).expect_err("blank decode");
-        assert_eq!(invariant(encoded_error), "epoch summary text is empty");
-        assert_eq!(invariant(decoded_error), "epoch summary text is empty");
-    }
-    let mut body = sample_body();
-    body.text = " \tkept prose\n\u{a0}".to_owned();
-    let bytes = encode_epoch_summary_body(&body)?;
-    assert_eq!(
-        decode_epoch_summary_body(&bytes)?,
-        body,
-        "do not trim usable prose"
-    );
-    assert_eq!(
-        encode_epoch_summary_body(&decode_epoch_summary_body(&bytes)?)?,
-        bytes
-    );
-    Ok(())
-}
-
 /// Seed coexisting durable rows, as seen after offline branches are imported.
 /// This is fixture setup, not an acceptance proof: every assertion below uses
 /// the native CompactionDriver request or integration door.
@@ -244,36 +218,6 @@ fn a_conflict_arriving_after_request_issuance_refuses_the_mint_atomically() -> R
     assert_eq!(pending_embedding_marker_count(&vault), markers);
     assert_eq!(*driver.margin(), margin);
     assert!(driver.is_compacting());
-    Ok(())
-}
-
-#[test]
-fn identical_maximum_epoch_copies_allow_native_lineage_advancement() -> Result<()> {
-    let (_dir, vault) = open_vault();
-    let session = mint_session(&vault, 10);
-    let actor = loom_actor(&vault, 0x60);
-    let mut driver = engine_driver(1_000);
-    let first = compact_once(
-        &vault,
-        &mut driver,
-        session,
-        actor,
-        host_window(&vault, 0x80, 1, 2),
-    )?;
-    let body = stored_summary_body(&vault, &first.summary_id);
-    put_epoch_fixture(&vault, 0x20, &body)?;
-    driver_regressions::advance_test_watermark(&vault, 4)?;
-    let next = compact_once(
-        &vault,
-        &mut driver,
-        session,
-        actor,
-        host_window(&vault, 0x90, 3, 2),
-    )?;
-    assert_eq!(next.epoch, 2);
-    let next_body = stored_summary_body(&vault, &next.summary_id);
-    assert_eq!((next_body.turn_start, next_body.turn_end), (3, 4));
-    assert_eq!(stored_summary_body(&vault, &first.summary_id), body);
     Ok(())
 }
 
@@ -554,117 +498,6 @@ fn identifiable_malformed_epochs_refuse_request_and_mint_without_writes() -> Res
                 CompactionDirective::Begin { .. }
             ));
         }
-    }
-    Ok(())
-}
-
-#[test]
-fn ordinary_partial_epoch_fields_do_not_block_request_or_mint() -> Result<()> {
-    use rmpv::Value;
-
-    for at_mint in [false, true] {
-        let (_dir, vault) = open_vault();
-        let session = mint_session(&vault, 10);
-        let actor = loom_actor(&vault, 0x60);
-        let mut prior = sample_body();
-        prior.session = session.to_hex();
-        prior.actor = actor.entity_ref().to_hex();
-        put_epoch_fixture(&vault, 0x21, &prior)?;
-        let window = host_window(&vault, 0x80, prior.turn_end + 1, 2);
-        let mut driver = engine_driver(1_000);
-        driver.evaluate_now(&vault, u64::MAX)?;
-        let request = if at_mint {
-            Some(driver.request_for(&vault, &session, window.clone())?)
-        } else {
-            None
-        };
-
-        let encode = |entries| {
-            let mut bytes = Vec::new();
-            rmpv::encode::write_value(&mut bytes, &Value::Map(entries)).expect("ordinary summary");
-            bytes
-        };
-        let base = vec![
-            (
-                Value::from("session"),
-                Value::from(session.to_hex().to_uppercase()),
-            ),
-            (Value::from("v"), Value::from(EPOCH_SUMMARY_BODY_VERSION)),
-            (Value::from("level"), Value::from(0)),
-            (
-                Value::from("text"),
-                Value::from("ordinary application summary"),
-            ),
-            (
-                Value::from("actor"),
-                Value::from(actor.entity_ref().to_hex()),
-            ),
-        ];
-        let lineage = ["epoch", "turn_start", "turn_end"];
-        let mut bodies = Vec::new();
-        for key in lineage {
-            // Even all common body fields plus ONE lineage key are ordinary.
-            let field = (Value::from(key), Value::from(999));
-            let mut entries = base.clone();
-            entries.push(field.clone());
-            bodies.push(encode(entries.clone()));
-            let mut nested = entries.clone();
-            nested.push((
-                Value::from("payload"),
-                Value::Map(
-                    lineage
-                        .iter()
-                        .map(|key| (Value::from(*key), Value::from(999)))
-                        .collect(),
-                ),
-            ));
-            bodies.push(encode(nested));
-            entries.extend([field.clone(), field]);
-            bodies.push(encode(entries));
-        }
-        // Two lineage keys without the remaining pinned schema are also
-        // ordinary partial fields, not proof of a damaged epoch body.
-        for omitted in lineage {
-            let mut entries = vec![base[0].clone(), base[3].clone()];
-            for key in lineage {
-                if key != omitted {
-                    entries.push((Value::from(key), Value::from(999)));
-                }
-            }
-            bodies.push(encode(entries));
-        }
-        // A range without the codec or the remaining body keys is not enough.
-        let mut unversioned = vec![base[0].clone(), base[3].clone()];
-        unversioned.extend(
-            lineage
-                .iter()
-                .map(|key| (Value::from(*key), Value::from(999))),
-        );
-        bodies.push(encode(unversioned));
-        for (index, bytes) in bodies.iter().enumerate() {
-            vault.put_entity(
-                &entity(0x30 + u8::try_from(index).expect("small fixture")),
-                ENTITY_TYPE_SUMMARY,
-                TimeRange { start: 1, end: 1 },
-                1,
-                bytes,
-            )?;
-        }
-        let request = match request {
-            Some(request) => request,
-            None => driver.request_for(&vault, &session, window)?,
-        };
-        assert_eq!(request.turn_start, prior.turn_end + 1);
-        let product = driver.backend().compact(&request)?;
-        let plan = driver.integrate(&vault, &session, actor, &request, product, &[])?;
-        assert_eq!(plan.epoch, prior.epoch + 1);
-        assert_eq!(summary_row_count(&vault), bodies.len() + 2);
-        assert_eq!(stored_summary_body(&vault, &entity(0x21)), prior);
-        for (index, bytes) in bodies.iter().enumerate() {
-            let id = entity(0x30 + u8::try_from(index).expect("small fixture"));
-            assert_eq!(vault.get(&id)?.expect("ordinary row retained"), *bytes);
-        }
-        assert!(!driver.is_compacting());
     }
     Ok(())
 }

@@ -4,8 +4,6 @@ use crate::codebase::RepoRef;
 
 // The one-shot lifetime ceiling and the floor-name predicate are defined in
 // `oneiron-authority`: the authority log's slip checks apply the same bounds.
-#[cfg(test)]
-pub(crate) use oneiron_authority::credential_door::DOOR_ONE_SHOT_MAX_LIFETIME_SECS;
 pub(crate) use oneiron_authority::credential_door::names_a_floor;
 
 /// The pre-receive scan is unconditional. Not a dial, not a policy row, not a

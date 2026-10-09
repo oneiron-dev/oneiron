@@ -44,6 +44,7 @@ impl NativeClient {
         scope: Option<NapiRecallScope>,
         limit: Option<f64>,
         format: Option<String>,
+        as_of: Option<f64>,
     ) -> napi::Result<NapiMemoryPack> {
         let effort = oneiron_remote::parse_effort(effort.as_deref().unwrap_or("medium"))
             .map_err(facade_error)?;
@@ -53,9 +54,14 @@ impl NativeClient {
             .transpose()
             .map_err(facade_error)?
             .unwrap_or(10);
+
+        let as_of = as_of
+            .map(|value| oneiron_remote::check_unix_seconds("as_of", value))
+            .transpose()
+            .map_err(facade_error)?;
         let output = self
             .inner
-            .recall(&query, effort, &scope, limit, format.as_deref())
+            .recall(&query, effort, &scope, limit, format.as_deref(), as_of)
             .map_err(facade_error)?;
         memory_pack_from_engine(output).map_err(boundary_error)
     }

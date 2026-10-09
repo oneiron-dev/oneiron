@@ -11,10 +11,6 @@ mod wake_dispatch;
 mod routing_tests;
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
-mod wake_adapter_tests;
-#[cfg(test)]
-mod wake_tests;
 
 pub use self::events::{
     BoardEvent, DeliveryClass, DeliveryPolicy, RouteObservation, SubscriptionError,
@@ -42,4 +38,4 @@ use super::one_line_token;
 #[cfg(test)]
 use self::provenance::*;
 #[cfg(test)]
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;

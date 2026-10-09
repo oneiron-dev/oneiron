@@ -56,14 +56,16 @@ func tierZeroCompiles(client: Oneiron) throws {
 
     let _: WitnessReceipt = try client.witness(turn: turn)
 
-    let scope = RecallScope(worldRef: nil, facet: nil)
+    let scope = RecallScope(worldRef: nil, facet: nil, kinds: ["MESSAGE", "TURN"])
     let _: String? = scope.facet
+    let _: [String]? = scope.kinds
     let pack: MemoryPack = try client.recall(
         query: "compile-only",
         effort: .medium,
         scope: scope,
         limit: 10,
-        format: nil
+        format: nil,
+        asOf: 1_767_225_600
     )
     let _: UInt32 = pack.packVersion
 
@@ -371,6 +373,7 @@ func recallDtosCompile() {
     let _: [String] = provenance.evidenceTurnIds
     let item = MemoryItem(
         shortId: "claim:compile-only",
+        sourceRevisionRef: "0123456789abcdef0123456789abcdef",
         kind: "claim",
         predicate: "compile.only",
         valueText: "compile-only",
@@ -384,12 +387,15 @@ func recallDtosCompile() {
     let _: String = item.hedgeBucket
     let honesty = ScopeHonesty(outOfScopeWorlds: ["world:compile-only"])
     let _: [String] = honesty.outOfScopeWorlds
+    let hint = TemporalHint(phrase: "last 2 weeks", status: "used", start: 0, end: 1_209_600)
+    let _: String = hint.status
     let meta = RetrievalMeta(
         sparse: true,
         totalCandidates: 1,
         claimsReturned: 1,
         deepPending: nil,
-        partial: false
+        partial: false,
+        temporalHints: [hint]
     )
     let _: UInt64 = meta.totalCandidates
     let pack = MemoryPack(

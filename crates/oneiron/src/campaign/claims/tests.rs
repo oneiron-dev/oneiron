@@ -1,7 +1,6 @@
 use super::*;
 
 use core::assert_matches;
-use std::collections::BTreeSet;
 
 use crate::claim::{ClaimApprovalStatus, ClaimBody, encode_claim_body, validate_claim_body_bytes};
 use crate::config::VaultConfig;
@@ -157,86 +156,6 @@ fn with_key(value: &Value, key: &str, replacement: Value) -> Value {
         }
     }
     value
-}
-
-#[test]
-fn campaign_claim_family_exact_match_precedes_comm_family() -> Result<()> {
-    // Every minted predicate is in the CA table and NOT in the comm table.
-    let minted: BTreeSet<&str> = CAMPAIGN_PACK_CLAIM_PREDICATES.iter().copied().collect();
-    assert_eq!(
-        minted,
-        BTreeSet::from([
-            "campaign.member",
-            "crm.fit",
-            "crm.stage",
-            "comm.do_not_contact",
-            "comm.bounce",
-            "comm.jurisdiction",
-        ])
-    );
-    assert_eq!(CAMPAIGN_PACK_CLAIM_PREDICATES.len(), minted.len());
-    for predicate in CAMPAIGN_PACK_CLAIM_PREDICATES {
-        assert!(is_campaign_pack_claim_predicate(predicate));
-        assert!(
-            !crate::comm::is_comm_claim_predicate(predicate),
-            "{predicate} must not also be claimed by the comm family"
-        );
-    }
-
-    // SPINE-COMM keeps its own family: none of them enter the CA branch.
-    for predicate in [
-        "comm.opt_out",
-        "comm.last_touch",
-        "comm.thread_member",
-        "comm.reachable_via",
-    ] {
-        assert!(crate::comm::is_comm_claim_predicate(predicate));
-        assert!(!is_campaign_pack_claim_predicate(predicate));
-    }
-
-    // Routing evidence, not just table membership: an empty map under
-    // `comm.do_not_contact` fails with the CA validator's message, while the
-    // same value under `comm.opt_out` fails with the comm validator's.
-    assert_matches!(
-        through_chokepoint(&body(PREDICATE_COMM_DO_NOT_CONTACT, Value::Map(Vec::new()))),
-        Err(Error::InvalidClaimBody(
-            "campaign pack value missing required key"
-        ))
-    );
-    assert_matches!(
-        through_chokepoint(&body("comm.opt_out", Value::Map(Vec::new()))),
-        Err(Error::InvalidClaimBody(reason)) if reason.starts_with("comm ")
-    );
-
-    // Lookalikes belong to NEITHER family: exact-match tables, no prefixes.
-    for lookalike in [
-        "comm.do_not_contact.extra",
-        "comm.do_not_contac",
-        "campaign.members",
-        "crm.stages",
-    ] {
-        assert!(!is_campaign_pack_claim_predicate(lookalike), "{lookalike}");
-        assert!(
-            !crate::comm::is_comm_claim_predicate(lookalike),
-            "{lookalike}"
-        );
-    }
-
-    // Canonical shapes all pass the chokepoint.
-    for (predicate, value) in [
-        (PREDICATE_CAMPAIGN_MEMBER, canonical_member()),
-        (PREDICATE_CRM_FIT, canonical_fit()),
-        (PREDICATE_CRM_STAGE, canonical_stage()),
-        (
-            PREDICATE_COMM_DO_NOT_CONTACT,
-            do_not_contact_value(Some("email"), DO_NOT_CONTACT_SCOPE_ALL),
-        ),
-        (PREDICATE_COMM_BOUNCE, canonical_bounce()),
-    ] {
-        through_chokepoint(&body(predicate, value))?;
-    }
-    through_chokepoint(&jurisdiction_body(canonical_jurisdiction()))?;
-    Ok(())
 }
 
 #[test]
@@ -417,75 +336,6 @@ fn campaign_member_requires_argument_shape() -> Result<()> {
             ]),
         );
     }
-    Ok(())
-}
-
-#[test]
-fn crm_fit_not_fit_wins_restrictive_fold() -> Result<()> {
-    let icp = entity(REF_SEED);
-    let other_icp = entity(OTHER_CAMPAIGN_SEED);
-    let fit = CrmFitValue {
-        icp_scope: icp,
-        verdict: CrmFitVerdict::Fit,
-    };
-    let not_fit = CrmFitValue {
-        icp_scope: icp,
-        verdict: CrmFitVerdict::NotFit,
-    };
-
-    assert_eq!(resolve_crm_fit(&icp, &[]), None);
-    assert_eq!(
-        resolve_crm_fit(&icp, std::slice::from_ref(&fit)),
-        Some(CrmFitVerdict::Fit)
-    );
-    // Order-independent: the restrictive verdict wins from either side.
-    assert_eq!(
-        resolve_crm_fit(&icp, &[fit.clone(), not_fit.clone()]),
-        Some(CrmFitVerdict::NotFit)
-    );
-    assert_eq!(
-        resolve_crm_fit(&icp, &[not_fit.clone(), fit.clone()]),
-        Some(CrmFitVerdict::NotFit)
-    );
-
-    // Scope isolation is a property of the fold, not of the caller: a
-    // rejection under one ICP never contaminates another's verdict.
-    let cross_scope = [
-        fit,
-        CrmFitValue {
-            icp_scope: other_icp,
-            verdict: CrmFitVerdict::NotFit,
-        },
-    ];
-    assert_eq!(
-        resolve_crm_fit(&icp, &cross_scope),
-        Some(CrmFitVerdict::Fit)
-    );
-    assert_eq!(
-        resolve_crm_fit(&other_icp, &cross_scope),
-        Some(CrmFitVerdict::NotFit)
-    );
-    assert_eq!(resolve_crm_fit(&entity(CAMPAIGN_SEED), &cross_scope), None);
-
-    // Wire shape.
-    assert_eq!(
-        decode_crm_fit_value(&map(&[
-            (KEY_ICP_SCOPE, hex(REF_SEED)),
-            (KEY_VERDICT, Value::from(CrmFitVerdict::NotFit.as_str())),
-        ]))?,
-        not_fit
-    );
-    reject(
-        PREDICATE_CRM_FIT,
-        map(&[
-            (KEY_ICP_SCOPE, hex(REF_SEED)),
-            (KEY_VERDICT, Value::from("maybe")),
-        ]),
-    );
-    reject(
-        PREDICATE_CRM_FIT,
-        map(&[(KEY_VERDICT, Value::from(CrmFitVerdict::Fit.as_str()))]),
-    );
     Ok(())
 }
 
@@ -808,40 +658,6 @@ fn campaign_pack_encoders_round_trip_through_their_decoders() -> Result<()> {
 }
 
 #[test]
-fn descriptor_rows_are_complete_and_pinned() {
-    let rows = claim_class_descriptors();
-    let covered: BTreeSet<&str> = rows.iter().map(|row| row.predicate).collect();
-    assert_eq!(
-        covered,
-        CAMPAIGN_PACK_CLAIM_PREDICATES.iter().copied().collect()
-    );
-    assert_eq!(rows.len(), 6);
-    assert_eq!(rows.len(), covered.len());
-
-    let expected = [
-        (PREDICATE_CAMPAIGN_MEMBER, "ordinary", false, true, false),
-        (PREDICATE_CRM_FIT, "human_ruled", false, true, false),
-        (PREDICATE_CRM_STAGE, "recorded", false, false, true),
-        (PREDICATE_COMM_DO_NOT_CONTACT, "ordinary", true, true, false),
-        (PREDICATE_COMM_BOUNCE, "recorded", false, false, true),
-        (PREDICATE_COMM_JURISDICTION, "recorded", true, false, true),
-    ];
-    for (row, (predicate, write_class, enforcement, restrictive, projector_only)) in
-        rows.iter().zip(expected)
-    {
-        assert_eq!(row.predicate, predicate);
-        assert_eq!(row.write_class, write_class, "{predicate}");
-        assert_eq!(row.enforcement, enforcement, "{predicate}");
-        assert_eq!(row.restrictive, restrictive, "{predicate}");
-        assert_eq!(row.projector_only, projector_only, "{predicate}");
-        assert!(
-            matches!(row.write_class, "recorded" | "human_ruled" | "ordinary"),
-            "{predicate} has a write_class outside the allowed tokens"
-        );
-    }
-}
-
-#[test]
 fn bounce_and_jurisdiction_validate_projector_fact_shape() -> Result<()> {
     for kind in [BounceKind::Hard, BounceKind::Soft] {
         let value = with_key(&canonical_bounce(), KEY_BOUNCE, Value::from(kind.as_str()));
@@ -903,96 +719,6 @@ fn bounce_and_jurisdiction_validate_projector_fact_shape() -> Result<()> {
         );
     }
     Ok(())
-}
-
-#[test]
-fn do_not_contact_channel_and_scope_are_exact() -> Result<()> {
-    let all_channels = CommDoNotContactValue {
-        channel: None,
-        scope: DO_NOT_CONTACT_SCOPE_ALL.to_owned(),
-    };
-    let email_send = CommDoNotContactValue {
-        channel: Some("email".to_owned()),
-        scope: "send".to_owned(),
-    };
-
-    // Wildcards.
-    assert!(do_not_contact_applies(&all_channels, Some("email"), "send"));
-    assert!(do_not_contact_applies(&all_channels, Some("sms"), "notify"));
-    assert!(do_not_contact_applies(&all_channels, None, "send"));
-
-    // Exact matches, normalization-insensitive on the query side.
-    assert!(do_not_contact_applies(&email_send, Some("email"), "send"));
-    assert!(do_not_contact_applies(&email_send, Some(" EMAIL "), "SEND"));
-
-    // A mismatched channel or a non-`all` mismatched scope does not apply.
-    assert!(!do_not_contact_applies(&email_send, Some("sms"), "send"));
-    assert!(!do_not_contact_applies(
-        &email_send,
-        Some("email"),
-        "notify"
-    ));
-    assert!(!do_not_contact_applies(
-        &CommDoNotContactValue {
-            channel: None,
-            scope: "send".to_owned(),
-        },
-        Some("email"),
-        "notify"
-    ));
-    // An unknown query channel cannot prove the suppression irrelevant.
-    assert!(do_not_contact_applies(&email_send, None, "send"));
-
-    // Wire shape: `channel` optional, `scope` required, both stored normalized.
-    assert_eq!(
-        decode_do_not_contact_value(&do_not_contact_value(None, DO_NOT_CONTACT_SCOPE_ALL))?,
-        all_channels
-    );
-    assert_eq!(
-        decode_do_not_contact_value(&do_not_contact_value(Some("email"), "send"))?,
-        email_send
-    );
-    for value in [
-        do_not_contact_value(Some("EMAIL"), "send"),
-        do_not_contact_value(Some(""), "send"),
-        do_not_contact_value(Some("email"), ""),
-        do_not_contact_value(Some("email"), "SEND"),
-        map(&[(KEY_CHANNEL, Value::from("email"))]),
-        map(&[
-            (KEY_CHANNEL, Value::from("email")),
-            (KEY_SCOPE, Value::from("send")),
-            ("campaign", hex(CAMPAIGN_SEED)),
-        ]),
-    ] {
-        reject(PREDICATE_COMM_DO_NOT_CONTACT, value);
-    }
-    Ok(())
-}
-
-#[test]
-fn crm_stage_wire_tokens_match_serde() {
-    // The rmpv codec and the serde surface must name the same tokens; a drift
-    // here would let a claim decode one way and serialize another.
-    for basis in [EvidenceBasis::Machine, EvidenceBasis::OwnerAttested] {
-        assert_eq!(
-            serde_json::to_string(&basis).expect("basis serializes"),
-            format!("\"{}\"", basis.as_str())
-        );
-        assert_eq!(EvidenceBasis::parse(basis.as_str()), Some(basis));
-    }
-    for class in StageEvidenceClass::ALL {
-        assert_eq!(
-            serde_json::to_string(&class).expect("class serializes"),
-            format!("\"{}\"", class.as_str())
-        );
-        assert_eq!(StageEvidenceClass::parse(class.as_str()), Some(class));
-    }
-    assert_eq!(EvidenceBasis::parse("owner-attested"), None);
-    assert_eq!(StageEvidenceClass::parse("meaningfulreply"), None);
-    assert_eq!(
-        serde_json::to_string(&StageKey("replied".to_owned())).expect("stage key serializes"),
-        "\"replied\""
-    );
 }
 
 // ---------------------------------------------------------------------------

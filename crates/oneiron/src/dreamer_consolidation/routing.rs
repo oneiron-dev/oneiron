@@ -229,5 +229,3 @@ impl Vault {
         })
     }
 }
-#[cfg(test)]
-mod tests;

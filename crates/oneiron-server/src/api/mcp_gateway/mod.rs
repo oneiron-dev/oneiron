@@ -32,8 +32,6 @@ use self::exec_board_verbs::{execute_mcp_board_verb, mcp_verb_family_error};
 // unused in non-test builds.
 #[cfg(test)]
 pub(crate) use self::envelope::MCP_PROTOCOL_VERSION;
-#[cfg(test)]
-pub(crate) use self::exec_board_verbs::mcp_board_verb_page_source;
 // Forwards for the `super::booking` / `super::hex_bytes` paths the moved bodies
 // already used: one level down, `super` is this module, so it re-exports them.
 pub(crate) use self::facade_verbs::{
