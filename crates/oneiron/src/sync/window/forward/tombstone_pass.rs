@@ -13,6 +13,9 @@ use crate::sync::ingest::{TombstoneStep, classify_tombstone};
 /// returns `deferred_error`.
 pub(super) struct TombstonePassOutcome {
     pub(super) purge_failures: Vec<EntityId>,
+    /// Each failed replay's tombstone value, for the fence its delete earns
+    /// if the protection gates admit it.
+    pub(super) unapplied: Vec<(EntityId, Vec<u8>)>,
     pub(super) cleared: Vec<EntityId>,
     pub(super) receiver_scrub_candidates: Vec<EntityId>,
     pub(super) deferred_error: Option<Error>,
@@ -49,6 +52,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePass
     // tombstone's success must never discharge another entity's retry.
     // (`marked` is the up-front snapshot loaded before the entity pass.)
     let mut purge_failures: Vec<EntityId> = Vec::new();
+    let mut unapplied: Vec<(EntityId, Vec<u8>)> = Vec::new();
     let mut cleared: Vec<EntityId> = Vec::new();
     let mut receiver_scrub_candidates: Vec<EntityId> = Vec::new();
     let mut tombstone_error: Option<Error> = None;
@@ -166,6 +170,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePass
                 // live. Flag THIS entity for durable retry; the pass keeps
                 // going so one failure cannot starve other tombstones.
                 purge_failures.push(id);
+                unapplied.push((id, value.to_vec()));
                 tracing::error!(
                     entity = %id.to_hex(),
                     error = %err,
@@ -177,6 +182,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePass
     ledger.count = count;
     TombstonePassOutcome {
         purge_failures,
+        unapplied,
         cleared,
         receiver_scrub_candidates,
         deferred_error: tombstone_error,

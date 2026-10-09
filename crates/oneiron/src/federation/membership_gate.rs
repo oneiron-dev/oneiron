@@ -77,6 +77,13 @@ impl Vault {
             {
                 return Err(denied());
             }
+            // A deleted grant is no membership: its shell is skipped here, and a
+            // stored body counts only while its row is live, checked last.
+            if raw.len() == ENTITY_METADATA_HEADER_LEN
+                && !crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live()
+            {
+                continue;
+            }
             let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
             if grant.scope != FederationGrantScope::vault(vault_id)
                 || grant.member_ref != writer.entity_ref()
@@ -87,6 +94,7 @@ impl Vault {
                     federation_grant_activation(&fold, &id),
                     FederationGrantActivation::Inactive(_)
                 )
+                || !crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live()
             {
                 continue;
             }

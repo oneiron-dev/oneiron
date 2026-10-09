@@ -2,6 +2,9 @@
 
 side_tables! {
     VAULT_META_D_L;
+    /// Marker that the one-time row-deletion-fence backfill from applied soft-delete markers has
+    /// run. Key: ().
+    DELETION_ROW_FENCE_BACKFILLED: VaultMeta b"deletion.row_fence.v1.backfilled" Raw;
     /// Immutable account/organization owner binding used to scope hosted derivation caches for this
     /// vault. Key: ().
     DERIVATION_OWNER: VaultMeta b"derivation:owner:v1" Raw;

@@ -217,6 +217,10 @@ pub(super) fn check_companion_answer(
     let person = word.companion_for.ok_or_else(invalid)?;
     let grant_id = group.guest_grants.get(&person).ok_or_else(invalid)?;
     let raw = vault.get_raw_in(txn, grant_id)?.ok_or_else(invalid)?;
+    // A deleted guest grant confers nothing, even while its body is stored.
+    if !crate::vault::live_entity_row_in_txn(&vault.store, txn, grant_id)?.is_live() {
+        return Err(invalid());
+    }
     let grant = crate::federation::decode_federation_grant_body(
         &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
     )?;
@@ -253,7 +257,9 @@ pub(super) fn validate_companion_fact(
     let grant_id = group.guest_grants.get(&person).ok_or_else(invalid)?;
     let raw = vault.get_raw_in(txn, grant_id)?.ok_or_else(invalid)?;
     let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
-    if header.entity_type != crate::registry::ENTITY_TYPE_FEDERATION_GRANT {
+    if header.entity_type != crate::registry::ENTITY_TYPE_FEDERATION_GRANT
+        || !crate::vault::live_entity_row_in_txn(&vault.store, txn, grant_id)?.is_live()
+    {
         return Err(invalid());
     }
     let grant = crate::federation::decode_federation_grant_body(

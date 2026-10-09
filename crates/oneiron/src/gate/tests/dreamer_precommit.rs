@@ -378,12 +378,13 @@ fn live_entity_rows_fail_closed_on_unreadable_deletion_metadata() -> Result<()> 
     vault.store.entities.put(
         &mut wtxn,
         zero_byte.as_bytes(),
-        &entity_record(ENTITY_TYPE_PERSON, test_time(1), 1, b""),
+        &entity_record(crate::registry::ENTITY_TYPE_CLAIM, test_time(1), 1, b""),
     )?;
+    // A claim shell's preserved deletion address, unreadable.
     vault.store.sync_state.put(
         &mut wtxn,
-        &format!("d:w:{}", crate::deletion::window_label_from_timestamp(1)),
-        b"not a loro snapshot",
+        &format!("m:dw:{}", zero_byte.to_hex()),
+        b"not a window label",
     )?;
     wtxn.commit()?;
 

@@ -333,13 +333,18 @@ fn resident_owner_survives_same_batch_delete_separate_delete_and_rematerializati
             .kind(),
         ErrorKind::InvalidSkillBody
     );
-    vault
-        .batch()
-        .put_replicated(&id, ENTITY_TYPE_SKILL, at, 4, &encode_skill_record(&first)?)
-        .commit()?;
-    // Admission accepts the SAME owner; a local deletion can still dominate
-    // this older replay, which is not permission to resurrect the body.
-    assert!(vault.get_skill_record(&id)?.is_none_or(|row| row == first));
+    // Admission accepts the SAME owner, but the local deletion dominates this
+    // older replay: it is refused, never permission to resurrect the body.
+    assert_eq!(
+        vault
+            .batch()
+            .put_replicated(&id, ENTITY_TYPE_SKILL, at, 4, &encode_skill_record(&first)?)
+            .commit()
+            .expect_err("a deletion here dominates the replay")
+            .kind(),
+        ErrorKind::InvariantViolation
+    );
+    assert!(vault.get_skill_record(&id)?.is_none());
     // The marker also freezes explicit absence: an unowned id cannot be
     // reborn with a resident mark after deletion.
     let unowned = EntityId::now();
