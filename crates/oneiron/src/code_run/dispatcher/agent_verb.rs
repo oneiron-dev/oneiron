@@ -46,7 +46,11 @@ impl HostSelfDispatcher<'_> {
         let Some(site) = site.filter(|_| call.verb.writes()) else {
             return Ok(answered(door.call(&call, &origin)));
         };
-        let receipt_id = self.write_receipt_id(site.run_id, site.step_start, site.earlier)?;
+        // Every write before this one in the step met its receipt: a write
+        // that does not (refused at the gate, or recorded after the bridge
+        // halted) halts the bridge, so no later call reaches this door.
+        let ordinal = site.earlier.iter().filter(is_write).count() as u64;
+        let receipt_id = self.write_receipt_id(site.run_id, site.step_start, ordinal)?;
         if let Some(receipt) = self.storage.get_code_run_replay_record(&receipt_id)? {
             let Some(row) = receipt.bridge_calls.first() else {
                 return Err(Error::ConcurrentWrite(
@@ -80,45 +84,55 @@ impl HostSelfDispatcher<'_> {
 
     /// Refuses to close a step that left out a write an earlier attempt of it
     /// made. A resumed step makes the step's writes again in order, each
-    /// meeting its receipt; a receipt past the last of them means the step
-    /// would checkpoint without that write, and a later step could make it
-    /// again under a fresh receipt.
+    /// answered from its receipt: the step's writes, in order, must be the
+    /// receipts' calls with the receipts' answers. A receipt the step did not
+    /// meet so (a write left out, or one the bridge recorded after halting
+    /// and never dispatched) means the step would checkpoint without that
+    /// write, and a later step could make it again under a fresh receipt.
     pub(crate) fn refuse_a_step_that_dropped_a_write(
         &self,
         run_id: EntityId,
         step_start: u64,
         calls: &[CodeRunBridgeCall],
     ) -> Result<()> {
-        let next = self.write_receipt_id(run_id, step_start, calls)?;
-        if self.storage.get_code_run_replay_record(&next)?.is_some() {
-            return Err(Error::InvariantViolation(
-                "a resumed step left out a write it already made",
-            ));
+        let mut made = calls.iter().filter(is_write);
+        let mut ordinal = 0;
+        while let Some(receipt) = self
+            .storage
+            .get_code_run_replay_record(&self.write_receipt_id(run_id, step_start, ordinal)?)?
+        {
+            let met = receipt
+                .bridge_calls
+                .first()
+                .zip(made.next())
+                .is_some_and(|(kept, made)| {
+                    row_identity(kept) == row_identity(made) && kept.outcome == made.outcome
+                });
+            if !met {
+                return Err(Error::InvariantViolation(
+                    "a resumed step left out a write it already made",
+                ));
+            }
+            ordinal += 1;
         }
         Ok(())
     }
 
-    /// The receipt of the step's next write: the run, the step's first bridge
-    /// position, and how many verb writes `earlier` (the step's calls so far)
-    /// holds.
+    /// The receipt of the step's write at `ordinal`: the run, the step's first
+    /// bridge position, and how many verb writes the step made before it.
     fn write_receipt_id(
         &self,
         run_id: EntityId,
         step_start: u64,
-        earlier: &[CodeRunBridgeCall],
+        ordinal: u64,
     ) -> Result<EntityId> {
-        let writes = earlier
-            .iter()
-            .filter_map(recorded_call)
-            .filter(|(verb, _)| AgentVerb::from_name(verb).is_some_and(AgentVerb::writes))
-            .count();
         derived_executor_id(
             AGENT_VERB_RECEIPT_DOMAIN,
             &[
                 self.run_ref.as_bytes(),
                 run_id.as_bytes(),
                 &step_start.to_le_bytes(),
-                &(writes as u64).to_le_bytes(),
+                &ordinal.to_le_bytes(),
             ],
         )
     }
@@ -168,6 +182,12 @@ fn call_identity(verb: &str, input: &Value) -> Vec<u8> {
 fn row_identity(row: &CodeRunBridgeCall) -> Option<Vec<u8>> {
     let (verb, input) = recorded_call(row)?;
     Some(call_identity(verb, &serde_json::from_str(input).ok()?))
+}
+
+/// Whether a recorded call is a verb write.
+fn is_write(row: &&CodeRunBridgeCall) -> bool {
+    recorded_call(row)
+        .is_some_and(|(verb, _)| AgentVerb::from_name(verb).is_some_and(AgentVerb::writes))
 }
 
 /// The verb name and JSON input of a recorded verb call, if the row is one.

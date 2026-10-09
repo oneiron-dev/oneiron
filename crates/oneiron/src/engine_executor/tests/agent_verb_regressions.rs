@@ -309,3 +309,39 @@ fn resumed_step_that_leaves_its_write_out_is_refused_not_written_later() {
         "{outcome:?}"
     );
 }
+
+/// Review repro (Astra R11, #1338): a write the bridge recorded after halting
+/// never met its receipt. Resumed, the step's speech changed and is refused,
+/// which halts the bridge; the step's write after it is recorded, never
+/// dispatched. The step is refused before its checkpoint, so the next attempt
+/// makes the step's write again and gets the first receipt, not a new task.
+#[test]
+fn a_write_recorded_after_the_bridge_halted_does_not_close_the_step() {
+    let (_dir, vault) = open_test_vault();
+    let vault = Arc::new(vault);
+    let run = VerbWriteRun::new(&vault);
+    let speak = |text: &str| SelfCall::Speak(SelfSpeechCall::new(text));
+    run.stop_after(vec![speak("Starting"), create_task()]);
+
+    let mut halted = resumed_step(vec![speak("Trying again"), create_task()]);
+    let outcome = run.resume(&run.config, &mut halted);
+    assert!(
+        matches!(outcome, Err(EngineExecutorError::Engine(_))),
+        "{outcome:?}"
+    );
+    let record = vault
+        .get_code_run_replay_record(&run.config.run_id)
+        .expect("read the run's record")
+        .expect("the run's record");
+    assert!(
+        record.step_checkpoints.is_empty(),
+        "the halted step left no checkpoint"
+    );
+
+    let mut again = resumed_step(vec![create_task()]);
+    let outcome = run.resume(&run.config, &mut again);
+    assert_eq!(
+        outcome.expect("the step made again").status,
+        EngineExecutorStatus::Complete
+    );
+}
