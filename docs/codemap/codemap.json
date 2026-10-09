@@ -7668,19 +7668,19 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 11,
       "fn": 6,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scoped_read/admission.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 19,
       "fn": 5
      }
     },
@@ -7755,7 +7755,7 @@
      "path": "src/claim/scoped_read/mod.rs",
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 6,
       "struct": 1
      }
@@ -7876,7 +7876,7 @@
      "path": "src/claim/scoped_read/visibility.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1
      }
     },
@@ -11372,7 +11372,7 @@
      "path": "src/context_board/mod.rs",
      "purpose": "Typed Context Board render projections",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "re-export": 17
      }
     },
@@ -11604,21 +11604,31 @@
       "RoomSection"
      ],
      "path": "src/context_board/room.rs",
-     "purpose": "Stateless ROOM projection and ordinary world-scope intersection",
+     "purpose": "Stateless ROOM projection and the one roster-to-Scope function",
      "surface": {
+      "crate-vis": 1,
       "enum": 2,
       "fn": 3,
       "struct": 3
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/context_board/room/tests.rs",
+     "purpose": "ARCH-0067 §8 acceptance: one roster-to-Scope function, and every read a room turn makes runs inside the…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/context_board/room_verbs.rs",
      "purpose": "The rooms.* facade family delegates to existing reads, witness and claim gates",
      "surface": {
-      "fn": 1
+      "crate-vis": 8,
+      "fn": 3
      }
     },
     {
@@ -12309,7 +12319,7 @@
      "path": "src/conversation/membership.rs",
      "purpose": "Append-only membership ledger",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 8,
       "struct": 2
@@ -12395,13 +12405,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/conversation/visibility.rs",
      "purpose": "The audience predicate shared by all ScopedRead paths",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -22651,7 +22661,7 @@
      "surface": {
       "crate-vis": 10,
       "mod": 2,
-      "re-export": 23
+      "re-export": 24
      }
     },
     {
@@ -22760,7 +22770,7 @@
      "path": "src/memory/read_lane.rs",
      "purpose": "The bound actor's one read lane",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
@@ -22831,6 +22841,20 @@
      "purpose": "Scope-honesty world names come only from actor-admitted claim rows",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoomTurnHandle"
+     ],
+     "path": "src/memory/room_turn.rs",
+     "purpose": "A room turn (ARCH-0067 §8): one actor's reads inside one room's Scope",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 12,
+      "struct": 1
      }
     },
     {
@@ -22942,8 +22966,8 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 25,
-      "fn": 8,
+      "crate-vis": 26,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -23120,7 +23144,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/tests_regressions/recall/pack_scope.rs",
@@ -26144,13 +26168,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/pipeline/world_authority.rs",
      "purpose": "Per-turn world authority, bound to the host's executing principal",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 6
      }
     },
     {
@@ -37404,7 +37428,7 @@
      "path": "src/workspace_roster/rooms/history.rs",
      "purpose": "Bounded room-local history and transactional auxiliary-row cleanup",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 10
      }
     },
@@ -37452,7 +37476,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 2,
       "fn": 5,
       "re-export": 1,
@@ -38744,7 +38768,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39171,7 +39195,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 96,
+     "files": 97,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -39726,8 +39750,8 @@
    },
    "over_bar": 26,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2387,
-   "test_files": 807
+   "source_files": 2388,
+   "test_files": 808
   },
   "oneiron-android": {
    "files": [
@@ -44838,7 +44862,7 @@
      "path": "src/facade/client.rs",
      "purpose": "Remote-backed NativeClient SDK seam with its stamped-turn input",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -45163,7 +45187,7 @@
      "path": "src/embedded.rs",
      "purpose": "The embedded backend: path resolution, the process-local vault registry, and the single-writer lease…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 17,
       "fn": 1
      }
     },
@@ -45188,7 +45212,7 @@
      "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
      "surface": {
       "const": 2,
-      "fn": 12,
+      "fn": 13,
       "mod": 1,
       "re-export": 2,
       "struct": 2
@@ -45216,7 +45240,7 @@
      "path": "src/remote/mod.rs",
      "purpose": "The remote backend: the ONE HTTP stack the SDK owns (ONE-1441 I13, D2)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -47041,7 +47065,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -47055,7 +47079,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/api/facade/tests.rs",
