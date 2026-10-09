@@ -10,7 +10,7 @@ use crate::hnsw;
 use crate::maintain::MaintenanceBuilder;
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
-use crate::store::{EMBEDDING_TRANSFORM_KEY, MODEL_ID_KEY, validate_embedding_model_id};
+use crate::store::{EMBEDDING_TRANSFORM_KEY, MODEL_ID_KEY, Rows, validate_embedding_model_id};
 
 /// Cap for `sync_state_keys_with_prefix` to prevent unbounded allocation when
 /// a pathological prefix scans a very large sync_state database.
@@ -299,7 +299,14 @@ impl Vault {
     /// Executes a closure within a single LMDB write transaction and allows
     /// callers to return their own error type.
     ///
-    /// The transaction commits on `Ok` return and rolls back on `Err`.
+    /// The transaction commits on `Ok` return and rolls back on `Err`. It is
+    /// this write's share of the vault's group commit (OF-536): concurrent
+    /// writes commit together with one fsync, a failing one rolls back only
+    /// its own rows, and `Ok` returns once the shared commit is durable. The
+    /// closure runs on the calling thread. Its result is held until the whole
+    /// group commits, so it must not carry a lock or permit that another
+    /// write's closure takes (an installed session-overlay segment closes its
+    /// group instead).
     /// Explicit Dreamer approvals applied through [`Self::batch_in`] run VAD
     /// consolidation after commit. A postcommit error retains Approved; retry
     /// [`Self::consolidate_claim_vad_now`] to finish that work.
@@ -308,23 +315,43 @@ impl Vault {
         F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
         E: From<Error>,
     {
-        let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
-        let retirements_before = self.store.gate_retirements_staged_in_txn(&wtxn)?;
-        let (result, postcommit) = {
-            let _active_write_txn = crate::store::active_write_txn_guard();
-            let vad_scope = crate::batch::VadPostcommitScope::new(self, &wtxn);
-            let result = f(&mut wtxn)?;
-            (result, vad_scope.finish())
-        };
-        let approved_vad_ids =
-            self.resolved_dreamer_vad_approvals_in_txn(&wtxn, postcommit.vad_ids)?;
-        // A claim delete applied in this transaction staged its key's
-        // retirement; destroy the key now, not at the next retention pass.
-        let retirement_staged =
-            self.store.gate_retirements_staged_in_txn(&wtxn)? != retirements_before;
-        wtxn.commit().map_err(Error::from)?;
+        // One logical write in the single writer's group commit: the closure
+        // runs in a transaction of its own, and `Ok` comes back only once the
+        // shared commit is durable.
+        let (result, approved_vad_ids, proactivity_changed, retirement_staged) =
+            self.store.group_write(None, |wtxn| {
+                let retirements_before = match self.store.gate_retirements_staged_in_txn(wtxn) {
+                    Ok(staged) => staged,
+                    Err(err) => return Rows::Discard(Err(E::from(err))),
+                };
+                let (result, postcommit) = {
+                    let _active_write_txn = crate::store::active_write_txn_guard();
+                    let vad_scope = crate::batch::VadPostcommitScope::new(self, wtxn);
+                    match f(wtxn) {
+                        Ok(result) => (result, vad_scope.finish()),
+                        Err(err) => return Rows::Discard(Err(err)),
+                    }
+                };
+                let approved =
+                    match self.resolved_dreamer_vad_approvals_in_txn(wtxn, postcommit.vad_ids) {
+                        Ok(approved) => approved,
+                        Err(err) => return Rows::Discard(Err(E::from(err))),
+                    };
+                // A claim delete applied in this write staged its key's
+                // retirement; destroy the key after the commit, not at the
+                // next retention pass.
+                match self.store.gate_retirements_staged_in_txn(wtxn) {
+                    Ok(staged) => Rows::Commit((
+                        result,
+                        approved,
+                        postcommit.proactivity_changed,
+                        staged != retirements_before,
+                    )),
+                    Err(err) => Rows::Discard(Err(E::from(err))),
+                }
+            })?;
         self.store.notify_attempt_observers();
-        if postcommit.proactivity_changed {
+        if proactivity_changed {
             self.store.notify_proactivity_changes();
         }
         if retirement_staged {
