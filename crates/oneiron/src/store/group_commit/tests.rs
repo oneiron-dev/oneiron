@@ -174,7 +174,7 @@ fn refused_and_panicking_members_leave_their_group_committed() {
     let panicking = {
         let vault = Arc::clone(&vault);
         std::thread::spawn(move || {
-            vault.with_write_txn(|txn| {
+            vault.with_write_txn(|txn| -> crate::error::Result<()> {
                 put_rows(vault.batch_in(), &rows(2, 0)).apply(txn)?;
                 panic!("a member panics after staging its rows");
             })
@@ -258,9 +258,9 @@ fn group_commit_crash_child() {
         .hold_next_group_until(CRASH_GROUP);
     let writers: Vec<_> = (1..=CRASH_GROUP)
         .map(|writer| {
-            let vault = Arc::clone(&vault);
+            let member = Arc::clone(&vault);
             let thread = std::thread::spawn(move || {
-                put_rows(vault.batch(), &rows(writer, 0)).commit()?;
+                put_rows(member.batch(), &rows(writer, 0)).commit()?;
                 // Never reached: the process dies before the group commits.
                 println!("COMMITTED-IN-GROUP {writer}");
                 Ok::<(), Error>(())

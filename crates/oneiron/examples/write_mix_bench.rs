@@ -20,7 +20,7 @@ const CORPUS: usize = 2048;
 const DIMS: usize = 64;
 const SEED: u64 = 42;
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy)]
 enum Op {
     Note,
     Turn,
@@ -215,8 +215,7 @@ fn run_writer(
             end: index as u64 + 2,
         };
         let began = Instant::now();
-        let op = Op::at(index + writer);
-        match op {
+        let written = match Op::at(index + writer) {
             Op::Note => vault
                 .batch()
                 .put(entity, 1, at, index as u64 + 2, b"write-mix-note")
@@ -247,8 +246,8 @@ fn run_writer(
                 samples.recalls_ms.push(ms(began.elapsed()));
                 continue;
             }
-        }
-        .map_err(|e| format!("write: {e}"))?;
+        };
+        written.map_err(|e| format!("write: {e}"))?;
         samples.logical_writes += 1;
         samples.writes_ms.push(ms(began.elapsed()));
     }
