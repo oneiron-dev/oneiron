@@ -70,7 +70,7 @@ impl ScopedRead<'_> {
             return Ok(false);
         }
         let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-        self.is_claim_readable_with_body_and_policy_in(rtxn, policy, id, &body, filter)
+        self.is_claim_readable_with_body_and_policy_in(rtxn, policy, id, raw, &body, filter)
     }
 
     fn is_claim_readable_with_body_and_policy_in(
@@ -78,6 +78,7 @@ impl ScopedRead<'_> {
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         id: &EntityId,
+        raw: &[u8],
         body: &ClaimBody,
         filter: &ResolvedRetrievalFilter,
     ) -> Result<bool> {
@@ -136,7 +137,7 @@ impl ScopedRead<'_> {
         let admitted = self.claim_status.admits(filter, body)
             && crate::pipeline::claim_ceiling_allowed(filter, body);
         if !admitted
-            || !self.audience_readable_in(rtxn, id)?
+            || !self.audience_readable_raw_in(rtxn, id, raw)?
             || !self.relationship_claim_allowed_in(rtxn, body)?
         {
             return Ok(false);

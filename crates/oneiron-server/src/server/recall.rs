@@ -31,21 +31,27 @@ impl SyncServer {
         memory: &Memory<'_>,
         input: RecallRequest,
     ) -> MemoryResult<MemoryPack> {
-        // Light is pure retrieval with no model call (ARCH-0044 S6); every
-        // other effort embeds the query when the vault's embedder serves.
-        let embeds = input.effort.unwrap_or(Effort::Medium) != Effort::Light;
-        oneiron::task_verb::sdk::recall_with_vector(memory, input, |query| {
-            embeds.then(|| self.recall_query_vector(query)).flatten()
-        })
+        let embed = self.recall_embed(input.effort);
+        oneiron::task_verb::sdk::recall_with_vector(memory, input, embed)
+    }
+
+    /// The query embedder recall runs with. Light is pure retrieval with no
+    /// model call (ARCH-0044 S6); every other effort embeds the query when
+    /// the vault's embedder serves.
+    fn recall_embed(&self, effort: Option<Effort>) -> impl FnOnce(&str) -> Option<Vec<f32>> + '_ {
+        let embeds = effort.unwrap_or(Effort::Medium) != Effort::Light;
+        move |query| embeds.then(|| self.recall_query_vector(query)).flatten()
     }
 
     /// [`Self::recall`] for `actor` under the slip it presented, on the
-    /// blocking pool.
+    /// blocking pool. When the request names a room turn, every read recall
+    /// makes runs inside that room (ARCH-0067 §8).
     pub(crate) async fn recall_off_runtime(
         self: &Arc<Self>,
         actor: EntityId,
         class: EdgeActorClass,
         proof: Option<VerifiedSlip>,
+        room: Option<EntityId>,
         input: RecallRequest,
     ) -> MemoryResult<MemoryPack> {
         let server = Arc::clone(self);
@@ -55,7 +61,13 @@ impl SyncServer {
                 Some(proof) => memory.with_read_proof(proof),
                 None => memory,
             };
-            server.recall(&memory, input)
+            match room {
+                Some(room) => {
+                    let embed = server.recall_embed(input.effort);
+                    memory.for_room_turn(room)?.recall_with_vector(input, embed)
+                }
+                None => server.recall(&memory, input),
+            }
         })
         .await
         .unwrap_or_else(|error| {

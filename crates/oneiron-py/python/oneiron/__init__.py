@@ -172,6 +172,16 @@ class Oneiron:
         """
         return Oneiron(_translate(lambda: self._client.as_actor(actor_key)))
 
+    def in_room_turn(self, room_ref: str) -> "Oneiron":
+        """Returns a NEW handle whose every verb runs as a turn in a room.
+
+        It names only the room. Each verb reads the room's roster as it stands
+        at that call and runs inside that roster's Scope (ARCH-0067 §8); a verb
+        that would read around the room raises ``BAD_REQUEST``, and so does
+        rebinding the actor or naming another room.
+        """
+        return Oneiron(_translate(lambda: self._client.in_room_turn(room_ref)))
+
     # BEGIN GENERATED FACADE VERBS
     def cancel(self, task_ref: str) -> dict[str, Any]:
         """Cancels one task under the ladder's ``auto`` default. The receipt says what stopped and what became a proposal instead."""

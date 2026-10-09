@@ -115,6 +115,13 @@ impl NativeClient {
         let inner = self.inner.as_actor(&actor_key).map_err(facade_error)?;
         Ok(Self { inner })
     }
+
+    /// Returns a NEW handle whose every verb runs as a turn in `room_ref`.
+    #[napi]
+    pub fn in_room_turn(&self, room_ref: String) -> napi::Result<Self> {
+        let inner = self.inner.in_room_turn(&room_ref).map_err(facade_error)?;
+        Ok(Self { inner })
+    }
 }
 
 mod agent_verbs;

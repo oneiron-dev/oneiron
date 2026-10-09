@@ -194,6 +194,14 @@ impl NativeClient {
         Ok(Self { inner })
     }
 
+    /// Returns a NEW handle whose every verb runs as a turn in `room_ref`.
+    fn in_room_turn(&self, py: Python<'_>, room_ref: String) -> PyResult<Self> {
+        let inner = py
+            .detach(|| self.inner.in_room_turn(&room_ref))
+            .map_err(raise)?;
+        Ok(Self { inner })
+    }
+
     // BEGIN GENERATED AGENT VERBS
     fn cancel(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "cancel")?;

@@ -32,9 +32,11 @@ pub(crate) fn claim_access_axes(body: &ClaimBody) -> (Option<EntityId>, bool) {
 }
 
 impl ScopedRead<'_> {
-    /// Persist grant time before the read snapshot, never inside it.
+    /// Persist grant time before the read snapshot, never inside it. Inside
+    /// a room turn each peer's access grants are judged at that time too, and
+    /// the snapshot may hold a member who joined after the key was built.
     pub(crate) fn persist_grant_clock(&self) -> Result<()> {
-        if self.actor_key.enforce_access_grants {
+        if self.actor_key.enforce_access_grants || self.actor_key.room_turn.is_some() {
             self.vault.store.authorization_now()?;
         }
         Ok(())

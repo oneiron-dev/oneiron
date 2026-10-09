@@ -6,6 +6,15 @@ impl ScopedRead<'_> {
         self.is_entity_readable_in(&rtxn, id)
     }
 
+    /// [`Self::is_entity_readable`], with an owner lane's standing rechecked
+    /// in the snapshot it reads, as every point read does: a lane kept past
+    /// its owner's revocation refuses.
+    pub(crate) fn is_entity_readable_now(&self, id: &EntityId) -> Result<bool> {
+        let rtxn = self.grant_read_txn()?;
+        self.owner_live_in(&rtxn)?;
+        self.is_entity_readable_in(&rtxn, id)
+    }
+
     pub(crate) fn is_entity_readable_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -98,7 +107,7 @@ impl ScopedRead<'_> {
         if !self.relationship_raw_allowed_in(rtxn, id, raw)? {
             return Ok(false);
         }
-        if !self.audience_readable_in(rtxn, id)? {
+        if !self.audience_readable_raw_in(rtxn, id, raw)? {
             return Ok(false);
         }
         if !self.credential_allows_id(id) || !self.proof_live_in(rtxn)? {

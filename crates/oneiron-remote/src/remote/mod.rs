@@ -43,6 +43,8 @@ const FACADE_PREFIX: &str = "v1/core/facade";
 
 /// The header a slip holder's per-request proof crosses in.
 const BINDING_HEADER: &str = "x-oneiron-binding";
+/// Names the room turn a verb runs in; the server resolves its roster.
+const ROOM_TURN_HEADER: &str = "x-oneiron-room-turn";
 
 /// Connect timeout: finite, so a black-holed address fails instead of hanging.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -62,6 +64,8 @@ pub(crate) struct RemoteClient {
     // not the ordinary verbs' response-byte ceiling or short timeout.
     export_agent: Client,
     stream_agent: reqwest::Client,
+    /// The room turn every verb runs in, named to the server per request.
+    room_turn: Option<oneiron::EntityId>,
 }
 
 /// Hand-written so the bearer cannot reach a log through a derive.
@@ -86,6 +90,7 @@ impl Clone for RemoteClient {
             agent: self.agent.clone(),
             export_agent: self.export_agent.clone(),
             stream_agent: self.stream_agent.clone(),
+            room_turn: self.room_turn,
         }
     }
 }
@@ -137,6 +142,16 @@ impl RemoteClient {
             holder,
             agent,
             export_agent,
+            room_turn: None,
+        })
+    }
+
+    /// The same connection with every verb run inside `room`'s turn.
+    pub(crate) fn in_room_turn(&self, room: oneiron::EntityId) -> Result<Self, MemoryError> {
+        crate::embedded::refuse_other_room(self.room_turn, room)?;
+        Ok(Self {
+            room_turn: Some(room),
+            ..self.clone()
         })
     }
 
@@ -169,7 +184,14 @@ impl RemoteClient {
     ) -> Result<R, MemoryError> {
         let url = self.verb_url(verb)?;
         let body = serialize_request(request)?;
-        let credential = self.credential_headers()?;
+        let mut credential = self.credential_headers()?;
+        if let Some(room) = self.room_turn {
+            credential.insert(
+                ROOM_TURN_HEADER,
+                HeaderValue::from_str(&room.to_hex())
+                    .map_err(|_| transport_error("could not name the room turn"))?,
+            );
+        }
         let response = (if verb == "export" {
             &self.export_agent
         } else {

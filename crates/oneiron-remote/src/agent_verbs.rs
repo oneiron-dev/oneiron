@@ -29,9 +29,7 @@ impl OneironClient {
         }
         oneiron::task_verb::sdk::validate_input(verb, &input)?;
         match &self.backend {
-            Backend::Embedded(client) => {
-                oneiron::task_verb::sdk::invoke(&client.memory(), verb, input)
-            }
+            Backend::Embedded(client) => client.invoke(verb, input),
             Backend::Remote(client) => {
                 match verb {
                     "cancel" => remote_agent_verb_output::<oneiron::task_verb::TaskCancelReceipt>(

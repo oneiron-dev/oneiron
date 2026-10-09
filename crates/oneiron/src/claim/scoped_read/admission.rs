@@ -8,6 +8,8 @@ impl crate::vault::Vault {
             actor_key,
             audience: None,
             audience_cache: Mutex::new(Default::default()),
+            room_ceiling: Mutex::new(None),
+            room_ceilings_built: AtomicUsize::new(0),
             session_view: None,
             claim_status: ClaimReadStatus::Surfaceable,
             recall_authority: Mutex::new(None),
@@ -33,6 +35,8 @@ impl crate::vault::Vault {
             actor_key,
             audience: None,
             audience_cache: Mutex::new(Default::default()),
+            room_ceiling: Mutex::new(None),
+            room_ceilings_built: AtomicUsize::new(0),
             session_view: Some(view),
             claim_status: ClaimReadStatus::Surfaceable,
             recall_authority: Mutex::new(None),
@@ -52,6 +56,14 @@ impl<'a> ScopedRead<'a> {
         self
     }
 
+    /// Read only rows in `worlds`; see [`ScopedReadActorKey::within_worlds`].
+    /// The ceiling rides the key, so a lane built from it keeps it too.
+    #[must_use]
+    pub(crate) fn within_worlds(mut self, worlds: crate::pipeline::WorldAuthoritySet) -> Self {
+        self.actor_key = self.actor_key.within_worlds(worlds);
+        self
+    }
+
     /// Number of immutable room ledger snapshots loaded by this read handle.
     pub fn audience_ledger_reads(&self) -> Result<usize> {
         Ok(self
@@ -61,10 +73,145 @@ impl<'a> ScopedRead<'a> {
             .ledger_reads())
     }
 
+    /// Number of room ceilings this read handle rebuilt from a serving
+    /// snapshot because the room held someone its ceiling did not bind.
+    #[cfg(test)]
+    pub(crate) fn room_ceilings_built(&self) -> usize {
+        self.room_ceilings_built
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The audience conjunct every admission path applies, over the current
+    /// row. Paths that serve a known revision use [`Self::audience_readable_raw_in`].
     pub(super) fn audience_readable_in(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
+    ) -> Result<bool> {
+        if self.actor_key.room_turn.is_none()
+            && self.actor_key.worlds.is_none()
+            && self.audience.is_none()
+        {
+            return Ok(true);
+        }
+        let Some(record) = self.entity_record_in(txn, id)? else {
+            return Ok(false);
+        };
+        self.audience_readable_raw_in(txn, id, &record.encode())
+    }
+
+    /// The audience conjunct over the exact revision `raw` being served. A
+    /// key that asked for a world set keeps the row inside it. A key bound to
+    /// a room turn adds the room's world ceiling, its whole roster as an
+    /// audience, and every other member's own read of that same revision, so
+    /// the turn reads inside the room's Scope (ARCH-0067 §8). The roster is
+    /// read in this snapshot, so a member who joined after the key was built
+    /// binds this row too.
+    pub(super) fn audience_readable_raw_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+    ) -> Result<bool> {
+        if self.actor_key.room_turn.is_none() && self.actor_key.worlds.is_none() {
+            return self.audience_conjunct_in(txn, id, raw);
+        }
+        let Some(world) = revision_world(raw)? else {
+            return Ok(false);
+        };
+        if self
+            .actor_key
+            .worlds
+            .as_ref()
+            .is_some_and(|worlds| !worlds.admits(world))
+        {
+            return Ok(false);
+        }
+        if let Some(turn) = &self.actor_key.room_turn {
+            let Some(room) = self.room_ceiling_in(txn, turn)? else {
+                return Ok(false);
+            };
+            if !room.admits_world(world)
+                || !self
+                    .audience_cache
+                    .lock()
+                    .map_err(|_| Error::InvariantViolation("audience cache lock"))?
+                    .readable_raw(self.vault, txn, *id, raw, &room.roster)?
+            {
+                return Ok(false);
+            }
+            // The room reads only what every member may read: a row private
+            // to the caller is not the room's. Each peer reads this revision
+            // under this read's claim-status contract.
+            for peer in &room.peers {
+                let peer = self
+                    .vault
+                    .scoped_read(peer.clone())
+                    .with_claim_status(self.claim_status);
+                // A member read as the owner must still be the owner in this
+                // snapshot; one whose standing lapsed keeps the row out.
+                match peer.owner_live_in(txn) {
+                    Ok(()) => {}
+                    Err(Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(_))) => {
+                        return Ok(false);
+                    }
+                    Err(error) => return Err(error),
+                }
+                let policy = peer.policy_manifest_in(txn)?;
+                let filter = crate::gate::narrow_retrieval_filter(
+                    &policy.retrieval_floor_for_actor(Some(&peer.actor_key)),
+                    None,
+                )?;
+                if !peer.is_entity_raw_readable_with_filter_in(txn, &policy, id, raw, &filter)? {
+                    return Ok(false);
+                }
+            }
+        }
+        self.audience_conjunct_in(txn, id, raw)
+    }
+
+    /// The ceiling `turn` puts on a row `txn` serves; `None` once the caller
+    /// is off the room's roster here. The roster is read in this snapshot.
+    /// While everyone on it already binds the ceiling this read holds, that
+    /// ceiling stands: rebuilding it cannot narrow the read. A member it does
+    /// not bind yet rebuilds the room from this snapshot and conjoins it, so
+    /// a refresh narrows the read and never widens it.
+    fn room_ceiling_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        turn: &RoomTurnCeiling,
+    ) -> Result<Option<Arc<RoomTurnCeiling>>> {
+        let Some(roster) = crate::context_board::room_roster_in(self.vault, txn, turn.room)? else {
+            return Ok(None);
+        };
+        if roster.binary_search(&turn.caller).is_err() {
+            return Ok(None);
+        }
+        let mut held = self
+            .room_ceiling
+            .lock()
+            .map_err(|_| Error::InvariantViolation("room ceiling lock"))?;
+        let current = held.get_or_insert_with(|| Arc::new(turn.clone()));
+        if current.binds_all(&roster) {
+            return Ok(Some(Arc::clone(current)));
+        }
+        let Some(now) =
+            crate::context_board::room_ceiling_in(self.vault, txn, turn.room, turn.caller)?
+        else {
+            return Ok(None);
+        };
+        self.room_ceilings_built
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        *current = Arc::new(current.narrowed_by(&now));
+        Ok(Some(Arc::clone(current)))
+    }
+
+    /// The explicit audience this read was opened for, if any.
+    fn audience_conjunct_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
     ) -> Result<bool> {
         let Some(audience) = &self.audience else {
             return Ok(true);
@@ -72,7 +219,7 @@ impl<'a> ScopedRead<'a> {
         self.audience_cache
             .lock()
             .map_err(|_| Error::InvariantViolation("audience cache lock"))?
-            .readable(self.vault, txn, *id, audience)
+            .readable_raw(self.vault, txn, *id, raw, audience)
     }
 
     pub(super) fn credential_allows_id(&self, id: &EntityId) -> bool {
@@ -213,11 +360,33 @@ impl ScopedRead<'_> {
         let Some(row) = self.entity_record_in(txn, id)? else {
             return Ok(ReadAdmission::OpaqueAbsent);
         };
-        if crate::note::countable_read_suppression(row.entity_type, &row.body) {
+        // Inside a room turn a withheld row may be another room's or a peer's
+        // private one; its count would say it exists, so it reads as absent.
+        // A row outside the worlds the read asked for is not withheld by
+        // policy; scope honesty names its world instead.
+        if self.actor_key.room_turn.is_none()
+            && !self.outside_asked_worlds(&row)
+            && crate::note::countable_read_suppression(row.entity_type, &row.body)
+        {
             Ok(ReadAdmission::Suppressed)
         } else {
             Ok(ReadAdmission::OpaqueAbsent)
         }
+    }
+
+    fn outside_asked_worlds(&self, row: &EntityRecord) -> bool {
+        let Some(worlds) = &self.actor_key.worlds else {
+            return false;
+        };
+        let world = if row.entity_type == ENTITY_TYPE_CLAIM {
+            match crate::claim::decode_claim_body(&row.body, true) {
+                Ok(body) => body.world,
+                Err(_) => return true,
+            }
+        } else {
+            None
+        };
+        !worlds.admits(world)
     }
 
     pub(super) fn admit_entity_in(
@@ -232,4 +401,18 @@ impl ScopedRead<'_> {
                 .map(|allowed| allowed.then_some(()))
         })
     }
+}
+
+/// The world of the revision `raw`: a claim's own, `None` for base reality,
+/// which also holds every record that is not a claim. An erased claim cannot
+/// prove its world, so it has none (`Ok(None)`).
+fn revision_world(raw: &[u8]) -> Result<Option<Option<EntityId>>> {
+    let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+        return Ok(Some(None));
+    }
+    Ok(raw
+        .get(ENTITY_METADATA_HEADER_LEN..)
+        .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
+        .map(|body| body.world))
 }
