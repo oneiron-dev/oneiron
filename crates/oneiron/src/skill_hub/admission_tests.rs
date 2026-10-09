@@ -610,19 +610,8 @@ fn federation_and_company_merge_only_submitted_bytes_with_useful_and_replay_line
             company
                 .vault
                 .prepare_shared_skill_merge(id, company.resident, useful_question(id))?;
-        assert_eq!(
-            company.vault.merge_shared_skill_delta(
-                &ask,
-                &Useful(true),
-                &Replay::new(true),
-                at(21),
-                21
-            )?,
-            SharedSkillMergeDisposition::PendingConsent
-        );
-        company
-            .vault
-            .approve_shared_skill_merge(&ask, &company.owner)?;
+        // A merge is reversible, so it lands on the useful yes and the
+        // held-out win alone: no per-merge approval (ARCH-0053 r4).
         let SharedSkillMergeDisposition::Ruled(receipt) = company.vault.merge_shared_skill_delta(
             &ask,
             &Useful(true),
@@ -631,7 +620,7 @@ fn federation_and_company_merge_only_submitted_bytes_with_useful_and_replay_line
             22,
         )?
         else {
-            panic!("consented");
+            panic!("a reversible merge needs no approval");
         };
         assert!(receipt.accepted);
         assert_eq!(receipt.judge_revision.as_deref(), Some("fixture-judge@1"));
@@ -708,9 +697,6 @@ fn resident_fork_delta_without_held_out_gain_cannot_merge_upstream() -> Result<(
         company
             .vault
             .prepare_shared_skill_merge(id, company.resident, useful_question(id))?;
-    company
-        .vault
-        .approve_shared_skill_merge(&ask, &company.owner)?;
     let SharedSkillMergeDisposition::Ruled(receipt) = company.vault.merge_shared_skill_delta(
         &ask,
         &Useful(true),
@@ -760,9 +746,6 @@ fn useless_shared_delta_never_runs_replay_or_changes_base() -> Result<()> {
         fixture
             .vault
             .prepare_shared_skill_merge(id, fixture.resident, useful_question(id))?;
-    fixture
-        .vault
-        .approve_shared_skill_merge(&ask, &fixture.owner)?;
     let replay = NoReplay;
     let SharedSkillMergeDisposition::Ruled(receipt) =
         fixture
@@ -847,9 +830,6 @@ fn merge_refuses_non_system_one_and_unbound_receipts_without_spending_consent() 
         fixture
             .vault
             .prepare_shared_skill_merge(id, fixture.resident, useful_question(id))?;
-    fixture
-        .vault
-        .approve_shared_skill_merge(&ask, &fixture.owner)?;
     assert!(
         fixture
             .vault
@@ -938,9 +918,6 @@ fn local_refinement_stays_a_fork_until_the_same_merge_gate_admits_it() -> Result
         fixture
             .vault
             .prepare_shared_skill_merge(id, fixture.resident, useful_question(id))?;
-    fixture
-        .vault
-        .approve_shared_skill_merge(&ask, &fixture.owner)?;
     let ruled =
         fixture
             .vault
@@ -998,9 +975,6 @@ fn local_refinement_yes_needs_independent_held_out_win() -> Result<()> {
         fixture
             .vault
             .prepare_shared_skill_merge(id, fixture.resident, useful_question(id))?;
-    fixture
-        .vault
-        .approve_shared_skill_merge(&ask, &fixture.owner)?;
     let ruled = fixture.vault.merge_shared_skill_delta(
         &ask,
         &Useful(true),
@@ -1062,9 +1036,6 @@ fn rejected_local_delta_cannot_activate_through_same_byte_hub_alias() -> Result<
         fixture
             .vault
             .prepare_shared_skill_merge(id, fixture.resident, useful_question(id))?;
-    fixture
-        .vault
-        .approve_shared_skill_merge(&ask, &fixture.owner)?;
     assert!(matches!(
         fixture.vault.merge_shared_skill_delta(&ask, &Useful(false), &NoReplay, at(21), 21)?,
         SharedSkillMergeDisposition::Ruled(receipt) if !receipt.accepted
@@ -1152,9 +1123,6 @@ fn local_refinement_retargeted_upstream_version_is_independent_of_branch_version
         fixture
             .vault
             .prepare_shared_skill_merge(id, fixture.resident, useful_question(id))?;
-    fixture
-        .vault
-        .approve_shared_skill_merge(&ask, &fixture.owner)?;
     assert!(matches!(
         fixture.vault.merge_shared_skill_delta(&ask, &Useful(true), &Replay::new(true), at(21), 21)?,
         SharedSkillMergeDisposition::Ruled(receipt) if receipt.accepted
@@ -1208,9 +1176,6 @@ fn shared_merge_scans_questions_and_provider_receipts_before_any_ruling() -> Res
             fixture
                 .vault
                 .prepare_shared_skill_merge(id, fixture.resident, useful_question(id))?;
-        fixture
-            .vault
-            .approve_shared_skill_merge(&ask, &fixture.owner)?;
         assert!(
             fixture
                 .vault
@@ -1273,9 +1238,6 @@ fn shared_skill_merge_deletion_purges_current_and_every_historical_question() ->
             let ask = fixture
                 .vault
                 .prepare_shared_skill_merge(id, fixture.resident, question)?;
-            fixture
-                .vault
-                .approve_shared_skill_merge(&ask, &fixture.owner)?;
             let SharedSkillMergeDisposition::Ruled(receipt) =
                 fixture.vault.merge_shared_skill_delta(
                     &ask,
@@ -1336,9 +1298,6 @@ fn replayed_shared_skill_delete_purges_merge_questions_for_both_outcomes() -> Re
                 fixture.resident,
                 useful_question(id),
             )?;
-            fixture
-                .vault
-                .approve_shared_skill_merge(&ask, &fixture.owner)?;
             let SharedSkillMergeDisposition::Ruled(receipt) =
                 fixture.vault.merge_shared_skill_delta(
                     &ask,
@@ -1393,9 +1352,6 @@ fn shared_skill_erase_matrix_retains_denial_after_raw_local_and_replayed_delete(
                     fixture.resident,
                     useful_question(candidate),
                 )?;
-                fixture
-                    .vault
-                    .approve_shared_skill_merge(&ask, &fixture.owner)?;
                 fixture.vault.merge_shared_skill_delta(
                     &ask,
                     &Useful(state == "admitted"),
@@ -1867,9 +1823,6 @@ fn marketplace_and_shared_merge_keep_scores_but_mark_displaced_judge() -> Result
         fixture.resident,
         useful_question(merged),
     )?;
-    fixture
-        .vault
-        .approve_shared_skill_merge(&merge_ask, &fixture.owner)?;
     let SharedSkillMergeDisposition::Ruled(merge_receipt) = fixture
         .vault
         .merge_shared_skill_delta(&merge_ask, &Useful(true), &Replay::new(true), at(41), 41)?
@@ -2006,7 +1959,6 @@ fn judge_replaced_mid_marketplace_or_merge_scoring_cannot_write_a_ruling() -> Re
         other.resident,
         useful_question(candidate),
     )?;
-    other.vault.approve_shared_skill_merge(&ask, &other.owner)?;
     let scorer = Replacing {
         vault: &other.vault,
         changed: std::cell::Cell::new(false),
@@ -2129,5 +2081,153 @@ fn edited_shared_fork_persists_each_role_and_callable_contract_change() -> Resul
         .expect("knowledge fork");
     assert_eq!(third.role, crate::skill::SkillRole::Knowledge);
     assert_eq!(third.call, None);
+    Ok(())
+}
+
+fn submit_fixture_delta(fixture: &Fixture, delta: &HubPackage) -> Result<EntityId> {
+    fixture.vault.submit_shared_skill_delta(
+        &fixture.baseline,
+        &encode_hub_package(delta)?,
+        SharedSkillLane::FederationMergeBack,
+        "member:fixture",
+        &EntityId::now(),
+        at(20),
+        20,
+    )
+}
+
+/// REV-9 D1 (ARCH-0053 r4, ARCH-0043, DEC-0006 reversibility-primary): a
+/// shared merge is reversible, so it lands on the useful-upstream yes and the
+/// held-out win with no per-merge approval. Rolling it back restores the
+/// displaced revision's content as the active revision, and every earlier
+/// revision stays readable.
+#[test]
+fn shared_merge_lands_without_approval_and_rolls_back_to_the_old_revision() -> Result<()> {
+    let fixture = Fixture::new();
+    let original = fixture
+        .vault
+        .get_skill_record(&fixture.baseline)?
+        .expect("baseline");
+    let merged = submit_fixture_delta(&fixture, &package("fixture.base", "2", "check result"))?;
+    let ask = fixture.vault.prepare_shared_skill_merge(
+        merged,
+        fixture.resident,
+        useful_question(merged),
+    )?;
+    let SharedSkillMergeDisposition::Ruled(receipt) = fixture.vault.merge_shared_skill_delta(
+        &ask,
+        &Useful(true),
+        &Replay::new(true),
+        at(21),
+        21,
+    )?
+    else {
+        panic!("a reversible merge needs no approval");
+    };
+    assert!(receipt.accepted);
+    let lifecycle = |id: &EntityId| -> Result<SkillLifecycle> {
+        Ok(fixture
+            .vault
+            .get_skill_record(id)?
+            .expect("revision stays readable")
+            .lifecycle_status)
+    };
+    assert_eq!(lifecycle(&merged)?, SkillLifecycle::Active);
+    assert_eq!(lifecycle(&fixture.baseline)?, SkillLifecycle::Superseded);
+
+    let restored = fixture
+        .vault
+        .roll_back_shared_skill_merge(&merged, at(30), 30)?;
+    let current = fixture
+        .vault
+        .get_skill_record(&restored)?
+        .expect("restoring revision");
+    assert_eq!(current.lifecycle_status, SkillLifecycle::Active);
+    assert_eq!(current.skill_id, original.skill_id);
+    assert_eq!(current.desc, original.desc);
+    assert_ne!(current.version, "2");
+    assert_eq!(lifecycle(&merged)?, SkillLifecycle::Superseded);
+    let mut displaced = original;
+    displaced.lifecycle_status = SkillLifecycle::Superseded;
+    assert_eq!(
+        fixture.vault.get_skill_record(&fixture.baseline)?,
+        Some(displaced),
+        "the old revision stays readable, unchanged"
+    );
+    let edges = fixture.vault.edges_out(&restored)?;
+    assert!(
+        edges.iter().any(|edge| {
+            edge.kind == crate::edge::EdgeKind::Supersedes && edge.target == merged
+        })
+    );
+    assert!(edges.iter().any(|edge| {
+        edge.kind == crate::edge::EdgeKind::DerivedFrom && edge.target == fixture.baseline
+    }));
+    assert!(
+        fixture
+            .vault
+            .roll_back_shared_skill_merge(&merged, at(31), 31)
+            .is_err(),
+        "a merge rolls back once; the restoring revision is now current"
+    );
+    Ok(())
+}
+
+/// A delta that widens the skill's permissions still asks, like any widening:
+/// the merge waits for the owner's answer on that exact effect.
+#[test]
+fn shared_merge_that_widens_permissions_waits_for_the_owner() -> Result<()> {
+    let fixture = Fixture::new();
+    let widened = super::folder::package_from_files(vec![HubFile::new(
+        "SKILL.md",
+        b"---\nname: fixture.base\ndescription: fixture\nversion: 2\nallowed-tools: [\"read_file\"]\n---\ncheck result\n"
+            .to_vec(),
+    )])?;
+    let merged = submit_fixture_delta(&fixture, &widened)?;
+    let ask = fixture.vault.prepare_shared_skill_merge(
+        merged,
+        fixture.resident,
+        useful_question(merged),
+    )?;
+    assert_eq!(
+        fixture.vault.merge_shared_skill_delta(
+            &ask,
+            &Useful(true),
+            &Replay::new(true),
+            at(21),
+            21
+        )?,
+        SharedSkillMergeDisposition::PendingConsent
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .get_skill_record(&merged)?
+            .expect("candidate")
+            .lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    fixture
+        .vault
+        .approve_shared_skill_merge(&ask, &fixture.owner)?;
+    let SharedSkillMergeDisposition::Ruled(receipt) = fixture.vault.merge_shared_skill_delta(
+        &ask,
+        &Useful(true),
+        &Replay::new(true),
+        at(22),
+        22,
+    )?
+    else {
+        panic!("the owner answered the widening");
+    };
+    assert!(receipt.accepted);
+    assert_eq!(
+        fixture
+            .vault
+            .get_skill_record(&merged)?
+            .expect("merged")
+            .lifecycle_status,
+        SkillLifecycle::Active
+    );
     Ok(())
 }
