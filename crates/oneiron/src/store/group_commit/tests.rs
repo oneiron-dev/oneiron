@@ -438,36 +438,32 @@ fn failed_shared_commit_fails_every_member_and_the_next_group_commits() {
     let receipt = {
         let vault = Arc::clone(&vault);
         spawn_write(move || {
-            vault
-                .store
-                .group_write(None, Callback::Audited, |txn| -> Rows<(), Answer> {
-                    if let Err(err) = put_rows(vault.batch_in(), &rows(2, 0)).apply(txn) {
-                        return Rows::Discard(Err(Answer::from(err)));
-                    }
-                    Rows::Refuse(Answer::Refused {
-                        writer: 2,
-                        write: 0,
-                    })
+            vault.store.group_write(None, |txn| -> Rows<(), Answer> {
+                if let Err(err) = put_rows(vault.batch_in(), &rows(2, 0)).apply(txn) {
+                    return Rows::Discard(Err(Answer::from(err)));
+                }
+                Rows::Refuse(Answer::Refused {
+                    writer: 2,
+                    write: 0,
                 })
+            })
         })
     };
     let reader = {
         let vault = Arc::clone(&vault);
         spawn_write(move || {
-            vault
-                .store
-                .group_write(None, Callback::Audited, |txn| -> Rows<(), Answer> {
-                    let staged_by_leader = vault
-                        .store
-                        .entities
-                        .get(txn, rows(0, 0)[0].as_bytes())
-                        .map(|row| row.is_some())
-                        .map_err(|err| Answer::from(Error::from(err)));
-                    Rows::Discard(staged_by_leader.and_then(|seen| {
-                        assert!(seen, "a member reads the rows the leader staged");
-                        Ok(())
-                    }))
-                })
+            vault.store.group_write(None, |txn| -> Rows<(), Answer> {
+                let staged_by_leader = vault
+                    .store
+                    .entities
+                    .get(txn, rows(0, 0)[0].as_bytes())
+                    .map(|row| row.is_some())
+                    .map_err(|err| Answer::from(Error::from(err)));
+                Rows::Discard(staged_by_leader.and_then(|seen| {
+                    assert!(seen, "a member reads the rows the leader staged");
+                    Ok(())
+                }))
+            })
         })
     };
     group_staged

@@ -356,7 +356,7 @@ impl Vault {
         // runs in a transaction of its own, and `Ok` comes back only once the
         // shared commit is durable.
         let (result, approved_vad_ids, proactivity_changed) =
-            self.store.group_write(None, callback, |wtxn| {
+            self.store.group_write_as(callback, None, |wtxn| {
                 let (result, postcommit) = {
                     let _active_write_txn = crate::store::active_write_txn_guard();
                     let vad_scope = crate::batch::VadPostcommitScope::new(self, wtxn);

@@ -5,7 +5,7 @@ use super::super::*;
 use super::preflight::preflight_gate_decisions_in_txn;
 use super::{BatchBuilder, CommitCheck};
 
-use crate::store::{Callback, Rows};
+use crate::store::Rows;
 
 use std::collections::HashMap;
 
@@ -95,10 +95,7 @@ impl BatchBuilder<'_> {
         let (origin, birth_mask) = (self.origin, self.birth_mask);
         #[cfg(feature = "sync")]
         let federated_puts = std::mem::take(&mut self.federated_puts);
-        // Engine code all through (the batch's apply, and a guard and an
-        // `after_apply` from engine doors), so the group goes on after it.
-        let callback = Callback::Audited;
-        let committed = vault.store.group_write(Some(announced), callback, |wtxn| {
+        let committed = vault.store.group_write(Some(announced), |wtxn| {
             if let Err(err) = target_guard(wtxn) {
                 return Rows::Discard(Err(err.into()));
             }

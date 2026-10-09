@@ -385,14 +385,27 @@ impl Store {
     /// it leads, a nested one when it joins) and says through [`Rows`] whether
     /// its rows stay. The answer arrives only after the shared transaction
     /// committed. A panic in the closure drops its rows and resumes on the
-    /// caller's thread. A [`Callback::Opaque`] write runs as a group of its
-    /// own.
+    /// caller's thread. The write is engine code audited to hold nothing
+    /// across the shared commit ([`Callback::Audited`]).
     ///
     /// A thread already inside a write transaction keeps its own, as before.
     pub(crate) fn group_write<T, E>(
         &self,
         announced: Option<Announced<'_>>,
+        write: impl FnOnce(&mut RwTxn<'_>) -> Rows<T, E>,
+    ) -> std::result::Result<T, E>
+    where
+        E: From<Error>,
+    {
+        self.group_write_as(Callback::Audited, announced, write)
+    }
+
+    /// [`Self::group_write`] for a write of either kind: a
+    /// [`Callback::Opaque`] write runs as a group of its own.
+    pub(crate) fn group_write_as<T, E>(
+        &self,
         callback: Callback,
+        announced: Option<Announced<'_>>,
         write: impl FnOnce(&mut RwTxn<'_>) -> Rows<T, E>,
     ) -> std::result::Result<T, E>
     where
@@ -425,13 +438,13 @@ impl Store {
         }
     }
 
-    /// [`Self::group_write`] for an audited engine write whose `Ok` keeps its
-    /// rows and whose `Err` drops them.
+    /// [`Self::group_write`] for a write whose `Ok` keeps its rows and whose
+    /// `Err` drops them.
     pub(crate) fn write_in_group<T>(
         &self,
         write: impl FnOnce(&mut RwTxn<'_>) -> crate::error::Result<T>,
     ) -> crate::error::Result<T> {
-        self.group_write(None, Callback::Audited, |txn| match write(txn) {
+        self.group_write(None, |txn| match write(txn) {
             Ok(value) => Rows::Commit(value),
             Err(err) => Rows::Discard(Err(err)),
         })
