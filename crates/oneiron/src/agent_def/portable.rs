@@ -1,4 +1,5 @@
 //! Canonical, inert AGENT_PACK facets derived from real definitions and selected rows.
+use super::portable_knowledge::{KnowledgeFormat, encode_agent_knowledge};
 use super::{AgentDefinition, encode_agent_definition};
 use crate::batch::export::ExportEntity;
 use crate::claim::{ClaimSubject, decode_claim_body};
@@ -85,6 +86,18 @@ pub(crate) fn agent_pack_files(
     refs: &[AgentSkillReference],
     knowledge: &[ExportEntity],
 ) -> Result<Vec<HubFile>> {
+    agent_pack_files_in(KnowledgeFormat::CURRENT, id, def, refs, knowledge)
+}
+
+/// The facets as `agent_pack_files` writes them, with the selected knowledge
+/// in `format`: a captured tree is re-derived in the form it was captured in.
+pub(crate) fn agent_pack_files_in(
+    format: KnowledgeFormat,
+    id: &EntityId,
+    def: &AgentDefinition,
+    refs: &[AgentSkillReference],
+    knowledge: &[ExportEntity],
+) -> Result<Vec<HubFile>> {
     let mut facets = BTreeMap::new();
     facets.insert("identity", "identity.md");
     facets.insert("policy", "policy.md");
@@ -128,7 +141,7 @@ pub(crate) fn agent_pack_files(
         ),
         HubFile::new(
             "knowledge/selected.json",
-            serde_json::to_vec(&knowledge).map_err(|_| invalid())?,
+            encode_agent_knowledge(format, &knowledge)?,
         ),
     ];
     canonical_skill_tree_hash(

@@ -79,11 +79,10 @@ fn install(vault: &Vault) -> Result<EntityId> {
     )
 }
 
-#[test]
-fn source_bundles_all_five_formats_and_native_json_reimport() -> Result<()> {
-    let (_source_dir, source) = open_test_vault_with(VaultConfig::default());
-    let skill = install(&source)?;
-    let agent_id = EntityId::now();
+/// A generated agent `agent_id` that uses the fixture skill, and one claim
+/// about it for its selected knowledge: the skill's id and the claim's.
+fn seed_portable_agent(source: &Vault, agent_id: EntityId) -> Result<(EntityId, EntityId)> {
+    let skill = install(source)?;
     let mut generated_agent = agent("fixture.agent", None);
     generated_agent.source = ClaimSource::Generated;
     generated_agent.generated = true;
@@ -103,6 +102,14 @@ fn source_bundles_all_five_formats_and_native_json_reimport() -> Result<()> {
         time(),
         130,
     )?;
+    Ok((skill, selected))
+}
+
+#[test]
+fn source_bundles_all_five_formats_and_native_json_reimport() -> Result<()> {
+    let (_source_dir, source) = open_test_vault_with(VaultConfig::default());
+    let agent_id = EntityId::now();
+    let (skill, selected) = seed_portable_agent(&source, agent_id)?;
     let expected = package();
     for format in [
         PackFormat::Json,
@@ -135,6 +142,168 @@ fn source_bundles_all_five_formats_and_native_json_reimport() -> Result<()> {
         }
         assert_native_reimport(&export, skill, agent_id, selected, &expected)?;
     }
+    Ok(())
+}
+
+/// A real bug (this file's reimport check failed about 1 run in 600): the
+/// source-file credential check read a typed id in an agent's selected
+/// knowledge as an encoded payload whenever its bytes also parse as one whole
+/// MessagePack value, and the export dropped the pack as a credential. This
+/// agent's id is `c4 0e` and 14 bytes, a complete MessagePack bin8, and every
+/// claim about it carries that id. The pack is read straight from the archive
+/// bytes and installed through the hub consumer: the archive's own claim rows
+/// meet the whole-vault document's credential pass, a separate path.
+#[test]
+fn an_agent_whose_id_reads_as_messagepack_keeps_its_pack_through_export_and_install() -> Result<()>
+{
+    let mut id = [0xc4, 0x0e, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    id[2..].copy_from_slice(b"fixture-agents");
+    let mut cursor = std::io::Cursor::new(&id[..]);
+    assert!(matches!(
+        rmpv::decode::read_value(&mut cursor),
+        Ok(Value::Binary(_))
+    ));
+    assert_eq!(cursor.position(), 16);
+    let agent_id = EntityId::from_bytes(id)?;
+    let (_source_dir, source) = open_test_vault_with(VaultConfig::default());
+    seed_portable_agent(&source, agent_id)?;
+    let export = source.export_whole_vault(PackFormat::Json)?;
+    let archive: serde_json::Value = serde_json::from_slice(export.bytes()).expect("archive JSON");
+    let bundle: ExportAgentBundle = serde_json::from_value(
+        archive["agent_packs"]
+            .as_array()
+            .expect("agent bundles")
+            .iter()
+            .find(|bundle| bundle["entity_id"] == agent_id.to_hex())
+            .expect("agent bundle")
+            .clone(),
+    )
+    .expect("agent bundle");
+    assert_eq!(bundle.omission, None);
+    let files = bundle.source_tree.expect("agent source").import_files()?;
+    let pack = crate::skill_hub::pack_catalog::PackSource::from_files(files)?;
+    let (_target_dir, target) = open_test_vault_with(VaultConfig::default());
+    install_native_agent_pack(&target, pack)
+}
+
+/// No id is ever read as a payload: over hundreds of agent packs with random
+/// agent, world and relationship ids, every pack's source tree stays whole and
+/// its selected knowledge reads back as written. Every fifth pack draws its
+/// ids until their bytes parse as one whole MessagePack container, the shape
+/// the first knowledge form dropped.
+#[test]
+fn no_random_id_drops_an_agent_pack() -> Result<()> {
+    use rand::{RngCore, SeedableRng, rngs::StdRng};
+    let mut rng = StdRng::seed_from_u64(0x0e1d);
+    let mut random_id = |container: bool| loop {
+        let mut bytes = [0; 16];
+        rng.fill_bytes(&mut bytes);
+        let mut cursor = std::io::Cursor::new(&bytes[..]);
+        let parses = matches!(
+            rmpv::decode::read_value(&mut cursor),
+            Ok(Value::Map(_) | Value::Array(_) | Value::Binary(_) | Value::Ext(..))
+        ) && cursor.position() == 16;
+        if (parses || !container)
+            && let Ok(id) = EntityId::from_bytes(bytes)
+        {
+            return id;
+        }
+    };
+    let definition = agent("fixture.agent", None);
+    for pack in 0..250 {
+        let container = pack % 5 == 0;
+        let agent_id = random_id(container);
+        let mut claim = ClaimBody::new(
+            "preference.format",
+            ClaimSubject::Entity(agent_id),
+            Value::from("brief"),
+            0.7,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        )?;
+        claim.world = Some(random_id(container));
+        claim.rel = Some(random_id(container));
+        let knowledge = vec![ExportEntity {
+            id: random_id(false).to_hex(),
+            short_ref: None,
+            entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+            occurred_start: 100,
+            occurred_end: 120,
+            learned_at: 130,
+            body: crate::serialize::ExportBody::from_bytes(
+                &crate::claim::encode_claim_body(&claim)?,
+                crate::registry::ENTITY_TYPE_CLAIM,
+            ),
+        }];
+        assert_eq!(
+            crate::agent_def::select_agent_knowledge(&agent_id, &knowledge),
+            knowledge
+        );
+        let files = crate::agent_def::agent_pack_files(&agent_id, &definition, &[], &knowledge)?;
+        let tree = crate::serialize::export_source_tree(&files)?;
+        let dropped: Vec<_> = tree
+            .files
+            .iter()
+            .filter(|file| file.content.is_none())
+            .map(|file| &file.path)
+            .collect();
+        assert!(
+            tree.content_hash.is_some(),
+            "agent {} lost its pack: {dropped:?}",
+            agent_id.to_hex()
+        );
+        let selected = tree
+            .files
+            .iter()
+            .find(|file| file.path == "knowledge/selected.json")
+            .and_then(|file| file.content.as_deref())
+            .expect("knowledge facet");
+        assert_eq!(
+            crate::agent_def::decode_agent_knowledge(selected.as_bytes())?,
+            (crate::agent_def::KnowledgeFormat::CURRENT, knowledge)
+        );
+    }
+    Ok(())
+}
+
+/// An archive an older engine wrote, its agent packs carrying the first
+/// knowledge form, still imports: stored archives read back as written.
+#[test]
+fn an_archive_with_first_form_agent_knowledge_still_imports() -> Result<()> {
+    let (_source_dir, source) = open_test_vault_with(VaultConfig::default());
+    let agent_id = EntityId::now();
+    seed_portable_agent(&source, agent_id)?;
+    let export = source.export_whole_vault(PackFormat::Json)?;
+    let mut document: WholeVaultDocument =
+        serde_json::from_slice(export.bytes()).expect("archive JSON");
+    let bindings = document
+        .agent_packs
+        .iter()
+        .filter_map(|bundle| {
+            Some((
+                EntityId::from_hex(&bundle.entity_id).ok()?,
+                bundle.fork_hash.clone()?,
+            ))
+        })
+        .collect();
+    crate::serialize::populate_agent_bundles(
+        &mut document,
+        &bindings,
+        crate::agent_def::KnowledgeFormat::V1,
+    )?;
+    let knowledge = document
+        .agent_packs
+        .iter()
+        .find(|bundle| bundle.entity_id == agent_id.to_hex())
+        .and_then(|bundle| bundle.source_tree.as_ref())
+        .expect("agent source")
+        .import_files()?
+        .into_iter()
+        .find(|file| file.path == "knowledge/selected.json")
+        .expect("knowledge facet");
+    assert_eq!(knowledge.content.first(), Some(&b'['));
+    let (_target_dir, target) = open_test_vault_with(VaultConfig::default());
+    target.import_whole_vault_json(&serde_json::to_vec(&document).expect("archive JSON"))?;
     Ok(())
 }
 
@@ -326,8 +495,8 @@ fn fork_hash_matches_unchanged_parent_with_selected_knowledge() -> Result<()> {
         .iter()
         .find(|file| file.path == "knowledge/selected.json")
         .unwrap();
-    let selected: Vec<ExportEntity> =
-        serde_json::from_str(selected.content.as_deref().unwrap()).unwrap();
+    let (_, selected) =
+        crate::agent_def::decode_agent_knowledge(selected.content.as_deref().unwrap().as_bytes())?;
     assert_eq!(selected.len(), 1);
     assert_eq!(selected[0].id, claim.to_hex());
     assert_eq!(

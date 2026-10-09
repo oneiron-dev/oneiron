@@ -1,6 +1,7 @@
 //! Actual birth capture and replay retain bytes without granting authority.
 use super::*;
-use crate::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
+use crate::agent_def::{AgentCeiling, AgentDefinition, AgentScope, KnowledgeFormat};
+use crate::batch::export::ExportEntity;
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use rmpv::Value;
 fn definition(agent_id: &str, forked_from: Option<EntityId>) -> AgentDefinition {
@@ -529,5 +530,53 @@ fn cyclic_archive_input_references_retire_payloads_without_recursing_through_age
         assert_eq!(vault.get_entity_type(child)?, Some(ENTITY_TYPE_AGENT_DEF));
         assert!(vault.get_raw(&asset)?.is_none());
     }
+    Ok(())
+}
+
+/// A birth source captured before the second knowledge form still decodes,
+/// re-derived in the form it was captured in: stored rows read back as
+/// written.
+#[test]
+fn a_birth_source_captured_in_the_first_knowledge_form_still_decodes() -> Result<()> {
+    let child = EntityId::now();
+    let def = definition("fixture.first-form", None);
+    let body = crate::ClaimBody::new(
+        "test.source_note",
+        crate::ClaimSubject::Entity(child),
+        Value::from("note"),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )?;
+    let knowledge = ExportEntity {
+        short_ref: None,
+        id: EntityId::now().to_hex(),
+        entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+        occurred_start: 10,
+        occurred_end: 10,
+        learned_at: 10,
+        body: ExportBody::from_bytes(
+            &crate::claim::encode_claim_body(&body)?,
+            crate::registry::ENTITY_TYPE_CLAIM,
+        ),
+    };
+    let files = super::super::agent_pack_files_in(
+        KnowledgeFormat::V1,
+        &child,
+        &def,
+        &[],
+        std::slice::from_ref(&knowledge),
+    )?;
+    let selected = files
+        .iter()
+        .find(|file| file.path == "knowledge/selected.json")
+        .expect("knowledge facet");
+    assert_eq!(selected.content, serde_json::to_vec(&[&knowledge]).unwrap());
+    let tree = crate::serialize::export_source_tree(&files)?;
+    let (_, bytes) = encode_birth_source(&child, &def, &child, &def, tree.clone())?;
+    assert_eq!(
+        decode_birth_source(&bytes)?.map(|source| source.tree),
+        Some(tree)
+    );
     Ok(())
 }

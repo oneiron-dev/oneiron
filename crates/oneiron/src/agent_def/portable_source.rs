@@ -1,6 +1,6 @@
 //! Immutable captured agent source. Imported/replicated bytes are lineage data, not authorship.
 use super::{AgentDefinition, decode_agent_definition, encode_agent_definition};
-use crate::batch::export::{ExportEntity, ExportFileTree};
+use crate::batch::export::ExportFileTree;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET};
 use crate::serialize::ExportBody;
@@ -65,8 +65,8 @@ impl AgentBirthSource {
             .iter()
             .find(|file| file.path == "knowledge/selected.json")
             .ok_or_else(|| invalid("knowledge facet"))?;
-        let knowledge: Vec<ExportEntity> =
-            serde_json::from_slice(&knowledge.content).map_err(|_| invalid("knowledge facet"))?;
+        let (_, knowledge) = super::decode_agent_knowledge(&knowledge.content)
+            .map_err(|_| invalid("knowledge facet"))?;
         for row in knowledge {
             dependencies.insert(EntityId::from_hex(&row.id)?);
         }
@@ -105,13 +105,14 @@ impl AgentBirthSource {
         let refs: Vec<super::portable::AgentSkillReference> =
             serde_json::from_slice(&file("skills.json")?.content)
                 .map_err(|_| invalid("skill facet"))?;
-        let knowledge: Vec<ExportEntity> =
-            serde_json::from_slice(&file("knowledge/selected.json")?.content)
+        let (format, knowledge) =
+            super::decode_agent_knowledge(&file("knowledge/selected.json")?.content)
                 .map_err(|_| invalid("knowledge facet"))?;
         if super::select_agent_knowledge(&source, &knowledge) != knowledge {
             return Err(invalid("knowledge subject"));
         }
-        let expected = super::agent_pack_files(&source, &definition, &refs, &knowledge)?;
+        // A source captured before the second knowledge form re-derives in the first.
+        let expected = super::agent_pack_files_in(format, &source, &definition, &refs, &knowledge)?;
         if crate::serialize::export_source_tree(&expected)? != self.tree {
             return Err(invalid("facets disagree with captured definition"));
         }

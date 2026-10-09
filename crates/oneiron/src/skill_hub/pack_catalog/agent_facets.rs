@@ -1,7 +1,6 @@
 //! Typed, inert AGENT_PACK facets on the common pack source path.
 use super::{PackManifest, invalid};
 use crate::agent_def::decode_agent_definition;
-use crate::batch::export::ExportEntity;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM};
@@ -116,7 +115,7 @@ impl AgentPackFacets {
             }
         }
         if let Some(path) = &self.knowledge {
-            let knowledge: Vec<ExportEntity> = serde_json::from_slice(file(path)?)
+            let (_, knowledge) = crate::agent_def::decode_agent_knowledge(file(path)?)
                 .map_err(|_| invalid("agent knowledge facet is not typed JSON"))?;
             let id = EntityId::from_hex(&policy.entity_id)
                 .map_err(|_| invalid("agent policy entity identity is invalid"))?;
