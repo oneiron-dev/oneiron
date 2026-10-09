@@ -329,6 +329,118 @@ fn a_member_who_joins_mid_read_binds_the_rows_it_serves() -> Result<()> {
     Ok(())
 }
 
+/// A member who leaves after a lane opened still binds the rows that lane
+/// serves: reading the room again narrows a lane and never drops a read it
+/// held. A lane opened after the leave reads the room as it is.
+#[test]
+fn a_member_who_leaves_mid_read_still_binds_the_rows_it_serves() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let agent = id(0x66);
+    vault.put_entity(
+        &agent,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"agent",
+    )?;
+    // The agent holds no read grant, so its own read withholds the note.
+    let (project, mut record) = project_room(&vault, owner, &[agent])?;
+    let room = EntityId::from_hex(&record.home_room)?;
+    let host = vault.memory(owner, EdgeActorClass::Human);
+    let receipt = host
+        .claim_upsert(&note(room, "lantern harbor", None))
+        .expect("note");
+    let harbor = EntityId::from_hex(
+        &host
+            .get_entity(&receipt.claim_short_id)
+            .expect("note read")
+            .value
+            .expect("owner reads the note")
+            .id_hex,
+    )?;
+    let turn = host.for_room_turn(room).expect("open room turn");
+    let served = |lane: &crate::claim::ScopedRead<'_>| -> Result<bool> {
+        Ok(lane
+            .read(&[crate::claim::PointRead::id(harbor)], None)?
+            .value
+            .into_iter()
+            .flatten()
+            .next()
+            .is_some())
+    };
+    let lane = turn
+        .memory()
+        .read_lane(crate::claim::ClaimReadStatus::Recorded)
+        .expect("room lane");
+    assert!(!served(&lane)?, "the agent's read withholds the note");
+    record.roster.retain(|member| *member != agent.to_hex());
+    vault.put_project(project, &record, 2)?;
+    assert!(
+        !served(&lane)?,
+        "the open lane still holds the agent's read"
+    );
+    let fresh = turn
+        .memory()
+        .read_lane(crate::claim::ClaimReadStatus::Recorded)
+        .expect("room lane");
+    assert!(served(&fresh)?, "a lane opened after the leave");
+    Ok(())
+}
+
+/// Every row a room lane serves reads the roster in its own snapshot, but
+/// the room's ceiling is rebuilt only for a member the lane does not bind
+/// yet, never once per row.
+#[test]
+fn a_room_lane_rebuilds_its_ceiling_only_for_a_new_member() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let agent = id(0x67);
+    let joiner = id(0x68);
+    for person in [agent, joiner] {
+        vault.put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"agent",
+        )?;
+    }
+    let (project, mut record) = project_room(&vault, owner, &[agent])?;
+    let room = EntityId::from_hex(&record.home_room)?;
+    let host = vault.memory(owner, EdgeActorClass::Human);
+    let mut notes = Vec::new();
+    for topic in ["lantern", "harbor", "beacon", "tide"] {
+        let receipt = host.claim_upsert(&note(room, topic, None)).expect("note");
+        let id = host
+            .get_entity(&receipt.claim_short_id)
+            .expect("note read")
+            .value
+            .expect("owner reads the note")
+            .id_hex;
+        notes.push(crate::claim::PointRead::id(EntityId::from_hex(&id)?));
+    }
+    crate::test_util::authorize_readers(&vault, &[&agent.to_hex(), &joiner.to_hex()]);
+    let turn = host.for_room_turn(room).expect("open room turn");
+    let lane = turn
+        .memory()
+        .read_lane(crate::claim::ClaimReadStatus::Recorded)
+        .expect("room lane");
+    let served =
+        || -> Result<usize> { Ok(lane.read(&notes, None)?.value.into_iter().flatten().count()) };
+    assert_eq!(served()?, notes.len());
+    assert_eq!(lane.room_ceilings_built(), 0, "the roster did not change");
+    record.roster.push(joiner.to_hex());
+    vault.put_project(project, &record, 2)?;
+    assert_eq!(served()?, notes.len());
+    assert_eq!(
+        lane.room_ceilings_built(),
+        1,
+        "one rebuild binds the joiner"
+    );
+    Ok(())
+}
+
 /// The roster is the channel's own membership: an ordinary channel's ledger,
 /// never an unchecked field a body carries beside it.
 #[test]

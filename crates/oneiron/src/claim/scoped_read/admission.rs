@@ -8,6 +8,8 @@ impl crate::vault::Vault {
             actor_key,
             audience: None,
             audience_cache: Mutex::new(Default::default()),
+            room_ceiling: Mutex::new(None),
+            room_ceilings_built: AtomicUsize::new(0),
             session_view: None,
             claim_status: ClaimReadStatus::Surfaceable,
             recall_authority: Mutex::new(None),
@@ -33,6 +35,8 @@ impl crate::vault::Vault {
             actor_key,
             audience: None,
             audience_cache: Mutex::new(Default::default()),
+            room_ceiling: Mutex::new(None),
+            room_ceilings_built: AtomicUsize::new(0),
             session_view: Some(view),
             claim_status: ClaimReadStatus::Surfaceable,
             recall_authority: Mutex::new(None),
@@ -69,6 +73,14 @@ impl<'a> ScopedRead<'a> {
             .ledger_reads())
     }
 
+    /// Number of room ceilings this read handle rebuilt from a serving
+    /// snapshot because the room held someone its ceiling did not bind.
+    #[cfg(test)]
+    pub(crate) fn room_ceilings_built(&self) -> usize {
+        self.room_ceilings_built
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// The audience conjunct every admission path applies, over the current
     /// row. Paths that serve a known revision use [`Self::audience_readable_raw_in`].
     pub(super) fn audience_readable_in(
@@ -92,9 +104,9 @@ impl<'a> ScopedRead<'a> {
     /// key that asked for a world set keeps the row inside it. A key bound to
     /// a room turn adds the room's world ceiling, its whole roster as an
     /// audience, and every other member's own read of that same revision, so
-    /// the turn reads inside the room's Scope (ARCH-0067 §8). The ceiling is
-    /// the room as this snapshot reads it, so a member who joined after the
-    /// key was built binds this row too.
+    /// the turn reads inside the room's Scope (ARCH-0067 §8). The roster is
+    /// read in this snapshot, so a member who joined after the key was built
+    /// binds this row too.
     pub(super) fn audience_readable_raw_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -116,12 +128,9 @@ impl<'a> ScopedRead<'a> {
             return Ok(false);
         }
         if let Some(turn) = &self.actor_key.room_turn {
-            let Some(now) =
-                crate::context_board::room_ceiling_in(self.vault, txn, turn.room, turn.caller)?
-            else {
+            let Some(room) = self.room_ceiling_in(txn, turn)? else {
                 return Ok(false);
             };
-            let room = turn.narrowed_by(now);
             if !room.admits_world(world)
                 || !self
                     .audience_cache
@@ -159,6 +168,42 @@ impl<'a> ScopedRead<'a> {
             }
         }
         self.audience_conjunct_in(txn, id, raw)
+    }
+
+    /// The ceiling `turn` puts on a row `txn` serves; `None` once the caller
+    /// is off the room's roster here. The roster is read in this snapshot.
+    /// While everyone on it already binds the ceiling this read holds, that
+    /// ceiling stands: rebuilding it cannot narrow the read. A member it does
+    /// not bind yet rebuilds the room from this snapshot and conjoins it, so
+    /// a refresh narrows the read and never widens it.
+    fn room_ceiling_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        turn: &RoomTurnCeiling,
+    ) -> Result<Option<Arc<RoomTurnCeiling>>> {
+        let Some(roster) = crate::context_board::room_roster_in(self.vault, txn, turn.room)? else {
+            return Ok(None);
+        };
+        if roster.binary_search(&turn.caller).is_err() {
+            return Ok(None);
+        }
+        let mut held = self
+            .room_ceiling
+            .lock()
+            .map_err(|_| Error::InvariantViolation("room ceiling lock"))?;
+        let current = held.get_or_insert_with(|| Arc::new(turn.clone()));
+        if current.binds_all(&roster) {
+            return Ok(Some(Arc::clone(current)));
+        }
+        let Some(now) =
+            crate::context_board::room_ceiling_in(self.vault, txn, turn.room, turn.caller)?
+        else {
+            return Ok(None);
+        };
+        self.room_ceilings_built
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        *current = Arc::new(current.narrowed_by(&now));
+        Ok(Some(Arc::clone(current)))
     }
 
     /// The explicit audience this read was opened for, if any.

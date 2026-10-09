@@ -114,7 +114,11 @@ impl Memory<'_> {
         let Some(turn) = self.room_turn() else {
             return Ok(None);
         };
-        Ok(Some(turn.narrowed_by(self.room_ceiling(turn.room)?)))
+        let now = self.room_ceiling(turn.room)?;
+        Ok(Some(RoomTurnCeiling {
+            scope: turn.scope.meet(&now.scope),
+            ..now
+        }))
     }
 
     /// One read key per other member; see [`peer_read_keys_in`].
@@ -337,6 +341,20 @@ fn peer_read_keys_in(
         .collect()
 }
 
+/// The room's members as `txn` reads them, sorted and unique; `None` as for
+/// [`room_members_in`]. A few point reads, cheap enough for every row.
+pub(crate) fn room_roster_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+) -> crate::Result<Option<Vec<EntityId>>> {
+    Ok(room_members_in(vault, txn, room)?.map(|mut members| {
+        members.sort_unstable();
+        members.dedup();
+        members
+    }))
+}
+
 /// The ceiling `room` puts on `caller`'s reads as `txn` reads the room
 /// (ARCH-0067 §8): `room_scope` over the roster in this snapshot, that roster
 /// as the audience, and every other member's read key. One snapshot builds
@@ -348,14 +366,12 @@ pub(crate) fn room_ceiling_in(
     room: EntityId,
     caller: EntityId,
 ) -> crate::Result<Option<RoomTurnCeiling>> {
-    let Some(mut members) = room_members_in(vault, txn, room)? else {
+    let Some(members) = room_roster_in(vault, txn, room)? else {
         return Ok(None);
     };
-    if !members.contains(&caller) {
+    if members.binary_search(&caller).is_err() {
         return Ok(None);
     }
-    members.sort();
-    members.dedup();
     let worlds = reading_defaults_in(vault, txn, &members)?;
     let roster: Vec<_> = members
         .iter()

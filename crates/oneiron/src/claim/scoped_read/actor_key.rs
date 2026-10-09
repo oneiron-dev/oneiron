@@ -48,16 +48,37 @@ impl RoomTurnCeiling {
         ))
     }
 
-    /// This ceiling as the snapshot `now` reads the room: its Scope met with
-    /// the one `now` resolves, and `now`'s roster and peers. A change between
-    /// the snapshot that built this ceiling and the one serving a row can
-    /// therefore narrow the read and never widen it.
+    /// This ceiling conjoined with `now`, the room as a later snapshot reads
+    /// it: the two Scopes met, both rosters as one audience, and every peer
+    /// read either holds. A member who joined binds the read; one who left
+    /// still binds a lane built while it belonged. Refreshing a ceiling can
+    /// therefore narrow the read and never drop a restriction it held.
     #[must_use]
-    pub(crate) fn narrowed_by(&self, now: Self) -> Self {
-        Self {
-            scope: self.scope.meet(&now.scope),
-            ..now
+    pub(crate) fn narrowed_by(&self, now: &Self) -> Self {
+        let mut roster = self.roster.clone();
+        roster.extend(&now.roster);
+        roster.sort_unstable();
+        roster.dedup();
+        let mut peers = self.peers.clone();
+        for peer in &now.peers {
+            if !peers.contains(peer) {
+                peers.push(peer.clone());
+            }
         }
+        Self {
+            room: self.room,
+            caller: self.caller,
+            scope: self.scope.meet(&now.scope),
+            roster,
+            peers,
+        }
+    }
+
+    /// Whether every member of `roster` already binds this ceiling.
+    pub(crate) fn binds_all(&self, roster: &[EntityId]) -> bool {
+        roster
+            .iter()
+            .all(|member| self.roster.binary_search(member).is_ok())
     }
 }
 

@@ -4,7 +4,9 @@
 
 mod lifecycle;
 
-use std::{collections::HashSet, sync::Mutex};
+use std::collections::HashSet;
+use std::sync::atomic::AtomicUsize;
+use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -57,6 +59,10 @@ pub struct ScopedRead<'a> {
     actor_key: ScopedReadActorKey,
     audience: Option<Vec<EntityId>>,
     audience_cache: Mutex<crate::conversation::AudienceCache>,
+    /// A bound room turn's ceiling once a serving snapshot narrowed it; until
+    /// then the key's own. See `ScopedRead::room_ceiling_in`.
+    room_ceiling: Mutex<Option<Arc<RoomTurnCeiling>>>,
+    room_ceilings_built: AtomicUsize,
     /// Session composition (ONE-1728 §7). `None` on the canonical handle,
     /// which therefore reads base only exactly as before; `Some` when the
     /// read was opened through a live session handle, in which case entity

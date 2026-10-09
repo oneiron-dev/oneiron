@@ -232,15 +232,17 @@ impl Memory<'_> {
         })
     }
 
-    /// Up to `window` history rows after `start`, each with its index key.
-    /// The snapshot closes before the caller admits any of them.
-    fn history_after(
+    /// Up to `window` history rows after `start`, each with its index key,
+    /// from a snapshot in which the reader still belongs to the room. The
+    /// snapshot closes before the caller admits any of them.
+    pub(super) fn history_after(
         &self,
         room: EntityId,
         start: Option<(u64, EntityId)>,
         window: usize,
     ) -> MemoryResult<Vec<((u64, EntityId), RoomTurn)>> {
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        require_member(self.vault(), &txn, room, self.actor())?;
         let rows = HISTORY
             .iter_from(&self.vault().store, &txn, room.as_bytes())?
             .skip_while(|row| match (start, row) {
@@ -298,7 +300,7 @@ impl Memory<'_> {
             turns.push(turn_in(self.vault(), &txn, turn_id)?);
         }
         drop(txn);
-        self.admitted_turns(turns)
+        Ok(answer_closed(self.admitted_turns(turns)?))
     }
 
     /// Recomputes thread liveness from the current room history and TASK
@@ -483,4 +485,36 @@ impl Memory<'_> {
             &turns, &tasks, handle, now,
         )?)
     }
+}
+
+/// The turns among `turns` whose answered turns are among them too, each
+/// chain followed to its end. Admission keeps a reply whose own parent is
+/// readable even when that parent's ancestor is withheld; the thread fold
+/// then meets the gap. Dropping the whole cut chain lets it fold the rest.
+fn answer_closed(turns: Vec<RoomTurn>) -> Vec<RoomTurn> {
+    let held: BTreeSet<&str> = turns.iter().map(|turn| turn.turn_id.as_str()).collect();
+    let mut answers = std::collections::BTreeMap::<&str, Vec<&str>>::new();
+    let mut cut = Vec::new();
+    for turn in &turns {
+        for parent in turn.reply_to.iter().chain(&turn.thread_of) {
+            answers
+                .entry(parent.as_str())
+                .or_default()
+                .push(turn.turn_id.as_str());
+            if !held.contains(parent.as_str()) {
+                cut.push(turn.turn_id.as_str());
+            }
+        }
+    }
+    let mut dropped = BTreeSet::new();
+    while let Some(id) = cut.pop() {
+        if dropped.insert(id) {
+            cut.extend(answers.get(id).into_iter().flatten().copied());
+        }
+    }
+    let dropped: BTreeSet<String> = dropped.into_iter().map(str::to_owned).collect();
+    turns
+        .into_iter()
+        .filter(|turn| !dropped.contains(&turn.turn_id))
+        .collect()
 }

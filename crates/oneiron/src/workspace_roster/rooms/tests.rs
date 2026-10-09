@@ -236,6 +236,153 @@ fn room_history_needs_the_readers_own_grant() -> Result<()> {
     Ok(())
 }
 
+/// A reader whose credential names a thread's replies but not its root
+/// still reads the room's other threads: the cut chain drops out of the
+/// thread fold instead of failing it.
+#[test]
+fn a_thread_cut_by_the_readers_credential_leaves_the_rest_readable() -> Result<()> {
+    use crate::authority::{HostSlipIssuer, SlipCaveat};
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let leader = EntityId::now();
+    vault.put_entity(
+        &leader,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"room leader",
+    )?;
+    let root = vault.root_project()?;
+    let project = EntityId::now();
+    let spec = ProjectRecord::new(project, Some(root), root, leader)?;
+    vault.put_project(project, &spec, 1)?;
+    let room = EntityId::from_hex(&spec.home_room)?;
+    // One trunk turn with two threads. The cut thread's root is answered by
+    // a reply, which a nested reply answers in turn.
+    let trunk = EntityId::now();
+    let cut_root = EntityId::now();
+    let reply = EntityId::now();
+    let nested = EntityId::now();
+    let other_root = EntityId::now();
+    let host = vault.memory(leader, EdgeActorClass::Human);
+    for (id, metadata, at) in [
+        (trunk, serde_json::json!({}), 2),
+        (
+            cut_root,
+            serde_json::json!({"room_thread_of": trunk.to_hex()}),
+            3,
+        ),
+        (
+            reply,
+            serde_json::json!({"room_reply_to": cut_root.to_hex()}),
+            4,
+        ),
+        (
+            nested,
+            serde_json::json!({"room_reply_to": reply.to_hex()}),
+            5,
+        ),
+        (
+            other_root,
+            serde_json::json!({"room_thread_of": trunk.to_hex()}),
+            6,
+        ),
+    ] {
+        host.rooms_speak(&turn(room, id, WitnessAuthor::User, metadata, at))
+            .expect("speak");
+    }
+    // The leader's credential names every turn but the cut thread's root.
+    let issuer = HostSlipIssuer::from_secret(b"room thread cut")?;
+    let mut claims = vault.ensure_host_root_slip(&issuer)?.claims;
+    claims.slip_id = *blake3::hash(leader.as_bytes()).as_bytes();
+    claims.holder_ref = leader.to_hex();
+    claims.actor_class = Some("human".into());
+    let mut slip = vault.mint_capability_slip(&issuer, claims)?;
+    issuer.attenuate(
+        &mut slip,
+        SlipCaveat {
+            records: Some(
+                [trunk, reply, nested, other_root]
+                    .iter()
+                    .map(EntityId::to_hex)
+                    .collect(),
+            ),
+            ..Default::default()
+        },
+    )?;
+    let binding = issuer.binding_proof(&slip, b"room read")?;
+    let proof =
+        vault.verify_capability_slip(&issuer.public_key(), &slip, b"room read", &binding)?;
+    let reader = vault
+        .memory(leader, EdgeActorClass::Human)
+        .with_read_proof(&proof);
+    assert!(
+        reader
+            .rooms_messages(room)
+            .expect("history")
+            .iter()
+            .any(|row| row.turn_id == trunk.to_hex()),
+        "the credential reads the room's turns"
+    );
+    assert_eq!(
+        reader.rooms_find_threads(room, None, 8).expect("threads"),
+        vec![other_root]
+    );
+    assert!(
+        reader
+            .rooms_get_thread(room, other_root)
+            .expect("thread")
+            .is_some()
+    );
+    reader.rooms_trunk(room, trunk).expect("trunk");
+    Ok(())
+}
+
+/// History is loaded only from a snapshot in which the reader still belongs
+/// to the room, so a turn posted after its removal never reaches it.
+#[test]
+fn a_removed_member_loads_no_later_history() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let leader = EntityId::now();
+    let agent = EntityId::now();
+    for actor in [leader, agent] {
+        vault.put_entity(
+            &actor,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"room participant",
+        )?;
+    }
+    let root = vault.root_project()?;
+    let project = EntityId::now();
+    let mut spec = ProjectRecord::new(project, Some(root), root, leader)?;
+    spec.roster.push(agent.to_hex());
+    vault.put_project(project, &spec, 1)?;
+    let room = EntityId::from_hex(&spec.home_room)?;
+    permit_room_reads(&vault, &[leader, agent])?;
+    let host = vault.memory(leader, EdgeActorClass::Human);
+    let peer = vault.memory(agent, EdgeActorClass::Agent);
+    let speak = |at| {
+        host.rooms_speak(&turn(
+            room,
+            EntityId::now(),
+            WitnessAuthor::User,
+            serde_json::json!({}),
+            at,
+        ))
+        .expect("speak")
+    };
+    speak(2);
+    assert_eq!(peer.history_after(room, None, 8).expect("history").len(), 1);
+    spec.roster.retain(|member| *member != agent.to_hex());
+    vault.put_project(project, &spec, 2)?;
+    speak(3);
+    assert!(peer.history_after(room, None, 8).is_err());
+    Ok(())
+}
+
 #[test]
 fn room_history_is_bounded_paged_and_removed_with_its_project() -> Result<()> {
     let dir = tempfile::tempdir()?;
