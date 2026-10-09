@@ -287,7 +287,7 @@ fn a_restore_never_hands_a_rebound_claim_back_to_a_verified_slip() -> Result<()>
 #[test]
 fn a_restore_never_hands_a_rebound_claim_back_to_a_paired_reader() -> Result<()> {
     let (_dir, vault) = open_vault();
-    let fact = (entity(0xD6), put_person(&vault, 0xD7)?);
+    let fact = (entity(0xD6), put_person(&vault, 0xD9)?);
     crate::test_util::authorize_readers(&vault, &[]);
     let issuer = crate::test_util::test_host_issuer();
     let mut paired = vault.ensure_host_root_slip(&issuer)?.claims;
