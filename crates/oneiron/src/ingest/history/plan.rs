@@ -12,7 +12,7 @@ use heed::{Database, Env, EnvFlags, EnvOpenOptions};
 
 use super::land::{HistoryImportReport, conversation_body, imported_message, runs};
 use super::ledger::{self, LedgerRow, content_hash};
-use super::{HistoryConversation, HistorySource};
+use super::{HistoryConversation, HistoryMessage, HistorySource};
 use crate::batch::secret_scan::{SecretScanMode, scan_write_payload, secret_scan_mode_in_txn};
 use crate::error::{Error, GateError, Result};
 use crate::memory::witness_message_body;
@@ -25,11 +25,12 @@ const VAULT_META_DB: &str = "vault_meta";
 /// A dry run's memory across conversations: the texts it has counted as
 /// landing and the conversations it has counted as minted, so a message two
 /// conversations carry (a resumed session's copies of the original's lines)
-/// counts once, as the import itself would land it.
+/// counts once, as the import itself would land it. Both are kept per source,
+/// as the ledger keeps them.
 #[derive(Debug, Default)]
 pub struct HistoryDryRun {
-    counted: HashMap<String, Vec<String>>,
-    minted: HashSet<String>,
+    counted: HashMap<(HistorySource, String), Vec<String>>,
+    minted: HashSet<(HistorySource, String)>,
 }
 
 impl HistoryDryRun {
@@ -39,16 +40,18 @@ impl HistoryDryRun {
         dbs: &impl SideTableDbs,
         txn: &heed::RoTxn<'_>,
         source: HistorySource,
-        native_id: &str,
+        message: &HistoryMessage,
     ) -> Result<&mut Vec<String>> {
-        Ok(match self.counted.entry(native_id.to_owned()) {
-            Entry::Occupied(counted) => counted.into_mut(),
-            Entry::Vacant(slot) => slot.insert(
-                ledger::get(dbs, txn, source, native_id)?
-                    .map(|row| row.hashes)
-                    .unwrap_or_default(),
-            ),
-        })
+        Ok(
+            match self.counted.entry((source, message.native_id.clone())) {
+                Entry::Occupied(counted) => counted.into_mut(),
+                Entry::Vacant(slot) => slot.insert(
+                    ledger::find(dbs, txn, source, message)?
+                        .map(|row| row.hashes)
+                        .unwrap_or_default(),
+                ),
+            },
+        )
     }
 }
 
@@ -129,10 +132,11 @@ impl HistoryLedgerSnapshot {
         let runs = runs(conversation, &mut report);
         // The conversation row, and the title in its body, is written by the
         // first turn that lands; until one has, every turn would carry it.
-        let mut minted = dry_run.minted.contains(&conversation.native_id);
+        let minted_key = (source, conversation.native_id.clone());
+        let mut minted = dry_run.minted.contains(&minted_key);
         if !minted {
             for message in runs.iter().flatten() {
-                if ledger::get(self, &txn, source, &message.native_id)?
+                if ledger::find(self, &txn, source, message)?
                     .is_some_and(|row| row.conversation == conversation.native_id)
                 {
                     minted = true;
@@ -152,7 +156,7 @@ impl HistoryLedgerSnapshot {
             let mut pending = Vec::new();
             for message in run {
                 let hash = content_hash(message);
-                let landed = dry_run.landed(self, &txn, source, &message.native_id)?;
+                let landed = dry_run.landed(self, &txn, source, message)?;
                 if landed.contains(&hash) {
                     report.skipped += 1;
                 } else {
@@ -165,7 +169,7 @@ impl HistoryLedgerSnapshot {
                 .iter()
                 .map(|(message, _, changed)| {
                     if *changed {
-                        ledger::get(self, &txn, source, &message.native_id)
+                        ledger::find(self, &txn, source, message)
                     } else {
                         Ok(None)
                     }
@@ -201,13 +205,11 @@ impl HistoryLedgerSnapshot {
                 } else {
                     report.new += 1;
                 }
-                dry_run
-                    .landed(self, &txn, source, &message.native_id)?
-                    .push(hash);
+                dry_run.landed(self, &txn, source, message)?.push(hash);
             }
         }
         if minted {
-            dry_run.minted.insert(conversation.native_id.clone());
+            dry_run.minted.insert(minted_key);
         }
         Ok(report)
     }

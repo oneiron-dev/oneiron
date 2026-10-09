@@ -1,10 +1,12 @@
 //! ChatGPT export: `conversations.json`, a list of conversations whose
-//! `mapping` is a message tree. `current_node` is the leaf the app shows; every
-//! other branch (an edit, a regeneration) becomes its own thread.
+//! `mapping` is a message tree. Each edit or regeneration becomes its own
+//! thread, with what was said after it. `current_node` (the branch the app
+//! shows) is not read: the person can switch it, and an imported message stays
+//! in the thread it landed in.
 
 use serde_json::Value;
 
-use super::text::{join_texts, str_field, time_field};
+use super::text::{export_conversations, join_texts, str_field, time_field};
 use super::tree::{TreeNode, threads};
 use super::{HistoryConversation, HistoryMessage, HistoryRole, HistorySkips, HistoryThreadKind};
 use crate::ingest::{IngestError, IngestResult};
@@ -12,19 +14,11 @@ use crate::ingest::{IngestError, IngestResult};
 const SOURCE_ID: &str = "chatgpt";
 
 pub(super) fn decode(text: &str) -> IngestResult<Vec<HistoryConversation>> {
-    let document: Value =
-        serde_json::from_str(text).map_err(|error| IngestError::InvalidDocument {
-            source_id: SOURCE_ID,
-            message: error.to_string(),
-        })?;
-    let conversations = document
-        .as_array()
-        .or_else(|| document.get("conversations").and_then(Value::as_array))
-        .ok_or_else(|| bad("conversations"))?;
     let mut out = Vec::new();
-    for conversation in conversations {
-        out.extend(decode_conversation(conversation)?);
-    }
+    export_conversations(SOURCE_ID, text, &mut |conversation| {
+        out.extend(decode_conversation(&conversation)?);
+        Ok(())
+    })?;
     Ok(out)
 }
 
@@ -79,10 +73,7 @@ fn decode_conversation(conversation: &Value) -> IngestResult<Vec<HistoryConversa
     let started_at_ms = time_field(conversation, "create_time");
 
     let mut out: Vec<HistoryConversation> = Vec::new();
-    for (number, members) in threads(&nodes, str_field(conversation, "current_node"))
-        .into_iter()
-        .enumerate()
-    {
+    for (number, members) in threads(&nodes).into_iter().enumerate() {
         let mut thread = if number == 0 {
             HistoryConversation::new(id.to_owned(), HistoryThreadKind::Main, None)
         } else {
@@ -206,6 +197,7 @@ fn decode_node(key: &str, node: &Value) -> Node {
         at_ms: time_field(message, "create_time"),
         said_by: None,
         tools: Vec::new(),
+        alias: None,
     };
     Node::Kept(message, u32::try_from(attachments).unwrap_or(u32::MAX))
 }

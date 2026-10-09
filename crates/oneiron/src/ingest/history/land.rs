@@ -8,9 +8,13 @@
 //! what landed before. Each turn lands through the witness program's import
 //! door, which runs the same ceiling door and write-door secret scan as any
 //! witnessed turn, with the ledger rows of its new messages in the same
-//! transaction. A refused turn is counted and the import goes on; the next
-//! import tries it again.
+//! transaction. The ledger is read again inside that transaction: when another
+//! import landed one of the turn's messages since the first read, the turn is
+//! read and built again, so no import overwrites what another landed. A
+//! refused turn is counted and the import goes on; the next import tries it
+//! again.
 
+use std::cell::Cell;
 use std::collections::{BTreeSet, HashSet};
 
 use rmpv::Value as Msgpack;
@@ -29,8 +33,9 @@ use crate::entity_id::{EntityId, derived_domains};
 use crate::error::Result;
 use crate::gate::MAX_WITNESS_MESSAGE_ORDER;
 use crate::memory::{
-    IMPORTED_SOURCE_KEY, ImportedTurnStamp, MEMORY_CODE_INTERNAL, MemoryError, MemoryResult,
-    WitnessAuthor, WitnessMessage, WitnessTurn, next_witness_message_order,
+    IMPORTED_SOURCE_KEY, ImportedTurnStamp, MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE,
+    Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage, WitnessTurn,
+    next_witness_message_order,
 };
 use crate::side_table::SideTableDbs;
 
@@ -46,6 +51,19 @@ const MAX_TOOL_LABELS: usize = 64;
 
 /// Bytes of an id or a label kept in metadata.
 const MAX_LABEL_BYTES: usize = 512;
+
+/// How many times a turn is read and built again when other imports keep
+/// landing its messages first. Past that it is counted as refused, and the
+/// next import tries it again.
+const LEDGER_ATTEMPTS: usize = 4;
+
+#[cfg(test)]
+thread_local! {
+    /// Runs once between a turn's ledger read and its write transaction, so a
+    /// test can land a concurrent import there.
+    pub(super) static BETWEEN_READ_AND_WRITE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
 
 /// One conversation's import, in counts. It names the conversation by the
 /// source's id and carries no text.
@@ -122,7 +140,7 @@ pub(super) fn standing(
     source: HistorySource,
     message: &HistoryMessage,
 ) -> Result<Standing> {
-    Ok(match ledger::get(dbs, txn, source, &message.native_id)? {
+    Ok(match ledger::find(dbs, txn, source, message)? {
         None => Standing::New,
         Some(row) if row.holds(&content_hash(message)) => Standing::Same,
         Some(row) => Standing::Changed(row),
@@ -295,16 +313,22 @@ impl Vault {
         imported_at: u64,
     ) -> MemoryResult<HistoryImportReport> {
         let mut report = HistoryImportReport::new(conversation);
-        let memory = self.memory(owner.actor(), EdgeActorClass::Human);
-        let conversation_id = derive(
-            derived_domains::HISTORY_CONVERSATION,
-            &[source.source_id(), &conversation.native_id],
-        )?;
-        let conversation_body = conversation_body(source, conversation)?;
-        let fallback_ms = conversation
-            .started_at_ms
-            .unwrap_or_else(|| imported_at.saturating_mul(1000));
-
+        let import = Import {
+            vault: self,
+            memory: self.memory(owner.actor(), EdgeActorClass::Human),
+            owner,
+            source,
+            conversation,
+            conversation_id: derive(
+                derived_domains::HISTORY_CONVERSATION,
+                &[source.source_id(), &conversation.native_id],
+            )?,
+            conversation_body: conversation_body(source, conversation)?,
+            fallback_ms: conversation
+                .started_at_ms
+                .unwrap_or_else(|| imported_at.saturating_mul(1000)),
+            imported_at,
+        };
         for run in runs(conversation, &mut report) {
             let turn_id = derive(
                 derived_domains::HISTORY_TURN,
@@ -314,99 +338,9 @@ impl Vault {
                     &run[0].native_id,
                 ],
             )?;
-            let mut pending = Vec::new();
-            let mut next_order = {
-                let txn = self
-                    .store
-                    .env
-                    .read_txn()
-                    .map_err(crate::error::Error::from)?;
-                for message in &run {
-                    match standing(&self.store, &txn, source, message)? {
-                        Standing::Same => report.skipped += 1,
-                        Standing::New => pending.push((*message, None)),
-                        Standing::Changed(row) => pending.push((*message, Some(row))),
-                    }
-                }
-                next_witness_message_order(&self.store, &txn, &turn_id)?
-            };
-            if pending.is_empty() {
-                continue;
-            }
-            let count = u32::try_from(pending.len()).unwrap_or(u32::MAX);
-            if next_order.saturating_add(count) > MAX_WITNESS_MESSAGE_ORDER.saturating_add(1) {
-                report.refused += count;
-                report.refusal_reasons.insert(TURN_FULL.to_owned());
-                continue;
-            }
-            let mut messages = Vec::with_capacity(pending.len());
-            let mut occurred = Vec::with_capacity(pending.len());
-            let mut rows = Vec::with_capacity(pending.len());
-            for (message, previous) in &pending {
-                let hash = content_hash(message);
-                let id = derive(
-                    derived_domains::HISTORY_MESSAGE,
-                    &[source.source_id(), &message.native_id, &hash],
-                )?;
-                messages.push(imported_message(
-                    source,
-                    conversation,
-                    message,
-                    previous.as_ref(),
-                    Some(id),
-                    next_order,
-                ));
-                next_order += 1;
-                occurred.push(message.at_ms.unwrap_or(fallback_ms) / 1000);
-                rows.push((
-                    message.native_id.as_str(),
-                    LedgerRow {
-                        conversation: conversation.native_id.clone(),
-                        message: id,
-                        turn: turn_id,
-                        hashes: previous
-                            .as_ref()
-                            .map_or_else(Vec::new, |row| row.hashes.clone())
-                            .into_iter()
-                            .chain(std::iter::once(hash))
-                            .collect(),
-                    },
-                ));
-            }
-            let turn = WitnessTurn {
-                conversation_ref: conversation_id.to_hex(),
-                turn_ref: Some(turn_id.to_hex()),
-                messages,
-                occurred_at: occurred[0],
-            };
-            let stamp = ImportedTurnStamp {
-                source: source.source_id(),
-                imported_at,
-                conversation_body: conversation_body.clone(),
-                message_occurred: occurred,
-            };
-            let landed = memory.witness_imported(&turn, &stamp, |wtxn| {
-                owner.revalidate_in_txn(self, wtxn)?;
-                for (native_id, row) in &rows {
-                    ledger::put(&self.store, wtxn, source, native_id, row)?;
-                }
-                Ok(())
-            });
-            match landed {
-                Ok(_) => {
-                    for (_, previous) in &pending {
-                        if previous.is_some() {
-                            report.changed += 1;
-                        } else {
-                            report.new += 1;
-                        }
-                    }
-                }
-                Err(error) => {
-                    let reasons = refusal(&error).ok_or(error)?;
-                    report.refused += count;
-                    report.refusal_reasons.extend(reasons);
-                }
+            let mut attempt = 1;
+            while !import.turn(&run, turn_id, attempt == LEDGER_ATTEMPTS, &mut report)? {
+                attempt += 1;
             }
         }
         Ok(report)
@@ -420,5 +354,154 @@ impl Vault {
     pub fn history_import_ledger_len(&self, source: HistorySource) -> Result<usize> {
         let txn = self.store.env.read_txn()?;
         ledger::count(&self.store, &txn, source)
+    }
+}
+
+/// One conversation's import: what each of its turns lands with.
+struct Import<'v> {
+    vault: &'v Vault,
+    memory: Memory<'v>,
+    owner: &'v AuthenticatedOwner,
+    source: HistorySource,
+    conversation: &'v HistoryConversation,
+    conversation_id: EntityId,
+    conversation_body: Vec<u8>,
+    fallback_ms: u64,
+    imported_at: u64,
+}
+
+impl Import<'_> {
+    /// Lands one run as a turn and counts it. `false`, with nothing counted,
+    /// when another import landed one of its messages between this read of
+    /// the ledger and the write; the caller reads the run again. On the
+    /// `last` attempt that is counted as a refusal instead.
+    fn turn(
+        &self,
+        run: &[&HistoryMessage],
+        turn_id: EntityId,
+        last: bool,
+        report: &mut HistoryImportReport,
+    ) -> MemoryResult<bool> {
+        let (source, conversation) = (self.source, self.conversation);
+        let mut skipped = 0;
+        let mut pending = Vec::new();
+        let mut next_order = {
+            let txn = self
+                .vault
+                .store
+                .env
+                .read_txn()
+                .map_err(crate::error::Error::from)?;
+            for message in run {
+                match standing(&self.vault.store, &txn, source, message)? {
+                    Standing::Same => skipped += 1,
+                    Standing::New => pending.push((*message, None)),
+                    Standing::Changed(row) => pending.push((*message, Some(row))),
+                }
+            }
+            next_witness_message_order(&self.vault.store, &txn, &turn_id)?
+        };
+        #[cfg(test)]
+        if let Some(between) = BETWEEN_READ_AND_WRITE.with_borrow_mut(Option::take) {
+            between();
+        }
+        if pending.is_empty() {
+            report.skipped += skipped;
+            return Ok(true);
+        }
+        let count = u32::try_from(pending.len()).unwrap_or(u32::MAX);
+        if next_order.saturating_add(count) > MAX_WITNESS_MESSAGE_ORDER.saturating_add(1) {
+            report.skipped += skipped;
+            report.refused += count;
+            report.refusal_reasons.insert(TURN_FULL.to_owned());
+            return Ok(true);
+        }
+        let mut messages = Vec::with_capacity(pending.len());
+        let mut occurred = Vec::with_capacity(pending.len());
+        let mut rows = Vec::with_capacity(pending.len());
+        for (message, previous) in &pending {
+            let hash = content_hash(message);
+            let id = derive(
+                derived_domains::HISTORY_MESSAGE,
+                &[source.source_id(), &message.native_id, &hash],
+            )?;
+            messages.push(imported_message(
+                source,
+                conversation,
+                message,
+                previous.as_ref(),
+                Some(id),
+                next_order,
+            ));
+            next_order += 1;
+            occurred.push(message.at_ms.unwrap_or(self.fallback_ms) / 1000);
+            rows.push((
+                message.native_id.as_str(),
+                LedgerRow {
+                    conversation: conversation.native_id.clone(),
+                    message: id,
+                    turn: turn_id,
+                    hashes: previous
+                        .as_ref()
+                        .map_or_else(Vec::new, |row| row.hashes.clone())
+                        .into_iter()
+                        .chain(std::iter::once(hash))
+                        .collect(),
+                },
+            ));
+        }
+        let turn = WitnessTurn {
+            conversation_ref: self.conversation_id.to_hex(),
+            turn_ref: Some(turn_id.to_hex()),
+            messages,
+            occurred_at: occurred[0],
+        };
+        let stamp = ImportedTurnStamp {
+            source: source.source_id(),
+            imported_at: self.imported_at,
+            conversation_body: self.conversation_body.clone(),
+            message_occurred: occurred,
+        };
+        let moved = Cell::new(false);
+        let landed = self.memory.witness_imported(&turn, &stamp, |wtxn| {
+            self.owner.revalidate_in_txn(self.vault, wtxn)?;
+            // The rows this turn was built on, read again where they are
+            // written: another import may have landed a message since.
+            for (message, previous) in &pending {
+                if ledger::find(&self.vault.store, wtxn, source, message)? != *previous {
+                    moved.set(true);
+                    return Err(MemoryError::new(
+                        MEMORY_CODE_INVALID_STATE,
+                        "another import landed this turn's messages first",
+                        &[],
+                    ));
+                }
+            }
+            for (native_id, row) in &rows {
+                ledger::put(&self.vault.store, wtxn, source, native_id, row)?;
+            }
+            Ok(())
+        });
+        if moved.get() && !last {
+            return Ok(false);
+        }
+        report.skipped += skipped;
+        match landed {
+            Ok(_) => {
+                for (_, previous) in &pending {
+                    if previous.is_some() {
+                        report.changed += 1;
+                    } else {
+                        report.new += 1;
+                    }
+                }
+            }
+            Err(error) => {
+                let reasons = refusal(&error).ok_or(error)?;
+                report.refused += count;
+                report.refusal_reasons.extend(reasons);
+            }
+        }
+        Ok(true)
     }
 }

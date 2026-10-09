@@ -37,13 +37,16 @@ fn kind(dir: &OwnedFd, name: &OsStr, listed: FileType) -> anyhow::Result<FileTyp
     Ok(FileType::from_raw_mode(stat.st_mode))
 }
 
-/// One regular file in an open folder, never through a link.
+/// One regular file in an open folder, never through a link. The open does
+/// not block, so an entry swapped for a FIFO after it was listed is refused
+/// by the type check rather than waited on; reading a regular file is the
+/// same either way.
 fn open_file(dir: &OwnedFd, name: &OsStr, shown: &Path) -> anyhow::Result<File> {
     let file = File::from(
         openat(
             dir,
             name,
-            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
             Mode::empty(),
         )
         .map_err(|error| {
@@ -139,4 +142,34 @@ fn walk(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use super::*;
+
+    /// Greptile 1310 (confined.rs:46): an entry listed as a file and swapped
+    /// for a FIFO before it is opened. Opening it must not wait for a writer.
+    #[test]
+    fn an_entry_that_is_a_fifo_when_opened_is_refused_without_waiting() {
+        let dir = tempfile::tempdir().expect("test fixture");
+        let name = "rollout-2026-09-14T10-00-00-fifo.jsonl";
+        let made = std::process::Command::new("mkfifo")
+            .arg(dir.path().join(name))
+            .status()
+            .expect("mkfifo");
+        assert!(made.success(), "mkfifo");
+        let folder = open_root(dir.path()).expect("open the folder");
+        let (opened, outcome) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = opened.send(open_file(&folder, OsStr::new(name), Path::new(name)).is_err());
+        });
+        let refused = outcome
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the open returned without a writer on the FIFO");
+        assert!(refused, "a FIFO is not a regular file");
+    }
 }

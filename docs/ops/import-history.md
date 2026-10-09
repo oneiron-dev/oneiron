@@ -26,9 +26,12 @@ a file or folder that changes into something else while it is read is refused.
 ## What lands
 
 - Each source conversation becomes a conversation in the vault; each message a
-  message, grouped into turns of one speaker. A ChatGPT edit or regeneration,
-  a Claude Code sidechain or subagent, and a Codex spawned or forked thread
-  each become their own conversation, linked to the one they belong to.
+  message, grouped into turns of one speaker. A ChatGPT edit or regeneration
+  (with what was said after it), a Claude Code sidechain or subagent, and a
+  Codex spawned or forked thread each become their own conversation, linked to
+  the one they belong to. The conversation itself is the path as first
+  written, whichever branch the app showed when you exported, so switching
+  branches and exporting again never moves a message.
 - Messages are searchable at once through your recall (lexical search;
   vectors follow when `serve` has an embedder).
 - The speaker is the source's: the import is not recorded as their author.
@@ -52,6 +55,14 @@ messages. A message whose text changed is landed as a revision beside the
 original, never as a duplicate. Copies of earlier messages land once: Claude
 Code copies a resumed session's lines into the new session's log, and Codex
 copies a parent thread's items into a forked or spawned thread's rollout.
+
+## Size limits
+
+An export's `conversations.json` is read up to 2 GiB unzipped, and one
+conversation in it up to 128 MiB. A folder of session logs is read up to a
+million messages (or 1 GiB of them) in one import, each log up to 4 GiB. Past
+a limit the import stops before it writes anything and says which; import one
+project folder, or one month of sessions, at a time.
 
 ## The report
 

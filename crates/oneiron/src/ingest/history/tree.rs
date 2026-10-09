@@ -11,13 +11,16 @@ pub(super) struct TreeNode<'a> {
     pub(super) order: (u64, usize),
 }
 
-/// Splits a tree into threads. Thread 0 is the main path, root to `leaf` (the
-/// node the source shows as current; the latest leaf when it names none). Each
-/// node off that path joins its parent's thread when it is the parent's first
-/// child off the main path, and starts a new thread otherwise, so every thread
-/// is one chain and every node is in exactly one. Returns node indexes per
-/// thread, root first; a node whose parent is missing is a root.
-pub(super) fn threads(nodes: &[TreeNode<'_>], leaf: Option<&str>) -> Vec<Vec<usize>> {
+/// Splits a tree into threads, each one chain. A node continues its parent's
+/// thread when it is the parent's first child, and starts a thread of its own
+/// otherwise: an edit or a regeneration starts one, and what was said after
+/// it continues it. Thread 0 is the conversation as first written, from the
+/// first root. Threads are a function of the tree alone, never of the branch
+/// the source shows as current, so a later export that switched branches
+/// keeps every node it shares with an earlier one in the same thread. Returns
+/// node indexes per thread, root first; a node whose parent is missing is a
+/// root.
+pub(super) fn threads(nodes: &[TreeNode<'_>]) -> Vec<Vec<usize>> {
     let index: HashMap<&str, usize> = nodes
         .iter()
         .enumerate()
@@ -43,51 +46,23 @@ pub(super) fn threads(nodes: &[TreeNode<'_>], leaf: Option<&str>) -> Vec<Vec<usi
     }
     roots.sort_by_key(|&root| nodes[root].order);
 
-    let leaf = leaf.and_then(|leaf| index.get(leaf).copied()).or_else(|| {
-        (0..nodes.len())
-            .filter(|node| !children.contains_key(node))
-            .max_by_key(|&node| nodes[node].order)
-    });
     let mut thread_of = vec![usize::MAX; nodes.len()];
-    let mut main = Vec::new();
-    let mut cursor = leaf;
-    // Bounded by the node count, so a parent cycle cannot loop.
-    while let Some(node) = cursor {
-        if thread_of[node] != usize::MAX {
-            break;
-        }
-        thread_of[node] = 0;
-        main.push(node);
-        cursor = parent_of(node);
-    }
-    main.reverse();
-    let mut threads = vec![main];
-
-    // Depth-first from each root in source order, so thread numbering and
-    // membership are a function of the tree alone.
+    let mut threads: Vec<Vec<usize>> = Vec::new();
+    // Depth-first from each root in source order, first children first, so
+    // thread numbering and membership are a function of the tree alone.
     let mut stack: Vec<usize> = roots.into_iter().rev().collect();
     while let Some(node) = stack.pop() {
-        if thread_of[node] == usize::MAX {
-            let parent = parent_of(node).filter(|&parent| thread_of[parent] != 0);
-            let continues = parent.and_then(|parent| {
-                let first_off_main = children
-                    .get(&parent)?
-                    .iter()
-                    .copied()
-                    .find(|&child| thread_of[child] != 0)?;
-                (first_off_main == node).then_some(thread_of[parent])
-            });
-            match continues {
-                Some(thread) if thread != usize::MAX => {
-                    thread_of[node] = thread;
-                    threads[thread].push(node);
-                }
-                _ => {
-                    thread_of[node] = threads.len();
-                    threads.push(vec![node]);
-                }
+        let first_child_of = parent_of(node)
+            .filter(|parent| children.get(parent).and_then(|kids| kids.first()) == Some(&node));
+        let thread = match first_child_of {
+            Some(parent) => thread_of[parent],
+            None => {
+                threads.push(Vec::new());
+                threads.len() - 1
             }
-        }
+        };
+        thread_of[node] = thread;
+        threads[thread].push(node);
         if let Some(kids) = children.get(&node) {
             stack.extend(kids.iter().rev().copied());
         }

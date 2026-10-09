@@ -8,11 +8,11 @@
 //! wrappers, compaction summaries. Only what a person or the assistant said is
 //! kept; the rest is counted.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 
 use serde_json::Value;
 
-use super::text::{join_texts, str_field, time_field};
+use super::text::{join_texts, json_record, str_field, time_field};
 use super::{
     HistoryConversation, HistoryFile, HistoryMessage, HistoryRole, HistorySkips, HistoryThreadKind,
 };
@@ -109,21 +109,18 @@ pub(super) fn decode(text: &str, file: &HistoryFile) -> Vec<HistoryConversation>
     // Older logs keep a session's sidechains inline; each agent gets its own
     // conversation, in the order it first appears.
     let mut sidechains: Vec<(String, Thread)> = Vec::new();
-    let typed_elsewhere = typed_texts(text);
+    let said = said_lines(text);
+    let mut copied = vec![false; said.len()];
     let mut queued: VecDeque<Queued> = VecDeque::new();
 
     for (line, raw) in text.lines().enumerate() {
         if raw.trim().is_empty() {
             continue;
         }
-        let Ok(value) = serde_json::from_str::<Value>(raw) else {
+        let Some(value) = json_record(raw) else {
             main.skipped().unreadable += 1;
             continue;
         };
-        if !value.is_object() {
-            main.skipped().unreadable += 1;
-            continue;
-        }
         // A subagent's own log is all sidechain; only a session's log keeps
         // sidechains inline.
         let inline_sidechain = kind == HistoryThreadKind::Main
@@ -156,9 +153,10 @@ pub(super) fn decode(text: &str, file: &HistoryFile) -> Vec<HistoryConversation>
             Some("queue-operation") => {
                 let queue = Queue {
                     queued: &mut queued,
-                    typed_elsewhere: &typed_elsewhere,
+                    said: &said,
+                    copied: &mut copied,
                 };
-                queue.line(thread, &value, &fallback_id, said_by);
+                queue.line(thread, &value, line, &fallback_id, said_by);
             }
             Some("system") => thread.skipped().system += 1,
             Some("custom-title") => {
@@ -190,43 +188,66 @@ struct Queued {
     text: String,
     at_ms: Option<u64>,
     native_id: String,
+    /// The line that queued it.
+    line: usize,
 }
 
-/// Every user-side text the log also holds as a typed line or a queued
-/// command attachment, to land a queued prompt once.
-fn typed_texts(text: &str) -> HashSet<String> {
-    let mut texts = HashSet::new();
-    for value in text
-        .lines()
-        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-    {
-        let content = match str_field(&value, "type") {
-            Some("user") if value.get("isMeta").and_then(Value::as_bool) != Some(true) => {
-                value.pointer("/message/content")
-            }
-            Some("attachment") => value
-                .get("attachment")
-                .filter(|attachment| str_field(attachment, "type") == Some("queued_command"))
-                .and_then(|attachment| attachment.get("prompt")),
-            _ => None,
+/// A message the log keeps on a line of its own, as the reader keeps it.
+struct Said {
+    line: usize,
+    role: HistoryRole,
+    text: String,
+}
+
+/// Every message the log keeps on a line of its own (typed lines, queued
+/// command attachments, replies), each read the way it lands, so a queued
+/// prompt can find the copy that is its own.
+fn said_lines(text: &str) -> Vec<Said> {
+    let mut said = Vec::new();
+    for (line, raw) in text.lines().enumerate() {
+        let Some(value) = json_record(raw) else {
+            continue;
         };
-        let text = user_text(content, &mut HistorySkips::default());
-        if !text.is_empty() {
-            texts.insert(text);
+        let mut scratch = Thread::new(HistoryConversation::new(
+            String::new(),
+            HistoryThreadKind::Main,
+            None,
+        ));
+        match str_field(&value, "type") {
+            Some("user") => user_line(&mut scratch, &value, "", None),
+            Some("assistant") => assistant_line(&mut scratch, &value, ""),
+            Some("attachment") => attachment_line(&mut scratch, &value, "", None),
+            _ => {}
         }
+        said.extend(
+            scratch
+                .conversation
+                .messages
+                .into_iter()
+                .map(|message| Said {
+                    line,
+                    role: message.role,
+                    text: message.text,
+                }),
+        );
     }
-    texts
+    said
 }
 
 /// Claude Code's prompt queue: `enqueue` holds the words; `dequeue` hands the
 /// oldest to the next turn and `remove` hands one over mid-turn. Either may
 /// leave no other trace of the words (a meta wrapper, an attachment the log
-/// did not keep), so a handed-over prompt lands from here unless the log also
-/// holds it as a typed line or a queued-command attachment. `popAll` takes the
-/// queue back into the input box: those prompts were withdrawn.
+/// did not keep), so a handed-over prompt lands from here unless the log holds
+/// its own copy: a kept typed line or queued-command attachment with its words,
+/// after it was queued and before the reply that follows the hand-over, that
+/// no other hand-over took. The same words asked at another time stay their
+/// own message. `popAll` takes the queue back into the input box: those
+/// prompts were withdrawn.
 struct Queue<'a> {
     queued: &'a mut VecDeque<Queued>,
-    typed_elsewhere: &'a HashSet<String>,
+    said: &'a [Said],
+    /// Which of `said` a hand-over has taken as its copy.
+    copied: &'a mut [bool],
 }
 
 impl Queue<'_> {
@@ -234,6 +255,7 @@ impl Queue<'_> {
         self,
         thread: &mut Thread,
         value: &Value,
+        line: usize,
         fallback_id: &str,
         said_by: Option<&'static str>,
     ) {
@@ -247,6 +269,7 @@ impl Queue<'_> {
                             text: text.to_owned(),
                             at_ms: time_field(value, "timestamp"),
                             native_id: fallback_id.to_owned(),
+                            line,
                         });
                     }
                     _ => thread.skipped().injected += 1,
@@ -277,7 +300,24 @@ impl Queue<'_> {
         let Some(queued) = handed else {
             return;
         };
-        if self.typed_elsewhere.contains(&queued.text) {
+        let answered = self
+            .said
+            .iter()
+            .find(|said| said.line > line && said.role == HistoryRole::Assistant)
+            .map_or(usize::MAX, |reply| reply.line);
+        let copy = self
+            .said
+            .iter()
+            .zip(self.copied.iter())
+            .position(|(said, copied)| {
+                !copied
+                    && said.role == HistoryRole::User
+                    && said.line > queued.line
+                    && said.line < answered
+                    && said.text == queued.text
+            });
+        if let Some(copy) = copy {
+            self.copied[copy] = true;
             thread.skipped().duplicates += 1;
             return;
         }
@@ -289,6 +329,7 @@ impl Queue<'_> {
             at_ms: queued.at_ms,
             said_by,
             tools: Vec::new(),
+            alias: None,
         });
     }
 }
@@ -296,7 +337,7 @@ impl Queue<'_> {
 /// The session id the first line that names one carries.
 fn first_session_id(text: &str) -> Option<String> {
     text.lines()
-        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter_map(json_record)
         .find_map(|value| str_field(&value, "sessionId").map(str::to_owned))
 }
 
@@ -324,6 +365,7 @@ fn message(value: &Value, fallback_id: &str, role: HistoryRole, text: String) ->
         at_ms: time_field(value, "timestamp"),
         said_by: None,
         tools: Vec::new(),
+        alias: None,
     }
 }
 

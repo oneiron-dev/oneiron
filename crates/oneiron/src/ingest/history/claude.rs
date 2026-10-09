@@ -1,10 +1,10 @@
 //! Claude.ai export: `conversations.json`, a list of conversations with their
 //! `chat_messages` in order. When a message names its parent the conversation
-//! branched, and the last message is the leaf the app shows.
+//! branched: each edit or retry becomes its own thread, with what followed it.
 
 use serde_json::Value;
 
-use super::text::{join_texts, str_field, time_field};
+use super::text::{export_conversations, join_texts, str_field, time_field};
 use super::tree::{TreeNode, threads};
 use super::{HistoryConversation, HistoryMessage, HistoryRole, HistorySkips, HistoryThreadKind};
 use crate::ingest::{IngestError, IngestResult};
@@ -15,19 +15,11 @@ const SOURCE_ID: &str = "claude";
 const ROOT_PARENT: &str = "00000000-0000-4000-8000-000000000000";
 
 pub(super) fn decode(text: &str) -> IngestResult<Vec<HistoryConversation>> {
-    let document: Value =
-        serde_json::from_str(text).map_err(|error| IngestError::InvalidDocument {
-            source_id: SOURCE_ID,
-            message: error.to_string(),
-        })?;
-    let conversations = document
-        .as_array()
-        .or_else(|| document.get("conversations").and_then(Value::as_array))
-        .ok_or_else(|| bad("conversations"))?;
     let mut out = Vec::new();
-    for conversation in conversations {
-        out.extend(decode_conversation(conversation)?);
-    }
+    export_conversations(SOURCE_ID, text, &mut |conversation| {
+        out.extend(decode_conversation(&conversation)?);
+        Ok(())
+    })?;
     Ok(out)
 }
 
@@ -75,7 +67,7 @@ fn decode_conversation(conversation: &Value) -> IngestResult<Vec<HistoryConversa
                 ),
             })
             .collect();
-        threads(&nodes, ids.last().map(String::as_str))
+        threads(&nodes)
     } else {
         vec![(0..messages.len()).collect()]
     };
@@ -177,5 +169,6 @@ fn decode_message(message: &Value, skipped: &mut HistorySkips) -> Option<History
         at_ms: time_field(message, "created_at"),
         said_by: None,
         tools,
+        alias: None,
     })
 }

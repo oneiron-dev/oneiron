@@ -9,21 +9,28 @@
 //! also wraps what the person typed in context it attached, and sends whole
 //! context blocks (instructions, environment, plugin listings) as user items.
 //! Both representations are cleared of that context first, then each message
-//! is kept once: the response item's id and time, the person's words. A legacy
-//! rollout begins with `{id, timestamp, instructions}` and holds bare response
-//! items with no time of their own.
+//! is kept once: the response item's id and time, the person's words. An
+//! event is paired only within its item's emission group, the lines between
+//! the item before and the item after, so the same words said again later
+//! stay their own message. A legacy rollout begins with `{id, timestamp,
+//! instructions}` and holds bare response items with no time of their own.
 //!
 //! A forked or spawned thread's rollout begins with a copy of its parent's
 //! history: the parent's meta line again, then its items. Items keep their ids
-//! there, so the import ledger lands them once. An item with no id gets one
-//! chained from its text and the id of the message before it, which the copy
-//! reproduces, so it too lands once.
+//! there, so the import ledger lands them once. A message with no id gets one
+//! chained from the id of the message before it, which the copy reproduces,
+//! so it too lands once. The words are not part of it: a corrected message
+//! keeps its id, and lands as a revision. A reply is logged as its event just
+//! before its item, so a log read in between holds the event alone, which
+//! takes a chained id; once the item is logged, the message keeps that id as
+//! its alias beside the item's own.
 
 use std::collections::HashMap;
+use std::ops::Range;
 
 use serde_json::Value;
 
-use super::text::{join_texts, str_field, time_field};
+use super::text::{join_texts, json_record, str_field, time_field};
 use super::{
     HistoryConversation, HistoryFile, HistoryMessage, HistoryRole, HistorySkips, HistoryThreadKind,
 };
@@ -105,14 +112,10 @@ pub(super) fn decode(text: &str, file: &HistoryFile) -> Vec<HistoryConversation>
         if raw.trim().is_empty() {
             continue;
         }
-        let Ok(value) = serde_json::from_str::<Value>(raw) else {
+        let Some(value) = json_record(raw) else {
             rollout.skipped.unreadable += 1;
             continue;
         };
-        if !value.is_object() {
-            rollout.skipped.unreadable += 1;
-            continue;
-        }
         let legacy_meta = first && value.get("type").is_none() && value.get("id").is_some();
         first = false;
         match (str_field(&value, "type"), value.get("payload")) {
@@ -352,74 +355,75 @@ impl Rollout {
                 .or_default()
                 .push(index);
         }
-        // The first event with these words that no response item has claimed.
-        let find = |role: HistoryRole, text: &str, claimed: &[bool]| {
+        // Each item's emission group: the lines after the item before it and
+        // before the item after it. Its events are logged there, before the
+        // item (a current reply) or after it (a request, a classic reply).
+        let groups: Vec<Range<usize>> = (0..responses.len())
+            .map(|index| {
+                let start = index
+                    .checked_sub(1)
+                    .map_or(0, |before| responses[before].line + 1);
+                let end = responses
+                    .get(index + 1)
+                    .map_or(usize::MAX, |after| after.line);
+                start..end
+            })
+            .collect();
+        // The first event in `group` with these words that no item has claimed.
+        let find = |role: HistoryRole, text: &str, group: &Range<usize>, claimed: &[bool]| {
             by_text
                 .get(&(role, text))?
                 .iter()
                 .copied()
-                .find(|&index| !claimed[index])
+                .find(|&index| !claimed[index] && group.contains(&events[index].line))
         };
         let mut claimed = vec![false; events.len()];
         let mut paired = vec![false; responses.len()];
         // Exact twins first, for every item, so no looser match below can take
         // an event that is another item's exact echo.
-        for (response, paired) in responses.iter_mut().zip(&mut paired) {
-            if let Some(index) = find(response.role, &response.text, &claimed) {
+        for ((response, paired), group) in responses.iter().zip(&mut paired).zip(&groups) {
+            if let Some(index) = find(response.role, &response.text, group, &claimed) {
                 claimed[index] = true;
                 *paired = true;
                 self.skipped.duplicates += 1;
             }
         }
-        // Classic events echo a reply one content block at a time.
-        for (response, paired) in responses.iter().zip(&mut paired) {
+        // Classic events echo a reply one content block at a time, after the
+        // item; a log read while it is written may hold only the first
+        // blocks' events yet. Each block's echo in the item's group is the
+        // item's, whether or not every block has one by now.
+        for ((response, paired), group) in responses.iter().zip(&mut paired).zip(&groups) {
+            if *paired || response.role != HistoryRole::Assistant {
+                continue;
+            }
             let blocks: Vec<&str> = response
                 .blocks
                 .iter()
                 .map(String::as_str)
                 .filter(|block| !block.is_empty())
                 .collect();
-            if *paired || blocks.len() < 2 {
+            if blocks.len() < 2 {
                 continue;
             }
-            let mut trial = claimed.clone();
-            let echoed = blocks.iter().all(|block| {
-                find(response.role, block, &trial).is_some_and(|index| {
-                    trial[index] = true;
-                    true
-                })
-            });
-            if echoed {
-                let echoes = trial
-                    .iter()
-                    .zip(&claimed)
-                    .filter(|(now, before)| **now && !**before);
-                self.skipped.duplicates += u32::try_from(echoes.count()).unwrap_or(u32::MAX);
-                claimed = trial;
-                *paired = true;
+            for block in blocks {
+                if let Some(index) = find(response.role, block, group, &claimed) {
+                    claimed[index] = true;
+                    *paired = true;
+                    self.skipped.duplicates += 1;
+                }
             }
         }
         // A user item that still wraps its event's words in context no rule
-        // knows: the event logged right after it, before the next user item.
-        let user_lines: Vec<usize> = responses
-            .iter()
-            .filter(|response| response.role == HistoryRole::User)
-            .map(|response| response.line)
-            .collect();
-        for (response, paired) in responses.iter_mut().zip(&mut paired) {
+        // knows: the event logged right after it, in its group.
+        for ((response, paired), group) in responses.iter_mut().zip(&mut paired).zip(&groups) {
             if *paired || response.role != HistoryRole::User {
                 continue;
             }
-            let next_item = user_lines
-                .iter()
-                .copied()
-                .find(|&line| line > response.line)
-                .unwrap_or(usize::MAX);
             let wrapped = events.iter().enumerate().find(|(index, event)| {
                 !claimed[*index]
                     && event.role == HistoryRole::User
                     && event.line > response.line
-                    && event.line < next_item
+                    && group.contains(&event.line)
                     && event.line - response.line <= WRAPPED_PAIR_WINDOW
                     && response.text.contains(event.text.as_str())
             });
@@ -455,8 +459,9 @@ impl Rollout {
         conversation.started_at_ms = self.started_at_ms;
         let mut tool_calls = self.tool_calls.into_iter().peekable();
         let mut pending: Vec<String> = Vec::new();
-        // An id-less item chains from the session its history began in: the
-        // last meta before the first message, which a copied history carries.
+        // An id-less message chains from the session its history began in:
+        // the last meta before the first message, which a copied history
+        // carries.
         let first_line = messages.first().map_or(0, |candidate| candidate.line);
         let mut previous = self
             .metas
@@ -485,9 +490,11 @@ impl Rollout {
                     _ => pending.push(name),
                 }
             }
-            let native_id = candidate
-                .id
-                .unwrap_or_else(|| chained_id(candidate.role, &candidate.text, &previous));
+            let chained = chained_id(candidate.role, &previous);
+            let (native_id, alias) = match candidate.id {
+                Some(id) => (id, Some(chained)),
+                None => (chained, None),
+            };
             previous.clone_from(&native_id);
             let mut message = HistoryMessage {
                 native_id,
@@ -497,6 +504,7 @@ impl Rollout {
                 at_ms: candidate.at_ms,
                 said_by: None,
                 tools: Vec::new(),
+                alias,
             };
             match message.role {
                 HistoryRole::Assistant => message.tools = std::mem::take(&mut pending),
@@ -519,17 +527,15 @@ impl Rollout {
     }
 }
 
-/// An id for an item the rollout recorded without one: its side, its words and
-/// the id of the message before it (for the first, of the session its history
-/// began in). A copied history reproduces all three; another session does not.
-fn chained_id(role: HistoryRole, text: &str, previous: &str) -> String {
+/// An id for a message the rollout recorded without one: its side and the id
+/// of the message before it (for the first, of the session its history began
+/// in). A copied history reproduces both; another session does not.
+fn chained_id(role: HistoryRole, previous: &str) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(match role {
         HistoryRole::User => b"user\0",
         HistoryRole::Assistant => b"asst\0",
     });
     hasher.update(previous.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(text.as_bytes());
     format!("chained:{}", &hasher.finalize().to_hex()[..32])
 }

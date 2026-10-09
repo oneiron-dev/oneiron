@@ -16,7 +16,7 @@ use std::time::Instant;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::ingest::history::{
     HistoryConversation, HistoryDryRun, HistoryFile, HistoryImportReport, HistoryLedgerSnapshot,
-    HistorySkips, HistorySource,
+    HistoryMessage, HistorySkips, HistorySource,
 };
 use serde::Serialize;
 
@@ -27,9 +27,19 @@ use crate::config::{ServeConfig, resolve_serve_config};
 /// log sits four below `~/.claude/projects`.
 const MAX_WALK_DEPTH: usize = 6;
 
-/// The largest file read whole: a session log, or an export's
-/// `conversations.json` (inside its zip, too).
-const MAX_FILE_BYTES: u64 = 4 << 30;
+/// The largest session log read whole.
+const MAX_LOG_BYTES: u64 = 4 << 30;
+
+/// The largest export read: its `conversations.json`, unzipped. The reader
+/// parses one conversation at a time, so this is about what the import holds.
+const MAX_EXPORT_BYTES: u64 = 2 << 30;
+
+/// What a folder's session logs may hold once decoded: messages, and bytes of
+/// them. The import keeps every decoded conversation until it lands them all,
+/// earliest first (an original before a resumed session's copies of it), so
+/// it checks after each log and stops before reading on.
+const MAX_DECODED_MESSAGES: usize = 1_000_000;
+const MAX_DECODED_BYTES: usize = 1 << 30;
 
 /// An export keeps its conversations in this file.
 const EXPORT_CONVERSATIONS: &str = "conversations.json";
@@ -201,12 +211,13 @@ fn decode(source: HistorySource, path: &Path) -> anyhow::Result<(Files, Vec<Hist
         // One log the person named.
         let file = File::open(path)
             .map_err(|error| anyhow::anyhow!("open {}: {error}", path.display()))?;
-        let text = read_limited(file, path)?;
+        let text = read_limited(file, path, MAX_LOG_BYTES)?;
         let conversations = decode_one(&text, &history_file(source, path), path)?;
         return Ok((Files { read: 1, passed: 0 }, conversations));
     }
     let mut files = Files { read: 0, passed: 0 };
     let mut conversations = Vec::new();
+    let mut decoded = Decoded::default();
     // Given the tool's whole home, only its history folder is read, never its
     // settings, prompt history or caches.
     let history = match source {
@@ -218,12 +229,45 @@ fn decode(source: HistorySource, path: &Path) -> anyhow::Result<(Files, Vec<Hist
             files.passed += 1;
             return Ok(());
         }
-        let text = read_limited(file, shown)?;
-        conversations.extend(decode_one(&text, &history_file(source, shown), shown)?);
+        let text = read_limited(file, shown, MAX_LOG_BYTES)?;
+        let read = decode_one(&text, &history_file(source, shown), shown)?;
+        decoded.add(&read);
+        anyhow::ensure!(
+            decoded.messages <= MAX_DECODED_MESSAGES && decoded.bytes <= MAX_DECODED_BYTES,
+            "the session logs under {} hold more than {MAX_DECODED_MESSAGES} messages or \
+             {MAX_DECODED_BYTES} bytes of them; nothing was imported. Import one project \
+             folder, or one month of sessions, at a time",
+            path.display()
+        );
+        conversations.extend(read);
         files.read += 1;
         Ok(())
     })?;
     Ok((files, conversations))
+}
+
+/// What decoded conversations hold in memory.
+#[derive(Default)]
+struct Decoded {
+    messages: usize,
+    bytes: usize,
+}
+
+impl Decoded {
+    fn add(&mut self, conversations: &[HistoryConversation]) {
+        for message in conversations
+            .iter()
+            .flat_map(|conversation| &conversation.messages)
+        {
+            self.messages += 1;
+            self.bytes += std::mem::size_of::<HistoryMessage>()
+                + message.native_id.len()
+                + message.text.len()
+                + message.parent_id.as_ref().map_or(0, String::len)
+                + message.alias.as_ref().map_or(0, String::len)
+                + message.tools.iter().map(String::len).sum::<usize>();
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -261,7 +305,7 @@ fn read_export(path: &Path) -> anyhow::Result<String> {
     if metadata.is_dir() {
         let file = open_in(path, EXPORT_CONVERSATIONS)?
             .ok_or_else(|| anyhow::anyhow!("{} holds no {EXPORT_CONVERSATIONS}", path.display()))?;
-        return read_limited(file, &path.join(EXPORT_CONVERSATIONS));
+        return read_limited(file, &path.join(EXPORT_CONVERSATIONS), MAX_EXPORT_BYTES);
     }
     let zipped = path
         .extension()
@@ -271,7 +315,7 @@ fn read_export(path: &Path) -> anyhow::Result<String> {
     } else {
         let file = File::open(path)
             .map_err(|error| anyhow::anyhow!("open {}: {error}", path.display()))?;
-        read_limited(file, path)
+        read_limited(file, path, MAX_EXPORT_BYTES)
     }
 }
 
@@ -300,24 +344,28 @@ fn read_zipped_export(path: &Path) -> anyhow::Result<String> {
     let (index, _) =
         best.ok_or_else(|| anyhow::anyhow!("{} holds no {EXPORT_CONVERSATIONS}", path.display()))?;
     let entry = archive.by_index(index)?;
+    // The size the zip declares, refused before anything is unzipped; the
+    // read below holds a zip that declares less to the same bound.
     anyhow::ensure!(
-        entry.size() <= MAX_FILE_BYTES,
-        "{EXPORT_CONVERSATIONS} in {} is larger than {MAX_FILE_BYTES} bytes",
-        path.display()
+        entry.size() <= MAX_EXPORT_BYTES,
+        "{EXPORT_CONVERSATIONS} in {} unzips to {} bytes; an export is read up to \
+         {MAX_EXPORT_BYTES}",
+        path.display(),
+        entry.size()
     );
-    read_limited(entry, path)
+    read_limited(entry, path, MAX_EXPORT_BYTES)
 }
 
-/// Reads at most [`MAX_FILE_BYTES`], whatever a header claimed.
-fn read_limited(reader: impl Read, path: &Path) -> anyhow::Result<String> {
+/// Reads at most `limit` bytes, whatever a header claimed, and refuses more.
+fn read_limited(reader: impl Read, path: &Path, limit: u64) -> anyhow::Result<String> {
     let mut bytes = Vec::new();
     reader
-        .take(MAX_FILE_BYTES + 1)
+        .take(limit + 1)
         .read_to_end(&mut bytes)
         .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
     anyhow::ensure!(
-        u64::try_from(bytes.len()).unwrap_or(u64::MAX) <= MAX_FILE_BYTES,
-        "{} is larger than {MAX_FILE_BYTES} bytes",
+        u64::try_from(bytes.len()).unwrap_or(u64::MAX) <= limit,
+        "{} is larger than {limit} bytes; nothing was imported",
         path.display()
     );
     Ok(String::from_utf8(bytes)

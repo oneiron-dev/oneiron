@@ -75,6 +75,23 @@ pub(super) fn get(
     LEDGER.get(dbs, txn, &key(source, native_id))
 }
 
+/// The row of `message`: under its native id, or else under the alias an
+/// earlier import may have landed it by.
+pub(super) fn find(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    source: HistorySource,
+    message: &HistoryMessage,
+) -> Result<Option<LedgerRow>> {
+    if let Some(row) = get(dbs, txn, source, &message.native_id)? {
+        return Ok(Some(row));
+    }
+    match &message.alias {
+        Some(alias) => get(dbs, txn, source, alias),
+        None => Ok(None),
+    }
+}
+
 pub(super) fn put(
     dbs: &impl SideTableDbs,
     txn: &mut heed::RwTxn<'_>,

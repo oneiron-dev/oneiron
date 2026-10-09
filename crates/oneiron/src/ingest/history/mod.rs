@@ -116,15 +116,19 @@ pub struct HistoryMessage {
     /// Names of the tools this assistant message went on to call. The calls
     /// and their results are counted in [`HistorySkips`], not kept.
     pub tools: Vec<String>,
+    /// The id an earlier read of a growing log gave this message: a Codex
+    /// reply logged first as its event alone, with its item (and the item's
+    /// own id) after it. The import knows the message by either id.
+    pub alias: Option<String>,
 }
 
 /// How a conversation relates to the source's main thread.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HistoryThreadKind {
-    /// The conversation as the source shows it.
+    /// The conversation as it was first written.
     Main,
-    /// An edit or regeneration the source kept beside the main thread.
+    /// An edit or regeneration the source kept, with what followed it.
     Branch,
     /// A Claude Code sidechain recorded inside its session's log.
     Sidechain,

@@ -6,7 +6,7 @@
 //! each source's real layout.
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 
 use oneiron::edge::EdgeActorClass;
 use oneiron::memory::{Effort, RecallScope};
@@ -48,8 +48,8 @@ impl Home {
         Self { dir, vault, config }
     }
 
-    /// Runs `oneiron import <source> <path> [--dry-run]` and returns its report.
-    fn import(&self, source: &str, path: &Path, dry_run: bool) -> Value {
+    /// Runs `oneiron import <source> <path> [--dry-run]`.
+    fn run_import(&self, source: &str, path: &Path, dry_run: bool) -> Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_oneiron"));
         command
             .args(["import", source])
@@ -60,7 +60,12 @@ impl Home {
         if dry_run {
             command.arg("--dry-run");
         }
-        let output = command.output().expect("test fixture");
+        command.output().expect("test fixture")
+    }
+
+    /// Runs `oneiron import <source> <path> [--dry-run]` and returns its report.
+    fn import(&self, source: &str, path: &Path, dry_run: bool) -> Value {
+        let output = self.run_import(source, path, dry_run);
         assert!(
             output.status.success(),
             "import {source}: {}",
@@ -397,4 +402,152 @@ fn codex_rollouts_keep_each_message_once_and_appended_rollouts_add_only_new() {
     assert_eq!(totals(&grown), (2, 16, 0, 0));
     assert_eq!(home.count(ENTITY_TYPE_MESSAGE), 14);
     assert_eq!(home.search("regression test"), 1);
+}
+
+/// Astra 1310 #2: a classic reply of two blocks, read while its log was
+/// written: the item and the first block's event are logged, the second
+/// block's event is not yet. The echo is the reply's, then and once the log
+/// is whole: one reply lands, never a second message holding its first block.
+#[test]
+fn a_codex_reply_read_before_all_its_block_echoes_were_logged_lands_once() {
+    let home = Home::new();
+    let rollout = "rollout-2026-09-14T10-00-00-0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b.jsonl";
+    let whole = std::fs::read_to_string(fixtures().join("codex/sessions/2026/09/14").join(rollout))
+        .expect("test fixture");
+    let lines: Vec<&str> = whole.lines().collect();
+    let sessions = home.dir.path().join("sessions");
+    std::fs::create_dir_all(&sessions).expect("test fixture");
+    let log = sessions.join(rollout);
+
+    // Through the event echoing the first block.
+    std::fs::write(&log, lines[..11].join("\n") + "\n").expect("test fixture");
+    let partway = home.import("codex", &sessions, false);
+    assert_eq!(totals(&partway), (2, 0, 0, 0), "the request and the reply");
+
+    std::fs::write(&log, &whole).expect("test fixture");
+    let finished = home.import("codex", &sessions, false);
+    assert_eq!(totals(&finished), (0, 2, 0, 0));
+    assert_eq!(home.count(ENTITY_TYPE_MESSAGE), 2);
+    assert_eq!(home.search("so 19.99 rounds"), 1);
+}
+
+/// The largest resident set any child process of this test has reached.
+#[cfg(unix)]
+fn peak_child_bytes() -> u64 {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+    // SAFETY: `getrusage` fills the `rusage` it is given; zeroed is a valid
+    // `rusage` either way.
+    let usage = unsafe {
+        libc::getrusage(libc::RUSAGE_CHILDREN, usage.as_mut_ptr());
+        usage.assume_init()
+    };
+    let max = u64::try_from(usage.ru_maxrss).unwrap_or(0);
+    // Linux counts kilobytes; macOS counts bytes.
+    if cfg!(target_os = "macos") {
+        max
+    } else {
+        max * 1024
+    }
+}
+
+/// An export zip whose `conversations.json` is `head`, `filler` bytes of
+/// `pad` repeated, then `tail`.
+fn zip_padded_export(zip_path: &Path, head: &[u8], pad: &[u8], filler: usize, tail: &[u8]) {
+    let mut zip = zip::ZipWriter::new(std::fs::File::create(zip_path).expect("test fixture"));
+    zip.start_file(
+        "export/conversations.json",
+        zip::write::FileOptions::default().compression_level(Some(1)),
+    )
+    .expect("test fixture");
+    zip.write_all(head).expect("test fixture");
+    let chunk = pad.repeat((1 << 20) / pad.len());
+    let mut written = 0;
+    while written < filler {
+        let take = chunk.len().min(filler - written);
+        zip.write_all(&chunk[..take]).expect("test fixture");
+        written += take;
+    }
+    zip.write_all(tail).expect("test fixture");
+    zip.finish().expect("test fixture");
+}
+
+/// Astra 1310 #5, scaled down: a small zip whose export holds its
+/// conversations beside a long list of zeros. The import reads the
+/// conversations without building the rest of the document.
+#[cfg(unix)]
+#[test]
+fn an_export_holding_a_long_list_beside_its_conversations_imports_in_bounded_memory() {
+    let home = Home::new();
+    let conversations = std::fs::read(fixtures().join("chatgpt/export-1/conversations.json"))
+        .expect("test fixture");
+    let mut head = b"{\"conversations\":".to_vec();
+    head.extend_from_slice(&conversations);
+    head.extend_from_slice(b",\"ignored\":[");
+    let zip_path = home.dir.path().join("padded-export.zip");
+    zip_padded_export(&zip_path, &head, b"0,", 64 << 20, b"0]}");
+
+    let report = home.import("chatgpt", &zip_path, false);
+    assert_eq!(totals(&report), (6, 0, 0, 0));
+    let peak = peak_child_bytes();
+    assert!(
+        peak < 1 << 30,
+        "the import peaked at {peak} bytes for a 64 MiB export"
+    );
+}
+
+/// Astra 1310 #5: an export that unzips past the read limit is refused before
+/// it is unzipped, and nothing lands.
+#[test]
+fn an_export_that_unzips_past_the_limit_is_refused_and_nothing_lands() {
+    let home = Home::new();
+    let zip_path = home.dir.path().join("huge-export.zip");
+    zip_padded_export(
+        &zip_path,
+        b"{\"conversations\":[]",
+        b" ",
+        (2 << 30) + (1 << 20),
+        b"}",
+    );
+    let output = home.run_import("chatgpt", &zip_path, false);
+    assert!(!output.status.success(), "an over-size export is refused");
+    assert_eq!(home.count(ENTITY_TYPE_MESSAGE), 0);
+}
+
+/// Astra 1310 #5: session logs each within the per-log limit that together
+/// decode to more messages than one import holds are refused before anything
+/// lands, dry run or not.
+#[test]
+fn session_logs_past_the_decoded_limit_are_refused_before_anything_lands() {
+    let home = Home::new();
+    let sessions = home.dir.path().join("sessions/2025/08");
+    std::fs::create_dir_all(&sessions).expect("test fixture");
+    for (day, session) in [
+        (20, "6a5b4c3d-2e1f-4a0b-9c8d-7e6f5a4b3c21"),
+        (21, "6a5b4c3d-2e1f-4a0b-9c8d-7e6f5a4b3c22"),
+    ] {
+        let log = sessions.join(format!("rollout-2025-08-{day}T09-00-00-{session}.jsonl"));
+        let mut file = std::io::BufWriter::new(std::fs::File::create(log).expect("test fixture"));
+        writeln!(
+            file,
+            r#"{{"id":"{session}","timestamp":"2025-08-{day}T09:00:00.000Z","instructions":null}}"#
+        )
+        .expect("test fixture");
+        for note in 0..500_001 {
+            writeln!(
+                file,
+                r#"{{"type":"message","role":"assistant","content":[{{"type":"output_text","text":"note {note}"}}]}}"#
+            )
+            .expect("test fixture");
+        }
+        file.flush().expect("test fixture");
+    }
+    let before = home.vault_bytes();
+    let dry = home.run_import("codex", &home.dir.path().join("sessions"), true);
+    assert!(!dry.status.success(), "a dry run is refused too");
+    let output = home.run_import("codex", &home.dir.path().join("sessions"), false);
+    assert!(
+        !output.status.success(),
+        "over a million messages is refused"
+    );
+    assert_eq!(home.vault_bytes(), before, "nothing was written");
 }

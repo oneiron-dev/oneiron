@@ -36,16 +36,60 @@ fn message(id: &str, role: HistoryRole, text: &str, at_ms: u64) -> HistoryMessag
         at_ms: Some(at_ms),
         said_by: None,
         tools: Vec::new(),
+        alias: None,
     }
 }
 
 /// The ledger row of one imported message. Its read transaction closes before
 /// the caller opens another: one thread holds one LMDB read at a time.
 fn ledger_row(vault: &Vault, native: &str) -> ledger::LedgerRow {
+    source_ledger_row(vault, SOURCE, native)
+}
+
+fn source_ledger_row(vault: &Vault, source: HistorySource, native: &str) -> ledger::LedgerRow {
     let txn = vault.store.env.read_txn().expect("txn");
-    ledger::get(&vault.store, &txn, SOURCE, native)
+    ledger::get(&vault.store, &txn, source, native)
         .expect("ledger read")
         .expect("ledger row")
+}
+
+/// Decodes one session log, its lines given one per item.
+fn decode_log(source: HistorySource, stem: &str, lines: &[&str]) -> Vec<HistoryConversation> {
+    let file = super::HistoryFile {
+        stem: stem.to_owned(),
+        parent: None,
+    };
+    source.decode(&lines.join("\n"), &file).expect("decode")
+}
+
+/// Imports every conversation and sums the reports: new, skipped, changed.
+fn import_all(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    source: HistorySource,
+    conversations: &[HistoryConversation],
+) -> (u32, u32, u32) {
+    conversations
+        .iter()
+        .fold((0, 0, 0), |(new, skipped, changed), conversation| {
+            let report = vault
+                .import_history(owner, source, conversation, IMPORTED_AT)
+                .expect("import");
+            (
+                new + report.new,
+                skipped + report.skipped,
+                changed + report.changed,
+            )
+        })
+}
+
+fn user_words(conversations: &[HistoryConversation]) -> Vec<&str> {
+    conversations
+        .iter()
+        .flat_map(|conversation| &conversation.messages)
+        .filter(|message| message.role == HistoryRole::User)
+        .map(|message| message.text.as_str())
+        .collect()
 }
 
 fn session(id: &str, messages: Vec<HistoryMessage>) -> HistoryConversation {
@@ -287,7 +331,7 @@ fn a_codex_item_without_an_event_keeps_its_own_words() {
 fn a_regrouped_run_lands_its_new_message_beside_what_landed() {
     let (_dir, vault, owner) = vault_and_owner();
     let at = 1_700_000_000_000;
-    // A ChatGPT export whose selected answer later changes: the run that held
+    // A later read of a source that regroups a run: the run that held
     // [a0, a1] now holds [a0, a2] under the same turn.
     let first = session(
         "session-gus",
@@ -496,4 +540,324 @@ fn a_secret_shaped_message_refuses_its_turn_and_the_rest_of_the_import_lands() {
         .import_history(&owner, SOURCE, &conversation, IMPORTED_AT + 60)
         .expect("re-import");
     assert_eq!((again.new, again.skipped, again.refused), (0, 2, 1));
+}
+
+/// Astra 1310 #1: a classic rollout's messages carry no ids. Correcting the
+/// request's words keeps both messages where they were: the request lands
+/// as a revision, and the unchanged reply after it is the same message.
+#[test]
+fn a_corrected_codex_request_without_an_id_lands_as_a_revision_and_its_reply_stays() {
+    let (_dir, vault, owner) = vault_and_owner();
+    let rollout = |request: &str| {
+        let item = format!(
+            r#"{{"timestamp":"2026-09-21T09:00:01.000Z","type":"response_item","payload":{{"type":"message","role":"user","content":[{{"type":"input_text","text":"{request}"}}]}}}}"#
+        );
+        let event = format!(
+            r#"{{"timestamp":"2026-09-21T09:00:01.001Z","type":"event_msg","payload":{{"type":"user_message","message":"{request}","kind":"plain"}}}}"#
+        );
+        decode_log(
+            HistorySource::Codex,
+            "rollout-2026-09-21T09-00-00-s-edit",
+            &[
+                r#"{"timestamp":"2026-09-21T09:00:00.000Z","type":"session_meta","payload":{"id":"s-edit","timestamp":"2026-09-21T09:00:00.000Z","cli_version":"0.50.0"}}"#,
+                &item,
+                &event,
+                r#"{"timestamp":"2026-09-21T09:00:06.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The total matches the bank statement."}]}}"#,
+                r#"{"timestamp":"2026-09-21T09:00:06.001Z","type":"event_msg","payload":{"type":"agent_message","message":"The total matches the bank statement."}}"#,
+            ],
+        )
+    };
+    let first = rollout("Chek the ledger total against the bank");
+    assert_eq!(
+        import_all(&vault, &owner, HistorySource::Codex, &first),
+        (2, 0, 0)
+    );
+    let corrected = rollout("Check the ledger total against the bank");
+    assert_eq!(
+        import_all(&vault, &owner, HistorySource::Codex, &corrected),
+        (0, 1, 1),
+        "the request is revised, the reply skipped"
+    );
+    assert_eq!(
+        vault
+            .history_import_ledger_len(HistorySource::Codex)
+            .expect("ledger"),
+        2
+    );
+}
+
+/// Greptile 1310 (codex.rs:491): a current reply is logged as its event, then
+/// as its item with the item's id. An import that read the log between the
+/// two saw the event alone; once the item is logged the reply is the same
+/// message, not a second one.
+#[test]
+fn a_codex_reply_read_before_its_item_was_logged_lands_once() {
+    let (_dir, vault, owner) = vault_and_owner();
+    let lines = [
+        r#"{"timestamp":"2026-09-22T08:00:00.000Z","type":"session_meta","payload":{"id":"s-live","timestamp":"2026-09-22T08:00:00.000Z","cli_version":"0.100.0"}}"#,
+        r#"{"timestamp":"2026-09-22T08:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Which columns does the CSV import read?"}],"id":"msg_live_u1"}}"#,
+        r#"{"timestamp":"2026-09-22T08:00:01.001Z","type":"event_msg","payload":{"type":"item_completed","thread_id":"s-live","turn_id":"turn-1","item":{"type":"UserMessage","id":"item-1","content":[{"type":"text","text":"Which columns does the CSV import read?"}]}}}"#,
+        r#"{"timestamp":"2026-09-22T08:00:07.000Z","type":"event_msg","payload":{"type":"item_completed","thread_id":"s-live","turn_id":"turn-1","item":{"type":"AgentMessage","id":"item-2","content":[{"type":"Text","text":"Date, payee and amount."}]}}}"#,
+        r#"{"timestamp":"2026-09-22T08:00:07.001Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Date, payee and amount."}],"id":"msg_live_a1"}}"#,
+    ];
+    let stem = "rollout-2026-09-22T08-00-00-s-live";
+    let partway = decode_log(HistorySource::Codex, stem, &lines[..4]);
+    assert_eq!(
+        import_all(&vault, &owner, HistorySource::Codex, &partway),
+        (2, 0, 0)
+    );
+    let whole = decode_log(HistorySource::Codex, stem, &lines);
+    assert_eq!(
+        import_all(&vault, &owner, HistorySource::Codex, &whole),
+        (0, 2, 0),
+        "the reply's item is the event already imported"
+    );
+    assert_eq!(
+        vault
+            .history_import_ledger_len(HistorySource::Codex)
+            .expect("ledger"),
+        2
+    );
+}
+
+/// Greptile 1310 (codex.rs:361): the same words asked in two turns are two
+/// requests, even when the first is logged only as its item and the second
+/// only as its event.
+#[test]
+fn the_same_codex_request_in_two_turns_stays_two_messages() {
+    let conversations = decode_log(
+        HistorySource::Codex,
+        "rollout-2026-09-23T10-00-00-s-again",
+        &[
+            r#"{"timestamp":"2026-09-23T10:00:00.000Z","type":"session_meta","payload":{"id":"s-again","timestamp":"2026-09-23T10:00:00.000Z","cli_version":"0.100.0"}}"#,
+            r#"{"timestamp":"2026-09-23T10:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}],"id":"msg_again_u1"}}"#,
+            r#"{"timestamp":"2026-09-23T10:00:09.000Z","type":"event_msg","payload":{"type":"item_completed","thread_id":"s-again","turn_id":"turn-1","item":{"type":"AgentMessage","id":"item-1","content":[{"type":"Text","text":"Step one is done."}]}}}"#,
+            r#"{"timestamp":"2026-09-23T10:00:09.001Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Step one is done."}],"id":"msg_again_a1"}}"#,
+            r#"{"timestamp":"2026-09-23T10:05:00.000Z","type":"event_msg","payload":{"type":"item_completed","thread_id":"s-again","turn_id":"turn-2","item":{"type":"UserMessage","id":"item-2","content":[{"type":"text","text":"continue"}]}}}"#,
+            r#"{"timestamp":"2026-09-23T10:05:08.000Z","type":"event_msg","payload":{"type":"item_completed","thread_id":"s-again","turn_id":"turn-2","item":{"type":"AgentMessage","id":"item-3","content":[{"type":"Text","text":"Step two is done."}]}}}"#,
+            r#"{"timestamp":"2026-09-23T10:05:08.001Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Step two is done."}],"id":"msg_again_a2"}}"#,
+        ],
+    );
+    assert_eq!(user_words(&conversations), ["continue", "continue"]);
+}
+
+/// Astra 1310 #3, Greptile 1310 (claude_code.rs:283): a prompt typed early
+/// in a session, and the same words queued later while the assistant was
+/// busy, are two requests. The later one is kept only by the queue and a meta
+/// wrapper, so the queue lands it.
+#[test]
+fn a_claude_code_prompt_queued_again_later_lands_again() {
+    let conversations = decode_log(
+        HistorySource::ClaudeCode,
+        "7e1f0a2b-3333-4444-8555-966677778888",
+        &[
+            r#"{"parentUuid":null,"isSidechain":false,"userType":"external","sessionId":"7e1f0a2b-3333-4444-8555-966677778888","type":"user","message":{"role":"user","content":"continue"},"uuid":"d1000000-0000-4000-8000-000000000001","timestamp":"2026-09-24T07:00:00.000Z"}"#,
+            r#"{"parentUuid":"d1000000-0000-4000-8000-000000000001","isSidechain":false,"userType":"external","sessionId":"7e1f0a2b-3333-4444-8555-966677778888","type":"assistant","message":{"role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"text","text":"Seedlings are potted."}]},"uuid":"d1000000-0000-4000-8000-000000000002","timestamp":"2026-09-24T07:00:20.000Z"}"#,
+            r#"{"type":"queue-operation","operation":"enqueue","timestamp":"2026-09-24T07:30:05.000Z","sessionId":"7e1f0a2b-3333-4444-8555-966677778888","content":"continue"}"#,
+            r#"{"type":"queue-operation","operation":"dequeue","timestamp":"2026-09-24T07:30:40.000Z","sessionId":"7e1f0a2b-3333-4444-8555-966677778888"}"#,
+            r#"{"parentUuid":"d1000000-0000-4000-8000-000000000002","isSidechain":false,"userType":"external","sessionId":"7e1f0a2b-3333-4444-8555-966677778888","type":"user","isMeta":true,"message":{"role":"user","content":"<system-reminder>The user sent: continue</system-reminder>"},"uuid":"d1000000-0000-4000-8000-000000000003","timestamp":"2026-09-24T07:30:40.000Z"}"#,
+            r#"{"parentUuid":"d1000000-0000-4000-8000-000000000003","isSidechain":false,"userType":"external","sessionId":"7e1f0a2b-3333-4444-8555-966677778888","type":"assistant","message":{"role":"assistant","model":"claude-sonnet-4-5","content":[{"type":"text","text":"Labels are printed."}]},"uuid":"d1000000-0000-4000-8000-000000000004","timestamp":"2026-09-24T07:31:00.000Z"}"#,
+        ],
+    );
+    assert_eq!(user_words(&conversations), ["continue", "continue"]);
+}
+
+/// One ChatGPT conversation with the given mapping nodes `(id, parent, role,
+/// time, text)`, showing `current`.
+fn chatgpt_export(current: &str, nodes: &[(&str, Option<&str>, &str, f64, &str)]) -> String {
+    let mapping: serde_json::Map<String, serde_json::Value> = nodes
+        .iter()
+        .map(|(id, parent, role, time, text)| {
+            let children: Vec<&str> = nodes
+                .iter()
+                .filter(|node| node.1 == Some(*id))
+                .map(|node| node.0)
+                .collect();
+            let message = (!role.is_empty()).then(|| {
+                serde_json::json!({
+                    "id": id,
+                    "author": {"role": role},
+                    "create_time": time,
+                    "content": {"content_type": "text", "parts": [text]},
+                    "recipient": "all",
+                })
+            });
+            (
+                (*id).to_owned(),
+                serde_json::json!({"id": id, "parent": parent, "children": children, "message": message}),
+            )
+        })
+        .collect();
+    serde_json::json!([{
+        "conversation_id": "c-kyoto",
+        "title": "Kyoto in April",
+        "create_time": 1_757_840_000.0,
+        "current_node": current,
+        "mapping": mapping,
+    }])
+    .to_string()
+}
+
+/// Astra 1310 #4, Greptile 1310 (chatgpt.rs:94): a regenerated answer, then
+/// a later export where the person went back to the first answer and asked
+/// on. Each new message lands beside the answer it follows, whichever branch
+/// the app showed at each export.
+#[test]
+fn a_chatgpt_reply_lands_beside_the_answer_it_follows_after_a_branch_switch() {
+    let (_dir, vault, owner) = vault_and_owner();
+    let source = HistorySource::Chatgpt;
+    let file = super::HistoryFile {
+        stem: "conversations.json".to_owned(),
+        parent: None,
+    };
+    let asked: [(&str, Option<&str>, &str, f64, &str); 4] = [
+        ("root", None, "", 0.0, ""),
+        (
+            "u1",
+            Some("root"),
+            "user",
+            1_757_840_010.0,
+            "Is Osaka a good day trip from Kyoto?",
+        ),
+        (
+            "a1",
+            Some("u1"),
+            "assistant",
+            1_757_840_015.0,
+            "Yes, fifteen minutes by Shinkansen.",
+        ),
+        (
+            "a1b",
+            Some("u1"),
+            "assistant",
+            1_757_840_090.0,
+            "Yes; the JR Special Rapid is cheaper.",
+        ),
+    ];
+    let first = source
+        .decode(&chatgpt_export("a1b", &asked), &file)
+        .expect("decode");
+    assert_eq!(import_all(&vault, &owner, source, &first), (3, 0, 0));
+
+    let mut later = asked.to_vec();
+    later.extend([
+        (
+            "u2",
+            Some("a1"),
+            "user",
+            1_757_926_400.0,
+            "Which car has the window seats?",
+        ),
+        (
+            "a2",
+            Some("u2"),
+            "assistant",
+            1_757_926_410.0,
+            "Seats A and E.",
+        ),
+        (
+            "u3",
+            Some("a1b"),
+            "user",
+            1_757_926_500.0,
+            "Does the Rapid need a reservation?",
+        ),
+        (
+            "a3",
+            Some("u3"),
+            "assistant",
+            1_757_926_510.0,
+            "No, every seat is unreserved.",
+        ),
+    ]);
+    let grown = source
+        .decode(&chatgpt_export("a2", &later), &file)
+        .expect("decode");
+    assert_eq!(import_all(&vault, &owner, source, &grown), (4, 3, 0));
+    let landed_in = |native: &str| source_ledger_row(&vault, source, native).conversation;
+    for (asked, answered) in [("u2", "a1"), ("a2", "a1"), ("u3", "a1b"), ("a3", "a1b")] {
+        assert_eq!(
+            landed_in(asked),
+            landed_in(answered),
+            "{asked} follows {answered}"
+        );
+    }
+    assert_ne!(landed_in("a1"), landed_in("a1b"));
+}
+
+/// Greptile 1310 (land.rs:391): a resumed session's copy and the original
+/// carry one message id. Another import lands its revision between this
+/// import's ledger read and its write; neither text may drop out of the
+/// ledger.
+#[test]
+fn an_import_landing_between_another_imports_read_and_write_keeps_both_texts() {
+    let (_dir, vault, owner) = vault_and_owner();
+    let vault = std::rc::Rc::new(vault);
+    let at = 1_700_000_000_000;
+    let said = |conversation: &str, text: &str| {
+        session(
+            conversation,
+            vec![message("m1", HistoryRole::User, text, at)],
+        )
+    };
+    vault
+        .import_history(
+            &owner,
+            SOURCE,
+            &said("session-orig", "pack the tent"),
+            IMPORTED_AT,
+        )
+        .expect("import");
+
+    let concurrent = said("session-resumed-b", "pack the tent and the stove");
+    let (other_vault, other_owner) = (std::rc::Rc::clone(&vault), owner.clone());
+    super::land::BETWEEN_READ_AND_WRITE.with_borrow_mut(|between| {
+        *between = Some(Box::new(move || {
+            let report = other_vault
+                .import_history(&other_owner, SOURCE, &concurrent, IMPORTED_AT)
+                .expect("concurrent import");
+            assert_eq!(report.changed, 1);
+        }));
+    });
+    let report = vault
+        .import_history(
+            &owner,
+            SOURCE,
+            &said("session-resumed-a", "pack the tent and the maps"),
+            IMPORTED_AT,
+        )
+        .expect("import");
+    assert_eq!((report.changed, report.refused), (1, 0));
+    assert_eq!(
+        ledger_row(&vault, "m1").hashes.len(),
+        3,
+        "the original, the concurrent revision and this one"
+    );
+}
+
+/// Greptile 1310 (plan.rs:32): one dry run over two sources whose message
+/// ids happen to match counts each as its own, as the import keeps them.
+#[test]
+fn a_dry_run_over_two_sources_keeps_their_messages_apart() {
+    let (dir, vault, _owner) = vault_and_owner();
+    drop(vault);
+    let snapshot = super::HistoryLedgerSnapshot::open(dir.path()).expect("read-only ledger");
+    let said = session(
+        "conversation-1",
+        vec![message(
+            "m1",
+            HistoryRole::User,
+            "Hello there",
+            1_700_000_000_000,
+        )],
+    );
+    let mut dry_run = super::HistoryDryRun::default();
+    let chatgpt = snapshot
+        .plan(HistorySource::Chatgpt, &said, &mut dry_run)
+        .expect("plan");
+    let claude = snapshot
+        .plan(HistorySource::Claude, &said, &mut dry_run)
+        .expect("plan");
+    assert_eq!((chatgpt.new, chatgpt.skipped), (1, 0));
+    assert_eq!((claude.new, claude.skipped), (1, 0));
 }
