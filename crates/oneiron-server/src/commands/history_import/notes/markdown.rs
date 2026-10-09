@@ -75,11 +75,14 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
     let mut in_list = false;
     let mut after_blank = true;
     for line in body.lines() {
-        let (quoted, inner) = unquote(line);
+        let line = expand_prefix(line);
         if let Some(open) = fence {
-            // A fence in a block quote ends with the quote.
-            if !open.quoted || quoted {
-                let content = inner.trim_start();
+            // A fence ends with its closing line, or with the quote or list
+            // item it opened in. Quote markers past its own are code.
+            let (depth, inner) = unquote(&line, Some(open.depth));
+            let content = inner.trim_start();
+            let item_ended = open.in_item && !content.is_empty() && indent(inner) == 0;
+            if depth == open.depth && !item_ended {
                 if run(content, open.mark) >= open.len
                     && content.trim_start_matches(open.mark).trim().is_empty()
                 {
@@ -88,7 +91,9 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
                 continue;
             }
             fence = None;
+            in_list &= !item_ended;
         }
+        let (depth, inner) = unquote(&line, None);
         let indent = indent(inner);
         let mut content = inner.trim_start();
         if content.is_empty() {
@@ -104,31 +109,34 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
             indented_code = true;
             continue;
         }
-        // A rule or a heading is a block of its own, and a heading at the
-        // margin ends a list.
-        if thematic_break(content) || heading(content) {
-            span_links(&std::mem::take(&mut paragraph), &mut links);
-            span_links(content, &mut links);
-            in_list &= indent >= 2;
-            after_blank = false;
-            continue;
-        }
-        if let Some(rest) = list_item(content) {
+        let mut item = false;
+        if let Some(rest) = list_item(content).filter(|_| !thematic_break(content)) {
             span_links(&std::mem::take(&mut paragraph), &mut links);
             in_list = true;
+            item = true;
             content = rest.trim_start();
-        } else if indent == 0 && after_blank {
+        } else if indent < 2 && after_blank {
             in_list = false;
         }
         after_blank = false;
+        // A rule or a heading is a block of its own, and one at the margin
+        // ends a list.
+        if thematic_break(content) || heading(content) {
+            span_links(&std::mem::take(&mut paragraph), &mut links);
+            span_links(content, &mut links);
+            in_list &= item || indent >= 2;
+            continue;
+        }
         if let Some(mark) = fence_mark(content)
             && (indent < 4 || in_list)
         {
             span_links(&std::mem::take(&mut paragraph), &mut links);
+            in_list &= item || indent >= 2;
             fence = Some(Fence {
                 mark,
                 len: run(content, mark),
-                quoted,
+                depth,
+                in_item: in_list,
             });
             continue;
         }
@@ -139,32 +147,56 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
     links
 }
 
-/// An open code fence: its character, its length, and whether it opened in
-/// a block quote.
+/// An open code fence: its character and length, the block-quote depth it
+/// opened at, and whether it opened in a list item.
 #[derive(Clone, Copy)]
 struct Fence {
     mark: char,
     len: usize,
-    quoted: bool,
+    depth: usize,
+    in_item: bool,
 }
 
-/// A line without its block-quote markers, and whether it had any.
-fn unquote(line: &str) -> (bool, &str) {
-    let mut rest = line;
-    let mut quoted = false;
-    loop {
-        let trimmed = rest.trim_start_matches(' ');
-        if rest.len() - trimmed.len() > 3 {
-            return (quoted, rest);
-        }
-        match trimmed.strip_prefix('>') {
-            Some(inner) => {
-                quoted = true;
-                rest = inner.strip_prefix([' ', '\t']).unwrap_or(inner);
-            }
-            None => return (quoted, rest),
+/// The line with the tabs among its leading spaces and quote markers
+/// expanded to the columns they reach, so a marker's padding and the indent
+/// after it are counted where they stand.
+fn expand_prefix(line: &str) -> std::borrow::Cow<'_, str> {
+    let lead = line
+        .find(|c: char| !matches!(c, ' ' | '\t' | '>'))
+        .unwrap_or(line.len());
+    if !line[..lead].contains('\t') {
+        return line.into();
+    }
+    let mut out = String::with_capacity(line.len() + 8);
+    for c in line[..lead].chars() {
+        if c == '\t' {
+            let to = 4 - out.len() % 4;
+            out.extend(std::iter::repeat_n(' ', to));
+        } else {
+            out.push(c);
         }
     }
+    out.push_str(&line[lead..]);
+    out.into()
+}
+
+/// A line without up to `most` block-quote markers (all of them when
+/// `None`), each with the one space after it, and how many it had.
+fn unquote(line: &str, most: Option<usize>) -> (usize, &str) {
+    let mut rest = line;
+    let mut depth = 0;
+    while most.is_none_or(|most| depth < most) {
+        let trimmed = rest.trim_start_matches(' ');
+        if rest.len() - trimmed.len() > 3 {
+            break;
+        }
+        let Some(inner) = trimmed.strip_prefix('>') else {
+            break;
+        };
+        depth += 1;
+        rest = inner.strip_prefix(' ').unwrap_or(inner);
+    }
+    (depth, rest)
 }
 
 /// Columns of leading whitespace; a tab moves to the next multiple of four.
@@ -289,7 +321,7 @@ mod tests {
             .collect()
     }
 
-    /// Sol review 1 (#1, #3, #6, #8) and its re-check (#1, #3, #13-#15):
+    /// Sol review 1 (#1, #3, #6, #8) and its re-checks (#1, #3, #13-#16):
     /// code spans over lines, indented and quoted code, a byte-order mark
     /// before a fence and escaped brackets hold no links; lists keep theirs;
     /// a heading, a list item or the end of a quote ends what opened in it.
@@ -319,5 +351,11 @@ mod tests {
         assert_eq!(targets("- - -\n\n    [[a]]\n\n[[b]]\n"), ["b"]);
         assert_eq!(targets("- item\n# Heading\n\n    [[a]]\n\n[[b]]\n"), ["b"]);
         assert_eq!(targets(">\t[[b]]\n"), ["b"]);
+        assert_eq!(targets("- # Heading `\n  See [[b]] and `.\n"), ["b"]);
+        assert_eq!(targets("> > ```\n> > [[a]]\n> [[b]]\n"), ["b"]);
+        assert_eq!(targets("```\n> ```\n[[a]]\n```\n[[b]]\n"), ["b"]);
+        assert_eq!(targets("> \t[[b]]\n"), ["b"]);
+        assert_eq!(targets(">\t  [[a]]\n"), Vec::<String>::new());
+        assert_eq!(targets("- ```\n  [[a]]\n\n[[b]]\n"), ["b"]);
     }
 }
