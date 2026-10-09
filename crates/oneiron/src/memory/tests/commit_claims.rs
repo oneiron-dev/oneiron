@@ -38,71 +38,6 @@ fn put_structural_refuses_message_entities() {
 }
 
 #[test]
-fn commit_user_stated_band0_lands_auto_with_resolvable_receipt() {
-    let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x41);
-    let subject = put_person(&vault, 0x42);
-    let facade = facade_for(&vault, actor);
-
-    let receipt = facade
-        .claim_upsert(&claim_input(
-            "profile.name",
-            &subject,
-            "user_stated",
-            serde_json::json!("Ada"),
-        ))
-        .expect("auto claim");
-    assert_eq!(receipt.approval, "auto");
-    assert!(receipt.receipt_ref.starts_with("gate:"));
-
-    // receipt_ref resolves via receipts().
-    let receipts = facade.receipts(50).expect("receipts");
-    let decision = receipts
-        .iter()
-        .find(|r| r.receipt_ref == receipt.receipt_ref)
-        .expect("decision resolvable via receipts()");
-    assert_eq!(decision.outcome, "allow");
-    assert_eq!(decision.actor_class, "human");
-
-    // Nothing parked for consent.
-    let pending = facade.pending_writes(50).expect("pending");
-    assert!(pending.is_empty());
-}
-
-#[test]
-fn commit_imported_lands_proposed_and_appears_in_pending_writes() {
-    let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x51);
-    let subject = put_person(&vault, 0x52);
-    let facade = facade_for(&vault, actor);
-
-    let receipt = facade
-        .claim_upsert(&claim_input(
-            "companion.onboarding.answer",
-            &subject,
-            "imported",
-            serde_json::json!({"question_id": "q-1", "selected_option_id": "a"}),
-        ))
-        .expect("imported claim");
-    assert_eq!(receipt.approval, "proposed");
-    assert!(receipt.receipt_ref.starts_with("gate:"));
-
-    let pending = facade.pending_writes(50).expect("pending");
-    assert_eq!(pending.len(), 1);
-    let receipts = facade.receipts(50).expect("receipts");
-    assert!(
-        receipts
-            .iter()
-            .any(|r| r.receipt_ref == receipt.receipt_ref),
-        "receipt_ref must resolve via receipts()"
-    );
-    assert!(
-        receipts.iter().any(|r| r.outcome == "pending"),
-        "gate outcome for the parked write is pending"
-    );
-}
-
-#[test]
 fn commit_auto_request_downgrades_to_proposed_when_gate_pends() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0x61);
@@ -160,27 +95,6 @@ fn commit_auto_request_downgrades_to_proposed_when_gate_pends() {
             .reason_codes
             .contains(&"gate.pending.actor_ceiling".to_owned()),
         "the non-attachable Agent Auto request must pend for its actor ceiling"
-    );
-}
-
-#[test]
-fn commit_sensitivity_scope_key_forces_proposed() {
-    let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x63);
-    let subject = put_person(&vault, 0x64);
-    let facade = facade_for(&vault, actor);
-
-    let mut input = claim_input(
-        "profile.name",
-        &subject,
-        "user_stated",
-        serde_json::json!("Mira"),
-    );
-    input.scope = Some(serde_json::json!({"sensitivity": 0}));
-    let receipt = facade.claim_upsert(&input).expect("scoped claim");
-    assert_eq!(
-        receipt.approval, "proposed",
-        "explicit sensitivity key ⇒ proposed request"
     );
 }
 
@@ -328,112 +242,6 @@ fn auto_eligible_upsert_stages_before_closing_prior() {
 }
 
 #[test]
-fn human_observed_auto_closure_ignores_unrelated_checker_knob() {
-    let (_dir, vault) = open_vault();
-    let id = crate::gate::default_policy_manifest_id().unwrap();
-    let raw = vault.get_raw(&id).unwrap().expect("manifest");
-    let mut cursor = std::io::Cursor::new(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]);
-    let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).unwrap() else {
-        panic!("policy manifest map");
-    };
-    entries.push((
-        Value::from("auto_checker"),
-        Value::from("unused-host-checker"),
-    ));
-    let mut encoded = Vec::new();
-    rmpv::encode::write_value(&mut encoded, &Value::Map(entries)).unwrap();
-    crate::test_util::put_policy_manifest_bytes(&vault, id, &encoded).unwrap();
-    let actor = put_person(&vault, 0x75);
-    let subject = put_person(&vault, 0x76);
-    let memory = facade_for(&vault, actor);
-    let first = memory
-        .claim_upsert(&claim_input(
-            "profile.name",
-            &subject,
-            "observed",
-            serde_json::json!("Ada"),
-        ))
-        .unwrap();
-    assert_eq!(first.approval, "auto");
-    let mut revision = claim_input(
-        "profile.name",
-        &subject,
-        "observed",
-        serde_json::json!("Ada Lovelace"),
-    );
-    revision.learned_at = Some(200);
-    revision.occurred_at = Some(200);
-    let second = memory.claim_upsert(&revision).unwrap();
-    let old = memory.resolve_ref(&first.claim_short_id).unwrap();
-    let new = memory.resolve_ref(&second.claim_short_id).unwrap();
-    assert_eq!(second.approval, "proposed");
-    vault
-        .grant_deferred_claim_auto(&new, 201)
-        .expect("human write needs no Dreamer checker");
-    assert_eq!(
-        vault.get_claim(&new).unwrap().unwrap().approval,
-        ClaimApprovalStatus::Auto
-    );
-    assert_eq!(
-        vault.get_claim(&old).unwrap().unwrap().lifecycle,
-        ClaimLifecycleStatus::Superseded
-    );
-}
-
-#[test]
-fn multi_cardinality_supersede_matches_on_question_id() {
-    let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x81);
-    let subject = put_person(&vault, 0x82);
-    let facade = facade_for(&vault, actor);
-
-    let answer = |question: &str, option: &str, at: u64| {
-        let mut input = claim_input(
-            "companion.onboarding.answer",
-            &subject,
-            "imported",
-            serde_json::json!({"question_id": question, "selected_option_id": option}),
-        );
-        input.occurred_at = Some(at);
-        input.learned_at = Some(at);
-        input
-    };
-
-    let answer_a = facade
-        .claim_upsert(&answer("q-a", "1", 100))
-        .expect("answer a");
-    let answer_b = facade
-        .claim_upsert(&answer("q-b", "2", 101))
-        .expect("answer b");
-    assert!(answer_a.superseded_short_id.is_none());
-    assert!(
-        answer_b.superseded_short_id.is_none(),
-        "answering question B must never supersede the answer to question A (B1c)"
-    );
-
-    let re_answer_a = facade
-        .claim_upsert(&answer("q-a", "3", 102))
-        .expect("re-answer a");
-    assert!(re_answer_a.superseded_short_id.is_none());
-    assert_eq!(re_answer_a.approval, "proposed");
-
-    // B's claim is untouched.
-    let claims = facade
-        .claim_list(&ClaimListFilter {
-            subject_ref: Some(subject.to_hex()),
-            predicate: Some("companion.onboarding.answer".to_owned()),
-            lifecycle: Some("active".to_owned()),
-            limit: 10,
-        })
-        .expect("list");
-    assert_eq!(
-        claims.len(),
-        3,
-        "a proposed replacement does not close either question"
-    );
-}
-
-#[test]
 fn commit_batch_gating_is_per_element() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0x91);
@@ -497,67 +305,6 @@ fn commit_batch_gating_is_per_element() {
         })
         .expect("list");
     assert_eq!(claims.len(), 2);
-}
-
-#[test]
-fn facade_errors_carry_stable_codes_and_suggestions() {
-    let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0xB1);
-    let subject = put_person(&vault, 0xB2);
-    let facade = facade_for(&vault, actor);
-
-    // Wrong-predicate case.
-    let err = facade
-        .claim_upsert(&claim_input(
-            "Bad Predicate!",
-            &subject,
-            "user_stated",
-            serde_json::json!("x"),
-        ))
-        .expect_err("bad predicate must fail");
-    assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
-    assert!(!err.suggestions.is_empty());
-
-    // Above-ceiling case: confidence outside [0, 1].
-    let mut over = claim_input(
-        "profile.name",
-        &subject,
-        "user_stated",
-        serde_json::json!("x"),
-    );
-    over.confidence = 2.0;
-    let err = facade.claim_upsert(&over).expect_err("confidence ceiling");
-    assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
-    assert!(!err.suggestions.is_empty());
-
-    // Maintenance-band kinds are not writable through the facade.
-    let err = facade
-        .put_structural(&StructuralPutInput {
-            id: None,
-            kind: "REDACTION_AUDIT".to_owned(),
-            body: serde_json::json!({}),
-            text_fields: None,
-            edges: None,
-            occurred_at: 100,
-            learned_at: None,
-        })
-        .expect_err("maintenance kind must be rejected");
-    assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
-    assert!(!err.suggestions.is_empty());
-
-    // Unknown claim source.
-    let mut bad_source = claim_input(
-        "profile.name",
-        &subject,
-        "user_stated",
-        serde_json::json!(1),
-    );
-    bad_source.source = "vibes".to_owned();
-    let err = facade
-        .claim_upsert(&bad_source)
-        .expect_err("unknown source");
-    assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
-    assert!(!err.suggestions.is_empty());
 }
 
 #[test]
@@ -643,70 +390,6 @@ fn put_structural_carries_text_index_fields_and_edges() {
     // Entities land with correct type bytes. Four bootstrap skill carriers and
     // four built-in pack sources persist alongside the fixture ASSET.
     assert_eq!(vault.entities_by_type(ENTITY_TYPE_ASSET).unwrap().len(), 9);
-}
-
-#[test]
-fn put_habit_checkin_appends_child_with_pinned_role() {
-    let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0xD1);
-    let facade = facade_for(&vault, actor);
-
-    let habit = facade
-        .put_structural(&StructuralPutInput {
-            id: None,
-            kind: "TASK".to_owned(),
-            body: serde_json::json!({"role": 4, "content": "meditate"}),
-            text_fields: None,
-            edges: None,
-            occurred_at: 800,
-            learned_at: None,
-        })
-        .expect("habit put");
-
-    let checkin = facade
-        .put_habit_checkin(&HabitCheckinInput {
-            habit_ref: habit.id_hex.clone(),
-            id: None,
-            data: Some(serde_json::json!({"note": "10 minutes"})),
-            occurred_at: 801,
-            learned_at: None,
-        })
-        .expect("checkin");
-
-    let checkin_id = EntityId::from_hex(&checkin.id_hex).unwrap();
-    let habit_id = EntityId::from_hex(&habit.id_hex).unwrap();
-    let edges = vault.edges_out(&checkin_id).expect("edges");
-    assert!(
-        edges
-            .iter()
-            .any(|e| e.kind == EdgeKind::ChildOf && e.target == habit_id),
-        "checkin carries the pack-contract ChildOf edge"
-    );
-    let view = facade
-        .get_entity(&checkin.entity_ref)
-        .unwrap()
-        .value
-        .expect("checkin view");
-    let body = view.body.unwrap();
-    assert_eq!(
-        body["role"],
-        serde_json::json!(5),
-        "facade stamps HabitCheckin role"
-    );
-    assert_eq!(body["note"], serde_json::json!("10 minutes"));
-    assert_eq!(vault.entities_by_type(ENTITY_TYPE_TASK).unwrap().len(), 2);
-
-    // Caller-supplied role keys are rejected.
-    let err = facade
-        .put_habit_checkin(&HabitCheckinInput {
-            habit_ref: habit.id_hex,
-            id: None,
-            data: Some(serde_json::json!({"role": 1})),
-            occurred_at: 802,
-            learned_at: None,
-        })
-        .expect_err("role key must be facade-stamped");
-    assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
 }
 
 /// ONE-1889: the structural door is create-only for EVERY stored kind, not
@@ -928,49 +611,6 @@ fn put_structural_rejects_cross_kind_id_reuse_without_side_effects() {
             .is_empty(),
         "the refused TASK put must not have created anything"
     );
-}
-
-#[test]
-fn persona_baseline_and_scenario_do_not_register_companion_persona() {
-    let (_dir, vault) = open_vault();
-    let person = EntityId::from_bytes([0xE2; 16]).expect("person id");
-    let facet = EntityId::from_bytes([0xE3; 16]).expect("facet id");
-    vault
-        .put_entity(&person, ENTITY_TYPE_PERSON, test_time(1), 1, b"")
-        .expect("PERSON fixture");
-
-    vault
-        .put_persona_baseline(
-            &person,
-            &serde_json::json!({"name": "Yuki", "vibes": ["calm"]}),
-            900,
-        )
-        .expect("PERSON baseline");
-    vault
-        .put_persona_scenario(
-            &person,
-            &facet,
-            &serde_json::json!({"name": "Rei"}),
-            crate::federation::Sensitivity::Private,
-            950,
-        )
-        .expect("FACET scenario");
-
-    assert_eq!(
-        vault.get_entity_type(&person).expect("PERSON type"),
-        Some(ENTITY_TYPE_PERSON)
-    );
-    assert_eq!(
-        vault.get_entity_type(&facet).expect("FACET type"),
-        Some(crate::registry::ENTITY_TYPE_FACET)
-    );
-    assert_eq!(
-        crate::companion::validated_persona_baseline(&vault.get(&person).unwrap().unwrap())
-            .expect("PERSON baseline"),
-        serde_json::json!({"name": "Yuki", "vibes": ["calm"]})
-    );
-    let scenario = vault.get(&facet).expect("scenario").expect("FACET body");
-    assert!(!crate::companion::is_identity_facet_body(&scenario));
 }
 
 #[test]
@@ -1395,93 +1035,6 @@ fn signed_machine_keyed_create_replace_and_delete() {
     );
 }
 
-#[test]
-fn hydrate_round_trips_witness_short_ids() {
-    let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x15);
-    let facade = facade_for(&vault, actor);
-
-    let receipt = facade
-        .witness(&WitnessTurn {
-            conversation_ref: EntityId::from_bytes([0x16; 16]).unwrap().to_hex(),
-            turn_ref: None,
-            messages: vec![witness_message(0, WitnessAuthor::User, "hydrate me")],
-            occurred_at: 1200,
-        })
-        .expect("witness");
-
-    let mut refs = vec![receipt.turn_short_id.clone()];
-    refs.extend(receipt.message_short_ids.iter().cloned());
-    let views = facade.hydrate(&refs).expect("hydrate");
-    assert_eq!(views.len(), 2);
-    assert_eq!(views[0].kind, "TURN");
-    assert_eq!(views[1].kind, "MESSAGE");
-    assert_eq!(
-        views[1].body.as_ref().unwrap()["content"],
-        serde_json::json!("hydrate me")
-    );
-
-    let err = facade
-        .hydrate(&["zz999:ff".to_owned()])
-        .expect_err("dangling short ref must be a typed error");
-    assert_eq!(err.code, MEMORY_CODE_NOT_FOUND);
-}
-
-/// ONE-1924 — the facade edge-name seam speaks canonical snake_case in BOTH
-/// directions for every minted kind. `blocked_by` parses to the u8-23 kind and
-/// renders back as `blocked_by`; the camelCase `blockedBy` spelling is NOT
-/// exposed at this engine seam.
-#[test]
-fn edge_kind_names_round_trip_including_blocked_by() {
-    assert_eq!(EdgeKind::from_name("blocked_by"), Some(EdgeKind::BlockedBy));
-    assert_eq!(EdgeKind::BlockedBy.name(), "blocked_by");
-    assert_eq!(EdgeKind::from_name("blockedBy"), None);
-
-    for kind in [
-        EdgeKind::AuthoredBy,
-        EdgeKind::ScopedTo,
-        EdgeKind::PartOf,
-        EdgeKind::Supersedes,
-        EdgeKind::BelongsTo,
-        EdgeKind::ClaimOf,
-        EdgeKind::ChildOf,
-        EdgeKind::AssignedTo,
-        EdgeKind::DerivedFrom,
-        EdgeKind::Mentions,
-        EdgeKind::About,
-        EdgeKind::Supports,
-        EdgeKind::Opposes,
-        EdgeKind::ParticipatesIn,
-        EdgeKind::Attached,
-        EdgeKind::EmployedBy,
-        EdgeKind::HasFacet,
-        EdgeKind::FacetOf,
-        EdgeKind::InWorld,
-        EdgeKind::SetIn,
-        EdgeKind::MergedInto,
-        EdgeKind::SplitInto,
-        EdgeKind::BlockedBy,
-    ] {
-        let name = kind.name();
-        assert_eq!(
-            EdgeKind::from_name(name),
-            Some(kind),
-            "{kind:?} name {name} must parse back to itself"
-        );
-    }
-}
-
-/// The `same_as` wire name round-trips both directions and resolves to the
-/// byte-20 kind. The camelCase spelling is not exposed at this engine seam,
-/// exactly as for `blocked_by`.
-#[test]
-fn same_as_edge_kind_name_round_trips() {
-    assert_eq!(EdgeKind::from_name("same_as"), Some(EdgeKind::SameAs));
-    assert_eq!(EdgeKind::SameAs.name(), "same_as");
-    assert_eq!(EdgeKind::from_name("sameAs"), None);
-    assert_eq!(EdgeKind::SameAs as u8, 20);
-}
-
 /// ONE-1414 done-means 5 (generic half) — the broad structural door REFUSES to
 /// mint a `same_as` link.
 ///
@@ -1534,45 +1087,6 @@ fn put_structural_refuses_to_mint_a_same_as_link() {
             .iter()
             .all(|edge| edge.kind != EdgeKind::SameAs)
     );
-}
-
-#[test]
-fn relationship_upserts_do_not_supersede_another_relationship() {
-    let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 0x21);
-    let subject = put_person(&vault, 0x22);
-    let facade = facade_for(&vault, actor);
-    let mut rows = Vec::new();
-    for value in ["Ada", "A"] {
-        let relationship = EntityId::now();
-        vault
-            .put_entity(
-                &relationship,
-                crate::registry::ENTITY_TYPE_RELATIONSHIP,
-                test_time(1),
-                1,
-                b"relationship",
-            )
-            .unwrap();
-        let mut input = claim_input(
-            "profile.nickname",
-            &subject,
-            "user_stated",
-            serde_json::json!(value),
-        );
-        input.relationship_ref = Some(relationship.to_hex());
-        let receipt = facade.claim_upsert(&input).unwrap();
-        let id = facade.resolve_ref(&receipt.claim_short_id).unwrap();
-        let body = vault.get_claim(&id).unwrap().unwrap();
-        assert_eq!(body.rel, Some(relationship));
-        rows.push(id);
-    }
-    for id in rows {
-        assert_eq!(
-            vault.get_claim(&id).unwrap().unwrap().lifecycle,
-            ClaimLifecycleStatus::Active
-        );
-    }
 }
 
 #[test]

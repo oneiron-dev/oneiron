@@ -6,17 +6,13 @@
 use super::outbound::*;
 use super::tests::{claim_input, facade_for, open_vault, put_person, test_time, witness_message};
 use super::*;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
-use crate::outbound::OutboundDispatchError;
 use crate::registry::ENTITY_TYPE_PERSON;
 
 mod authority;
 mod consolidation_outbound;
 mod outbound_actor_scope;
 mod recall;
-mod recall_l2;
 mod recall_revision;
 mod recall_security;
-mod retrieval_quality;

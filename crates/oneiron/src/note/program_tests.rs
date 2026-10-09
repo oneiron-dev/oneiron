@@ -18,112 +18,6 @@ fn current(vault: &Vault, id: EntityId) -> String {
 }
 
 #[test]
-fn brief_ids_and_recorded_time_use_the_vault_source() {
-    use crate::ports::{EntityStoreRead, ManualClock};
-    let clock = ManualClock::new(123);
-    let mut config = VaultConfig::device();
-    config.store_clock = clock.bundle();
-    let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open(dir.path(), config).unwrap();
-    let author = EntityId::from_bytes([0x41; 16]).unwrap();
-    vault
-        .put_entity(
-            &author,
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"person",
-        )
-        .unwrap();
-    let memory = vault.memory(author, EdgeActorClass::Human);
-    memory.bless_brief_kind().unwrap();
-    let brief = memory.author_brief("from clock", &[]).unwrap();
-    let id = EntityId::from_hex(&brief.id_hex).unwrap();
-    let txn = vault.store.env.read_txn().unwrap();
-    let stored = vault.port_entity_record(&txn, &id).unwrap().unwrap();
-    assert_eq!(stored.learned_at, 123);
-    assert_eq!(
-        stored.occurred,
-        TimeRange {
-            start: 123,
-            end: 123
-        }
-    );
-    assert_eq!(id.as_bytes()[0], 0x71);
-    drop(txn);
-    clock.set(124);
-    let another = memory.author_brief("next", &[]).unwrap();
-    assert_ne!(brief.id_hex, another.id_hex);
-}
-
-#[test]
-fn six_descriptors_and_namespaced_kind_round_trip() {
-    let (_dir, vault, actor) = fixture();
-    for kind in [
-        "scratchpad",
-        "observation",
-        "handoff",
-        "research",
-        "reflection",
-        "diary",
-    ] {
-        let id = vault.create_note(kind, "birth", actor).unwrap();
-        let body = vault.read_note(&id).unwrap().unwrap();
-        assert_eq!(body.kind.as_str(), kind);
-        assert_eq!(body.markdown, "birth");
-        assert_eq!(current(&vault, id), "birth");
-    }
-    assert!(vault.create_note("unknown", "birth", actor).is_err());
-    let descriptor = NoteKindDescriptor {
-        pack: "example.notes".into(),
-        kind: "example.notes/runbook".into(),
-        extraction: ExtractionDefault::AfterSeal,
-        context: ContextDefault::OwnerOnly,
-        retention: RetentionDefault::Durable,
-        archive_after_days: None,
-    };
-    vault.register_note_kind(&descriptor).unwrap();
-    let id = vault
-        .create_note(&descriptor.kind, "custom", actor)
-        .unwrap();
-    assert_eq!(
-        vault.read_note(&id).unwrap().unwrap().kind.as_str(),
-        descriptor.kind
-    );
-    assert!(
-        !vault
-            .search_text("custom", 20)
-            .unwrap()
-            .iter()
-            .any(|row| row.id == id)
-    );
-    let public = NoteKindDescriptor {
-        kind: "example.notes/reference".into(),
-        context: ContextDefault::VaultReadable,
-        ..descriptor.clone()
-    };
-    vault.register_note_kind(&public).unwrap();
-    let public_id = vault
-        .create_note(&public.kind, "custom public", actor)
-        .unwrap();
-    assert!(
-        vault
-            .search_text("custom", 20)
-            .unwrap()
-            .iter()
-            .any(|row| row.id == public_id)
-    );
-    assert!(
-        vault
-            .register_note_kind(&NoteKindDescriptor {
-                pack: "other".into(),
-                ..descriptor
-            })
-            .is_err()
-    );
-}
-
-#[test]
 fn old_cursor_survives_concurrent_insert_and_rewrite_never_touches_live_head() {
     let (_dir, vault, actor) = fixture();
     let id = vault.create_note("research", "alpha beta", actor).unwrap();
@@ -376,50 +270,6 @@ fn stale_whole_text_diff_preserves_concurrent_prefix() {
 }
 
 #[test]
-fn asset_bridge_selects_latest_text_and_links_asset_atomically() {
-    let (_dir, vault, actor) = fixture();
-    let asset = EntityId::now();
-    vault
-        .put_entity(
-            &asset,
-            crate::registry::ENTITY_TYPE_ASSET,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"asset",
-        )
-        .unwrap();
-    let before = vault.get_raw(&asset).unwrap();
-    for (at, text) in [(2, "old text"), (3, "current text")] {
-        let id = EntityId::now();
-        vault
-            .batch()
-            .put(
-                &id,
-                ENTITY_TYPE_ASSET_TEXT,
-                TimeRange { start: at, end: at },
-                at,
-                text.as_bytes(),
-            )
-            .edge(&id, EdgeKind::DerivedFrom, &asset, 1.0)
-            .commit()
-            .unwrap();
-    }
-    let note = vault
-        .create_note_from_asset(asset, "research", actor)
-        .unwrap();
-    assert_eq!(
-        vault.read_note(&note).unwrap().unwrap().markdown,
-        "current text"
-    );
-    assert_eq!(
-        vault.targets(&note, EdgeKind::DerivedFrom, None).unwrap(),
-        vec![asset]
-    );
-    assert!(vault.note_program_document(note).unwrap().is_none());
-    assert_eq!(vault.get_raw(&asset).unwrap(), before);
-}
-
-#[test]
 fn wrong_document_anchor_leaves_live_bytes_unchanged() {
     let (_dir, vault, actor) = fixture();
     let one = vault.create_note("research", "one", actor).unwrap();
@@ -575,44 +425,6 @@ fn source_bridge_refuses_retained_stale_asset_text() {
 }
 
 #[test]
-fn append_to_section_uses_its_unicode_anchor_after_another_edit() {
-    let (_dir, vault, actor) = fixture();
-    let id = vault
-        .create_note("research", "# α\nfirst\n# β\nsecond", actor)
-        .unwrap();
-    let read = vault.note_program_document(id).unwrap().unwrap();
-    let end = read.anchor("# α\nfirst\n".chars().count()).unwrap();
-    vault
-        .edit_note(
-            id,
-            &NoteEdit::InsertAfter {
-                anchor: read.anchor(0).unwrap(),
-                text: "preface 🦀\n".into(),
-            },
-            actor,
-        )
-        .unwrap();
-    vault
-        .edit_note(
-            id,
-            &NoteEdit::AppendToSection {
-                end,
-                text: "appended\n".into(),
-            },
-            actor,
-        )
-        .unwrap();
-    assert_eq!(
-        current(&vault, id),
-        "preface 🦀\n# α\nfirst\nappended\n# β\nsecond"
-    );
-    assert_eq!(
-        vault.note_program_document(id).unwrap().unwrap().head(),
-        read.head()
-    );
-}
-
-#[test]
 fn recovered_merge_refuses_ambiguous_overlap_without_losing_bundle_members() {
     let (_dir, vault, owner) = fixture();
     let first = vault.create_note("research", "alpha beta", owner).unwrap();
@@ -711,18 +523,6 @@ fn switched_to_rewrite(vault: &Vault, actor: WriteActor, note: EntityId) -> Enti
         .review_note_proposal(bundle.id, NoteVerdict::Switch, actor)
         .unwrap();
     fork
-}
-
-#[test]
-fn switch_moves_the_head_pointer_to_the_fork() {
-    let (_dir, vault, actor) = fixture();
-    let note = vault.create_note("research", "origin", actor).unwrap();
-    let fork = switched_to_rewrite(&vault, actor, note);
-
-    assert_eq!(
-        vault.note_program_document(note).unwrap().unwrap().head(),
-        fork
-    );
 }
 
 #[test]

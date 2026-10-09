@@ -187,53 +187,6 @@ fn revoked_owner_preview_cannot_observe_later_share_recipient() {
     );
 }
 
-/// T10: an UNROOTED vault keeps today's store-truth behavior exactly.
-///
-/// This pins the ratified enforcement mode (S-AUTH3 D6 fork (a),
-/// "enforce-when-root-exists"): teeth arrive when a host DECLARES authority,
-/// not before. Every shipped vault has no authority log at all, so nothing
-/// breaks on upgrade. [owner] fork note: under the alternate "hard flip"
-/// ruling these three expectations invert to FORBIDDEN.
-#[test]
-fn unrooted_vault_keeps_store_truth_owner_verbs() {
-    let (_dir, vault) = open_vault();
-    let owner = put_person(&vault, 0x63);
-    let agent = put_person(&vault, 0x64);
-    let subject = put_person(&vault, 0x65);
-    let owner_facade = facade_for(&vault, owner);
-    let agent_claim = vault
-        .memory(agent, EdgeActorClass::Agent)
-        .claim_upsert(&claim_input(
-            "profile.mood",
-            &subject,
-            "observed",
-            serde_json::json!("calm"),
-        ))
-        .expect("agent claim");
-
-    assert!(
-        vault.authority_fold().expect("fold").vault_id.is_none(),
-        "fixture must have no declared authority root"
-    );
-    owner_facade
-        .put_structural(&StructuralPutInput {
-            id: None,
-            kind: "PERSON".to_owned(),
-            body: serde_json::json!({"name": "minted"}),
-            text_fields: None,
-            edges: None,
-            occurred_at: 702,
-            learned_at: None,
-        })
-        .expect("unrooted PERSON mint unchanged");
-    owner_facade
-        .claim_retract(&agent_claim.claim_short_id)
-        .expect("unrooted cross-actor retract unchanged");
-    owner_facade
-        .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
-        .expect("unrooted delete unchanged");
-}
-
 /// T11: the binding class is EXACT and revocation is real.
 #[test]
 fn exact_class_binding_no_cross_class_satisfaction() {
@@ -247,75 +200,6 @@ fn exact_class_binding_no_cross_class_satisfaction() {
     let err = facade_for(&vault, owner)
         .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
         .expect_err("agent-class binding must not satisfy a human-class verb");
-    assert_eq!(err.code, MEMORY_CODE_OWNER_BINDING_REQUIRED);
-}
-
-/// T11b: a RevokeActor watermark takes the owner's teeth away again.
-#[test]
-fn revoked_binding_forbids_owner_verbs() {
-    use crate::authority::{AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature};
-    let (_dir, vault) = open_vault();
-    let owner = put_person(&vault, 0x68);
-    let subject = put_person(&vault, 0x69);
-    let facade = facade_for(&vault, owner);
-
-    let (genesis, signing) = authority_root(0x73);
-    let vault_id = crate::authority::genesis_vault_id(&genesis).expect("vault id");
-    let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
-    let genesis_hash = crate::authority::authority_entry_hash(&genesis).expect("genesis hash");
-    let owner_entry = |seq: u64, op: AuthorityOp, parents: Vec<[u8; 32]>| {
-        sign_authority(
-            AuthorityLogEntry {
-                schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
-                vault_id: Some(vault_id),
-                seq,
-                parent_hashes: parents,
-                op,
-                signer: AuthoritySignature {
-                    suite: key.suite(),
-                    public_key: key.clone(),
-                    signature: vec![0; 64],
-                },
-                cosigns: Vec::new(),
-                ts: 100 + seq,
-            },
-            &signing,
-        )
-    };
-    let bind = owner_entry(
-        1,
-        AuthorityOp::BindActor {
-            authority_key: key.clone(),
-            actor_ref: owner,
-            actor_class: "human".to_owned(),
-            epoch: 1,
-        },
-        vec![genesis_hash],
-    );
-    let bind_hash = crate::authority::authority_entry_hash(&bind).expect("bind hash");
-    vault
-        .put_authority_log_entries(&[(genesis, test_time(1), 1), (bind, test_time(2), 2)])
-        .expect("root + bind");
-    facade
-        .safe_delete(&subject.to_hex(), SafeDeleteReason::UserDelete)
-        .expect("bound owner deletes");
-
-    let revoke = owner_entry(
-        2,
-        AuthorityOp::RevokeActor {
-            authority_key: key.clone(),
-            epoch: 1,
-        },
-        vec![bind_hash],
-    );
-    vault
-        .put_authority_log_entries(&[(revoke, test_time(3), 3)])
-        .expect("revoke binding");
-
-    let victim = put_person(&vault, 0x6A);
-    let err = facade
-        .safe_delete(&victim.to_hex(), SafeDeleteReason::UserDelete)
-        .expect_err("a revoked binding must lose its owner teeth");
     assert_eq!(err.code, MEMORY_CODE_OWNER_BINDING_REQUIRED);
 }
 

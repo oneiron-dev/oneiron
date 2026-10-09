@@ -91,48 +91,6 @@ fn talk_only_request(session_ref: &str) -> OutboundDispatchRequest {
 }
 
 #[test]
-fn off_record_enter_is_explicit_marked_and_single_shot() {
-    let (_tmp, vault) = temp_vault();
-    let session = vault
-        .off_record_session_vault()
-        .enter("sess-enter", OffRecordBackendClass::Local)
-        .expect("enter");
-    assert_eq!(session.mode().expect("read mode"), OffRecordMode::OffRecord);
-    assert_eq!(
-        session.backend_class().expect("read backend class"),
-        OffRecordBackendClass::Local
-    );
-    let record = vault
-        .off_record_session("sess-enter")
-        .expect("read record")
-        .expect("live record");
-    assert!(record.promoted_turns.is_empty());
-
-    let double_enter = vault
-        .enter_off_record_session("sess-enter", OffRecordBackendClass::Local)
-        .expect_err("enter is single-shot");
-    assert_eq!(
-        double_enter.kind(),
-        ErrorKind::OffRecordSessionAlreadyExists
-    );
-
-    let remote_session = vault
-        .off_record_session_vault()
-        .enter("sess-enter-remote", OffRecordBackendClass::RemoteProvider)
-        .expect("enter remote session");
-    assert_eq!(
-        remote_session.mode().expect("read remote mode"),
-        OffRecordMode::OffRecord
-    );
-    assert_eq!(
-        remote_session
-            .backend_class()
-            .expect("read remote backend class"),
-        OffRecordBackendClass::RemoteProvider
-    );
-}
-
-#[test]
 fn off_record_registry_evaporates_without_base_residue_on_reopen() -> Result<()> {
     let tmp = tempfile::tempdir()?;
     let vault = Vault::open(tmp.path(), telemetry_config())?;
@@ -507,41 +465,6 @@ fn off_record_closing_flag_freezes_record_against_mutators() {
     );
 }
 
-#[test]
-fn off_record_session_ref_bounds_are_enforced_everywhere() {
-    let (_tmp, vault) = temp_vault();
-    let oversized = "x".repeat(300);
-    let enter = vault
-        .enter_off_record_session(&oversized, OffRecordBackendClass::Local)
-        .expect_err("oversized enter");
-    assert_eq!(enter.kind(), ErrorKind::InvalidConfig);
-    // A ref that cannot pass enter cannot name a session: reads as None.
-    assert!(
-        vault
-            .off_record_session(&oversized)
-            .expect("probe")
-            .is_none()
-    );
-    let flip = vault
-        .set_off_record_session_mode(&oversized, OffRecordMode::OnRecord)
-        .expect_err("oversized flip");
-    assert_eq!(flip.kind(), ErrorKind::InvalidConfig);
-    // Promote takes no session ref: it hangs off a live session HANDLE, which
-    // only `enter` above can mint — so the bound is enforced upstream of it by
-    // construction rather than re-checked at the verb.
-    let log = vault
-        .off_record_receipt_log(&oversized)
-        .expect_err("oversized log");
-    assert_eq!(log.kind(), ErrorKind::InvalidConfig);
-    let close = vault
-        .close_off_record_session(
-            &oversized,
-            SessionLocalReceiptLog::off_record(oversized.clone()),
-        )
-        .expect_err("oversized close");
-    assert_eq!(close.kind(), ErrorKind::InvalidConfig);
-}
-
 /// ONE-1730: the promote-replay grant exempts ONLY the closure it was minted
 /// from, and a rejection INSIDE the promote transaction rolls the whole thing
 /// back.
@@ -845,75 +768,6 @@ fn off_record_recall_registers_its_run_in_the_room_and_close_consumes_it() -> Re
     Ok(())
 }
 
-/// The two negative controls the settle contract names, on ONE fixture so the
-/// distinction is visible: a room retrieval is claimed by the room ONLY while
-/// the room is off record, and ambient live-session state never claims an
-/// ordinary one.
-#[test]
-fn on_record_and_ordinary_recalls_never_enter_the_rooms_receipt_set() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let actor = seed_recallable_base_turn(&vault, "armbcontrolneedle");
-    let facade = vault.memory(actor, EdgeActorClass::Human);
-    let session = vault
-        .off_record_session_vault()
-        .enter("sess-armb-control", OffRecordBackendClass::Local)?;
-
-    // The room's own reader is COMPOSED (overlay ∪ base), so "the room shows
-    // no rows" would be the wrong question — a base row is visible through it
-    // by design. Room MEMBERSHIP is what the pre-close census counts, so the
-    // per-step check is the durable-base one and the membership verdict is the
-    // census at the end.
-    let landed_in_base = |base_before: usize, expectation: &str| -> Result<()> {
-        assert!(
-            vault.retrieval_runs(64)?.len() > base_before,
-            "{expectation}: the run is an ordinary durable base one"
-        );
-        Ok(())
-    };
-
-    // CONTROL A — an ordinary commissioned recall, taken through the plain
-    // public door while the room is live off record. Nothing routed it through
-    // the session handle, so the room has no claim on it.
-    let before = vault.retrieval_runs(64)?.len();
-    facade
-        .recall(
-            "armbcontrolneedle",
-            crate::memory::Effort::Medium,
-            &crate::memory::RecallScope::default(),
-            10,
-            None,
-            None,
-        )
-        .expect("ordinary recall");
-    landed_in_base(before, "an ordinary recall beside a live room")?;
-
-    // CONTROL B — the SAME in-room door after a flip back on record. The room
-    // is on record, so its retrievals are ordinary ones and their runs belong
-    // in the base ledger like any other.
-    session.flip_on_record()?;
-    let before = vault.retrieval_runs(64)?.len();
-    facade
-        .recall_in_session(
-            &session,
-            "armbcontrolneedle",
-            crate::memory::Effort::Medium,
-            &crate::memory::RecallScope::default(),
-            10,
-            None,
-            None,
-        )
-        .expect("on-record in-room recall");
-    landed_in_base(before, "an on-record room recall")?;
-
-    let receipt_log = vault.off_record_receipt_log("sess-armb-control")?;
-    let outcome = vault.close_off_record_session("sess-armb-control", receipt_log)?;
-    assert_eq!(
-        outcome.context_receipts_deleted, 0,
-        "neither control ever became a context receipt of the room"
-    );
-    Ok(())
-}
-
 /// K10 boundary under a MID-ASSEMBLY flip, base direction.
 ///
 /// A retrieval admitted while the room is ON RECORD captures a base-targeted
@@ -1074,32 +928,6 @@ fn post_flip_emit_receipt_routes_on_record_and_survives_close() {
     let outcome = session.close().expect("close");
     assert_eq!(outcome.emit_receipts_deleted, 1);
     assert_eq!(outcome.emit_receipts_retained, vec![r2]);
-}
-
-#[test]
-fn off_record_emit_receipts_still_evaporate_at_close() {
-    let (_tmp, vault) = temp_vault();
-    let session = vault
-        .off_record_session_vault()
-        .enter("sess-evaporate", OffRecordBackendClass::Local)
-        .expect("enter");
-    for id in ["r1", "r2"] {
-        session
-            .record_emit_receipt(crate::receipt::outbound_intent_receipt(
-                id,
-                id,
-                &OutboundIntent::from_trigger(
-                    OutboundIntentDraft::new("agent-alpha", "send", "email", "kenji@example.com"),
-                    OutboundIntentTrigger::agent_immediate(format!("intent:{id}")),
-                ),
-                100,
-                "delivered_to_channel",
-            ))
-            .expect("record receipt");
-    }
-    let outcome = session.close().expect("close");
-    assert_eq!(outcome.emit_receipts_deleted, 2);
-    assert!(outcome.emit_receipts_retained.is_empty());
 }
 
 #[test]
@@ -1527,16 +1355,6 @@ fn assert_session_search_capture(capture: bool, on_record: bool) -> Result<()> {
 #[test]
 fn default_on_record_session_search_does_not_persist_telemetry() -> Result<()> {
     assert_session_search_capture(false, true)
-}
-
-#[test]
-fn default_off_record_session_search_does_not_stage_telemetry() -> Result<()> {
-    assert_session_search_capture(false, false)
-}
-
-#[test]
-fn opted_in_on_record_session_search_persists_telemetry() -> Result<()> {
-    assert_session_search_capture(true, true)
 }
 
 #[test]

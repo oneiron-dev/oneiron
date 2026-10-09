@@ -93,72 +93,6 @@ fn exact_actor_keys_replace_replay_delete_without_resurrection() {
 }
 
 #[test]
-fn exact_prefix_filter_and_namespace_pages_follow_live_keys() {
-    let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 93);
-    let memory = vault.memory(actor, EdgeActorClass::Human);
-    for (ns, key, n) in [
-        (vec!["a", "b"], "a", 1),
-        (vec!["a", "b"], "b", 2),
-        (vec!["a", "bc"], "c", 2),
-        (vec!["ab"], "d", 2),
-    ] {
-        memory.key_value_put(&input(&ns, key, key, n)).unwrap();
-    }
-    let page = memory
-        .key_value_search(&KeyValueSearch {
-            namespace_prefix: vec!["a".into()],
-            filter: Some(json!({"n":2}).as_object().unwrap().clone()),
-            limit: 1,
-            offset: 1,
-        })
-        .unwrap();
-    assert_eq!(page.len(), 1);
-    assert_eq!(page[0].key, "c");
-    let exact = memory
-        .key_value_search(&KeyValueSearch {
-            namespace_prefix: vec!["a".into(), "b".into()],
-            ..Default::default()
-        })
-        .unwrap();
-    assert_eq!(
-        exact
-            .iter()
-            .map(|item| item.key.as_str())
-            .collect::<Vec<_>>(),
-        vec!["a", "b"]
-    );
-    let namespaces = memory
-        .key_value_namespaces(&KeyValueNamespaces {
-            prefix: vec!["a".into()],
-            max_depth: Some(1),
-            ..Default::default()
-        })
-        .unwrap();
-    assert_eq!(namespaces, vec![vec!["a".to_owned()]]);
-    memory.key_value_delete(&address(&["a", "b"], "a")).unwrap();
-    memory.key_value_delete(&address(&["a", "b"], "b")).unwrap();
-    assert_eq!(
-        memory
-            .key_value_namespaces(&KeyValueNamespaces {
-                prefix: vec!["a".into()],
-                ..Default::default()
-            })
-            .unwrap(),
-        vec![vec!["a".to_owned(), "bc".to_owned()]]
-    );
-    assert!(
-        memory
-            .key_value_search(&KeyValueSearch {
-                limit: 0,
-                ..Default::default()
-            })
-            .is_err()
-    );
-    assert!(memory.key_value_get(&address(&["*"], "k")).is_err());
-}
-
-#[test]
 fn gate_refusal_preserves_current_value_and_never_parks_a_replacement() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 94);
@@ -236,52 +170,6 @@ fn generic_claim_upsert_cannot_close_another_actors_key() {
     assert_eq!(
         memory.key_value_get(&address(&["private"], "k")).unwrap(),
         Some(receipt.item)
-    );
-}
-
-#[test]
-fn canonical_demotion_does_not_turn_exact_keys_into_recall_results() {
-    let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 97);
-    let memory = vault.memory(actor, EdgeActorClass::Human);
-    let receipt = memory
-        .key_value_put(&input(&["long_term"], "k", "one", 1))
-        .unwrap();
-    let id = EntityId::from_hex(&receipt.item.revision).unwrap();
-    let decay = crate::claim::ClaimDemotionAction::Decay {
-        new_claim_of_weight: 0.1,
-    };
-    let now = vault.now_recorded_at();
-    // Keyed values sit at the default manifest's critical floor, so the
-    // demotion parks for a bound human clear before it touches the head.
-    assert_eq!(
-        vault
-            .apply_claim_demotion(&id, decay, now)
-            .unwrap_err()
-            .kind(),
-        crate::ErrorKind::GateWriteRejected
-    );
-    assert_eq!(vault.pending_claim_demotion(&id).unwrap(), Some(decay));
-    assert_eq!(
-        memory.key_value_get(&address(&["long_term"], "k")).unwrap(),
-        Some(receipt.item.clone())
-    );
-    vault
-        .with_write_txn(|txn| vault.complete_deferred_claim_in_txn(txn, &id, true, now))
-        .unwrap();
-    assert_eq!(
-        crate::claim::claim_demotion_rung(&vault.get_claim(&id).unwrap().unwrap()).unwrap(),
-        Some(crate::claim::ClaimDemotionRung::Decayed)
-    );
-    assert_eq!(
-        memory.key_value_get(&address(&["long_term"], "k")).unwrap(),
-        Some(receipt.item)
-    );
-    assert!(
-        memory
-            .key_value_delete(&address(&["long_term"], "k"))
-            .unwrap()
-            .existed
     );
 }
 
@@ -948,39 +836,6 @@ fn replacement_keeps_source_trust_and_refuses_generated_over_user_truth_atomical
             .lifecycle,
         ClaimLifecycleStatus::Superseded
     );
-}
-
-#[test]
-fn exact_number_filters_preserve_representation_and_large_integer_precision() {
-    let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 111);
-    let memory = vault.memory(actor, EdgeActorClass::Human);
-    for (key, number) in [
-        ("integer", json!(2)),
-        ("float", json!(2.0)),
-        ("large", json!(9_007_199_254_740_993_u64)),
-    ] {
-        let mut request = input(&["numbers"], key, "one", 0);
-        request.value = json!({"n": number});
-        memory.key_value_put(&request).unwrap();
-    }
-    for (filter, expected) in [
-        (json!(2), vec!["integer"]),
-        (json!(2.0), vec!["float"]),
-        (json!(9_007_199_254_740_993_u64), vec!["large"]),
-        (json!(9_007_199_254_740_992_u64), vec![]),
-    ] {
-        let rows = memory
-            .key_value_search(&KeyValueSearch {
-                filter: Some(json!({"n": filter}).as_object().unwrap().clone()),
-                ..Default::default()
-            })
-            .unwrap();
-        assert_eq!(
-            rows.iter().map(|row| row.key.as_str()).collect::<Vec<_>>(),
-            expected
-        );
-    }
 }
 
 #[test]

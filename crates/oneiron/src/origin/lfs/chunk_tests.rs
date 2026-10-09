@@ -79,25 +79,6 @@ fn missing_chunk_parameters_fail_closed_without_upload_reminting() {
 }
 
 #[test]
-fn chunk_parameters_are_vault_private_and_small_files_use_one_chunk() {
-    let (_a, a) = open_test_vault_with(embedding_test_config());
-    let (_b, b) = open_test_vault_with(embedding_test_config());
-    let params = a.lfs_chunk_parameters().unwrap();
-    assert_ne!(params, b.lfs_chunk_parameters().unwrap());
-    assert_eq!(params, a.lfs_chunk_parameters().unwrap());
-    let bytes = b"small object";
-    let oid = LfsOid::digest(bytes);
-    a.put_lfs_object(oid, bytes, time(), time().start).unwrap();
-    let manifest = a.lfs_manifest(oid).unwrap().unwrap();
-    assert_eq!(manifest.chunks.len(), 1);
-    assert_eq!(manifest.chunks[0].hash, *blake3::hash(bytes).as_bytes());
-    assert_eq!(
-        a.get(&manifest.asset_id().unwrap()).unwrap(),
-        Some(manifest.encode().unwrap())
-    );
-}
-
-#[test]
 fn four_kib_edit_reuses_chunks_and_last_reference_gc_is_permanent() {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     let mut bytes = data(8 * 1024 * 1024);

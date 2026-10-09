@@ -44,8 +44,6 @@ mod chunk_tests;
 mod tests;
 
 #[cfg(test)]
-use crate::error::Result;
-#[cfg(test)]
 use crate::registry::ENTITY_TYPE_ASSET;
 #[cfg(test)]
 use crate::{EntityId, TimeRange, Vault};

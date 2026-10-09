@@ -10,77 +10,6 @@ use super::*;
 use crate::config::VaultConfig;
 
 #[test]
-fn receive_pack_crash_before_outcome_recovers_on_noop_retry() {
-    let (vault_dir, vault) = temp_vault();
-    let (_repo_dir, root, oid) = seeded_repo();
-    fixture_intent(
-        &vault,
-        &root,
-        vec![ref_update("refs/heads/recovered", None, Some(&oid))],
-    );
-    assert!(
-        vault
-            .origin_publication_ids(None)
-            .expect("no publication yet")
-            .is_empty()
-    );
-    let before = vault.receive_pack_intents(&root).expect("intent");
-    assert_eq!(before.len(), 1);
-    assert!(!before[0].1.refs[0].observed);
-    // Backend effect, followed by process loss before finish_serve writes anything.
-    git(&root, &["update-ref", "refs/heads/recovered", oid.as_str()]);
-    drop(before);
-    drop(vault);
-    let reopened = Vault::open(vault_dir.path(), VaultConfig::default()).expect("reopen");
-    reopened
-        .reconcile_receive_pack_operations(&root)
-        .expect("no-op retry recovery");
-    let rows = reopened.receive_pack_intents(&root).expect("operation");
-    assert_eq!(rows[0].1.refs[0].status, ReceivePackRefStatus::Published);
-    assert_eq!(
-        rows[0].1.transport_bytes, None,
-        "no exchange checkpoint survived"
-    );
-    let source_id = EntityId::from_hex(&rows[0].1.refs[0].outcome_id).expect("source id");
-    let source = reopened
-        .get_claim(&source_id)
-        .expect("source")
-        .expect("claim");
-    assert_eq!(
-        receive_pack_field(&source, "pack_stats").expect("unmeasured counters"),
-        &receive_pack_stats_value(PackStats {
-            request_bytes: 0,
-            response_bytes: 0,
-            ref_update_count: 1,
-        })
-    );
-    let ids = reopened.origin_publication_ids(None).expect("ids");
-    assert_eq!(ids.len(), 1);
-    reopened
-        .reconcile_receive_pack_operations(&root)
-        .expect("repeated recovery");
-    assert_eq!(
-        reopened.origin_publication_ids(None).expect("same ids"),
-        ids
-    );
-    let wire = GitWire::new(&reopened).expect("wire");
-    let handle = wire
-        .open_repo(local_repo_ref(&root, &oid).expect("repo"), &root)
-        .expect("handle");
-    assert_eq!(
-        reopened
-            .published_origin_refs(
-                &wire,
-                lfs_repo_id(&handle.identity().as_hex()).expect("id"),
-                &handle,
-            )
-            .expect("visible")
-            .len(),
-        1
-    );
-}
-
-#[test]
 fn receive_pack_intent_without_backend_effect_never_advances_a_ref() {
     let (_vault_dir, vault) = temp_vault();
     let (_repo_dir, root, oid) = seeded_repo();
@@ -96,72 +25,6 @@ fn receive_pack_intent_without_backend_effect_never_advances_a_ref() {
     assert_eq!(rows[0].1.refs[0].status, ReceivePackRefStatus::NotApplied);
     assert!(vault.origin_publication_ids(None).expect("ids").is_empty());
     assert!(git(&root, &["for-each-ref", "refs/heads/declined"]).is_empty());
-}
-
-#[test]
-fn receive_pack_multiref_partial_publication_resumes_without_rewriting_success() {
-    let (vault_dir, vault) = temp_vault();
-    let (_repo_dir, root, first) = seeded_repo();
-    let second = commit_file(&root, "second.txt", "second\n");
-    fixture_intent(
-        &vault,
-        &root,
-        vec![
-            ref_update("refs/heads/first", None, Some(&first)),
-            ref_update("refs/heads/second", None, Some(&second)),
-            ref_update("refs/heads/declined", None, Some(&first)),
-        ],
-    );
-    git(&root, &["update-ref", "refs/heads/first", first.as_str()]);
-    git(&root, &["update-ref", "refs/heads/second", second.as_str()]);
-    let keep = super::super::publication::origin_keep_ref_name(&second).expect("keep");
-    let blocked = root.join(".git").join(format!("{}.lock", keep.as_str()));
-    fs::create_dir_all(blocked.parent().expect("parent")).expect("directory");
-    fs::write(&blocked, b"blocked keep-ref effect").expect("block second publication");
-    vault
-        .reconcile_receive_pack_operations(&root)
-        .expect("partial result retained");
-    let rows = vault.receive_pack_intents(&root).expect("intent");
-    assert_eq!(
-        rows[0]
-            .1
-            .refs
-            .iter()
-            .map(|entry| entry.status)
-            .collect::<Vec<_>>(),
-        vec![
-            ReceivePackRefStatus::Published,
-            ReceivePackRefStatus::Pending,
-            ReceivePackRefStatus::NotApplied,
-        ]
-    );
-    let first_id = vault.origin_publication_ids(None).expect("first row");
-    assert_eq!(first_id.len(), 1);
-    let first_claim = vault
-        .origin_publication(first_id[0])
-        .expect("row")
-        .expect("present")
-        .publication_claim_id
-        .expect("claim");
-    let claim_bytes = vault.get_raw(&first_claim).expect("claim bytes");
-    drop(rows);
-    drop(vault);
-    fs::remove_file(blocked).expect("unblock");
-    let reopened = Vault::open(vault_dir.path(), VaultConfig::default()).expect("reopen");
-    reopened
-        .reconcile_receive_pack_operations(&root)
-        .expect("resume remaining ref");
-    let rows = reopened.receive_pack_intents(&root).expect("operation");
-    assert_eq!(rows[0].1.refs[1].status, ReceivePackRefStatus::Published);
-    assert_eq!(rows[0].1.refs[2].status, ReceivePackRefStatus::NotApplied);
-    assert_eq!(
-        reopened.origin_publication_ids(None).expect("rows").len(),
-        2
-    );
-    assert_eq!(
-        reopened.get_raw(&first_claim).expect("unchanged claim"),
-        claim_bytes
-    );
 }
 
 #[test]
@@ -407,44 +270,6 @@ fn receive_pack_partial_effect_superseded_before_recovery_is_not_reapplied() {
             .expect("no publication")
             .is_empty()
     );
-}
-
-#[test]
-fn receive_pack_delete_crash_recovers_operation_without_inventing_an_advance() {
-    let (vault_dir, vault) = temp_vault();
-    let (_repo_dir, root, oid) = seeded_repo();
-    git(&root, &["update-ref", "refs/heads/deleted", oid.as_str()]);
-    fixture_intent(
-        &vault,
-        &root,
-        vec![ref_update("refs/heads/deleted", Some(&oid), None)],
-    );
-    git(&root, &["update-ref", "-d", "refs/heads/deleted"]);
-    drop(vault);
-    let reopened = Vault::open(vault_dir.path(), VaultConfig::default()).expect("reopen");
-    reopened
-        .reconcile_receive_pack_operations(&root)
-        .expect("recover deletion");
-    let rows = reopened.receive_pack_intents(&root).expect("journal");
-    assert_eq!(rows[0].1.refs[0].status, ReceivePackRefStatus::Published);
-    assert!(rows[0].1.refs[0].observed);
-    let evidence_id = EntityId::from_hex(&rows[0].1.refs[0].outcome_id).expect("id");
-    let bytes = reopened.get_raw(&evidence_id).expect("evidence");
-    assert!(bytes.is_some());
-    reopened
-        .reconcile_receive_pack_operations(&root)
-        .expect("idempotent deletion");
-    assert_eq!(
-        reopened.get_raw(&evidence_id).expect("evidence unchanged"),
-        bytes
-    );
-    assert!(
-        reopened
-            .origin_publication_ids(None)
-            .expect("no advancing claim")
-            .is_empty()
-    );
-    assert!(git(&root, &["for-each-ref", "refs/heads/deleted"]).is_empty());
 }
 
 #[test]

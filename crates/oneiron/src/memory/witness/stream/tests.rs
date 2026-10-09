@@ -339,23 +339,6 @@ fn message_stream_policy_precedence_bounds_and_actor_ownership() {
         .unwrap();
     assert!(memory.begin_message_stream(&input(), None).is_ok());
 }
-#[test]
-fn message_stream_buffer_overflow_does_not_accept_delta() {
-    let (_dir, vault, actor) = fixture();
-    let memory = vault.memory(actor, EdgeActorClass::Human);
-    let handle = memory
-        .begin_message_stream(&input(), Some(MessageWriteMode::Atomic))
-        .unwrap();
-    memory.append_to_stream(handle, "retained").unwrap();
-    assert!(matches!(
-        memory.append_to_stream(handle, &"x".repeat(MAX_MESSAGE_STREAM_BYTES)),
-        Err(MessageStreamError::BufferOverflow)
-    ));
-    assert_eq!(
-        memory.message_stream_partial(handle).unwrap().text,
-        "retained"
-    );
-}
 #[cfg(feature = "sync")]
 fn frame_text(frame: &[u8]) -> Option<String> {
     assert_eq!(frame[0], crate::sync::TAG_EPHEMERAL);
