@@ -485,6 +485,41 @@ fn budget_denied_opens_budget_trap_and_parks() -> Result<()> {
     Ok(())
 }
 
+/// A metered backend below the step (a host's run admission, admitting each
+/// rung on its own permit) can find the budget spent after the step's own
+/// admission passed. That is the same budget trap, with its park and its
+/// resume signal, never a model failure; the step's lease is released.
+#[test]
+fn a_backend_that_finds_the_budget_spent_opens_the_budget_trap() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    install_failure_rules(&vault, &[("budget", "budget_trap", true, false)])?;
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let backend = ScriptedBackend::new(vec![Err(LlmError::BudgetDenied(
+        crate::llm::BudgetDenied::Exhausted,
+    ))]);
+    let guard = guard_with_limit(10_000);
+
+    let outcome = block_on(call_as_step(&ctx, &backend, &guard, request_fixture()))
+        .expect("trap outcome is Ok");
+    let StepOutcome::Trapped { trap, .. } = outcome else {
+        panic!("expected trapped step");
+    };
+    assert_eq!(trap.kind, DreamerTrapKind::Budget);
+    assert_eq!(backend.calls(), 1);
+    let parked = DreamerRunnerStore::new(&vault)
+        .parked_attempt(fixture.attempt_id)?
+        .expect("attempt parked");
+    assert_eq!(parked.park_owner, trap_park_owner(&trap.trap_claim_id));
+    assert_eq!(
+        guard.read().reserved_units,
+        0,
+        "the step's lease is released"
+    );
+    assert_eq!(guard.read().used_units, 0);
+    Ok(())
+}
+
 /// Astra R2 #1304: the budget trap and its park committed in two
 /// transactions, so a crash or a refused park between them left an open trap
 /// over an unparked attempt; boot recovery requeued it and a fresh budget ran

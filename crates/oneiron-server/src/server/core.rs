@@ -307,6 +307,7 @@ impl SyncServer {
     #[cfg(feature = "code-sandbox-wasmtime")]
     #[must_use]
     pub fn with_mcp_quickjs_provider(mut self, provider: crate::mcp::McpQuickJsProvider) -> Self {
+        let provider = provider.with_run_receipts(self.run_receipts());
         self.mcp_code_host = Some(Arc::new(crate::mcp::McpEngineNativeCodeHost::new(
             Arc::new(provider),
         )));

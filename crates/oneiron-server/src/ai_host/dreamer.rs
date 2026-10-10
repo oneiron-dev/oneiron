@@ -235,15 +235,20 @@ impl PassExecutorFactory for ObservedFactory {
             }
         };
         // The pass's calls go out as a run on a line that mirrors the pass's
-        // own: each rung takes its own permit through the run's gate. The
-        // engine's step layer still meters the pass on `guard` with its own
-        // lease, and each of its retries reaches the run as a fresh call.
-        let line = oneiron::BudgetGuard::with_reserve_units(
+        // own: its limit, and the vault's budget policy for the Dreamer's
+        // actor, so each rung's permit meets the same caps. Each rung takes
+        // its own permit through the run's gate, and the line charges what
+        // the engine's step layer does not see (a failed rung, an answer
+        // with no usage). The step layer still meters the pass on `guard`
+        // with its own lease; a line spent first traps the step on budget
+        // as the pass's own admission would.
+        let line = self.vault.policy_budget_guard(
             DREAMER_PASS_RUN,
             guard.read().limit_units,
             guard.reserve_units(),
             oneiron::BudgetExhaustionPolicy::Suspend,
-        );
+            self.actor,
+        )?;
         let backend = RunBackend::new(
             route.ladder,
             self.runtime.undeclared_run(DREAMER_PASS_RUN, line),

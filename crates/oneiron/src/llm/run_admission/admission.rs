@@ -2,7 +2,7 @@
 //! connector, is admitted against the run's own declaration and its lease,
 //! and gets a one-use permit bound to the run, the model, the route, the
 //! locality and the offer that pays.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::Serialize;
@@ -104,6 +104,10 @@ pub(super) struct RunInner {
     pub(super) host: Option<Arc<HostAccount>>,
     receipts: Arc<dyn RunReceiptSink>,
     calls: Mutex<BTreeMap<String, CallFacts>>,
+    /// Every lease this run's permits hold, model and paid alike. A meter
+    /// other runs share issues theirs too, so the meter alone cannot tell a
+    /// permit's run.
+    issued: Mutex<BTreeSet<String>>,
 }
 
 struct Revisioned {
@@ -146,8 +150,8 @@ impl RunAdmission {
     /// for its line, such as the vault's budget policy for one actor's calls.
     /// `meter` holds the line `declaration.budget()` names, and each call
     /// reserves that line's `reserve_units` on it. Runs that share a meter
-    /// share its line, and a permit one of them issued starts at another's
-    /// gate for the same offer.
+    /// share its line, never their permits: a permit starts only at the gate
+    /// of the run that admitted it.
     #[must_use]
     pub fn with_meter(
         run: impl Into<String>,
@@ -168,6 +172,7 @@ impl RunAdmission {
                 host,
                 receipts,
                 calls: Mutex::new(BTreeMap::new()),
+                issued: Mutex::new(BTreeSet::new()),
             }),
         }
     }
@@ -361,7 +366,13 @@ impl RunInner {
         lease: &BudgetLease,
         call: &DispatchBinding,
     ) -> Result<(), RunDenied> {
-        self.guard.begin_dispatch(lease, call).map_err(|refused| {
+        let started = if self.lock_issued().contains(lease.id()) {
+            self.guard.begin_dispatch(lease, call)
+        } else {
+            // Another run's permit, on a meter the two share.
+            Err(DispatchRefused::ForeignLease)
+        };
+        started.map_err(|refused| {
             let reason = RunDenied::Dispatch { refused };
             self.refuse(Some(&call.subject), Some(lease), reason.clone());
             reason
@@ -435,6 +446,7 @@ impl RunInner {
     ) -> Result<RunPermit, RunDenied> {
         match admitted {
             Ok(permit) => {
+                self.lock_issued().insert(permit.lease.id().to_owned());
                 if let Some(model) = model {
                     self.lock_calls().insert(
                         permit.lease.id().to_owned(),
@@ -493,6 +505,10 @@ impl RunInner {
 
     pub(super) fn lock_calls(&self) -> MutexGuard<'_, BTreeMap<String, CallFacts>> {
         self.calls.lock().expect("run call mutex poisoned")
+    }
+
+    fn lock_issued(&self) -> MutexGuard<'_, BTreeSet<String>> {
+        self.issued.lock().expect("run permit mutex poisoned")
     }
 }
 

@@ -5,12 +5,12 @@
 //! (briefing, then each earlier step's output) as user messages. A first step
 //! with no context is asked its definition's own `desc`. No text is invented
 //! here; the output's raw bytes become the step's durable result.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use oneiron::agent_dispatch::{AgentDispatchStatus, agent_dispatch_actor};
-use oneiron::attempt_queue::AttemptQueue;
+use oneiron::attempt_queue::{AttemptId, AttemptQueue};
 use oneiron::compaction::output::restore_output;
 use oneiron::context_projection::ResolvedContextProjection;
 use oneiron::{
@@ -33,7 +33,15 @@ pub(super) struct StepRunner {
     pub(super) budget_units: u64,
     /// How long a failed step waits before its next try, times the tries.
     pub(super) retry_backoff_secs: u64,
+    /// What each step's tries spent in all, by the failed try a retry
+    /// follows: the next try replays exactly that.
+    pub(super) spent: Mutex<HashMap<AttemptId, u64>>,
 }
+
+/// Failed tries whose spend is kept for a retry. A chain past its last try
+/// keeps its entry, so the map is cleared at this size; a retry it forgot
+/// replays the bound instead.
+const KEPT_SPENDS: usize = 1024;
 
 /// Why a step did not produce its output, and whether a later try of the
 /// same call may succeed (a model call the provider answered with a
@@ -129,13 +137,20 @@ impl StepRunner {
         let request = call.request;
         // The agent pays: its live budget policy rows, its own meter. Every
         // earlier try of this step failed its model call, and each rung it
-        // sent was charged its reservation: one reservation per rung of the
-        // ladder, at most, whatever the config did between them. Those
-        // charges are replayed into this try's meter, so the step's budget
-        // and every policy row it matches (the agent's cap, the purpose's)
-        // see them: retries share one budget, never renew it.
+        // sent was charged its reservation. Those charges are replayed into
+        // this try's meter, so the step's budget and every policy row it
+        // matches (the agent's cap, the purpose's) see them: retries share
+        // one budget, never renew it. The try this one follows left what the
+        // chain spent; after a restart, each earlier try is replayed at one
+        // reservation per rung of the ladder, the most it could have sent.
         let reserve = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
         let earlier = AttemptQueue::new(vault).retry_chain_depth(step.attempt.id)?;
+        let carried = step.attempt.retry_of.and_then(|parent| {
+            self.spent
+                .lock()
+                .expect("step spend mutex poisoned")
+                .remove(&parent)
+        });
         let run_id = format!(
             "workflow-step:{}",
             oneiron::EntityId::from_bytes(*step.attempt.id.as_bytes())?.to_hex()
@@ -150,7 +165,10 @@ impl StepRunner {
         let budget = |denied: oneiron::llm::BudgetDenied| {
             Error::InvalidConfig(format!("workflow step budget: {denied:?}"))
         };
-        let charged = u64::from(earlier).saturating_mul(call.ladder.rungs() as u64);
+        let charged = match carried {
+            Some(units) => units.div_ceil(reserve),
+            None => u64::from(earlier).saturating_mul(call.ladder.rungs() as u64),
+        };
         for _ in 0..charged {
             let spent = guard.admit_for_request(&request).map_err(budget)?.lease;
             guard.settle_reserved(&spent).map_err(budget)?;
@@ -164,8 +182,16 @@ impl StepRunner {
             Ok(response) => response,
             Err(oneiron::llm::LlmError::BudgetDenied(denied)) => return Err(budget(denied).into()),
             Err(error) => {
+                let retryable = matches!(error, oneiron::llm::LlmError::Retryable(_));
+                if retryable {
+                    let mut spent = self.spent.lock().expect("step spend mutex poisoned");
+                    if spent.len() >= KEPT_SPENDS {
+                        spent.clear();
+                    }
+                    spent.insert(step.attempt.id, run.read().used_units);
+                }
                 return Err(StepFault {
-                    retryable: matches!(error, oneiron::llm::LlmError::Retryable(_)),
+                    retryable,
                     error: Error::InvalidConfig(format!(
                         "workflow step model call failed: {error}"
                     )),

@@ -7,7 +7,10 @@ use oneiron::llm::SingleRouteBackend;
 use oneiron::llm::run_admission::{
     KeyCustody, OfferBinding, OfferRoute, Payer, RunAdmission, RunReceiptSink,
 };
-use oneiron::{BudgetGuard, LlmRequest};
+use oneiron::{
+    BudgetGuard, BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmGenerateFuture,
+    LlmRequest, LlmStreamResult, ModelId,
+};
 
 use super::{ModelRouter, OfferLadder, ServedOffer, undeclared_run};
 
@@ -63,6 +66,54 @@ impl RawInference {
             ladder,
             undeclared_run(RAW_RUN, self.meter.clone(), receipts),
         ))
+    }
+}
+
+/// A host-injected backend as a model backend for engine code that calls one
+/// itself (code mode's executor): every call is its own undeclared run on the
+/// host's meter, sent through the run's gate. The caller's lease carries no
+/// spend.
+pub(crate) struct InjectedRuns {
+    raw: RawInference,
+    backend: Arc<dyn SingleRouteBackend>,
+    receipts: Arc<dyn RunReceiptSink>,
+}
+
+impl InjectedRuns {
+    pub(crate) fn new(
+        backend: Arc<dyn SingleRouteBackend>,
+        meter: BudgetGuard,
+        receipts: Arc<dyn RunReceiptSink>,
+    ) -> Self {
+        Self {
+            raw: RawInference::injected(Arc::clone(&backend), meter),
+            backend,
+            receipts,
+        }
+    }
+}
+
+impl LlmBackend for InjectedRuns {
+    fn supports(&self, model: &ModelId, capability: LlmCapability) -> bool {
+        self.backend.supports(model, capability)
+    }
+
+    fn generate<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
+        Box::pin(async move {
+            let (ladder, run) = self
+                .raw
+                .call(&request, Arc::clone(&self.receipts))
+                .ok_or(FatalLlmError::InvalidRequest)?;
+            ladder.generate(&run, request, None).await
+        })
+    }
+
+    fn stream<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmStreamResult<'a> {
+        let (ladder, run) = self
+            .raw
+            .call(&request, Arc::clone(&self.receipts))
+            .ok_or(FatalLlmError::InvalidRequest)?;
+        ladder.stream(&run, request, None)
     }
 }
 

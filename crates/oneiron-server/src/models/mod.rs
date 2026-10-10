@@ -51,7 +51,7 @@ mod tests;
 pub use declared::DeclaredRun;
 pub use ladder::OfferLadder;
 pub use offer::ServedOffer;
-pub(crate) use raw::RawInference;
+pub(crate) use raw::{InjectedRuns, RawInference};
 pub use receipts::{LoggedReceipts, RUN_RECEIPT_TARGET};
 pub use role_route::{RoleCall, RoleRefusal, RoleRoute};
 pub use router::ModelRouter;

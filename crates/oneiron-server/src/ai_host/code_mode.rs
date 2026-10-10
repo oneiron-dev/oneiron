@@ -68,10 +68,7 @@ pub(super) async fn bind(
     // The executor hands this lease to every call; the backend below admits
     // and settles each call on the meter instead, so the lease carries no
     // spend and its reservation is released at once.
-    let lease = match guard
-        .admit()
-        .and_then(|admission| guard.abort(&admission.lease).map(|_| admission.lease))
-    {
+    let lease = match crate::mcp::idle_lease(&guard) {
         Ok(lease) => lease,
         Err(denied) => {
             tracing::error!(?denied, "code mode's meter admits nothing");
@@ -95,7 +92,7 @@ pub(super) async fn bind(
         determinism: CodeRunDeterminism::new(0, [0; CODE_RUN_RNG_SEED_LEN]),
         limits: EngineExecutorLimits::default(),
     };
-    match McpQuickJsProvider::new(Arc::new(component), backend, lease, config) {
+    match McpQuickJsProvider::gated(Arc::new(component), backend, lease, config) {
         Ok(provider) => server.with_mcp_quickjs_provider(provider.with_clock_from_first_start()),
         Err(error) => {
             tracing::error!(%error, "code mode's executor config is invalid");

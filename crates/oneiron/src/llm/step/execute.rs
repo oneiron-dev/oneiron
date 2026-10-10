@@ -174,40 +174,7 @@ pub async fn call_as_step_with_fallbacks(
 
     let admission = match guard.admit_for_request(&request) {
         Ok(admission) => admission,
-        Err(BudgetDenied::Exhausted) => {
-            let failure_policy =
-                resolve_failure_policy(ctx.vault, super::super::DreamerFailureClass::Budget)?;
-            // The trap and its park land in one transaction: an open trap
-            // over an unparked attempt reads as plain leased work, which boot
-            // recovery requeues and a fresh budget runs without the signal.
-            let store = crate::dreamer_runner::DreamerRunnerStore::new(ctx.vault);
-            let trap = ctx.vault.with_write_txn_grouped(|wtxn| {
-                let trap = open_trap_in_txn(
-                    ctx.vault,
-                    wtxn,
-                    ctx,
-                    DreamerTrapKind::Budget,
-                    step_hash,
-                    "durable step budget exhausted",
-                    TrapBindingScope::Attempt,
-                )?;
-                store.park_attempt_in_txn(
-                    wtxn,
-                    crate::dreamer_runner::ParkDreamerAttempt {
-                        attempt_id: ctx.attempt_id,
-                        reason: "durable step budget exhausted".to_owned(),
-                        park_owner: trap_park_owner(&trap.trap_claim_id),
-                        now: ctx.now_s(),
-                    },
-                )?;
-                Ok(trap)
-            })?;
-            step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
-            return Ok(StepOutcome::Trapped {
-                trap,
-                failure_policy,
-            });
-        }
+        Err(BudgetDenied::Exhausted) => return budget_trap(ctx, step_hash),
         Err(denied) => {
             let source = LlmError::from(denied);
             return Err(classified_failure(ctx.vault, source)?);
@@ -246,6 +213,17 @@ pub async fn call_as_step_with_fallbacks(
                     return Err(error.into());
                 }
             }
+        }
+        // A metered backend below the step (a host's run admission, rung by
+        // rung) found the budget spent before the step spent anything: the
+        // same trap as this step's own admission, never a model failure. Once
+        // a response was paid, a spent budget fails the step as a spent
+        // correction admission does.
+        Err(DurableStepError::Llm(LlmError::BudgetDenied(BudgetDenied::Exhausted)))
+            if failed_usage.input.total == 0 && failed_usage.output.total == 0 =>
+        {
+            settle_failed_usage(guard, &admission.lease, &failed_usage);
+            return budget_trap(ctx, step_hash);
         }
         Err(error) => {
             settle_failed_usage(guard, &admission.lease, &failed_usage);
@@ -400,6 +378,45 @@ fn failure_policy(
         return Err(Error::InvariantViolation("injected dreamer failure policy read").into());
     }
     Ok(Some(resolve_failure_policy(vault, class)?))
+}
+
+/// A spent budget parks the step's attempt behind a budget trap. The trap
+/// and its park land in one transaction: an open trap over an unparked
+/// attempt reads as plain leased work, which boot recovery requeues and a
+/// fresh budget runs without the signal.
+fn budget_trap(
+    ctx: &DurableStepContext<'_>,
+    step_hash: [u8; 32],
+) -> DurableStepResult<StepOutcome> {
+    let failure_policy =
+        resolve_failure_policy(ctx.vault, super::super::DreamerFailureClass::Budget)?;
+    let store = crate::dreamer_runner::DreamerRunnerStore::new(ctx.vault);
+    let trap = ctx.vault.with_write_txn_grouped(|wtxn| {
+        let trap = open_trap_in_txn(
+            ctx.vault,
+            wtxn,
+            ctx,
+            DreamerTrapKind::Budget,
+            step_hash,
+            "durable step budget exhausted",
+            TrapBindingScope::Attempt,
+        )?;
+        store.park_attempt_in_txn(
+            wtxn,
+            crate::dreamer_runner::ParkDreamerAttempt {
+                attempt_id: ctx.attempt_id,
+                reason: "durable step budget exhausted".to_owned(),
+                park_owner: trap_park_owner(&trap.trap_claim_id),
+                now: ctx.now_s(),
+            },
+        )?;
+        Ok(trap)
+    })?;
+    step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
+    Ok(StepOutcome::Trapped {
+        trap,
+        failure_policy,
+    })
 }
 
 fn classified_failure(

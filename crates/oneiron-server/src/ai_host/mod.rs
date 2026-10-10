@@ -279,14 +279,14 @@ impl AiHost {
         (server, host)
     }
 
-    /// [`Self::start_receipted`] with run receipts written to the log.
+    /// Builds every seat from `models` and starts the workers those seats can
+    /// serve. Every model call they make is admitted as a run whose receipts
+    /// are written to the log.
     pub async fn start(vault: Arc<Vault>, models: Option<&ModelsConfig>, host_root: bool) -> Self {
         Self::start_receipted(vault, models, host_root, Arc::new(LoggedReceipts)).await
     }
 
-    /// Builds every seat from `models` and starts the workers those seats can
-    /// serve. Every model call they make is admitted as a run whose receipts
-    /// go to `receipts`.
+    /// `start`, with the run receipts going to `receipts`.
     pub(crate) async fn start_receipted(
         vault: Arc<Vault>,
         models: Option<&ModelsConfig>,
@@ -525,6 +525,7 @@ fn start_workflows(
             models: Arc::clone(runtime),
             budget_units: models.workflows.step_budget_units,
             retry_backoff_secs: models.workflows.retry_backoff_secs,
+            spent: Default::default(),
         },
         Arc::clone(status),
     )

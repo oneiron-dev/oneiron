@@ -42,10 +42,14 @@ fn response() -> LlmResponse {
         finish_reason: FinishReason::Stop,
     }
 }
-// One request per call: the raw routes' gate wraps it.
+// One request per call: the raw routes' gate wraps it. A stream this
+// fixture refuses to start is refused here, before the gate dispatches it.
 impl oneiron::llm::SingleRouteBackend for Backend {
-    fn preflight(&self, _: &LlmRequest, _: bool) -> oneiron::LlmResult<()> {
-        Ok(())
+    fn preflight(&self, request: &LlmRequest, stream: bool) -> oneiron::LlmResult<()> {
+        match backend_error(&request.model) {
+            Some(error) if stream => Err(error.into()),
+            _ => Ok(()),
+        }
     }
 }
 impl LlmBackend for Backend {
@@ -270,17 +274,16 @@ async fn a_paired_top_scope_credential_carries_llm_results_and_host_usage() {
     })
     .await
     .unwrap();
-    // A stream its backend fails to start is charged its reservation too:
-    // the run's gate counts a call as started once it passed the dispatch
-    // check and was handed on. A backend that can tell before sending
-    // refuses in its preflight, which the gate runs uncharged.
+    // A stream its backend refuses to start (in its preflight, before the
+    // run's gate dispatches it) never starts provider work, so the server
+    // releases its reservation rather than charging the host.
     for _ in 0..100 {
         if budget.read().reserved_units == 0 {
             break;
         }
         tokio::task::yield_now().await;
     }
-    assert_eq!(budget.read().used_units, 60);
+    assert_eq!(budget.read().used_units, 50);
     assert_eq!(budget.read().reserved_units, 0);
     serving.abort();
 }
