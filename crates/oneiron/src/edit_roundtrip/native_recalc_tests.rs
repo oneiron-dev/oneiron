@@ -19,7 +19,7 @@ const INPUT: &str = "xl/worksheets/input.xml";
 const OUTPUT: &str = "xl/worksheets/result.xml";
 const OPAQUE: &str = "vendor/opaque.bin";
 const UNKNOWN: &[u8] = b"opaque vendor bytes\0\xff";
-const NATIVE_STAMP: &str = "oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.11";
+const NATIVE_STAMP: &str = "oneiron-xlsx-formula/0.1.0+formualizer.0.9.3-oneiron.12";
 
 fn build(parts: Vec<(&str, Vec<u8>)>) -> Vec<u8> {
     opc::write(&OpcPackage::from_parts(
@@ -338,6 +338,69 @@ fn shared_formulas_defined_names_and_tables_recalculate_natively_through_the_gat
     );
 }
 
+/// `bytes` with "Set precision as displayed" on and cell style 1 formatted
+/// with `code`.
+fn precision_as_displayed(bytes: &[u8], code: &str) -> Vec<u8> {
+    let bytes = with_part(
+        bytes,
+        "xl/workbook.xml",
+        part_text(bytes, "xl/workbook.xml")
+            .replace("</sheets>", r#"</sheets><calcPr fullPrecision="0"/>"#),
+    );
+    let bytes = with_part(
+        &bytes,
+        "xl/_rels/workbook.xml.rels",
+        part_text(&bytes, "xl/_rels/workbook.xml.rels").replace(
+            "</Relationships>",
+            &format!(r#"<Relationship Id="styles" Type="{DOC_REL}/styles" Target="styles.xml"/></Relationships>"#),
+        ),
+    );
+    let bytes = with_part(
+        &bytes,
+        "[Content_Types].xml",
+        part_text(&bytes, "[Content_Types].xml").replace(
+            "</Types>",
+            &format!(r#"<Override PartName="/xl/styles.xml" ContentType="{SPREADSHEET}.styles+xml"/></Types>"#),
+        ),
+    );
+    with_part(
+        &bytes,
+        "xl/styles.xml",
+        format!(
+            r#"<styleSheet xmlns="{MAIN}"><numFmts count="1"><numFmt numFmtId="164" formatCode="{code}"/></numFmts><fonts count="1"><font/></fonts><fills count="1"><fill/></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="164"/></cellXfs></styleSheet>"#
+        ),
+    )
+}
+
+#[test]
+fn precision_as_displayed_recalculates_natively() {
+    // Excel stores =Input!A1/3 under 0.00 as 0.67 and a formula reading it
+    // reads 0.67 (Excel for Windows 16.0.20430).
+    let input = precision_as_displayed(
+        &workbook(
+            r#"<c r="A1"><v>2</v></c>"#,
+            r#"<c r="A1" s="1"><f>Input!A1/3</f><v>0</v></c><c r="B1"><f>A1*3</f><v>0</v></c>"#,
+        ),
+        "0.00",
+    );
+    let host = Host::default();
+    let proposal = proposed(run_edit_roundtrip(
+        &host,
+        &input,
+        OfficeFormat::Xlsx,
+        &recalc_plan(),
+        "run:precision",
+    ));
+    assert_eq!(stamp(&proposal).as_deref(), Some(NATIVE_STAMP));
+    let xml = part_text(&proposal.new_bytes, OUTPUT);
+    assert!(xml.contains("<f>Input!A1/3</f><v>0.67</v>"), "{xml}");
+    assert!(xml.contains("<f>A1*3</f><v>2.01</v>"), "{xml}");
+    assert!(
+        host.seen.borrow().is_empty(),
+        "the host calculator never ran"
+    );
+}
+
 #[test]
 fn a_reused_host_does_not_stamp_an_old_engine_on_a_no_recalc_proposal() {
     let input = workbook("", r#"<c r="A1"><f>1+1</f><v>0</v></c>"#);
@@ -374,7 +437,7 @@ fn refused_workbooks_reach_the_host_recalc_untouched() {
         deep_chain.as_str(),
         // An Excel function the engine lacks: it would cache #NAME? where
         // Excel computes a value.
-        "<f>_xlfn.ANCHORARRAY(Input!A1)</f>",
+        "<f>_xlfn.STOCKHISTORY(Input!A1)</f>",
         // The edit gate requires the OOXML prefix in a recalculated sheet.
         "<f>XLOOKUP(2,Input!A1:A1,Input!A1:A1)</f>",
     ];
@@ -387,13 +450,14 @@ fn refused_workbooks_reach_the_host_recalc_untouched() {
             )
         })
         .collect();
-    // A workbook feature the engine refuses, not a formula.
-    let local = workbook(r#"<c r="A1"><v>2</v></c>"#, r#"<c r="A1"><f>1+1</f></c>"#);
-    inputs.push(with_part(
-        &local,
-        "xl/workbook.xml",
-        part_text(&local, "xl/workbook.xml")
-            .replace("</sheets>", r#"</sheets><calcPr fullPrecision="0"/>"#),
+    // A workbook feature the engine refuses, not a formula: under precision
+    // as displayed, a number format Excel will not open.
+    inputs.push(precision_as_displayed(
+        &workbook(
+            r#"<c r="A1"><v>2</v></c>"#,
+            r#"<c r="A1" s="1"><f>1+1</f></c>"#,
+        ),
+        "0.00e+00",
     ));
     // A function the workbook's VBA project may define, which Excel with
     // macros enabled would call.

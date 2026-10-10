@@ -294,6 +294,110 @@ fn workbook_date_system_changes_dates_but_not_time_or_numeric_inputs() {
     }
 }
 
+/// `fixture` with "Set precision as displayed" on and a styles part: `numfmts`
+/// are its `numFmt` elements and cell style N (from 1) has format id
+/// `ids[N - 1]`.
+fn with_precision_as_displayed(bytes: &[u8], numfmts: &str, ids: &[u32]) -> Vec<u8> {
+    let bytes = edit_part(bytes, "xl/workbook.xml", |xml| {
+        xml.replace("</sheets>", r#"</sheets><calcPr fullPrecision="0"/>"#)
+    });
+    let bytes = edit_part(&bytes, "xl/_rels/workbook.xml.rels", |rels| {
+        rels.replace("</Relationships>", &format!(r#"<Relationship Id="styles" Type="{DOC_REL}/styles" Target="styles.xml"/></Relationships>"#))
+    });
+    let bytes = edit_part(&bytes, "[Content_Types].xml", |types| {
+        types.replace("</Types>", &format!(r#"<Override PartName="/xl/styles.xml" ContentType="{SPREADSHEET}.styles+xml"/></Types>"#))
+    });
+    let xfs: String = std::iter::once(0)
+        .chain(ids.iter().copied())
+        .map(|id| format!(r#"<xf numFmtId="{id}" fontId="0" fillId="0" borderId="0" xfId="0"/>"#))
+        .collect();
+    with_part(
+        &bytes,
+        "xl/styles.xml",
+        format!(
+            r#"<styleSheet xmlns="{MAIN}"><numFmts>{numfmts}</numFmts><fonts count="1"><font/></fonts><fills count="1"><fill/></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs>{xfs}</cellXfs></styleSheet>"#
+        ),
+    )
+}
+
+#[test]
+fn precision_as_displayed_stores_each_result_as_its_format_shows_it() {
+    // Excel for Windows 16.0.20430 (jobs probe-w2-precision-1 to -4): =1/3
+    // under 0.00 stores 0.33 and a formula reading it reads 0.33; General
+    // keeps 15 digits; a constant keeps the value the file holds; # ?/?
+    // stores 13/17 as 3/4; [>100]0;0.00 stores 2/3 by its first section.
+    let input = with_precision_as_displayed(
+        &fixture(
+            r#"<c r="A1" s="1"><v>1.23456</v></c>"#,
+            r#"<c r="A1" s="1"><f>1/3</f></c><c r="B1"><f>A1*3</f></c><c r="C1"><f>0.1+0.2</f></c><c r="D1"><f>Input!A1</f></c><c r="E1" s="2"><f>13/17</f></c><c r="F1" s="3"><f>2/3</f></c>"#,
+            false,
+        ),
+        r#"<numFmt numFmtId="164" formatCode="[&gt;100]0;0.00"/>"#,
+        &[2, 12, 164],
+    );
+    let report = recalc(&input).expect("precision as displayed is native");
+    let xml = part_text(&report.bytes, OUTPUT);
+    for cache in [
+        r#"<c r="A1" s="1"><f>1/3</f><v>0.33</v></c>"#,
+        r#"<c r="B1"><f>A1*3</f><v>0.99</v></c>"#,
+        r#"<c r="C1"><f>0.1+0.2</f><v>0.3</v></c>"#,
+        r#"<c r="D1"><f>Input!A1</f><v>1.23456</v></c>"#,
+        r#"<c r="E1" s="2"><f>13/17</f><v>0.75</v></c>"#,
+        r#"<c r="F1" s="3"><f>2/3</f><v>1</v></c>"#,
+    ] {
+        assert!(xml.contains(cache), "{cache} in {xml}");
+    }
+    assert_eq!(part_text(&report.bytes, INPUT), part_text(&input, INPUT));
+}
+
+#[test]
+fn precision_as_displayed_falls_back_where_excels_stored_value_is_unknown() {
+    // Each goes to the fallback instead of being written: a cell format with a
+    // lowercase exponent (Excel for Windows will not open it), a negative
+    // number shown by a section of literal text only, a style the styles part
+    // does not define, a scientific format scaled by a comma (Excel stores
+    // every number under 0.0,E+0 as 0; the fork stored 0.33), a format Excel
+    // will not open a workbook with (0.0@; the fork stored 15 digits), a
+    // number General rounds past the largest double (Excel saves #NUM! for it,
+    // yet =A1=0 is FALSE; the fork kept the number), and a circular reference
+    // (Excel keeps the saved values of A1=A1 and of B1=A1*2; the fork
+    // calculated B1 again). Excel for Windows 16.0.20430, jobs
+    // probe-w2-precision-sol-raw, -5, -sol2-2 and -6.
+    let formula = r#"<c r="A1" s="1"><f>0-1/3</f></c>"#;
+    for (numfmts, ids) in [
+        (
+            r#"<numFmt numFmtId="164" formatCode="0.00e+00"/>"#,
+            &[164][..],
+        ),
+        (
+            r#"<numFmt numFmtId="164" formatCode="0.00;&quot;none&quot;"/>"#,
+            &[164],
+        ),
+        ("", &[]),
+        (r#"<numFmt numFmtId="164" formatCode="0.0,E+0"/>"#, &[164]),
+        (r#"<numFmt numFmtId="164" formatCode="0.0@"/>"#, &[164]),
+    ] {
+        fallback(&with_precision_as_displayed(
+            &fixture("", formula, false),
+            numfmts,
+            ids,
+        ));
+    }
+    let largest = r#"<c r="A1"><f>2^1023*(2-2^-52)</f></c><c r="B1"><f>A1=0</f></c>"#;
+    fallback(&with_precision_as_displayed(
+        &fixture("", largest, false),
+        "",
+        &[],
+    ));
+    let circular =
+        r#"<c r="A1" s="1"><f>A1</f><v>1.23456</v></c><c r="B1"><f>A1*2</f><v>99</v></c>"#;
+    fallback(&with_precision_as_displayed(
+        &fixture("", circular, false),
+        "",
+        &[2],
+    ));
+}
+
 /// `Result!A1:A3` repeat one shared formula over the defined name `rate` and
 /// the `Prices` table on `Input`; `B1` totals a table column.
 fn names_tables_and_shared_formulas() -> Vec<u8> {
@@ -1434,7 +1538,7 @@ fn native_measurement_cli_writes_recalc_and_refuses_overwrite_or_fallback() {
     assert_eq!(report["engine"]["engine"], "oneiron-xlsx-formula");
     assert_eq!(
         report["engine"]["version"],
-        "0.1.0+formualizer.0.9.3-oneiron.11"
+        "0.1.0+formualizer.0.9.3-oneiron.12"
     );
     assert_eq!(report["formulas"], 1);
     assert_eq!(report["precision_fallback"], false);

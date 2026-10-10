@@ -58,7 +58,10 @@ impl FormualizerEngine {
     /// and a defined name evaluates for the formula that uses it (its relative
     /// R1C1 text reads the calling cell, its random calls are that formula's
     /// draws). A call of a name outside Excel's function list as the file
-    /// spells it is `#NAME?`, as in Excel.
+    /// spells it is `#NAME?`, as in Excel. With "Set precision as displayed"
+    /// on (`fullPrecision="0"`), each formula result is stored as its cell's
+    /// number format shows it and formulas read the stored value, as in
+    /// Excel.
     /// `UnsupportedWorkbook` is returned before bytes are emitted, so the
     /// caller's precision fallback recalculates, for: the external links the
     /// engine cannot read as Excel does with the linked workbook closed (see
@@ -70,7 +73,8 @@ impl FormualizerEngine {
     /// linked-workbook name used as a function or a workbook name
     /// holding a LAMBDA, string escapes the writer's reader does not decode as
     /// Excel does (in strings, formulas, and sheet, defined and table names),
-    /// precision-as-displayed, anything the writer cannot write exactly (such
+    /// under precision as displayed a number format whose stored values the
+    /// writer does not know, anything the writer cannot write exactly (such
     /// as a dynamic array larger than its saved extent), a result over the
     /// host's limits and a recalculation the edit round trip's corruption gate
     /// would refuse. Malformed content (such as
@@ -154,16 +158,10 @@ impl Formulas {
     fn read(package: &Package) -> Result<Self> {
         let workbook = parse_part(package, "xl/workbook.xml")?;
         workbook.root(MAIN, "workbook")?;
+        // Precision as displayed (`fullPrecision="0"`) is the writer's: it
+        // stores each formula result as its cell's format shows it, as Excel
+        // does, and refuses a format whose stored values it does not know.
         let mut refusal = None;
-        // The writer calculates at full precision; Excel would round to the
-        // displayed format first.
-        if let Some((_, settings)) = workbook.child(0, MAIN, "calcPr")?
-            && settings
-                .attr("fullPrecision")
-                .is_some_and(|v| matches!(v, "0" | "false"))
-        {
-            refusal = Some("precision-as-displayed".into());
-        }
         if !matches!(
             workbook
                 .child(0, MAIN, "workbookPr")?
