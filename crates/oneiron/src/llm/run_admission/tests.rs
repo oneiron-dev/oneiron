@@ -21,7 +21,8 @@ use crate::llm::{
 
 mod support;
 use support::{
-    FakePaidEndpoint, FakeProvider, FakeResolver, Reply, SENTINEL_KEY, block_on, paid_call,
+    FakePaidEndpoint, FakeProvider, FakeResolver, PanickingSink, Reply, SENTINEL_KEY, block_on,
+    paid_call,
 };
 
 const RUN: &str = "run-1";
@@ -1193,9 +1194,7 @@ fn a_call_its_route_cannot_serve_is_refused_before_its_permit_starts() {
     assert!(world.a.receipts.rows().iter().any(|row| matches!(
         &row.event,
         RunEvent::Denied {
-            reason: RunDenied::Unsupported {
-                capability: LlmCapability::Streaming
-            },
+            reason: RunDenied::BackendRefused,
             ..
         }
     )));
@@ -1214,6 +1213,9 @@ fn a_route_that_could_carry_a_credential_into_a_receipt_is_refused() {
         "https://user:sk-secret@model.test",
         "https://model.test/v1?key=sk-secret",
         "https://model.test/#sk-secret",
+        "https://model.test/sk-secret/v1",
+        "HTTP://model.test:443/",
+        "https://",
         "https://model.test/ v1",
         "",
     ] {
@@ -1230,11 +1232,16 @@ fn a_route_that_could_carry_a_credential_into_a_receipt_is_refused() {
             "{adapter:?}"
         );
     }
-    let route = OfferRoute::new("fake", "https://model.test:443/v1").expect("a path is fine");
-    assert_eq!(
-        (route.adapter(), route.origin()),
-        ("fake", "https://model.test:443/v1")
-    );
+    for origin in [
+        MODEL_ORIGIN,
+        "http://[::1]:8080",
+        "unix:///tmp/model.sock",
+        "cli:vendor-seat",
+        "device",
+    ] {
+        let route = OfferRoute::new("fake", origin).expect(origin);
+        assert_eq!((route.adapter(), route.origin()), ("fake", origin));
+    }
 }
 
 #[test]
@@ -1247,15 +1254,22 @@ fn a_large_native_amount_converts_whole_and_is_never_priced_low() {
     let convert = super::host::convert;
     assert_eq!(
         convert(u128::from(u64::MAX) * 2, &gpu_seconds(), &units(), &half),
-        Some(u64::MAX)
+        Ok(u64::MAX)
     );
-    assert_eq!(convert(u128::MAX, &units(), &units(), &[]), Some(u64::MAX));
+    assert_eq!(
+        convert(u128::from(u64::MAX) + 1, &units(), &units(), &[]),
+        Err(super::host::Unpriced::TooLarge)
+    );
     let zero_per = UnitRate {
         per: 0,
         ..half[0].clone()
     };
-    assert_eq!(convert(7, &gpu_seconds(), &units(), &[zero_per]), None);
-    // A connector call that big is refused, never admitted at half its price.
+    assert_eq!(
+        convert(7, &gpu_seconds(), &units(), &[zero_per]),
+        Err(super::host::Unpriced::NoRate)
+    );
+    // A connector call that big is refused, never admitted at half its price
+    // nor at the most a meter holds.
     let gpu = PaidConnector {
         connector: "gpu".to_owned(),
         unit_cost: 2,
@@ -1273,6 +1287,43 @@ fn a_large_native_amount_converts_whole_and_is_never_priced_low() {
         }
     );
     assert_eq!((run.used(), run.reserved()), (0, 0));
+    let full = Run::start(
+        RunDeclaration::declared(BudgetLine {
+            limit_units: u64::MAX,
+            ..line()
+        })
+        .with_connector("doubled"),
+        None,
+    );
+    let doubled = PaidConnector {
+        connector: "doubled".to_owned(),
+        unit_cost: 2,
+        ..search()
+    };
+    assert_eq!(
+        full.admission
+            .admit_paid(&doubled, u64::MAX)
+            .expect_err("twice what the line holds"),
+        RunDenied::Budget {
+            denied: BudgetDenied::Exhausted
+        }
+    );
+    assert_eq!((full.used(), full.reserved()), (0, 0));
+}
+
+#[test]
+fn a_receipt_sink_that_panics_never_aborts_the_host_and_leaves_no_hold() {
+    let run = RunAdmission::new(RUN, declaration(), None, Arc::new(PanickingSink));
+    let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run.admit(RunCall {
+            selector: None,
+            request: &request(SMALL),
+            offer: &offer(SMALL),
+        })
+    }));
+    assert!(unwound.is_err(), "the sink's panic reaches the caller");
+    // The permit dropped during the unwind settled; its receipt was lost.
+    assert_eq!(run.read().reserved_units, 0);
 }
 
 #[test]

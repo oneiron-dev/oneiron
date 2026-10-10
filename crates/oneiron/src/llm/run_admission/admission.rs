@@ -9,7 +9,7 @@ use serde::Serialize;
 
 use super::super::{
     BudgetDenied, BudgetExhaustionPolicy, BudgetGuard, BudgetLease, BudgetRead, DispatchRefused,
-    LlmBackend, LlmCapability, LlmError, LlmRequest, LlmResponse, ModelId, SingleRouteBackend,
+    LlmBackend, LlmError, LlmRequest, LlmResponse, ModelId, SingleRouteBackend,
 };
 use super::declaration::{DeclarationEditor, LeaseUnit, RunDeclaration};
 use super::gate::GatedBackend;
@@ -33,8 +33,8 @@ pub enum RunDenied {
     LocalityMismatch,
     #[error("the call picks its model or route through {key}")]
     RouteOverride { key: String },
-    #[error("the route's backend cannot serve {capability:?}")]
-    Unsupported { capability: LlmCapability },
+    #[error("the route's backend refused the call before sending it")]
+    BackendRefused,
     #[error("a declared run keeps its paid keys at T0")]
     KeyAtT1,
     #[error("the run did not declare connector {connector}")]
@@ -448,11 +448,23 @@ impl RunInner {
     }
 
     pub(super) fn record(&self, revision: u32, event: RunEvent) {
-        self.receipts.record(RunReceipt {
+        let receipt = RunReceipt {
             run: self.run.clone(),
             revision,
             event,
-        });
+        };
+        if !std::thread::panicking() {
+            self.receipts.record(receipt);
+            return;
+        }
+        // A permit's or a dispatch's drop during an unwind: a sink that
+        // panics again must not abort the host. The meters are settled by now.
+        let recorded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.receipts.record(receipt);
+        }));
+        if recorded.is_err() {
+            tracing::error!(run = %self.run, "run receipt sink panicked during an unwind");
+        }
     }
 
     fn lock_declaration(&self) -> MutexGuard<'_, Revisioned> {

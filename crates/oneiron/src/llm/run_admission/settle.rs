@@ -1,9 +1,10 @@
 //! Settling a run's permits: an answer pays its usage or its reservation, a
 //! started call that failed pays its reservation, and every settlement the
 //! meter refuses goes on the receipt.
-use super::super::{BudgetSettlement, LlmUsage, answered_units};
+use super::super::{BudgetSettlement, LlmUsage, answered_units_wide};
 use super::admission::{RunDenied, RunInner};
-use super::host::convert;
+use super::declaration::LeaseUnit;
+use super::host::{UnitRate, Unpriced, convert};
 use super::permit::RunPermit;
 use super::receipt::RunEvent;
 
@@ -29,7 +30,7 @@ impl RunInner {
         let native = match outcome {
             CallOutcome::Answered(usage) => {
                 let floor = u64::try_from(permit.reserve_native).unwrap_or(u64::MAX);
-                Some(u128::from(answered_units(usage, floor)))
+                Some(answered_units_wide(usage, floor))
             }
             CallOutcome::Used(quantity) => {
                 Some(u128::from(quantity) * u128::from(permit.unit_cost))
@@ -38,8 +39,13 @@ impl RunInner {
         };
         let line_unit = &permit.facts.unit;
         let line_units = native.map(|native| {
-            convert(native, &permit.native, line_unit, &permit.rates)
-                .unwrap_or(permit.facts.reserved_units)
+            charge(
+                native,
+                &permit.native,
+                line_unit,
+                &permit.rates,
+                permit.facts.reserved_units,
+            )
         });
         let settled = match line_units {
             Some(units) => self.guard.settle_usage(&permit.lease, units),
@@ -58,8 +64,7 @@ impl RunInner {
             let reserved = hold.meter.reserved_for(&hold.lease).unwrap_or(0);
             match native {
                 Some(native) => {
-                    let units = convert(native, &permit.native, &hold.unit, &permit.rates)
-                        .unwrap_or(reserved);
+                    let units = charge(native, &permit.native, &hold.unit, &permit.rates, reserved);
                     (units, hold.meter.settle_usage(&hold.lease, units))
                 }
                 None if started => (reserved, hold.meter.settle_reserved(&hold.lease)),
@@ -90,5 +95,22 @@ impl RunInner {
             (Err(denied), _) | (Ok(_), Some(denied)) => Err(RunDenied::Budget { denied }),
             (Ok(settlement), None) => Ok(settlement),
         }
+    }
+}
+
+/// What a finished call charges a meter. Admission priced the same units
+/// through the same rates, so a missing rate falls back to the reservation; a
+/// call that ran past what a meter holds charges all it holds.
+fn charge(
+    native: u128,
+    from: &LeaseUnit,
+    to: &LeaseUnit,
+    rates: &[UnitRate],
+    reserved: u64,
+) -> u64 {
+    match convert(native, from, to, rates) {
+        Ok(units) => units,
+        Err(Unpriced::TooLarge) => u64::MAX,
+        Err(Unpriced::NoRate) => reserved,
     }
 }

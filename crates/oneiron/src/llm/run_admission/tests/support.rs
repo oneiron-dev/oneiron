@@ -11,11 +11,12 @@ use std::task::{Context, Poll, Wake, Waker};
 use futures_core::Stream;
 
 use super::super::super::{
-    BudgetLease, ContentPart, FinishReason, LlmBackend, LlmCapability, LlmGenerateFuture,
-    LlmMessage, LlmMessageRole, LlmResponse, LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult,
-    LlmUsage, ModelId, RetryableLlmError, SingleRouteBackend,
+    BudgetLease, ContentPart, FatalLlmError, FinishReason, LlmBackend, LlmCapability,
+    LlmGenerateFuture, LlmMessage, LlmMessageRole, LlmResponse, LlmResult, LlmStream,
+    LlmStreamEvent, LlmStreamResult, LlmUsage, RetryableLlmError, SingleRouteBackend,
+    UnsupportedCapability,
 };
-use super::super::{PaidConnector, RunAdmission, RunDenied};
+use super::super::{PaidConnector, RunAdmission, RunDenied, RunReceipt, RunReceiptSink};
 use crate::llm::LlmRequest;
 
 /// The test key a resolver hands out. It must never appear in a receipt.
@@ -59,8 +60,8 @@ pub(super) enum Reply {
 }
 
 /// A provider that serves any model it is reached with, as a real key would,
-/// and records what reached it. It supports every capability but those it is
-/// told to refuse.
+/// and records what reached it. Its preflight refuses streaming or tools only
+/// when it is told to.
 pub(super) struct FakeProvider {
     sent: Mutex<Vec<Sent>>,
     reply: Mutex<Reply>,
@@ -118,13 +119,29 @@ fn answer(request: &LlmRequest, input: u64, output: u64) -> LlmResponse {
     }
 }
 
-impl SingleRouteBackend for FakeProvider {}
+impl SingleRouteBackend for FakeProvider {
+    fn preflight(&self, request: &LlmRequest, stream: bool) -> LlmResult<()> {
+        let refused = self.refused.lock().expect("refused");
+        let needed = [
+            (stream, LlmCapability::Streaming),
+            (!request.tools.is_empty(), LlmCapability::ToolCalling),
+        ];
+        match needed
+            .into_iter()
+            .find(|(needed, capability)| *needed && refused.contains(capability))
+        {
+            Some((_, capability)) => Err(FatalLlmError::Unsupported(UnsupportedCapability {
+                capability,
+                model: Some(request.model.clone()),
+                reason: None,
+            })
+            .into()),
+            None => Ok(()),
+        }
+    }
+}
 
 impl LlmBackend for FakeProvider {
-    fn supports(&self, _model: &ModelId, capability: LlmCapability) -> bool {
-        !self.refused.lock().expect("refused").contains(&capability)
-    }
-
     fn generate<'a>(
         &'a self,
         request: LlmRequest,
@@ -172,6 +189,16 @@ impl Stream for Events {
 
     fn poll_next(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Poll::Ready(self.get_mut().0.pop_front())
+    }
+}
+
+/// A receipt sink that panics at every row, as a broken persistence layer
+/// might.
+pub(super) struct PanickingSink;
+
+impl RunReceiptSink for PanickingSink {
+    fn record(&self, _: RunReceipt) {
+        panic!("receipt sink down");
     }
 }
 

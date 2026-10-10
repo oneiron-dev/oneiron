@@ -8,7 +8,7 @@ use super::super::{
 use super::admission::{RunCall, RunDenied, RunInner};
 use super::declaration::{LeaseUnit, RunDeclaration};
 use super::host::{
-    AllocationRef, KeyCustody, LiveAllocation, PaidConnector, Payer, UnitRate, convert,
+    AllocationRef, KeyCustody, LiveAllocation, PaidConnector, Payer, UnitRate, Unpriced, convert,
 };
 use super::receipt::PermitFacts;
 use super::settle::CallOutcome;
@@ -149,16 +149,12 @@ impl RunInner {
                 .lease;
             (lease, 0)
         } else {
-            let reserve = convert(
+            let reserve = priced(
                 u128::from(line.reserve_units),
                 &tokens,
                 &line.unit,
                 &offer.rates,
-            )
-            .ok_or(RunDenied::UnitMismatch {
-                from: tokens.clone(),
-                to: line.unit.clone(),
-            })?;
+            )?;
             let lease = self
                 .guard
                 .admit_reserve_bound(reserve, binding)
@@ -232,12 +228,7 @@ impl RunInner {
         )?;
         let line = declaration.budget();
         let native = u128::from(connector.unit_cost) * u128::from(quantity);
-        let reserve = convert(native, &connector.cost_unit, &line.unit, &connector.rates).ok_or(
-            RunDenied::UnitMismatch {
-                from: connector.cost_unit.clone(),
-                to: line.unit.clone(),
-            },
-        )?;
+        let reserve = priced(native, &connector.cost_unit, &line.unit, &connector.rates)?;
         let lease = self
             .guard
             .admit_reserve_bound(reserve, connector.dispatch_binding())
@@ -316,10 +307,7 @@ impl RunInner {
                 None => RunDenied::NoAllocation,
             });
         };
-        let units = convert(native_units, native, &unit, rates).ok_or(RunDenied::UnitMismatch {
-            from: native.clone(),
-            to: unit.clone(),
-        })?;
+        let units = priced(native_units, native, &unit, rates)?;
         let lease = meter.admit_reserve(units).map_err(|denied| match denied {
             BudgetDenied::Exhausted => short(),
             denied => RunDenied::Budget { denied },
@@ -333,6 +321,24 @@ impl RunInner {
             },
         )))
     }
+}
+
+/// A reservation in a meter's unit. A price no meter can hold never fits.
+fn priced(
+    units: u128,
+    native: &LeaseUnit,
+    target: &LeaseUnit,
+    rates: &[UnitRate],
+) -> Result<u64, RunDenied> {
+    convert(units, native, target, rates).map_err(|unpriced| match unpriced {
+        Unpriced::NoRate => RunDenied::UnitMismatch {
+            from: native.clone(),
+            to: target.clone(),
+        },
+        Unpriced::TooLarge => RunDenied::Budget {
+            denied: BudgetDenied::Exhausted,
+        },
+    })
 }
 
 /// The key-rung rule of a declared run: its paid keys stay at T0. A BYO seat

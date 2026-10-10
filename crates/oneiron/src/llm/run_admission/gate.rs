@@ -9,7 +9,6 @@ use futures_core::Stream;
 use super::super::{
     BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmGenerateFuture, LlmRequest,
     LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult, LlmUsage, ModelId, SingleRouteBackend,
-    UnsupportedCapability,
 };
 use super::admission::{RunDenied, RunInner};
 
@@ -25,8 +24,8 @@ const SERVED_MODEL_KEYS: [&str; 2] = ["reported_model", "served_model"];
 /// It wraps only a [`SingleRouteBackend`]: a fallback ladder below a gate
 /// would pick its model after the check. One permit buys one physical call,
 /// so a retry, a schema correction or the next hop of a chain takes a fresh
-/// admission. A call the backend cannot serve is refused before its permit
-/// starts, so it costs nothing. A lease from any other meter, the step
+/// admission. A call the backend's own preflight refuses is refused before
+/// its permit starts, so it costs nothing and the permit stays usable. A lease from any other meter, the step
 /// layer's included, is refused here.
 pub struct GatedBackend {
     run: Arc<RunInner>,
@@ -52,21 +51,10 @@ impl GatedBackend {
             self.run.refuse(Some(model), Some(lease), reason);
             return Err(FatalLlmError::InvalidRequest.into());
         }
-        if let Some(capability) = request
-            .needed_capabilities(stream)
-            .into_iter()
-            .find(|capability| !self.inner.supports(&request.model, capability.clone()))
-        {
-            let reason = RunDenied::Unsupported {
-                capability: capability.clone(),
-            };
-            self.run.refuse(Some(model), Some(lease), reason);
-            return Err(FatalLlmError::Unsupported(UnsupportedCapability {
-                capability,
-                model: Some(request.model.clone()),
-                reason: None,
-            })
-            .into());
+        if let Err(error) = self.inner.preflight(request, stream) {
+            self.run
+                .refuse(Some(model), Some(lease), RunDenied::BackendRefused);
+            return Err(error);
         }
         let digest = request
             .canonical_hash_hex()

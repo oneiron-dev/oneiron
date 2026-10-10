@@ -38,6 +38,8 @@ pub enum KeyCustody {
 
 /// The adapter and the origin a call goes out through. The origin names
 /// where the call goes, never how it authenticates: it lands in every receipt.
+/// An `http` or `https` origin is its scheme and authority alone, since a
+/// path, like userinfo or a query, could carry a proxy's key.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct OfferRoute {
     adapter: String,
@@ -50,9 +52,11 @@ pub struct OfferRoute {
 pub enum OfferRouteError {
     #[error("an adapter name is non-empty, without '@', whitespace or control characters")]
     Adapter,
-    /// An origin with userinfo, a query or a fragment could carry a
-    /// credential into a receipt.
-    #[error("an origin is non-empty, without '@', '?', '#', whitespace or control characters")]
+    /// An origin with userinfo, a query, a fragment or an HTTP path could
+    /// carry a credential into a receipt.
+    #[error(
+        "an origin is non-empty, without '@', '?', '#', whitespace, control characters or an HTTP path"
+    )]
     Origin,
 }
 
@@ -71,7 +75,11 @@ impl OfferRoute {
         if !plain(&adapter, &['@']) {
             return Err(OfferRouteError::Adapter);
         }
-        if !plain(&origin, &['@', '?', '#']) {
+        let http_path = origin.split_once("://").is_some_and(|(scheme, rest)| {
+            (scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https"))
+                && (rest.is_empty() || rest.contains('/'))
+        });
+        if !plain(&origin, &['@', '?', '#']) || http_path {
             return Err(OfferRouteError::Origin);
         }
         Ok(Self { adapter, origin })
@@ -101,27 +109,37 @@ pub struct UnitRate {
     pub cost: u64,
 }
 
+/// Why an amount has no price in a line's unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Unpriced {
+    /// No rate names the target unit, so units never mix silently.
+    NoRate,
+    /// The price is more than any meter holds.
+    TooLarge,
+}
+
 /// Converts `units` of `native` into `target`: unchanged in the same unit,
-/// else through the first matching rate, rounded up, and clamped to `u64` only
-/// at the end, so a large native amount is never priced low. `None` when no
-/// rate names `target`, so units never mix silently.
+/// else through the first matching rate, rounded up. The amount stays wide
+/// until the end, so a large one is refused rather than priced low.
 pub(super) fn convert(
     units: u128,
     native: &LeaseUnit,
     target: &LeaseUnit,
     rates: &[UnitRate],
-) -> Option<u64> {
+) -> Result<u64, Unpriced> {
     let converted = if native == target {
         units
     } else {
         let rate = rates
             .iter()
-            .find(|rate| rate.unit == *target && rate.per > 0)?;
+            .find(|rate| rate.unit == *target && rate.per > 0)
+            .ok_or(Unpriced::NoRate)?;
         units
-            .saturating_mul(u128::from(rate.cost))
+            .checked_mul(u128::from(rate.cost))
+            .ok_or(Unpriced::TooLarge)?
             .div_ceil(u128::from(rate.per))
     };
-    Some(u64::try_from(converted).unwrap_or(u64::MAX))
+    u64::try_from(converted).map_err(|_| Unpriced::TooLarge)
 }
 
 /// One model at one place, as the host bound it: the host, not the caller,
