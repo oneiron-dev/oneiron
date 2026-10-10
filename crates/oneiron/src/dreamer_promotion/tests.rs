@@ -518,14 +518,28 @@ fn imported_evidence_lands_proposed_in_its_import_review_whatever_the_policy_gra
     // A MESSAGE with no import provenance of its own, given an imported TURN
     // as a parent, is imported evidence, but the edge names no import: it
     // waits in the Dreamer run's review (Sol 9A-3B round 4 #2).
-    let bare = EntityId::now();
-    vault.put_entity(
-        &bare,
-        crate::registry::ENTITY_TYPE_MESSAGE,
-        occurred(5),
-        5,
-        b"bare",
-    )?;
+    vault
+        .memory(actor, EdgeActorClass::Human)
+        .witness(&crate::WitnessTurn {
+            conversation_ref: EntityId::now().to_hex(),
+            turn_ref: None,
+            messages: vec![crate::WitnessMessage {
+                id: None,
+                author: crate::WitnessAuthor::User,
+                message_type: "dialogue".into(),
+                content: "I drink tea".into(),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+            }],
+            occurred_at: 9_000,
+        })
+        .expect("a live message");
+    let bare = vault
+        .entities_by_type(crate::registry::ENTITY_TYPE_MESSAGE)?
+        .into_iter()
+        .find(|id| *id != message)
+        .expect("the live message");
     vault.put_edge(&bare, EdgeKind::PartOf, &turn, 1.0)?;
     let promoted = candidate(&fixture, "profile.drink", "tea", vec![bare]);
     let id = promoted.claim_id;
