@@ -605,19 +605,20 @@ struct Producer {
     turn: TurnGuard,
 }
 
-/// Charges what a terminal reports, or the reservation when it reports
-/// nothing.
+/// Charges a terminal what it reports, or the turn's reservation when it
+/// reports nothing, plus the reservation for each rung that failed before it
+/// (`settle_answered`, the rule code mode and workflow steps use).
 fn settle(
     guard: &BudgetGuard,
     lease: &BudgetLease,
     usage: &oneiron::LlmUsage,
 ) -> Result<(), String> {
-    if usage.input.total == 0 && usage.output.total == 0 {
-        guard.settle_reserved(lease).map(|_| ())
-    } else {
-        guard.settle_per_call(lease, usage).map(|_| ())
-    }
-    .map_err(|denied| format!("chat settlement: {denied:?}"))
+    let floor = guard
+        .reserved_for(lease)
+        .unwrap_or(oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS);
+    crate::models::settle_answered(guard, lease, usage, floor)
+        .map(|_| ())
+        .map_err(|denied| format!("chat settlement: {denied:?}"))
 }
 
 /// Drives the model stream into the presence plane and the bus. Settles the
