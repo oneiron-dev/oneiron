@@ -39,12 +39,10 @@ fn doctor_reports_the_vault_beside_a_serve_setting_that_does_not_resolve() {
     )
     .unwrap();
     let report = doctor_report(DoctorArgs {
-        vault: crate::cli::VaultArgs {
-            path: vault_path.clone(),
-            dimensions: oneiron::VaultConfig::server().dimensions,
-            map_size: oneiron::VaultConfig::server().map_size,
-            dict_search_paths: None,
-        },
+        path: vault_path.clone(),
+        dimensions: None,
+        map_size: None,
+        dict_search_paths: None,
         config: Some(config),
     })
     .expect("doctor reports despite the bad setting");
@@ -88,12 +86,10 @@ fn doctor_finds_the_configured_backups_beside_a_mistyped_serve_setting() {
     )
     .unwrap();
     let report = doctor_report(DoctorArgs {
-        vault: crate::cli::VaultArgs {
-            path: vault_path,
-            dimensions: oneiron::VaultConfig::server().dimensions,
-            map_size: oneiron::VaultConfig::server().map_size,
-            dict_search_paths: None,
-        },
+        path: vault_path,
+        dimensions: None,
+        map_size: None,
+        dict_search_paths: None,
         config: Some(config),
     })
     .expect("doctor reports despite the mistyped setting");

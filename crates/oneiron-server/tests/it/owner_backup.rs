@@ -177,3 +177,49 @@ fn secret_scan_switch_from_the_cli_is_receipted() {
     let receipt = json(&oneiron(&config, &["secret-scan", "on"]));
     assert_eq!(receipt["revision"], 2);
 }
+
+/// First try, 2026-10-10: `doctor --config` refused a vault `init` made 1024
+/// wide with a larger map unless `--dimensions` and `--map-size` were passed
+/// again. It opens the vault as `serve` and `import` do, from the config, and
+/// a flag still overrides.
+#[test]
+fn doctor_opens_the_vault_with_the_configs_dimensions_and_map_size() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault_path = dir.path().join("vault");
+    let config = dir.path().join("oneiron.toml");
+    let map_size = (1_u64 << 34).to_string();
+    let init = Command::new(env!("CARGO_BIN_EXE_oneiron"))
+        .args(["init", vault_path.to_str().unwrap()])
+        .args(["--config", config.to_str().unwrap()])
+        .args(["--embedder", "none", "--dimensions", "1024"])
+        .args(["--map-size", &map_size])
+        .env_remove("ONEIRON_VAULT_PATH")
+        .output()
+        .unwrap();
+    assert!(
+        init.status.success(),
+        "init: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let doctor = |flags: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_oneiron"))
+            .args(["doctor", vault_path.to_str().unwrap()])
+            .args(["--config", config.to_str().unwrap()])
+            .args(flags)
+            .env_remove("ONEIRON_VAULT_PATH")
+            .output()
+            .unwrap()
+    };
+
+    let report = json(&doctor(&[]));
+    assert!(report.get("config_errors").is_none(), "{report}");
+    assert_eq!(
+        report["location"]["vault"],
+        vault_path.canonicalize().unwrap().to_str().unwrap()
+    );
+    json(&doctor(&["--dimensions", "1024"]));
+    assert!(
+        !doctor(&["--dimensions", "4096"]).status.success(),
+        "the flag, not the config, is what opens the vault"
+    );
+}
