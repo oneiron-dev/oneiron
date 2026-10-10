@@ -136,3 +136,41 @@ fn pinned_evidence_floors_hold_only_for_the_profile_they_were_measured_with() {
         );
     }
 }
+
+/// An endpoint vault on the shipped model must judge vector evidence as a
+/// local vault on it does. Bug repro: every endpoint section took the
+/// engine's default floors, so a vault filled by `embedder serve` withheld
+/// the paraphrases a local vault on the same vectors answers with.
+#[test]
+fn an_endpoint_naming_the_shipped_model_takes_its_evidence_floors() {
+    let floors = |settings: &str| {
+        resolve(&format!(
+            "dimensions = 1024\n\n[embedder]\nprovider = \"endpoint\"\ndimensions = 1024\nendpoint = \"http://127.0.0.1:7399/v1\"\nmodel_key = \"shared\"\n{settings}"
+        ))
+        .unwrap_or_else(|error| panic!("{settings}: {error:#}"))
+        .vault_config()
+        .vector_evidence
+    };
+    let shipped = format!("model_id = \"{}\"\n", super::embedder::DEFAULT_MODEL_ID);
+    let measured = oneiron::config::VectorEvidenceFloors {
+        floor: 0.15,
+        strong: 0.25,
+    };
+    assert_eq!(floors(&shipped), measured);
+    assert_eq!(
+        floors(&format!("{shipped}query_instruction = \" \\n\"\n")),
+        measured
+    );
+    for settings in [
+        format!("{shipped}query_instruction = \"Represent this query: \"\n"),
+        format!("model_id = \"{HARRIER}\"\n"),
+        "model_id = \"perplexity-ai/pplx-embed-v1-0.6b@0000000000000000000000000000000000000000\"\n"
+            .to_owned(),
+    ] {
+        assert_eq!(
+            floors(&settings),
+            oneiron::config::VectorEvidenceFloors::default(),
+            "{settings:?}"
+        );
+    }
+}
