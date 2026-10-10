@@ -4,7 +4,10 @@
 use zeroize::Zeroizing;
 
 use crate::cli::EmbedderServeArgs;
-use crate::config::{EmbedderConfig, EmbedderProvider, ServeArgs, resolve_serve_config};
+use crate::config::embedder::DEFAULT_DIMENSIONS;
+use crate::config::{
+    EmbedderConfig, EmbedderProvider, ServeArgs, default_config_path, resolve_serve_config,
+};
 use crate::embedder::serve::{Listen, run};
 
 pub async fn embedder_serve(args: EmbedderServeArgs) -> anyhow::Result<()> {
@@ -35,10 +38,25 @@ pub async fn embedder_serve(args: EmbedderServeArgs) -> anyhow::Result<()> {
 /// and environment. A local section is served as it stands; with none at all,
 /// the default local model is.
 fn served_config(args: &EmbedderServeArgs) -> anyhow::Result<EmbedderConfig> {
+    // There is no vault here, so the vault-wide width only has to agree with
+    // the model's. With no config file to name it, it is the model's: the
+    // flags' width, or the default model's.
+    let config_file = args.config.is_some()
+        || std::env::var_os("ONEIRON_CONFIG").is_some()
+        || default_config_path().is_some_and(|path| path.exists());
+    let dimensions = match (args.dimensions, config_file) {
+        (Some(dimensions), _) => Some(dimensions),
+        (None, true) => None,
+        (None, false) => Some(
+            args.embedder
+                .embedder_dimensions
+                .unwrap_or(DEFAULT_DIMENSIONS),
+        ),
+    };
     let resolved = resolve_serve_config(&ServeArgs {
         config: args.config.clone(),
         embedder: args.embedder.clone(),
-        dimensions: args.dimensions,
+        dimensions,
         ..ServeArgs::default()
     })?;
     match resolved.embedder {
