@@ -538,6 +538,24 @@ fn native_quickjs_memory_rows_make_the_calls_their_imports_made() -> Result<()> 
     Ok(())
 }
 
+/// The bridge's own argument check refuses with a stable code, never prose:
+/// a string parameter given a number is `invalid_host_argument`, and nothing
+/// reaches the host. Every typed import, `verb-call` included, shares it.
+#[test]
+fn native_quickjs_bridge_refuses_an_argument_with_a_code() -> Result<()> {
+    let outcome = native_quickjs_runtime()?.run_step(
+        step(
+            "try { await self.report_blocked('tool', 1); finish('sent'); } \
+             catch (error) { finish(String(error)); }",
+            SandboxGuestTier::FirstPartyDreamer,
+        ),
+        &mut NoEffects,
+    )?;
+    assert!(outcome.done);
+    assert_eq!(outcome.observation, "TypeError: invalid_host_argument");
+    Ok(())
+}
+
 #[test]
 fn native_quickjs_report_blocked_lands_an_issue() -> Result<()> {
     use crate::code_run::blocked::BlockedCategory;

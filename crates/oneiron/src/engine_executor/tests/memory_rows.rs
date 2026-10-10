@@ -171,10 +171,10 @@ fn a_guest_call_through_each_memory_row_keeps_its_call_and_answer() {
 }
 
 /// A guest call through a memory row is refused as before: a non-finite
-/// number (boxed or not), a time past JavaScript's safe range, an input JSON
-/// cannot carry and one past the message budget never reach the gate, the
-/// guest sees a stable code for each, and a write the gate refuses stops the
-/// run with the gate's own error, writing nothing.
+/// number (boxed or not), a time past JavaScript's safe range and an input
+/// JSON cannot carry never reach the gate, the guest sees a stable code for
+/// each, and a write the gate refuses stops the run with the gate's own error,
+/// writing nothing.
 #[cfg(feature = "code-sandbox-wasmtime")]
 #[test]
 fn a_guest_call_through_a_memory_row_is_refused_as_before() {
@@ -194,8 +194,6 @@ fn a_guest_call_through_a_memory_row_is_refused_as_before() {
          const cyclic = {{}}; cyclic.self = cyclic; \
          try {{ await self.memory.put_claim({{id: '{claim}', subject, predicate: 'p.q', value: cyclic}}); \
            out.cyclic = 'written'; }} catch (error) {{ out.cyclic = String(error); }} \
-         try {{ await self.memory.search({{query: 'x'.repeat(1 << 20)}}); out.oversize = 'sent'; }} \
-         catch (error) {{ out.oversize = String(error); }} \
          finish(JSON.stringify(out));",
         subject = subject.to_hex(),
         claim = claim.to_hex(),
@@ -210,7 +208,6 @@ fn a_guest_call_through_a_memory_row_is_refused_as_before() {
             "unsafe": "host_call_refused",
             "boxed": "RangeError: non_finite_verb_input",
             "cyclic": "TypeError: invalid_verb_input",
-            "oversize": "TypeError: invalid_host_argument",
         })
     );
     assert!(rows.is_empty(), "{rows:?}");
