@@ -578,22 +578,25 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     ));
 
     spawn_sigterm_shutdown(shutdown.clone())?;
-    let ctl_task = tokio::spawn({
-        let state = Arc::clone(&state);
-        let ctl_shutdown = shutdown.triggered();
-        async move { ctl.serve(state, ctl_shutdown).await }
-    });
 
     // The receipts every vault signs (ARCH-0066 §8-§9), as the plain host signs
     // them. Each emission is admitted through the reap freeze like a served
     // write: a frozen vault signs nothing, and a reap never reads quiescent
-    // over a set in flight.
+    // over a set in flight. The first set is signed before the control socket
+    // is served, so no reap can freeze the vault ahead of it, and a refused
+    // start leaves nothing serving.
     let oversight = sync_server
         .start_healer_oversight(crate::server::HEALER_OVERSIGHT_EVERY, {
             let state = Arc::clone(&state);
             move || state.admit_http_mutation().ok()
         })
         .await?;
+
+    let ctl_task = tokio::spawn({
+        let state = Arc::clone(&state);
+        let ctl_shutdown = shutdown.triggered();
+        async move { ctl.serve(state, ctl_shutdown).await }
+    });
 
     // Both sockets are bound, the credentials are consumed, and the open gates
     // have passed. Only now is this process something the supervisor may route

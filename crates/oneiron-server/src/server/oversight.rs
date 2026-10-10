@@ -20,6 +20,9 @@ pub(crate) const HEALER_OVERSIGHT_EVERY: Duration = Duration::from_secs(60 * 60)
 /// reporting ready.
 #[derive(Debug, thiserror::Error)]
 pub enum OversightStartError {
+    /// The host's write gate refused the first emission.
+    #[error("the host refused the first healer oversight emission")]
+    NotAdmitted,
     /// The vault refused the write.
     #[error("the first healer oversight receipts were not signed: {0}")]
     Refused(oneiron::Error),
@@ -49,24 +52,24 @@ impl HealerOversight {
 
 impl SyncServer {
     /// Signs the receipts once, then starts the cadence. Awaited before the
-    /// host reports ready, and a failed first emission is returned, so a
-    /// vault carries its receipts from its first serve. Later failures are
-    /// logged and the next tick tries again.
+    /// host reports ready, and a first emission that is refused or fails is
+    /// returned, so a vault carries its receipts from its first serve. Later
+    /// failures are logged and the next tick tries again.
     ///
     /// `admit` is the host's write gate. Each emission holds what it returns
-    /// until the write finishes, so the host can see the write in flight, and
-    /// `None` skips that tick: a managed vault frozen for reap signs nothing.
+    /// until the write finishes, so the host can see the write in flight. On
+    /// a later tick `None` skips that tick: a managed vault frozen for reap
+    /// signs nothing.
     pub(crate) async fn start_healer_oversight<A: Send + 'static>(
         self: &Arc<Self>,
         every: Duration,
         admit: impl Fn() -> Option<A> + Send + 'static,
     ) -> Result<HealerOversight, OversightStartError> {
-        if let Some(admission) = admit() {
-            match self.emit_healer_oversight_admitted(admission).await {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => return Err(OversightStartError::Refused(error)),
-                Err(error) => return Err(OversightStartError::Interrupted(error)),
-            }
+        let admission = admit().ok_or(OversightStartError::NotAdmitted)?;
+        match self.emit_healer_oversight_admitted(admission).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => return Err(OversightStartError::Refused(error)),
+            Err(error) => return Err(OversightStartError::Interrupted(error)),
         }
         let (stop, mut stopped) = oneshot::channel();
         let server = Arc::clone(self);

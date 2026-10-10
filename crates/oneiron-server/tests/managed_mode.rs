@@ -1553,7 +1553,8 @@ fn a_managed_start_signs_the_three_oversight_receipts() {
 
 /// A managed vault that cannot sign its first oversight receipts never
 /// reports ready (ARCH-0066 §9: every vault carries them from day one). The
-/// start used to log the refusal and write the ready byte anyway.
+/// start used to log the refusal and write the ready byte anyway, and the
+/// control socket it served first kept running after a refused start.
 #[tokio::test]
 async fn a_managed_start_that_cannot_sign_its_receipts_never_reports_ready() {
     let dir = tempfile::tempdir().unwrap();
@@ -1593,4 +1594,14 @@ async fn a_managed_start_that_cannot_sign_its_receipts_never_reports_ready() {
         "unexpected: {error:#}"
     );
     assert!(std::fs::read(&ready_path).unwrap().is_empty());
+    // A refused start leaves nothing serving: no supervisor verb reaches the
+    // vault the boot gave up on, and the vault is released unsigned.
+    assert!(
+        tokio::net::UnixStream::connect(run.join("ctl.sock"))
+            .await
+            .is_err(),
+        "the control socket is still served after a refused start"
+    );
+    let vault = open_vault(&run.join("data"));
+    assert!(vault.healer_oversight_receipts().unwrap().is_empty());
 }
