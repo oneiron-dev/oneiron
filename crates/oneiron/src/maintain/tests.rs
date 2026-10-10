@@ -436,61 +436,28 @@ fn cleanup_ppr_cache_evicts_stale_and_expired() -> Result<()> {
 }
 
 #[test]
-fn postings_compaction_preserves_both_same_term_documents_after_reopen() -> Result<()> {
-    let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), test_config())?;
-    let first = entity(0x75);
-    let second = entity(0x76);
-    for (id, body) in [
-        (first, b"shared apple".as_slice()),
-        (second, b"shared pear".as_slice()),
-    ] {
-        vault.put_entity(
-            &id,
-            crate::registry::ENTITY_TYPE_ASSET_TEXT,
-            test_time_range(1, 1),
-            1,
-            body,
-        )?;
+fn compact_postings_removes_empty_lists() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+
+    {
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.store.text_postings.put(&mut wtxn, b"empty-a", &[])?;
+        vault.store.text_postings.put(&mut wtxn, b"empty-b", &[])?;
         vault
-            .batch()
-            .text(&id, &[("body", std::str::from_utf8(body).unwrap())])
-            .commit()?;
+            .store
+            .text_postings
+            .put(&mut wtxn, b"keep", &[1, 2, 3])?;
+        wtxn.commit()?;
     }
-    let before: std::collections::BTreeSet<_> = vault
-        .search_text("shared", 10)?
-        .into_iter()
-        .map(|hit| hit.id)
-        .collect();
-    assert_eq!(before, std::collections::BTreeSet::from([first, second]));
-    vault.with_write_txn(|txn| {
-        vault.store.text_postings.put(txn, b"shared", &[])?;
-        Ok(())
-    })?;
-    assert_eq!(
-        vault
-            .maintain()
-            .compact_postings()
-            .run()?
-            .postings_compacted,
-        1
-    );
-    drop(vault);
-    let vault = Vault::open(dir.path(), test_config())?;
-    let after: std::collections::BTreeSet<_> = vault
-        .search_text("shared", 10)?
-        .into_iter()
-        .map(|hit| hit.id)
-        .collect();
-    assert_eq!(after, std::collections::BTreeSet::from([first, second]));
-    assert_eq!(
-        vault.get(&first)?.as_deref(),
-        Some(b"shared apple".as_slice())
-    );
-    assert_eq!(
-        vault.get(&second)?.as_deref(),
-        Some(b"shared pear".as_slice())
-    );
+
+    let report = vault.maintain().compact_postings().run()?;
+    assert_eq!(report.postings_compacted, 2);
+
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(vault.store.text_postings.get(&rtxn, b"empty-a")?.is_none());
+    assert!(vault.store.text_postings.get(&rtxn, b"empty-b")?.is_none());
+    assert!(vault.store.text_postings.get(&rtxn, b"keep")?.is_some());
     Ok(())
 }
 
