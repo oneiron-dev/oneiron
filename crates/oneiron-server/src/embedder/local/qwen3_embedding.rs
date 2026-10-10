@@ -210,17 +210,23 @@ impl Attention {
                 self.attend([&queries, &keys, &values], *inputs, *len, model)?
             }
             Layout::Packed(spans) => {
-                let mut attended = Vec::with_capacity(spans.len());
-                for span in spans {
-                    let rows = |projected: &Tensor| projected.narrow(0, span.start, span.len);
-                    let heads = self.attend(
-                        [&rows(&queries)?, &rows(&keys)?, &rows(&values)?],
-                        1,
-                        span.len,
-                        model,
-                    )?;
-                    attended.push(heads.reshape((span.len, self.heads * self.head_dim))?);
-                }
+                // Inputs attend independently, so they run side by side: each
+                // through the very ops, at the very shapes, it would run alone.
+                // Run one after another, these small ops — copies, transposes,
+                // the scale, mostly on one thread — were half a forward.
+                let mut attended = spans
+                    .par_iter()
+                    .map(|span| {
+                        let rows = |projected: &Tensor| projected.narrow(0, span.start, span.len);
+                        self.attend(
+                            [&rows(&queries)?, &rows(&keys)?, &rows(&values)?],
+                            1,
+                            span.len,
+                            model,
+                        )?
+                        .reshape((span.len, self.heads * self.head_dim))
+                    })
+                    .collect::<candle_core::Result<Vec<_>>>()?;
                 match attended.len() {
                     1 => attended.remove(0),
                     _ => Tensor::cat(&attended, 0)?,
