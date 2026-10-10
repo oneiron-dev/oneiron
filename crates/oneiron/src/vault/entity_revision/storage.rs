@@ -317,6 +317,64 @@ pub(crate) fn entity_owns_revision_in_txn(
     Ok(reference(id, &raw) == revision || FRONTIER.contains(store, txn, &(*id, revision.0))?)
 }
 
+/// Every revision `id`'s row can be read at whose first byte is `first`: of
+/// its current row, its live and indexed frontiers, and each retained one.
+/// The retained ones are read from that byte's key range alone.
+pub(super) fn row_revisions_starting_with_in_txn(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    first: u8,
+) -> Result<Vec<RevisionRef>> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        return Ok(Vec::new());
+    };
+    let mut revisions = vec![reference(id, &raw)];
+    if let Some(current) = state(store, txn, id)? {
+        revisions.extend([current.live, current.indexed]);
+    }
+    let mut prefix = id.as_bytes().to_vec();
+    prefix.push(first);
+    revisions.extend(
+        FRONTIER
+            .scan_keys(store, txn, &prefix)?
+            .into_iter()
+            .map(|(_, revision)| RevisionRef(revision)),
+    );
+    revisions.retain(|revision| revision.0[0] == first);
+    revisions.sort_unstable();
+    revisions.dedup();
+    Ok(revisions)
+}
+
+/// `id`'s row as stored, then as it stood at each revision its document
+/// retains, at most `limit` of those, read from one load of the document.
+pub(super) fn retained_rows_in_txn(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    limit: usize,
+) -> Result<Vec<Vec<u8>>> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        return Ok(Vec::new());
+    };
+    let mut rows = vec![raw.to_vec()];
+    if !state(store, txn, id)?.is_some_and(|current| current.has_doc) {
+        return Ok(rows);
+    }
+    let doc = load_doc(store, txn, id)?;
+    for row in FRONTIER.iter_from(store, txn, id.as_bytes())?.take(limit) {
+        let (_, encoded) = row?;
+        let frontier =
+            Frontiers::decode(&encoded).map_err(|_| Error::CorruptedIndex("entity frontier"))?;
+        let fork = doc
+            .fork_at(&frontier)
+            .map_err(|_| Error::CorruptedIndex("retained entity frontier"))?;
+        rows.push(doc_raw(&fork)?);
+    }
+    Ok(rows)
+}
+
 pub(crate) fn read_entity_revision_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -362,6 +420,21 @@ pub(crate) fn read_entity_revision_from_store_in_txn(
     };
     if !current.as_ref().is_some_and(|value| value.has_doc) && reference(id, &raw) == target {
         return Ok(Some(raw.to_vec()));
+    }
+    // A TURN item names the text revision it served (`turn_text`); it reads
+    // the row that revision was read at, while its sources still stand.
+    if header.entity_type == crate::registry::ENTITY_TYPE_TURN
+        && !entity_owns_revision_in_txn(store, txn, id, target)?
+        && let Some(row) =
+            super::turn_text::turn_row_for_text_revision_in_txn(vault, txn, id, target)?
+    {
+        return read_entity_revision_from_store_in_txn(
+            vault,
+            store,
+            txn,
+            id,
+            ReadMode::Pinned(row),
+        );
     }
     Ok(Some(doc_raw(&fork_revision(store, txn, id, target)?)?))
 }

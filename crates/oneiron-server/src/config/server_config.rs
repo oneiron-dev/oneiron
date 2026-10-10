@@ -229,6 +229,9 @@ pub struct ServeConfig {
     pub oneironer: Option<OneironerConfig>,
     /// The `[backup]` section: local backup directory, schedule and retention.
     pub backup: BackupConfig,
+    /// The `[import]` section: the queue a running `serve` imports session
+    /// logs from, off unless set.
+    pub import: super::ImportConfig,
     /// The `[models]` section, absent until the config file names it.
     /// Absent means no model seat is filled: every model-free path runs and
     /// the Dreamer reports idle for want of a model.
@@ -282,6 +285,7 @@ impl Default for ServeConfig {
             embedder: None,
             oneironer: None,
             backup: BackupConfig::default(),
+            import: super::ImportConfig::default(),
             models: None,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
@@ -338,6 +342,7 @@ impl fmt::Debug for ServeConfig {
             .field("embedder", &self.embedder)
             .field("oneironer", &self.oneironer)
             .field("backup", &self.backup)
+            .field("import", &self.import)
             .field("models", &self.models)
             .field("privacy_posture", &self.privacy_posture)
             .field(
@@ -411,6 +416,10 @@ impl ServeConfig {
         // Beside it, how the embedder turns that model's output into stored
         // vectors, when the section says so before the provider loads.
         config.embedding_transform = embedder.and_then(crate::embedder::declared_transform);
+        // And where a vector hit counts as evidence in that space.
+        config.vector_evidence = embedder
+            .map(crate::embedder::evidence_floors)
+            .unwrap_or_default();
         // An active tagger arms the outbox marker: every witnessed turn owes
         // it a pass, committed with the turn (ARCH-0036, serving the tagger).
         config.tagging = self

@@ -253,6 +253,57 @@ async fn a_failed_model_call_cancels_the_message_and_reports_why() {
     host.shutdown().await;
 }
 
+/// Greptile #1304 P1 (follow-up): a first rung whose stream closes before its
+/// first event (an empty body, or a lone `[DONE]`) must not end the turn
+/// while the next rung could answer. The rung's `LlmStream` reports that EOF
+/// as a cut stream, so the ladder hands the turn on and the reply arrives.
+#[tokio::test]
+async fn a_rung_that_ends_its_stream_unspoken_hands_the_turn_to_the_next() {
+    for unspoken in ["", "data: [DONE]\n\n"] {
+        let first = FakeLlm::start(vec![], Some(Reply::Raw(unspoken.into()))).await;
+        let second = FakeLlm::start(
+            vec![],
+            Some(Reply::Deltas {
+                deltas: vec!["res".into(), "cued".into()],
+                model: "fake-model".into(),
+            }),
+        )
+        .await;
+        let config = models_toml(&format!(
+            r#"
+[providers.first]
+kind = "local-openai-compat"
+base_url = "{}"
+[providers.second]
+kind = "local-openai-compat"
+base_url = "{}"
+[roles.generative_reasoner]
+rungs = [{{ model = "first:small" }}, {{ model = "second:big" }}]
+"#,
+            first.base_url, second.base_url
+        ));
+        let (_dir, server, host) = ai_server_with(Some(config)).await;
+        let (status, body) = send(
+            &server,
+            chat(json!({"conversation_ref": oneiron::EntityId::now().to_hex(), "text": "hi"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let lines = lines(&body);
+        let done = lines
+            .iter()
+            .find(|line| line["type"] == json!("done"))
+            .unwrap_or_else(|| panic!("{unspoken:?}: no reply arrived: {lines:?}"));
+        assert_eq!(done["text"], json!("rescued"));
+        // The receipt names the rung that answered: the second.
+        assert_eq!(done["usage"]["raw_provider"]["rung"], json!(1));
+        assert_eq!(done["usage"]["raw_provider"]["provider"], json!("second"));
+        assert_eq!(lines.last().unwrap()["type"], json!("saved"), "{lines:?}");
+        assert!(!first.seen().is_empty(), "the first rung was never tried");
+        host.shutdown().await;
+    }
+}
+
 #[tokio::test]
 async fn a_named_agent_must_be_dispatchable_and_no_model_is_called() {
     let fake = FakeLlm::start(vec![], Some(Reply::Status(500))).await;

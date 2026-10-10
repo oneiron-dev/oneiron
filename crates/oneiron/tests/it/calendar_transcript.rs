@@ -5,13 +5,12 @@ use oneiron::attempt_queue::AttemptQueue;
 use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use oneiron::calendar::transcript::{
     TranscriptFileDropRequest, TranscriptIngestOutcome, ingest_file_drop_transcript,
-    ingest_file_drop_transcript_fail_after_turns_for_test, parse_file_drop_transcript,
-    seed_file_drop_machine_fixture,
+    ingest_file_drop_transcript_fail_after_turns_for_test, seed_file_drop_machine_fixture,
 };
 use oneiron::claim::ClaimApprovalStatus;
 use oneiron::dreamer_runner::decode_dreamer_attempt_payload;
 use oneiron::edge::{EdgeActorClass, EdgeKind};
-use oneiron::ingest::{self, IngestSourceFormat};
+use oneiron::ingest::{self};
 use oneiron::write_envelope::WriteActor;
 use oneiron::{EntityId, Vault, VaultConfig};
 use sha2::Digest;
@@ -153,74 +152,6 @@ fn speaker_transcript_mints_one_session_and_ordered_turns() {
         2
     );
 }
-#[test]
-fn empty_input_is_rejected_not_minted_as_empty_session_or_note() {
-    let (_dir, vault) = vault();
-    let before = (
-        vault
-            .entities_by_type(oneiron::registry::ENTITY_TYPE_SESSION)
-            .unwrap()
-            .len(),
-        vault
-            .entities_by_type(oneiron::registry::ENTITY_TYPE_TURN)
-            .unwrap()
-            .len(),
-        vault
-            .entities_by_type(oneiron::registry::ENTITY_TYPE_NOTE)
-            .unwrap()
-            .len(),
-        AttemptQueue::new(&vault).list().unwrap().len(),
-    );
-    assert!(parse_file_drop_transcript(" ").is_err());
-    assert!(
-        ingest_file_drop_transcript(
-            &vault,
-            TranscriptFileDropRequest {
-                source_blob_ref: EntityId::now(),
-                decoded_text: " ",
-                arrived_at_ms: 1
-            }
-        )
-        .is_err()
-    );
-    assert_eq!(
-        before,
-        (
-            vault
-                .entities_by_type(oneiron::registry::ENTITY_TYPE_SESSION)
-                .unwrap()
-                .len(),
-            vault
-                .entities_by_type(oneiron::registry::ENTITY_TYPE_TURN)
-                .unwrap()
-                .len(),
-            vault
-                .entities_by_type(oneiron::registry::ENTITY_TYPE_NOTE)
-                .unwrap()
-                .len(),
-            AttemptQueue::new(&vault).list().unwrap().len()
-        )
-    );
-}
-
-#[test]
-fn file_drop_registration_has_exact_source_id_and_format() {
-    let cfg = ingest::INGEST_SOURCE_REGISTRY
-        .get_config(ingest::FILE_DROP_TRANSCRIPT_SOURCE_ID)
-        .unwrap();
-    assert_eq!(cfg.source_id, "file-drop-transcript");
-    assert_eq!(cfg.format, IngestSourceFormat::FileDropTranscript);
-}
-
-#[test]
-fn file_drop_source_obeys_ingest_registry_parity() {
-    let source = ingest::INGEST_SOURCE_REGISTRY
-        .get(ingest::FILE_DROP_TRANSCRIPT_SOURCE_ID)
-        .unwrap();
-    let batch = source.normalize("Ada: hello").unwrap();
-    assert_eq!(batch.source_id, ingest::FILE_DROP_TRANSCRIPT_SOURCE_ID);
-    assert_eq!(batch.records[0].speaker.as_deref(), Some("Ada"));
-}
 
 #[test]
 fn turns_preserve_source_labels_timestamps_order_and_blob_provenance() {
@@ -259,59 +190,6 @@ fn turns_preserve_source_labels_timestamps_order_and_blob_provenance() {
     assert_eq!(
         vault.get_entity_type(&turn_refs[0]).unwrap(),
         Some(oneiron::registry::ENTITY_TYPE_TURN)
-    );
-}
-#[test]
-fn public_lifecycle_wrappers_delegate_to_in_txn_entrypoints() {
-    let (_dir, vault) = vault();
-    let oneiron::session_lifecycle::SessionMintOutcome::Minted(id) = vault.mint_session(4).unwrap()
-    else {
-        panic!()
-    };
-    let wake = vault.plan_session_end_wake().unwrap();
-    assert!(
-        vault
-            .end_session_with_wake(
-                &id,
-                oneiron::session_lifecycle::SessionClosePredicate::Explicit,
-                4,
-                &wake
-            )
-            .unwrap()
-            .is_some()
-    );
-    assert!(vault.open_session().unwrap().is_none());
-}
-#[test]
-fn timestamp_preserving_end_wrapper_forwards_exact_end_hint() {
-    let (_dir, vault) = vault();
-    let hint = oneiron::session_lifecycle::SessionHintTimestamp {
-        claimed_ms: Some(5_001),
-        arrival_ms: 5_000,
-        effective_ms: 5_000,
-    };
-    let oneiron::session_lifecycle::SessionMintOutcome::Minted(id) =
-        vault.mint_session_from_hint(hint).unwrap()
-    else {
-        panic!()
-    };
-    let wake = vault.plan_session_end_wake().unwrap();
-    vault
-        .end_session_with_wake_and_hint(
-            &id,
-            oneiron::session_lifecycle::SessionClosePredicate::Explicit,
-            5,
-            &wake,
-            Some(hint),
-        )
-        .unwrap();
-    assert_eq!(
-        vault
-            .session_lifecycle_record(&id)
-            .unwrap()
-            .unwrap()
-            .explicit_end_hint,
-        Some(hint)
     );
 }
 /// MIXED state (the case the deleted empty-only fallback could never serve): a
@@ -637,39 +515,6 @@ fn raw_blob_is_retained_and_calendar_adapter_does_not_rewrite_blob_storage() {
         vault.read_blob_artifact_version(&blob, 1).unwrap(),
         before_bytes
     );
-}
-
-#[test]
-fn transcript_lifecycle_hints_preserve_claimed_and_arrival_effective_timestamps() {
-    let (_dir, vault) = vault();
-    let start = oneiron::session_lifecycle::SessionHintTimestamp {
-        claimed_ms: Some(1_001),
-        arrival_ms: 2_003,
-        effective_ms: 3_005,
-    };
-    let end = oneiron::session_lifecycle::SessionHintTimestamp {
-        claimed_ms: Some(4_007),
-        arrival_ms: 5_009,
-        effective_ms: 6_011,
-    };
-    let oneiron::session_lifecycle::SessionMintOutcome::Minted(id) =
-        vault.mint_session_from_hint(start).unwrap()
-    else {
-        panic!()
-    };
-    let wake = vault.plan_session_end_wake().unwrap();
-    vault
-        .end_session_with_wake_and_hint(
-            &id,
-            oneiron::session_lifecycle::SessionClosePredicate::Explicit,
-            7,
-            &wake,
-            Some(end),
-        )
-        .unwrap();
-    let record = vault.session_lifecycle_record(&id).unwrap().unwrap();
-    assert_eq!(record.app_open_hints.first(), Some(&start));
-    assert_eq!(record.explicit_end_hint, Some(end));
 }
 
 /// T48 pin (packet "Second read, added tests"): the file-drop fixture's

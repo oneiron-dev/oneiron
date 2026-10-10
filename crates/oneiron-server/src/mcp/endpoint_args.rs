@@ -225,7 +225,8 @@ impl McpVerbArguments {
         ]
     }
 
-    fn validate(
+    /// The per-verb argument rules every door applies to a call of `verb`.
+    pub(crate) fn validate(
         &self,
         tool: &'static str,
         verb: McpGeneratedVerbTool,

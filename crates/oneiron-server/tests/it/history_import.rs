@@ -106,12 +106,21 @@ impl Home {
             )
             .expect("test fixture");
         let phrase = phrase.to_lowercase();
+        // A hit on a message comes back as its TURN, which quotes the message
+        // (ARCH-0004): count the messages either way.
         pack.items
             .iter()
-            .filter(|item| {
-                item.kind.eq_ignore_ascii_case("message")
-                    && item.value_text.to_lowercase().contains(&phrase)
+            .flat_map(|item| {
+                if item.kind.eq_ignore_ascii_case("message") {
+                    vec![item.value_text.as_str()]
+                } else {
+                    item.cited_messages
+                        .iter()
+                        .map(|message| message.value_text.as_str())
+                        .collect()
+                }
             })
+            .filter(|text| text.to_lowercase().contains(&phrase))
             .count()
     }
 }
@@ -632,4 +641,142 @@ fn session_logs_whose_titles_pass_the_decoded_limit_are_refused() {
     let output = home.run_import("claude-code", &home.dir.path().join("projects"), false);
     assert!(!output.status.success(), "over 1 GiB of titles is refused");
     assert_eq!(home.vault_bytes(), before, "nothing was written");
+}
+
+/// Done-means (Wave 9b, Claude Code hooks): sessions handed over with
+/// `--queue` while `serve` is down land when it starts, a session's subagent
+/// logs with it and a resumed session's copies once; a session handed over
+/// again while `serve` runs, after it grew, adds only its new messages; and a
+/// queued path that leaves the root through a link lands nothing.
+#[cfg(unix)]
+#[test]
+fn a_session_queued_while_serve_runs_lands_and_a_grown_one_adds_only_new_messages() {
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    /// A running `oneiron serve`, killed if the test fails before it stops.
+    struct Serving(std::process::Child);
+    impl Drop for Serving {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    let home = Home::new();
+    let projects = home.dir.path().join("projects");
+    copy_tree(&fixtures().join("claude-code/projects"), &projects);
+    let project = projects.join("-Users-ana-code-garden-planner");
+    let session = project.join("5d0c0a7e-1111-4222-8333-944455556666.jsonl");
+    let outside = home.dir.path().join("elsewhere");
+    std::fs::create_dir_all(&outside).expect("test fixture");
+    std::fs::copy(
+        fixtures().join("claude-code/append.jsonl"),
+        outside.join("0f0e0d0c-0b0a-4908-8706-050403020100.jsonl"),
+    )
+    .expect("test fixture");
+    std::os::unix::fs::symlink(&outside, project.join("linked")).expect("test fixture");
+    let queue = home.dir.path().join("queue");
+    let mut config = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&home.config)
+        .expect("test fixture");
+    write!(
+        config,
+        "\n[import]\nqueue = true\nqueue_dir = \"{}\"\nclaude_code_root = \"{}\"\n",
+        queue.display(),
+        projects.display()
+    )
+    .expect("test fixture");
+    drop(config);
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("test fixture")
+        .local_addr()
+        .expect("test fixture")
+        .port();
+    let start = || {
+        Serving(
+            Command::new(env!("CARGO_BIN_EXE_oneiron"))
+                .args(["serve", "--host", "127.0.0.1", "--port", &port.to_string()])
+                .arg("--config")
+                .arg(&home.config)
+                .env("ONEIRON_AUTH_SECRET", "import-queue-test-host-secret-0001")
+                .env_remove("ONEIRON_VAULT_PATH")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn oneiron serve"),
+        )
+    };
+    let queue_logs = |logs: &[&Path]| {
+        for log in logs {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_oneiron"));
+            command
+                .args(["import", "claude-code"])
+                .arg(log)
+                .arg("--queue")
+                .arg("--config")
+                .arg(&home.config)
+                .env_remove("ONEIRON_VAULT_PATH");
+            let output = command.output().expect("test fixture");
+            assert!(
+                output.status.success(),
+                "queue {}: {}",
+                log.display(),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    };
+    let drained = || {
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while std::fs::read_dir(&queue)
+            .expect("the queue folder")
+            .next()
+            .is_some()
+        {
+            assert!(Instant::now() < deadline, "serve never drained the queue");
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    };
+    let stop = |mut server: Serving| {
+        let sent = Command::new("kill")
+            .args(["-TERM", &server.0.id().to_string()])
+            .status()
+            .expect("test fixture");
+        assert!(sent.success(), "SIGTERM could not be sent");
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while server.0.try_wait().expect("poll oneiron serve").is_none() {
+            assert!(Instant::now() < deadline, "oneiron serve ignored SIGTERM");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    };
+
+    let resumed = project.join("9a8b7c6d-2222-4333-8444-a55566667777.jsonl");
+    let linked = project.join("linked/0f0e0d0c-0b0a-4908-8706-050403020100.jsonl");
+    queue_logs(&[&resumed, &session, &linked]);
+    let server = start();
+    drained();
+    stop(server);
+    // The session 9 and its inline sidechain 2, its subagent 2, its workflow
+    // run's agent 2, and the resumed session's own 2 beside the 2 copies it
+    // carries; nothing of the log behind the link.
+    assert_eq!(home.count(ENTITY_TYPE_MESSAGE), 17);
+    assert_eq!(home.search("watering reminder fires twice"), 1);
+    assert_eq!(
+        home.search("chili peppers"),
+        0,
+        "nothing under the link was read"
+    );
+
+    append(&session, &fixtures().join("claude-code/append.jsonl"));
+    let server = start();
+    queue_logs(&[&session]);
+    drained();
+    stop(server);
+    assert_eq!(
+        home.count(ENTITY_TYPE_MESSAGE),
+        19,
+        "only the two new messages"
+    );
+    assert_eq!(home.search("chili peppers"), 2);
 }

@@ -11,13 +11,13 @@ mod execution;
 mod execution_binding;
 mod filters;
 mod scoped_channels;
-pub(crate) use types::CandidateFilter;
+pub(crate) use types::{CandidateFilter, TurnFold};
 mod l2_evidence;
 mod support;
 mod trace;
 mod types;
 mod world_authority;
-pub(crate) use world_authority::{WorldGrantIndex, reading_default};
+pub(crate) use world_authority::{WorldGrantIndex, reading_default, resolve_world_authority};
 
 pub use self::builder::PipelineBuilder;
 pub use self::types::{

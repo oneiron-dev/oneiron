@@ -1,6 +1,7 @@
 //! The text channel: the D19 claim-gate widening probe, the scoped BM25 search, and the HyDE-retry extra queries.
 
 use super::admit::{AdmitSignal, ChannelAccumulator};
+use super::turn_fold;
 use crate::bm25::Bm25Config;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -14,7 +15,7 @@ use crate::pipeline::filters::{
     pipeline_candidate_matches_filters_and_gate,
 };
 use crate::pipeline::types::{
-    ClaimStatusGateCache, EntityMetadataCache, PER_SCAN_CAP_FACTOR, PipelineFilterConfig,
+    ClaimStatusGateCache, EntityMetadataCache, PER_SCAN_CAP_FACTOR, PipelineFilterConfig, TurnFold,
 };
 use crate::query_expansion::{HydeExpansion, retry_channel_limit};
 use crate::retrieval_quality::RetrievalDiagnostics;
@@ -149,6 +150,13 @@ impl PipelineBuilder<'_> {
             } else {
                 scoped_text_limit
             };
+            // The bound below admits turns as the fold does, in caches of its
+            // own: the scan closure holds the run's.
+            let mut fold_claim_gate = ClaimStatusGateCache {
+                include_stale: inputs.filter_config.authority_filter.include_stale,
+                private_note_ids: inputs.claim_gate_widening_probe.private_note_ids.clone(),
+                ..ClaimStatusGateCache::default()
+            };
             let mut prefix_probe_claim_gate = inputs.claim_gate_widening_probe;
             let mut exact_posting_matches_scope = |id: &EntityId| {
                 pipeline_candidate_matches_filters_and_gate(
@@ -171,31 +179,63 @@ impl PipelineBuilder<'_> {
             } else {
                 text_channel_limit
             };
-            let mut text_results = if self.memory_category {
-                self.search_text_candidates(
-                    rtxn,
-                    inputs.bm25_config,
-                    text_query,
+            // A run that folds each MESSAGE into its TURN returns turns, so the
+            // bound counts turns: several messages of one turn would otherwise
+            // fill it and keep later conversations out. Such a run reads on,
+            // up to `PER_SCAN_CAP_FACTOR` times the bound, until its rows hold
+            // that many turns or the matches run out.
+            let fold_cap = candidate_limit.saturating_mul(PER_SCAN_CAP_FACTOR);
+            let mut fold_metadata = EntityMetadataCache::default();
+            let mut fetch_limit = candidate_limit;
+            let mut text_results = loop {
+                let mut rows = if self.memory_category {
+                    self.search_text_candidates(
+                        rtxn,
+                        inputs.bm25_config,
+                        text_query,
+                        fetch_limit,
+                        crate::bm25::Bm25SearchOptions {
+                            recency: None,
+                            exact_posting_matches_scope: &mut exact_posting_matches_scope,
+                            private_note_ids: inputs.private_note_ids,
+                        },
+                    )?
+                } else {
+                    crate::ports::RetrievalIndexExecution::port_retrieval_text_scoped(
+                        self.vault,
+                        rtxn,
+                        crate::ports::TextQuery {
+                            query: text_query,
+                            limit: fetch_limit,
+                            rank: inputs.bm25_config,
+                            filter_all: self.candidate_filter.is_some(),
+                            matches_scope: &mut exact_posting_matches_scope,
+                            private_note_ids: inputs.private_note_ids,
+                        },
+                    )?
+                };
+                let exhausted = rows.len() < fetch_limit;
+                if self.turn_fold == TurnFold::Off || (exhausted && fetch_limit == candidate_limit)
+                {
+                    break rows;
+                }
+                if let Some(held) = turn_fold::rows_holding_distinct_turns(
+                    &rows,
                     candidate_limit,
-                    crate::bm25::Bm25SearchOptions {
-                        recency: None,
-                        exact_posting_matches_scope: &mut exact_posting_matches_scope,
-                        private_note_ids: inputs.private_note_ids,
-                    },
-                )?
-            } else {
-                crate::ports::RetrievalIndexExecution::port_retrieval_text_scoped(
-                    self.vault,
+                    self.turn_fold,
+                    &self.vault.store,
                     rtxn,
-                    crate::ports::TextQuery {
-                        query: text_query,
-                        limit: candidate_limit,
-                        rank: inputs.bm25_config,
-                        filter_all: self.candidate_filter.is_some(),
-                        matches_scope: &mut exact_posting_matches_scope,
-                        private_note_ids: inputs.private_note_ids,
-                    },
-                )?
+                    inputs.filter_config,
+                    &mut fold_metadata,
+                    &mut fold_claim_gate,
+                )? {
+                    rows.truncate(held);
+                    break rows;
+                }
+                if exhausted || fetch_limit >= fold_cap || self.deadline_reached() {
+                    break rows;
+                }
+                fetch_limit = fetch_limit.saturating_mul(2).min(fold_cap);
             };
             diagnostics.succeeded.push(RetrievalSignal::Text);
             if self.candidate_filter.is_none()
