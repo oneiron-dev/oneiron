@@ -43,10 +43,18 @@ impl FrozenGitArgv {
 
     /// `for-each-ref` over exact full ref names. A ref that does not exist is
     /// simply absent from the output; the status stays zero.
+    ///
+    /// git matches a plain pattern "completely or up to a slash", so an absent
+    /// name would list every ref beneath it. Each name goes in with its last
+    /// byte escaped: no ref name holds a backslash, so the plain match never
+    /// applies, and the glob match takes the name alone.
     pub(super) fn read_refs(names: &[GitRefName]) -> Self {
         let mut tail = os_args(&["for-each-ref", "--format=%(objectname) %(refname)"]);
         for name in names {
-            tail.push(OsString::from(name.as_str()));
+            // A GitRefName is [A-Za-z0-9._-/], never empty and never ends in
+            // `/`: it holds no glob byte, and its last byte escapes to itself.
+            let (head, last) = name.as_str().split_at(name.as_str().len() - 1);
+            tail.push(OsString::from(format!("{head}\\{last}")));
         }
         Self::frozen(GitWireOperation::ReadRefs, tail)
     }

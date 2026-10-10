@@ -149,14 +149,21 @@ fn publish_manifest_beside(vault: &Vault, repo: &str, manifest: &str, files: usi
     let dir = root.join(&bare).canonicalize().expect("repo dir");
     // A raw ref is not publication authority; the journal is.
     git(&dir, &["update-ref", "-d", "refs/heads/main"]);
+    publish_ref(vault, &dir, "refs/heads/main", &commit);
+    commit
+}
+
+/// Publishes `ref_name` at `commit` in the served repository `dir`, as a
+/// landed push would.
+fn publish_ref(vault: &Vault, dir: &Path, ref_name: &str, commit: &str) {
     let wire = GitWire::new(vault).expect("wire");
-    let oid = GitOid::parse_hex(commit.as_str()).expect("oid");
+    let oid = GitOid::parse_hex(commit).expect("oid");
     let repo_ref = RepoRef::parse(&format!("local:{}#{commit}", dir.display())).expect("ref");
-    let handle = wire.open_repo(repo_ref, &dir).expect("open repo");
+    let handle = wire.open_repo(repo_ref, dir).expect("open repo");
     let request = OriginPublicationRequest {
         repo_id: lfs_repo_id(&handle.identity().as_hex()).expect("repo id"),
         repo: handle,
-        ref_name: GitRefName::parse_full("refs/heads/main").expect("ref name"),
+        ref_name: GitRefName::parse_full(ref_name).expect("ref name"),
         expected_old_oid: None,
         new_oid: oid,
         required_objects: Vec::new(),
@@ -176,7 +183,6 @@ fn publish_manifest_beside(vault: &Vault, repo: &str, manifest: &str, files: usi
         )
         .expect("provenance");
     vault.publish_origin_ref(&wire, request).expect("published");
-    commit
 }
 
 fn owner(vault: &Vault) -> AuthenticatedOwner {
@@ -428,4 +434,58 @@ fn a_published_tree_too_wide_to_list_still_yields_its_manifest() {
         format!("app:refs/heads/main@{commit}:{SECRET_MANIFEST_PATH}")
     );
     assert_eq!(registered.declared_paths, [".env.deploy"]);
+}
+
+/// Sol on #1372: a published ref that a later push deleted keeps its row, and
+/// git read that absent name as a pattern, listing every ref beneath it. Past
+/// GitWire's 16 MiB output bound the projection failed, and registration on
+/// another branch answered 500.
+#[test]
+fn refs_beneath_a_deleted_published_ref_never_break_registration() {
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = Vault::open(dir.path(), crate::config::VaultConfig::default()).expect("vault");
+    let commit = publish_manifest(&vault, "app", MANIFEST);
+    let bare = origin_serving_root(&vault)
+        .expect("root")
+        .join("app.git")
+        .canonicalize()
+        .expect("repo dir");
+    publish_ref(&vault, &bare, "refs/heads/group", &commit);
+    git(&bare, &["update-ref", "-d", "refs/heads/group"]);
+    let (middle, leaf) = ("m".repeat(255), "x".repeat(234));
+    let mut updates = String::new();
+    for index in 0..32_000 {
+        updates.push_str(&format!(
+            "create refs/heads/group/{middle}/{index:05}-{leaf} {commit}\n"
+        ));
+    }
+    git_stdin(&bare, &["update-ref", "--stdin"], updates.as_bytes());
+    let listing = git(
+        &bare,
+        &[
+            "for-each-ref",
+            "--format=%(objectname) %(refname)",
+            "refs/heads/group",
+        ],
+    );
+    assert!(
+        listing.len() > 16 * 1024 * 1024,
+        "the refs beneath list past the bound"
+    );
+
+    let registered = vault
+        .register_secret_as_owner(
+            &owner(&vault),
+            &ask(
+                "deploy-token",
+                CustodyClass::CustodyPortable,
+                CustodyTier::T2LocalRegistered,
+            ),
+            7,
+        )
+        .expect("registered");
+    assert_eq!(
+        registered.manifest_ref,
+        format!("app:refs/heads/main@{commit}:{SECRET_MANIFEST_PATH}")
+    );
 }
