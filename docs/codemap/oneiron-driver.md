@@ -18,7 +18,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/supervisor/budget_ids.rs` | src | s | 4 crate-vis | — | Durable per-pass budget-id derivation and occupied-row index scan |
 | `src/supervisor/budget_tests.rs` | test | m | — | — | Durable budget-id, index-scan, and config-validation tests |
 | `src/supervisor/config.rs` | src | s | 2 struct · 2 fn · 1 type · 1 const · 8 crate-vis | RestartBackoffConfig, WakeSupervisorConfig | Static config, restart backoff, and budget-id length ceilings |
-| `src/supervisor/factory.rs` | src | m | 1 struct · 1 trait · 7 fn · 1 type | ConsolidationExecutorFactory, PassExecutorFactory | Per-pass attempt-executor factory trait and default implementation |
+| `src/supervisor/factory.rs` | src | m | 1 struct · 1 trait · 8 fn · 1 type | ConsolidationExecutorFactory, PassExecutorFactory | Per-pass attempt-executor factory trait and default implementation |
 | `src/supervisor/factory_tests.rs` | test | XL | — | — | Factory, planner-routing, and attempt-fixture tests |
 | `src/supervisor/loop.rs` | src | m | 2 struct · 6 fn · 2 crate-vis | WakeSupervisor, WakeSupervisorReport | Biased-select supervisor loop with panic containment and backoff |
 | `src/supervisor/loop_tests.rs` | test | L | — | — | Loop, panic-containment, shutdown, and redrive acceptance tests |
@@ -33,9 +33,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/tick/policy.rs` | src | s | 1 struct · 1 fn · 1 type | WakePolicyTicks | One cancellable quiet sleep per tick source, driven by the vault's row policy |
 | `src/tick/push.rs` | src | m | 3 struct · 1 enum · 6 fn · 3 crate-vis | HintPusher, PushTick, TickPushError, WakePusher | Push lane: coalescing mailbox state, push error, receiver, and role-typed producer handles |
 | `src/tick/tests/mod.rs` | test | s | — | — | Tick tests: shared helpers (scripted deadlines, frozen and movable clocks, vault seed helpers) |
-| `src/tick/tests/tests_commitment.rs` | test | s | — | — | Tick commitment-lane tests: merge and tie, admission, and fire tests |
+| `src/tick/tests/tests_commitment.rs` | test | m | — | — | Tick commitment-lane tests: merge and tie, admission, and fire tests |
 | `src/tick/tests/tests_push.rs` | test | s | — | — | Tick push and hybrid tests: coalescing, lane fairness, drain order, hint order and overflow, exhaustion races |
-| `src/tick/timer.rs` | src | m | 3 struct · 6 fn · 4 crate-vis | AttemptQueueDeadlines, CommitmentDueDeadlines, TimerTick | Timer lane: attempt-queue deadline reads, commitment reconcile and fire, deadline timer, and due sleep |
+| `src/tick/timer.rs` | src | m | 3 struct · 7 fn · 4 crate-vis | AttemptQueueDeadlines, CommitmentDueDeadlines, TimerTick | Timer lane: attempt-queue deadline reads, commitment reconcile and fire, deadline timer, and due sleep |
 | `src/wave.rs` | src | s | 1 struct · 3 fn | WaveHost | Host-side consumption of a queued planning attempt and live TASK dispatch |
 | `src/wave/tests.rs` | test | s | — | — | — |
 | `src/wave_dispatch.rs` | src | m | 2 struct · 3 enum · 1 fn · 10 crate-vis | WaveDispatchCandidate, WaveDispatchLimits, WaveDispatchRoute, WaveHandoffOutcome, WaveHandoffReceipt | Bounded, per-item delivery of durable wave TASKs to a host dispatcher |
