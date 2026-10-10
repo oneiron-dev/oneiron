@@ -22,8 +22,6 @@ use super::*;
 
 thread_local! {
     static ACTIVE_WRITE_TXN_DEPTH: Cell<usize> = const { Cell::new(0) };
-    #[cfg(test)]
-    static PANIC_ON_ACTIVE_WRITE_TXN: Cell<bool> = const { Cell::new(false) };
 }
 
 pub(crate) type MachineWriteSigner = Arc<dyn Fn(&[u8]) -> Result<[u8; 64]> + Send + Sync>;
@@ -39,13 +37,6 @@ impl Drop for ActiveWriteTxnGuard {
 }
 
 pub(crate) fn active_write_txn_guard() -> ActiveWriteTxnGuard {
-    #[cfg(test)]
-    PANIC_ON_ACTIVE_WRITE_TXN.with(|panic_on_txn| {
-        assert!(
-            !panic_on_txn.get(),
-            "write transaction must not be opened by this path",
-        );
-    });
     ACTIVE_WRITE_TXN_DEPTH.with(|depth| {
         depth.set(depth.get().saturating_add(1));
     });
@@ -54,11 +45,6 @@ pub(crate) fn active_write_txn_guard() -> ActiveWriteTxnGuard {
 
 pub(super) fn active_write_txn_depth() -> usize {
     ACTIVE_WRITE_TXN_DEPTH.with(Cell::get)
-}
-
-#[cfg(test)]
-pub(crate) fn panic_on_active_write_txn_for_current_thread(enabled: bool) {
-    PANIC_ON_ACTIVE_WRITE_TXN.with(|panic_on_txn| panic_on_txn.set(enabled));
 }
 
 pub struct RawDatabases {

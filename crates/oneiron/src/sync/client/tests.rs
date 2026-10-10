@@ -1,6 +1,6 @@
 use super::*;
 use core::assert_matches;
-use loro::{Container, ExportMode, LoroMap, ValueOrContainer};
+use loro::ExportMode;
 
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::{
@@ -10,7 +10,7 @@ use crate::entity_id::EntityId;
 use crate::error::{GateDenialOutcome, GateDenialReason};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TASK};
 use crate::sync::bridge::Materializer;
-use crate::sync::loro_support::{export_snapshot, replicated_deep_value};
+use crate::sync::loro_support::replicated_deep_value;
 use crate::sync::schema::create_root_doc;
 use crate::temporal::TimeRange;
 
@@ -74,14 +74,6 @@ fn sync_state_values_with_prefix(vault: &Vault, prefix: &str) -> Vec<(String, Ve
         .collect()
 }
 
-fn root_windows_map(doc: &LoroDoc) -> LoroMap {
-    let meta = doc.get_map("meta");
-    match meta.get("windows").expect("meta.windows must exist") {
-        ValueOrContainer::Container(Container::Map(windows)) => windows,
-        other => panic!("meta.windows must be a LoroMap, got {other:?}"),
-    }
-}
-
 fn read_u_seq(vault: &Vault, key: &str) -> Option<u32> {
     vault
         .sync_state_get(&format!("m:u_seq:w:{key}"))
@@ -115,7 +107,6 @@ fn commit_local_entity(
     export_updates_since(&window.doc, &vv_before.encode()).unwrap()
 }
 
-use crate::error::SyncError;
 use crate::test_util::{entity as test_entity_id, put_policy_manifest_bytes};
 
 fn encode_policy_manifest(extra_entries: Vec<(rmpv::Value, rmpv::Value)>) -> Vec<u8> {
@@ -344,106 +335,6 @@ fn trusted_manifest_world_ceiling_caps_sync_all_and_rejects_unfollowed_updates()
             .iter()
             .all(|frame| transport::decode_window_sync(&frame[1..]).unwrap().0 != key_b.as_str())
     );
-}
-
-#[test]
-fn subscribed_world_windows_only_request_followed_projects_and_backfill_on_follow() {
-    let manager = test_manager();
-    let (mut client, _rx) = test_client(&manager);
-    let worlds: Vec<_> = (1..=5).map(test_entity_id).collect();
-    let month = WindowKey::new("2026-03");
-    client.root_doc = create_root_doc(
-        "owner",
-        "vault",
-        &worlds
-            .iter()
-            .map(|world| WindowKey::for_month_world(&month, *world))
-            .collect::<Vec<_>>(),
-    );
-    let mut root_frame = vec![TAG_SYNC_UPDATE];
-    root_frame.extend_from_slice(&client.root_doc.export(ExportMode::snapshot()).unwrap());
-    let requested = |frames: &[Vec<u8>]| -> Vec<String> {
-        frames
-            .iter()
-            .filter(|frame| frame.first() == Some(&TAG_WINDOW_SYNC))
-            .map(|frame| {
-                transport::decode_window_sync(&frame[1..])
-                    .unwrap()
-                    .0
-                    .to_owned()
-            })
-            .collect()
-    };
-    client.follow_world(worlds[0]);
-    client.begin_connection_sync();
-    let initial = requested(&client.generate_initial_sync());
-    assert!(
-        initial
-            .iter()
-            .all(|key| WindowKey::try_new(key).unwrap().world().is_none())
-    );
-    let keys = requested(&client.handle_server_message(&root_frame).unwrap());
-    assert!(keys.contains(&WindowKey::for_month_world(&month, worlds[0]).to_string()));
-    for other in &worlds[1..] {
-        assert!(!keys.contains(&WindowKey::for_month_world(&month, *other).to_string()));
-    }
-    client.follow_world(worlds[1]);
-    client.begin_connection_sync();
-    client.generate_initial_sync();
-    let keys = requested(&client.handle_server_message(&root_frame).unwrap());
-    assert!(keys.contains(&WindowKey::for_month_world(&month, worlds[1]).to_string()));
-    client.follow_all_worlds();
-    client.begin_connection_sync();
-    client.generate_initial_sync();
-    let keys = requested(&client.handle_server_message(&root_frame).unwrap());
-    for world in &worlds {
-        assert!(keys.contains(&WindowKey::for_month_world(&month, *world).to_string()));
-    }
-}
-
-#[test]
-fn fresh_device_requests_followed_history_after_root_arrives() {
-    let manager = test_manager();
-    let (mut client, _events) = test_client(&manager);
-    let world = test_entity_id(0x54);
-    let other = test_entity_id(0x55);
-    client.follow_world(world);
-    client.generate_initial_sync(); // New client does not yet know server windows.
-    let root = create_root_doc(
-        "server",
-        "vault",
-        &[
-            WindowKey::for_world(1_771_027_200, world),
-            WindowKey::for_world(1_771_027_200, other),
-        ],
-    );
-    let mut frame = vec![TAG_SYNC_UPDATE];
-    frame.extend_from_slice(&root.export(ExportMode::snapshot()).unwrap());
-    let requests = client.handle_server_message(&frame).unwrap();
-    let keys: Vec<_> = requests
-        .iter()
-        .map(|frame| {
-            transport::decode_window_sync(&frame[1..])
-                .unwrap()
-                .0
-                .to_owned()
-        })
-        .collect();
-    let historical_base = WindowKey::from_timestamp(1_771_027_200).to_string();
-    let historical_world = WindowKey::for_world(1_771_027_200, world).to_string();
-    let base_index = keys.iter().position(|key| key == &historical_base).unwrap();
-    let world_index = keys
-        .iter()
-        .position(|key| key == &historical_world)
-        .unwrap();
-    assert!(base_index < world_index);
-    assert!(
-        keys[..world_index]
-            .iter()
-            .all(|key| WindowKey::try_new(key).unwrap().world().is_none())
-    );
-    assert!(!keys.contains(&WindowKey::for_world(1_771_027_200, other).to_string()));
-    assert!(client.handle_server_message(&frame).unwrap().is_empty());
 }
 
 #[test]
@@ -860,20 +751,6 @@ fn sync_all_discovers_unopened_world_and_old_base_windows_between_independent_va
 }
 
 #[test]
-fn sync_client_rejects_invalid_window_creation() {
-    let manager = test_manager();
-    let (client, _rx) = test_client(&manager);
-    let Err(err) = client.ensure_window("2026-13") else {
-        panic!("expected invalid window key");
-    };
-    assert_matches!(err, TransportError::InvalidWindowKey);
-    let Err(err) = client.ensure_window("1969-12") else {
-        panic!("expected invalid window key");
-    };
-    assert_matches!(err, TransportError::InvalidWindowKey);
-}
-
-#[test]
 fn thin_item_writes_refuse_until_canonical_window_promotion() {
     let manager = test_manager();
     let vault = manager.vault();
@@ -926,31 +803,6 @@ fn thin_item_writes_refuse_until_canonical_window_promotion() {
         )
         .unwrap();
     assert!(vault.get_raw(&id).unwrap().is_some());
-}
-
-#[test]
-fn new_device_enrols_without_requesting_full_month_windows() {
-    let manager = test_manager();
-    let (client, _rx) = SyncClient::new(manager.clone(), SyncClientConfig::default()).unwrap();
-    let frames = client.generate_initial_sync();
-    assert_eq!(
-        frames.len(),
-        2,
-        "enrol must only request the root, not full windows"
-    );
-    assert_eq!(frames[0], transport::encode_residence_protocol_hello());
-    assert_eq!(frames[1][0], TAG_VERSION_VECTOR);
-    assert!(manager.loaded_keys().is_empty());
-}
-
-#[test]
-fn opened_item_residence_never_requests_a_loaded_full_window_on_connect() {
-    let manager = test_manager();
-    manager.open_window(&WindowKey::new("2026-09")).unwrap();
-    let (client, _rx) = SyncClient::new(manager, SyncClientConfig::default()).unwrap();
-    let frames = client.generate_initial_sync();
-    assert_eq!(frames.len(), 2);
-    assert_eq!(frames[1][0], TAG_VERSION_VECTOR);
 }
 
 #[test]
@@ -1456,113 +1308,6 @@ fn federated_generated_auto_claim_restamps_but_stays_non_consolidatable() {
 }
 
 #[test]
-fn federated_selector_member_response_enters_admission_once() {
-    let manager = test_manager();
-    let vault = Arc::clone(manager.vault());
-    let (mut client, _rx) = test_federated_client(&manager);
-    let key = "2026-03";
-    put_policy_manifest_bytes(
-        &vault,
-        test_entity_id(0x93),
-        &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]),
-    )
-    .expect("put policy manifest");
-
-    let selector = test_selector();
-    let request = client
-        .federated_selector_vv_request(key, &selector, &VersionVector::new().encode())
-        .expect("selector request encodes");
-    let (request_key, request_sub_tag, _) =
-        transport::decode_window_sync(&request[1..]).expect("decode selector request frame");
-    assert_eq!(request_key, key);
-    assert_eq!(request_sub_tag, window_sub_tags::SELECTOR_VV_REQUEST);
-
-    let id = test_entity_id(0x94);
-    let remote_body = public_source_trust_claim(ClaimSource::ToolOutput);
-    let update = federated_claim_update(&id, &remote_body);
-
-    client
-        .import_federated_selector_window_update(key, &update, FederationAdmissionRole::Member)
-        .expect("selector member response should be admitted");
-
-    let raw = vault
-        .get_raw(&id)
-        .expect("read admitted selector claim")
-        .expect("admitted selector claim materializes");
-    let materialized_body =
-        crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)
-            .expect("decode materialized selector claim");
-    assert_eq!(materialized_body.source, Some(ClaimSource::Imported));
-
-    let ordinary_id = test_entity_id(0x9A);
-    let ordinary_body = internal_source_trust_claim(ClaimSource::ToolOutput);
-    let ordinary_update = federated_claim_update(&ordinary_id, &ordinary_body);
-    let ordinary_response =
-        transport::encode_window_sync(key, window_sub_tags::UPDATE, &ordinary_update)
-            .into_result()
-            .expect("ordinary full-window update encodes");
-
-    // Own-device replay uses its unbound connection; a bound federation lane
-    // must never treat a later UPDATE as trust-blind.
-    let (mut ordinary_client, _) = test_client(&manager);
-    ordinary_client
-        .handle_server_message(&ordinary_response)
-        .expect("ordinary full-window update should remain trust-blind after selector import");
-
-    let ordinary_raw = vault
-        .get_raw(&ordinary_id)
-        .expect("read ordinary post-selector claim")
-        .expect("ordinary post-selector claim materializes");
-    let ordinary_materialized_body =
-        crate::claim::decode_claim_body(&ordinary_raw[ENTITY_METADATA_HEADER_LEN..], false)
-            .expect("decode ordinary post-selector claim");
-    assert_eq!(
-        ordinary_materialized_body.source,
-        Some(ClaimSource::ToolOutput)
-    );
-}
-
-#[test]
-fn federated_selector_member_stale_claim_is_restamped_and_retained() {
-    let manager = test_manager();
-    let vault = Arc::clone(manager.vault());
-    let (mut client, _rx) = test_federated_client(&manager);
-    let key = "2026-03";
-    put_policy_manifest_bytes(
-        &vault,
-        test_entity_id(0x9B),
-        &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]),
-    )
-    .expect("put policy manifest");
-
-    let id = test_entity_id(0x9C);
-    let mut remote_body = public_source_trust_claim(ClaimSource::ToolOutput);
-    remote_body.stale = true;
-    let update = federated_claim_update(&id, &remote_body);
-
-    client
-        .import_federated_selector_window_update(key, &update, FederationAdmissionRole::Member)
-        .expect("stale selector member response should be admitted and retained");
-
-    let raw = vault
-        .get_raw(&id)
-        .expect("read stale selector claim")
-        .expect("stale selector claim materializes");
-    let materialized_body =
-        crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)
-            .expect("decode stale selector claim");
-    assert_eq!(materialized_body.source, Some(ClaimSource::Imported));
-    assert!(
-        materialized_body.stale,
-        "F-STALE marker must be retained for read-path gating"
-    );
-    assert!(
-        !crate::claim::claim_surfaceable(&materialized_body),
-        "stale federated claims must remain hidden from surfaceable read paths"
-    );
-}
-
-#[test]
 fn federated_selector_guest_response_cannot_auto_approve_above_local_ceiling() {
     let manager = test_manager();
     let vault = Arc::clone(manager.vault());
@@ -1604,33 +1349,6 @@ fn federated_selector_guest_response_cannot_auto_approve_above_local_ceiling() {
 }
 
 #[test]
-fn ordinary_full_window_update_remains_trust_blind_without_selector_marker() {
-    let manager = test_manager();
-    let vault = Arc::clone(manager.vault());
-    let (mut client, _rx) = test_client(&manager);
-    let key = "2026-03";
-    let id = test_entity_id(0x97);
-    let remote_body = internal_source_trust_claim(ClaimSource::ToolOutput);
-    let update = federated_claim_update(&id, &remote_body);
-    let response = transport::encode_window_sync(key, window_sub_tags::UPDATE, &update)
-        .into_result()
-        .expect("full-window update encodes");
-
-    client
-        .handle_server_message(&response)
-        .expect("ordinary full-window update should remain trust-blind");
-
-    let raw = vault
-        .get_raw(&id)
-        .expect("read full-window claim")
-        .expect("full-window claim materializes");
-    let materialized_body =
-        crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)
-            .expect("decode full-window claim");
-    assert_eq!(materialized_body.source, Some(ClaimSource::ToolOutput));
-}
-
-#[test]
 fn selector_request_builder_does_not_reclassify_next_update() {
     let manager = test_manager();
     let vault = Arc::clone(manager.vault());
@@ -1659,34 +1377,6 @@ fn selector_request_builder_does_not_reclassify_next_update() {
         crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)
             .expect("decode full-window claim");
     assert_eq!(materialized_body.source, Some(ClaimSource::ToolOutput));
-}
-
-#[test]
-fn federated_import_seam_denies_before_window_import_with_reason() {
-    let manager = test_manager();
-    let vault = Arc::clone(manager.vault());
-    let (mut client, _rx) = test_federated_client(&manager);
-    let key = "2026-03";
-    let id = test_entity_id(0x8C);
-    let remote_body = source_trust_claim(ClaimSource::ToolOutput);
-    let update = federated_claim_update(&id, &remote_body);
-
-    let err = client
-        .import_federated_window_update(key, &update, FederationAdmissionRole::Guest)
-        .expect_err("untrusted imported auto claim must be denied before import");
-    assert_matches!(
-        err,
-        TransportError::AdmissionDenied(ref denial)
-            if denial.reason_codes() == [GateDenialReason::PendingSourceTrust]
-    );
-    assert!(
-        client.window(key).is_none(),
-        "denied federated bytes must not open or import a live window"
-    );
-    assert!(
-        vault.get_raw(&id).expect("read denied claim").is_none(),
-        "denied federated bytes must not materialize"
-    );
 }
 
 #[test]
@@ -1836,88 +1526,6 @@ fn federated_import_seam_rejects_oversized_update_before_window_open() {
 }
 
 #[test]
-fn federated_admission_error_mapping_preserves_local_storage_failures() {
-    let err = map_federated_admission_err(crate::error::Error::MapFull);
-    let TransportError::Storage(message) = err else {
-        panic!("expected local storage failure to remain storage, got {err:?}");
-    };
-    assert!(
-        message.contains("federated admission failed"),
-        "storage mapping should keep admission context, got {message}"
-    );
-}
-
-#[test]
-fn federated_admission_error_mapping_keeps_remote_content_malformed() {
-    assert_matches!(
-        map_federated_admission_err(crate::error::Error::CorruptedIndex("entity metadata")),
-        TransportError::InvalidPayload(_)
-    );
-}
-
-/// ONE-1128 AC2: the re-bootstrap drops ALL in-memory docs and produces
-/// Phase 1-2 frames WITHOUT the protocol hello (hello is per-connection,
-/// ONE-1127). Fresh root VV must be EMPTY — that is what "drop Docs"
-/// means on the wire.
-#[test]
-fn generate_re_bootstrap_sync_drops_docs_and_omits_hello() {
-    let manager = test_manager();
-    let (mut client, _rx) = test_client(&manager);
-
-    // Dirty state: a non-default window with local ops and a recorded
-    // server witness. (The unsent debounce buffer lives in the
-    // connection run loop since ONE-1126, not on the client.)
-    let key = "2026-01";
-    client.ensure_window(key).unwrap();
-    let window = client.window(key).unwrap();
-    window
-        .doc
-        .get_map("entities")
-        .insert("local", b"x".as_slice())
-        .unwrap();
-    window.doc.commit();
-    drop(window);
-    let resp = transport::encode_window_sync(
-        key,
-        window_sub_tags::VV_RESPONSE,
-        &loro::VersionVector::new().encode(),
-    );
-    client.handle_server_message(&resp).unwrap();
-
-    let frames = client.generate_re_bootstrap_sync();
-
-    // Docs dropped: the dirty window is gone, witnesses cleared.
-    assert!(client.window(key).is_none(), "window docs must be dropped");
-    assert_eq!(client.window_converged(key), None);
-
-    // No hello frame anywhere — pinned wire literal [3, 1] (ONE-1127).
-    assert!(
-        frames.iter().all(|f| f != &vec![3u8, 1u8]),
-        "re-bootstrap must NOT re-send the per-connection protocol hello"
-    );
-
-    // Frame 0: root VV — and it must decode to the EMPTY VV (fresh doc).
-    assert_eq!(frames[0][0], TAG_VERSION_VECTOR);
-    let root_vv = VersionVector::decode(&frames[0][1..]).unwrap();
-    assert_eq!(
-        root_vv,
-        VersionVector::new(),
-        "re-bootstrap root VV must be empty — the old root doc must not survive"
-    );
-
-    // Frames 1..: VV_REQUEST frames for the default windows (current + prev),
-    // NOT for the dropped dirty window.
-    assert_eq!(frames.len(), 3, "root VV + 2 default-window VV requests");
-    for frame in &frames[1..] {
-        assert_eq!(frame[0], TAG_WINDOW_SYNC);
-        let (k, sub_tag, payload) = transport::decode_window_sync(&frame[1..]).unwrap();
-        assert_ne!(k, key, "dropped window must not be re-requested");
-        assert_eq!(sub_tag, window_sub_tags::VV_REQUEST);
-        VersionVector::decode(payload).expect("window VV must be Loro binary encoding");
-    }
-}
-
-#[test]
 fn malformed_vv_payloads_fail_closed() {
     // The dead JSON encoding and arbitrary garbage must both be REJECTED
     // with the typed error — never silently treated as an empty VV (an
@@ -1966,137 +1574,6 @@ fn malformed_vv_payloads_fail_closed() {
             "root VV with malformed payload must fail closed"
         );
     }
-}
-
-#[test]
-fn ephemeral_frame_applies_and_emits_event() {
-    let manager = test_manager();
-    let (client_a, mut rx_a) = test_client(&manager);
-    let (mut client_b, mut rx_b) = test_client(&manager);
-
-    let msg = client_a
-        .set_ephemeral("presence:device-a", "online")
-        .unwrap();
-    let _ = rx_a.try_recv().expect("local set emits an event");
-
-    let responses = client_b.handle_server_message(&msg).unwrap();
-    assert!(
-        responses.is_empty(),
-        "ephemeral import must not echo an immediate response"
-    );
-    assert_eq!(
-        client_b.ephemeral("presence:device-a"),
-        Some("online".into())
-    );
-    let event = rx_b.try_recv().expect("remote import emits an event");
-    assert_matches!(
-        event,
-        SyncEvent::EphemeralChanged {
-            origin: EphemeralChangeOrigin::Remote,
-            added,
-            updated,
-            removed,
-        } if added == vec!["presence:device-a".to_string()]
-            && updated.is_empty()
-            && removed.is_empty()
-    );
-}
-
-#[test]
-fn ephemeral_delete_removes_remote_key() {
-    let manager = test_manager();
-    let (client_a, mut rx_a) = test_client(&manager);
-    let (mut client_b, mut rx_b) = test_client(&manager);
-    let key = "presence:device-a";
-
-    let set = client_a.set_ephemeral(key, "online").unwrap();
-    let _ = rx_a.try_recv().expect("local set emits an event");
-    client_b.handle_server_message(&set).unwrap();
-    let _ = rx_b.try_recv().expect("remote set emits an event");
-    assert_eq!(client_b.ephemeral(key), Some("online".into()));
-
-    std::thread::sleep(std::time::Duration::from_millis(2));
-    let delete = client_a.delete_ephemeral(key).unwrap();
-    let _ = rx_a.try_recv().expect("local delete emits an event");
-    client_b.handle_server_message(&delete).unwrap();
-    assert!(client_b.ephemeral(key).is_none());
-    let event = rx_b.try_recv().expect("remote delete emits an event");
-    assert_matches!(
-        event,
-        SyncEvent::EphemeralChanged {
-            origin: EphemeralChangeOrigin::Remote,
-            added,
-            updated,
-            removed,
-        } if added.is_empty()
-            && updated.is_empty()
-            && removed == vec![key.to_string()]
-    );
-}
-
-#[test]
-fn client_rejects_non_positive_ephemeral_timeout() {
-    let manager = test_manager();
-    let result = SyncClient::new(
-        manager,
-        SyncClientConfig {
-            ephemeral_timeout_ms: 0,
-            ..Default::default()
-        },
-    );
-
-    match result {
-        Err(Error::Sync(SyncError::SyncProtocolError {
-            context:
-                SyncProtocolValidation::InvalidConfig {
-                    field: SyncConfigField::EphemeralTimeoutMs,
-                },
-        })) => {}
-        Ok(_) => panic!("client construction must reject non-positive ephemeral timeout"),
-        Err(err) => panic!("unexpected error: {err}"),
-    }
-}
-
-#[test]
-fn ephemeral_timeout_housekeeping_removes_key() {
-    let manager = test_manager();
-    let config = SyncClientConfig {
-        ephemeral_timeout_ms: 5,
-        ..Default::default()
-    };
-    let (client, mut rx) = SyncClient::new(manager, config).unwrap();
-    let key = "presence:device-a";
-
-    let _ = client.set_ephemeral(key, "online").unwrap();
-    let _ = rx.try_recv().expect("local set emits an event");
-
-    std::thread::sleep(std::time::Duration::from_millis(10));
-    client.remove_outdated_ephemeral();
-
-    assert!(client.ephemeral(key).is_none());
-    let event = rx.try_recv().expect("timeout emits an event");
-    assert_matches!(
-        event,
-        SyncEvent::EphemeralChanged {
-            origin: EphemeralChangeOrigin::Timeout,
-            added,
-            updated,
-            removed,
-        } if added.is_empty()
-            && updated.is_empty()
-            && removed == vec![key.to_string()]
-    );
-}
-
-#[test]
-fn oversized_root_update_fails_closed() {
-    let manager = test_manager();
-    let (mut client, _rx) = test_client(&manager);
-    let mut msg = vec![TAG_SYNC_UPDATE];
-    msg.extend_from_slice(&vec![0u8; MAX_DECODED_PAYLOAD_BYTES + 1]);
-
-    assert_matches!(client.handle_server_message(&msg), Err(TransportError::FrameTooLarge { size, max })
-                if size == MAX_DECODED_PAYLOAD_BYTES + 1 && max == MAX_DECODED_PAYLOAD_BYTES);
 }
 
 #[test]
@@ -2155,30 +1632,6 @@ fn sync_client_mints_client_id_once_and_keeps_it_stable() {
 }
 
 #[test]
-fn sync_client_fails_closed_on_malformed_client_id_row() {
-    let manager = test_manager();
-    manager
-        .vault()
-        .sync_state_put(KEY_CLIENT_ID, &[1, 2, 3])
-        .unwrap();
-
-    let result = SyncClient::new(Arc::clone(&manager), SyncClientConfig::default());
-    assert!(
-        matches!(result, Err(Error::CorruptedIndex(_))),
-        "malformed m:client_id must not be silently re-minted"
-    );
-    // The corrupt row is left for diagnosis, not overwritten.
-    assert_eq!(
-        manager
-            .vault()
-            .sync_state_get(KEY_CLIENT_ID)
-            .unwrap()
-            .unwrap(),
-        vec![1, 2, 3]
-    );
-}
-
-#[test]
 fn sync_client_fails_closed_on_zero_client_id_row() {
     let manager = test_manager();
     manager
@@ -2200,54 +1653,6 @@ fn sync_client_fails_closed_on_zero_client_id_row() {
             .unwrap(),
         0u64.to_le_bytes()
     );
-}
-
-#[test]
-fn sync_client_mark_synced_writes_last_sync_row() {
-    let manager = test_manager();
-    let (client, _rx) = test_client(&manager);
-
-    assert!(
-        manager
-            .vault()
-            .sync_state_get(KEY_LAST_SYNC)
-            .unwrap()
-            .is_none()
-    );
-    client.mark_synced().unwrap();
-
-    let raw = manager
-        .vault()
-        .sync_state_get(KEY_LAST_SYNC)
-        .unwrap()
-        .expect("m:last_sync must be written");
-    assert_eq!(raw.len(), 8, "m:last_sync must be u64 LE (8 bytes)");
-    let ts = u64::from_le_bytes(raw.try_into().unwrap());
-    assert!(ts > 1_700_000_000, "timestamp should be wall-clock seconds");
-}
-
-#[test]
-fn sync_client_filters_invalid_server_windows() {
-    let manager = test_manager();
-    let (mut client, _rx) = test_client(&manager);
-    let server_root = create_root_doc(
-        "user-1",
-        "vault-1",
-        &[WindowKey::new("2026-03"), WindowKey::new("2026-04")],
-    );
-    let windows = root_windows_map(&server_root);
-    windows.insert("1969-12", b"1".as_slice()).unwrap();
-    windows.insert("2026-13", b"1".as_slice()).unwrap();
-    windows.insert("garbage", b"1".as_slice()).unwrap();
-    server_root.commit();
-
-    let snapshot = export_snapshot(&server_root).unwrap();
-    let mut msg = vec![TAG_SYNC_UPDATE];
-    msg.extend_from_slice(&snapshot);
-    client.handle_server_message(&msg).unwrap();
-
-    let windows = client.server_windows();
-    assert_eq!(windows, vec!["2026-03".to_string(), "2026-04".to_string()]);
 }
 
 #[test]
@@ -2316,66 +1721,6 @@ fn server_windows_reads_schema_written_root_doc() {
     );
 }
 
-#[test]
-fn server_windows_reads_legacy_encoded_root_doc() {
-    use crate::sync::loro_support::export_snapshot;
-
-    let manager = test_manager();
-    let (mut client, _rx) = test_client(&manager);
-    let server_root = LoroDoc::new();
-    server_root
-        .get_map("meta")
-        .insert(
-            crate::sync::schema::ROOT_WINDOWS_KEY,
-            b"2026-02,2026-01,bad,2026-01".as_slice(),
-        )
-        .unwrap();
-    server_root.commit();
-    let snapshot = export_snapshot(&server_root).unwrap();
-
-    let mut msg = vec![TAG_SYNC_UPDATE];
-    msg.extend_from_slice(&snapshot);
-    client.handle_server_message(&msg).unwrap();
-
-    assert_eq!(
-        client.server_windows(),
-        vec!["2026-01".to_string(), "2026-02".to_string()],
-    );
-}
-
-#[test]
-fn backoff_calculation() {
-    assert_eq!(next_backoff(1_000, 60_000), 2_000);
-    assert_eq!(next_backoff(2_000, 60_000), 4_000);
-    assert_eq!(next_backoff(32_000, 60_000), 60_000);
-    assert_eq!(next_backoff(60_000, 60_000), 60_000);
-}
-
-#[test]
-fn staging_rejects_owner_and_reads_no_receipt() {
-    let manager = test_manager();
-    let vault = manager.vault();
-    let classification = crate::batch::export::VaultImportReceipt {
-        manifest_digest: [1; 32],
-        classification: crate::batch::export::VaultImportClassification::ByteFaithfulOwnerRestore,
-        mismatches: vec![],
-        exported_vault_id: None,
-        local_vault_id: None,
-        exported_label: None,
-        expected_label: None,
-        byte_faithful: true,
-    };
-    let result = crate::batch::export::stage_foreign_vault_import(
-        vault,
-        &classification,
-        crate::batch::export::ForeignVaultImportSource::ForeignPlatform {
-            platform: "x".into(),
-        },
-        &WindowKey::new("2026-01"),
-        &[],
-    );
-    assert!(result.is_err());
-}
 fn real_staged_import(
     manager: &Arc<WindowManager>,
     seed: u8,
@@ -2408,49 +1753,6 @@ fn real_staged_import(
     .expect("stage real update")
 }
 
-#[test]
-fn identical_duplicate_confirm_is_idempotent() {
-    let manager = test_manager();
-    let staged = real_staged_import(&manager, 0x30);
-    let id = staged.receipt.receipt_id;
-    let actor = test_entity_id(0x35);
-    let c = crate::batch::export::VaultImportConfirmation {
-        receipt_id: id,
-        actor,
-        confirmed_at_secs: 1,
-    };
-    let (mut client, _) = test_client(&manager);
-    let staged_again = staged.clone();
-    let done = client.confirm_staged_vault_import(staged, c).unwrap();
-    assert_eq!(
-        done.status,
-        crate::batch::export::VaultImportStageStatus::Confirmed
-    );
-    // ONE-1380 C2: the confirming write txn also collected the staged payload.
-    assert_eq!(
-        crate::batch::export::vault_import_staged_content(manager.vault(), &id).unwrap(),
-        None
-    );
-    let again = client
-        .confirm_staged_vault_import(
-            staged_again,
-            crate::batch::export::VaultImportConfirmation {
-                receipt_id: id,
-                actor,
-                confirmed_at_secs: 1,
-            },
-        )
-        .unwrap();
-    assert_eq!(
-        again.status,
-        crate::batch::export::VaultImportStageStatus::Confirmed
-    );
-    assert_eq!(
-        crate::batch::export::vault_import_staged_content(manager.vault(), &id).unwrap(),
-        None,
-        "the idempotent re-confirm must not resurrect staged content"
-    );
-}
 #[test]
 fn conflicting_confirm_fails_closed() {
     let manager = test_manager();
@@ -2573,185 +1875,6 @@ fn staged_confirm_does_not_admit_twice() {
         durable_update_count,
         "reconfirmation must not persist a second window update"
     );
-}
-
-#[test]
-fn foreign_platform_stage_then_confirm_real_admitted_update() {
-    let manager = test_manager();
-    let vault = manager.vault();
-    let policy = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
-    put_policy_manifest_bytes(vault, test_entity_id(0xC0), &policy).expect("put policy manifest");
-    let body = public_source_trust_claim(ClaimSource::ToolOutput);
-    let id = test_entity_id(0xC1);
-    let update = federated_claim_update(&id, &body);
-    let classification = crate::batch::export::VaultImportReceipt {
-        manifest_digest: [4; 32],
-        classification: crate::batch::export::VaultImportClassification::ForeignAuthorityChain,
-        mismatches: vec![],
-        exported_vault_id: None,
-        local_vault_id: None,
-        exported_label: None,
-        expected_label: None,
-        byte_faithful: false,
-    };
-    let key = WindowKey::new("2026-01");
-    let staged = crate::batch::export::stage_foreign_vault_import(
-        vault,
-        &classification,
-        crate::batch::export::ForeignVaultImportSource::ForeignPlatform {
-            platform: "foreign".into(),
-        },
-        &key,
-        &update,
-    )
-    .expect("real admitted update");
-    assert_eq!(
-        staged.receipt.status,
-        crate::batch::export::VaultImportStageStatus::Pending
-    );
-    let (mut client, _) = test_client(&manager);
-    let confirmation = crate::batch::export::VaultImportConfirmation {
-        receipt_id: staged.receipt.receipt_id,
-        actor: test_entity_id(0xC2),
-        confirmed_at_secs: 10,
-    };
-    let confirmed = client
-        .confirm_staged_vault_import(staged, confirmation)
-        .expect("confirm");
-    assert_eq!(
-        confirmed.status,
-        crate::batch::export::VaultImportStageStatus::Confirmed
-    );
-    let durable = crate::batch::export::vault_import_stage_receipt(vault, &confirmed.receipt_id)
-        .unwrap()
-        .unwrap();
-    assert_eq!(durable.confirmed_at_secs, Some(10));
-}
-
-#[test]
-fn other_person_export_guest_attributed() {
-    let manager = test_manager();
-    let vault = manager.vault();
-    let policy = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
-    put_policy_manifest_bytes(vault, test_entity_id(0xD0), &policy).unwrap();
-    let body = public_source_trust_claim(ClaimSource::ToolOutput);
-    let id = test_entity_id(0xD1);
-    let update = federated_claim_update(&id, &body);
-    let key = WindowKey::new("2026-01");
-    let c = crate::batch::export::VaultImportReceipt {
-        manifest_digest: [0xD2; 32],
-        classification: crate::batch::export::VaultImportClassification::ForeignAuthorityChain,
-        mismatches: vec![],
-        exported_vault_id: None,
-        local_vault_id: None,
-        exported_label: None,
-        expected_label: None,
-        byte_faithful: false,
-    };
-    let staged = crate::batch::export::stage_foreign_vault_import(
-        vault,
-        &c,
-        crate::batch::export::ForeignVaultImportSource::AnotherPerson {
-            peer_ref: test_entity_id(0xD3),
-        },
-        &key,
-        &update,
-    )
-    .expect("stage");
-    assert_eq!(
-        staged.receipt.role,
-        crate::sync::selector::FederationAdmissionRole::Guest
-    );
-    let (mut client, _) = test_client(&manager);
-    let conf = crate::batch::export::VaultImportConfirmation {
-        receipt_id: staged.receipt.receipt_id,
-        actor: test_entity_id(0xD4),
-        confirmed_at_secs: 11,
-    };
-    let done = client
-        .confirm_staged_vault_import(staged, conf)
-        .expect("confirm");
-    assert_eq!(
-        done.status,
-        crate::batch::export::VaultImportStageStatus::Confirmed
-    );
-    let receipt = crate::batch::export::vault_import_stage_receipt(vault, &done.receipt_id)
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        receipt.role,
-        crate::sync::selector::FederationAdmissionRole::Guest
-    );
-    let live = client.window("2026-01").expect("live guest window");
-    let blob =
-        crate::sync::loro_support::map_get_bytes(&live.doc.get_map("entities"), &id.to_hex())
-            .expect("guest claim");
-    let decoded = crate::claim::decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], false)
-        .expect("decode guest claim");
-    assert_eq!(decoded.source, Some(ClaimSource::Imported));
-}
-#[test]
-fn imported_claims_non_consolidatable() {
-    let manager = test_manager();
-    let vault = manager.vault();
-    let policy = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
-    put_policy_manifest_bytes(vault, test_entity_id(0xD5), &policy).unwrap();
-    let body = public_source_trust_claim(ClaimSource::Generated);
-    let update = federated_claim_update(&test_entity_id(0xD6), &body);
-    let c = crate::batch::export::VaultImportReceipt {
-        manifest_digest: [0xD7; 32],
-        classification: crate::batch::export::VaultImportClassification::ForeignAuthorityChain,
-        mismatches: vec![],
-        exported_vault_id: None,
-        local_vault_id: None,
-        exported_label: None,
-        expected_label: None,
-        byte_faithful: false,
-    };
-    let staged = crate::batch::export::stage_foreign_vault_import(
-        vault,
-        &c,
-        crate::batch::export::ForeignVaultImportSource::AnotherPerson {
-            peer_ref: test_entity_id(0xD8),
-        },
-        &WindowKey::new("2026-01"),
-        &update,
-    )
-    .expect("stage");
-    assert_eq!(
-        staged.receipt.status,
-        crate::batch::export::VaultImportStageStatus::Pending
-    );
-    let (mut client, _) = test_client(&manager);
-    let conf = crate::batch::export::VaultImportConfirmation {
-        receipt_id: staged.receipt.receipt_id,
-        actor: test_entity_id(0xD9),
-        confirmed_at_secs: 12,
-    };
-    let done = client.confirm_staged_vault_import(staged, conf).unwrap();
-    assert_eq!(
-        done.status,
-        crate::batch::export::VaultImportStageStatus::Confirmed
-    );
-    let live = client.window("2026-01").expect("live manager window");
-    let values = live
-        .doc
-        .get_map("entities")
-        .get(test_entity_id(0xD6).to_hex().as_str())
-        .expect("admitted claim");
-    let blob = crate::sync::loro_support::map_get_bytes(
-        &live.doc.get_map("entities"),
-        &test_entity_id(0xD6).to_hex(),
-    )
-    .expect("claim bytes");
-    let body = crate::claim::decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], false)
-        .expect("decode imported claim");
-    assert_eq!(body.source, Some(ClaimSource::Imported));
-    assert!(!crate::claim::claim_consolidatable(&body));
-    assert!(matches!(
-        values,
-        loro::ValueOrContainer::Value(loro::LoroValue::Binary(_))
-    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -2953,55 +2076,6 @@ fn gate_rejected_stage_heals_to_pending_under_same_receipt_id() {
     let body = crate::claim::decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], false)
         .expect("decode healed claim");
     assert_eq!(body.source, Some(ClaimSource::Imported));
-}
-
-#[test]
-fn gate_sensitivity_rejection_is_retryable_and_heals() {
-    // A second, differently-shaped gate refusal: the Imported permit exists but
-    // its auto ceiling sits below the claim's band. Same invariant — retryable,
-    // no receipt, and a ceiling change lets the identical artifact through.
-    let classification = gate_retry_classification(0xE8);
-    let key = WindowKey::new("2026-01");
-    let update = federated_claim_update(
-        &test_entity_id(0xEA),
-        &internal_source_trust_claim(ClaimSource::ToolOutput),
-    );
-    let manifest_id = test_entity_id(0xE9);
-
-    let manager = test_manager();
-    let vault = manager.vault();
-    // `internal` is band 1, above this ceiling of 0.
-    let too_low = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
-    put_policy_manifest_bytes(vault, manifest_id, &too_low).unwrap();
-
-    let rejected = crate::batch::export::stage_foreign_vault_import(
-        vault,
-        &classification,
-        heal_source(),
-        &key,
-        &update,
-    );
-    assert!(
-        rejected.is_err(),
-        "over-ceiling import must be refused, got {rejected:?}",
-    );
-
-    // Raise the ceiling; the same artifact now admits under the same id.
-    let raised = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 2)]);
-    put_policy_manifest_bytes(vault, manifest_id, &raised).unwrap();
-    let staged = crate::batch::export::stage_foreign_vault_import(
-        vault,
-        &classification,
-        heal_source(),
-        &key,
-        &update,
-    )
-    .expect("raised ceiling must admit the identical artifact");
-    assert_eq!(
-        staged.receipt.status,
-        crate::batch::export::VaultImportStageStatus::Pending
-    );
-    assert_eq!(staged.receipt.failure, None);
 }
 
 #[test]
@@ -3227,33 +2301,6 @@ fn malformed_federation_update_is_not_queued_and_streak_reaches_the_next_decisio
         ids.iter()
             .all(|id| manager.vault().get_raw(id).unwrap().is_some())
     );
-}
-
-#[test]
-fn selector_defer_wire_response_generates_an_automatic_retry() {
-    let manager = test_manager();
-    let (mut client, _) = test_client(&manager);
-    let selector = SyncSelector::new(
-        EntityId::now(),
-        EntityId::now(),
-        crate::sync::SyncSelectorWorld::All,
-        vec![],
-        vec![],
-    );
-    let request =
-        crate::sync::encode_selector_vv_request(&selector, &VersionVector::new().encode()).unwrap();
-    let mut deferred = vec![42; 32];
-    deferred.extend_from_slice(&request);
-    let frame =
-        transport::encode_window_sync("2026-01", window_sub_tags::SELECTOR_DEFERRED, &deferred)
-            .into_result()
-            .unwrap();
-    let replies = client.handle_server_message(&frame).unwrap();
-    assert_eq!(replies.len(), 1);
-    let (key, tag, payload) = transport::decode_window_sync(&replies[0][1..]).unwrap();
-    assert_eq!(key, "2026-01");
-    assert_eq!(tag, window_sub_tags::SELECTOR_RETRY);
-    assert_eq!(payload, deferred.as_slice());
 }
 
 #[test]

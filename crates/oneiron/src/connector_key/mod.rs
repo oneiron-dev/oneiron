@@ -67,8 +67,6 @@ pub(crate) use self::txn::{governing_connector_key, suspend_connector_key_in_txn
 // Crate-visible paths whose only live consumers are the test modules of sibling
 // modules; gated so the non-test build carries no unused re-export.
 #[cfg(test)]
-pub(crate) use self::meter::connector_key_usage_row_key;
-#[cfg(test)]
 pub(crate) use self::txn::rewrite_connector_key_in_txn;
 
 // The flat connector_key.rs module used to provide these names to the test

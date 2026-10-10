@@ -194,28 +194,6 @@ fn entity_token_accounting_text(
         .expect("prepared entity token-accounting JSON should serialize")
 }
 
-#[cfg(test)]
-pub(super) fn estimate_entity_chars(entity: &PreparedEntity) -> usize {
-    estimate_entity_chars_with_depth_limit(entity, None)
-}
-
-// Character estimates below are retained for non-budget tests and truncation
-// suffix display only. All pack budget decisions use the tokenizer helpers
-// above.
-#[cfg(test)]
-fn estimate_entity_chars_with_depth_limit(
-    entity: &PreparedEntity,
-    value_depth_limit: ValueDepthLimit,
-) -> usize {
-    let mut chars = entity.id.len() + 12;
-    for (key, value) in &entity.fields {
-        chars += estimate_json_string_chars(key);
-        chars += estimate_value_chars_with_depth_limit(value, value_depth_limit);
-        chars += 2;
-    }
-    chars
-}
-
 pub(super) fn budget_groups_with_depth_limit(
     source: &[(GroupKey, Vec<PreparedEntity>)],
     allocation: &TokenAllocation,
@@ -590,11 +568,6 @@ fn signal_name(signal: Signal) -> &'static str {
         Signal::Ppr => "ppr",
         Signal::Hyde => "hyde",
     }
-}
-
-#[cfg(test)]
-pub(super) fn estimate_value_chars(value: &Value) -> usize {
-    estimate_value_chars_with_depth_limit(value, None)
 }
 
 pub(super) fn estimate_value_chars_with_depth_limit(
