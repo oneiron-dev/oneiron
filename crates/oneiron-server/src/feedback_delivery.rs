@@ -28,6 +28,11 @@ impl FeedbackDeliveryConfig {
         FeedbackSendRoute::new(channel, "send", &self.endpoint)
     }
 }
+/// The feedback destination `serve` runs with, and its credential.
+pub struct FeedbackHost {
+    pub config: FeedbackDeliveryConfig,
+    pub bearer: Option<Zeroizing<String>>,
+}
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
 pub enum FeedbackDeliveryError {
     #[error("feedback endpoint must be HTTPS (or a loopback test endpoint)")]
@@ -45,27 +50,32 @@ pub struct HttpFeedbackTransport {
     bearer: Option<Zeroizing<String>>,
     last_error: Option<FeedbackDeliveryError>,
 }
+/// An endpoint a send can use: HTTPS (HTTP only on loopback), with no
+/// credentials, query or fragment in the URL.
+pub fn check_endpoint(endpoint: &str) -> Result<(), FeedbackDeliveryError> {
+    let url = reqwest::Url::parse(endpoint).map_err(|_| FeedbackDeliveryError::InvalidEndpoint)?;
+    let loopback = url.host_str().is_some_and(|host| {
+        host == "localhost"
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    });
+    if (url.scheme() != "https" && !(url.scheme() == "http" && loopback))
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+        || url.query().is_some()
+    {
+        return Err(FeedbackDeliveryError::InvalidEndpoint);
+    }
+    Ok(())
+}
 impl HttpFeedbackTransport {
     pub fn new(
         config: FeedbackDeliveryConfig,
         bearer: Option<Zeroizing<String>>,
     ) -> Result<Self, FeedbackDeliveryError> {
-        let url = reqwest::Url::parse(&config.endpoint)
-            .map_err(|_| FeedbackDeliveryError::InvalidEndpoint)?;
-        let loopback = url.host_str().is_some_and(|host| {
-            host == "localhost"
-                || host
-                    .parse::<std::net::IpAddr>()
-                    .is_ok_and(|ip| ip.is_loopback())
-        });
-        if (url.scheme() != "https" && !(url.scheme() == "http" && loopback))
-            || !url.username().is_empty()
-            || url.password().is_some()
-            || url.fragment().is_some()
-            || url.query().is_some()
-        {
-            return Err(FeedbackDeliveryError::InvalidEndpoint);
-        }
+        check_endpoint(&config.endpoint)?;
         let client = reqwest::blocking::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(std::time::Duration::from_secs(30))
@@ -168,23 +178,31 @@ pub enum SendFeedbackError {
 }
 /// Sends only to the configured destination. The caller approves the exact
 /// route returned by `config.route()`; changing configuration invalidates that
-/// approval. Transport errors are typed after the ordinary failure receipt is
-/// persisted. This blocking door belongs on the host's blocking worker.
+/// approval. The send is `owner`'s and is admitted only while `owner`'s proof
+/// still holds where it is admitted. Transport errors are typed after the
+/// ordinary failure receipt is persisted. This blocking door belongs on the
+/// host's blocking worker.
 pub fn send_approved_feedback(
     vault: &oneiron::Vault,
     config: FeedbackDeliveryConfig,
     bearer: Option<Zeroizing<String>>,
     preview: &oneiron::feedback::FeedbackPreview,
     evaluation: &oneiron::genui::ConsentActionEvaluation,
-    actor: oneiron::outbound::OutboundDispatchActor,
+    owner: &oneiron::consent::AuthenticatedOwner,
     now: u64,
 ) -> Result<oneiron::feedback::FeedbackSendOutcome, SendFeedbackError> {
+    let actor = oneiron::outbound::OutboundDispatchActor {
+        actor_class: "human".to_owned(),
+        actor_ref: Some(owner.actor().to_hex()),
+        actor_entity_ref: Some(owner.actor()),
+    };
     let context = oneiron::feedback::FeedbackSendContext::new(
         config.route(),
         actor,
         now,
         oneiron::outbound::OutboundDeliveryWindowDecision::DeliverNow,
-    );
+    )
+    .approved_by(owner.clone());
     // Validate before building a client or reading transport credentials.
     oneiron::feedback::feedback_dispatch_request(preview, &context, evaluation)?;
     let mut transport = HttpFeedbackTransport::new(config, bearer)?;

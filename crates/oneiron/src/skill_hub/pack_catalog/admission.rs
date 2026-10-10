@@ -112,6 +112,10 @@ impl Vault {
     }
     /// The copied object is not a grant. Requested powers remain on its card;
     /// a code flag or rules hit leaves it Candidate, without registering verbs.
+    ///
+    /// A changed source for an installed pack is an update: in the same
+    /// transaction, every saved query reading a predicate the update dropped
+    /// or remapped runs the pack-drift repair ladder (ARCH-0059 §4).
     pub fn install_pack(&self, ask: &PackInstallAsk) -> Result<PackInstallDisposition> {
         self.with_write_txn_grouped(|txn| {
             let source = self.check_pack_install_ask(txn, ask)?;
@@ -246,9 +250,10 @@ impl Vault {
                     }));
                 }
             }
-            if let Some(old) = self.installed_pack_in_txn(txn, &source.manifest.name)? {
-                for predicate in old.predicates {
-                    PACK_PREDICATE.delete(&self.store, txn, &predicate)?;
+            let prior = self.installed_pack_in_txn(txn, &source.manifest.name)?;
+            if let Some(old) = &prior {
+                for predicate in &old.predicates {
+                    PACK_PREDICATE.delete(&self.store, txn, predicate)?;
                 }
             }
             for predicate in &source.manifest.predicates {
@@ -256,6 +261,27 @@ impl Vault {
             }
             PACK_CANDIDATE.delete(&self.store, txn, &candidate_key(&source))?;
             PACK_INSTALL.put(&self.store, txn, &source.manifest.name, &receipt)?;
+            if let Some(old) = prior
+                && old.content_hash != receipt.content_hash
+            {
+                let from_version = self
+                    .pack_source_in_txn(txn, &EntityId::from_hex(&old.source_id)?)?
+                    .map(|old_source| old_source.manifest.version)
+                    .unwrap_or_default();
+                let from_predicates = old.predicates.into_iter().collect();
+                crate::saved_query::repair_saved_queries_after_pack_move_in_txn(
+                    self,
+                    txn,
+                    &crate::saved_query::PackMove {
+                        pack: &source.manifest.name,
+                        from_version: &from_version,
+                        to_version: &source.manifest.version,
+                        from_predicates: &from_predicates,
+                        to_predicates: &source.manifest.predicates,
+                    },
+                    self.now_recorded_at(),
+                )?;
+            }
             Ok(PackInstallDisposition::Installed(Box::new(receipt)))
         })
     }

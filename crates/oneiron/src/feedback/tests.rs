@@ -122,6 +122,7 @@ fn evaluation_with(
     fields.insert("component_kind".to_owned(), component_kind.to_owned());
     fields.insert("component_id".to_owned(), component_id.to_owned());
     fields.insert("action_id".to_owned(), action_id.to_owned());
+    fields.insert("expected_principal_ref".to_owned(), "owner".to_owned());
     ConsentActionEvaluation {
         decision,
         receipt: ReceiptRecord {
@@ -147,7 +148,7 @@ fn approved_for(
     evaluation_with(
         ConsentActionDecision::ApprovedOnce,
         "consent_ask",
-        &preview.approval_component_id(scope),
+        &preview.approval_component_id(scope, "owner"),
         FEEDBACK_APPROVE_ONCE_ACTION,
         "consent:feedback:approval:1",
     )
@@ -657,7 +658,7 @@ fn redactor_output_is_the_only_preview_and_send_payload() {
             &evaluation_with(
                 ConsentActionDecision::Declined,
                 "consent_ask",
-                &plain.approval_component_id(&FeedbackApprovalScope::Export),
+                &plain.approval_component_id(&FeedbackApprovalScope::Export, "owner"),
                 FEEDBACK_APPROVE_ONCE_ACTION,
                 "consent:declined:1",
             ),
@@ -675,7 +676,7 @@ fn redactor_output_is_the_only_preview_and_send_payload() {
 fn feedback_approval_rejects_every_non_approval() {
     let preview = preview_of(full_bundle());
     let scope = send_scope();
-    let component = preview.approval_component_id(&scope);
+    let component = preview.approval_component_id(&scope, "owner");
 
     let declined = evaluation_with(
         ConsentActionDecision::Declined,
@@ -831,22 +832,25 @@ fn approval_scope_binds_destination() {
     let scope_a = FeedbackApprovalScope::Send(route_a.clone());
     let scope_b = FeedbackApprovalScope::Send(route_b);
 
-    let id_a = preview.approval_component_id(&scope_a);
-    assert_ne!(id_a, preview.approval_component_id(&scope_b));
+    let id_a = preview.approval_component_id(&scope_a, "owner");
+    assert_ne!(id_a, preview.approval_component_id(&scope_b, "owner"));
     assert_eq!(
         id_a,
-        preview.approval_component_id(&FeedbackApprovalScope::Send(send_route())),
+        preview.approval_component_id(&FeedbackApprovalScope::Send(send_route()), "owner"),
         "the same route yields the same component id every time"
     );
 
     let with_counterparty = FeedbackApprovalScope::Send(send_route().with_counterparty_ref("cp"));
     let with_identity =
         FeedbackApprovalScope::Send(send_route().with_channel_identity_ref(entity(0x63)));
-    assert_ne!(id_a, preview.approval_component_id(&with_counterparty));
-    assert_ne!(id_a, preview.approval_component_id(&with_identity));
     assert_ne!(
-        preview.approval_component_id(&with_counterparty),
-        preview.approval_component_id(&with_identity)
+        id_a,
+        preview.approval_component_id(&with_counterparty, "owner")
+    );
+    assert_ne!(id_a, preview.approval_component_id(&with_identity, "owner"));
+    assert_ne!(
+        preview.approval_component_id(&with_counterparty, "owner"),
+        preview.approval_component_id(&with_identity, "owner")
     );
 
     // Length prefixing and tag framing keep routes distinct that a naive
@@ -856,14 +860,14 @@ fn approval_scope_binds_destination() {
     );
     let crafted_right = FeedbackApprovalScope::Send(FeedbackSendRoute::new("x", "y", "z\u{0}p"));
     assert_ne!(
-        preview.approval_component_id(&crafted_left),
-        preview.approval_component_id(&crafted_right)
+        preview.approval_component_id(&crafted_left, "owner"),
+        preview.approval_component_id(&crafted_right, "owner")
     );
     let split_left = FeedbackApprovalScope::Send(FeedbackSendRoute::new("em", "ail", "t"));
     let split_right = FeedbackApprovalScope::Send(FeedbackSendRoute::new("e", "mail", "t"));
     assert_ne!(
-        preview.approval_component_id(&split_left),
-        preview.approval_component_id(&split_right)
+        preview.approval_component_id(&split_left, "owner"),
+        preview.approval_component_id(&split_right, "owner")
     );
 
     // An approval for route B cannot authorize route A, and it fails before an
@@ -917,8 +921,8 @@ fn stale_preview_digest_never_sends() {
     let context = send_context(send_route(), actor);
     match send_feedback(&vault, &preview_b, &context, &approved_a, &mut transport) {
         Err(FeedbackError::StalePreviewDigest { expected, found }) => {
-            assert_eq!(expected, preview_b.approval_component_id(&scope));
-            assert_eq!(found, preview_a.approval_component_id(&scope));
+            assert_eq!(expected, preview_b.approval_component_id(&scope, "owner"));
+            assert_eq!(found, preview_a.approval_component_id(&scope, "owner"));
         }
         other => panic!("a stale approval must fail typed, got {other:?}"),
     }

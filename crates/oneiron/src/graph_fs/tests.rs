@@ -407,6 +407,129 @@ fn find_newer_scan_cap_hit_returns_progressing_cursor() -> Result<()> {
     Ok(())
 }
 
+/// A walk that reaches its scan limit on a row it passed over (sealed secret
+/// custody here) resumes after that row without naming it: the cursor carries
+/// neither its time nor its id, and paging on lists every visible claim once
+/// (Astra P2 on #1341).
+#[test]
+fn a_scan_limit_cursor_never_names_the_row_the_walk_passed_over() -> Result<()> {
+    use crate::ports::EntityStoreRead;
+    use crate::secret_custody::{
+        CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SECRET_SCOPE_READ, SecretBinding,
+        SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
+    };
+    let (_tmp, vault) = open_test_vault_with(telemetry_config());
+    let initial_claims = vault.entities_by_type(ENTITY_TYPE_CLAIM)?;
+    let subject = test_id(0x61);
+    let (older, newer) = (test_id(0x62), test_id(0x63));
+    put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
+    put_claim(&vault, older, subject, None, 10)?;
+    put_claim(&vault, newer, subject, None, 11)?;
+    put_policy_manifest(
+        &vault,
+        test_id(0x64),
+        encode_policy_manifest(vec![core_read_base_grant("reader")]),
+    )?;
+    let sealed = vault.register_secret(SecretCustodyRecord {
+        schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
+        name: "graph-fs-scan-limit".to_owned(),
+        class: CustodyClass::CustodyPortable,
+        device_only: false,
+        value_bytes: b"never-in-a-cursor".to_vec(),
+        status: SecretCustodyStatus::Active,
+        registered_at: 1,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: vec![SecretBinding {
+            effector: "connector:graph-fs-test".to_owned(),
+            tier_ceiling: CustodyTier::T0Doored,
+            scopes: vec![SECRET_SCOPE_READ.to_owned()],
+        }],
+        manifest_ref: String::new(),
+        declared_paths: Vec::new(),
+        policy_floor_snapshot: SecretCustodyFloor::default(),
+    })?;
+    // Newest first, as `ls -t` walks: the cap that ends on the sealed row.
+    let timeline: Vec<_> = {
+        let rtxn = vault.store.env.read_txn()?;
+        let query = crate::ports::TimelineQuery {
+            reverse: true,
+            ..Default::default()
+        };
+        vault
+            .store
+            .port_entity_timeline(&rtxn, query)?
+            .collect::<Result<_>>()?
+    };
+    let at = timeline
+        .iter()
+        .position(|row| row.id == sealed)
+        .expect("the sealed row is on the timeline");
+    let sealed_at = timeline[at].timestamp;
+    let cap = at + 1;
+    // Neither as text (`<time>:<id hex>`, the plain form) nor as raw bytes.
+    let names_sealed = |token: &str| {
+        let bytes: Vec<u8> = (0..token.len() / 2)
+            .filter_map(|at| u8::from_str_radix(token.get(2 * at..2 * at + 2)?, 16).ok())
+            .collect();
+        token.contains(&sealed.to_hex())
+            || token.contains(&format!("{sealed_at}:"))
+            || bytes.windows(16).any(|window| window == sealed.as_bytes())
+            || bytes
+                .windows(8)
+                .any(|window| window == sealed_at.to_be_bytes())
+    };
+
+    let reader =
+        vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
+    let fs = resolver(&reader, 1024);
+    let mut emitted = String::new();
+    let mut cursor = None;
+    for page in 0.. {
+        assert!(page < timeline.len() + 2, "pagination must terminate");
+        let (bytes, next, _) =
+            fs.ls_claims_by_time_pushdown_with_scan_cap(cursor.as_deref(), cap)?;
+        emitted.push_str(std::str::from_utf8(&bytes).expect("utf8 ls output"));
+        let Some(next) = next else { break };
+        assert!(!names_sealed(&next), "{next}");
+        cursor = Some(next);
+    }
+    assert!(!emitted.contains(&sealed.to_hex()), "{emitted}");
+    let lines: Vec<_> = emitted
+        .lines()
+        .filter(|line| !initial_claims.iter().any(|id| id.to_hex() == *line))
+        .collect();
+    assert_eq!(lines, [newer.to_hex(), older.to_hex()]);
+
+    // The first cap-hit page ends exactly on the sealed row, and another
+    // reader cannot open its cursor.
+    let (_, first, _) = fs.ls_claims_by_time_pushdown_with_scan_cap(None, cap)?;
+    let first = first.expect("the scan limit leaves a cursor");
+    let other =
+        vault.scoped_read(crate::claim::ScopedReadActorKey::new("other").expect("actor key"));
+    assert!(
+        resolver(&other, 1024)
+            .ls_claims_by_time_pushdown_with_scan_cap(Some(&first), cap)
+            .is_err()
+    );
+    // Stopping on the same row twice hands out two unequal tokens, so
+    // comparing tokens says nothing about where a walk stopped.
+    let (_, again, _) = fs.ls_claims_by_time_pushdown_with_scan_cap(None, cap)?;
+    assert_ne!(again.as_deref(), Some(first.as_str()));
+    // A find cursor opens only under the threshold it was minted for.
+    let (_, found, _) = fs.find_newer_pushdown_with_scan_cap("/claims", 0, None, 1)?;
+    let found = found.expect("the scan limit leaves a cursor");
+    assert!(
+        fs.find_newer_pushdown_with_scan_cap("/claims", 0, Some(&found), 1)
+            .is_ok()
+    );
+    assert!(
+        fs.find_newer_pushdown_with_scan_cap("/claims", 1, Some(&found), 1)
+            .is_err()
+    );
+    Ok(())
+}
+
 #[test]
 fn grep_pushdown_preserves_narrowing_receipts_on_full_and_capped_pages() -> Result<()> {
     let (_tmp, vault) = open_test_vault_with(telemetry_config());
@@ -660,5 +783,178 @@ fn graph_fs_failed_telemetry_write_has_no_identity() -> Result<()> {
             .grep("amberlantern", "/claims", true, None)?;
     assert_eq!(output.telemetry_run_id(), None);
     assert!(vault.retrieval_runs(10)?.is_empty());
+    Ok(())
+}
+
+/// Every page of one command, following its cursor to the end, joined.
+fn pages(mut next: impl FnMut(Option<&str>) -> Result<GraphFsCommandOutput>) -> Result<String> {
+    let mut joined = String::new();
+    let mut cursor: Option<String> = None;
+    for _ in 0..10_000 {
+        let page = next(cursor.as_deref())?;
+        joined.push_str(std::str::from_utf8(page.bytes()).expect("every page is text"));
+        cursor = page.next_cursor().map(str::to_owned);
+        if cursor.is_none() {
+            return Ok(joined);
+        }
+    }
+    panic!("paging must end");
+}
+
+/// Every page a limit cuts hands out a cursor, and paging on reaches the
+/// rest, each line once: `find` and `grep -r` paged small rejoin to the same
+/// walk in one page (stopping inside files and directory listings), `head`
+/// goes past a page, the claim text pushdown past its result cap, an id
+/// listing past a run of ids the reader cannot see, and the day listing past
+/// its scan limit. Each of these ended with no cursor before (#1341).
+#[test]
+fn a_page_a_limit_cut_always_hands_out_a_cursor() -> Result<()> {
+    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (world, subject) = (test_id(0x51), test_id(0x52));
+    put_entity(&vault, world, ENTITY_TYPE_WORLD)?;
+    put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
+    // Claims in a world the reader has no grant for come first, by id and by
+    // time (day 1); the reader's own come after them (day 2).
+    let hidden = [test_id(0x53), test_id(0x54), test_id(0x55)];
+    let shown = [test_id(0x56), test_id(0x57), test_id(0x58)];
+    let needle = "cutpageneedle";
+    for (at, id) in (0_u64..).zip(hidden) {
+        put_claim(&vault, id, subject, Some(world), 86_400 + at)?;
+    }
+    for (at, id) in (0_u64..).zip(shown) {
+        put_claim_with_value(&vault, id, subject, None, 2 * 86_400 + at, needle)?;
+        vault.batch().text(&id, &[("body", needle)]).commit()?;
+    }
+    let lines: Vec<_> = (0..600).map(|at| format!("{needle} line {at}")).collect();
+    let (long, short) = (test_id(0x59), test_id(0x5A));
+    let body = lines.join("\n");
+    vault.put_entity(&long, ENTITY_TYPE_PERSON, time_range(1), 1, body.as_bytes())?;
+    let body = format!("{needle} alone");
+    vault.put_entity(
+        &short,
+        ENTITY_TYPE_PERSON,
+        time_range(1),
+        1,
+        body.as_bytes(),
+    )?;
+    put_policy_manifest(
+        &vault,
+        test_id(0x5B),
+        encode_policy_manifest(vec![core_read_base_grant("reader")]),
+    )?;
+    let reader =
+        vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
+    for id in hidden {
+        assert!(!reader.is_entity_readable(&id)?);
+    }
+    for id in shown {
+        assert!(reader.is_entity_readable(&id)?);
+    }
+    let text = |output: &GraphFsCommandOutput| {
+        std::str::from_utf8(output.bytes())
+            .expect("every page is text")
+            .to_owned()
+    };
+
+    // find and grep -r: many small pages rejoin to one uncut page.
+    let small = resolver(&reader, 256);
+    let whole = reader.graph_fs(
+        GraphFsOptions::default()
+            .with_page_byte_cap(GRAPH_FS_MAX_PAGE_BYTE_CAP)
+            .with_max_entries(GRAPH_FS_MAX_PAGE_ENTRIES),
+    );
+    let found = whole.find("/entities", None, None)?;
+    assert!(found.next_cursor().is_none());
+    let found = text(&found);
+    assert!(found.contains(&format!("/entities/{}/claims", subject.to_hex())));
+    assert_eq!(
+        pages(|cursor| small.find("/entities", None, cursor))?,
+        found
+    );
+    let grepped = whole.grep(needle, "/entities", true, None)?;
+    assert!(grepped.next_cursor().is_none());
+    let grepped = text(&grepped);
+    for line in &lines {
+        let line = format!("/entities/{}/body:{line}\n", long.to_hex());
+        assert_eq!(grepped.matches(&line).count(), 1, "{line}");
+    }
+    assert!(grepped.contains(&format!("/entities/{}/body:{needle} alone", short.to_hex())));
+    assert_eq!(
+        pages(|cursor| small.grep(needle, "/entities", true, cursor))?,
+        grepped
+    );
+
+    // head past a page (512 lines).
+    let fs = resolver(&reader, GRAPH_FS_DEFAULT_PAGE_BYTE_CAP);
+    let path = format!("/entities/{}/body", long.to_hex());
+    let head = pages(|cursor| fs.head(&path, 600, cursor))?;
+    assert_eq!(head.lines().collect::<Vec<_>>(), lines);
+
+    // The claim text pushdown past its result cap (2 here).
+    let capped = reader.graph_fs(GraphFsOptions::default().with_max_entries(2));
+    let grepped = pages(|cursor| capped.grep(needle, "/claims", true, cursor))?;
+    let mut ids: Vec<_> = grepped
+        .lines()
+        .filter_map(|line| line.strip_prefix("/claims/")?.split_once(':'))
+        .map(|(id, _)| id.to_owned())
+        .collect();
+    ids.sort();
+    assert_eq!(ids, shown.map(|id| id.to_hex()));
+
+    // An id listing whose run of ids (2 here) holds no claim the reader sees.
+    let mut listed = Vec::new();
+    let mut empty_but_more = false;
+    let mut cursor: Option<String> = None;
+    for _ in 0..10_000 {
+        let page = fs.listdir_claims_by_id_with_fetch("/claims/by-id", cursor.as_deref(), 2)?;
+        let names: Vec<_> = page
+            .entries()
+            .iter()
+            .filter(|entry| entry.kind() != GraphFsEntryKind::Cursor)
+            .map(|entry| entry.name().to_owned())
+            .collect();
+        cursor = page.next_cursor().map(str::to_owned);
+        empty_but_more |= names.is_empty() && cursor.is_some();
+        listed.extend(names);
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert!(cursor.is_none(), "paging must end");
+    assert!(empty_but_more);
+    for id in shown {
+        assert_eq!(
+            listed.iter().filter(|name| **name == id.to_hex()).count(),
+            1
+        );
+    }
+    for id in hidden {
+        assert!(!listed.contains(&id.to_hex()));
+    }
+
+    // The day listing past its scan limit (1 row here), over the hidden day.
+    let days = |page: &GraphFsPage| -> Vec<String> {
+        page.entries()
+            .iter()
+            .filter(|entry| entry.kind() != GraphFsEntryKind::Cursor)
+            .map(|entry| entry.name().to_owned())
+            .collect()
+    };
+    let all_days = fs.listdir_claim_days_with_scan_cap("/claims/by-time", None, usize::MAX)?;
+    assert!(all_days.next_cursor().is_none());
+    let all_days = days(&all_days);
+    assert!(all_days.contains(&super::paging::format_day_shard(2)));
+    let mut paged = Vec::new();
+    let mut cursor: Option<String> = None;
+    for _ in 0..10_000 {
+        let page = fs.listdir_claim_days_with_scan_cap("/claims/by-time", cursor.as_deref(), 1)?;
+        paged.extend(days(&page));
+        cursor = page.next_cursor().map(str::to_owned);
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert!(cursor.is_none(), "paging must end");
+    assert_eq!(paged, all_days);
     Ok(())
 }

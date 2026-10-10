@@ -12,10 +12,7 @@ impl Vault {
     /// Sets completed-task retention; `None` or zero disables this arm.
     /// Like the cleanup posture setter, this is a trusted owner configuration door.
     pub fn set_task_retention_days(&self, days: Option<u32>) -> Result<()> {
-        self.with_write_txn_grouped(|txn| {
-            RETENTION.put(&self.store, txn, &(), &u64::from(days.unwrap_or(0)))?;
-            Ok(())
-        })
+        self.with_write_txn_grouped(|txn| set_task_retention_days_in_txn(self, txn, days))
     }
 
     /// Current retention period. Zero means disabled; an unset vault uses 90 days.
@@ -23,6 +20,14 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         retention_days_in_txn(self, &txn)
     }
+}
+
+pub(super) fn set_task_retention_days_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    days: Option<u32>,
+) -> Result<()> {
+    RETENTION.put(&vault.store, txn, &(), &u64::from(days.unwrap_or(0)))
 }
 
 pub(super) fn retention_days_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<u64> {

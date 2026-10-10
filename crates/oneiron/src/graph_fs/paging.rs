@@ -1,14 +1,16 @@
 //! Cursor codecs, page and output builders with byte-cap logic, and day-shard civil-date math.
 
-use crate::entity_id::EntityId;
+use std::sync::OnceLock;
+
+use rand_core::{OsRng, RngCore};
+
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 
 use super::model::{
     GRAPH_FS_MORE_RESERVE_BYTES, GraphFsEntry, GraphFsEntryKind, GraphFsMount, GraphFsOptions,
-    GraphFsPage,
+    GraphFsPage, GraphFsResolver,
 };
-
-use super::readdir::parse_entity_id;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct TemporalCursor {
@@ -23,28 +25,21 @@ impl TemporalCursor {
             timestamp: self.learned_at,
         }
     }
+}
 
-    pub(super) fn parse_optional(value: Option<&str>) -> Result<Option<Self>> {
-        value.map(Self::parse).transpose()
+impl SealedPosition for TemporalCursor {
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = self.learned_at.to_be_bytes().to_vec();
+        bytes.extend_from_slice(self.id.as_bytes());
+        bytes
     }
 
-    pub(super) fn parse(value: &str) -> Result<Self> {
-        let Some((learned, id)) = value.split_once(':') else {
-            return Err(Error::InvalidConfig(
-                "invalid graph-fs temporal cursor".to_owned(),
-            ));
-        };
-        let learned_at = learned
-            .parse::<u64>()
-            .map_err(|_| Error::InvalidConfig("invalid graph-fs temporal cursor".to_owned()))?;
-        Ok(Self {
-            learned_at,
-            id: parse_entity_id(id)?,
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        let (learned_at, id) = bytes.split_first_chunk::<8>()?;
+        Some(Self {
+            learned_at: u64::from_be_bytes(*learned_at),
+            id: entity_id(id)?,
         })
-    }
-
-    pub(super) fn encode(self) -> String {
-        format!("{}:{}", self.learned_at, self.id.to_hex())
     }
 }
 
@@ -64,10 +59,197 @@ impl EdgeCursor {
             source: edge.target,
         }
     }
+}
 
-    pub(super) fn encode(self) -> String {
-        format!("{}:{}", self.kind, self.source.to_hex())
+impl SealedPosition for EdgeCursor {
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![self.kind];
+        bytes.extend_from_slice(self.source.as_bytes());
+        bytes
     }
+
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        let (kind, source) = bytes.split_first()?;
+        Some(Self {
+            kind: *kind,
+            source: entity_id(source)?,
+        })
+    }
+}
+
+/// Where the day listing resumes: after a timeline row, and whether that
+/// row's day is already listed (every later row is in that day or after it,
+/// so this is all the listing needs to pass over the days it listed). Sealed,
+/// it fits the page's `_more` reserve.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct DayPosition {
+    pub(super) after: Option<TemporalCursor>,
+    pub(super) day_listed: bool,
+}
+
+impl SealedPosition for DayPosition {
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![u8::from(self.day_listed)];
+        if let Some(after) = self.after {
+            bytes.extend_from_slice(&after.to_bytes());
+        }
+        bytes
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        let (flag, after) = bytes.split_first()?;
+        Some(Self {
+            after: match after {
+                [] => None,
+                after => Some(TemporalCursor::from_bytes(after)?),
+            },
+            day_listed: match flag {
+                0 => false,
+                1 => true,
+                _ => return None,
+            },
+        })
+    }
+}
+
+/// An id listing resumes after the last id it read.
+impl SealedPosition for EntityId {
+    fn to_bytes(&self) -> Vec<u8> {
+        self.as_bytes().to_vec()
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        entity_id(bytes)
+    }
+}
+
+/// What a sealed token carries: a position, as bytes.
+pub(super) trait SealedPosition: Sized {
+    fn to_bytes(&self) -> Vec<u8>;
+    fn from_bytes(bytes: &[u8]) -> Option<Self>;
+}
+
+fn entity_id(bytes: &[u8]) -> Option<EntityId> {
+    EntityId::from_bytes(bytes.try_into().ok()?).ok()
+}
+
+/// A sealed position is its nonce, its tag, then the position's own bytes:
+/// 52 bytes for a temporal one, 104 hex characters, which the page's `_more`
+/// reserve holds.
+const SEALED_NONCE_LEN: usize = 12;
+const SEALED_TAG_LEN: usize = 16;
+
+/// This process's key for sealing walk positions. A restart retires every
+/// position it sealed, and a listing given one starts again from the top.
+fn position_key() -> &'static [u8; 32] {
+    static KEY: OnceLock<[u8; 32]> = OnceLock::new();
+    KEY.get_or_init(|| {
+        let mut key = [0; 32];
+        OsRng.fill_bytes(&mut key);
+        key
+    })
+}
+
+/// Where a scan-bounded walk resumes, as the page hands it out: sealed, so
+/// the token names no row. A walk can stop at its scan limit on a row it
+/// passed over (sealed custody, a row the reader may not see); its resume
+/// point then is that row, and a plain cursor would publish its time and id
+/// (ARCH-0051: what a walk withholds stays absent, paging included). A sealed
+/// position opens only in this process, for the vault, reader and listing
+/// that sealed it.
+pub(super) struct CursorScope([u8; 32]);
+
+impl GraphFsResolver<'_, '_> {
+    /// The scope of one listing's cursors: this vault, this reader, and the
+    /// listing named by `listing` (its path and any parameter it walks by).
+    pub(super) fn cursor_scope(&self, listing: &str) -> CursorScope {
+        let mut hasher = blake3::Hasher::new_keyed(position_key());
+        hasher.update(b"oneiron.graph-fs.cursor.v1");
+        hasher.update(self.scoped_read.vault().vault_id().as_bytes());
+        for field in [self.scoped_read.actor_key().actor_ref(), listing] {
+            hasher.update(&(field.len() as u64).to_be_bytes());
+            hasher.update(field.as_bytes());
+        }
+        CursorScope(*hasher.finalize().as_bytes())
+    }
+}
+
+impl CursorScope {
+    pub(super) fn seal<P: SealedPosition>(&self, position: &P) -> String {
+        self.seal_bytes(&position.to_bytes())
+    }
+
+    /// The position a token sealed, if this scope sealed it.
+    pub(super) fn open<P: SealedPosition>(&self, token: Option<&str>) -> Result<Option<P>> {
+        token
+            .map(|token| {
+                self.open_bytes(token)
+                    .as_deref()
+                    .and_then(P::from_bytes)
+                    .ok_or_else(invalid_cursor)
+            })
+            .transpose()
+    }
+
+    /// Authenticated encryption under a fresh nonce: the tag is a keyed hash
+    /// of the nonce and the position, and the position travels XORed with a
+    /// stream keyed by that tag. Two tokens never compare equal, even for one
+    /// position, so comparing them says nothing about where a walk stopped.
+    fn seal_bytes(&self, position: &[u8]) -> String {
+        let mut nonce = [0; SEALED_NONCE_LEN];
+        OsRng.fill_bytes(&mut nonce);
+        let tag = self.tag(&nonce, position);
+        let mut token = nonce.to_vec();
+        token.extend_from_slice(&tag);
+        token.extend_from_slice(position);
+        self.xor_stream(&tag, &mut token[SEALED_NONCE_LEN + SEALED_TAG_LEN..]);
+        bytes_to_hex_lower(&token)
+    }
+
+    fn open_bytes(&self, token: &str) -> Option<Vec<u8>> {
+        if !token.len().is_multiple_of(2) || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return None;
+        }
+        let bytes = (0..token.len())
+            .step_by(2)
+            .map(|at| u8::from_str_radix(&token[at..at + 2], 16).ok())
+            .collect::<Option<Vec<u8>>>()?;
+        let (nonce, rest) = bytes.split_first_chunk::<SEALED_NONCE_LEN>()?;
+        let (tag, sealed) = rest.split_first_chunk::<SEALED_TAG_LEN>()?;
+        let mut position = sealed.to_vec();
+        self.xor_stream(tag, &mut position);
+        let expected = self.tag(nonce, &position);
+        let mismatch = expected
+            .iter()
+            .zip(tag)
+            .fold(0, |acc, (left, right)| acc | (left ^ right));
+        (mismatch == 0).then_some(position)
+    }
+
+    fn tag(&self, nonce: &[u8], position: &[u8]) -> [u8; SEALED_TAG_LEN] {
+        let mut hasher = blake3::Hasher::new_keyed(&self.0);
+        hasher.update(b"tag");
+        hasher.update(nonce);
+        hasher.update(position);
+        let mut tag = [0; SEALED_TAG_LEN];
+        tag.copy_from_slice(&hasher.finalize().as_bytes()[..SEALED_TAG_LEN]);
+        tag
+    }
+
+    fn xor_stream(&self, tag: &[u8], bytes: &mut [u8]) {
+        let mut hasher = blake3::Hasher::new_keyed(&self.0);
+        hasher.update(b"stream");
+        hasher.update(tag);
+        let mut stream = vec![0; bytes.len()];
+        hasher.finalize_xof().fill(&mut stream);
+        for (byte, key) in bytes.iter_mut().zip(stream) {
+            *byte ^= key;
+        }
+    }
+}
+
+fn invalid_cursor() -> Error {
+    Error::InvalidConfig("invalid graph-fs cursor; list again without one".to_owned())
 }
 
 pub(super) struct PageBuilder {
@@ -123,8 +305,8 @@ impl PageBuilder {
         self.last_temporal_cursor = Some(cursor);
     }
 
-    pub(super) fn last_temporal_cursor(&self) -> Option<String> {
-        self.last_temporal_cursor.map(TemporalCursor::encode)
+    pub(super) fn last_temporal_cursor(&self) -> Option<TemporalCursor> {
+        self.last_temporal_cursor
     }
 
     pub(super) fn finish(mut self, next_cursor: Option<String>) -> GraphFsPage {
@@ -183,6 +365,33 @@ impl CommandOutputBuilder {
         true
     }
 
+    /// Pushes `line` from byte `printed` on (what earlier pages printed of
+    /// it). Returns `None` once all of it is in, else how much of it has
+    /// printed when the page filled: no more, on a page holding other lines;
+    /// as much as fits, cut on a character boundary, on an empty one, so a
+    /// line longer than any page prints across pages.
+    pub(super) fn push_line(&mut self, line: &str, printed: usize) -> Option<usize> {
+        let printed = if line.is_char_boundary(printed) {
+            printed
+        } else {
+            0
+        };
+        let rest = &line[printed..];
+        if self.try_push(rest.as_bytes()) {
+            return None;
+        }
+        if self.entries > 0 {
+            return Some(printed);
+        }
+        let mut end = self.byte_cap.min(rest.len());
+        while !rest.is_char_boundary(end) {
+            end -= 1;
+        }
+        self.bytes.extend_from_slice(&rest.as_bytes()[..end]);
+        self.entries += 1;
+        Some(printed + end)
+    }
+
     pub(super) fn entries(&self) -> usize {
         self.entries
     }
@@ -194,21 +403,6 @@ impl CommandOutputBuilder {
     pub(super) fn into_bytes(self) -> Vec<u8> {
         self.bytes
     }
-}
-
-pub(super) fn parse_edge_cursor(value: &str) -> Result<EdgeCursor> {
-    let Some((kind, source)) = value.split_once(':') else {
-        return Err(Error::InvalidConfig(
-            "invalid graph-fs edge cursor".to_owned(),
-        ));
-    };
-    let kind = kind
-        .parse::<u8>()
-        .map_err(|_| Error::InvalidConfig("invalid graph-fs edge cursor".to_owned()))?;
-    Ok(EdgeCursor {
-        kind,
-        source: parse_entity_id(source)?,
-    })
 }
 
 pub(super) fn format_day_shard(day: u64) -> String {

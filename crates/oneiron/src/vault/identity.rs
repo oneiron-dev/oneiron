@@ -40,6 +40,11 @@ impl VaultId {
         wtxn.commit()?;
         Ok(Self(id))
     }
+
+    /// The id's bytes, for binding a value to this vault's store.
+    pub(crate) fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
 }
 
 impl Vault {

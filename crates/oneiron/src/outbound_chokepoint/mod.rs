@@ -19,7 +19,7 @@ pub(crate) use fanout::{
 };
 
 pub(crate) use self::admission::execute_outbound_effect;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) use self::types::BEFORE_NEW_ADMISSION;
 pub(crate) use self::types::{
     OutboundEffectCommand, OutboundEffectError, OutboundEffectResult, OutboundTransport,

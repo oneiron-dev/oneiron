@@ -418,25 +418,6 @@ impl Vault {
         Ok(result)
     }
 
-    /// Resolves the selector and mints a summary in one transaction.
-    pub fn mint_dag_scope_summary(
-        &self,
-        scope: &ScopeSelector,
-        text: &str,
-        actor: WriteActor,
-    ) -> Result<EntityId> {
-        self.with_write_txn_grouped(|txn| {
-            mint_in_txn(
-                self,
-                txn,
-                scope,
-                text,
-                actor,
-                self.store.clock.now_recorded_at(),
-            )
-        })
-    }
-
     /// Projects the first thread chain and lands its header on the trunk atomically.
     pub fn mint_and_land_thread_summary(
         &self,

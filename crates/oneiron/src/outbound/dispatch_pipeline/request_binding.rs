@@ -40,6 +40,8 @@ pub(super) struct PreparedOutboundDispatch {
     pub(super) space_posting: Option<crate::channel_identity_autonomy::FrozenSpacePosting>,
     pub(super) policy_risk: ExternalEffectPolicyRisk,
     pub(super) verified_actor: Option<(EntityId, EdgeActorClass)>,
+    /// The owner whose approval the effect carries; admission rechecks it.
+    pub(super) owner_proof: Option<crate::consent::AuthenticatedOwner>,
     pub(super) step_binding: Option<crate::llm::StepEffectBinding>,
     pub(super) payload: Option<Vec<u8>>,
     pub(super) native_mail_recipient: bool,
@@ -144,6 +146,7 @@ impl PreparedOutboundDispatch {
             space_posting,
             policy_risk,
             verified_actor,
+            owner_proof: None,
             step_binding,
             payload: None,
             native_mail_recipient,

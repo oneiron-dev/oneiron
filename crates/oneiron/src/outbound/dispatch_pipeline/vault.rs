@@ -69,6 +69,19 @@ impl Vault {
         )
     }
 
+    /// Dispatches an effect the vault owner approved. Admission rechecks
+    /// `owner`'s proof under the writer that commits the gate decision and
+    /// the pending send, so a slip revoked while the dispatch waited admits
+    /// nothing and the sink is never called.
+    pub(crate) fn dispatch_outbound_intent_as_owner<S: OutboundExecutionSink>(
+        &self,
+        request: OutboundDispatchRequest,
+        owner: &crate::consent::AuthenticatedOwner,
+        sink: &mut S,
+    ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
+        OutboundDispatchPipeline.dispatch_as_owner(self, request, sink, owner)
+    }
+
     /// Facade-only dispatch seam: asserts the actor still resolves in the
     /// Gate transaction that persists this outbound decision.
     pub(crate) fn dispatch_outbound_intent_with_verified_actor<S: OutboundExecutionSink>(

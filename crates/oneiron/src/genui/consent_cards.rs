@@ -2,14 +2,12 @@
 
 use super::consent_eval::{
     ConsentActionDecision, ConsentActionEvaluation, ConsentActionKind, ConsentActionRequest,
-    GrantMintIntent, GrantMintIntentScope, action_button_node, atom_id, consent_evaluation,
-    ensure_authenticated_actor, ensure_component_request, ensure_declared_action,
-    ensure_principal_ref, lens_text, meta_line, non_empty, noop_policy_rejection,
-    required_scope_ref, widening_grant_surface_is_eligible,
+    GrantMintIntent, GrantMintIntentScope, consent_evaluation, ensure_authenticated_actor,
+    ensure_component_request, ensure_declared_action, ensure_principal_ref, non_empty,
+    noop_policy_rejection, required_scope_ref, widening_grant_surface_is_eligible,
 };
 use super::protocol::{Of336ActionDescriptor, Of336ComponentKind};
 use crate::consent::AuthenticatedOwner;
-use crate::lens::{CollectionAtom, LensAtom, LensNode, ReceiptAtom, SealAtom, SealLevel};
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 
@@ -193,35 +191,6 @@ impl ConsentAskCard {
             }),
         }
     }
-
-    pub(super) fn atom_kit_root(&self) -> Result<LensNode> {
-        let mut root = LensNode::new(
-            atom_id("consent-ask-root")?,
-            LensAtom::Sheet(CollectionAtom {
-                title: lens_text("Consent ask")?,
-                rows: Vec::new(),
-            }),
-        );
-        root.children.push(LensNode::new(
-            atom_id("consent-ask-receipt")?,
-            LensAtom::Receipt(ReceiptAtom {
-                title: lens_text(&self.prompt)?,
-                lines: vec![
-                    meta_line("preview", &self.preview)?,
-                    meta_line("principal_ref", &self.principal_ref)?,
-                    meta_line("verb_class", &self.verb_class)?,
-                ],
-                seal: Some(SealAtom {
-                    level: SealLevel::Actor,
-                    label: lens_text("principal-auth")?,
-                }),
-            }),
-        ));
-        for action in self.actions() {
-            root.children.push(action_button_node(action)?);
-        }
-        Ok(root)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -386,35 +355,6 @@ impl BundleApproveCard {
     #[must_use]
     pub fn fallback_text(&self) -> String {
         format!("{}: {}", self.title, self.item_labels().join("; "))
-    }
-
-    pub(super) fn atom_kit_root(&self) -> Result<LensNode> {
-        let mut root = LensNode::new(
-            atom_id("bundle-approve-root")?,
-            LensAtom::Sheet(CollectionAtom {
-                title: lens_text(&self.title)?,
-                rows: Vec::new(),
-            }),
-        );
-        root.children.push(LensNode::new(
-            atom_id("bundle-approve-receipt")?,
-            LensAtom::Receipt(ReceiptAtom {
-                title: lens_text(&self.title)?,
-                lines: vec![
-                    meta_line("brief_ref", &self.brief_ref)?,
-                    meta_line("verb_class", &self.verb_class)?,
-                    meta_line("sends", &self.item_labels().join("; "))?,
-                ],
-                seal: Some(SealAtom {
-                    level: SealLevel::Actor,
-                    label: lens_text("bundle-approve")?,
-                }),
-            }),
-        ));
-        for action in self.actions() {
-            root.children.push(action_button_node(action)?);
-        }
-        Ok(root)
     }
 }
 

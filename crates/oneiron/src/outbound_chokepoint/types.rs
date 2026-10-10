@@ -14,7 +14,7 @@ use crate::receipt::ReceiptRecord;
 
 pub(crate) type OutboundEffectError = IntentLedgerError;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 std::thread_local! {
     pub(crate) static BEFORE_NEW_ADMISSION: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
@@ -68,6 +68,10 @@ pub(crate) struct PreparedEffect {
     pub(crate) budget_class: BudgetClass,
     pub(crate) authorization: PreparedAuthorization,
     pub(crate) verified_actor: Option<(EntityId, EdgeActorClass)>,
+    /// The owner whose approval this effect carries. Admission rechecks the
+    /// proof under its writer, so a slip revoked while the effect waited for
+    /// it admits nothing and never reaches the transport.
+    pub(crate) owner_proof: Option<crate::consent::AuthenticatedOwner>,
     /// OF-327 semantic identity; absent for non-dispatch effects.
     pub(crate) dedupe_key: Option<String>,
     /// The caller-facing receipt to commit if this admission is suppressed.

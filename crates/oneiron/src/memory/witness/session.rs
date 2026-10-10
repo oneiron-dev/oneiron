@@ -99,6 +99,47 @@ impl Memory<'_> {
         )
     }
 
+    /// [`Self::witness_into_session`] for a transport: `owner`'s proof is
+    /// rechecked in the transaction that lands the turn, so a witness queued
+    /// behind a revocation writes nothing, on record or off.
+    ///
+    /// # Errors
+    ///
+    /// `FORBIDDEN` when `owner` does not name this handle's actor or its proof
+    /// no longer holds; otherwise as [`Self::witness_into_session`].
+    pub fn witness_into_session_as(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        session: &OffRecordSession<'_>,
+        turn: &WitnessTurn,
+        summary: Option<&str>,
+    ) -> MemoryResult<WitnessReceipt> {
+        let refused = |message: String| {
+            MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                message,
+                &["Authenticate again as a live owner of this vault, then retry."],
+            )
+        };
+        if owner.actor() != self.actor {
+            return Err(refused(
+                "the owner proof names another actor than the witness".to_owned(),
+            ));
+        }
+        self.run_witness(
+            turn,
+            WitnessTarget::Session { session, summary },
+            WitnessDoor::Guest,
+            || {},
+            |_| Ok(()),
+            |wtxn| {
+                owner
+                    .revalidate_in_txn(self.vault, wtxn)
+                    .map_err(|error| refused(error.to_string()))
+            },
+        )
+    }
+
     /// Host-bound variant for executor speech. `host_turn_ref` is derived from
     /// the run identity behind a crate-private capability; it is deliberately a
     /// separate parameter from guest [`WitnessTurn::turn_ref`], so preserving a

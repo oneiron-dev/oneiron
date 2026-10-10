@@ -46,6 +46,17 @@ impl OutboundDispatchPipeline {
     ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
         self.dispatch_inner(vault, request, sink, Some((actor, actor_class)), None)
     }
+    pub(in crate::outbound) fn dispatch_as_owner<S: OutboundExecutionSink>(
+        self,
+        vault: &Vault,
+        request: OutboundDispatchRequest,
+        sink: &mut S,
+        owner: &crate::consent::AuthenticatedOwner,
+    ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
+        let mut prepared = PreparedOutboundDispatch::prepare(vault, request, None, None)?;
+        prepared.owner_proof = Some(owner.clone());
+        self.dispatch_prepared_or_completed(vault, prepared, sink)
+    }
     fn dispatch_inner<S: OutboundExecutionSink>(
         self,
         vault: &Vault,
@@ -56,6 +67,14 @@ impl OutboundDispatchPipeline {
     ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
         let prepared =
             PreparedOutboundDispatch::prepare(vault, request, verified_actor, step_binding)?;
+        self.dispatch_prepared_or_completed(vault, prepared, sink)
+    }
+    fn dispatch_prepared_or_completed<S: OutboundExecutionSink>(
+        self,
+        vault: &Vault,
+        prepared: PreparedOutboundDispatch,
+        sink: &mut S,
+    ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
         if prepared.replay_done() {
             return Ok(self
                 .dispatch_completed_effect(vault, prepared, sink)?
@@ -120,6 +139,7 @@ impl OutboundDispatchPipeline {
             attempt_id,
             idempotency_supported,
             verified_actor,
+            owner_proof,
             space_posting,
             policy_risk,
             payload,
@@ -136,6 +156,7 @@ impl OutboundDispatchPipeline {
             attempt_id,
             idempotency_supported,
             verified_actor,
+            owner_proof,
             parked: None,
             suppression_receipt: None,
         })?;
@@ -191,6 +212,7 @@ impl OutboundDispatchPipeline {
             attempt_id,
             idempotency_supported,
             verified_actor,
+            owner_proof,
             space_posting,
             policy_risk,
             payload,
@@ -220,6 +242,7 @@ impl OutboundDispatchPipeline {
             attempt_id,
             idempotency_supported,
             verified_actor,
+            owner_proof,
             parked,
             suppression_receipt: crate::outbound::receipt_fields::suppression_receipt_for_dispatch(
                 &request,

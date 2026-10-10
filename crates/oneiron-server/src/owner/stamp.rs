@@ -55,6 +55,11 @@ pub(crate) fn rfc3339(unix_ms: u64) -> String {
     )
 }
 
+/// [`rfc3339`] for a time the engine keeps in Unix seconds.
+pub(crate) fn rfc3339_secs(unix_seconds: u64) -> String {
+    rfc3339(unix_seconds.saturating_mul(1_000))
+}
+
 /// Inverse of [`file_stamp`]; `None` for anything it did not produce.
 pub(crate) fn parse_file_stamp(stamp: &str) -> Option<u64> {
     let bytes = stamp.as_bytes();

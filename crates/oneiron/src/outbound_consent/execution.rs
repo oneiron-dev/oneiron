@@ -111,6 +111,7 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
             prepared: Box::new(prepared_call.clone()),
         },
         verified_actor: None,
+        owner_proof: None,
         dedupe_key: None,
         suppression_receipt: None,
     };

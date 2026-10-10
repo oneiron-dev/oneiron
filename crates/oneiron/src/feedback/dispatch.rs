@@ -42,6 +42,9 @@ pub struct FeedbackSendContext {
     pub occurred_at: u64,
     /// Delivery-window decision supplied by the caller.
     pub window_decision: OutboundDeliveryWindowDecision,
+    /// The owner who approved this send, when an owner did: admission
+    /// rechecks that proof under the writer that admits the send.
+    pub approved_by: Option<crate::consent::AuthenticatedOwner>,
 }
 
 impl FeedbackSendContext {
@@ -59,6 +62,7 @@ impl FeedbackSendContext {
             on_behalf_of: None,
             occurred_at,
             window_decision,
+            approved_by: None,
         }
     }
 
@@ -66,6 +70,14 @@ impl FeedbackSendContext {
     #[must_use]
     pub fn on_behalf_of(mut self, principal: impl Into<String>) -> Self {
         self.on_behalf_of = Some(principal.into());
+        self
+    }
+
+    /// Binds the send to the owner who approved it: a send is admitted only
+    /// while that owner's proof still holds in the admitting transaction.
+    #[must_use]
+    pub fn approved_by(mut self, owner: crate::consent::AuthenticatedOwner) -> Self {
+        self.approved_by = Some(owner);
         self
     }
 }
@@ -293,9 +305,11 @@ where
         approval_receipt_ref: &approval_receipt_ref,
         calls: 0,
     };
-    let dispatch = vault
-        .dispatch_outbound_intent(request, &mut adapter)
-        .map_err(|error| FeedbackError::Dispatch(Box::new(error)))?;
+    let dispatch = match &context.approved_by {
+        Some(owner) => vault.dispatch_outbound_intent_as_owner(request, owner, &mut adapter),
+        None => vault.dispatch_outbound_intent(request, &mut adapter),
+    }
+    .map_err(|error| FeedbackError::Dispatch(Box::new(error)))?;
     let transport_calls = adapter.calls;
     Ok(FeedbackSendOutcome {
         dispatch,

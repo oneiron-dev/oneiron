@@ -33,10 +33,7 @@ pub use self::project_proposal::{
     PROJECT_PROPOSAL_MINT_ACTION_ID, ProjectGoalDraft, ProjectMintIntent, ProjectProposalCard,
     ProjectProposalPicks,
 };
-pub use self::protocol::{
-    OF336_CARD_CATALOG_VERSION, OF336_MCP_UI_MIME, OF336_PROTOCOL_VERSION, Of336ActionDescriptor,
-    Of336Component, Of336ComponentKind, Of336RenderedComponent, Of336SurfaceAdapter,
-};
+pub use self::protocol::{Of336ActionDescriptor, Of336ComponentKind};
 pub use self::receipt_view::{
     ReceiptDeepLink, ReceiptDeepLinkKind, ReceiptViewComponent, ViewTimeResolution,
     resolve_commitment_receipt_link,

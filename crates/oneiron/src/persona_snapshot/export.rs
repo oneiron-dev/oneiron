@@ -14,6 +14,7 @@ use super::types::{
     PersonaSnapshotRowKind, PersonaSnapshotStrikeList, STRUCK_IDENTITY_LINE_PLACEHOLDER,
 };
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
+use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::registry::ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT;
@@ -33,6 +34,41 @@ impl crate::Vault {
         compile: &PersonaSnapshotCompile,
         strikes: &PersonaSnapshotStrikeList,
         consent: &PersonaSnapshotExportConsent,
+    ) -> Result<PersonaSnapshotArtifact> {
+        self.export_persona_snapshot_bound(compile, strikes, consent, None)
+    }
+
+    /// [`Self::export_persona_snapshot`] for a transport: the consent is the
+    /// authenticated owner's, given over the stamp they previewed, and the
+    /// proof is rechecked in the transaction that records the export, so an
+    /// export queued behind a revocation issues nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof no longer
+    /// holds; [`GateError::PersonaSnapshotConsentStale`] when `previewed_stamp`
+    /// is not this compile's; otherwise as [`Self::export_persona_snapshot`].
+    pub fn export_persona_snapshot_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        compile: &PersonaSnapshotCompile,
+        strikes: &PersonaSnapshotStrikeList,
+        previewed_stamp: &str,
+    ) -> Result<PersonaSnapshotArtifact> {
+        let consent = PersonaSnapshotExportConsent {
+            granted_by: owner.actor().to_hex(),
+            compile_stamp: previewed_stamp.to_owned(),
+            granted_at_secs: self.store.clock.now_recorded_at(),
+        };
+        self.export_persona_snapshot_bound(compile, strikes, &consent, Some(owner))
+    }
+
+    fn export_persona_snapshot_bound(
+        &self,
+        compile: &PersonaSnapshotCompile,
+        strikes: &PersonaSnapshotStrikeList,
+        consent: &PersonaSnapshotExportConsent,
+        owner: Option<&AuthenticatedOwner>,
     ) -> Result<PersonaSnapshotArtifact> {
         if consent.granted_by.trim().is_empty() {
             return Err(invalid_snapshot(
@@ -112,7 +148,7 @@ impl crate::Vault {
             artifact_fingerprint,
         };
         let export_id = self.store.clock.entity_id()?;
-        self.put_persona_snapshot_export(&export_id, &record)?;
+        self.put_persona_snapshot_export_bound(&export_id, &record, owner)?;
 
         Ok(PersonaSnapshotArtifact {
             export_id,
@@ -137,9 +173,21 @@ impl crate::Vault {
         id: &EntityId,
         record: &PersonaSnapshotExportRecord,
     ) -> Result<()> {
+        self.put_persona_snapshot_export_bound(id, record, None)
+    }
+
+    fn put_persona_snapshot_export_bound(
+        &self,
+        id: &EntityId,
+        record: &PersonaSnapshotExportRecord,
+        owner: Option<&AuthenticatedOwner>,
+    ) -> Result<()> {
         let data = encode_persona_snapshot_export_body(record)?;
         let learned_at = record.exported_at_secs;
         let mut wtxn = self.store.env.write_txn()?;
+        if let Some(owner) = owner {
+            owner.revalidate_in_txn(self, &wtxn)?;
+        }
         apply_ops(
             &self.store,
             &self.config,
