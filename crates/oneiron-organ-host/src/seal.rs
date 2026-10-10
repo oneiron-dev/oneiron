@@ -666,12 +666,14 @@ fn host_failure(err: HostError) -> EsignSealerError {
 }
 
 /// Whether starting the organ failed on its binary: missing, not
-/// executable, or not a format the kernel runs.
+/// executable, or not a format the kernel runs. Told by errno, not by
+/// kind: the sandbox's steps before exec never fail with these, and a
+/// limit they are refused (EPERM) may pass.
 fn not_runnable(err: &std::io::Error) -> bool {
     matches!(
-        err.kind(),
-        std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
-    ) || err.raw_os_error() == Some(libc::ENOEXEC)
+        err.raw_os_error(),
+        Some(libc::ENOENT | libc::EACCES | libc::ENOEXEC | libc::ENOTDIR)
+    )
 }
 
 /// A unit enum's wire name.
