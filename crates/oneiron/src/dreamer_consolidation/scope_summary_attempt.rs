@@ -235,7 +235,9 @@ const SCOPE_DRIFT_RETRY_SECS: u64 = 60;
 fn compose_again(charges: &StepChargeTally, now_ms: u64) -> DreamerAttemptExecution {
     DreamerAttemptExecution::Deferred {
         completed_units: charges.units,
-        retry_at: now_ms.div_ceil(1_000).saturating_add(SCOPE_DRIFT_RETRY_SECS),
+        retry_at: now_ms
+            .div_ceil(1_000)
+            .saturating_add(SCOPE_DRIFT_RETRY_SECS),
     }
 }
 
