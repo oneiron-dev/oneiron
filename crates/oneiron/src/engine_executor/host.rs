@@ -167,7 +167,7 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
             // attached) and the replay row records exactly that.
             let outcome = SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: call.effect(),
-                error: "host bridge halted after failed call".to_owned(),
+                error: "host_bridge_halted".to_owned(),
             });
             let row =
                 CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;

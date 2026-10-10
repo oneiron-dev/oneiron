@@ -76,8 +76,9 @@ Bootstrap builds them from the hidden `self.verbs` imports and then deletes
 `self.verbs`, so a row added to `scripts/sdk/agent-verbs.json` reaches the guest
 with no component rebuild. The memory reads and writes the run answers itself
 (`search`, `put_claim`, `supersede_claim`, `put_edge`) are rows of the same table,
-so they arrive the same way. A verb input holding a non-finite number is refused
-before the call: JSON would carry it as null.
+so they arrive the same way. A verb input is read once and the call sends that
+snapshot; one holding a non-finite number is refused before the call, since JSON
+would carry it as null. A refused call throws a stable code, never prose.
 
 The interpreter has its own 24 MiB tracked heap and instruction-interrupt cap.
 Wasmtime adds bounded fuel, linear memory, stack, wall time and host-call counts.

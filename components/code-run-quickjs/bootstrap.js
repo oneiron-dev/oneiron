@@ -9,8 +9,9 @@
     const {names, call} = sdk.self.verbs;
     delete sdk.self.verbs;
     // JSON has no NaN or Infinity: encoding one would send null, an absent
-    // value, so a non-finite number is refused before the call instead.
-    const encode = JSON.stringify, finite = Number.isFinite;
+    // value, so a non-finite number is refused before the call instead. The
+    // input is read once: the checked snapshot is what the call sends.
+    const encode = JSON.stringify, decode = JSON.parse, finite = Number.isFinite;
     const refuseNonFinite = (_, value) => {
       if (typeof value === "number" && !finite(value)) throw new RangeError("non_finite_verb_input");
       return value;
@@ -21,10 +22,7 @@
       let target = memory;
       for (const part of parts.slice(0, -1)) target = target[part] ??= Object.create(null);
       if (Object.hasOwn(target, parts.at(-1))) throw new TypeError("verb row shadows a host import");
-      target[parts.at(-1)] = (input = {}) => {
-        encode(input, refuseNonFinite);
-        return call(name, input).then(JSON.parse);
-      };
+      target[parts.at(-1)] = (input = {}) => call(name, decode(encode(input, refuseNonFinite))).then(decode);
     }
   }
   const {clock, random} = sdk.oneiron;

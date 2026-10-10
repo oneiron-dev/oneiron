@@ -8,6 +8,9 @@ use std::sync::mpsc;
 use wasmtime::StoreContextMut;
 use wasmtime::component::Linker;
 
+/// A typed import's answer. A refusal is a stable code the guest sees as the
+/// thrown value, never prose; any wording for it belongs to the host or prompt
+/// layer.
 type Reply<T> = std::result::Result<T, String>;
 const IMPORTS: &[(&str, &str)] = include!("../../../wit/generated/imports.rs");
 
@@ -23,20 +26,20 @@ impl State {
     fn call(&mut self, name: &'static str, input: Value) -> Reply<Value> {
         let input = input.to_string();
         if input.len() > self.message_bytes {
-            return Err("host call budget exceeded".into());
+            return Err("host_call_over_budget".into());
         }
         let (reply, response) = mpsc::sync_channel(1);
         self.events
             .send(HostEvent::Call { name, input, reply })
-            .map_err(|_| "host bridge stopped")?;
+            .map_err(|_| "host_bridge_stopped")?;
         let output = response
             .recv()
-            .map_err(|_| "host bridge stopped")?
-            .map_err(|_| "host call refused")?;
+            .map_err(|_| "host_bridge_stopped")?
+            .map_err(|_| "host_call_refused")?;
         if output.len() > self.message_bytes {
-            return Err("host response budget exceeded".into());
+            return Err("host_response_over_budget".into());
         }
-        let value: Value = serde_json::from_str(&output).map_err(|_| "invalid host response")?;
+        let value: Value = serde_json::from_str(&output).map_err(|_| "invalid_host_response")?;
         if value.get("denied").is_some() || value.get("failed").is_some() {
             return Err(output);
         }
@@ -49,9 +52,9 @@ fn field<T: serde::de::DeserializeOwned>(value: &Value, name: &str) -> Reply<T> 
         value
             .get(name)
             .cloned()
-            .ok_or("missing host response field")?,
+            .ok_or("missing_host_response_field")?,
     )
-    .map_err(|_| "invalid host response field".into())
+    .map_err(|_| "invalid_host_response_field".into())
 }
 
 pub(super) fn link_imports(
@@ -96,10 +99,10 @@ pub(super) fn link_imports(
                     cx.data_mut().begin_call()?;
                     let reply: Reply<String> = (|| {
                         if input.args.len() > cx.data().message_bytes {
-                            return Err("credential arguments exceed message budget".into());
+                            return Err("credential_arguments_over_budget".into());
                         }
                         let args: Value = serde_json::from_str(&input.args)
-                            .map_err(|_| "invalid credential arguments")?;
+                            .map_err(|_| "invalid_credential_arguments")?;
                         cx.data_mut()
                             .call(
                                 "sandbox.credential.call",
@@ -128,10 +131,10 @@ pub(super) fn link_imports(
                     cx.data_mut().begin_call()?;
                     let reply: Reply<String> = (|| {
                         if input.len() > cx.data().message_bytes {
-                            return Err("verb input exceeds message budget".into());
+                            return Err("verb_input_over_budget".into());
                         }
                         let input: Value =
-                            serde_json::from_str(&input).map_err(|_| "invalid verb input JSON")?;
+                            serde_json::from_str(&input).map_err(|_| "invalid_verb_input")?;
                         cx.data_mut()
                             .call("self.verbs.call", json!({"verb":verb,"input":input}))
                             .and_then(|value| field::<Value>(&value, "output"))
@@ -168,10 +171,10 @@ pub(super) fn link_imports(
                     cx.data_mut().begin_call()?;
                     let reply: Reply<AgentPutOutput> = (|| {
                         if input.definition.len() > cx.data().message_bytes {
-                            return Err("agent definition exceeds message budget".into());
+                            return Err("agent_definition_over_budget".into());
                         }
                         let definition: Value = serde_json::from_str(&input.definition)
-                            .map_err(|_| "invalid agent definition JSON")?;
+                            .map_err(|_| "invalid_agent_definition")?;
                         let value = cx.data_mut().call(
                             "vault.agents.put",
                             json!({"id":input.id,"definition":definition}),
@@ -190,9 +193,9 @@ pub(super) fn link_imports(
                     cx.data_mut().begin_call()?;
                     let reply: Reply<bool> = (|| {
                         let schema: Value =
-                            serde_json::from_str(&schema).map_err(|_| "invalid schema JSON")?;
+                            serde_json::from_str(&schema).map_err(|_| "invalid_schema")?;
                         let value: Value =
-                            serde_json::from_str(&value).map_err(|_| "invalid value JSON")?;
+                            serde_json::from_str(&value).map_err(|_| "invalid_value")?;
                         cx.data_mut()
                             .call("self.json.validate", json!({"schema":schema,"value":value}))
                             .and_then(|result| field(&result, "valid"))

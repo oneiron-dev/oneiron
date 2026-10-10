@@ -334,6 +334,55 @@ fn non_finite_run_row_numbers_refuse_before_dispatch() {
     }
 }
 
+/// A time past JavaScript's safe-integer range was rounded in the guest, and a
+/// search limit past `u32` never fit the typed import: the bridge refuses
+/// both before any dispatch, as the typed import's adapter did. The largest
+/// safe time still dispatches.
+#[test]
+fn unsafe_run_row_integers_refuse_before_dispatch() {
+    struct Counting(usize);
+    impl JsCodeModeHost for Counting {
+        fn dispatch_self(&mut self, _: SelfCall) -> Result<SelfDispatchResponse> {
+            self.0 += 1;
+            Err(crate::Error::InvalidConfig("test host".into()))
+        }
+    }
+    let [id, other] = [
+        "11111111111111111111111111111111",
+        "22222222222222222222222222222222",
+    ];
+    let claim = |extra: serde_json::Value| {
+        let mut input = serde_json::json!({
+            "verb": "put_claim", "id": id, "subject": other,
+            "predicate": "profile.favorite_drink", "value": "sencha"
+        });
+        input
+            .as_object_mut()
+            .expect("object")
+            .extend(extra.as_object().expect("object").clone());
+        input
+    };
+    let supersede = |now: u64| {
+        serde_json::json!({"verb": "supersede_claim", "newId": id, "oldId": other, "now": now})
+    };
+    let unsafe_time = crate::code_run::JS_SAFE_INTEGER + 1;
+    for (input, dispatched) in [
+        (supersede(unsafe_time), 0),
+        (claim(serde_json::json!({"learnedAt": unsafe_time})), 0),
+        (claim(serde_json::json!({"occurred": {"start": 0, "end": unsafe_time}})), 0),
+        (serde_json::json!({"verb": "search", "query": "tea", "limit": 1_u64 << 32}), 0),
+        (supersede(crate::code_run::JS_SAFE_INTEGER), 1),
+    ] {
+        let mut host = Counting(0);
+        assert!(
+            runtime_with("verb-call", &input)
+                .run_step(step("", SandboxGuestTier::FirstPartyDreamer), &mut host)
+                .is_err()
+        );
+        assert_eq!(host.0, dispatched, "{input}");
+    }
+}
+
 /// The checked-in QuickJS component, not an ABI fixture: this crosses JS,
 /// generated WIT, the typed linker, the dispatcher, and the receipt reader.
 fn native_quickjs_runtime() -> Result<WasmtimeComponentRuntime> {

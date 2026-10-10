@@ -82,7 +82,11 @@ fn real_guest() -> crate::code_sandbox::quickjs::QuickJsRuntimeFactory {
 /// One single-step run of `program` through the real guest; the step's
 /// `finish` text and its bridge rows as `effect kind`.
 #[cfg(feature = "code-sandbox-wasmtime")]
-fn run_program(vault: &Vault, run: u8, program: &str) -> (String, Vec<String>) {
+fn run_program(
+    vault: &Vault,
+    run: u8,
+    program: &str,
+) -> EngineExecutorResult<(String, Vec<String>)> {
     let factory = real_guest();
     let backend = FixtureBackend::new([program]);
     let lease = BudgetLease::for_test("memory-rows");
@@ -96,20 +100,19 @@ fn run_program(vault: &Vault, run: u8, program: &str) -> (String, Vec<String>) {
             hard_steps: 1,
         },
     );
-    let outcome = block_on_ready(executor.run(&config)).expect("run");
+    let outcome = block_on_ready(executor.run(&config))?;
     let answer = load_utf8_output(
         &ExecutorStorage::Canonical(vault),
         &outcome.replay_record,
         &observation_output_path(0),
-    )
-    .expect("step observation");
+    )?;
     let rows = outcome
         .replay_record
         .bridge_calls
         .iter()
         .map(|row| format!("{} {}", row.effect.as_str(), bridge_outcome_kind(row)))
         .collect();
-    (answer, rows)
+    Ok((answer, rows))
 }
 
 /// A guest call through each memory row still works: the same typed call
@@ -136,7 +139,7 @@ fn a_guest_call_through_each_memory_row_keeps_its_call_and_answer() {
         first = first.to_hex(),
         second = second.to_hex(),
     );
-    let (answer, rows) = run_program(&vault, 0xE1, &program);
+    let (answer, rows) = run_program(&vault, 0x71, &program).expect("run");
     let answer: serde_json::Value = serde_json::from_str(&answer).expect("guest answer");
     assert_eq!(
         answer,
@@ -172,9 +175,10 @@ fn a_guest_call_through_each_memory_row_keeps_its_call_and_answer() {
     );
 }
 
-/// A guest call through each memory row is refused as before: a non-finite
-/// number never reaches the gate, and a refused write is the typed `failed`
-/// answer and replay row it always was.
+/// A guest call through a memory row is refused as before: a non-finite
+/// number or a time past JavaScript's safe range never reaches the gate, the
+/// guest sees a stable code for each, and a write the gate refuses stops the
+/// run with the gate's own error, writing nothing.
 #[cfg(feature = "code-sandbox-wasmtime")]
 #[test]
 fn a_guest_call_through_a_memory_row_is_refused_as_before() {
@@ -184,23 +188,42 @@ fn a_guest_call_through_a_memory_row_is_refused_as_before() {
     let program = format!(
         "const subject = '{subject}'; const out = {{}}; \
          try {{ await self.memory.put_claim({{id: '{claim}', subject, predicate: 'p.q', value: 1, \
-           confidence: NaN}}); out.nan = 'written'; }} catch (error) {{ out.nan = 'refused'; }} \
+           confidence: NaN}}); out.nan = 'written'; }} catch (error) {{ out.nan = String(error); }} \
          try {{ await self.memory.put_edge({{src: '{claim}', kind: 'about', tgt: subject, \
-           weight: Infinity}}); out.infinite = 'written'; }} catch (error) {{ out.infinite = 'refused'; }} \
-         try {{ await self.memory.put_edge({{src: subject, kind: 'same_as', tgt: subject, \
-           weight: 0}}); out.sameAs = 'written'; }} catch (error) {{ out.sameAs = String(error); }} \
+           weight: Infinity}}); out.infinite = 'written'; }} catch (error) {{ out.infinite = String(error); }} \
+         try {{ await self.memory.put_claim({{id: '{claim}', subject, predicate: 'p.q', value: 1, \
+           learnedAt: 2 ** 53}}); out.unsafe = 'written'; }} catch (error) {{ out.unsafe = String(error); }} \
          finish(JSON.stringify(out));",
         subject = subject.to_hex(),
         claim = claim.to_hex(),
     );
-    let (answer, rows) = run_program(&vault, 0xE2, &program);
+    let (answer, rows) = run_program(&vault, 0x72, &program).expect("run");
     let answer: serde_json::Value = serde_json::from_str(&answer).expect("guest answer");
-    assert_eq!(answer["nan"], "refused", "{answer}");
-    assert_eq!(answer["infinite"], "refused", "{answer}");
-    let same_as = answer["sameAs"].as_str().expect("refusal text");
-    assert!(same_as.contains(r#""failed":true"#), "{same_as}");
-    assert_eq!(rows, ["self.memory.put_edge failed"]);
+    assert_eq!(
+        answer,
+        serde_json::json!({
+            "nan": "RangeError: non_finite_verb_input",
+            "infinite": "RangeError: non_finite_verb_input",
+            "unsafe": "host_call_refused",
+        })
+    );
+    assert!(rows.is_empty(), "{rows:?}");
     assert!(vault.get_claim(&claim).expect("read").is_none());
+
+    let program = format!(
+        "await self.memory.put_edge({{src: '{subject}', kind: 'same_as', tgt: '{subject}', \
+           weight: 0}}); finish('written');",
+        subject = subject.to_hex(),
+    );
+    let error = run_program(&vault, 0x73, &program).expect_err("same_as is refused");
+    assert!(
+        matches!(
+            &error,
+            EngineExecutorError::Engine(Error::InvalidClaimBody(reason))
+                if *reason == "self.memory.put_edge rejects structural edge kinds"
+        ),
+        "{error:?}"
+    );
     assert!(
         vault
             .targets(&subject, EdgeKind::SameAs, None)
@@ -210,7 +233,8 @@ fn a_guest_call_through_a_memory_row_is_refused_as_before() {
 }
 
 /// A memory row's input is closed, as every row's is: a field it does not
-/// list is refused before the gate, never dropped and written.
+/// list is refused before the gate, never dropped and written, and the guest
+/// sees the refusal as a stable code.
 #[cfg(feature = "code-sandbox-wasmtime")]
 #[test]
 fn a_memory_row_refuses_a_field_its_input_does_not_list() {
@@ -220,12 +244,36 @@ fn a_memory_row_refuses_a_field_its_input_does_not_list() {
     let program = format!(
         "try {{ await self.memory.put_claim({{id: '{claim}', subject: '{subject}', \
            predicate: 'profile.favorite_drink', value: 'tea', source: 'user_stated'}}); \
-           finish('written'); }} catch (error) {{ finish('refused'); }}",
+           finish('written'); }} catch (error) {{ finish(String(error)); }}",
         subject = subject.to_hex(),
         claim = claim.to_hex(),
     );
-    let (answer, rows) = run_program(&vault, 0xE3, &program);
-    assert_eq!(answer, "refused");
+    let (answer, rows) = run_program(&vault, 0x74, &program).expect("run");
+    assert_eq!(answer, "host_call_refused");
     assert!(rows.is_empty(), "{rows:?}");
     assert!(vault.get_claim(&claim).expect("read").is_none());
+}
+
+/// A row's input is read once: the call sends the snapshot the finite check
+/// saw, so a getter cannot pass the check and then send a different value.
+#[cfg(feature = "code-sandbox-wasmtime")]
+#[test]
+fn a_memory_row_reads_its_input_once() {
+    let (_dir, vault) = open_test_vault();
+    let subject = seed_person(&vault, 0xB4);
+    let claim = entity(0xC5);
+    let program = format!(
+        "const input = {{id: '{claim}', subject: '{subject}', predicate: 'profile.favorite_drink', \
+           value: 'tea'}}; let reads = 0; \
+         Object.defineProperty(input, 'confidence', {{enumerable: true, \
+           get() {{ reads += 1; return reads === 1 ? 0.5 : NaN; }}}}); \
+         await self.memory.put_claim(input); finish(String(reads));",
+        subject = subject.to_hex(),
+        claim = claim.to_hex(),
+    );
+    let (answer, rows) = run_program(&vault, 0x75, &program).expect("run");
+    assert_eq!(answer, "1");
+    assert_eq!(rows, ["self.memory.put_claim memory_write"]);
+    let stored = vault.get_claim(&claim).expect("read").expect("claim");
+    assert_eq!(stored.confidence, 0.5);
 }

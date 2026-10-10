@@ -62,7 +62,8 @@ pub use self::types::{
     SelfSpeechCall, SelfSpeechResult, SelfWakePolicyWriteCall, peer_result_wait,
 };
 pub use run_verbs::{
-    MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput, MemoryTimeRange,
+    JS_SAFE_INTEGER, MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput,
+    MemoryTimeRange,
 };
 pub use types::{AGENT_VERB_DOOR_UNBOUND, AgentVerbDoor, AgentVerbRefusal, SelfAgentVerbCall};
 

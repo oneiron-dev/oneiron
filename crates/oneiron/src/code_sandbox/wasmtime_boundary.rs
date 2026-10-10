@@ -174,10 +174,10 @@ fn link<H: bindings::GuestImports + 'static>(
                 wit,
                 |_cx: StoreContextMut<'_, RequestState<H>>, (schema, value): (String, String)| {
                     let verdict = serde_json::from_str(&schema)
-                        .map_err(|_| "invalid schema JSON".to_owned())
+                        .map_err(|_| "invalid_schema".to_owned())
                         .and_then(|schema| {
                             serde_json::from_str(&value)
-                                .map_err(|_| "invalid value JSON".to_owned())
+                                .map_err(|_| "invalid_value".to_owned())
                                 .map(|value| {
                                     crate::llm::validate_json_schema(&schema, &value).is_ok()
                                 })

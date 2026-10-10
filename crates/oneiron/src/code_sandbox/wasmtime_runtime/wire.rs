@@ -2,9 +2,9 @@
 
 use super::{Bridge, failure};
 use crate::code_run::{
-    MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput, MemoryTimeRange,
-    SelfAskCall, SelfCall, SelfDispatchOutcome, SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall,
-    SelfMemorySearchCall, SelfMemorySupersedeClaimCall, SelfSpeechCall,
+    JS_SAFE_INTEGER, MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput,
+    MemoryTimeRange, SelfAskCall, SelfCall, SelfDispatchOutcome, SelfMemoryPutClaimCall,
+    SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySupersedeClaimCall, SelfSpeechCall,
     blocked::{BlockedCategory, SelfReportBlockedCall},
 };
 use crate::code_sandbox::{
@@ -77,6 +77,15 @@ fn parse<T: serde::de::DeserializeOwned>(input: &str) -> Result<T> {
 
 fn decode<T: serde::de::DeserializeOwned>(input: Value) -> Result<T> {
     serde_json::from_value(input).map_err(|_| failure("invalid typed component arguments"))
+}
+
+/// A guest time: a JavaScript number above the safe range was rounded before
+/// it left the guest, so it is refused rather than stored.
+fn js_time(value: u64) -> Result<u64> {
+    if value > JS_SAFE_INTEGER {
+        return Err(failure("invalid guest integer"));
+    }
+    Ok(value)
 }
 
 /// Fit a recoverable chunk inside the *encoded* host reply ceiling. The
@@ -228,7 +237,7 @@ fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
             let args: MemorySearchInput = decode(input)?;
             SelfCall::MemorySearch(SelfMemorySearchCall::new(
                 args.query,
-                args.limit.unwrap_or(20),
+                args.limit.map_or(20, |limit| limit as usize),
             ))
         }
         RunVerb::PutClaim => {
@@ -242,7 +251,8 @@ fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
                 start: now,
                 end: now,
             });
-            if occurred.start > occurred.end {
+            let (start, end) = (js_time(occurred.start)?, js_time(occurred.end)?);
+            if start > end {
                 return Err(failure("invalid claim time range"));
             }
             let candidate = ClaimCandidate::new(
@@ -254,11 +264,8 @@ fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
             SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
                 EntityId::from_hex(&args.id)?,
                 candidate,
-                TimeRange {
-                    start: occurred.start,
-                    end: occurred.end,
-                },
-                args.learned_at.unwrap_or(now),
+                TimeRange { start, end },
+                args.learned_at.map_or(Ok(now), js_time)?,
             ))
         }
         RunVerb::SupersedeClaim => {
@@ -266,7 +273,7 @@ fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
             SelfCall::MemorySupersedeClaim(SelfMemorySupersedeClaimCall::new(
                 EntityId::from_hex(&args.new_id)?,
                 EntityId::from_hex(&args.old_id)?,
-                args.now,
+                js_time(args.now)?,
             ))
         }
         RunVerb::PutEdge => {
