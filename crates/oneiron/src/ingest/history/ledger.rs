@@ -69,10 +69,7 @@ pub(super) fn content_hash(message: &HistoryMessage) -> String {
 /// unknown speaker, so the import that knows who said them lands them, as a
 /// revision the Dreamer reads.
 pub(super) fn holds(landed: &[String], message: &HistoryMessage) -> bool {
-    let held = |unknown| {
-        let hash = hash(message, unknown);
-        landed.iter().any(|landed| *landed == hash)
-    };
+    let held = |unknown| landed.contains(&hash(message, unknown));
     held(false) || (message.said_by == Some(UNKNOWN_SPEAKER) && held(true))
 }
 

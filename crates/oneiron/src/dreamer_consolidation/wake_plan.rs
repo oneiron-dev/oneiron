@@ -144,6 +144,7 @@ impl PreparedWake {
                 || attempt.state.is_terminal()
                 || only_attempt.is_some_and(|id| id != attempt.id)
                 || left.contains(attempt.id.as_bytes())
+                || (only_attempt.is_none() && idle(vault, &txn, &attempt)?)
             {
                 continue;
             }
@@ -523,6 +524,20 @@ impl PreparedWake {
     pub(super) fn read_receipt(&self) -> Option<&ScopedReadReceipt> {
         self.read_receipt.as_ref()
     }
+}
+
+/// An attempt no pass runs before a later write, which a later wake
+/// prepares: a paused one, or one parked under its lease until the lease
+/// lapses and the queue hands it out again.
+fn idle(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: &crate::attempt_queue::AttemptRecord,
+) -> Result<bool> {
+    Ok(attempt.state == crate::attempt_queue::AttemptState::Paused
+        || (attempt.state.is_running()
+            && crate::dreamer_runner::DreamerRunnerStore::new(vault)
+                .is_parked_in_txn(txn, attempt.id)?))
 }
 
 /// The ready work of `scope` past the head one wake prepares, in the order a

@@ -143,19 +143,19 @@ fn run(
     )
 }
 
-/// An extraction of `(predicate, value, byte range)` claims about `subject`,
-/// each citing its range of `turn`.
+/// An extraction of `(predicate, value, topic, byte range)` claims about
+/// `subject`, each citing its range of `turn`.
 fn extraction(
     subject: EntityId,
     turn: EntityId,
-    claims: &[(&str, &str, (usize, usize))],
+    claims: &[(&str, &str, Option<&str>, (usize, usize))],
 ) -> crate::LlmResponse {
     let candidates: Vec<_> = claims
         .iter()
-        .map(|(predicate, value, (start, end))| {
+        .map(|(predicate, value, topic, (start, end))| {
             serde_json::json!({
                 "subject": subject.to_hex(), "predicate": predicate, "value": value,
-                "confidence": 0.8,
+                "topic_key": topic, "confidence": 0.8,
                 "evidence_refs": [{"source_id": turn.to_hex(), "byte_range": [start, end]}],
             })
         })
@@ -179,7 +179,9 @@ fn review_members(vault: &Vault, person: EntityId, review: &str) -> Result<Vec<E
 /// the claim as the review holds it or as the owner left it. Astra 1357 #3:
 /// words a later import adds to the same TURN make the Dreamer read the old
 /// words again; the claim the owner declined is not proposed again, and the
-/// new words' claim waits in the later import's review.
+/// new words' claim waits in the later import's review. Sol R7 on #1357: a
+/// claim the old words yield under another topic, which the owner never saw,
+/// is proposed in the first import's review.
 #[test]
 fn imported_claims_stay_as_the_review_holds_them_when_the_dreamer_meets_them_again() -> Result<()> {
     let (_dir, vault) = open_vault();
@@ -207,14 +209,15 @@ fn imported_claims_stay_as_the_review_holds_them_when_the_dreamer_meets_them_aga
         Ok(extraction(
             subject,
             turn,
-            &[("profile.name", "Ana", (11, 14))],
+            &[("profile.name", "Ana", None, (11, 14))],
         )),
         Ok(extraction(
             subject,
             turn,
             &[
-                ("profile.name", "Ana", (11, 14)),
-                ("profile.city", "Kyoto", (25, 30)),
+                ("profile.name", "Ana", None, (11, 14)),
+                ("profile.name", "Ana", Some("nickname"), (11, 14)),
+                ("profile.city", "Kyoto", None, (25, 30)),
             ],
         )),
     ]);
@@ -287,25 +290,40 @@ fn imported_claims_stay_as_the_review_holds_them_when_the_dreamer_meets_them_aga
         DreamerAttemptExecution::Completed { .. }
     ));
     assert_eq!(later.outcome.held, [name], "{:?}", later.outcome);
-    let [city] = later.outcome.pended[..] else {
-        panic!("one proposed claim: {:?}", later.outcome)
+    let mut proposed = later
+        .outcome
+        .pended
+        .iter()
+        .map(|id| {
+            let body = vault.get_claim(id)?.expect("a proposed claim");
+            let topic = super::super::conflict::topic_key(body.scope.as_ref())?;
+            Ok(((body.predicate, topic.is_some()), *id))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    proposed.sort();
+    let [
+        ((city_predicate, false), city),
+        ((nickname_predicate, true), nickname),
+    ] = &proposed[..]
+    else {
+        panic!("a city and a nickname: {:?}", later.outcome)
     };
     assert_eq!(
-        vault.get_claim(&city)?.expect("the city claim").predicate,
-        "profile.city"
+        (city_predicate.as_str(), nickname_predicate.as_str()),
+        ("profile.city", "profile.name")
     );
+    // The city's words are the later import's; the nickname's are the first
+    // import's, and it waits in that review, which held nothing since the
+    // owner declined it.
     assert_eq!(
         review_members(
             &vault,
             person,
             &history_import_review_id(SOURCE, second_import)
         )?,
-        [city]
+        [*city]
     );
-    assert!(matches!(
-        review_members(&vault, person, &review),
-        Err(crate::Error::EntityNotFound)
-    ));
+    assert_eq!(review_members(&vault, person, &review)?, [*nickname]);
     let names = vault
         .claims_for_subject(&subject)?
         .into_iter()
@@ -314,7 +332,7 @@ fn imported_claims_stay_as_the_review_holds_them_when_the_dreamer_meets_them_aga
         .into_iter()
         .filter(|body| body.predicate == "profile.name")
         .count();
-    assert_eq!(names, 1, "the declined name is never proposed again");
+    assert_eq!(names, 2, "the declined name is never proposed again");
     Ok(())
 }
 
@@ -406,5 +424,75 @@ fn a_whole_history_import_drains_one_round_of_turns_per_wake_pass() -> Result<()
     assert_eq!(stops[0], WakePassStop::BacklogLeft, "{stops:?}");
     assert_eq!(stops.last(), Some(&WakePassStop::QueueEmpty), "{stops:?}");
     assert_eq!(settled as usize, queued, "every queued attempt ran once");
+    Ok(())
+}
+
+/// Sol R7 on #1357: import work the owner paused, or that a failed pass
+/// parked under its lease, runs on no pass before a later write. A wake
+/// prepares none of it, and prepares it again once it can run.
+#[test]
+fn a_wake_prepares_no_paused_or_parked_import_work() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    install_shipped_policy(&vault)?;
+    let (_, owner) = owner(&vault)?;
+    let imported_at = vault.now_recorded_at();
+    for session in ["a", "b", "c"] {
+        import(
+            &vault,
+            &owner,
+            conversation(
+                &format!("session-{session}"),
+                vec![said(&format!("{session}-0"), HistoryRole::User, "a line")],
+            ),
+            imported_at,
+        );
+    }
+    let queued = plan_dirty_turn_rounds(&vault, imported_at)?;
+    assert!(queued > 1, "{queued} attempts");
+    let store = DreamerRunnerStore::new(&vault);
+    let parked = admit_meso(&vault)?.status.attempt.id;
+    store.park_attempt(crate::dreamer_runner::ParkDreamerAttempt {
+        attempt_id: parked,
+        reason: "provider unavailable".to_owned(),
+        park_owner: "import-worker".to_owned(),
+        now: vault.now_recorded_at(),
+    })?;
+    let queue = AttemptQueue::new(&vault);
+    let kind = DreamerConsolidationScope::Meso.attempt_kind();
+    let paused: Vec<_> = queue
+        .list()?
+        .into_iter()
+        .filter(|record| record.kind == kind && record.id != parked)
+        .map(|record| record.id)
+        .collect();
+    assert_eq!(paused.len() + 1, queued);
+    let intervene = |id, action| {
+        queue.intervene(crate::attempt_queue::InterveneAttempt {
+            id,
+            kind: action,
+            actor: "owner".to_owned(),
+            note: None,
+            now: vault.now_recorded_at(),
+        })
+    };
+    for id in &paused {
+        intervene(*id, crate::attempt_queue::AttemptInterventionKind::Pause)?;
+    }
+
+    let wake = PreparedWake::capture(&vault, DreamerConsolidationScope::Meso)?;
+    for id in paused.iter().chain([&parked]) {
+        assert!(!wake.contains_attempt(*id), "{id:?} was prepared");
+    }
+
+    for id in &paused {
+        intervene(*id, crate::attempt_queue::AttemptInterventionKind::Resume)?;
+    }
+    store
+        .resume_parked(parked, "import-worker", vault.now_recorded_at())?
+        .expect("parked");
+    let wake = PreparedWake::capture(&vault, DreamerConsolidationScope::Meso)?;
+    for id in paused.iter().chain([&parked]) {
+        assert!(wake.contains_attempt(*id), "{id:?} was not prepared");
+    }
     Ok(())
 }

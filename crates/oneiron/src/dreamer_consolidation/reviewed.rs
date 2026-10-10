@@ -4,7 +4,7 @@
 //! words.
 use std::collections::BTreeSet;
 
-use super::conflict::{CandidateFacts, candidate_facts, canonical_value_bytes};
+use super::conflict::{CandidateFacts, candidate_facts, canonical_value_bytes, topic_key};
 use super::provenance::PromotionCandidate;
 use super::resources::signals::facet;
 use super::support::invalid_consolidation;
@@ -14,14 +14,15 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::{EntityId, Result, Vault};
 
 /// Whether `body` is the claim `facts` name: the same subject, predicate,
-/// value and coordinates.
+/// value, coordinates and topic.
 pub(super) fn names(facts: &CandidateFacts, body: &ClaimBody) -> Result<bool> {
     Ok(body.subject == ClaimSubject::Entity(facts.subject)
         && body.predicate == facts.predicate
         && canonical_value_bytes(&body.value)? == canonical_value_bytes(&facts.value)?
         && body.world == facts.world
         && facet(body.scope.as_ref())? == facts.facet
-        && body.rel == facts.rel)
+        && body.rel == facts.rel
+        && topic_key(body.scope.as_ref())? == facts.topic)
 }
 
 /// Whether the claim at `candidate`'s id is one an earlier pass of this
