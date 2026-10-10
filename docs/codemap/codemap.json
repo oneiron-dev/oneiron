@@ -43861,6 +43861,189 @@
    "source_files": 7,
    "test_files": 2
   },
+  "oneiron-image": {
+   "files": [
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "benches/organ_host.rs",
+     "purpose": "The organ host's four measures (design page section 7), on synthetic images only: `cargo bench -p…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/bin/oneiron-image-organ.rs",
+     "purpose": "The image organ's process: serves the host on the socket it passes",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Filter",
+      "Format",
+      "Icc",
+      "ImageBody",
+      "Overlay",
+      "Point",
+      "Shape",
+      "Size",
+      "Source",
+      "Step",
+      "Stroke"
+     ],
+     "path": "src/body.rs",
+     "purpose": "The `image` kind's typed body, schema 1",
+     "surface": {
+      "const": 8,
+      "crate-vis": 12,
+      "enum": 5,
+      "fn": 5,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [
+      "Header",
+      "Profile"
+     ],
+     "path": "src/decode.rs",
+     "purpose": "Reading an image: the header first, then pixels only when it passes",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 1,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "The image organ (ART-1, the first slice): still PNG, JPEG and WebP images as a native `image` kind, behind…",
+     "surface": {
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ops.rs",
+     "purpose": "The edit ops: each changes the body only, never pixels",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ImageOrgan"
+     ],
+     "path": "src/organ.rs",
+     "purpose": "The image organ: six verbs over the `image` body, schema 1",
+     "surface": {
+      "const": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/render.rs",
+     "purpose": "Export: the only place pixels are made",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fixtures/mod.rs",
+     "purpose": "Images made in code, so no binary fixture is stored: corner-coded pixels, EXIF and ICC through the encoders…",
+     "surface": {
+      "crate-vis": 27
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/host_e2e.rs",
+     "purpose": "The image organ as its own process behind the organ host, over a real vault blob (ART-1 \"done means\", the…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/hostile_input.rs",
+     "purpose": "Inputs built to slip past the header checks (the second PR2 review round)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/image_ops.rs",
+     "purpose": "The image organ's first slice, checked against analytic pixels (ART-1 plan, \"Fixture and oracle gate\"): crop…",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "body": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The `image` kind's typed body, schema 1"
+    },
+    "decode": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "L",
+     "layout": "file",
+     "purpose": "Reading an image: the header first, then pixels only when it passes"
+    },
+    "ops": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The edit ops: each changes the body only, never pixels"
+    },
+    "organ": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The image organ: six verbs over the `image` body, schema 1"
+    },
+    "render": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Export: the only place pixels are made"
+    }
+   },
+   "over_bar": 1,
+   "purpose": "The image organ (ART-1, the first slice): still PNG, JPEG and WebP images as a native `image` kind, behind…",
+   "source_files": 8,
+   "test_files": 4
+  },
   "oneiron-image-comfyui": {
    "files": [
     {

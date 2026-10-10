@@ -24,6 +24,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 18 | 10 | 0 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 8 | 1 | 0 |
 | [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 7 | 2 | 0 |
+| [oneiron-image](codemap/oneiron-image.md) | The image organ (ART-1, the first slice): still PNG, JPEG and WebP images as a native `image` kind, behind… | 8 | 4 | 1 |
 | [oneiron-image-comfyui](codemap/oneiron-image-comfyui.md) | Self-hosted ComfyUI image adapter | 1 | 0 | 0 |
 | [oneiron-image-openrouter](codemap/oneiron-image-openrouter.md) | OpenRouter Image API adapter | 3 | 0 | 0 |
 | [oneiron-linear](codemap/oneiron-linear.md) | Host-side Linear GraphQL adapter for the engine's TASK ↔ issue mirror | 6 | 1 | 0 |
@@ -351,6 +352,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `protocol` | file | 1 | s | Strict, bounded host/guest JSON framing and admission state machine |
 | `runtime` | file | 1 | m | Canonical typed Component Model execution with four read-only imports |
 | `tests` | file | 1 | — | — |
+
+## oneiron-image
+
+| module | layout | files | largest src bucket | purpose |
+|---|---|---|---|---|
+| `body` | file | 1 | m | The `image` kind's typed body, schema 1 |
+| `decode` | file | 1 | L | Reading an image: the header first, then pixels only when it passes |
+| `ops` | file | 1 | s | The edit ops: each changes the body only, never pixels |
+| `organ` | file | 1 | m | The image organ: six verbs over the `image` body, schema 1 |
+| `render` | file | 1 | m | Export: the only place pixels are made |
 
 ## oneiron-image-comfyui
 
