@@ -282,10 +282,19 @@ impl DisclosureContext {
     /// narrows); only storage I/O failures stay loud. The owner-facing read
     /// (`Vault::counterparty_disclosure_scope`) keeps erroring loudly so
     /// corruption stays visible on the consent surface.
+    ///
+    /// With no owner session and no one identified, the assembly still has a
+    /// reader the roster does not name (a delegated caller). That reader is
+    /// an unknown party and holds the empty clearance: public-only.
     pub fn resolve(vault: &Vault, set: InterlocutorSet) -> Result<Self> {
+        let disclosable = if set.supervised() || set.has_non_owner() {
+            disclosable_set(vault, &set)?
+        } else {
+            DisclosableSet::unknown_reader()
+        };
         Ok(Self {
             mode: DisclosureMode::from_set(&set),
-            disclosable: disclosable_set(vault, &set)?,
+            disclosable,
             interlocutors: set,
         })
     }

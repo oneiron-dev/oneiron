@@ -1387,8 +1387,8 @@ fn dreamer_consolidation_reads_keep_their_receipts() -> Result<()> {
     Ok(())
 }
 
-/// A raw TURN carrying the record door's project stamp, as a project
-/// leader-chat turn is stored.
+/// A TURN stamped with a project on its record position, as both TURN
+/// write doors settle a project leader-chat turn.
 fn seed_project_turn(
     vault: &Vault,
     conversation: &EntityId,
@@ -1396,31 +1396,10 @@ fn seed_project_turn(
     learned_at: u64,
     project: EntityId,
 ) -> Result<EntityId> {
-    let id = EntityId::now();
-    let mut body = Vec::new();
-    rmpv::encode::write_value(
-        &mut body,
-        &Value::Map(vec![
-            (Value::from("txt"), Value::from(text)),
-            (Value::from("spkr"), Value::from("user")),
-            (
-                Value::from(TURN_BODY_PROJECT_REF_KEY),
-                Value::from(project.to_hex()),
-            ),
-        ]),
-    )
-    .expect("turn body encode");
-    vault
-        .batch()
-        .put(
-            &id,
-            ENTITY_TYPE_TURN,
-            occurred(learned_at),
-            learned_at,
-            &body,
-        )
-        .edge(&id, EdgeKind::ChildOf, conversation, 1.0)
-        .commit()?;
+    let id = seed_turn(vault, conversation, "user", text, learned_at);
+    vault.with_write_txn_grouped(|txn| {
+        crate::federation::record_scope::stamp_leader_project(&vault.store, txn, id, project)
+    })?;
     Ok(id)
 }
 

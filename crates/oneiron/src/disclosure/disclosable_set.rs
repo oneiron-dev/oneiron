@@ -14,6 +14,12 @@ use crate::interlocutor::InterlocutorSet;
 pub struct DisclosableSet(Scope);
 
 impl DisclosableSet {
+    /// An unknown party's set: the empty clearance, so public-only.
+    #[must_use]
+    pub fn unknown_reader() -> Self {
+        Self(Scope::default())
+    }
+
     /// The met clearance of every non-owner present.
     #[must_use]
     pub fn clearance(&self) -> &Scope {

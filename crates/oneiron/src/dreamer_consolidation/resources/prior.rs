@@ -213,11 +213,10 @@ fn prior_keys(prior: &PriorHead, rules: &PredicateKeyRules) -> Result<CandidateK
     if let Some(rel) = body.rel {
         candidate = candidate.with_relationship(rel);
     }
-    candidate = candidate.with_scope_stamps(body.scope_facet, body.scope_project);
     if let Some(scope) = &body.scope {
         candidate = candidate.with_scope(scope.clone());
     }
-    candidate_keys(
+    let mut keys = candidate_keys(
         &PromotionCandidate {
             claim_id: prior.claim_id,
             candidate,
@@ -229,5 +228,9 @@ fn prior_keys(prior: &PriorHead, rules: &PredicateKeyRules) -> Result<CandidateK
             learned_at: 0,
         },
         rules,
-    )
+    )?;
+    // The stored body's own stamp is the head's project; a scope-map entry
+    // can never move it.
+    keys.identity.project = body.scope_project;
+    Ok(keys)
 }

@@ -34,10 +34,6 @@ pub const TURN_BODY_WORLD_REF_KEY: &str = "world_ref";
 /// (16-byte MessagePack binary). Absent = "channel gave no mask signal";
 /// extraction may still assign one — it does NOT force the invariant layer.
 pub const TURN_BODY_FACET_REF_KEY: &str = "facet_ref";
-/// Door-owned turn-body key naming the PROJECT a turn was spoken in (hex
-/// entity id). The record door stamps it on project leader-chat turns and
-/// refuses it from callers. Absent = the vault's default project.
-pub const TURN_BODY_PROJECT_REF_KEY: &str = "scope_project_id";
 /// Default bound on ONE Meso round: the scan stops after this many admissible
 /// TURNs even when the backlog is larger, and the remainder drains across the
 /// following rounds (one capped round per session-close settlement). The cap
