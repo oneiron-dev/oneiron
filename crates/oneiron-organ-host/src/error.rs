@@ -47,6 +47,10 @@ pub enum HostError {
     /// so it backs off and may start next time.
     #[error("organ {organ} failed to start: {reason}")]
     StartFailed { organ: String, reason: String },
+    /// The organ's binary cannot run: missing, not an executable file, or
+    /// not a format the kernel runs. It stays so until it is reinstalled.
+    #[error("organ {organ} cannot run: {reason}")]
+    NotRunnable { organ: String, reason: String },
     #[error("organ {0} crashed")]
     Crashed(String),
     #[error("organ call missed its deadline")]

@@ -52,11 +52,6 @@ pub(crate) fn confine(command: &mut Command, socket: RawFd, spec: &OrganSpec) {
 }
 
 impl Plan {
-    /// Runs in the child before exec. Its descriptor, group and limit
-    /// calls fail only with EPERM, EBADF, EINVAL, ESRCH, EMFILE, EBUSY or
-    /// EINTR, never with an errno exec gives a binary it cannot run
-    /// (ENOENT, EACCES, ENOEXEC, ENOTDIR): the seal adapter tells a bad
-    /// install from a refused limit by that.
     fn apply(self) -> io::Result<()> {
         let moved = if self.socket == 3 {
             // SAFETY: fd 3 is the organ socket, inherited open; clearing its
