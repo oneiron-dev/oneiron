@@ -143,6 +143,13 @@ pub struct ImportSourceArgs {
     #[arg(long)]
     pub dry_run: bool,
 
+    /// Hand one session log to the running `serve` instead, which imports it
+    /// within seconds. Needs `[import] queue = true` in the serve config and
+    /// a log under that source's root; writes one small queue file, nothing
+    /// else.
+    #[arg(long, conflicts_with = "dry_run")]
+    pub queue: bool,
+
     #[command(flatten)]
     pub serve: ServeArgs,
 }

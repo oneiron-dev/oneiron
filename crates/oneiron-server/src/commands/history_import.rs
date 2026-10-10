@@ -120,27 +120,19 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
     let ImportSourceArgs {
         path,
         dry_run,
+        queue,
         serve,
     } = args;
     let config = resolve_serve_config(&serve)?;
+    if queue {
+        #[cfg(unix)]
+        return queue::enqueue(source, &path, &config);
+        #[cfg(not(unix))]
+        anyhow::bail!("the import queue needs a unix host");
+    }
     let started = Instant::now();
     let (files, mut conversations) = decode(source, &path)?;
-    // Earliest first, so a session's own lines land in it before a resumed
-    // or forked session's copies of them are seen. A resumed Claude Code
-    // session starts with copies of the original's lines, times and all; the
-    // original ends first.
-    conversations.sort_by_cached_key(|conversation| {
-        let ended = conversation
-            .messages
-            .iter()
-            .filter_map(|message| message.at_ms)
-            .max();
-        (
-            conversation.started_at_ms.unwrap_or(u64::MAX),
-            ended.unwrap_or(u64::MAX),
-            conversation.native_id.clone(),
-        )
-    });
+    earliest_first(&mut conversations);
     progress(&format!(
         "read {} file(s): {} conversation(s)",
         files.read,
@@ -167,13 +159,7 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
                     .map_err(|error| anyhow::anyhow!("import stopped: {error}"))?
             }
         };
-        totals.conversations += 1;
-        totals.messages += u64::from(report.messages);
-        totals.new += u64::from(report.new);
-        totals.skipped += u64::from(report.skipped);
-        totals.changed += u64::from(report.changed);
-        totals.refused += u64::from(report.refused);
-        totals.not_kept.add(&report.not_kept);
+        totals.add(&report);
         reports.push(report);
         if (done + 1) % 100 == 0 {
             progress(&format!(
@@ -243,6 +229,41 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
         ));
     }
     Ok(())
+}
+
+impl Totals {
+    fn add(&mut self, report: &HistoryImportReport) {
+        self.conversations += 1;
+        self.messages += u64::from(report.messages);
+        self.new += u64::from(report.new);
+        self.skipped += u64::from(report.skipped);
+        self.changed += u64::from(report.changed);
+        self.refused += u64::from(report.refused);
+        self.not_kept.add(&report.not_kept);
+    }
+}
+
+/// Earliest first, so a session's own lines land in it before a resumed or
+/// forked session's copies of them are seen. A resumed Claude Code session
+/// starts with copies of the original's lines, times and all; the original
+/// ends first.
+fn earliest_first(conversations: &mut [HistoryConversation]) {
+    conversations.sort_by_cached_key(order_key);
+}
+
+/// Where [`earliest_first`] puts a conversation: when it started, then when
+/// it ended.
+fn order_key(conversation: &HistoryConversation) -> (u64, u64, String) {
+    let ended = conversation
+        .messages
+        .iter()
+        .filter_map(|message| message.at_ms)
+        .max();
+    (
+        conversation.started_at_ms.unwrap_or(u64::MAX),
+        ended.unwrap_or(u64::MAX),
+        conversation.native_id.clone(),
+    )
 }
 
 /// The second this import lands at: after every write before it, so no two
@@ -345,7 +366,7 @@ fn decode(source: HistorySource, path: &Path) -> anyhow::Result<(Files, Vec<Hist
         let read = decode_one(&text, &history_file(source, shown), shown)?;
         decoded.add(&read);
         anyhow::ensure!(
-            decoded.messages <= MAX_DECODED_MESSAGES && decoded.bytes <= MAX_DECODED_BYTES,
+            decoded.fits(),
             "the session logs under {} hold more than {MAX_DECODED_MESSAGES} messages or \
              {MAX_DECODED_BYTES} bytes of them; nothing was imported. Import one project \
              folder, or one month of sessions, at a time",
@@ -392,13 +413,18 @@ impl Files {
 
 /// What decoded conversations hold in memory: their messages, and every
 /// byte they keep, titles and ids included.
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 struct Decoded {
     messages: usize,
     bytes: usize,
 }
 
 impl Decoded {
+    /// Within what one import may hold decoded.
+    fn fits(self) -> bool {
+        self.messages <= MAX_DECODED_MESSAGES && self.bytes <= MAX_DECODED_BYTES
+    }
+
     fn add(&mut self, conversations: &[HistoryConversation]) {
         for conversation in conversations {
             self.bytes += std::mem::size_of::<HistoryConversation>()
@@ -425,6 +451,105 @@ impl Decoded {
 mod confined;
 #[cfg(unix)]
 use confined::{open_in, walk_logs};
+#[cfg(unix)]
+pub(super) mod queue;
+
+/// One session log queued for a running `serve`, read only below `root`:
+/// `path` must name a session log there, and every folder between `root` and
+/// it is opened relative to the one above and never through a link. A Claude
+/// Code session brings its own subagent logs from the folder beside it.
+///
+/// Also says whether a log ended mid-line, the session's or a subagent's: a
+/// live log whose last record was still being written, which a later pass
+/// reads whole.
+#[cfg(unix)]
+fn read_queued(
+    source: HistorySource,
+    root: &Path,
+    path: &Path,
+) -> anyhow::Result<(Vec<HistoryConversation>, bool)> {
+    let relative = below(root, path)?;
+    anyhow::ensure!(
+        session_log_name(source, path),
+        "{} is not a {} session log",
+        path.display(),
+        source.source_id()
+    );
+    let decode_one = |text: &str, shown: &Path| {
+        source
+            .decode(text, &history_file(source, shown))
+            .map_err(|error| anyhow::anyhow!("{}: {error}", shown.display()))
+    };
+    let mut decoded = Decoded::default();
+    let mut keep = |read: &[HistoryConversation]| {
+        decoded.add(read);
+        anyhow::ensure!(
+            decoded.fits(),
+            "the session {} and its subagent logs hold more than {MAX_DECODED_MESSAGES} \
+             messages or {MAX_DECODED_BYTES} bytes of them; nothing was imported",
+            path.display()
+        );
+        Ok(())
+    };
+    let (dir, file) = confined::open_below(root, relative)?;
+    let text = read_limited(file, path, MAX_LOG_BYTES)?;
+    let mut mid_line = cut(&text);
+    let mut conversations = decode_one(&text, path)?;
+    drop(text);
+    keep(&conversations)?;
+    if source == HistorySource::ClaudeCode
+        && let Some(stem) = path.file_stem()
+        && let Some(folder) = confined::open_dir_in(&dir, stem)?
+    {
+        confined::walk(
+            &folder,
+            &path.with_extension(""),
+            0,
+            &mut |shown: &Path, file: File| {
+                if !session_log_name(source, shown) {
+                    return Ok(());
+                }
+                let text = read_limited(file, shown, MAX_LOG_BYTES)?;
+                mid_line |= cut(&text);
+                let read = decode_one(&text, shown)?;
+                drop(text);
+                keep(&read)?;
+                conversations.extend(read);
+                Ok(())
+            },
+        )?;
+    }
+    Ok((conversations, mid_line))
+}
+
+/// A log whose last record is not whole yet.
+#[cfg(unix)]
+fn cut(text: &str) -> bool {
+    !text.is_empty() && !text.ends_with('\n')
+}
+
+/// `path` relative to `root`, in plain names only, so it can name nothing
+/// outside `root`.
+#[cfg(unix)]
+fn below<'a>(root: &Path, path: &'a Path) -> anyhow::Result<&'a Path> {
+    let relative = path.strip_prefix(root).map_err(|_| {
+        anyhow::anyhow!(
+            "{} is not under {}, the folder this source's queued logs must sit under",
+            path.display(),
+            root.display()
+        )
+    })?;
+    anyhow::ensure!(
+        relative.components().next().is_some()
+            && relative
+                .components()
+                .all(|component| matches!(component, std::path::Component::Normal(_))),
+        "{} is not a plain path below {}",
+        path.display(),
+        root.display()
+    );
+    Ok(relative)
+}
 
 #[cfg(not(unix))]
 fn walk_logs(
