@@ -184,8 +184,11 @@ What the hooks already imported stays in your vault, like any import.
 - `hand-over` takes well under a second: it writes one small file. Claude
   Code gives `SessionEnd` hooks 1.5 seconds unless a hook sets its own
   `timeout`; the `timeout` of 5 above raises that budget to 5 seconds.
-- `serve` looks at the queue every 5 seconds and imports one log at a time.
+- `serve` looks at the queue every 5 seconds and imports what waits there.
   One session log is read up to 1 GiB, the same limit as `oneiron import`.
+  A larger one, the session's or a subagent's, is left out with a
+  `log_too_large` warning in `serve`'s log, and the rest of the session
+  lands.
 - `--query "<words>"` on `session-start` recalls those words instead of the
   project's name.
 

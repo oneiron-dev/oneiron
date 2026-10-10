@@ -1699,6 +1699,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/machine_write/successor.rs",
+     "purpose": "Re-signing a MACHINE claim's successor with its writer's retained signer",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -2467,7 +2477,7 @@
      "path": "src/batch/claim_materialization.rs",
      "purpose": "Exact-operation envelope handoff",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -2477,7 +2487,17 @@
      "path": "src/batch/claim_materialization/demotion.rs",
      "purpose": "The permitted body delta of a demotion materialization",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/claim_materialization/succession.rs",
+     "purpose": "Claim succession: a weakening or a facet fork births a new claim from its predecessor's exact body, never…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -2505,7 +2525,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/batch/claim_materialization/tests/lifecycle_actor_regressions/demotion_guards.rs",
@@ -3288,7 +3308,7 @@
      "path": "src/batch/verified_claim_transition.rs",
      "purpose": "Sealed operation proof: minted only after the owning consent, curation or lifecycle validator checks the…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -7982,14 +8002,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ClaimDemotion",
       "ClaimDemotionAction",
       "ClaimDemotionRung"
      ],
      "path": "src/claim/source_trust.rs",
      "purpose": "Source-of-truth, taint, sensitivity and demotion state carried in a claim's engine-owned `scope` map, plus…",
      "surface": {
-      "crate-vis": 21,
-      "enum": 2
+      "crate-vis": 22,
+      "enum": 2,
+      "struct": 1
      }
     },
     {
@@ -17767,7 +17789,7 @@
      "path": "src/gate/doors/peripheral.rs",
      "purpose": "Write mode types and the small standalone claim doors",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -18327,7 +18349,7 @@
      "path": "src/gate/tests/carry_forward.rs",
      "purpose": "ONE-2032: four forward kinds round-trip the shared claim Gate",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -19718,18 +19740,18 @@
      "path": "src/identity_topology/op_apply.rs",
      "purpose": "The apply door: the per-write consent metadata, the door outcome, the merge/split/facet/assert_distinct…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 3,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/identity_topology/op_undo.rs",
-     "purpose": "The undo door: a counter-event appended over an applied merge/split, never a rewrite of the event it reverts…",
+     "purpose": "The undo door: a counter-event appended over an applied merge, split or facet, never a rewrite of the event…",
      "surface": {
       "fn": 1
      }
@@ -19874,7 +19896,7 @@
      "purpose": "Pinned wire vocabulary of the identity-topology family: the type-76 body field keys, the reassignment-map…",
      "surface": {
       "const": 2,
-      "crate-vis": 59
+      "crate-vis": 60
      }
     },
     {
@@ -24167,7 +24189,7 @@
      "path": "src/note/verbs.rs",
      "purpose": "Actor-bound NOTE creation, edit and source-entity bridge",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 6
      }
     },
@@ -31264,13 +31286,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/admission_guard.rs",
      "purpose": "Imported and hub-derived instruction authority at the single SKILL materialization door",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {
@@ -31911,14 +31933,15 @@
       "SharedSkillMergeAsk",
       "SharedSkillMergeDisposition",
       "SharedSkillMergeReceipt",
+      "SharedSkillRollback",
       "UsefulUpstreamJudge"
      ],
      "path": "src/skill_hub/shared_gate.rs",
      "purpose": "Useful-upstream and held-out merge gate for submitted shared-skill deltas",
      "surface": {
       "crate-vis": 1,
-      "enum": 1,
-      "fn": 6,
+      "enum": 2,
+      "fn": 7,
       "struct": 2,
       "trait": 1
      }
@@ -37802,7 +37825,7 @@
      "path": "src/write_envelope.rs",
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 22,
       "fn": 24,
       "mod": 1,
       "re-export": 1,
@@ -38643,7 +38666,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 57,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -38657,7 +38680,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 97,
+     "files": 98,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39919,7 +39942,7 @@
    },
    "over_bar": 32,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2416,
+   "source_files": 2418,
    "test_files": 785
   },
   "oneiron-android": {
@@ -48374,7 +48397,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/commands/history_import.rs",
@@ -48422,6 +48445,14 @@
      "surface": {
       "crate-vis": 4
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/commands/history_import/queue/tests.rs",
+     "purpose": "The queue's passes on a vault held as `serve` holds it, one pass at a time, over invented Claude Code…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -50962,7 +50993,7 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 19,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -51137,10 +51168,10 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 7,
+   "over_bar": 8,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 302,
-   "test_files": 114
+   "test_files": 115
   },
   "oneiron-uniffi": {
    "files": [
