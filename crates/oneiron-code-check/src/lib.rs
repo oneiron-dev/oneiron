@@ -262,6 +262,14 @@ const TSC_ARGS: [&str; 4] = ["-p", PROJECT_FILE, "--pretty", "false"];
 /// Every file of one check, by name: the declarations, the program in its
 /// envelope, and the project that lists them.
 fn project_files(input: &CheckInput<'_>) -> Result<Vec<(String, Vec<u8>)>, CheckFailure> {
+    let size = input
+        .declarations
+        .iter()
+        .map(|declaration| declaration.text.len())
+        .try_fold(input.program.len(), usize::checked_add);
+    if size.is_none_or(|size| size > DEFAULT_INPUT_BYTES) {
+        return Err(CheckFailure::InvalidInput);
+    }
     let mut names = Vec::with_capacity(input.declarations.len() + 1);
     let mut files = Vec::with_capacity(input.declarations.len() + 2);
     for declaration in input.declarations {
@@ -302,6 +310,40 @@ fn project_files(input: &CheckInput<'_>) -> Result<Vec<(String, Vec<u8>)>, Check
     Ok(files)
 }
 
+/// How one run of tsc ended.
+struct Exited {
+    status: i32,
+    stdout: Vec<u8>,
+    /// Whether anything reached stderr, where tsc prints only a crash.
+    stderr: bool,
+}
+
+impl Exited {
+    /// The run's report. tsc exits 0 clean, and 1 or 2 with diagnostics; a
+    /// crash (an unrecovered Go panic also exits 2) tells its story on stderr
+    /// or prints no diagnostic.
+    fn report(
+        self,
+        backend: BackendId,
+        peak_memory_bytes: Option<u64>,
+    ) -> Result<CheckReport, CheckFailure> {
+        if self.stderr || !(0..=2).contains(&self.status) {
+            return Err(CheckFailure::Crashed);
+        }
+        let diagnostics = output::diagnostics(&self.stdout)?;
+        if self.status != 0 && diagnostics.is_empty() {
+            return Err(CheckFailure::Crashed);
+        }
+        Ok(CheckReport {
+            backend,
+            diagnostics,
+            peak_memory_bytes,
+        })
+    }
+}
+
+/// The most declaration and program text one check takes.
+const DEFAULT_INPUT_BYTES: usize = 4 << 20;
 /// How long a check may take before it is abandoned.
 const DEFAULT_WALL_TIME: Duration = Duration::from_secs(10);
 /// The most diagnostic text a check may print.

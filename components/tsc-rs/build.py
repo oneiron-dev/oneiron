@@ -11,6 +11,7 @@ import glob
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -32,9 +33,26 @@ NOTICES = ("LICENSE", "NOTICE.md", "licenses/Go-LICENSE.txt", "licenses/TypeScri
            "licenses/vscode-languageserver-node-LICENSE.txt")
 HOST = ROOT / "crates/oneiron-code-check/src/tsc_rs.rs"
 EXPORTS = {"memory", "ts_input", "ts_run", "ts_output", "ts_output_len"}
-# The host links exactly these modules: the file system the checker reads
-# (`ts_host`) and the WASI calls of crates/ts_wasm, answered in memory.
-IMPORT_MODULES = {"ts_host", "wasi_snapshot_preview1"}
+# The module's whole import list, with signatures: the file system the checker
+# reads (`ts_host`) and the WASI calls of crates/ts_wasm. The host registers
+# each `ts_host` call and the WASI calls it answers by name (`func_wrap`); every
+# other WASI call gets ENOSYS.
+WASI = "wasi_snapshot_preview1"
+IMPORTS = {
+    ("ts_host", "fs"): "(i32,i32,i32)->(i32)", ("ts_host", "fs_take"): "(i32)->()",
+    (WASI, "clock_time_get"): "(i32,i64,i32)->(i32)", (WASI, "environ_get"): "(i32,i32)->(i32)",
+    (WASI, "environ_sizes_get"): "(i32,i32)->(i32)", (WASI, "fd_close"): "(i32)->(i32)",
+    (WASI, "fd_fdstat_get"): "(i32,i32)->(i32)", (WASI, "fd_filestat_get"): "(i32,i32)->(i32)",
+    (WASI, "fd_filestat_set_times"): "(i32,i64,i64,i32)->(i32)", (WASI, "fd_prestat_dir_name"): "(i32,i32,i32)->(i32)",
+    (WASI, "fd_prestat_get"): "(i32,i32)->(i32)", (WASI, "fd_read"): "(i32,i32,i32,i32)->(i32)",
+    (WASI, "fd_readdir"): "(i32,i32,i32,i64,i32)->(i32)", (WASI, "fd_write"): "(i32,i32,i32,i32)->(i32)",
+    (WASI, "path_create_directory"): "(i32,i32,i32)->(i32)", (WASI, "path_filestat_get"): "(i32,i32,i32,i32,i32)->(i32)",
+    (WASI, "path_open"): "(i32,i32,i32,i32,i32,i64,i64,i32,i32)->(i32)",
+    (WASI, "path_readlink"): "(i32,i32,i32,i32,i32,i32)->(i32)", (WASI, "path_remove_directory"): "(i32,i32,i32)->(i32)",
+    (WASI, "path_unlink_file"): "(i32,i32,i32)->(i32)", (WASI, "proc_exit"): "(i32)->()",
+    (WASI, "random_get"): "(i32,i32)->(i32)", (WASI, "sched_yield"): "()->(i32)",
+}
+VALTYPES = {0x7F: "i32", 0x7E: "i64", 0x7D: "f32", 0x7C: "f64"}
 
 
 def sha(data):
@@ -53,14 +71,27 @@ def leb(data, at):
 
 
 def inventory(data):
-    """The module's (imports, exports), read from its import and export sections."""
+    """The module's imports with their signatures, and its exports, read from
+    its type, import and export sections."""
     if data[:8] != b"\0asm\x01\0\0\0":
         raise SystemExit("tsc-rs artifact is not a core Wasm module")
-    imports, exports, at = set(), set(), 8
+    types, imports, exports, at = [], {}, set(), 8
     while at < len(data):
         section = data[at]
         size, at = leb(data, at + 1)
         end = at + size
+        if section == 1:
+            count, cursor = leb(data, at)
+            for _ in range(count):
+                if data[cursor] != 0x60:
+                    raise SystemExit("tsc-rs artifact has a non-function type")
+                cursor += 1
+                sides = []
+                for _ in range(2):
+                    length, cursor = leb(data, cursor)
+                    sides.append(",".join(VALTYPES[byte] for byte in data[cursor:cursor + length]))
+                    cursor += length
+                types.append(f"({sides[0]})->({sides[1]})")
         if section in (2, 7):
             count, cursor = leb(data, at)
             for _ in range(count):
@@ -76,8 +107,8 @@ def inventory(data):
                     continue
                 if kind != 0:
                     raise SystemExit(f"tsc-rs artifact imports a non-function: {names}")
-                _, cursor = leb(data, cursor + 1)
-                imports.add(tuple(names))
+                index, cursor = leb(data, cursor + 1)
+                imports[tuple(names)] = types[index]
         at = end
     return imports, exports
 
@@ -140,8 +171,13 @@ def check():
         if literal not in host:
             raise SystemExit(f"host pin mismatch: {HOST.relative_to(ROOT)} lacks {literal}")
     imports, exports = inventory(data)
-    if {module for module, _ in imports} - IMPORT_MODULES or not EXPORTS <= exports:
-        raise SystemExit(f"tsc-rs ABI changed: imports {sorted(imports)}, exports {sorted(exports)}")
+    if imports != IMPORTS or not EXPORTS <= exports:
+        raise SystemExit(f"tsc-rs ABI changed: imports {sorted(imports.items())}, exports {sorted(exports)}")
+    registered = set(re.findall(r'func_wrap\(\s*"(\w+)",\s*"(\w+)"', host.replace("WASI,", f'"{WASI}",')))
+    if missing := sorted(name for name in IMPORTS if name[0] == "ts_host" and name not in registered):
+        raise SystemExit(f"the host registers no {missing}")
+    if stray := sorted(registered - set(IMPORTS)):
+        raise SystemExit(f"the host registers imports the module lacks: {stray}")
     print("TSC-RS-OK: artifact, notices, host pins and ABI")
 
 

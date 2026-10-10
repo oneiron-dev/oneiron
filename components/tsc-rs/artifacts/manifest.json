@@ -22,6 +22,6 @@
     "licenses/vscode-languageserver-node-LICENSE.txt": "05b6af84f5acd7186f031cf389c722350d2780608d24e6c237cf2d2d85d139bd"
   },
   "sources": {
-    "build.py": "ebff6c7b4c526db7b4fb3b5f96a403a83f927be7f188346b37b6866cbcc00055"
+    "build.py": "8aec6cf6813e96e743c9ddc1e700ab69b2174a0b8a554e78b1cd6fd09e276d84"
   }
 }

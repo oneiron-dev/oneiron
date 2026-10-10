@@ -33,7 +33,7 @@ use crate::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback, Error, LlmMessage,
     LlmMessageRole, LlmRequest, ResponseFormat, TierPrecedence,
 };
-use oneiron_code_check::StepThen;
+use crate::session_overlay::RouteTarget;
 use serde_json::json;
 use std::collections::{BTreeMap, HashMap};
 
@@ -144,11 +144,18 @@ impl EngineNativeExecutor<'_> {
             )?;
             // Shadow mode records what a type check finds and acts on none
             // of it: a check that cannot be recorded is traced and dropped,
-            // never a reason for the step to fail.
+            // never a reason for the step to fail. Its report joins the
+            // record only in the vault's own storage: an off-record overlay
+            // is quota-bounded, and the report must not take room a later
+            // write of the step needs (nor may a discarding route keep it).
             let mut shadow = self
                 .code_check
                 .map(|shadow| ShadowStep::check(shadow, config.run_id, completed_steps, &script));
-            if let Some(shadow) = &shadow
+            let records_checks = matches!(
+                self.storage.session_route_target(),
+                None | Some(RouteTarget::Base)
+            );
+            if let Some(shadow) = shadow.as_ref().filter(|_| records_checks)
                 && let Err(error) = record_text_output(
                     &self.storage,
                     &mut record,
@@ -203,6 +210,9 @@ impl EngineNativeExecutor<'_> {
                             config,
                         )?
                     {
+                        if let Some(shadow) = &mut shadow {
+                            shadow.ended(Some(&status));
+                        }
                         return Ok(EngineExecutorOutcome {
                             status,
                             steps_run: steps_run + 1,
@@ -232,6 +242,9 @@ impl EngineNativeExecutor<'_> {
                     repairs.healed(),
                     config,
                 )? {
+                    if let Some(shadow) = &mut shadow {
+                        shadow.ended(Some(&status));
+                    }
                     return Ok(EngineExecutorOutcome {
                         status,
                         steps_run: steps_run + 1,
@@ -264,6 +277,9 @@ impl EngineNativeExecutor<'_> {
                                 config,
                             )?
                         {
+                            if let Some(shadow) = &mut shadow {
+                                shadow.ended(Some(&status));
+                            }
                             return Ok(EngineExecutorOutcome {
                                 status,
                                 steps_run: steps_run + 1,
@@ -364,11 +380,7 @@ impl EngineNativeExecutor<'_> {
             }
             steps_run += 1;
             if let Some(shadow) = &mut shadow {
-                shadow.then(match &terminal_status {
-                    Some(EngineExecutorStatus::Complete) => StepThen::Completed,
-                    Some(EngineExecutorStatus::Waiting(_)) => StepThen::Waiting,
-                    _ => StepThen::Continued,
-                });
+                shadow.ended(terminal_status.as_ref());
             }
 
             if let Some(status) = terminal_status {

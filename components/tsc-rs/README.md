@@ -41,10 +41,13 @@ notices, the host's literal pins and the import inventory without building.
 The module exports `memory`, `ts_input`, `ts_run`, `ts_output` and
 `ts_output_len`, and imports `ts_host.fs`, `ts_host.fs_take` and a fixed set of
 `wasi_snapshot_preview1` calls (`crates/ts_wasm/src/{lib,host}.rs` upstream).
+`build.py` pins the whole import list with signatures, and `--check` requires
+the host to register each `ts_host` call and no import the module lacks.
 The engine answers them in memory: a read-only file system holding only the
 check's files, a fixed clock, seeded random bytes, stdout captured up to a
 bound, and `ENOSYS` for every other WASI call. A panic exits through
-`proc_exit`, which ends the check, never the engine.
+`proc_exit`, and anything on stderr marks the check crashed; either ends the
+check, never the engine.
 
 ## Licence
 

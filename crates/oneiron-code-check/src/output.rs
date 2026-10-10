@@ -30,39 +30,79 @@ pub(crate) fn diagnostics(stdout: &[u8]) -> Result<Vec<Diagnostic>, CheckFailure
 /// `file(line,column): category TScode: message`, or the same without the
 /// place for a diagnostic about the whole check.
 fn diagnostic(line: &str) -> Option<Diagnostic> {
-    let (place, rest) = match line.split_once("): ") {
-        Some((place, rest)) if !CATEGORIES.iter().any(|c| line.starts_with(c)) => {
-            (Some(place), rest)
-        }
-        _ => (None, line),
+    located(line).or_else(|| {
+        let (category, code, message) = body(line)?;
+        Some(Diagnostic {
+            file: None,
+            line: 0,
+            column: 0,
+            category: category.to_owned(),
+            code,
+            message: message.to_owned(),
+        })
+    })
+}
+
+fn located(text: &str) -> Option<Diagnostic> {
+    let (place, rest) = text.split_once("): ")?;
+    let (file, position) = place.rsplit_once('(')?;
+    let (line, column) = position.split_once(',')?;
+    let line: u32 = line.parse().ok()?;
+    // The envelope's first line precedes the program.
+    let line = if file == PROGRAM_FILE {
+        line.checked_sub(1)?
+    } else {
+        line
     };
-    let (category, rest) = rest.split_once(" TS")?;
-    let (code, message) = rest.split_once(": ")?;
-    if !CATEGORIES.contains(&category) {
-        return None;
-    }
-    let code = code.parse().ok()?;
-    let (file, line, column) = match place {
-        None => (None, 0, 0),
-        Some(place) => {
-            let (file, position) = place.rsplit_once('(')?;
-            let (line, column) = position.split_once(',')?;
-            let line: u32 = line.parse().ok()?;
-            // The envelope's first line precedes the program.
-            let line = if file == PROGRAM_FILE {
-                line.checked_sub(1)?
-            } else {
-                line
-            };
-            (Some(file.to_owned()), line, column.parse().ok()?)
-        }
-    };
+    let (category, code, message) = body(rest)?;
     Some(Diagnostic {
-        file,
+        file: Some(file.to_owned()),
         line,
-        column,
+        column: column.parse().ok()?,
         category: category.to_owned(),
         code,
         message: message.to_owned(),
     })
+}
+
+/// `category TScode: message`.
+fn body(text: &str) -> Option<(&str, u32, &str)> {
+    let (category, rest) = text.split_once(" TS")?;
+    if !CATEGORIES.contains(&category) {
+        return None;
+    }
+    let (code, message) = rest.split_once(": ")?;
+    Some((category, code.parse().ok()?, message))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::diagnostics;
+
+    /// tsc's `--pretty false` forms: a placed diagnostic in a declaration
+    /// file whose name starts like a category, one in the program (shifted
+    /// past the envelope's first line) with a continued message chain, and
+    /// one about the whole check.
+    #[test]
+    fn reads_placed_continued_and_global_diagnostics() {
+        let printed = "errors.d.ts(1,23): error TS2304: Cannot find name 'MissingType'.\n\
+            program.js(3,5): error TS2322: Type 'number' is not assignable to type 'string'.\n  \
+            The expected type comes from property 'text'.\n\
+            error TS5023: Unknown compiler option 'x'.\n";
+        let found = diagnostics(printed.as_bytes()).unwrap();
+        let places: Vec<_> = found
+            .iter()
+            .map(|d| (d.file.as_deref(), d.line, d.column, d.code))
+            .collect();
+        assert_eq!(
+            places,
+            [
+                (Some("errors.d.ts"), 1, 23, 2304),
+                (Some("program.js"), 2, 5, 2322),
+                (None, 0, 0, 5023),
+            ]
+        );
+        assert!(found[1].message.ends_with("\n  The expected type comes from property 'text'."));
+        assert!(diagnostics(b"Segmentation fault\n").is_err());
+    }
 }

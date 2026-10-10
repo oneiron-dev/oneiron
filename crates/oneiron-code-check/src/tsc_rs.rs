@@ -11,7 +11,7 @@
 
 use crate::{
     BackendId, CheckFailure, CheckInput, CheckReport, CodeCheck, DEFAULT_OUTPUT_BYTES,
-    DEFAULT_WALL_TIME, TSC_ARGS, output, project_files,
+    DEFAULT_WALL_TIME, Exited, TSC_ARGS, project_files,
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -37,6 +37,8 @@ const FLAGS: u32 = 0;
 /// this bounds the native stack its frames take on the check's thread.
 const MAX_WASM_STACK: usize = 32 << 20;
 const THREAD_STACK: usize = MAX_WASM_STACK + (8 << 20);
+/// How often a check past its deadline is woken to end.
+const EPOCH_TICK: Duration = Duration::from_millis(10);
 
 const ESUCCESS: i32 = 0;
 const EBADF: i32 = 8;
@@ -109,13 +111,16 @@ impl TscRsWasm {
         })
     }
 
-    /// Runs tsc once over `files` in a new instance: its exit status, stdout
-    /// and peak linear memory.
+    /// Runs tsc once over `files` in a new instance: how it ended, and its
+    /// peak linear memory.
     fn run(
         &self,
         files: BTreeMap<String, Vec<u8>>,
         deadline: Instant,
-    ) -> Result<(i32, Vec<u8>, u64), CheckFailure> {
+    ) -> Result<(Exited, u64), CheckFailure> {
+        if Instant::now() >= deadline {
+            return Err(CheckFailure::Timeout);
+        }
         let mut store = Store::new(&self.engine, Host::new(files, self.budget));
         store.limiter(|host| host);
         store.set_epoch_deadline(1);
@@ -172,7 +177,12 @@ impl TscRsWasm {
         if host.over_budget {
             return Err(CheckFailure::OverBudget);
         }
-        Ok((status, host.stdout, host.peak_memory))
+        let exited = Exited {
+            status,
+            stdout: host.stdout,
+            stderr: host.stderr,
+        };
+        Ok((exited, host.peak_memory))
     }
 }
 
@@ -185,13 +195,13 @@ impl CodeCheck for TscRsWasm {
     }
 
     fn check(&self, input: &CheckInput<'_>) -> Result<CheckReport, CheckFailure> {
+        let deadline = Instant::now() + self.budget.wall_time;
+        let _slot = Slot::take(&self.running, self.budget.concurrent)?;
         let files = project_files(input)?
             .into_iter()
             .map(|(name, bytes)| (format!("{ROOT}/{name}"), bytes))
             .collect();
-        let _slot = Slot::take(&self.running, self.budget.concurrent)?;
-        let deadline = Instant::now() + self.budget.wall_time;
-        let (status, stdout, peak) = std::thread::scope(|scope| {
+        let (exited, peak) = std::thread::scope(|scope| {
             let (sender, receiver) = mpsc::sync_channel(1);
             let thread = std::thread::Builder::new()
                 .name("tsc-rs-check".into())
@@ -200,29 +210,26 @@ impl CodeCheck for TscRsWasm {
                     let _ = sender.send(self.run(files, deadline));
                 })
                 .map_err(|_| CheckFailure::Unavailable)?;
-            let result = match receiver.recv_timeout(self.budget.wall_time) {
-                Ok(result) => result,
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    // Wake the instance: its deadline callback ends it.
-                    self.engine.increment_epoch();
-                    let _ = receiver.recv();
-                    Err(CheckFailure::Timeout)
+            // Past the deadline, the epoch ticks until the check returns: each
+            // tick runs its deadline callback, which ends it, however late
+            // its store began.
+            let mut wait = deadline.saturating_duration_since(Instant::now());
+            let result = loop {
+                match receiver.recv_timeout(wait) {
+                    Ok(result) => break result,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        self.engine.increment_epoch();
+                        wait = EPOCH_TICK;
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break Err(CheckFailure::Crashed),
                 }
-                Err(mpsc::RecvTimeoutError::Disconnected) => Err(CheckFailure::Crashed),
             };
             // Joined here, a panicked check is a crash: the scope would
             // otherwise re-raise it on the caller's thread.
             thread.join().map_err(|_| CheckFailure::Crashed)?;
             result
         })?;
-        if !(0..=2).contains(&status) {
-            return Err(CheckFailure::Crashed);
-        }
-        Ok(CheckReport {
-            backend: self.backend(),
-            diagnostics: output::diagnostics(&stdout)?,
-            peak_memory_bytes: Some(peak),
-        })
+        exited.report(self.backend(), Some(peak))
     }
 }
 
@@ -274,6 +281,7 @@ struct Host {
     /// The result of the last `ts_host.fs` call, until `fs_take` copies it.
     staged: Vec<u8>,
     stdout: Vec<u8>,
+    stderr: bool,
     output_bytes: usize,
     memory_bytes: usize,
     peak_memory: u64,
@@ -288,6 +296,7 @@ impl Host {
             files,
             staged: Vec::new(),
             stdout: Vec::new(),
+            stderr: false,
             output_bytes: budget.output_bytes,
             memory_bytes: budget.memory_bytes,
             peak_memory: 0,
@@ -296,6 +305,15 @@ impl Host {
             clock_ns: 1_767_225_600_000_000_000,
             random: 0x9E37_79B9_7F4A_7C15,
         }
+    }
+
+    /// splitmix64: the same bytes for every check.
+    fn next_random(&mut self) -> u64 {
+        self.random = self.random.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.random;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
     }
 
     fn is_dir(&self, path: &str) -> bool {
@@ -491,6 +509,7 @@ fn link(linker: &mut Linker<Host>, module: &Module) -> wasmtime::Result<()> {
                     return Ok(EFAULT);
                 };
                 // stdout carries the diagnostics; stderr only a crash's story.
+                host.stderr |= fd == 2 && !chunk.is_empty();
                 if fd == 1 {
                     if host.stdout.len() + chunk.len() > host.output_bytes {
                         host.over_budget = true;
@@ -546,21 +565,20 @@ fn link(linker: &mut Linker<Host>, module: &Module) -> wasmtime::Result<()> {
         WASI,
         "random_get",
         |mut caller: Caller<'_, Host>, at: i32, length: i32| -> wasmtime::Result<i32> {
-            let Ok(length) = usize::try_from(length) else {
+            // Filled in place: the guest's own memory bounds the request.
+            let memory = memory(&mut caller)?;
+            let (data, host) = memory.data_and_store_mut(&mut caller);
+            let Some(target) = usize::try_from(at)
+                .ok()
+                .zip(usize::try_from(length).ok())
+                .and_then(|(at, length)| data.get_mut(at..at.checked_add(length)?))
+            else {
                 return Ok(EFAULT);
             };
-            let host = caller.data_mut();
-            let mut bytes = Vec::with_capacity(length);
-            while bytes.len() < length {
-                // splitmix64
-                host.random = host.random.wrapping_add(0x9E37_79B9_7F4A_7C15);
-                let mut z = host.random;
-                z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-                z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-                bytes.extend_from_slice(&(z ^ (z >> 31)).to_le_bytes());
+            for chunk in target.chunks_mut(8) {
+                chunk.copy_from_slice(&host.next_random().to_le_bytes()[..chunk.len()]);
             }
-            bytes.truncate(length);
-            write_bytes(&mut caller, at, &bytes)
+            Ok(ESUCCESS)
         },
     )?;
     for import in module.imports() {
