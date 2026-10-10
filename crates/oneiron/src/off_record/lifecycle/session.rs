@@ -632,10 +632,10 @@ impl OffRecordSession<'_> {
 
     /// Notes the messages of a turn witnessed while the room was on record:
     /// they landed in base, where a copy of the talk reads them.
-    pub(crate) fn note_on_record_messages<'body>(
+    pub(crate) fn note_on_record_messages(
         &self,
         turn: EntityId,
-        messages: impl IntoIterator<Item = (EntityId, &'body [u8])>,
+        messages: impl IntoIterator<Item = (EntityId, &[u8])>,
     ) {
         if let Ok(mut state) = session_entry_state(&self.entry)
             && !state.record.closing

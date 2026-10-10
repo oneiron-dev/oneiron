@@ -74,10 +74,10 @@ pub(super) struct KeptMessage {
 
 impl OffRecordSessionEntryState {
     /// Notes `messages` of `turn`, now in base, for a copy of a room's talk.
-    pub(super) fn keep_messages<'body>(
+    pub(super) fn keep_messages(
         &mut self,
         turn: EntityId,
-        messages: impl IntoIterator<Item = (EntityId, &'body [u8])>,
+        messages: impl IntoIterator<Item = (EntityId, &[u8])>,
     ) {
         if self.record.room.is_none() {
             return;
