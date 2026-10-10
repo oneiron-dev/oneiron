@@ -85,8 +85,9 @@ pub struct ImportedFile<'a> {
     pub path: &'a str,
     /// The file as written.
     pub markdown: &'a str,
-    /// What the host decoded from the file (its frontmatter, written out
-    /// again without escapes). A title can come from it, or from the path.
+    /// What the host decoded from the file: every key and value of its
+    /// frontmatter, each as it is. A title can come from it, or from the
+    /// path.
     pub decoded: &'a str,
 }
 
@@ -188,15 +189,13 @@ impl Vault {
     ///
     /// # Errors
     /// Refuses an empty batch, a repeated path or title, a blank or oversize
-    /// note, an invalid title, a title the secret scan refuses and a link
-    /// that is not between two paths.
+    /// note, an invalid title and a link that is not between two paths.
     pub fn imported_note_batch_effect(
         &self,
         owner: &AuthenticatedOwner,
         batch: &ImportedNoteBatch,
     ) -> Result<ComposedEffect> {
         validate_batch(batch)?;
-        scan_titles(&self.store, &self.store.env.read_txn()?, batch)?;
         let bound = GrantBound::action(
             ActorBound::new(owner.actor().to_hex())?,
             ActionClass::new(REVIEW)?,
@@ -363,7 +362,8 @@ impl Vault {
 }
 
 /// Refuses `batch` when the secret scan is on and would refuse a title: the
-/// write door scans each note's body, and a title lands beside it.
+/// write door scans each note's body, and a title lands beside it. Approve
+/// asks this, never the digest, so a decline is recorded whatever the scan.
 fn scan_titles(store: &Store, txn: &heed::RoTxn<'_>, batch: &ImportedNoteBatch) -> Result<()> {
     if secret_scan_mode_in_txn(store, txn)? == SecretScanMode::On {
         for title in batch.notes.iter().filter_map(|note| note.title.as_deref()) {

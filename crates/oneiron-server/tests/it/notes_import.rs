@@ -315,17 +315,19 @@ fn a_batch_edited_after_its_preview_is_refused() {
     assert_eq!(note_count(&home.open()), 0);
 }
 
-/// Astra 1 (#1351): the secret scan read each file as written, not what its
-/// frontmatter decodes to. A YAML escape spells a token the file's text does
-/// not show; decoded, it landed as the note's title, or reached stdout as
-/// its type. A file name lands as a title too. Each such note is refused at
-/// preview, nothing of it is approved, and a batch that names the token as a
-/// title outright is refused.
+/// A GitHub-token shape the secret scan refuses.
+const TOKEN: &str = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
+
+/// Astra 1 (#1351) and its re-check: the secret scan read each file as
+/// written, not what its frontmatter decodes to. A YAML escape spells a token
+/// the file's text does not show; decoded, it landed as the note's title, or
+/// reached stdout as its type, also behind an escaped carriage return that
+/// the type then lost to trimming. A file name lands as a title too. Each
+/// such note is refused at preview, and nothing of it is approved.
 #[test]
 fn a_credential_the_frontmatter_decodes_to_is_refused() {
     let home = Home::new();
-    let token = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
-    let escaped = token.replacen('p', "\\u0070", 1);
+    let escaped = TOKEN.replacen('p', "\\u0070", 1);
     home.write(
         "titled.md",
         &format!("---\ntitle: \"{escaped}\"\n---\nAn ordinary note.\n"),
@@ -334,21 +336,25 @@ fn a_credential_the_frontmatter_decodes_to_is_refused() {
         "typed.md",
         &format!("---\ntype: \"{escaped}\"\n---\nAnother note.\n"),
     );
-    let named = format!("{token}.md");
-    home.write(&named, "A third note.\n");
+    home.write(
+        "spaced.md",
+        &format!("---\ntype: \"\\r{escaped}\"\n---\nA third note.\n"),
+    );
+    let named = format!("{TOKEN}.md");
+    home.write(&named, "A fourth note.\n");
     home.write("plain.md", "Links to [[titled]] and [[typed]].\n");
 
     let report = home.import("batch.json");
-    assert_eq!(report["notes"]["refused"], 3);
+    assert_eq!(report["notes"]["refused"], 4);
     assert_eq!(report["notes"]["new"], 1);
-    assert!(!report.to_string().contains(token), "stdout names no token");
+    assert!(!report.to_string().contains(TOKEN), "stdout names no token");
     let file = report["batch"]["file"].as_str().expect("a batch file");
     let written = std::fs::read_to_string(file).expect("test fixture");
-    assert!(!written.contains(token) && !written.contains(&escaped));
+    assert!(!written.contains(TOKEN) && !written.contains(&escaped));
     assert!(home.decide("approve", &report).status.success());
     let vault = home.open();
     assert_eq!(note_count(&vault), 1);
-    for path in ["titled.md", "typed.md", named.as_str()] {
+    for path in ["titled.md", "typed.md", "spaced.md", named.as_str()] {
         assert!(
             vault
                 .read_note(&home.id(path))
@@ -356,19 +362,43 @@ fn a_credential_the_frontmatter_decodes_to_is_refused() {
                 .is_none()
         );
     }
-    drop(vault);
+}
 
-    let mut batch: Value = serde_json::from_str(&written).expect("test fixture");
-    batch["notes"][0]["title"] = token.into();
+/// Astra re-check (#1351): the title scan sat in the batch's digest, so a
+/// batch whose title the scan refuses could not be declined, only left
+/// undecided. Approve refuses it inside its transaction, naming no token
+/// and landing nothing; decline records the owner's refusal.
+#[test]
+fn a_batch_whose_title_the_scan_refuses_is_refused_at_approve_and_can_be_declined() {
+    let home = Home::new();
+    home.write("plain.md", "A plain note.\n");
+    let report = home.import("batch.json");
+    let file = report["batch"]["file"].as_str().expect("a batch file");
+    let mut batch: Value =
+        serde_json::from_str(&std::fs::read_to_string(file).expect("test fixture"))
+            .expect("test fixture");
+    batch["notes"][0]["title"] = TOKEN.into();
     let edited = home.dir.path().join("edited.json");
     std::fs::write(&edited, batch.to_string()).expect("test fixture");
-    let preview = home.oneiron(&["import", "preview", edited.to_str().expect("test fixture")]);
-    let stderr = String::from_utf8_lossy(&preview.stderr);
+    let edited = edited.to_str().expect("test fixture");
+
+    let preview = home.ok(&["import", "preview", edited]);
+    let digest = preview["digest"].as_str().expect("a digest");
+    let approve = home.oneiron(&["import", "approve", edited, "--digest", digest]);
+    let stderr = String::from_utf8_lossy(&approve.stderr);
     assert!(
-        !preview.status.success() && stderr.contains("gate.secret_scan"),
+        !approve.status.success() && stderr.contains("gate.secret_scan"),
         "{stderr}"
     );
-    assert!(!stderr.contains(token), "the refusal names no token");
+    assert!(!stderr.contains(TOKEN), "the refusal names no token");
+    assert_eq!(note_count(&home.open()), 0);
+    let decline = home.oneiron(&["import", "decline", edited, "--digest", digest]);
+    assert!(
+        decline.status.success(),
+        "{}",
+        String::from_utf8_lossy(&decline.stderr)
+    );
+    assert_eq!(note_count(&home.open()), 0);
 }
 
 /// Astra 2 (#1351): a hard link is a regular file to the walk, so a file

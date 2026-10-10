@@ -22,8 +22,8 @@ pub(super) struct Front {
     pub(super) title: Option<String>,
     /// `type`, else `metadata.type`.
     pub(super) label: Option<String>,
-    /// All of it as it decodes, written out again without escapes: an escape
-    /// can spell what the file's own text does not show.
+    /// Every key and value as it decodes, each as it is, one `key: value`
+    /// a line: an escape in the file can spell what its text does not show.
     pub(super) decoded: String,
 }
 
@@ -52,7 +52,8 @@ pub(super) fn split_frontmatter(text: &str) -> (Option<&str>, &str) {
 /// The frontmatter's title and type; `None` when it is not YAML.
 pub(super) fn frontmatter(yaml: &str) -> Option<Front> {
     let value: serde_yaml_ng::Value = serde_yaml_ng::from_str(yaml).ok()?;
-    let decoded = serde_yaml_ng::to_string(&value).ok()?;
+    let mut decoded = String::new();
+    write_decoded(&value, &mut decoded);
     let text = |value: Option<&serde_yaml_ng::Value>| {
         value
             .and_then(serde_yaml_ng::Value::as_str)
@@ -71,6 +72,38 @@ pub(super) fn frontmatter(yaml: &str) -> Option<Front> {
         }),
         decoded,
     })
+}
+
+/// Every key and value of `value` as it is, a nested map's or list's on
+/// lines of their own. Never written out as YAML again: that would escape a
+/// control character again, and the token beside it with it.
+fn write_decoded(value: &serde_yaml_ng::Value, out: &mut String) {
+    use serde_yaml_ng::Value;
+    match value {
+        Value::Null => {}
+        Value::Bool(flag) => out.push_str(if *flag { "true" } else { "false" }),
+        Value::Number(number) => out.push_str(&number.to_string()),
+        Value::String(text) => out.push_str(text),
+        Value::Sequence(items) => {
+            for item in items {
+                out.push('\n');
+                write_decoded(item, out);
+            }
+        }
+        Value::Mapping(fields) => {
+            for (key, value) in fields {
+                out.push('\n');
+                write_decoded(key, out);
+                out.push_str(": ");
+                write_decoded(value, out);
+            }
+        }
+        Value::Tagged(tagged) => {
+            out.push_str(&tagged.tag.to_string());
+            out.push(' ');
+            write_decoded(&tagged.value, out);
+        }
+    }
 }
 
 /// Every `[[link]]` in `body` outside code.
@@ -358,10 +391,10 @@ fn span_links(text: &str, links: &mut Vec<Link>) {
     }
 }
 
-/// The bytes the link scan may still read ahead of where it stands: a test
-/// sets it, and the scan panics past it.
 #[cfg(test)]
 thread_local! {
+    /// The bytes the link scan may still read ahead of where it stands: a
+    /// test sets it, and the scan panics past it.
     static READS_LEFT: std::cell::Cell<usize> = const { std::cell::Cell::new(usize::MAX) };
 }
 
