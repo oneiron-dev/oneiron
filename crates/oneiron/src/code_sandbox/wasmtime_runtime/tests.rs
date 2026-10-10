@@ -6,65 +6,39 @@ use crate::{
     ClaimApprovalStatus, ClaimSource, EdgeActorClass, EntityId, TimeRange, Vault, WriteActor,
 };
 
-const CLAIM_CALL: &str = "i32.const 0 i32.load i32.const 4 i32.load
-    i32.const 8 i32.load i32.const 12 i32.load
-    i32.const 16 i32.load i32.const 20 i32.load
-    i32.const 24 i32.load i32.const 28 i32.load
-    i32.const 0 f32.const 0 i32.const 0 i64.const 0 i64.const 0
-    i32.const 0 i64.const 0 i32.const 512 call $trap";
-
 // Typed ABI fixture only, NOT a JavaScript interpreter. The complete record
 // shape and run-step export match the C13 WIT, not the retired string-run ABI.
-fn fixture(import: &str, input: &serde_json::Value, forged: bool) -> String {
+// A `verb-call` fixture calls one row, `input["verb"]`, with the rest of
+// `input` as the row's JSON input.
+fn fixture(import: &str, input: &serde_json::Value) -> String {
     let output = r#"{"done":true,"observation":"called"}"#;
     let mut data = Vec::new();
-    let mut init = String::new();
+    let mut strings = Vec::new();
     let mut next = 128usize;
-    for (slot, value) in [
-        input
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_owned(),
-        input
-            .get("predicate")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_owned(),
-        serde_json::to_string(&input["subject"]).unwrap(),
-        serde_json::to_string(&input["value"]).unwrap(),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        data.push(format!(
-            r#"(data (i32.const {next}) "{}")"#,
-            escaped(&value)
-        ));
-        init.push_str(&format!(
-            "i32.const {} i32.const {next} i32.store\ni32.const {} i32.const {} i32.store\n",
-            slot * 8,
-            slot * 8 + 4,
-            value.len()
-        ));
-        next += value.len() + 1;
+    if import == "verb-call" {
+        let mut row = input.clone();
+        let verb = row
+            .as_object_mut()
+            .and_then(|fields| fields.remove("verb"))
+            .and_then(|verb| verb.as_str().map(str::to_owned))
+            .unwrap_or_default();
+        for value in [verb, row.to_string()] {
+            data.push(format!(
+                r#"(data (i32.const {next}) "{}")"#,
+                escaped(&value)
+            ));
+            strings.push(format!("i32.const {next} i32.const {}", value.len()));
+            next += value.len() + 1;
+        }
     }
     data.push(format!(r#"(data (i32.const 2048) "{}")"#, escaped(output)));
-    let extra = if forged {
-        "(field \"approval\" string)"
-    } else {
-        ""
-    };
-    let types = format!(
-        r#"
+    let types = r#"
       (type $time-shape (record (field "start" u64) (field "end" u64)))
       (import "time-range" (type $time (eq $time-shape)))
       (type $claim-shape (record (field "id" string) (field "predicate" string)
         (field "subject" string) (field "value" string) (field "confidence" (option f32))
-        (field "occurred" (option $time)) (field "learned-at" (option u64)) {extra}))
+        (field "occurred" (option $time)) (field "learned-at" (option u64))))
       (import "claim-input" (type $claim (eq $claim-shape)))
-      (type $claim-output-shape (record (field "id" string)))
-      (import "claim-output" (type $claim-output (eq $claim-output-shape)))
       (type $file-shape (record (field "path" string) (field "bytes" (list u8))))
       (import "file-proposal" (type $file (eq $file-shape)))
       (type $delete-shape (record (field "path" string)))
@@ -75,30 +49,14 @@ fn fixture(import: &str, input: &serde_json::Value, forged: bool) -> String {
       (import "proposal-delta" (type $proposal (eq $proposal-shape)))
       (type $step-shape (record (field "result-json" string) (field "proposals" (list $proposal))))
       (import "step-result" (type $step (eq $step-shape)))
-      (type $reply (result $step (error string)))"#
-    );
-    let (declaration, lower, core_import, call) = if import == "memory-put-claim" {
-        // The canonical claim flattens to 15 arguments plus its return pointer.
-        // Adding a forged field exceeds MAX_FLAT_PARAMS and uses an input pointer.
-        let (parameters, invoke) = if forged {
-            ("i32 i32", "i32.const 0 i32.const 512 call $trap")
-        } else {
-            (
-                "i32 i32 i32 i32 i32 i32 i32 i32 i32 f32 i32 i64 i64 i32 i64 i32",
-                CLAIM_CALL,
-            )
-        };
-        let invoke = match input["confidence"].as_f64() {
-            Some(confidence) => invoke.replace(
-                "i32.const 0 f32.const 0",
-                &format!("i32.const 1 f32.const {confidence}"),
-            ),
-            None => invoke.to_owned(),
-        };
-        (format!(r#"(import "{import}" (func $trap (param "input" $claim) (result (result $claim-output (error string)))))"#),
+      (type $reply (result $step (error string)))"#;
+    let (declaration, lower, core_import, call) = if import == "verb-call" {
+        // Two strings flatten to four arguments plus the return pointer; an
+        // error reply traps the step.
+        (format!(r#"(import "{import}" (func $trap (param "verb" string) (param "input" string) (result (result string (error string)))))"#),
          r#"(core func $trap (canon lower (func $trap) (memory (core memory $mem "memory")) (realloc (core func $mem "realloc"))))"#.to_owned(),
-         format!(r#"(import "host" "trap" (func $trap (param {parameters})))"#),
-         format!("{init} {invoke} i32.const 512 i32.load8_u if unreachable end"))
+         r#"(import "host" "trap" (func $trap (param i32 i32 i32 i32 i32)))"#.to_owned(),
+         format!("{} i32.const 512 call $trap i32.const 512 i32.load8_u if unreachable end", strings.join(" ")))
     } else {
         (
             format!(r#"(import "{import}" (func $trap (result u64)))"#),
@@ -147,8 +105,8 @@ fn escaped(value: &str) -> String {
         .collect()
 }
 
-fn runtime_with(import: &str, input: &serde_json::Value, forged: bool) -> WasmtimeComponentRuntime {
-    let component = fixture(import, input, forged);
+fn runtime_with(import: &str, input: &serde_json::Value) -> WasmtimeComponentRuntime {
+    let component = fixture(import, input);
     WasmtimeComponentRuntime::from_component(
         component.as_bytes(),
         *blake3::hash(component.as_bytes()).as_bytes(),
@@ -157,7 +115,7 @@ fn runtime_with(import: &str, input: &serde_json::Value, forged: bool) -> Wasmti
     .expect("typed fixture component")
 }
 fn runtime(import: &str) -> WasmtimeComponentRuntime {
-    runtime_with(import, &serde_json::Value::Null, false)
+    runtime_with(import, &serde_json::Value::Null)
 }
 
 fn step(script: &str, tier: SandboxGuestTier) -> JsCodeModeStep<'_> {
@@ -213,15 +171,11 @@ fn component_write_enters_real_dispatcher_and_gate() -> Result<()> {
         WriteActor::new(actor, EdgeActorClass::Agent),
         "component-gated-write",
     )?);
-    let input = serde_json::json!({"id":claim.to_hex(),"subject":subject.to_hex(),
-        "predicate":"profile.favorite_drink","value":"sencha","confidence":0.9})
-    .to_string();
-    let outcome = runtime_with(
-        "memory-put-claim",
-        &serde_json::from_str(&input).unwrap(),
-        false,
-    )
-    .run_step(step(&input, SandboxGuestTier::FirstPartyDreamer), &mut host)?;
+    let input = serde_json::json!({"verb":"put_claim","id":claim.to_hex(),
+        "subject":subject.to_hex(),"predicate":"profile.favorite_drink","value":"sencha",
+        "confidence":0.9});
+    let outcome = runtime_with("verb-call", &input)
+        .run_step(step("", SandboxGuestTier::FirstPartyDreamer), &mut host)?;
     assert!(outcome.done);
     let stored = vault
         .get_claim(&claim)?
@@ -237,21 +191,14 @@ fn component_write_enters_real_dispatcher_and_gate() -> Result<()> {
                 && r.trigger_ref.as_deref() == Some(format!("claim:{}", claim.to_hex()).as_str()))
     );
     // Host-authority keys are not accepted as candidate data.
-    let forged = serde_json::json!({"id":EntityId::from_bytes([0xc5;16])?.to_hex(),
-        "subject":subject.to_hex(),"predicate":"profile.favorite_drink","value":"tea",
-        "source":"human","approval":"confirmed"})
-    .to_string();
+    let forged = serde_json::json!({"verb":"put_claim",
+        "id":EntityId::from_bytes([0xc5;16])?.to_hex(),"subject":subject.to_hex(),
+        "predicate":"profile.favorite_drink","value":"tea","source":"human",
+        "approval":"confirmed"});
     assert!(
-        runtime_with(
-            "memory-put-claim",
-            &serde_json::from_str(&forged).unwrap(),
-            true
-        )
-        .run_step(
-            step(&forged, SandboxGuestTier::FirstPartyDreamer),
-            &mut host
-        )
-        .is_err()
+        runtime_with("verb-call", &forged)
+            .run_step(step("", SandboxGuestTier::FirstPartyDreamer), &mut host)
+            .is_err()
     );
     assert!(
         vault
@@ -267,7 +214,7 @@ fn restricted_tiers_reject_write_at_component_link_time() {
         // execute is private. The production in-process entry refuses these
         // tiers altogether; this calls the same linker the guest runtime uses.
         assert!(
-            runtime("memory-put-claim")
+            runtime("verb-call")
                 .execute(step("{}", tier), &mut NoEffects)
                 .is_err()
         );
@@ -295,7 +242,7 @@ fn restricted_tiers_reject_write_at_component_link_time() {
 
 #[test]
 fn component_pin_and_resource_limits_fail_closed() {
-    let component = fixture("clock-now-unix-ms", &serde_json::Value::Null, false);
+    let component = fixture("clock-now-unix-ms", &serde_json::Value::Null);
     assert!(
         WasmtimeComponentRuntime::from_component(
             component.as_bytes(),
@@ -319,7 +266,7 @@ fn component_pin_and_resource_limits_fail_closed() {
 #[test]
 fn component_post_return_trap_fails_closed() {
     for (body, traps) in [("", false), ("unreachable", true)] {
-        let component = fixture("clock-now-unix-ms", &serde_json::Value::Null, false)
+        let component = fixture("clock-now-unix-ms", &serde_json::Value::Null)
             .replace(
                 r#"(func (export "run-step") (param i32 i32) (result i32)"#,
                 &format!(
@@ -349,30 +296,108 @@ fn component_post_return_trap_fails_closed() {
     }
 }
 
+/// A row's input is JSON, which carries no NaN, but a number can still be
+/// past `f32`'s range: one that would round to infinity, or one just past
+/// `f32::MAX` that would round down to it. The bridge refuses both before any
+/// dispatch, as the typed import's adapter did; `f32::MAX` itself dispatches.
 #[test]
-fn non_finite_typed_claim_confidence_refuses_before_dispatch() {
-    let input = serde_json::json!({
-        "id": "11111111111111111111111111111111",
-        "subject": "22222222222222222222222222222222",
-        "predicate": "profile.favorite_drink",
-        "value": "sencha"
-    });
-    let component = fixture("memory-put-claim", &input, false)
-        .replace("i32.const 0 f32.const 0", "i32.const 1 f32.const nan");
-    let mut runtime = WasmtimeComponentRuntime::from_component(
-        component.as_bytes(),
-        *blake3::hash(component.as_bytes()).as_bytes(),
-        ComponentBudget::default(),
-    )
-    .expect("typed component");
-    assert!(
-        runtime
-            .run_step(
-                step("", SandboxGuestTier::FirstPartyDreamer),
-                &mut NoEffects
-            )
-            .is_err()
-    );
+fn non_finite_run_row_numbers_refuse_before_dispatch() {
+    struct Counting(usize);
+    impl JsCodeModeHost for Counting {
+        fn dispatch_self(&mut self, _: SelfCall) -> Result<SelfDispatchResponse> {
+            self.0 += 1;
+            Err(crate::Error::InvalidConfig("test host".into()))
+        }
+    }
+    let claim = |confidence: f64| {
+        serde_json::json!({
+            "verb": "put_claim",
+            "id": "11111111111111111111111111111111",
+            "subject": "22222222222222222222222222222222",
+            "predicate": "profile.favorite_drink",
+            "value": "sencha",
+            "confidence": confidence
+        })
+    };
+    let edge = |weight: f64| {
+        serde_json::json!({
+            "verb": "put_edge",
+            "src": "11111111111111111111111111111111",
+            "kind": "about",
+            "tgt": "22222222222222222222222222222222",
+            "weight": weight
+        })
+    };
+    let past_max = 3.402_823_5e38;
+    assert!(past_max > f64::from(f32::MAX) && past_max as f32 == f32::MAX);
+    for (input, dispatched) in [
+        (claim(1e39), 0),
+        (edge(1e39), 0),
+        (claim(past_max), 0),
+        (edge(-past_max), 0),
+        (claim(f64::from(f32::MAX)), 1),
+    ] {
+        let mut host = Counting(0);
+        assert!(
+            runtime_with("verb-call", &input)
+                .run_step(step("", SandboxGuestTier::FirstPartyDreamer), &mut host)
+                .is_err()
+        );
+        assert_eq!(host.0, dispatched, "{input}");
+    }
+}
+
+/// A time past JavaScript's safe-integer range was rounded in the guest, and a
+/// search limit past `u32` never fit the typed import: the bridge refuses
+/// both before any dispatch, as the typed import's adapter did. The largest
+/// safe time still dispatches.
+#[test]
+fn unsafe_run_row_integers_refuse_before_dispatch() {
+    struct Counting(usize);
+    impl JsCodeModeHost for Counting {
+        fn dispatch_self(&mut self, _: SelfCall) -> Result<SelfDispatchResponse> {
+            self.0 += 1;
+            Err(crate::Error::InvalidConfig("test host".into()))
+        }
+    }
+    let [id, other] = [
+        "11111111111111111111111111111111",
+        "22222222222222222222222222222222",
+    ];
+    let claim = |extra: serde_json::Value| {
+        let mut input = serde_json::json!({
+            "verb": "put_claim", "id": id, "subject": other,
+            "predicate": "profile.favorite_drink", "value": "sencha"
+        });
+        input
+            .as_object_mut()
+            .expect("object")
+            .extend(extra.as_object().expect("object").clone());
+        input
+    };
+    let supersede = |now: u64| serde_json::json!({"verb": "supersede_claim", "newId": id, "oldId": other, "now": now});
+    let unsafe_time = crate::code_run::JS_SAFE_INTEGER + 1;
+    for (input, dispatched) in [
+        (supersede(unsafe_time), 0),
+        (claim(serde_json::json!({"learnedAt": unsafe_time})), 0),
+        (
+            claim(serde_json::json!({"occurred": {"start": 0, "end": unsafe_time}})),
+            0,
+        ),
+        (
+            serde_json::json!({"verb": "search", "query": "tea", "limit": 1_u64 << 32}),
+            0,
+        ),
+        (supersede(crate::code_run::JS_SAFE_INTEGER), 1),
+    ] {
+        let mut host = Counting(0);
+        assert!(
+            runtime_with("verb-call", &input)
+                .run_step(step("", SandboxGuestTier::FirstPartyDreamer), &mut host)
+                .is_err()
+        );
+        assert_eq!(host.0, dispatched, "{input}");
+    }
 }
 
 /// The checked-in QuickJS component, not an ABI fixture: this crosses JS,
@@ -401,6 +426,147 @@ fn native_quickjs_runtime() -> Result<WasmtimeComponentRuntime> {
         *blake3::hash(&bytes).as_bytes(),
         ComponentBudget::default(),
     )
+}
+
+/// A guest call through each memory row reaches the host as the typed call the
+/// row's hand-written import made, defaults included: a search limit of 20, a
+/// claim's span and learned time at the step's frozen clock (10 s),
+/// confidence 1.0, and an edge kind's default weight. The host's answer reaches
+/// the guest in the import's shape.
+#[test]
+fn native_quickjs_memory_rows_make_the_calls_their_imports_made() -> Result<()> {
+    use crate::code_run::{
+        SelfDispatchOutcome, SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall,
+        SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
+        SelfMemorySupersedeClaimCall, SelfMemoryWriteResult,
+    };
+    use crate::{ClaimCandidate, ClaimSubject, EdgeKind, ScoredEntity};
+    struct Recording(Vec<SelfCall>, EntityId);
+    impl JsCodeModeHost for Recording {
+        fn dispatch_self(&mut self, call: SelfCall) -> Result<SelfDispatchResponse> {
+            let outcome = match &call {
+                SelfCall::MemorySearch(_) => {
+                    SelfDispatchOutcome::MemorySearch(SelfMemorySearchResult {
+                        query: String::new(),
+                        results: vec![ScoredEntity {
+                            id: self.1,
+                            score: 0.5,
+                        }],
+                    })
+                }
+                SelfCall::MemoryPutClaim(call) => {
+                    SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult { id: call.id })
+                }
+                SelfCall::MemorySupersedeClaim(call) => {
+                    SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult { id: call.new_id })
+                }
+                SelfCall::MemoryPutEdge(call) => {
+                    SelfDispatchOutcome::MemoryEdgeWrite(SelfMemoryEdgeWriteResult {
+                        src: call.src,
+                        kind: call.kind,
+                        tgt: call.tgt,
+                    })
+                }
+                other => panic!("not a memory row: {other:?}"),
+            };
+            self.0.push(call);
+            Ok(SelfDispatchResponse {
+                outcome,
+                budget: None,
+            })
+        }
+    }
+    let [first, second, subject, hit] =
+        [0x61, 0x62, 0x63, 0x64].map(|byte| EntityId::from_bytes([byte; 16]).expect("test id"));
+    let script = format!(
+        "const [a, b, s] = ['{a}', '{b}', '{s}']; const out = {{}}; \
+         out.search = await self.memory.search({{query: 'tea'}}); \
+         out.first = await self.memory.put_claim({{id: a, subject: s, predicate: 'p.q', \
+           value: 'sencha'}}); \
+         out.second = await self.memory.put_claim({{id: b, subject: s, predicate: 'p.q', \
+           value: 'matcha', confidence: 0.25, occurred: {{start: 3, end: 4}}, learnedAt: 5}}); \
+         out.superseded = await self.memory.supersede_claim({{newId: b, oldId: a, now: 6}}); \
+         out.edge = await self.memory.put_edge({{src: b, kind: 'about', tgt: s}}); \
+         out.weighted = await self.memory.put_edge({{src: b, kind: 'mentions', tgt: s, \
+           weight: 0.75}}); \
+         finish(JSON.stringify(out));",
+        a = first.to_hex(),
+        b = second.to_hex(),
+        s = subject.to_hex(),
+    );
+    let mut host = Recording(Vec::new(), hit);
+    let outcome = native_quickjs_runtime()?.run_step(
+        step(&script, SandboxGuestTier::FirstPartyDreamer),
+        &mut host,
+    )?;
+    let claim = |id, value: &str, confidence, occurred, learned_at| {
+        SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
+            id,
+            ClaimCandidate::new(
+                "p.q",
+                ClaimSubject::Entity(subject),
+                rmpv::Value::from(value),
+                confidence,
+            ),
+            occurred,
+            learned_at,
+        ))
+    };
+    assert_eq!(
+        host.0,
+        [
+            SelfCall::MemorySearch(SelfMemorySearchCall::new("tea", 20)),
+            claim(first, "sencha", 1.0, TimeRange { start: 10, end: 10 }, 10),
+            claim(second, "matcha", 0.25, TimeRange { start: 3, end: 4 }, 5),
+            SelfCall::MemorySupersedeClaim(SelfMemorySupersedeClaimCall::new(second, first, 6)),
+            SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+                second,
+                EdgeKind::About,
+                subject,
+                0.5
+            )),
+            SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+                second,
+                EdgeKind::Mentions,
+                subject,
+                0.75
+            )),
+        ]
+    );
+    assert!(outcome.done);
+    let answer: serde_json::Value = serde_json::from_str(&outcome.observation).expect("answer");
+    let edge =
+        |kind| serde_json::json!({"src": second.to_hex(), "kind": kind, "tgt": subject.to_hex()});
+    assert_eq!(
+        answer,
+        serde_json::json!({
+            "search": {"results": [{"id": hit.to_hex(), "score": 0.5}]},
+            "first": {"id": first.to_hex()},
+            "second": {"id": second.to_hex()},
+            "superseded": {"id": second.to_hex()},
+            "edge": edge("about"),
+            "weighted": edge("mentions"),
+        })
+    );
+    Ok(())
+}
+
+/// The bridge's own argument check refuses with a stable code, never prose:
+/// a string parameter given a number is `invalid_host_argument`, and nothing
+/// reaches the host. Every typed import, `verb-call` included, shares it.
+#[test]
+fn native_quickjs_bridge_refuses_an_argument_with_a_code() -> Result<()> {
+    let outcome = native_quickjs_runtime()?.run_step(
+        step(
+            "try { await self.report_blocked('tool', 1); finish('sent'); } \
+             catch (error) { finish(String(error)); }",
+            SandboxGuestTier::FirstPartyDreamer,
+        ),
+        &mut NoEffects,
+    )?;
+    assert!(outcome.done);
+    assert_eq!(outcome.observation, "TypeError: invalid_host_argument");
+    Ok(())
 }
 
 #[test]
