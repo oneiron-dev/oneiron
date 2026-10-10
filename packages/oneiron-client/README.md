@@ -34,7 +34,7 @@ cannot run TypeScript should take the curl lane (`oneiron api …` or plain
 import { HttpBaseClient } from "@oneiron/client";
 
 const client = new HttpBaseClient({
-  baseUrl: "http://127.0.0.1:3000",
+  baseUrl: "http://127.0.0.1:9090",
   secret: process.env.ONEIRON_SECRET, // placeholder credential from the environment
 });
 

@@ -257,6 +257,11 @@ impl McpGeneratedVerbTool {
     pub(crate) fn writes(self) -> bool {
         AgentVerb::from_name(self.name).is_some_and(AgentVerb::writes)
     }
+    /// A write that lands at the actor's ceiling: under `proposed` it waits
+    /// for review instead of taking effect.
+    pub(crate) fn proposes(self) -> bool {
+        AgentVerb::from_name(self.name).is_some_and(AgentVerb::proposes)
+    }
 }
 
 /// One tool as an endpoint registers it.
