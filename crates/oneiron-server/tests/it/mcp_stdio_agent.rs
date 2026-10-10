@@ -1139,7 +1139,14 @@ fn seed_failed_task_and_open_turn(
         })
         .unwrap();
 
+    // Minting a slip roots the vault in the host key: the owner acts only
+    // once the host has bound it, and a new project needs its signed birth.
+    let host = SigningKey::from_bytes(&blake3::derive_key(
+        "oneiron/host-authority-signing/v2",
+        SECRET.as_bytes(),
+    ));
     let owner = vault.ensure_embedded_owner_actor().unwrap();
+    bind_owner(&vault, &host, owner);
     let root = vault.root_project().unwrap();
     let project = oneiron::EntityId::now();
     let mut record =
@@ -1149,12 +1156,6 @@ fn seed_failed_task_and_open_turn(
             .chain(members.iter().copied())
             .map(|minted| principal(minted).to_hex()),
     );
-    // An owner-rooted vault takes a new project only with the owner's signed
-    // birth, under the host key the issuer secret derives.
-    let host = SigningKey::from_bytes(&blake3::derive_key(
-        "oneiron/host-authority-signing/v2",
-        SECRET.as_bytes(),
-    ));
     vault
         .create_project_with_owner(
             project,
@@ -1167,7 +1168,7 @@ fn seed_failed_task_and_open_turn(
                 Ok(host.sign(message).to_bytes().to_vec())
             },
         )
-        .unwrap();
+        .expect("the owner's signed project birth");
     let room = record.home_room.clone();
     let turn = oneiron::EntityId::now().to_hex();
     let opened: oneiron::memory::WitnessTurn = serde_json::from_value(json!({
@@ -1179,8 +1180,81 @@ fn seed_failed_task_and_open_turn(
     vault
         .memory(owner, oneiron::EdgeActorClass::Human)
         .rooms_speak(&opened)
-        .unwrap();
+        .expect("the owner opens a turn in the room");
     [task.to_hex(), room, turn]
+}
+
+/// Appends the host-signed authority entry that binds `owner` as the vault's
+/// human, as the host does when its owner first signs in.
+fn bind_owner(vault: &oneiron::Vault, host: &SigningKey, owner: oneiron::EntityId) {
+    use ed25519_dalek::Signer;
+    use oneiron::authority::{
+        AUTHORITY_LOG_SCHEMA_VERSION, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
+        HostSlipIssuer, actor_binding_is_active, authority_entry_hash, authority_transcript,
+    };
+
+    let issuer = HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+    assert_eq!(host.verifying_key().to_bytes(), issuer.binding_key());
+    let host_key = issuer.public_key();
+    let fold = vault.authority_fold().unwrap();
+    let mut heads: BTreeSet<_> = fold.valid_entries.clone();
+    let mut seq = 0;
+    for row in vault
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_AUTHORITY_LOG)
+        .unwrap()
+    {
+        let entry = vault.get_authority_log_entry(&row).unwrap().unwrap();
+        if fold
+            .valid_entries
+            .contains(&authority_entry_hash(&entry).unwrap())
+        {
+            for parent in &entry.parent_hashes {
+                heads.remove(parent);
+            }
+            if entry.signer.public_key == host_key {
+                seq = seq.max(entry.seq.saturating_add(1));
+            }
+        }
+    }
+    let now = vault.now_recorded_at();
+    let mut entry = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: fold.vault_id,
+        seq,
+        parent_hashes: heads.into_iter().collect(),
+        op: AuthorityOp::BindActor {
+            authority_key: host_key.clone(),
+            actor_ref: owner,
+            actor_class: "human".into(),
+            epoch: 1,
+        },
+        signer: AuthoritySignature {
+            suite: host_key.suite(),
+            public_key: host_key,
+            signature: vec![0; 64],
+        },
+        cosigns: vec![],
+        ts: now,
+    };
+    entry.signer.signature = host
+        .sign(&authority_transcript(&entry).unwrap())
+        .to_bytes()
+        .to_vec();
+    vault
+        .put_authority_log_entry(
+            &entry,
+            oneiron::TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )
+        .expect("the host binds the owner");
+    assert!(actor_binding_is_active(
+        &vault.authority_fold().unwrap(),
+        &owner,
+        "human"
+    ));
 }
 
 /// On the stopped vault, while `author` is full-access: one claim of its own
