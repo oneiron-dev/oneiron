@@ -134,8 +134,9 @@ fn recall(client: &OneironClient) -> Result<bool, String> {
 }
 
 fn secret_file(path: &Path, secret: &str, mode: u32) {
-    std::fs::write(path, format!("{secret}\n")).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    std::fs::write(path, format!("{secret}\n")).expect("write the secret file");
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+        .expect("set the secret file's mode");
 }
 
 #[test]
@@ -235,14 +236,13 @@ fn a_leaked_host_secret_moves_to_a_new_one_and_the_vault_keeps_its_id() {
     let moved: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(moved["vault_id"], vault_id, "{moved:#}");
     assert_eq!(moved["engine_writers_enrolled"], 6, "{moved:#}");
-    let retired: Vec<&str> = moved["retired_credentials"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|slip| slip["slip_id"].as_str().unwrap())
-        .collect();
+    let agent_slip = agent["slip_id"].as_str().unwrap();
     assert!(
-        retired.contains(&agent["slip_id"].as_str().unwrap()),
+        moved["retired_credentials"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|slip| slip["slip_id"].as_str() == Some(agent_slip)),
         "the agent's slip is listed: {moved:#}"
     );
     assert!(
@@ -285,7 +285,7 @@ fn a_leaked_host_secret_moves_to_a_new_one_and_the_vault_keeps_its_id() {
     assert!(
         doctor["config_errors"]
             .as_array()
-            .is_none_or(|errors| errors.is_empty()),
+            .is_none_or(Vec::is_empty),
         "{doctor:#}"
     );
     let agent = json(oneiron(
