@@ -70,6 +70,9 @@ pub enum StoredIdentityOpAction {
         applied_assigned: u64,
         /// Map rows it left unscoped.
         applied_residue: u64,
+        /// The origin claims the op forked under their masks (r9), sorted by
+        /// id: one per applied assignment.
+        forked: Vec<EntityId>,
     },
     /// An anti-merge assertion and the CLAIM it is carried by (ONE-1746).
     /// The pair is stored NORMALIZED ([`distinct_pair_key`](super::distinct_pair_key)), so the ledger
