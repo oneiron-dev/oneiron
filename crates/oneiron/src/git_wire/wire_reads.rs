@@ -310,6 +310,23 @@ impl GitWire<'_> {
         parse_tree_entries(&output.stdout)
     }
 
+    /// The entry `name` names directly in one tree, or `None` when there is
+    /// none. Git selects it, so a tree too wide for [`read_tree`] to capture
+    /// still answers.
+    ///
+    /// [`read_tree`]: Self::read_tree
+    pub fn read_tree_entry(
+        &self,
+        repo: &GitWireRepo,
+        tree: &GitOid,
+        name: &str,
+    ) -> GitWireResult<Option<GitTreeEntry>> {
+        let output = self.run_read(repo, &FrozenGitArgv::read_tree_entry(tree, name)?)?;
+        Ok(parse_tree_entries(&output.stdout)?
+            .into_iter()
+            .find(|entry| entry.name == name.as_bytes()))
+    }
+
     /// The raw stored bytes of one object, in git's own encoding for its type.
     pub fn read_object(&self, repo: &GitWireRepo, oid: &GitOid) -> GitWireResult<Vec<u8>> {
         let info = self.object_info(repo, std::slice::from_ref(oid))?;

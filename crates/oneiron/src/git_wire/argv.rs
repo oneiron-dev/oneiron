@@ -89,6 +89,19 @@ impl FrozenGitArgv {
         Self::frozen(GitWireOperation::ReadTree, tail)
     }
 
+    /// `ls-tree -z <tree> -- :(top,literal)<name>`: only the entry `name`
+    /// names in one tree, so the output stays one entry however wide the tree
+    /// is. The magic reads `name` as one literal component from the root,
+    /// never as a glob or as relative to the working directory.
+    pub(super) fn read_tree_entry(tree: &GitOid, name: &str) -> GitWireResult<Self> {
+        if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\0']) {
+            return Err(invalid("git tree entry name must be one path component"));
+        }
+        let mut tail = os_args(&["ls-tree", "-z", tree.as_str(), "--"]);
+        tail.push(OsString::from(format!(":(top,literal){name}")));
+        Ok(Self::frozen(GitWireOperation::ReadTree, tail))
+    }
+
     /// `cat-file <type> <oid>`: the raw stored bytes of one object.
     pub(super) fn read_object(kind: &str, oid: &GitOid) -> Self {
         let tail = os_args(&["cat-file", kind, oid.as_str()]);

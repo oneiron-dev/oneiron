@@ -2,8 +2,9 @@
 //! the manifest's entry on its custody record, and an ask wider than that entry
 //! stores nothing.
 
+use std::io::Write;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use super::*;
 use crate::codebase::RepoRef;
@@ -54,10 +55,40 @@ fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
+fn git_stdin(dir: &Path, args: &[&str], input: &[u8]) -> String {
+    let mut child = Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("git runs");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(input)
+        .expect("stdin written");
+    let output = child.wait_with_output().expect("git exits");
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
 /// Serves `repo` from the vault with one commit holding the manifest, and
 /// publishes `refs/heads/main` at it, as a landed push would. Returns the
 /// commit.
 fn publish_manifest(vault: &Vault, repo: &str, manifest: &str) -> String {
+    publish_manifest_beside(vault, repo, manifest, 0)
+}
+
+/// As [`publish_manifest`], with `files` more root files beside the
+/// manifest's directory, each a 230-byte name for one empty blob.
+fn publish_manifest_beside(vault: &Vault, repo: &str, manifest: &str, files: usize) -> String {
     let source = tempfile::tempdir().expect("source");
     git(source.path(), &["init", "--initial-branch=main"]);
     let file = source.path().join(SECRET_MANIFEST_PATH);
@@ -76,6 +107,33 @@ fn publish_manifest(vault: &Vault, repo: &str, manifest: &str) -> String {
             "declare secrets",
         ],
     );
+    if files > 0 {
+        let blob = git_stdin(source.path(), &["hash-object", "-w", "--stdin"], b"");
+        let mut entries = git(source.path(), &["ls-tree", "-z", "HEAD"]).into_bytes();
+        let padding = "x".repeat(223);
+        for index in 0..files {
+            entries.extend_from_slice(
+                format!("100644 blob {blob}\t{index:06}-{padding}\0").as_bytes(),
+            );
+        }
+        let tree = git_stdin(source.path(), &["mktree", "-z"], &entries);
+        let wide = git(
+            source.path(),
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit-tree",
+                &tree,
+                "-p",
+                "HEAD",
+                "-m",
+                "widen the root",
+            ],
+        );
+        git(source.path(), &["update-ref", "refs/heads/main", &wide]);
+    }
     let commit = git(source.path(), &["rev-parse", "HEAD"]);
     let root = origin_serving_root(vault).expect("serving root");
     let bare = format!("{repo}.git");
@@ -337,4 +395,37 @@ fn a_replacement_ref_never_decides_which_manifest_is_read() {
         format!("app:refs/heads/main@{published}:{SECRET_MANIFEST_PATH}")
     );
     assert_eq!(registered.bindings[0].tier_ceiling, CustodyTier::T0Doored);
+}
+
+/// Sol on #1372: a published root tree too wide to list within GitWire's
+/// 16 MiB output bound failed the whole read, and registration answered 500
+/// before it reached the manifest.
+#[test]
+fn a_published_tree_too_wide_to_list_still_yields_its_manifest() {
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = Vault::open(dir.path(), crate::config::VaultConfig::default()).expect("vault");
+    let commit = publish_manifest_beside(&vault, "app", MANIFEST, 65_536);
+    let bare = origin_serving_root(&vault).expect("root").join("app.git");
+    let listing = git(&bare, &["ls-tree", "-z", &commit]);
+    assert!(
+        listing.len() > 16 * 1024 * 1024,
+        "the root lists past the bound"
+    );
+
+    let registered = vault
+        .register_secret_as_owner(
+            &owner(&vault),
+            &ask(
+                "deploy-token",
+                CustodyClass::CustodyPortable,
+                CustodyTier::T2LocalRegistered,
+            ),
+            7,
+        )
+        .expect("registered");
+    assert_eq!(
+        registered.manifest_ref,
+        format!("app:refs/heads/main@{commit}:{SECRET_MANIFEST_PATH}")
+    );
+    assert_eq!(registered.declared_paths, [".env.deploy"]);
 }

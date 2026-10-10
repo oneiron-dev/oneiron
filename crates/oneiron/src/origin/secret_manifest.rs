@@ -128,7 +128,9 @@ fn manifest_bytes(
         return Ok(None);
     }
     // `ls-tree` on a commit lists its root tree; the commit's own body is
-    // never read.
+    // never read. Each step asks git for the one component it wants: a
+    // published tree may be too wide to list in full within the process's
+    // output bound.
     let mut oid = commit.clone();
     let mut components = SECRET_MANIFEST_PATH.split('/').peekable();
     while let Some(component) = components.next() {
@@ -141,9 +143,8 @@ fn manifest_bytes(
             }
         };
         let Some(entry) = wire
-            .read_tree(repo, &oid)?
-            .into_iter()
-            .find(|entry| entry.name == component.as_bytes() && wanted(entry.mode))
+            .read_tree_entry(repo, &oid, component)?
+            .filter(|entry| wanted(entry.mode))
         else {
             return Ok(None);
         };
