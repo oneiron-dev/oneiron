@@ -298,16 +298,23 @@ already hold.
 
 - `POST /v1/core/off-record/start` with `{"room": "<conversation id>", "session_ref": "…",
   "backend": "local" | "remote_provider"}`: any person on the room's roster starts one.
-- `POST /v1/core/off-record/witness` with `{"session_ref": "…", "turn": {…}}`: a member speaks
-  into it.
-- `POST /v1/core/off-record/save` with `{"session_ref": "…"}`: a person keeps the whole talk in
-  their own vault. Only a live owner of this vault saves here; anyone else is refused, and
-  nothing is written.
-- `POST /v1/core/off-record/export` with `{"session_ref": "…"}` (`core:read`): any person in
-  the room takes an export file of the turns their membership lets them see. It writes no vault.
-- `POST /v1/core/off-record/suggest-save` with `{"session_ref": "…"}`: an agent suggests a save.
-  It saves nothing.
-- `GET /v1/core/off-record?session_ref=…` reads the stretch and its notices.
+- `POST /v1/core/off-record/witness` with `{"room": "…", "session_ref": "…", "turn": {…}}`: a
+  member speaks into it.
+- `POST /v1/core/off-record/save` with `{"room": "…", "session_ref": "…"}`: a person keeps the
+  whole talk in their own vault. Only a live owner of this vault saves here; anyone else is
+  refused, and nothing is written.
+- `POST /v1/core/off-record/export` with `{"room": "…", "session_ref": "…"}` (`core:read`): any
+  person in the room takes an export file of the turns their membership lets them see. It writes
+  no vault.
+- `POST /v1/core/off-record/suggest-save` with `{"room": "…", "session_ref": "…"}`: an agent
+  suggests a save. It saves nothing.
+- `GET /v1/core/off-record?room=…&session_ref=…` reads the stretch and the notices from the
+  times your membership shows you.
+
+Each room names its own stretches, so the same `session_ref` may run in two rooms. Your own
+routes above address a room's stretch as `room:<conversation id>:<session_ref>`, and only while
+you are on that room's roster; a name you pick for `POST /v1/owner/off-record` may not start
+with `room:`.
 
 Every save, export and suggestion posts a notice to the room (`saved_talk`, `saved_turn`,
 `saving_from_here`, `exported`, `save_suggested`), with who and when, never the content. Your

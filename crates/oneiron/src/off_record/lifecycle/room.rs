@@ -248,8 +248,9 @@ impl OffRecordSession<'_> {
             Some(_) => Some(self.require_in_room(owner.actor())?),
             None => None,
         };
-        let authority =
-            |vault: &Vault, txn: &heed::RoTxn<'_>| owner.revalidate_as_vault_owner_in_txn(vault, txn);
+        let authority = |vault: &Vault, txn: &heed::RoTxn<'_>| {
+            owner.revalidate_as_vault_owner_in_txn(vault, txn)
+        };
         // Refused the same way whether or not there is anything to save yet.
         authority(self.vault, &self.vault.store.env.read_txn()?)?;
         self.save_talk(owner.actor(), room, authority)
