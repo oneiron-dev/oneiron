@@ -550,6 +550,46 @@ fn titled_body_rewrite_switch_retains_title_and_reservation() {
     );
 }
 
+/// A #1351 follow-up: an import's titles were scanned for secrets, but a
+/// title set on the ordinary path was not, so a credential could land as a
+/// title anywhere but an import. A title is scanned where the body is, under
+/// the same switch.
+#[test]
+fn a_title_the_secret_scan_refuses_is_refused_on_the_ordinary_path() {
+    let (_dir, vault, actor) = fixture();
+    let note = vault
+        .create_note("research", "a plain note", actor)
+        .unwrap();
+    let memory = vault.memory(actor.entity_ref(), actor.actor_class());
+    // A GitHub-token shape, assembled at run time.
+    let title = ["deploy gh", "p_", "0123456789abcdefghijklmnopqrstuvwxyz"].concat();
+    let refused = memory
+        .set_note_title(note, title.as_str())
+        .expect_err("the scan is on by default");
+    assert_eq!(
+        refused.gate_denial.map(|denial| denial.reason_codes),
+        Some(vec![
+            "gate.secret_scan.detected".to_owned(),
+            "gate.secret_scan.github_token".to_owned(),
+        ])
+    );
+    assert_eq!(vault.note_document(note).unwrap().title, None);
+    let id = crate::vault::embedded_owner_actor_id().unwrap();
+    let owner = vault
+        .authenticate_owner(id, &id.to_hex(), true, crate::store::GateDecisionId::now())
+        .unwrap();
+    assert!(vault.note_title_free(&owner, &title).unwrap());
+
+    vault
+        .set_secret_scan_mode(&owner, crate::batch::secret_scan::SecretScanMode::Off, 10)
+        .unwrap();
+    memory.set_note_title(note, title.as_str()).unwrap();
+    assert_eq!(
+        vault.note_document(note).unwrap().title.as_deref(),
+        Some(title.as_str())
+    );
+}
+
 #[test]
 fn note_title_reservation_is_atomic_and_normalized_in_featureless_mode() {
     let (_dir, vault, actor) = fixture();
