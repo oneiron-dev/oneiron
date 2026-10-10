@@ -107,7 +107,10 @@ it. Every claim the Dreamer draws from imported words is `imported` and waits
 for you, Proposed: imported material never approves itself, whatever the
 policy's source-trust rows grant (ARCH-0027, ARCH-0040). The prompts a
 delegating agent gave its subagents are not your words and are not read for
-claims; what the subagents answered is.
+claims; what the subagents answered is. Neither are words whose speaker the
+log does not say, such as a Codex thread's copy of history whose own thread
+the copy left out: they land with `said_by: unknown`, and once you import the
+rollout that says they were yours, they land again as yours and are read.
 
 Each import is one review, named in the report's `review` (`run_id`
 `import:<source>:<time>`, its `run_ref`, and the Dreamer attempts it queued).
@@ -122,6 +125,8 @@ oneiron runs approve import:claude-code:1791234567 --bundle <bundle id from show
 
 The review fills as the Dreamer runs; `show` lists what waits so far and its
 bundle id binds exactly that. A claim citing words a later import added to the
-same turn waits in the later import's review. Each import takes a second of
+same turn waits in the later import's review; a claim you declined is not
+proposed again from the same words. A large import drains over several Dreamer
+passes, each reading about one round of turns. Each import takes a second of
 its own on the vault's clock: if that clock is ahead of the machine's (the
 system clock moved back), the import is refused until the machine catches up.

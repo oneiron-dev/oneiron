@@ -92,7 +92,9 @@ pub struct PromotionOutcome {
     /// go to `rejected`.
     pub pended: Vec<EntityId>,
     /// Existing heads that imported evidence restated: not attached, because
-    /// imported material reaches the vault only through the owner's review.
+    /// imported material reaches the vault only through the owner's review;
+    /// and declined claims the same imported words yielded again, not
+    /// proposed again.
     pub held: Vec<EntityId>,
     /// Not written (typed reason per candidate); the loop continues.
     pub rejected: Vec<(EntityId, String)>,
@@ -184,6 +186,15 @@ fn promote_one(
     // gate's imported floor and the owner's review grouping among them.
     if run.run_id.trim().is_empty() {
         return Err("promotion run id is blank".to_owned());
+    }
+    // An earlier pass of this attempt committed this claim into the owner's
+    // review: a crash before the attempt completed, or a held selection's
+    // retry. It stays as the review holds it or the owner left it; writing it
+    // again would refuse the attempt.
+    if crate::dreamer_consolidation::reviewed::reviewed_output(vault, &candidate)
+        .map_err(|error| format!("committed output read failed: {error}"))?
+    {
+        return Ok(ClaimApprovalStatus::Proposed);
     }
     let default_facet = vault
         .default_facet()

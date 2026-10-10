@@ -33,7 +33,7 @@ use serde_json::Value;
 use super::text::{join_texts, json_record, str_field, time_field};
 use super::{
     DELEGATING_AGENT, HistoryConversation, HistoryFile, HistoryMessage, HistoryRole, HistorySkips,
-    HistoryThreadKind,
+    HistoryThreadKind, UNKNOWN_SPEAKER,
 };
 
 /// How far apart (in lines) an event and the response item wrapping it may be.
@@ -123,34 +123,46 @@ struct Thread {
     resolved: bool,
 }
 
-/// Whether the user message at `line` is a delegating agent's. Copies nest,
-/// so each copied parent's own history ends where the thread that copied it
-/// starts its own, and the thread whose own history holds the line decides.
-/// Words are the owner's only when a thread no agent spawned provably holds
-/// them: its own known range, or a root thread's whole span, and only through
-/// an unbroken chain of copies. Anything else (a spawned thread's span past an
-/// unknown start, copied history whose thread's meta the copy left out, a
-/// broken chain) is the agent's: left out of extraction, never the owner's.
-/// A rollout with no meta names no spawn at all: its words are the owner's.
-fn delegated(threads: &[Thread], line: usize) -> bool {
+/// Who said the user message at `line` when it was not the owner. Copies
+/// nest, so each copied parent's own history ends where the thread that
+/// copied it starts its own, and the thread whose own history holds the line
+/// decides. Words are the owner's (`None`) only when a thread no agent spawned
+/// provably holds them: its own known range, or a root thread's whole span,
+/// and only through an unbroken chain of copies. They are the delegating
+/// agent's when a spawned thread's own range provably holds them: its start
+/// is known, and so is every start after it. Anything else (a spawned
+/// thread's span past an unknown start, copied history whose thread's meta
+/// the copy left out, a broken chain) is [`UNKNOWN_SPEAKER`]: left out of
+/// extraction like an agent's, never the owner's, and landed again once a
+/// later import knows who said it. A rollout with no meta names no spawn at
+/// all: its words are the owner's.
+fn said_by(threads: &[Thread], line: usize) -> Option<&'static str> {
     let mut end = usize::MAX;
+    // Every thread before this one names where its own history starts, so
+    // `end` is where this one's own history ends.
+    let mut bounded = true;
     let mut owners = threads.is_empty();
     for thread in threads {
         match thread.own_from {
             Some(start) if (start..end).contains(&line) => {
-                return thread.spawned || !thread.resolved;
+                return match (thread.resolved, thread.spawned) {
+                    (true, false) => None,
+                    (true, true) if bounded => Some(DELEGATING_AGENT),
+                    _ => Some(UNKNOWN_SPEAKER),
+                };
             }
             Some(start) => end = end.min(start),
             None if (thread.line..end).contains(&line) => {
                 if thread.spawned {
-                    return true;
+                    return Some(UNKNOWN_SPEAKER);
                 }
+                bounded = false;
                 owners |= thread.resolved && thread.parent.is_none();
             }
             None => {}
         }
     }
-    !owners
+    (!owners).then_some(UNKNOWN_SPEAKER)
 }
 
 /// The thread that spawned this one, at the top level in current rollouts and
@@ -575,9 +587,7 @@ impl Rollout {
                 HistoryRole::Assistant => message.tools = std::mem::take(&mut pending),
                 HistoryRole::User => {
                     pending.clear();
-                    if delegated(&self.threads, line) {
-                        message.said_by = Some(DELEGATING_AGENT);
-                    }
+                    message.said_by = said_by(&self.threads, line);
                 }
             }
             conversation.messages.push(message);

@@ -45,6 +45,17 @@ pub fn promote_scoped_consolidation(
     for (mut candidate, evidence) in write.candidates.into_iter().zip(write.candidate_evidence) {
         candidate.evidence_meet = evidence.meet();
         let id = candidate.claim_id;
+        // The owner declined this claim from these same imported words; a
+        // message landing later in their TURN re-reads them and the Dreamer
+        // finds it again. It is not proposed again.
+        if let Some(declined) = crate::dreamer_consolidation::reviewed::declined_from_same_words(
+            vault,
+            &candidate,
+            &evidence.cited_messages(),
+        )? {
+            outcome.held.push(declined);
+            continue;
+        }
         match promote_one(
             vault,
             run,

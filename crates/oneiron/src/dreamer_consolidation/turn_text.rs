@@ -310,9 +310,10 @@ pub(super) fn collect_in(
             stream,
         });
         // The user side of an imported subagent or sidechain thread is the
-        // agent that delegated it, not the owner: its words never reach
-        // extraction, so they cannot become what the owner said.
-        if !(facts.imported && message.delegated) {
+        // agent that delegated it, not the owner, and words whose speaker the
+        // source did not say may be an agent's: they never reach extraction,
+        // so they cannot become what the owner said.
+        if !(facts.imported && message.not_the_owners) {
             children.push((id, message, words));
         }
     }
@@ -475,8 +476,9 @@ struct MessageText {
     content: String,
     is_visible: bool,
     order: u64,
-    /// An imported row the delegating agent said.
-    delegated: bool,
+    /// An imported row that names a speaker other than the owner, or says
+    /// the speaker is unknown.
+    not_the_owners: bool,
 }
 
 /// Strict reader of the four fields the projection uses. The logical body of
@@ -491,7 +493,7 @@ fn decode_message(body: &[u8]) -> Option<MessageText> {
         return None;
     }
     let (mut author, mut content, mut is_visible, mut order) = (None, None, None, None);
-    let mut delegated = false;
+    let mut not_the_owners = false;
     for (key, value) in entries {
         let fresh = match key.as_str() {
             Some("author") => author.replace(value.as_str()?.to_owned()).is_none(),
@@ -499,7 +501,7 @@ fn decode_message(body: &[u8]) -> Option<MessageText> {
             Some("is_visible") => is_visible.replace(value.as_bool()?).is_none(),
             Some("order") => order.replace(value.as_u64()?).is_none(),
             Some("metadata") => {
-                delegated = said_by_delegating_agent(&value);
+                not_the_owners = said_by_another(&value);
                 true
             }
             _ => true,
@@ -513,13 +515,14 @@ fn decode_message(body: &[u8]) -> Option<MessageText> {
         content: content?,
         is_visible: is_visible?,
         order: order?,
-        delegated,
+        not_the_owners,
     })
 }
 
-/// Whether an imported MESSAGE's `import.said_by` names the delegating agent
-/// (`ingest::history`): the prompt one agent gave a subagent it started.
-fn said_by_delegating_agent(metadata: &rmpv::Value) -> bool {
+/// Whether an imported MESSAGE's `import.said_by` names anyone but the owner
+/// (`ingest::history`): the agent that delegated a subagent's task, or a
+/// speaker the source did not say. The owner's words carry none.
+fn said_by_another(metadata: &rmpv::Value) -> bool {
     let field = |value: &rmpv::Value, name: &str| match value {
         rmpv::Value::Map(entries) => entries
             .iter()
@@ -529,7 +532,7 @@ fn said_by_delegating_agent(metadata: &rmpv::Value) -> bool {
     };
     field(metadata, "import")
         .and_then(|import| field(&import, "said_by"))
-        .is_some_and(|said_by| said_by.as_str() == Some(crate::ingest::history::DELEGATING_AGENT))
+        .is_some_and(|said_by| said_by.is_str())
 }
 
 fn peers(

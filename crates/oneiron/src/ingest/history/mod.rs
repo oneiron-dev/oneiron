@@ -38,6 +38,12 @@ use super::IngestResult;
 /// agent's thread: the agent that delegated the task, never the owner.
 pub const DELEGATING_AGENT: &str = "delegating_agent";
 
+/// [`HistoryMessage::said_by`] for user-side words the source does not say
+/// were the owner's or an agent's, such as copied history whose thread a copy
+/// left out. Never read as the owner's; a later import that knows the
+/// speaker lands the words again.
+pub const UNKNOWN_SPEAKER: &str = "unknown";
+
 /// The four history sources `oneiron import` reads. Their ids are the ingest
 /// registry's, which carries their Imported trust ceiling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -118,7 +124,8 @@ pub struct HistoryMessage {
     /// Unix milliseconds, when the source recorded one for this message.
     pub at_ms: Option<u64>,
     /// Who spoke on the user side when it was not the owner: in a subagent's
-    /// log that is the agent that delegated the task.
+    /// log that is the agent that delegated the task ([`DELEGATING_AGENT`]);
+    /// [`UNKNOWN_SPEAKER`] when the source does not say.
     pub said_by: Option<&'static str>,
     /// Names of the tools this assistant message went on to call. The calls
     /// and their results are counted in [`HistorySkips`], not kept.

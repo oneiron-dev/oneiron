@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{HistoryMessage, HistoryRole, HistorySource};
+use super::{HistoryMessage, HistoryRole, HistorySource, UNKNOWN_SPEAKER};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
@@ -35,9 +35,9 @@ pub(super) struct LedgerRow {
 }
 
 impl LedgerRow {
-    /// Whether this text of the message has landed.
-    pub(super) fn holds(&self, hash: &str) -> bool {
-        self.hashes.iter().any(|landed| landed == hash)
+    /// Whether this text of the message has landed ([`holds`]).
+    pub(super) fn holds(&self, message: &HistoryMessage) -> bool {
+        holds(&self.hashes, message)
     }
 
     /// The revision the next changed text lands as (the first import is 0).
@@ -55,9 +55,32 @@ fn key(source: HistorySource, native_id: &str) -> String {
     }
 }
 
-/// What a re-import compares: the speaker's side and the words.
+/// What a re-import compares: the speaker's side and the words, and whether
+/// the source left the speaker unknown ([`UNKNOWN_SPEAKER`]). Words of an
+/// unknown speaker hash apart from the same words with the speaker known.
 pub(super) fn content_hash(message: &HistoryMessage) -> String {
+    hash(message, message.said_by == Some(UNKNOWN_SPEAKER))
+}
+
+/// Whether `landed`, the [`content_hash`]es of what landed of one message,
+/// holds `message`. Words of an unknown speaker are held by the same words
+/// with the speaker known too, so a later copy never lands them as unknown
+/// again; words with the speaker known are not held by the same words of an
+/// unknown speaker, so the import that knows who said them lands them, as a
+/// revision the Dreamer reads.
+pub(super) fn holds(landed: &[String], message: &HistoryMessage) -> bool {
+    let held = |unknown| {
+        let hash = hash(message, unknown);
+        landed.iter().any(|landed| *landed == hash)
+    };
+    held(false) || (message.said_by == Some(UNKNOWN_SPEAKER) && held(true))
+}
+
+fn hash(message: &HistoryMessage, unknown_speaker: bool) -> String {
     let mut hasher = blake3::Hasher::new();
+    if unknown_speaker {
+        hasher.update(b"unknown\0");
+    }
     hasher.update(match message.role {
         HistoryRole::User => b"user\0",
         HistoryRole::Assistant => b"asst\0",
