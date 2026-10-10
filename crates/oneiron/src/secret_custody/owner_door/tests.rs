@@ -524,8 +524,8 @@ fn a_registration_wipes_the_staged_row_that_carried_its_value() {
 
 /// Sol on the staging fix: generic readers on the put path copied a custody
 /// row, value and all, into buffers freed unwiped, before they checked its
-/// kind. Neither a registration nor a rotation of it makes a plain copy of a
-/// row that holds the value.
+/// kind, and so did the deletion-fence probe. Neither a registration nor a
+/// rotation of it makes a plain copy of a row that holds the value.
 #[test]
 fn registering_then_rotating_copies_no_row_that_holds_the_value_unwiped() {
     const VALUE: &[u8] = b"wipe-check-copied-row-value";
@@ -549,6 +549,22 @@ fn registering_then_rotating_copies_no_row_that_holds_the_value_unwiped() {
             7,
         )
         .expect("registered");
+    // A delete still pending on the row fences it, and a local put over a
+    // fenced row reads the prior row too.
+    let id = vault
+        .resolve_secret_ref("deploy-token")
+        .expect("index")
+        .expect("registered name");
+    let mut wtxn = vault.store.env.write_txn().expect("write txn");
+    crate::deletion::ROW_DELETION_FENCE
+        .put(
+            &vault.store,
+            &mut wtxn,
+            &crate::side_table::HexId(id),
+            &Vec::new(),
+        )
+        .expect("fence");
+    wtxn.commit().expect("commit");
     vault
         .rotate_secret_as_owner(&owner, "deploy-token", VALUE, 8)
         .expect("rotated");

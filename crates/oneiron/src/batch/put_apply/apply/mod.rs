@@ -174,7 +174,7 @@ pub(in crate::batch) fn apply_put(
     // for why the mutation cannot ride along with the check.
     let mut authority_dominates_key_squatter = false;
     if let Some(body) = incoming_claim_body {
-        if let Some(prior) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &id)?
+        if let Some(prior) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, wtxn, &id)?
             && prior.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
         {
             crate::blob_artifact::esign::reject_event_delete(store, wtxn, &id)?;
@@ -185,7 +185,8 @@ pub(in crate::batch) fn apply_put(
                     "esign events require the local authenticated organ",
                 ));
             }
-            if let Some(prior) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &id)?
+            if let Some(prior) =
+                crate::ports::EntityStoreRead::port_entity_raw_wiped(store, wtxn, &id)?
                 && prior.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
             {
                 return Err(Error::InvalidClaimBody("esign events are append-only"));
@@ -197,7 +198,7 @@ pub(in crate::batch) fn apply_put(
         if is_lexical_query_hint_claim {
             super::lexical_hint::validate_lexical_query_hint(store, wtxn, id, &body, replicated)?;
         }
-        if let Some(prior) = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &id)?
+        if let Some(prior) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, wtxn, &id)?
             && crate::batch::EntityMetadataHeader::parse(&prior)
                 .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
             && crate::claim::decode_claim_body(&prior[ENTITY_METADATA_HEADER_LEN..], true)
@@ -693,7 +694,7 @@ pub(in crate::batch) fn apply_put(
     // local edit does not withdraw that delete.
     if !replicated
         && crate::deletion::ROW_DELETION_FENCE.contains(store, wtxn, &HexId(id))?
-        && crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &id)?
+        && crate::ports::EntityStoreRead::port_entity_raw_wiped(store, wtxn, &id)?
             .is_none_or(|old| old.len() == ENTITY_METADATA_HEADER_LEN)
     {
         crate::deletion::ROW_DELETION_FENCE.delete(store, wtxn, &HexId(id))?;
