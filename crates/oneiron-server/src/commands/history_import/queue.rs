@@ -17,7 +17,7 @@
 //! A claim that waits past the decoded budget keeps where it sorts and what
 //! it decodes to, so it is read again only to land.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
@@ -67,7 +67,9 @@ struct Entry {
 }
 
 /// What a pass that read a log keeps of it while it waits: enough to choose
-/// what lands without reading it again.
+/// what lands without reading it again. Only a hint: the earliest claim is
+/// read whatever its place says, and a log that starts elsewhere or grew past
+/// what is left when it is read waits to be placed anew.
 #[derive(Serialize, Deserialize, Clone, Copy)]
 struct Place {
     /// When its earliest conversation started, then ended.
@@ -194,6 +196,21 @@ impl Claimed {
             .place
             .map_or_else(Decoded::default, |place| place.size)
     }
+
+    fn start(&self) -> u64 {
+        self.order().0.0
+    }
+}
+
+/// Lets go of what is held decoded past the budget, counting from `ahead`:
+/// what sorts after the budget is spent cannot land this pass.
+fn release(claimed: &mut VecDeque<Claimed>, mut ahead: Decoded, budget: Decoded) {
+    for held in claimed {
+        ahead = ahead.and(held.size());
+        if !ahead.within(budget) {
+            held.read = None;
+        }
+    }
 }
 
 impl ImportQueue {
@@ -239,15 +256,15 @@ impl ImportQueue {
     }
 
     /// One pass: claims every entry waiting, then lands the earliest that fit
-    /// the decoded budget together, earliest first, and removes them. Entries
-    /// land whole, in the order of their earliest conversation: a resumed or
-    /// forked session starts with its original's first line, time and all,
-    /// so its entry never sorts before the original's.
+    /// the decoded budget, entry by entry, and removes them. Entries land
+    /// whole, in the order of their earliest conversation: a resumed or forked
+    /// session starts with its original's first line, time and all, so its
+    /// entry never sorts before the original's.
     ///
-    /// A log is read once to land. One no pass has read yet is read to place
-    /// it, and what it decodes is held while it can still land this pass;
-    /// one that must wait keeps its place in its claim, so a later pass reads
-    /// it only to land it.
+    /// A pass reads a log at most once. One no pass has read yet is read to
+    /// place it, and what it decodes is held while it can still land this
+    /// pass; one that must wait keeps its place in its claim, so a later pass
+    /// reads it only to land it.
     fn pass(&self, vault: &oneiron::Vault) -> anyhow::Result<Landed> {
         let Some(dir) = self.open_checked()? else {
             return Ok(Landed::default());
@@ -257,25 +274,31 @@ impl ImportQueue {
             anyhow::anyhow!("a claim kept for the next pass is unwritten: {error}")
         };
         let mut kept = Ok(());
-        for held in waits.iter().filter(|held| held.placed) {
+        for mut held in waits.into_iter().filter(|held| held.placed) {
+            // A log with no start yet has nothing to sort by: the pass that
+            // reads it next places it again.
+            if held
+                .entry
+                .place
+                .is_some_and(|place| place.first.0 == u64::MAX)
+            {
+                held.entry.place = None;
+            }
             kept = kept.and(rewrite(&dir, &held.name, &held.entry));
         }
         if landing.is_empty() {
             return kept.map(|()| Landed::default()).map_err(unwritten);
         }
 
-        let mut sources: Vec<(HistorySource, Vec<HistoryConversation>)> = Vec::new();
+        let mut entries = Vec::new();
         let mut landed = Landed::default();
         let mut done = Vec::new();
         for (held, Log { source, session }) in landing {
-            match sources.iter_mut().find(|(known, _)| *known == source) {
-                Some((_, conversations)) => conversations.extend(session.conversations),
-                None => sources.push((source, session.conversations)),
-            }
+            entries.push((source, session.conversations));
             landed.left_out.extend(session.left_out);
             done.push((held, session.mid_line));
         }
-        landed.totals = land(vault, sources)
+        landed.totals = land(vault, entries)
             .map_err(|error| error.context("its claimed logs are read again next pass"))?;
         let totals = &landed.totals;
         tracing::info!(
@@ -300,6 +323,9 @@ impl ImportQueue {
         for (mut held, mid_line) in done {
             if mid_line && held.entry.passes < MID_LINE_PASSES {
                 held.entry.passes += 1;
+                // Its log is still being written: the next pass places it
+                // again once it has read the rest.
+                held.entry.place = None;
                 kept = kept.and(rewrite(&dir, &held.name, &held.entry));
             } else {
                 remove(&dir, &held.name);
@@ -309,9 +335,10 @@ impl ImportQueue {
     }
 
     /// Claims every entry waiting and chooses what lands: the earliest that
-    /// fit the decoded budget, each read once. The rest wait.
+    /// fit the decoded budget, and always the first, whatever its claim says
+    /// it holds. A pass reads each log at most once; the rest wait.
     fn choose(&self, dir: &OwnedFd) -> anyhow::Result<Chosen> {
-        let mut claimed: Vec<Claimed> = Vec::new();
+        let mut claimed = VecDeque::new();
         let mut unplaced = Vec::new();
         for name in waiting(dir)? {
             let Some(entry) = take(dir, &name) else {
@@ -324,12 +351,14 @@ impl ImportQueue {
                 placed: false,
             };
             if held.entry.place.is_some() {
-                claimed.push(held);
+                claimed.push_back(held);
             } else {
                 unplaced.push(held);
             }
         }
-        claimed.sort_by(|one, other| one.order().cmp(&other.order()));
+        claimed
+            .make_contiguous()
+            .sort_by(|one, other| one.order().cmp(&other.order()));
         for mut held in unplaced {
             let Some(read) = self.read(dir, &mut held) else {
                 continue;
@@ -337,37 +366,42 @@ impl ImportQueue {
             held.read = Some(read);
             let at = claimed.partition_point(|known| known.order() < held.order());
             claimed.insert(at, held);
-            // What sorts after the budget is spent cannot land this pass.
-            let mut ahead = Decoded::default();
-            for held in &mut claimed {
-                ahead = ahead.and(held.size());
-                if !ahead.within(self.budget) {
-                    held.read = None;
-                }
-            }
+            release(&mut claimed, Decoded::default(), self.budget);
         }
 
         let mut ahead = Decoded::default();
         let mut landing = Vec::new();
         let mut waits = Vec::new();
-        for mut held in claimed {
-            if waits.is_empty() && ahead.and(held.size()).within(self.budget) {
-                let read = match held.read.take() {
-                    Some(read) => read,
-                    None => match self.read(dir, &mut held) {
-                        Some(read) => read,
-                        None => continue,
-                    },
-                };
-                // A log that grew since it was placed may no longer fit.
-                ahead = ahead.and(held.size());
-                if ahead.within(self.budget) {
-                    landing.push((held, read));
-                    continue;
-                }
+        while let Some(mut held) = claimed.pop_front() {
+            let fits = landing.is_empty() || ahead.and(held.size()).within(self.budget);
+            // Read this pass and let go: it lands on the next.
+            let released = held.read.is_none() && held.placed;
+            if !waits.is_empty() || !fits || released {
+                held.read = None;
+                waits.push(held);
+                continue;
             }
-            held.read = None;
-            waits.push(held);
+            let read = match held.read.take() {
+                Some(read) => read,
+                None => {
+                    let start = held.start();
+                    let Some(read) = self.read(dir, &mut held) else {
+                        continue;
+                    };
+                    // A log that starts elsewhere now sorts elsewhere, and
+                    // one that grew may no longer fit: it waits, placed anew.
+                    let fits = landing.is_empty() || ahead.and(held.size()).within(self.budget);
+                    if held.start() != start || !fits {
+                        waits.push(held);
+                        continue;
+                    }
+                    read
+                }
+            };
+            ahead = ahead.and(held.size());
+            landing.push((held, read));
+            // A log that grew holds more than its claim said.
+            release(&mut claimed, ahead, self.budget);
         }
         Ok(Chosen { landing, waits })
     }
@@ -522,15 +556,15 @@ fn rewrite(dir: &OwnedFd, name: &str, entry: &Entry) -> std::io::Result<()> {
     written
 }
 
-/// Lands every claimed conversation, earliest first within each source.
+/// Lands each entry in turn, its conversations earliest first.
 fn land(
     vault: &oneiron::Vault,
-    sources: Vec<(HistorySource, Vec<HistoryConversation>)>,
+    entries: Vec<(HistorySource, Vec<HistoryConversation>)>,
 ) -> anyhow::Result<Totals> {
     let owner = crate::owner::local_owner(vault)?;
     let imported_at = vault.now_recorded_at();
     let mut totals = Totals::default();
-    for (source, mut conversations) in sources {
+    for (source, mut conversations) in entries {
         earliest_first(&mut conversations);
         for conversation in &conversations {
             let report = vault

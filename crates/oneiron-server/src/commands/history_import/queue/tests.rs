@@ -67,15 +67,24 @@ impl Bench {
 
     /// `oneiron import claude-code <log> --queue`, as the hooks run it.
     fn hand_over(&self, log: &Path) {
+        self.put(log, None, "json");
+    }
+
+    /// A claim an earlier pass kept, saying `place`.
+    fn kept(&self, log: &Path, place: Place) {
+        self.put(log, Some(place), "taking");
+    }
+
+    fn put(&self, log: &Path, place: Option<Place>, suffix: &str) {
         let name = entry_name(HistorySource::ClaudeCode, log);
         let entry = Entry {
             source: HistorySource::ClaudeCode.source_id().to_owned(),
             path: log.to_path_buf(),
             passes: 0,
-            place: None,
+            place,
         };
         fs::write(
-            self.queue.dir.join(format!("{name}.json")),
+            self.queue.dir.join(format!("{name}.{suffix}")),
             serde_json::to_vec(&entry).unwrap(),
         )
         .unwrap();
@@ -108,7 +117,7 @@ fn session_id(log: u32) -> String {
 /// Message `message` of session `log`, one whole record: said on day `log`
 /// of the month, a minute after the one before.
 fn record(log: u32, message: usize) -> String {
-    let role = if message % 2 == 0 {
+    let role = if message.is_multiple_of(2) {
         "user"
     } else {
         "assistant"
@@ -179,6 +188,78 @@ fn a_backlog_past_the_budget_reads_each_log_once_per_landing() {
     assert!(bench.waiting().is_empty());
     let (_, reads) = bench.pass(&vault);
     assert!(reads.is_empty());
+}
+
+/// Sol 1354 F1: a claim's kept place is only a hint. One that says its log
+/// holds more than any pass may hold does not stop the queue: the earliest
+/// claim is always read, placed anew, and lands.
+#[test]
+fn a_claim_that_says_it_holds_more_than_a_pass_does_not_stop_the_queue() {
+    let bench = Bench::new(Decoded {
+        messages: 4,
+        bytes: usize::MAX,
+    });
+    let vault = bench.vault();
+    let (first, second) = (bench.log(1), bench.log(2));
+    bench.write(&first, 1, 0..2);
+    bench.kept(
+        &first,
+        Place {
+            first: (0, 0),
+            size: Decoded {
+                messages: usize::MAX,
+                bytes: usize::MAX,
+            },
+        },
+    );
+    bench.write(&second, 2, 0..2);
+    bench.hand_over(&second);
+
+    for _ in 0..2 {
+        let (landed, mut reads) = bench.pass(&vault);
+        landed.unwrap();
+        let read = reads.len();
+        reads.sort();
+        reads.dedup();
+        assert_eq!(reads.len(), read, "a log is read once a pass");
+    }
+    assert_eq!(messages(&vault), 4, "both land");
+    assert!(bench.waiting().is_empty());
+}
+
+/// Sol 1354 F3: a log read once in a pass is not read again in it, even when
+/// the claim that sorted before it and spent the budget is gone by the time
+/// it would land. It lands on the next pass.
+#[test]
+fn a_pass_reads_a_log_once_even_when_what_sorted_before_it_is_gone() {
+    let bench = Bench::new(Decoded {
+        messages: 4,
+        bytes: usize::MAX,
+    });
+    let vault = bench.vault();
+    let logs: Vec<PathBuf> = (1..=3).map(|log| bench.log(log)).collect();
+    for (log, path) in (1..=2).zip(&logs) {
+        bench.write(path, log, 0..4);
+        bench.hand_over(path);
+    }
+    bench.pass(&vault).0.unwrap();
+    assert_eq!(messages(&vault), 4, "the first lands; the second waits");
+
+    fs::remove_file(&logs[1]).unwrap();
+    bench.write(&logs[2], 3, 0..2);
+    bench.hand_over(&logs[2]);
+    let (landed, reads) = bench.pass(&vault);
+    landed.unwrap();
+    assert_eq!(
+        reads.iter().filter(|read| **read == logs[2]).count(),
+        1,
+        "{reads:?}"
+    );
+    let (landed, reads) = bench.pass(&vault);
+    landed.unwrap();
+    assert_eq!(reads, [logs[2].clone()]);
+    assert_eq!(messages(&vault), 6);
+    assert!(bench.waiting().is_empty());
 }
 
 /// A live session's last record still being written lands whole on a later
