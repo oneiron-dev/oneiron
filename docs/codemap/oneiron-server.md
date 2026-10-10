@@ -344,7 +344,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/output_cap.rs` | src | s | 2 crate-vis | — | A provider's output ceiling on the wire |
 | `src/models/role_route.rs` | src | s | 2 struct · 1 enum · 2 fn | RoleCall, RoleRefusal, RoleRoute | A role-bound call's model under the vault's live model manifest |
 | `src/models/router.rs` | src | s | 1 struct · 1 fn · 3 crate-vis | ModelRouter | A backend over every configured model and seat, chosen by the request's own model id: the raw `/v1/llm`… |
-| `src/models/served.rs` | src | s | 4 crate-vis | — | Which model actually answered: the receipt field a ladder fills in |
+| `src/models/served.rs` | src | s | 4 crate-vis | — | Which model actually answered: the receipt field a ladder fills in, and what an answered call is charged |
 | `src/models/sse.rs` | src | s | 6 crate-vis | — | An incremental server-sent-events decoder (WHATWG event-stream parsing): LF, CRLF or lone CR line ends, a… |
 | `src/models/status.rs` | src | s | 4 struct · 1 enum · 6 crate-vis | ModelsStatus, ProviderStatus, RungStatus, SeatState, SeatStatus | What the model runtime built, for the owner-facing status route |
 | `src/models/tests.rs` | test | m | — | — | Every provider kind against a local fake server, the ladder's fallback and receipt, and one config edit… |

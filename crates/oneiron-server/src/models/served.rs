@@ -1,12 +1,25 @@
-//! Which model actually answered: the receipt field a ladder fills in.
+//! Which model actually answered: the receipt field a ladder fills in, and
+//! what an answered call is charged.
+// The ladder stamps the engine's key, so the charge rule reads what it wrote.
+use oneiron::llm::FAILED_RUNGS_KEY;
+use oneiron::llm::{BudgetDenied, BudgetGuard, BudgetLease, BudgetSettlement, LlmUsage};
 use serde_json::{Map, Value as JsonValue};
 
 /// Key inside a provider usage object naming the model the reply reported.
 pub(crate) const SERVED_MODEL_KEY: &str = "served_model";
 
-/// Key inside a ladder's receipt counting the rungs that were tried and
-/// failed before the one that served.
-pub(crate) const FAILED_RUNGS_KEY: &str = "failed_rungs";
+/// Settles an answered call by the engine's one rule
+/// ([`oneiron::llm::answered_units`]): its tokens, or `floor` when it reports
+/// none, plus `floor` for each rung that failed before it. Chat turns,
+/// workflow steps and code mode all charge an answer this way.
+pub(crate) fn settle_answered(
+    guard: &BudgetGuard,
+    lease: &BudgetLease,
+    usage: &LlmUsage,
+    floor: u64,
+) -> Result<BudgetSettlement, BudgetDenied> {
+    guard.settle_usage(lease, oneiron::llm::answered_units(usage, floor))
+}
 
 /// Stamps the model a reply names into its usage object, which the adapters
 /// carry through as `LlmUsage::raw_provider`. A usage object that is not a

@@ -3818,6 +3818,7 @@
      "kind": "src",
      "notable": [
       "BlobArtifactVersion",
+      "BlobBytes",
       "CalcEngineStamp"
      ],
      "path": "src/blob_artifact/versions.rs",
@@ -3825,8 +3826,8 @@
      "surface": {
       "const": 1,
       "crate-vis": 22,
-      "fn": 11,
-      "struct": 2
+      "fn": 15,
+      "struct": 3
      }
     },
     {
@@ -7590,7 +7591,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DreamerIsolationClass"
@@ -7598,7 +7599,7 @@
      "path": "src/claim/predicate_grammar.rs",
      "purpose": "Predicate vocabulary and the D17 grammar gate: namespace constants, the crate-owned well-known predicate…",
      "surface": {
-      "const": 13,
+      "const": 14,
       "crate-vis": 5,
       "enum": 1,
       "fn": 2
@@ -27061,13 +27062,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ports/lmdb_aux.rs",
      "purpose": "LMDB audit, dependency, content-addressed blob and queue adapters",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -29683,7 +29684,7 @@
      "path": "src/saved_query/storage.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -31689,7 +31690,7 @@
      "path": "src/skill_hub/pack_catalog/admission.rs",
      "purpose": "Post-fit installation of pinned pack source; requested powers stay inert",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 7
      }
     },
@@ -31801,8 +31802,22 @@
      "path": "src/skill_hub/pack_catalog/manifest.rs",
      "purpose": "Closed PACK.md manifest parser",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PackMigration"
+     ],
+     "path": "src/skill_hub/pack_catalog/migrations.rs",
+     "purpose": "Predicate migration maps a pack ships in PACK.md (ARCH-0059 §4, rung 1)",
+     "surface": {
+      "crate-vis": 2,
       "struct": 1
      }
     },
@@ -31814,7 +31829,7 @@
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
       "crate-vis": 5,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -39916,7 +39931,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 65,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40128,7 +40143,7 @@
    },
    "over_bar": 32,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2436,
+   "source_files": 2437,
    "test_files": 772
   },
   "oneiron-android": {
@@ -45506,6 +45521,402 @@
    "source_files": 19,
    "test_files": 1
   },
+  "oneiron-organ-host": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/bin/oneiron-organ-probe.rs",
+     "purpose": "A diagnostics organ for the host's own checks: the runtime's built-in verbs (`organ.touch`, `organ.echo`)…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BudgetConfig"
+     ],
+     "path": "src/budget.rs",
+     "purpose": "One admission budget for every organ: threads, memory, in-flight calls",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostError",
+      "Unavailable"
+     ],
+     "path": "src/error.rs",
+     "purpose": "What can go wrong on the engine side of an organ call",
+     "surface": {
+      "enum": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OrganHost",
+      "OrganOutcome",
+      "OrganOutput"
+     ],
+     "path": "src/host.rs",
+     "purpose": "The organ host: install, call, unload, revoke",
+     "surface": {
+      "fn": 10,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
+     "surface": {
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/process.rs",
+     "purpose": "One live organ process: spawn, handshake, a reader thread, calls",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CallReceipt",
+      "ReceiptInput",
+      "ReceiptOutput"
+     ],
+     "path": "src/receipt.rs",
+     "purpose": "The engine's receipt for one organ call: facts the host computed, plus the organ's bounded notes",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/regions.rs",
+     "purpose": "Regions kept for reuse, keyed by content hash: a blob is copied out of the store once, then every later call…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sandbox.rs",
+     "purpose": "What the host does to an organ process between fork and exec",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OrganState",
+      "OrganStatus"
+     ],
+     "path": "src/slot.rs",
+     "purpose": "One installed organ: its process, its crash history, its condition",
+     "surface": {
+      "crate-vis": 13,
+      "enum": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CallClass",
+      "HostConfig",
+      "OrganCall",
+      "OrganInput",
+      "OrganSpec",
+      "OrganTier"
+     ],
+     "path": "src/spec.rs",
+     "purpose": "What the engine installs and what a caller asks",
+     "surface": {
+      "enum": 2,
+      "fn": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/host_e2e.rs",
+     "purpose": "The host against a real organ process (the probe), over real vault blobs",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/host_fds.rs",
+     "purpose": "A stopped organ gives its descriptors back: hosts whose organ was unloaded, revoked or crashed hold no more…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/organ_fence.rs",
+     "purpose": "OF-060 F4: the engine never depends on an organ, and an organ never depends on the engine (ARCH-0075 section…",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "budget": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "One admission budget for every organ: threads, memory, in-flight calls"
+    },
+    "error": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "What can go wrong on the engine side of an organ call"
+    },
+    "host": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The organ host: install, call, unload, revoke"
+    },
+    "process": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "One live organ process: spawn, handshake, a reader thread, calls"
+    },
+    "receipt": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The engine's receipt for one organ call: facts the host computed, plus the organ's bounded notes"
+    },
+    "regions": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Regions kept for reuse, keyed by content hash: a blob is copied out of the store once, then every later call…"
+    },
+    "sandbox": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "What the host does to an organ process between fork and exec"
+    },
+    "slot": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "One installed organ: its process, its crash history, its condition"
+    },
+    "spec": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "What the engine installs and what a caller asks"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
+   "source_files": 11,
+   "test_files": 3
+  },
+  "oneiron-organ-protocol": {
+   "files": [
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FrameError"
+     ],
+     "path": "src/frame.rs",
+     "purpose": "Framing: `len: u32 LE | MessagePack body`, with descriptors riding as `SCM_RIGHTS` on the send that carries…",
+     "surface": {
+      "enum": 1,
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
+     "surface": {
+      "mod": 1,
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MappedRegion",
+      "SharedRegion"
+     ],
+     "path": "src/region.rs",
+     "purpose": "Read-only shared regions: how blob bytes cross without being copied",
+     "surface": {
+      "fn": 7,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Answer",
+      "CallContext",
+      "InputBytes",
+      "Organ",
+      "OutputBytes"
+     ],
+     "path": "src/runtime.rs",
+     "purpose": "The organ side: handshake, frames, a small worker pool and cancel flags",
+     "surface": {
+      "const": 2,
+      "fn": 7,
+      "struct": 4,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/shape.rs",
+     "purpose": "A structural check of a MessagePack frame before it is decoded",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Call",
+      "CancelReason",
+      "ErrorCode",
+      "FromOrgan",
+      "Hash32",
+      "Hello",
+      "HelloAck",
+      "Input",
+      "Limits",
+      "Locator",
+      "Loss",
+      "Notes",
+      "OrganError",
+      "OrganIdentity",
+      "Outcome",
+      "Output",
+      "Payload",
+      "Proposal",
+      "ProtocolVersion",
+      "Reply",
+      "ToOrgan",
+      "TypedBody",
+      "VerbSpec"
+     ],
+     "path": "src/wire.rs",
+     "purpose": "The protocol's messages",
+     "surface": {
+      "const": 4,
+      "enum": 7,
+      "fn": 3,
+      "struct": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/frames.rs",
+     "purpose": "A frame is bounded by what it decodes to, not only by its bytes: a peer cannot make the other side…",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "frame": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Framing: `len: u32 LE | MessagePack body`, with descriptors riding as `SCM_RIGHTS` on the send that carries…"
+    },
+    "region": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Read-only shared regions: how blob bytes cross without being copied"
+    },
+    "runtime": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The organ side: handshake, frames, a small worker pool and cancel flags"
+    },
+    "shape": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A structural check of a MessagePack frame before it is decoded"
+    },
+    "wire": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The protocol's messages"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
+   "source_files": 6,
+   "test_files": 1
+  },
   "oneiron-py": {
    "files": [
     {
@@ -50292,7 +50703,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/models/served.rs",
-     "purpose": "Which model actually answered: the receipt field a ladder fills in",
+     "purpose": "Which model actually answered: the receipt field a ladder fills in, and what an answered call is charged",
      "surface": {
       "crate-vis": 4
      }
