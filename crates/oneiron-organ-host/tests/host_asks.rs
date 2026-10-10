@@ -302,6 +302,32 @@ fn a_handler_that_panics_frees_its_call() {
     .expect("the next call runs");
 }
 
+/// Outlasts the call's deadline, then panics.
+struct PanicsLate(Duration);
+
+impl AskHandler for PanicsLate {
+    fn answer(&self, _: &AskRequest<'_>) -> Result<Answered, AskRefusal> {
+        thread::sleep(self.0);
+        panic!("a handler bug past the deadline");
+    }
+}
+
+#[test]
+fn a_handler_that_panics_in_the_grace_still_stops_a_deaf_organ() {
+    let (_dir, vault) = vault();
+    let host = rogue("--ask-once");
+    host.warm("probe").expect("warm");
+    // Back inside the grace: the deadline's cancel went out, unanswered.
+    let handler = PanicsLate(Duration::from_millis(250));
+    let asks = AskHandlers::none().with(ANSWER, &handler);
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        host.call_with(&vault, echo(Duration::from_millis(200)), Vec::new(), &asks)
+    }));
+    assert!(panicked.is_err());
+    // The grace ran out before the panic went on, and the organ was stopped.
+    assert_eq!(host.status("probe").expect("installed").pid, None);
+}
+
 #[test]
 fn an_organ_that_keeps_asking_is_refused_once_then_cut_off() {
     let (_dir, vault) = vault();

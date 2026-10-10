@@ -194,7 +194,9 @@ impl<'a> CallAsks<'a> {
 
     /// Decides one ask: refuse it, answer it through its handler, or end
     /// the call when the organ asks again after a `budget` refusal.
-    pub(crate) fn take(&mut self, ask: Ask) -> AskStep {
+    /// `watched` says whether a watchdog keeps the call's deadline; with
+    /// none the handler is not run and the ask is refused, retryable.
+    pub(crate) fn take(&mut self, ask: Ask, watched: bool) -> AskStep {
         // One budget refusal, of either kind; any ask after it ends the call.
         if self.refused_past_cap {
             return AskStep::End(HostError::AskBudget);
@@ -250,6 +252,14 @@ impl<'a> CallAsks<'a> {
         if self.bytes_left == 0 {
             self.refused_past_cap = true;
             let refusal = AskRefusal::new(AskCode::Budget, "this call's answer bytes are spent");
+            return self.refuse(&ask, line, refusal);
+        }
+        if !watched {
+            let refusal = AskRefusal::new(
+                AskCode::Failed,
+                "the host could not keep the call's deadline while a handler ran",
+            )
+            .retryable();
             return self.refuse(&ask, line, refusal);
         }
         let request = AskRequest {
