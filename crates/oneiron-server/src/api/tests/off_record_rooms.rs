@@ -252,6 +252,26 @@ async fn a_guests_save_writes_no_vault_and_their_export_is_a_file() {
 
     let (status, refused) = act(&server, "save", mina.clone(), room.id, "garden").await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{refused}");
+    // A native host's proof shows Mina is a live person, not that this vault
+    // is hers: the owner's doors refuse her too.
+    {
+        let vault = server.vault();
+        let proof = vault
+            .authenticate_owner(
+                room.mina,
+                &room.mina.to_hex(),
+                true,
+                oneiron::store::GateDecisionId::now(),
+            )
+            .unwrap();
+        let session = vault
+            .off_record_session_vault()
+            .bind(&owner_key(room.id, "garden"))
+            .unwrap();
+        assert!(session.save_talk_as(&proof).is_err());
+        assert!(session.promote_turn_as(&proof, &said[0]).is_err());
+        assert!(session.flip_on_record_as(&proof).is_err());
+    }
     for turn in said {
         assert!(server.vault().get(&turn).unwrap().is_none());
     }

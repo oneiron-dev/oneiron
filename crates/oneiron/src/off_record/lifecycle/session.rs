@@ -760,7 +760,11 @@ impl OffRecordSession<'_> {
             drop(snapshot);
             let mut outcomes = self.promote_plans(&mut state, vec![plan], |wtxn| {
                 if let Some(owner) = owner {
-                    owner.revalidate_in_txn(self.vault, wtxn)?;
+                    if room.is_some() {
+                        owner.revalidate_as_vault_owner_in_txn(self.vault, wtxn)?;
+                    } else {
+                        owner.revalidate_in_txn(self.vault, wtxn)?;
+                    }
                     if let Some(room) = room {
                         super::room::require_sight_in_txn(
                             self.vault,

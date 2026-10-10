@@ -239,24 +239,37 @@ impl OffRecordSession<'_> {
         self.save_talk(person, Some(room), authority)
     }
 
-    /// The owner's save of the whole talk so far; `owner`'s proof is rechecked
-    /// in the transaction that saves. In a room the owner must be on the
-    /// roster, and only the turns their membership shows them are saved.
+    /// The owner's save of the whole talk so far; `owner`'s proof, and that
+    /// they own this vault, are rechecked in the transaction that saves. In a
+    /// room the owner must be on the roster, and only the turns their
+    /// membership shows them are saved.
     pub fn save_talk_as(&self, owner: &crate::consent::AuthenticatedOwner) -> Result<SavedTurns> {
         let room = match self.room()? {
             Some(_) => Some(self.require_in_room(owner.actor())?),
             None => None,
         };
-        self.save_talk(owner.actor(), room, |vault, txn| {
-            owner.revalidate_in_txn(vault, txn)
-        })
+        let authority =
+            |vault: &Vault, txn: &heed::RoTxn<'_>| owner.revalidate_as_vault_owner_in_txn(vault, txn);
+        // Refused the same way whether or not there is anything to save yet.
+        authority(self.vault, &self.vault.store.env.read_txn()?)?;
+        self.save_talk(owner.actor(), room, authority)
     }
 
     /// Flips the stretch on record for the owner: later turns are saved as
     /// they land, and the room hears a `saving_from_here` notice. In a room
-    /// the owner must be on the roster.
+    /// the owner must be on the roster and own this vault, since the flip
+    /// saves everyone's later turns into it.
     pub fn flip_on_record_as(&self, owner: &crate::consent::AuthenticatedOwner) -> Result<()> {
-        if self.room()?.is_some() {
+        let in_room = self.room()?.is_some();
+        {
+            let txn = self.vault.store.env.read_txn()?;
+            if in_room {
+                owner.revalidate_as_vault_owner_in_txn(self.vault, &txn)?;
+            } else {
+                owner.revalidate_in_txn(self.vault, &txn)?;
+            }
+        }
+        if in_room {
             self.require_in_room(owner.actor())?;
         }
         let was = self.mode()?;
