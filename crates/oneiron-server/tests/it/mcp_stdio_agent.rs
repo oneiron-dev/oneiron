@@ -1149,7 +1149,25 @@ fn seed_failed_task_and_open_turn(
             .chain(members.iter().copied())
             .map(|minted| principal(minted).to_hex()),
     );
-    vault.put_project(project, &record, 1).unwrap();
+    // An owner-rooted vault takes a new project only with the owner's signed
+    // birth, under the host key the issuer secret derives.
+    let host = SigningKey::from_bytes(&blake3::derive_key(
+        "oneiron/host-authority-signing/v2",
+        SECRET.as_bytes(),
+    ));
+    vault
+        .create_project_with_owner(
+            project,
+            &record,
+            &oneiron::write_envelope::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
+            1,
+            oneiron::authority::AuthorityKey::Ed25519(host.verifying_key().to_bytes()),
+            |message| {
+                use ed25519_dalek::Signer;
+                Ok(host.sign(message).to_bytes().to_vec())
+            },
+        )
+        .unwrap();
     let room = record.home_room.clone();
     let turn = oneiron::EntityId::now().to_hex();
     let opened: oneiron::memory::WitnessTurn = serde_json::from_value(json!({
