@@ -248,21 +248,14 @@ impl AskHandler for Outlasts<'_> {
 #[test]
 fn a_deadline_stops_an_organ_deaf_to_its_cancel_while_the_handler_runs() {
     let (_dir, vault) = vault();
-    let mut deaf = spec(vec![AskGrant::new(ANSWER, 4)]);
-    deaf.args = vec!["--ask-once".into()];
-    let host = host(deaf);
+    let host = rogue("--ask-once");
     let handler = Outlasts {
         host: &host,
         sleep: Duration::from_millis(1500),
         pid_after: Mutex::new(None),
     };
     let asks = AskHandlers::none().with(ANSWER, &handler);
-    let result = host.call_with(
-        &vault,
-        ask_call(ANSWER, rmpv::Value::Nil, 1, Duration::from_millis(200)),
-        Vec::new(),
-        &asks,
-    );
+    let result = host.call_with(&vault, echo(Duration::from_millis(200)), Vec::new(), &asks);
     assert!(
         matches!(result, Err(HostError::DeadlineExceeded)),
         "{result:?}"
