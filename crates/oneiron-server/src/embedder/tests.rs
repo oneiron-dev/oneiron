@@ -636,28 +636,13 @@ fn an_alias_moved_to_another_revision_is_refused_and_nothing_is_stored() {
 /// provider, as any failed remote answer does.
 #[test]
 fn a_remote_rung_on_an_alias_moved_to_another_revision_is_refused() {
-    use crate::config::EmbedderLocality as Locality;
-    use crate::config::remote_embedder::{EgressPolicy, RemoteEmbedderConfig};
     use oneiron::embed::EmbedderLocality;
     let primary = MockEndpoint::start(MockBehaviour::OneironWire);
     let remote = MockEndpoint::start(MockBehaviour::OneironWire);
     let dir = tempfile::tempdir().expect("vault dir");
     let vault = test_vault(dir.path());
     let config = EmbedderConfig {
-        remote: Some(RemoteEmbedderConfig {
-            endpoint: remote.base.clone(),
-            model_key: MODEL_KEY.into(),
-            locality: Locality::OwnerServer,
-            artifact: None,
-            api_key_env: None,
-            lease_ms: 120_000,
-            timeout_ms: 1000,
-            egress: Some(EgressPolicy {
-                allow: Vec::new(),
-                deny: Vec::new(),
-                allow_all: true,
-            }),
-        }),
+        remote: Some(owner_rung(&remote.base)),
         ..endpoint_config(&primary.base)
     };
     let slot = EmbedderSlot::from_config(&config)
@@ -692,6 +677,86 @@ fn a_remote_rung_on_an_alias_moved_to_another_revision_is_refused() {
     assert_eq!(
         vault.embedding_locality(&second).expect("read"),
         Some(EmbedderLocality::OnDevice)
+    );
+}
+
+/// A remote rung on the owner's server at `endpoint`, every row allowed out.
+fn owner_rung(endpoint: &str) -> crate::config::remote_embedder::RemoteEmbedderConfig {
+    use crate::config::remote_embedder::{EgressPolicy, RemoteEmbedderConfig};
+    RemoteEmbedderConfig {
+        endpoint: endpoint.to_owned(),
+        model_key: MODEL_KEY.into(),
+        locality: crate::config::EmbedderLocality::OwnerServer,
+        artifact: None,
+        api_key_env: None,
+        lease_ms: 120_000,
+        timeout_ms: 1000,
+        egress: Some(EgressPolicy {
+            allow: Vec::new(),
+            deny: Vec::new(),
+            allow_all: true,
+        }),
+    }
+}
+
+/// Review (Astra's re-check, #1361): a remote rung fills rows the vault
+/// judges by its floors. Bug repro: a rung's answers were held to the model
+/// and transform alone, and weight precision is not in the transform, so a
+/// rung on unquantised weights filled a vault judged by the floors measured
+/// for Q8_0. Under measured floors a rung's answers must now name a measured
+/// profile, or the vault's own provider fills the row.
+#[test]
+fn a_remote_rung_off_the_measured_profile_is_refused_under_measured_floors() {
+    use oneiron::embed::EmbedderLocality;
+    let shipped_id = crate::config::embedder::DEFAULT_MODEL_ID;
+    let primary = MockEndpoint::start(MockBehaviour::OneironWire);
+    let remote = MockEndpoint::start(MockBehaviour::OneironWire);
+    primary.serve_model(shipped_id);
+    primary.serve_profile(shipped_profile(json!({})));
+    remote.serve_model(shipped_id);
+    remote.serve_profile(shipped_profile(json!({ "quant": "none" })));
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = vault_on(dir.path(), shipped_id);
+    let config = EmbedderConfig {
+        model_id: shipped_id.to_owned(),
+        remote: Some(owner_rung(&remote.base)),
+        ..endpoint_config(&primary.base)
+    };
+    let slot = EmbedderSlot::from_config(&config)
+        .expect("slot")
+        .expect("active");
+    let embedder = slot
+        .ensure_ready(|admission| admission.into_vault(&vault))
+        .expect("admitted");
+    assert_eq!(vault.vector_evidence(), MEASURED);
+    let reconciler = oneiron::embed::PendingEmbeddingReconciler::new(
+        Arc::clone(&vault),
+        embedder as Arc<dyn oneiron::embed::Embedder>,
+    )
+    .with_remote_rung(slot.remote_rung().expect("rung").expect("configured"))
+    .expect("rung");
+    while reconciler.reconcile_once().expect("filled").leased > 0 {}
+
+    let first = put_claim(&vault, 0xE7, "a claim the unquantised rung would embed");
+    let report = reconciler.reconcile_once().expect("filled");
+    assert_eq!(
+        (report.remote_failed_fallback_local, report.filled),
+        (1, 1),
+        "refused, and filled by the vault's own provider"
+    );
+    assert_eq!(
+        vault.embedding_locality(&first).expect("read"),
+        Some(EmbedderLocality::OnDevice)
+    );
+
+    // A longer input cap still reads what the shipped one does.
+    remote.serve_profile(shipped_profile(json!({ "max_input_tokens": 8192 })));
+    let second = put_claim(&vault, 0xE8, "a claim the measured rung embeds");
+    let report = reconciler.reconcile_once().expect("filled");
+    assert_eq!((report.routed_remote, report.filled), (1, 1));
+    assert_eq!(
+        vault.embedding_locality(&second).expect("read"),
+        Some(EmbedderLocality::OwnerServer)
     );
 }
 
@@ -1606,7 +1671,9 @@ fn remote_rung_routes_each_entity_and_falls_back_with_truthful_locality() {
             }),
         });
         let primary = endpoint::HttpEmbedder::from_config(&config).unwrap();
-        let rung = build_remote_rung(&config, None).unwrap().unwrap();
+        let rung = build_remote_rung(&config, Default::default())
+            .unwrap()
+            .unwrap();
         assert_eq!(rung.lease_duration_ms, 120_000);
         let reconciler = PendingEmbeddingReconciler::new(Arc::clone(&vault), primary)
             .with_remote_rung(rung)

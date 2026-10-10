@@ -21,6 +21,7 @@ use oneiron::embed::{Embedder, EmbedderLocality, PendingEmbeddingInput};
 use oneiron::error::StoreError;
 
 use super::local::evidence::{self, RunProfile};
+use super::remote::RungHold;
 use super::{EmbedderCommon, QueryEmbedder, engine_locality};
 use crate::config::EmbedderConfig;
 
@@ -144,9 +145,8 @@ enum Admitted {
     /// must agree with ([`Listing::agrees_with`]).
     Listing(Listing),
     /// A remote rung, held to the vault's space without a listing of its own
-    /// ([`HttpEmbedder::hold_as_rung`]): the transform the vault admitted
-    /// from its own provider, if that names one.
-    Rung { transform: Option<String> },
+    /// ([`HttpEmbedder::hold_as_rung`]).
+    Rung(Arc<Mutex<RungHold>>),
 }
 
 /// What the remote's `/models` listing said about the configured model.
@@ -391,13 +391,11 @@ impl HttpEmbedder {
     /// Holds a remote rung to the vault's space. A rung is never admitted
     /// from a listing of its own and fills the rows the vault's provider
     /// would: an answer that names the model it loaded must name the vault's,
-    /// and one that names a transform must name `transform`, the one the
-    /// vault admitted from its provider. A server that names neither, any
-    /// other OpenAI server, is held to the configured model's promise alone,
-    /// as before.
-    pub(crate) fn hold_as_rung(&self, transform: Option<String>) {
-        *self.admitted.lock().unwrap_or_else(PoisonError::into_inner) =
-            Admitted::Rung { transform };
+    /// one that names a transform must name the one the vault admitted from
+    /// its provider, and under a model's measured floors one that names its
+    /// profile must name the measured one ([`RungHold::holds`]).
+    pub(crate) fn hold_as_rung(&self, hold: Arc<Mutex<RungHold>>) {
+        *self.admitted.lock().unwrap_or_else(PoisonError::into_inner) = Admitted::Rung(hold);
     }
 
     /// Reads the remote's `/models` listing and keeps it. A listing that does
@@ -481,16 +479,12 @@ impl HttpEmbedder {
         let agrees = match &*self.admitted.lock().unwrap_or_else(PoisonError::into_inner) {
             Admitted::Unchecked => true,
             Admitted::Listing(listing) => listing.agrees_with(&parsed),
-            Admitted::Rung { transform } => {
-                parsed
-                    .model_id
-                    .as_ref()
-                    .is_none_or(|model| *model == self.common.model_id)
-                    && parsed
-                        .transform
-                        .as_ref()
-                        .is_none_or(|named| Some(named) == transform.as_ref())
-            }
+            Admitted::Rung(hold) => hold.lock().unwrap_or_else(PoisonError::into_inner).holds(
+                &self.common.model_id,
+                parsed.model_id.as_deref(),
+                parsed.transform.as_deref(),
+                parsed.profile.as_ref(),
+            ),
         };
         if !agrees {
             return Err(oneiron::Error::UpstreamToolFailure {

@@ -175,7 +175,10 @@ floors only when the server runs it as it was measured (Q8_0 weights, the
 checkpoint's attention and output quantization, the shipped input cap or more,
 its own files) and the vault's queries carry no prompt of their own; any other
 profile, and any other endpoint, keeps the engine's default floors, as a
-`local` vault on the same settings does.
+`local` vault on the same settings does. A remote rung pointed at
+`embedder serve` is held the same way: its answers must name the vault's model
+and transform and, when the vault judges by measured floors, the measured
+profile, or the vault's own provider fills the row instead.
 `deploy/systemd/oneiron-embedder.service` runs it as a user service.
 
 `--config` or the `--embedder-*` flags pick another local model, as `serve`

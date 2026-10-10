@@ -42,7 +42,7 @@ impl RunProfile {
     /// under: the repository's files, Q8_0 weights, the attention and output
     /// quantization the checkpoint declares, and an input cap that reads at
     /// least what the shipped one does.
-    fn is_measured(&self) -> bool {
+    pub(crate) fn is_measured(&self) -> bool {
         !self.model_dir
             && self.quant == EmbedderQuant::Q8_0
             && self.attention == EmbedderAttention::Auto

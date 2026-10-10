@@ -180,9 +180,10 @@ pub(crate) struct EmbedderSlot {
     /// built at boot but answers no query until the worker has admitted it,
     /// as a local model answers none before it has loaded and been admitted.
     admitted: AtomicBool,
-    /// The transform the vault admitted from the provider, if it named one,
-    /// which a remote rung is held to ([`Self::remote_rung`]).
-    vault_transform: Mutex<Option<String>>,
+    /// The space the vault admitted from the provider, which a remote rung's
+    /// answers are held to ([`Self::remote_rung`]); set again with the
+    /// vault's floors on every admission.
+    rung_hold: Arc<Mutex<remote::RungHold>>,
 }
 
 impl EmbedderSlot {
@@ -200,7 +201,7 @@ impl EmbedderSlot {
             ready: OnceLock::new(),
             models: local::model_manager::ModelManager::default(),
             admitted: AtomicBool::new(false),
-            vault_transform: Mutex::new(None),
+            rung_hold: Arc::default(),
         };
         if config.provider == EmbedderProvider::Endpoint {
             let embedder = endpoint::HttpEmbedder::from_config(config)?;
@@ -259,23 +260,21 @@ impl EmbedderSlot {
                 // Read afresh each time: a refused remote restored to the
                 // vault's model and settings is admitted on the worker's next
                 // try, and one restarted with another profile gets its floors.
-                // The answers' pin goes in with the vault's side, before
+                // The answers' pins go in with the vault's side, before
                 // queries are let through.
                 let admitted = http.served().and_then(|served| {
-                    let transform = served.transform().map(str::to_owned);
                     http.admit_with(served, |served| {
-                        admit(Admission {
-                            transform: served.transform(),
-                            evidence: served.evidence(&self.config),
-                        })
-                    })?;
-                    Ok(transform)
+                        self.admit_holding_rung(
+                            Admission {
+                                transform: served.transform(),
+                                evidence: served.evidence(&self.config),
+                            },
+                            admit,
+                        )
+                    })
                 });
                 match admitted {
-                    Ok(transform) => {
-                        *self.vault_transform() = transform;
-                        self.admitted.store(true, Ordering::Release);
-                    }
+                    Ok(()) => self.admitted.store(true, Ordering::Release),
                     Err(error) => {
                         self.admitted.store(false, Ordering::Release);
                         return Err(error);
@@ -285,11 +284,13 @@ impl EmbedderSlot {
             return Ok(Arc::clone(ready));
         }
         let local = local::LocalEmbedder::load(&self.config, &self.models)?;
-        admit(Admission {
-            transform: Some(local.transform()),
-            evidence: evidence_floors(&self.config),
-        })?;
-        *self.vault_transform() = Some(local.transform().to_owned());
+        self.admit_holding_rung(
+            Admission {
+                transform: Some(local.transform()),
+                evidence: evidence_floors(&self.config),
+            },
+            admit,
+        )?;
         self.admitted.store(true, Ordering::Release);
         let embedder = local as Arc<dyn QueryEmbedder>;
         let _ = self.ready.set(Arc::clone(&embedder));
@@ -297,18 +298,31 @@ impl EmbedderSlot {
         Ok(self.ready.get().map_or(embedder, Arc::clone))
     }
 
-    fn vault_transform(&self) -> std::sync::MutexGuard<'_, Option<String>> {
-        self.vault_transform
+    /// Runs `admit`, and once the vault has taken `admission` holds a remote
+    /// rung's answers to it, with no rung answer checked in between.
+    fn admit_holding_rung(
+        &self,
+        admission: Admission<'_>,
+        admit: impl FnOnce(Admission<'_>) -> oneiron::Result<()>,
+    ) -> oneiron::Result<()> {
+        let mut hold = self
+            .rung_hold
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let taken = remote::RungHold {
+            transform: admission.transform.map(str::to_owned),
+            measured: admission.evidence != VectorEvidenceFloors::default(),
+        };
+        admit(admission)?;
+        *hold = taken;
+        Ok(())
     }
 
     /// The section's remote rung, if it configures one, held to the vault's
-    /// model and to the transform the vault admitted from the provider
-    /// ([`Self::ensure_ready`] first).
+    /// model and to the space the vault admits from the provider
+    /// ([`Self::ensure_ready`]).
     pub(crate) fn remote_rung(&self) -> oneiron::Result<Option<oneiron::embed::RemoteRung>> {
-        let transform = self.vault_transform().clone();
-        build_remote_rung(&self.config, transform)
+        build_remote_rung(&self.config, Arc::clone(&self.rung_hold))
     }
 
     /// Embeds a query, or says why it cannot.
