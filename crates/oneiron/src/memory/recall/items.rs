@@ -78,13 +78,19 @@ impl Memory<'_> {
         // from, or quotes, is a source too: an edit, erase, archive or
         // disclosure change of one changes the item. A live view depends on
         // every source an item names.
+        let mut named = std::collections::HashSet::from([*id]);
+        named.extend(
+            edges
+                .iter()
+                .filter(|edge| edge.kind == EdgeKind::Supersedes)
+                .map(|edge| edge.target),
+        );
         for message in turn_members
             .iter()
             .chain(turn_messages.iter().map(|(message, _)| message))
         {
-            let message = message.to_hex();
-            if !source_revision_ids.contains(&message) {
-                source_revision_ids.push(message);
+            if named.insert(*message) {
+                source_revision_ids.push(message.to_hex());
             }
         }
         let facet = facet_hint.map(|facet| facet.to_hex()).or_else(|| {
