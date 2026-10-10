@@ -244,6 +244,8 @@ fn resumed_step_that_moves_its_write_still_gets_the_first_receipt() {
 /// and may make its write with another input, here `label` omitted where the
 /// first attempt passed `null`. The step's first write is the one the first
 /// attempt committed, so the changed call is refused, never written again.
+/// It is refused where it is made, not answered with the first call's
+/// receipt: a step that went on from that answer would make its next write.
 #[test]
 fn resumed_step_that_changes_its_write_is_refused_not_written_twice() {
     let (_dir, vault) = open_test_vault();
@@ -254,7 +256,11 @@ fn resumed_step_that_changes_its_write_is_refused_not_written_twice() {
         verb: AgentVerb::TasksCreate,
         input: serde_json::json!({"spec": "summarize the open notes"}),
     });
-    let outcome = run.resume(&run.config, &mut resumed_step(vec![changed]));
+    let next = SelfCall::AgentVerb(SelfAgentVerbCall {
+        verb: AgentVerb::TasksCreate,
+        input: serde_json::json!({"spec": "file the summary"}),
+    });
+    let outcome = run.resume(&run.config, &mut resumed_step(vec![changed, next]));
     assert!(
         matches!(
             outcome,
