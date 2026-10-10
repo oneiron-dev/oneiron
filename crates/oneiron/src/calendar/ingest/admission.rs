@@ -204,7 +204,7 @@ impl PollAdmission<'_> {
                     calendar_name: Some(self.system.to_owned()),
                     ..Default::default()
                 };
-                let admitted = self.vault.with_write_txn(|txn| {
+                let admitted = self.vault.with_write_txn_grouped(|txn| {
                     self.vault.stage_calendar_event(
                         txn,
                         &input,
@@ -237,7 +237,7 @@ impl PollAdmission<'_> {
             external_id: Some(event.uid.clone()),
             ..Default::default()
         };
-        self.vault.with_write_txn(|txn| {
+        self.vault.with_write_txn_grouped(|txn| {
             self.vault.update_calendar_import_in_txn(
                 txn,
                 event_ref,

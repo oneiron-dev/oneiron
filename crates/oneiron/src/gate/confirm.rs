@@ -133,7 +133,7 @@ impl Vault {
             );
         }
         self.expire_critical_write_confirms()?;
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let (cursor, prior_fence) = self
                 .store
                 .critical_confirm_list_sweep_state_in_txn(&*wtxn)?;
@@ -192,7 +192,7 @@ impl Vault {
         confirm_id: [u8; 32],
     ) -> Result<CriticalWriteConfirmResolution> {
         let now = self.store.clock.now_recorded_at();
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let fold = self.authority_fold_readonly_in_txn(&*wtxn)?;
             // Confirm IDs have a dedicated exact index; unrelated calls cannot
             // influence absence detection or turn a live target into terminal state.
@@ -365,7 +365,7 @@ impl Vault {
     }
 
     fn expire_critical_write_confirms_impl(&self, now: u64) -> Result<usize> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let (cursor, prior_fence) = self
                 .store
                 .critical_confirm_expiry_sweep_state_in_txn(&*wtxn)?;

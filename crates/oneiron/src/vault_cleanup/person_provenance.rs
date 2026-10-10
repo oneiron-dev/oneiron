@@ -45,7 +45,7 @@ impl Vault {
         learned_at: u64,
         data: &[u8],
     ) -> Result<bool> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             self.put_extraction_minted_person_in_txn(txn, id, source, occurred, learned_at, data)
         })
     }

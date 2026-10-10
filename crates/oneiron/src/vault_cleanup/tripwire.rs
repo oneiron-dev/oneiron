@@ -263,7 +263,7 @@ pub(super) fn cleanup_posture_in_txn(
 ///
 /// Storage errors.
 pub fn set_cleanup_posture(vault: &Vault, posture: CleanupPosture) -> Result<()> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         if posture == CleanupPosture::AutoWithDigest && !rollout::auto_enabled(vault, wtxn)? {
             return Err(Error::InvariantViolation(
                 "automatic cleanup rollout blockers are open",

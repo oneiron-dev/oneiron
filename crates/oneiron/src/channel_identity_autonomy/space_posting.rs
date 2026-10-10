@@ -116,7 +116,7 @@ impl Vault {
     ) -> Result<SpacePostingReceipt> {
         self.autonomy_owner(owner)?;
         let head = head_key(identity, space)?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             self.autonomy_identity_actor(txn, identity)?;
             let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &identity)?
                 .ok_or_else(invalid_autonomy)?;

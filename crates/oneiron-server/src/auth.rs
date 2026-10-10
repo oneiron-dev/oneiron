@@ -118,7 +118,7 @@ pub(crate) fn revoke_token_jti(vault: &oneiron::Vault, jti: &str) -> anyhow::Res
     let key = revoked_token_jti_key(jti);
     // LMDB serializes writers. Read the marker under the SAME write transaction
     // that creates it, so only the first concurrent caller can report `true`.
-    Ok(vault.with_write_txn(|txn| {
+    Ok(vault.with_write_txn_grouped(|txn| {
         if vault.sync_state_get_in_write_txn(txn, &key)?.is_some() {
             return Ok(false);
         }

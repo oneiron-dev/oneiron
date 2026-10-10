@@ -80,7 +80,7 @@ impl DreamerWakeDriver<'_> {
             start: now,
             end: now,
         };
-        self.vault.with_write_txn(|wtxn| {
+        self.vault.with_write_txn_grouped(|wtxn| {
             let mut envelope = author.envelope.clone();
             self.vault.sign_retained_machine_claim_in_txn(
                 &*wtxn,

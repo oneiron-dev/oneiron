@@ -60,7 +60,7 @@ impl Memory<'_> {
         let id = self.resolve_ref(claim_ref)?;
         let (approval, vad) = self
             .vault
-            .with_write_txn(|txn| {
+            .with_write_txn_grouped(|txn| {
                 self.verify_public_booking_writer_in_txn(txn).map_err(|_| {
                     crate::Error::InvalidClaimBody("booking publication owner authority refused")
                 })?;

@@ -264,7 +264,7 @@ impl Vault {
         history: Option<HistoryChoice>,
         from: Option<u64>,
     ) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             authorize(self, txn, actor)?;
             require_kind(self, txn, person, ENTITY_TYPE_PERSON)?;
             let mut body = body::body_in(self, txn, conversation)?;
