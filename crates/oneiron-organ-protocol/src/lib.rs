@@ -22,6 +22,8 @@ mod region;
 mod runtime;
 #[cfg(unix)]
 mod shape;
+#[cfg(unix)]
+pub mod spin;
 
 #[cfg(unix)]
 pub use frame::{FrameError, recv_frame, recv_frame_until, send_frame, send_frame_until};

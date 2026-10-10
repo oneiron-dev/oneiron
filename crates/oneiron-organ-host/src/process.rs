@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use oneiron_organ_protocol::{
     Call, CancelReason, DEFAULT_FRAME_LIMIT, FrameError, FromOrgan, Hello, HelloAck, Limits,
-    PROTOCOL, Reply, ToOrgan, recv_frame, recv_frame_until, send_frame_until,
+    PROTOCOL, Reply, ToOrgan, recv_frame, recv_frame_until, send_frame_until, spin,
 };
 
 use crate::error::HostError;
@@ -370,7 +370,7 @@ impl OrganProcess {
                 return Err(CallFailure::Frame(err.into()));
             }
         }
-        match reply.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        match spin::recv_spinning(reply, Some(deadline)) {
             Ok(Some(delivery)) => return Ok(delivery),
             Ok(None) | Err(RecvTimeoutError::Disconnected) => return Err(CallFailure::Crashed),
             Err(RecvTimeoutError::Timeout) => {}
@@ -526,7 +526,11 @@ fn check_handshake(spec: &OrganSpec, ack: &HelloAck) -> Result<(), HostError> {
 /// second `hello_ack`; then fails every waiting call and ends the process,
 /// so an organ that exits while idle is reaped at once.
 fn read_replies(stream: &UnixStream, inbox: &Inbox, lifeline: &Lifeline, limit: u32) {
-    while let Ok((FromOrgan::Reply(reply), fds)) = recv_frame::<FromOrgan>(stream, limit) {
+    loop {
+        spin::poll_readable(stream);
+        let Ok((FromOrgan::Reply(reply), fds)) = recv_frame::<FromOrgan>(stream, limit) else {
+            break;
+        };
         let waiter = lock(&inbox.pending).remove(&reply.id);
         // A reply nobody waits for came after its deadline: drop it.
         if let Some(waiter) = waiter {
