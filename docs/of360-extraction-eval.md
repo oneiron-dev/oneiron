@@ -61,13 +61,8 @@ ONE-1524. The fixture metadata keeps `owner_corpus_missing = true` and
 `generate_of360_seeded_gold_subset` performs deterministic subset selection from
 the bundled seed rows. It does not synthesize replacement gold labels.
 
-`crates/oneiron/tests/fixtures/of360_gold.v1.json` supplies the full v1 fixture,
-read by `crates/oneiron/tests/it/of360_extraction_eval.rs`; the library has no
-full loader. It holds 500 memory points across 50 scenarios, plus grounded QA
-items. It was authored for this ticket and is explicitly synthetic, not private
-owner data. The full fixture carries `owner_corpus_missing = false` and no seed
-warning. The original subset and its warning remain available for smoke tests.
-
-The 500-point integration fixture supplies exact extraction matches and QA
-answers to test the scorer. Its perfect score validates accounting, not a model's
-extraction quality. Live systems must provide their own predictions.
+The library has no full loader, and the repo ships no full corpus. A synthetic
+500-point v1 fixture and its integration test checked only the scorer's
+accounting (a perfect score from copied gold answers), not a model's extraction
+quality; both were removed in the 2026-10 test prune and remain in git history.
+Live systems must provide their own predictions.

@@ -118,7 +118,8 @@ impl Memory<'_> {
             let route = self.route_created_task_in_txn(wtxn, task_ref, &validated, now)?;
             // A caller-chosen owner_ref does not certify who authored the
             // assignment. This independent witness is minted only after an
-            // authenticated human owner creates an agent-addressed TASK.
+            // authenticated human owner creates an agent-addressed TASK, never
+            // when code a model wrote does so under the owner's connector.
             if validated.kind == TaskKind::Standard
                 && validated.assignee.is_some_and(|assignee| {
                     matches!(
@@ -129,6 +130,7 @@ impl Memory<'_> {
                     )
                 })
                 && self.actor_class() == crate::EdgeActorClass::Human
+                && !self.writes_generated()
                 && owner_ref == self.actor()
                 && crate::memory::verify_owner_actor_binding_in_txn(self.vault(), wtxn, owner_ref)
                     .is_ok()

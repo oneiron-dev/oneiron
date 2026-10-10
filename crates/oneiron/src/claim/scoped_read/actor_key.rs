@@ -208,15 +208,21 @@ impl ScopedReadActorKey {
             proof.claims().holder_ref.clone(),
             proof.claims().actor_class.clone(),
         )?;
-        let mut authority = proof.scope().clone();
+        key.authority = Some(Self::read_authority(proof.scope()));
+        key.proof = Some(proof.clone());
+        Some(key)
+    }
+
+    /// A slip's Scope as every read door checks a proof of it: one that
+    /// names `core:read` names `read` too.
+    pub(crate) fn read_authority(scope: &crate::federation::Scope) -> crate::federation::Scope {
+        let mut authority = scope.clone();
         if let crate::federation::ScopeAxis::Some(verbs) = &mut authority.verbs
             && verbs.contains("core:read")
         {
             verbs.insert("read".to_owned());
         }
-        key.authority = Some(authority);
-        key.proof = Some(proof.clone());
-        Some(key)
+        authority
     }
 
     pub(crate) fn authenticated_person(&self) -> Option<EntityId> {

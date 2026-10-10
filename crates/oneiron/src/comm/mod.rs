@@ -40,7 +40,8 @@ pub(crate) use self::consent::{
 };
 pub use self::parties::resolve_or_create_comm_party;
 pub(crate) use self::parties::{
-    comm_party_keys_in_txn, resolve_party_ref_from_store_in_txn, resolve_party_ref_in_txn,
+    CommParties, comm_party_keys_in_txn, count_active_party_claims_in_txn,
+    resolve_party_ref_from_store_in_txn, resolve_party_ref_in_txn,
 };
 pub use self::projector::{
     record_comm_inbound_reply, record_comm_inbound_stop, record_comm_send_receipt,
