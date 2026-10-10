@@ -42,18 +42,36 @@ fn title_key(
         .map(|title| {
             validate_title(title)?;
             let (_, core) = super::verbs::note_core(vault, txn, note)?;
-            let normalized = title
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-                .to_lowercase();
-            Ok(TitleKey(format!(
-                "{}:{}",
-                core.author_ref.to_hex(),
-                blake3::hash(normalized.as_bytes()).to_hex()
-            )))
+            Ok(TitleKey(reservation_key(core.author_ref, title)))
         })
         .transpose()
+}
+
+/// Titles that differ only in case and spacing are one title.
+pub(super) fn normalized(title: &str) -> String {
+    title
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+fn reservation_key(author: EntityId, title: &str) -> String {
+    format!(
+        "{}:{}",
+        author.to_hex(),
+        blake3::hash(normalized(title).as_bytes()).to_hex()
+    )
+}
+
+/// The NOTE that holds `author`'s reservation of `title`, if one does.
+pub(super) fn holder_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    author: EntityId,
+    title: &str,
+) -> Result<Option<EntityId>> {
+    TITLE_RESERVATION.get(store, txn, &reservation_key(author, title))
 }
 
 impl ValidatedTitleReplacement {

@@ -9,6 +9,7 @@
 pub(crate) mod backup;
 pub(crate) mod imports;
 pub(crate) mod location;
+pub(crate) mod note_imports;
 pub(crate) mod runs;
 pub(crate) mod schedule;
 pub(crate) mod stamp;

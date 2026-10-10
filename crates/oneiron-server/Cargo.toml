@@ -60,6 +60,9 @@ clap = { version = "4", features = ["derive", "env"] }
 tower-http = { version = "0.6", features = ["cors"] }
 anyhow = "1"
 serde_bytes = "0.11"
+# `oneiron import notes` reads each note's YAML frontmatter; the tests also
+# parse memory-reason YAML in quoted-scalar control-character regressions.
+serde_yaml_ng = "0.10"
 blake3 = { workspace = true }
 ed25519-dalek = { workspace = true }
 rand_core = { workspace = true }
@@ -116,8 +119,6 @@ candle-nn = { version = "=0.11.0", features = ["metal"] }
 
 [dev-dependencies]
 oneiron-remote = { path = "../oneiron-remote" }
-# Parse memory-reason YAML in quoted-scalar control-character regressions.
-serde_yaml_ng = "0.10"
 tempfile = "3"
 # `util` carries `ServiceExt::oneshot`, which the router-level rows in
 # `src/api/tests.rs` and `src/commands/tests.rs` drive requests through. The

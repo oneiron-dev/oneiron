@@ -93,11 +93,47 @@ pub(super) fn walk_logs(
                 root.join(history).display()
             );
             let dir = openat(&root_dir, history_name, directory_flags(), Mode::empty())?;
-            walk(&dir, &root.join(history), 0, visit)
+            walk(&dir, &root.join(history), 0, LOGS, visit)
         }
-        Err(_) => walk(&root_dir, root, 0, visit),
+        Err(_) => walk(&root_dir, root, 0, LOGS, visit),
     }
 }
+
+/// Visits every `.md` file under `root`, passing over hidden files and
+/// folders (an editor's settings, its trash, a `.git`): the path shown, and
+/// the file.
+pub(super) fn walk_notes(
+    root: &Path,
+    visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    walk(&open_root(root)?, root, 0, NOTES, visit)
+}
+
+/// The files a walk visits: their extension, whether hidden entries count,
+/// and how deep it goes. Past `depth`, a log walk passes over the folder; a
+/// notes walk refuses, since a batch without those notes would read as the
+/// whole folder.
+#[derive(Clone, Copy)]
+pub(super) struct Wanted {
+    extension: &'static str,
+    hidden: bool,
+    depth: usize,
+    refuse_deeper: bool,
+}
+
+pub(super) const LOGS: Wanted = Wanted {
+    extension: "jsonl",
+    hidden: true,
+    depth: MAX_WALK_DEPTH,
+    refuse_deeper: false,
+};
+
+const NOTES: Wanted = Wanted {
+    extension: "md",
+    hidden: false,
+    depth: 32,
+    refuse_deeper: true,
+};
 
 /// The session log `relative` names below `root`, and the folder it sits in.
 /// Every folder below `root` is opened relative to the one above it and never
@@ -141,16 +177,24 @@ pub(super) fn walk(
     dir: &OwnedFd,
     shown: &Path,
     depth: usize,
+    wanted: Wanted,
     visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
-    if depth > MAX_WALK_DEPTH {
+    if depth > wanted.depth {
+        anyhow::ensure!(
+            !wanted.refuse_deeper,
+            "{} is more than {} folders deep; nothing was imported",
+            shown.display(),
+            wanted.depth
+        );
         return Ok(());
     }
     let mut entries: Vec<(OsString, FileType)> = Vec::new();
     for entry in Dir::read_from(dir)? {
         let entry = entry?;
         let name = OsStr::from_bytes(entry.file_name().to_bytes());
-        if name != "." && name != ".." {
+        let hidden = name.as_bytes().first() == Some(&b'.');
+        if name != "." && name != ".." && (wanted.hidden || !hidden) {
             entries.push((name.to_owned(), entry.file_type()));
         }
     }
@@ -167,12 +211,12 @@ pub(super) fn walk(
                             path.display()
                         )
                     })?;
-                walk(&child, &path, depth + 1, visit)?;
+                walk(&child, &path, depth + 1, wanted, visit)?;
             }
             FileType::RegularFile
                 if Path::new(&name)
                     .extension()
-                    .is_some_and(|extension| extension == "jsonl") =>
+                    .is_some_and(|extension| extension == wanted.extension) =>
             {
                 visit(&path, open_file(dir, &name, &path)?)?;
             }
