@@ -330,7 +330,7 @@
      "path": "src/affect/consolidation.rs",
      "purpose": "Vault claim-VAD transaction surface: annotation, consolidation, approvals, and state scans",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 4,
       "fn": 6
      }
     },
@@ -20266,7 +20266,7 @@
      "path": "src/ingest/identity_key.rs",
      "purpose": "Per-kind identity hints and the lookup-before-mint entity-resolution door",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 3
      }
     },
@@ -22829,7 +22829,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/extraction/mod.rs",
-     "purpose": "Host-served extraction beside witness, followed by separately authorized atomic persistence",
+     "purpose": "Host-served extraction beside witness, followed by a separately authorized save of its tags",
      "surface": {
       "crate-vis": 1,
       "re-export": 1
@@ -22840,7 +22840,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/extraction/persist.rs",
-     "purpose": "One transaction composes mention, VAD and identity-proposal doors",
+     "purpose": "A host's shadow output, once it clears parity, saved as its turn's tags the way the tagging slot saves an…",
      "surface": {
       "fn": 1
      }
@@ -22857,7 +22857,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/memory/extraction/tests.rs",
@@ -22876,7 +22876,6 @@
       "EncoderParity",
       "EncoderTurn",
       "ExtractionEncoder",
-      "ExtractionReceipt",
       "NerSpan",
       "ShadowTrace",
       "WitnessWithShadow"
@@ -22885,7 +22884,7 @@
      "purpose": "Typed serving payloads and observable extraction receipts",
      "surface": {
       "fn": 5,
-      "struct": 11,
+      "struct": 10,
       "trait": 1
      }
     },
@@ -23512,7 +23511,7 @@
      "purpose": "Base witness landing: container resolve, K7 door, batch write, text ops, session bump",
      "surface": {
       "crate-vis": 13,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -23543,7 +23542,7 @@
      "path": "src/memory/witness/program.rs",
      "purpose": "The one witness program: request checks, one plan, the ONE-1686 ceiling door and the ONE-1767 mint contract…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -27127,7 +27126,9 @@
      "notable": [],
      "path": "src/ports/lmdb_visibility.rs",
      "purpose": "Transaction-local visibility ledger for canonical and composed session views",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -27185,7 +27186,7 @@
      "path": "src/ports/mod.rs",
      "purpose": "Transaction-composable storage ports",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 6
      }
     },
@@ -27333,7 +27334,7 @@
      "path": "src/ports/time.rs",
      "purpose": "Per-store clock and id source",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 6,
       "struct": 1,
       "trait": 2
@@ -34947,12 +34948,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "HeldTagsOutcome"
+      "HeldTagsOutcome",
+      "UnreadText"
      ],
      "path": "src/tagging/held.rs",
      "purpose": "An importer completes a turn's marker with tags it already holds: no tagger call",
      "surface": {
-      "enum": 1,
+      "crate-vis": 1,
+      "enum": 2,
       "fn": 1
      }
     },
@@ -34985,6 +34988,7 @@
      "kind": "src",
      "notable": [
       "TaggingMarkerConfig",
+      "TaggingMode",
       "TaggingTraceHistory"
      ],
      "path": "src/tagging/marker.rs",
@@ -34992,7 +34996,8 @@
      "surface": {
       "const": 6,
       "crate-vis": 9,
-      "fn": 4,
+      "enum": 1,
+      "fn": 7,
       "struct": 2
      }
     },
@@ -35003,8 +35008,8 @@
      "path": "src/tagging/mod.rs",
      "purpose": "The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036…",
      "surface": {
-      "crate-vis": 3,
-      "re-export": 6
+      "crate-vis": 7,
+      "re-export": 8
      }
     },
     {
@@ -35016,9 +35021,22 @@
      "path": "src/tagging/output.rs",
      "purpose": "What a tagger's answer must satisfy before a marker settles on it",
      "surface": {
-      "crate-vis": 2,
-      "enum": 1,
-      "fn": 1
+      "crate-vis": 1,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ProvisionalEntity"
+     ],
+     "path": "src/tagging/provisional.rs",
+     "purpose": "Provisional entities: what a save mints when the identity key names nothing (ARCH-0055 §10), for the Dreamer…",
+     "surface": {
+      "crate-vis": 8,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -35033,8 +35051,46 @@
      "purpose": "The drain pass a host worker drives: claim ready markers, read each turn, call the tagger outside any write…",
      "surface": {
       "crate-vis": 1,
-      "fn": 10,
+      "fn": 9,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/tagging/save.rs",
+     "purpose": "Save mode: a checked answer becomes the turn's tag set (ARCH-0036, serving the tagger)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/tagging/save_tests.rs",
+     "purpose": "Save mode end to end, observed through the read doors (ARCH-0036, serving the tagger): a tagged turn's…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DerivationEnvelope",
+      "MentionHit",
+      "MentionLink",
+      "MergeEvidence",
+      "TaggedMention",
+      "TurnTags"
+     ],
+     "path": "src/tagging/tags.rs",
+     "purpose": "The saved tag sets: what save mode keeps for a tagged turn, the index of the entities they name, and the…",
+     "surface": {
+      "crate-vis": 13,
+      "enum": 1,
+      "fn": 6,
+      "struct": 5
      }
     },
     {
@@ -38515,6 +38571,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it_sync/tagging_local_only.rs",
+     "purpose": "What a saved tag set and a provisional entity do across two devices of one vault (ARCH-0036, serving the…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -39871,7 +39935,7 @@
      "purpose": "CRDT sync layer for Oneiron"
     },
     "tagging": {
-     "files": 10,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40006,8 +40070,8 @@
    },
    "over_bar": 33,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2422,
-   "test_files": 787
+   "source_files": 2425,
+   "test_files": 789
   },
   "oneiron-android": {
    "files": [
@@ -50221,7 +50285,7 @@
      "path": "src/oneironer/tests/support.rs",
      "purpose": "A stub tagger server inside the test process, and the vaults and servers the slot's tests share",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -50229,7 +50293,7 @@
      "kind": "test",
      "notable": [],
      "path": "src/oneironer/tests/worker.rs",
-     "purpose": "The worker against the stub tagger: shadow writes nothing but the job tables, a failing tagger never fails a…",
+     "purpose": "The worker against the stub tagger: save mode saves each turn's tags, shadow writes nothing but the job…",
      "surface": {}
     },
     {
