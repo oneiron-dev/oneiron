@@ -2122,3 +2122,152 @@ async fn owner_feed_socket_delivers_two_local_changes_without_reopen_or_poll() {
     );
     assert!(socket.has_active_subscriptions());
 }
+
+/// CodeRabbit 1333 (deletion fence): a live recall view returns a matched
+/// MESSAGE as its TURN, whose words are its messages'. The turn's item names
+/// each of them, so a change to one, an erase included, refreshes the view,
+/// which never serves the erased words again. One message's text lives in its
+/// entity document (an owner edit), which the view must still follow. Bug
+/// repro: the TURN item named only itself and its superseded rows, and an
+/// erase publishes only the message.
+#[tokio::test]
+async fn erasing_a_folded_message_refreshes_the_live_recall_of_its_turn() {
+    use oneiron::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb, TextField};
+    use oneiron::sync::bridge::LiveQueryTee;
+    for reason in [
+        oneiron::DeleteReason::UserDelete,
+        oneiron::DeleteReason::UserHardDelete,
+    ] {
+        let (_dir, server) = server();
+        let actor = EntityId::from_hex(ACTOR).unwrap();
+        let memory = server.vault().memory(actor, EdgeActorClass::Human);
+        let said = |order, content: &str| WitnessMessage {
+            id: None,
+            author: WitnessAuthor::User,
+            message_type: "dialogue".to_owned(),
+            content: content.to_owned(),
+            metadata: Some(json!({"rel": SPACE})),
+            is_visible: true,
+            order,
+        };
+        let receipt = memory
+            .witness(&WitnessTurn {
+                conversation_ref: CONVERSATION.to_owned(),
+                turn_ref: None,
+                messages: vec![
+                    said(0, "The mechanic says the brakes squeal."),
+                    said(1, "We met for lunch at noon."),
+                ],
+                occurred_at: AT,
+            })
+            .unwrap();
+        let id_of = |short_id: &str| {
+            EntityId::from_hex(&memory.get_entity(short_id).unwrap().value.unwrap().id_hex).unwrap()
+        };
+        let brakes = id_of(&receipt.message_short_ids[0]);
+        let lunch = id_of(&receipt.message_short_ids[1]);
+
+        // The owner edits the other message: its text moves into its document.
+        crate::test_credentials::bind_owner(server.vault(), SECRET, actor);
+        let writer = oneiron::WriteActor::new(actor, EdgeActorClass::Human);
+        let owner = server
+            .vault()
+            .authenticate_owner(actor, ACTOR, true, oneiron::store::GateDecisionId::now())
+            .unwrap();
+        let authorization = DocAuthorization::Owner(&owner);
+        server
+            .vault()
+            .migrate_entity_text(
+                &lunch,
+                &TextField::MapField("content".into()),
+                writer,
+                &authorization,
+            )
+            .unwrap();
+        let end = server.vault().entity_text(&lunch).unwrap().chars().count();
+        let whole = server.vault().entity_text_anchor(&lunch, 0, end).unwrap();
+        server
+            .vault()
+            .edit_entity_text(
+                &lunch,
+                &[AnchoredEdit {
+                    actor: Some(writer),
+                    verb: EditVerb::ReplaceQuotedSpan {
+                        span: whole,
+                        text: "We met for a meal at noon.".into(),
+                    },
+                }],
+                &authorization,
+                AT + 60,
+            )
+            .unwrap();
+
+        let source = Arc::new(BoundSource::new(
+            Arc::downgrade(&server),
+            auth(&server, "human"),
+            "turn-fold".into(),
+        ));
+        let queries = Arc::new(subscriptions::LiveQueries::new(1, source.clone()));
+        let tee: Arc<dyn LiveQueryTee> = queries.clone();
+        server
+            .reassert_manager
+            .materializer()
+            .attach_live_query_tee(&tee);
+        let view = ScopedView {
+            query: Some("mechanic".into()),
+            ..Default::default()
+        };
+        let derived = source.derive(&view, Channel::View).unwrap();
+        for message in [brakes, lunch] {
+            assert!(
+                derived
+                    .dependencies
+                    .contains(&format!("e:{}", message.to_hex())),
+                "{reason:?}: the view does not follow {message:?}: {:?}",
+                derived.dependencies
+            );
+        }
+        let opened = queries
+            .open(1, view.clone(), Channel::View, None, None)
+            .unwrap();
+        let served = opened[0].result.as_ref().unwrap();
+        assert!(
+            served.as_array().unwrap().iter().any(|item| {
+                item["kind"] == "TURN"
+                    && item["value_text"]
+                        .as_str()
+                        .is_some_and(|text| text.contains("squeal") && text.contains("meal"))
+            }),
+            "{reason:?}: the turn is served with both messages' words: {served:#}"
+        );
+        queries.ack(1, &opened[0].cursor).unwrap();
+        queries.refresh().unwrap();
+        assert!(queries.pending(1).unwrap().is_empty());
+
+        server
+            .vault()
+            .delete_room_record_unchecked_for_test(&brakes, reason)
+            .unwrap();
+        queries.refresh().unwrap();
+        let pushed = queries.pending(1).unwrap();
+        assert!(
+            !pushed.is_empty(),
+            "{reason:?}: the erase left the view as it was"
+        );
+        for push in &pushed {
+            assert!(
+                push.result
+                    .as_ref()
+                    .is_none_or(|result| !result.to_string().contains("squeal")),
+                "{reason:?}: the view serves the erased words: {:?}",
+                push.result
+            );
+        }
+        let again = source.derive(&view, Channel::View).unwrap();
+        assert!(
+            !again.value.to_string().contains("squeal"),
+            "{reason:?}: {:#}",
+            again.value
+        );
+    }
+}
