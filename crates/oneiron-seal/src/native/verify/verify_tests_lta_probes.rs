@@ -404,6 +404,83 @@ pub(crate) mod tests {
         );
     }
 
+    #[test]
+    fn cyclic_or_overdeep_dss_cannot_grant_archival_authority() {
+        let signer = test_ca("dss-ref-signer");
+        let tsa = tsa_ca();
+        let signed = append_sig_revision(&base_input(), &signer, "dss-refs", Some(&tsa), AT_UNIX);
+        let engine = verify_engine(vec![signer.cert_der.clone(), tsa.cert_der.clone()], AT_UNIX);
+        for (mode, valid_material) in [("128", true), ("129", false), ("cycle", false)] {
+            let state = pdf::reparse_revision(&signed, &SealResourceLimits::default()).unwrap();
+            let material = profile::DssMaterial {
+                certs_der: vec![signer.cert_der.clone(), tsa.cert_der.clone()],
+                crls_der: vec![],
+                ocsps_der: vec![],
+            };
+            let (mut objects, dss_num) =
+                profile::build_dss_objects(&material, state.max_obj + 1).unwrap();
+            let first = dss_num + 1;
+            let head = if mode == "cycle" {
+                objects.push((first, format!("{} 0 R", first + 1).into_bytes()));
+                objects.push((first + 1, format!("{first} 0 R").into_bytes()));
+                first
+            } else {
+                let ocsp = build_ocsp(
+                    &signer,
+                    signer.cert.tbs_certificate.serial_number.clone(),
+                    AT_UNIX - 60,
+                    Some(AT_UNIX + 3600),
+                    x509_ocsp::CertStatus::good(),
+                );
+                objects.push((first, stream_body(&ocsp)));
+                let hops: u32 = mode.parse().unwrap();
+                for offset in 1..hops {
+                    objects.push((
+                        first + offset,
+                        format!("{} 0 R", first + offset - 1).into_bytes(),
+                    ));
+                }
+                first + hops - 1
+            };
+            let dss = objects.iter_mut().find(|(n, _)| *n == dss_num).unwrap();
+            dss.1.truncate(dss.1.len() - 2);
+            dss.1
+                .extend_from_slice(format!(" /OCSPs [{head} 0 R] >>").as_bytes());
+            objects.push((state.root.0, catalog_body(&state, Some(dss_num))));
+            let (with_dss, _) = emit_revision(&signed, &state, &objects, None);
+            let archived = append_doc_ts_revision(&with_dss, &tsa, AT_UNIX);
+            let report = engine.verify_sealed_pdf(&archived).unwrap();
+            assert_eq!(
+                report.signatures[0].integrity,
+                crate::api::VerifyVerdict::Passed
+            );
+            assert!(
+                report
+                    .checks()
+                    .any(|c| c.kind == VerifyCheckKind::ValidationMaterial
+                        && c.status
+                            == if valid_material {
+                                VerifyCheckStatus::Pass
+                            } else {
+                                VerifyCheckStatus::Fail
+                            })
+            );
+            if valid_material {
+                assert_eq!(
+                    report.signatures[0].profile,
+                    Some(PadesProfile::BaselineLta)
+                );
+            } else {
+                assert!(
+                    report
+                        .signatures
+                        .iter()
+                        .all(|s| s.profile != Some(PadesProfile::BaselineLta))
+                );
+            }
+        }
+    }
+
     // --- bot-fix leg 3b pins: DSS stream decode, object cap, typeless ----
 
     // --- signature discovery, hex whitespace in /Contents -----------------

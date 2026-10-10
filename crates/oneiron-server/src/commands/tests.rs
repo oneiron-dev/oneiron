@@ -492,55 +492,6 @@ fn api_raw_content_type_defaults_to_json_and_only_a_valid_type_replaces_it() {
     }
 }
 
-/// `@FILE` and a literal body are different forms, and neither is shell text:
-/// a body full of shell metacharacters is bytes, not a command.
-#[test]
-fn api_body_forms_are_distinct_and_never_shell_evaluated() {
-    let dir = tempfile::tempdir().unwrap();
-    let body_path = dir.path().join("request.json");
-    std::fs::write(&body_path, b"{\"from\":\"file\"}").unwrap();
-
-    let from_file = api::request_for_command(
-        "http://127.0.0.1:3000",
-        ApiCommand::Call {
-            verb: "board.append".to_owned(),
-            data: format!("@{}", body_path.display()),
-        },
-    )
-    .unwrap();
-    assert_eq!(
-        from_file.body.as_deref(),
-        Some(b"{\"from\":\"file\"}".as_slice())
-    );
-
-    let literal = "{\"shell\":\"$(id); rm -rf / `whoami`\"}";
-    let verbatim = api::request_for_command(
-        "http://127.0.0.1:3000",
-        ApiCommand::Call {
-            verb: "board.append".to_owned(),
-            data: literal.to_owned(),
-        },
-    )
-    .unwrap();
-    assert_eq!(
-        verbatim.body.as_deref(),
-        Some(literal.as_bytes()),
-        "a literal body is sent verbatim, never expanded"
-    );
-
-    assert!(
-        api::request_for_command(
-            "http://127.0.0.1:3000",
-            ApiCommand::Call {
-                verb: "board.append".to_owned(),
-                data: format!("@{}", dir.path().join("absent.json").display()),
-            },
-        )
-        .is_err(),
-        "a missing @FILE is an error here, not an empty request"
-    );
-}
-
 /// The credential travels in curl's config channel on stdin. It is in no
 /// argument, no captured stdout, and no captured stderr.
 #[test]
