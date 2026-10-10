@@ -779,7 +779,7 @@ pub(super) fn document_version(document: EntityId, body: &[u8]) -> ScopeResource
 /// project, the same stamp the scoped read doors select. The vault default
 /// where the row carries no position; `None` where the position's audience
 /// is not exactly one project.
-pub(super) fn stored_project(
+pub(crate) fn stored_project(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
