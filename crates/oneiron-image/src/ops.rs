@@ -1,0 +1,175 @@
+//! The edit ops: each changes the body only, never pixels.
+
+use oneiron_organ_protocol::{ErrorCode, Locator, OrganError};
+
+use crate::body::{Filter, ImageBody, Overlay, Shape, Size, Step, Stroke, bad, check_overlay};
+
+/// What one op did: the new body and the units it touched.
+#[derive(Debug)]
+pub(crate) struct Edited {
+    pub(crate) body: ImageBody,
+    pub(crate) touched: Vec<Locator>,
+}
+
+fn pixels(x: u32, y: u32, w: u32, h: u32) -> Locator {
+    Locator::Pixel {
+        layer: None,
+        x,
+        y,
+        w,
+        h,
+    }
+}
+
+/// The locator of one overlay.
+#[must_use]
+pub fn overlay_locator(id: u32) -> Locator {
+    Locator::Object {
+        id: format!("overlay/{id}"),
+    }
+}
+
+/// Bytes a canvas of `size` takes as RGBA.
+pub(crate) fn rgba_bytes(size: Size) -> u64 {
+    u64::from(size.w) * u64::from(size.h) * 4
+}
+
+/// What a bilinear resize from `from` to `to` holds at its peak: the
+/// premultiplied float copy, the vertical pass, the float result and the
+/// RGBA result.
+pub(crate) fn bilinear_bytes(from: Size, to: Size) -> u64 {
+    let float = |w: u32, h: u32| u64::from(w) * u64::from(h) * 16;
+    float(from.w, from.h)
+        .saturating_add(float(from.w, to.h))
+        .saturating_add(float(to.w, to.h))
+        .saturating_add(rgba_bytes(to))
+}
+
+/// Keeps `x, y, w, h` of the canvas. Overlays move with the pixels; one
+/// that now crosses the edge is marked clipped.
+///
+/// # Errors
+/// `bad_request` if the rect does not fit the canvas.
+pub(crate) fn crop(
+    mut body: ImageBody,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+) -> Result<Edited, OrganError> {
+    let step = Step::Crop { x, y, w, h };
+    body.canvas = step.apply_to(body.canvas)?;
+    body.steps.push(step);
+    let mut touched = vec![pixels(x, y, w, h)];
+    for overlay in &mut body.overlays {
+        overlay.shape.translate(-(x as f32), -(y as f32));
+        let clipped = overlay.clipped_by(body.canvas);
+        if clipped && !overlay.clipped {
+            touched.push(overlay_locator(overlay.id));
+        }
+        overlay.clipped = clipped;
+    }
+    check_steps(&body)?;
+    Ok(Edited { body, touched })
+}
+
+/// Scales the canvas to `w x h`. Overlay points scale per axis and stroke
+/// widths by the geometric mean, never under one pixel.
+///
+/// # Errors
+/// `bad_request` for a zero size, `too_large` past `max_bytes`.
+pub(crate) fn resize(
+    mut body: ImageBody,
+    w: u32,
+    h: u32,
+    filter: Filter,
+    max_bytes: u64,
+) -> Result<Edited, OrganError> {
+    let from = body.canvas;
+    let step = Step::Resize { w, h, filter };
+    let to = step.apply_to(from)?;
+    let peak = match filter {
+        Filter::Nearest => rgba_bytes(to),
+        Filter::Bilinear => bilinear_bytes(from, to),
+    };
+    if peak > max_bytes {
+        return Err(OrganError::new(
+            ErrorCode::TooLarge,
+            format!(
+                "resizing {}x{} to {w}x{h} needs {peak} bytes; this organ holds {max_bytes}",
+                from.w, from.h
+            ),
+        ));
+    }
+    body.canvas = to;
+    body.steps.push(step);
+    let sx = w as f32 / from.w as f32;
+    let sy = h as f32 / from.h as f32;
+    let widen = (sx * sy).sqrt();
+    for overlay in &mut body.overlays {
+        overlay.shape.scale(sx, sy);
+        overlay.stroke.width =
+            (overlay.stroke.width * widen).clamp(1.0, crate::body::MAX_STROKE_WIDTH);
+        overlay.clipped = overlay.clipped_by(to);
+    }
+    check_steps(&body)?;
+    Ok(Edited {
+        body,
+        touched: vec![pixels(0, 0, w, h)],
+    })
+}
+
+/// Adds one overlay with the next id.
+///
+/// # Errors
+/// `bad_request` for a bad shape or stroke, or a full body.
+pub(crate) fn annotate(
+    mut body: ImageBody,
+    shape: Shape,
+    stroke: Stroke,
+) -> Result<Edited, OrganError> {
+    check_overlay(&shape, &stroke)?;
+    if body.overlays.len() >= crate::body::MAX_OVERLAYS {
+        return Err(bad("the body holds the most overlays it may"));
+    }
+    if let Shape::Freehand { points } = &shape
+        && body.total_points() + points.len() > crate::body::MAX_TOTAL_POINTS
+    {
+        return Err(bad("the body holds the most points it may"));
+    }
+    let id = body.next_overlay;
+    body.next_overlay = id
+        .checked_add(1)
+        .ok_or_else(|| bad("overlay ids are spent"))?;
+    let mut overlay = Overlay {
+        id,
+        shape,
+        stroke,
+        clipped: false,
+    };
+    overlay.clipped = overlay.clipped_by(body.canvas);
+    let mut touched = vec![overlay_locator(id)];
+    let b = overlay.bounds();
+    let x0 = b.x0.floor().max(0.0);
+    let y0 = b.y0.floor().max(0.0);
+    let x1 = b.x1.ceil().min(body.canvas.w as f32);
+    let y1 = b.y1.ceil().min(body.canvas.h as f32);
+    if x1 > x0 && y1 > y0 {
+        touched.push(pixels(
+            x0 as u32,
+            y0 as u32,
+            (x1 - x0) as u32,
+            (y1 - y0) as u32,
+        ));
+    }
+    body.overlays.push(overlay);
+    Ok(Edited { body, touched })
+}
+
+fn check_steps(body: &ImageBody) -> Result<(), OrganError> {
+    if body.steps.len() > crate::body::MAX_STEPS {
+        Err(bad(format!("more than {} steps", crate::body::MAX_STEPS)))
+    } else {
+        Ok(())
+    }
+}

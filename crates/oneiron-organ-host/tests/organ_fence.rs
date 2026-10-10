@@ -24,6 +24,10 @@ const ENGINE_CRATES: [&str; 3] = ["oneiron", "oneiron-server", "oneiron-organ-ho
 /// the host. Each move PR deletes its name; the list only shrinks.
 const PENDING_MOVE: [&str; 3] = ["oneiron-seal", "oneiron-docedit", "oneiron-xlsx-formula"];
 
+/// Organs that run behind the host. Each must say so in its manifest, so the
+/// fence walks it; the list only grows.
+const HOSTED: [&str; 1] = ["oneiron-image"];
+
 struct Manifest {
     organ: bool,
     /// Workspace crates this one reaches through normal or build deps.
@@ -178,6 +182,18 @@ fn of060_f4_pending_moves_are_still_real() {
         assert!(
             engine.contains_key(pending),
             "{pending} no longer sits under oneiron: delete it from PENDING_MOVE",
+        );
+    }
+}
+
+#[test]
+fn of060_f4_hosted_organs_are_marked() {
+    // An unmarked organ would drop out of both walks above unseen.
+    let manifests = read_manifests();
+    for organ in HOSTED {
+        assert!(
+            manifests.get(organ).is_some_and(|manifest| manifest.organ),
+            "{organ} must mark [package.metadata.oneiron] organ = true",
         );
     }
 }

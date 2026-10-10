@@ -1,0 +1,45 @@
+[package]
+name = "oneiron-image"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The image organ: inspect, crop, resize, annotate and export still images"
+repository.workspace = true
+homepage.workspace = true
+
+# An organ runs as its own process behind the organ host. The engine never
+# depends on it, and it never depends on the engine (the of060 F4 fence in
+# crates/oneiron-organ-host/tests/organ_fence.rs).
+[package.metadata.oneiron]
+organ = true
+
+[lib]
+doctest = false
+
+[[bin]]
+name = "oneiron-image-organ"
+path = "src/bin/oneiron-image-organ.rs"
+
+[dependencies]
+oneiron-organ-protocol = { version = "0.1.0", path = "../oneiron-organ-protocol" }
+# Static PNG, JPEG and WebP only; no default formats, no rayon.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+rmp-serde = { workspace = true }
+rmpv = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+# The e2e check runs the organ process through the host over a real vault.
+oneiron = { path = "../oneiron", features = ["test-support"] }
+oneiron-organ-host = { path = "../oneiron-organ-host" }
+blake3 = { workspace = true }
+tempfile = "3"
+
+# The organ host's measures; run on one quiet host.
+[[bench]]
+name = "organ_host"
+harness = false
+
+[lints]
+workspace = true
