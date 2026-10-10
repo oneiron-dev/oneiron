@@ -34,7 +34,9 @@ impl From<HttpFailure> for AnthropicMessagesTransportError {
             HttpFailure::Timeout => Self::Timeout,
             HttpFailure::Connection => Self::Connection,
             HttpFailure::StreamCut => Self::StreamCut,
-            HttpFailure::Malformed | HttpFailure::EventTooLarge => Self::Server,
+            HttpFailure::Malformed | HttpFailure::EventTooLarge | HttpFailure::BodyTooLarge => {
+                Self::Server
+            }
         }
     }
 }

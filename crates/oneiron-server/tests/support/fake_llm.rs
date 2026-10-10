@@ -8,6 +8,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::Router;
@@ -41,6 +42,13 @@ pub(crate) enum Reply {
     Hold { text: String },
     /// Answer with text computed from the request (to echo ids it carries).
     Computed(Compute),
+    /// Answer with this exact event-stream body, one event per chunk: an
+    /// empty stream, a lone `[DONE]`, a stream cut after its first event.
+    Raw(String),
+    /// Answer with this status and `bytes` of a body that never closes its
+    /// JSON, in chunks. [`FakeLlm::sent_before_close`] says how much of it
+    /// went out before the body ended or the client hung up.
+    Oversized { status: u16, bytes: usize },
 }
 
 impl Reply {
@@ -67,6 +75,9 @@ struct Shared {
     seen: Mutex<Vec<Seen>>,
     released: Notify,
     holding: Notify,
+    /// Bytes the last closed `Oversized` body handed its connection.
+    sent: AtomicUsize,
+    body_closed: Notify,
 }
 
 pub(crate) struct FakeLlm {
@@ -116,6 +127,52 @@ impl FakeLlm {
     pub(crate) async fn wait_holding(&self) {
         self.shared.holding.notified().await;
     }
+
+    /// Resolves once an `Oversized` body has ended or lost its client, to
+    /// the bytes it handed the connection by then.
+    pub(crate) async fn sent_before_close(&self) -> usize {
+        self.shared.body_closed.notified().await;
+        self.shared.sent.load(Ordering::SeqCst)
+    }
+}
+
+/// Counts an `Oversized` body's bytes and reports them when the body is
+/// dropped: at its end, or when the server gives up on a gone client.
+struct Counted {
+    shared: Arc<Shared>,
+    sent: usize,
+}
+
+impl Drop for Counted {
+    fn drop(&mut self) {
+        self.shared.sent.store(self.sent, Ordering::SeqCst);
+        self.shared.body_closed.notify_one();
+    }
+}
+
+fn oversized(shared: Arc<Shared>, status: u16, bytes: usize) -> Response {
+    const CHUNK: usize = 64 << 10;
+    let start = (Counted { shared, sent: 0 }, bytes);
+    let body = futures_util::stream::unfold(start, |(mut counted, left)| async move {
+        if left == 0 {
+            return None;
+        }
+        let len = left.min(CHUNK);
+        let chunk = if counted.sent == 0 {
+            let mut chunk = b"{\"pad\":\"".to_vec();
+            chunk.resize(len, b'x');
+            chunk
+        } else {
+            vec![b'x'; len]
+        };
+        counted.sent += len;
+        Some((Ok::<_, std::io::Error>(chunk), (counted, left - len)))
+    });
+    Response::builder()
+        .status(status)
+        .header("content-type", "application/json")
+        .body(Body::from_stream(body))
+        .unwrap()
 }
 
 impl Drop for FakeLlm {
@@ -175,6 +232,10 @@ async fn answer(
         Reply::Text { text, model } => (vec![text], model),
         Reply::Deltas { deltas, model } | Reply::NoUsage { deltas, model } => (deltas, model),
         Reply::Computed(compute) => (vec![compute(&body)], "fake-model".to_owned()),
+        Reply::Raw(body) => return sse_body(body),
+        Reply::Oversized { status, bytes } => {
+            return oversized(Arc::clone(&shared), status, bytes);
+        }
         Reply::Hold { .. } => unreachable!("resolved above"),
     };
     match (anthropic, stream) {
@@ -303,6 +364,10 @@ fn sse(events: Vec<(Option<&'static str>, Value)>) -> Response {
     if !body.contains("event: ") {
         body.push_str("data: [DONE]\n\n");
     }
+    sse_body(body)
+}
+
+fn sse_body(body: String) -> Response {
     // One chunk per event, so the client sees deltas arrive separately.
     let chunks: Vec<Result<String, std::io::Error>> = body
         .split_inclusive("\n\n")

@@ -381,6 +381,96 @@ rungs = [
     );
 }
 
+/// Once a rung has spoken, its stream is the answer, cut or whole: one that
+/// ends or breaks after its first event is reported cut, and never hands the
+/// call to the next rung.
+#[tokio::test]
+async fn a_rung_that_has_spoken_keeps_the_call_when_its_stream_breaks() {
+    let delta = json!({"model": "m", "choices": [{"index": 0, "delta": {"content": "partial"}, "finish_reason": null}]});
+    for broken in [
+        format!("data: {delta}\n\n"),
+        format!("data: {delta}\n\ndata: {{not json\n\n"),
+    ] {
+        let first = FakeLlm::start(vec![], Some(Reply::Raw(broken.clone()))).await;
+        let second = FakeLlm::start(vec![], Some(Reply::text("switched"))).await;
+        let runtime = ModelRuntime::build(Some(&config(&format!(
+            "[providers.first]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n[providers.second]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n[roles.checker]\nrungs = [{{ model = \"first:small\" }}, {{ model = \"second:big\" }}]\n",
+            first.base_url, second.base_url
+        ))));
+        let seat = runtime.seat(ModelRole::Checker).expect("seat");
+        let guard = BudgetGuard::new("models-test", 100_000, BudgetExhaustionPolicy::Suspend);
+        let lease = guard.admit().unwrap().lease;
+        let mut events = seat
+            .backend
+            .stream(request(&seat.model, "hi"), &lease)
+            .unwrap();
+        let mut deltas = Vec::new();
+        let mut cut = false;
+        while let Some(event) = events.next().await {
+            match event {
+                Ok(LlmStreamEvent::TextDelta { text, .. }) => deltas.push(text),
+                Ok(LlmStreamEvent::Done { .. }) => panic!("{broken:?}: a broken stream finished"),
+                Ok(_) => {}
+                Err(_) => cut = true,
+            }
+        }
+        assert_eq!(deltas, ["partial"], "{broken:?}");
+        assert!(cut, "{broken:?}: a broken stream ended as if whole");
+        assert!(
+            second.seen().is_empty(),
+            "{broken:?}: the call switched rungs after the first had spoken"
+        );
+    }
+}
+
+/// Greptile #1304 P2 (follow-up): a provider's whole reply body was read
+/// into memory before it was parsed, so a broken provider or proxy could
+/// fill the server's memory with one reply. A JSON reply, and a streamed
+/// call's error body, are refused past the bound, and the rest goes unread.
+#[tokio::test]
+async fn an_oversized_provider_body_is_refused_before_it_is_read_whole() {
+    use super::http::{HttpFailure, KeyStyle, MAX_REPLY_BYTES, ProviderHttp};
+    let whole = 8 * MAX_REPLY_BYTES;
+    let fake = FakeLlm::start(
+        vec![
+            Reply::Oversized {
+                status: 200,
+                bytes: whole,
+            },
+            Reply::Oversized {
+                status: 502,
+                bytes: whole,
+            },
+        ],
+        None,
+    )
+    .await;
+    let models = config(&format!(
+        "[providers.p]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n",
+        fake.base_url
+    ));
+    let http = ProviderHttp::new(&models.providers["p"], KeyStyle::Bearer).unwrap();
+    let (path, headers, body) = ("/v1/chat/completions", BTreeMap::new(), json!({}));
+
+    let reply = http.post_json(path, &headers, &body).await;
+    assert_eq!(reply.err(), Some(HttpFailure::BodyTooLarge));
+    assert!(
+        fake.sent_before_close().await < whole,
+        "the JSON reply was read whole"
+    );
+
+    let mut events = Box::pin(http.post_sse(path, &headers, &body));
+    assert!(matches!(
+        events.next().await,
+        Some(Err(HttpFailure::BodyTooLarge))
+    ));
+    drop(events);
+    assert!(
+        fake.sent_before_close().await < whole,
+        "the error body was read whole"
+    );
+}
+
 /// Greptile #1304 P2 (re-review): a manifest that selects a later rung got
 /// that rung alone, numbered 0, so its receipt named the first rung. A rung
 /// after an unavailable one was numbered the same way. The receipt's `rung`

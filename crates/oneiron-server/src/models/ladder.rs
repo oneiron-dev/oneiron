@@ -120,8 +120,9 @@ impl LlmBackend for LadderBackend {
         })
     }
 
-    /// Falls through only before the first event: once a rung has spoken,
-    /// its stream is the answer, cut or whole.
+    /// Falls through only before the first event: a rung whose stream fails
+    /// or ends unspoken hands the call on; once a rung has spoken, its stream
+    /// is the answer, cut or whole.
     fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
         self.admits(&request)?;
         let state = StreamState {
@@ -202,6 +203,9 @@ async fn next_event(
                 state.last_error = Some(error);
             }
             Some(Err(error)) => return Some((Err(error), state.finished())),
+            // Unreached: an `LlmStream` that ends before its terminal yields
+            // `StreamCut` first, so a rung that ends unspoken (an empty body,
+            // a lone `[DONE]`) falls through on the arm above.
             None => return None,
         }
     }
