@@ -8839,6 +8839,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/tests_room_saver.rs",
+     "purpose": "ARCH-0052 D5: a run in a room on record writes into the vault of the owner who put it on record, and only…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -10921,7 +10929,7 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 18,
       "struct": 2
      }
@@ -12461,7 +12469,7 @@
      "path": "src/conversation/membership.rs",
      "purpose": "Append-only membership ledger",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 2,
       "fn": 8,
       "struct": 2
@@ -23699,7 +23707,7 @@
      "purpose": "Session overlay landing: journal staging from the door's authorized values, room-shell claim",
      "surface": {
       "crate-vis": 6,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -24407,17 +24415,51 @@
      "purpose": "OF-326 off-record / ephemeral session seam (ARCH-0052 P6, ONE-1731)",
      "surface": {
       "crate-vis": 3,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/off_record/lifecycle/on_record.rs",
+     "purpose": "A room on record (ARCH-0052 D5)",
+     "surface": {
+      "crate-vis": 8,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/promotion.rs",
+     "purpose": "Promotion out of the room (ARCH-0052 D4): the one session-overlay-to-base write, and the doors that save a…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/off_record/lifecycle/registry.rs",
      "purpose": "In-process session registry, entry state, publish/lookup/membership doors and ref vetting",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/room.rs",
+     "purpose": "Participants in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10)",
+     "surface": {
+      "crate-vis": 8,
+      "fn": 11,
+      "type": 1
      }
     },
     {
@@ -24428,10 +24470,10 @@
       "OffRecordSessionVault"
      ],
      "path": "src/off_record/lifecycle/session.rs",
-     "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, promote_turn, close",
+     "purpose": "Session and vault handles: routes, shells, search, VaultMeta family, flips, receipts, close",
      "surface": {
-      "crate-vis": 18,
-      "fn": 13,
+      "crate-vis": 20,
+      "fn": 11,
       "struct": 2
      }
     },
@@ -24463,15 +24505,20 @@
       "OffRecordBackendClass",
       "OffRecordCloseOutcome",
       "OffRecordMode",
-      "OffRecordSessionRecord"
+      "OffRecordNotice",
+      "OffRecordNoticeAct",
+      "OffRecordSessionRecord",
+      "OffRecordTalk",
+      "OffRecordTalkMessage",
+      "OffRecordTalkTurn"
      ],
      "path": "src/off_record/lifecycle/types.rs",
      "purpose": "Public records, enums, constants and the executor-utterance label shared by all off-record children",
      "surface": {
       "crate-vis": 3,
-      "enum": 3,
+      "enum": 4,
       "fn": 2,
-      "struct": 2
+      "struct": 6
      }
     },
     {
@@ -24481,7 +24528,7 @@
      "path": "src/off_record/lifecycle/vault_api.rs",
      "purpose": "Vault verbs: session vault handle, enter, mode flip, receipt log and close",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 7
      }
     },
@@ -30858,7 +30905,7 @@
      "path": "src/session_overlay/snapshot.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -33006,7 +33053,7 @@
      "path": "src/store/group_commit.rs",
      "purpose": "Group commit at the vault's single LMDB writer (ARCH-0019 storage invariant, OF-536)",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "struct": 1
      }
     },
@@ -39158,7 +39205,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 43,
+     "files": 44,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39732,7 +39779,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 12,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40266,7 +40313,7 @@
    },
    "over_bar": 33,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2444,
+   "source_files": 2448,
    "test_files": 775
   },
   "oneiron-android": {
@@ -48731,6 +48778,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/off_record_rooms.rs",
+     "purpose": "Off-record stretches for everyone in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -49101,6 +49158,14 @@
      "surface": {
       "crate-vis": 51
      }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/off_record_rooms.rs",
+     "purpose": "ARCH-0052 D5, the notice model (owner ruling 2026-10-10, O1 = A): anyone in a room may start an off-record…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -51338,13 +51403,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/owner/off_record.rs",
      "purpose": "Off-record sessions (ARCH-0052, OF-326): enter a room whose writes land in an in-memory overlay, witness…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 19
      }
     },
     {
@@ -52116,7 +52181,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 168,
+     "files": 170,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52321,8 +52386,8 @@
    },
    "over_bar": 8,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 314,
-   "test_files": 123
+   "source_files": 315,
+   "test_files": 124
   },
   "oneiron-uniffi": {
    "files": [
