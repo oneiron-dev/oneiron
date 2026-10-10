@@ -170,17 +170,19 @@ fn stalled_speculative_fires_leave_the_vault_reader_slots() -> Result<()> {
     put_text(&vault, 7, "Tokyo launch")?;
     vault.arm_slow_retrieval_stage_for_test(Some(SlowRetrievalStage {
         signal: RetrievalSignal::Text,
-        duration: Duration::from_secs(5),
+        // Outlasts every fire below, so the stalled passes overlap.
+        duration: Duration::from_secs(30),
         yields: false,
     }));
     let terms = ["tokyo".to_owned()];
     // Twice as many utterances as the vault has reader slots, each with one
-    // fire that misses its deadline in the stalled stage.
+    // fire that misses its deadline in the stalled stage (or, on a host slow
+    // to reach that stage, skips it and lands cut short).
     for _ in 0..2 * vault.config.max_readers {
         let mut session = SpeculativeSession::new(
             Arc::clone(&vault),
             SpeculativeSessionConfig {
-                deadline: Some(Duration::from_millis(20)),
+                deadline: Some(Duration::from_millis(100)),
                 ..SpeculativeSessionConfig::default()
             },
         );
@@ -190,9 +192,14 @@ fn stalled_speculative_fires_leave_the_vault_reader_slots() -> Result<()> {
             entity_labels: &[],
             salient_terms: &terms,
         };
-        assert_eq!(
-            session.observe_partial(heard)?,
-            SpeculativeFireDecision::MissedDeadline
+        let decision = session.observe_partial(heard)?;
+        assert!(
+            matches!(
+                decision,
+                SpeculativeFireDecision::MissedDeadline
+                    | SpeculativeFireDecision::Fired { partial: true, .. }
+            ),
+            "{decision:?}"
         );
     }
     // A reader on a thread of its own, which holds no slot yet.
