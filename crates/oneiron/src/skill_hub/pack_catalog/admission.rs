@@ -259,6 +259,26 @@ impl Vault {
             Ok(PackInstallDisposition::Installed(Box::new(receipt)))
         })
     }
+    /// Each pack name whose install receipt selects a script, with the source
+    /// it selects, read without the catalog listing's bound: a restore asks
+    /// `installed_script_pack` about every one, however many packs it holds.
+    pub(crate) fn script_pack_selections(&self) -> Result<Vec<(String, EntityId)>> {
+        let txn = self.store.env.read_txn()?;
+        let mut selections = Vec::new();
+        for entry in PACK_INSTALL.iter_from(&self.store, &txn, &[])? {
+            let (name, receipt) = entry.map_err(|error| {
+                if error.kind() == crate::error::ErrorKind::SideTableRow {
+                    invalid("pack install catalog corrupt")
+                } else {
+                    error
+                }
+            })?;
+            if matches!(receipt.adapter, Some(PackAdapter::Script(_))) {
+                selections.push((name, EntityId::from_hex(&receipt.source_id)?));
+            }
+        }
+        Ok(selections)
+    }
     /// Active installations only, verified against their still-live exact source.
     /// A Candidate never enters the section/board projection.
     pub fn installed_packs(&self) -> Result<Vec<PackInstallReceipt>> {

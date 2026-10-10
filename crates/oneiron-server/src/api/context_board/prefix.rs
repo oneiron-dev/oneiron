@@ -8,6 +8,9 @@ use oneiron::HydrationBudget;
 use oneiron::NotificationItem;
 use oneiron::SessionContext;
 use oneiron::UnprocessedItem;
+use oneiron::context_board::caller_marker_contains;
+use oneiron::context_board::notification_body_json;
+use oneiron::context_board::notification_scoped_to_caller;
 use oneiron::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use oneiron::registry::ENTITY_TYPE_NOTIFICATION;
 use oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST;
@@ -114,36 +117,6 @@ pub(crate) fn current_hydration_budget(_server: &SyncServer) -> HydrationBudget 
     HydrationBudget::from_meter(0, 0)
 }
 
-pub(crate) fn notification_body_json(raw_body: &[u8]) -> Option<Value> {
-    let body: Value = rmp_serde::from_slice(raw_body).ok()?;
-    body.as_object()?;
-    Some(body)
-}
-
-pub(crate) fn notification_scoped_to_caller(body: &Value, caller: &str) -> bool {
-    const SCOPE_KEYS: &[&str] = &[
-        "caller",
-        "caller_id",
-        "callerId",
-        "recipient",
-        "recipient_id",
-        "recipientId",
-    ];
-
-    let Some(object) = body.as_object() else {
-        return false;
-    };
-
-    for key in SCOPE_KEYS {
-        if let Some(value) = object.get(*key)
-            && !caller_marker_contains(Some(value), caller)
-        {
-            return false;
-        }
-    }
-    true
-}
-
 pub(crate) fn notification_already_surfaced(body: &Value, caller: &str) -> bool {
     const GLOBAL_KEYS: &[&str] = &["acked", "acknowledged", "surfaced", "seen"];
     const CALLER_KEYS: &[&str] = &[
@@ -171,13 +144,4 @@ pub(crate) fn notification_already_surfaced(body: &Value, caller: &str) -> bool 
     CALLER_KEYS
         .iter()
         .any(|key| caller_marker_contains(object.get(*key), caller))
-}
-
-pub(crate) fn caller_marker_contains(value: Option<&Value>, caller: &str) -> bool {
-    match value {
-        Some(Value::Array(items)) => items.iter().any(|item| item.as_str() == Some(caller)),
-        Some(Value::Object(map)) => map.get(caller).and_then(Value::as_bool) == Some(true),
-        Some(Value::String(item)) => item == caller,
-        _ => false,
-    }
 }

@@ -142,15 +142,84 @@ fn lookup_party_in_txn(
     rtxn: &heed::RoTxn<'_>,
     party_key: &str,
 ) -> CommResult<PartyLookup> {
-    if let Some(id) = PARTY_INDEX.get(&vault.store, rtxn, &party_index_digest(party_key))?
-        && active_comm_party_key_in_txn(vault, rtxn, id)?.as_deref() == Some(party_key)
-    {
+    if let Some(id) = fresh_indexed_party_in_txn(vault, rtxn, party_key)? {
         return Ok(PartyLookup::Fresh(id));
     }
     Ok(active_comm_persons_by_party_key_in_txn(vault, rtxn)?
         .remove(party_key)
         .and_then(|ids| ids.into_iter().next())
         .map_or(PartyLookup::Absent, PartyLookup::Repairable))
+}
+
+/// The party the node-local shortcut names for `party_key`, when it names an
+/// active comm-owned PERSON that still carries that key.
+fn fresh_indexed_party_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    party_key: &str,
+) -> CommResult<Option<EntityId>> {
+    if let Some(id) = PARTY_INDEX.get(&vault.store, rtxn, &party_index_digest(party_key))?
+        && active_comm_party_key_in_txn(vault, rtxn, id)?.as_deref() == Some(party_key)
+    {
+        return Ok(Some(id));
+    }
+    Ok(None)
+}
+
+/// Every active comm party, by the exact key a party lookup names, read in
+/// one transaction: `resolve_party`'s answer for every key at once, for a
+/// reader that resolves many.
+pub(crate) struct CommParties(BTreeMap<String, EntityId>);
+
+impl CommParties {
+    /// Each active key with the party a lookup of it resolves to
+    /// (`lookup_party_in_txn`): the one a fresh shortcut names, otherwise
+    /// the smallest active row carrying the key. A key no active row carries
+    /// resolves to none, as no shortcut to it is fresh.
+    pub(crate) fn read_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> CommResult<Self> {
+        let mut parties = BTreeMap::new();
+        for (party_key, ids) in active_comm_persons_by_party_key_in_txn(vault, rtxn)? {
+            let indexed = fresh_indexed_party_in_txn(vault, rtxn, &party_key)?;
+            if let Some(party) = indexed.or_else(|| ids.first().copied()) {
+                parties.insert(party_key, party);
+            }
+        }
+        Ok(Self(parties))
+    }
+
+    /// The party `party` resolves to, as `resolve_party` resolves it,
+    /// leaving the shortcut as it is.
+    pub(crate) fn resolve(&self, party: &str) -> CommResult<Option<EntityId>> {
+        validate_key_string(party).map_err(|_| CommError::InvalidRecord)?;
+        Ok(self.0.get(party).copied())
+    }
+
+    /// Every party.
+    pub(crate) fn refs(&self) -> impl Iterator<Item = EntityId> {
+        self.0.values().copied()
+    }
+}
+
+/// The standing `predicate` claims on `channel_class` that `party_ref`
+/// carries, through the caller's transaction: what `count_active_comm_claims`
+/// counts once it has resolved the party.
+pub(crate) fn count_active_party_claims_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    party_ref: EntityId,
+    predicate: &str,
+    channel_class: &str,
+) -> CommResult<usize> {
+    Ok(super::projection_writes::matching_claims_in_txn(
+        vault,
+        rtxn,
+        party_ref,
+        predicate,
+        Some(channel_class),
+        None,
+        true,
+    )?
+    .len())
 }
 
 /// Points the node-local shortcut at `id`.
