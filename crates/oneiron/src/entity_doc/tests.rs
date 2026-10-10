@@ -691,3 +691,42 @@ fn text_migration_refuses_maintenance_and_semantic_records_atomically() -> Resul
     assert_eq!(vault.entity_text(&id)?, "editable asset");
     Ok(())
 }
+
+#[test]
+fn a_lent_blob_resolves_a_migrated_body_as_a_read_does() -> Result<()> {
+    // Organ host review (Astra, PR #1366): the lend path handed out the
+    // document pointer, so an unchanged version failed its hash check.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault =
+        Vault::open_unseeded_for_test(dir.path(), crate::test_util::embedding_test_config())?;
+    let (writer, owner) = actor(&vault)?;
+    let artifact = EntityId::now();
+    vault.put_blob_artifact(
+        &artifact,
+        &crate::blob_artifact::BlobArtifactBody::new("notes", "text/plain"),
+        TimeRange { start: 1, end: 1 },
+        1,
+    )?;
+    let version = vault.append_blob_artifact_version(
+        &artifact,
+        b"plain text body",
+        &crate::blob_artifact::BlobVersionProvenance::UserUpload,
+        writer,
+        TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+    let asset = crate::blob_artifact::blob_artifact_asset_entity_id(&version.content_hash)?;
+    vault.migrate_entity_text(
+        &asset,
+        &TextField::Utf8Body,
+        writer,
+        &DocAuthorization::Owner(&owner),
+    )?;
+    let lent = vault
+        .lend_blob_artifact_version(&artifact, version.version, |_, bytes| {
+            bytes.verified().map(std::borrow::Cow::into_owned)
+        })?
+        .expect("the version is live")?;
+    assert_eq!(lent, b"plain text body");
+    Ok(())
+}
