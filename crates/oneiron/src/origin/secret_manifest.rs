@@ -75,8 +75,7 @@ impl Vault {
         // A pin only proves which object store the handle names, and only a
         // commit can: any commit this repository published will do. Which
         // object the ref names NOW is the projection's answer below, as for an
-        // advertisement. A ref published at a tag object pins nothing and
-        // holds no manifest.
+        // advertisement, and only a commit there holds a manifest.
         let mut repo = None;
         for id in self.origin_publication_ids(Some(repo_id))? {
             let Some(record) = self.origin_publication(id)? else {
@@ -110,25 +109,27 @@ impl Vault {
     }
 }
 
-/// The manifest file's bytes in `commit`'s tree, or `None` when it has none.
-/// Only a regular file counts: a symlink or a submodule at the path declares
-/// nothing.
+/// The manifest file's bytes in `commit`'s tree, or `None` when it has none
+/// or `commit` names no commit. Only a regular file counts: a symlink or a
+/// submodule at the path declares nothing.
 fn manifest_bytes(
     wire: &GitWire<'_>,
     repo: &GitWireRepo,
     commit: &GitOid,
 ) -> Result<Option<Vec<u8>>> {
-    let object = wire.read_object(repo, commit)?;
-    // Anything but a commit holds no manifest.
-    let Some(tree) = object
-        .split(|byte| *byte == b'\n')
-        .next()
-        .and_then(|line| line.strip_prefix(b"tree "))
-        .and_then(|hex| std::str::from_utf8(hex).ok())
-    else {
+    // Only a commit holds a manifest. A ref published at a tag or a blob
+    // declares nothing, whatever its bytes look like, and is never read.
+    if wire
+        .object_info(repo, std::slice::from_ref(commit))?
+        .get(commit)
+        .map(String::as_str)
+        != Some("commit")
+    {
         return Ok(None);
-    };
-    let mut oid = GitOid::parse_hex(tree)?;
+    }
+    // `ls-tree` on a commit lists its root tree; the commit's own body is
+    // never read.
+    let mut oid = commit.clone();
     let mut components = SECRET_MANIFEST_PATH.split('/').peekable();
     while let Some(component) = components.next() {
         let last = components.peek().is_none();
