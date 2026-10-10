@@ -17,6 +17,10 @@ doctest = false
 oneiron = { version = "0.1.0", path = "../oneiron" }
 oneiron-organ-protocol = { version = "0.1.0", path = "../oneiron-organ-protocol" }
 blake3 = { workspace = true }
+ipnet = "2"
+# The guarded `net.fetch`: the engine already builds this client and TLS
+# stack, so this adds no crate to the graph.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls-native-roots"] }
 rmp-serde = { workspace = true }
 rmpv = { workspace = true, features = ["with-serde"] }
 serde = { workspace = true }

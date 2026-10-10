@@ -1,15 +1,19 @@
 //! A diagnostics organ for the host's own checks: the runtime's built-in
 //! verbs (`organ.touch`, `organ.echo`) plus `probe.sleep`, `probe.crash`,
-//! `probe.fork` and `probe.outputs`. Two hostile modes stand in for a broken organ:
-//! `--deaf` answers the handshake and then never reads its socket, and
-//! `--drip` sends its `hello_ack` one byte at a time.
+//! `probe.fork`, `probe.outputs` and `probe.ask`. Hostile modes stand in for
+//! a broken organ: `--deaf` answers the handshake and then never reads its
+//! socket, `--drip` sends its `hello_ack` one byte at a time, `--ask-twice`
+//! sends a second ask before the first is answered, and `--stale-asks` asks
+//! for calls that are not in flight. `--v1-0` is an organ built against
+//! protocol 1.0: it acks 1.0, echoes, and dies on any message 1.0 lacks.
 
 #[cfg(unix)]
 mod probe {
     use std::time::{Duration, Instant};
 
     use oneiron_organ_protocol::{
-        Answer, CallContext, ErrorCode, Organ, OrganError, OrganIdentity, OutputBytes, VerbSpec,
+        Answer, AskCode, CallContext, ErrorCode, Organ, OrganError, OrganIdentity, OutputBytes,
+        VerbSpec, touch_fold,
     };
 
     pub(super) struct Probe;
@@ -23,19 +27,28 @@ mod probe {
         }
 
         fn verbs(&self) -> Vec<VerbSpec> {
-            ["probe.sleep", "probe.crash", "probe.fork", "probe.outputs"]
-                .map(|name| VerbSpec {
-                    name: name.into(),
-                    schema: 1,
-                    kinds: Vec::new(),
-                })
-                .into()
+            [
+                "probe.sleep",
+                "probe.crash",
+                "probe.fork",
+                "probe.outputs",
+                "probe.ask",
+            ]
+            .map(|name| VerbSpec {
+                name: name.into(),
+                schema: 1,
+                kinds: Vec::new(),
+            })
+            .into()
         }
 
         /// `probe.sleep {ms, obey_cancel}` sleeps; with `obey_cancel` false
         /// it ignores cancels, as a hostile organ would. `probe.fork` leaves
         /// a child behind and reports its pid. `probe.outputs {count, bytes}`
         /// answers with `count` outputs of `bytes` bytes each.
+        /// `probe.ask {verb, value, times}` asks `times` times, going on past
+        /// refusals, and reports each answer (its value, the length and fold
+        /// of its bytes) or refusal code; a cancel ends it as cancelled.
         fn call(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
             let field = |key: &str| {
                 call.args
@@ -59,6 +72,39 @@ mod probe {
                     Ok(Answer::default())
                 }
                 "probe.crash" => std::process::abort(),
+                "probe.ask" => {
+                    let verb = field("verb")
+                        .and_then(|v| v.as_str().map(str::to_owned))
+                        .unwrap_or_default();
+                    let value = field("value").unwrap_or(rmpv::Value::Nil);
+                    let times = field("times").and_then(|v| v.as_u64()).unwrap_or(1);
+                    let mut report = Vec::new();
+                    for _ in 0..times {
+                        let line = match call.ask(&verb, value.clone()) {
+                            Ok(reply) => {
+                                let data = reply.data.as_deref().unwrap_or_default();
+                                rmpv::Value::Map(vec![
+                                    ("answered".into(), reply.value),
+                                    ("len".into(), (data.len() as u64).into()),
+                                    ("fold".into(), touch_fold(data).into()),
+                                ])
+                            }
+                            Err(refusal) if refusal.code == AskCode::Cancelled => {
+                                return Err(OrganError::new(ErrorCode::Cancelled, "cancelled"));
+                            }
+                            Err(refusal) => {
+                                let code =
+                                    rmpv::ext::to_value(refusal.code).unwrap_or(rmpv::Value::Nil);
+                                rmpv::Value::Map(vec![("refused".into(), code)])
+                            }
+                        };
+                        report.push(line);
+                    }
+                    Ok(Answer {
+                        report: rmpv::Value::Array(report),
+                        ..Answer::default()
+                    })
+                }
                 "probe.outputs" => {
                     let count = field("count").and_then(|v| v.as_u64()).unwrap_or(0);
                     let bytes = field("bytes").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -106,8 +152,8 @@ mod rogue {
     use std::time::Duration;
 
     use oneiron_organ_protocol::{
-        DEFAULT_FRAME_LIMIT, FromOrgan, HelloAck, OrganIdentity, PROTOCOL, ToOrgan, VerbSpec,
-        recv_frame, send_frame,
+        Ask, DEFAULT_FRAME_LIMIT, FromOrgan, HelloAck, Notes, OrganIdentity, Outcome, PROTOCOL,
+        Proposal, ProtocolVersion, Reply, ToOrgan, VerbSpec, recv_frame, send_frame,
     };
 
     fn socket() -> UnixStream {
@@ -117,8 +163,12 @@ mod rogue {
     }
 
     fn ack_for(organ: String) -> FromOrgan {
+        ack_at(organ, PROTOCOL)
+    }
+
+    fn ack_at(organ: String, protocol: ProtocolVersion) -> FromOrgan {
         FromOrgan::HelloAck(HelloAck {
-            protocol: PROTOCOL,
+            protocol,
             organ: OrganIdentity {
                 name: organ,
                 version: env!("CARGO_PKG_VERSION").into(),
@@ -149,6 +199,78 @@ mod rogue {
         }
         loop {
             std::thread::sleep(Duration::from_secs(3600));
+        }
+    }
+
+    fn ask(call: u64, id: u32) -> FromOrgan {
+        FromOrgan::Ask(Ask {
+            call,
+            id,
+            verb: "probe.answer".into(),
+            value: rmpv::Value::Nil,
+        })
+    }
+
+    /// Answers the handshake, then meets each call with asks as `asks`
+    /// writes them, never waiting for an answer; reads until the end.
+    fn asking(asks: impl Fn(u64) -> Vec<FromOrgan>) {
+        let stream = socket();
+        let Some(organ) = hello_organ(&stream) else {
+            return;
+        };
+        if send_frame(&stream, &ack_for(organ), &[], DEFAULT_FRAME_LIMIT).is_err() {
+            return;
+        }
+        while let Ok((message, _)) = recv_frame::<ToOrgan>(&stream, DEFAULT_FRAME_LIMIT) {
+            if let ToOrgan::Call(call) = message {
+                for ask in asks(call.id) {
+                    if send_frame(&stream, &ask, &[], DEFAULT_FRAME_LIMIT).is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Sends a second ask before the first is answered.
+    pub(super) fn ask_twice() {
+        asking(|call| vec![ask(call, 1), ask(call, 2)]);
+    }
+
+    /// Asks a hundred times for a call that is not in flight.
+    pub(super) fn stale_asks() {
+        asking(|call| (0..100).map(|n| ask(call + 1000, n)).collect());
+    }
+
+    /// An organ built against protocol 1.0: it acks 1.0, echoes each call's
+    /// args, and exits on any message 1.0 does not have.
+    pub(super) fn v1_0() {
+        let stream = socket();
+        let Some(organ) = hello_organ(&stream) else {
+            return;
+        };
+        let old = ProtocolVersion { major: 1, minor: 0 };
+        if send_frame(&stream, &ack_at(organ, old), &[], DEFAULT_FRAME_LIMIT).is_err() {
+            return;
+        }
+        while let Ok((message, _)) = recv_frame::<ToOrgan>(&stream, DEFAULT_FRAME_LIMIT) {
+            let call = match message {
+                ToOrgan::Call(call) => call,
+                ToOrgan::Cancel { .. } => continue,
+                _ => return,
+            };
+            let reply = FromOrgan::Reply(Reply {
+                id: call.id,
+                outcome: Outcome::Proposal(Proposal {
+                    body: None,
+                    outputs: Vec::new(),
+                    report: call.args,
+                    notes: Notes::default(),
+                }),
+            });
+            if send_frame(&stream, &reply, &[], DEFAULT_FRAME_LIMIT).is_err() {
+                return;
+            }
         }
     }
 
@@ -183,6 +305,18 @@ fn main() -> std::process::ExitCode {
         }
         Some("--drip") => {
             rogue::drip();
+            std::process::ExitCode::SUCCESS
+        }
+        Some("--ask-twice") => {
+            rogue::ask_twice();
+            std::process::ExitCode::SUCCESS
+        }
+        Some("--stale-asks") => {
+            rogue::stale_asks();
+            std::process::ExitCode::SUCCESS
+        }
+        Some("--v1-0") => {
+            rogue::v1_0();
             std::process::ExitCode::SUCCESS
         }
         _ => oneiron_organ_protocol::serve(probe::Probe),
