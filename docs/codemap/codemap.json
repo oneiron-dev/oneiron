@@ -11349,7 +11349,8 @@
      "path": "src/context_board/history/ledger.rs",
      "purpose": "Board turn anchors reference one CRDT frontier; facts remain CLAIM rows",
      "surface": {
-      "fn": 3
+      "crate-vis": 1,
+      "fn": 7
      }
     },
     {
@@ -11359,7 +11360,7 @@
      "path": "src/context_board/history/mod.rs",
      "purpose": "Delta-only board claims and exact Loro-frontier reconstruction",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 1
      }
     },
@@ -11384,8 +11385,9 @@
      "path": "src/context_board/history/types.rs",
      "purpose": "Typed board history requests and exact-fold results",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
+      "fn": 1,
       "struct": 4
      }
     },
@@ -12408,7 +12410,7 @@
      "path": "src/conversation/deletion.rs",
      "purpose": "Actor-bound room deletion and per-person erasure over the existing delete door",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 3
      }
     },
@@ -12624,7 +12626,7 @@
      "path": "src/conversation_dag/reply.rs",
      "purpose": "Revision-bound reply strips",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 6,
       "struct": 3
      }
@@ -28287,7 +28289,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "QuarantinedArtifact",
@@ -28303,12 +28305,12 @@
       "enum": 2,
       "fn": 7,
       "mod": 1,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 2
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "CanonicalBaseEdge",
@@ -28324,7 +28326,7 @@
      "purpose": "CRDT-independent, byte-exact Layer-1 snapshot and fresh-window construction",
      "surface": {
       "const": 2,
-      "crate-vis": 9,
+      "crate-vis": 17,
       "fn": 6,
       "struct": 8
      }
@@ -28745,6 +28747,27 @@
       "fn": 7,
       "struct": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WindowRecoveryReport"
+     ],
+     "path": "src/recovery/maintenance.rs",
+     "purpose": "The canonical snapshot as one owner maintenance act (ARCH-0038 escape hatch and recovery ladder): capture a…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/maintenance_tests.rs",
+     "purpose": "The canonical snapshot as one owner maintenance act (ARCH-0038 escape hatch, recovery ladder and the…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -39573,7 +39596,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 49,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -39951,10 +39974,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 32,
+   "over_bar": 33,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2419,
-   "test_files": 785
+   "source_files": 2420,
+   "test_files": 786
   },
   "oneiron-android": {
    "files": [
@@ -47093,6 +47116,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/api/context_board/history.rs",
+     "purpose": "Board history on the board's own surface (ARCH-0067 §3)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/context_board/memories.rs",
      "purpose": "MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly",
      "surface": {
@@ -47106,7 +47139,7 @@
      "path": "src/api/context_board/mod.rs",
      "purpose": "The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -47166,7 +47199,7 @@
      "path": "src/api/context_pack/interlocutor.rs",
      "purpose": "Interlocutor-set resolution and third-party party inputs for context-pack requests",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -47961,6 +47994,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "src/api/tests/context_board_history.rs",
+     "purpose": "Board history on the board's own surface (ARCH-0067 §3): hydrations that name their TURN record its board…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "src/api/tests/context_board_standing.rs",
      "purpose": "The real session endpoint cannot fill context before a registered standing floor",
      "surface": {}
@@ -48362,6 +48403,7 @@
       "ImportDecisionArgs",
       "ImportNotesArgs",
       "ImportSourceArgs",
+      "RecoverWindowArgs",
       "RestoreArgs",
       "RunArgs",
       "RunDecisionArgs",
@@ -48372,10 +48414,10 @@
       "WhoamiArgs"
      ],
      "path": "src/cli/owner_args.rs",
-     "purpose": "Flags for the owner's own commands: doctor, backup, restore, export, the secret scan switch, importing…",
+     "purpose": "Flags for the owner's own commands: doctor, backup, restore, window recovery, export, the secret scan…",
      "surface": {
       "enum": 3,
-      "struct": 13
+      "struct": 14
      }
     },
     {
@@ -48518,10 +48560,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/commands/owner.rs",
-     "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, export, the secret scan switch, import…",
+     "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window recovery, export, the secret…",
      "surface": {
       "crate-vis": 1,
-      "fn": 8
+      "fn": 9
      }
     },
     {
@@ -49265,7 +49307,7 @@
      "path": "src/idempotency.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -51017,7 +51059,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 162,
+     "files": 164,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51222,8 +51264,8 @@
    },
    "over_bar": 8,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 305,
-   "test_files": 116
+   "source_files": 306,
+   "test_files": 117
   },
   "oneiron-uniffi": {
    "files": [
