@@ -1290,7 +1290,7 @@
      "path": "src/attempt_queue/mod.rs",
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "re-export": 4
      }
     },
@@ -13672,7 +13672,7 @@
      "path": "src/dreamer_consolidation/evidence.rs",
      "purpose": "Parent-verified evidence is the sole scoped consolidation handoff",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -13763,7 +13763,7 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 2,
       "re-export": 10
      }
@@ -13790,7 +13790,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 6,
-      "fn": 6,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -13845,7 +13845,7 @@
      "path": "src/dreamer_consolidation/resources.rs",
      "purpose": "Exact resource bounds for a consolidation partition",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "re-export": 1
      }
     },
@@ -13881,6 +13881,16 @@
       "crate-vis": 9,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/reviewed.rs",
+     "purpose": "Claims the owner's review already holds or decided, which a later pass meets again: this attempt's own…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -13955,6 +13965,14 @@
      "notable": [],
      "path": "src/dreamer_consolidation/tests/failure_rules.rs",
      "purpose": "A resident-authored policy changes what the real executor can publish on fatal fallback",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/dreamer_consolidation/tests/imported_review.rs",
+     "purpose": "Claims from imported words wait in the owner's import review (ARCH-0027)",
      "surface": {}
     },
     {
@@ -14079,7 +14097,7 @@
      "path": "src/dreamer_consolidation/wake_plan.rs",
      "purpose": "One frozen read revision and exact preparation of queued consolidation work",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "struct": 2
      }
     },
@@ -14261,7 +14279,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_promotion/scoped.rs",
@@ -14640,7 +14658,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 14,
       "struct": 1
      }
@@ -17563,7 +17581,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 129
+      "crate-vis": 130
      }
     },
     {
@@ -17950,7 +17968,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 55,
+      "crate-vis": 56,
       "re-export": 8
      }
     },
@@ -20162,7 +20180,7 @@
      "path": "src/ingest/history/ledger.rs",
      "purpose": "The history import ledger: one row per imported source message, keyed by the source and the message's native…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -20180,10 +20198,11 @@
      "path": "src/ingest/history/mod.rs",
      "purpose": "The owner's own history, imported (ARCH-0027): ChatGPT and Claude.ai exports and the on-device Claude Code…",
      "surface": {
-      "const": 1,
+      "const": 3,
+      "crate-vis": 1,
       "enum": 3,
       "fn": 5,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 4
      }
     },
@@ -20199,6 +20218,17 @@
      "surface": {
       "fn": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/history/review.rs",
+     "purpose": "The owner's review of what the Dreamer proposes from one import (ARCH-0027 trust tier): imported material…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -32985,7 +33015,7 @@
      "path": "src/store/pending_gate_consent/indexes.rs",
      "purpose": "Run/group/hash index sidecars, group-alias refresh, and the critical-confirm confirm-id sidecar",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -39099,7 +39129,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 43,
+     "files": 45,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -39344,7 +39374,7 @@
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
     "ingest": {
-     "files": 51,
+     "files": 52,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39976,8 +40006,8 @@
    },
    "over_bar": 33,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2420,
-   "test_files": 786
+   "source_files": 2422,
+   "test_files": 787
   },
   "oneiron-android": {
    "files": [
@@ -50337,7 +50367,7 @@
      "path": "src/owner/runs.rs",
      "purpose": "Agent-run batch consent: see what a run is waiting on, then approve or decline the whole run in one act…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -50894,7 +50924,9 @@
      "notable": [],
      "path": "tests/it/ai_serve.rs",
      "purpose": "The shipped binary with no model, and with one: without `[models]` every model-free path works and the…",
-     "surface": {}
+     "surface": {
+      "crate-vis": 9
+     }
     },
     {
      "bucket": "L",
@@ -50934,6 +50966,14 @@
      "notable": [],
      "path": "tests/it/history_import.rs",
      "purpose": "`oneiron import <source> <path>` through the shipped binary, for each of the four sources (owner…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/import_claims.rs",
+     "purpose": "Claims from imported history wait for the owner's review (ARCH-0027 trust tier: \"imported material never…",
      "surface": {}
     },
     {
@@ -51265,7 +51305,7 @@
    "over_bar": 8,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 306,
-   "test_files": 117
+   "test_files": 118
   },
   "oneiron-uniffi": {
    "files": [
