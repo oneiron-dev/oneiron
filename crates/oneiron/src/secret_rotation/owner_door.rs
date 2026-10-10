@@ -126,23 +126,21 @@ fn wipe<B: Zeroize + AsRef<[u8]> + ?Sized>(buffer: &mut B) {
 /// see that it went through [`wipe`].
 #[cfg(test)]
 pub(super) mod wiped {
-    use std::sync::{Mutex, PoisonError};
+    use std::cell::RefCell;
 
-    static SEEN: Mutex<Vec<blake3::Hash>> = Mutex::new(Vec::new());
-
-    pub(super) fn saw(buffer: &[u8]) {
-        SEEN.lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(blake3::hash(buffer));
+    thread_local! {
+        // Per thread: a rotation wipes on the thread that calls it.
+        static SEEN: RefCell<Vec<blake3::Hash>> = const { RefCell::new(Vec::new()) };
     }
 
-    /// How many wiped buffers held exactly `bytes` just before the wipe.
+    pub(super) fn saw(buffer: &[u8]) {
+        SEEN.with_borrow_mut(|seen| seen.push(blake3::hash(buffer)));
+    }
+
+    /// How many buffers this thread wiped that held exactly `bytes` just
+    /// before the wipe.
     pub(in crate::secret_rotation) fn count(bytes: &[u8]) -> usize {
         let held = blake3::hash(bytes);
-        SEEN.lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .iter()
-            .filter(|seen| **seen == held)
-            .count()
+        SEEN.with_borrow(|seen| seen.iter().filter(|seen| **seen == held).count())
     }
 }
