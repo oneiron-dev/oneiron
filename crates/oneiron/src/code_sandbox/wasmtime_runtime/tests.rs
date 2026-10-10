@@ -415,6 +415,128 @@ fn native_quickjs_runtime() -> Result<WasmtimeComponentRuntime> {
     )
 }
 
+/// A guest call through each memory row reaches the host as the typed call the
+/// row's hand-written import made, defaults included: a search limit of 20, a
+/// claim's span and learned time at the step's frozen clock (10 s),
+/// confidence 1.0, and an edge kind's default weight. The host's answer reaches
+/// the guest in the import's shape.
+#[test]
+fn native_quickjs_memory_rows_make_the_calls_their_imports_made() -> Result<()> {
+    use crate::code_run::{
+        SelfDispatchOutcome, SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall,
+        SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
+        SelfMemorySupersedeClaimCall, SelfMemoryWriteResult,
+    };
+    use crate::{ClaimCandidate, ClaimSubject, EdgeKind, ScoredEntity};
+    struct Recording(Vec<SelfCall>, EntityId);
+    impl JsCodeModeHost for Recording {
+        fn dispatch_self(&mut self, call: SelfCall) -> Result<SelfDispatchResponse> {
+            let outcome = match &call {
+                SelfCall::MemorySearch(_) => {
+                    SelfDispatchOutcome::MemorySearch(SelfMemorySearchResult {
+                        query: String::new(),
+                        results: vec![ScoredEntity {
+                            id: self.1,
+                            score: 0.5,
+                        }],
+                    })
+                }
+                SelfCall::MemoryPutClaim(call) => {
+                    SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult { id: call.id })
+                }
+                SelfCall::MemorySupersedeClaim(call) => {
+                    SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult { id: call.new_id })
+                }
+                SelfCall::MemoryPutEdge(call) => {
+                    SelfDispatchOutcome::MemoryEdgeWrite(SelfMemoryEdgeWriteResult {
+                        src: call.src,
+                        kind: call.kind,
+                        tgt: call.tgt,
+                    })
+                }
+                other => panic!("not a memory row: {other:?}"),
+            };
+            self.0.push(call);
+            Ok(SelfDispatchResponse {
+                outcome,
+                budget: None,
+            })
+        }
+    }
+    let [first, second, subject, hit] =
+        [0x61, 0x62, 0x63, 0x64].map(|byte| EntityId::from_bytes([byte; 16]).expect("test id"));
+    let script = format!(
+        "const [a, b, s] = ['{a}', '{b}', '{s}']; const out = {{}}; \
+         out.search = await self.memory.search({{query: 'tea'}}); \
+         out.first = await self.memory.put_claim({{id: a, subject: s, predicate: 'p.q', \
+           value: 'sencha'}}); \
+         out.second = await self.memory.put_claim({{id: b, subject: s, predicate: 'p.q', \
+           value: 'matcha', confidence: 0.25, occurred: {{start: 3, end: 4}}, learnedAt: 5}}); \
+         out.superseded = await self.memory.supersede_claim({{newId: b, oldId: a, now: 6}}); \
+         out.edge = await self.memory.put_edge({{src: b, kind: 'about', tgt: s}}); \
+         out.weighted = await self.memory.put_edge({{src: b, kind: 'mentions', tgt: s, \
+           weight: 0.75}}); \
+         finish(JSON.stringify(out));",
+        a = first.to_hex(),
+        b = second.to_hex(),
+        s = subject.to_hex(),
+    );
+    let mut host = Recording(Vec::new(), hit);
+    let outcome = native_quickjs_runtime()?.run_step(
+        step(&script, SandboxGuestTier::FirstPartyDreamer),
+        &mut host,
+    )?;
+    let claim = |id, value: &str, confidence, occurred, learned_at| {
+        SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
+            id,
+            ClaimCandidate::new(
+                "p.q",
+                ClaimSubject::Entity(subject),
+                rmpv::Value::from(value),
+                confidence,
+            ),
+            occurred,
+            learned_at,
+        ))
+    };
+    assert_eq!(
+        host.0,
+        [
+            SelfCall::MemorySearch(SelfMemorySearchCall::new("tea", 20)),
+            claim(first, "sencha", 1.0, TimeRange { start: 10, end: 10 }, 10),
+            claim(second, "matcha", 0.25, TimeRange { start: 3, end: 4 }, 5),
+            SelfCall::MemorySupersedeClaim(SelfMemorySupersedeClaimCall::new(second, first, 6)),
+            SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+                second,
+                EdgeKind::About,
+                subject,
+                0.5
+            )),
+            SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
+                second,
+                EdgeKind::Mentions,
+                subject,
+                0.75
+            )),
+        ]
+    );
+    assert!(outcome.done);
+    let answer: serde_json::Value = serde_json::from_str(&outcome.observation).expect("answer");
+    let edge = |kind| serde_json::json!({"src": second.to_hex(), "kind": kind, "tgt": subject.to_hex()});
+    assert_eq!(
+        answer,
+        serde_json::json!({
+            "search": {"results": [{"id": hit.to_hex(), "score": 0.5}]},
+            "first": {"id": first.to_hex()},
+            "second": {"id": second.to_hex()},
+            "superseded": {"id": second.to_hex()},
+            "edge": edge("about"),
+            "weighted": edge("mentions"),
+        })
+    );
+    Ok(())
+}
+
 #[test]
 fn native_quickjs_report_blocked_lands_an_issue() -> Result<()> {
     use crate::code_run::blocked::BlockedCategory;

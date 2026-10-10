@@ -115,8 +115,11 @@ fn run_program(
     Ok((answer, rows))
 }
 
-/// A guest call through each memory row still works: the same typed call
-/// (effect and replay row), the same answer shape, the same gated write.
+/// A guest call through a memory row still works end to end: the run's search
+/// and its claim writes keep their effect, replay row, answer shape and gated
+/// write. Each row's typed call, `supersede_claim` and `put_edge` included, is
+/// pinned at the guest boundary by
+/// `native_quickjs_memory_rows_make_the_calls_their_imports_made`.
 #[cfg(feature = "code-sandbox-wasmtime")]
 #[test]
 fn a_guest_call_through_each_memory_row_keeps_its_call_and_answer() {
@@ -131,9 +134,6 @@ fn a_guest_call_through_each_memory_row_keeps_its_call_and_answer() {
            occurred: {{start: 3, end: 4}}, learnedAt: 4}}); \
          out.second = await self.memory.put_claim({{id: '{second}', subject, \
            predicate: 'profile.favorite_drink', value: 'matcha'}}); \
-         out.superseded = await self.memory.supersede_claim({{newId: '{second}', \
-           oldId: '{first}', now: 12}}); \
-         out.edge = await self.memory.put_edge({{src: '{second}', kind: 'about', tgt: subject}}); \
          finish(JSON.stringify(out)); }} catch (error) {{ finish(`threw ${{error}}`); }}",
         subject = subject.to_hex(),
         first = first.to_hex(),
@@ -148,8 +148,6 @@ fn a_guest_call_through_each_memory_row_keeps_its_call_and_answer() {
             "search": {"results": []},
             "first": {"id": first.to_hex()},
             "second": {"id": second.to_hex()},
-            "superseded": {"id": second.to_hex()},
-            "edge": {"src": second.to_hex(), "kind": "about", "tgt": subject.to_hex()},
         })
     );
     assert_eq!(
@@ -158,22 +156,18 @@ fn a_guest_call_through_each_memory_row_keeps_its_call_and_answer() {
             "self.memory.search memory_search",
             "self.memory.put_claim memory_write",
             "self.memory.put_claim memory_write",
-            "self.memory.supersede_claim memory_write",
-            "self.memory.put_edge memory_edge_write",
         ]
     );
+    let stored = vault.get_claim(&first).expect("read").expect("first claim");
+    assert_eq!(stored.source, Some(crate::ClaimSource::Generated));
+    assert_eq!(stored.value, Value::from("sencha"));
+    assert_eq!(stored.confidence, 0.9);
     let stored = vault
         .get_claim(&second)
         .expect("read")
         .expect("second claim");
-    assert_eq!(stored.source, Some(crate::ClaimSource::Generated));
     assert_eq!(stored.value, Value::from("matcha"));
-    assert_eq!(
-        vault
-            .targets(&second, EdgeKind::About, None)
-            .expect("edges"),
-        [subject]
-    );
+    assert_eq!(stored.confidence, 1.0);
 }
 
 /// A guest call through a memory row is refused as before: a non-finite
