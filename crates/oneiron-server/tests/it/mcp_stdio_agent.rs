@@ -226,8 +226,12 @@ impl Bridge {
     }
 
     fn send(&mut self, message: &Value) {
+        self.send_line(&message.to_string());
+    }
+
+    fn send_line(&mut self, line: &str) {
         let stdin = self.stdin.as_mut().expect("bridge stdin open");
-        writeln!(stdin, "{message}").unwrap();
+        writeln!(stdin, "{line}").unwrap();
         stdin.flush().unwrap();
     }
 
@@ -1015,6 +1019,21 @@ fn the_bridge_bounds_every_request_and_keeps_its_credential_from_curl() {
             .unwrap()
             .iter()
             .any(|request| request["id"] == json!(4))
+    );
+
+    // One cut inside its numeric id (`"id":12` kept as `"id":1`) names no
+    // request rather than the wrong one (Astra re-check).
+    let prefix = r#"{"jsonrpc":"2.0","method":"ping","params":{"pad":""#;
+    let kept_tail = r#""},"id":1"#;
+    let pad = "x".repeat(FRAME_LIMIT + 1 - prefix.len() - kept_tail.len());
+    bridge.send_line(&format!(r#"{prefix}{pad}"}},"id":12}}"#));
+    let refused = bridge.next_within(Duration::from_secs(30));
+    assert_eq!(refused["id"], Value::Null, "{}", head(&refused));
+    assert_eq!(
+        refused["error"]["data"]["kind"],
+        json!("frame_too_large"),
+        "{}",
+        head(&refused)
     );
 
     // The session is whole: the next request is answered.

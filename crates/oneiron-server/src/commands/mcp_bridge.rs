@@ -174,8 +174,10 @@ fn read_frame(input: &mut impl BufRead) -> io::Result<Option<Frame>> {
     Ok(Some(Frame::TooLong(line)))
 }
 
-/// The `id` of a message cut off at `head`, when it comes before the cut, so
-/// the client hears which request was refused; `null` otherwise.
+/// The `id` of a message cut off at `head`, when it comes whole before the
+/// cut, so the client hears which request was refused; `null` otherwise. A
+/// number that runs to the cut may be the start of a longer one (`"id":1` of
+/// `"id":12`), so it is not read: only an id something follows is.
 fn leading_id(head: &[u8]) -> Value {
     struct Seek<'a>(&'a mut Option<Value>);
     impl<'de> serde::de::Visitor<'de> for Seek<'_> {
@@ -194,11 +196,15 @@ fn leading_id(head: &[u8]) -> Value {
             Ok(())
         }
     }
+    let whole = head
+        .iter()
+        .rposition(|byte| !matches!(byte, b'0'..=b'9' | b'-' | b'+' | b'.' | b'e' | b'E'))
+        .map_or(0, |at| at + 1);
     let mut id = None;
     // The head ends mid-message, so this parse fails; an id it passed on the
     // way is already kept.
     let _ = serde::Deserializer::deserialize_map(
-        &mut serde_json::Deserializer::from_slice(head),
+        &mut serde_json::Deserializer::from_slice(&head[..whole]),
         Seek(&mut id),
     );
     id.filter(|id| id.is_string() || id.is_number())
