@@ -181,6 +181,7 @@
       "output": "crate::memory::WitnessReceipt",
       "call": "memory.witness(&input)?",
       "scope": "Write",
+      "lands_turn": true,
       "admission": {
         "validate": "crate::memory::caps::check_witness_turn(&input)?;"
       },

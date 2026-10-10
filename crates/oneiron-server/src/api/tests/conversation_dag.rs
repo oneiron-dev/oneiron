@@ -463,6 +463,72 @@ async fn a_landed_turn_wakes_the_dreamer_on_the_vault_grain() {
     host.shutdown().await;
 }
 
+/// The same wake through the generated facade: a turn witnessed at
+/// `POST /v1/core/facade/witness` is read by a Micro round. The handler is
+/// generated (the verb-table row's `lands_turn`), so this fails if
+/// `scripts/sdk/generate.py` stops emitting the wake.
+#[tokio::test]
+async fn a_facade_witness_turn_wakes_the_dreamer() {
+    let reply = Reply::Text {
+        text: json!({"candidates": []}).to_string(),
+        model: "test-model".to_owned(),
+    };
+    let fake = FakeLlm::start(vec![], Some(reply)).await;
+    let (_dir, vault) = rooted_vault();
+    route_extraction(&vault);
+    let models = models(
+        &fake.base_url,
+        "[dreamer]\nsummary_prompt = \"Summarize these records.\"",
+    );
+    let host = AiHost::start(Arc::clone(&vault), Some(&models), true).await;
+    let config = SyncServerConfig {
+        auth_secret: Some(crate::ai_host::test_support::TEST_SECRET.to_owned()),
+        ..Default::default()
+    };
+    let server = Arc::new(
+        SyncServer::new(vault, config)
+            .expect("sync server")
+            .with_ai(host.handle()),
+    );
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
+    let (slip, key) = crate::test_credentials::credential(
+        &server,
+        &format!(
+            "scope=core:read,core:write;principal_ref={};actor_class=human",
+            owner.to_hex()
+        ),
+    );
+    let turn = json!({
+        "conversation_ref": "41414141414141414141414141414141",
+        "occurred_at": 1_767_225_600,
+        "messages": [{"author": "user", "message_type": "text", "is_visible": true, "order": 0,
+            "content": "my brother Kenji moved to Sapporo last winter"}],
+    });
+    let request = crate::test_credentials::bind_slip_request(
+        &server,
+        &slip,
+        &key,
+        json_request("POST", "/v1/core/facade/witness", turn),
+    );
+    let response = crate::build_app(Arc::clone(&server))
+        .oneshot(request)
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert!(
+        eventually(Duration::from_secs(30), || fake
+            .seen()
+            .iter()
+            .any(|seen| seen.body["messages"].to_string().contains("Sapporo")))
+        .await,
+        "no Micro round read the witnessed turn; status {:?}",
+        server.ai.status().dreamer
+    );
+    host.shutdown().await;
+}
+
 /// No Dreamer writes summaries here, so a declaration is refused rather than
 /// queued for a writer that never comes.
 #[tokio::test]
