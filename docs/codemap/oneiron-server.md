@@ -352,8 +352,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/oneironer/endpoint.rs` | src | m | 9 crate-vis | — | The `endpoint` provider: a tagger server on this machine that speaks the slot's contract |
 | `src/oneironer/mod.rs` | src | s | 12 crate-vis | — | The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled |
 | `src/oneironer/tests/mod.rs` | test | m | — | — | The slot's laws: configuration, the endpoint's wire and identity probe, the typed refusals, `init`, and the… |
-| `src/oneironer/tests/support.rs` | test | m | 26 crate-vis | — | A stub tagger server inside the test process, and the vaults and servers the slot's tests share |
-| `src/oneironer/tests/worker.rs` | test | m | — | — | The worker against the stub tagger: shadow writes nothing but the job tables, a failing tagger never fails a… |
+| `src/oneironer/tests/support.rs` | test | m | 27 crate-vis | — | A stub tagger server inside the test process, and the vaults and servers the slot's tests share |
+| `src/oneironer/tests/worker.rs` | test | m | — | — | The worker against the stub tagger: save mode saves each turn's tags, shadow writes nothing but the job… |
 | `src/owner/backup.rs` | src | m | 14 crate-vis | — | Local backups of one vault: take, list, prune, rehearse and restore |
 | `src/owner/backup/tests.rs` | test | m | — | — | — |
 | `src/owner/cleanup.rs` | src | s | 13 crate-vis | — | Cleanup review (ARCH-0073): the archive proposals the cleanup job opened, the digests of what cleanup… |
