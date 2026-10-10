@@ -297,9 +297,8 @@ fn a_turn_reference_hydrates_after_its_row_takes_new_metadata() {
 /// original row stays in the revision ledger (its pinned short ref was taken
 /// before its text moved into the document), which the purge does not
 /// reach. Bug repro: the search took that retained row as a state of the
-/// message and served the purged words. After the first fix, a build
-/// without `sync`, which reads no document, still did (Astra's final
-/// re-check).
+/// message and served the purged words.
+#[cfg(feature = "sync")]
 #[test]
 fn a_turn_reference_never_reads_back_purged_words() {
     use crate::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb, TextField};
@@ -372,6 +371,82 @@ fn a_turn_reference_never_reads_back_purged_words() {
     assert!(
         pinned_pack_text(&vault, &lane, &turn, &MEANING, &before).is_none(),
         "a pinned pack serves purged words"
+    );
+}
+
+/// Astra 1333 final re-check (F1, P1): a build without `sync`, which reads
+/// no entity document, never reads a turn's reference back from the rows a
+/// message had before its text moved into its document. A `sync` process
+/// sharing the vault moved it (the row became a document pointer beside the
+/// document's head row), and may since have purged the words from the
+/// document. Bug repro: only the `sync` build knew a document-backed message
+/// from a row-backed one, so this build searched the original row the
+/// revision ledger keeps (the message's pinned short ref retained it) and
+/// served the moved words.
+#[cfg(not(feature = "sync"))]
+#[test]
+fn a_turn_reference_never_reads_a_moved_message_back_from_its_old_rows() {
+    use crate::side_table::{self, HexId, Named, SideTable};
+    const DOCUMENT_HEADS: SideTable<HexId, rmpv::Value, Named> =
+        SideTable::new(&side_table::ENTITY_DOC_HEAD);
+    const MEANING: [f32; 4] = [0.6, 0.0, 0.8, 0.0];
+    let (_dir, vault) = open_embedding_vault();
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let facade = facade_for(&vault, owner);
+    let turn = witness_turn(
+        &facade,
+        0xDF,
+        &["the safe code is 4417", "keep it quiet"],
+        1_900,
+    );
+    fill_turn(&vault, &turn, &MEANING);
+    let message = first_message(&vault, &turn);
+    vault
+        .pinned_short_ref(&message)
+        .expect("pin the message's row");
+    let before = recalled_turn(&facade, "safe", &MEANING);
+    assert_eq!(before.value_text, "the safe code is 4417\nkeep it quiet");
+
+    let raw = {
+        let rtxn = vault.store.env.read_txn().expect("read txn");
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &rtxn, &message)
+            .expect("read the message row")
+            .expect("the message row")
+            .to_vec()
+    };
+    let (header, body) = raw.split_at(crate::batch::ENTITY_METADATA_HEADER_LEN);
+    let rmpv::Value::Map(mut fields) =
+        rmpv::decode::read_value(&mut std::io::Cursor::new(body)).expect("message body")
+    else {
+        panic!("a message body is a map");
+    };
+    fields.retain(|(key, _)| key.as_str() != Some("content"));
+    fields.push((
+        rmpv::Value::from("entity_doc_ref"),
+        rmpv::Value::from(message.to_hex()),
+    ));
+    let mut pointer = header.to_vec();
+    rmpv::encode::write_value(&mut pointer, &rmpv::Value::Map(fields)).expect("encode");
+    vault
+        .with_write_txn(|wtxn| {
+            vault.store.entities.put(wtxn, message.as_bytes(), &pointer)?;
+            DOCUMENT_HEADS.put(&vault.store, wtxn, &HexId(message), &rmpv::Value::Nil)
+        })
+        .expect("move the message's text out of its row, as a sync process does");
+
+    assert!(
+        facade
+            .hydrate(std::slice::from_ref(&before.reference()))
+            .is_err(),
+        "a moved message is read back from its old row: {}",
+        before.reference()
+    );
+    let lane = facade
+        .read_lane(crate::claim::ClaimReadStatus::Recorded)
+        .expect("owner read lane");
+    assert!(
+        pinned_pack_text(&vault, &lane, &turn, &MEANING, &before).is_none(),
+        "a pinned pack serves a moved message from its old row"
     );
 }
 

@@ -31,6 +31,7 @@ use super::storage::{
 use super::{ReadMode, RevisionRef};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::error::Result;
+use crate::side_table::{self, HexId, Named, SideTable};
 use crate::{EntityId, Vault};
 use heed::RoTxn;
 
@@ -43,6 +44,10 @@ const MAX_SEARCH_DIGESTS: usize = 4096;
 /// Messages a turn may hold for a search past its current sources; a larger
 /// turn's text revision resolves only while its sources stand.
 const MAX_SEARCH_MEMBERS: usize = 64;
+/// Entity-document heads, read in every build: a build without `sync` reads
+/// no document, but still sees which messages have one.
+const DOCUMENT_HEADS: SideTable<HexId, rmpv::Value, Named> =
+    SideTable::new(&side_table::ENTITY_DOC_HEAD);
 
 #[cfg(test)]
 thread_local! {
@@ -364,9 +369,9 @@ fn source_in_txn(
         }
         None => source.may_be_absent = true,
     };
-    // Whether its text lives in its document is read in every build: its
-    // rows from before the move never stand for it then.
-    if crate::entity_doc::has_record_head(&vault.store, txn, &message)? {
+    // Once its text lives in its document, its rows from before the move
+    // never stand for it, whether or not this build reads the document.
+    if DOCUMENT_HEADS.contains(&vault.store, txn, &HexId(message))? {
         #[cfg(feature = "sync")]
         if let Some(raw) =
             crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &message)?
