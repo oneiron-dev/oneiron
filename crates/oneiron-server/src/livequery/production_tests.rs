@@ -401,12 +401,15 @@ async fn a_paired_core_read_slip_recalls_over_the_websocket() {
     let auth =
         CoreAuth::from_headers(request.headers(), &server.config, server.vault().as_ref()).unwrap();
 
+    // The message comes back as its turn, quoting it (ARCH-0004).
     let pack = rpc(&server, &auth, "recall", json!({"query": "solar panel"}))["result"].clone();
-    let found = pack["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|item| item["short_id"].as_str() == Some(said.as_str()));
+    let found = pack["items"].as_array().unwrap().iter().any(|item| {
+        item["cited_messages"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|message| message["short_id"].as_str() == Some(said.as_str()))
+    });
     assert!(found, "{said}: {pack}");
 }
 

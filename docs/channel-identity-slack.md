@@ -81,9 +81,13 @@ Hosts resolve each Events API payload to a persona handle before calling `parse_
 ## Dev-Workspace Smoke Runbook
 
 The always-on smoke test `cid8_slack_shared_presence_routes_two_agents_in_one_workspace`
-validates the adapter locally with deterministic test ids. The ignored smoke seam
-`cid8_slack_dev_workspace_env_smoke_seam` lets a host validate the same two-agent flow against
-real dev-workspace identifiers without storing or printing Slack tokens.
+validates the adapter locally with deterministic test ids. It creates two agent-bound Slack
+ChannelIdentity rows, routes two inbound Events API-shaped payloads, and builds two outbound
+`chat.postMessage` payloads. It verifies:
+
+- both personas route to distinct active identities in the same workspace
+- inbound receipts and SurfaceEvents carry the expected `workspace_ref`
+- outbound payloads carry persona-specific `username`, sidecar `identity_key`, and optional metadata stamps
 
 Use a disposable Slack development workspace and two Oneiron personas. The host-owned Slack app
 token is needed only for the real Slack install and Web API calls; keep it in the host secret store
@@ -92,34 +96,8 @@ and do not put it in the vault or shell history.
 1. Create the app manifest payload with `SlackSharedPresenceAdapter::apps_manifest_create_payload()`.
 2. Call Slack `apps.manifest.create` with the host-side app token, then install the app into the dev workspace.
 3. Record the workspace/team id, channel id, two Slack sender user ids, and optional Enterprise Grid id.
-4. Export only non-secret identifiers for the local smoke seam:
 
-```sh
-export ONEIRON_SLACK_SMOKE_WORKSPACE_ID=T123ABC
-export ONEIRON_SLACK_SMOKE_CHANNEL_ID=C123ABC
-export ONEIRON_SLACK_SMOKE_USER_A_ID=U123ABC
-export ONEIRON_SLACK_SMOKE_USER_B_ID=U456DEF
-export ONEIRON_SLACK_SMOKE_PERSONA_A=eiri
-export ONEIRON_SLACK_SMOKE_PERSONA_B=herald
-# Enterprise Grid only:
-export ONEIRON_SLACK_SMOKE_ENTERPRISE_ID=E123ABC
-```
-
-5. Run the env-gated smoke seam:
-
-```sh
-rtk proxy cargo test -p oneiron --features sync cid8_slack_dev_workspace_env_smoke_seam -- --ignored
-```
-
-The seam creates two agent-bound Slack ChannelIdentity rows, routes two inbound Events API-shaped
-payloads, and builds two outbound `chat.postMessage` payloads. It verifies:
-
-- both personas route to distinct active identities in the same workspace
-- inbound receipts and SurfaceEvents carry the expected `workspace_ref`
-- Enterprise Grid identities include `slack:enterprise:<ENTERPRISE_ID>` consistently when configured
-- outbound payloads carry persona-specific `username`, sidecar `identity_key`, and optional metadata stamps
-
-For a live end-to-end workspace smoke, perform one additional host-side check after the seam passes:
-send one message per persona using the generated outbound body, trigger one app mention or DM event
-per persona mapping, and compare the observed workspace/persona ids with the seam inputs. Do not
-log OAuth access tokens or Web API bearer headers.
+For a live end-to-end workspace smoke, send one message per persona using the generated outbound
+body, trigger one app mention or DM event per persona mapping, and compare the observed
+workspace/persona ids with the ids recorded in step 3. Do not log OAuth access tokens or Web API
+bearer headers.

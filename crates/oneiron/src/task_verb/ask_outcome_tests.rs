@@ -618,3 +618,35 @@ fn settled_task_ask_cannot_accept_standing_graph_backfill() -> Result<()> {
     assert_eq!(vault.claims_for_subject(&holder)?, before);
     Ok(())
 }
+
+/// Review repro (Astra R2, #1338): a human connector running generated code
+/// does not give that person's word. The answer the person may give is
+/// refused from a surface bound to a generated origin, and the person can
+/// still give it themselves.
+#[test]
+fn generated_code_cannot_answer_an_ask_in_a_persons_name() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let owner = EntityId::now();
+    let holder = EntityId::now();
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    actors(&vault, owner, &[owner, holder])?;
+    let receipt = vault
+        .memory(owner, EdgeActorClass::Human)
+        .tasks_ask(&spec(&vault, holder))?;
+    let generated = crate::memory::HostWriteOrigin::new(crate::WriteEnvelope::new(
+        crate::WriteActor::new(holder, EdgeActorClass::Human),
+        crate::ClaimSource::Generated,
+        crate::WriteProvenance::new(rmpv::Value::Map(Vec::new()))?,
+        ClaimApprovalStatus::Proposed,
+    ));
+    let refused = vault
+        .memory(holder, EdgeActorClass::Human)
+        .with_host_origin(generated)
+        .tasks_answer(&receipt.handle, &TaskAskWord::new(holder))
+        .expect_err("a generated word is not the person's");
+    assert_eq!(refused.code, crate::memory::MEMORY_CODE_FORBIDDEN);
+    vault
+        .memory(holder, EdgeActorClass::Human)
+        .tasks_answer(&receipt.handle, &TaskAskWord::new(holder))?;
+    Ok(())
+}
