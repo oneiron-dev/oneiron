@@ -34,6 +34,8 @@ use crate::skills_pack::{self, OutputMode};
 mod api;
 mod host_init;
 pub use self::host_init::host_init;
+mod host_re_root;
+pub use self::host_re_root::host_re_root;
 
 pub use self::api::api;
 mod mcp_bridge;

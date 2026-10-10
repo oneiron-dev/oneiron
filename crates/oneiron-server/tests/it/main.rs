@@ -10,6 +10,9 @@ mod core_discover;
 mod fake_llm;
 mod first_owner_bootstrap;
 mod history_import;
+// The secret file's owner-only mode and SIGTERM are Unix-only.
+#[cfg(unix)]
+mod host_re_root;
 mod mcp_oracle;
 // The credential file's owner-only mode and SIGTERM are Unix-only.
 #[cfg(unix)]

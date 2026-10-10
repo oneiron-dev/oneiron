@@ -31,12 +31,10 @@ fn missing() -> Error {
 fn bad() -> Error {
     Error::Claim(ClaimError::InvalidMachineClaimProof)
 }
+pub(crate) const PIN_PREFIX: &[u8] = b"claim:machine-history-pin:v1:";
+
 pub(crate) fn pin_key(target: EntityId) -> Vec<u8> {
-    [
-        b"claim:machine-history-pin:v1:".as_slice(),
-        target.as_bytes(),
-    ]
-    .concat()
+    [PIN_PREFIX, target.as_bytes()].concat()
 }
 
 pub(crate) struct MachineHistoryRows {
@@ -596,13 +594,25 @@ impl Vault {
         challenge: [u8; 32],
     ) -> Result<[u8; 32]> {
         let mut txn = self.store.env.write_txn()?;
-        let rows = machine_history_rows(&self.store, &txn, target)?;
-        let prior = trusted_machine_handoff(&self.store, &txn, target)?;
+        let hash = self.carry_machine_history_in_txn(&mut txn, target, issuer, challenge)?;
+        txn.commit()?;
+        Ok(hash)
+    }
+
+    pub(crate) fn carry_machine_history_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        target: EntityId,
+        issuer: &crate::authority::HostSlipIssuer,
+        challenge: [u8; 32],
+    ) -> Result<[u8; 32]> {
+        let rows = machine_history_rows(&self.store, txn, target)?;
+        let prior = trusted_machine_handoff(&self.store, txn, target)?;
         let prior_hash = prior.content_hash().map_err(|_| bad())?;
         let (vault_id, authority_head) = crate::authority::machine_history_host_context(
             &self.store,
             self.privacy_posture(),
-            &txn,
+            txn,
             &issuer.public_key(),
         )?;
         if vault_id != rows.birth.vault_id
@@ -673,7 +683,7 @@ impl Vault {
             &self.store,
             &self.config,
             &self.analyzer,
-            &mut txn,
+            txn,
             vec![
                 crate::batch::BatchOp::Put {
                     id,
@@ -700,10 +710,7 @@ impl Vault {
                 .load(std::sync::atomic::Ordering::Acquire),
             crate::batch::ApplyOpsGateMode::new(false, false),
         )?;
-        self.store
-            .vault_meta
-            .put(&mut txn, &pin_key(target), &bytes)?;
-        txn.commit()?;
+        self.store.vault_meta.put(txn, &pin_key(target), &bytes)?;
         Ok(hash)
     }
 }

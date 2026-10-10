@@ -44,6 +44,19 @@ impl HostSlipIssuer {
     pub fn binding_key(&self) -> [u8; 32] {
         self.signing.verifying_key().to_bytes()
     }
+    /// The roster row this host's key holds as the vault's root.
+    pub(super) fn root_device(&self) -> DeviceAuthority {
+        DeviceAuthority {
+            key: self.public_key(),
+            transport_key_binding: self.binding_key(),
+            attestation: AuthorityAttestation {
+                kind: "HostRoot".into(),
+                evidence: Vec::new(),
+            },
+            tier: AuthorityTier::Software,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+        }
+    }
     pub(super) fn sign_mesh(&self, transcript: &[u8]) -> [u8; 64] {
         self.signing.sign(transcript).to_bytes()
     }
@@ -173,13 +186,22 @@ impl Vault {
     /// log. A rooted vault must already recognize this host. A rejected cached
     /// root is never silently replaced (revocation stays terminal).
     pub fn ensure_host_root_slip(&self, issuer: &HostSlipIssuer) -> Result<CapabilitySlip> {
+        let mut txn = self.store.env.write_txn()?;
+        let slip = self.ensure_host_root_slip_in_txn(&mut txn, issuer)?;
+        txn.commit()?;
+        Ok(slip)
+    }
+    pub(super) fn ensure_host_root_slip_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+    ) -> Result<CapabilitySlip> {
         if self.privacy_posture() == crate::HostingPrivacyPosture::Relay {
             return Err(invalid_authority());
         }
-        let mut txn = self.store.env.write_txn()?;
         let cache_key = format!(":{}", blake3::hash(&issuer.binding_key()).to_hex());
-        let now = self.instant_in_txn(&txn)?.secs();
-        let mut fold = self.authority_fold_readonly_in_txn(&txn)?;
+        let now = self.instant_in_txn(txn)?.secs();
+        let mut fold = self.authority_fold_readonly_in_txn(txn)?;
         let mut pending = Vec::new();
         if fold.append_sequences.is_empty() {
             let recovery = blake3::derive_key("oneiron/host-genesis-recovery/v2", issuer.secret());
@@ -188,16 +210,7 @@ impl Vault {
                 0,
                 Vec::new(),
                 AuthorityOp::Genesis {
-                    device: DeviceAuthority {
-                        key: issuer.public_key(),
-                        transport_key_binding: issuer.binding_key(),
-                        attestation: AuthorityAttestation {
-                            kind: "HostRoot".into(),
-                            evidence: Vec::new(),
-                        },
-                        tier: AuthorityTier::Software,
-                        roles: ROLE_OWNER | ROLE_ADMIN,
-                    },
+                    device: issuer.root_device(),
                     genesis_nonce: random_slip_id(),
                     recovery: GenesisRecoveryStep::acknowledge(&recovery, true)?,
                     tier_floor: AuthorityTier::Software,
@@ -210,7 +223,7 @@ impl Vault {
             fold = fold_authority_log(&pending);
         }
         require_host(&fold, issuer)?;
-        if let Some(token) = HOST_ROOT_SLIP_CACHE.get(&self.store, &txn, &cache_key)? {
+        if let Some(token) = HOST_ROOT_SLIP_CACHE.get(&self.store, txn, &cache_key)? {
             let slip = CapabilitySlip::from_token(&token)?;
             slip.verify_authority(&issuer.public_key(), &fold, now)?;
 
@@ -253,12 +266,10 @@ impl Vault {
                 )
             })
             .collect();
-        self.put_authority_log_entries_in_txn(&mut txn, &rows)?;
-        let fresh = self.authority_view_readonly_in_txn(&txn)?;
+        self.put_authority_log_entries_in_txn(txn, &rows)?;
+        let fresh = self.authority_view_readonly_in_txn(txn)?;
         slip.verify_authority(&issuer.public_key(), &fresh, now)?;
-        HOST_ROOT_SLIP_CACHE.put(&self.store, &mut txn, &cache_key, &slip.to_token()?)?;
-
-        txn.commit()?;
+        HOST_ROOT_SLIP_CACHE.put(&self.store, txn, &cache_key, &slip.to_token()?)?;
         Ok(slip)
     }
     /// Proves the local retained host secret through its actual logged root slip.
