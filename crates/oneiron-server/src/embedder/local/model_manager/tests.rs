@@ -5,8 +5,30 @@
 
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::net::TcpListener;
+use std::sync::{Arc, Barrier};
 
 use super::*;
+
+/// Model files whose fetches meet here, each with the barrier they meet at.
+///
+/// A row that is about two fetches overlapping names its file here, and every
+/// fetch of that file waits once its temporary file exists until all of them
+/// have one: the overlap is certain rather than likely. No other row's file is
+/// ever listed, so every other fetch passes straight through.
+static TOGETHER: Mutex<Vec<(PathBuf, Arc<Barrier>)>> = Mutex::new(Vec::new());
+
+/// Called by a fetch once its temporary file exists and is locked.
+pub(super) fn partial_created(path: &Path) {
+    let barrier = TOGETHER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .iter()
+        .find(|(file, _)| file == path)
+        .map(|(_, barrier)| Arc::clone(barrier));
+    if let Some(barrier) = barrier {
+        barrier.wait();
+    }
+}
 
 /// A model file big enough to arrive in more than one read.
 fn model_body() -> Vec<u8> {
@@ -30,43 +52,32 @@ fn shared_models_dir(root: &Path) -> (LocalEmbedderConfig, PathBuf) {
     (config, dir)
 }
 
-/// A fake model source on loopback that answers `fetches` requests together.
-///
-/// It holds every answer until all of them have asked, then sends each the
-/// first half of the body, waits, and sends the rest: every fetch is part way
-/// through writing its file when the first one finishes. It answers nothing
-/// else, so a fetch after these fails.
-fn source_answering_together(
-    fetches: usize,
-    body: Vec<u8>,
-) -> (String, std::thread::JoinHandle<()>) {
+/// A fake model source on loopback that serves `fetches` requests, each on a
+/// thread of its own, and then stops: a fetch after these fails.
+fn source(fetches: usize, body: Vec<u8>) -> (String, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
     let base = format!("http://{}", listener.local_addr().expect("addr"));
     let source = std::thread::spawn(move || {
-        let mut streams = Vec::new();
-        for _ in 0..fetches {
-            let (stream, _) = listener.accept().expect("a fetch connects");
-            let mut request = BufReader::new(stream.try_clone().expect("clone"));
-            let mut line = String::new();
-            while request.read_line(&mut line).expect("request head") > 2 {
-                line.clear();
+        std::thread::scope(|scope| {
+            for _ in 0..fetches {
+                let (mut stream, _) = listener.accept().expect("a fetch connects");
+                let body = &body;
+                scope.spawn(move || {
+                    let mut request = BufReader::new(stream.try_clone().expect("clone"));
+                    let mut line = String::new();
+                    while request.read_line(&mut line).expect("request head") > 2 {
+                        line.clear();
+                    }
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    )
+                    .expect("head");
+                    stream.write_all(body).expect("body");
+                });
             }
-            streams.push(stream);
-        }
-        let half = body.len() / 2;
-        for stream in &mut streams {
-            write!(
-                stream,
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                body.len()
-            )
-            .expect("head");
-            stream.write_all(&body[..half]).expect("first half");
-        }
-        std::thread::sleep(Duration::from_millis(500));
-        for stream in &mut streams {
-            stream.write_all(&body[half..]).expect("second half");
-        }
+        });
     });
     (base, source)
 }
@@ -79,9 +90,14 @@ fn source_answering_together(
 fn two_servers_fetching_one_model_into_one_directory_both_get_it() {
     let body = model_body();
     let artifact = pinned(&body);
-    let (base, source) = source_answering_together(2, body.clone());
+    let (base, source) = source(2, body.clone());
     let root = tempfile::tempdir().expect("models root");
     let (config, dir) = shared_models_dir(root.path());
+    let path = dir.join(artifact.file.as_ref());
+    TOGETHER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push((path.clone(), Arc::new(Barrier::new(2))));
     // Two managers are two servers: neither knows what the other verified.
     let servers = [
         ModelManager::with_base_url(&base),
@@ -103,7 +119,6 @@ fn two_servers_fetching_one_model_into_one_directory_both_get_it() {
     });
     source.join().expect("the source answered both");
 
-    let path = dir.join(artifact.file.as_ref());
     assert_eq!(std::fs::read(&path).expect("the file in place"), body);
     for server in &servers {
         // The source has stopped answering, so only a file found in place and
@@ -124,12 +139,13 @@ fn two_servers_fetching_one_model_into_one_directory_both_get_it() {
     );
 }
 
-/// A temporary file a killed fetch left does not stay for good: the next
-/// server to check that model file removes one nothing has written for longer
-/// than a fetch may run, under this build's names and the earlier one, and
-/// leaves a fresh one, which may be another server's fetch still running.
+/// A temporary file a killed fetch left does not stay for good. The next
+/// server to check that model file removes one that nothing has written for
+/// longer than a fetch may run and whose lock nobody holds, under this
+/// build's names and the earlier one. A fetch that is alive keeps its file,
+/// however long it has paused, and so does a file created a moment ago.
 #[test]
-fn a_killed_fetchs_leftover_is_removed_and_a_running_fetchs_file_is_kept() {
+fn a_killed_fetchs_leftover_is_removed_and_a_live_fetchs_file_is_kept() {
     let body = model_body();
     let artifact = pinned(&body);
     let root = tempfile::tempdir().expect("models root");
@@ -139,16 +155,23 @@ fn a_killed_fetchs_leftover_is_removed_and_a_running_fetchs_file_is_kept() {
     std::fs::write(&path, &body).expect("the model in place");
     let killed = partial_path(&path);
     let earlier_build = path.with_extension("partial");
-    let running = partial_path(&path);
+    let paused = partial_path(&path);
+    let just_created = partial_path(&path);
     let long_ago = SystemTime::now() - STALE_PARTIAL - Duration::from_secs(60);
-    for (leftover, modified) in [
-        (&killed, Some(long_ago)),
-        (&earlier_build, Some(long_ago)),
-        (&running, None),
+    let mut held = Vec::new();
+    for (partial, modified, alive) in [
+        (&killed, Some(long_ago), false),
+        (&earlier_build, Some(long_ago), false),
+        (&paused, Some(long_ago), true),
+        (&just_created, None, false),
     ] {
-        let file = std::fs::File::create(leftover).expect("a partial file");
+        let file = std::fs::File::create(partial).expect("a partial file");
         if let Some(modified) = modified {
             file.set_modified(modified).expect("age the partial file");
+        }
+        if alive {
+            file.lock().expect("the live fetch's lock");
+            held.push(file);
         }
     }
 
@@ -163,8 +186,7 @@ fn a_killed_fetchs_leftover_is_removed_and_a_running_fetchs_file_is_kept() {
         !earlier_build.exists(),
         "an earlier build's leftover is removed"
     );
-    assert!(
-        running.exists(),
-        "a file a fetch may still be writing stays"
-    );
+    assert!(paused.exists(), "a paused live fetch keeps its file");
+    assert!(just_created.exists(), "a file created a moment ago stays");
+    drop(held);
 }

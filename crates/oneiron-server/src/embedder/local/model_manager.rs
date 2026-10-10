@@ -33,9 +33,12 @@ const HUGGINGFACE_BASE_URL: &str = "https://huggingface.co";
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
-/// A temporary download no fetch has written to for this long is a killed
-/// fetch's leftover: a live one writes as the bytes arrive and gives up
-/// after [`DOWNLOAD_TIMEOUT`].
+/// How long nothing may have written a temporary download before a sweep asks
+/// whether its fetch is still alive ([`sweep_stale_partials`]). The age
+/// covers the moment between a fetch creating its file and locking it, and
+/// earlier builds, which wrote one shared name and never locked it: a live
+/// fetch of theirs writes as the bytes arrive and gives up after
+/// [`DOWNLOAD_TIMEOUT`].
 const STALE_PARTIAL: Duration = Duration::from_secs(2 * DOWNLOAD_TIMEOUT.as_secs());
 /// Refuse a file larger than this before writing it: a redirect to the wrong
 /// place must not fill the disk.
@@ -643,6 +646,7 @@ impl ModelManager {
         artifact: &PinnedArtifact,
     ) -> oneiron::Result<()> {
         let path = dir.join(artifact.file.as_ref());
+        sweep_stale_partials(&path);
         if path.is_file() || absent_marker(&path).is_file() {
             return Ok(());
         }
@@ -786,31 +790,40 @@ fn download(
         .create_new(true)
         .open(&temp)
         .map_err(oneiron::Error::Io)?;
-    let placed = write_verified(response, file, &temp, artifact).and_then(|stamp| {
-        std::fs::rename(&temp, path).map_err(oneiron::Error::Io)?;
-        Ok(stamp)
-    });
+    let placed = place(response, &file, &temp, path, artifact);
     if placed.is_err() {
         let _ = std::fs::remove_file(&temp);
     }
+    drop(file);
     placed.map(Some)
 }
 
-/// Writes a response body to its temporary file and checks it there.
-fn write_verified(
+/// Writes a response body to its temporary file, checks it there, then
+/// renames it into place.
+///
+/// The file's lock is held from before the first byte until the file is
+/// renamed or removed, so a sweep never takes a temporary file whose fetch is
+/// still alive, however long that fetch pauses.
+fn place(
     response: reqwest::blocking::Response,
-    mut file: std::fs::File,
+    file: &std::fs::File,
     temp: &Path,
+    path: &Path,
     artifact: &PinnedArtifact,
 ) -> oneiron::Result<FileStamp> {
-    let written = std::io::copy(&mut response.take(MAX_ARTIFACT_BYTES + 1), &mut file)
+    file.lock().map_err(oneiron::Error::Io)?;
+    #[cfg(test)]
+    tests::partial_created(path);
+    let mut writer = file;
+    let written = std::io::copy(&mut response.take(MAX_ARTIFACT_BYTES + 1), &mut writer)
         .map_err(oneiron::Error::Io)?;
-    drop(file);
     if written > MAX_ARTIFACT_BYTES {
         return Err(download_failed(&artifact.file, "exceeds the artifact cap"));
     }
     verify(temp, artifact)?;
-    FileStamp::read(temp)
+    let stamp = FileStamp::read(temp)?;
+    std::fs::rename(temp, path).map_err(oneiron::Error::Io)?;
+    Ok(stamp)
 }
 
 /// A temporary name beside `path` that no other fetch writes: this process's
@@ -825,11 +838,12 @@ fn partial_path(path: &Path) -> PathBuf {
     ))
 }
 
-/// Removes what killed fetches of this file left behind: a temporary file no
-/// fetch has written to for longer than [`STALE_PARTIAL`], under this build's
-/// names or the single name earlier builds used. A younger one may be another
-/// server's fetch still running, so it stays. Best effort: a leftover that
-/// cannot be removed costs disk, never the file itself.
+/// Removes what killed fetches of this file left behind, under this build's
+/// names or the single name earlier builds used: a temporary file nothing has
+/// written for [`STALE_PARTIAL`] and whose lock nobody holds. A fetch that is
+/// alive holds its lock, however long it has paused, so its file stays. Best
+/// effort: a leftover that cannot be removed costs disk, never the file
+/// itself.
 fn sweep_stale_partials(path: &Path) {
     let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
         return;
@@ -853,7 +867,13 @@ fn sweep_stale_partials(path: &Path) {
                 .and_then(|modified| modified.elapsed().ok())
                 .is_some_and(|age| age > STALE_PARTIAL)
         };
-        if (partial || candidate == legacy) && stale() {
+        if !(partial || candidate == legacy) || !stale() {
+            continue;
+        }
+        let Ok(file) = std::fs::File::open(&candidate) else {
+            continue;
+        };
+        if file.try_lock().is_ok() {
             let _ = std::fs::remove_file(&candidate);
         }
     }
