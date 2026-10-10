@@ -46087,7 +46087,7 @@
      "path": "src/lib.rs",
      "purpose": "The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
      "surface": {
-      "mod": 1,
+      "mod": 2,
       "re-export": 6
      }
     },
@@ -46133,6 +46133,17 @@
      "surface": {
       "const": 2,
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/spin.rs",
+     "purpose": "Spinning a moment before sleeping",
+     "surface": {
+      "const": 1,
+      "fn": 2
      }
     },
     {
@@ -46210,6 +46221,13 @@
      "layout": "file",
      "purpose": "A structural check of a MessagePack frame before it is decoded"
     },
+    "spin": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Spinning a moment before sleeping"
+    },
     "wire": {
      "files": 1,
      "impl_vault": false,
@@ -46220,7 +46238,7 @@
    },
    "over_bar": 0,
    "purpose": "The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 6,
+   "source_files": 7,
    "test_files": 1
   },
   "oneiron-py": {
