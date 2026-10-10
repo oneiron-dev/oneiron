@@ -13,6 +13,7 @@ use candle_core::{DType, Device, Module, Shape, Tensor};
 use candle_nn::var_builder::SimpleBackend;
 use candle_nn::{Init, Linear, VarBuilder};
 
+use super::cpu_q8::{self, CpuQ8};
 use crate::config::EmbedderQuant;
 
 /// A projection, at whichever precision it was loaded.
@@ -23,6 +24,8 @@ use crate::config::EmbedderQuant;
 pub(super) enum Proj {
     Dense(Linear),
     Q8(QMatMul),
+    /// Q8_0 on the CPU, where [`CpuQ8`] reproduces candle's numbers.
+    CpuQ8(CpuQ8),
 }
 
 impl Proj {
@@ -30,8 +33,18 @@ impl Proj {
         match self {
             Self::Dense(linear) => linear.forward(xs),
             Self::Q8(matmul) => matmul.forward(xs),
+            Self::CpuQ8(matmul) => matmul.forward(xs),
         }
     }
+}
+
+/// Which kernel runs a Q8_0 projection on the CPU.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Q8Kernel {
+    /// The tiled kernel, wherever it reproduces candle's numbers ([`cpu_q8`]).
+    Tiled,
+    /// candle's own everywhere: the reference the tiled kernel is held to.
+    Candle,
 }
 
 /// Loads one projection weight, quantising it when asked.
@@ -39,12 +52,14 @@ impl Proj {
 /// `vb` must be a CPU builder: `quantize_onto` reads the source on the host and
 /// writes the blocks straight to `device`, so the full-precision copy never
 /// lands on the GPU and peak memory stays at one tensor rather than one model.
+#[expect(clippy::too_many_arguments, reason = "one weight's whole load recipe")]
 pub(super) fn load_proj(
     vb: &VarBuilder<'_>,
     name: &str,
     out_dim: usize,
     in_dim: usize,
     quant: EmbedderQuant,
+    kernel: Q8Kernel,
     device: &Device,
     dtype: DType,
 ) -> candle_core::Result<Proj> {
@@ -52,6 +67,12 @@ pub(super) fn load_proj(
     match quant {
         EmbedderQuant::Q8_0 => {
             let quantised = QTensor::quantize_onto(&weight, GgmlDType::Q8_0, device)?;
+            if kernel == Q8Kernel::Tiled
+                && cpu_q8::REPRODUCES_CANDLE
+                && let Some(tiled) = CpuQ8::from_qtensor(&quantised)?
+            {
+                return Ok(Proj::CpuQ8(tiled));
+            }
             Ok(Proj::Q8(QMatMul::from_qtensor(quantised)?))
         }
         EmbedderQuant::None => Ok(Proj::Dense(Linear::new(

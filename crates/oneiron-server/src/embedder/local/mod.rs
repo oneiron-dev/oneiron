@@ -2,9 +2,11 @@
 //!
 //! Rebuilt from the upstream runtime's embedding stack and left standing on the
 //! released candle — the model body, the sentence-transformers chain, the
-//! quantise-at-load step, the attention dispatch and the no-padding batching,
-//! with its engine, scheduler, request channels and CLI left behind. File-level
-//! provenance is in `NOTICE-mistralrs.md` beside this module.
+//! quantise-at-load step and the attention dispatch, with its engine,
+//! scheduler, request channels and CLI left behind. File-level provenance is in
+//! `NOTICE-mistralrs.md` beside this module. Inputs are packed rather than
+//! padded ([`batcher`]); on x86_64 the quantised projections run on this
+//! crate's own tiled kernel ([`cpu_q8`]).
 //!
 //! Zero setup for the operator: the pinned artifacts are fetched on first use,
 //! verified by digest, quantised at load, and the vault serves at rung 0 until
@@ -17,6 +19,7 @@
 
 pub(super) mod attention;
 pub(super) mod batcher;
+pub(super) mod cpu_q8;
 pub(super) mod device;
 pub(super) mod isq;
 pub(crate) mod model_manager;
@@ -25,27 +28,36 @@ pub(super) mod qwen3_embedding;
 pub(super) mod spec;
 pub(super) mod st_modules;
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
-use candle_core::{DType, Device, Tensor};
+use candle_core::{DType, Device};
 use candle_nn::VarBuilder;
 use oneiron::embed::{Embedder, EmbedderLocality, PendingEmbeddingInput};
 use tokenizers::Tokenizer;
 
+use self::isq::Q8Kernel;
 use self::prompts::Prompts;
-use self::qwen3_embedding::{Config, Model};
+use self::qwen3_embedding::{Config, LoadContext, Model};
 use self::spec::LocalModelSpec;
 use self::st_modules::{Chain, StModules};
 use super::{EmbedderCommon, QueryEmbedder};
 use crate::config::EmbedderConfig;
 
+/// Tokens one forward packs, at most; one input longer than this runs alone.
+///
+/// Enough rows that every weight is read once for many tokens, and few enough
+/// that a forward's activations stay near 40 MiB. Each token holds about
+/// 80 KiB of them at the widest step.
+const FORWARD_TOKENS: usize = 512;
+
 pub(crate) struct LocalEmbedder {
     common: EmbedderCommon,
-    /// One model, one lock. candle tensors are shareable but the mask cache is
-    /// not, and the reconciler calls `embed` from one worker thread anyway.
-    model: Mutex<Model>,
+    /// The body. Forwards share it and run side by side; a bulk forward parks
+    /// between layers while a query runs ([`QueryFirst`]).
+    model: Model,
+    queries_first: QueryFirst,
     modules: StModules,
     /// What each side carries before its text.
     prompts: Prompts,
@@ -56,8 +68,80 @@ pub(crate) struct LocalEmbedder {
     tokenizer: Tokenizer,
     /// How this model turns text into stored vectors ([`LocalModelSpec::transform`]).
     transform: String,
+    /// Inputs one forward packs, at most.
     batch_size: usize,
+    /// Tokens one forward packs, at most ([`FORWARD_TOKENS`]).
+    forward_tokens: usize,
     truncations: AtomicU64,
+}
+
+/// Which prompt a text is embedded behind.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Side {
+    Query,
+    Document,
+}
+
+/// Whether a call runs first or makes way.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Priority {
+    /// Someone is waiting on it: a recall's query.
+    Query,
+    /// Filling the vault: parks between layers while any query runs.
+    Bulk,
+}
+
+/// What one call embedded: each text's output from the model's module chain,
+/// before the numerics contract normalises and rounds it, and the tokens read.
+pub(super) struct Embedded {
+    pub(super) rows: Vec<Vec<f32>>,
+    pub(super) tokens: usize,
+}
+
+/// Queries first. A bulk forward checks in before every layer and waits there
+/// while any query runs; a query never waits for a bulk forward, so a recall
+/// shares the CPU with at most one bulk layer already under way.
+#[derive(Default)]
+struct QueryFirst {
+    running: Mutex<usize>,
+    done: Condvar,
+}
+
+impl QueryFirst {
+    fn enter(&self) -> QueryRunning<'_> {
+        *count(&self.running) += 1;
+        QueryRunning(self)
+    }
+
+    fn make_way(&self) {
+        let mut running = count(&self.running);
+        while *running > 0 {
+            running = self
+                .done
+                .wait(running)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+}
+
+/// Poison recovery: the count is a plain integer that no panic leaves half
+/// written, and refusing it would stall every bulk forward for the life of
+/// the process.
+fn count(running: &Mutex<usize>) -> MutexGuard<'_, usize> {
+    running.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// A query in flight; dropping it lets parked bulk forwards go once none is.
+struct QueryRunning<'a>(&'a QueryFirst);
+
+impl Drop for QueryRunning<'_> {
+    fn drop(&mut self) {
+        let mut running = count(&self.0.running);
+        *running = running.saturating_sub(1);
+        if *running == 0 {
+            self.0.done.notify_all();
+        }
+    }
 }
 
 /// The transform descriptor of the local model as its files on this host
@@ -104,16 +188,23 @@ impl LocalEmbedder {
         config: &EmbedderConfig,
         models: &model_manager::ModelManager,
     ) -> oneiron::Result<std::sync::Arc<Self>> {
-        Self::load_at(config, models, device::run_dtype(config.local.quant))
+        Self::load_at(
+            config,
+            models,
+            device::run_dtype(config.local.quant),
+            Q8Kernel::Tiled,
+        )
     }
 
-    /// [`Self::load`] with the activation precision named rather than derived
-    /// from `quant`. The parity rows use it to run unquantised f32, the one
-    /// precision that separates a port error from rounding.
+    /// [`Self::load`] with the activation precision and the Q8_0 kernel named
+    /// rather than derived. The parity rows use it to run unquantised f32, the
+    /// one precision that separates a port error from rounding, and to hold
+    /// the tiled kernel to candle's own.
     fn load_at(
         config: &EmbedderConfig,
         models: &model_manager::ModelManager,
         dtype: DType,
+        kernel: Q8Kernel,
     ) -> oneiron::Result<std::sync::Arc<Self>> {
         let run_device = device::resolve_device(config.local.device, &config.local.auto_devices)?;
         let dir = models.ensure_all(&config.local)?;
@@ -132,7 +223,13 @@ impl LocalEmbedder {
         let document_prompt_tokens = prompt_tokens(&spec.prompts.document)?;
         let transform = spec.transform();
         let started = Instant::now();
-        let model = load_body(&dir, &spec.body, config, &run_device, dtype)?;
+        let context = LoadContext {
+            quant: config.local.quant,
+            kernel,
+            device: &run_device,
+            dtype,
+        };
+        let model = load_body(&dir, &spec.body, config, &context)?;
         let modules = StModules::load(spec.chain, &dir, &run_device)?;
         tracing::info!(
             device = device::device_label(&run_device),
@@ -149,7 +246,8 @@ impl LocalEmbedder {
         );
         Ok(std::sync::Arc::new(Self {
             common: EmbedderCommon::from_config(config),
-            model: Mutex::new(model),
+            model,
+            queries_first: QueryFirst::default(),
             modules,
             prompts: spec.prompts,
             query_prompt_tokens,
@@ -157,6 +255,7 @@ impl LocalEmbedder {
             tokenizer,
             transform,
             batch_size: config.batch_size.max(1),
+            forward_tokens: FORWARD_TOKENS,
             truncations: AtomicU64::new(0),
         }))
     }
@@ -166,14 +265,19 @@ impl LocalEmbedder {
         &self.transform
     }
 
-    /// Embeds document texts in input order, each behind the model's own
-    /// document prompt.
-    fn embed_documents(&self, texts: &[String]) -> oneiron::Result<Vec<Vec<f32>>> {
-        let prompted: Vec<String> = texts
-            .iter()
-            .map(|text| format!("{}{text}", self.prompts.document))
-            .collect();
-        self.embed_texts(&prompted, self.document_prompt_tokens)
+    /// Embeds texts in input order, each behind `side`'s prompt.
+    pub(super) fn embed_raw(
+        &self,
+        texts: &[String],
+        side: Side,
+        priority: Priority,
+    ) -> oneiron::Result<Embedded> {
+        let (prompt, prompt_tokens) = match side {
+            Side::Query => (&self.prompts.query, self.query_prompt_tokens),
+            Side::Document => (&self.prompts.document, self.document_prompt_tokens),
+        };
+        let prompted: Vec<String> = texts.iter().map(|text| format!("{prompt}{text}")).collect();
+        self.embed_texts(&prompted, prompt_tokens, priority)
     }
 
     /// Embeds already-prompted texts in input order. `prompt_tokens` leading
@@ -182,9 +286,13 @@ impl LocalEmbedder {
         &self,
         texts: &[String],
         prompt_tokens: usize,
-    ) -> oneiron::Result<Vec<Vec<f32>>> {
+        priority: Priority,
+    ) -> oneiron::Result<Embedded> {
         if texts.is_empty() {
-            return Ok(Vec::new());
+            return Ok(Embedded {
+                rows: Vec::new(),
+                tokens: 0,
+            });
         }
         let tokenized = batcher::tokenize(&self.tokenizer, texts)?;
         let truncated = tokenized.iter().filter(|item| item.truncated).count() as u64;
@@ -192,59 +300,56 @@ impl LocalEmbedder {
             self.truncations.fetch_add(truncated, Ordering::Relaxed);
         }
         let lengths: Vec<usize> = tokenized.iter().map(|item| item.ids.len()).collect();
-        let groups = batcher::group_equal_lengths(&lengths, self.batch_size);
-        let mut vectors: Vec<Option<Vec<f32>>> = vec![None; texts.len()];
-        // Poison recovery: the only state behind this lock is a cache of causal
-        // masks, which a panic cannot leave inconsistent, and refusing it would
-        // disable the embedder for the life of the process.
-        let mut model = self
-            .model
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for group in &groups {
-            let rows = self.embed_group(&mut model, &tokenized, group, prompt_tokens)?;
-            for (index, row) in group.iter().zip(rows) {
-                vectors[*index] = Some(row);
+        let _query = (priority == Priority::Query).then(|| self.queries_first.enter());
+        let park = || {
+            if priority == Priority::Bulk {
+                self.queries_first.make_way();
+            }
+        };
+        let mut rows = Vec::with_capacity(texts.len());
+        for packed in batcher::pack(&lengths, self.batch_size, self.forward_tokens) {
+            let inputs: Vec<&[u32]> = tokenized[packed]
+                .iter()
+                .map(|item| item.ids.as_slice())
+                .collect();
+            let states = self.model.forward(&inputs, &park).map_err(candle_failed)?;
+            for state in &states {
+                let pooled = self
+                    .modules
+                    .apply(state, prompt_tokens)
+                    .map_err(candle_failed)?;
+                rows.push(
+                    pooled
+                        .to_dtype(DType::F32)
+                        .and_then(|pooled| pooled.flatten_all()?.to_vec1())
+                        .map_err(candle_failed)?,
+                );
             }
         }
-        drop(model);
-        vectors
+        Ok(Embedded {
+            rows,
+            tokens: lengths.iter().sum(),
+        })
+    }
+
+    /// Embeds texts and holds each output to the numerics contract.
+    fn embed_finished(
+        &self,
+        texts: &[String],
+        side: Side,
+        priority: Priority,
+    ) -> oneiron::Result<Vec<Vec<f32>>> {
+        self.embed_raw(texts, side, priority)?
+            .rows
             .into_iter()
-            .map(|row| {
-                row.ok_or(oneiron::Error::InvariantViolation(
-                    "embedder left an input unembedded",
-                ))
-            })
+            .map(|row| self.common.finish_vector(row))
             .collect()
     }
 
-    /// One equal-length group: stack, forward, pool, finish.
-    fn embed_group(
-        &self,
-        model: &mut Model,
-        tokenized: &[batcher::Tokenized],
-        group: &[usize],
-        prompt_tokens: usize,
-    ) -> oneiron::Result<Vec<Vec<f32>>> {
-        let ids: Vec<u32> = group
-            .iter()
-            .flat_map(|index| tokenized[*index].ids.iter().copied())
-            .collect();
-        let seq = tokenized[group[0]].ids.len();
-        let shape = (group.len(), seq);
-        let ids = Tensor::from_vec(ids, shape, model.device()).map_err(candle_failed)?;
-        let hidden = model.forward(&ids).map_err(candle_failed)?;
-        let pooled = self
-            .modules
-            .apply(&hidden, prompt_tokens)
-            .map_err(candle_failed)?;
-        let rows: Vec<Vec<f32>> = pooled
-            .to_dtype(DType::F32)
-            .and_then(|pooled| pooled.to_vec2())
-            .map_err(candle_failed)?;
-        rows.into_iter()
-            .map(|row| self.common.finish_vector(row))
-            .collect()
+    /// Embeds document texts in input order, each behind the model's own
+    /// document prompt.
+    fn embed_documents(&self, texts: &[String]) -> oneiron::Result<Vec<Vec<f32>>> {
+        self.embed_finished(texts, Side::Document, Priority::Bulk)
     }
 }
 
@@ -252,8 +357,7 @@ fn load_body(
     dir: &std::path::Path,
     model_config: &Config,
     config: &EmbedderConfig,
-    run_device: &Device,
-    dtype: DType,
+    context: &LoadContext<'_>,
 ) -> oneiron::Result<Model> {
     let weights = dir.join("model.safetensors");
     // Read at f32, which holds every checkpoint's own precision exactly — bf16
@@ -270,9 +374,7 @@ fn load_body(
     Model::load(
         model_config,
         &vb,
-        config.local.quant,
-        run_device,
-        dtype,
+        context,
         config.max_input_tokens,
         load_threads(config.local.threads),
     )
@@ -362,15 +464,14 @@ impl QueryEmbedder for LocalEmbedder {
     }
 
     fn embed_query(&self, text: &str) -> oneiron::Result<Vec<f32>> {
-        let mut vectors = self.embed_texts(
-            &[format!("{}{text}", self.prompts.query)],
-            self.query_prompt_tokens,
-        )?;
+        let mut vectors = self.embed_finished(&[text.to_owned()], Side::Query, Priority::Query)?;
         vectors.pop().ok_or(oneiron::Error::InvariantViolation(
             "embedder answered a single query with no row",
         ))
     }
 }
 
+#[cfg(test)]
+pub(super) mod bench;
 #[cfg(test)]
 mod tests;

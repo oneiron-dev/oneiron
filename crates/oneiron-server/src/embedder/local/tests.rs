@@ -727,6 +727,63 @@ mod with_model {
         println!("pplx Q8_0 vs sentence-transformers: worst cosine {worst}, mean {mean}");
     }
 
+    /// The packed forward on the tiled kernel against candle's kernel run one
+    /// input per forward, which is what every vault's vectors were made with
+    /// before. Hidden states and stored vectors both equal to the bit, for
+    /// inputs packed together and across forwards: an input's vector does not
+    /// depend on what it was embedded with.
+    #[test]
+    #[ignore = "needs the 2.38 GB pplx-embed-v1 checkpoint; run with --run-ignored=all"]
+    fn packed_forwards_on_the_tiled_kernel_keep_every_vector_to_the_bit() {
+        let config = pplx_config(EmbedderDevice::Cpu);
+        let packed = LocalEmbedder::load(&config, &manager()).expect("model loads");
+        let reference = LocalEmbedder::load_at(&config, &manager(), DType::F32, Q8Kernel::Candle)
+            .expect("model loads");
+        let mut texts = pplx_parity_texts();
+        texts.extend(super::super::bench::synthetic_documents(60, 9));
+        texts.push(texts[3].clone());
+        let tokenized = batcher::tokenize(&packed.tokenizer, &texts).expect("tokenized");
+        let inputs: Vec<&[u32]> = tokenized.iter().map(|item| item.ids.as_slice()).collect();
+        let mut differing_states = 0;
+        for chunk in inputs.chunks(16) {
+            let together = packed.model.forward(chunk, &|| {}).expect("packed forward");
+            for (input, state) in chunk.iter().zip(&together) {
+                let alone = reference
+                    .model
+                    .forward(&[*input], &|| {})
+                    .expect("one input");
+                let bits = |tensor: &candle_core::Tensor| -> Vec<u32> {
+                    tensor
+                        .flatten_all()
+                        .and_then(|flat| flat.to_vec1::<f32>())
+                        .expect("states")
+                        .into_iter()
+                        .map(f32::to_bits)
+                        .collect()
+                };
+                if bits(state) != bits(&alone[0]) {
+                    differing_states += 1;
+                }
+            }
+        }
+        assert_eq!(differing_states, 0, "inputs whose hidden states moved");
+        let ours = packed.embed_documents(&texts).expect("embedded");
+        let theirs: Vec<Vec<f32>> = texts
+            .iter()
+            .map(|text| {
+                reference
+                    .embed_documents(std::slice::from_ref(text))
+                    .expect("embedded")
+                    .remove(0)
+            })
+            .collect();
+        assert_eq!(ours, theirs);
+        println!(
+            "{} inputs, every hidden state and vector equal to the bit",
+            texts.len()
+        );
+    }
+
     fn bench_device() -> EmbedderDevice {
         std::env::var("ONEIRON_EMBED_BENCH_DEVICE")
             .unwrap_or_else(|_| "auto".to_owned())

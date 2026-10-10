@@ -128,3 +128,51 @@ launchctl load ~/Library/LaunchAgents/com.oneiron.server.plist
 
 The templates assume `oneiron-server` was installed by Cargo into
 `~/.cargo/bin` and use `~/.local/share/oneiron/default` as the vault path.
+
+The Linux unit sets `MALLOC_ARENA_MAX=2`: glibc otherwise keeps a malloc arena
+per busy thread, and two arenas measured 75 to 93 MiB less resident per vault
+running the local embedder, at the same embedding speed. Keep it in any unit
+you write yourself. macOS's allocator does not read it.
+
+## Shared Embedder
+
+A vault on the `local` embedder loads its own copy of the model, about 1 GiB
+resident. Several vaults on one host, or a host with a GPU, can share one copy
+instead: run `oneiron-server embedder serve`, which serves the local model over
+an OpenAI-compatible `/v1/embeddings`, and put the vaults on the `endpoint`
+provider.
+
+```sh
+# The host that holds the model. Loopback 127.0.0.1:7399 by default; it prints
+# the model id, which is also the first row of GET /v1/models.
+oneiron-server embedder serve
+
+# Each vault.
+MODEL=perplexity-ai/pplx-embed-v1-0.6b@2c4d510dd4a732063c31a0f70193e35067b51fd8
+oneiron-server init ~/vaults/notes --embedder endpoint \
+  --embedder-endpoint http://127.0.0.1:7399/v1 \
+  --embedder-model-key "$MODEL" --embedder-model-id "$MODEL" --dimensions 1024
+```
+
+The vectors are the ones a `local` vault makes, to the bit: the server runs the
+same verified files, tokenizer, pooling and module chain, returns the chain's
+output, and the vault normalises and rounds it exactly as the local provider
+does. A vault can move between `local` and this endpoint without `reembed`.
+`deploy/systemd/oneiron-embedder.service` runs it as a user service.
+
+`--config` or the `--embedder-*` flags pick another local model, as `serve`
+reads them. Off loopback the server needs `--api-key-env NAME` (vaults send the
+key with `--embedder-api-key-env`), and vaults refuse a network endpoint that is
+not HTTPS, so reach a remote embedder through a TLS proxy such as
+`tailscale serve`, or an SSH tunnel to a loopback port.
+
+On a GPU host, build with candle's CUDA kernels (the CUDA toolkit's `nvcc` on
+`PATH`) and ask for the device:
+
+```sh
+cargo build --release -p oneiron-server --features candle-core/cuda,candle-nn/cuda
+oneiron-server embedder serve --embedder-device cuda
+```
+
+Without those features the build needs no GPU and `cuda` is refused as
+unavailable. Apple silicon builds use Metal by default.

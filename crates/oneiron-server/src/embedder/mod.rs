@@ -15,6 +15,7 @@ mod remote;
 pub(crate) use local::prepare as prepare_local;
 pub(crate) use remote::build_remote_rung;
 mod local;
+pub(crate) mod serve;
 
 use std::sync::{Arc, OnceLock};
 

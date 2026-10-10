@@ -1,13 +1,16 @@
-//! Tokenisation and no-padding batching.
+//! Tokenisation and packing.
 //!
-//! The upstream runtime reached its measured throughput by bucketing waiting
-//! sequences by IDENTICAL length and running one bucket per step — which is the
-//! only reason its right-padding with no attention mask was ever correct, since
-//! padding never actually happened. This keeps the correct half at the provider
-//! level: sort by token length, group equal lengths, restore the input order
-//! afterwards. No padding, no padding mask, no position shifts: a causal model
-//! keeps its pure causal mask, a bidirectional one needs no mask, and a mean
-//! pool averages exactly the input's own rows.
+//! Inputs are packed, never padded: a forward takes several inputs' tokens
+//! back to back, runs every row-wise step over all of them at once, and splits
+//! them only for attention ([`super::qwen3_embedding::Model::forward`]). No
+//! padding means no padding mask and no position shifts: a causal model keeps
+//! its pure causal mask, a bidirectional one needs no mask, and a mean pool
+//! averages exactly the input's own rows.
+//!
+//! The upstream runtime batched only inputs of IDENTICAL length, which is what
+//! made its unmasked right-padding correct. Packing keeps that property and
+//! drops the cost: real text rarely shares a length, so grouping by length ran
+//! one input per forward.
 
 use tokenizers::{Tokenizer, TruncationDirection, TruncationParams, TruncationStrategy};
 
@@ -28,9 +31,8 @@ pub(super) struct Tokenized {
 /// whatever it adds and cuts the text to fit, which is also what
 /// sentence-transformers does with the same file.
 ///
-/// Padding is switched off whatever the file says: a padded group would need a
-/// key mask and a masked pool, and grouping equal lengths is what makes both
-/// unnecessary.
+/// Padding is switched off whatever the file says: a padded input would need a
+/// key mask and a masked pool, and packing is what makes both unnecessary.
 pub(super) fn for_provider(
     mut tokenizer: Tokenizer,
     max_input_tokens: usize,
@@ -109,26 +111,28 @@ fn strip(text: &str) -> &str {
     text.trim_matches(|c: char| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c))
 }
 
-/// Groups input indices by identical token length, in first-appearance order,
-/// chunked at `batch_size`.
+/// Splits inputs, in order, into forwards of at most `max_inputs` inputs and
+/// `max_tokens` tokens. An input longer than `max_tokens` runs alone.
 ///
-/// Stable on purpose: the caller scatters results back by index, and a group
-/// order that depended on a hash would make two identical batches produce two
-/// different orders of the same work.
-pub(super) fn group_equal_lengths(lengths: &[usize], batch_size: usize) -> Vec<Vec<usize>> {
-    let cap = batch_size.max(1);
-    let mut buckets: Vec<(usize, Vec<usize>)> = Vec::new();
+/// In order on purpose: each forward's outputs are the next rows of the
+/// result, so nothing has to be scattered back by index.
+pub(super) fn pack(
+    lengths: &[usize],
+    max_inputs: usize,
+    max_tokens: usize,
+) -> Vec<std::ops::Range<usize>> {
+    let mut forwards = Vec::new();
+    let (mut start, mut tokens) = (0, 0);
     for (index, &length) in lengths.iter().enumerate() {
-        match buckets.iter_mut().find(|(bucket, _)| *bucket == length) {
-            Some((_, members)) => members.push(index),
-            None => buckets.push((length, vec![index])),
+        let full = index - start >= max_inputs.max(1) || tokens + length > max_tokens;
+        if index > start && full {
+            forwards.push(start..index);
+            (start, tokens) = (index, 0);
         }
+        tokens += length;
     }
-    let mut groups = Vec::new();
-    for (_, members) in buckets {
-        for chunk in members.chunks(cap) {
-            groups.push(chunk.to_vec());
-        }
+    if start < lengths.len() {
+        forwards.push(start..lengths.len());
     }
-    groups
+    forwards
 }

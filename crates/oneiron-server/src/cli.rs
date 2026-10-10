@@ -83,6 +83,51 @@ pub enum Command {
     /// Owner acts for the vault's Dreamer.
     #[command(subcommand)]
     Dreamer(DreamerCommand),
+    /// Run this host's local embedder for other vaults.
+    #[command(subcommand)]
+    Embedder(EmbedderCommand),
+}
+
+#[derive(Subcommand)]
+pub enum EmbedderCommand {
+    /// Serve the local embedding model over an OpenAI-compatible
+    /// `/v1/embeddings` for vaults on the `endpoint` provider to share: one
+    /// model in memory for all of them, on a GPU where the build has one.
+    /// Point a vault at it with `init --embedder endpoint --embedder-endpoint
+    /// http://127.0.0.1:7399/v1` and the model id this prints; its vectors are
+    /// the ones a local vault makes.
+    Serve(Box<EmbedderServeArgs>),
+}
+
+#[derive(Args, Clone)]
+pub struct EmbedderServeArgs {
+    /// Config file whose `[embedder]` section names the model, as `serve
+    /// --config` reads it. With neither this, `ONEIRON_CONFIG`, the XDG
+    /// config nor `--embedder-*` flags, the default local model.
+    #[arg(long)]
+    pub config: Option<PathBuf>,
+    /// `--embedder-*` flags, as `serve` takes them: repository, revision,
+    /// device, quantisation, input cap.
+    #[command(flatten)]
+    pub embedder: crate::config::EmbedderArgs,
+    /// Vault width the `[embedder]` section is checked against, as `serve`
+    /// checks it.
+    #[arg(long)]
+    pub dimensions: Option<usize>,
+    /// Address to listen on. Anything but loopback needs `--api-key-env`.
+    #[arg(long, default_value = "127.0.0.1")]
+    pub host: std::net::IpAddr,
+    #[arg(long, default_value_t = 7399)]
+    pub port: u16,
+    /// Environment variable NAME holding the key every request must send as
+    /// a bearer token. Never the key itself.
+    #[arg(long)]
+    pub api_key_env: Option<String>,
+    /// Another name a request's `model` may give, beside the model id.
+    #[arg(long = "model-alias")]
+    pub model_aliases: Vec<String>,
+    #[arg(long, default_value = "info")]
+    pub log_level: String,
 }
 
 #[derive(Subcommand)]
@@ -495,5 +540,6 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Api(args) => commands::api(args).await,
         Command::Host(HostCommand::Init(args)) => commands::host_init(args),
         Command::Dreamer(DreamerCommand::Grant(args)) => commands::dreamer_grant(*args),
+        Command::Embedder(EmbedderCommand::Serve(args)) => commands::embedder_serve(*args).await,
     }
 }

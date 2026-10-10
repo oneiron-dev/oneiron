@@ -13,17 +13,19 @@
 //! an encoder trained bidirectionally on this layout differs from a causal one
 //! in its mask and nothing else.
 
-use candle_core::{D, DType, Device, IndexOp, Module, Tensor};
+use std::sync::Mutex;
+
+use candle_core::{DType, Device, IndexOp, Module, Tensor};
 use candle_nn::{RmsNorm, VarBuilder};
 use serde::Deserialize;
 
 use super::attention::{causal_mask, grouped_attention};
-use super::isq::{Proj, load_plain, load_proj};
+use super::isq::{Proj, Q8Kernel, load_plain, load_proj};
 use crate::config::EmbedderQuant;
 
 /// `config.json` as the model ships it. Unknown keys are ignored on purpose:
 /// the file carries inference knobs (`use_cache`, `layer_types`) that do not
-/// apply to a single forward pass over an unpadded batch, and a class name
+/// apply to a single forward pass over packed, unpadded inputs, and a class name
 /// (`architectures`) that says nothing the fields below do not.
 #[derive(Clone, Debug, Deserialize)]
 pub(super) struct Config {
@@ -195,30 +197,51 @@ impl Attention {
         })
     }
 
-    fn forward(
-        &self,
-        xs: &Tensor,
-        rotary: &Rotary,
-        mask: Option<&Tensor>,
-        causal: bool,
-    ) -> candle_core::Result<Tensor> {
-        let (batch, seq, _) = xs.dims3()?;
-        // Per-HEAD q/k norms, as the source applies them: reshape to heads
-        // first, normalise inside each head, then rotate.
-        let split = |projected: Tensor, heads: usize| -> candle_core::Result<Tensor> {
-            projected
-                .reshape((batch, seq, heads, self.head_dim))?
-                .transpose(1, 2)
+    /// `xs` is `[tokens, hidden]`, every input's rows back to back. The
+    /// projections run once over all of them; attention runs per input, over
+    /// that input's own rows.
+    fn forward(&self, xs: &Tensor, spans: &[Span], model: &Model) -> candle_core::Result<Tensor> {
+        let queries = self.q_proj.forward(xs)?;
+        let keys = self.k_proj.forward(xs)?;
+        let values = self.v_proj.forward(xs)?;
+        let mut attended = Vec::with_capacity(spans.len());
+        for span in spans {
+            // Per-HEAD q/k norms, as the source applies them: reshape to heads
+            // first, normalise inside each head, then rotate.
+            let split = |projected: &Tensor, heads: usize| -> candle_core::Result<Tensor> {
+                projected
+                    .narrow(0, span.start, span.len)?
+                    .reshape((1, span.len, heads, self.head_dim))?
+                    .transpose(1, 2)
+            };
+            let q = split(&queries, self.heads)?;
+            let k = split(&keys, self.kv_heads)?;
+            let v = split(&values, self.kv_heads)?;
+            let q = model
+                .rotary
+                .apply(&self.q_norm.forward(&q.contiguous()?)?, span.len)?;
+            let k = model
+                .rotary
+                .apply(&self.k_norm.forward(&k.contiguous()?)?, span.len)?;
+            let mask = model.mask(span.len)?;
+            let heads = grouped_attention(
+                &q,
+                &k,
+                &v.contiguous()?,
+                mask.as_ref(),
+                model.causal,
+                self.scale,
+            )?;
+            attended.push(
+                heads
+                    .transpose(1, 2)?
+                    .reshape((span.len, self.heads * self.head_dim))?,
+            );
+        }
+        let merged = match attended.len() {
+            1 => attended.remove(0),
+            _ => Tensor::cat(&attended, 0)?,
         };
-        let q = split(self.q_proj.forward(xs)?, self.heads)?;
-        let k = split(self.k_proj.forward(xs)?, self.kv_heads)?;
-        let v = split(self.v_proj.forward(xs)?, self.kv_heads)?;
-        let q = rotary.apply(&self.q_norm.forward(&q.contiguous()?)?, seq)?;
-        let k = rotary.apply(&self.k_norm.forward(&k.contiguous()?)?, seq)?;
-        let attended = grouped_attention(&q, &k, &v.contiguous()?, mask, causal, self.scale)?;
-        let merged = attended
-            .transpose(1, 2)?
-            .reshape((batch, seq, self.heads * self.head_dim))?;
         self.o_proj.forward(&merged)
     }
 }
@@ -270,16 +293,10 @@ impl DecoderLayer {
         })
     }
 
-    fn forward(
-        &self,
-        xs: &Tensor,
-        rotary: &Rotary,
-        mask: Option<&Tensor>,
-        causal: bool,
-    ) -> candle_core::Result<Tensor> {
-        let attended =
-            self.self_attn
-                .forward(&self.input_layernorm.forward(xs)?, rotary, mask, causal)?;
+    fn forward(&self, xs: &Tensor, spans: &[Span], model: &Model) -> candle_core::Result<Tensor> {
+        let attended = self
+            .self_attn
+            .forward(&self.input_layernorm.forward(xs)?, spans, model)?;
         let xs = (xs + attended)?;
         let fed = self
             .mlp
@@ -288,11 +305,13 @@ impl DecoderLayer {
     }
 }
 
-/// Where and at what precision every tensor lands.
-struct LoadContext<'a> {
-    quant: EmbedderQuant,
-    device: &'a Device,
-    dtype: DType,
+/// Where and at what precision every tensor lands, and which kernel runs a
+/// quantised projection.
+pub(super) struct LoadContext<'a> {
+    pub(super) quant: EmbedderQuant,
+    pub(super) kernel: Q8Kernel,
+    pub(super) device: &'a Device,
+    pub(super) dtype: DType,
 }
 
 impl LoadContext<'_> {
@@ -309,6 +328,7 @@ impl LoadContext<'_> {
             out_dim,
             in_dim,
             self.quant,
+            self.kernel,
             self.device,
             self.dtype,
         )
@@ -386,8 +406,8 @@ fn load_layers(
 
 /// Distinct sequence lengths the mask cache holds at once.
 ///
-/// Inputs arrive grouped by equal length and a corpus settles on a handful of
-/// them, so a few entries carry nearly every pass. The bound is what keeps a
+/// A corpus settles on a handful of input lengths, so a few entries carry
+/// nearly every pass. The bound is what keeps a
 /// long-lived process from holding one `s × s` tensor for every length it has
 /// ever been asked to embed.
 pub(super) const MASK_CACHE_CAPACITY: usize = 8;
@@ -426,6 +446,13 @@ impl MaskCache {
     }
 }
 
+/// Where one packed input's rows sit: its first row and how many.
+#[derive(Clone, Copy, Debug)]
+struct Span {
+    start: usize,
+    len: usize,
+}
+
 /// The body. `forward` returns post-norm hidden states, one row per token.
 pub(super) struct Model {
     /// Kept at bf16 whatever the run precision: 152k × 1024 values is the
@@ -435,10 +462,11 @@ pub(super) struct Model {
     norm: RmsNorm,
     rotary: Rotary,
     /// One additive mask per distinct sequence length, bounded. Rebuilding an
-    /// `s × s` mask per batch is the one avoidable cost in the eager path;
+    /// `s × s` mask per input is the one avoidable cost in the eager path;
     /// keeping every length ever seen is the other. Never touched by a
-    /// bidirectional body, which masks nothing.
-    mask_cache: MaskCache,
+    /// bidirectional body, which masks nothing. Its own lock, held only to
+    /// look a mask up: forwards share the model and run side by side.
+    mask_cache: Mutex<MaskCache>,
     /// Whether attention hides future positions: the checkpoint's declaration.
     causal: bool,
     device: Device,
@@ -455,17 +483,11 @@ impl Model {
     pub(super) fn load(
         cfg: &Config,
         vb: &VarBuilder<'_>,
-        quant: EmbedderQuant,
-        device: &Device,
-        dtype: DType,
+        ctx: &LoadContext<'_>,
         max_seq: usize,
         threads: usize,
     ) -> candle_core::Result<Self> {
-        let ctx = LoadContext {
-            quant,
-            device,
-            dtype,
-        };
+        let (device, dtype) = (ctx.device, ctx.dtype);
         let model = body_root(vb)?;
         let embed_tokens = load_plain(
             &model,
@@ -474,7 +496,7 @@ impl Model {
             device,
             DType::BF16,
         )?;
-        let layers = load_layers(cfg, &model, &ctx, threads)?;
+        let layers = load_layers(cfg, &model, ctx, threads)?;
         let norm = RmsNorm::new(
             ctx.plain(&model, "norm.weight", cfg.hidden_size)?,
             cfg.rms_norm_eps,
@@ -491,7 +513,7 @@ impl Model {
             layers,
             norm,
             rotary,
-            mask_cache: MaskCache::new(),
+            mask_cache: Mutex::new(MaskCache::new()),
             causal: cfg.causal(),
             device: device.clone(),
             dtype,
@@ -499,35 +521,66 @@ impl Model {
         })
     }
 
-    pub(super) fn device(&self) -> &Device {
-        &self.device
-    }
-
-    /// `[batch, seq]` token ids, equal lengths and no padding, to
-    /// `[batch, seq, hidden]` post-norm hidden states.
+    /// Several inputs' token ids to each input's post-norm hidden states,
+    /// `[1, len, hidden]` apiece, in input order.
     ///
-    /// `&mut self` rather than `&self`: the only mutable state is the mask
-    /// cache, and the provider already holds the whole model behind one lock,
-    /// so a second lock inside it would guard nothing.
-    pub(super) fn forward(&mut self, ids: &Tensor) -> candle_core::Result<Tensor> {
-        let seq = ids.dim(D::Minus1)?;
-        // The fused Metal kernel masks causally on its own, so that path builds
-        // and caches nothing: an `s × s` tensor no kernel reads is pure cost. A
-        // bidirectional body over an unpadded group has nothing to mask at all.
-        let mask = if !self.causal || matches!(self.device, Device::Metal(_)) {
-            None
-        } else {
-            Some(self.mask_cache.get_or_build(seq, &self.device)?)
-        };
+    /// The inputs are packed, not padded: their tokens run back to back as
+    /// one `[tokens, hidden]` matrix through every row-wise step — the
+    /// embedding lookup, the projections, the norms, the MLP — which is where
+    /// a forward spends its time, and only attention splits it, so each input
+    /// attends to its own tokens alone. Every row-wise step treats a row the
+    /// same whatever rows surround it, and attention sees exactly one input,
+    /// so an input's states do not depend on what it was packed with.
+    ///
+    /// `between_layers` runs before each layer. The provider parks a bulk
+    /// forward there while a query runs.
+    pub(super) fn forward(
+        &self,
+        inputs: &[&[u32]],
+        between_layers: &dyn Fn(),
+    ) -> candle_core::Result<Vec<Tensor>> {
+        let mut spans = Vec::with_capacity(inputs.len());
+        let mut ids = Vec::with_capacity(inputs.iter().map(|input| input.len()).sum());
+        for input in inputs {
+            spans.push(Span {
+                start: ids.len(),
+                len: input.len(),
+            });
+            ids.extend_from_slice(input);
+        }
+        let tokens = ids.len();
+        let ids = Tensor::from_vec(ids, tokens, &self.device)?;
         let mut xs = self
             .embed_tokens
-            .index_select(&ids.flatten_all()?, 0)?
-            .reshape((ids.dim(0)?, seq, self.hidden_size))?
+            .index_select(&ids, 0)?
+            .reshape((tokens, self.hidden_size))?
             .to_dtype(self.dtype)?;
         for layer in &self.layers {
-            xs = layer.forward(&xs, &self.rotary, mask.as_ref(), self.causal)?;
+            between_layers();
+            xs = layer.forward(&xs, &spans, self)?;
         }
-        self.norm.forward(&xs)
+        let xs = self.norm.forward(&xs)?;
+        spans
+            .iter()
+            .map(|span| xs.narrow(0, span.start, span.len)?.unsqueeze(0))
+            .collect()
+    }
+
+    /// The additive mask attention over `len` positions takes, if any.
+    ///
+    /// The fused Metal kernel masks causally on its own, so that path builds
+    /// and caches nothing: an `s × s` tensor no kernel reads is pure cost. A
+    /// bidirectional body over one unpadded input has nothing to mask at all.
+    fn mask(&self, len: usize) -> candle_core::Result<Option<Tensor>> {
+        if !self.causal || matches!(self.device, Device::Metal(_)) {
+            return Ok(None);
+        }
+        // Poison recovery: the cache only ever holds whole masks.
+        let mut cache = self
+            .mask_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        cache.get_or_build(len, &self.device).map(Some)
     }
 
     /// The first row of every sequence, which is what CLS pooling reads.
