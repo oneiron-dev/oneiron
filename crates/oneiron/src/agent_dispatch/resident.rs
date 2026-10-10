@@ -73,7 +73,7 @@ impl Vault {
             ClaimApprovalStatus::Approved,
         );
         let id = self.new_entity_id()?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             self.batch_in()
                 .claim_candidate(
                     &id,

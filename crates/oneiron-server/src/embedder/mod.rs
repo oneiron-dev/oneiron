@@ -264,6 +264,17 @@ pub(crate) fn declared_transform(config: &EmbedderConfig) -> Option<String> {
     }
 }
 
+/// Where vector evidence starts in this section's embedding space: the
+/// measured floors of a shipped local model, otherwise the engine's default.
+pub(crate) fn evidence_floors(config: &EmbedderConfig) -> oneiron::config::VectorEvidenceFloors {
+    match config.provider {
+        EmbedderProvider::Local => {
+            local::model_manager::pinned_evidence(&config.local).unwrap_or_default()
+        }
+        EmbedderProvider::None | EmbedderProvider::Endpoint => Default::default(),
+    }
+}
+
 /// The descriptor a vault moves to under this section, resolved now: the
 /// local provider's from its model's verified metadata, fetching those small
 /// files when they are not on this host (never the weights); `None` for an

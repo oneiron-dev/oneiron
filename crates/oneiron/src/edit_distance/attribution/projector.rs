@@ -187,7 +187,7 @@ fn write_cost_head(
 ///
 /// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
 pub fn project_amendment_reliability(vault: &Vault) -> Result<Vec<EntityId>> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let mut verdicts = Vec::new();
         for (judgment, attempt) in amendment_judgments_in_txn(vault, wtxn)? {
             let Some((attempt_receipt, skill)) = attempt else {
@@ -266,7 +266,7 @@ pub fn project_amendment_lessons(
         if ground_actor_claim(vault, &row, &evidence).is_err() {
             continue;
         }
-        let landed = vault.with_write_txn(|wtxn| {
+        let landed = vault.with_write_txn_grouped(|wtxn| {
             if amendment_judgment_in_txn(vault, wtxn, &judgment.receipt_id)?.as_ref()
                 != Some(judgment)
             {
@@ -308,7 +308,8 @@ fn record_target(
     subject: &EntityId,
     scope: &str,
 ) -> Result<()> {
-    vault.with_write_txn(|wtxn| record_target_in_txn(vault, wtxn, predicate, subject, scope))
+    vault
+        .with_write_txn_grouped(|wtxn| record_target_in_txn(vault, wtxn, predicate, subject, scope))
 }
 
 /// [`record_target`] in the caller's transaction.
@@ -372,7 +373,7 @@ fn retract_unsupported_targets(vault: &Vault) -> Result<()> {
         }
     }
     let now = vault.store.clock.now_recorded_at();
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         for (predicate, subject, scope) in unsupported_targets_in_txn(vault, wtxn)? {
             retract_target_in_txn(vault, wtxn, predicate, &subject, &scope, now)?;
         }
@@ -568,7 +569,7 @@ fn write_skill_edit_cost(
     let at = aggregate.at;
     let value = rmpv::Value::F32(aggregate.cost);
     let evidence = skill_cost_evidence(aggregate);
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let heads =
             active_cost_heads_in_txn(vault, wtxn, PREDICATE_SKILL_EDIT_COST, skill, &scope)?;
         let claim_id = vault.store.clock.entity_id()?;

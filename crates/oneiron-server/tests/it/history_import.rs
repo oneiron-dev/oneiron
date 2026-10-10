@@ -106,12 +106,21 @@ impl Home {
             )
             .expect("test fixture");
         let phrase = phrase.to_lowercase();
+        // A hit on a message comes back as its TURN, which quotes the message
+        // (ARCH-0004): count the messages either way.
         pack.items
             .iter()
-            .filter(|item| {
-                item.kind.eq_ignore_ascii_case("message")
-                    && item.value_text.to_lowercase().contains(&phrase)
+            .flat_map(|item| {
+                if item.kind.eq_ignore_ascii_case("message") {
+                    vec![item.value_text.as_str()]
+                } else {
+                    item.cited_messages
+                        .iter()
+                        .map(|message| message.value_text.as_str())
+                        .collect()
+                }
             })
+            .filter(|text| text.to_lowercase().contains(&phrase))
             .count()
     }
 }

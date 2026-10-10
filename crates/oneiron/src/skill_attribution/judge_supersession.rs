@@ -165,7 +165,7 @@ pub fn supersede_displaced_judge_receipts(
             hook();
         }
     });
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         // Scan on the same writer snapshot that installs the fence. A J1
         // verdict committed before this lock is present here; one committed
         // afterward is refused by the revision fence in its own writer.

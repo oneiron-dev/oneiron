@@ -139,7 +139,7 @@ pub fn create_question(
         definition,
         created_at: now,
     };
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         let id = record.definition.question.id;
         super::arrival::watch(&vault.store, txn, &record)?;
         secret_scan_before_put(&record)?;
@@ -190,7 +190,7 @@ pub fn edit_question(
     mut definition: QuestionDefinition,
     now: u64,
 ) -> Result<QuestionRecord> {
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         let mut head = owned_head(vault, txn, principal, id)?;
         if head.version != expected_version {
             return Err(Error::ConcurrentWrite("standing question changed"));
@@ -245,7 +245,7 @@ pub fn pause_question(
     id: EntityId,
     paused: bool,
 ) -> Result<()> {
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         let mut head = owned_head(vault, txn, principal, id)?;
         head.paused = paused;
         secret_scan_before_put(&head)?;

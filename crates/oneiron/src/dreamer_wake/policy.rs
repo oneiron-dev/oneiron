@@ -497,7 +497,7 @@ impl Vault {
         policy: DreamerWakePolicy,
     ) -> Result<()> {
         policy.validate()?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             crate::dreamer_runner::maintenance::validate_owner_in_txn(self, txn, owner)?;
             POLICY
                 .put(&self.store, txn, &(), &policy)
@@ -513,7 +513,7 @@ impl Vault {
         grain: super::grain::WakeGrain,
     ) -> Result<()> {
         super::grain::WakeGrain::new(grain.turns_per_wake)?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             crate::dreamer_runner::maintenance::validate_owner_in_txn(self, txn, owner)?;
             let mut policy = policy_in_txn(self, txn)?;
             policy.wake_grain_turns = grain.turns_per_wake;
@@ -574,7 +574,7 @@ impl Vault {
                 attempt: None,
             });
         }
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let policy = policy_in_txn(self, txn)?;
             let mut state = state_in_txn(self, txn)?;
             let previous_processed = state.processed_change_id;

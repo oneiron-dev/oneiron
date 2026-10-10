@@ -100,7 +100,7 @@ pub(super) fn park_open_conflict(
     candidate = candidate
         .with_scope(super::persistence::identity_scope(&conflict.identity)?)
         .with_evidence_taint(meet)?;
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         fence.validate_in_txn(vault, txn)?;
         // An open question over imported words waits in their import's review,

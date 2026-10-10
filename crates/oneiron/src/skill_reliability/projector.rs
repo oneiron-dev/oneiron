@@ -156,7 +156,7 @@ pub fn project_skill_reliability(
     for (skill, executor, rows) in batches {
         let at = rows.iter().map(|row| row.at).max().unwrap_or_default();
         let prior = skill_reliability_prior(vault, &skill)?;
-        vault.with_write_txn(|wtxn| {
+        vault.with_write_txn_grouped(|wtxn| {
             for row in &rows {
                 // Close the TOCTOU window: a displacement can commit after the
                 // pre-read but before this writer. Recheck under the same writer
@@ -202,7 +202,7 @@ pub fn project_skill_reliability_for(
     at: u64,
 ) -> Result<SkillReliabilityPosterior> {
     let prior = skill_reliability_prior(vault, skill)?;
-    vault.with_write_txn(|wtxn| project_in_txn(vault, wtxn, skill, None, prior, at))
+    vault.with_write_txn_grouped(|wtxn| project_in_txn(vault, wtxn, skill, None, prior, at))
 }
 
 /// Reprojects the named executor's arm; A/B, cutover and held-out runs all
@@ -215,7 +215,9 @@ pub fn project_skill_reliability_for_executor(
 ) -> Result<SkillReliabilityPosterior> {
     validate_executor(executor)?;
     let prior = skill_reliability_prior(vault, skill)?;
-    vault.with_write_txn(|wtxn| project_in_txn(vault, wtxn, skill, Some(executor), prior, at))
+    vault.with_write_txn_grouped(|wtxn| {
+        project_in_txn(vault, wtxn, skill, Some(executor), prior, at)
+    })
 }
 
 pub(super) fn project_in_txn(

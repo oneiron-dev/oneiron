@@ -40,9 +40,8 @@ use self::{record::*, store::*};
 #[cfg(test)]
 use crate::code_run::{
     CODE_RUN_CONSOLE_CLOSE, CODE_RUN_CONSOLE_OPEN, CODE_RUN_EXEC_CLOSE, CODE_RUN_EXEC_OPEN,
-    CodeRunBridgeCall, CodeRunDeterminism, CodeRunHistoryTurn, CodeRunRawOutput,
-    CodeRunReplayRecord, ExecutorStorage, GatedActorWrite, SelfCall, SelfDispatchOutcome,
-    SelfDurableWait,
+    CodeRunBridgeCall, CodeRunDeterminism, CodeRunHistoryTurn, CodeRunRawOutput, ExecutorStorage,
+    GatedActorWrite, SelfCall, SelfDispatchOutcome, SelfDurableWait,
 };
 #[cfg(test)]
 use crate::entity_id::EntityId;

@@ -128,7 +128,7 @@ impl Vault {
             revision: record.revision,
             owner: owner.actor(),
         };
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             require_owner_bundle_in(self, txn, review.id, &approval)?;
             // The exact reviewed body must still be live at the local arm.
             let body = self

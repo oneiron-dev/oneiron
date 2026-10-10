@@ -433,7 +433,7 @@ fn promote_one(
             .commit_with_checker_and_then(checker, finish_promotion)
     } else {
         // Preserve the original single-pass transaction for every None caller.
-        vault.with_write_txn(|wtxn| {
+        vault.with_write_txn_grouped(|wtxn| {
             vault
                 .batch_in()
                 .claim_candidate(

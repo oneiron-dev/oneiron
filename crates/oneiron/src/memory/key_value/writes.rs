@@ -1,12 +1,11 @@
 //! Key mutations compose the existing claim gate and lifecycle door in ONE
 //! transaction. The public claim_upsert's proposed fallback is deliberately
 //! not used: BaseStore cannot truthfully return success for a parked write.
-use super::super::support::facade_provenance;
 use super::*;
 use crate::batch::{ApplyOpsGateMode, BatchOp};
 use crate::entity_id::derived_domains::KEY_VALUE;
 use crate::temporal::TimeRange;
-use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
+use crate::write_envelope::{ClaimCandidate, WriteActor};
 use std::sync::atomic::Ordering;
 
 impl Memory<'_> {
@@ -32,7 +31,7 @@ impl Memory<'_> {
         if !input.value.is_object() {
             return Err(MemoryError::bad_request("value must be a JSON object"));
         }
-        let source = super::super::claims::parse_claim_source(&input.source)?;
+        let source = self.claim_source(&input.source)?;
         let address_bytes = serde_json::to_vec(&address)
             .map_err(|_| MemoryError::bad_request("invalid key identity"))?;
         // Domain-separated, actor-bound deterministic ID, not an unchecked
@@ -83,8 +82,7 @@ impl Memory<'_> {
                 .map_err(|_| MemoryError::bad_request("invalid JSON value"))?.len())?;
             let candidate = ClaimCandidate::new(PREDICATE.to_owned(), ClaimSubject::Entity(self.actor),
                 json_to_rmpv(&value), 1.0).with_scope(self.key_value_scope(&address));
-            let mut envelope = WriteEnvelope::new(WriteActor::new(self.actor, self.actor_class), source,
-                WriteProvenance::new(facade_provenance("key_value_put"))?, ClaimApprovalStatus::Auto);
+            let mut envelope = self.claim_envelope(source, "key_value_put", ClaimApprovalStatus::Auto)?;
             self.sign_machine_claim_in_txn(content.read(), id, &candidate, &mut envelope)?;
             content.apply_claim_ops(
                 vec![BatchOp::ClaimCandidate { id, candidate: Box::new(candidate), envelope,

@@ -161,7 +161,7 @@ impl Vault {
         }
     }
 
-    fn installed_script_pack(
+    pub(crate) fn installed_script_pack(
         &self,
         name: &str,
     ) -> Result<(PackSource, String, PackInstallReceipt)> {
@@ -361,7 +361,7 @@ impl Vault {
         }
         let mut inbound = Vec::new();
         let mut wakes = Vec::new();
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             if self.installed_pack_for_script_in_txn(&*txn, name)?.as_ref() != Some(&receipt) {
                 return Err(invalid("installed pack changed during script execution"));
             }

@@ -126,7 +126,7 @@ pub(crate) fn record(vault: &Vault, mut receipt: ReceiptRecord) -> Result<()> {
         logical_ref,
         receipt,
     };
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         if !DIRECT.contains(&vault.store, txn, &key)?
             && !thinner_duplicate(vault, txn, &row.logical_ref, &row.receipt)?
         {

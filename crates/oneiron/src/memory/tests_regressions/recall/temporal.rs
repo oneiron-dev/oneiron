@@ -1,4 +1,6 @@
-fn witness_query_window_pair(facade: &Memory<'_>, now: u64) -> [String; 2] {
+/// Two identical messages, 40 and 3 days old, each its own turn; returns
+/// their receipts' `(turn, message)` short ids.
+fn witness_query_window_pair(facade: &Memory<'_>, now: u64) -> [(String, String); 2] {
     let mut refs = Vec::new();
     for (seed, days_ago) in [(0x67, 40), (0x68, 3)] {
         let receipt = facade
@@ -13,7 +15,10 @@ fn witness_query_window_pair(facade: &Memory<'_>, now: u64) -> [String; 2] {
                 occurred_at: now - days_ago * 86_400,
             })
             .expect("witness");
-        refs.push(receipt.message_short_ids[0].clone());
+        refs.push((
+            receipt.turn_short_id.clone(),
+            receipt.message_short_ids[0].clone(),
+        ));
     }
     refs.try_into().expect("two messages")
 }
@@ -22,7 +27,8 @@ fn witness_query_window_pair(facade: &Memory<'_>, now: u64) -> [String; 2] {
 fn recall_default_effort_reads_last_week_from_the_query() {
     let (_dir, vault) = open_vault();
     let facade = facade_for(&vault, put_person(&vault, 0x69));
-    let [older, newer] = witness_query_window_pair(&facade, crate::unix_seconds_now());
+    // Recall returns each message as its turn (ARCH-0004).
+    let [(older, _), (newer, _)] = witness_query_window_pair(&facade, crate::unix_seconds_now());
 
     let pack = facade
         .recall(
@@ -66,7 +72,7 @@ fn recall_with_a_host_window_ignores_the_query_range() {
     let (_dir, vault) = open_vault();
     let facade = facade_for(&vault, put_person(&vault, 0x6a));
     let now = crate::unix_seconds_now();
-    let [older, newer] = witness_query_window_pair(&facade, now);
+    let [(_, older), (_, newer)] = witness_query_window_pair(&facade, now);
 
     // The facade does not expose host temporal windows; use its underlying
     // context-pack builder with the same Medium effort preset and two messages.
@@ -114,7 +120,8 @@ fn recall_default_effort_ranks_the_newer_identical_message_first() {
                 occurred_at: now - days_ago * 86_400,
             })
             .expect("witness");
-        witnessed.push(receipt.message_short_ids[0].clone());
+        // Recall returns each message as its turn (ARCH-0004).
+        witnessed.push(receipt.turn_short_id.clone());
     }
     let [older, newer] = <[String; 2]>::try_from(witnessed).expect("two messages");
 
@@ -158,7 +165,8 @@ fn recall_light_effort_ranks_the_newer_identical_message_first() {
                 occurred_at: now - days_ago * 86_400,
             })
             .expect("witness");
-        witnessed.push(receipt.message_short_ids[0].clone());
+        // Recall returns each message as its turn (ARCH-0004).
+        witnessed.push(receipt.turn_short_id.clone());
     }
     let [older, newer] = <[String; 2]>::try_from(witnessed).expect("two messages");
 

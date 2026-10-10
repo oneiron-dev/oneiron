@@ -95,7 +95,7 @@ impl Vault {
         expected_producer: &EntityId,
         session_tag: &str,
     ) -> Result<SessionClaimBundle> {
-        let (bundle, recorded_decisions) = self.with_write_txn(|wtxn| {
+        let (bundle, recorded_decisions) = self.with_write_txn_grouped(|wtxn| {
             self.validate_session_bundle_actor_in_txn(&*wtxn, actor)?;
             let members =
                 self.session_claim_bundle_members_in_txn(&*wtxn, expected_producer, session_tag)?;
@@ -326,7 +326,7 @@ impl Vault {
         now: u64,
     ) -> Result<GateConsentBundleReceipt> {
         require_gate_consent_bundle_run_id(dreamer_run_id)?;
-        let (receipt, recorded_decisions) = self.with_write_txn(|wtxn| {
+        let (receipt, recorded_decisions) = self.with_write_txn_grouped(|wtxn| {
             // The proof is rechecked where the decision commits: an owner
             // whose person, credential or ownership went away while the call
             // waited for the writer decides nothing.

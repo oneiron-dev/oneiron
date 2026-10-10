@@ -162,12 +162,69 @@ impl Vault {
     #[doc(hidden)]
     pub fn ensure_embedded_owner_actor(&self) -> crate::memory::MemoryResult<EntityId> {
         let owner = embedded_owner_actor_id()?;
-        self.try_with_write_txn(|wtxn| {
+        self.try_with_write_txn_grouped(|wtxn| {
             if self.local_hard_delete_marker_exists_in_txn(wtxn, &owner)? {
                 return Err(crate::memory::hard_deleted_refusal(&owner));
             }
             let now = self.store.clock.now_recorded_at();
             Ok(self.stage_embedded_owner_actor_in_txn(wtxn, now)?)
+        })
+    }
+
+    /// Ensures and returns the PERSON a named agent acts as when the owner
+    /// mints it a credential (`oneiron token agent`).
+    ///
+    /// The id is derived from the name, so every mint for one name lands on
+    /// the same principal and what the agent wrote stays one actor's history.
+    /// Idempotent and single-transaction, like
+    /// [`Vault::ensure_embedded_owner_actor`]: an occupant that is not a
+    /// `PERSON` is a typed refusal, never a retype, and a hard-deleted
+    /// principal is not brought back. A PERSON may act as class `agent`.
+    #[doc(hidden)]
+    pub fn ensure_agent_principal(&self, name: &str) -> crate::memory::MemoryResult<EntityId> {
+        if name.trim().is_empty() {
+            return Err(Error::InvalidClaimBody("agent principal name").into());
+        }
+        let principal = EntityId::derive(
+            crate::entity_id::derived_domains::AGENT_PRINCIPAL,
+            &[name.as_bytes()],
+        )?;
+        let mut body = Vec::new();
+        rmpv::encode::write_value(
+            &mut body,
+            &rmpv::Value::Map(vec![(rmpv::Value::from("name"), rmpv::Value::from(name))]),
+        )
+        .map_err(|_| Error::InvariantViolation("agent principal body encode"))?;
+        self.try_with_write_txn_grouped(|wtxn| {
+            if self.local_hard_delete_marker_exists_in_txn(wtxn, &principal)? {
+                return Err(crate::memory::hard_deleted_refusal(&principal));
+            }
+            match self.get_entity_type_in_txn(wtxn, &principal)? {
+                Some(crate::registry::ENTITY_TYPE_PERSON) => return Ok(principal),
+                Some(existing) => {
+                    return Err(Error::Registry(RegistryError::EntityTypeImmutable {
+                        id: principal,
+                        existing,
+                        attempted: crate::registry::ENTITY_TYPE_PERSON,
+                    })
+                    .into());
+                }
+                None => {}
+            }
+            let now = self.store.clock.now_recorded_at();
+            self.batch_in()
+                .put(
+                    &principal,
+                    crate::registry::ENTITY_TYPE_PERSON,
+                    TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                    &body,
+                )
+                .apply(wtxn)?;
+            Ok(principal)
         })
     }
 
@@ -314,7 +371,9 @@ impl Vault {
         &self,
         input: crate::code_memory::AttachCodeMemory,
     ) -> Result<crate::code_memory::SlotInsertOutcome> {
-        self.with_write_txn(|wtxn| crate::code_memory::attach_code_memory(&self.store, wtxn, input))
+        self.with_write_txn_grouped(|wtxn| {
+            crate::code_memory::attach_code_memory(&self.store, wtxn, input)
+        })
     }
 
     /// Applies one EXPLICIT rename/copy anchor transfer.
@@ -328,7 +387,7 @@ impl Vault {
         &self,
         transfer: &crate::code_memory::AnchorTransfer,
     ) -> Result<crate::code_memory::AnchorTransferReceipt> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             crate::code_memory::transfer_code_memory_anchor(&self.store, wtxn, transfer)
         })
     }
@@ -380,7 +439,7 @@ impl Vault {
         &self,
         contract: crate::code_memory::AlwaysOnCodeMemoryContract,
     ) -> Result<()> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             crate::code_memory::register_always_on_contract(&self.store, wtxn, contract)
         })
     }
@@ -398,7 +457,7 @@ impl Vault {
         to: EntityId,
         context: crate::code_memory::BlocksWriteContext<'_>,
     ) -> Result<()> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             crate::code_memory::insert_blocks_edge(self, wtxn, from, to, context)
         })
     }
@@ -413,7 +472,7 @@ impl Vault {
         to: EntityId,
         context: crate::code_memory::BlocksWriteContext<'_>,
     ) -> Result<bool> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             crate::code_memory::remove_blocks_edge(self, wtxn, from, to, context)
         })
     }
