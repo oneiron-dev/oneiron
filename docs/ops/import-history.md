@@ -23,6 +23,22 @@ oneiron import chatgpt ~/Downloads/chatgpt-export.zip
 Only the path you give is read. Symbolic links under it are not followed, and
 a file or folder that changes into something else while it is read is refused.
 
+## While `serve` runs: the import queue
+
+With `queue = true` under `[import]` in the serve config, `serve` imports
+session logs handed to it, so you need not stop it:
+
+```bash
+oneiron import claude-code ~/.claude/projects/<project>/<session>.jsonl --queue
+```
+
+`--queue` writes one small file naming the log and returns. `serve` imports
+it within seconds, the same way as above, with the session's subagent logs.
+Only logs under `claude_code_root` (default `~/.claude/projects`) or
+`codex_root` (default `~/.codex/sessions`) are imported, and no link under
+them is followed. The [Claude Code hooks](claude-code-hooks.md) queue each
+session this way at every stop.
+
 ## What lands
 
 - Each source conversation becomes a conversation in the vault; each message a
@@ -60,18 +76,26 @@ copies a parent thread's items into a forked or spawned thread's rollout.
 
 An export's `conversations.json` is read up to 2 GiB unzipped, and one
 conversation in it up to 128 MiB. A folder of session logs is read up to a
-million messages (or 1 GiB of them) in one import, each log up to 1 GiB. Past
-a limit the import stops before it writes anything and says which; import one
-project folder, or one month of sessions, at a time.
+million messages (or 1 GiB of them) in one import. Past one of these limits
+the import stops before it writes anything and says which; import one project
+folder, or one month of sessions, at a time.
+
+Each session log is read up to 1 GiB. A larger log in a folder is left out,
+unread, and the rest of the folder lands: the report counts it under
+`files.too_large` and names it in `warnings`, and the import still succeeds.
+Importing the folder again once the limit allows that log lands it, and only
+what is new. A larger log named on its own is refused.
 
 ## The report
 
 stdout is one JSON document of counts: per conversation (its source id, kind,
-`new`, `skipped`, `changed`, `refused`, `not_kept`), totals, and `files`
-(`read`, and `passed`: other `.jsonl` files under the path, such as a workflow
-journal). It never holds message text or titles. `--dry-run` prints the same
-counts and predicts the secret scan's refusals; a refusal from a policy gate
-shows only in a real import.
+`new`, `skipped`, `changed`, `refused`, `not_kept`), totals, `files` (`read`;
+`passed`: other `.jsonl` files under the path, such as a workflow journal;
+`too_large`: session logs left out), and `warnings`, one per log left out
+(`"warning": "log_too_large"`, its `path`, `bytes` and the `limit`). It never
+holds message text or titles. `--dry-run` prints the same counts and
+predicts the secret scan's refusals; a refusal from a policy gate shows only
+in a real import.
 
 ## Claims
 
