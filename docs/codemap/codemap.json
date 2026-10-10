@@ -36801,6 +36801,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/vault/vector_evidence.rs",
+     "purpose": "Where a vector hit counts as evidence in the vault's embedding space, as the host's embedder states it",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/vault_cleanup/attempt_retention.rs",
      "purpose": "Reversible retention for private queue records; the serialized attempt is never changed",
      "surface": {
@@ -40145,7 +40155,7 @@
      "purpose": "—"
     },
     "vault": {
-     "files": 25,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40210,7 +40220,7 @@
    },
    "over_bar": 32,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2441,
+   "source_files": 2442,
    "test_files": 773
   },
   "oneiron-android": {
@@ -49231,6 +49241,8 @@
       "Command",
       "DreamerCommand",
       "DreamerGrantArgs",
+      "EmbedderCommand",
+      "EmbedderServeArgs",
       "HostCommand",
       "HostInitArgs",
       "InitArgs",
@@ -49251,10 +49263,10 @@
      "path": "src/cli.rs",
      "purpose": "—",
      "surface": {
-      "enum": 7,
+      "enum": 8,
       "fn": 3,
       "re-export": 1,
-      "struct": 16
+      "struct": 17
      }
     },
     {
@@ -49298,7 +49310,7 @@
       "const": 1,
       "crate-vis": 1,
       "fn": 11,
-      "re-export": 7,
+      "re-export": 8,
       "struct": 1
      }
     },
@@ -49322,6 +49334,24 @@
      "surface": {
       "fn": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/embedder_serve.rs",
+     "purpose": "`oneiron-server embedder serve`: resolves which model to serve, then hands it to the endpoint…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/commands/embedder_serve/tests.rs",
+     "purpose": "Which section `embedder serve` serves, and at what width",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -49607,7 +49637,7 @@
      "path": "src/config/merge.rs",
      "purpose": "Layered merge: file, environment, and argv values into `ServeConfig`",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 6,
       "struct": 1
      }
@@ -49619,6 +49649,7 @@
      "path": "src/config/mod.rs",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
+      "crate-vis": 1,
       "mod": 9,
       "re-export": 10
      }
@@ -49810,7 +49841,7 @@
      "path": "src/embedder/endpoint.rs",
      "purpose": "The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 13
      }
     },
     {
@@ -49828,9 +49859,29 @@
      "kind": "src",
      "notable": [],
      "path": "src/embedder/local/batcher.rs",
-     "purpose": "Tokenisation and no-padding batching",
+     "purpose": "Tokenisation and packing",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/local/bench.rs",
+     "purpose": "Throughput and query latency of the local provider on synthetic text, the numbers its PR bodies report",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/local/cpu_q8.rs",
+     "purpose": "Q8_0 projections on the CPU that read each weight once per forward pass",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -49847,10 +49898,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/embedder/local/evidence.rs",
+     "purpose": "Where vector evidence starts in a shipped model's space, and the profile its floors hold for",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/embedder/local/isq.rs",
      "purpose": "Quantise-at-load, in one function",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -49860,7 +49921,7 @@
      "path": "src/embedder/local/mod.rs",
      "purpose": "The `local` provider: the model runs in this process, on candle",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 23
      }
     },
     {
@@ -49870,7 +49931,7 @@
      "path": "src/embedder/local/model_manager.rs",
      "purpose": "Where the local model's files live, and how they get there",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 20
      }
     },
     {
@@ -49900,7 +49961,7 @@
      "path": "src/embedder/local/qwen3_embedding.rs",
      "purpose": "The embedding model body: a Qwen3 decoder stack with no language head",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -49938,7 +49999,7 @@
      "path": "src/embedder/mod.rs",
      "purpose": "The embedder provider slot",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 22
      }
     },
     {
@@ -49948,11 +50009,29 @@
      "path": "src/embedder/remote.rs",
      "purpose": "Builds a remote rung with a nonblocking host egress predicate",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedder/serve.rs",
+     "purpose": "`oneiron-server embedder serve`: the local provider over an OpenAI-compatible `/v1/embeddings`, for several…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/embedder/serve/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/embedder/tests.rs",
@@ -51402,7 +51481,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/server/embedding.rs",
@@ -51983,7 +52062,7 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 20,
+     "files": 22,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -52004,7 +52083,7 @@
      "purpose": "Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every…"
     },
     "embedder": {
-     "files": 17,
+     "files": 22,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -52160,8 +52239,8 @@
    },
    "over_bar": 8,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 308,
-   "test_files": 120
+   "source_files": 313,
+   "test_files": 122
   },
   "oneiron-uniffi": {
    "files": [
