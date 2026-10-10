@@ -59,8 +59,11 @@ pub const SECRET_MANIFEST_SCHEMA_VERSION: u16 = 1;
 /// (the canon kebab-case noun), a `declared_paths` string array, and inline
 /// `[[secrets.bindings]]` tables with `effector`, `tier_ceiling` (integer
 /// 0..=2), and a `scopes` string array. Unknown keys are ignored so the
-/// format can grow. The parser is a deliberately small TOML subset — the
-/// engine takes no `toml` crate dependency for this one file.
+/// format can grow. A key set twice in one table, or an effector bound twice
+/// in one entry, is refused: the manifest would say two things, and keeping
+/// either would let a wider value pass for a narrower one. The parser is a
+/// deliberately small TOML subset — the engine takes no `toml` crate
+/// dependency for this one file.
 pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
     // Scratch shape during parse: class stays Option so a missing `class`
     // key is a typed error at finish, not a silent default.
@@ -87,6 +90,9 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
     let mut schema_version = None;
     let mut secrets = Vec::new();
     let mut scope = Scope::Root;
+    // The keys the current table has set. TOML forbids setting one twice, and
+    // keeping the last would let a later, wider tier erase a narrower one.
+    let mut seen: Vec<&str> = Vec::new();
 
     for raw in text.lines() {
         let line = raw.trim();
@@ -96,6 +102,7 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
         if line == "[[secrets]]" {
             secrets.push(ScratchEntry::default());
             scope = Scope::Secrets;
+            seen.clear();
             continue;
         }
         if line == "[[secrets.bindings]]" {
@@ -106,14 +113,19 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
             };
             entry.bindings.push(ScratchBinding::default());
             scope = Scope::Binding;
+            seen.clear();
             continue;
         }
 
         let Some((key, value)) = line.split_once('=') else {
             return Err(invalid_manifest("expected `key = value`"));
         };
-        let key = key.trim();
+        let key = unquote_key(key.trim());
         let value = value.trim();
+        if seen.contains(&key) {
+            return Err(invalid_manifest("a key is set twice in one manifest table"));
+        }
+        seen.push(key);
 
         match scope {
             Scope::Root => {
@@ -192,6 +204,13 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;
+            let mut effectors = std::collections::BTreeSet::new();
+            if !bindings
+                .iter()
+                .all(|binding| effectors.insert(binding.effector.as_str()))
+            {
+                return Err(invalid_manifest("a manifest entry binds an effector twice"));
+            }
             Ok(SecretManifestEntry {
                 name: entry.name,
                 class,
@@ -208,6 +227,15 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
 
 fn invalid_manifest(msg: &'static str) -> Error {
     Error::Secret(SecretError::InvalidSecretCustodyBody(msg))
+}
+
+/// A bare key as written, or a quoted one without its quotes: TOML reads
+/// `tier_ceiling` and `"tier_ceiling"` as one key.
+fn unquote_key(key: &str) -> &str {
+    ['"', '\'']
+        .into_iter()
+        .find_map(|quote| key.strip_prefix(quote)?.strip_suffix(quote))
+        .unwrap_or(key)
 }
 
 fn parse_string(value: &str) -> Result<String> {

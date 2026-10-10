@@ -522,3 +522,69 @@ fn a_registration_wipes_the_staged_row_that_carried_its_value() {
     );
 }
 
+/// Astra on #1372: the parser kept the last of a repeated key, so a binding
+/// declaring `tier_ceiling = 0` and then `tier_ceiling = 2` registered at
+/// tier 2. A manifest that says one thing twice is refused, and nothing is
+/// stored.
+#[test]
+fn a_manifest_that_says_one_thing_twice_is_refused() {
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = Vault::open(dir.path(), crate::config::VaultConfig::default()).expect("vault");
+    let owner = owner(&vault);
+    let entry = r#"schema_version = 1
+
+[[secrets]]
+name = "deploy-token"
+class = "custody-portable"
+declared_paths = [".env.deploy"]
+"#;
+    let cases = [
+        (
+            "a tier set twice",
+            "dup-tier",
+            "[[secrets.bindings]]\neffector = \"deploy\"\ntier_ceiling = 0\ntier_ceiling = 2\nscopes = [\"read\"]\n",
+        ),
+        (
+            "a tier set twice, once as a quoted key",
+            "dup-quoted",
+            "[[secrets.bindings]]\neffector = \"deploy\"\n\"tier_ceiling\" = 0\ntier_ceiling = 2\nscopes = [\"read\"]\n",
+        ),
+        (
+            "an effector bound twice",
+            "dup-effector",
+            "[[secrets.bindings]]\neffector = \"deploy\"\ntier_ceiling = 0\nscopes = [\"read\"]\n\n[[secrets.bindings]]\neffector = \"deploy\"\ntier_ceiling = 2\nscopes = [\"read\"]\n",
+        ),
+    ];
+    for (why, repo, bindings) in cases {
+        publish_manifest(&vault, repo, &format!("{entry}\n{bindings}"));
+        let error = vault
+            .register_secret_as_owner(
+                &owner,
+                &OwnerSecretRegistration {
+                    manifest: Some(ManifestSource {
+                        repo: repo.to_owned(),
+                        git_ref: "refs/heads/main".to_owned(),
+                    }),
+                    ..ask(
+                        "deploy-token",
+                        CustodyClass::CustodyPortable,
+                        CustodyTier::T2LocalRegistered,
+                    )
+                },
+                7,
+            )
+            .expect_err(why);
+        assert!(
+            matches!(
+                error,
+                Error::Secret(SecretError::InvalidSecretCustodyBody(_))
+            ),
+            "{why}: {error:?}"
+        );
+        assert_eq!(
+            vault.resolve_secret_ref("deploy-token").expect("index"),
+            None,
+            "{why}"
+        );
+    }
+}
