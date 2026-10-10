@@ -141,6 +141,23 @@ fn said(log: u32, message: usize, day: u32) -> String {
     )
 }
 
+/// One Claude Code record by hand: a user message, in an inline sidechain
+/// or the session's own thread, said at `minute` past 08:00 on 1 September,
+/// or with no time at all.
+fn line(uuid: &str, parent: Option<&str>, sidechain: bool, minute: Option<u32>) -> String {
+    let mut record = serde_json::json!({
+        "parentUuid": parent,
+        "isSidechain": sidechain,
+        "type": "user",
+        "uuid": format!("c1000000-0000-4000-8000-{uuid}"),
+        "message": {"role": "user", "content": format!("note {uuid}")},
+    });
+    if let Some(minute) = minute {
+        record["timestamp"] = format!("2026-09-01T08:{minute:02}:00.000Z").into();
+    }
+    format!("{record}\n")
+}
+
 fn messages(vault: &Vault) -> u64 {
     vault.count_entities_by_type(ENTITY_TYPE_MESSAGE).unwrap()
 }
@@ -361,25 +378,13 @@ fn a_resumed_copy_that_carries_its_originals_sidechain_lands_after_it() {
     {
         std::mem::swap(&mut original, &mut copy);
     }
-    let line = |uuid: &str, parent: Option<&str>, sidechain: bool, minute: u32| {
-        format!(
-            "{}\n",
-            serde_json::json!({
-                "parentUuid": parent,
-                "isSidechain": sidechain,
-                "type": "user",
-                "uuid": format!("c1000000-0000-4000-8000-{uuid}"),
-                "timestamp": format!("2026-09-01T08:{minute:02}:00.000Z"),
-                "message": {"role": "user", "content": format!("note {uuid}")},
-            })
-        )
-    };
-    let carried = line("000000000001", None, true, 0) + &line("000000000002", None, false, 10);
+    let carried =
+        line("000000000001", None, true, Some(0)) + &line("000000000002", None, false, Some(10));
     fs::write(&original, &carried).unwrap();
     let parent = "c1000000-0000-4000-8000-000000000002";
     fs::write(
         &copy,
-        carried + &line("000000000003", Some(parent), false, 20),
+        carried + &line("000000000003", Some(parent), false, Some(20)),
     )
     .unwrap();
     bench.hand_over(&copy);
@@ -389,6 +394,47 @@ fn a_resumed_copy_that_carries_its_originals_sidechain_lands_after_it() {
     assert_eq!(bench.waiting(), names(&[&copy]), "the original lands first");
     bench.pass(&vault).0.unwrap();
     assert_eq!(messages(&vault), 3, "the copy adds only its own message");
+    assert!(bench.waiting().is_empty());
+}
+
+/// Sol 1354 R5-1: the session's own thread decides where it ends, even when
+/// its messages carry no time and one of its subagents ran on after it. Its
+/// resumed copy, whose new prompt is timed, still lands after it.
+#[test]
+fn an_original_whose_own_thread_has_no_times_lands_before_its_resumed_copy() {
+    let bench = Bench::new(Decoded {
+        messages: 4,
+        bytes: usize::MAX,
+    });
+    let vault = bench.vault();
+    let (original, copy) = (bench.log(1), bench.log(2));
+    let carried =
+        line("000000000001", None, true, Some(0)) + &line("000000000002", None, false, None);
+    fs::write(&original, &carried).unwrap();
+    let subagents = bench
+        .root
+        .join(PROJECT)
+        .join(session_id(1))
+        .join("subagents");
+    fs::create_dir_all(&subagents).unwrap();
+    fs::write(
+        subagents.join("agent-a7f3.jsonl"),
+        line("000000000011", None, false, Some(20)) + &line("000000000012", None, false, Some(50)),
+    )
+    .unwrap();
+    let parent = "c1000000-0000-4000-8000-000000000002";
+    fs::write(
+        &copy,
+        carried + &line("000000000003", Some(parent), false, Some(30)),
+    )
+    .unwrap();
+    bench.hand_over(&copy);
+    bench.hand_over(&original);
+
+    bench.pass(&vault).0.unwrap();
+    assert_eq!(bench.waiting(), names(&[&copy]), "the original lands first");
+    bench.pass(&vault).0.unwrap();
+    assert_eq!(messages(&vault), 5, "the copy adds only its own message");
     assert!(bench.waiting().is_empty());
 }
 

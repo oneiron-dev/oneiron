@@ -74,9 +74,10 @@ struct Entry {
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 struct Place {
     /// When the session's conversations started, and when its own thread
-    /// ended (without one, its last message): a resumed copy starts with its
-    /// original's first line and goes on after it, whatever sidechain it
-    /// carries or subagent outlived the original's thread.
+    /// ended (unknown, it sorts first among those that started together): a
+    /// resumed copy starts with its original's first line and goes on after
+    /// it, whatever sidechain it carries or subagent outlived the original's
+    /// thread.
     span: (u64, u64),
     size: Decoded,
     /// The session's logs as they were read.
@@ -490,19 +491,14 @@ impl ImportQueue {
                     .iter()
                     .filter_map(|conversation| conversation.started_at_ms)
                     .min();
-                let ended = |own: bool| {
-                    conversations
-                        .iter()
-                        .filter(|conversation| !own || conversation.kind == HistoryThreadKind::Main)
-                        .flat_map(|conversation| &conversation.messages)
-                        .filter_map(|message| message.at_ms)
-                        .max()
-                };
+                let ended = conversations
+                    .iter()
+                    .filter(|conversation| conversation.kind == HistoryThreadKind::Main)
+                    .flat_map(|conversation| &conversation.messages)
+                    .filter_map(|message| message.at_ms)
+                    .max();
                 held.entry.place = Some(Place {
-                    span: (
-                        started.unwrap_or(u64::MAX),
-                        ended(true).or_else(|| ended(false)).unwrap_or(u64::MAX),
-                    ),
+                    span: (started.unwrap_or(u64::MAX), ended.unwrap_or(0)),
                     size,
                     stamp: read.session.stamp.clone(),
                 });
