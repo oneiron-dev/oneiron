@@ -12,6 +12,7 @@ use super::backup::{BackupConfig, BackupConfigOverride, lookup_backup_override};
 use super::embedder::{EmbedderConfig, EmbedderProvider};
 use super::embedder::{EmbedderConfigOverride, lookup_embedder_override};
 use super::feedback::{FeedbackConfigOverride, lookup_feedback_override};
+use super::import::ImportConfigOverride;
 use super::lookup::{
     DEFAULT_CONFIG_DIR, DEFAULT_CONFIG_FILE, expand_home, lookup_bool, lookup_list, lookup_parse,
     lookup_path, lookup_path_list, normalize_list, redacted_secret,
@@ -261,6 +262,7 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     }
     config.backup.validate()?;
     config.feedback.validate()?;
+    config.import.validate(&config.vault_path)?;
     // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
     // refused while it is still a config error with an operator-facing
     // remedy, not only at open time.
@@ -458,6 +460,7 @@ struct FileServeConfig {
     oneironer: Option<OneironerConfigOverride>,
     backup: Option<BackupConfigOverride>,
     feedback: Option<FeedbackConfigOverride>,
+    import: Option<ImportConfigOverride>,
     models: Option<ModelsFile>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
@@ -502,6 +505,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             oneironer: value.oneironer,
             backup: value.backup,
             feedback: value.feedback,
+            import: value.import,
             models: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
@@ -547,6 +551,7 @@ struct PartialServeConfig {
     oneironer: Option<OneironerConfigOverride>,
     backup: Option<BackupConfigOverride>,
     feedback: Option<FeedbackConfigOverride>,
+    import: Option<ImportConfigOverride>,
     /// `[models]` is file-only: it is too structured for env or argv.
     models: Option<ModelsConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
@@ -604,6 +609,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("oneironer", &self.oneironer)
             .field("backup", &self.backup)
             .field("feedback", &self.feedback)
+            .field("import", &self.import)
             .field("models", &self.models)
             .field("privacy_posture", &self.privacy_posture)
             .field(
@@ -727,6 +733,9 @@ impl PartialServeConfig {
         if let Some(value) = self.feedback {
             resolved.feedback.apply_override(value);
         }
+        if let Some(value) = self.import {
+            resolved.import.apply_override(value);
+        }
         if let Some(value) = self.models {
             resolved.models = Some(value);
         }
@@ -789,6 +798,7 @@ impl From<&ServeArgs> for PartialServeConfig {
                 .filter(|over| !over.is_empty()),
             backup: None,
             feedback: None,
+            import: None,
             models: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,

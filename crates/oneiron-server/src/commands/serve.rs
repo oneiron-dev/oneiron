@@ -35,6 +35,8 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
     let mut vault_config = config.vault_config();
     vault_config.dict_search_paths = dicts.paths;
     let owner_host = crate::owner::schedule::OwnerHost::from_config(&config, vault_config.clone());
+    #[cfg(unix)]
+    let import_queue = super::history_import::queue::ImportQueue::from_config(&config);
     let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
         .map_err(reembed::with_model_change_remedy)?;
 
@@ -121,6 +123,8 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
     let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
     let mut workers = sync_server.spawn_slot_workers();
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
+    #[cfg(unix)]
+    workers.extend(import_queue.map(|queue| queue.spawn(Arc::clone(&sync_server))));
     let app = build_app(sync_server).layer(cors_layer);
     host.ready()?;
     // Open sockets may never close by themselves, so the drain is bounded.

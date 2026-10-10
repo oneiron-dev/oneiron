@@ -1031,7 +1031,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ArtifactExportRef",
@@ -1048,7 +1048,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 4,
       "fn": 18,
       "re-export": 1,
@@ -1872,7 +1872,7 @@
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 23,
       "struct": 1
      }
@@ -4499,13 +4499,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/booking/invite_grant/authorization.rs",
      "purpose": "Whether a page's standing grant covers a recipient, read from persisted claims only",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 8,
       "fn": 2
      }
     },
@@ -5523,7 +5523,7 @@
      "path": "src/calendar/invite/hygiene.rs",
      "purpose": "Vault-hydrated consent evidence and sending-identity reads",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 6,
       "struct": 1
@@ -5550,6 +5550,7 @@
      "path": "src/calendar/invite/mod.rs",
      "purpose": "Outbound iMIP invite adapter (CAL-04, ONE-1786)",
      "surface": {
+      "crate-vis": 2,
       "re-export": 4
      }
     },
@@ -7696,7 +7697,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 6,
       "struct": 1
      }
@@ -9734,7 +9735,7 @@
      "path": "src/comm/parties.rs",
      "purpose": "Node-local party shortcut vs synced PERSON truth plus twin reconciliation",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 16,
       "fn": 1
      }
     },
@@ -11428,8 +11429,19 @@
      "path": "src/context_board/mod.rs",
      "purpose": "Typed Context Board render projections",
      "surface": {
-      "crate-vis": 6,
-      "re-export": 17
+      "crate-vis": 7,
+      "re-export": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/notifications.rs",
+     "purpose": "Who a pending notification is delivered to: the recipient markers its stored body carries, read one way…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 3
      }
     },
     {
@@ -17827,7 +17839,7 @@
      "path": "src/gate/grants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -28237,6 +28249,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/artifacts.rs",
+     "purpose": "What the publication and build-cache doors admit of a retained output by the secrets that tainted it: a…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -28263,7 +28285,7 @@
      "path": "src/recovery/checkpoint/decisions/consent.rs",
      "purpose": "What the engine grants on consent and standing it folds from rows a restore brings back: the ramp offer a…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -28277,13 +28299,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/notifications.rs",
+     "purpose": "Who a pending notification is delivered to, as its recipient markers decide from the body a restore brings…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/decisions/reads.rs",
      "purpose": "Who a read admits: the relationship reads a principal's memberships and grants decide, the policy grants a…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     },
     {
@@ -28293,7 +28325,7 @@
      "path": "src/recovery/checkpoint/decisions/skills.rs",
      "purpose": "What the activation gate decides about a skill: the posture its bytes' scan verdicts give an entry into…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -28314,6 +28346,16 @@
      "purpose": "The census check, a substrate invariant: no restore loosens a decision the engine makes from restored rows…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/tests/artifacts.rs",
+     "purpose": "Census case for what the publication and build-cache doors admit of a retained output by its taint",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -28343,7 +28385,7 @@
      "path": "src/recovery/checkpoint/decisions/tests/consent.rs",
      "purpose": "Census cases for consent and standing the engine grants from restored rows",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -28360,20 +28402,30 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
-     "path": "src/recovery/checkpoint/decisions/tests/reads.rs",
-     "purpose": "Census cases for who a read admits",
+     "path": "src/recovery/checkpoint/decisions/tests/notifications.rs",
+     "purpose": "Census case for who a pending notification is delivered to",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/tests/reads.rs",
+     "purpose": "Census cases for who a read admits",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/recovery/checkpoint/decisions/tests/skills.rs",
-     "purpose": "Census cases for what the activation gate decides about a skill",
+     "purpose": "Census cases for what the activation gate decides about a skill, and for the script code an installed pack's…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -28384,6 +28436,26 @@
      "purpose": "Census cases for what a task, an ask and an agent may do",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/tests/worlds.rs",
+     "purpose": "Census case and regression for the worlds an agent may read",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/decisions/worlds.rs",
+     "purpose": "Which worlds an executing principal may read: the owner grants and the default its `claim_of` edges reach…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -31371,7 +31443,7 @@
      "path": "src/skill_hub/pack_catalog/admission.rs",
      "purpose": "Post-fit installation of pinned pack source; requested powers stay inert",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 7
      }
     },
@@ -31562,7 +31634,7 @@
      "path": "src/skill_hub/pack_catalog/script_runtime.rs",
      "purpose": "Foreign pack scripts run only through the existing propose-only code-mode VM",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2,
       "struct": 3
      }
@@ -38468,7 +38540,7 @@
     "artifact_hosting": {
      "files": 5,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
@@ -38774,7 +38846,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 50,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39376,7 +39448,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 43,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -39754,10 +39826,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 27,
+   "over_bar": 28,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2399,
-   "test_files": 788
+   "source_files": 2403,
+   "test_files": 791
   },
   "oneiron-android": {
    "files": [
@@ -46908,7 +46980,7 @@
      "path": "src/api/context_board/prefix.rs",
      "purpose": "Session prefix material: entity counts, latest activity, pending notifications, unprocessed work, token meter",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 7
      }
     },
     {
@@ -48247,7 +48319,7 @@
      "path": "src/commands/history_import.rs",
      "purpose": "`oneiron import <source> <path>`: the owner's own history, imported into a stopped vault (ARCH-0027)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -48257,7 +48329,17 @@
      "path": "src/commands/history_import/confined.rs",
      "purpose": "Reading under one folder without leaving it",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/history_import/queue.rs",
+     "purpose": "The import queue",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -48430,6 +48512,21 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ImportConfig",
+      "ImportConfigOverride"
+     ],
+     "path": "src/config/import.rs",
+     "purpose": "The `[import]` section: whether a running `serve` imports the session logs queued for it (`oneiron import…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/config/lookup.rs",
      "purpose": "Leaf config helpers: env lookups, value parsing, and secret redaction",
@@ -48458,8 +48555,8 @@
      "path": "src/config/mod.rs",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
-      "mod": 8,
-      "re-export": 8
+      "mod": 9,
+      "re-export": 9
      }
     },
     {
@@ -50696,14 +50793,14 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 15,
+     "files": 16,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 19,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50873,7 +50970,7 @@
    },
    "over_bar": 3,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 292,
+   "source_files": 294,
    "test_files": 113
   },
   "oneiron-uniffi": {

@@ -232,6 +232,9 @@ pub struct ServeConfig {
     pub backup: BackupConfig,
     /// The `[feedback]` section: where the owner's feedback goes.
     pub feedback: FeedbackConfig,
+    /// The `[import]` section: the queue a running `serve` imports session
+    /// logs from, off unless set.
+    pub import: super::ImportConfig,
     /// The `[models]` section, absent until the config file names it.
     /// Absent means no model seat is filled: every model-free path runs and
     /// the Dreamer reports idle for want of a model.
@@ -286,6 +289,7 @@ impl Default for ServeConfig {
             oneironer: None,
             backup: BackupConfig::default(),
             feedback: FeedbackConfig::default(),
+            import: super::ImportConfig::default(),
             models: None,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
@@ -343,6 +347,7 @@ impl fmt::Debug for ServeConfig {
             .field("oneironer", &self.oneironer)
             .field("backup", &self.backup)
             .field("feedback", &self.feedback)
+            .field("import", &self.import)
             .field("models", &self.models)
             .field("privacy_posture", &self.privacy_posture)
             .field(
