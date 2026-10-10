@@ -66,6 +66,7 @@ pub use self::burst_inputs::{NormalizedBurstInputs, normalized_burst_inputs};
 
 pub use self::backend::{
     BudgetLease, LlmBackend, LlmGenerateFuture, LlmResult, LlmStream, LlmStreamResult,
+    SingleRouteBackend,
 };
 pub use self::call::{
     CallClass, CallEnvelope, CallPurpose, DeterministicFallback, LlmRole, ModelLocality,

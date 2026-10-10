@@ -84,6 +84,9 @@ impl<T> OpenAiCompatBackend<T> {
     }
 }
 
+/// One request to the configured endpoint per call; retries stay with the host.
+impl<T> oneiron::llm::SingleRouteBackend for OpenAiCompatBackend<T> where T: OpenAiCompatTransport {}
+
 impl<T> LlmBackend for OpenAiCompatBackend<T>
 where
     T: OpenAiCompatTransport,

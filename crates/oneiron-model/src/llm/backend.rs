@@ -80,6 +80,11 @@ pub trait LlmBackend: Send + Sync {
     fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a>;
 }
 
+/// A backend whose one call is one request to one route: no retry, and no
+/// fallback to another model or origin. A run admission's gate wraps only
+/// these, so the permit it checks covers exactly the request that leaves.
+pub trait SingleRouteBackend: LlmBackend {}
+
 /// Opaque admission token issued by the budget guard.
 #[derive(Clone)]
 pub struct BudgetLease {

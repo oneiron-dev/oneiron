@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
-use super::{CallEnvelope, ModelId};
+use super::{CallEnvelope, LlmCapability, ModelId, ResponseFormat};
 use oneiron_contracts::entity_id::bytes_to_hex_lower;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -62,6 +62,37 @@ impl LlmRequest {
             }
         }
         None
+    }
+
+    /// The capabilities a backend needs to serve this request, streamed or
+    /// not, in the order a catalog row checks them.
+    #[must_use]
+    pub fn needed_capabilities(&self, stream: bool) -> Vec<LlmCapability> {
+        let mut needed = Vec::new();
+        let mut need = |capability: LlmCapability| {
+            if !needed.contains(&capability) {
+                needed.push(capability);
+            }
+        };
+        if stream {
+            need(LlmCapability::Streaming);
+        }
+        if !self.tools.is_empty() {
+            need(LlmCapability::ToolCalling);
+        }
+        if matches!(self.envelope.response_format, ResponseFormat::Json { .. }) {
+            need(LlmCapability::JsonResponse);
+        }
+        for part in self.messages.iter().flat_map(|message| &message.content) {
+            match part {
+                ContentPart::ToolCall { .. } => need(LlmCapability::ToolCalling),
+                ContentPart::ToolResult { .. } => need(LlmCapability::ToolResults),
+                ContentPart::Image { .. } => need(LlmCapability::ImageInput),
+                ContentPart::Reasoning { .. } => need(LlmCapability::Reasoning),
+                _ => {}
+            }
+        }
+        needed
     }
 }
 

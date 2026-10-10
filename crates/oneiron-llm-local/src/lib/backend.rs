@@ -80,6 +80,9 @@ where
     }
 }
 
+/// One generation on the local runtime per call.
+impl<R> oneiron::llm::SingleRouteBackend for LocalLlmBackend<R> where R: LocalLlmRuntime {}
+
 impl<R> LlmBackend for LocalLlmBackend<R>
 where
     R: LocalLlmRuntime,

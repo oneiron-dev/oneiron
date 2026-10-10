@@ -26,6 +26,9 @@ impl<T: GeminiTransport> GeminiBackend<T> {
         })
     }
 }
+/// One request to the configured endpoint per call; retries stay with the host.
+impl<T: GeminiTransport> oneiron::llm::SingleRouteBackend for GeminiBackend<T> {}
+
 impl<T: GeminiTransport> LlmBackend for GeminiBackend<T> {
     fn supports(&self, model: &ModelId, capability: LlmCapability) -> bool {
         self.models

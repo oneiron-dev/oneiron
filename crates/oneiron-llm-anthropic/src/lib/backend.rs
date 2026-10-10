@@ -95,6 +95,12 @@ impl<T> AnthropicMessagesBackend<T> {
     }
 }
 
+/// One request to the configured Messages endpoint per call; retries stay with the host.
+impl<T> oneiron::llm::SingleRouteBackend for AnthropicMessagesBackend<T> where
+    T: AnthropicMessagesTransport
+{
+}
+
 impl<T> LlmBackend for AnthropicMessagesBackend<T>
 where
     T: AnthropicMessagesTransport,

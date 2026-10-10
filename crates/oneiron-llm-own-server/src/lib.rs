@@ -28,6 +28,9 @@ impl<T: OwnServerTransport> OwnServerBackend<T> {
             .admit(request, stream)
     }
 }
+/// One request to the own server per call; retries stay with the host.
+impl<T: OwnServerTransport> oneiron::llm::SingleRouteBackend for OwnServerBackend<T> {}
+
 impl<T: OwnServerTransport> LlmBackend for OwnServerBackend<T> {
     fn supports(&self, model: &ModelId, capability: LlmCapability) -> bool {
         self.models
