@@ -12,7 +12,7 @@ pub(crate) fn apply(
     mut state: State,
     window: &str,
 ) -> Result<Vec<EntityId>> {
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         let mut dropped = BTreeSet::new();
         for note in state.cores.keys() {
             if blocked(vault, txn, doc, note)?

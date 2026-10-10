@@ -16289,7 +16289,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "EgressDecision",
@@ -23204,7 +23204,7 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "fn": 11,
       "struct": 2
      }
@@ -23484,7 +23484,7 @@
      "path": "src/memory/witness/program.rs",
      "purpose": "The one witness program: request checks, one plan, the ONE-1686 ceiling door and the ONE-1767 mint contract…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -23752,7 +23752,7 @@
       "crate-vis": 24,
       "enum": 3,
       "fn": 4,
-      "re-export": 7,
+      "re-export": 8,
       "struct": 2
      }
     },
@@ -23944,6 +23944,26 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ImportedFile",
+      "ImportedNote",
+      "ImportedNoteBatch",
+      "ImportedNoteBatchReceipt",
+      "ImportedNoteLink",
+      "ImportedNoteStanding"
+     ],
+     "path": "src/note/import.rs",
+     "purpose": "A folder of linked markdown notes, imported as one batch the owner approves or declines whole (ARCH-0027…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 6,
+      "struct": 5
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -24132,7 +24152,7 @@
      "path": "src/note/title_index.rs",
      "purpose": "Atomic title-reservation replacement for authoritative NOTE document sets",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -32700,7 +32720,7 @@
      "path": "src/store/group_commit.rs",
      "purpose": "Group commit at the vault's single LMDB writer (ARCH-0019 storage invariant, OF-536)",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 19,
       "struct": 1
      }
     },
@@ -36444,8 +36464,8 @@
      "path": "src/vault/transactions.rs",
      "purpose": "Vault maintenance, learned-at range scans, transaction helpers and sync state",
      "surface": {
-      "crate-vis": 1,
-      "fn": 22
+      "crate-vis": 2,
+      "fn": 24
      }
     },
     {
@@ -39061,7 +39081,7 @@
     "embed": {
      "files": 8,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "—"
     },
@@ -39318,7 +39338,7 @@
      "purpose": "Durable batched speculation over real detached worktrees"
     },
     "note": {
-     "files": 36,
+     "files": 37,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -39857,9 +39877,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 31,
+   "over_bar": 32,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2410,
+   "source_files": 2411,
    "test_files": 786
   },
   "oneiron-android": {
@@ -41649,7 +41669,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 33,
+      "const": 34,
       "crate-vis": 1
      }
     },
@@ -48244,6 +48264,7 @@
       "ImportBatchArgs",
       "ImportCommand",
       "ImportDecisionArgs",
+      "ImportNotesArgs",
       "ImportSourceArgs",
       "RestoreArgs",
       "RunArgs",
@@ -48258,7 +48279,7 @@
      "purpose": "Flags for the owner's own commands: doctor, backup, restore, export, the secret scan switch, importing…",
      "surface": {
       "enum": 3,
-      "struct": 12
+      "struct": 13
      }
     },
     {
@@ -48305,7 +48326,7 @@
      "path": "src/commands/history_import.rs",
      "purpose": "`oneiron import <source> <path>`: the owner's own history, imported into a stopped vault (ARCH-0027)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -48315,7 +48336,27 @@
      "path": "src/commands/history_import/confined.rs",
      "purpose": "Reading under one folder without leaving it",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/history_import/notes.rs",
+     "purpose": "`oneiron import notes <folder> --out <batch>`: a folder of linked markdown notes, as one batch the owner…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/history_import/notes/markdown.rs",
+     "purpose": "What `import notes` reads in one note: its YAML frontmatter, and the `[[links]]` it makes outside code",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -48365,6 +48406,7 @@
      "path": "src/commands/owner.rs",
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, export, the secret scan switch, import…",
      "surface": {
+      "crate-vis": 1,
       "fn": 8
      }
     },
@@ -50034,7 +50076,17 @@
      "path": "src/owner/mod.rs",
      "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/note_imports.rs",
+     "purpose": "A folder of markdown notes as one import batch: preview its digest, then approve or decline it whole…",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -50637,6 +50689,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/notes_import.rs",
+     "purpose": "`oneiron import notes <folder>` through the shipped binary: a folder of linked markdown notes is one batch…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -50755,7 +50815,7 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 16,
+     "files": 18,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -50860,7 +50920,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -50932,8 +50992,8 @@
    },
    "over_bar": 5,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 291,
-   "test_files": 111
+   "source_files": 294,
+   "test_files": 112
   },
   "oneiron-uniffi": {
    "files": [

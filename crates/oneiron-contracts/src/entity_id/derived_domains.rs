@@ -133,6 +133,10 @@ pub const HISTORY_TURN: &[u8] = b"oneiron.ingest.history.turn.v1";
 /// content hash.
 pub const HISTORY_MESSAGE: &[u8] = b"oneiron.ingest.history.message.v1";
 
+/// A NOTE imported from a folder of markdown notes (`note::import`). Parts:
+/// folder, the file's path under it.
+pub const IMPORTED_NOTE: &[u8] = b"oneiron.ingest.notes.note.v1";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
 pub(crate) const ALL: [&[u8]; 34] = [
@@ -170,4 +174,5 @@ pub(crate) const ALL: [&[u8]; 34] = [
     HISTORY_CONVERSATION,
     HISTORY_TURN,
     HISTORY_MESSAGE,
+    IMPORTED_NOTE,
 ];

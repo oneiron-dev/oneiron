@@ -149,7 +149,7 @@ impl Vault {
             return Ok(());
         }
 
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let backfill_key = authority_first_seen_backfill_key();
             if AUTHORITY_FIRST_SEEN_BACKFILLED.contains(&self.store, wtxn, &backfill_key)? {
                 return Ok(());
@@ -213,7 +213,7 @@ impl Vault {
     #[cfg(feature = "test-hooks")]
     #[doc(hidden)]
     pub fn advance_authority_clock_for_test(&self, observed_secs: u64) -> Result<()> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let floor_key = authority_first_seen_clock_key();
             let previous = AUTHORITY_FIRST_SEEN
                 .get_lenient(&self.store, wtxn, &floor_key)?
@@ -243,7 +243,7 @@ impl Vault {
         self.backfill_authority_first_seen_sidecars()?;
         // Update the monotonic local observation in a committed writer before
         // the cached read view opens its own snapshot.
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let floor_key = authority_first_seen_clock_key();
             let floor = AUTHORITY_FIRST_SEEN
                 .get_lenient(&self.store, wtxn, &floor_key)?

@@ -299,14 +299,14 @@ impl Vault {
         let dirty = THREAD_DIRTY.contains(&self.store, &txn, &trunk)?;
         if dirty {
             drop(txn);
-            return self.with_write_txn(|txn| rebuild_thread_meta_in_txn(self, txn, trunk));
+            return self.with_write_txn_grouped(|txn| rebuild_thread_meta_in_txn(self, txn, trunk));
         }
         meta_in_txn(self, &txn, &trunk)
     }
 
     /// Reconstructs a missing/stale projection from the retained reply chain.
     pub fn rebuild_thread_meta(&self, trunk: EntityId) -> Result<Option<ThreadMeta>> {
-        self.with_write_txn(|txn| rebuild_thread_meta_in_txn(self, txn, trunk))
+        self.with_write_txn_grouped(|txn| rebuild_thread_meta_in_txn(self, txn, trunk))
     }
 
     pub fn thread(&self, trunk: EntityId) -> Result<Thread> {
@@ -332,7 +332,7 @@ impl Vault {
 
     /// Continues the reply chain without changing the conversation HEAD.
     pub fn reply_in_thread(&self, trunk: EntityId, input: &AppendRecord) -> Result<AppendedRecord> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             require_member(&self.store, txn, &input.conversation, &trunk)?;
             let mut target = trunk;
             let conversation = conversation_of(&self.store, txn, &trunk)?;

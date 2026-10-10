@@ -51,7 +51,7 @@ pub(super) fn persist_send_receipt_and_retry(
         .fields
         .insert("retry_at".to_owned(), retry_at.to_string());
     let queue = AttemptQueue::new(vault);
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         if !persist_send_receipt_in_txn(
             &vault.store,
             wtxn,
@@ -105,7 +105,7 @@ pub(super) fn persist_terminal_send_receipt_and_fail(
     vault: &Vault,
     settlement: TerminalSendSettlement<'_>,
 ) -> Result<bool, Error> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         persist_terminal_send_receipt_and_fail_in_txn(vault, wtxn, settlement)
     })
 }
@@ -178,7 +178,7 @@ pub(super) fn settle_suppressed_send(
 ) -> Result<(), Error> {
     use crate::attempt_queue::{CompleteAttempt, FailAttempt};
     let queue = AttemptQueue::new(vault);
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let delivered = crate::receipt::delivered_send_exists_in_txn(&vault.store, wtxn, task_ref)?;
         if delivered {
             queue.complete_in_txn(
@@ -236,7 +236,7 @@ pub(super) fn reconcile_connector_task(
         originating_session_ref: task.originating_session_ref.as_deref(),
         calendar_invite: task.calendar_invite.as_ref(),
     };
-    let terminal = vault.with_write_txn(|wtxn| {
+    let terminal = vault.with_write_txn_grouped(|wtxn| {
         let Some(resolution) =
             reconcile_connector_intent_in_txn(vault, wtxn, attempt_id, &binding, stop, now)
                 .map_err(|_| {

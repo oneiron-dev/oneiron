@@ -40,7 +40,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             self.put_skill_record_in_txn(wtxn, id, record, occurred, learned_at)
         })
     }
@@ -175,7 +175,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<SkillRecord> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             self.fork_skill_record_bound_in_txn(
                 wtxn,
                 parent_id,
@@ -325,7 +325,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             self.supersede_skill_record_in_txn(wtxn, old_id, new_id, occurred, learned_at)
         })
     }

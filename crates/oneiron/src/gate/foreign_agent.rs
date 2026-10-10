@@ -127,7 +127,7 @@ impl Vault {
         introducer: WriteActor,
         confirmed: AgentCeiling,
     ) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             if foreign == introducer.entity_ref()
                 || crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &foreign)?
@@ -169,7 +169,7 @@ impl Vault {
         foreign: EntityId,
         requested: AgentCeiling,
     ) -> Result<bool> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             let mut row = load(&self.store, txn, foreign)?.ok_or(Error::EntityNotFound)?;
             if row.owner != *owner.actor().as_bytes() {
@@ -321,7 +321,7 @@ impl Vault {
             field(ACTOR_CLASS_KEY) == Some(EdgeActorClass::Agent.gate_actor_class())
                 && field(ACTOR_REF_KEY) == Some(principal)
         };
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             let id = super::default_policy_manifest_id()?;
             let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &id)?

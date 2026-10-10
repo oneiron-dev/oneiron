@@ -16,7 +16,7 @@ impl crate::Vault {
                 "cold attach requires an embedding model".into(),
             ));
         }
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             if self
                 .store
                 .hnsw_meta

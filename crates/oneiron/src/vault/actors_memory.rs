@@ -162,7 +162,7 @@ impl Vault {
     #[doc(hidden)]
     pub fn ensure_embedded_owner_actor(&self) -> crate::memory::MemoryResult<EntityId> {
         let owner = embedded_owner_actor_id()?;
-        self.try_with_write_txn(|wtxn| {
+        self.try_with_write_txn_grouped(|wtxn| {
             if self.local_hard_delete_marker_exists_in_txn(wtxn, &owner)? {
                 return Err(crate::memory::hard_deleted_refusal(&owner));
             }
@@ -195,7 +195,7 @@ impl Vault {
             &rmpv::Value::Map(vec![(rmpv::Value::from("name"), rmpv::Value::from(name))]),
         )
         .map_err(|_| Error::InvariantViolation("agent principal body encode"))?;
-        self.try_with_write_txn(|wtxn| {
+        self.try_with_write_txn_grouped(|wtxn| {
             if self.local_hard_delete_marker_exists_in_txn(wtxn, &principal)? {
                 return Err(crate::memory::hard_deleted_refusal(&principal));
             }
@@ -371,7 +371,9 @@ impl Vault {
         &self,
         input: crate::code_memory::AttachCodeMemory,
     ) -> Result<crate::code_memory::SlotInsertOutcome> {
-        self.with_write_txn(|wtxn| crate::code_memory::attach_code_memory(&self.store, wtxn, input))
+        self.with_write_txn_grouped(|wtxn| {
+            crate::code_memory::attach_code_memory(&self.store, wtxn, input)
+        })
     }
 
     /// Applies one EXPLICIT rename/copy anchor transfer.
@@ -385,7 +387,7 @@ impl Vault {
         &self,
         transfer: &crate::code_memory::AnchorTransfer,
     ) -> Result<crate::code_memory::AnchorTransferReceipt> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             crate::code_memory::transfer_code_memory_anchor(&self.store, wtxn, transfer)
         })
     }
@@ -437,7 +439,7 @@ impl Vault {
         &self,
         contract: crate::code_memory::AlwaysOnCodeMemoryContract,
     ) -> Result<()> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             crate::code_memory::register_always_on_contract(&self.store, wtxn, contract)
         })
     }
@@ -455,7 +457,7 @@ impl Vault {
         to: EntityId,
         context: crate::code_memory::BlocksWriteContext<'_>,
     ) -> Result<()> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             crate::code_memory::insert_blocks_edge(self, wtxn, from, to, context)
         })
     }
@@ -470,7 +472,7 @@ impl Vault {
         to: EntityId,
         context: crate::code_memory::BlocksWriteContext<'_>,
     ) -> Result<bool> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             crate::code_memory::remove_blocks_edge(self, wtxn, from, to, context)
         })
     }

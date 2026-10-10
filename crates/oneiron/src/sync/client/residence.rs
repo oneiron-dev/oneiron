@@ -371,7 +371,7 @@ impl SyncClient {
         // entry. Neither reaches the observed Loro window or LMDB entity
         // tables until the canonical window is promoted before a write.
         self.vault
-            .with_write_txn(|txn| {
+            .with_write_txn_grouped(|txn| {
                 if self
                     .vault
                     .store
@@ -473,7 +473,7 @@ impl SyncClient {
         // Publish the writable marker only AFTER the canonical doc is
         // durable. Cached thin bodies in this window can no longer shadow it.
         self.vault
-            .with_write_txn(|txn| {
+            .with_write_txn_grouped(|txn| {
                 let stale: Vec<_> = self
                     .vault
                     .store

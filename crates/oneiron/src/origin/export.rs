@@ -193,7 +193,7 @@ impl Vault {
             },
             revision.finalized_at,
         )?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let key = export_key(repo, revision.revision_id);
             if let Some(old) = ENGINE_EXPORTS.get(&self.store, txn, &key)? {
                 if old != oid.as_str() {

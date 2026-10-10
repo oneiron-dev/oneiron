@@ -233,6 +233,6 @@ impl Vault {
     /// Resolves a complete scope. Safety limits refuse instead of truncating
     /// the covers set that a later summary will attest to.
     pub fn resolve_dag_scope(&self, scope: &ScopeSelector) -> Result<ResolvedScope> {
-        self.with_write_txn(|txn| resolve_in_txn(self, txn, scope))
+        self.with_write_txn_grouped(|txn| resolve_in_txn(self, txn, scope))
     }
 }
