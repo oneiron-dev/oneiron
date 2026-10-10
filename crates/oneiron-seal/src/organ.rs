@@ -59,6 +59,11 @@ pub const ASK_IDENTITY: &str = "seal.identity";
 pub const ASK_SIGN: &str = "seal.sign";
 /// The name of the sealed output.
 pub const SEALED_OUTPUT: &str = "sealed.pdf";
+/// The most report JSON a verdict carries. A larger report is left out,
+/// as `{"omitted_over_bytes": MAX_REPORT_JSON_BYTES}`, so its verdict
+/// still fits the reply frame: a small PDF can name thousands of
+/// signatures with long field names.
+pub const MAX_REPORT_JSON_BYTES: usize = 8 * 1024 * 1024;
 const PDF: &str = "application/pdf";
 
 /// The seal organ. It holds nothing between calls.
@@ -162,8 +167,8 @@ struct Degrade {
 }
 
 /// A verdict, with the full report as JSON bytes: one value in the reply
-/// frame however many signatures the PDF holds, and never parsed by the
-/// engine.
+/// frame however many signatures the PDF holds, at most
+/// [`MAX_REPORT_JSON_BYTES`], and never parsed by the engine.
 #[derive(Serialize)]
 struct Verdict {
     verdict: VerifyVerdict,
@@ -175,8 +180,17 @@ struct Verdict {
 
 impl Verdict {
     fn of(report: &VerifyReport) -> Result<Self, OrganError> {
-        let json = serde_json::to_vec(report)
-            .map_err(|err| OrganError::new(ErrorCode::Internal, format!("report: {err}")))?;
+        let failed =
+            |err: serde_json::Error| OrganError::new(ErrorCode::Internal, format!("report: {err}"));
+        let mut capped = CappedJson(Vec::new());
+        let json = match serde_json::to_writer(&mut capped, report) {
+            Ok(()) => capped.0,
+            Err(err) if err.is_io() => serde_json::to_vec(&OmittedReport {
+                omitted_over_bytes: MAX_REPORT_JSON_BYTES,
+            })
+            .map_err(failed)?,
+            Err(err) => return Err(failed(err)),
+        };
         Ok(Self {
             verdict: report.verdict(),
             reasons: report.reasons(),
@@ -184,6 +198,29 @@ impl Verdict {
             self_verify_ok: report.passes_self_verify(),
             report_json: ByteBuf::from(json),
         })
+    }
+}
+
+/// What stands in for a report over [`MAX_REPORT_JSON_BYTES`].
+#[derive(Serialize)]
+struct OmittedReport {
+    omitted_over_bytes: usize,
+}
+
+/// JSON that stops at [`MAX_REPORT_JSON_BYTES`] rather than grow past it.
+struct CappedJson(Vec<u8>);
+
+impl std::io::Write for CappedJson {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.0.len() + buf.len() > MAX_REPORT_JSON_BYTES {
+            return Err(std::io::ErrorKind::FileTooLarge.into());
+        }
+        self.0.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 

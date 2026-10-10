@@ -101,7 +101,8 @@ pub struct SealKeyError {
     pub retryable: bool,
 }
 
-/// A timestamp authority.
+/// A timestamp authority. Its URL crosses to the organ, so it carries no
+/// user, password, query or fragment; a seal with one is refused.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SealTsa {
     pub url: String,
@@ -343,13 +344,19 @@ impl HostedSealer<'_> {
     }
 
     /// The seal's configuration as the organ reads it. Verification gets
-    /// no timestamp authorities: it never fetches. A TSA URL that carries
-    /// credentials is refused here, so they never cross the socket.
+    /// no timestamp authorities: it never fetches. A TSA URL with a user,
+    /// a password, a query or a fragment is refused here: the URL crosses
+    /// the socket, and the seal cannot tell a credential in a query from a
+    /// harmless parameter.
     fn config(&self, timestamps: bool) -> Result<ConfigArgs, EsignSealerError> {
         let timestamp_authorities = if timestamps {
             for tsa in &self.settings.timestamp_authorities {
                 let url = reqwest::Url::parse(&tsa.url).map_err(|_| invalid_configuration())?;
-                if !url.username().is_empty() || url.password().is_some() {
+                if !url.username().is_empty()
+                    || url.password().is_some()
+                    || url.query().is_some()
+                    || url.fragment().is_some()
+                {
                     return Err(invalid_configuration());
                 }
             }
@@ -627,6 +634,8 @@ fn host_failure(err: HostError) -> EsignSealerError {
         HostError::Backoff { retry_after, .. } => EsignSealerError::Unavailable {
             retry_after_ms: Some(u64::try_from(retry_after.as_millis()).unwrap_or(u64::MAX)),
         },
+        // A binary that cannot run stays that way until it is reinstalled.
+        HostError::Io(err) if not_runnable(&err) => organ("not_runnable"),
         // The organ died or the host had no room: it may pass. A frame the
         // socket could not carry means the process was gone.
         HostError::Crashed(_)
@@ -654,6 +663,15 @@ fn host_failure(err: HostError) -> EsignSealerError {
         HostError::Unavailable { .. } => organ("unavailable"),
         _ => organ("host"),
     }
+}
+
+/// Whether starting the organ failed on its binary: missing, not
+/// executable, or not a format the kernel runs.
+fn not_runnable(err: &std::io::Error) -> bool {
+    matches!(
+        err.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+    ) || err.raw_os_error() == Some(libc::ENOEXEC)
 }
 
 /// A unit enum's wire name.

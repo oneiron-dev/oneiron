@@ -18,13 +18,19 @@ use oneiron::blob_artifact::esign::{
 };
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_organ_host::seal::{
-    HostedSealer, SealAlgorithm, SealIdentity, SealKeyError, SealKeys, SealSettings, seal_spec,
+    HostedSealer, SealAlgorithm, SealIdentity, SealKeyError, SealKeys, SealSettings, SealTsa,
+    seal_spec,
 };
 use oneiron_organ_host::{FetchGrant, HostConfig, OrganHost};
+use oneiron_seal::organ::MAX_REPORT_JSON_BYTES;
 use p256::ecdsa::signature::hazmat::PrehashSigner;
 use p256::pkcs8::DecodePrivateKey;
 
 const ORGAN: &str = env!("CARGO_BIN_EXE_oneiron-seal-organ");
+const ORIGINAL: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/pdf-input/classic_1page.pdf"
+));
 
 /// A synthetic P-256 key and its self-signed certificate, held engine-side.
 struct Keys {
@@ -77,6 +83,19 @@ impl EsignSealer for RejectVerify<'_> {
     }
 }
 
+/// A synthetic P-256 key and its self-signed certificate.
+fn synthetic_keys() -> std::result::Result<(Keys, Vec<u8>), Box<dyn std::error::Error>> {
+    let key = rcgen::KeyPair::generate()?;
+    let mut params = rcgen::CertificateParams::new(Vec::<String>::new())?;
+    params.key_usages = vec![rcgen::KeyUsagePurpose::DigitalSignature];
+    let cert = params.self_signed(&key)?.der().to_vec();
+    let keys = Keys {
+        key: p256::ecdsa::SigningKey::from_pkcs8_der(&key.serialize_der())?,
+        cert: cert.clone(),
+    };
+    Ok((keys, cert))
+}
+
 fn unix_seconds_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -86,14 +105,7 @@ fn unix_seconds_now() -> u64 {
 #[test]
 fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let key = rcgen::KeyPair::generate()?;
-    let mut params = rcgen::CertificateParams::new(Vec::<String>::new())?;
-    params.key_usages = vec![rcgen::KeyUsagePurpose::DigitalSignature];
-    let cert = params.self_signed(&key)?.der().to_vec();
-    let keys = Keys {
-        key: p256::ecdsa::SigningKey::from_pkcs8_der(&key.serialize_der())?,
-        cert: cert.clone(),
-    };
+    let (keys, cert) = synthetic_keys()?;
     let host = OrganHost::new(HostConfig::default());
     host.install(seal_spec(ORGAN, FetchGrant::default()));
     let dir = tempfile::tempdir()?;
@@ -126,13 +138,9 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
         at,
         now,
     )?;
-    let original = include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/pdf-input/classic_1page.pdf"
-    ));
     vault.append_blob_artifact_version(
         &id,
-        original,
+        ORIGINAL,
         &oneiron::blob_artifact::BlobVersionProvenance::UserUpload,
         oneiron::write_envelope::WriteActor::new(owner, oneiron::edge::EdgeActorClass::Human),
         at,
@@ -261,7 +269,7 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
     );
     assert_eq!(
         vault.read_blob_artifact_version(&id, 1)?.as_deref(),
-        Some(original.as_slice())
+        Some(ORIGINAL)
     );
     assert_eq!(
         vault.seal_esign_attempt(&attempt, &sealer, SealProfile::BaselineB, url)?,
@@ -407,7 +415,7 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
     assert!(vault.verify_esign_item(id, 0, &sealer)?.valid());
     assert_eq!(
         vault.read_blob_artifact_version(&id, 1)?.as_deref(),
-        Some(original.as_slice())
+        Some(ORIGINAL)
     );
     let audit = vault.esign_audit(id)?;
     let canonical = vault.esign_pdf_for_capability(&capabilities[0].1, 0, None, None)?;
@@ -446,5 +454,102 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
             .is_err()
     );
     assert_eq!(reopened.esign_audit(id)?, audit);
+    Ok(())
+}
+
+#[test]
+fn a_tsa_url_with_a_query_is_refused_before_the_organ_starts()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (keys, cert) = synthetic_keys()?;
+    let host = OrganHost::new(HostConfig::default());
+    host.install(seal_spec(ORGAN, FetchGrant::default()));
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    let mut settings = SealSettings::new(vec![cert], "seal");
+    // The URL would cross to the organ, and a query may carry a key.
+    settings.timestamp_authorities = vec![SealTsa {
+        url: "https://tsa.example/timestamp?api_key=placeholder".to_owned(),
+        policy_oid: None,
+    }];
+    let sealer = HostedSealer::new(&host, &vault, &keys, settings);
+    let request = EsignSealRequest {
+        operation_id: "op".to_owned(),
+        profile: SealProfile::BaselineT,
+    };
+    let refused = sealer.seal(ORIGINAL, &request);
+    assert!(
+        matches!(&refused, Err(EsignSealerError::Fatal { code, .. }) if code == "invalid_configuration"),
+        "{refused:?}"
+    );
+    assert_eq!(host.status("seal").map(|status| status.spawns), Some(0));
+    Ok(())
+}
+
+#[test]
+fn an_organ_binary_that_cannot_run_is_not_retried()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (keys, cert) = synthetic_keys()?;
+    let bin = tempfile::tempdir()?;
+    let program = bin.path().join("not-an-organ");
+    std::fs::write(&program, b"not an executable")?;
+    let host = OrganHost::new(HostConfig::default());
+    host.install(seal_spec(&program, FetchGrant::default()));
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    let sealer = HostedSealer::new(&host, &vault, &keys, SealSettings::new(vec![cert], "seal"));
+    let failed = sealer.verify(ORIGINAL);
+    assert!(
+        matches!(&failed, Err(EsignSealerError::Fatal { code, .. }) if code == "not_runnable"),
+        "{failed:?}"
+    );
+    Ok(())
+}
+
+/// A 100 KB PDF whose 1,024 signature fields all name one 64 KiB string,
+/// so its full verification report is over 64 MiB.
+fn many_long_named_fields() -> Vec<u8> {
+    let name = "A".repeat(64 * 1024);
+    let fields = "<< /FT /Sig /T 7 0 R /V 6 0 R >> ".repeat(1024);
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm 5 0 R >>".to_owned(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>".to_owned(),
+        "<< /Length 0 >>\nstream\n\nendstream".to_owned(),
+        format!("<< /Fields [{fields}] >>"),
+        "<< /Type /Sig /SubFilter /ETSI.CAdES.detached /ByteRange [0 0 0 0] /Contents <> >>"
+            .to_owned(),
+        format!("({name})"),
+    ];
+    let mut pdf = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (n, body) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n{body}\nendobj\n", n + 1).as_bytes());
+    }
+    let xref = pdf.len();
+    let size = objects.len() + 1;
+    pdf.extend_from_slice(format!("xref\n0 {size}\n0000000000 65535 f \n").as_bytes());
+    for offset in offsets {
+        pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(
+        format!("trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
+    );
+    pdf
+}
+
+#[test]
+fn a_verdict_whose_report_is_too_large_still_crosses()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (keys, cert) = synthetic_keys()?;
+    let host = OrganHost::new(HostConfig::default());
+    host.install(seal_spec(ORGAN, FetchGrant::default()));
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    let sealer = HostedSealer::new(&host, &vault, &keys, SealSettings::new(vec![cert], "seal"));
+    let verdict = sealer.verify(&many_long_named_fields())?;
+    assert_eq!(verdict.verdict, SealVerdict::Failed);
+    let report: serde_json::Value = serde_json::from_slice(&verdict.report_json)?;
+    assert_eq!(report["omitted_over_bytes"], MAX_REPORT_JSON_BYTES);
     Ok(())
 }
