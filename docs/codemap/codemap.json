@@ -37769,14 +37769,6 @@
      "surface": {}
     },
     {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/it/booking_conversion.rs",
-     "purpose": "BK-07 host-facing conversion contracts across the merged booking packs",
-     "surface": {}
-    },
-    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -37795,7 +37787,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it/booking_solver.rs",
@@ -37819,7 +37811,7 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/it/calendar_ics_ingest_adapter.rs",
@@ -37827,7 +37819,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it/calendar_outcome.rs",
@@ -37835,7 +37827,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it/calendar_prep.rs",
@@ -37883,7 +37875,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it/campaign_send_hygiene_oracle.rs",
@@ -37891,7 +37883,7 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/it/campaign_stage_ladder_oracle.rs",
@@ -37909,7 +37901,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/it/cb_oracle_frame.rs",
@@ -37917,13 +37909,13 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/it/cb_oracle_plugin.rs",
      "purpose": "Context Board forward test oracle — epic ONE-1692, opened by ONE-1693 (CB-01)",
      "surface": {
-      "crate-vis": 55
+      "crate-vis": 42
      }
     },
     {
@@ -37937,21 +37929,13 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/it/cb_oracle_stream.rs",
-     "purpose": "Context Board forward test oracle — epic ONE-1692, opened by ONE-1693 (CB-01)",
-     "surface": {}
-    },
-    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "tests/it/cb_oracle_tasks.rs",
      "purpose": "Context Board forward test oracle — epic ONE-1692, opened by ONE-1693 (CB-01)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 14
      }
     },
     {
@@ -37963,7 +37947,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/it/channel_identity_slack_adapter_smoke.rs",
@@ -37971,7 +37955,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it/code_consent.rs",
@@ -37993,7 +37977,7 @@
      "path": "tests/it/effect_spine_oracle.rs",
      "purpose": "Effect Spine forward test oracle (doc 13, ONE-1713 epic) — authored by the ONE-1714 path opener",
      "surface": {
-      "crate-vis": 102
+      "crate-vis": 73
      }
     },
     {
@@ -38005,7 +37989,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/it/gate_regression.rs",
@@ -38021,7 +38005,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it/linkedin_connector_adapter.rs",
@@ -38063,22 +38047,6 @@
      "surface": {}
     },
     {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/it/of360_extraction_eval.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/it/ops_docs.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -38095,15 +38063,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/it/receipt_answerability.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/it/receipt_context.rs",
@@ -38111,7 +38071,7 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/it/saved_query_oracle.rs",
@@ -38127,7 +38087,7 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/it/skills_epic_oracle.rs",
@@ -38337,15 +38297,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/lens_regen.rs",
-     "purpose": "ONE-1431 — lens regen-on-update with the behavior-diff auto-adopt gate",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/owner_reason.rs",
@@ -38433,7 +38385,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/vault_read_parity.rs",
@@ -39829,7 +39781,7 @@
    "over_bar": 28,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2403,
-   "test_files": 791
+   "test_files": 785
   },
   "oneiron-android": {
    "files": [
