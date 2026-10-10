@@ -125,7 +125,7 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
             continue;
         }
 
-        let Some(&at) = separators(line, '=').first() else {
+        let Some(&at) = separators(line, b'=').first() else {
             return Err(invalid_manifest("expected `key = value`"));
         };
         let (key, value) = (&line[..at], &line[at + 1..]);
@@ -298,9 +298,8 @@ fn extension_value(value: &str) -> Result<()> {
                 break;
             }
             b'"' | b'\'' => {
-                at = string_end(bytes, at, c).ok_or_else(|| {
-                    invalid_manifest("a manifest value does not end on its line")
-                })?;
+                at = string_end(bytes, at, c)
+                    .ok_or_else(|| invalid_manifest("a manifest value does not end on its line"))?;
                 continue;
             }
             b'[' | b'{' => depth += 1,
@@ -350,33 +349,35 @@ fn invalid_manifest(msg: &'static str) -> Error {
     Error::Secret(SecretError::InvalidSecretCustodyBody(msg))
 }
 
-/// The byte offsets of `sep` in `text` outside a basic (`"…"`) or literal
-/// (`'…'`) string.
-fn separators(text: &str, sep: char) -> Vec<usize> {
+/// The byte offsets of `sep` in `text` outside a string, in any of TOML's
+/// four forms. A string left open runs to the end of the text.
+fn separators(text: &str, sep: u8) -> Vec<usize> {
+    let bytes = text.as_bytes();
     let mut found = Vec::new();
-    let mut quote = None;
-    let mut escaped = false;
-    for (at, c) in text.char_indices() {
-        match quote {
-            Some('"') if escaped => escaped = false,
-            Some('"') if c == '\\' => escaped = true,
-            Some(open) if c == open => quote = None,
-            Some(_) => {}
-            None if c == '"' || c == '\'' => quote = Some(c),
-            None if c == sep => found.push(at),
-            None => {}
+    let mut at = 0;
+    while let Some(&c) = bytes.get(at) {
+        if c == b'"' || c == b'\'' {
+            let Some(end) = string_end(bytes, at, c) else {
+                break;
+            };
+            at = end;
+        } else {
+            if c == sep {
+                found.push(at);
+            }
+            at += 1;
         }
     }
     found
 }
 
 /// `text` cut at each `sep` outside a string.
-fn split_outside_quotes(text: &str, sep: char) -> Vec<&str> {
+fn split_outside_quotes(text: &str, sep: u8) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut start = 0;
     for at in separators(text, sep) {
         parts.push(&text[start..at]);
-        start = at + sep.len_utf8();
+        start = at + 1;
     }
     parts.push(&text[start..]);
     parts
@@ -386,12 +387,14 @@ fn split_outside_quotes(text: &str, sep: char) -> Vec<&str> {
 /// `"tier_ceiling"` and `"\u0074ier_ceiling"` as one key, and
 /// `"extension.flag"` (one part) apart from `extension.flag` (two).
 fn key_path(key: &str) -> Result<Vec<String>> {
-    split_outside_quotes(key, '.')
+    split_outside_quotes(key, b'.')
         .into_iter()
         .map(|part| {
             let part = toml_trim(part);
             if part.is_empty() {
                 Err(invalid_manifest("a key has an empty part"))
+            } else if part.starts_with("\"\"\"") || part.starts_with("'''") {
+                Err(invalid_manifest("a key is never a multi-line string"))
             } else if part.starts_with(['"', '\'']) {
                 parse_string(part)
             } else if part
@@ -408,24 +411,34 @@ fn key_path(key: &str) -> Result<Vec<String>> {
         .collect()
 }
 
-/// A basic (`"…"`, escapes decoded) or literal (`'…'`) string. TOML reads
-/// `"deploy"` and `"de\u0070loy"` as one string, so they compare equal here.
+/// A string in one of TOML's four forms, on one line. A basic string
+/// (`"…"`) decodes its escapes; a literal one (`'…'`) is its text as written.
+/// Their multi-line forms (`"""…"""`, `'''…'''`) may also hold one or two of
+/// their quotes in a row. TOML reads `"deploy"`, `"de\u0070loy"` and
+/// `"""deploy"""` as one string, so they compare equal here.
 fn parse_string(value: &str) -> Result<String> {
-    if let Some(inner) = value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')) {
-        if inner.contains('\'') {
-            return Err(invalid_manifest("a literal string holds a quote"));
-        }
-        return Ok(inner.to_owned());
-    }
-    let Some(inner) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) else {
+    let quoted = |quotes: &str| value.strip_prefix(quotes)?.strip_suffix(quotes);
+    let (inner, quote, run_cap) = if let Some(inner) = quoted("'''") {
+        (inner, '\'', 2)
+    } else if let Some(inner) = quoted("\"\"\"") {
+        (inner, '"', 2)
+    } else if let Some(inner) = quoted("'") {
+        (inner, '\'', 0)
+    } else if let Some(inner) = quoted("\"") {
+        (inner, '"', 0)
+    } else {
         return Err(invalid_manifest("expected a quoted string"));
     };
     let mut text = String::with_capacity(inner.len());
     let mut chars = inner.chars();
+    let mut run = 0;
     while let Some(c) = chars.next() {
+        run = if c == quote { run + 1 } else { 0 };
+        if run > run_cap {
+            return Err(invalid_manifest("a string holds its own closing quote"));
+        }
         match c {
-            '"' => return Err(invalid_manifest("a basic string holds an unescaped quote")),
-            '\\' => text.push(unescape(&mut chars)?),
+            '\\' if quote == '"' => text.push(unescape(&mut chars)?),
             c => text.push(c),
         }
     }
@@ -491,7 +504,7 @@ fn parse_string_array(value: &str) -> Result<Vec<String>> {
     if toml_trim(inner).is_empty() {
         return Ok(Vec::new());
     }
-    let mut items = split_outside_quotes(inner, ',');
+    let mut items = split_outside_quotes(inner, b',');
     if items.last().is_some_and(|item| toml_trim(item).is_empty()) {
         items.pop();
     }
