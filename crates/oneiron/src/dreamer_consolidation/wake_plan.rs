@@ -66,6 +66,13 @@ pub(crate) enum AttemptPreparation {
     },
 }
 
+/// The most queued TURNs one wake prepares: one Meso round's worth. A pass
+/// admits work from the head of the ready order, so the wake prepares that
+/// head and leaves the rest of a larger backlog (a whole history import) to
+/// the passes after it, rather than reading all of it before any budget or
+/// deadline applies.
+const WAKE_PREPARED_TURN_CAP: usize = super::DEFAULT_MESO_ROUND_TURN_CAP;
+
 /// Source bodies frozen by the Dreamer at ONE ledger snapshot, before the
 /// wake starts any writes. The read transaction closes immediately after this
 /// bounded projection; a wake never holds an LMDB reader slot across writes.
@@ -76,6 +83,8 @@ pub struct PreparedWake {
     /// in the same snapshot as `sources`.
     texts: BTreeMap<EntityId, super::turn_text::TurnText>,
     attempts: BTreeSet<[u8; 16]>,
+    /// Ready work past the head this wake prepared, for a later pass.
+    left: BTreeSet<[u8; 16]>,
     preparations: BTreeMap<[u8; 16], AttemptPreparation>,
     /// The receipt of the one scoped read behind `sources`; `None` when the
     /// wake read nothing. Every branch opened on this wake folds it.
@@ -121,6 +130,11 @@ impl PreparedWake {
         let txn = super::turn_text::snapshot(vault)?;
         let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
         let records = crate::attempt_queue::AttemptQueue::new(vault).list_in_txn(&txn)?;
+        let left = if only_attempt.is_some() {
+            BTreeSet::new()
+        } else {
+            left_for_later(&records, scope)
+        };
         let mut ids = BTreeSet::new();
         let mut attempts = BTreeSet::new();
         let mut retries = Vec::new();
@@ -129,6 +143,8 @@ impl PreparedWake {
             if attempt.kind != scope.attempt_kind()
                 || attempt.state.is_terminal()
                 || only_attempt.is_some_and(|id| id != attempt.id)
+                || left.contains(attempt.id.as_bytes())
+                || (only_attempt.is_none() && idle(vault, &txn, &attempt)?)
             {
                 continue;
             }
@@ -255,6 +271,7 @@ impl PreparedWake {
         if ids.is_empty() {
             return Ok(Self {
                 attempts,
+                left,
                 preparations,
                 ..Self::default()
             });
@@ -453,6 +470,7 @@ impl PreparedWake {
             sources,
             texts,
             attempts,
+            left,
             preparations,
             read_receipt: Some(read_receipt),
         })
@@ -461,6 +479,12 @@ impl PreparedWake {
     /// Only work known at the wake's single revision may execute on it.
     pub(crate) fn contains_attempt(&self, id: AttemptId) -> bool {
         self.attempts.contains(id.as_bytes())
+    }
+
+    /// Ready work this wake left past the head it prepared: a later pass
+    /// prepares and runs it.
+    pub(crate) fn left_for_later(&self, id: AttemptId) -> bool {
+        self.left.contains(id.as_bytes())
     }
 
     pub(crate) fn preparation(&self, id: AttemptId) -> Option<&AttemptPreparation> {
@@ -500,4 +524,48 @@ impl PreparedWake {
     pub(super) fn read_receipt(&self) -> Option<&ScopedReadReceipt> {
         self.read_receipt.as_ref()
     }
+}
+
+/// An attempt no pass runs before a later write, which a later wake
+/// prepares: a paused one, or one parked under its lease until the lease
+/// lapses and the queue hands it out again.
+fn idle(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: &crate::attempt_queue::AttemptRecord,
+) -> Result<bool> {
+    Ok(attempt.state == crate::attempt_queue::AttemptState::Paused
+        || (attempt.state.is_running()
+            && crate::dreamer_runner::DreamerRunnerStore::new(vault)
+                .is_parked_in_txn(txn, attempt.id)?))
+}
+
+/// The ready work of `scope` past the head one wake prepares, in the order a
+/// pass admits it: every attempt from the first whose queued TURNs would take
+/// the head past [`WAKE_PREPARED_TURN_CAP`]. The head always holds at least
+/// one attempt, however many TURNs it queued.
+fn left_for_later(
+    records: &[crate::attempt_queue::AttemptRecord],
+    scope: crate::dreamer_runner::DreamerConsolidationScope,
+) -> BTreeSet<[u8; 16]> {
+    let mut ready: Vec<_> = records
+        .iter()
+        .filter(|record| record.kind == scope.attempt_kind())
+        .filter_map(|record| Some((crate::attempt_queue::admission_order(record)?, record)))
+        .collect();
+    ready.sort_unstable_by_key(|(order, _)| *order);
+    let mut head = 0_usize;
+    let mut left = BTreeSet::new();
+    for (_, record) in ready {
+        let queued = crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload)
+            .ok()
+            .and_then(|payload| super::partition::decode_partition_payload(&payload.input).ok())
+            .map_or(0, |(_, turns, _)| turns.len());
+        if !left.is_empty() || (head > 0 && head.saturating_add(queued) > WAKE_PREPARED_TURN_CAP) {
+            left.insert(*record.id.as_bytes());
+        } else {
+            head = head.saturating_add(queued);
+        }
+    }
+    left
 }

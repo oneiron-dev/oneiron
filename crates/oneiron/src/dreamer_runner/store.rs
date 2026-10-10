@@ -630,6 +630,15 @@ impl<'a> DreamerRunnerStore<'a> {
         PARKED.get(&self.vault.store, &rtxn, &attempt_id)
     }
 
+    /// Whether `attempt_id` holds a parked row at `txn`'s revision.
+    pub(crate) fn is_parked_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        attempt_id: AttemptId,
+    ) -> Result<bool> {
+        Ok(PARKED.get(&self.vault.store, txn, &attempt_id)?.is_some())
+    }
+
     /// Pure proposal step. This method performs no LMDB write and enqueues no
     /// attempt.
     ///

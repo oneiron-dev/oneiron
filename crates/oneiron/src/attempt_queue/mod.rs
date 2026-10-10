@@ -81,6 +81,16 @@ pub(crate) use engine::dreamer_run_root_id_in_txn;
 pub(crate) use types::ATTEMPT_RECORD_VERSION;
 pub(crate) use types::attempt_record_order;
 
+/// Where `record` stands in the order queued work is admitted in: its
+/// readiness instant, then its id. `None` for a row admission never hands
+/// out.
+pub(crate) fn admission_order(record: &AttemptRecord) -> Option<(u64, [u8; 16])> {
+    record
+        .state
+        .is_ready_indexed()
+        .then(|| (encoding::ready_at(record), *record.id.as_bytes()))
+}
+
 /// Whether rows of `kind` are job state whose owner settles, prunes and
 /// bounds them itself (the tagging marker: its settled tries leave the ledger
 /// for a bounded trace history). No content-side cleanup proposes such a row,

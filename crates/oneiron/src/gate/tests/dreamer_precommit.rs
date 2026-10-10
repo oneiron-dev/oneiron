@@ -1137,3 +1137,100 @@ fn valid_tool_output_dreamer_write_pends_without_joining_a_run_group() -> Result
     );
     Ok(())
 }
+
+/// ARCH-0027 trust tier, mechanically (Sol 19 on Wave 9a lane 3): imported
+/// material never auto-approves. Where the manifest grants `imported` a full
+/// Auto permit, a Dreamer write from imported evidence is still refused Auto,
+/// and its Proposed request parks for the owner's review. The same permit
+/// still answers a write the Dreamer did not author.
+#[test]
+fn a_dreamer_write_from_imported_evidence_never_lands_auto_whatever_the_manifest_grants()
+-> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let row = |source: ClaimSource| match source_trust_entry(source, 3).1 {
+        Value::Map(mut rows) => rows.remove(0),
+        _ => unreachable!("a source_trust entry is a map"),
+    };
+    let mut data = encode_policy_manifest(vec![
+        (
+            Value::from(POLICY_SOURCE_TRUST_KEY),
+            Value::Map(vec![
+                row(ClaimSource::Generated),
+                row(ClaimSource::Imported),
+            ]),
+        ),
+        signatures_entry(),
+    ]);
+    append_actor_ceiling(
+        &mut data,
+        actor_ceiling_row_for_ref("agent", &first_party_connector_actor_ref(), "auto"),
+    );
+    append_actor_ceiling(&mut data, actor_ceiling_row("human", "auto"));
+    put_policy_manifest_bytes(&vault, test_id(0x22), &data)?;
+    let evidence_ref = test_id(0x90);
+    seed_precommit_evidence_entity(&vault, &evidence_ref)?;
+    let body = |approval| {
+        let mut body = precommit_body(
+            Value::from("Ada Lovelace"),
+            Some(precommit_evidence(vec![evidence_ref])),
+        );
+        body.approval = approval;
+        body
+    };
+
+    // The manifest does grant the Dreamer Auto: a generated meet lands Auto.
+    attempt_dreamer_write_with_source(
+        &vault,
+        &test_id(0x91),
+        &body(ClaimApprovalStatus::Auto),
+        ClaimSource::Generated,
+    )?;
+    assert_eq!(
+        stored_claim_body(&vault, &test_id(0x91))?.approval,
+        ClaimApprovalStatus::Auto
+    );
+
+    // An imported meet does not, whatever the imported row grants.
+    let err = attempt_dreamer_write_with_source(
+        &vault,
+        &test_id(0x92),
+        &body(ClaimApprovalStatus::Auto),
+        ClaimSource::Imported,
+    )
+    .expect_err("imported material never auto-approves");
+    assert_gate_rejected(err, "pending", &["gate.pending.source_trust"]);
+    assert!(vault.get_raw(&test_id(0x92))?.is_none());
+
+    // Proposed, it parks for the owner.
+    attempt_dreamer_write_with_source(
+        &vault,
+        &test_id(0x93),
+        &body(ClaimApprovalStatus::Proposed),
+        ClaimSource::Imported,
+    )?;
+    assert_eq!(
+        stored_claim_body(&vault, &test_id(0x93))?.approval,
+        ClaimApprovalStatus::Proposed
+    );
+    assert!(
+        vault
+            .pending_gate_consents(10)?
+            .iter()
+            .any(|row| row.claim_id == *test_id(0x93).as_bytes()),
+        "a Proposed imported claim waits in a review"
+    );
+
+    // A write the Dreamer did not author keeps what the row grants.
+    let mut owned = public_stamped(source_trust_claim(ClaimSource::Imported));
+    owned.approval = ClaimApprovalStatus::Auto;
+    let (candidate, envelope) = claim_candidate_write_parts(&vault, &owned)?;
+    vault
+        .batch()
+        .claim_candidate(&test_id(0x94), candidate, &envelope, test_time(6), 6)
+        .commit()?;
+    assert_eq!(
+        stored_claim_body(&vault, &test_id(0x94))?.approval,
+        ClaimApprovalStatus::Auto
+    );
+    Ok(())
+}

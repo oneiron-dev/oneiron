@@ -224,12 +224,21 @@ fn user_stated_head(
     fixture: &PromotionFixture,
     predicate: &str,
 ) -> Result<EntityId> {
+    approved_head(vault, fixture, ClaimSource::UserStated, predicate)
+}
+
+fn approved_head(
+    vault: &Vault,
+    fixture: &PromotionFixture,
+    source: ClaimSource,
+    predicate: &str,
+) -> Result<EntityId> {
     let human = EntityId::now();
     vault.put_entity(&human, ENTITY_TYPE_PERSON, occurred(1), 1, b"human")?;
     let claim_id = EntityId::now();
     let envelope = WriteEnvelope::new(
         WriteActor::new(human, EdgeActorClass::Human),
-        ClaimSource::UserStated,
+        source,
         WriteProvenance::new(Mp::from("promotion-test"))?,
         ClaimApprovalStatus::Approved,
     );
@@ -367,6 +376,203 @@ fn promotion_rejects_rather_than_pends_without_an_auto_permit() -> Result<()> {
     assert!(
         vault.store.pending_gate_consents(1_000)?.is_empty(),
         "a refused consolidation write mints no pending consent record"
+    );
+    Ok(())
+}
+
+/// ARCH-0027 trust tier (Sol 19 on Wave 9a lane 3): a claim from imported
+/// evidence lands Proposed in the review of the import its words came from,
+/// even in a vault whose policy grants `imported` a full Auto permit and even
+/// when the caller computed a `Generated` meet for it. Nothing lands it Auto,
+/// and the owner finds it under the import's review id. Sol 9A-3B #1: the
+/// same holds for a claim that cites an imported claim.
+#[test]
+fn imported_evidence_lands_proposed_in_its_import_review_whatever_the_policy_grants() -> Result<()>
+{
+    use crate::ingest::history::{
+        HistoryConversation, HistoryMessage, HistoryRole, HistorySkips, HistorySource,
+        HistoryThreadKind, history_import_review_id,
+    };
+    const IMPORTED_AT: u64 = 1_800_000_000;
+    let (_dir, vault) = open_auto_vault();
+    let fixture = fixture(&vault)?;
+    let actor = vault.ensure_embedded_owner_actor().expect("owner actor");
+    let owner = vault.authenticate_owner(
+        actor,
+        &actor.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let conversation = HistoryConversation {
+        native_id: "session-ana".to_owned(),
+        kind: HistoryThreadKind::Main,
+        parent: None,
+        title: None,
+        started_at_ms: None,
+        messages: vec![HistoryMessage {
+            native_id: "u1".to_owned(),
+            parent_id: None,
+            role: HistoryRole::User,
+            text: "my name is Ana".to_owned(),
+            at_ms: Some(1_700_000_000_000),
+            said_by: None,
+            tools: Vec::new(),
+            alias: None,
+        }],
+        skipped: HistorySkips::default(),
+    };
+    let report = vault
+        .import_history(
+            &owner,
+            HistorySource::ClaudeCode,
+            &conversation,
+            IMPORTED_AT,
+        )
+        .expect("import");
+    assert_eq!(report.new, 1);
+    let turn = EntityId::derive(
+        crate::entity_id::derived_domains::HISTORY_TURN,
+        &[b"claude-code".as_slice(), b"session-ana", b"u1"],
+    )?;
+
+    // The caller's meet says Generated; the imported TURN decides.
+    let promoted = candidate(&fixture, "profile.name", "Ana", vec![turn]);
+    let claim_id = promoted.claim_id;
+    let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
+    assert_eq!(outcome.pended, vec![claim_id], "{outcome:?}");
+    assert!(outcome.landed.is_empty() && outcome.rejected.is_empty());
+
+    let body = vault.get_claim(&claim_id)?.expect("the proposed claim");
+    assert_eq!(body.source, Some(ClaimSource::Imported));
+    assert_eq!(body.approval, ClaimApprovalStatus::Proposed);
+    assert_eq!(evidence_refs(&body), vec![turn]);
+    let review = history_import_review_id(HistorySource::ClaudeCode, IMPORTED_AT);
+    let pending = vault.store.pending_gate_consents(10)?;
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].claim_id, *claim_id.as_bytes());
+    assert_eq!(pending[0].dreamer_run_id.as_deref(), Some(review.as_str()));
+
+    // Citing the imported MESSAGE itself, or its CONVERSATION, is the same:
+    // Sol 9A-3B round 2 #4. The MESSAGE names the import that learned it.
+    let message = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault.filtered_edge_peers(
+            &rtxn,
+            crate::ports::EdgeDirection::In,
+            &turn,
+            EdgeKind::PartOf,
+            Some(crate::registry::ENTITY_TYPE_MESSAGE),
+            "imported message",
+        )?[0]
+    };
+    let conversation = EntityId::derive(
+        crate::entity_id::derived_domains::HISTORY_CONVERSATION,
+        &[b"claude-code".as_slice(), b"session-ana"],
+    )?;
+    for (predicate, cited, group) in [
+        ("profile.city", message, review.as_str()),
+        ("profile.pet", conversation, fixture.run.run_id.as_str()),
+    ] {
+        let promoted = candidate(&fixture, predicate, "Kyoto", vec![cited]);
+        let id = promoted.claim_id;
+        let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
+        assert_eq!(outcome.pended, vec![id], "{predicate}: {outcome:?}");
+        let body = vault.get_claim(&id)?.expect("the proposed claim");
+        assert_eq!(body.source, Some(ClaimSource::Imported), "{predicate}");
+        assert_eq!(body.approval, ClaimApprovalStatus::Proposed, "{predicate}");
+        let pending = vault.store.pending_gate_consents(10)?;
+        let row = pending
+            .iter()
+            .find(|row| row.claim_id == *id.as_bytes())
+            .expect("its pending row");
+        assert_eq!(row.dreamer_run_id.as_deref(), Some(group), "{predicate}");
+    }
+
+    // No other parent edge takes the import away (Sol 9A-3B round 3 #2): a
+    // plain TURN that sorts first, made a second parent of the MESSAGE.
+    let plain = EntityId::from_bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0])?;
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &Mp::Map(vec![
+            (Mp::from("txt"), Mp::from("my name is Ana")),
+            (Mp::from("spkr"), Mp::from("user")),
+        ]),
+    )
+    .expect("turn body");
+    vault.put_entity(&plain, ENTITY_TYPE_TURN, occurred(5), 5, &body)?;
+    vault.put_edge(&message, EdgeKind::PartOf, &plain, 1.0)?;
+    let promoted = candidate(&fixture, "profile.food", "ramen", vec![message]);
+    let id = promoted.claim_id;
+    let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
+    assert_eq!(outcome.pended, vec![id], "{outcome:?}");
+    let body = vault.get_claim(&id)?.expect("the proposed claim");
+    assert_eq!(body.source, Some(ClaimSource::Imported));
+    let pending = vault.store.pending_gate_consents(10)?;
+    let row = pending
+        .iter()
+        .find(|row| row.claim_id == *id.as_bytes())
+        .expect("its pending row");
+    assert_eq!(row.dreamer_run_id.as_deref(), Some(review.as_str()));
+
+    // A MESSAGE with no import provenance of its own, given an imported TURN
+    // as a parent, is imported evidence, but the edge names no import: it
+    // waits in the Dreamer run's review (Sol 9A-3B round 4 #2).
+    vault
+        .memory(actor, EdgeActorClass::Human)
+        .witness(&crate::WitnessTurn {
+            conversation_ref: EntityId::now().to_hex(),
+            turn_ref: None,
+            messages: vec![crate::WitnessMessage {
+                id: None,
+                author: crate::WitnessAuthor::User,
+                message_type: "dialogue".into(),
+                content: "I drink tea".into(),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+            }],
+            occurred_at: 9_000,
+        })
+        .expect("a live message");
+    let bare = vault
+        .entities_by_type(crate::registry::ENTITY_TYPE_MESSAGE)?
+        .into_iter()
+        .find(|id| *id != message)
+        .expect("the live message");
+    vault.put_edge(&bare, EdgeKind::PartOf, &turn, 1.0)?;
+    let promoted = candidate(&fixture, "profile.drink", "tea", vec![bare]);
+    let id = promoted.claim_id;
+    let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
+    assert_eq!(outcome.pended, vec![id], "{outcome:?}");
+    let pending = vault.store.pending_gate_consents(10)?;
+    let row = pending
+        .iter()
+        .find(|row| row.claim_id == *id.as_bytes())
+        .expect("its pending row");
+    assert_eq!(
+        row.dreamer_run_id.as_deref(),
+        Some(fixture.run.run_id.as_str())
+    );
+
+    // A claim built on an approved imported claim carries the import on: it
+    // too waits for the owner, in the Dreamer run's review.
+    let head = approved_head(&vault, &fixture, ClaimSource::Imported, "profile.home")?;
+    let built = candidate(&fixture, "profile.tone", "warm", vec![head]);
+    let built_id = built.claim_id;
+    let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![built])?;
+    assert_eq!(outcome.pended, vec![built_id], "{outcome:?}");
+    let body = vault.get_claim(&built_id)?.expect("the proposed claim");
+    assert_eq!(body.source, Some(ClaimSource::Imported));
+    assert_eq!(body.approval, ClaimApprovalStatus::Proposed);
+    let pending = vault.store.pending_gate_consents(10)?;
+    let row = pending
+        .iter()
+        .find(|row| row.claim_id == *built_id.as_bytes())
+        .expect("its pending row");
+    assert_eq!(
+        row.dreamer_run_id.as_deref(),
+        Some(fixture.run.run_id.as_str())
     );
     Ok(())
 }
@@ -1744,11 +1950,9 @@ mod vad_deferral_tests {
 
     #[test]
     fn promotion_auto_all_landed_classes_must_remain_non_consolidatable_tripwire() -> Result<()> {
-        for source in [
-            ClaimSource::Generated,
-            ClaimSource::ToolOutput,
-            ClaimSource::Imported,
-        ] {
+        // Imported evidence never lands Auto (ARCH-0027):
+        // `imported_evidence_lands_proposed_in_its_import_review_whatever_the_policy_grants`.
+        for source in [ClaimSource::Generated, ClaimSource::ToolOutput] {
             let (_dir, vault) = open_auto_vault();
             let fixture = annotated_fixture(&vault)?;
             let mut promoted = candidate(&fixture, "profile.name", "review me", vec![fixture.turn]);

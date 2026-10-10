@@ -993,6 +993,16 @@ fn pinned_exact_head_attachment_retains_visible_range_and_original_head() -> Res
 
 #[test]
 fn pinned_exact_head_attachment_accepts_other_claim_with_restrictive_meet() -> Result<()> {
+    // An imported citation restates the head from imported words, which reach
+    // the vault only through the owner's import review (ARCH-0027): it is held,
+    // and the head keeps its own evidence.
+    for source in [ClaimSource::ToolOutput, ClaimSource::Imported] {
+        attach_other_claim_with_restrictive_meet(source)?;
+    }
+    Ok(())
+}
+
+fn attach_other_claim_with_restrictive_meet(source: ClaimSource) -> Result<()> {
     let (dir, vault) = open_vault();
     let fx = fixture(&vault)?;
     let raw = vault.get_raw(&fx.head)?.expect("original head");
@@ -1001,7 +1011,7 @@ fn pinned_exact_head_attachment_accepts_other_claim_with_restrictive_meet() -> R
     let cited = EntityId::now();
     let envelope = WriteEnvelope::new(
         WriteActor::new(actor, EdgeActorClass::Human),
-        ClaimSource::Imported,
+        source,
         WriteProvenance::new("outside citation".into())?,
         ClaimApprovalStatus::Approved,
     );
@@ -1056,6 +1066,12 @@ fn pinned_exact_head_attachment_accepts_other_claim_with_restrictive_meet() -> R
         sink.outcome.rejected.is_empty(),
         "CLAIM citation must attach"
     );
+    if source == ClaimSource::Imported {
+        assert!(sink.outcome.landed.is_empty());
+        assert_eq!(sink.outcome.held, vec![fx.head]);
+        assert_eq!(vault.get_raw(&fx.head)?.as_ref(), Some(&raw));
+        return Ok(());
+    }
     assert_eq!(sink.outcome.landed, vec![fx.head]);
     assert!(
         markers
@@ -1065,11 +1081,8 @@ fn pinned_exact_head_attachment_accepts_other_claim_with_restrictive_meet() -> R
     );
     assert_eq!(vault.get_raw(&fx.head)?.as_ref(), Some(&raw));
     let wrapper = attachment_wrapper(&vault, cited, fx.head)?;
-    assert_eq!(wrapper.source, Some(ClaimSource::Imported));
-    assert_eq!(
-        crate::claim::claim_evidence_taint(&wrapper),
-        Some(ClaimSource::Imported)
-    );
+    assert_eq!(wrapper.source, Some(source));
+    assert_eq!(crate::claim::claim_evidence_taint(&wrapper), Some(source));
     let locators = super::super::decode_verified_locators(&attached_evidence(&wrapper))?;
     assert_eq!(
         locators,

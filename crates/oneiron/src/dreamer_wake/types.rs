@@ -82,6 +82,9 @@ pub enum WakePassStop {
     /// checkpoint. Any attempt admitted when the request landed was parked and
     /// its budget reservation refunded — nothing leaks (H-S5/R2).
     Cancelled,
+    /// The pass worked through the head of a backlog larger than one wake
+    /// prepares and met the rest, which waits for the next pass.
+    BacklogLeft,
 }
 
 /// Wake-pass tally.

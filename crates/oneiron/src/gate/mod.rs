@@ -16,6 +16,7 @@ mod carry_forward_policy;
 mod confirm;
 mod connector_admission;
 mod constants;
+pub(crate) use constants::DREAMER_PROVENANCE_IMPORT_REVIEW_KEY;
 mod decision;
 mod decode;
 mod default_manifest;

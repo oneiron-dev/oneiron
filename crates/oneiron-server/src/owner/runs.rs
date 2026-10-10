@@ -93,7 +93,7 @@ pub(crate) fn pending(vault: &Vault) -> OwnerResult<Vec<PendingRun>> {
 
 /// A run's handle for review and resolve, derived from its id and never
 /// carrying it.
-fn run_ref(run_id: &str) -> String {
+pub(crate) fn run_ref(run_id: &str) -> String {
     hex(&blake3::derive_key(
         "oneiron owner run ref v1",
         run_id.as_bytes(),

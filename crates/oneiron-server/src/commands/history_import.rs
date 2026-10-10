@@ -94,6 +94,18 @@ struct Totals {
     not_kept: HistorySkips,
 }
 
+/// The owner's one review of the claims the Dreamer extracts from an import:
+/// they land Proposed, never Auto (ARCH-0027), and wait under `run_id` for
+/// `oneiron runs show|approve|decline`.
+#[derive(Serialize)]
+struct Review {
+    run_id: String,
+    run_ref: String,
+    /// Dreamer attempts this import queued; they run when `serve` runs with
+    /// a model.
+    dreamer_attempts: usize,
+}
+
 #[derive(Serialize)]
 struct ImportOutcome<'a> {
     source: &'static str,
@@ -104,6 +116,9 @@ struct ImportOutcome<'a> {
     totals: Totals,
     /// Messages of this source the vault's import ledger holds afterwards.
     ledger: usize,
+    /// Where what the Dreamer extracts from this import waits for the owner.
+    /// `None` for a dry run and for an import that landed nothing.
+    review: Option<Review>,
     seconds: f64,
     conversations: Vec<HistoryImportReport>,
 }
@@ -137,7 +152,7 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
     } else {
         let vault = open_vault(&config)?;
         let owner = crate::owner::local_owner(&vault)?;
-        let imported_at = vault.now_recorded_at();
+        let imported_at = own_second(&vault)?;
         Target::Land(Box::new((vault, owner, imported_at)))
     };
     let mut totals = Totals::default();
@@ -162,6 +177,31 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
             ));
         }
     }
+    // What landed goes in front of the Dreamer now, as a session end would
+    // put captured turns: no sitting ever ends for an import. Planning runs on
+    // every import, so a rerun after a crash plans what the crash left.
+    let review = match &target {
+        Target::Land(landing) => {
+            let (vault, _, imported_at) = &**landing;
+            let dreamer_attempts = queue_dreamer(vault, *imported_at)?;
+            if totals.new + totals.changed == 0 && dreamer_attempts > 0 {
+                progress(&format!(
+                    "queued {dreamer_attempts} Dreamer attempt(s) an earlier import left; \
+                     `oneiron runs pending` lists the reviews"
+                ));
+            }
+            (totals.new + totals.changed > 0).then(|| {
+                let run_id =
+                    oneiron::ingest::history::history_import_review_id(source, *imported_at);
+                Review {
+                    run_ref: crate::owner::runs::run_ref(&run_id),
+                    run_id,
+                    dreamer_attempts,
+                }
+            })
+        }
+        Target::Plan(..) => None,
+    };
     let outcome = ImportOutcome {
         source: source.source_id(),
         path: &path,
@@ -173,12 +213,20 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
             Target::Plan(snapshot, _) => snapshot.ledger_len(source)?,
             Target::Land(landing) => landing.0.history_import_ledger_len(source)?,
         },
+        review,
         seconds: started.elapsed().as_secs_f64(),
         conversations: reports,
     };
     let mut stdout = io::stdout().lock();
     serde_json::to_writer_pretty(&mut stdout, &outcome)?;
     writeln!(stdout)?;
+    if let Some(review) = &outcome.review {
+        progress(&format!(
+            "claims the Dreamer extracts from this import wait for your review: \
+             `oneiron runs show {}`",
+            review.run_id
+        ));
+    }
     if files.too_large > 0 {
         progress(&format!(
             "left out {} session log(s) over {MAX_LOG_BYTES} bytes; the report's \
@@ -229,6 +277,34 @@ fn order_key(conversation: &HistoryConversation) -> (u64, u64, String) {
         ended.unwrap_or(u64::MAX),
         conversation.native_id.clone(),
     )
+}
+
+/// The second this import lands at: after every write before it, so no two
+/// imports share one and each has a review of its own. Waits out the rest of
+/// the current second; a vault clock more than two seconds ahead of this
+/// machine's refuses the import rather than share a second with an earlier one.
+fn own_second(vault: &oneiron::Vault) -> anyhow::Result<u64> {
+    let start = vault.now_recorded_at();
+    let deadline = Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        let now = vault.now_recorded_at();
+        if now > start {
+            return Ok(now);
+        }
+        anyhow::ensure!(
+            Instant::now() < deadline,
+            "the vault's clock is ahead of this machine's; import again once \
+             the machine's clock passes it, so this import has a review of its own"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// Queues the Dreamer's rounds over every turn not yet planned, as a session
+/// end does for captured turns: no sitting ever ends for an import.
+fn queue_dreamer(vault: &oneiron::Vault, imported_at: u64) -> anyhow::Result<usize> {
+    oneiron::dreamer_consolidation::plan_dirty_turn_rounds(vault, imported_at)
+        .map_err(|error| anyhow::anyhow!("queue the Dreamer: {error}"))
 }
 
 /// Where conversations go: planned against a read-only ledger, or landed.

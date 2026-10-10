@@ -18,6 +18,7 @@ mod codex;
 mod land;
 mod ledger;
 mod plan;
+mod review;
 mod text;
 mod tree;
 
@@ -26,10 +27,22 @@ mod tests;
 
 pub use land::HistoryImportReport;
 pub use plan::{HistoryDryRun, HistoryLedgerSnapshot};
+pub use review::history_import_review_id;
+pub(crate) use review::imported_evidence_in_txn;
 
 use serde::Serialize;
 
 use super::IngestResult;
+
+/// [`HistoryMessage::said_by`] for the user side of a subagent's or a spawned
+/// agent's thread: the agent that delegated the task, never the owner.
+pub const DELEGATING_AGENT: &str = "delegating_agent";
+
+/// [`HistoryMessage::said_by`] for user-side words the source does not say
+/// were the owner's or an agent's, such as copied history whose thread a copy
+/// left out. Never read as the owner's; a later import that knows the
+/// speaker lands the words again.
+pub const UNKNOWN_SPEAKER: &str = "unknown";
 
 /// The four history sources `oneiron import` reads. Their ids are the ingest
 /// registry's, which carries their Imported trust ceiling.
@@ -111,7 +124,8 @@ pub struct HistoryMessage {
     /// Unix milliseconds, when the source recorded one for this message.
     pub at_ms: Option<u64>,
     /// Who spoke on the user side when it was not the owner: in a subagent's
-    /// log that is the agent that delegated the task.
+    /// log that is the agent that delegated the task ([`DELEGATING_AGENT`]);
+    /// [`UNKNOWN_SPEAKER`] when the source does not say.
     pub said_by: Option<&'static str>,
     /// Names of the tools this assistant message went on to call. The calls
     /// and their results are counted in [`HistorySkips`], not kept.

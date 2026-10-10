@@ -432,6 +432,24 @@ pub fn import(command: ImportCommand) -> anyhow::Result<()> {
     }
 }
 
+/// Deciding a Dreamer proposal writes its signed history with the host's
+/// machine key (ONE-1634), so the command holds the host root as `serve` does
+/// when the config names its secret. Without one, a run the Dreamer proposed
+/// stays undecided here; a running server decides it at `/v1/owner/runs`.
+fn hold_host_root(config: &ServeConfig, vault: &oneiron::Vault) -> anyhow::Result<()> {
+    let Some(secret) = config
+        .sync_server_config()
+        .auth_secret
+        .filter(|secret| !secret.is_empty())
+    else {
+        return Ok(());
+    };
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+    vault.ensure_host_root_slip(&issuer)?;
+    vault.provision_engine_machine_identities(&issuer)?;
+    Ok(())
+}
+
 pub fn runs(command: RunsCommand) -> anyhow::Result<()> {
     let serve = match &command {
         RunsCommand::Pending(args) => &args.serve,
@@ -440,6 +458,9 @@ pub fn runs(command: RunsCommand) -> anyhow::Result<()> {
     };
     let config = resolve_serve_config(serve)?;
     let vault = open_vault(&config, "GET /v1/owner/runs")?;
+    if matches!(command, RunsCommand::Approve(_) | RunsCommand::Decline(_)) {
+        hold_host_root(&config, &vault)?;
+    }
     match command {
         RunsCommand::Pending(_) => emit(&runs::pending(&vault)?),
         RunsCommand::Show(args) => {
