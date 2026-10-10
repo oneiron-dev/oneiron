@@ -486,3 +486,92 @@ async fn successful_calls_without_usage_charge_estimates_for_both_verbs() {
         assert_eq!(budget.read().reserved_units, 0);
     }
 }
+
+type Pick = fn(&mut LlmRequest);
+
+#[tokio::test]
+async fn a_raw_call_that_picks_its_own_model_or_route_is_refused_with_the_key() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tower::ServiceExt;
+    // A backend that answers anything, as a provider key would, and counts
+    // what reached it.
+    struct Counting(AtomicUsize);
+    impl LlmBackend for Counting {
+        fn generate<'a>(&'a self, r: LlmRequest, l: &'a BudgetLease) -> LlmGenerateFuture<'a> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Backend.generate(r, l)
+        }
+        fn stream<'a>(&'a self, r: LlmRequest, l: &'a BudgetLease) -> LlmStreamResult<'a> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Backend.stream(r, l)
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    seed_models(&vault);
+    let budget = BudgetGuard::with_reserve_units("raw", 100, 10, BudgetExhaustionPolicy::Suspend);
+    let backend = Arc::new(Counting(AtomicUsize::new(0)));
+    let server = SyncServer::new(
+        vault,
+        crate::config::SyncServerConfig {
+            auth_secret: Some("owner".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+    .with_llm_backend(backend.clone(), budget.clone());
+    let server = Arc::new(server);
+    let (slip, key) = crate::test_credentials::credential(&server, "jti=llm-route-selector");
+    let router = crate::api::api_routes(server.clone());
+    let picks: [(&str, Pick); 3] = [
+        ("model", |r| {
+            r.params.insert("model".into(), "other/model@1".into());
+        }),
+        ("openai.models", |r| {
+            r.provider_options.insert(
+                "openai".into(),
+                serde_json::json!({ "models": ["other/model@1"] }),
+            );
+        }),
+        ("provider", |r| {
+            r.provider_options
+                .insert("provider".into(), serde_json::json!({ "order": ["other"] }));
+        }),
+    ];
+    for verb in ["generate", "stream"] {
+        for (named, pick) in picks {
+            let mut wire = request();
+            pick(&mut wire);
+            let reply = router
+                .clone()
+                .oneshot(crate::test_credentials::bind_slip_request(
+                    &server,
+                    &slip,
+                    &key,
+                    axum::http::Request::post(format!("/v1/llm/{verb}"))
+                        .header("content-type", "application/json")
+                        .body(Body::from(serde_json::to_vec(&wire).unwrap()))
+                        .unwrap(),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(reply.status(), StatusCode::BAD_REQUEST, "{verb} {named}");
+            let bytes = axum::body::to_bytes(reply.into_body(), 65_536)
+                .await
+                .unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                body,
+                serde_json::json!({"error":{"code":"route_selector_forbidden","key":named}}),
+                "{verb} {named}"
+            );
+        }
+    }
+    assert_eq!(
+        backend.0.load(Ordering::SeqCst),
+        0,
+        "a call reached the backend"
+    );
+    assert_eq!(budget.read().used_units, 0);
+    assert_eq!(budget.read().reserved_units, 0);
+}

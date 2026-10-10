@@ -80,6 +80,16 @@ where
     }
 }
 
+/// One generation per call, when the runtime generates once.
+impl<R> oneiron::llm::SingleRouteBackend for LocalLlmBackend<R>
+where
+    R: LocalLlmRuntime + oneiron::llm::SingleSend,
+{
+    fn preflight(&self, request: &LlmRequest, _stream: bool) -> LlmResult<()> {
+        validate_request(request, &self.descriptor())
+    }
+}
+
 impl<R> LlmBackend for LocalLlmBackend<R>
 where
     R: LocalLlmRuntime,
