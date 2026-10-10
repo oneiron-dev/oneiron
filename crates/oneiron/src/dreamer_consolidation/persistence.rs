@@ -3,7 +3,7 @@ use super::conflict::deterministic_claim_id;
 #[cfg(test)]
 use super::conflict::{ConflictSet, PriorHead, conflict_open_marker_id};
 use super::provenance::{PromotionCandidate, source_meet};
-use super::support::{TURN_BODY_FACET_REF_KEY, invalid_consolidation};
+use super::support::{SCOPE_PROJECT_KEY, TURN_BODY_FACET_REF_KEY, invalid_consolidation};
 use crate::claim::{
     ClaimSource, ClaimSubject, PREDICATE_CONFLICT_OPEN, PREDICATE_CONFLICT_RESOLVED,
     claim_evidence_taint,
@@ -25,6 +25,12 @@ pub(super) fn identity_scope(identity: &super::conflict::ConflictIdentity) -> Re
         let value = rmpv::decode::read_value(&mut topic.as_slice())
             .map_err(|_| invalid_consolidation("conflict topic key"))?;
         fields.push((Value::from("topic_key"), value));
+    }
+    if identity.project != crate::claim::default_project_id() {
+        fields.push((
+            Value::from(SCOPE_PROJECT_KEY),
+            Value::Binary(identity.project.as_bytes().to_vec()),
+        ));
     }
     Ok(Value::Map(fields))
 }
@@ -154,6 +160,7 @@ pub fn close_persistent_conflict(
         body.world,
         None,
         body.rel,
+        body.scope_project,
         super::conflict::topic_key(body.scope.as_ref())?.as_deref(),
     )?;
     let meet = source_meet(

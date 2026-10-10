@@ -40,6 +40,8 @@ struct SourcePin {
     resource: ScopeResource,
     entity_type: u8,
     learned_at: u64,
+    /// The source's PROJECT; `None` for a stamp that does not decode.
+    project: Option<EntityId>,
     #[cfg(test)]
     trust_class: Option<crate::claim::ClaimSource>,
 }
@@ -191,25 +193,29 @@ impl<'a> BranchResources<'a> {
             }
             let resource = document_version(*id, &body);
             readable.insert(resource.clone());
+            let facts = (entity_type == ENTITY_TYPE_TURN).then(|| decode_turn_body(&body));
+            let project = facts
+                .as_ref()
+                .map_or(Some(crate::claim::default_project_id()), |facts| {
+                    facts.project
+                });
             #[cfg(test)]
-            let trust_class = (entity_type == ENTITY_TYPE_TURN)
-                .then(|| {
-                    let facts = decode_turn_body(&body);
-                    turn_trust_class(
-                        dreamer_turn_role(
-                            facts.speaker.as_deref(),
-                            &vault.config.assistant_display_names,
-                        ),
-                        facts.imported,
-                    )
-                })
-                .flatten();
+            let trust_class = facts.and_then(|facts| {
+                turn_trust_class(
+                    dreamer_turn_role(
+                        facts.speaker.as_deref(),
+                        &vault.config.assistant_display_names,
+                    ),
+                    facts.imported,
+                )
+            });
             sources.insert(
                 *id,
                 SourcePin {
                     resource,
                     entity_type,
                     learned_at,
+                    project,
                     #[cfg(test)]
                     trust_class,
                 },
@@ -224,7 +230,8 @@ impl<'a> BranchResources<'a> {
         readable.extend(messages.map(|(_, version)| version.clone()));
         // The queued/caller scope is an actual upper bound supplied by the
         // trusted host. It binds TURNs to relationship/project slices through
-        // exact versions: neither axis is a TURN or conversation column.
+        // exact versions: neither axis is a conversation column. A TURN's own
+        // project stamp (pinned above) still bounds what it may support.
         let mut granted = Scope {
             world: partition.world_ref,
             facet: partition.facet_ref,
@@ -268,6 +275,36 @@ impl<'a> BranchResources<'a> {
         }
         resources.admit_priors()?;
         Ok(resources)
+    }
+
+    /// The one PROJECT a claim drawn from these sources may land in: a
+    /// consolidated claim inherits its sources' exposure and never mixes
+    /// scopes (ONE-1592 P3). A project-bound branch is that project's slice,
+    /// so its default-project sources take the bound project. `None` when
+    /// the sources span projects or a project stamp does not decode.
+    pub(in crate::dreamer_consolidation) fn evidence_project(
+        &self,
+        refs: &[EntityId],
+    ) -> Result<Option<EntityId>> {
+        let default = crate::claim::default_project_id();
+        let mut project = self.scope.project;
+        for id in refs {
+            let pin = self
+                .sources
+                .get(id)
+                .ok_or_else(|| invalid_consolidation("unadmitted evidence source"))?;
+            let Some(source) = pin.project else {
+                return Ok(None);
+            };
+            if self.scope.project.is_some() && source == default {
+                continue;
+            }
+            match project {
+                Some(project) if project != source => return Ok(None),
+                _ => project = Some(source),
+            }
+        }
+        Ok(Some(project.unwrap_or(default)))
     }
 
     pub(super) fn source_version(&self, id: &EntityId) -> Result<ScopeResource> {
@@ -544,6 +581,7 @@ impl<'a> BranchResources<'a> {
                         facts.world,
                         facts.facet,
                         facts.rel,
+                        facts.project,
                         facts.topic.as_deref(),
                     )?
             {
@@ -561,6 +599,11 @@ impl<'a> BranchResources<'a> {
                     self.prior(*id)?;
                     self.source(scope, id)?;
                 }
+            }
+            if self.evidence_project(&candidate.evidence_turn_refs)? != Some(facts.project) {
+                return Err(invalid_consolidation(
+                    "candidate crossed its sources' project",
+                ));
             }
         }
         Ok(())

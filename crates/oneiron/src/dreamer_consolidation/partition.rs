@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use rmpv::Value;
 
 use super::support::{
-    CURSOR_SCHEMA_VERSION, DREAMER_BUCKET_HASH_DOMAIN, DREAMER_PARTITION_ROUND_HASH_DOMAIN,
+    CURSOR_SCHEMA_VERSION, DREAMER_PARTITION_HASH_DOMAIN, DREAMER_PARTITION_ROUND_HASH_DOMAIN,
     DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE, KEY_CONVERSATION, KEY_FACET, KEY_LAST_LEARNED_AT,
     KEY_LAST_LEDGER_REVISION_HINT, KEY_SCHEMA_VERSION, KEY_TURNS, KEY_WATERMARK, KEY_WORLD,
     PARTITION_PAYLOAD_SCHEMA_VERSION, decode_value, encode_value, expect_key, expect_map,
@@ -62,7 +62,7 @@ impl ConsolidationPartitionKey {
     #[must_use]
     pub fn partition_hash(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
-        hasher.update(DREAMER_BUCKET_HASH_DOMAIN);
+        hasher.update(DREAMER_PARTITION_HASH_DOMAIN);
         hasher.update(b"partition");
         hasher.update(self.conversation_ref.as_bytes());
         hash_optional_entity(&mut hasher, self.world_ref.as_ref());

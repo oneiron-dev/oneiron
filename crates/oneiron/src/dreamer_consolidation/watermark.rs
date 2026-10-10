@@ -5,9 +5,9 @@ use rmpv::Value;
 
 use super::support::{
     DEFAULT_MESO_ROUND_TURN_CAP, KEY_LAST_LEARNED_AT, KEY_LAST_TURN_ID, KEY_SCHEMA_VERSION,
-    TURN_BODY_FACET_REF_KEY, TURN_BODY_WORLD_REF_KEY, WATERMARK_SCHEMA_VERSION,
-    WATERMARK_SCHEMA_VERSION_V1, decode_value, encode_value, expect_key, expect_map,
-    invalid_consolidation, scope_byte,
+    TURN_BODY_FACET_REF_KEY, TURN_BODY_PROJECT_REF_KEY, TURN_BODY_WORLD_REF_KEY,
+    WATERMARK_SCHEMA_VERSION, WATERMARK_SCHEMA_VERSION_V1, decode_value, encode_value, expect_key,
+    expect_map, invalid_consolidation, scope_byte,
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -669,6 +669,10 @@ pub(crate) struct TurnBodyFacts {
     /// The turn is from an imported transcript (ARCH-0027): its evidence is
     /// `Imported` whatever its speaker.
     pub(crate) imported: bool,
+    /// The PROJECT the turn was spoken in: its door stamp, else the vault
+    /// default project. `None` only for a stamp that does not decode, which
+    /// never reads as the default.
+    pub(crate) project: Option<EntityId>,
 }
 
 /// The ONE turn-body decoder. In-crate planners (the ONE-1685 session-close
@@ -682,6 +686,7 @@ pub(crate) fn decode_turn_body(raw: &[u8]) -> TurnBodyFacts {
         world_ref: None,
         facet_ref: None,
         imported: false,
+        project: Some(crate::claim::default_project_id()),
     };
     let Ok(value) = rmpv::decode::read_value(&mut Cursor::new(raw)) else {
         return facts;
@@ -703,6 +708,9 @@ pub(crate) fn decode_turn_body(raw: &[u8]) -> TurnBodyFacts {
             }
             Some(TURN_BODY_WORLD_REF_KEY) => facts.world_ref = entity_ref_from_value(&value),
             Some(TURN_BODY_FACET_REF_KEY) => facts.facet_ref = entity_ref_from_value(&value),
+            Some(TURN_BODY_PROJECT_REF_KEY) => {
+                facts.project = value.as_str().and_then(|hex| EntityId::from_hex(hex).ok());
+            }
             // Present at all, whatever its value: a malformed stamp fails toward
             // the lower trust class, never up.
             Some(crate::memory::IMPORTED_SOURCE_KEY) => facts.imported = true,
@@ -739,6 +747,7 @@ pub(super) fn read_turn_facts(vault: &Vault, id: &EntityId) -> Result<TurnBodyFa
             world_ref: None,
             facet_ref: None,
             imported: false,
+            project: Some(crate::claim::default_project_id()),
         });
     };
     Ok(decode_turn_body(

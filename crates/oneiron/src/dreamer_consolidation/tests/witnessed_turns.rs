@@ -783,6 +783,7 @@ fn private_or_ungranted_relationship_messages_never_reach_consolidation() -> Res
             facts.world,
             facts.facet,
             facts.rel,
+            facts.project,
             facts.topic.as_deref(),
         )?;
         let change: Option<Change> = expire.then(|| {

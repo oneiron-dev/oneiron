@@ -6,9 +6,12 @@ use crate::dreamer_runner::DreamerConsolidationScope;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
-/// Domain for phase-2 candidate-bucket hashes (pinned, design D6). The
-/// phase-1 partition hash keeps this domain unchanged (DESIGN-PIN A2).
-pub const DREAMER_BUCKET_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-bucket:v1";
+/// Domain for phase-2 candidate-bucket hashes (pinned, design D6). v2 added
+/// the project axis to the bucket key.
+pub const DREAMER_BUCKET_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-bucket:v2";
+/// Domain for the phase-1 partition hash: the v1 bucket domain, unchanged
+/// (DESIGN-PIN A2). Partition hashes key stored cursors and queue rows.
+pub const DREAMER_PARTITION_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-bucket:v1";
 /// Domain for reflection gap hashes (pinned, design D6).
 pub const DREAMER_GAP_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-gap:v1";
 /// Domain for swarm evidence content hashes (pinned, design D10).
@@ -31,6 +34,10 @@ pub const TURN_BODY_WORLD_REF_KEY: &str = "world_ref";
 /// (16-byte MessagePack binary). Absent = "channel gave no mask signal";
 /// extraction may still assign one — it does NOT force the invariant layer.
 pub const TURN_BODY_FACET_REF_KEY: &str = "facet_ref";
+/// Door-owned turn-body key naming the PROJECT a turn was spoken in (hex
+/// entity id). The record door stamps it on project leader-chat turns and
+/// refuses it from callers. Absent = the vault's default project.
+pub const TURN_BODY_PROJECT_REF_KEY: &str = "scope_project_id";
 /// Default bound on ONE Meso round: the scan stops after this many admissible
 /// TURNs even when the backlog is larger, and the remainder drains across the
 /// following rounds (one capped round per session-close settlement). The cap
@@ -64,6 +71,8 @@ pub(super) const KEY_DECAYED: &str = "decayed";
 pub(super) const KEY_CONVERSATION: &str = "conversation_ref";
 pub(super) const KEY_WORLD: &str = "world_ref";
 pub(super) const KEY_FACET: &str = "facet_ref";
+/// Candidate scope-map key the write envelope stamps into `scopeProjectId`.
+pub(super) const SCOPE_PROJECT_KEY: &str = "scopeProjectId";
 pub(super) const KEY_WATERMARK: &str = "watermark";
 pub(super) const KEY_TURNS: &str = "turns";
 

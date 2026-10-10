@@ -1237,6 +1237,7 @@ fn bucket_hash_conformance() {
         rel: None,
         world: None,
         facet: None,
+        project: crate::claim::default_project_id(),
     };
     // Pinned known-answer vector for the domain-separated hash.
     assert_eq!(
@@ -1247,6 +1248,7 @@ fn bucket_hash_conformance() {
 
     // Identical content hashes identically regardless of construction path.
     let rebuilt = ConsolidationBucketKey {
+        project: crate::claim::default_project_id(),
         facet: None,
         world: None,
         predicate_root: String::from("profile"),
@@ -1260,6 +1262,9 @@ fn bucket_hash_conformance() {
     let mut other = key.clone();
     other.predicate_root = "preference".to_owned();
     assert_ne!(key.bucket_hash(), other.bucket_hash());
+    let mut other_project = key.clone();
+    other_project.project = subject;
+    assert_ne!(key.bucket_hash(), other_project.bucket_hash());
     let partition = ConsolidationPartitionKey {
         conversation_ref: subject,
         world_ref: None,
@@ -1889,8 +1894,6 @@ fn admitted_attempt_fixture<'a>(
     Vec<EntityId>,
     EntityId,
 )> {
-    let scope = DreamerConsolidationScope::Micro;
-    let node_id = crate::identity::load_or_mint_client_id(vault)?;
     let conversation = seed_session(vault, session_seed, 1);
     let mut turns = Vec::new();
     for (index, (speaker, text)) in texts.iter().enumerate() {
@@ -1902,6 +1905,16 @@ fn admitted_attempt_fixture<'a>(
             10 + index as u64,
         ));
     }
+    Ok((admit_seeded_attempt(vault, store)?, turns, conversation))
+}
+
+/// Enqueues the already-seeded dirty turns and admits their one attempt.
+fn admit_seeded_attempt<'a>(
+    vault: &'a Vault,
+    store: &DreamerRunnerStore<'a>,
+) -> Result<crate::dreamer_runner::DreamerAdmittedAttempt> {
+    let scope = DreamerConsolidationScope::Micro;
+    let node_id = crate::identity::load_or_mint_client_id(vault)?;
     let watermark = read_watermark(vault, scope)?;
     let dirty = scan_dirty_turns(vault, scope, &watermark, 10)?;
     enqueue_partition_attempts(vault, scope, &dirty, &watermark, "run-1", 20)?;
@@ -1924,7 +1937,7 @@ fn admitted_attempt_fixture<'a>(
     else {
         panic!("expected admitted consolidation attempt");
     };
-    Ok((*admitted, turns, conversation))
+    Ok(*admitted)
 }
 
 #[test]
@@ -3021,6 +3034,7 @@ fn relationship_axis_separates_buckets_conflicts_and_ids() -> Result<()> {
             None,
             None,
             rel,
+            crate::claim::default_project_id(),
             None,
         )
         .unwrap()
