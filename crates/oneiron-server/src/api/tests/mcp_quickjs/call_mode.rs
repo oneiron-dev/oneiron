@@ -3,13 +3,14 @@
 use super::*;
 
 /// Code mode takes `effort: 'call'` and a `deadline_ms`, and a deadline
-/// outside 1..=60000 is a typed refusal the guest catches.
+/// outside 1..=60000 is a typed refusal the guest catches: the door's stable
+/// code, the two calls differing only in the deadline.
 #[tokio::test]
 async fn quickjs_code_mode_recall_takes_call_mode_and_refuses_a_deadline_out_of_range() {
     let script = "const pack = await self.memory.recall({query: 'heron lantern', effort: 'call', \
         deadline_ms: 30000, scope: {}}); let refused = 'reached'; try { await \
-        self.memory.recall({query: 'heron lantern', effort: 'call', deadline_ms: 0}); } catch \
-        (error) { refused = String(error); } finish(JSON.stringify({pack, refused}));";
+        self.memory.recall({query: 'heron lantern', effort: 'call', deadline_ms: 0, scope: {}}); \
+        } catch (error) { refused = String(error); } finish(JSON.stringify({pack, refused}));";
     let mode = code_mode_server(vec![script.to_owned()]);
     let actor = seeded_test_entity_id(0x0024_6571);
     let credential = "quickjs-call-mode";
@@ -45,10 +46,9 @@ async fn quickjs_code_mode_recall_takes_call_mode_and_refuses_a_deadline_out_of_
         .as_str()
         .expect("recall output");
     assert!(recalled.contains("north gate"), "{recalled}");
-    let refused = steps[1].to_string();
-    assert!(
-        refused.contains("facade_error")
-            && refused.contains("deadline_ms must be a whole number between 1 and 60000"),
-        "{refused}"
+    assert_eq!(
+        steps[1]["outcome"],
+        verb_refusal("facade_error"),
+        "{structured}"
     );
 }
