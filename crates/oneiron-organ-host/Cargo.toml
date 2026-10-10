@@ -1,0 +1,35 @@
+[package]
+name = "oneiron-organ-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The engine side of the organ protocol: spawn, pool, budget, regions, sandbox"
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+doctest = false
+
+# The host links the engine and the open protocol, never an organ crate
+# (the of060 F4 fence in tests/organ_fence.rs).
+[dependencies]
+oneiron = { version = "0.1.0", path = "../oneiron" }
+oneiron-organ-protocol = { version = "0.1.0", path = "../oneiron-organ-protocol" }
+blake3 = { workspace = true }
+rmp-serde = { workspace = true }
+rmpv = { workspace = true, features = ["with-serde"] }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+# Unseeded test vaults keep the blob write door open without a policy fixture.
+oneiron = { path = "../oneiron", features = ["test-support"] }
+tempfile = "3"
+toml = "0.8"
+
+[lints]
+workspace = true
