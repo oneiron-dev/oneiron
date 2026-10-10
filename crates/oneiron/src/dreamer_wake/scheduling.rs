@@ -241,6 +241,17 @@ fn turn_wake_due_in_txn(
     })
 }
 
+/// Whether a TURN carries an import stamp, read as its import's review reads
+/// it (ARCH-0027).
+fn turn_imported_in_txn(vault: &Vault, txn: &heed::RwTxn<'_>, turn: &EntityId) -> Result<bool> {
+    Ok(vault.get_raw_in(txn, turn)?.is_some_and(|raw| {
+        crate::dreamer_consolidation::decode_turn_body(
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN.min(raw.len())..],
+        )
+        .imported
+    }))
+}
+
 impl Vault {
     /// The turn producer (ARCH-0026 RD-26): a landed turn counts against the
     /// wake grain, and a due turn queues the Micro rounds for every turn no
@@ -252,7 +263,11 @@ impl Vault {
     /// due wake compares against the last one queued: a wake with nothing new
     /// writes nothing. Enqueue, projection cursor and Micro watermark land in
     /// one transaction, so a crash cannot queue a window twice or lose one.
-    /// Returns whether a wake was queued.
+    ///
+    /// An imported TURN belongs to its import's one review (ARCH-0027): it is
+    /// never planned here and never counts. The watermark steps over imported
+    /// turns up to the first live turn left unplanned, so no later wake reads
+    /// them again. Returns whether a wake was queued.
     pub fn wake_dreamer_on_turn(&self, subject: WakeTurnSubject, now: u64) -> Result<bool> {
         use crate::dreamer_consolidation::{
             advance_watermark_in_txn, carried_round_hash, collect_dirty_turn_ids_in_txn,
@@ -268,31 +283,53 @@ impl Vault {
                 watermark.last_learned_at,
                 u64::MAX,
             )?;
-            let mut window = read_partition_turns_in_txn(self, txn, scope, &ids)?;
+            let mut window = Vec::with_capacity(ids.len());
+            let mut imported = Vec::new();
+            for turn in read_partition_turns_in_txn(self, txn, scope, &ids)? {
+                if turn_imported_in_txn(self, txn, &turn.turn_id)? {
+                    imported.push(turn.learned_at);
+                } else {
+                    window.push(turn);
+                }
+            }
+            let first_live = window.iter().map(|turn| turn.learned_at).min();
             // Session close's cut rule: a turn without its conversation edge
             // stops the window at its second, same-second ties with it.
-            if let Some(cut) = window
+            let cut = window
                 .iter()
                 .find(|turn| turn.conversation.is_none())
-                .map(|turn| turn.learned_at)
-            {
+                .map(|turn| turn.learned_at);
+            if let Some(cut) = cut {
                 window.retain(|turn| turn.learned_at < cut);
             }
-            let Some(through) = window.iter().map(|turn| turn.learned_at).max() else {
-                return Ok(false);
-            };
-            if !turn_wake_due_in_txn(self, txn, subject, 1..=window.len() as u64)? {
-                return Ok(false);
-            }
             let image = carried_round_hash(&window);
-            if self.queued_wake_projection_in_txn(txn)? == Some(image) {
-                return Ok(false);
+            let queue = !window.is_empty()
+                && turn_wake_due_in_txn(self, txn, subject, 1..=window.len() as u64)?
+                && self.queued_wake_projection_in_txn(txn)? != Some(image);
+            // The watermark settles every turn up to where it moves, so it
+            // stops before the first live turn this wake leaves unplanned.
+            let unplanned = if queue { cut } else { first_live };
+            let passed = imported
+                .iter()
+                .copied()
+                .filter(|at| unplanned.is_none_or(|live| *at < live))
+                .max();
+            let through = if queue {
+                window.iter().map(|turn| turn.learned_at).max().max(passed)
+            } else {
+                passed
+            };
+            if queue {
+                let ids: Vec<_> = window.iter().map(|turn| turn.turn_id).collect();
+                enqueue_partition_attempts_in_txn(self, txn, scope, &ids, &watermark, None, now)?;
             }
-            let ids: Vec<_> = window.iter().map(|turn| turn.turn_id).collect();
-            enqueue_partition_attempts_in_txn(self, txn, scope, &ids, &watermark, None, now)?;
-            advance_watermark_in_txn(self, txn, scope, through)?;
-            self.set_queued_wake_projection_in_txn(txn, &image)?;
-            Ok(true)
+            if let Some(through) = through {
+                advance_watermark_in_txn(self, txn, scope, through)?;
+            }
+            if queue {
+                self.set_queued_wake_projection_in_txn(txn, &image)?;
+            }
+            Ok(queue)
         })?;
         if queued {
             self.store.notify_attempt_observers();
