@@ -37,7 +37,7 @@ pub struct MemoryClaimInput {
     /// When the claim held, unix seconds; the run's clock when absent.
     pub occurred: Option<MemoryTimeRange>,
     /// When it was learned, unix seconds; the run's clock when absent.
-    #[schemars(range(max = 9_007_199_254_740_991))]
+    #[schemars(range(max = "JS_SAFE_INTEGER"))]
     pub learned_at: Option<u64>,
 }
 
@@ -45,9 +45,9 @@ pub struct MemoryClaimInput {
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryTimeRange {
-    #[schemars(range(max = 9_007_199_254_740_991))]
+    #[schemars(range(max = "JS_SAFE_INTEGER"))]
     pub start: u64,
-    #[schemars(range(max = 9_007_199_254_740_991))]
+    #[schemars(range(max = "JS_SAFE_INTEGER"))]
     pub end: u64,
 }
 
@@ -57,7 +57,7 @@ pub struct MemoryTimeRange {
 pub struct MemorySupersedeInput {
     pub new_id: String,
     pub old_id: String,
-    #[schemars(range(max = 9_007_199_254_740_991))]
+    #[schemars(range(max = "JS_SAFE_INTEGER"))]
     pub now: u64,
 }
 

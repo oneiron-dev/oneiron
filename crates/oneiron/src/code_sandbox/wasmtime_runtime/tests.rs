@@ -362,15 +362,19 @@ fn unsafe_run_row_integers_refuse_before_dispatch() {
             .extend(extra.as_object().expect("object").clone());
         input
     };
-    let supersede = |now: u64| {
-        serde_json::json!({"verb": "supersede_claim", "newId": id, "oldId": other, "now": now})
-    };
+    let supersede = |now: u64| serde_json::json!({"verb": "supersede_claim", "newId": id, "oldId": other, "now": now});
     let unsafe_time = crate::code_run::JS_SAFE_INTEGER + 1;
     for (input, dispatched) in [
         (supersede(unsafe_time), 0),
         (claim(serde_json::json!({"learnedAt": unsafe_time})), 0),
-        (claim(serde_json::json!({"occurred": {"start": 0, "end": unsafe_time}})), 0),
-        (serde_json::json!({"verb": "search", "query": "tea", "limit": 1_u64 << 32}), 0),
+        (
+            claim(serde_json::json!({"occurred": {"start": 0, "end": unsafe_time}})),
+            0,
+        ),
+        (
+            serde_json::json!({"verb": "search", "query": "tea", "limit": 1_u64 << 32}),
+            0,
+        ),
         (supersede(crate::code_run::JS_SAFE_INTEGER), 1),
     ] {
         let mut host = Counting(0);
