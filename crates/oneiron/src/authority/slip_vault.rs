@@ -3,6 +3,7 @@ use super::*;
 use crate::Vault;
 use crate::error::Result;
 use crate::federation::Scope;
+use crate::secret_lease::VaultInstant;
 use crate::side_table::{self, Raw, SideTable};
 use crate::temporal::TimeRange;
 use ed25519_dalek::{Signer, SigningKey};
@@ -111,6 +112,18 @@ impl HostSlipIssuer {
     }
 }
 
+impl AuthorityFold {
+    /// Whether the slip minted as `id` is live at `instant`: live in this
+    /// fold, and minted for a lifetime that holds `instant`.
+    pub(crate) fn slip_is_live_at(&self, id: &[u8; 32], instant: VaultInstant) -> bool {
+        let now = instant.secs();
+        self.slip_is_live(id)
+            && self.slips.mints.get(id).is_some_and(|mint| {
+                now >= mint.action.claims.issued_at && now < mint.action.claims.expires_at
+            })
+    }
+}
+
 impl Vault {
     /// Rechecks a verified capability against one vault clock/authority snapshot.
     pub fn capability_slip_is_live(&self, verified: &VerifiedSlip) -> Result<bool> {
@@ -152,11 +165,8 @@ impl Vault {
         id: &[u8; 32],
     ) -> Result<bool> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
-        let now = self.instant_in_txn(txn)?.secs();
-        Ok(fold.slip_is_live(id)
-            && fold.slips.mints.get(id).is_some_and(|mint| {
-                now >= mint.action.claims.issued_at && now < mint.action.claims.expires_at
-            }))
+        let now = self.instant_in_txn(txn)?;
+        Ok(fold.slip_is_live_at(id, now))
     }
 
     /// Bootstrap Genesis + host root slip atomically, and only on a truly empty
@@ -446,6 +456,41 @@ impl Vault {
     }
     pub fn revoke_capability_slip(&self, issuer: &HostSlipIssuer, slip_id: [u8; 32]) -> Result<()> {
         self.revoke_capability_slip_once(issuer, slip_id).map(drop)
+    }
+    /// Revokes, in one transaction, every live unexpired slip `holder_ref`
+    /// holds other than `keep`, and returns their ids: a credential that
+    /// replaces a holder's earlier ones, rather than standing beside them.
+    pub fn revoke_held_capability_slips(
+        &self,
+        issuer: &HostSlipIssuer,
+        holder_ref: &str,
+        keep: [u8; 32],
+    ) -> Result<Vec<[u8; 32]>> {
+        let mut txn = self.store.env.write_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        require_host(&fold, issuer)?;
+        let now = self.instant_in_txn(&txn)?.secs();
+        let held: Vec<[u8; 32]> = fold
+            .slips
+            .mints
+            .iter()
+            .filter(|(id, mint)| {
+                **id != keep
+                    && mint.action.claims.holder_ref == holder_ref
+                    && now < mint.action.claims.expires_at
+                    && fold.slip_is_live(id)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for slip_id in &held {
+            self.append_slip_op_in_txn(
+                &mut txn,
+                issuer,
+                AuthorityOp::SlipRevoke { slip_id: *slip_id },
+            )?;
+        }
+        txn.commit()?;
+        Ok(held)
     }
     /// Appends a signed revocation once per slip id. `true` means this call
     /// appended the first explicit revoke; expiry, ancestor revocation, or an

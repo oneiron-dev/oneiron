@@ -292,7 +292,7 @@ impl Vault {
 
         // Step 3 — derived indexes, one write transaction, committed once. Any
         // failure aborts it and leaves every derived row unchanged.
-        let derived = self.with_write_txn(|wtxn| {
+        let derived = self.with_write_txn_grouped(|wtxn| {
             // Heal-mode maintenance can leave malformed source rows outside
             // the usable graph. Validate without healing in this SAME write
             // snapshot before dropping anything: lazy rebuild must be able

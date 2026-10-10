@@ -118,7 +118,7 @@ impl Vault {
             reviewer: owner.actor(),
             positive,
         };
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let k = key(family, &event_id);
             if let Some(stored) = LABEL
                 .get(&self.store, txn, &k)

@@ -212,6 +212,33 @@ impl Memory<'_> {
         prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
         effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
     ) -> MemoryResult<WitnessReceipt> {
+        self.run_witness_as(
+            crate::store::Callback::Audited,
+            turn,
+            target,
+            door,
+            before_txn,
+            prepare,
+            effect,
+        )
+    }
+
+    /// [`Self::run_witness`] through the write door `callback` names: an
+    /// `effect` that runs host code is [`crate::store::Callback::Opaque`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the write door joins the witness program's inputs"
+    )]
+    pub(super) fn run_witness_as(
+        &self,
+        callback: crate::store::Callback,
+        turn: &WitnessTurn,
+        target: WitnessTarget<'_, '_>,
+        door: WitnessDoor,
+        before_txn: impl FnOnce(),
+        prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+        effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+    ) -> MemoryResult<WitnessReceipt> {
         validate_witness_origin(turn, door.is_host())?;
         if turn.messages.is_empty() {
             return Err(MemoryError::bad_request("witness turn carries no messages"));
@@ -223,6 +250,20 @@ impl Memory<'_> {
             .into());
         }
         distinct_message_orders(&turn.messages)?;
+        // Generated code speaks as the companion: a person's word or the
+        // engine's system voice needs an origin a guest cannot assert.
+        if self.writes_generated()
+            && turn
+                .messages
+                .iter()
+                .any(|message| message.author != WitnessAuthor::Companion)
+        {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "generated code cannot author a user or system message",
+                &["Witness generated text as the companion."],
+            ));
+        }
         let session_route;
         let landing = match target {
             WitnessTarget::Base { route } => Landing::Base {
@@ -294,7 +335,7 @@ impl Memory<'_> {
         };
         before_txn();
 
-        let landed = self.with_verified_actor_write_txn(|wtxn| {
+        let landed = self.with_verified_actor_write_txn_as(callback, |wtxn| {
             let mut mint_conversation = false;
             let mut leader_project = None;
             let admission = match &sink {
@@ -333,13 +374,15 @@ impl Memory<'_> {
                 WitnessSink::Base(base) => {
                     self.stage_in_base(&plan, &admission, base, mint_conversation, wtxn)?;
                     // The outbox rule (write-path hub; ARCH-0036): a turn that
-                    // gained text owes the vault's tagger a pass, committed
+                    // gained text owes the vault's tagger a pass, and its
+                    // embedder a vector of the new text (ARCH-0004), committed
                     // with the turn. An exact retry stages nothing and owes
                     // nothing.
                     if matches!(admission.turn, AdmittedTurn::Mint { .. })
                         || admission.has_new_messages()
                     {
                         crate::tagging::mark_turn_in_txn(self.vault, wtxn, plan.turn_id)?;
+                        crate::embed::mark_turn_in_txn(self.vault, wtxn, plan.turn_id)?;
                     }
                     Landed::Base
                 }

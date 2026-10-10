@@ -14,13 +14,14 @@ use crate::error::OffRecordError;
 /// Write-transaction entry points that a session write path must wrap.
 ///
 /// ONE-1726 supplies the segment mechanism only. Future session paths must
-/// install it around `Vault::try_with_write_txn`/`with_write_txn`,
-/// `BatchBuilder::commit`, facade `with_verified_actor_write_txn`/`witness`,
-/// and the direct `env.write_txn()` clusters in `dreamer_runner`,
-/// `attempt_queue`, `claim`, `deletion`, `connector_key`, `companion`,
-/// `code_run`, and the remaining store/vault feature modules.
+/// install it around `Vault::try_with_write_txn`/`with_write_txn` (and their
+/// `_grouped` engine doors), `BatchBuilder::commit`, facade
+/// `with_verified_actor_write_txn`/`witness`, and the direct `env.write_txn()`
+/// clusters in `dreamer_runner`, `attempt_queue`, `claim`, `deletion`,
+/// `connector_key`, `companion`, `code_run`, and the remaining store/vault
+/// feature modules.
 const SESSION_WRITE_TXN_ENTRY_POINTS: &[&str] = &[
-    "Vault::try_with_write_txn / Vault::with_write_txn",
+    "Vault::try_with_write_txn / Vault::with_write_txn (and their _grouped engine doors)",
     "BatchBuilder::commit",
     "Memory::with_verified_actor_write_txn / Memory::witness",
     "direct env.write_txn(): dreamer_runner, attempt_queue, claim, deletion, connector_key, companion, code_run, and remaining feature modules",

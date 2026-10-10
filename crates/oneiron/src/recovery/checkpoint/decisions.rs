@@ -30,13 +30,16 @@ use crate::ports::EntityStoreRead;
 use crate::{EntityId, Error, Result, Vault};
 use std::collections::BTreeSet;
 
+mod artifacts;
 mod audience;
 mod campaign;
 mod consent;
 mod counterparty;
+mod notifications;
 mod reads;
 mod skills;
 mod tasks;
+mod worlds;
 
 /// One decision the engine makes from rows a restore can change.
 trait Decision {
@@ -104,6 +107,10 @@ const DECISIONS: &[(&str, Check)] = &[
     ("project verdicts", loosened::<audience::ProjectVerdicts>),
     ("relationship reads", loosened::<reads::RelationshipReads>),
     ("claim read grants", reads::ClaimGrants::loosened),
+    (
+        "verified slip claim reads",
+        loosened::<reads::SlipClaimGrants>,
+    ),
     ("private note reads", loosened::<reads::NoteReads>),
     ("diary link reads", loosened::<reads::DiaryLinks>),
     ("record positions", loosened::<reads::RecordPositions>),
@@ -118,6 +125,10 @@ const DECISIONS: &[(&str, Check)] = &[
     ("agent approval ceilings", loosened::<tasks::AgentCeilings>),
     ("ask authority holders", loosened::<tasks::AskHolders>),
     ("skill activations", loosened::<skills::SkillActivations>),
+    (
+        "installed script packs",
+        loosened::<skills::InstalledScriptPacks>,
+    ),
     (
         "sender reputation offers",
         loosened::<consent::MailReputation>,
@@ -141,6 +152,22 @@ const DECISIONS: &[(&str, Check)] = &[
     (
         "e-sign ceremony states",
         loosened::<consent::EsignCeremonies>,
+    ),
+    (
+        "calendar invitation consent",
+        loosened::<consent::CalendarInviteConsent>,
+    ),
+    (
+        "world selection authority",
+        loosened::<worlds::WorldSelections>,
+    ),
+    (
+        "notification recipients",
+        loosened::<notifications::NotificationRecipients>,
+    ),
+    (
+        "artifact taint admissions",
+        loosened::<artifacts::ArtifactTaints>,
     ),
 ];
 

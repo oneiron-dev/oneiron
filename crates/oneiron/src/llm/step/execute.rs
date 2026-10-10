@@ -181,7 +181,7 @@ pub async fn call_as_step_with_fallbacks(
             // over an unparked attempt reads as plain leased work, which boot
             // recovery requeues and a fresh budget runs without the signal.
             let store = crate::dreamer_runner::DreamerRunnerStore::new(ctx.vault);
-            let trap = ctx.vault.with_write_txn(|wtxn| {
+            let trap = ctx.vault.with_write_txn_grouped(|wtxn| {
                 let trap = open_trap_in_txn(
                     ctx.vault,
                     wtxn,

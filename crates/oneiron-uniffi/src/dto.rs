@@ -549,7 +549,7 @@ pub struct RecallScope {
     pub world_ref: Option<String>,
     /// Facet ref; strict facet narrowing when set.
     pub facet: Option<String>,
-    /// Registry kinds to return; unset returns every kind but turns,
+    /// Registry kinds to return; unset returns every kind but
     /// conversations, sessions, facets and worlds.
     pub kinds: Option<Vec<String>>,
 }

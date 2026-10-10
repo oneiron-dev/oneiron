@@ -123,7 +123,7 @@ pub fn resolve_mined_skill_edit(
     verdict: MinedSkillEditVerdict,
     at: u64,
 ) -> Result<()> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let Some(mut row) = SKILL_EDIT.get(&vault.store, &*wtxn, proposal_id)? else {
             return Err(Error::EntityNotFound);
         };

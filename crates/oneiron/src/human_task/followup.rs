@@ -392,7 +392,7 @@ impl<'a> HumanTaskFollowupDriver<'a> {
                 if human_followup_record(self.vault, task_ref)?.is_some() {
                     continue;
                 }
-                self.vault.with_write_txn(|wtxn| {
+                self.vault.with_write_txn_grouped(|wtxn| {
                     register_human_followup_in_txn(self.vault, wtxn, task_ref, actor_ref, now)
                 })?;
                 rebuilt += 1;
@@ -502,7 +502,7 @@ impl<'a> HumanTaskFollowupDriver<'a> {
         } else {
             record.stage_generation
         };
-        self.vault.with_write_txn(|wtxn| {
+        self.vault.with_write_txn_grouped(|wtxn| {
             let next_due_at = crate::task_verb::ask_notice_at_in(
                 self.vault,
                 wtxn,
@@ -533,7 +533,7 @@ impl<'a> HumanTaskFollowupDriver<'a> {
             ..record.clone()
         };
         self.vault
-            .with_write_txn(|wtxn| put_followup_record_in_txn(self.vault, wtxn, &next))
+            .with_write_txn_grouped(|wtxn| put_followup_record_in_txn(self.vault, wtxn, &next))
     }
 }
 

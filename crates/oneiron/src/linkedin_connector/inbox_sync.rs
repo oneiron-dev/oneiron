@@ -625,7 +625,7 @@ fn claim_linkedin_inbox_message(
     message: &LinkedInConversationMessage,
 ) -> Result<bool> {
     let seen_key = linkedin_inbox_message_key_hash(config, message);
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         if INBOX_SYNC_SEEN.contains(&vault.store, wtxn, &seen_key)? {
             return Ok(false);
         }
@@ -645,7 +645,7 @@ fn release_linkedin_inbox_message_claim(
     message: &LinkedInConversationMessage,
 ) -> Result<()> {
     let seen_key = linkedin_inbox_message_key_hash(config, message);
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         if INBOX_SYNC_SEEN
             .get(&vault.store, wtxn, &seen_key)?
             .is_some_and(|value| value == LINKEDIN_INBOX_SYNC_CLAIMED_VALUE)
@@ -678,7 +678,7 @@ fn finalize_linkedin_inbox_seen_message(
         received_at: event_input.received_at,
         occurred_at: message.occurred_at,
     };
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         if INBOX_SYNC_SEEN
             .get(&vault.store, wtxn, &seen_key)?
             .is_none_or(|value| value != LINKEDIN_INBOX_SYNC_CLAIMED_VALUE)

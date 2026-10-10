@@ -198,7 +198,7 @@ impl Vault {
             outputs.push((sealed.bytes, hash, prepared.audit_chain_sha256));
         }
         let now = self.now_recorded_at();
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             live_attempt(self, txn, attempt)?;
             if snapshot_hash(&events_in(self, txn, document)?)? != fingerprint {
                 return Err(Error::ConcurrentWrite("esign changed during seal"));

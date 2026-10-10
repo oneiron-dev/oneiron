@@ -1,39 +1,10 @@
 //! MCP argument codecs: parsed-value and raw-JSON integer normalization.
 
-use super::tool_catalog::{McpToolName, McpToolValidationError, mcp_tool_schema};
-use super::validate::ValidateMcpArgs;
 use serde::Deserialize;
 use serde::Deserializer;
-use serde::de::DeserializeOwned;
 use serde::de::Error as DeError;
 use serde_json::Value;
 use std::ops::Range;
-
-pub(super) fn decode_tool_args<T>(
-    tool: McpToolName,
-    args: McpToolArguments,
-) -> Result<T, McpToolValidationError>
-where
-    T: DeserializeOwned + ValidateMcpArgs,
-{
-    // The ADVERTISED schema decides where an integer lives, so the decoder's
-    // domain is the advertised domain at every one of those positions —
-    // including the ones nested in engine-owned input types this door does not
-    // define. Nothing else in the payload is touched.
-    let args = schema_normalized_arguments(&mcp_tool_schema(tool).input_schema, args).map_err(
-        |message| McpToolValidationError::Decode {
-            tool: tool.as_str(),
-            message,
-        },
-    )?;
-    let parsed =
-        serde_json::from_value::<T>(args).map_err(|error| McpToolValidationError::Decode {
-            tool: tool.as_str(),
-            message: error.to_string(),
-        })?;
-    parsed.validate(tool)?;
-    Ok(parsed)
-}
 
 /// Restates mathematically integral JSON numbers in their integer spelling at
 /// every position the ADVERTISED schema types as `integer` (ONE-1704 repair).
@@ -207,9 +178,16 @@ pub(super) fn schema_normalized_arguments(
 /// which is exactly the previous behaviour.
 pub(crate) fn mcp_raw_call_arguments(body: &[u8]) -> Option<String> {
     let text = std::str::from_utf8(body).ok()?;
+    Some(text[mcp_raw_call_arguments_span(text)?].to_owned())
+}
+
+/// Where `params.arguments` sits in one raw JSON-RPC body, as a byte range.
+///
+/// `oneiron mcp` splices the caller identity into that object without
+/// re-serializing the call, so every other number keeps its spelling too.
+pub(crate) fn mcp_raw_call_arguments_span(text: &str) -> Option<Range<usize>> {
     let node = McpRawJsonNode::scan(text)?;
-    let arguments = node.entry("params")?.entry("arguments")?;
-    Some(text[arguments.span.clone()].to_owned())
+    Some(node.entry("params")?.entry("arguments")?.span.clone())
 }
 
 /// The deepest object/array nesting one raw scan descends.

@@ -5,13 +5,16 @@ use crate::{Result, Vault};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+mod artifacts;
 mod audience;
 mod campaign;
 mod consent;
 mod counterparty;
+mod notifications;
 mod reads;
 mod skills;
 mod tasks;
+mod worlds;
 
 /// A write to the live vault since the backup.
 type Write = Box<dyn FnOnce(&Vault) -> Result<()>>;
@@ -66,6 +69,7 @@ const CASES: &[fn() -> Result<Case>] = &[
     reads::relationship_reads,
     reads::claim_grants,
     reads::claim_grants_under_the_seeded_default,
+    reads::credential_backed_claim_reads,
     reads::note_reads,
     reads::diary_links,
     reads::record_positions,
@@ -78,12 +82,17 @@ const CASES: &[fn() -> Result<Case>] = &[
     tasks::agent_ceilings,
     tasks::ask_holders,
     skills::skill_activations,
+    skills::installed_script_packs,
     consent::mail_reputation,
     consent::shared_coreference,
     consent::delivery_windows,
     consent::booking_publications,
     consent::principal_autonomy,
     consent::esign_ceremonies,
+    consent::calendar_invitation_consent,
+    worlds::world_selection_authority,
+    notifications::notification_recipients,
+    artifacts::artifact_taint_admissions,
 ];
 
 #[test]

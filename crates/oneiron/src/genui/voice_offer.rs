@@ -111,7 +111,7 @@ impl Vault {
         // Prune in its own committed transaction: rejecting a new offer at
         // capacity must not roll back reclamation of expired rows.
         self.prune_expired_voice_grant_offers()?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let mut pending = 0;
             for _entry in OFFERS.scan_keys(&self.store, txn, &[])? {
                 pending += 1;
@@ -144,7 +144,7 @@ impl Vault {
     /// confirmation or issuance is refused.
     pub fn prune_expired_voice_grant_offers(&self) -> Result<usize> {
         let now = self.now_recorded_at();
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let mut expired = Vec::new();
             for entry in OFFERS.iter_from(&self.store, txn, &[])? {
                 let (key, row) = entry.map_err(row_error)?;
@@ -179,7 +179,7 @@ impl Vault {
             return Err(invalid_offer());
         }
         let key = offer_key(grant_offer_nonce)?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let row = OFFERS
                 .get(&self.store, txn, &key)
                 .map_err(row_error)?

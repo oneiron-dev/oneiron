@@ -52,7 +52,7 @@ impl Vault {
                 Error::InvalidConfig("tagging markers are not armed on this vault".to_owned())
             })?;
         let queue = AttemptQueue::from_store(&self.store);
-        self.try_with_write_txn(|txn| -> Result<HeldTagsOutcome> {
+        self.try_with_write_txn_grouped(|txn| -> Result<HeldTagsOutcome> {
             let key = dedupe_key(turn, &checkpoint);
             let Some(record) = queue.pending_dedupe_in_txn(txn, TAGGING_MARKER_KIND, &key)? else {
                 return Ok(HeldTagsOutcome::NoMarker);

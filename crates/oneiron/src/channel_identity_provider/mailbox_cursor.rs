@@ -140,7 +140,7 @@ pub(super) fn advance_mailbox_cursor(
         validate_mailbox_cursor(cursor.as_str())?;
     }
     let key = HexId(identity_id);
-    vault.try_with_write_txn(|txn| {
+    vault.try_with_write_txn_grouped(|txn| {
         let current = decode_cursor(MAILBOX_CURSORS.get(&vault.store, txn, &key))?;
         if current.as_ref() != previous {
             return Err(Error::InvalidConfig(

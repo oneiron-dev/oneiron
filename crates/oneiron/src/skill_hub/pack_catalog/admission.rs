@@ -113,7 +113,7 @@ impl Vault {
     /// The copied object is not a grant. Requested powers remain on its card;
     /// a code flag or rules hit leaves it Candidate, without registering verbs.
     pub fn install_pack(&self, ask: &PackInstallAsk) -> Result<PackInstallDisposition> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let source = self.check_pack_install_ask(txn, ask)?;
             if let Some(reason) = self.screen_pack_in_txn(
                 txn,
@@ -258,6 +258,26 @@ impl Vault {
             PACK_INSTALL.put(&self.store, txn, &source.manifest.name, &receipt)?;
             Ok(PackInstallDisposition::Installed(Box::new(receipt)))
         })
+    }
+    /// Each pack name whose install receipt selects a script, with the source
+    /// it selects, read without the catalog listing's bound: a restore asks
+    /// `installed_script_pack` about every one, however many packs it holds.
+    pub(crate) fn script_pack_selections(&self) -> Result<Vec<(String, EntityId)>> {
+        let txn = self.store.env.read_txn()?;
+        let mut selections = Vec::new();
+        for entry in PACK_INSTALL.iter_from(&self.store, &txn, &[])? {
+            let (name, receipt) = entry.map_err(|error| {
+                if error.kind() == crate::error::ErrorKind::SideTableRow {
+                    invalid("pack install catalog corrupt")
+                } else {
+                    error
+                }
+            })?;
+            if matches!(receipt.adapter, Some(PackAdapter::Script(_))) {
+                selections.push((name, EntityId::from_hex(&receipt.source_id)?));
+            }
+        }
+        Ok(selections)
     }
     /// Active installations only, verified against their still-live exact source.
     /// A Candidate never enters the section/board projection.

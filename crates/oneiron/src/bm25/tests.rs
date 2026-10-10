@@ -25,6 +25,7 @@ fn test_config() -> VaultConfig {
         fast_dims: None,
         embedding_model: None,
         embedding_transform: None,
+        vector_evidence: crate::config::VectorEvidenceFloors::default(),
         tagging: None,
         max_readers: 16,
         hnsw: HnswConfig {
@@ -955,6 +956,32 @@ fn deindex_missing_posting_after_partial_repair_fails_closed() -> Result<()> {
         );
     }
 
+    Ok(())
+}
+
+/// An analysis done before the write transaction indexes only the fields it
+/// was read from: `body=cat` is refused for `body=dog`, a field of the same
+/// name and length, and the refusal writes nothing.
+#[test]
+fn analysis_read_from_other_fields_is_refused() -> Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let vault = Vault::open(temp_dir.path(), test_config())?;
+    put_text_doc(&vault, &EntityId::now(), "bird")?;
+    let id = EntityId::now();
+    let body = |text: &str| vec![("body".to_owned(), text.to_owned())];
+    let cat = analyze_text(&vault.analyzer, &body("cat"))?;
+
+    let mut wtxn = vault.store.env.write_txn()?;
+    let refused = index_analyzed_text(&vault.store, &mut wtxn, &id, &body("dog"), &cat);
+    assert_matches!(refused, Err(Error::InvariantViolation(_)));
+    wtxn.commit()?;
+    assert!(vault.search_text("cat", 10)?.is_empty());
+    assert!(vault.search_text("dog", 10)?.is_empty());
+
+    let mut wtxn = vault.store.env.write_txn()?;
+    index_analyzed_text(&vault.store, &mut wtxn, &id, &body("cat"), &cat)?;
+    wtxn.commit()?;
+    assert!(contains_id(&vault.search_text("cat", 10)?, &id));
     Ok(())
 }
 
