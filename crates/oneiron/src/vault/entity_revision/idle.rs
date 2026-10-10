@@ -265,8 +265,15 @@ impl Vault {
                 vector_refill::clear(&self.store, &mut txn, &input.entity)?;
             }
             // A moved frontier of a turn's text owes the tagger a pass again,
-            // committed with the frontier (ARCH-0036).
+            // committed with the frontier (ARCH-0036), and the turn a vector
+            // of its new text (ARCH-0004).
             crate::tagging::mark_on_publication_in_txn(
+                self,
+                &mut txn,
+                &input.entity,
+                input.entity_type,
+            )?;
+            crate::embed::mark_on_publication_in_txn(
                 self,
                 &mut txn,
                 &input.entity,
@@ -451,8 +458,12 @@ impl Vault {
 
 /// Drops what a revision with nothing to embed must not keep: its vector and
 /// graph node, and the pending marker, job and lease a worker would lease it
-/// by.
-fn drop_vector_state(vault: &Vault, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
+/// by. A turn left with no text drops the same state.
+pub(crate) fn drop_vector_state(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
     let had_node = vault
         .store
         .hnsw_neighbors

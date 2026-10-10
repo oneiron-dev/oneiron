@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use crate::Vault;
-use crate::code_artifact::CodeArtifactClass;
+use crate::code_artifact::{CodeArtifactClass, decode_code_artifact_body};
 use crate::codebase::{
     CODEBASE_FILE_PATH_MAX_BYTES, CODEBASE_FORK_HASH_LEN, CODEBASE_PROJECT_ID_MAX_BYTES,
     CodebaseFileEntry, CodebaseForkHash, CodebaseSnapshot,
@@ -21,6 +21,7 @@ use crate::gate::{
     GateProvenanceHandles,
 };
 use crate::outbound::OutboundDispatchPipeline;
+use crate::ports::EntityStoreRead;
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use crate::registry::{ArtifactFamilyKindId, artifact_family_kind_of};
 use crate::secret_rotation::{
@@ -599,9 +600,23 @@ impl Vault {
         artifact: &str,
         fork_hash: &CodebaseForkHash,
     ) -> Result<Option<ArtifactSnapshotRef>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.resolve_artifact_snapshot_by_fork_in_txn(&rtxn, artifact, fork_hash)
+    }
+
+    /// Transaction-composable body of [`Vault::resolve_artifact_snapshot_by_fork`]:
+    /// the first code artifact in fork-index order whose snapshot at
+    /// `fork_hash` is `artifact`'s and whose class is `Artifact`, the one
+    /// publication of that route selects.
+    pub(crate) fn resolve_artifact_snapshot_by_fork_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        artifact: &str,
+        fork_hash: &CodebaseForkHash,
+    ) -> Result<Option<ArtifactSnapshotRef>> {
         validate_artifact_id(artifact)?;
-        for code_artifact_id in self.codebase_snapshots_by_fork_hash(fork_hash)? {
-            let Some(snapshot) = self.get_codebase_snapshot(&code_artifact_id)? else {
+        for code_artifact_id in self.codebase_snapshots_by_fork_hash_in_txn(txn, fork_hash)? {
+            let Some(snapshot) = self.get_codebase_snapshot_in_txn(txn, &code_artifact_id)? else {
                 continue;
             };
             if snapshot.project_id != artifact {
@@ -610,17 +625,13 @@ impl Vault {
             // This serving adapter mounts code trees only. The semantic family
             // match keeps other registered kinds out without treating their
             // different export bodies as code snapshots.
-            if self
-                .get_entity_type(&code_artifact_id)?
-                .and_then(artifact_family_kind_of)
-                != Some(ArtifactFamilyKindId::Code)
-            {
-                continue;
-            }
-            let Some(body) = self.get_code_artifact(&code_artifact_id)? else {
+            let Some(record) = self.store.port_entity_record(txn, &code_artifact_id)? else {
                 continue;
             };
-            if body.class != CodeArtifactClass::Artifact {
+            if artifact_family_kind_of(record.entity_type) != Some(ArtifactFamilyKindId::Code) {
+                continue;
+            }
+            if decode_code_artifact_body(&record.body)?.class != CodeArtifactClass::Artifact {
                 continue;
             }
             return Ok(Some(ArtifactSnapshotRef {

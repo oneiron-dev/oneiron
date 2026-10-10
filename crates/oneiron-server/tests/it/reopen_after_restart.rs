@@ -99,7 +99,7 @@ fn sigterm(mut server: Server) {
     }
 }
 
-/// The message reference recall returns for [`TEXT`].
+/// The reference recall returns for [`TEXT`]: the turn that says it.
 fn recalled_ref(client: &OneironClient) -> String {
     let pack = client
         .recall(

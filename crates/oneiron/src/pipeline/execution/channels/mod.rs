@@ -8,6 +8,7 @@ mod ppr_expand;
 mod rerank;
 mod text;
 mod trace_assembly;
+mod turn_fold;
 
 use self::admit::ChannelAccumulator;
 use self::post_blend::{PostBlend, PostBlendInputs};
@@ -28,7 +29,9 @@ use super::super::filters::{apply_claim_status_gate, apply_relationship_filter};
 use super::super::trace::{
     capture_replay_inputs, record_ppr_cache_outcome, retrieval_trace_fused_scores,
 };
-use super::super::types::{ClaimStatusGateCache, EntityMetadataCache, PPR_DAMPING, RelMode};
+use super::super::types::{
+    ClaimStatusGateCache, EntityMetadataCache, PPR_DAMPING, RelMode, TurnFold,
+};
 use super::super::world_authority::resolve_active_world_authority;
 use super::types::{HydeAttemptOverrides, RetrievalTxnOutput, pending_vectors_for_scores};
 use crate::bm25::Bm25Config;
@@ -370,6 +373,7 @@ impl PipelineBuilder<'_> {
                     revisions: HashMap::new(),
                     diagnostics,
                     scores: Vec::new(),
+                    cited_messages: HashMap::new(),
                     capabilities: Vec::new(),
                     pending_vectors: Vec::new(),
                     claim_gate: ClaimStatusGateCache::default(),
@@ -582,6 +586,21 @@ impl PipelineBuilder<'_> {
                 )?;
             }
 
+            let cited_messages = if self.turn_fold == TurnFold::Off {
+                HashMap::new()
+            } else {
+                turn_fold::fold_messages_into_turns(
+                    &mut scores,
+                    &mut acc.signal_components,
+                    self.turn_fold,
+                    &self.vault.store,
+                    rtxn,
+                    filter_config,
+                    &mut metadata_cache,
+                    &mut claim_gate,
+                )?
+            };
+
             let capabilities = self.prepare_pack_candidates(
                 rtxn,
                 &mut scores,
@@ -664,16 +683,25 @@ impl PipelineBuilder<'_> {
                     rerank_query,
                 )
             });
+            // A hit whose indexed revision cannot be read has no pin, so it
+            // leaves the pack instead of failing the run. A MESSAGE whose text
+            // moved into an entity document is one: the migration replaced its
+            // body without retaining the revision its state still names.
             let mut revisions = HashMap::new();
             for hit in &scores {
-                if let Some(revision) = self.vault.indexed_revision_in_txn(rtxn, &hit.id)? {
-                    revisions.insert(hit.id, revision);
+                match self.vault.indexed_revision_in_txn(rtxn, &hit.id) {
+                    Ok(Some(revision)) => {
+                        revisions.insert(hit.id, revision);
+                    }
+                    Ok(None) | Err(crate::Error::EntityNotFound) => {}
+                    Err(error) => return Err(error),
                 }
             }
             Ok(RetrievalTxnOutput {
                 revisions,
                 diagnostics,
                 scores,
+                cited_messages,
                 capabilities,
                 pending_vectors,
                 claim_gate,
@@ -757,6 +785,7 @@ impl PipelineBuilder<'_> {
             signal_components,
             self.text_search.as_ref().map(|(query, _)| query.as_str()),
             self.vector_search.is_some(),
+            self.vault.config.vector_evidence,
         ) {
             capabilities.clear();
         }
@@ -773,6 +802,7 @@ impl PipelineBuilder<'_> {
                 signal_components,
                 self.text_search.as_ref().map(|(query, _)| query.as_str()),
                 self.vector_search.is_some(),
+                self.vault.config.vector_evidence,
             )
         {
             scores.clear();

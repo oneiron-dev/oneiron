@@ -158,11 +158,7 @@ pub enum McpSurfaceConstructionError {
 /// row upstream adds a tool here with no curation decision to make.
 #[must_use]
 pub fn exported_verb_rows() -> Vec<&'static str> {
-    let mut rows: Vec<_> = AgentVerb::ALL
-        .iter()
-        .filter(|verb| verb.is_mcp())
-        .map(|verb| verb.as_str())
-        .collect();
+    let mut rows: Vec<_> = AgentVerb::ALL.iter().map(|verb| verb.as_str()).collect();
     rows.extend_from_slice(&MEMORY_VERBS);
     rows
 }
@@ -214,7 +210,7 @@ fn project_verb_row(
     if verb.is_empty() || verb.contains('.') {
         return Err(unprojectable);
     }
-    if !AgentVerb::from_name(row).is_some_and(AgentVerb::is_mcp)
+    if AgentVerb::from_name(row).is_none()
         && !VaultReadMethod::ALL
             .into_iter()
             .any(|method| method.tool_name() == row)
@@ -241,15 +237,11 @@ impl McpGeneratedVerbTool {
     }
 
     pub(super) fn argument_fields(self) -> &'static [&'static str] {
-        AgentVerb::from_name(self.name)
-            .and_then(AgentVerb::argument_fields)
-            .unwrap_or(&["request"])
+        AgentVerb::from_name(self.name).map_or(&["request"][..], AgentVerb::argument_fields)
     }
 
     pub(super) fn required_fields(self) -> &'static [&'static str] {
-        AgentVerb::from_name(self.name)
-            .and_then(AgentVerb::required_fields)
-            .unwrap_or(&["request"])
+        AgentVerb::from_name(self.name).map_or(&["request"][..], AgentVerb::required_fields)
     }
 
     pub(crate) fn continuable(self) -> bool {

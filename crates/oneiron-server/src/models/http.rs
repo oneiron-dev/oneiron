@@ -28,7 +28,15 @@ pub(super) enum HttpFailure {
     Malformed,
     /// A streamed event grew past the decoder's bound before it ended.
     EventTooLarge,
+    /// A reply body grew past [`MAX_REPLY_BYTES`] before it ended.
+    BodyTooLarge,
 }
+
+/// The most one whole reply body may hold: a JSON reply, or the body of a
+/// streamed call's error status. Far above any reply a provider sends (a
+/// whole long answer with its usage), so only a broken provider or proxy
+/// reaches it.
+pub(super) const MAX_REPLY_BYTES: usize = 16 << 20;
 
 impl From<reqwest::Error> for HttpFailure {
     fn from(error: reqwest::Error) -> Self {
@@ -125,7 +133,7 @@ impl ProviderHttp {
         let response = self.post(path, headers, body).send().await?;
         let status = response.status().as_u16();
         let headers = reply_headers(&response);
-        let bytes = response.bytes().await?;
+        let bytes = bounded_body(response).await?;
         let body = if bytes.is_empty() {
             JsonValue::Null
         } else {
@@ -143,7 +151,8 @@ impl ProviderHttp {
     }
 
     /// Starts a streamed exchange. A non-2xx answer arrives as one
-    /// [`SseItem::Status`]; a 2xx answer as its events, in order.
+    /// [`SseItem::Status`] (or [`HttpFailure::BodyTooLarge`]); a 2xx answer
+    /// as its events, in order.
     pub(super) fn post_sse(
         &self,
         path: &str,
@@ -166,6 +175,25 @@ fn reply_headers(response: &reqwest::Response) -> BTreeMap<String, String> {
                 .map(|value| (name.as_str().to_owned(), value.to_owned()))
         })
         .collect()
+}
+
+/// Reads a whole reply body. One whose declared length, or whose bytes so
+/// far, pass [`MAX_REPLY_BYTES`] is refused there; the rest is never read.
+async fn bounded_body(mut response: reqwest::Response) -> Result<Vec<u8>, HttpFailure> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_REPLY_BYTES as u64)
+    {
+        return Err(HttpFailure::BodyTooLarge);
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if body.len() + chunk.len() > MAX_REPLY_BYTES {
+            return Err(HttpFailure::BodyTooLarge);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
 }
 
 /// One unit of a streamed exchange.
@@ -195,12 +223,13 @@ async fn next_sse(state: SseState) -> Option<(Result<SseItem, HttpFailure>, SseS
             if !response.status().is_success() {
                 let status = response.status().as_u16();
                 let headers = reply_headers(&response);
-                let body = response
-                    .bytes()
-                    .await
-                    .ok()
-                    .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-                    .unwrap_or(JsonValue::Null);
+                let body = match bounded_body(response).await {
+                    Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or(JsonValue::Null),
+                    Err(HttpFailure::BodyTooLarge) => {
+                        return Some((Err(HttpFailure::BodyTooLarge), SseState::Done));
+                    }
+                    Err(_) => JsonValue::Null,
+                };
                 return Some((
                     Ok(SseItem::Status(JsonReply {
                         status,

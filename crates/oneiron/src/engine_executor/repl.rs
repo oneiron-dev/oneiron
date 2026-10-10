@@ -255,6 +255,11 @@ impl EngineNativeExecutor<'_> {
                         return Err(err);
                     }
                 };
+            self.gated_write.refuse_a_step_that_dropped_a_write(
+                config.run_id,
+                bridge_start as u64,
+                &host.bridge_calls,
+            )?;
             record.bridge_calls.extend(host.bridge_calls);
             record_text_output(
                 &self.storage,
@@ -512,6 +517,11 @@ impl EngineNativeExecutor<'_> {
         healed: bool,
         config: &EngineExecutorConfig,
     ) -> EngineExecutorResult<Option<EngineExecutorStatus>> {
+        self.gated_write.refuse_a_step_that_dropped_a_write(
+            config.run_id,
+            bridge_start as u64,
+            &bridge_calls,
+        )?;
         record.bridge_calls.extend(bridge_calls);
         let failed_outcome = JsCodeModeStepOutcome::pending(observation);
         record_text_output(
@@ -551,7 +561,7 @@ impl EngineNativeExecutor<'_> {
         Ok(terminal_status)
     }
 
-    /// Loads the run's replay record, or starts one.
+    /// Loads the run's replay record, or starts and saves one.
     ///
     /// Run IDENTITY is strict on every resume. Resolved-prompt drift is judged
     /// against what the resume would DO: a record that is not terminal still
@@ -597,9 +607,15 @@ impl EngineNativeExecutor<'_> {
         }
         let mut record = CodeRunReplayRecord::new(config.run_id, config.determinism);
         record_config_marker(&self.storage, &mut record, config, prompt_fingerprint)?;
+        // The run's clock and config are durable from its start: a process
+        // that stops after the first step's writes and before its checkpoint
+        // resumes under them, never under a fresh clock or another task.
+        let generation = self
+            .storage
+            .put_code_run_replay_record_if_generation_with_heal(&record, None, None)?;
         Ok(LoadedReplayRecord {
             record,
-            generation: None,
+            generation: Some(generation),
             terminal_status: None,
         })
     }

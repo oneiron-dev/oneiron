@@ -3,7 +3,7 @@
 //! Every provider kind is reached over HTTP through the matching adapter
 //! crate (`oneiron-llm-openai` for OpenAI-compatible and local servers,
 //! `oneiron-llm-anthropic` for Anthropic-compatible ones). Each role's ladder
-//! becomes a [`LadderBackend`] behind one seat model id, so the engine pins a
+//! becomes a `LadderBackend` behind one seat model id, so the engine pins a
 //! single identity while the ladder falls back across rungs.
 //!
 //! Building never fails the server: a provider that cannot start (its key
@@ -35,6 +35,7 @@ mod tests;
 
 pub use role_route::{RoleCall, RoleRefusal, RoleRoute};
 pub use router::ModelRouter;
+pub(crate) use served::FAILED_RUNGS_KEY;
 pub use status::{ModelsStatus, ProviderStatus, RungStatus, SeatState, SeatStatus};
 
 use catalog::{catalog_entry, engine_model_id, locality_rank};
@@ -49,6 +50,8 @@ pub struct Seat {
     pub model: ModelId,
     pub locality: ModelLocality,
     pub backend: Arc<dyn LlmBackend>,
+    /// How many rungs the ladder tries before a call fails.
+    rung_count: usize,
     /// Each rung on its own, keyed by its engine model id, so a call the
     /// vault's manifest binds to one rung's model keeps that rung's prompt.
     rungs: BTreeMap<ModelId, Arc<dyn LlmBackend>>,
@@ -279,6 +282,7 @@ fn seat_for(role: ModelRole, locality: ModelLocality, rungs: Vec<LadderRung>) ->
         role,
         model: model.clone(),
         locality,
+        rung_count: rungs.len(),
         backend: Arc::new(LadderBackend::new(model, rungs)),
         rungs: alone,
     })

@@ -38,6 +38,7 @@ pub(crate) async fn execute_mcp_execute_code(
             run_ref: &args.run_ref,
             task: &args.task,
             run_id,
+            verbs: Arc::new(super::code_mode_verbs::McpCodeModeVerbs::new(server, actor)),
         })
         .await
         .map_err(|error| mcp_code_execution_error(&error))?;

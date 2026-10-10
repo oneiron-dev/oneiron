@@ -348,7 +348,7 @@ pub struct NapiRecallScope {
     pub world_ref: Option<String>,
     /// Facet entity ref; strict facet narrowing when set.
     pub facet: Option<String>,
-    /// Registry kinds to return; unset returns every kind but turns,
+    /// Registry kinds to return; unset returns every kind but
     /// conversations, sessions, facets and worlds.
     pub kinds: Option<Vec<String>>,
 }
@@ -428,6 +428,17 @@ pub struct NapiMemoryItem {
     pub facet: Option<String>,
     /// Salience, when stamped.
     pub salience: Option<f64>,
+    /// For a TURN item, the messages whose words the query matched, best first.
+    pub cited_messages: Vec<NapiCitedMessage>,
+}
+
+/// A MESSAGE a TURN item quotes: the words a query matched, as they were said.
+#[napi(object)]
+pub struct NapiCitedMessage {
+    /// The message's short ref, the one its witness receipt returned.
+    pub short_id: String,
+    /// The message's text.
+    pub value_text: String,
 }
 
 /// Scope honesty (S6).
