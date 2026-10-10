@@ -8,11 +8,11 @@ use super::controls::{
     ContextPackBudgetControls, ContextPackDepthControls, ContextPackPolicyControls,
     ContextPackRetrievalBudgetControls, ContextPackTimeControls, CoreContextPackRequest,
 };
-use super::resolve_core_interlocutor_set;
 use super::response::{
     CoreContextPackResponse, CoreReactionSignal, context_pack_json_projection_config,
     run_context_pack_builder,
 };
+use super::{resolve_core_disclosure, resolve_core_interlocutor_set};
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
 use crate::error::ApiError;
@@ -161,20 +161,11 @@ pub(crate) async fn run_context_pack(
     // OF-365 ILD-2: one DisclosureContext value feeds builder, board, and
     // response, so the response can never describe a different clamp than
     // the one applied (design §11 rule 6).
-    let disclosure = interlocutors
-        .as_ref()
-        .map(|set| {
-            if room_members.is_some() {
-                oneiron::DisclosureContext::resolve_room(&server.vault, set.clone())
-            } else {
-                oneiron::DisclosureContext::resolve(&server.vault, set.clone())
-            }
-        })
-        .transpose()
-        .map_err(|error| {
-            tracing::error!(error = %error, "core context-pack disclosure resolution failed");
-            core_engine_error("core context-pack disclosure resolution failed", error)
-        })?;
+    let disclosure = resolve_core_disclosure(
+        &server.vault,
+        interlocutors.as_ref(),
+        room_members.is_some(),
+    )?;
 
     let mut builder = server
         .vault

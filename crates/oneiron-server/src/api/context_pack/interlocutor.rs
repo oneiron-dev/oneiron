@@ -171,6 +171,30 @@ pub(crate) fn resolve_core_interlocutor_set(
         })
 }
 
+/// The disclosure clamp a resolved interlocutor set applies (OF-365 ILD-2):
+/// its contacts' current clearance and the current Tier-A marks. `None` is
+/// an unclamped owner session. A room read never takes owner presence as
+/// clearance.
+pub(crate) fn resolve_core_disclosure(
+    vault: &oneiron::Vault,
+    interlocutors: Option<&oneiron::InterlocutorSet>,
+    in_room: bool,
+) -> Result<Option<oneiron::DisclosureContext>, ApiError> {
+    interlocutors
+        .map(|set| {
+            if in_room {
+                oneiron::DisclosureContext::resolve_room(vault, set.clone())
+            } else {
+                oneiron::DisclosureContext::resolve(vault, set.clone())
+            }
+        })
+        .transpose()
+        .map_err(|error| {
+            tracing::error!(error = %error, "core context-pack disclosure resolution failed");
+            core_engine_error("core context-pack disclosure resolution failed", error)
+        })
+}
+
 pub(crate) fn core_interlocutor_party_input(
     party: &CoreInterlocutorParty,
     index: usize,

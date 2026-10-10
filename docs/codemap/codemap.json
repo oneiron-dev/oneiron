@@ -330,7 +330,7 @@
      "path": "src/affect/consolidation.rs",
      "purpose": "Vault claim-VAD transaction surface: annotation, consolidation, approvals, and state scans",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 4,
       "fn": 6
      }
     },
@@ -1290,7 +1290,7 @@
      "path": "src/attempt_queue/mod.rs",
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "re-export": 4
      }
     },
@@ -11349,7 +11349,8 @@
      "path": "src/context_board/history/ledger.rs",
      "purpose": "Board turn anchors reference one CRDT frontier; facts remain CLAIM rows",
      "surface": {
-      "fn": 3
+      "crate-vis": 1,
+      "fn": 7
      }
     },
     {
@@ -11359,7 +11360,7 @@
      "path": "src/context_board/history/mod.rs",
      "purpose": "Delta-only board claims and exact Loro-frontier reconstruction",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 1
      }
     },
@@ -11384,8 +11385,9 @@
      "path": "src/context_board/history/types.rs",
      "purpose": "Typed board history requests and exact-fold results",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
+      "fn": 1,
       "struct": 4
      }
     },
@@ -12408,7 +12410,7 @@
      "path": "src/conversation/deletion.rs",
      "purpose": "Actor-bound room deletion and per-person erasure over the existing delete door",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 3
      }
     },
@@ -12624,7 +12626,7 @@
      "path": "src/conversation_dag/reply.rs",
      "purpose": "Revision-bound reply strips",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 6,
       "struct": 3
      }
@@ -13670,7 +13672,7 @@
      "path": "src/dreamer_consolidation/evidence.rs",
      "purpose": "Parent-verified evidence is the sole scoped consolidation handoff",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -13761,7 +13763,7 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 2,
       "re-export": 10
      }
@@ -13788,7 +13790,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 6,
-      "fn": 6,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -13843,7 +13845,7 @@
      "path": "src/dreamer_consolidation/resources.rs",
      "purpose": "Exact resource bounds for a consolidation partition",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "re-export": 1
      }
     },
@@ -13879,6 +13881,16 @@
       "crate-vis": 9,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/reviewed.rs",
+     "purpose": "Claims the owner's review already holds or decided, which a later pass meets again: this attempt's own…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -13953,6 +13965,14 @@
      "notable": [],
      "path": "src/dreamer_consolidation/tests/failure_rules.rs",
      "purpose": "A resident-authored policy changes what the real executor can publish on fatal fallback",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/dreamer_consolidation/tests/imported_review.rs",
+     "purpose": "Claims from imported words wait in the owner's import review (ARCH-0027)",
      "surface": {}
     },
     {
@@ -14077,7 +14097,7 @@
      "path": "src/dreamer_consolidation/wake_plan.rs",
      "purpose": "One frozen read revision and exact preparation of queued consolidation work",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "struct": 2
      }
     },
@@ -14259,7 +14279,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_promotion/scoped.rs",
@@ -14638,7 +14658,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 14,
       "struct": 1
      }
@@ -17561,7 +17581,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 129
+      "crate-vis": 130
      }
     },
     {
@@ -17948,7 +17968,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 55,
+      "crate-vis": 56,
       "re-export": 8
      }
     },
@@ -20160,7 +20180,7 @@
      "path": "src/ingest/history/ledger.rs",
      "purpose": "The history import ledger: one row per imported source message, keyed by the source and the message's native…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -20178,10 +20198,11 @@
      "path": "src/ingest/history/mod.rs",
      "purpose": "The owner's own history, imported (ARCH-0027): ChatGPT and Claude.ai exports and the on-device Claude Code…",
      "surface": {
-      "const": 1,
+      "const": 3,
+      "crate-vis": 1,
       "enum": 3,
       "fn": 5,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 4
      }
     },
@@ -20197,6 +20218,17 @@
      "surface": {
       "fn": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/history/review.rs",
+     "purpose": "The owner's review of what the Dreamer proposes from one import (ARCH-0027 trust tier): imported material…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -20234,7 +20266,7 @@
      "path": "src/ingest/identity_key.rs",
      "purpose": "Per-kind identity hints and the lookup-before-mint entity-resolution door",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 3
      }
     },
@@ -22797,7 +22829,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/extraction/mod.rs",
-     "purpose": "Host-served extraction beside witness, followed by separately authorized atomic persistence",
+     "purpose": "Host-served extraction beside witness, followed by a separately authorized save of its tags",
      "surface": {
       "crate-vis": 1,
       "re-export": 1
@@ -22808,7 +22840,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/extraction/persist.rs",
-     "purpose": "One transaction composes mention, VAD and identity-proposal doors",
+     "purpose": "A host's shadow output, once it clears parity, saved as its turn's tags the way the tagging slot saves an…",
      "surface": {
       "fn": 1
      }
@@ -22825,7 +22857,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/memory/extraction/tests.rs",
@@ -22844,7 +22876,6 @@
       "EncoderParity",
       "EncoderTurn",
       "ExtractionEncoder",
-      "ExtractionReceipt",
       "NerSpan",
       "ShadowTrace",
       "WitnessWithShadow"
@@ -22853,7 +22884,7 @@
      "purpose": "Typed serving payloads and observable extraction receipts",
      "surface": {
       "fn": 5,
-      "struct": 11,
+      "struct": 10,
       "trait": 1
      }
     },
@@ -23480,7 +23511,7 @@
      "purpose": "Base witness landing: container resolve, K7 door, batch write, text ops, session bump",
      "surface": {
       "crate-vis": 13,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -23511,7 +23542,7 @@
      "path": "src/memory/witness/program.rs",
      "purpose": "The one witness program: request checks, one plan, the ONE-1686 ceiling door and the ONE-1767 mint contract…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -27095,7 +27126,9 @@
      "notable": [],
      "path": "src/ports/lmdb_visibility.rs",
      "purpose": "Transaction-local visibility ledger for canonical and composed session views",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -27153,7 +27186,7 @@
      "path": "src/ports/mod.rs",
      "purpose": "Transaction-composable storage ports",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 6
      }
     },
@@ -27301,7 +27334,7 @@
      "path": "src/ports/time.rs",
      "purpose": "Per-store clock and id source",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 6,
       "struct": 1,
       "trait": 2
@@ -28287,7 +28320,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "QuarantinedArtifact",
@@ -28303,12 +28336,12 @@
       "enum": 2,
       "fn": 7,
       "mod": 1,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 2
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "CanonicalBaseEdge",
@@ -28324,7 +28357,7 @@
      "purpose": "CRDT-independent, byte-exact Layer-1 snapshot and fresh-window construction",
      "surface": {
       "const": 2,
-      "crate-vis": 9,
+      "crate-vis": 17,
       "fn": 6,
       "struct": 8
      }
@@ -28745,6 +28778,27 @@
       "fn": 7,
       "struct": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WindowRecoveryReport"
+     ],
+     "path": "src/recovery/maintenance.rs",
+     "purpose": "The canonical snapshot as one owner maintenance act (ARCH-0038 escape hatch and recovery ladder): capture a…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/recovery/maintenance_tests.rs",
+     "purpose": "The canonical snapshot as one owner maintenance act (ARCH-0038 escape hatch, recovery ladder and the…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -32962,7 +33016,7 @@
      "path": "src/store/pending_gate_consent/indexes.rs",
      "purpose": "Run/group/hash index sidecars, group-alias refresh, and the critical-confirm confirm-id sidecar",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -34894,12 +34948,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "HeldTagsOutcome"
+      "HeldTagsOutcome",
+      "UnreadText"
      ],
      "path": "src/tagging/held.rs",
      "purpose": "An importer completes a turn's marker with tags it already holds: no tagger call",
      "surface": {
-      "enum": 1,
+      "crate-vis": 1,
+      "enum": 2,
       "fn": 1
      }
     },
@@ -34932,6 +34988,7 @@
      "kind": "src",
      "notable": [
       "TaggingMarkerConfig",
+      "TaggingMode",
       "TaggingTraceHistory"
      ],
      "path": "src/tagging/marker.rs",
@@ -34939,7 +34996,8 @@
      "surface": {
       "const": 6,
       "crate-vis": 9,
-      "fn": 4,
+      "enum": 1,
+      "fn": 7,
       "struct": 2
      }
     },
@@ -34950,8 +35008,8 @@
      "path": "src/tagging/mod.rs",
      "purpose": "The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036…",
      "surface": {
-      "crate-vis": 3,
-      "re-export": 6
+      "crate-vis": 7,
+      "re-export": 8
      }
     },
     {
@@ -34963,9 +35021,22 @@
      "path": "src/tagging/output.rs",
      "purpose": "What a tagger's answer must satisfy before a marker settles on it",
      "surface": {
-      "crate-vis": 2,
-      "enum": 1,
-      "fn": 1
+      "crate-vis": 1,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ProvisionalEntity"
+     ],
+     "path": "src/tagging/provisional.rs",
+     "purpose": "Provisional entities: what a save mints when the identity key names nothing (ARCH-0055 §10), for the Dreamer…",
+     "surface": {
+      "crate-vis": 8,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -34980,8 +35051,46 @@
      "purpose": "The drain pass a host worker drives: claim ready markers, read each turn, call the tagger outside any write…",
      "surface": {
       "crate-vis": 1,
-      "fn": 10,
+      "fn": 9,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/tagging/save.rs",
+     "purpose": "Save mode: a checked answer becomes the turn's tag set (ARCH-0036, serving the tagger)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/tagging/save_tests.rs",
+     "purpose": "Save mode end to end, observed through the read doors (ARCH-0036, serving the tagger): a tagged turn's…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DerivationEnvelope",
+      "MentionHit",
+      "MentionLink",
+      "MergeEvidence",
+      "TaggedMention",
+      "TurnTags"
+     ],
+     "path": "src/tagging/tags.rs",
+     "purpose": "The saved tag sets: what save mode keeps for a tagged turn, the index of the entities they name, and the…",
+     "surface": {
+      "crate-vis": 13,
+      "enum": 1,
+      "fn": 6,
+      "struct": 5
      }
     },
     {
@@ -38462,6 +38571,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it_sync/tagging_local_only.rs",
+     "purpose": "What a saved tag set and a provisional entity do across two devices of one vault (ARCH-0036, serving the…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -39076,7 +39193,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 43,
+     "files": 45,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -39321,7 +39438,7 @@
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
     "ingest": {
-     "files": 51,
+     "files": 52,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39573,7 +39690,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 49,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -39818,7 +39935,7 @@
      "purpose": "CRDT sync layer for Oneiron"
     },
     "tagging": {
-     "files": 10,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -39951,10 +40068,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 32,
+   "over_bar": 33,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2419,
-   "test_files": 785
+   "source_files": 2425,
+   "test_files": 789
   },
   "oneiron-android": {
    "files": [
@@ -47093,6 +47210,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/api/context_board/history.rs",
+     "purpose": "Board history on the board's own surface (ARCH-0067 §3)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/context_board/memories.rs",
      "purpose": "MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly",
      "surface": {
@@ -47106,7 +47233,7 @@
      "path": "src/api/context_board/mod.rs",
      "purpose": "The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -47166,7 +47293,7 @@
      "path": "src/api/context_pack/interlocutor.rs",
      "purpose": "Interlocutor-set resolution and third-party party inputs for context-pack requests",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -47961,6 +48088,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "src/api/tests/context_board_history.rs",
+     "purpose": "Board history on the board's own surface (ARCH-0067 §3): hydrations that name their TURN record its board…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "src/api/tests/context_board_standing.rs",
      "purpose": "The real session endpoint cannot fill context before a registered standing floor",
      "surface": {}
@@ -48362,6 +48497,7 @@
       "ImportDecisionArgs",
       "ImportNotesArgs",
       "ImportSourceArgs",
+      "RecoverWindowArgs",
       "RestoreArgs",
       "RunArgs",
       "RunDecisionArgs",
@@ -48372,10 +48508,10 @@
       "WhoamiArgs"
      ],
      "path": "src/cli/owner_args.rs",
-     "purpose": "Flags for the owner's own commands: doctor, backup, restore, export, the secret scan switch, importing…",
+     "purpose": "Flags for the owner's own commands: doctor, backup, restore, window recovery, export, the secret scan…",
      "surface": {
       "enum": 3,
-      "struct": 13
+      "struct": 14
      }
     },
     {
@@ -48518,10 +48654,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/commands/owner.rs",
-     "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, export, the secret scan switch, import…",
+     "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window recovery, export, the secret…",
      "surface": {
       "crate-vis": 1,
-      "fn": 8
+      "fn": 9
      }
     },
     {
@@ -49265,7 +49401,7 @@
      "path": "src/idempotency.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -50149,7 +50285,7 @@
      "path": "src/oneironer/tests/support.rs",
      "purpose": "A stub tagger server inside the test process, and the vaults and servers the slot's tests share",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -50157,7 +50293,7 @@
      "kind": "test",
      "notable": [],
      "path": "src/oneironer/tests/worker.rs",
-     "purpose": "The worker against the stub tagger: shadow writes nothing but the job tables, a failing tagger never fails a…",
+     "purpose": "The worker against the stub tagger: save mode saves each turn's tags, shadow writes nothing but the job…",
      "surface": {}
     },
     {
@@ -50295,7 +50431,7 @@
      "path": "src/owner/runs.rs",
      "purpose": "Agent-run batch consent: see what a run is waiting on, then approve or decline the whole run in one act…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -50852,7 +50988,9 @@
      "notable": [],
      "path": "tests/it/ai_serve.rs",
      "purpose": "The shipped binary with no model, and with one: without `[models]` every model-free path works and the…",
-     "surface": {}
+     "surface": {
+      "crate-vis": 9
+     }
     },
     {
      "bucket": "L",
@@ -50892,6 +51030,14 @@
      "notable": [],
      "path": "tests/it/history_import.rs",
      "purpose": "`oneiron import <source> <path>` through the shipped binary, for each of the four sources (owner…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/import_claims.rs",
+     "purpose": "Claims from imported history wait for the owner's review (ARCH-0027 trust tier: \"imported material never…",
      "surface": {}
     },
     {
@@ -51017,7 +51163,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 162,
+     "files": 164,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51222,8 +51368,8 @@
    },
    "over_bar": 8,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 305,
-   "test_files": 116
+   "source_files": 306,
+   "test_files": 118
   },
   "oneiron-uniffi": {
    "files": [

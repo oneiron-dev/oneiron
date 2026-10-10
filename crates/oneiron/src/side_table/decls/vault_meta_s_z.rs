@@ -313,6 +313,18 @@ side_tables! {
     STORAGE_ABI_VERSION: VaultMeta b"storage_abi_version" Raw;
     /// Per-generation stream receipt keyed by its receipt ref. Key: hex32 ":" hex32.
     MESSAGE_STREAM_RECEIPT_BY_REF: VaultMeta b"stream:v1:" Named;
+    /// Which turns' saved tag sets name one entity, real or provisional: derived, local, never
+    /// synced. Empty marker. Key: entity id16 + turn id16.
+    TAGGING_MENTION_REF: VaultMeta b"tagging:mention_ref:v1:" Raw;
+    /// A provisional entity the tagger's save minted on an identity-key miss: local like the tags,
+    /// never synced, until it is confirmed into a real entity. Key: id16.
+    TAGGING_PROVISIONAL: VaultMeta b"tagging:provisional:v1:" Named;
+    /// Local identity-hint index over the provisional entities, keyed as the engine's identity
+    /// index is. Empty marker. Key: kind byte + blake3(hint) + id16.
+    TAGGING_PROVISIONAL_HINT: VaultMeta b"tagging:provisional_hint:v1:" Raw;
+    /// One turn's saved tag set under its derivation envelope: unconfirmed mentions, the turn's
+    /// mood and merge evidence. Derived, local, never synced. Key: turn id16.
+    TAGGING_TAG_SET: VaultMeta b"tagging:tags:v1:" Named;
     /// Owner/question-class ask band and consumed receipt markers. Key: id16 + u16be + class [+ ':' id16].
     TASK_ASK_BAND: VaultMeta b"tasks.ask.band.v1:" Raw;
     /// Local ed25519 seed (32 bytes) that signs one ask group's option-link words. Key: id16 (group).

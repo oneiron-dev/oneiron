@@ -142,7 +142,7 @@ pub(super) fn standing(
 ) -> Result<Standing> {
     Ok(match ledger::find(dbs, txn, source, message)? {
         None => Standing::New,
-        Some(row) if row.holds(&content_hash(message)) => Standing::Same,
+        Some(row) if row.holds(message) => Standing::Same,
         Some(row) => Standing::Changed(row),
     })
 }
