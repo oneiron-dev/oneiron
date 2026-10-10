@@ -470,7 +470,7 @@ pub fn project_campaign_email_webhook(
     event: &CampaignEmailWebhookEvent,
     requested_daily_cap: u64,
 ) -> Result<SenderHealthProjection> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         project_campaign_email_webhook_in_txn(vault, wtxn, current, event, requested_daily_cap)
     })
 }

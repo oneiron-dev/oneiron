@@ -237,7 +237,7 @@ pub fn verdict_memo(vault: &Vault, key: &VerdictMemoKey) -> Result<Option<Verdic
 ///
 /// Storage errors propagate unchanged.
 pub fn put_verdict_memo(vault: &Vault, row: &VerdictMemoRow) -> Result<()> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         MEMOS.put(&vault.store, wtxn, &row.key, row)?;
         Ok(())
     })

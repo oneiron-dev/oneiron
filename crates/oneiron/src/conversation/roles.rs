@@ -67,7 +67,7 @@ impl Vault {
         role: RoomRole,
         actor: WriteActor,
     ) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let actor_role = role_in(self, txn, room, actor)?;
             let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
             if !crate::gate::room_policy_allows(

@@ -147,7 +147,7 @@ fn rule_on_proposal(
     let presented = terminal_reason(&proposal_record, target_record.as_ref());
     race_hook();
 
-    let prepared = vault.with_write_txn(|wtxn| {
+    let prepared = vault.with_write_txn_grouped(|wtxn| {
         ensure_current_judge_in_txn(vault, &*wtxn, judge_revision)?;
         let staged = vault.read_skill_record_in_txn(&*wtxn, proposal)?;
         require_open_optimizer_proposal(&staged)?;
@@ -274,7 +274,7 @@ fn rule_on_proposal(
     let basis = inputs.basis;
     let target = inputs.target;
 
-    let verdict = vault.with_write_txn(|wtxn| {
+    let verdict = vault.with_write_txn_grouped(|wtxn| {
         // Re-read at the write door, exactly as ONE-1448's draft path does: the
         // scorer ran outside this transaction, so the target may have been
         // superseded and either tier may have been re-marked while it thought.

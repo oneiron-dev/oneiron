@@ -271,7 +271,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         warning: &BypassGrantWarning,
     ) -> Result<ConsentReceipt> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let current = self.check_bypass_request_in_txn(
                 wtxn,
                 owner,

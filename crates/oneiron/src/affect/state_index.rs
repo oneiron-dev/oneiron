@@ -74,7 +74,7 @@ impl Vault {
         let mut turns = evidence.vad_turns.clone();
         turns.sort();
         turns.dedup();
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let mut mean = Vad::NEUTRAL;
             let mut count = 0.0_f32;
             for turn in &turns {

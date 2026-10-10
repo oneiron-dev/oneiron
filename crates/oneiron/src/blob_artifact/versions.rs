@@ -207,7 +207,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<BlobArtifactVersion> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             self.append_blob_artifact_version_in_txn(
                 wtxn,
                 artifact_id,
@@ -235,7 +235,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<BlobArtifactVersion> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             self.append_blob_artifact_version_with_parent_in_txn(
                 wtxn,
                 artifact_id,

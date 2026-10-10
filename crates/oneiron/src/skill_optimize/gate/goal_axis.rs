@@ -183,7 +183,7 @@ pub fn set_skill_edit_goal_axes(
     axes: Vec<GoalAxisSpec>,
 ) -> Result<String> {
     validate_axes(&axes)?;
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         owner.revalidate_in_txn(vault, txn)?;
         let (required, _) = manifest_axes_in_txn(vault, txn)?;
         if !required.iter().all(|axis| axes.contains(axis)) {

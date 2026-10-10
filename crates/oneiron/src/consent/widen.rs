@@ -267,7 +267,7 @@ impl Vault {
         let proposer = actor.entity_ref().to_hex();
         let reference = proposal_ref(&canonical_delta, &proposer, &owner_ref, now, expires_at);
         validate_reference_shape(&reference)?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             // Recheck in the committing transaction: a verified handle can be
             // revoked or expire between proof verification and this write.
             if !self.capability_slip_is_live_in_txn(&*txn, credential)? {
@@ -367,7 +367,7 @@ impl Vault {
     ) -> Result<ConsentReceipt> {
         validate_reference_shape(reference)?;
         let key = reference.to_owned();
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, &*txn)?;
             if let Some(credential) = credential
                 && !self.capability_slip_is_live_in_txn(&*txn, credential)?

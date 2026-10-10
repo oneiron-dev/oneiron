@@ -126,7 +126,7 @@ impl SessionRetrievalTelemetry<'_> {
         F: FnOnce(&crate::store::SessionStoreView<'_>, &mut heed::RwTxn<'_>) -> Result<()>,
     {
         let overlay = self.route.overlay();
-        let segment = self.vault.with_write_txn(|wtxn| {
+        let segment = self.vault.with_write_txn_grouped(|wtxn| {
             let segment = overlay.install_txn_segment()?;
             self.route.revalidate()?;
             let view = self.vault.store.session_view(overlay.clone())?;

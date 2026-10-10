@@ -114,7 +114,7 @@ pub fn put_pack_migration_map(
     drift: &PackDrift,
     map: &PackMigrationMap,
 ) -> Result<()> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         PACK_MIGRATION_MAPS.put(&vault.store, wtxn, &migration_map_key(drift), map)?;
         Ok(())
     })
@@ -172,7 +172,7 @@ pub fn repair_pack_drift(
         drift.from_pack_id, drift.from_version, drift.to_pack_id, drift.to_version
     );
     let kind = saved_query_type_byte(vault)?;
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let mut record =
             load_record_in_txn(vault, wtxn, query_ref, kind)?.ok_or(Error::EntityNotFound)?;
         if record.definition.definition_version != definition.definition_version {

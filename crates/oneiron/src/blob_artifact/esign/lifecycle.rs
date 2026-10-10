@@ -281,7 +281,7 @@ impl Vault {
         if documents.len() > 100 {
             return Err(invalid("expiry sweep batch exceeds 100"));
         }
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let mut count = 0;
             for &document in documents {
                 let state = state_in(self, txn, document)?;

@@ -118,7 +118,7 @@ pub fn run_attribution_audit_with_judge(
         at,
     };
 
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let sequence = next_evidence_sequence_in_txn(vault, wtxn)?;
         AUDIT.put(&vault.store, wtxn, &(at, sequence), &report)?;
         Ok(())

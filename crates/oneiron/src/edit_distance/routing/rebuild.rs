@@ -57,7 +57,7 @@ pub fn rebuild_routing_projection(vault: &Vault) -> Result<()> {
         }
     }
 
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         for key in &stale_members {
             MEMBER.delete(&vault.store, wtxn, key)?;
         }
