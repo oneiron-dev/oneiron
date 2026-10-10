@@ -8,7 +8,7 @@ use crate::{
     Vault,
     consent::{AuthenticatedOwner, ComposedEffect, ConsentReceipt, EffectDigest, EffectFacts},
     entity_id::EntityId,
-    error::Result,
+    error::{ArtifactError, Error, Result},
     llm::decision::{
         AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung,
         TypedDecision,
@@ -318,6 +318,9 @@ impl Vault {
     ///
     /// Refuses unless `merged` is the active revision a shared merge admitted.
     /// Once a later revision has superseded it, roll that one back instead.
+    /// Refuses with [`ArtifactError::SkillPackageUnavailable`] when the
+    /// displaced revision had content whose package this vault no longer
+    /// holds.
     /// A protected (identity/alignment) revision never rolls back here, as it
     /// never merges here: the owner edits it by hand.
     pub fn roll_back_shared_skill_merge(
@@ -378,10 +381,19 @@ impl Vault {
             provenance.push(("source".into(), "shared-skill-rollback".into()));
             provenance.push(("restores".into(), base.to_hex().into()));
             record.provenance = rmpv::Value::Map(provenance);
-            let package = self
-                .export_hub_package_in_txn(txn, &base)?
-                .map(|package| restored_package(&package, &record))
-                .transpose()?;
+            let package = match self.export_hub_package_in_txn(txn, &base)? {
+                Some(package) => Some(restored_package(&package, &record)?),
+                // Only a revision that never had a package restores as its
+                // record alone. One whose package is gone has nothing to
+                // restore its instructions from.
+                None if displaced.content_hash.is_some() => {
+                    return Err(Error::Artifact(ArtifactError::SkillPackageUnavailable {
+                        revision: base,
+                    })
+                    .into());
+                }
+                None => None,
+            };
             record.content_hash = package.as_ref().map(HubPackage::content_hash).transpose()?;
             self.put_skill_record_in_txn(txn, &restore, &record, occurred, learned_at)?;
             if let Some(package) = &package {

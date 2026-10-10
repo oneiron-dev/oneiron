@@ -2126,6 +2126,8 @@ fn shared_merge_lands_without_approval_and_rolls_back_to_the_old_revision() -> R
         .vault
         .get_skill_record(&fixture.baseline)?
         .expect("baseline");
+    // A revision that never had a package rolls back as its record alone.
+    assert_eq!(original.content_hash, None);
     let merged = submit_fixture_delta(&fixture, &package("fixture.base", "2", "check result"))?;
     let ask = fixture.vault.prepare_shared_skill_merge(
         merged,
@@ -2430,6 +2432,69 @@ impl HeldOutReplayScorer for PrefersTwice {
     }
 }
 
+/// Admits `stored` (version "1": the held-out reserve stamps that version on
+/// its receipts) as a stored revision, then merges a delta over it with no
+/// approval. Returns the stored revision and the merged one.
+fn merge_over_a_stored_revision(
+    fixture: &Fixture,
+    stored: &HubPackage,
+) -> Result<(EntityId, EntityId)> {
+    let (original, publisher) = fixture.hub(SkillHubTrustTier::Community);
+    let source = HubRef::new(
+        original.hub_id,
+        "stored",
+        HubPin::ContentHash(stored.content_hash()?.to_hex()),
+    )?;
+    let base = fixture
+        .vault
+        .import_skill_from_hub(&source, stored, at(20), 20)?;
+    let ask = fixture.vault.prepare_marketplace_activation(
+        base,
+        &source,
+        &publisher,
+        fixture.baseline,
+    )?;
+    fixture
+        .vault
+        .approve_marketplace_activation(&ask, &fixture.owner)?;
+    let HubAdmissionDisposition::Ruled(admitted) =
+        fixture
+            .vault
+            .admit_marketplace_skill(&ask, &Replay::new(true), at(22), 22)?
+    else {
+        panic!("consented stored source")
+    };
+    assert!(admitted.accepted);
+    reserve(&fixture.vault, &base, "fixture.stored");
+
+    let merged = fixture.vault.submit_shared_skill_delta(
+        &base,
+        &encode_hub_package(&package("fixture.stored", "2", "check the result twice"))?,
+        SharedSkillLane::FederationMergeBack,
+        "member:fixture",
+        &EntityId::now(),
+        at(30),
+        30,
+    )?;
+    let merge_ask = fixture.vault.prepare_shared_skill_merge(
+        merged,
+        fixture.resident,
+        useful_question(merged),
+    )?;
+    let SharedSkillMergeDisposition::Ruled(receipt) = fixture.vault.merge_shared_skill_delta(
+        &merge_ask,
+        &Useful(true),
+        &PrefersTwice,
+        at(31),
+        31,
+    )?
+    else {
+        panic!("a reversible merge needs no approval");
+    };
+    assert!(receipt.accepted);
+    Ok((base, merged))
+}
+
 /// Rolling back a merge over a stored revision restores that revision's own
 /// source in its own format: a native tree byte for byte (its version is
 /// native metadata), a folder tree with only its frontmatter version renewed.
@@ -2437,8 +2502,6 @@ impl HeldOutReplayScorer for PrefersTwice {
 fn rollback_restores_a_stored_revision_in_its_own_format() -> Result<()> {
     for format in [SkillPackageFormat::Native, SkillPackageFormat::Folder] {
         let fixture = Fixture::new();
-        let (original, publisher) = fixture.hub(SkillHubTrustTier::Community);
-        // Version "1": the held-out reserve stamps that version on its receipts.
         let mut stored = package("fixture.stored", "1", "check result");
         if format == SkillPackageFormat::Native {
             stored.files = vec![HubFile::new(
@@ -2448,58 +2511,7 @@ fn rollback_restores_a_stored_revision_in_its_own_format() -> Result<()> {
             stored.format = SkillPackageFormat::Native;
         }
         stored.record.content_hash = Some(stored.content_hash()?);
-        let source = HubRef::new(
-            original.hub_id,
-            "stored",
-            HubPin::ContentHash(stored.content_hash()?.to_hex()),
-        )?;
-        let base = fixture
-            .vault
-            .import_skill_from_hub(&source, &stored, at(20), 20)?;
-        let ask = fixture.vault.prepare_marketplace_activation(
-            base,
-            &source,
-            &publisher,
-            fixture.baseline,
-        )?;
-        fixture
-            .vault
-            .approve_marketplace_activation(&ask, &fixture.owner)?;
-        let HubAdmissionDisposition::Ruled(admitted) =
-            fixture
-                .vault
-                .admit_marketplace_skill(&ask, &Replay::new(true), at(22), 22)?
-        else {
-            panic!("consented stored source")
-        };
-        assert!(admitted.accepted);
-        reserve(&fixture.vault, &base, "fixture.stored");
-
-        let merged = fixture.vault.submit_shared_skill_delta(
-            &base,
-            &encode_hub_package(&package("fixture.stored", "2", "check the result twice"))?,
-            SharedSkillLane::FederationMergeBack,
-            "member:fixture",
-            &EntityId::now(),
-            at(30),
-            30,
-        )?;
-        let merge_ask = fixture.vault.prepare_shared_skill_merge(
-            merged,
-            fixture.resident,
-            useful_question(merged),
-        )?;
-        let SharedSkillMergeDisposition::Ruled(receipt) = fixture.vault.merge_shared_skill_delta(
-            &merge_ask,
-            &Useful(true),
-            &PrefersTwice,
-            at(31),
-            31,
-        )?
-        else {
-            panic!("a reversible merge needs no approval");
-        };
-        assert!(receipt.accepted);
+        let (_, merged) = merge_over_a_stored_revision(&fixture, &stored)?;
 
         let SharedSkillRollback::Restored(restored) =
             fixture
@@ -2527,5 +2539,44 @@ fn rollback_restores_a_stored_revision_in_its_own_format() -> Result<()> {
             ),
         }
     }
+    Ok(())
+}
+
+/// Greptile #1336 repro: a rollback never restores a revision without the
+/// instructions it had. Deleting the displaced revision's source carrier
+/// leaves its record but not its package, so the rollback is refused with a
+/// typed error and nothing changes. A revision that never had a package
+/// still rolls back as its record alone: see
+/// `shared_merge_lands_without_approval_and_rolls_back_to_the_old_revision`.
+#[test]
+fn rollback_refuses_a_revision_whose_package_is_gone() -> Result<()> {
+    let fixture = Fixture::new();
+    let mut stored = package("fixture.stored", "1", "check result");
+    stored.record.content_hash = Some(stored.content_hash()?);
+    let (base, merged) = merge_over_a_stored_revision(&fixture, &stored)?;
+    let carrier = super::source_carrier::source_carrier_id(&base, &stored.content_hash()?)?;
+    assert!(fixture.vault.delete_entity(&carrier)?);
+    let records = || -> Result<_> {
+        Ok((
+            fixture.vault.get_skill_record(&base)?.expect("displaced"),
+            fixture.vault.get_skill_record(&merged)?.expect("merged"),
+        ))
+    };
+    let before = records()?;
+    assert!(before.0.content_hash.is_some());
+    let error = fixture
+        .vault
+        .roll_back_shared_skill_merge(&merged, None, at(40), 40)
+        .expect_err("the displaced revision's instructions are gone");
+    assert_eq!(error.kind(), ErrorKind::SkillPackageUnavailable);
+    assert_eq!(records()?, before);
+    assert_eq!(before.1.lifecycle_status, SkillLifecycle::Active);
+    assert!(
+        fixture
+            .vault
+            .edges_in(&merged)?
+            .iter()
+            .all(|edge| edge.kind != crate::edge::EdgeKind::Supersedes)
+    );
     Ok(())
 }

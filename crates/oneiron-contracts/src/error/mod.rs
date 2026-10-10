@@ -122,6 +122,7 @@ pub enum ErrorKind {
     InvalidSkillBody,
     SkillEditGateRetry,
     SkillContentAnchorTypeMismatch,
+    SkillPackageUnavailable,
     InvalidAgentDefBody,
     AgentDefinitionNotFound,
     AgentDefinitionDisabled,

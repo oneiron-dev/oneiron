@@ -11,8 +11,9 @@ use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::write_envelope::{
     MachineWriteSignature, SourceLineage, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY,
-    WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY, WriteActor,
-    WriteEnvelope, WriteProvenance, write_envelope_evidence,
+    WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WRITE_ENVELOPE_EVIDENCE_CARRIED_KEY,
+    WRITE_ENVELOPE_EVIDENCE_LINEAGE_KEY, WriteActor, WriteEnvelope, WriteProvenance,
+    envelope_carried_evidence, write_envelope_evidence,
 };
 use crate::{EntityId, Vault};
 
@@ -124,26 +125,34 @@ impl SuccessionWriter {
             });
         }
         next.source = Some(source);
-        next.evidence = Some(write_envelope_evidence(&envelope, carried.into_value()));
+        next.evidence = Some(stamped_evidence(&envelope, carried));
         Ok((next, Some(envelope)))
     }
 }
 
 /// The evidence a successor carries forward from its predecessor.
 enum CarriedEvidence {
-    /// Evidence the predecessor held at its top level: a raw write's, or an
-    /// unbound successor's without its lineage record.
+    /// Evidence a raw write held at its top level: the predecessor's own, an
+    /// unbound successor's without its lineage record, or what a stamped
+    /// successor carries apart from its stamp.
     TopLevel(Option<Value>),
     /// The evidence a writer supplied beside its stamp. Its keys are the
     /// writer's, never the engine's own.
     Candidate(Value),
 }
 
-impl CarriedEvidence {
-    fn into_value(self) -> Option<Value> {
-        match self {
-            Self::TopLevel(evidence) => evidence,
-            Self::Candidate(evidence) => Some(evidence),
+/// A stamped successor's evidence: its writer's stamp, with a writer's
+/// evidence under the candidate key, or a raw write's under the carried key
+/// where the readers of its citations still look.
+fn stamped_evidence(envelope: &WriteEnvelope, carried: CarriedEvidence) -> Value {
+    match carried {
+        CarriedEvidence::Candidate(evidence) => write_envelope_evidence(envelope, Some(evidence)),
+        CarriedEvidence::TopLevel(evidence) => {
+            let mut stamped = write_envelope_evidence(envelope, None);
+            if let (Value::Map(entries), Some(evidence)) = (&mut stamped, evidence) {
+                entries.push((Value::from(WRITE_ENVELOPE_EVIDENCE_CARRIED_KEY), evidence));
+            }
+            stamped
         }
     }
 }
@@ -185,11 +194,14 @@ fn unbound_evidence(lineage: Option<&SourceLineage>, carried: CarriedEvidence) -
 /// The evidence a successor carries forward: the evidence its predecessor's
 /// writer supplied, without that writer's stamp or an unbound successor's
 /// lineage record. A raw predecessor's evidence carries no stamp, so it
-/// travels whole.
+/// travels whole, and a stamped successor carries it on as a raw write's.
 fn carried_evidence(prior: &ClaimBody) -> CarriedEvidence {
-    let Some(Value::Map(entries)) = &prior.evidence else {
+    let Some(evidence @ Value::Map(entries)) = &prior.evidence else {
         return CarriedEvidence::TopLevel(prior.evidence.clone());
     };
+    if let Some(carried) = envelope_carried_evidence(evidence) {
+        return top_level_evidence(carried);
+    }
     let is = |key: &Value, name: &str| key.as_str() == Some(name);
     if entries
         .iter()
@@ -202,6 +214,15 @@ fn carried_evidence(prior: &ClaimBody) -> CarriedEvidence {
                 CarriedEvidence::Candidate(value.clone())
             });
     }
+    top_level_evidence(evidence)
+}
+
+/// Evidence a raw write held at its top level, as a successor carries it.
+fn top_level_evidence(evidence: &Value) -> CarriedEvidence {
+    let Value::Map(entries) = evidence else {
+        return CarriedEvidence::TopLevel(Some(evidence.clone()));
+    };
+    let is = |key: &Value, name: &str| key.as_str() == Some(name);
     // Drop an unbound successor's lineage record. A lone candidate entry is
     // what a record wrapped, or a writer's evidence: it stays a writer's.
     let rest: Vec<_> = entries
