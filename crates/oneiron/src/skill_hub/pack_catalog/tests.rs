@@ -490,5 +490,24 @@ fn escaped_credential_in_any_pack_md_value_is_refused() -> Result<()> {
             "{class}: {err:?}"
         );
     }
+    // A recovery phrase spread over a list, one escaped word per entry, is
+    // read as one run, as the raw file shows an unescaped list. A BIP39
+    // reference vector (trezor/python-mnemonic); it guards no funds. Its twin
+    // breaks the checksum.
+    let escaped = |phrase: &str| {
+        phrase
+            .split(' ')
+            .map(|word| format!("\"\\u{:04x}{}\"", word.as_bytes()[0], &word[1..]))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let words = "ozone drill grab fiber curtain grace pudding thank cruise elder eight";
+    assert!(capability(format!("grants: [{}]", escaped(&format!("{words} pilot")))).is_ok());
+    let err = capability(format!("grants: [{}]", escaped(&format!("{words} picnic"))))
+        .expect_err("recovery phrase");
+    assert!(
+        format!("{err:?}").contains("gate.secret_scan.mnemonic"),
+        "{err:?}"
+    );
     Ok(())
 }

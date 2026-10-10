@@ -252,12 +252,17 @@ pub(super) fn decoded_frontmatter(text: &str) -> Result<Vec<(&str, String)>> {
     Ok(decoded_fields(&frontmatter_fields(text)?))
 }
 /// A JSON string, list or map yields each string it holds, map keys and
-/// repeated keys included; any other value is read as written.
+/// repeated keys included, and when it holds several, all of them in order,
+/// one per line, as the raw file shows them (a recovery phrase can be spread
+/// over a list's entries); any other value is read as written.
 fn decoded_fields<'a>(fields: &BTreeMap<&'a str, &str>) -> Vec<(&'a str, String)> {
     let mut decoded = Vec::new();
     for (&key, value) in fields {
         match serde_json::from_str::<Strings>(value) {
             Ok(Strings(strings)) if value.starts_with(['"', '[', '{']) => {
+                if strings.len() > 1 {
+                    decoded.push((key, strings.join("\n")));
+                }
                 decoded.extend(strings.into_iter().map(|text| (key, text)));
             }
             _ => decoded.push((key, (*value).to_owned())),
