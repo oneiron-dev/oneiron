@@ -123,6 +123,29 @@ fn parse_route(value: &str) -> Result<oneiron::ModelLocality, String> {
 #[derive(Subcommand)]
 pub enum HostCommand {
     Init(HostInitArgs),
+    /// Move a stopped self-host vault's root to a new host secret, in-chain:
+    /// the vault id stays, and every credential the old secret minted stops
+    /// working. Run it after a host secret leaks, or to change it.
+    ReRoot(Box<HostReRootArgs>),
+}
+
+/// The current secret comes from `--secret-file`, the config or
+/// `ONEIRON_AUTH_SECRET`; the new one from `--new-secret-file` or
+/// `ONEIRON_NEW_AUTH_SECRET`. Neither is read from argv or printed.
+#[derive(Args, Clone, Debug)]
+pub struct HostReRootArgs {
+    /// Read the current host secret from this file, readable by its owner
+    /// only, instead of the config or `ONEIRON_AUTH_SECRET`.
+    #[arg(long, value_name = "FILE")]
+    pub secret_file: Option<PathBuf>,
+
+    /// Read the new host secret from this file, readable by its owner only,
+    /// instead of `ONEIRON_NEW_AUTH_SECRET`.
+    #[arg(long, value_name = "FILE")]
+    pub new_secret_file: Option<PathBuf>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -604,6 +627,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Api(args) => commands::api(args).await,
         Command::Mcp(args) => commands::mcp(args),
         Command::Host(HostCommand::Init(args)) => commands::host_init(args),
+        Command::Host(HostCommand::ReRoot(args)) => commands::host_re_root(*args),
         Command::Dreamer(DreamerCommand::Grant(args)) => commands::dreamer_grant(*args),
     }
 }

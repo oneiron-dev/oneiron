@@ -136,18 +136,28 @@ impl Vault {
     /// Appends an already-signed ReRoot only if its transition is valid in this vault.
     /// Each vault consumes its own independently signed history; there is no master share.
     pub fn apply_signed_re_root(&self, entry: &AuthorityLogEntry) -> Result<EntityId> {
+        let mut txn = self.store.env.write_txn()?;
+        let id = self.apply_signed_re_root_in_txn(&mut txn, entry)?;
+        txn.commit()?;
+        Ok(id)
+    }
+
+    fn apply_signed_re_root_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        entry: &AuthorityLogEntry,
+    ) -> Result<EntityId> {
         if !matches!(entry.op, AuthorityOp::ReRoot { .. }) {
             return Err(invalid_authority());
         }
         let hash = authority_entry_hash(entry)?;
         let now = crate::unix_seconds_now();
-        let mut txn = self.store.env.write_txn()?;
-        let before = self.authority_fold_readonly_in_txn(&txn)?;
+        let before = self.authority_fold_readonly_in_txn(txn)?;
         if before.vault_id.is_none() || entry.vault_id != before.vault_id {
             return Err(invalid_authority());
         }
         let ids = self.put_authority_log_entries_in_txn(
-            &mut txn,
+            txn,
             &[(
                 entry.clone(),
                 TimeRange {
@@ -157,13 +167,12 @@ impl Vault {
                 now,
             )],
         )?;
-        let after = self.authority_fold_readonly_in_txn(&txn)?;
+        let after = self.authority_fold_readonly_in_txn(txn)?;
         if after.vault_id != before.vault_id || !after.valid_entries.contains(&hash) {
             return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
                 "re-root transition refused",
             )));
         }
-        txn.commit()?;
         ids.into_iter().next().ok_or_else(invalid_authority)
     }
 
@@ -179,8 +188,39 @@ impl Vault {
         S: FnOnce(&[u8]) -> Result<Vec<u8>>,
     {
         let txn = self.store.env.read_txn()?;
-        let history = history_in_txn(self, &txn)?;
-        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        let mut entry = self.unsigned_re_root_in_txn(&txn, new_device, signer_key)?;
+        drop(txn);
+        entry.signer.signature = signer(&authority_transcript(&entry)?)?;
+        self.apply_signed_re_root(&entry)?;
+        Ok(entry)
+    }
+
+    /// The same move inside the caller's write transaction. `signer` runs
+    /// while that transaction is open, so it must not open another.
+    pub(super) fn re_root_authority_in_txn<S>(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        new_device: DeviceAuthority,
+        signer_key: AuthorityKey,
+        signer: S,
+    ) -> Result<AuthorityLogEntry>
+    where
+        S: FnOnce(&[u8]) -> Result<Vec<u8>>,
+    {
+        let mut entry = self.unsigned_re_root_in_txn(txn, new_device, signer_key)?;
+        entry.signer.signature = signer(&authority_transcript(&entry)?)?;
+        self.apply_signed_re_root_in_txn(txn, &entry)?;
+        Ok(entry)
+    }
+
+    fn unsigned_re_root_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        new_device: DeviceAuthority,
+        signer_key: AuthorityKey,
+    ) -> Result<AuthorityLogEntry> {
+        let history = history_in_txn(self, txn)?;
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         let mut parents = fold.valid_entries.clone();
         for hash in &fold.valid_entries {
@@ -196,8 +236,7 @@ impl Vault {
             .unwrap_or(0)
             .checked_add(1)
             .ok_or_else(invalid_authority)?;
-        drop(txn);
-        let mut entry = AuthorityLogEntry {
+        Ok(AuthorityLogEntry {
             schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
             vault_id: Some(vault_id),
             seq,
@@ -210,10 +249,7 @@ impl Vault {
             },
             cosigns: Vec::new(),
             ts: crate::unix_seconds_now(),
-        };
-        entry.signer.signature = signer(&authority_transcript(&entry)?)?;
-        self.apply_signed_re_root(&entry)?;
-        Ok(entry)
+        })
     }
 
     /// Account-authenticated managed-vault recovery. The existing host root signs
