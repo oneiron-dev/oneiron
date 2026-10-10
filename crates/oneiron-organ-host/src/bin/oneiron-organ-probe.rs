@@ -93,8 +93,13 @@ mod probe {
                                 return Err(OrganError::new(ErrorCode::Cancelled, "cancelled"));
                             }
                             Err(refusal) => {
-                                let code =
-                                    rmpv::ext::to_value(refusal.code).unwrap_or(rmpv::Value::Nil);
+                                // The code by its wire name, as an organ reads it.
+                                let code = rmp_serde::to_vec_named(&refusal.code)
+                                    .ok()
+                                    .and_then(|bytes| {
+                                        rmpv::decode::read_value(&mut bytes.as_slice()).ok()
+                                    })
+                                    .unwrap_or(rmpv::Value::Nil);
                                 rmpv::Value::Map(vec![("refused".into(), code)])
                             }
                         };

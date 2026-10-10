@@ -43,9 +43,13 @@ fn failed(detail: impl Into<String>) -> AskRefusal {
     AskRefusal::new(AskCode::Failed, detail).retryable()
 }
 
+/// Reads a fetch ask as the wire carries it: named fields, enums by name.
 fn parse(value: &rmpv::Value) -> Result<(FetchAsk, Url), AskRefusal> {
-    let ask: FetchAsk = rmpv::ext::from_value(value.clone())
-        .map_err(|err| refused(AskCode::BadRequest, format!("not a fetch: {err}")))?;
+    let not_a_fetch =
+        |err: &dyn std::fmt::Display| refused(AskCode::BadRequest, format!("not a fetch: {err}"));
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, value).map_err(|err| not_a_fetch(&err))?;
+    let ask: FetchAsk = rmp_serde::from_slice(&bytes).map_err(|err| not_a_fetch(&err))?;
     if ask.purpose.len() > MAX_PURPOSE_BYTES {
         return Err(refused(AskCode::BadRequest, "the purpose is over 32 bytes"));
     }
@@ -238,7 +242,9 @@ impl AskHandler for GuardedFetch {
                 content_type,
                 final_url: url.to_string(),
             };
-            let value = rmpv::ext::to_value(&answer)
+            let encoded = rmp_serde::to_vec_named(&answer)
+                .map_err(|err| refused(AskCode::Failed, format!("answer: {err}")))?;
+            let value = rmpv::decode::read_value(&mut encoded.as_slice())
                 .map_err(|err| refused(AskCode::Failed, format!("answer: {err}")))?;
             return Ok(Answered {
                 value,
