@@ -22,6 +22,7 @@ pub use embedder::{
 pub use embedder_shape::{EmbedderAttention, EmbedderOutputQuantization};
 pub use feedback::FeedbackConfig;
 pub use import::ImportConfig;
+pub(crate) use merge::layer_serve_config;
 pub use merge::{
     EnvConfig, default_config_path, resolve_backup_config, resolve_serve_config,
     resolve_serve_config_with_sources,

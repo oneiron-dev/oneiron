@@ -84,6 +84,7 @@ impl BatchBuilder<'_> {
             Vec::new()
         };
         let changes_claims = super::vad_postcommit::ops_change_proactivity(&ops);
+        let tasks = super::vad_postcommit::ops_put_tasks(&ops);
         let gate_mode = gate_mode.with_birth_mask(self.birth_mask);
         if let Some(actor) = actor {
             apply_actor_ops(
@@ -113,6 +114,7 @@ impl BatchBuilder<'_> {
         if changes_claims {
             super::vad_postcommit::queue_proactivity_change(vault, wtxn);
         }
+        super::vad_postcommit::queue_task_updates(vault, wtxn, tasks);
         Ok(())
     }
 }

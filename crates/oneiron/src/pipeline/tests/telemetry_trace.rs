@@ -368,7 +368,7 @@ fn a_compressed_space_counts_a_paraphrase_under_its_own_floors() -> Result<()> {
 #[test]
 fn the_evidence_floors_and_the_turn_fold_key_the_replay() -> Result<()> {
     let query = [1.0_f32, 0.0, 0.0, 0.0];
-    let (_dir, mut vault) = open_test_vault();
+    let (_dir, vault) = open_test_vault();
     put_text_and_vector(
         &vault,
         entity_id(0x3E),
@@ -382,7 +382,7 @@ fn the_evidence_floors_and_the_turn_fold_key_the_replay() -> Result<()> {
 
     let mut keys = Vec::new();
     for floors in [crate::config::VectorEvidenceFloors::default(), space] {
-        vault.config.vector_evidence = floors;
+        vault.set_vector_evidence(floors)?;
         let (run_id, trace) = captured_retrieval_run_trace(
             &vault,
             vault
@@ -1444,6 +1444,7 @@ fn opted_in_search_persists_retrieval_telemetry_across_reopen() -> Result<()> {
 fn a_vault_refuses_vector_evidence_floors_outside_their_range() {
     use crate::config::VectorEvidenceFloors;
     let floors = |floor, strong| VectorEvidenceFloors { floor, strong };
+    let (_dir, open) = open_test_vault();
     for refused in [
         floors(f32::NAN, 0.5),
         floors(0.3, f32::NAN),
@@ -1462,6 +1463,13 @@ fn a_vault_refuses_vector_evidence_floors_outside_their_range() {
             "{refused:?} opened: {:?}",
             opened.err()
         );
+        // Set on an open vault by a host that learns them late, the same
+        // floors are refused, and the ones in force stay.
+        assert!(matches!(
+            open.set_vector_evidence(refused),
+            Err(crate::Error::InvalidConfig(_))
+        ));
+        assert_eq!(open.vector_evidence(), VectorEvidenceFloors::default());
     }
     // The engine's calibration and a compressed space's both open.
     for accepted in [VectorEvidenceFloors::default(), floors(0.15, 0.25)] {
