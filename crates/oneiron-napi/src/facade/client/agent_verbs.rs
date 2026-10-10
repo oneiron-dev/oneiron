@@ -36,10 +36,6 @@ impl NativeClient {
         let output = self.inner.claim_upsert(&claim).map_err(facade_error)?;
         Ok(commit_receipt_from_engine(output))
     }
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "one parameter per SDK argument of the verb"
-    )]
     #[napi]
     pub fn recall(
         &self,

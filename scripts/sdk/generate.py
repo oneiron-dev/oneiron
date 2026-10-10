@@ -133,7 +133,9 @@ def native_boundary(row, language):
             return f'#[napi] pub fn {method}(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {{ self.inner.agent_verb("{row["name"]}", input).map_err(facade_error) }}'
         declaration = ', '.join(names[a['name']] + ': ' + ARGUMENTS[a['kind']]['napi'] for a in args)
         output = boundary_type(row['output'], 'napi') if typed else 'String'
-        head = f'{long_signature(len(args) + 1)}#[napi] pub fn {method}(&self, {declaration}) -> napi::Result<{output}> {{'
+        # `#[napi]` re-emits the method, and clippy does not lint macro
+        # output, so a long napi verb needs no expectation.
+        head = f'#[napi] pub fn {method}(&self, {declaration}) -> napi::Result<{output}> {{'
     else:
         declaration = ', '.join(names[a['name']] + ': ' + ARGUMENTS[a['kind']]['native_py'] for a in args)
         signature = ', '.join(names[a['name']] + ('=None' if ARGUMENTS[a['kind']]['native_py'].startswith('Option<') else '') for a in args)
