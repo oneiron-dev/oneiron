@@ -482,8 +482,8 @@ fn reembed_refuses_a_commit_that_is_not_a_plain_name_before_writing_anything() {
 
 /// An endpoint that answers `/v1/models` with `listing` and every embedding
 /// request with one unit vector of `width` components, naming the listed
-/// transform as `embedder serve` does: all reembed asks of it. The address
-/// it serves; the thread ends with the test process.
+/// model and transform as `embedder serve` does: all reembed asks of it. The
+/// address it serves; the thread ends with the test process.
 fn listing_endpoint(listing: &'static str, width: usize) -> String {
     use std::io::{Read, Write};
 
@@ -493,8 +493,10 @@ fn listing_endpoint(listing: &'static str, width: usize) -> String {
     vector[0] = 1.0;
     let listed: serde_json::Value = serde_json::from_str(listing).expect("listing json");
     let mut embedded = serde_json::json!({ "data": [{ "index": 0, "embedding": vector }] });
-    if let Some(transform) = listed["data"][0].get("transform") {
-        embedded["transform"] = transform.clone();
+    for field in ["model_id", "transform"] {
+        if let Some(value) = listed["data"][0].get(field) {
+            embedded[field] = value.clone();
+        }
     }
     let embedded = embedded.to_string();
     std::thread::spawn(move || {
@@ -543,7 +545,7 @@ fn listing_endpoint(listing: &'static str, width: usize) -> String {
 const PLAIN_LISTING: &str = r#"{"object":"list","data":[{"id":"k","object":"model"}]}"#;
 /// `embedder serve`'s listing of the model, made another way than
 /// [`local_config`]'s.
-const SERVED_LISTING: &str = r#"{"object":"list","data":[{"id":"k","object":"model","oneiron_wire":1,"transform":"served-elsewhere"}]}"#;
+const SERVED_LISTING: &str = r#"{"object":"list","data":[{"id":"k","object":"model","oneiron_wire":1,"model_id":"test/old@v1","transform":"served-elsewhere"}]}"#;
 
 /// What `serve` resolves for a vault served by the endpoint at `base` under
 /// the same model and width as [`local_config`].

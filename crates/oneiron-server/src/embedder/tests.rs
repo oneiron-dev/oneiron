@@ -173,6 +173,9 @@ enum MockBehaviour {
     ListingDisagrees,
 }
 
+/// The model the Oneiron-wire behaviours say they loaded, until a row says
+/// otherwise ([`MockEndpoint::serve_model`]): [`endpoint_config`]'s.
+const MOCK_MODEL: &str = "test/model@rev";
 /// The transform the [`MockBehaviour::OneironWire`] listing reports.
 const MOCK_TRANSFORM: &str = "attn=bidirectional;pool=mean;mock";
 /// The transform [`MockBehaviour::OneironWireOther`] reports.
@@ -187,12 +190,18 @@ struct EmbeddingPause {
 struct MockState {
     pause: Mutex<Option<Arc<EmbeddingPause>>>,
     behaviour: Mutex<MockBehaviour>,
+    /// The model the Oneiron-wire behaviours list and answer as loaded.
+    model: Mutex<String>,
     requests: Mutex<Vec<Value>>,
 }
 
 impl MockState {
     fn behaviour(&self) -> MockBehaviour {
         *self.behaviour.lock().expect("mock behaviour lock")
+    }
+
+    fn model(&self) -> String {
+        self.model.lock().expect("mock model lock").clone()
     }
 }
 
@@ -218,6 +227,7 @@ impl MockEndpoint {
         let state = Arc::new(MockState {
             pause: Mutex::new(None),
             behaviour: Mutex::new(behaviour),
+            model: Mutex::new(MOCK_MODEL.to_owned()),
             requests: Mutex::new(Vec::new()),
         });
         let app = Router::new()
@@ -247,6 +257,12 @@ impl MockEndpoint {
         *self.state.behaviour.lock().expect("mock behaviour lock") = behaviour;
     }
 
+    /// Puts another model behind the same key and transform, as a server
+    /// restarted on another checkpoint lists and answers it.
+    fn serve_model(&self, model: &str) {
+        *self.state.model.lock().expect("mock model lock") = model.to_owned();
+    }
+
     fn requests(&self) -> Vec<Value> {
         self.state
             .requests
@@ -273,6 +289,7 @@ async fn mock_models(State(state): State<Arc<MockState>>) -> Result<axum::Json<V
             "data": [{
                 "id": MODEL_KEY,
                 "oneiron_wire": 1,
+                "model_id": state.model(),
                 "transform": mock_transform(state.behaviour()),
             }]
         })),
@@ -382,7 +399,11 @@ async fn mock_embeddings(
             MockBehaviour::ListingDisagrees => OTHER_TRANSFORM,
             behaviour => mock_transform(behaviour),
         };
-        return Ok(axum::Json(json!({ "data": rows, "transform": transform })));
+        return Ok(axum::Json(json!({
+            "data": rows,
+            "model_id": state.model(),
+            "transform": transform,
+        })));
     }
     Ok(axum::Json(json!({ "data": rows })))
 }
@@ -526,6 +547,70 @@ fn an_oneiron_endpoint_that_changes_how_it_embeds_is_refused_until_restored() {
     mock.set_behaviour(MockBehaviour::OneironWire);
     oneiron::embed::Embedder::embed(embedder.as_ref(), &[summary_input("third")])
         .expect("restored");
+}
+
+/// Another revision of [`MOCK_MODEL`]: the same architecture, other weights.
+const OTHER_REVISION: &str = "test/model@rev2";
+
+/// Review P1 (Astra, #1361): a shared alias restarted on another revision of
+/// the same architecture truthfully lists and answers the same transform. Bug
+/// repro: the vault held answers to the transform alone, so it stored the new
+/// revision's vectors in the old one's space. The model the server loaded is
+/// now held to the vault's at admission, in every answer, after a restart
+/// and for a move; nothing it makes is stored, and no query is answered.
+#[test]
+fn an_alias_moved_to_another_revision_is_refused_and_nothing_is_stored() {
+    let mock = MockEndpoint::start(MockBehaviour::OneironWire);
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = test_vault(dir.path());
+    let config = endpoint_config(&mock.base);
+    let slot = EmbedderSlot::from_config(&config)
+        .expect("slot")
+        .expect("active");
+    let admit = |transform: &str| vault.adopt_embedding_transform(transform);
+    let embedder = slot
+        .ensure_ready(admit)
+        .expect("the vault's model, admitted");
+    let reconciler = oneiron::embed::PendingEmbeddingReconciler::new(
+        Arc::clone(&vault),
+        embedder as Arc<dyn oneiron::embed::Embedder>,
+    );
+    let first = put_claim(&vault, 0xE1, "a claim the first revision embeds");
+    while reconciler.reconcile_once().expect("filled").leased > 0 {}
+    assert!(vault.get_vector(&first).expect("read").is_some());
+    slot.embed_query("cats").expect("a query answered");
+
+    mock.serve_model(OTHER_REVISION);
+    let second = put_claim(&vault, 0xE2, "a claim the second revision answers");
+    assert!(
+        reconciler.reconcile_once().is_err(),
+        "an answer from another model is refused"
+    );
+    assert_eq!(vault.get_vector(&second).expect("read"), None);
+    assert_eq!(slot.embed_query("cats"), Err(EmbedQueryRefusal::Failed));
+    let refused = slot.ensure_ready(admit).err().map(|error| error.kind());
+    assert_eq!(refused, Some(oneiron::ErrorKind::EmbeddingModelChanged));
+    assert_eq!(slot.embed_query("cats"), Err(EmbedQueryRefusal::NotReady));
+
+    let restarted = EmbedderSlot::from_config(&config)
+        .expect("slot")
+        .expect("active");
+    assert!(
+        restarted.ensure_ready(admit).is_err(),
+        "nor after a restart"
+    );
+    assert!(
+        endpoint::resolve_transform(&config).is_err(),
+        "nor as the space a vault on the first revision moves to"
+    );
+    let moved = EmbedderConfig {
+        model_id: OTHER_REVISION.to_owned(),
+        ..config
+    };
+    assert_eq!(
+        endpoint::resolve_transform(&moved).expect("a move to the served revision"),
+        Some(MOCK_TRANSFORM.to_owned())
+    );
 }
 
 /// An endpoint has no model files to read a prompt from: a query carries

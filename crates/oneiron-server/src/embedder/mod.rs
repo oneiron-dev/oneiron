@@ -223,8 +223,9 @@ impl EmbedderSlot {
     /// provider serves anything, and its refusal leaves the slot not ready: a
     /// model whose files only arrived after the vault opened is checked
     /// against the vault's pinned transform here rather than at open. An
-    /// endpoint that says how it makes vectors (`embedder serve`) is checked
-    /// the same way, once its listing has been read.
+    /// endpoint that says what it serves (`embedder serve`) is checked the
+    /// same way, once its listing has been read, and must name the vault's
+    /// model as the one it loaded.
     pub(crate) fn ensure_ready(
         &self,
         admit: impl FnOnce(&str) -> oneiron::Result<()>,
@@ -232,9 +233,10 @@ impl EmbedderSlot {
         if let Some(ready) = self.ready.get() {
             if let Some(http) = ready.as_endpoint() {
                 // Read afresh each time: a refused remote restored to the
-                // vault's settings is admitted on the worker's next try.
-                let admitted = http.served_transform().and_then(|served| {
-                    if let Some(transform) = &served {
+                // vault's model and settings is admitted on the worker's next
+                // try.
+                let admitted = http.served().and_then(|served| {
+                    if let Some(transform) = served.transform() {
                         admit(transform)?;
                     }
                     Ok(served)

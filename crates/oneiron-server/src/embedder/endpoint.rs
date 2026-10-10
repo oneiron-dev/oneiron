@@ -7,7 +7,9 @@
 //!
 //! One remote gets more: `oneiron-server embedder serve` marks its `/models`
 //! rows, and to it this client sends what a local vault's provider would see —
-//! whole texts, each marked query or document ([`Wire::Oneiron`]).
+//! whole texts, each marked query or document ([`Wire::Oneiron`]). It names
+//! the model it loaded and how it makes vectors, in its listing and in every
+//! answer, and the vault holds both to what it admitted.
 
 use std::io::Read;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -15,6 +17,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use oneiron::embed::{Embedder, EmbedderLocality, PendingEmbeddingInput};
+use oneiron::error::StoreError;
 
 use super::{EmbedderCommon, QueryEmbedder, engine_locality};
 use crate::config::EmbedderConfig;
@@ -90,6 +93,9 @@ enum Wire {
 #[derive(serde::Deserialize)]
 struct EmbeddingsResponse {
     data: Vec<EmbeddingRow>,
+    /// The model that made these vectors, from `embedder serve`.
+    #[serde(default)]
+    model_id: Option<String>,
     /// How these vectors were made, from `embedder serve`.
     #[serde(default)]
     transform: Option<String>,
@@ -109,9 +115,13 @@ struct ModelsResponse {
 #[derive(serde::Deserialize)]
 struct ModelRow {
     id: String,
-    /// Set by `oneiron-server embedder serve`, with `transform`.
+    /// Set by `oneiron-server embedder serve`, with `model_id` and
+    /// `transform`.
     #[serde(default)]
     oneiron_wire: Option<u32>,
+    /// The model the server loaded, which an alias in `id` stands for.
+    #[serde(default)]
+    model_id: Option<String>,
     #[serde(default)]
     transform: Option<String>,
 }
@@ -122,18 +132,38 @@ enum Admitted {
     /// Nothing yet, or never (a remote rung): answers are not checked.
     #[default]
     Unchecked,
-    /// The transform the remote listed when the vault admitted it, or none
-    /// for a remote that lists none. Every answer must name exactly this:
-    /// `embedder serve` names its transform in each, other servers none.
-    Transform(Option<String>),
+    /// The remote's listing when the vault admitted it, which every answer
+    /// must agree with ([`Listing::agrees_with`]).
+    Listing(Listing),
 }
 
 /// What the remote's `/models` listing said about the configured model.
 #[derive(Clone, Debug)]
-struct Listing {
+pub(crate) struct Listing {
     wire: Wire,
+    /// The model the remote loaded, when it says ([`Wire::Oneiron`]): the
+    /// configured model key may be an alias, and the model behind an alias
+    /// can change while the alias stays.
+    model_id: Option<String>,
     /// How the remote makes vectors, when it says ([`Wire::Oneiron`]).
     transform: Option<String>,
+}
+
+impl Listing {
+    /// How the remote makes vectors, when it says.
+    pub(crate) fn transform(&self) -> Option<&str> {
+        self.transform.as_deref()
+    }
+
+    /// Whether an answer names what this listing did: `embedder serve` names
+    /// the model it loaded and its transform in every answer, and any other
+    /// server neither.
+    fn agrees_with(&self, answer: &EmbeddingsResponse) -> bool {
+        match self.wire {
+            Wire::OpenAi => answer.transform.is_none(),
+            Wire::Oneiron => answer.model_id == self.model_id && answer.transform == self.transform,
+        }
+    }
 }
 
 pub(crate) struct HttpEmbedder {
@@ -272,21 +302,32 @@ impl HttpEmbedder {
         }
     }
 
-    /// How the remote makes vectors, when it says, read afresh: `embedder
-    /// serve` does, and the slot holds it to the vault's pinned transform as
-    /// it holds the local provider's.
-    pub(crate) fn served_transform(&self) -> oneiron::Result<Option<String>> {
-        Ok(self.read_listing()?.transform)
+    /// What the remote serves, read afresh. `embedder serve` names the model
+    /// it loaded, which must be this section's, the vault's space, and its
+    /// transform, which the slot holds to the vault's pin as it holds the
+    /// local provider's. An error when the listing does not answer, or names
+    /// another model.
+    pub(crate) fn served(&self) -> oneiron::Result<Listing> {
+        let listing = self.read_listing()?;
+        if listing.wire == Wire::Oneiron
+            && listing.model_id.as_deref() != Some(self.common.model_id.as_str())
+        {
+            return Err(oneiron::Error::Store(StoreError::EmbeddingModelChanged {
+                stored: self.common.model_id.clone(),
+                requested: listing.model_id.unwrap_or_default(),
+            }));
+        }
+        Ok(listing)
     }
 
     /// Records what the vault admitted. From then on an answer that names
-    /// another transform, or names one where none was admitted, is refused: a
-    /// remote restarted with other settings, or whose listing could not be
-    /// read as one, fills and answers nothing until it is restored or the
-    /// vault is reembedded.
-    pub(crate) fn admit(&self, transform: Option<String>) {
-        *self.admitted.lock().unwrap_or_else(PoisonError::into_inner) =
-            Admitted::Transform(transform);
+    /// another model or transform than the admitted listing, or names one
+    /// where none was listed, is refused: a remote restarted with another
+    /// model or other settings, or whose listing could not be read as
+    /// `embedder serve`'s, fills and answers nothing until it is restored or
+    /// the vault is reembedded.
+    pub(crate) fn admit(&self, listing: Listing) {
+        *self.admitted.lock().unwrap_or_else(PoisonError::into_inner) = Admitted::Listing(listing);
     }
 
     /// Reads the remote's `/models` listing and keeps it. A listing that does
@@ -326,10 +367,12 @@ impl HttpEmbedder {
         match row {
             Some(row) => Listing {
                 wire: Wire::Oneiron,
+                model_id: row.model_id.clone(),
                 transform: row.transform.clone(),
             },
             None => Listing {
                 wire: Wire::OpenAi,
+                model_id: None,
                 transform: None,
             },
         }
@@ -363,13 +406,13 @@ impl HttpEmbedder {
                     code: format!("embeddings response: {e}"),
                 }
             })?;
-        if let Admitted::Transform(admitted) =
+        if let Admitted::Listing(admitted) =
             &*self.admitted.lock().unwrap_or_else(PoisonError::into_inner)
-            && parsed.transform != *admitted
+            && !admitted.agrees_with(&parsed)
         {
             return Err(oneiron::Error::UpstreamToolFailure {
                 tool: EMBEDDER_TOOL,
-                code: "embedder endpoint now makes vectors another way than the vault admitted; restore its settings or run `oneiron-server reembed`".to_owned(),
+                code: "embedder endpoint now serves another model, or makes vectors another way, than the vault admitted; restore it or run `oneiron-server reembed`".to_owned(),
             });
         }
         self.order_rows(parsed.data, texts.len())
@@ -576,17 +619,19 @@ fn no_listing_route(status: reqwest::StatusCode) -> bool {
 }
 
 /// How the configured remote makes vectors, asked now: what `embedder serve`
-/// lists for the model, `None` for any other remote. The remote must then
-/// pass the startup probe held to that answer — it lists the model and
-/// answers at the configured width, naming the listed transform — so a vault
+/// lists for the model, `None` for any other remote. `embedder serve` must
+/// serve the configured model itself, and the remote must then pass the
+/// startup probe held to that listing — it lists the model key and answers at
+/// the configured width, naming the listed model and transform — so a vault
 /// is never moved to a remote that cannot fill it, nor to a listing no answer
 /// came from. An error when it does not answer or does not pass.
 pub(crate) fn resolve_transform(config: &EmbedderConfig) -> oneiron::Result<Option<String>> {
     let embedder = HttpEmbedder::from_config(config)?;
-    let served = embedder.served_transform()?;
-    embedder.admit(served.clone());
+    let served = embedder.served()?;
+    let transform = served.transform.clone();
+    embedder.admit(served);
     match probe_endpoint(&embedder) {
-        Ok(ProbeOutcome::Ready) => Ok(served),
+        Ok(ProbeOutcome::Ready) => Ok(transform),
         Ok(ProbeOutcome::Unreachable(why)) => Err(oneiron::Error::UpstreamToolFailure {
             tool: EMBEDDER_TOOL,
             code: format!("embedder endpoint did not answer the probe: {why}"),
@@ -638,7 +683,7 @@ pub(crate) fn probe_endpoint(embedder: &HttpEmbedder) -> Result<ProbeOutcome, Pr
         .listing
         .lock()
         .unwrap_or_else(PoisonError::into_inner) = Some(embedder.listing_of(listed.as_ref()));
-    // Unmarked, so any remote answers it as a document; held to the transform
+    // Unmarked, so any remote answers it as a document; held to the listing
     // admitted, if any (none at startup, the listed one before a move).
     match embedder.post_embeddings(&[PROBE_TEXT], Side::default()) {
         Ok(vectors) => {

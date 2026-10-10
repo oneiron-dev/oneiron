@@ -105,6 +105,11 @@ impl SyncServer {
                                 ?error,
                                 "the loaded model makes vectors another way than the vault's were made; it fills and answers nothing. Stop the server and run `oneiron-server reembed`, or restore the settings that made the vault"
                             );
+                        } else if error.kind() == oneiron::ErrorKind::EmbeddingModelChanged {
+                            tracing::error!(
+                                ?error,
+                                "the embedder endpoint serves another model than the vault's; it fills and answers nothing. Serve the vault's model there again, or stop the server and run `oneiron-server reembed`"
+                            );
                         } else {
                             tracing::warn!(
                                 ?error,

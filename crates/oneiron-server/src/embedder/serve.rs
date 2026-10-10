@@ -22,8 +22,10 @@
 //! `input_type` is a document request. One input runs at query priority and
 //! more park for queries ([`super::local::Priority`]), whichever side they
 //! embed: a recall sends one input and the fill worker sends batches. Every
-//! answer names the transform that made it, which the vault's client holds to
-//! the one it admitted from the listing.
+//! listing row, an alias's too, and every answer names the model loaded and
+//! the transform that makes its vectors, which the vault's client holds to the
+//! listing it admitted: a restart with another model behind the same name is
+//! refused like one with other settings.
 //!
 //! A request's bearer key is checked from its headers before any of its body
 //! is read. A body is read only once the bytes it declares fit a budget,
@@ -246,8 +248,10 @@ struct ModelRow {
     created: u64,
     owned_by: &'static str,
     /// Beyond OpenAI's fields: what an operator checks a vault against, and
-    /// the mark the vault's client reads.
+    /// the mark the vault's client reads. `model_id` is the model loaded,
+    /// on an alias's row as on its own: a vault holds an alias to it.
     dimensions: usize,
+    model_id: String,
     transform: String,
     oneiron_wire: u32,
 }
@@ -262,6 +266,7 @@ async fn models(State(served): State<Arc<Served>>) -> Response {
             created: 0,
             owned_by: "oneiron",
             dimensions: served.embedder.dimensions(),
+            model_id: served.embedder.model_id().to_owned(),
             transform: served.embedder.transform().to_owned(),
             oneiron_wire: ONEIRON_WIRE,
         })
@@ -300,9 +305,11 @@ struct EmbeddingsResponse {
     data: Vec<EmbeddingRow>,
     model: String,
     usage: Usage,
-    /// How these vectors were made: a vault holds every answer to the
-    /// transform it admitted from the listing, so a server restarted with
-    /// other settings is refused rather than mixed in.
+    /// The model loaded, whichever name the request gave, and how these
+    /// vectors were made: a vault holds every answer to the listing it
+    /// admitted, so a server restarted with another model behind the same
+    /// name, or with other settings, is refused rather than mixed in.
+    model_id: String,
     transform: String,
 }
 
@@ -537,6 +544,7 @@ async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Resp
             prompt_tokens: embedded.tokens,
             total_tokens: embedded.tokens,
         },
+        model_id: served.embedder.model_id().to_owned(),
         transform: served.embedder.transform().to_owned(),
     })
     .into_response()

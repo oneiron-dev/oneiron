@@ -135,10 +135,14 @@ impl ServedModel for Synthetic {
     }
 }
 
+/// The model [`synthetic`] loads.
+const SYNTHETIC_MODEL: &str = "fixture/embedding@1111111111111111111111111111111111111111";
+const SYNTHETIC_TRANSFORM: &str = "attn=bidirectional;pool=mean;synthetic";
+
 fn synthetic() -> Arc<dyn ServedModel> {
     Arc::new(Synthetic {
-        model_id: "fixture/embedding@1111111111111111111111111111111111111111",
-        transform: "attn=bidirectional;pool=mean;synthetic",
+        model_id: SYNTHETIC_MODEL,
+        transform: SYNTHETIC_TRANSFORM,
     })
 }
 
@@ -240,7 +244,7 @@ fn bodies_wait_for_their_budget_before_they_are_read() {
     );
 
     let query = serde_json::json!({
-        "model": "fixture/embedding@1111111111111111111111111111111111111111",
+        "model": SYNTHETIC_MODEL,
         "input": "a short query",
         "input_type": "query",
     })
@@ -255,4 +259,34 @@ fn bodies_wait_for_their_budget_before_they_are_read() {
     assert!(holds(&served, MAX_BODY_BYTES), "one body left");
     drop(uploads);
     assert!(holds(&served, 0), "every request's bytes returned");
+}
+
+/// Review P1 (Astra, #1361): a vault may name the model by an alias, and the
+/// model behind an alias can change while the alias stays. Every listing row,
+/// an alias's too, and every answer names the model loaded, which the vault
+/// holds to its own.
+#[test]
+fn every_row_and_answer_names_the_model_loaded() {
+    let (addr, _runtime) = on_loopback(router(synthetic(), vec!["shared".to_owned()], None));
+    let client = reqwest::blocking::Client::new();
+    let listed: serde_json::Value = client
+        .get(format!("http://{addr}/v1/models"))
+        .send()
+        .and_then(reqwest::blocking::Response::json)
+        .expect("listing");
+    let rows = listed["data"].as_array().expect("rows");
+    assert_eq!(rows.len(), 2);
+    for row in rows {
+        assert_eq!(row["model_id"], SYNTHETIC_MODEL, "{row}");
+        assert_eq!(row["transform"], SYNTHETIC_TRANSFORM, "{row}");
+    }
+    let answer: serde_json::Value = client
+        .post(format!("http://{addr}/v1/embeddings"))
+        .json(&serde_json::json!({ "model": "shared", "input": ["one text"] }))
+        .send()
+        .and_then(reqwest::blocking::Response::json)
+        .expect("answer");
+    assert_eq!(answer["model"], "shared");
+    assert_eq!(answer["model_id"], SYNTHETIC_MODEL);
+    assert_eq!(answer["transform"], SYNTHETIC_TRANSFORM);
 }
