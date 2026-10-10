@@ -482,17 +482,37 @@ pub(crate) fn body_covers_in_txn(
     Ok(None)
 }
 
-pub(crate) fn merge_covers_in_txn(
+/// The summary a merge header names, valid for the turn it landed on.
+fn merge_summary_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
     body: &crate::ClaimBody,
-) -> Result<Option<Vec<EntityId>>> {
+) -> Result<Option<ScopeSummaryBody>> {
     let Some((turn, summary)) = merge_summary_ref(body)? else {
         return Ok(None);
     };
     let summary = summary_in_txn(vault, txn, &summary)?;
     validate_landing_in_txn(vault, txn, &summary.scope, &turn)?;
-    Ok(Some(summary.covers))
+    Ok(Some(summary))
+}
+
+pub(crate) fn merge_covers_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    body: &crate::ClaimBody,
+) -> Result<Option<Vec<EntityId>>> {
+    Ok(merge_summary_in_txn(vault, txn, body)?.map(|summary| summary.covers))
+}
+
+/// Every record and MESSAGE the summary a merge header names was written
+/// from: what a reader of the header must read.
+pub(crate) fn merge_word_sources_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    body: &crate::ClaimBody,
+) -> Result<Option<Vec<EntityId>>> {
+    Ok(merge_summary_in_txn(vault, txn, body)?
+        .map(|summary| word_sources(&summary).copied().collect()))
 }
 
 impl Vault {

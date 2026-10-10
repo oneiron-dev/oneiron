@@ -76,12 +76,14 @@ pub(crate) struct ScopeSummaryPlan {
 impl ScopeSummaryPlan {
     /// The composition memo (ARCH-0006a scope content hash): this scope,
     /// each covered record with the content hash of the body read, each
-    /// MESSAGE at its revision, and the composing `policy`. Landing requests
-    /// are not part of it: they never change the body.
+    /// MESSAGE at its revision, the transcript the model reads (finality
+    /// changes it without changing a body), and the composing `policy`.
+    /// Landing requests are not part of it: they never change the body.
     pub(crate) fn composition_memo(
         &self,
         covers: &[(EntityId, [u8; 32])],
         messages: &[SummarySourceMessage],
+        transcript: &str,
         policy: &[&str],
     ) -> Result<[u8; 32]> {
         let mut scope = Vec::new();
@@ -101,6 +103,8 @@ impl ScopeSummaryPlan {
             hasher.update(message.id.as_bytes());
             hasher.update(&message.revision);
         }
+        hasher.update(&(transcript.len() as u64).to_be_bytes());
+        hasher.update(transcript.as_bytes());
         for part in policy {
             hasher.update(&(part.len() as u64).to_be_bytes());
             hasher.update(part.as_bytes());

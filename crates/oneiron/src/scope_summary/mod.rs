@@ -12,7 +12,8 @@ pub use codec::{
 };
 pub use doors::LandedHeader;
 pub(crate) use doors::{
-    body_covers_in_txn, merge_covers_in_txn, merge_summary_ref, validate_summary_put,
+    body_covers_in_txn, merge_covers_in_txn, merge_summary_ref, merge_word_sources_in_txn,
+    validate_summary_put,
 };
 pub(crate) use request::ComposedSummary;
 pub use request::{ScopeSummaryQueued, ScopeSummaryRequest, ScopeSummaryTarget};

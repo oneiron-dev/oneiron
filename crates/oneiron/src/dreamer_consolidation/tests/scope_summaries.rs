@@ -274,6 +274,95 @@ fn erasing_a_message_retires_the_summary_and_reply_written_from_it() -> Result<(
     Ok(())
 }
 
+/// Human readers each granted `core:read` over one set of entity types, in
+/// one test policy.
+fn granted_readers<'v>(
+    vault: &'v Vault,
+    grants: &[&[u8]],
+) -> Result<Vec<crate::claim::ScopedRead<'v>>> {
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let mut read = crate::federation::Scope::top();
+    read.verbs = crate::federation::ScopeAxis::Some(["read".to_owned()].into());
+    let mut readers = Vec::new();
+    let mut rows = Vec::new();
+    for types in grants {
+        let reader = EntityId::now();
+        vault.put_entity(&reader, ENTITY_TYPE_PERSON, time(1), 1, &body("reader"))?;
+        rows.push(serde_json::json!({
+            "actor_ref": reader.to_hex(),
+            "effector": "core:read",
+            "scope": serde_json::to_value(&read).expect("scope json"),
+            "selectors": {"entity_types": types},
+            "receipt_required": false,
+        }));
+        let key = crate::claim::ScopedReadActorKey::with_actor_class(reader.to_hex(), "human")
+            .expect("reader key");
+        readers.push(vault.scoped_read(key));
+    }
+    crate::conversation_dag::test_support::put_test_policy_manifest(
+        vault,
+        WriteActor::new(owner, EdgeActorClass::Human),
+        EntityId::now(),
+        &serde_json::json!({
+            "schema_version": "1.2", "pack_id": "summary-readers", "pack_version": "1",
+            "min_engine_version": "0.0.0", "defaults": {}, "rules": [], "actor_ceilings": [],
+            "scoped_grants": rows,
+        }),
+    )?;
+    Ok(readers)
+}
+
+/// Finding 3, the reader's half (Astra re-check): a reader whose grant reads
+/// SUMMARYs and TURNs but no MESSAGE reads neither the summary nor the reply
+/// written from one; a reader who may read the MESSAGE reads both.
+#[test]
+fn a_reader_who_may_not_read_the_message_reads_no_summary_of_it() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let said = message(0, WitnessAuthor::User, SECRET, true);
+    let (turn, conversation) = witness(&vault, 0x6E, vec![said]);
+    let person = requester(&vault, 0x6E)?;
+    declare(&vault, person, conversation, Some(turn))?;
+    let backend = RecordingBackend::new(vec![Ok(text_response(format!("They said {SECRET}.")))]);
+    let outcome = compose(&vault, &backend)?;
+    assert!(
+        matches!(outcome, DreamerAttemptExecution::Completed { .. }),
+        "{outcome:?}"
+    );
+    let [summary] = summaries(&vault)[..] else {
+        panic!("one summary")
+    };
+    let reply = vault
+        .resolve_dag_scope(&canonical(conversation))?
+        .records
+        .into_iter()
+        .find(|record| *record != turn)
+        .expect("the summary's reply");
+    let readers = granted_readers(
+        &vault,
+        &[
+            &[ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN, ENTITY_TYPE_MESSAGE],
+            &[ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN],
+        ],
+    )?;
+    let [full, narrow] = &readers[..] else {
+        panic!("two readers")
+    };
+    assert!(
+        full.is_entity_readable(&summary)?,
+        "the control reads the summary"
+    );
+    assert!(
+        full.is_entity_readable(&reply)?,
+        "the control reads the reply"
+    );
+    assert!(
+        !narrow.is_entity_readable(&summary)?,
+        "the summary is served"
+    );
+    assert!(!narrow.is_entity_readable(&reply)?, "the reply is served");
+    Ok(())
+}
+
 /// Finding 5: the Dreamer's MESSAGE grant is revoked while the model writes.
 /// The re-read refuses, and the paid call still settles on the wake budget.
 #[test]

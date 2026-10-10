@@ -115,6 +115,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 .zip(evidence.versions.iter().copied())
                 .collect::<Vec<_>>(),
             &evidence.messages,
+            &evidence.text,
             &[instruction, self.model.as_str()],
         )?;
         // The same composition already stands: no second call, no second
