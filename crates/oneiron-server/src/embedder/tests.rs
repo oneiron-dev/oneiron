@@ -447,6 +447,25 @@ fn an_oneiron_endpoint_gets_whole_marked_texts_and_is_held_to_the_vault_pin() {
     assert_eq!(requests[1]["instruction"], json!("query: "));
 }
 
+/// Whole texts go to `embedder serve`, so a batch of long ones is split into
+/// requests a slow host answers inside the timeout; the vectors come back in
+/// input order.
+#[test]
+fn long_documents_reach_an_oneiron_endpoint_in_several_requests() {
+    let mock = MockEndpoint::start(MockBehaviour::OneironWire);
+    let embedder = mock.embedder();
+    let texts: Vec<String> = ["a", "b", "c"]
+        .iter()
+        .map(|word| format!("{word} ").repeat(10 * 1024))
+        .collect();
+    let inputs: Vec<_> = texts.iter().map(|text| summary_input(text)).collect();
+    let vectors = oneiron::embed::Embedder::embed(embedder.as_ref(), &inputs).expect("embedded");
+    assert_eq!(mock.requests().len(), 3, "20 KiB each, two never share one");
+    for (vector, text) in vectors.iter().zip(&texts) {
+        assert_eq!(*vector, mock_vector(text, DIMS), "in input order");
+    }
+}
+
 /// The vault holds `embedder serve` to the transform it admitted for as long
 /// as it runs: a listing that fails is not taken for a plain OpenAI server, a
 /// server restarted with other settings fills and answers nothing, and once

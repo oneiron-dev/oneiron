@@ -31,6 +31,11 @@ const CHARS_PER_TOKEN: usize = 4;
 const PROBE_TEXT: &str = "oneiron embedder probe";
 /// Tool name on every upstream failure this provider reports.
 const EMBEDDER_TOOL: &str = "embedder-endpoint";
+/// Bytes of text one request to `embedder serve` carries at most; an input
+/// over it goes alone. About 8K tokens, which a CPU host embeds well inside
+/// the default request timeout: whole texts go on that wire, and a batch of
+/// long ones in one request would time out, and be retried, for ever.
+const ONEIRON_REQUEST_BYTES: usize = 32 * 1024;
 
 /// What a startup probe found.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -421,6 +426,24 @@ impl HttpEmbedder {
     }
 }
 
+/// `texts` in order, as consecutive requests of at most `bytes` bytes each,
+/// or of one text where a text alone is over it.
+fn requests<'t, 'a>(texts: &'t [&'a str], bytes: usize) -> Vec<&'t [&'a str]> {
+    let mut requests = Vec::new();
+    let (mut start, mut size) = (0, 0);
+    for (index, text) in texts.iter().enumerate() {
+        if index > start && size + text.len() > bytes {
+            requests.push(&texts[start..index]);
+            (start, size) = (index, 0);
+        }
+        size += text.len();
+    }
+    if start < texts.len() {
+        requests.push(&texts[start..]);
+    }
+    requests
+}
+
 fn transport_error(what: &str, error: &reqwest::Error) -> oneiron::Error {
     // The message carries the failure class, never the response body: a remote
     // that echoes the input back in an error must not put vault text into this
@@ -495,14 +518,20 @@ impl Embedder for HttpEmbedder {
             })
             .collect::<oneiron::Result<_>>()?;
         let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
-        let side = match wire {
-            Wire::OpenAi => Side::default(),
-            Wire::Oneiron => Side {
-                input_type: Some("document"),
-                instruction: None,
-            },
-        };
-        self.post_embeddings(&refs, side)
+        match wire {
+            Wire::OpenAi => self.post_embeddings(&refs, Side::default()),
+            Wire::Oneiron => {
+                let side = Side {
+                    input_type: Some("document"),
+                    instruction: None,
+                };
+                let mut vectors = Vec::with_capacity(refs.len());
+                for request in requests(&refs, ONEIRON_REQUEST_BYTES) {
+                    vectors.extend(self.post_embeddings(request, side)?);
+                }
+                Ok(vectors)
+            }
+        }
     }
 }
 

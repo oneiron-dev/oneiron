@@ -472,6 +472,8 @@ mod tests {
                 endpoint: EndpointEmbedderConfig {
                     endpoint: Some(format!("http://{addr}/v1")),
                     model_key: Some(local_config.model_id.clone()),
+                    // Bit equality is the claim, not speed, on a shared box.
+                    timeout_ms: 600_000,
                     ..EndpointEmbedderConfig::default()
                 },
                 ..local_config.clone()
