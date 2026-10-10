@@ -198,7 +198,7 @@ fn role_ladder(role: ModelRole, file: RoleFile, base: Option<&Path>) -> anyhow::
     }
 }
 
-fn prompt_text(
+pub(super) fn prompt_text(
     field: &str,
     inline: Option<String>,
     file: Option<PathBuf>,
