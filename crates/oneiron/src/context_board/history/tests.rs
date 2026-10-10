@@ -517,3 +517,99 @@ fn board_history_reads_return_their_receipt() {
     assert!(board.documents.contains_key(&claim));
     assert_eq!(board.read_receipt, expected);
 }
+
+/// A TURN whose body carries the author stamp its door writes.
+fn put_turn(vault: &Vault, author: EntityId) -> EntityId {
+    let id = EntityId::now();
+    let raw = rmp_serde::to_vec_named(&serde_json::json!({"actor": author.to_hex()})).unwrap();
+    vault
+        .put_entity(
+            &id,
+            ENTITY_TYPE_TURN,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &raw,
+        )
+        .unwrap();
+    id
+}
+
+fn read_as(vault: &Vault, actor: EntityId) -> crate::claim::ScopedRead<'_> {
+    vault.scoped_read(crate::claim::ScopedReadActorKey::new(actor.to_hex()).unwrap())
+}
+
+/// Astra 2 (REV-9 D2a): the authenticated door records only its caller's own
+/// board. A reader's capability naming the TURN's author as owner is refused
+/// and anchors nothing, so the author still records the turn.
+#[test]
+fn another_actors_capability_cannot_record_a_board_in_the_authors_name() {
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let author = put(&vault, ENTITY_TYPE_PERSON, "author");
+    let reader = put(&vault, ENTITY_TYPE_PERSON, "reader");
+    let turn = put_turn(&vault, author);
+    crate::test_util::authorize_readers(
+        &vault,
+        &[author.to_hex().as_str(), reader.to_hex().as_str()],
+    );
+    let as_reader = read_as(&vault, reader);
+    assert!(as_reader.is_entity_readable(&turn).unwrap());
+
+    assert!(matches!(
+        vault.record_board_turn_now(turn, author, None, &as_reader, |_| true),
+        Err(BoardHistoryError::NotTurnAuthor(id)) if id == turn
+    ));
+    let recorded = vault
+        .record_board_turn_now(turn, author, None, &read_as(&vault, author), |_| true)
+        .unwrap();
+    assert!(recorded.is_some());
+    assert_eq!(vault.board_turn_owner(&turn).unwrap(), Some(author));
+}
+
+/// Astra 4 (REV-9 D2a): a pin records the revision its point read served.
+/// The pinned document changes after the read and before the record; the
+/// turn's board still replays the text the board served.
+#[test]
+fn a_pin_changed_before_its_record_replays_the_served_revision() {
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let owner = put(&vault, ENTITY_TYPE_PERSON, "owner");
+    let document = put(&vault, ENTITY_TYPE_ASSET_TEXT, "served text");
+    let turn = put_turn(&vault, owner);
+    crate::test_util::authorize_readers(&vault, &[owner.to_hex().as_str()]);
+    let caller = read_as(&vault, owner);
+    let pin = crate::retrieval_depth::short_ref_or_hex(&vault, &document).unwrap();
+    assert!(
+        pin.contains(':'),
+        "the document has a short reference: {pin}"
+    );
+    let mut memories = crate::context_board::MemoriesSection {
+        version: String::new(),
+        budget: crate::context_board::MemoriesBudget::default(),
+        rows: Vec::new(),
+        companion: None,
+        disclosure: None,
+    };
+    memories.include_pinned_refs(&caller, &[pin]).unwrap();
+    assert_eq!(memories.rows.len(), 1, "the pin is served");
+
+    let later = rmp_serde::to_vec_named(&serde_json::json!({"content": "later text"})).unwrap();
+    vault
+        .put_entity(
+            &document,
+            ENTITY_TYPE_ASSET_TEXT,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &later,
+        )
+        .unwrap();
+    let recorded = vault
+        .record_board_turn_now(turn, owner, Some(&memories), &caller, |_| true)
+        .unwrap();
+    assert!(recorded.is_some());
+
+    let board = vault.reconstruct_board_for(&turn, &caller, None).unwrap();
+    assert_eq!(board.selection.pinned, BTreeSet::from([document]));
+    let body: serde_json::Value = rmp_serde::from_slice(&board.documents[&document]).unwrap();
+    assert_eq!(body["content"], "served text");
+}

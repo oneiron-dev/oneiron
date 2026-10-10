@@ -302,7 +302,8 @@ impl PolicyManifestResolution {
             input.sensitivity_band,
             input.actor.actor_ref.as_deref(),
             lineage,
-        ) {
+        ) || dreamer_writes_from_import(input, lineage)
+        {
             pending.push(GateReasonCode::PendingSourceTrust);
         }
 
@@ -455,4 +456,14 @@ impl PolicyManifestResolution {
             grant.budget.is_none() && external_effect_grant_matches(grant, &input.actor, effect)
         })
     }
+}
+
+/// ARCH-0027 trust tier: imported material never auto-approves. A Dreamer
+/// write whose source or lineage is `Imported` waits for the owner's import
+/// review whatever any source_trust row grants, so no manifest can land it
+/// Auto.
+fn dreamer_writes_from_import(input: &GateEvaluatorInput, lineage: Option<&SourceLineage>) -> bool {
+    input.provenance.dreamer_run_id.is_some()
+        && (input.source == Some(ClaimSource::Imported)
+            || lineage.is_some_and(|lineage| lineage.contains(ClaimSource::Imported)))
 }

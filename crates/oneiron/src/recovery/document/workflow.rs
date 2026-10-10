@@ -2,7 +2,7 @@
 
 #[cfg(feature = "sync")]
 use crate::recovery::canonical::pack;
-use crate::recovery::canonical::{CanonicalSnapshot, invalid};
+use crate::recovery::canonical::{ByteBudget, CanonicalSnapshot, invalid};
 use crate::{
     Vault,
     error::Result,
@@ -29,6 +29,16 @@ pub(super) fn bundle_notes(bundle: &NoteReviewBundle) -> BTreeSet<[u8; 16]> {
         .collect()
 }
 
+/// The bytes one fork holds: its ids, frontier and recovery texts.
+fn fork_bytes(fork: &NoteFork) -> usize {
+    4 * 16
+        + fork.frontier.len()
+        + fork
+            .recovery_merge
+            .as_ref()
+            .map_or(0, |(parent, merged)| parent.len() + merged.len())
+}
+
 /// Resolve the old history while it still exists. The artifact carries values,
 /// not frontiers that could refer to unrelated peers after reconstruction.
 pub(super) fn normalize(vault: &Vault, txn: &heed::RoTxn<'_>, fork: &NoteFork) -> Result<NoteFork> {
@@ -49,19 +59,24 @@ pub(super) fn capture(
     txn: &heed::RoTxn<'_>,
     snapshot: &mut CanonicalSnapshot,
     ids: &BTreeSet<[u8; 16]>,
+    budget: &mut ByteBudget,
 ) -> Result<()> {
     let mut originals = BTreeMap::new();
-    for (fork_id, fork) in super::NOTE_FORK.scan(&vault.store, txn)? {
+    for row in super::NOTE_FORK.iter_from(&vault.store, txn, &[])? {
+        let (fork_id, fork) = row?;
         if !ids.contains(fork.note.as_bytes()) {
             continue;
         }
         if fork_id != fork.fork {
             return Err(invalid("stored fork key"));
         }
+        // The captured fork and the original kept to check bundles against.
+        budget.take(2 * fork_bytes(&fork))?;
         snapshot.note_forks.push(normalize(vault, txn, &fork)?);
         originals.insert(fork.fork, fork);
     }
-    for (bundle_id, mut bundle) in super::NOTE_PROPOSAL_BUNDLE.scan(&vault.store, txn)? {
+    for row in super::NOTE_PROPOSAL_BUNDLE.iter_from(&vault.store, txn, &[])? {
+        let (bundle_id, mut bundle) = row?;
         let mut notes = bundle_notes(&bundle);
         for fork_id in bundle
             .waiting
@@ -88,6 +103,11 @@ pub(super) fn capture(
             }
             *fork = normalize(vault, txn, fork)?;
         }
+        budget.take(
+            16 + bundle.explainer.len()
+                + bundle.waiting.iter().map(fork_bytes).sum::<usize>()
+                + bundle.landed.len() * 6 * 16,
+        )?;
         snapshot.note_proposals.push(bundle);
     }
     snapshot.note_forks.sort_by_key(|fork| fork.fork);

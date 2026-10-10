@@ -172,9 +172,12 @@ What the hooks already imported stays in your vault, like any import.
 - Messages are searchable at once, so the next `SessionStart` in that project
   can recall them.
 - Claims drawn from imported material never approve themselves (ARCH-0027,
-  ARCH-0040). Reviewing them in bulk is the import's open follow-up; until it
-  ships, no claim waits on these hooks. Queue entries waiting for a stopped
-  `serve` are the only pending items, and `serve` takes them up when it starts.
+  ARCH-0040). Each queue pass that lands something is one import: `serve`
+  queues the Dreamer over it and logs its review id
+  (`import:claude-code:<time>`). `oneiron runs pending` lists the reviews, and
+  `oneiron runs show|approve|decline` resolves each whole
+  ([Import your history](import-history.md#claims)). Queue entries waiting for
+  a stopped `serve` land when it starts.
 
 ## Limits and timings
 

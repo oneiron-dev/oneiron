@@ -15,8 +15,10 @@
 use std::sync::Arc;
 
 use axum::Router;
+use axum::body::Body;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Query, State};
+use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::consent::AuthenticatedOwner;
@@ -25,13 +27,13 @@ use oneiron::store::GateDecisionId;
 use serde::Deserialize;
 
 use super::error_map::core_engine_error;
-use super::{json_payload, query_params};
+use super::{has_json_content_type, json_payload, query_params};
 use crate::auth::CoreAuth;
 use crate::error::{ApiError, ApiErrorDetails, EnvelopedApiError};
 use crate::owner::schedule::OwnerHost;
 use crate::owner::{
-    OwnerError, backup, cleanup, feedback, graph_fs, imports, location, off_record, pack_drift,
-    persona, runs,
+    OwnerError, backup, cleanup, feedback, graph_fs, healer, imports, location, off_record,
+    pack_drift, persona, runs, secrets,
 };
 use crate::server::SyncServer;
 
@@ -43,6 +45,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/backups", get(list_backups).post(take_backup))
         .route("/backups/rehearse", post(rehearse_backup))
         .route("/secret-scan", get(secret_scan).post(set_secret_scan))
+        .route("/secrets/rotate", post(rotate_secret))
+        .route("/healer/oversight", get(healer_oversight))
+        .route("/healer/failures", get(healer_failures))
+        .route("/healer/failures/drill", get(drill_failure))
         .route("/imports/preview", post(preview_import))
         .route("/imports/approve", post(approve_import))
         .route("/imports/decline", post(decline_import))
@@ -143,6 +149,13 @@ fn owner_error(error: OwnerError) -> ApiError {
             oneiron::ErrorKind::ConsentOwnerNotAuthenticated => ApiError::forbidden_scope("owner"),
             oneiron::ErrorKind::ConsentApproveOnceSpent => {
                 ApiError::invalid_state(Some("already_decided"))
+            }
+            oneiron::ErrorKind::SecretRefNotFound => ApiError::not_found("secret", None),
+            oneiron::ErrorKind::SecretCustodyNotActive => {
+                ApiError::invalid_state(Some("secret_not_active"))
+            }
+            oneiron::ErrorKind::ManifestWidensFloor => {
+                ApiError::invalid_state(Some("secret_wider_than_floor"))
             }
             _ => core_engine_error("owner action failed", *error),
         },
@@ -266,6 +279,56 @@ async fn set_secret_scan(
     })
     .await?;
     Ok(Json(receipt))
+}
+
+/// The body is read by `RotateSecret::read`, not `Json`: the extractor's
+/// body copy and parser scratch would outlive the request unwiped.
+async fn rotate_secret(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    body: Body,
+) -> OwnerReply<secrets::Rotated> {
+    let owner = owner(&auth, &server)?;
+    if !has_json_content_type(&headers) {
+        return Err(ApiError::bad_request("invalid JSON request body", None).into());
+    }
+    let request = secrets::RotateSecret::read(body)
+        .await
+        .map_err(owner_error)?;
+    let rotated = blocking(move || secrets::rotate(server.vault(), &owner, &request)).await?;
+    Ok(Json(rotated))
+}
+
+async fn healer_oversight(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<Vec<healer::OversightRead>> {
+    owner(&auth, &server)?;
+    Ok(Json(
+        blocking(move || healer::oversight(server.vault())).await?,
+    ))
+}
+
+async fn healer_failures(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<Vec<healer::FailureGroup>> {
+    owner(&auth, &server)?;
+    Ok(Json(
+        blocking(move || healer::failure_groups(server.vault())).await?,
+    ))
+}
+
+async fn drill_failure(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<healer::DrillQuery>, QueryRejection>,
+) -> OwnerReply<healer::FailureDrill> {
+    let owner = owner(&auth, &server)?;
+    let query = query_params(query)?;
+    let drill = blocking(move || healer::drill(server.vault(), &owner, query)).await?;
+    Ok(Json(drill))
 }
 
 async fn preview_import(

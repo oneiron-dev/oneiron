@@ -3,12 +3,14 @@
 //! Step two: `EmptyContext`/`memories` when retrieval is skipped: today `memories: None`; the tail always renders MEMORIES once the renderer lands.
 
 mod cursor;
+mod history;
 mod memories;
 mod prefix;
 mod session;
 mod standing;
 
 pub(crate) use cursor::*;
+pub(crate) use history::*;
 pub(crate) use memories::*;
 pub(crate) use prefix::*;
 pub(crate) use session::*;
@@ -60,6 +62,10 @@ pub(crate) struct ContextBoardRequest {
     /// Append a current describe(self) card to the tail of an existing run.
     #[serde(default)]
     describe_self: bool,
+    /// The TURN this board is assembled for: its board joins the caller's
+    /// board history (ARCH-0067 §3). Needs `core:write`.
+    #[serde(default)]
+    turn: Option<ContextBoardTurnControls>,
 }
 
 /// The assembled context for one turn.
@@ -104,6 +110,9 @@ pub(crate) struct ContextBoardResponse {
     self_brief: Option<oneiron::context_board::PlacedSelfBrief>,
     /// This turn's capability agent candidates.
     agents: Vec<String>,
+    /// What recording the named TURN's board wrote; absent without `turn`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    board_turn: Option<ContextBoardTurnRecord>,
 }
 
 /// Session prefix: API level, entity counts by numeric type, latest activity.
@@ -184,7 +193,9 @@ pub(crate) struct ContextBoardBudget {
         (status = 200, description = "Context board hydrated.", body = ContextBoardResponse, content_type = "application/json"),
         (status = 400, description = "Malformed context-board request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read, or core:write when naming a turn.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "The named turn is not readable.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "The named turn's board is already recorded, the turn is another actor's, or a selected document is not readable.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Context-board hydration failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -196,6 +207,7 @@ pub(crate) async fn context_board_hydrate(
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let mut req = json_payload(payload)?;
+    let board_turn = board_turn_target(&server, &auth, req.turn.as_ref())?;
     let standing = standing::standing_prefix(&server, &auth, req.standing.as_ref()).await?;
     if let Some(prefix) = &standing
         && let Some(retrieval) = &mut req.retrieval
@@ -366,7 +378,7 @@ pub(crate) async fn context_board_hydrate(
     } else {
         None
     };
-    let response = ContextBoardResponse {
+    let mut response = ContextBoardResponse {
         standing,
         session,
         notifications,
@@ -380,18 +392,22 @@ pub(crate) async fn context_board_hydrate(
         skills,
         agents,
         self_brief,
+        board_turn: None,
     };
-    if let Some(prefix) = &response.standing {
-        let wire = serde_json::to_string(&response).map_err(|_| {
-            crate::error::ApiError::internal_server_error("context serialization failed")
-        })?;
-        if oneiron::count_context_pack_tokens(&wire) > prefix.total_tokens {
-            return Err(crate::error::ApiError::bad_request(
-                "session prefix and retrieval exceed the token budget",
-                Some("standing.token_budget"),
-            )
-            .into());
+    match board_turn {
+        // The turn's record is part of the response the budget counts, so the
+        // check runs inside the recording transaction, with the real record:
+        // a refused hydration leaves the turn free to record its board.
+        Some(target) => {
+            record_board_turn(
+                &server,
+                &read,
+                target,
+                &mut response,
+                within_standing_budget,
+            )?;
         }
+        None => within_standing_budget(&response)?,
     }
     let prefix_committed = staged_prefix.is_some();
     if let Some((key, render, epoch)) = staged_prefix {
@@ -413,6 +429,23 @@ pub(crate) async fn context_board_hydrate(
         }
     }
     Ok(Json(response))
+}
+
+/// A standing session's response must fit its whole token budget.
+fn within_standing_budget(response: &ContextBoardResponse) -> Result<(), crate::error::ApiError> {
+    let Some(prefix) = &response.standing else {
+        return Ok(());
+    };
+    let wire = serde_json::to_string(response).map_err(|_| {
+        crate::error::ApiError::internal_server_error("context serialization failed")
+    })?;
+    if oneiron::count_context_pack_tokens(&wire) > prefix.total_tokens {
+        return Err(crate::error::ApiError::bad_request(
+            "session prefix and retrieval exceed the token budget",
+            Some("standing.token_budget"),
+        ));
+    }
+    Ok(())
 }
 
 /// The authenticated SDK describe(self) path uses the same run snapshot and

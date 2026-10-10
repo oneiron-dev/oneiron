@@ -12,7 +12,7 @@ use super::conflict::{
 use super::wake_plan::PreparedWake;
 
 mod prior;
-mod signals;
+pub(super) mod signals;
 mod write;
 use super::partition::ConsolidationPartitionKey;
 use super::provenance::{ConsolidationSink, PromotionCandidate};
