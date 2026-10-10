@@ -5,7 +5,7 @@ mod records;
 mod routing;
 mod speech_identity;
 
-pub(crate) use self::compaction::ExecutorOutputSpan;
+pub(crate) use self::compaction::{CodeRunCompactionCoverage, ExecutorOutputSpan};
 pub use self::records::CodeRunModelHealCount;
 pub(crate) use self::routing::ExecutorStorage;
 #[cfg(test)]

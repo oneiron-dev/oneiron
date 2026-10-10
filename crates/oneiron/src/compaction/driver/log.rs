@@ -34,7 +34,7 @@ impl CompactionDriver {
     /// [`Self::request_for`] for a host-numbered log (an executor run): the
     /// window stops at the recorded watermark's turn, `pins` occur verbatim
     /// in it, and `sources` is the whole `DerivedFrom` set, refused above
-    /// [`super::EPOCH_SUMMARY_MAX_SOURCES`] rather than cut.
+    /// [`crate::compaction::EPOCH_SUMMARY_MAX_SOURCES`] rather than cut.
     pub fn request_for_log(
         &mut self,
         vault: &Vault,
@@ -66,7 +66,7 @@ impl CompactionDriver {
                 "a verbatim pin does not occur in the window",
             ));
         }
-        if sources.len() > super::EPOCH_SUMMARY_MAX_SOURCES {
+        if sources.len() > crate::compaction::EPOCH_SUMMARY_MAX_SOURCES {
             return Err(Error::InvariantViolation(
                 "compaction window names more sources than one summary may derive from",
             ));

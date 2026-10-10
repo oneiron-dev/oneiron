@@ -45,7 +45,7 @@ pub use self::replay::{
 };
 pub use self::storage::CodeRunModelHealCount;
 pub(crate) use self::storage::{
-    ExecutorOutputSpan, ExecutorStorage, executor_compaction_session_id,
+    CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, executor_compaction_session_id,
     executor_speech_turn_id_for_run,
 };
 // ONE-1686: a canonical run's transcript identity is DERIVED from its run ref,

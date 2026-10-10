@@ -493,9 +493,9 @@ pub(super) fn mint_epoch_summary_with(
             request
                 .window
                 .iter()
-                .map(|message| &message.turn_id)
+                .map(|message| message.turn_id)
                 .filter(|_| request.folds_board_turns)
-                .chain(&request.sources),
+                .chain(request.sources.iter().copied()),
         )?;
         let prior = prior_epoch_in_txn(&vault.store, &*wtxn, session_ref)?;
         validate_epoch_boundary(prior, turn_start)?;
@@ -576,15 +576,15 @@ pub(super) fn mint_epoch_summary_with(
 /// from live registry state INSIDE the applying transaction, which is the
 /// state the transaction applies against — the same TOCTOU-free discipline
 /// the K4 guard uses.
-fn refuse_overlay_derived_mint<'a>(
+fn refuse_overlay_derived_mint(
     store: &Store,
-    covered: impl Iterator<Item = &'a EntityId>,
+    covered: impl Iterator<Item = EntityId>,
 ) -> Result<()> {
     if !store.off_record_sessions.has_overlay_entities()? {
         return Ok(());
     }
     for id in covered {
-        if store.off_record_sessions.contains_entity(id)? {
+        if store.off_record_sessions.contains_entity(&id)? {
             return Err(Error::OffRecord(
                 OffRecordError::OffRecordTaintedBaseWrite {
                     entity_ref: id.to_hex(),
