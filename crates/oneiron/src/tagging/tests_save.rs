@@ -520,12 +520,12 @@ fn held_tags_are_saved_on_the_messages_they_were_read_from() {
     let landed = sent(
         "7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d",
         &[
-            (0xa1, true, "Ada called"),
-            (0xa2, false, "about Mirela"),
-            (0xa3, true, ""),
-            (0xa4, true, "Mirela wrote back"),
-            (0xa5, true, "Ottilie answered"),
-            (0xa6, true, "Bruno too"),
+            (0xc1, true, "Ada called"),
+            (0xc2, false, "about Mirela"),
+            (0xc3, true, ""),
+            (0xc4, true, "Mirela wrote back"),
+            (0xc5, true, "Ottilie answered"),
+            (0xc6, true, "Bruno too"),
         ],
     );
     let held = EncoderOutput {
@@ -547,7 +547,7 @@ fn held_tags_are_saved_on_the_messages_they_were_read_from() {
             .iter()
             .map(|mention| (mention.message, mention.start, mention.end))
             .collect::<Vec<_>>(),
-        vec![(message(0xa1), 0, 3), (message(0xa4), 0, 6)]
+        vec![(message(0xc1), 0, 3), (message(0xc4), 0, 6)]
     );
     assert_eq!(found(&vault, "Ada"), vec![(turn, 0)]);
     assert_eq!(found(&vault, "Mirela"), vec![(turn, 1)]);
