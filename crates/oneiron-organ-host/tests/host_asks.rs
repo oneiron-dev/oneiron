@@ -395,15 +395,17 @@ fn serve(to: Option<String>) -> (u16, std::sync::Arc<Mutex<Vec<String>>>) {
     (port, asked)
 }
 
+/// A fetch ask as an organ sends it: named fields, enums by name.
 fn fetch(url: &str) -> rmpv::Value {
-    rmpv::ext::to_value(FetchAsk {
+    let bytes = rmp_serde::to_vec_named(&FetchAsk {
         purpose: "test".into(),
         method: FetchMethod::Get,
         url: url.into(),
         content_type: None,
         body: None,
     })
-    .expect("fetch value")
+    .expect("fetch encodes");
+    rmpv::decode::read_value(&mut bytes.as_slice()).expect("fetch value")
 }
 
 #[test]
