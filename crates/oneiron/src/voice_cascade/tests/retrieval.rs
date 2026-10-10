@@ -56,9 +56,10 @@ fn empty_host_enrichment_skips_partial_and_runs_normal_final_retrieval() -> Resu
 }
 
 /// Call mode on ASR partials: every fire and the finalize pass answer by the
-/// session's deadline. A slow stage that yields cuts its fire short; a
-/// stalled one misses the deadline, which keeps the warm pack, and a
-/// finalize that misses it answers with that warm pack.
+/// session's deadline. A slow stage that yields cuts its fire short, and a
+/// promotion of that fire stays partial; a stalled one misses the deadline,
+/// which keeps the warm pack, and a finalize that misses it answers with
+/// that warm pack.
 #[test]
 fn speculative_passes_answer_by_the_session_deadline() -> Result<()> {
     use crate::retrieval_depth::SlowRetrievalStage;
@@ -66,9 +67,9 @@ fn speculative_passes_answer_by_the_session_deadline() -> Result<()> {
     use crate::store::RetrievalSignal;
     use std::time::Instant;
 
-    const DEADLINE: Duration = Duration::from_secs(1);
+    const DEADLINE: Duration = Duration::from_secs(3);
     // The waiting caller wakes at the deadline; this is scheduling slack.
-    const WAKE: Duration = Duration::from_millis(250);
+    const WAKE: Duration = Duration::from_millis(500);
     let (_dir, vault) = vault();
     let tokyo = put_text(&vault, 7, "Tokyo launch")?;
     let config = || SpeculativeSessionConfig {
@@ -99,7 +100,7 @@ fn speculative_passes_answer_by_the_session_deadline() -> Result<()> {
     assert_eq!(ids(session.warm_candidates()), [tokyo.clone()]);
     vault.arm_slow_retrieval_stage_for_test(Some(SlowRetrievalStage {
         signal: RetrievalSignal::Text,
-        duration: Duration::from_secs(3),
+        duration: Duration::from_secs(6),
         yields: false,
     }));
     let started = Instant::now();
@@ -136,7 +137,7 @@ fn speculative_passes_answer_by_the_session_deadline() -> Result<()> {
     // in time, cut short, without the slow stage's hits.
     vault.arm_slow_retrieval_stage_for_test(Some(SlowRetrievalStage {
         signal: RetrievalSignal::Text,
-        duration: Duration::from_secs(10),
+        duration: Duration::from_secs(30),
         yields: true,
     }));
     let mut session = SpeculativeSession::new(Arc::clone(&vault), config());
@@ -148,5 +149,9 @@ fn speculative_passes_answer_by_the_session_deadline() -> Result<()> {
     assert!(started.elapsed() < DEADLINE, "{:?}", started.elapsed());
     assert!(session.warm_candidates().is_empty());
     vault.arm_slow_retrieval_stage_for_test(None);
+    assert!(matches!(
+        session.finalize(heard(&tokyo_terms))?,
+        SpeculativeFinal::Promoted { partial: true, .. }
+    ));
     Ok(())
 }

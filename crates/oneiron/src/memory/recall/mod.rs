@@ -900,13 +900,8 @@ impl Memory<'_> {
         };
 
         let claims_returned = items.iter().filter(|item| item.kind == "CLAIM").count() as u64;
-        Ok(MemoryPack {
-            scope_honesty: self.out_of_scope_worlds(
-                &census,
-                &mut receipt,
-                &worlds,
-                execution.deadline,
-            )?,
+        let mut pack = MemoryPack {
+            scope_honesty: ScopeHonesty::default(),
             retrieval_meta: RetrievalMeta {
                 quality: retrieval_quality.quality,
                 degradation: retrieval_quality.degradation,
@@ -924,7 +919,18 @@ impl Memory<'_> {
             pack_version: MEMORY_PACK_VERSION,
             rendered,
             narrowing: Box::new(receipt),
-        })
+        };
+        if let Some(on_cut) = execution.on_cut {
+            // The items are ready. A door that stops waiting during the
+            // census answers with them, the census marked unfinished.
+            let mut ready = pack.clone();
+            ready.scope_honesty.census_capped = true;
+            ready.retrieval_meta.partial = true;
+            on_cut(ready);
+        }
+        pack.scope_honesty =
+            self.out_of_scope_worlds(&census, &mut pack.narrowing, &worlds, execution.deadline)?;
+        Ok(pack)
     }
 }
 

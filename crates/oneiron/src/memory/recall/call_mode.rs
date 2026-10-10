@@ -99,4 +99,19 @@ impl crate::memory::Memory<'_> {
     pub fn call_mode_deadline(&self) -> Duration {
         self.vault.call_mode_deadline()
     }
+
+    /// The pack a recall with `scope` answers with when its door stops
+    /// waiting before retrieval ran: no items, marked partial, under the
+    /// receipt the recall reads with.
+    pub(crate) fn recall_cut_pack(
+        &self,
+        scope: &super::RecallScope,
+    ) -> MemoryResult<super::MemoryPack> {
+        let worlds = self.recall_worlds(scope)?;
+        let receipt = self
+            .read_lane(crate::claim::ClaimReadStatus::Surfaceable)?
+            .within_worlds(worlds)
+            .read_receipt(None, 0)?;
+        Ok(super::cut_pack(&receipt, None))
+    }
 }

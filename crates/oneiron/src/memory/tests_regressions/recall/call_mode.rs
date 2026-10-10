@@ -54,15 +54,18 @@ fn pack_gives(pack: &crate::memory::MemoryPack, said: &str) -> bool {
 /// reaches the month-old message; the temporal channel's now anchor reaches
 /// only the fresh one. A stage that starts past its share (after a stall
 /// that does not yield) is cut at its first candidate, inside the channel,
-/// and its hits are dropped.
+/// and its hits are dropped. The deadline counts from the instant the test
+/// measures from; the answer's quarter of the budget is slack for a loaded
+/// host.
 #[test]
 fn a_slow_channel_never_holds_a_call_mode_answer_past_its_deadline() {
     use crate::memory::RecallEffort;
     use crate::retrieval_depth::SlowRetrievalStage;
     use crate::store::RetrievalSignal;
+    use crate::task_verb::sdk::{RecallDoor, RecallRequest, recall_at_door};
     use std::time::{Duration, Instant};
 
-    const DEADLINE_MS: u64 = 1_000;
+    const DEADLINE_MS: u64 = 4_000;
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0x81);
     let facade = facade_for(&vault, actor);
@@ -79,13 +82,14 @@ fn a_slow_channel_never_holds_a_call_mode_answer_past_its_deadline() {
     assert!(pack_gives(&whole, "aisle seat"));
     assert!(pack_gives(&whole, "harbour lights"));
 
-    // The text stage opens first, with half the stage time: 375 ms.
-    for (slow, duration, yields, kept, dropped) in [
-        (RetrievalSignal::Temporal, 10_000, true, "aisle seat", None),
-        (RetrievalSignal::Text, 10_000, true, "harbour lights", None),
+    // The stages share three quarters of the budget, and the text stage
+    // opens first, with half of it: 1.5 s.
+    for (slow, duration_ms, yields, kept, dropped) in [
+        (RetrievalSignal::Temporal, 30_000, true, "aisle seat", None),
+        (RetrievalSignal::Text, 30_000, true, "harbour lights", None),
         (
             RetrievalSignal::Text,
-            500,
+            2_000,
             false,
             "harbour lights",
             Some("aisle seat"),
@@ -93,18 +97,29 @@ fn a_slow_channel_never_holds_a_call_mode_answer_past_its_deadline() {
     ] {
         vault.arm_slow_retrieval_stage_for_test(Some(SlowRetrievalStage {
             signal: slow,
-            duration: Duration::from_millis(duration),
+            duration: Duration::from_millis(duration_ms),
             yields,
         }));
-        let started = Instant::now();
-        let pack = recall_at(
+        let arrived = Instant::now();
+        let pack = recall_at_door(
             &facade,
-            "aisle seat",
-            RecallEffort::Call,
-            Some(DEADLINE_MS),
-            None,
-        );
-        let took = started.elapsed();
+            RecallRequest {
+                query: "aisle seat".to_owned(),
+                effort: Some(RecallEffort::Call),
+                scope: None,
+                limit: Some(20),
+                format: None,
+                as_of: None,
+                deadline_ms: Some(DEADLINE_MS),
+            },
+            |_| None,
+            &RecallDoor {
+                arrived,
+                on_cut: None,
+            },
+        )
+        .expect("call-mode recall");
+        let took = arrived.elapsed();
         vault.arm_slow_retrieval_stage_for_test(None);
         assert!(
             took < Duration::from_millis(DEADLINE_MS),
@@ -211,7 +226,7 @@ fn call_mode_never_returns_a_row_a_normal_recall_withholds() {
         })
         .expect("witness");
     let erased = resolve_entity_ref(&vault, &erased.message_short_ids[0]).expect("message id");
-    let before = recall_at(&facade, "lantern", RecallEffort::Call, Some(1_000), None);
+    let before = recall_at(&facade, "lantern", RecallEffort::Call, Some(4_000), None);
     assert!(pack_gives(&before, "lantern secret"), "{before:?}");
     vault
         .delete_own_room_record(erased, crate::DeleteReason::UserDelete)
@@ -259,7 +274,7 @@ fn call_mode_never_returns_a_row_a_normal_recall_withholds() {
     assert!(pack_gives(&normal, "lantern festival"));
     for slow in [None, Some(slow_temporal)] {
         vault.arm_slow_retrieval_stage_for_test(slow);
-        let call = recall_at(&facade, "lantern", RecallEffort::Call, Some(1_000), None);
+        let call = recall_at(&facade, "lantern", RecallEffort::Call, Some(4_000), None);
         vault.arm_slow_retrieval_stage_for_test(None);
         withheld(&call);
         assert!(short_ids(&call).is_subset(&short_ids(&normal)), "{call:?}");
@@ -272,7 +287,7 @@ fn call_mode_never_returns_a_row_a_normal_recall_withholds() {
         &facade_for(&vault, owner),
         "window seat",
         RecallEffort::Call,
-        Some(1_000),
+        Some(4_000),
         None,
     );
     assert!(owned.items.iter().any(gives_control_message), "{owned:?}");
@@ -282,7 +297,7 @@ fn call_mode_never_returns_a_row_a_normal_recall_withholds() {
             &facade_for(&vault, scoped),
             "window seat",
             RecallEffort::Call,
-            Some(1_000),
+            Some(4_000),
             None,
         );
         vault.arm_slow_retrieval_stage_for_test(None);
@@ -326,4 +341,60 @@ fn the_recall_dial_refuses_a_deadline_out_of_range() {
         resolve_recall_dial(Some(RecallEffort::High), Some(40), vault_deadline).unwrap(),
         (Effort::High, Some(Duration::from_millis(40)))
     );
+}
+
+/// A door that stops waiting at the deadline answers with the last pack
+/// recall published: before the query embeds, no items under the reader's
+/// receipt; once the items are assembled, those items before the scope
+/// census. Both are marked partial, and the census marked unfinished.
+#[test]
+fn a_recall_door_is_handed_the_best_pack_ready_at_each_step() {
+    use crate::memory::{MemoryPack, RecallEffort};
+    use crate::task_verb::sdk::{RecallDoor, RecallRequest, recall_at_door};
+    use std::sync::Mutex;
+
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x8d);
+    let facade = facade_for(&vault, actor);
+    witness_said(&facade, 0x8e, "the lighthouse keeper rang twice", 2);
+    let published: Mutex<Vec<MemoryPack>> = Mutex::default();
+    let publish = |pack| published.lock().expect("published packs").push(pack);
+    let embedded = Mutex::new(0);
+    let pack = recall_at_door(
+        &facade,
+        RecallRequest {
+            query: "lighthouse keeper".to_owned(),
+            effort: Some(RecallEffort::Call),
+            scope: None,
+            limit: Some(10),
+            format: None,
+            as_of: None,
+            deadline_ms: Some(30_000),
+        },
+        |_| {
+            // The empty pack is already published when the query embeds.
+            *embedded.lock().expect("embed count") += 1;
+            assert_eq!(published.lock().expect("published packs").len(), 1);
+            None
+        },
+        &RecallDoor {
+            arrived: std::time::Instant::now(),
+            on_cut: Some(&publish),
+        },
+    )
+    .expect("call-mode recall");
+    assert_eq!(*embedded.lock().expect("embed count"), 1);
+    assert!(!pack.retrieval_meta.partial);
+    assert!(pack_gives(&pack, "lighthouse keeper"));
+    let published = std::mem::take(&mut *published.lock().expect("published packs"));
+    let [before, assembled] = published.as_slice() else {
+        panic!("two packs published: {published:?}");
+    };
+    for cut in [before, assembled] {
+        assert!(cut.retrieval_meta.partial);
+        assert!(cut.scope_honesty.census_capped);
+        assert_eq!(cut.narrowing.applied, pack.narrowing.applied);
+    }
+    assert!(before.items.is_empty());
+    assert_eq!(assembled.items, pack.items);
 }

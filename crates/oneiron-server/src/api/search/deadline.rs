@@ -21,7 +21,7 @@ pub(super) struct SearchPage {
 }
 
 /// Reads and projects one page.
-fn search_page(
+pub(super) fn search_page(
     server: &SyncServer,
     page: SearchPage,
     deadline: Option<&RetrievalDeadline>,
@@ -50,10 +50,7 @@ fn search_page(
 
 /// The page a search answers with when its deadline came due before its read
 /// finished: no hits, `meta.partial`, under the reader's receipt.
-pub(super) fn cut_page(
-    server: &SyncServer,
-    count_mode: CountMode,
-) -> Result<ScopedSearchResponse, ApiError> {
+fn cut_page(server: &SyncServer, count_mode: CountMode) -> Result<ScopedSearchResponse, ApiError> {
     let receipt = scoped_read_for_legacy_api(server)?
         .read_receipt(None, 0)
         .map_err(|_| ApiError::internal_server_error("read receipt failed"))?;
@@ -66,29 +63,57 @@ pub(super) fn cut_page(
 }
 
 /// Runs a raw search page. With no deadline it runs inline, as it always
-/// has. With one it reads on the blocking pool under that hard deadline,
-/// counted from `arrived`, and the door answers when it comes due: with the
-/// page if the read finished, else with [`cut_page`].
+/// has; with one, [`read_by_deadline`] reads it.
 pub(super) async fn search_page_by_deadline(
     server: Arc<SyncServer>,
     arrived: Instant,
     budget: Option<Duration>,
     page: SearchPage,
 ) -> Result<ScopedSearchResponse, ApiError> {
-    let Some(budget) = budget else {
-        return search_page(&server, page, None);
-    };
-    let count_mode = page.count_mode;
-    let reader = Arc::clone(&server);
+    match budget {
+        None => search_page(&server, page, None),
+        Some(budget) => {
+            let count_mode = page.count_mode;
+            read_by_deadline(
+                server,
+                arrived,
+                budget,
+                count_mode,
+                move |server, deadline| search_page(server, page, Some(deadline)),
+            )
+            .await
+        }
+    }
+}
+
+/// Runs `read` on the blocking pool under the hard deadline `budget`,
+/// counted from `arrived`. The read first publishes [`cut_page`], off the
+/// async thread because the reader's receipt reads the store, and the door
+/// answers when the deadline comes due: with the page if the read finished,
+/// else with the cut page.
+pub(super) async fn read_by_deadline(
+    server: Arc<SyncServer>,
+    arrived: Instant,
+    budget: Duration,
+    count_mode: CountMode,
+    read: impl FnOnce(&SyncServer, &RetrievalDeadline) -> Result<ScopedSearchResponse, ApiError>
+    + Send
+    + 'static,
+) -> Result<ScopedSearchResponse, ApiError> {
+    let (publish, ready) = std::sync::mpsc::sync_channel(1);
     let task = tokio::task::spawn_blocking(move || {
         let deadline = RetrievalDeadline::hard(arrived, budget);
-        search_page(&reader, page, Some(&deadline))
+        // The door reads at most one; a closed slot is moot.
+        let _ = publish.try_send(cut_page(&server, count_mode)?);
+        read(&server, &deadline)
     });
     let due = tokio::time::Instant::from_std(arrived + budget);
     match tokio::time::timeout_at(due, task).await {
         Ok(joined) => {
             joined.unwrap_or_else(|_| Err(ApiError::internal_server_error("search did not finish")))
         }
-        Err(_) => cut_page(&server, count_mode),
+        Err(_) => ready.try_recv().map_err(|_| {
+            ApiError::internal_server_error("search reached its deadline before it could read")
+        }),
     }
 }

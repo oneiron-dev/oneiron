@@ -33,7 +33,9 @@ use utoipa::IntoParams;
 use utoipa::ToSchema;
 
 mod deadline;
-use deadline::{SearchPage, cut_page, search_deadline, search_page_by_deadline};
+use deadline::{
+    SearchPage, read_by_deadline, search_deadline, search_page, search_page_by_deadline,
+};
 
 /// Search responses always preserve each executed read receipt.
 #[derive(Serialize)]
@@ -657,38 +659,49 @@ pub(crate) async fn search_semantic(
     let descriptor = server
         .embedder_descriptor()
         .ok_or_else(ApiError::embedder_unavailable)?;
-    // Under a deadline the embedding spends the same budget: one still
-    // running when it comes due is not waited for, and the page comes back
-    // empty and partial.
     let count_mode = params.count_mode.for_search_response();
-    let embedding = server.embed_query_off_runtime(text.to_owned());
-    let embedding = match deadline {
-        Some(budget) => {
-            let due = tokio::time::Instant::from_std(arrived + budget);
-            tokio::time::timeout_at(due, embedding).await.ok()
+    let (depth, view, page_limit) = (
+        params.depth,
+        params.view.unwrap_or(View::Summary),
+        params.limit,
+    );
+    let page = move |embedding, question| SearchPage {
+        probe: SearchProbe::Vector {
+            embedding,
+            // Semantic search HAS the question, so a deep read over it needs no
+            // second argument from the caller: the text that produced the
+            // probe is the text the decomposition reads.
+            query_text: Some(question),
+        },
+        depth,
+        view,
+        count_mode,
+        page_limit,
+    };
+    let question = text.to_owned();
+    let page = match deadline {
+        None => {
+            let embedding = server
+                .embed_query_off_runtime(question.clone())
+                .await
+                .map_err(embed_query_error)?;
+            search_page(&server, page(embedding, question), None)?
         }
-        None => Some(embedding.await),
-    }
-    .transpose()
-    .map_err(embed_query_error)?;
-
-    let page = match embedding {
-        None => cut_page(&server, count_mode)?,
-        Some(embedding) => {
-            let page = SearchPage {
-                probe: SearchProbe::Vector {
-                    embedding,
-                    // Semantic search HAS the question, so a deep read over it needs no
-                    // second argument from the caller: the text that produced the
-                    // probe is the text the decomposition reads.
-                    query_text: Some(text.to_owned()),
-                },
-                depth: params.depth,
-                view: params.view.unwrap_or(View::Summary),
+        // Under a deadline the embedding spends the same budget: it runs
+        // inside the read, so one still running when the deadline comes due
+        // leaves the page empty and partial.
+        Some(budget) => {
+            read_by_deadline(
+                Arc::clone(&server),
+                arrived,
+                budget,
                 count_mode,
-                page_limit: params.limit,
-            };
-            search_page_by_deadline(Arc::clone(&server), arrived, deadline, page).await?
+                move |server, deadline| {
+                    let embedding = server.embed_query(&question).map_err(embed_query_error)?;
+                    search_page(server, page(embedding, question), Some(deadline))
+                },
+            )
+            .await?
         }
     };
     let mut response = serde_json::to_value(page)

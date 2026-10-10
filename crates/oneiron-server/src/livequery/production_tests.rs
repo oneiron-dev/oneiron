@@ -2304,3 +2304,43 @@ async fn rpc_recall_takes_call_mode_and_refuses_a_deadline_out_of_range() {
         );
     }
 }
+
+/// The read RPC is synchronous, yet a stage that never yields cannot hold a
+/// call-mode recall past its deadline: the read runs on a thread of its own,
+/// and at the deadline the RPC answers with the pack recall published.
+#[tokio::test]
+async fn rpc_call_mode_recall_answers_by_its_deadline_past_a_stalled_stage() {
+    use oneiron::retrieval_depth::SlowRetrievalStage;
+    use oneiron::store::RetrievalSignal;
+    use std::time::{Duration, Instant};
+
+    const DEADLINE_MS: u64 = 300;
+    let (_dir, server) = server();
+    let auth = auth(&server, "human");
+    server
+        .vault()
+        .arm_slow_retrieval_stage_for_test(Some(SlowRetrievalStage {
+            signal: RetrievalSignal::Text,
+            duration: Duration::from_secs(3),
+            yields: false,
+        }));
+    let started = Instant::now();
+    let reply = rpc(
+        &server,
+        &auth,
+        "recall",
+        json!({"query":"solar","effort":"call","deadline_ms":DEADLINE_MS}),
+    );
+    let took = started.elapsed();
+    server.vault().arm_slow_retrieval_stage_for_test(None);
+    assert!(reply.get("error").is_none(), "{reply}");
+    assert!(
+        took < Duration::from_millis(DEADLINE_MS + 1_000),
+        "the stalled stage held the answer {took:?}"
+    );
+    assert_eq!(reply["result"]["items"], json!([]), "{reply}");
+    assert_eq!(
+        reply["result"]["retrieval_meta"]["partial"], true,
+        "{reply}"
+    );
+}

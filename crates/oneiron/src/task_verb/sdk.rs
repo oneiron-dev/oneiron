@@ -176,7 +176,9 @@ pub struct RecallRequest {
 
 /// When a recall's clock started and what its door does if it stops waiting.
 /// A door that can stop waiting at the deadline (an async server door) starts
-/// the clock when the request arrives and takes the pack `on_cut` receives.
+/// the clock when the request arrives, and answers with the last pack
+/// `on_cut` received: the empty one before the query embeds and retrieval
+/// runs, then the assembled one before the scope census.
 pub struct RecallDoor<'a> {
     pub arrived: std::time::Instant,
     pub on_cut: Option<&'a (dyn Fn(crate::memory::MemoryPack) + Sync)>,
@@ -238,6 +240,11 @@ pub fn recall_at_door(
     )?;
     let deadline =
         budget.map(|budget| crate::retrieval_depth::RetrievalDeadline::hard(door.arrived, budget));
+    if let Some(on_cut) = door.on_cut {
+        // Before the query embeds: a door whose deadline comes due during
+        // the embedding still answers.
+        on_cut(memory.recall_cut_pack(&scope)?);
+    }
     let embedding = embed(&input.query);
     memory.recall_with_execution(
         &input.query,

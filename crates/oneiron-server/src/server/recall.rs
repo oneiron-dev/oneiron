@@ -13,7 +13,7 @@
 //! with the best pack ready, so a slow stage, a writer it waits on or a busy
 //! blocking pool never holds the turn (retrieval hub #call-mode).
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use oneiron::authority::VerifiedSlip;
@@ -57,9 +57,10 @@ impl SyncServer {
     /// makes runs inside that room (ARCH-0067 §8).
     ///
     /// A request with a deadline answers by it whatever the blocking work is
-    /// doing: past it, the door returns the pack recall published before its
-    /// retrieval ran (no items, `partial`, under the reader's receipt), and the
-    /// cut work stops at its next checkpoint.
+    /// doing: past it, the door returns the last pack recall published (before
+    /// retrieval, no items; once assembled, the items before the scope census;
+    /// both `partial`, under the reader's receipt), and the cut work stops at
+    /// its next checkpoint.
     pub(crate) async fn recall_off_runtime(
         self: &Arc<Self>,
         actor: EntityId,
@@ -74,22 +75,16 @@ impl SyncServer {
             input.deadline_ms,
             self.vault.call_mode_deadline(),
         )?;
-        let (cut_sender, cut) = std::sync::mpsc::sync_channel(1);
+        let ready = CutSlot::default();
+        let publish = ready.clone();
         let server = Arc::clone(self);
         let task = tokio::task::spawn_blocking(move || {
-            let publish = move |pack| {
-                // The door reads at most one; a full or closed slot is moot.
-                let _ = cut_sender.try_send(pack);
-            };
+            let publish = move |pack| publish.put(pack);
             let door = RecallDoor {
                 arrived,
                 on_cut: budget.map(|_| &publish as &(dyn Fn(MemoryPack) + Sync)),
             };
-            let memory = server.vault.memory(actor, class);
-            let memory = match &proof {
-                Some(proof) => memory.with_read_proof(proof),
-                None => memory,
-            };
+            let memory = reader(&server.vault, actor, class, proof.as_ref());
             let embed = server.recall_embed(input.effort);
             match room {
                 Some(room) => memory
@@ -104,26 +99,66 @@ impl SyncServer {
                 let due = tokio::time::Instant::from_std(arrived + budget);
                 match tokio::time::timeout_at(due, task).await {
                     Ok(joined) => joined,
-                    Err(_) => {
-                        return cut.try_recv().map_err(|_| {
-                            MemoryError::new(
-                                MEMORY_CODE_INTERNAL,
-                                "recall reached its deadline before it could read",
-                                &["Retry the call, or allow a longer deadline_ms."],
-                            )
-                        });
-                    }
+                    Err(_) => return ready.take(),
                 }
             }
         };
         joined.unwrap_or_else(|error| {
             tracing::warn!(%error, "recall task failed to join");
-            Err(MemoryError::new(
-                MEMORY_CODE_INTERNAL,
-                "recall did not finish",
-                &["Retry the call."],
-            ))
+            Err(recall_did_not_finish())
         })
+    }
+
+    /// [`Self::recall`] for `actor` at a synchronous door (the WebSocket read
+    /// RPC), which has no runtime to stop waiting on. A light recall under a
+    /// deadline (call mode, or light effort with its own `deadline_ms`) reads
+    /// on a thread of its own, and the door waits for it only until the
+    /// answer is due, then answers with the last pack recall published. Above
+    /// light the query embeds on the server's embedder first, so such a
+    /// deadline keeps the engine's cooperative cut.
+    pub(crate) fn recall_at_sync_door(
+        &self,
+        actor: EntityId,
+        class: EdgeActorClass,
+        proof: Option<VerifiedSlip>,
+        input: RecallRequest,
+    ) -> MemoryResult<MemoryPack> {
+        let arrived = Instant::now();
+        let (effort, budget) = oneiron::memory::resolve_recall_dial(
+            input.effort,
+            input.deadline_ms,
+            self.vault.call_mode_deadline(),
+        )?;
+        let Some(budget) = budget.filter(|_| effort == Effort::Light) else {
+            let memory = reader(&self.vault, actor, class, proof.as_ref());
+            return blocking(|| self.recall(&memory, input));
+        };
+        let ready = CutSlot::default();
+        let publish = ready.clone();
+        let vault = Arc::clone(&self.vault);
+        let (sender, answer) = std::sync::mpsc::sync_channel(1);
+        std::thread::Builder::new()
+            .name("oneiron-recall".to_owned())
+            .spawn(move || {
+                let publish = move |pack| publish.put(pack);
+                let door = RecallDoor {
+                    arrived,
+                    on_cut: Some(&publish),
+                };
+                let memory = reader(&vault, actor, class, proof.as_ref());
+                // Light effort embeds no query (ARCH-0044 S6).
+                let answer =
+                    oneiron::task_verb::sdk::recall_at_door(&memory, input, |_| None, &door);
+                // The door may have stopped waiting; a closed slot is moot.
+                let _ = sender.send(answer);
+            })
+            .map_err(|_| recall_did_not_finish())?;
+        let left = (arrived + budget).saturating_duration_since(Instant::now());
+        match blocking(move || answer.recv_timeout(left)) {
+            Ok(answer) => answer,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => ready.take(),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(recall_did_not_finish()),
+        }
     }
 
     /// The query's vector, or `None` when no embedder is serving.
@@ -138,6 +173,57 @@ impl SyncServer {
             }
         }
     }
+}
+
+/// `actor`'s memory facade, reading under the slip it presented.
+fn reader<'a>(
+    vault: &'a oneiron::Vault,
+    actor: EntityId,
+    class: EdgeActorClass,
+    proof: Option<&VerifiedSlip>,
+) -> Memory<'a> {
+    let memory = vault.memory(actor, class);
+    match proof {
+        Some(proof) => memory.with_read_proof(proof),
+        None => memory,
+    }
+}
+
+/// The last pack a recall published for its door to answer with when the
+/// deadline comes due; a later pack replaces an earlier one.
+#[derive(Clone, Default)]
+struct CutSlot(Arc<Mutex<Option<MemoryPack>>>);
+
+impl CutSlot {
+    fn put(&self, pack: MemoryPack) {
+        if let Ok(mut slot) = self.0.lock() {
+            *slot = Some(pack);
+        }
+    }
+
+    /// The pack the door answers with at the deadline. The read had not
+    /// started, so there is not even an empty pack under the reader's receipt.
+    fn take(&self) -> MemoryResult<MemoryPack> {
+        self.0
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take())
+            .ok_or_else(|| {
+                MemoryError::new(
+                    MEMORY_CODE_INTERNAL,
+                    "recall reached its deadline before it could read",
+                    &["Retry the call, or allow a longer deadline_ms."],
+                )
+            })
+    }
+}
+
+fn recall_did_not_finish() -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_INTERNAL,
+        "recall did not finish",
+        &["Retry the call."],
+    )
 }
 
 /// Runs blocking work from a synchronous caller that may sit on a runtime

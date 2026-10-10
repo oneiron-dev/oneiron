@@ -105,9 +105,12 @@ impl SpeculativeRetrievalBridge {
             .ok_or_else(|| invalid("no open utterance"))?;
         let decision = open.session.observe_partial(as_partial(text, &enriched))?;
         let context = match &decision {
-            SpeculativeFireDecision::Fired { run_id, .. } => {
-                Some(project(open.session.warm_candidates(), *run_id, false))
-            }
+            SpeculativeFireDecision::Fired { run_id, partial } => Some(project(
+                open.session.warm_candidates(),
+                *run_id,
+                false,
+                *partial,
+            )),
             _ => None,
         };
         // Retrieval/enrichment errors leave the revision retryable, just as an
@@ -132,10 +135,17 @@ impl SpeculativeRetrievalBridge {
             .take()
             .ok_or_else(|| invalid("no open utterance"))?;
         match open.session.finalize(as_partial(text, &enriched))? {
-            SpeculativeFinal::Promoted { scores, run_id } => Ok(project(&scores, run_id, true)),
-            SpeculativeFinal::Finalized { scores, run_id, .. } => {
-                Ok(project(&scores, run_id, false))
-            }
+            SpeculativeFinal::Promoted {
+                scores,
+                run_id,
+                partial,
+            } => Ok(project(&scores, run_id, true, partial)),
+            SpeculativeFinal::Finalized {
+                scores,
+                run_id,
+                partial,
+                ..
+            } => Ok(project(&scores, run_id, false, partial)),
         }
     }
 
@@ -220,11 +230,13 @@ fn project(
     scores: &[ScoredEntity],
     run_id: Option<RetrievalRunId>,
     promoted: bool,
+    partial: bool,
 ) -> RetrievalContext {
     RetrievalContext {
         result_refs: scores.iter().map(|score| score.id.to_hex()).collect(),
         promoted,
         run_id: run_id.map(RetrievalRunId::to_hex),
+        partial,
     }
 }
 

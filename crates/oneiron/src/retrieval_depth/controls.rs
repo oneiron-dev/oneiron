@@ -185,8 +185,10 @@ pub struct RecallExecution<'a> {
     /// Unix seconds the query's time words resolve against (`yesterday`
     /// is the day before it), and the clock recency ages from. `None` is now.
     pub as_of: Option<u64>,
-    /// Receives, before retrieval runs, the pack this recall answers with if
-    /// its door stops waiting at the deadline: no items, marked partial,
-    /// under the reader's own read receipt.
+    /// Receives each pack this recall answers with if its door stops waiting
+    /// at the deadline, the later replacing the earlier: before retrieval
+    /// runs, no items under the reader's own read receipt; once the items are
+    /// assembled, those items before the scope census. Both are marked
+    /// partial.
     pub on_cut: Option<&'a (dyn Fn(crate::memory::MemoryPack) + Sync)>,
 }

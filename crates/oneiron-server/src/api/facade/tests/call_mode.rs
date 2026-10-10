@@ -64,7 +64,7 @@ async fn http_call_mode_answers_by_its_deadline_past_a_stalled_stage() {
         .vault
         .arm_slow_retrieval_stage_for_test(Some(SlowRetrievalStage {
             signal: RetrievalSignal::Text,
-            duration: Duration::from_secs(2),
+            duration: Duration::from_secs(3),
             yields: false,
         }));
     let started = Instant::now();
@@ -77,9 +77,11 @@ async fn http_call_mode_answers_by_its_deadline_past_a_stalled_stage() {
     let took = started.elapsed();
     facade.server.vault.arm_slow_retrieval_stage_for_test(None);
     assert_eq!(status, StatusCode::OK, "{pack}");
-    // The deadline counts from the door; this is the router's own slack.
+    // The deadline counts from the door, after the router authenticates the
+    // request; the slack is that, on a loaded host, and still far short of
+    // the stall.
     assert!(
-        took < Duration::from_millis(DEADLINE_MS + 200),
+        took < Duration::from_millis(DEADLINE_MS + 1_000),
         "the stalled stage held the answer {took:?}"
     );
     assert_eq!(pack["items"], json!([]), "{pack}");

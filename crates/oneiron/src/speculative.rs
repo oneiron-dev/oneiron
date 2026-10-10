@@ -120,6 +120,8 @@ pub enum SpeculativeFinal {
     Promoted {
         scores: Vec<ScoredEntity>,
         run_id: Option<RetrievalRunId>,
+        /// The promoted fire's deadline cut it short.
+        partial: bool,
     },
     /// Diff non-empty: one full-quality pass ran; warm candidates absent
     /// from the fresh results were appended (in warm order) up to
@@ -142,6 +144,7 @@ pub enum SpeculativeFinal {
 struct WarmPack {
     scores: Vec<ScoredEntity>,
     run_id: Option<RetrievalRunId>,
+    partial: bool,
 }
 
 /// Per-utterance speculative-retrieval session (see the module docs).
@@ -206,11 +209,12 @@ impl SpeculativeSession {
         self.warm = Some(WarmPack {
             scores: fired.scores,
             run_id: fired.run_id,
+            partial: fired.partial,
         });
         self.last_signature = signature;
         self.fires_used += 1;
         Ok(SpeculativeFireDecision::Fired {
-            run_id: self.warm.as_ref().and_then(|warm| warm.run_id),
+            run_id: fired.run_id,
             partial: fired.partial,
         })
     }
@@ -266,6 +270,7 @@ impl SpeculativeSession {
             return Ok(SpeculativeFinal::Promoted {
                 scores: warm.scores,
                 run_id: warm.run_id,
+                partial: warm.partial,
             });
         }
 
