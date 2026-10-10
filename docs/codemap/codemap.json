@@ -7724,14 +7724,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scoped_read/context_pack_filter.rs",
      "purpose": "Final actor-bound context-pack filtering before rendering and telemetry",
      "surface": {
       "crate-vis": 1,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -7833,6 +7833,7 @@
      "path": "src/claim/scoped_read/reactions.rs",
      "purpose": "Reactions riding along with the conversation records a scoped read admits",
      "surface": {
+      "crate-vis": 1,
       "fn": 3
      }
     },
@@ -7905,7 +7906,7 @@
      "path": "src/claim/scoped_read/visibility.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 1
      }
     },
@@ -10364,7 +10365,8 @@
       "TextIndexOptions",
       "VaultConfig",
       "VaultDataKeyCustody",
-      "VaultPrivacyConfig"
+      "VaultPrivacyConfig",
+      "VectorEvidenceFloors"
      ],
      "path": "src/config.rs",
      "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…",
@@ -10372,10 +10374,10 @@
       "const": 4,
       "crate-vis": 1,
       "enum": 2,
-      "fn": 11,
+      "fn": 12,
       "mod": 1,
       "re-export": 1,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -11961,7 +11963,7 @@
      "path": "src/context_pack/builder/assembly.rs",
      "purpose": "Executing a configured builder: the retrieval run, hydration, validation, and every run_* terminal",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 8
      }
     },
@@ -12000,7 +12002,7 @@
      "path": "src/context_pack/builder/query.rs",
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 59,
       "struct": 1
      }
@@ -16304,7 +16306,7 @@
      "purpose": "—",
      "surface": {
       "const": 6,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 3,
       "fn": 8,
       "struct": 4,
@@ -16329,7 +16331,7 @@
      "path": "src/embed/eligibility.rs",
      "purpose": "Which stored records are embedded, and what the embedder receives for each",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {
@@ -16358,6 +16360,16 @@
      "path": "src/embed/tests/payload.rs",
      "purpose": "Typed CLAIM/SUMMARY inputs at the embedding and egress boundaries",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/turn.rs",
+     "purpose": "The turn doors' half of embedding: a TURN whose text moved owes a vector of its new text, marked with the…",
+     "surface": {
+      "crate-vis": 4
+     }
     },
     {
      "bucket": "s",
@@ -16633,7 +16645,7 @@
      "path": "src/entity_doc/storage.rs",
      "purpose": "Transactional entity-document storage and row-pointer migration",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 1
      }
@@ -22883,7 +22895,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "mod": 2,
       "re-export": 24
      }
@@ -23029,6 +23041,7 @@
      "bucket": "L",
      "kind": "src",
      "notable": [
+      "CitedMessage",
       "Effort",
       "MemoryItem",
       "MemoryPack",
@@ -23041,10 +23054,10 @@
      "purpose": "Recall and `MemoryPack` assembly (S6): recall/recall_in_session and the scope-honesty + provenance plumbing",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 11,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -23389,6 +23402,30 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/tests_regressions/recall/temporal.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/tests_regressions/recall/turn_disclosure.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/tests_regressions/recall/turn_fold.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/tests_regressions/recall/turn_text_revision.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -25884,7 +25921,7 @@
      "path": "src/pipeline/builder/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 39,
       "struct": 1
      }
@@ -26000,7 +26037,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/pipeline/execution/channels/mod.rs",
@@ -26055,6 +26092,16 @@
      "notable": [],
      "path": "src/pipeline/execution/channels/trace_assembly.rs",
      "purpose": "Retrieval-trace assembly: the fork hash and the per-channel, fused, blended, reranked, and final stage records",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/execution/channels/turn_fold.rs",
+     "purpose": "A MESSAGE hit folds into its TURN, so one result never holds both",
      "surface": {
       "crate-vis": 2
      }
@@ -26275,7 +26322,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ActiveWorldSelection",
@@ -34793,7 +34840,7 @@
      "path": "src/tagging/input.rs",
      "purpose": "The tagger's input for one turn: the turn's MESSAGE rows, and the live register's bounded window of earlier…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 9
      }
     },
     {
@@ -34819,7 +34866,7 @@
      "path": "src/tagging/mod.rs",
      "purpose": "The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 6
      }
     },
@@ -36209,7 +36256,7 @@
      "path": "src/vault/entity_revision/idle.rs",
      "purpose": "Idle debounce and atomic BM25/vector/frontier publication",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 6
      }
     },
@@ -36220,7 +36267,7 @@
      "path": "src/vault/entity_revision/mod.rs",
      "purpose": "Per-entity Loro history, exact reads, and idle-only index publication",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 8,
       "re-export": 1
      }
     },
@@ -36251,7 +36298,7 @@
      "path": "src/vault/entity_revision/storage.rs",
      "purpose": "Transactional revision ledger",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 24,
       "fn": 2
      }
     },
@@ -36262,6 +36309,16 @@
      "path": "src/vault/entity_revision/tests.rs",
      "purpose": "Acceptance laws exercise the existing put/index/read engines, not a side store",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/entity_revision/turn_text.rs",
+     "purpose": "A TURN's text revision: the revision that pins the words a turn serves",
+     "surface": {
+      "crate-vis": 5
+     }
     },
     {
      "bucket": "s",
@@ -39002,7 +39059,7 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
     "embed": {
-     "files": 7,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -39247,7 +39304,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 93,
+     "files": 96,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -39331,7 +39388,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 49,
+     "files": 50,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -39737,7 +39794,7 @@
      "purpose": "—"
     },
     "vault": {
-     "files": 24,
+     "files": 25,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39800,9 +39857,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 29,
+   "over_bar": 31,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2404,
+   "source_files": 2410,
    "test_files": 786
   },
   "oneiron-android": {
@@ -44929,6 +44986,7 @@
       "NapiCalendarRange",
       "NapiCalendarSearchRequest",
       "NapiCalendarSel",
+      "NapiCitedMessage",
       "NapiClaimInput",
       "NapiClaimListFilter",
       "NapiClaimView",
@@ -44972,7 +45030,7 @@
      "path": "src/facade/dtos.rs",
      "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
-      "struct": 51
+      "struct": 52
      }
     },
     {
@@ -48728,13 +48786,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/embedder/local/model_manager.rs",
      "purpose": "Where the local model's files live, and how they get there",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -48792,7 +48850,7 @@
      "path": "src/embedder/mod.rs",
      "purpose": "The embedder provider slot",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -48811,6 +48869,14 @@
      "notable": [],
      "path": "src/embedder/tests.rs",
      "purpose": "Provider-slot rows: the numerics contract, and the endpoint provider driven against a real HTTP server",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/embedder/tests/turns.rs",
+     "purpose": "Turns are the embedding unit (ARCH-0004): a witnessed conversation is found by what it meant, through the…",
      "surface": {}
     },
     {
@@ -50710,9 +50776,9 @@
      "purpose": "Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every…"
     },
     "embedder": {
-     "files": 15,
+     "files": 16,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The embedder provider slot"
     },
@@ -50864,10 +50930,10 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 4,
+   "over_bar": 5,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 291,
-   "test_files": 110
+   "test_files": 111
   },
   "oneiron-uniffi": {
    "files": [

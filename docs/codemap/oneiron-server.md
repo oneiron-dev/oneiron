@@ -237,15 +237,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embedder/local/device.rs` | src | s | 3 crate-vis | — | Which candle device the local provider runs on, and at what precision |
 | `src/embedder/local/isq.rs` | src | s | 6 crate-vis | — | Quantise-at-load, in one function |
 | `src/embedder/local/mod.rs` | src | m | 15 crate-vis | — | The `local` provider: the model runs in this process, on candle |
-| `src/embedder/local/model_manager.rs` | src | m | 20 crate-vis | — | Where the local model's files live, and how they get there |
+| `src/embedder/local/model_manager.rs` | src | L | 21 crate-vis | — | Where the local model's files live, and how they get there |
 | `src/embedder/local/prompts.rs` | src | s | 3 crate-vis | — | What a query and a document carry before their text, read from the checkpoint's own… |
 | `src/embedder/local/qwen3_embedding.rs` | src | m | 15 crate-vis | — | The embedding model body: a Qwen3 decoder stack with no language head |
 | `src/embedder/local/spec.rs` | src | s | 3 crate-vis | — | What a local checkpoint declares about itself, read from its metadata files alone: the body, how it attends… |
 | `src/embedder/local/st_modules.rs` | src | m | 14 crate-vis | — | The sentence-transformers module chain that turns hidden states into one vector per input |
 | `src/embedder/local/tests.rs` | test | L | — | — | Local-provider rows |
-| `src/embedder/mod.rs` | src | m | 17 crate-vis | — | The embedder provider slot |
+| `src/embedder/mod.rs` | src | m | 18 crate-vis | — | The embedder provider slot |
 | `src/embedder/remote.rs` | src | s | 1 crate-vis | — | Builds a remote rung with a nonblocking host egress predicate |
 | `src/embedder/tests.rs` | test | L | — | — | Provider-slot rows: the numerics contract, and the endpoint provider driven against a real HTTP server |
+| `src/embedder/tests/turns.rs` | test | m | — | — | Turns are the embedding unit (ARCH-0004): a witnessed conversation is found by what it meant, through the… |
 | `src/error/mod.rs` | src | m | 4 struct · 2 enum · 25 fn · 1 const · 1 re-export · 1 crate-vis | ApiError, ApiErrorDetails, ApiErrorEnvelope, ApiErrorEnvelopeBody, EnvelopedApiError, ErrorCode | Structured HTTP API errors and their schema catalog |
 | `src/error/schema.rs` | src | s | 4 fn | — | JSON Schema generation for the API error catalog |
 | `src/feedback_delivery.rs` | src | s | 2 struct · 3 enum · 4 fn | FeedbackDeliveryConfig, FeedbackDeliveryError, FeedbackDestination, HttpFeedbackTransport, SendFeedbackError | Deployment-selected feedback transport |
