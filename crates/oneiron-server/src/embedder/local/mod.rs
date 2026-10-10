@@ -104,38 +104,72 @@ pub(super) struct Embedded {
 /// recall waits for at most one bulk layer, and the memory a forward's widest
 /// step needs (a full-length input's attention scores are a gibibyte) is
 /// needed by one forward at a time, as when the model sat behind one lock.
+/// After [`QUERY_STREAK`] queries in a row while a bulk forward waits, the
+/// bulk forward runs one layer: steady recall traffic slows a fill but never
+/// stops it.
 #[derive(Default)]
 struct Turns {
     state: Mutex<TurnState>,
     changed: Condvar,
 }
 
+/// Queries that may take the model in a row while a bulk forward waits.
+const QUERY_STREAK: usize = 4;
+
 #[derive(Default)]
 struct TurnState {
     running: bool,
     queries_waiting: usize,
+    bulk_waiting: usize,
+    /// Queries that took a turn while a bulk forward waited, since a bulk
+    /// forward last ran.
+    query_streak: usize,
+}
+
+impl TurnState {
+    fn bulk_owed(&self) -> bool {
+        self.bulk_waiting > 0 && self.query_streak >= QUERY_STREAK
+    }
 }
 
 impl Turns {
     fn take(&self, priority: Priority) -> Turn<'_> {
         let mut state = self.state();
-        if priority == Priority::Query {
-            state.queries_waiting += 1;
+        match priority {
+            Priority::Query => state.queries_waiting += 1,
+            Priority::Bulk => state.bulk_waiting += 1,
         }
-        while state.running || (priority == Priority::Bulk && state.queries_waiting > 0) {
+        loop {
+            let blocked = state.running
+                || match priority {
+                    Priority::Query => state.bulk_owed(),
+                    Priority::Bulk => state.queries_waiting > 0 && !state.bulk_owed(),
+                };
+            if !blocked {
+                break;
+            }
             state = self
                 .changed
                 .wait(state)
                 .unwrap_or_else(PoisonError::into_inner);
         }
-        if priority == Priority::Query {
-            state.queries_waiting -= 1;
+        match priority {
+            Priority::Query => {
+                state.queries_waiting -= 1;
+                if state.bulk_waiting > 0 {
+                    state.query_streak += 1;
+                }
+            }
+            Priority::Bulk => {
+                state.bulk_waiting -= 1;
+                state.query_streak = 0;
+            }
         }
         state.running = true;
         Turn(self)
     }
 
-    /// Poison recovery: the state is two plain fields that no panic leaves
+    /// Poison recovery: the state is plain counters that no panic leaves
     /// half written, and refusing it would stop the model for the life of the
     /// process.
     fn state(&self) -> MutexGuard<'_, TurnState> {
@@ -326,7 +360,7 @@ impl LocalEmbedder {
         let forwards = if cpu {
             batcher::pack(&lengths, self.batch_size, self.forward_tokens)
         } else {
-            batcher::group_equal_lengths(&lengths, self.batch_size)
+            batcher::group_equal_lengths(&lengths, self.batch_size, self.forward_tokens)
         };
         let mut turn: Option<Turn<'_>> = None;
         let mut next_layer = || match priority {
@@ -357,17 +391,16 @@ impl LocalEmbedder {
                 .model
                 .forward(&inputs, &mut next_layer)
                 .map_err(candle_failed)?;
-            let mut indices = forward.iter();
+            let mut pooled = Vec::with_capacity(forward.len());
             for state in &states {
-                let pooled: Vec<Vec<f32>> = self
-                    .modules
-                    .apply(state, prompt_tokens)
-                    .and_then(|pooled| pooled.to_dtype(DType::F32)?.to_vec2())
-                    .map_err(candle_failed)?;
-                for (index, row) in indices.by_ref().zip(pooled) {
-                    rows[*index] = Some(row);
-                }
+                pooled.extend(
+                    self.modules
+                        .apply(state, prompt_tokens)
+                        .and_then(|pooled| pooled.to_dtype(DType::F32)?.to_vec2())
+                        .map_err(candle_failed)?,
+                );
             }
+            place(&mut rows, forward, pooled)?;
         }
         let rows = rows
             .into_iter()
@@ -402,6 +435,25 @@ impl LocalEmbedder {
     fn embed_documents(&self, texts: &[String]) -> oneiron::Result<Vec<Vec<f32>>> {
         self.embed_finished(texts, Side::Document, Priority::Bulk)
     }
+}
+
+/// Puts one forward's pooled rows, in its input order, at its inputs' places.
+/// A forward answers block by block; it must answer every input it carried,
+/// no more and no fewer, or a row would land on another input.
+fn place(
+    rows: &mut [Option<Vec<f32>>],
+    forward: &[usize],
+    pooled: Vec<Vec<f32>>,
+) -> oneiron::Result<()> {
+    if pooled.len() != forward.len() {
+        return Err(oneiron::Error::InvariantViolation(
+            "a forward answered another number of inputs than it carried",
+        ));
+    }
+    for (&index, row) in forward.iter().zip(pooled) {
+        rows[index] = Some(row);
+    }
+    Ok(())
 }
 
 fn load_body(

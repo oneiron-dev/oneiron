@@ -160,9 +160,11 @@ output, and the vault normalises and rounds it exactly as the local provider
 does. The vault's client recognises this server from its `/v1/models` listing
 and then sends whole texts marked query or document, so the server's tokenizer
 cuts long inputs and its prompts apply where a local vault's would. The vault
-also holds the server's transform to the one it pinned: a server started with,
-say, another output quantization fills nothing until `reembed`. A vault can
-move between `local` and this endpoint without `reembed`.
+also holds the server's transform to the one it pinned, on every answer: a
+server started, or restarted, with say another output quantization fills and
+answers nothing until its settings are restored or `oneiron-server reembed`,
+run with the endpoint configuration, moves the vault to it. A vault can move
+between `local` and this endpoint without `reembed`.
 `deploy/systemd/oneiron-embedder.service` runs it as a user service.
 
 `--config` or the `--embedder-*` flags pick another local model, as `serve`

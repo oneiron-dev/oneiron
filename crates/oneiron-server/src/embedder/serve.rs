@@ -19,9 +19,11 @@
 //! the pool's prompt rows as the local provider would, and `instruction` is a
 //! vault's own `query_instruction`. That client then also leaves the input cap
 //! to this server's tokenizer, as a local vault's is. A request without
-//! `input_type` is a document request; one input runs at query priority and
-//! more park for queries ([`super::local::Priority`]), since a recall sends one
-//! input and the fill worker sends batches.
+//! `input_type` is a document request. One input runs at query priority and
+//! more park for queries ([`super::local::Priority`]), whichever side they
+//! embed: a recall sends one input and the fill worker sends batches. Every
+//! answer names the transform that made it, which the vault's client holds to
+//! the one it admitted from the listing.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -52,6 +54,10 @@ const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
 const BULK_REQUESTS: usize = 2;
 /// Query requests in flight at once, for the same reason.
 const QUERY_REQUESTS: usize = 64;
+/// The longest query instruction a request may carry. A vault's is a line;
+/// each input is embedded behind its own copy, so the cap is what bounds a
+/// request's prompted text.
+const MAX_INSTRUCTION_BYTES: usize = 4 * 1024;
 /// The version of the two fields beyond OpenAI's that this server reads,
 /// advertised on every `/v1/models` row.
 pub(crate) const ONEIRON_WIRE: u32 = 1;
@@ -101,8 +107,11 @@ struct Served {
     /// The space id first, then the aliases.
     names: Vec<String>,
     key: Option<Zeroizing<String>>,
-    bulk: tokio::sync::Semaphore,
-    queries: tokio::sync::Semaphore,
+    /// Admission, held until the request's embedding work ends, not only its
+    /// handler: a client that hangs up does not free a turn its work still
+    /// takes.
+    bulk: Arc<tokio::sync::Semaphore>,
+    queries: Arc<tokio::sync::Semaphore>,
 }
 
 /// The two routes, over one loaded model.
@@ -121,8 +130,8 @@ pub(crate) fn router(
             embedder,
             names,
             key,
-            bulk: tokio::sync::Semaphore::new(BULK_REQUESTS),
-            queries: tokio::sync::Semaphore::new(QUERY_REQUESTS),
+            bulk: Arc::new(tokio::sync::Semaphore::new(BULK_REQUESTS)),
+            queries: Arc::new(tokio::sync::Semaphore::new(QUERY_REQUESTS)),
         }))
 }
 
@@ -196,6 +205,10 @@ struct EmbeddingsResponse {
     data: Vec<EmbeddingRow>,
     model: String,
     usage: Usage,
+    /// How these vectors were made: a vault holds every answer to the
+    /// transform it admitted from the listing, so a server restarted with
+    /// other settings is refused rather than mixed in.
+    transform: String,
 }
 
 #[derive(Serialize)]
@@ -289,7 +302,8 @@ async fn embeddings(
         );
     }
     let (side, priority) = match (request.input_type.as_deref(), texts.len()) {
-        (Some("query"), _) => (Side::Query, Priority::Query),
+        (Some("query"), 1) => (Side::Query, Priority::Query),
+        (Some("query"), _) => (Side::Query, Priority::Bulk),
         (Some("document" | "passage"), _) | (None, 2..) => (Side::Document, Priority::Bulk),
         (None, _) => (Side::Document, Priority::Query),
         (Some(other), _) => {
@@ -307,11 +321,22 @@ async fn embeddings(
             "instruction goes with input_type query",
         );
     }
+    if request
+        .instruction
+        .as_ref()
+        .is_some_and(|instruction| instruction.len() > MAX_INSTRUCTION_BYTES)
+    {
+        return refuse(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            &format!("an instruction is at most {MAX_INSTRUCTION_BYTES} bytes"),
+        );
+    }
     let admitted = match priority {
-        Priority::Query => served.queries.acquire().await,
-        Priority::Bulk => served.bulk.acquire().await,
+        Priority::Query => Arc::clone(&served.queries).acquire_owned().await,
+        Priority::Bulk => Arc::clone(&served.bulk).acquire_owned().await,
     };
-    let Ok(_admitted) = admitted else {
+    let Ok(admitted) = admitted else {
         return refuse(
             StatusCode::SERVICE_UNAVAILABLE,
             "server_error",
@@ -321,6 +346,7 @@ async fn embeddings(
     let embedder = Arc::clone(&served.embedder);
     let instruction = request.instruction;
     let embedded = tokio::task::spawn_blocking(move || {
+        let _admitted = admitted;
         embedder.embed_raw(&texts, side, instruction.as_deref(), priority)
     })
     .await;
@@ -366,6 +392,7 @@ async fn embeddings(
             prompt_tokens: embedded.tokens,
             total_tokens: embedded.tokens,
         },
+        transform: served.embedder.transform().to_owned(),
     })
     .into_response()
 }

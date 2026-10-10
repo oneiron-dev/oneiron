@@ -620,8 +620,10 @@ impl Model {
     /// quantised matmul picks its kernel by the row count, which is why the
     /// provider sends a GPU only groups of one length (`batcher`).
     ///
-    /// `between_layers` runs before each layer: the provider takes the
-    /// model's turn there, and a bulk forward gives it up to a waiting query.
+    /// `between_layers` runs before the forward allocates its activations and
+    /// before each later layer: the provider takes the model's turn there, so
+    /// a forward waiting for it holds only token ids, and a bulk forward gives
+    /// it up to a waiting query.
     pub(super) fn forward(
         &self,
         inputs: &[&[u32]],
@@ -650,14 +652,17 @@ impl Model {
             Layout::Group { inputs, len } => (*inputs, *len, self.hidden_size).into(),
             Layout::Packed(_) => (tokens, self.hidden_size).into(),
         };
+        between_layers();
         let ids = Tensor::from_vec(ids, tokens, &self.device)?;
         let mut xs = self
             .embed_tokens
             .index_select(&ids, 0)?
             .reshape(shape)?
             .to_dtype(self.dtype)?;
-        for layer in &self.layers {
-            between_layers();
+        for (index, layer) in self.layers.iter().enumerate() {
+            if index > 0 {
+                between_layers();
+            }
             xs = layer.forward(&xs, &layout, self)?;
         }
         let xs = self.norm.forward(&xs)?;

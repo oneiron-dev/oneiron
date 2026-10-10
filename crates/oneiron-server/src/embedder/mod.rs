@@ -156,9 +156,10 @@ pub(crate) struct EmbedderSlot {
     /// same reason `ready` is one: it belongs to this server, and it has to
     /// outlive the individual load attempts the worker makes.
     models: local::model_manager::ModelManager,
-    /// The endpoint said it makes vectors another way than the vault's were
-    /// made. It then answers no query either, as a refused local model does.
-    refused: AtomicBool,
+    /// The vault has admitted how the provider makes vectors. An endpoint is
+    /// built at boot but answers no query until the worker has admitted it,
+    /// as a local model answers none before it has loaded and been admitted.
+    admitted: AtomicBool,
 }
 
 impl EmbedderSlot {
@@ -175,7 +176,7 @@ impl EmbedderSlot {
             config: config.clone(),
             ready: OnceLock::new(),
             models: local::model_manager::ModelManager::default(),
-            refused: AtomicBool::new(false),
+            admitted: AtomicBool::new(false),
         };
         if config.provider == EmbedderProvider::Endpoint {
             let embedder = endpoint::HttpEmbedder::from_config(config)?;
@@ -230,16 +231,22 @@ impl EmbedderSlot {
     ) -> oneiron::Result<Arc<dyn QueryEmbedder>> {
         if let Some(ready) = self.ready.get() {
             if let Some(http) = ready.as_endpoint() {
-                let admitted = http
-                    .served_transform()
-                    .and_then(|served| served.map_or(Ok(()), |transform| admit(&transform)));
-                self.refused.store(admitted.is_err(), Ordering::Relaxed);
-                admitted?;
+                // Read afresh each time: a refused remote restored to the
+                // vault's settings is admitted on the worker's next try.
+                let admitted = http.served_transform().and_then(|served| {
+                    if let Some(transform) = &served {
+                        admit(transform)?;
+                    }
+                    Ok(served)
+                });
+                self.admitted.store(admitted.is_ok(), Ordering::Relaxed);
+                http.admit(admitted?);
             }
             return Ok(Arc::clone(ready));
         }
         let local = local::LocalEmbedder::load(&self.config, &self.models)?;
         admit(local.transform())?;
+        self.admitted.store(true, Ordering::Relaxed);
         let embedder = local as Arc<dyn QueryEmbedder>;
         let _ = self.ready.set(Arc::clone(&embedder));
         // `set` loses a race; the winner is the one every caller must see.
@@ -251,7 +258,7 @@ impl EmbedderSlot {
         let Some(embedder) = self.ready.get() else {
             return Err(EmbedQueryRefusal::NotReady);
         };
-        if self.refused.load(Ordering::Relaxed) {
+        if !self.admitted.load(Ordering::Relaxed) {
             return Err(EmbedQueryRefusal::NotReady);
         }
         embedder.embed_query(text).map_err(|error| {
@@ -268,13 +275,14 @@ impl EmbedderSlot {
 /// they are on this host, complete and verified, and from the loaded model
 /// otherwise ([`EmbedderSlot::ensure_ready`]).
 ///
-/// An endpoint declares none, and so neither writes nor checks one: a vault
-/// moves between the local provider and an endpoint serving the same
-/// `model_id` without a reembed, and the descriptor the local provider pinned
-/// stays in the vault for its return. The endpoint's `model_id` is the promise
-/// that it makes the same vectors — the same document embedding function, not
-/// only the same weights — which nothing on the wire can check. `none` pins
-/// nothing either.
+/// An endpoint declares none before it is asked: a vault moves between the
+/// local provider and an endpoint serving the same `model_id` without a
+/// reembed, and the descriptor the local provider pinned stays in the vault
+/// for its return. `embedder serve` lists its descriptor, which the worker
+/// admits like a local model's ([`EmbedderSlot::ensure_ready`]); any other
+/// endpoint's `model_id` is the promise that it makes the same vectors — the
+/// same document embedding function, not only the same weights — which
+/// nothing on its wire can check. `none` pins nothing either.
 pub(crate) fn declared_transform(config: &EmbedderConfig) -> Option<String> {
     match config.provider {
         EmbedderProvider::None | EmbedderProvider::Endpoint => None,
@@ -295,14 +303,17 @@ pub(crate) fn evidence_floors(config: &EmbedderConfig) -> oneiron::config::Vecto
 
 /// The descriptor a vault moves to under this section, resolved now: the
 /// local provider's from its model's verified metadata, fetching those small
-/// files when they are not on this host (never the weights); `None` for an
-/// endpoint and for `none`, which declare none.
+/// files when they are not on this host (never the weights); an endpoint's
+/// from its `/models` listing, which only `embedder serve` fills; `None` for
+/// any other endpoint and for `none`, which declare none.
 ///
 /// An error means the local model's metadata could not be fetched, verified
-/// or read, and the transform it makes is unknown.
+/// or read, or the endpoint's listing did not answer, and the transform the
+/// section makes is unknown.
 pub(crate) fn resolve_transform(config: &EmbedderConfig) -> oneiron::Result<Option<String>> {
     match config.provider {
-        EmbedderProvider::None | EmbedderProvider::Endpoint => Ok(None),
+        EmbedderProvider::None => Ok(None),
+        EmbedderProvider::Endpoint => endpoint::resolve_transform(config),
         EmbedderProvider::Local => local::resolve_transform(config).map(Some),
     }
 }

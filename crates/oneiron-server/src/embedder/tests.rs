@@ -158,12 +158,20 @@ enum MockBehaviour {
     UnknownModel,
     /// Embed into [`concept_vector`]'s meaning space.
     Concepts,
-    /// List the model as `embedder serve` does: marked, with its transform.
+    /// List the model as `embedder serve` does: marked, with its transform,
+    /// and answer with that transform.
     OneironWire,
+    /// [`Self::OneironWire`] restarted with other settings: it lists and
+    /// answers with [`OTHER_TRANSFORM`].
+    OneironWireOther,
+    /// The listing answers 503.
+    ListingDown,
 }
 
 /// The transform the [`MockBehaviour::OneironWire`] listing reports.
 const MOCK_TRANSFORM: &str = "attn=bidirectional;pool=mean;mock";
+/// The transform [`MockBehaviour::OneironWireOther`] reports.
+const OTHER_TRANSFORM: &str = "attn=bidirectional;pool=mean;mock;out=binary";
 
 struct EmbeddingPause {
     request: usize,
@@ -247,15 +255,27 @@ impl MockEndpoint {
     }
 }
 
-async fn mock_models(State(state): State<Arc<MockState>>) -> axum::Json<Value> {
-    match state.behaviour() {
+async fn mock_models(State(state): State<Arc<MockState>>) -> Result<axum::Json<Value>, StatusCode> {
+    Ok(match state.behaviour() {
         MockBehaviour::UnknownModel => {
             axum::Json(json!({ "data": [{ "id": "some-other-model" }] }))
         }
-        MockBehaviour::OneironWire => axum::Json(json!({
-            "data": [{ "id": MODEL_KEY, "oneiron_wire": 1, "transform": MOCK_TRANSFORM }]
+        MockBehaviour::ListingDown => return Err(StatusCode::SERVICE_UNAVAILABLE),
+        MockBehaviour::OneironWire | MockBehaviour::OneironWireOther => axum::Json(json!({
+            "data": [{
+                "id": MODEL_KEY,
+                "oneiron_wire": 1,
+                "transform": mock_transform(state.behaviour()),
+            }]
         })),
         _ => axum::Json(json!({ "data": [{ "id": MODEL_KEY }] })),
+    })
+}
+
+fn mock_transform(behaviour: MockBehaviour) -> &'static str {
+    match behaviour {
+        MockBehaviour::OneironWireOther => OTHER_TRANSFORM,
+        _ => MOCK_TRANSFORM,
     }
 }
 
@@ -344,6 +364,13 @@ async fn mock_embeddings(
     if state.behaviour() == MockBehaviour::Reversed {
         rows.reverse();
     }
+    if matches!(
+        state.behaviour(),
+        MockBehaviour::OneironWire | MockBehaviour::OneironWireOther
+    ) {
+        let transform = mock_transform(state.behaviour());
+        return Ok(axum::Json(json!({ "data": rows, "transform": transform })));
+    }
     Ok(axum::Json(json!({ "data": rows })))
 }
 
@@ -376,8 +403,9 @@ fn the_request_carries_the_model_key_and_the_projected_documents_in_order() {
 /// client sends what a local vault's provider would see: whole documents
 /// marked as documents, which the server's tokenizer caps, and a query marked
 /// as one with the vault's own instruction beside it rather than in it. And
-/// the slot holds the server's transform to the vault's pin: refused, the
-/// endpoint answers no query, as a refused local model does.
+/// the slot holds the server's transform to the vault's pin: before it is
+/// admitted, or refused, the endpoint answers no query, as a local model
+/// answers none before it is loaded and admitted.
 #[test]
 fn an_oneiron_endpoint_gets_whole_marked_texts_and_is_held_to_the_vault_pin() {
     let mock = MockEndpoint::start(MockBehaviour::OneironWire);
@@ -389,6 +417,11 @@ fn an_oneiron_endpoint_gets_whole_marked_texts_and_is_held_to_the_vault_pin() {
     let slot = EmbedderSlot::from_config(&config)
         .expect("slot")
         .expect("active");
+    assert_eq!(
+        slot.embed_query("cats"),
+        Err(EmbedQueryRefusal::NotReady),
+        "no query before the worker admits the endpoint"
+    );
     let refused = slot.ensure_ready(|transform| {
         assert_eq!(transform, MOCK_TRANSFORM);
         Err(oneiron::Error::InvalidConfig(
@@ -412,6 +445,55 @@ fn an_oneiron_endpoint_gets_whole_marked_texts_and_is_held_to_the_vault_pin() {
     assert_eq!(requests[1]["input"], json!(["cats"]));
     assert_eq!(requests[1]["input_type"], json!("query"));
     assert_eq!(requests[1]["instruction"], json!("query: "));
+}
+
+/// The vault holds `embedder serve` to the transform it admitted for as long
+/// as it runs: a listing that fails is not taken for a plain OpenAI server, a
+/// server restarted with other settings fills and answers nothing, and once
+/// restored it is admitted again without a vault restart.
+#[test]
+fn an_oneiron_endpoint_that_changes_how_it_embeds_is_refused_until_restored() {
+    let mock = MockEndpoint::start(MockBehaviour::ListingDown);
+    let slot = EmbedderSlot::from_config(&endpoint_config(&mock.base))
+        .expect("slot")
+        .expect("active");
+    let pinned = |transform: &str| {
+        if transform == MOCK_TRANSFORM {
+            Ok(())
+        } else {
+            Err(oneiron::Error::InvalidConfig(
+                "the vault pins another transform".to_owned(),
+            ))
+        }
+    };
+    assert!(
+        slot.ensure_ready(pinned).is_err(),
+        "a listing that answers 503 admits nothing"
+    );
+    mock.set_behaviour(MockBehaviour::OneironWireOther);
+    assert!(
+        slot.ensure_ready(pinned).is_err(),
+        "another transform is refused"
+    );
+    assert_eq!(slot.embed_query("cats"), Err(EmbedQueryRefusal::NotReady));
+    mock.set_behaviour(MockBehaviour::OneironWire);
+    let embedder = slot.ensure_ready(pinned).expect("restored, admitted");
+    oneiron::embed::Embedder::embed(embedder.as_ref(), &[summary_input("first")])
+        .expect("embedded");
+    assert_eq!(
+        mock.requests().last().expect("a request")["input_type"],
+        json!("document"),
+        "the failed listing was not cached as the OpenAI wire"
+    );
+    mock.set_behaviour(MockBehaviour::OneironWireOther);
+    assert!(
+        oneiron::embed::Embedder::embed(embedder.as_ref(), &[summary_input("second")]).is_err(),
+        "vectors made another way are not stored"
+    );
+    assert_eq!(slot.embed_query("cats"), Err(EmbedQueryRefusal::Failed));
+    mock.set_behaviour(MockBehaviour::OneironWire);
+    oneiron::embed::Embedder::embed(embedder.as_ref(), &[summary_input("third")])
+        .expect("restored");
 }
 
 /// An endpoint has no model files to read a prompt from: a query carries

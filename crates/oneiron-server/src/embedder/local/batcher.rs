@@ -133,14 +133,19 @@ pub(super) fn pack(lengths: &[usize], max_inputs: usize, max_tokens: usize) -> V
 }
 
 /// Groups input indices by identical token length, in first-appearance order,
-/// chunked at `batch_size`: every forward on a GPU, whose quantised kernels
-/// pick by row count, so its vectors stay the ones it always made.
+/// chunked at `max_inputs` inputs and `max_tokens` tokens: every forward on a
+/// GPU, whose quantised kernels pick by row count, so its vectors stay the
+/// ones it always made. An input longer than `max_tokens` runs alone, so a
+/// forward's attention scores never outgrow one full-length input's.
 ///
 /// Stable on purpose: the caller scatters results back by index, and a group
 /// order that depended on a hash would make two identical batches produce two
 /// different orders of the same work.
-pub(super) fn group_equal_lengths(lengths: &[usize], batch_size: usize) -> Vec<Vec<usize>> {
-    let cap = batch_size.max(1);
+pub(super) fn group_equal_lengths(
+    lengths: &[usize],
+    max_inputs: usize,
+    max_tokens: usize,
+) -> Vec<Vec<usize>> {
     let mut buckets: Vec<(usize, Vec<usize>)> = Vec::new();
     for (index, &length) in lengths.iter().enumerate() {
         match buckets.iter_mut().find(|(bucket, _)| *bucket == length) {
@@ -149,7 +154,8 @@ pub(super) fn group_equal_lengths(lengths: &[usize], batch_size: usize) -> Vec<V
         }
     }
     let mut groups = Vec::new();
-    for (_, members) in buckets {
+    for (length, members) in buckets {
+        let cap = max_inputs.min(max_tokens / length.max(1)).max(1);
         for chunk in members.chunks(cap) {
             groups.push(chunk.to_vec());
         }
