@@ -1354,7 +1354,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/failure_ladder/ladder.rs` | src | s | 1 struct · 4 fn | FailureLadder | FailureLadder entry point, surface context, healer routing, and correlation refs |
 | `src/failure_ladder/lineage.rs` | src | s | 4 struct · 4 enum · 2 crate-vis | FailureLadderOutcome, HandleAttemptFailure, HealerCase, HealerOutcome, HealerRepairRoute, RetryLineagePathology, RetryOrdinal, SurfacedFailure | Retry-lineage walk/ordinal, healer case/route, and surfaced-failure outcome types |
 | `src/failure_ladder/mod.rs` | src | s | 1 mod · 7 re-export · 3 crate-vis | — | ONE-1887 failure ladder: classify → bounded retry → healer slot → surface |
-| `src/failure_ladder/oversight.rs` | src | s | 2 struct · 1 enum · 3 fn · 1 crate-vis | OversightCounts, OversightKind, OversightReceipt | Per-vault signed oversight over healer proposals and review decisions |
+| `src/failure_ladder/oversight.rs` | src | s | 2 struct · 1 enum · 5 fn · 1 crate-vis | OversightCounts, OversightKind, OversightReceipt | Per-vault signed oversight over healer proposals and review decisions |
 | `src/failure_ladder/scope.rs` | src | s | 2 struct · 1 enum · 1 fn | FailureEscalationMode, FailureScope, FailureScopePolicy | Escalation mode, failure scope, and per-scope consecutive-transient policy |
 | `src/failure_ladder/tests.rs` | test | m | — | — | ONE-1887 failure-ladder tests, mapped 1:1 to the brief's acceptance criteria: classification, bounded retry… |
 | `src/failure_ladder/tests/custom_review.rs` | test | s | — | — | Custom-agent retrospective grouping uses only committed terminal dispatches |
@@ -1602,7 +1602,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/human_task/signal_tests.rs` | test | s | — | — | cfg(test) C9 wait/signal, idempotency, interleave and reopen tests |
 | `src/human_task/storage.rs` | src | m | 9 crate-vis | — | vault_meta key codecs and msgpack rows for the follow-up cursor, wait binding and signal marker |
 | `src/human_task/wait.rs` | src | s | 4 fn · 1 crate-vis | — | C9 wait binding, identity-checked response signalling and release |
-| `src/identity.rs` | src | m | 8 crate-vis | — | Device identity for REDACTION_AUDIT origin attestation (ONE-1140) |
+| `src/identity.rs` | src | m | 9 crate-vis | — | Device identity for REDACTION_AUDIT origin attestation (ONE-1140) |
 | `src/identity_redirect.rs` | src | m | 4 fn · 1 const · 4 crate-vis | — | ARCH-0055 redirect projection: the rebuildable `shell id -> head set` table and the read-time… |
 | `src/identity_redirect/tests.rs` | test | s | — | — | ONE-1744 (MS-02) unit tests: redirect-row derivation, resolve semantics (0/1/N + transitive chains), the… |
 | `src/identity_reputation.rs` | src | m | 5 struct · 5 enum · 16 fn · 17 const · 2 crate-vis | CampaignEmailWebhookEvent, EmailDeliveryDisposition, EmailReputationWebhookSignal, IdentityAttestationTier, IdentityReputation, IdentityReputationSignal, IdentityReputationStatus, IdentitySendRateClamp +2 | ChannelIdentity reputation claims and warmup delivery floors (OF-347 R4) |
@@ -2429,7 +2429,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/scope_summary/mod.rs` | src | s | 2 re-export · 1 crate-vis | — | Retained spawned sub-sessions and caller-composed scope summaries |
 | `src/scope_summary/tests.rs` | test | m | — | — | Exact covers, gated merge atomicity and revision-bound late results |
 | `src/secret_custody/codec.rs` | src | m | 2 fn · 3 crate-vis | — | MessagePack body codec for custody records, bands, floors, and bindings |
-| `src/secret_custody/doors.rs` | src | m | 3 fn · 10 crate-vis | — | Name index, borrowing admission projection, sealed put, and Vault doors |
+| `src/secret_custody/doors.rs` | src | m | 4 fn · 10 crate-vis | — | Name index, borrowing admission projection, sealed put, and Vault doors |
 | `src/secret_custody/floor.rs` | src | m | 2 fn · 8 crate-vis | — | Vault floor resolution plus the shared strict POLICY_MANIFEST walk |
 | `src/secret_custody/mod.rs` | src | s | 2 re-export · 13 crate-vis | — | ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret… |
 | `src/secret_custody/replication.rs` | src | s | 3 crate-vis | — | Name-index planning for admitted same-vault custody replay |
@@ -2446,6 +2446,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_manifest.rs` | src | s | 2 struct · 2 fn · 1 const | SecretManifest, SecretManifestEntry | SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2) |
 | `src/secret_manifest/tests.rs` | test | s | — | — | SECRET-01 (ONE-1919) manifest tests: parse, narrow-only validation, the widening-reject fixture |
 | `src/secret_rotation.rs` | src | m | 1 struct · 2 enum · 10 fn · 5 const · 9 crate-vis | ArtifactTaintState, RotationKind, RotationReceipt | SECRET-04 (ONE-1922): rotation as a first-class vault op, and READ-TIME invalidation of secret-tainted build… |
+| `src/secret_rotation/owner_door.rs` | src | s | 1 fn · 4 crate-vis | — | The owner's rotation door and the one transaction body every rotation shares |
 | `src/secret_rotation/tests.rs` | test | L | — | — | SECRET-04 (ONE-1922) unit tests |
 | `src/secret_snapshot.rs` | src | s | 3 struct · 2 fn · 3 crate-vis | SecretLiftProposal, SnapshotCustodyReport, SnapshotExclusionSet | Snapshot-time secret custody filtering (ARCH-0069 S4/S5) |
 | `src/secret_snapshot/tests.rs` | test | s | — | — | — |
