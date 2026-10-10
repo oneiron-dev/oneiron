@@ -23,7 +23,7 @@ const EXECUTOR_SPEECH_MESSAGE_DOMAIN: &[u8] = b"oneiron:executor-speech-message:
 /// Derives one deterministic entity id from a domain tag and length-prefixed
 /// material, re-salting past a reserved sentinel rather than truncating into
 /// one.
-fn derived_executor_id(domain: &[u8], parts: &[&[u8]]) -> Result<EntityId> {
+pub(in crate::code_run) fn derived_executor_id(domain: &[u8], parts: &[&[u8]]) -> Result<EntityId> {
     for salt in 0..=u8::MAX {
         let mut hasher = Sha256::new();
         hasher.update(domain);

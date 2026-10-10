@@ -30,7 +30,8 @@ pub(crate) use registry::EntityDocRegistry;
 pub use registry::RegistryStatus;
 pub use storage::TextField;
 pub(crate) use storage::{
-    erase_in_txn, guard_record_put, has_record_head, record_head_bytes, resolve_record_body,
+    erase_in_txn, guard_record_put, has_record_head, record_body_history_in_txn, record_head_bytes,
+    resolve_record_body,
 };
 pub use verbs::{AnchoredEdit, EditVerb, TextAnchor, TextUpdateOutcome, TextUpdateRequest};
 

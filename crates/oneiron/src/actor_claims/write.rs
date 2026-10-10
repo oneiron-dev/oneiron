@@ -61,7 +61,7 @@ pub fn write_actor_claim(
     evidence: &ActorClaimEvidence,
 ) -> Result<EntityId> {
     ground_actor_claim(vault, &row, evidence)?;
-    vault.with_write_txn(|wtxn| write_actor_claim_in_txn(vault, wtxn, &row, evidence))
+    vault.with_write_txn_grouped(|wtxn| write_actor_claim_in_txn(vault, wtxn, &row, evidence))
 }
 /// Resolves everything a row asserts BEFORE any transaction opens: the actor,
 /// the fit pair's skill, and every cited piece of evidence.
@@ -441,9 +441,9 @@ pub fn project_actor_claims_from_judgments(
         if ground_actor_claim(vault, &row, &evidence).is_err() {
             continue;
         }
-        written.push(
-            vault.with_write_txn(|wtxn| write_actor_claim_in_txn(vault, wtxn, &row, &evidence))?,
-        );
+        written.push(vault.with_write_txn_grouped(|wtxn| {
+            write_actor_claim_in_txn(vault, wtxn, &row, &evidence)
+        })?);
     }
     Ok(written)
 }

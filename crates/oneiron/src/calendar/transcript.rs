@@ -156,7 +156,7 @@ fn ingest_file_drop_transcript_inner(
             return persist_note_fallback(vault, request);
         }
     };
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let hint = crate::session_lifecycle::SessionHintTimestamp {
             claimed_ms: parsed.claimed_started_ms,
             arrival_ms: request.arrived_at_ms,
@@ -474,7 +474,7 @@ fn put_calendar_test_policy(
     rmpv::encode::write_value(&mut body, manifest)
         .map_err(|_| crate::Error::InvariantViolation("fixture policy manifest encode"))?;
     let id = crate::EntityId::now();
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         crate::batch::apply_ops(
             &vault.store,
             &vault.config,

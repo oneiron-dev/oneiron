@@ -370,7 +370,7 @@ pub fn set_skill_scan_activation_risk_threshold(
     vault: &Vault,
     threshold: ScanRiskLevel,
 ) -> Result<()> {
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         ACTIVATION_RISK_THRESHOLD.put(&vault.store, wtxn, &(), &threshold)?;
         Ok(())
     })

@@ -100,9 +100,10 @@ pub use outbound::{
     OutboundScheduleContext,
 };
 pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts};
+pub(crate) use recall::check_recall_request;
 pub use recall::{
-    CONTAINER_KINDS, Effort, MEMORY_PACK_VERSION, MemoryItem, MemoryPack, MemoryProvenance,
-    RecallScope, RetrievalMeta, ScopeHonesty,
+    CONTAINER_KINDS, CitedMessage, Effort, MEMORY_PACK_VERSION, MemoryItem, MemoryPack,
+    MemoryProvenance, RecallScope, RetrievalMeta, ScopeHonesty,
 };
 pub use room_turn::RoomTurnHandle;
 pub use skill_authoring::SkillAuthoringReceipt;
@@ -112,7 +113,7 @@ pub use structural::{
     HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput, TextIndexField,
 };
 pub use subscriptions::{MemorySubscriptionOwner, ScopedView};
-pub use support::{Memory, parse_actor_key, resolve_entity_ref};
+pub use support::{HostWriteOrigin, Memory, parse_actor_key, resolve_entity_ref};
 pub use witness::{
     DEFAULT_MESSAGE_STREAM_IDLE_MS, MAX_MESSAGE_STREAM_BYTES, MAX_MESSAGE_STREAMS,
     MessageStreamError, MessageStreamHandle, MessageStreamPartial, MessageStreamPolicy,
