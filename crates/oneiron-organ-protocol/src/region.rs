@@ -146,21 +146,57 @@ impl MappedRegion {
     /// Maps `len` bytes of the region behind `fd`, read-only.
     ///
     /// On Linux the region must carry the write, grow and shrink seals, so
-    /// the bytes cannot change or vanish under the mapping.
+    /// the bytes cannot change or vanish under the mapping. The seals are
+    /// checked before the size: a size read first could be truncated away
+    /// before the seals land.
     ///
     /// # Errors
     /// Fails if the region is shorter than `len`, unsealed on Linux, or the
     /// OS refuses the mapping.
     pub fn map(fd: OwnedFd, len: u64) -> io::Result<Self> {
-        let size = u64::try_from(rustix::fs::fstat(&fd)?.st_size).unwrap_or(0);
-        if size < len {
+        #[cfg(target_os = "linux")]
+        require_seals(&fd)?;
+        if sealed_size(&fd)? < len {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "region is shorter than its handle says",
             ));
         }
+        Self::map_len(fd, len)
+    }
+
+    /// Maps the whole of a region another process made and sealed, if it is
+    /// no larger than `max`.
+    ///
+    /// Linux only: elsewhere a received region cannot be proven immutable,
+    /// so an organ's outputs ride inline there.
+    ///
+    /// # Errors
+    /// Fails if the region is unsealed, larger than `max`, or not on Linux.
+    pub fn map_sealed(fd: OwnedFd, max: u64) -> io::Result<Self> {
         #[cfg(target_os = "linux")]
-        require_seals(&fd)?;
+        {
+            require_seals(&fd)?;
+            let size = sealed_size(&fd)?;
+            if size > max {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("region of {size} bytes is over the {max}-byte limit"),
+                ));
+            }
+            Self::map_len(fd, size)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (fd, max);
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "regions from an organ cross only on Linux",
+            ))
+        }
+    }
+
+    fn map_len(fd: OwnedFd, len: u64) -> io::Result<Self> {
         if len == 0 {
             return Ok(Self { map: None });
         }
@@ -168,13 +204,17 @@ impl MappedRegion {
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "region too large"))?;
         let file = File::from(fd);
         // SAFETY: the region cannot change size or contents while mapped: on
-        // Linux `require_seals` proved the write, grow and shrink seals; on
-        // other Unix the creator holds no writable descriptor and the object
-        // is sized once at creation. The mapping is read-only and private to
-        // this value.
+        // Linux the caller proved the write, grow and shrink seals before
+        // reading the size; on other Unix the creator holds no writable
+        // descriptor and the object is sized once at creation. The mapping
+        // is read-only and private to this value.
         let map = unsafe { MmapOptions::new().len(len).map(&file)? };
         Ok(Self { map: Some(map) })
     }
+}
+
+fn sealed_size(fd: &OwnedFd) -> io::Result<u64> {
+    Ok(u64::try_from(rustix::fs::fstat(fd)?.st_size).unwrap_or(0))
 }
 
 #[cfg(target_os = "linux")]

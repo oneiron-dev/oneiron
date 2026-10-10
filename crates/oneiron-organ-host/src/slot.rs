@@ -1,7 +1,7 @@
 //! One installed organ: its process, its crash history, its condition.
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
 use oneiron_organ_protocol::OrganIdentity;
@@ -44,6 +44,10 @@ pub struct OrganStatus {
 #[derive(Debug, Default)]
 struct SlotState {
     process: Option<Arc<OrganProcess>>,
+    /// Every process this slot started that may still live: the current
+    /// one, and older ones a call in flight still holds. A revocation must
+    /// reach them all.
+    generations: Vec<Weak<OrganProcess>>,
     crashes: VecDeque<Instant>,
     not_before: Option<Instant>,
     unavailable: Option<Unavailable>,
@@ -77,8 +81,12 @@ impl Slot {
     }
 
     /// The live process, started if needed. Concurrent first calls wait for
-    /// one start.
-    pub(crate) fn process(&self, config: &HostConfig) -> Result<Arc<OrganProcess>, HostError> {
+    /// one start, which is bounded by the handshake timeout or `deadline`.
+    pub(crate) fn process(
+        &self,
+        config: &HostConfig,
+        deadline: Option<Instant>,
+    ) -> Result<Arc<OrganProcess>, HostError> {
         let mut state = self.lock();
         if let Some(reason) = &state.unavailable {
             return Err(self.unavailable(reason.clone()));
@@ -108,8 +116,10 @@ impl Slot {
         if self.spec.tier == OrganTier::ThirdParty {
             return Err(self.unavailable(Unavailable::ThirdPartyUnconfined));
         }
-        match OrganProcess::spawn(&self.spec, config) {
+        match OrganProcess::spawn(&self.spec, config, deadline) {
             Ok(process) => {
+                state.generations.retain(|old| old.strong_count() > 0);
+                state.generations.push(Arc::downgrade(&process));
                 state.spawns += 1;
                 state.last_spawn = Some(process.spawn_time);
                 state.not_before = None;
@@ -160,10 +170,24 @@ impl Slot {
         self.lock().process.clone()
     }
 
-    pub(crate) fn revoke(&self) -> Option<Arc<OrganProcess>> {
+    /// Every process of this slot that is still alive, current or not.
+    pub(crate) fn live(&self) -> Vec<Arc<OrganProcess>> {
         let mut state = self.lock();
-        state.unavailable = Some(Unavailable::Revoked);
-        state.process.take()
+        state.generations.retain(|old| old.strong_count() > 0);
+        state
+            .generations
+            .iter()
+            .filter_map(Weak::upgrade)
+            .filter(|process| process.is_alive())
+            .collect()
+    }
+
+    /// Refuses every later call and hands back every live process to stop.
+    pub(crate) fn revoke(&self) -> Vec<Arc<OrganProcess>> {
+        self.lock().unavailable = Some(Unavailable::Revoked);
+        let live = self.live();
+        self.lock().process = None;
+        live
     }
 
     pub(crate) fn take_if_idle(&self, idle: Duration) -> Option<Arc<OrganProcess>> {

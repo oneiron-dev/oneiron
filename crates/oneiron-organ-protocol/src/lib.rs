@@ -20,9 +20,11 @@ mod frame;
 mod region;
 #[cfg(unix)]
 mod runtime;
+#[cfg(unix)]
+mod shape;
 
 #[cfg(unix)]
-pub use frame::{FrameError, recv_frame, send_frame};
+pub use frame::{FrameError, recv_frame, recv_frame_until, send_frame, send_frame_until};
 #[cfg(unix)]
 pub use region::{MappedRegion, SharedRegion};
 #[cfg(unix)]
@@ -31,4 +33,6 @@ pub use runtime::{
     serve_stream, touch_fold,
 };
 pub use serde_bytes::ByteBuf;
+#[cfg(unix)]
+pub use shape::{MAX_FRAME_DEPTH, MAX_FRAME_VALUES};
 pub use wire::*;

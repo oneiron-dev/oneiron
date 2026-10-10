@@ -3,8 +3,9 @@
 //!
 //! An organ crate says so in its manifest: `[package.metadata.oneiron]
 //! organ = true`. The fence walks workspace path dependencies (normal and
-//! build, every target table; dev-dependencies are test-only and excluded)
-//! from each engine root and from each organ.
+//! build, every target table, `workspace = true` resolved through the root
+//! manifest; dev-dependencies are test-only and excluded) from each engine
+//! root and from each organ, and checks every edge it crosses.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -42,11 +43,17 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn path_deps(table: Option<&toml::Value>, into: &mut BTreeSet<String>) {
-    let Some(table) = table.and_then(toml::Value::as_table) else {
-        return;
-    };
-    for (name, spec) in table {
+/// Workspace crates the root manifest names by path, under the name a
+/// member uses with `workspace = true`.
+fn workspace_paths() -> BTreeMap<String, String> {
+    let text = std::fs::read_to_string(workspace_root().join("Cargo.toml")).expect("root manifest");
+    let doc: toml::Value = text.parse().expect("root manifest parses");
+    let mut paths = BTreeMap::new();
+    let table = doc
+        .get("workspace")
+        .and_then(|workspace| workspace.get("dependencies"))
+        .and_then(toml::Value::as_table);
+    for (name, spec) in table.into_iter().flatten() {
         let Some(spec) = spec.as_table() else {
             continue;
         };
@@ -55,12 +62,37 @@ fn path_deps(table: Option<&toml::Value>, into: &mut BTreeSet<String>) {
                 .get("package")
                 .and_then(toml::Value::as_str)
                 .unwrap_or(name);
-            into.insert(package.to_owned());
+            paths.insert(name.clone(), package.to_owned());
+        }
+    }
+    paths
+}
+
+fn path_deps(
+    table: Option<&toml::Value>,
+    inherited: &BTreeMap<String, String>,
+    into: &mut BTreeSet<String>,
+) {
+    let Some(table) = table.and_then(toml::Value::as_table) else {
+        return;
+    };
+    for (name, spec) in table {
+        let Some(spec) = spec.as_table() else {
+            continue;
+        };
+        let package = spec.get("package").and_then(toml::Value::as_str);
+        if spec.contains_key("path") {
+            into.insert(package.unwrap_or(name).to_owned());
+        } else if spec.get("workspace").and_then(toml::Value::as_bool) == Some(true)
+            && let Some(root) = inherited.get(package.unwrap_or(name))
+        {
+            into.insert(root.clone());
         }
     }
 }
 
 fn read_manifests() -> BTreeMap<String, Manifest> {
+    let inherited = workspace_paths();
     let crates = workspace_root().join("crates");
     let mut manifests = BTreeMap::new();
     for entry in std::fs::read_dir(&crates).expect("read crates/") {
@@ -85,12 +117,12 @@ fn read_manifests() -> BTreeMap<String, Manifest> {
             .unwrap_or(false);
         let mut deps = BTreeSet::new();
         for key in ["dependencies", "build-dependencies"] {
-            path_deps(doc.get(key), &mut deps);
+            path_deps(doc.get(key), &inherited, &mut deps);
         }
         if let Some(targets) = doc.get("target").and_then(toml::Value::as_table) {
             for target in targets.values() {
                 for key in ["dependencies", "build-dependencies"] {
-                    path_deps(target.get(key), &mut deps);
+                    path_deps(target.get(key), &inherited, &mut deps);
                 }
             }
         }
@@ -130,24 +162,36 @@ fn of060_f4_engine_never_depends_on_an_organ() {
         .map(|(name, _)| name.as_str())
         .chain(PENDING_MOVE)
         .collect();
-    let mut violations = Vec::new();
+    let mut violations = BTreeSet::new();
     for root in ENGINE_ROOTS {
         assert!(manifests.contains_key(root), "engine root {root} not found");
-        for (dep, path) in reach(&manifests, root) {
-            // A pending organ is excused only on its edge from the engine
-            // crate (or from another pending organ), never anywhere new.
-            let via = path.len().checked_sub(2).and_then(|at| path.get(at));
-            let pending = PENDING_MOVE.contains(&dep.as_str())
-                && via.is_some_and(|via| via == "oneiron" || PENDING_MOVE.contains(&via.as_str()));
-            if organs.contains(dep.as_str()) && !pending {
-                violations.push(path.join(" -> "));
+        // Every edge out of every crate the root reaches, not one path per
+        // crate: an excused edge must not hide a new one to the same organ.
+        let mut from: Vec<(String, Vec<String>)> = vec![(root.to_owned(), vec![root.to_owned()])];
+        from.extend(reach(&manifests, root));
+        for (crate_name, path) in from {
+            let Some(manifest) = manifests.get(&crate_name) else {
+                continue;
+            };
+            for dep in manifest
+                .deps
+                .iter()
+                .filter(|dep| organs.contains(dep.as_str()))
+            {
+                // A pending organ is excused only on its edge from the
+                // engine crate (or from another pending organ).
+                let excused = PENDING_MOVE.contains(&dep.as_str())
+                    && (crate_name == "oneiron" || PENDING_MOVE.contains(&crate_name.as_str()));
+                if !excused {
+                    violations.insert(format!("{} -> {dep}", path.join(" -> ")));
+                }
             }
         }
     }
     assert!(
         violations.is_empty(),
         "OF-060 F4: an engine crate reaches an organ:\n{}",
-        violations.join("\n"),
+        violations.into_iter().collect::<Vec<_>>().join("\n"),
     );
 }
 

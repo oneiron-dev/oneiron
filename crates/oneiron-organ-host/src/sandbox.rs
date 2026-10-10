@@ -1,12 +1,15 @@
 //! What the host does to an organ process between fork and exec.
 //!
-//! Built: the socket moves to fd 3, a clean environment, cwd `/`, rlimits
-//! (core 0, open files, file size; data on Linux), `no_new_privs` and a new
-//! user and network namespace where Linux allows it, nice +10. Not built:
-//! filesystem confinement (Landlock, Seatbelt) and a syscall filter, so
-//! third-party organs are refused (`Unavailable::ThirdPartyUnconfined`).
-//! No parent-death signal: Linux ties it to the spawning thread, which may
-//! be a short-lived worker; the organ runtime exits at EOF on its socket.
+//! Built: the socket moves to fd 3 and every other inherited descriptor
+//! closes at exec, a clean environment, cwd `/`, its own process group (so
+//! a kill reaches what it forks), rlimits (core 0, open files, file size;
+//! data on Linux), `no_new_privs` and a new user and network namespace where
+//! Linux allows it, nice +10. Not built: filesystem confinement (Landlock,
+//! Seatbelt) and a syscall filter, so third-party organs are refused
+//! (`Unavailable::ThirdPartyUnconfined`); a descendant that leaves the
+//! process group (`setsid`) outlives a kill until that lands. No
+//! parent-death signal: Linux ties it to the spawning thread, which may be a
+//! short-lived worker; the organ runtime exits at EOF on its socket.
 
 use std::io;
 use std::os::fd::RawFd;
@@ -38,8 +41,9 @@ pub(crate) fn confine(command: &mut Command, socket: RawFd, spec: &OrganSpec) {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     // SAFETY: the closure runs in the child between fork and exec. It only
-    // makes async-signal-safe calls (dup2, fcntl, setrlimit, prctl, unshare,
-    // setpriority) on values computed before the fork, and allocates nothing.
+    // makes async-signal-safe calls (dup2, fcntl, close_range, getrlimit,
+    // setpgid, setrlimit, prctl, unshare, setpriority) on values computed
+    // before the fork, and allocates nothing.
     unsafe {
         command.pre_exec(move || plan.apply());
     }
@@ -59,6 +63,12 @@ impl Plan {
         if !moved {
             return Err(io::Error::last_os_error());
         }
+        close_on_exec_above(3);
+        // SAFETY: setpgid on this process only: it leads a new group, so the
+        // host's group kill reaches every process it forks.
+        if unsafe { libc::setpgid(0, 0) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
         limit(libc::RLIMIT_CORE, 0)?;
         limit(libc::RLIMIT_NOFILE, self.open_files)?;
         limit(libc::RLIMIT_FSIZE, self.memory)?;
@@ -70,6 +80,51 @@ impl Plan {
             libc::setpriority(libc::PRIO_PROCESS, 0, 10);
         }
         Ok(())
+    }
+}
+
+/// Marks every descriptor above `keep` close-on-exec, so the organ starts
+/// with its socket and the standard three only, whatever the host process
+/// had open without the flag.
+fn close_on_exec_above(keep: u32) {
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: close_range with CLOSE_RANGE_CLOEXEC only sets a flag on
+        // this process's descriptors; it fails on kernels before 5.11, and
+        // the loop below covers that.
+        let done = unsafe {
+            libc::syscall(
+                libc::SYS_close_range,
+                keep + 1,
+                u32::MAX,
+                libc::CLOSE_RANGE_CLOEXEC,
+            )
+        } == 0;
+        if done {
+            return;
+        }
+    }
+    let mut open = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: getrlimit writes the struct on the stack.
+    let ceiling = if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut open) } == 0 {
+        open.rlim_cur.min(65_536)
+    } else {
+        1024
+    };
+    let ceiling = i32::try_from(ceiling).unwrap_or(1024);
+    let first = i32::try_from(keep).unwrap_or(i32::MAX).saturating_add(1);
+    for fd in first..ceiling {
+        // SAFETY: fcntl on a descriptor number that may not be open: an
+        // unopened one fails with EBADF and is skipped.
+        unsafe {
+            let flags = libc::fcntl(fd, libc::F_GETFD);
+            if flags >= 0 && flags & libc::FD_CLOEXEC == 0 {
+                libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+            }
+        }
     }
 }
 

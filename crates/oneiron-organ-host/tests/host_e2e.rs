@@ -15,7 +15,7 @@ use oneiron_organ_host::{
     CallClass, HostConfig, HostError, OrganCall, OrganHost, OrganInput, OrganSpec, OrganState,
     Unavailable,
 };
-use oneiron_organ_protocol::{Hash32, touch_fold};
+use oneiron_organ_protocol::{FrameError, Hash32, touch_fold};
 
 const PROBE: &str = env!("CARGO_BIN_EXE_oneiron-organ-probe");
 const BIN: &str = "application/octet-stream";
@@ -70,9 +70,15 @@ fn put_blob(vault: &Vault, bytes: &[u8], media_type: &str) -> OrganInput {
 fn host() -> OrganHost {
     let host = OrganHost::new(HostConfig::default());
     let mut spec = OrganSpec::first_party("probe", PROBE);
-    spec.verbs = ["organ.touch", "organ.echo", "probe.sleep", "probe.crash"]
-        .map(String::from)
-        .into();
+    spec.verbs = [
+        "organ.touch",
+        "organ.echo",
+        "probe.sleep",
+        "probe.crash",
+        "probe.fork",
+    ]
+    .map(String::from)
+    .into();
     spec.media_types = vec![BIN.to_owned()];
     host.install(spec);
     host
@@ -268,4 +274,123 @@ fn a_version_outside_the_pin_is_refused_at_handshake() {
         host.status("probe").expect("installed").state,
         OrganState::Unavailable(Unavailable::Incompatible(_)),
     ));
+}
+
+fn rogue(mode: &str, config: HostConfig) -> OrganHost {
+    let host = OrganHost::new(config);
+    let mut spec = OrganSpec::first_party("probe", PROBE);
+    spec.args = vec![mode.into()];
+    spec.verbs = vec!["organ.echo".into()];
+    host.install(spec);
+    host
+}
+
+#[test]
+fn an_organ_that_stops_reading_cannot_hold_a_call_past_its_deadline() {
+    // The call frame is far larger than the socket buffer, so the send
+    // itself blocks: the deadline must bound the write, not just the reply.
+    let (_dir, vault) = vault();
+    let host = rogue("--deaf", HostConfig::default());
+    let mut stuck = call(
+        "organ.echo",
+        "x".repeat(8 * 1024 * 1024).into(),
+        Vec::new(),
+        "g",
+    );
+    stuck.deadline = Duration::from_millis(500);
+    let started = Instant::now();
+    let err = host.call(&vault, stuck).expect_err("deadline");
+    assert!(matches!(err, HostError::DeadlineExceeded), "{err:?}");
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn a_dripped_handshake_fails_at_its_deadline() {
+    // One byte every 100 ms: each read makes progress, so only a deadline
+    // over the whole handshake stops it.
+    let (_dir, vault) = vault();
+    let config = HostConfig {
+        handshake_timeout: Duration::from_millis(500),
+        ..HostConfig::default()
+    };
+    let host = rogue("--drip", config);
+    let started = Instant::now();
+    let err = host
+        .call(&vault, call("organ.echo", 1.into(), Vec::new(), "g"))
+        .expect_err("start");
+    assert!(matches!(err, HostError::StartFailed { .. }), "{err:?}");
+    let status = host.status("probe").expect("installed");
+    assert_eq!(
+        status.recent_crashes, 1,
+        "a stalled start backs off as a crash, not a refusal"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn a_call_too_large_to_send_leaves_the_organ_unharmed() {
+    let (_dir, vault) = vault();
+    let host = OrganHost::new(HostConfig::default());
+    let mut spec = OrganSpec::first_party("probe", PROBE);
+    spec.verbs = vec!["organ.echo".into()];
+    spec.max_call_frame = 4096;
+    host.install(spec);
+    let small = || call("organ.echo", 1.into(), Vec::new(), "g");
+    host.call(&vault, small()).expect("small call");
+    for _ in 0..6 {
+        let big = call("organ.echo", "x".repeat(8192).into(), Vec::new(), "g");
+        let err = host.call(&vault, big).expect_err("too large");
+        assert!(
+            matches!(err, HostError::Frame(FrameError::TooLarge { .. })),
+            "{err:?}"
+        );
+    }
+    let status = host.status("probe").expect("installed");
+    assert_eq!(
+        (status.spawns, status.recent_crashes),
+        (1, 0),
+        "refused calls neither kill nor count"
+    );
+    host.call(&vault, small()).expect("still warm");
+}
+
+/// Whether `pid` is a live process (a zombie is not).
+#[cfg(target_os = "linux")]
+fn running(pid: i64) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+        stat.rsplit(')')
+            .next()
+            .is_some_and(|rest| !rest.trim_start().starts_with('Z'))
+    })
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn stopping_an_organ_kills_what_it_forked() {
+    // A forked child inherits the organ's mappings and socket; killing the
+    // organ alone would leave it holding them.
+    let (_dir, vault) = vault();
+    let host = host();
+    let forked = host
+        .call(
+            &vault,
+            call("probe.fork", rmpv::Value::Nil, Vec::new(), "g"),
+        )
+        .expect("fork");
+    let pid = forked.report.as_i64().expect("the child's pid");
+    assert!(pid > 0 && running(pid));
+    assert!(host.unload("probe"));
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while running(pid) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(!running(pid), "the forked child outlived its organ");
 }
