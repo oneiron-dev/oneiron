@@ -1,5 +1,5 @@
 //! The queue's passes on a vault held as `serve` holds it, one pass at a
-//! time, over invented Claude Code sessions.
+//! time, over invented Claude Code sessions and Codex rollouts.
 
 use oneiron::registry::ENTITY_TYPE_MESSAGE;
 use oneiron::{Vault, VaultConfig};
@@ -8,10 +8,11 @@ use super::*;
 
 const PROJECT: &str = "-Users-ana-code-garden-planner";
 
-/// A queue folder, a vault and a Claude Code root, all fresh.
+/// A queue folder, a vault, a Claude Code root and a Codex one, all fresh.
 struct Bench {
     _dir: tempfile::TempDir,
     root: PathBuf,
+    codex: PathBuf,
     queue: ImportQueue,
 }
 
@@ -20,12 +21,15 @@ impl Bench {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("projects");
         fs::create_dir_all(root.join(PROJECT)).unwrap();
+        let codex = dir.path().join("sessions");
+        fs::create_dir_all(&codex).unwrap();
         let queue = ImportQueue {
             dir: dir.path().join("queue"),
             vault_path: dir.path().join("vault"),
             config: ImportConfig {
                 queue: true,
                 claude_code_root: Some(root.clone()),
+                codex_root: Some(codex.clone()),
                 ..ImportConfig::default()
             },
             budget,
@@ -37,6 +41,7 @@ impl Bench {
         Self {
             _dir: dir,
             root,
+            codex,
             queue,
         }
     }
@@ -67,18 +72,23 @@ impl Bench {
 
     /// `oneiron import claude-code <log> --queue`, as the hooks run it.
     fn hand_over(&self, log: &Path) {
-        self.put(log, None, "json");
+        self.put(HistorySource::ClaudeCode, log, None, "json");
+    }
+
+    /// `oneiron import codex <rollout> --queue`.
+    fn hand_over_rollout(&self, rollout: &Path) {
+        self.put(HistorySource::Codex, rollout, None, "json");
     }
 
     /// A claim an earlier pass kept, saying `place`.
     fn kept(&self, log: &Path, place: Place) {
-        self.put(log, Some(place), "taking");
+        self.put(HistorySource::ClaudeCode, log, Some(place), "taking");
     }
 
-    fn put(&self, log: &Path, place: Option<Place>, suffix: &str) {
-        let name = entry_name(HistorySource::ClaudeCode, log);
+    fn put(&self, source: HistorySource, log: &Path, place: Option<Place>, suffix: &str) {
+        let name = entry_name(source, log);
         let entry = Entry {
-            source: HistorySource::ClaudeCode.source_id().to_owned(),
+            source: source.source_id().to_owned(),
             path: log.to_path_buf(),
             passes: 0,
             place,
@@ -435,6 +445,74 @@ fn an_original_whose_own_thread_has_no_times_lands_before_its_resumed_copy() {
     assert_eq!(bench.waiting(), names(&[&copy]), "the original lands first");
     bench.pass(&vault).0.unwrap();
     assert_eq!(messages(&vault), 5, "the copy adds only its own message");
+    assert!(bench.waiting().is_empty());
+}
+
+/// Sol 1354 R6-1: a Codex fork names the rollout it forked from, yet it is
+/// its own thread. Started with its parent and carrying the parent's history,
+/// it goes on after it, and lands after it.
+#[test]
+fn a_codex_fork_that_started_with_its_parent_lands_after_it() {
+    let bench = Bench::new(Decoded {
+        messages: 3,
+        bytes: usize::MAX,
+    });
+    let vault = bench.vault();
+    let day = bench.codex.join("2026/09/01");
+    fs::create_dir_all(&day).unwrap();
+    let rollout = |id: &str| day.join(format!("rollout-2026-09-01T08-00-00-{id}.jsonl"));
+    // The fork gets the name that sorts first, so a tie on names would land
+    // it first.
+    let (mut parent, mut fork) = (
+        "0199b2c3-d4e5-7f60-8a9b-0c1d2e3f4a01",
+        "0199b2c3-d4e5-7f60-8a9b-0c1d2e3f4a02",
+    );
+    if entry_name(HistorySource::Codex, &rollout(fork))
+        > entry_name(HistorySource::Codex, &rollout(parent))
+    {
+        std::mem::swap(&mut parent, &mut fork);
+    }
+    let meta = |id: &str, forked: &str| {
+        format!(
+            "{{\"timestamp\":\"2026-09-01T08:00:00.000Z\",\"type\":\"session_meta\",\
+             \"payload\":{{\"id\":\"{id}\",{forked}\"timestamp\":\"2026-09-01T08:00:00.000Z\",\
+             \"cwd\":\"/home/ana/src/garden-planner\",\"source\":\"cli\"}}}}\n"
+        )
+    };
+    let item = |role: &str, text: &str, minute: u32| {
+        let block = if role == "user" {
+            "input_text"
+        } else {
+            "output_text"
+        };
+        format!(
+            "{{\"timestamp\":\"2026-09-01T08:{minute:02}:00.000Z\",\"type\":\"response_item\",\
+             \"payload\":{{\"type\":\"message\",\"role\":\"{role}\",\
+             \"content\":[{{\"type\":\"{block}\",\"text\":\"{text}\"}}]}}}}\n"
+        )
+    };
+    let history = item("user", "Which beds get the tomatoes?", 0)
+        + &item("assistant", "The south beds, for the sun.", 10);
+    fs::write(rollout(parent), meta(parent, "") + &history).unwrap();
+    // The fork's own meta, then its parent's and the history it copied; its
+    // own lines start at line 4.
+    let forked = format!("\"forked_from_id\":\"{parent}\",\"subagent_history_start_ordinal\":4,");
+    fs::write(
+        rollout(fork),
+        meta(fork, &forked) + &meta(parent, "") + &history + &item("user", "And the peppers?", 30),
+    )
+    .unwrap();
+    bench.hand_over_rollout(&rollout(fork));
+    bench.hand_over_rollout(&rollout(parent));
+
+    bench.pass(&vault).0.unwrap();
+    assert_eq!(
+        bench.waiting(),
+        [entry_name(HistorySource::Codex, &rollout(fork))],
+        "the parent lands first"
+    );
+    bench.pass(&vault).0.unwrap();
+    assert_eq!(messages(&vault), 3, "the fork adds only its own message");
     assert!(bench.waiting().is_empty());
 }
 

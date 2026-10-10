@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use oneiron::ingest::history::{HistoryConversation, HistorySource, HistoryThreadKind};
+use oneiron::ingest::history::{HistoryConversation, HistorySource};
 use rustix::fs::{AtFlags, CWD, Dir, Mode, OFlags, fstat, openat, renameat, statat, unlinkat};
 use rustix::io::Errno;
 use serde::{Deserialize, Serialize};
@@ -74,8 +74,10 @@ struct Entry {
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 struct Place {
     /// When the session's conversations started, and when its own thread
-    /// ended (unknown, it sorts first among those that started together): a
-    /// resumed copy starts with its original's first line and goes on after
+    /// ended (unknown, it sorts first among those that started together). Its
+    /// own thread is what none of its other conversations began: a Claude
+    /// Code session's main thread, a Codex rollout, forked or not. A resumed
+    /// copy or a fork starts with its original's first line and goes on after
     /// it, whatever sidechain it carries or subagent outlived the original's
     /// thread.
     span: (u64, u64),
@@ -491,9 +493,18 @@ impl ImportQueue {
                     .iter()
                     .filter_map(|conversation| conversation.started_at_ms)
                     .min();
+                let ids: BTreeSet<&str> = conversations
+                    .iter()
+                    .map(|conversation| conversation.native_id.as_str())
+                    .collect();
                 let ended = conversations
                     .iter()
-                    .filter(|conversation| conversation.kind == HistoryThreadKind::Main)
+                    .filter(|conversation| {
+                        conversation
+                            .parent
+                            .as_deref()
+                            .is_none_or(|parent| !ids.contains(parent))
+                    })
                     .flat_map(|conversation| &conversation.messages)
                     .filter_map(|message| message.at_ms)
                     .max();
