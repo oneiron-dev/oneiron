@@ -35,7 +35,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// How long nothing may have written a temporary download before a sweep asks
 /// whether its fetch is still alive ([`sweep_stale_partials`]). The age
-/// covers the moment between a fetch creating its file and locking it, and
+/// spares a fetch that has created its file and not yet locked it, and
 /// earlier builds, which wrote one shared name and never locked it: a live
 /// fetch of theirs writes as the bytes arrive and gives up after
 /// [`DOWNLOAD_TIMEOUT`].
@@ -812,6 +812,16 @@ fn place(
     artifact: &PinnedArtifact,
 ) -> oneiron::Result<FileStamp> {
     file.lock().map_err(oneiron::Error::Io)?;
+    // A fetch that stalled between creating its file and locking it may have
+    // lost the file to a sweep. Only a sweep removes these names and nothing
+    // else creates them, so a name still there is this fetch's, and the lock
+    // now keeps it.
+    if !temp.is_file() {
+        return Err(download_failed(
+            &artifact.file,
+            "its temporary file was swept before it was locked",
+        ));
+    }
     #[cfg(test)]
     tests::partial_created(path);
     let mut writer = file;
