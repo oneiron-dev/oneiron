@@ -160,13 +160,24 @@ impl OffRecordSession<'_> {
     /// turns (their copy marks which turns are saved).
     pub fn record_for(&self, actor: EntityId) -> Result<OffRecordSessionRecord> {
         let room = self.require_in_room(actor)?;
-        let windows = self.vault.windows(room, actor)?;
         let mut record = session_entry_state(&self.entry)?.record.clone();
+        let windows = self.sight(room, actor)?;
         record.promoted_turns.clear();
         record
             .notices
             .retain(|notice| visible(Some(windows.as_slice()), notice.at));
         Ok(record)
+    }
+
+    /// `actor`'s membership windows in `room`, read AFTER whatever they
+    /// filter: someone removed before this read is refused, and anything
+    /// said after they left falls outside the windows it returns.
+    fn sight(&self, room: EntityId, actor: EntityId) -> Result<Vec<MembershipWindow>> {
+        let txn = self.vault.store.env.read_txn()?;
+        if !is_member_in_txn(self.vault, &txn, room, actor)? {
+            return Err(not_in_room(&self.session_ref, actor));
+        }
+        self.vault.windows_in_txn(&txn, room, actor)
     }
 
     /// An agent in the room suggests a save. Everyone in the room sees the
@@ -186,9 +197,14 @@ impl OffRecordSession<'_> {
     /// It posts an `exported` notice and writes no vault.
     pub fn export_talk_by(&self, person: EntityId) -> Result<OffRecordTalk> {
         let room = self.require_in_room(person)?;
-        let windows = self.vault.windows(room, person)?;
         let mut state = self.recording_state()?;
-        let talk = self.talk(&state, Some(windows.as_slice()))?;
+        let gathered = self.gather_talk(&state)?;
+        let windows = self.sight(room, person)?;
+        let talk = OffRecordTalk {
+            session_ref: self.session_ref.clone(),
+            room: state.record.room,
+            turns: gathered.finish(Some(windows.as_slice())),
+        };
         let at = self.vault.store.clock.now_recorded_at();
         post_notice(&mut state, OffRecordNoticeAct::Exported, person, at);
         self.entry.publish_state(&state);
@@ -342,16 +358,11 @@ impl OffRecordSession<'_> {
         Ok(saved)
     }
 
-    /// The talk as data, in the order the room took it: the turns already in
-    /// this vault (saved, or said while the room was on record) read from the
-    /// vault as it holds them now, and the turns and messages still in the
-    /// room read from its journal. Only visible messages are kept, each only
-    /// when the reader's membership shows the moment it was said.
-    fn talk(
-        &self,
-        state: &OffRecordSessionEntryState,
-        windows: Option<&[MembershipWindow]>,
-    ) -> Result<OffRecordTalk> {
+    /// The talk so far, gathered: the turns already in this vault (saved, or
+    /// said while the room was on record) read from the vault as it holds
+    /// them now, and the turns and messages still in the room read from its
+    /// journal. [`Talk::finish`] keeps only what a reader's membership shows.
+    fn gather_talk(&self, state: &OffRecordSessionEntryState) -> Result<Talk> {
         let promoted: BTreeSet<EntityId> = state
             .record
             .promoted_turns
@@ -390,11 +401,7 @@ impl OffRecordSession<'_> {
             }
         }
         drop(snapshot);
-        Ok(OffRecordTalk {
-            session_ref: self.session_ref.clone(),
-            room: state.record.room,
-            turns: talk.finish(windows),
-        })
+        Ok(talk)
     }
 
     /// One turn of this stretch as the vault holds it now; nothing once the
@@ -470,8 +477,8 @@ impl Talk {
         }
     }
 
-    /// The turns holding a message the reader may see, in the order the room
-    /// took them.
+    /// The turns holding a visible message the reader's membership shows at
+    /// the moment it was said, in the order the room took them.
     fn finish(mut self, windows: Option<&[MembershipWindow]>) -> Vec<OffRecordTalkTurn> {
         for (turn, at, message) in self.messages.into_values() {
             if let (Some(message), Some(turn)) = (message, self.turns.get_mut(&turn))

@@ -551,8 +551,14 @@ async fn outsiders_see_nothing_and_a_late_joiner_sees_only_their_part() {
     let (status, _) = act(&server, "export", mina_slip.clone(), attic, "attic").await;
     assert_eq!(status, StatusCode::OK);
 
-    for path in ["save", "export", "suggest-save"] {
-        let (status, refused) = act(&server, path, ravi_slip.clone(), attic, "attic").await;
+    // Only an agent suggests, so the outsider suggesting is Ravi's agent.
+    let ravi_agent = slip("ravi-agent", ravi, "agent");
+    for (path, who) in [
+        ("save", &ravi_slip),
+        ("export", &ravi_slip),
+        ("suggest-save", &ravi_agent),
+    ] {
+        let (status, refused) = act(&server, path, who.clone(), attic, "attic").await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {refused}");
     }
     let (status, _) = call(
