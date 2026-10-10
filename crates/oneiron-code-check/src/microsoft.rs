@@ -27,10 +27,12 @@ const DRAIN: Duration = Duration::from_millis(100);
 /// Text through which a program can make tsc resolve a module: an import
 /// (statement, call, JSDoc type or tag, JSX import source), an export from
 /// another module (a program can close its envelope and write one at the top
-/// level), a `require` call, a reference directive, or a Unicode escape that
-/// spells one of them. Matched without regard to case, so a program that
-/// merely mentions one (`self.memory.export`) is left unchecked too.
-const MODULE_NAMING: [&str; 5] = ["import", "export", "require", "reference", "\\u"];
+/// level), a `require` call, a reference directive, an ambient module
+/// declaration (a nested one is an augmentation, resolved even in a script),
+/// or a Unicode escape that spells one of them. Matched without regard to
+/// case, so a program that merely mentions one (`self.memory.export`) is left
+/// unchecked too.
+const MODULE_NAMING: [&str; 6] = ["import", "export", "require", "reference", "module", "\\u"];
 /// `tsc --version` prints one short line.
 const VERSION_BYTES: usize = 256;
 

@@ -185,6 +185,7 @@ async fn shadow_mode_changes_no_programs_behaviour_or_result() {
     let shadow = Arc::new(ShadowCheck::new(Arc::new(
         TscRsWasm::load(TscRsBudget::default()).unwrap(),
     )));
+    let mut failed_steps = 0;
     for (name, program, codes) in FIXTURES {
         let off = run(program, None).await;
         let checked = run(program, Some(shadow.clone())).await;
@@ -193,20 +194,24 @@ async fn shadow_mode_changes_no_programs_behaviour_or_result() {
         assert_eq!(off.view(), checked.view(), "{name}");
         assert_eq!(off.checks(), 0, "{name}: off checks nothing");
         // A completed step keeps its check's report; a failed step keeps
-        // none, and its check is counted below. Every run here ends on a
-        // completed step.
+        // none, and its check is counted below. Every fixture ends its program
+        // with `finish`, so a step before the run's last is a program that
+        // failed after a host call, and the last step completed the run.
         let steps = &checked.record.step_checkpoints;
         let last = steps.last().map(|step| step.seq);
         for step in steps {
             let at = |kind: &str| checked.text(&format!("executor/repl/{:06}.{kind}", step.seq));
-            let Some(report) = at("code-check.json") else {
-                assert_ne!(
-                    Some(step.seq),
-                    last,
-                    "{name}: the last step keeps its report"
+            let report = at("code-check.json");
+            if Some(step.seq) != last {
+                assert!(
+                    report.is_none(),
+                    "{name}: failed step {} keeps no report",
+                    step.seq
                 );
+                failed_steps += 1;
                 continue;
-            };
+            }
+            let report = report.unwrap_or_else(|| panic!("{name}: the last step keeps its report"));
             let report: Value = serde_json::from_str(&report).unwrap();
             assert_eq!(report["mode"], "shadow", "{name}");
             assert_eq!(report["backend"], "tsc-rs", "{name}");
@@ -228,6 +233,8 @@ async fn shadow_mode_changes_no_programs_behaviour_or_result() {
             assert_eq!(found, expected, "{name}: {report}");
         }
     }
+    // 05-undefined-path fails after its speech, so a failed step was seen.
+    assert!(failed_steps > 0);
     // A program whose step failed still counts.
     let totals = shadow.metrics().snapshot();
     assert_eq!(totals.with_diagnostics, 4, "{totals:?}");

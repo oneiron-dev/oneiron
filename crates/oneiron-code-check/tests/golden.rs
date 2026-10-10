@@ -114,6 +114,7 @@ fn microsoft_oracle_gives_the_golden_diagnostics() {
         "/** @type {IMPORT('fs')} */\nconst fs = REQUIRE('fs');\nfinish(fs);",
         "const fs = requ\\u0069re('fs');\nfinish(fs);",
         "})();\nexport * from '/etc/hostname';\n(async () => {",
+        "})();\ndeclare module 'outer' {\n  module 'outside-package' {}\n}\n(async () => {",
     ] {
         let checked = checker.check(&CheckInput {
             declarations: &DECLARATIONS,
