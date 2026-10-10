@@ -57,6 +57,10 @@ pub use self::payload::{
     CalendarInvitePayload, decode_frozen_calendar_invite,
 };
 
+pub(crate) use self::hygiene::CalendarInviteConsentSnapshot;
+#[cfg(test)]
+pub(crate) use self::hygiene::resolve_consent_basis;
+
 use super::CalendarError;
 #[cfg(test)]
 use super::claims::PREDICATE_CALENDAR_ATTENDEE;

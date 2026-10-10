@@ -90,6 +90,9 @@ pub struct McpCodeExecutionRequest<'a> {
     pub task: &'a str,
     /// The durable run id [`mcp_code_run_id`] derived for this handle.
     pub run_id: EntityId,
+    /// The door `self.memory.<verb>` takes: the SDK verb table under this
+    /// call's connector, with its admission and gate.
+    pub verbs: Arc<dyn oneiron::code_run::AgentVerbDoor>,
 }
 
 impl fmt::Debug for McpCodeExecutionRequest<'_> {
@@ -165,8 +168,13 @@ pub trait McpCodeModeProvider: Send + Sync {
     fn lease(&self) -> &BudgetLease;
     /// A FRESH sandbox/REPL runtime for one run.
     fn runtime(&self) -> Box<dyn JsCodeModeRuntime + Send>;
-    /// The executor configuration for this run.
-    fn executor_config(&self, run_id: EntityId, task: &str) -> EngineExecutorConfig;
+    /// The executor configuration for this run, in the vault it lives in.
+    fn executor_config(
+        &self,
+        vault: &Vault,
+        run_id: EntityId,
+        task: &str,
+    ) -> oneiron::Result<EngineExecutorConfig>;
     /// Injected typed judgment, above the raw backend; absent for legacy vaults.
     fn seat_judge(&self) -> Option<&dyn SeatJudge> {
         None
@@ -215,20 +223,25 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
         let provider = Arc::clone(&self.provider);
         let active = Arc::clone(&self.active);
         let write_actor = request.actor.write_actor();
+        let verbs = Arc::clone(&request.verbs);
         // The gated run source is HOST-derived: the caller's handle is a label
         // inside it, never the WHO.
         let run_ref = format!("mcp.execute_code:{}", request.run_ref);
-        let config = provider.executor_config(request.run_id, request.task);
         Box::pin(async move {
-            if request.run_id != mcp_code_run_id(request.run_ref, request.actor)
-                || config.run_id != request.run_id
-                || config.task != request.task
-            {
-                return Err(McpCodeExecutionError::RunBinding(
-                    "provider changed scoped run identity".into(),
-                ));
+            let changed =
+                || McpCodeExecutionError::RunBinding("provider changed scoped run identity".into());
+            if request.run_id != mcp_code_run_id(request.run_ref, request.actor) {
+                return Err(changed());
             }
-            let guard = ActiveRun::acquire(active, config.run_id)?;
+            let guard = ActiveRun::acquire(active, request.run_id)?;
+            // Read under single-flight: what the provider derives from the
+            // run's record is not raced by another attempt making it.
+            let config = provider
+                .executor_config(&vault, request.run_id, request.task)
+                .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?;
+            if config.run_id != request.run_id || config.task != request.task {
+                return Err(changed());
+            }
             let (sender, receiver) = tokio::sync::oneshot::channel();
             // The engine REPL driver holds `&mut dyn JsCodeModeRuntime` across
             // its own awaits, so its future is deliberately not `Send`. It runs
@@ -244,6 +257,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                         write_actor,
                         &run_ref,
                         &config,
+                        verbs,
                     );
                     // Completion must release single-flight before waking an
                     // awaiter that may immediately re-enter this persisted run.
@@ -273,9 +287,11 @@ fn run_engine_native_code_mode(
     write_actor: WriteActor,
     run_ref: &str,
     config: &EngineExecutorConfig,
+    verbs: Arc<dyn oneiron::code_run::AgentVerbDoor>,
 ) -> Result<EngineExecutorOutcome, McpCodeExecutionError> {
     let gated_write = GatedActorWrite::new(vault, write_actor, run_ref)
-        .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?;
+        .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
+        .with_agent_verb_door(verbs);
     let mut runtime = provider.runtime();
     let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
     let reactor = tokio::runtime::Builder::new_current_thread()

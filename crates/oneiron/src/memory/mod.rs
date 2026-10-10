@@ -112,7 +112,7 @@ pub use structural::{
     HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput, TextIndexField,
 };
 pub use subscriptions::{MemorySubscriptionOwner, ScopedView};
-pub use support::{Memory, parse_actor_key, resolve_entity_ref};
+pub use support::{HostWriteOrigin, Memory, parse_actor_key, resolve_entity_ref};
 pub use witness::{
     DEFAULT_MESSAGE_STREAM_IDLE_MS, MAX_MESSAGE_STREAM_BYTES, MAX_MESSAGE_STREAMS,
     MessageStreamError, MessageStreamHandle, MessageStreamPartial, MessageStreamPolicy,

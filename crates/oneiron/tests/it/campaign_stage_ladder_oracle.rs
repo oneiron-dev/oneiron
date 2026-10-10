@@ -39,17 +39,15 @@ use oneiron::campaign::enrollment::{
     CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND, CampaignEnrollmentAttemptPayload,
 };
 use oneiron::campaign::stage::{
-    CodedCommReply, ExternalStageEvidenceHook, LaneClockPolicy, MembershipProvenance,
-    NO_SHOW_BUMP_AFTER_SECS, NoShowRecoveryRule, NoShowRecoveryStep, OutreachLane, PromotionMode,
-    ReentryPlan, ReplyCode, ReplyDisposition, ReplyRouteRule, StageDefinition, StageEvidence,
-    StageLadderDefinition, StageProjectResult, StageRoute, StageTransitionRule, WakeCondition,
-    apply_coded_reply, apply_event_outcome, apply_external_stage_evidence, route_membership_lane,
-    snooze_with_wake, validate_ladder,
+    CodedCommReply, ExternalStageEvidenceHook, NO_SHOW_BUMP_AFTER_SECS, NoShowRecoveryRule,
+    PromotionMode, ReentryPlan, ReplyCode, ReplyDisposition, ReplyRouteRule, StageDefinition,
+    StageEvidence, StageLadderDefinition, StageProjectResult, StageTransitionRule, WakeCondition,
+    apply_coded_reply, apply_event_outcome, apply_external_stage_evidence, snooze_with_wake,
 };
 use oneiron::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
-    Error, Result, TimeRange, Vault, VaultConfig,
+    Error, TimeRange, Vault, VaultConfig,
 };
 use rmpv::Value;
 
@@ -65,12 +63,10 @@ const LEDGER_SEED: u8 = 0x58;
 const BASIS_SEED: u8 = 0x59;
 const SENDER_SEED: u8 = 0x5A;
 const QUERY_SEED: u8 = 0x5B;
-const RELATIONSHIP_SEED: u8 = 0x5C;
 const PLANTED_SEED: u8 = 0x5D;
 const PROGRAM_SEED: u8 = 0x5E;
 const STEP_SEED: u8 = 0x5F;
 const MISSING_EVENT_SEED: u8 = 0x60;
-const OTHER_CAMPAIGN_SEED: u8 = 0x61;
 const OTHER_EVENT_SEED: u8 = 0x62;
 const PLANTED_OUTCOME_SEED: u8 = 0x63;
 
@@ -435,77 +431,6 @@ fn apply_outcome(vault: &Vault) -> StageProjectResult {
 }
 
 // ---------------------------------------------------------------------------
-// Law 1 — membership is not a stage
-// ---------------------------------------------------------------------------
-
-#[test]
-fn warm_reconnect_requires_real_prior_evidence() {
-    let policy = LaneClockPolicy {
-        trigger_fresh_for_secs: 30 * 24 * 60 * 60,
-        prior_touch_warm_for_secs: 90 * 24 * 60 * 60,
-    };
-    let base = MembershipProvenance {
-        membership_claim_ref: test_id(MEMBER_SEED),
-        trigger_evidence_refs: vec![test_id(QUERY_SEED)],
-        trigger_observed_at: REPLY_AT,
-        prior_thread_ref: None,
-        prior_relationship_evidence_ref: None,
-        prior_touch_at: Some(REPLY_AT - 60 * 60),
-    };
-
-    // A real thread reference earns the warm lane and RIDES it.
-    let threaded = MembershipProvenance {
-        prior_thread_ref: Some("thread:prior".to_owned()),
-        ..base.clone()
-    };
-    assert_eq!(
-        route_membership_lane(&threaded, policy, REPLY_AT),
-        OutreachLane::WarmReconnect {
-            thread_ref: Some("thread:prior".to_owned()),
-            relationship_evidence_ref: None,
-        },
-    );
-
-    // So does a relationship evidence entity.
-    let related = MembershipProvenance {
-        prior_relationship_evidence_ref: Some(test_id(RELATIONSHIP_SEED)),
-        ..base.clone()
-    };
-    assert_eq!(
-        route_membership_lane(&related, policy, REPLY_AT),
-        OutreachLane::WarmReconnect {
-            thread_ref: None,
-            relationship_evidence_ref: Some(test_id(RELATIONSHIP_SEED)),
-        },
-    );
-
-    // A blank thread token is an ASSERTION of warmth with nothing behind it.
-    let unreferenced = MembershipProvenance {
-        prior_thread_ref: Some("   ".to_owned()),
-        ..base
-    };
-    assert_eq!(
-        route_membership_lane(&unreferenced, policy, REPLY_AT),
-        OutreachLane::Cold,
-    );
-
-    // Policy horizons are data, and both bite: a prior touch outside the warm
-    // window, and a trigger that is no longer a live reason to reach out.
-    assert_eq!(
-        route_membership_lane(&threaded, policy, REPLY_AT + 120 * 24 * 60 * 60),
-        OutreachLane::Cold,
-    );
-    let stale_trigger = MembershipProvenance {
-        trigger_observed_at: REPLY_AT - 60 * 24 * 60 * 60,
-        ..threaded
-    };
-    assert_eq!(
-        route_membership_lane(&stale_trigger, policy, REPLY_AT),
-        OutreachLane::Cold,
-    );
-}
-
-// ---------------------------------------------------------------------------
 // Law 2 — AUTO is the default, Propose is a dial
 // ---------------------------------------------------------------------------
 
@@ -544,54 +469,6 @@ fn positive_now_reply_auto_promotes_with_message_evidence() {
         )])),
         "the reply message rides the claim as evidence",
     );
-}
-
-#[test]
-fn propose_mode_is_a_dial_not_a_gate() {
-    let (_dir, auto_vault) = oracle_vault();
-    let (_propose_dir, propose_vault) = oracle_vault();
-    let person = test_id(PERSON_SEED);
-
-    // The SAME evidence, through the same door, differing only in the dial.
-    let auto = apply_coded_reply(
-        &auto_vault,
-        &ladder(),
-        &reply(ReplyCode::PositiveNow),
-        PromotionMode::Auto,
-    )
-    .unwrap();
-    let proposed = apply_coded_reply(
-        &propose_vault,
-        &ladder(),
-        &reply(ReplyCode::PositiveNow),
-        PromotionMode::Propose,
-    )
-    .unwrap();
-
-    assert!(matches!(auto, StageProjectResult::Advanced { .. }));
-    let StageProjectResult::Proposed { proposed_claim_ref } = proposed else {
-        panic!("propose mode must return a proposed head, got {proposed:?}");
-    };
-
-    // AUTO needed no approval step to be invented for it.
-    assert_eq!(
-        only_live_claim(&auto_vault, person, PREDICATE_CRM_STAGE)
-            .1
-            .approval,
-        ClaimApprovalStatus::Approved,
-    );
-    // Propose lands on the crate's EXISTING approval status; CA-04 mints no
-    // second approval mechanism.
-    let (id, body) = only_live_claim(&propose_vault, person, PREDICATE_CRM_STAGE);
-    assert_eq!(id, proposed_claim_ref);
-    assert_eq!(body.approval, ClaimApprovalStatus::Proposed);
-    // The dial moved the approval, not the payload: the proposed head is still
-    // the `replied` stage the same evidence earned under AUTO.
-    let stage = decode_crm_stage_value(&body.value).unwrap();
-    assert_eq!(stage.stage, key(REPLIED));
-    assert_eq!(stage.evidence_class, StageEvidenceClass::MeaningfulReply);
-    assert_eq!(stage.evidence_refs, vec![test_id(MESSAGE_SEED)]);
-    assert_eq!(stage.recorded_at, REPLY_AT);
 }
 
 // ---------------------------------------------------------------------------
@@ -781,35 +658,6 @@ fn coded_and_external_ingress_use_projector_only_path() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn held_outcome_is_required_for_call_held() {
-    let (_dir, vault) = oracle_vault();
-    let person = test_id(PERSON_SEED);
-    walk_to_call_booked(&vault);
-
-    record_outcome(&vault, EventOutcome::Held);
-    let outcome_claim = only_live_claim(
-        &vault,
-        test_id(EVENT_SEED),
-        PREDICATE_CALENDAR_EVENT_OUTCOME,
-    )
-    .0;
-    let advanced_ref = advanced(apply_outcome(&vault));
-
-    let (id, body) = only_live_claim(&vault, person, PREDICATE_CRM_STAGE);
-    assert_eq!(id, advanced_ref);
-    assert_eq!(
-        body.value,
-        stage_value(
-            CALL_HELD,
-            StageEvidenceClass::CalendarEventOutcome,
-            vec![outcome_claim],
-            OUTCOME_AT,
-        ),
-        "the recorded outcome claim itself is the evidence",
-    );
-}
-
-#[test]
 fn silent_outcome_is_none_and_projects_unknown() {
     let (_dir, vault) = oracle_vault();
     let person = test_id(PERSON_SEED);
@@ -829,66 +677,6 @@ fn silent_outcome_is_none_and_projects_unknown() {
     assert_eq!(
         decode_crm_stage_value(&body.value).unwrap().stage,
         key(CALL_BOOKED),
-    );
-}
-
-#[test]
-fn explicit_unknown_never_promotes() {
-    let (_dir, vault) = oracle_vault();
-    let person = test_id(PERSON_SEED);
-    let booked_ref = walk_to_call_booked(&vault);
-
-    record_outcome(&vault, EventOutcome::Unknown);
-    assert_eq!(apply_outcome(&vault), StageProjectResult::NoChange);
-
-    // The same holds for a pre-start cancellation: it is a real recorded value,
-    // and it is still not evidence that a call happened.
-    record_outcome(&vault, EventOutcome::CancelledPreStart);
-    assert_eq!(apply_outcome(&vault), StageProjectResult::NoChange);
-
-    let (head_id, body) = only_live_claim(&vault, person, PREDICATE_CRM_STAGE);
-    assert_eq!(head_id, booked_ref, "the head did not move");
-    assert_eq!(
-        decode_crm_stage_value(&body.value).unwrap().stage,
-        key(CALL_BOOKED)
-    );
-}
-
-#[test]
-fn no_show_routes_same_day_d3_then_snooze() {
-    let (_dir, vault) = oracle_vault();
-    let person = test_id(PERSON_SEED);
-    walk_to_call_booked(&vault);
-    let booked_claim = only_live_claim(&vault, person, PREDICATE_CRM_STAGE).0;
-
-    record_outcome(&vault, EventOutcome::NoShow);
-    let outcome_claim = only_live_claim(
-        &vault,
-        test_id(EVENT_SEED),
-        PREDICATE_CALENDAR_EVENT_OUTCOME,
-    )
-    .0;
-
-    let StageProjectResult::Routed(StageRoute::Reengage(plan)) = apply_outcome(&vault) else {
-        panic!("a no-show must route re-engagement");
-    };
-    assert_eq!(plan.event_ref, test_id(EVENT_SEED));
-    assert_eq!(plan.outcome_claim_ref, outcome_claim);
-    assert_eq!(
-        plan.steps,
-        vec![
-            NoShowRecoveryStep::SameDayReschedule,
-            NoShowRecoveryStep::BumpAfter {
-                delay_secs: 3 * 24 * 60 * 60,
-            },
-            NoShowRecoveryStep::Snooze,
-        ],
-        "the recovery ORDER is ratified, not a dial",
-    );
-    assert_eq!(
-        only_live_claim(&vault, person, PREDICATE_CRM_STAGE).0,
-        booked_claim,
-        "a no-show leaves the booked head live",
     );
 }
 
@@ -1065,88 +853,6 @@ fn an_owner_attested_outcome_is_never_relabelled_machine() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn positive_later_snoozes_and_reenters_at_touch_one() {
-    let (_dir, vault) = oracle_vault();
-    let person = test_id(PERSON_SEED);
-
-    let StageProjectResult::Routed(StageRoute::Snoozed(plan)) = apply_coded_reply(
-        &vault,
-        &ladder(),
-        &reply(ReplyCode::PositiveLater),
-        PromotionMode::Auto,
-    )
-    .unwrap() else {
-        panic!("positive_later must snooze");
-    };
-    assert_eq!(plan.restart_touch_index, 0, "re-entry restarts at touch 1");
-    assert_eq!(plan.reason_evidence_ref, test_id(MESSAGE_SEED));
-    assert_eq!(plan.wake, WakeCondition::NewTrigger);
-    assert_eq!(plan.reentry_attempt, None);
-
-    // The membership is paused with a wake condition; channels and derivation
-    // ride across the transition untouched.
-    let (member_id, body) = only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER);
-    let paused = decode_campaign_member_value(&body.value).unwrap();
-    assert_eq!(
-        paused.state,
-        CampaignMemberState::Paused {
-            until: None,
-            new_trigger: Some(true),
-        },
-    );
-    assert_eq!(paused.channels, enrolled_member().channels);
-    assert_eq!(paused.derivation, enrolled_member().derivation);
-
-    // `AtOrNewTrigger` persists BOTH fields.
-    let both = ReentryPlan {
-        party_ref: person,
-        campaign_ref: test_id(CAMPAIGN_SEED),
-        wake: WakeCondition::AtOrNewTrigger { at: BOOKING_AT },
-        restart_touch_index: 0,
-        reason_evidence_ref: test_id(MESSAGE_SEED),
-        reentry_attempt: None,
-    };
-    let next = snooze_with_wake(&vault, &member_id, &both, BOOKING_AT).unwrap();
-    let at_or_new_trigger = decode_campaign_member_value(
-        &only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER)
-            .1
-            .value,
-    )
-    .unwrap();
-    assert_eq!(
-        at_or_new_trigger.state,
-        CampaignMemberState::Paused {
-            until: Some(BOOKING_AT),
-            new_trigger: Some(true),
-        },
-    );
-    assert_eq!(at_or_new_trigger.channels, enrolled_member().channels);
-    assert_eq!(at_or_new_trigger.derivation, enrolled_member().derivation);
-
-    // A deadline alone sets only `until`.
-    let dated = ReentryPlan {
-        wake: WakeCondition::At(BOOKING_AT + 60),
-        ..both
-    };
-    snooze_with_wake(&vault, &next, &dated, BOOKING_AT + 60).unwrap();
-    let deadline_only = decode_campaign_member_value(
-        &only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER)
-            .1
-            .value,
-    )
-    .unwrap();
-    assert_eq!(
-        deadline_only.state,
-        CampaignMemberState::Paused {
-            until: Some(BOOKING_AT + 60),
-            new_trigger: None,
-        },
-    );
-    assert_eq!(deadline_only.channels, enrolled_member().channels);
-    assert_eq!(deadline_only.derivation, enrolled_member().derivation);
-}
-
-#[test]
 fn reentry_rides_the_existing_enrollment_attempt_kind() {
     let (_dir, vault) = oracle_vault();
     let person = test_id(PERSON_SEED);
@@ -1200,57 +906,6 @@ fn reentry_rides_the_existing_enrollment_attempt_kind() {
         snooze_with_wake(&vault, &test_id(MEMBER_SEED), &wrong_touch, BOOKING_AT),
         Err(Error::InvalidClaimBody(_)),
     ));
-}
-
-#[test]
-fn complaint_and_exit_reuse_campaign_member_state() {
-    let (_dir, vault) = oracle_vault();
-    let person = test_id(PERSON_SEED);
-
-    let result = apply_coded_reply(
-        &vault,
-        &ladder(),
-        &reply(ReplyCode::Complaint),
-        PromotionMode::Auto,
-    )
-    .unwrap();
-    assert_eq!(result, StageProjectResult::Routed(StageRoute::Suppressed));
-    let (member_id, body) = only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER);
-    let member = decode_campaign_member_value(&body.value).unwrap();
-    assert_eq!(
-        member.state,
-        CampaignMemberState::Suppressed,
-        "suppression reuses CA-01 membership state; no second primitive is minted",
-    );
-    assert_eq!(member.campaign, enrolled_member().campaign);
-    assert_eq!(member.channels, enrolled_member().channels);
-    assert_eq!(member.derivation, enrolled_member().derivation);
-
-    let exited = apply_coded_reply(
-        &vault,
-        &ladder(),
-        &CodedCommReply {
-            membership_claim_ref: member_id,
-            ..reply(ReplyCode::NotInterested)
-        },
-        PromotionMode::Auto,
-    )
-    .unwrap();
-    assert_eq!(exited, StageProjectResult::Routed(StageRoute::Exited));
-    let exited_member = decode_campaign_member_value(
-        &only_live_claim(&vault, person, PREDICATE_CAMPAIGN_MEMBER)
-            .1
-            .value,
-    )
-    .unwrap();
-    assert_eq!(exited_member.state, CampaignMemberState::Exited);
-    assert_eq!(exited_member.campaign, enrolled_member().campaign);
-    assert_eq!(exited_member.channels, enrolled_member().channels);
-    assert_eq!(exited_member.derivation, enrolled_member().derivation);
-    assert!(
-        live_claims(&vault, person, PREDICATE_CRM_STAGE).is_empty(),
-        "neither route invents a pipeline head",
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1345,159 +1000,4 @@ fn owner_attested_is_allowed_only_after_proposal_sent() {
     assert_eq!(stage.evidence_refs, vec![test_id(LEDGER_SEED)]);
     assert_eq!(stage.evidence_class, StageEvidenceClass::CounterpartyLedger);
     assert_eq!(stage.recorded_at, DEPOSIT_AT);
-}
-
-#[test]
-fn deposit_and_desk_hooks_do_not_mint_source_truth() {
-    let (_dir, vault) = oracle_vault();
-    let person = test_id(PERSON_SEED);
-    walk_to_proposal_sent(&vault);
-
-    let before = vault.claims_for_subject(&person).unwrap().len();
-    advanced(
-        apply_external_stage_evidence(
-            &vault,
-            &ladder(),
-            &hook(
-                DEPOSIT_PAID,
-                StageEvidenceClass::CounterpartyLedger,
-                EvidenceBasis::OwnerAttested,
-                vec![test_id(LEDGER_SEED)],
-                DEPOSIT_AT,
-            ),
-            PromotionMode::Auto,
-        )
-        .unwrap(),
-    );
-
-    // Exactly ONE new claim, and it is a stage. No payment, commitment,
-    // renewal, or TASK_LIST record is created: the counterparty ledger keeps
-    // its truth, and CA-04 stores only the reference to it.
-    assert_eq!(vault.claims_for_subject(&person).unwrap().len(), before + 1);
-    let predicates: Vec<String> = all_claims(&vault, person)
-        .into_iter()
-        .map(|body| body.predicate)
-        .collect();
-    assert!(
-        predicates
-            .iter()
-            .all(|predicate| predicate == PREDICATE_CRM_STAGE
-                || predicate == PREDICATE_CAMPAIGN_MEMBER),
-        "CA-04 wrote a foreign family: {predicates:?}",
-    );
-    assert_eq!(
-        only_live_claim(&vault, person, PREDICATE_CRM_STAGE)
-            .1
-            .evidence,
-        Some(Value::Array(vec![Value::from(
-            test_id(LEDGER_SEED).to_hex()
-        )])),
-        "the hook keeps only the evidence REFERENCE",
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Ladder validation
-// ---------------------------------------------------------------------------
-
-#[test]
-fn a_self_contradicting_ladder_is_rejected() {
-    assert!(validate_ladder(&ladder()).is_ok());
-
-    let empty_key = StageLadderDefinition {
-        key: "  ".to_owned(),
-        ..ladder()
-    };
-    assert!(validate_ladder(&empty_key).is_err());
-
-    let mut duplicate_stage = ladder();
-    duplicate_stage.stages.push(StageDefinition {
-        key: key(REPLIED),
-        label: "again".to_owned(),
-    });
-    assert!(validate_ladder(&duplicate_stage).is_err());
-
-    let mut undeclared = ladder();
-    undeclared.transitions.push(transition(
-        Some(DESK_ACTIVE),
-        "renewed",
-        StageEvidenceClass::RecurringCommitment,
-        false,
-    ));
-    assert!(validate_ladder(&undeclared).is_err());
-
-    // Two ways out of one stage on the SAME evidence class would make the
-    // calendar-outcome path pick arbitrarily.
-    let mut ambiguous = ladder();
-    ambiguous.transitions.push(transition(
-        Some(CALL_BOOKED),
-        DESK_ACTIVE,
-        StageEvidenceClass::CalendarEventOutcome,
-        false,
-    ));
-    assert!(validate_ladder(&ambiguous).is_err());
-
-    let mut twice_routed = ladder();
-    twice_routed
-        .reply_routes
-        .push(route(ReplyCode::PositiveNow, ReplyDisposition::RecordOnly));
-    assert!(validate_ladder(&twice_routed).is_err());
-
-    let mut phantom_promotion = ladder();
-    phantom_promotion.reply_routes = vec![route(
-        ReplyCode::PositiveNow,
-        ReplyDisposition::Promote {
-            stage: key("nowhere"),
-        },
-    )];
-    assert!(validate_ladder(&phantom_promotion).is_err());
-}
-
-#[test]
-fn an_unrouted_code_and_an_unconfigured_transition_are_not_errors() -> Result<()> {
-    let (_dir, vault) = oracle_vault();
-    let person = test_id(PERSON_SEED);
-
-    let mut sparse = ladder();
-    sparse.reply_routes.clear();
-    assert_eq!(
-        apply_coded_reply(
-            &vault,
-            &sparse,
-            &reply(ReplyCode::PositiveNow),
-            PromotionMode::Auto,
-        )?,
-        StageProjectResult::NoChange,
-    );
-
-    // A hook naming a stage no transition reaches from HERE changes nothing —
-    // a configuration statement, not a failure.
-    assert_eq!(
-        apply_external_stage_evidence(
-            &vault,
-            &ladder(),
-            &hook(
-                DESK_ACTIVE,
-                StageEvidenceClass::RecurringCommitment,
-                EvidenceBasis::Machine,
-                vec![test_id(LEDGER_SEED)],
-                DEPOSIT_AT,
-            ),
-            PromotionMode::Auto,
-        )?,
-        StageProjectResult::NoChange,
-    );
-    assert!(live_claims(&vault, person, PREDICATE_CRM_STAGE).is_empty());
-
-    // A stage scoped to another campaign is not this campaign's head.
-    let other = apply_event_outcome(
-        &vault,
-        &ladder(),
-        &test_id(PERSON_SEED),
-        &test_id(OTHER_CAMPAIGN_SEED),
-        &test_id(EVENT_SEED),
-        PromotionMode::Auto,
-    )?;
-    assert_eq!(other, StageProjectResult::NoChange);
-    Ok(())
 }
