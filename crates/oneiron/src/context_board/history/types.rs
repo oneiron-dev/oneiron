@@ -90,10 +90,6 @@ pub(super) struct TurnAnchor {
     pub learned_at: u64,
     pub source_revision_ref: RevisionRef,
     pub frontier: Vec<u8>,
-    /// Compaction folded this turn: its board no longer reconstructs. Only
-    /// the folded turns are marked; the owner's other turns keep theirs.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub folded: bool,
 }
 
 /// Claims written by this turn. Empty on an unchanged selection.

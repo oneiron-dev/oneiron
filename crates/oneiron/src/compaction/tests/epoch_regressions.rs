@@ -606,3 +606,45 @@ fn compaction_folds_only_the_boards_of_the_turns_it_compacts() -> Result<()> {
     }
     Ok(())
 }
+
+/// Greptile P1 (#1340): the fold belongs to the turn, not to its anchor. A
+/// compaction that runs before a turn's board is recorded still folds that
+/// board: recorded late, it reads as beyond the horizon, never reconstructs.
+#[test]
+fn a_board_recorded_after_its_turn_was_compacted_stays_folded() -> Result<()> {
+    use crate::context_board::{BoardHistoryError, BoardSelection, BoardTurn};
+    let (_dir, vault) = open_vault();
+    let session = mint_session(&vault, 10);
+    let actor = loom_actor(&vault, 0x61);
+    let owner = put_actor(&vault, 0x62);
+    let pinned = put_actor(&vault, 0x63);
+    let late = put_turn(&vault, 0x81, 1);
+
+    let mut driver = engine_driver(1_000);
+    compact_once(
+        &vault,
+        &mut driver,
+        session,
+        actor,
+        vec![window_row(late, 1)],
+    )?;
+    vault
+        .record_board_turn(
+            &BoardTurn {
+                turn: late,
+                owner,
+                at: 1,
+                selection: BoardSelection {
+                    pinned: [pinned].into(),
+                    ..BoardSelection::default()
+                },
+            },
+            11,
+        )
+        .expect("a late board still records");
+    match vault.reconstruct_board(&late) {
+        Err(BoardHistoryError::Compacted(turn)) => assert_eq!(turn, late),
+        other => panic!("a board recorded after its fold must stay folded, got {other:?}"),
+    }
+    Ok(())
+}

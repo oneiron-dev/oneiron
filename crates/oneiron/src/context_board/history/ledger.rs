@@ -33,6 +33,10 @@ const LAST: SideTable<EntityId, (u64, u64), LegacyCompact> =
 /// authenticated on every read. Key: the claim id.
 const CLAIM_FRONTIER: SideTable<EntityId, [u8; 16], Raw> =
     SideTable::new(&side_table::BOARD_HISTORY_CLAIM_FRONTIER);
+/// Compaction folded this TURN into a summary: its board no longer
+/// reconstructs, whether it was recorded before the fold or after it. Key:
+/// the turn id.
+const FOLDED: SideTable<EntityId, (), Raw> = SideTable::new(&side_table::BOARD_HISTORY_FOLDED);
 /// Monotonic compaction horizon (earliest retained turn time) per
 /// board-history owner. Key: the owner id.
 const HORIZON: SideTable<EntityId, u64, Raw> = SideTable::new(&side_table::BOARD_HISTORY_HORIZON);
@@ -395,7 +399,6 @@ impl Vault {
             learned_at,
             source_revision_ref: anchor_ref,
             frontier,
-            folded: false,
         };
         write_anchor(self, &mut txn, &input.turn, &anchor)?;
         let snapshot = doc
@@ -461,7 +464,7 @@ impl Vault {
         let anchor = TURN
             .get(&self.store, &txn, turn)?
             .ok_or(BoardHistoryError::UnknownTurn(*turn))?;
-        if anchor.folded {
+        if FOLDED.contains(&self.store, &txn, turn)? {
             return Err(BoardHistoryError::Compacted(*turn));
         }
         if let Some(retained_from) = HORIZON.get(&self.store, &txn, &anchor.owner)?
@@ -655,21 +658,17 @@ impl Vault {
 }
 
 /// Compaction folded `turns` into a summary: exactly those turns' boards stop
-/// reconstructing. Each anchor is marked on its own, so folding one session
-/// leaves the owner's boards in every other session whole. A turn with no
-/// board anchor marks nothing. Runs inside the compaction's own transaction.
+/// reconstructing. Each turn is marked on its own, so folding one session
+/// leaves the owner's boards in every other session whole. The mark is the
+/// turn's, not its anchor's: a board recorded after the fold is folded too.
+/// Runs inside the compaction's own transaction.
 pub(crate) fn fold_board_turns_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     turns: impl IntoIterator<Item = EntityId>,
 ) -> crate::error::Result<()> {
     for turn in turns {
-        if let Some(mut anchor) = TURN.get(&vault.store, txn, &turn)?
-            && !anchor.folded
-        {
-            anchor.folded = true;
-            TURN.put(&vault.store, txn, &turn, &anchor)?;
-        }
+        FOLDED.put(&vault.store, txn, &turn, &())?;
     }
     Ok(())
 }

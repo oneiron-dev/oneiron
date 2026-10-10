@@ -82,6 +82,9 @@ side_tables! {
     BOARD_HISTORY_CLAIM_FRONTIER: VaultMeta b"board_history:claim_frontier:" Raw;
     /// Loro CRDT snapshot backing one owner's board-selection/document history. Key: id16.
     BOARD_HISTORY_DOC: VaultMeta b"board_history:doc:" Raw;
+    /// Marker that compaction folded a TURN, so its board never reconstructs, whether it was recorded
+    /// before or after the fold. Key: id16.
+    BOARD_HISTORY_FOLDED: VaultMeta b"board_history:folded:" Raw;
     /// Monotonic compaction horizon (u64be earliest retained turn time) per board-history owner. Key:
     /// id16.
     BOARD_HISTORY_HORIZON: VaultMeta b"board_history:horizon:" Raw;
