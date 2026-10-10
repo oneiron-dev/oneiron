@@ -178,23 +178,31 @@ pub enum SendFeedbackError {
 }
 /// Sends only to the configured destination. The caller approves the exact
 /// route returned by `config.route()`; changing configuration invalidates that
-/// approval. Transport errors are typed after the ordinary failure receipt is
-/// persisted. This blocking door belongs on the host's blocking worker.
+/// approval. The send is `owner`'s and is admitted only while `owner`'s proof
+/// still holds where it is admitted. Transport errors are typed after the
+/// ordinary failure receipt is persisted. This blocking door belongs on the
+/// host's blocking worker.
 pub fn send_approved_feedback(
     vault: &oneiron::Vault,
     config: FeedbackDeliveryConfig,
     bearer: Option<Zeroizing<String>>,
     preview: &oneiron::feedback::FeedbackPreview,
     evaluation: &oneiron::genui::ConsentActionEvaluation,
-    actor: oneiron::outbound::OutboundDispatchActor,
+    owner: &oneiron::consent::AuthenticatedOwner,
     now: u64,
 ) -> Result<oneiron::feedback::FeedbackSendOutcome, SendFeedbackError> {
+    let actor = oneiron::outbound::OutboundDispatchActor {
+        actor_class: "human".to_owned(),
+        actor_ref: Some(owner.actor().to_hex()),
+        actor_entity_ref: Some(owner.actor()),
+    };
     let context = oneiron::feedback::FeedbackSendContext::new(
         config.route(),
         actor,
         now,
         oneiron::outbound::OutboundDeliveryWindowDecision::DeliverNow,
-    );
+    )
+    .approved_by(owner.clone());
     // Validate before building a client or reading transport credentials.
     oneiron::feedback::feedback_dispatch_request(preview, &context, evaluation)?;
     let mut transport = HttpFeedbackTransport::new(config, bearer)?;

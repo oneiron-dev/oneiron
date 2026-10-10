@@ -443,7 +443,8 @@ async fn reject_cleanup(
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RestoreArchived {
-    /// An archived entity id from `GET /v1/owner/cleanup`.
+    /// An id from the `archived` list of `GET /v1/owner/cleanup`: a record
+    /// or a completed attempt.
     entity: String,
 }
 

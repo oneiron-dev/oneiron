@@ -7,9 +7,10 @@
 //! posture until those teeth close. Archive is the only verb; a record
 //! restored here is the same record, never a copy.
 
+use oneiron::attempt_queue::AttemptId;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::vault_cleanup::{
-    self, ArchivedEntity, CleanupDigest, CleanupPosture, CleanupProposal,
+    self, ArchivedEntity, CleanupDigest, CleanupKind, CleanupPosture, CleanupProposal,
 };
 use oneiron::{EntityId, ErrorKind, Vault};
 use serde::{Deserialize, Serialize};
@@ -29,7 +30,8 @@ pub(crate) struct CleanupReview {
     pub(crate) proposals: Vec<Proposal>,
     /// What cleanup archived, one entry per run or accepted proposal.
     pub(crate) digests: Vec<Digest>,
-    /// Records cleanup archived that are still archived.
+    /// Everything cleanup archived that is still archived: records and
+    /// completed attempts, one restorable view (ARCH-0073 §6).
     pub(crate) archived: Vec<Archived>,
 }
 
@@ -72,8 +74,13 @@ pub(crate) struct Digest {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct Archived {
+    /// Send this to `/cleanup/restore` as `entity` to bring it back.
     pub(crate) entity: String,
-    pub(crate) archived_at: String,
+    /// `record`, or `completed_attempt` for a finished queue record.
+    pub(crate) kind: &'static str,
+    /// When it was archived; an attempt's time is its digest's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) archived_at: Option<String>,
 }
 
 /// What accepting a proposal did.
@@ -99,6 +106,20 @@ pub(crate) struct CleanupSettings {
 }
 
 pub(crate) fn review(vault: &Vault) -> OwnerResult<CleanupReview> {
+    let digests = vault_cleanup::cleanup_digests(vault)?;
+    let mut archived: Vec<Archived> = vault.archived_entities()?.iter().map(archived).collect();
+    for attempt in vault.archived_attempts()? {
+        let id = EntityId::from_bytes_unchecked(*attempt.as_bytes());
+        archived.push(Archived {
+            entity: id.to_hex(),
+            kind: CleanupKind::CompletedAttempt.as_str(),
+            archived_at: digests
+                .iter()
+                .rev()
+                .find(|row| row.archived.contains(&id))
+                .map(|row| rfc3339_secs(row.at)),
+        });
+    }
     Ok(CleanupReview {
         posture: vault_cleanup::cleanup_posture(vault)?.as_str(),
         task_retention_days: vault.task_retention_days()?,
@@ -106,11 +127,8 @@ pub(crate) fn review(vault: &Vault) -> OwnerResult<CleanupReview> {
             .iter()
             .map(proposal)
             .collect(),
-        digests: vault_cleanup::cleanup_digests(vault)?
-            .iter()
-            .map(digest)
-            .collect(),
-        archived: vault.archived_entities()?.iter().map(archived).collect(),
+        digests: digests.iter().map(digest).collect(),
+        archived,
     })
 }
 
@@ -164,16 +182,22 @@ pub(crate) fn configure(
     review(vault)
 }
 
+/// Brings back what the review lists as archived: a record, or a completed
+/// attempt, each through its own owner-bound door.
 pub(crate) fn restore(vault: &Vault, owner: &AuthenticatedOwner, entity: &str) -> OwnerResult<()> {
     let id = entity_id("entity", entity)?;
-    vault
-        .restore_archived_as(owner, &id)
-        .map_err(|error| match error.kind() {
-            ErrorKind::VaultCleanupRestoreNotArchived => {
-                OwnerError::Changed(format!("{entity} is not archived by cleanup"))
-            }
-            _ => OwnerError::from(error),
-        })
+    let attempt = AttemptId::from_bytes(id.as_bytes())?;
+    let restored = if vault.archived_entity(&id)?.is_none() && vault.archived_attempt(attempt)? {
+        vault.restore_archived_attempt_as(owner, attempt)
+    } else {
+        vault.restore_archived_as(owner, &id)
+    };
+    restored.map_err(|error| match error.kind() {
+        ErrorKind::VaultCleanupRestoreNotArchived => {
+            OwnerError::Changed(format!("{entity} is not archived by cleanup"))
+        }
+        _ => OwnerError::from(error),
+    })
 }
 
 fn proposal_gone(error: oneiron::Error, proposal: &str) -> OwnerError {
@@ -223,7 +247,8 @@ fn digest(row: &CleanupDigest) -> Digest {
 fn archived(row: &ArchivedEntity) -> Archived {
     Archived {
         entity: row.entity.to_hex(),
-        archived_at: rfc3339_secs(row.archived_at),
+        kind: "record",
+        archived_at: Some(rfc3339_secs(row.archived_at)),
     }
 }
 

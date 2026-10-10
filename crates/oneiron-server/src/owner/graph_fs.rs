@@ -60,8 +60,12 @@ pub(crate) struct GraphFsQuery {
 #[derive(Debug, Serialize)]
 pub(crate) struct GraphFsReply {
     pub(crate) path: String,
-    /// The command's output, as a shell would print it.
+    /// The command's output, as a shell would print it, in `encoding`.
     pub(crate) output: String,
+    /// `utf8` when the output is text, as it is; `base64` (standard, padded)
+    /// when it holds bytes that are not, such as a MessagePack body. Decoding
+    /// each page by its own encoding and joining them gives the stored bytes.
+    pub(crate) encoding: &'static str,
     /// Send this back as `cursor` for the next page; absent on the last.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) next_cursor: Option<String>,
@@ -100,6 +104,7 @@ pub(crate) fn run(
             return Ok(GraphFsReply {
                 path: path.to_owned(),
                 output: target,
+                encoding: "utf8",
                 next_cursor: None,
                 plan: None,
             });
@@ -114,9 +119,18 @@ fn reply(path: &str, output: GraphFsCommandOutput) -> GraphFsReply {
         GraphFsCoreutilsDecision::Walk => "walk",
     };
     let next_cursor = output.next_cursor().map(str::to_owned);
+    let (output, encoding) = match String::from_utf8(output.into_bytes()) {
+        Ok(text) => (text, "utf8"),
+        Err(bytes) => {
+            use base64::Engine;
+            let encoded = base64::engine::general_purpose::STANDARD.encode(bytes.into_bytes());
+            (encoded, "base64")
+        }
+    };
     GraphFsReply {
         path: path.to_owned(),
-        output: String::from_utf8_lossy(&output.into_bytes()).into_owned(),
+        output,
+        encoding,
         next_cursor,
         plan: Some(plan),
     }

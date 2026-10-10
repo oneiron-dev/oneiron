@@ -18,7 +18,6 @@ use oneiron::feedback::{
 use oneiron::genui::{
     ConsentActionKind, ConsentActionRequest, ConsentActorIdentity, ConsentSurface,
 };
-use oneiron::outbound::OutboundDispatchActor;
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerError, OwnerResult};
@@ -155,18 +154,15 @@ pub(crate) fn send(
         request.previewed_at,
     )?;
     let evaluation = card.evaluate_action(&approval, owner)?;
-    let actor = OutboundDispatchActor {
-        actor_class: "human".to_owned(),
-        actor_ref: Some(owner.actor().to_hex()),
-        actor_entity_ref: Some(owner.actor()),
-    };
+    // The send carries the owner's proof to the transaction that admits it,
+    // so a slip revoked while this request waited admits nothing.
     let sent = send_approved_feedback(
         vault,
         host.config.clone(),
         host.bearer.clone(),
         &preview,
         &evaluation,
-        actor,
+        owner,
         now,
     )
     .map_err(|error| match error {
@@ -200,5 +196,22 @@ fn bundle_preview(request: &FeedbackRequest) -> OwnerResult<FeedbackPreview> {
 }
 
 fn feedback_error(error: oneiron::feedback::FeedbackError) -> OwnerError {
-    OwnerError::Invalid(error.to_string())
+    use oneiron::feedback::FeedbackError;
+    use oneiron::outbound::OutboundDispatchError;
+    use oneiron::outbound_intent_ledger::IntentLedgerError;
+    // An owner proof that stopped holding is the owner door's refusal.
+    match error {
+        FeedbackError::Dispatch(dispatch) => match *dispatch {
+            OutboundDispatchError::Engine(error)
+            | OutboundDispatchError::Chokepoint(IntentLedgerError::Engine(error))
+                if error.kind() == oneiron::ErrorKind::ConsentOwnerNotAuthenticated =>
+            {
+                OwnerError::Engine(Box::new(error))
+            }
+            dispatch => {
+                OwnerError::Invalid(FeedbackError::Dispatch(Box::new(dispatch)).to_string())
+            }
+        },
+        error => OwnerError::Invalid(error.to_string()),
+    }
 }

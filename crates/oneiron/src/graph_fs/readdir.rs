@@ -22,9 +22,7 @@ use super::model::{
 
 use super::coreutils::{claim_matches_world_in, grant_scope_world_name, read_grant_matches_actor};
 
-use super::paging::{
-    EdgeCursor, PageBuilder, TemporalCursor, format_day_shard, parse_day_shard, parse_edge_cursor,
-};
+use super::paging::{EdgeCursor, PageBuilder, TemporalCursor, format_day_shard, parse_day_shard};
 
 /// File lookup and the receipt of the scoped read, if a stored row was read.
 /// Fixed files and unmatched paths have no scoped-read receipt.
@@ -383,7 +381,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     }
 
     fn listdir_entities(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsPage> {
-        let cursor = TemporalCursor::parse_optional(cursor)?;
+        let scope = self.cursor_scope(path);
+        let cursor = scope.open_temporal(cursor)?;
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
         let mut last_scanned = None;
@@ -402,7 +401,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             .enumerate()
         {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
-                next_cursor = last_scanned.map(|cursor: TemporalCursor| cursor.encode());
+                // Sealed: the last scanned row may be one the walk passed over.
+                next_cursor = last_scanned.map(|cursor| scope.seal_temporal(cursor));
                 break;
             }
             let time = entry?;
@@ -419,7 +419,9 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             }
             let entry = GraphFsEntry::directory(cursor.id.to_hex());
             if !builder.try_push(entry) {
-                next_cursor = builder.last_temporal_cursor();
+                next_cursor = builder
+                    .last_temporal_cursor()
+                    .map(|cursor| scope.seal_temporal(cursor));
                 break;
             }
             builder.set_last_temporal_cursor(cursor);
@@ -487,8 +489,9 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         world: &str,
         cursor: Option<&str>,
     ) -> Result<GraphFsPage> {
+        let scope = self.cursor_scope(path);
         let world = parse_world_scope(world)?;
-        let cursor = TemporalCursor::parse_optional(cursor)?;
+        let cursor = scope.open_temporal(cursor)?;
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
         let mut last_scanned = None;
@@ -507,7 +510,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             .enumerate()
         {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
-                next_cursor = last_scanned.map(|cursor: TemporalCursor| cursor.encode());
+                // Sealed: the last scanned row may be one the walk passed over.
+                next_cursor = last_scanned.map(|cursor| scope.seal_temporal(cursor));
                 break;
             }
             let time = entry?;
@@ -529,7 +533,9 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             }
             let entry = GraphFsEntry::file(temporal.id.to_hex(), None);
             if !builder.try_push(entry) {
-                next_cursor = builder.last_temporal_cursor();
+                next_cursor = builder
+                    .last_temporal_cursor()
+                    .map(|cursor| scope.seal_temporal(cursor));
                 break;
             }
             builder.set_last_temporal_cursor(temporal);
@@ -546,10 +552,12 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         if !self.scoped_read.is_entity_readable(target)? {
             return Ok(empty_page(path, self.options.mount));
         }
-        let after = cursor.map(parse_edge_cursor).transpose()?;
+        let scope = self.cursor_scope(path);
+        let after = scope.open_edge(cursor)?;
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
-        let mut last_cursor = after;
+        let mut last_emitted = after;
+        let mut last_scanned = None;
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
@@ -566,11 +574,15 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             .enumerate()
         {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
-                next_cursor = last_cursor.map(EdgeCursor::encode);
+                // Sealed: the last scanned edge may be one the walk passed over.
+                next_cursor = last_scanned
+                    .or(last_emitted)
+                    .map(|cursor| scope.seal_edge(cursor));
                 break;
             }
             let edge = entry?;
             let cursor = EdgeCursor::from_port(&edge);
+            last_scanned = Some(cursor);
             if !sealed_is_absent(self.scoped_read.is_entity_readable_with_policy_in(
                 &rtxn,
                 &policy,
@@ -581,10 +593,10 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             let name = format!("{}-{}", edge.kind as u8, edge.target.to_hex());
             let entry = GraphFsEntry::symlink(name, format!("/entities/{}", edge.target.to_hex()));
             if !builder.try_push(entry) {
-                next_cursor = last_cursor.map(EdgeCursor::encode);
+                next_cursor = last_emitted.map(|cursor| scope.seal_edge(cursor));
                 break;
             }
-            last_cursor = Some(cursor);
+            last_emitted = Some(cursor);
         }
         Ok(builder.finish(next_cursor))
     }
@@ -654,7 +666,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let end = start
             .checked_add(86_400)
             .ok_or_else(|| Error::InvalidConfig("graph-fs day shard overflowed".to_owned()))?;
-        let cursor = TemporalCursor::parse_optional(cursor)?;
+        let scope = self.cursor_scope(path);
+        let cursor = scope.open_temporal(cursor)?;
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
         let mut last_scanned = None;
@@ -675,7 +688,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             .enumerate()
         {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
-                next_cursor = last_scanned.map(|cursor: TemporalCursor| cursor.encode());
+                // Sealed: the last scanned row may be one the walk passed over.
+                next_cursor = last_scanned.map(|cursor| scope.seal_temporal(cursor));
                 break;
             }
             let time = entry?;
@@ -693,7 +707,9 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             }
             let entry = GraphFsEntry::file(temporal.id.to_hex(), None);
             if !builder.try_push(entry) {
-                next_cursor = builder.last_temporal_cursor();
+                next_cursor = builder
+                    .last_temporal_cursor()
+                    .map(|cursor| scope.seal_temporal(cursor));
                 break;
             }
             builder.set_last_temporal_cursor(temporal);

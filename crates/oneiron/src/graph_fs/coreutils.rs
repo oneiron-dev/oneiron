@@ -177,9 +177,16 @@ impl GraphFsResolver<'_, '_> {
         let bytes = if let Some(file) = &read.value {
             let bytes = file.bytes();
             let start = offset.min(bytes.len());
-            let end = start
+            let mut end = start
                 .saturating_add(self.options.page_byte_cap)
                 .min(bytes.len());
+            // A text body pages on character boundaries, so every page of it
+            // is text on its own; other bytes page where the cap falls.
+            if let Ok(text) = std::str::from_utf8(bytes) {
+                while end > start + 1 && !text.is_char_boundary(end) {
+                    end -= 1;
+                }
+            }
             if end < bytes.len() {
                 next_cursor = Some(end.to_string());
             }
@@ -308,8 +315,9 @@ impl GraphFsResolver<'_, '_> {
         max_scan_rows: usize,
     ) -> Result<(Vec<u8>, Option<String>, usize)> {
         let mut out = CommandOutputBuilder::new(self.options);
-        let cursor = TemporalCursor::parse_optional(cursor)?;
-        let mut last_emitted = cursor.map(TemporalCursor::encode);
+        let scope = self.cursor_scope("ls -t /claims");
+        let cursor = scope.open_temporal(cursor)?;
+        let mut last_emitted = cursor;
         let mut last_scanned: Option<TemporalCursor> = None;
         let mut total = 0;
         self.scoped_read.persist_grant_clock()?;
@@ -328,8 +336,14 @@ impl GraphFsResolver<'_, '_> {
             .enumerate()
         {
             if scanned >= max_scan_rows {
-                let next_cursor = last_scanned.map(TemporalCursor::encode).or(last_emitted);
-                return Ok((out.into_bytes(), next_cursor, total));
+                // The last scanned row may be one the walk passed over; the
+                // sealed position resumes after it without naming it.
+                let next_cursor = last_scanned.or(last_emitted);
+                return Ok((
+                    out.into_bytes(),
+                    next_cursor.map(|cursor| scope.seal_temporal(cursor)),
+                    total,
+                ));
             }
             let time = entry?;
             let temporal = TemporalCursor {
@@ -349,10 +363,14 @@ impl GraphFsResolver<'_, '_> {
             }
             let line = format!("{}\n", temporal.id.to_hex());
             if !out.try_push(line.as_bytes()) {
-                return Ok((out.into_bytes(), last_emitted, total));
+                return Ok((
+                    out.into_bytes(),
+                    last_emitted.map(|cursor| scope.seal_temporal(cursor)),
+                    total,
+                ));
             }
             total += 1;
-            last_emitted = Some(temporal.encode());
+            last_emitted = Some(temporal);
         }
         Ok((out.into_bytes(), None, total))
     }
@@ -374,8 +392,9 @@ impl GraphFsResolver<'_, '_> {
         max_scan_rows: usize,
     ) -> Result<(Vec<u8>, Option<String>, usize)> {
         let mut out = CommandOutputBuilder::new(self.options);
-        let cursor = TemporalCursor::parse_optional(cursor)?;
-        let mut last_emitted = cursor.map(TemporalCursor::encode);
+        let scope = self.cursor_scope(&format!("find -newer {path}"));
+        let cursor = scope.open_temporal(cursor)?;
+        let mut last_emitted = cursor;
         let mut last_scanned: Option<TemporalCursor> = None;
         let mut total = 0;
         self.scoped_read.persist_grant_clock()?;
@@ -398,8 +417,14 @@ impl GraphFsResolver<'_, '_> {
             .enumerate()
         {
             if scanned >= max_scan_rows {
-                let next_cursor = last_scanned.map(TemporalCursor::encode).or(last_emitted);
-                return Ok((out.into_bytes(), next_cursor, total));
+                // The last scanned row may be one the walk passed over; the
+                // sealed position resumes after it without naming it.
+                let next_cursor = last_scanned.or(last_emitted);
+                return Ok((
+                    out.into_bytes(),
+                    next_cursor.map(|cursor| scope.seal_temporal(cursor)),
+                    total,
+                ));
             }
             let time = entry?;
             let temporal = TemporalCursor {
@@ -414,10 +439,14 @@ impl GraphFsResolver<'_, '_> {
                 continue;
             };
             if !out.try_push(line.as_bytes()) {
-                return Ok((out.into_bytes(), last_emitted, total));
+                return Ok((
+                    out.into_bytes(),
+                    last_emitted.map(|cursor| scope.seal_temporal(cursor)),
+                    total,
+                ));
             }
             total += 1;
-            last_emitted = Some(temporal.encode());
+            last_emitted = Some(temporal);
         }
         Ok((out.into_bytes(), None, total))
     }

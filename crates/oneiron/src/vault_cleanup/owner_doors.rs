@@ -3,11 +3,13 @@
 //! request queued behind a revocation changes nothing. The proof-free doors
 //! beside them stay for a host that holds the vault as its own owner.
 
+use super::attempt_retention::restore_archived_attempt_in_txn;
 use super::proposals_archive::{accept_cleanup_proposal_in_txn, reject_cleanup_proposal_in_txn};
 use super::retention::set_task_retention_days_in_txn;
 use super::tripwire::set_cleanup_posture_in_txn;
 use super::{CleanupAcceptOutcome, CleanupPosture};
 use crate::Vault;
+use crate::attempt_queue::AttemptId;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -88,6 +90,22 @@ impl Vault {
         self.with_write_txn(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             self.restore_archived_in_txn(txn, entity)
+        })
+    }
+
+    /// [`Self::restore_archived_attempt`], as `owner`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::accept_cleanup_proposal_as`].
+    pub fn restore_archived_attempt_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        attempt: AttemptId,
+    ) -> Result<()> {
+        self.with_write_txn(|txn| {
+            owner.revalidate_in_txn(self, txn)?;
+            restore_archived_attempt_in_txn(self, txn, attempt)
         })
     }
 }

@@ -164,6 +164,123 @@ async fn cleanup_proposals_wait_for_the_owner_and_archive_stays_restorable() {
     assert_eq!(review["task_retention_days"], 30);
 }
 
+/// A completed attempt cleanup archives sits in the same restorable view as
+/// an archived record and comes back through the owner's restore, onto the
+/// queue listing again (ARCH-0073 §6, ARCH-0038; Astra P2 on #1341).
+#[tokio::test]
+async fn an_archived_attempt_is_in_the_review_and_restores_onto_the_queue() {
+    use oneiron::attempt_queue::{
+        AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt,
+    };
+    let (_dir, server) = auth_test_server();
+    let owner = owner_recipe(&server);
+    let queue = AttemptQueue::new(server.vault());
+    // Finished long before the 90-day retention window.
+    let long_ago = 1_000;
+    queue
+        .enqueue(EnqueueAttempt {
+            kind: "owner-surface.finished".into(),
+            payload: vec![1, 2, 3],
+            dedupe_key: None,
+            run_id: None,
+            now: long_ago,
+        })
+        .unwrap();
+    let ClaimOutcome::Claimed(record) = queue
+        .claim(ClaimAttempt {
+            lease_owner: "owner-surface".into(),
+            now: long_ago,
+        })
+        .unwrap()
+    else {
+        panic!("the attempt is claimed");
+    };
+    queue
+        .complete(CompleteAttempt {
+            id: record.id,
+            lease_owner: "owner-surface".into(),
+            attempt_count: record.attempt_count,
+            now: long_ago,
+        })
+        .unwrap();
+    let attempt = EntityId::from_bytes(*record.id.as_bytes())
+        .unwrap()
+        .to_hex();
+    let listed =
+        |queue: &AttemptQueue<'_>| queue.list().unwrap().iter().any(|row| row.id == record.id);
+    assert!(listed(&queue));
+
+    let run = oneiron::vault_cleanup::run_vault_cleanup(server.vault(), &AttemptId::now()).unwrap();
+    let decide = json!({ "proposal": run.proposal.expect("a proposal").to_hex() });
+    let (status, accepted) = call(
+        &server,
+        "POST",
+        "/v1/owner/cleanup/accept",
+        owner.clone(),
+        Some(&decide),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{accepted}");
+    assert!(
+        hexes(&accepted["archived"]).contains(&attempt),
+        "{accepted}"
+    );
+    assert!(
+        !listed(&queue),
+        "an archived attempt leaves the queue listing"
+    );
+
+    let (_, review) = call(&server, "GET", "/v1/owner/cleanup", owner.clone(), None).await;
+    let row = review["archived"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["entity"] == attempt.as_str())
+        .unwrap_or_else(|| panic!("the archived attempt is in the review: {review}"));
+    assert_eq!(row["kind"], "completed_attempt", "{row}");
+    assert!(row["archived_at"].is_string(), "{row}");
+
+    for recipe in refused_recipes(&server) {
+        let (status, _) = call(
+            &server,
+            "POST",
+            "/v1/owner/cleanup/restore",
+            recipe,
+            Some(&json!({ "entity": attempt })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+    let (status, restored) = call(
+        &server,
+        "POST",
+        "/v1/owner/cleanup/restore",
+        owner.clone(),
+        Some(&json!({ "entity": attempt })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{restored}");
+    assert!(listed(&queue), "the restored attempt is back on the queue");
+    assert!(
+        !restored["archived"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["entity"] == attempt.as_str()),
+        "{restored}"
+    );
+    // Restoring it again finds nothing archived.
+    let (status, again) = call(
+        &server,
+        "POST",
+        "/v1/owner/cleanup/restore",
+        owner,
+        Some(&json!({ "entity": attempt })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{again}");
+}
+
 fn claim_about(server: &SyncServer, subject: EntityId, predicate: &str, text: &str) {
     let mut body = oneiron::ClaimBody::new(
         predicate,
@@ -584,6 +701,67 @@ async fn graph_fs_reads_the_vault_as_a_tree_for_the_owner_only() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
+/// `cat` hands back the stored bytes: a text body pages on character
+/// boundaries and stays text, a MessagePack body comes back as base64, and
+/// each body's pages, decoded by the encoding each names, join to exactly
+/// what the vault holds (Greptile on #1341).
+#[tokio::test]
+async fn graph_fs_cat_rejoins_to_the_stored_bytes() {
+    use base64::Engine;
+    let (_dir, server) = auth_test_server();
+    let owner = owner_recipe(&server);
+    // A page is 16 KiB: the two-byte `é` straddles the first page's end.
+    let mut text = "a".repeat(16 * 1024 - 1);
+    text.push_str("é, then the rest");
+    let mut packed = Vec::new();
+    rmpv::encode::write_value(
+        &mut packed,
+        &rmpv::Value::Map(vec![(
+            rmpv::Value::from("raw"),
+            rmpv::Value::Binary(vec![0xff, 0xfe, 0x00, 0xc3]),
+        )]),
+    )
+    .unwrap();
+    for (body, expected) in [
+        (text.into_bytes(), ["utf8", "utf8"].as_slice()),
+        (packed, ["base64"].as_slice()),
+    ] {
+        let id = person(&server, &body).to_hex();
+        let mut joined = Vec::new();
+        let mut encodings = Vec::new();
+        let mut cursor = String::new();
+        loop {
+            let (status, page) = call(
+                &server,
+                "GET",
+                &format!("/v1/owner/graph-fs?path=/entities/{id}/body&op=cat{cursor}"),
+                owner.clone(),
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{page}");
+            let output = page["output"].as_str().unwrap();
+            let encoding = page["encoding"].as_str().unwrap().to_owned();
+            match encoding.as_str() {
+                "utf8" => joined.extend_from_slice(output.as_bytes()),
+                "base64" => joined.extend(
+                    base64::engine::general_purpose::STANDARD
+                        .decode(output)
+                        .unwrap(),
+                ),
+                other => panic!("unknown encoding {other}"),
+            }
+            encodings.push(encoding);
+            let Some(next) = page["next_cursor"].as_str() else {
+                break;
+            };
+            cursor = format!("&cursor={next}");
+        }
+        assert_eq!(encodings, expected);
+        assert_eq!(joined, body);
+    }
+}
+
 fn feedback_server(endpoint: &str) -> (tempfile::TempDir, Arc<SyncServer>) {
     use crate::feedback_delivery::{FeedbackDeliveryConfig, FeedbackDestination, FeedbackHost};
     let dir = tempfile::tempdir().unwrap();
@@ -604,6 +782,29 @@ fn feedback_server(endpoint: &str) -> (tempfile::TempDir, Arc<SyncServer>) {
         bearer: None,
     }));
     (dir, Arc::new(server))
+}
+
+/// The vault's policy grants its owner `external:send` on the feedback
+/// collector channel.
+fn grant_feedback_sends(server: &SyncServer) {
+    let owner_id = server.vault().ensure_embedded_owner_actor().unwrap();
+    let mut effect = oneiron::federation::Scope::top();
+    effect.verbs = oneiron::federation::ScopeAxis::Some(["effect".to_owned()].into());
+    oneiron::conversation_dag::test_support::put_test_policy_manifest(
+        server.vault(),
+        oneiron::write_envelope::WriteActor::new(owner_id, oneiron::edge::EdgeActorClass::Human),
+        EntityId::now(),
+        &json!({
+            "schema_version": "1.2", "pack_id": "owner-feedback", "pack_version": "v1",
+            "min_engine_version": "0.0.0",
+            "defaults": { "criticality": "normal", "sensitivity": "normal" },
+            "rules": [],
+            "actor_ceilings": [{ "actor_class": "human", "actor_ref": owner_id.to_hex(), "ceiling": "auto" }],
+            "scoped_grants": [{ "actor_ref": owner_id.to_hex(), "effector": "external:send",
+                "scope": effect, "selectors": { "channel": "feedback_collector" } }],
+        }),
+    )
+    .unwrap();
 }
 
 /// Accepts one request on `listener` and returns its head and body as text.
@@ -723,24 +924,7 @@ async fn feedback_leaves_only_as_previewed_and_only_where_policy_allows() {
     ));
 
     // The owner grants sends on the feedback channel.
-    let owner_id = server.vault().ensure_embedded_owner_actor().unwrap();
-    let mut effect = oneiron::federation::Scope::top();
-    effect.verbs = oneiron::federation::ScopeAxis::Some(["effect".to_owned()].into());
-    oneiron::conversation_dag::test_support::put_test_policy_manifest(
-        server.vault(),
-        oneiron::write_envelope::WriteActor::new(owner_id, oneiron::edge::EdgeActorClass::Human),
-        EntityId::now(),
-        &json!({
-            "schema_version": "1.2", "pack_id": "owner-feedback", "pack_version": "v1",
-            "min_engine_version": "0.0.0",
-            "defaults": { "criticality": "normal", "sensitivity": "normal" },
-            "rules": [],
-            "actor_ceilings": [{ "actor_class": "human", "actor_ref": owner_id.to_hex(), "ceiling": "auto" }],
-            "scoped_grants": [{ "actor_ref": owner_id.to_hex(), "effector": "external:send",
-                "scope": effect, "selectors": { "channel": "feedback_collector" } }],
-        }),
-    )
-    .unwrap();
+    grant_feedback_sends(&server);
     let wish = json!({ "category": "feature-wish" });
     let (_, preview) = call(
         &server,
@@ -786,6 +970,112 @@ async fn feedback_leaves_only_as_previewed_and_only_where_policy_allows() {
     assert_eq!(status, StatusCode::OK, "{again}");
     assert_eq!(again["logical_send_ref"], sent["logical_send_ref"]);
     assert_eq!(again["outcome"], "delivered_to_channel", "{again}");
+}
+
+/// A send that passed the owner door and then waited for the writer while
+/// its slip was revoked admits nothing: no gate decision, no pending send,
+/// and the destination is never called. The same send with a live slip goes
+/// out (Astra P2 on #1341).
+#[tokio::test]
+async fn a_feedback_send_queued_behind_a_slip_revocation_admits_nothing() {
+    use crate::owner::{OwnerError, feedback};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let endpoint = format!("http://{}/ingest", listener.local_addr().unwrap());
+    let (_dir, server) = feedback_server(&endpoint);
+    grant_feedback_sends(&server);
+    let vault = server.vault();
+    let host = server.feedback.clone().unwrap();
+    let owner_id = vault.ensure_embedded_owner_actor().unwrap();
+    let recipe = format!("principal_ref={};actor_class=human", owner_id.to_hex());
+    let request = slip_credentials::bind_request(
+        &server,
+        core_request_with_authz(
+            "POST",
+            "/v1/owner/feedback/send",
+            test_bearer(&recipe),
+            None,
+        ),
+    );
+    let auth = CoreAuth::from_headers(request.headers(), &server.config, vault.as_ref()).unwrap();
+    let admitted = crate::api::owner_routes::owner(&auth, &server).expect("the owner is admitted");
+    let category = oneiron::feedback::FeedbackCategory::Bug;
+    let preview = feedback::preview(
+        vault,
+        &host,
+        &admitted,
+        &feedback::FeedbackRequest {
+            category,
+            note: None,
+        },
+    )
+    .unwrap();
+    let (digest, approval, previewed_at) = (preview.digest, preview.approval, preview.previewed_at);
+    let send = move || feedback::SendRequest {
+        category,
+        note: None,
+        digest: digest.clone(),
+        approval: approval.clone(),
+        previewed_at,
+    };
+
+    // The revocation commits after the send passed the door and every check
+    // before admission, while it waits for the writer.
+    let (slip, _) = slip_credentials::credential(&server, &recipe);
+    let refused = {
+        let (server, host, admitted, send) =
+            (server.clone(), host.clone(), admitted.clone(), send.clone());
+        tokio::task::spawn_blocking(move || {
+            let revoker = server.clone();
+            oneiron::outbound::before_next_admission_for_test(move || {
+                let issuer = oneiron::authority::HostSlipIssuer::from_secret(
+                    revoker.config.auth_secret.as_deref().unwrap().as_bytes(),
+                )
+                .unwrap();
+                revoker
+                    .vault()
+                    .revoke_capability_slip(&issuer, slip.claims.slip_id)
+                    .unwrap();
+            });
+            feedback::send(server.vault(), &host, &admitted, &send())
+        })
+        .await
+        .unwrap()
+    };
+    match refused {
+        Err(OwnerError::Engine(error)) => assert_eq!(
+            error.kind(),
+            oneiron::ErrorKind::ConsentOwnerNotAuthenticated,
+            "{error}"
+        ),
+        other => panic!("the queued send was not refused for its proof: {other:?}"),
+    }
+    let ledger = oneiron::outbound_intent_ledger::intent_ledger_records(vault).unwrap();
+    assert!(ledger.records.is_empty(), "nothing admitted: {ledger:?}");
+    assert!(matches!(
+        listener.accept(),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+    ));
+
+    // The same send on a live proof goes out.
+    let live = vault
+        .authenticate_owner(
+            owner_id,
+            &owner_id.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let collector = collect_one(listener);
+    let sent = {
+        let (server, host) = (server.clone(), host.clone());
+        tokio::task::spawn_blocking(move || feedback::send(server.vault(), &host, &live, &send()))
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    assert_eq!(sent.outcome, "delivered_to_channel");
+    assert!(collector.join().unwrap().starts_with("post /ingest"));
 }
 
 /// Two owners of one shared vault preview the same bundle and send it with the

@@ -1,14 +1,16 @@
 //! Cursor codecs, page and output builders with byte-cap logic, and day-shard civil-date math.
 
-use crate::entity_id::EntityId;
+use std::sync::OnceLock;
+
+use rand_core::{OsRng, RngCore};
+
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 
 use super::model::{
     GRAPH_FS_MORE_RESERVE_BYTES, GraphFsEntry, GraphFsEntryKind, GraphFsMount, GraphFsOptions,
-    GraphFsPage,
+    GraphFsPage, GraphFsResolver,
 };
-
-use super::readdir::parse_entity_id;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct TemporalCursor {
@@ -24,27 +26,18 @@ impl TemporalCursor {
         }
     }
 
-    pub(super) fn parse_optional(value: Option<&str>) -> Result<Option<Self>> {
-        value.map(Self::parse).transpose()
+    fn to_bytes(self) -> Vec<u8> {
+        let mut bytes = self.learned_at.to_be_bytes().to_vec();
+        bytes.extend_from_slice(self.id.as_bytes());
+        bytes
     }
 
-    pub(super) fn parse(value: &str) -> Result<Self> {
-        let Some((learned, id)) = value.split_once(':') else {
-            return Err(Error::InvalidConfig(
-                "invalid graph-fs temporal cursor".to_owned(),
-            ));
-        };
-        let learned_at = learned
-            .parse::<u64>()
-            .map_err(|_| Error::InvalidConfig("invalid graph-fs temporal cursor".to_owned()))?;
-        Ok(Self {
-            learned_at,
-            id: parse_entity_id(id)?,
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        let (learned_at, id) = bytes.split_first_chunk::<8>()?;
+        Some(Self {
+            learned_at: u64::from_be_bytes(*learned_at),
+            id: EntityId::from_bytes(id.try_into().ok()?).ok()?,
         })
-    }
-
-    pub(super) fn encode(self) -> String {
-        format!("{}:{}", self.learned_at, self.id.to_hex())
     }
 }
 
@@ -65,9 +58,144 @@ impl EdgeCursor {
         }
     }
 
-    pub(super) fn encode(self) -> String {
-        format!("{}:{}", self.kind, self.source.to_hex())
+    fn to_bytes(self) -> Vec<u8> {
+        let mut bytes = vec![self.kind];
+        bytes.extend_from_slice(self.source.as_bytes());
+        bytes
     }
+
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        let (kind, source) = bytes.split_first()?;
+        Some(Self {
+            kind: *kind,
+            source: EntityId::from_bytes(source.try_into().ok()?).ok()?,
+        })
+    }
+}
+
+/// Tag bytes a sealed position carries; with a 24-byte temporal position the
+/// token stays inside the page's `_more` reserve.
+const SEALED_TAG_LEN: usize = 12;
+
+/// This process's key for sealing walk positions. A restart retires every
+/// position it sealed, and a listing given one starts again from the top.
+fn position_key() -> &'static [u8; 32] {
+    static KEY: OnceLock<[u8; 32]> = OnceLock::new();
+    KEY.get_or_init(|| {
+        let mut key = [0; 32];
+        OsRng.fill_bytes(&mut key);
+        key
+    })
+}
+
+/// Where a scan-bounded walk resumes, as the page hands it out: sealed, so
+/// the token names no row. A walk can stop at its scan limit on a row it
+/// passed over (sealed custody, a row the reader may not see); its resume
+/// point then is that row, and a plain cursor would publish its time and id
+/// (ARCH-0051: what a walk withholds stays absent, paging included). A sealed
+/// position opens only in this process, for the vault, reader and listing
+/// that sealed it.
+pub(super) struct CursorScope([u8; 32]);
+
+impl GraphFsResolver<'_, '_> {
+    /// The scope of one listing's cursors: this vault, this reader, and the
+    /// listing named by `listing` (its path and any parameter it walks by).
+    pub(super) fn cursor_scope(&self, listing: &str) -> CursorScope {
+        let mut hasher = blake3::Hasher::new_keyed(position_key());
+        hasher.update(b"oneiron.graph-fs.cursor.v1");
+        hasher.update(self.scoped_read.vault().vault_id().as_bytes());
+        for field in [self.scoped_read.actor_key().actor_ref(), listing] {
+            hasher.update(&(field.len() as u64).to_be_bytes());
+            hasher.update(field.as_bytes());
+        }
+        CursorScope(*hasher.finalize().as_bytes())
+    }
+}
+
+impl CursorScope {
+    pub(super) fn seal_temporal(&self, cursor: TemporalCursor) -> String {
+        self.seal(&cursor.to_bytes())
+    }
+
+    pub(super) fn open_temporal(&self, token: Option<&str>) -> Result<Option<TemporalCursor>> {
+        token
+            .map(|token| {
+                self.open(token)
+                    .as_deref()
+                    .and_then(TemporalCursor::from_bytes)
+                    .ok_or_else(invalid_cursor)
+            })
+            .transpose()
+    }
+
+    pub(super) fn seal_edge(&self, cursor: EdgeCursor) -> String {
+        self.seal(&cursor.to_bytes())
+    }
+
+    pub(super) fn open_edge(&self, token: Option<&str>) -> Result<Option<EdgeCursor>> {
+        token
+            .map(|token| {
+                self.open(token)
+                    .as_deref()
+                    .and_then(EdgeCursor::from_bytes)
+                    .ok_or_else(invalid_cursor)
+            })
+            .transpose()
+    }
+
+    /// Deterministic authenticated encryption (SIV): the tag is a keyed hash
+    /// of the position, and the position travels XORed with a stream keyed by
+    /// that tag.
+    fn seal(&self, position: &[u8]) -> String {
+        let tag = self.tag(position);
+        let mut token = tag.to_vec();
+        token.extend_from_slice(position);
+        self.xor_stream(&tag, &mut token[SEALED_TAG_LEN..]);
+        bytes_to_hex_lower(&token)
+    }
+
+    fn open(&self, token: &str) -> Option<Vec<u8>> {
+        if token.len() % 2 != 0 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return None;
+        }
+        let bytes = (0..token.len())
+            .step_by(2)
+            .map(|at| u8::from_str_radix(&token[at..at + 2], 16).ok())
+            .collect::<Option<Vec<u8>>>()?;
+        let (tag, sealed) = bytes.split_first_chunk::<SEALED_TAG_LEN>()?;
+        let mut position = sealed.to_vec();
+        self.xor_stream(tag, &mut position);
+        let expected = self.tag(&position);
+        let mismatch = expected
+            .iter()
+            .zip(tag)
+            .fold(0, |acc, (left, right)| acc | (left ^ right));
+        (mismatch == 0).then_some(position)
+    }
+
+    fn tag(&self, position: &[u8]) -> [u8; SEALED_TAG_LEN] {
+        let mut hasher = blake3::Hasher::new_keyed(&self.0);
+        hasher.update(b"tag");
+        hasher.update(position);
+        let mut tag = [0; SEALED_TAG_LEN];
+        tag.copy_from_slice(&hasher.finalize().as_bytes()[..SEALED_TAG_LEN]);
+        tag
+    }
+
+    fn xor_stream(&self, tag: &[u8], bytes: &mut [u8]) {
+        let mut hasher = blake3::Hasher::new_keyed(&self.0);
+        hasher.update(b"stream");
+        hasher.update(tag);
+        let mut stream = vec![0; bytes.len()];
+        hasher.finalize_xof().fill(&mut stream);
+        for (byte, key) in bytes.iter_mut().zip(stream) {
+            *byte ^= key;
+        }
+    }
+}
+
+fn invalid_cursor() -> Error {
+    Error::InvalidConfig("invalid graph-fs cursor; list again without one".to_owned())
 }
 
 pub(super) struct PageBuilder {
@@ -123,8 +251,8 @@ impl PageBuilder {
         self.last_temporal_cursor = Some(cursor);
     }
 
-    pub(super) fn last_temporal_cursor(&self) -> Option<String> {
-        self.last_temporal_cursor.map(TemporalCursor::encode)
+    pub(super) fn last_temporal_cursor(&self) -> Option<TemporalCursor> {
+        self.last_temporal_cursor
     }
 
     pub(super) fn finish(mut self, next_cursor: Option<String>) -> GraphFsPage {
@@ -194,21 +322,6 @@ impl CommandOutputBuilder {
     pub(super) fn into_bytes(self) -> Vec<u8> {
         self.bytes
     }
-}
-
-pub(super) fn parse_edge_cursor(value: &str) -> Result<EdgeCursor> {
-    let Some((kind, source)) = value.split_once(':') else {
-        return Err(Error::InvalidConfig(
-            "invalid graph-fs edge cursor".to_owned(),
-        ));
-    };
-    let kind = kind
-        .parse::<u8>()
-        .map_err(|_| Error::InvalidConfig("invalid graph-fs edge cursor".to_owned()))?;
-    Ok(EdgeCursor {
-        kind,
-        source: parse_entity_id(source)?,
-    })
 }
 
 pub(super) fn format_day_shard(day: u64) -> String {

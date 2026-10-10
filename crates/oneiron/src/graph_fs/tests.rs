@@ -407,6 +407,103 @@ fn find_newer_scan_cap_hit_returns_progressing_cursor() -> Result<()> {
     Ok(())
 }
 
+/// A walk that reaches its scan limit on a row it passed over (sealed secret
+/// custody here) resumes after that row without naming it: the cursor carries
+/// neither its time nor its id, and paging on lists every visible claim once
+/// (Astra P2 on #1341).
+#[test]
+fn a_scan_limit_cursor_never_names_the_row_the_walk_passed_over() -> Result<()> {
+    use crate::ports::EntityStoreRead;
+    use crate::secret_custody::{
+        CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SECRET_SCOPE_READ, SecretBinding,
+        SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
+    };
+    let (_tmp, vault) = open_test_vault_with(telemetry_config());
+    let initial_claims = vault.entities_by_type(ENTITY_TYPE_CLAIM)?;
+    let subject = test_id(0x61);
+    let (older, newer) = (test_id(0x62), test_id(0x63));
+    put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
+    put_claim(&vault, older, subject, None, 10)?;
+    put_claim(&vault, newer, subject, None, 11)?;
+    put_policy_manifest(
+        &vault,
+        test_id(0x64),
+        encode_policy_manifest(vec![core_read_base_grant("reader")]),
+    )?;
+    let sealed = vault.register_secret(SecretCustodyRecord {
+        schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
+        name: "graph-fs-scan-limit".to_owned(),
+        class: CustodyClass::CustodyPortable,
+        device_only: false,
+        value_bytes: b"never-in-a-cursor".to_vec(),
+        status: SecretCustodyStatus::Active,
+        registered_at: 1,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: vec![SecretBinding {
+            effector: "connector:graph-fs-test".to_owned(),
+            tier_ceiling: CustodyTier::T0Doored,
+            scopes: vec![SECRET_SCOPE_READ.to_owned()],
+        }],
+        manifest_ref: String::new(),
+        declared_paths: Vec::new(),
+        policy_floor_snapshot: SecretCustodyFloor::default(),
+    })?;
+    // Newest first, as `ls -t` walks: the cap that ends on the sealed row.
+    let timeline: Vec<_> = {
+        let rtxn = vault.store.env.read_txn()?;
+        let query = crate::ports::TimelineQuery {
+            reverse: true,
+            ..Default::default()
+        };
+        vault
+            .store
+            .port_entity_timeline(&rtxn, query)?
+            .collect::<Result<_>>()?
+    };
+    let at = timeline
+        .iter()
+        .position(|row| row.id == sealed)
+        .expect("the sealed row is on the timeline");
+    let sealed_at = timeline[at].timestamp.to_string();
+    let cap = at + 1;
+
+    let reader =
+        vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
+    let fs = resolver(&reader, 1024);
+    let mut emitted = String::new();
+    let mut cursor = None;
+    for page in 0.. {
+        assert!(page < timeline.len() + 2, "pagination must terminate");
+        let (bytes, next, _) =
+            fs.ls_claims_by_time_pushdown_with_scan_cap(cursor.as_deref(), cap)?;
+        emitted.push_str(std::str::from_utf8(&bytes).expect("utf8 ls output"));
+        let Some(next) = next else { break };
+        assert!(!next.contains(&sealed.to_hex()), "{next}");
+        assert!(!next.contains(&sealed_at), "{next}");
+        cursor = Some(next);
+    }
+    assert!(!emitted.contains(&sealed.to_hex()), "{emitted}");
+    let lines: Vec<_> = emitted
+        .lines()
+        .filter(|line| !initial_claims.iter().any(|id| id.to_hex() == *line))
+        .collect();
+    assert_eq!(lines, [newer.to_hex(), older.to_hex()]);
+
+    // The first cap-hit page ends exactly on the sealed row, and another
+    // reader cannot open its cursor.
+    let (_, first, _) = fs.ls_claims_by_time_pushdown_with_scan_cap(None, cap)?;
+    let first = first.expect("the scan limit leaves a cursor");
+    let other =
+        vault.scoped_read(crate::claim::ScopedReadActorKey::new("other").expect("actor key"));
+    assert!(
+        resolver(&other, 1024)
+            .ls_claims_by_time_pushdown_with_scan_cap(Some(&first), cap)
+            .is_err()
+    );
+    Ok(())
+}
+
 #[test]
 fn grep_pushdown_preserves_narrowing_receipts_on_full_and_capped_pages() -> Result<()> {
     let (_tmp, vault) = open_test_vault_with(telemetry_config());

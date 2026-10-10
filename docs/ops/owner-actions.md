@@ -235,10 +235,12 @@ archived until you accept, and the engine refuses the automatic posture.
 
 - `GET /v1/owner/cleanup`: the posture, the done-task retention in days (`0` turns that arm
   off), the open proposals with what accepting would archive, the digests of what was
-  archived, and the records still archived.
+  archived, and everything still archived: records (`"kind": "record"`) and finished queue
+  attempts (`"kind": "completed_attempt"`), in one list.
 - `POST /v1/owner/cleanup/accept` or `/reject` with `{"proposal": "<id>"}`. Accept archives the
   candidates that are still empty and records one digest; a proposal already answered is a 409.
-- `POST /v1/owner/cleanup/restore` with `{"entity": "<id>"}` brings an archived record back.
+- `POST /v1/owner/cleanup/restore` with `{"entity": "<id>"}` brings back any item of that list:
+  a record, or an attempt, which returns to the queue listing.
 - `POST /v1/owner/cleanup` with `{"task_retention_days": 30}` or `{"posture": "propose_first"}`.
   `auto_with_digest` is refused (409) while the integrity checks are open.
 
@@ -277,9 +279,13 @@ The session lives in the server process: a restart ends it, and only saved turns
 `GET /v1/owner/graph-fs?path=/entities` reads the vault as a read-only tree (OF-355): `/worlds`,
 `/entities`, `/claims` (by time and by id) and `/backlinks`. `op` is `ls` (default), `cat`,
 `head` (`lines`), `wc`, `find` (`newer_than`), `grep` (`pattern`, `recursive`) or `readlink`.
-Listings and searches are bounded; pass `next_cursor` back as `cursor` for the next page. Reads
-go through your own scoped read, so scopes excluded from you are absent. Sealed secret custody
-is never part of the tree: walks pass over it, and a direct read of it is refused.
+Listings and searches are bounded; pass `next_cursor` back as `cursor` for the next page. A
+listing's cursor is sealed: it names no row, and it works only for you, on that path, until the
+server restarts (then list again). Reads go through your own scoped read, so scopes excluded
+from you are absent. Sealed secret custody is never part of the tree: walks pass over it, and a
+direct read of it is refused. `output` comes with its `encoding`: `utf8` for text, or `base64`
+for bytes that are not text, such as a MessagePack body. `cat` pages a text body on character
+boundaries, so decoding each page by its own `encoding` and joining them gives the stored bytes.
 
 ## Send feedback
 
@@ -322,9 +328,10 @@ Other credentials get the same 403: another person, an agent-class slip, a slip 
 some verbs, or the host root. Managed vaults are owned through their supervisor, and these
 routes refuse there. Each act rechecks the slip and your ownership in the transaction that
 commits it, so a request still queued when its slip is revoked changes nothing; an off-record
-witness and promote recheck it where the turn lands. Entering, flipping and closing a room, and
-feedback sends, keep no row of their own to recheck in, so they recheck the slip when they
-start. From a shell, with the slip in `ONEIRON_SECRET` and its binding seed in
+witness and promote recheck it where the turn lands. A feedback send rechecks it
+where the send is admitted, so a send whose slip is revoked while it waits admits nothing and
+never reaches the destination. Entering, flipping and closing a room keep no row of their own
+to recheck in, so they recheck the slip when they start. From a shell, with the slip in `ONEIRON_SECRET` and its binding seed in
 `ONEIRON_BINDING_KEY`:
 
 ```sh
