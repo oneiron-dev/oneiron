@@ -70,8 +70,9 @@ pub struct EsignVerdict {
     /// Passed, with an ordinary signature that reached a profile: what the
     /// seal task requires before it commits.
     pub self_verify_ok: bool,
-    /// The sealer's full report, kept as its word.
-    pub report: serde_json::Value,
+    /// The sealer's full report as JSON, kept as its word: carried and
+    /// stored, never parsed here.
+    pub report_json: Vec<u8>,
 }
 
 impl EsignVerdict {

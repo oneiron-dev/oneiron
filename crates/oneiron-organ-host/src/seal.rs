@@ -12,19 +12,19 @@
 //! Calls block, as every host call does: run them off any async runtime.
 
 use std::path::PathBuf;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use oneiron::Vault;
 use oneiron::blob_artifact::esign::{
     EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError, EsignVerdict, SealDegrade,
     SealProfile, SealVerdict,
 };
-use oneiron_organ_protocol::{ASK_NET_FETCH, AskCode, AskRefusal, ByteBuf};
+use oneiron_organ_protocol::{ASK_NET_FETCH, AskCode, AskRefusal, ByteBuf, FrameError};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::asks::{Answered, AskHandler, AskHandlers, AskRequest};
-use crate::error::HostError;
+use crate::error::{HostError, Unavailable};
 use crate::fetch::GuardedFetch;
 use crate::host::OrganHost;
 use crate::spec::{AskGrant, CallClass, FetchGrant, LentInput, OrganCall, OrganSpec};
@@ -260,7 +260,7 @@ struct VerdictReply {
     reasons: Vec<String>,
     achieved: Option<SealProfile>,
     self_verify_ok: bool,
-    report: rmpv::Value,
+    report_json: ByteBuf,
 }
 
 /// The seal's own error, by its stage and code names.
@@ -288,15 +288,14 @@ enum FailureReply {
 }
 
 impl VerdictReply {
-    fn into_verdict(self) -> Result<EsignVerdict, EsignSealerError> {
-        let report = serde_json::to_value(&self.report).map_err(|_| reply_invalid())?;
-        Ok(EsignVerdict {
+    fn into_verdict(self) -> EsignVerdict {
+        EsignVerdict {
             verdict: self.verdict,
             reasons: self.reasons,
             achieved: self.achieved,
             self_verify_ok: self.self_verify_ok,
-            report,
-        })
+            report_json: self.report_json.into_vec(),
+        }
     }
 }
 
@@ -313,11 +312,8 @@ impl FailureReply {
                 retry_after_ms,
             },
             Self::Fatal { stage, code } => EsignSealerError::Fatal { stage, code },
-            Self::VerifyFailed { verdict } => match verdict.into_verdict() {
-                Ok(verdict) => EsignSealerError::VerifyFailed {
-                    verdict: Box::new(verdict),
-                },
-                Err(err) => err,
+            Self::VerifyFailed { verdict } => EsignSealerError::VerifyFailed {
+                verdict: Box::new(verdict.into_verdict()),
             },
             Self::BackendUnavailable { retry_after_ms } => {
                 EsignSealerError::Unavailable { retry_after_ms }
@@ -328,6 +324,11 @@ impl FailureReply {
 }
 
 impl HostedSealer<'_> {
+    /// The engine's clock: the vault's own, which a host may inject.
+    fn now_ms(&self) -> u64 {
+        self.vault.now_recorded_at().saturating_mul(1000)
+    }
+
     fn config(&self) -> ConfigArgs {
         ConfigArgs {
             trust_anchors: self
@@ -377,7 +378,7 @@ impl EsignSealer for HostedSealer<'_> {
         let args = to_value(&SealArgs {
             operation_id: request.operation_id.clone(),
             profile: request.profile,
-            now_ms: now_ms(),
+            now_ms: self.now_ms(),
             config: self.config(),
         })
         .map_err(|_| reply_invalid())?;
@@ -414,13 +415,13 @@ impl EsignSealer for HostedSealer<'_> {
             requested,
             achieved,
             degraded,
-            self_verify: self_verify.into_verdict()?,
+            self_verify: self_verify.into_verdict(),
         })
     }
 
     fn verify(&self, pdf: &[u8]) -> Result<EsignVerdict, EsignSealerError> {
         let args = to_value(&VerifyArgs {
-            now_ms: now_ms(),
+            now_ms: self.now_ms(),
             config: self.config(),
         })
         .map_err(|_| reply_invalid())?;
@@ -438,7 +439,7 @@ impl EsignSealer for HostedSealer<'_> {
             )
             .map_err(host_failure)?;
         match from_value(&outcome.report)? {
-            VerifyReply::Verified(verdict) => verdict.into_verdict(),
+            VerifyReply::Verified(verdict) => Ok(verdict.into_verdict()),
             VerifyReply::Failed(failure) => Err(failure.into_error()),
         }
     }
@@ -568,13 +569,25 @@ fn host_failure(err: HostError) -> EsignSealerError {
         HostError::Backoff { retry_after, .. } => EsignSealerError::Unavailable {
             retry_after_ms: Some(u64::try_from(retry_after.as_millis()).unwrap_or(u64::MAX)),
         },
-        HostError::Crashed(_) | HostError::StartFailed { .. } | HostError::BudgetTimeout => {
-            EsignSealerError::Unavailable {
-                retry_after_ms: None,
-            }
-        }
+        // The organ died or the host had no room: it may pass. A frame the
+        // socket could not carry means the process was gone.
+        HostError::Crashed(_)
+        | HostError::StartFailed { .. }
+        | HostError::BudgetTimeout
+        | HostError::Io(_)
+        | HostError::Frame(FrameError::Closed | FrameError::Io(_) | FrameError::TimedOut)
+        | HostError::Unavailable {
+            reason: Unavailable::Reinstalled | Unavailable::Quarantined,
+            ..
+        } => EsignSealerError::Unavailable {
+            retry_after_ms: None,
+        },
         HostError::DeadlineExceeded => retryable("deadline_exceeded"),
-        HostError::Revoked => retryable("revoked"),
+        HostError::Revoked
+        | HostError::Unavailable {
+            reason: Unavailable::Revoked,
+            ..
+        } => retryable("revoked"),
         HostError::Organ(err) if err.retryable => retryable(&name(&err.code)),
         HostError::Organ(err) => organ(&name(&err.code)),
         HostError::AskBudget => organ("ask_budget"),
@@ -583,14 +596,6 @@ fn host_failure(err: HostError) -> EsignSealerError {
         HostError::Unavailable { .. } => organ("unavailable"),
         _ => organ("host"),
     }
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| {
-            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
-        })
 }
 
 /// A unit enum's wire name.

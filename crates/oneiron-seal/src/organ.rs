@@ -25,6 +25,7 @@
 
 use std::future::Future;
 use std::pin::pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::{Context, Poll, Wake, Waker};
 use std::thread::{self, Thread};
@@ -32,7 +33,7 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use oneiron_organ_protocol::{
-    ASK_NET_FETCH, Answer, AskCode, AskRefusal, Asker, ByteBuf, CallContext, ErrorCode,
+    ASK_NET_FETCH, Answer, AskCode, AskRefusal, AskReply, Asker, ByteBuf, CallContext, ErrorCode,
     FetchAnswer, FetchAsk, Organ, OrganError, OrganIdentity, OutputBytes, VerbSpec,
 };
 use serde::de::DeserializeOwned;
@@ -160,24 +161,29 @@ struct Degrade {
     reason: ProfileDegradeReason,
 }
 
+/// A verdict, with the full report as JSON bytes: one value in the reply
+/// frame however many signatures the PDF holds, and never parsed by the
+/// engine.
 #[derive(Serialize)]
 struct Verdict {
     verdict: VerifyVerdict,
     reasons: Vec<VerifyFindingCode>,
     achieved: Option<PadesProfile>,
     self_verify_ok: bool,
-    report: VerifyReport,
+    report_json: ByteBuf,
 }
 
 impl Verdict {
-    fn of(report: VerifyReport) -> Self {
-        Self {
+    fn of(report: &VerifyReport) -> Result<Self, OrganError> {
+        let json = serde_json::to_vec(report)
+            .map_err(|err| OrganError::new(ErrorCode::Internal, format!("report: {err}")))?;
+        Ok(Self {
             verdict: report.verdict(),
             reasons: report.reasons(),
             achieved: report.achieved_profile(),
             self_verify_ok: report.passes_self_verify(),
-            report,
-        }
+            report_json: ByteBuf::from(json),
+        })
     }
 }
 
@@ -205,9 +211,9 @@ enum Failure {
     },
 }
 
-impl From<SealError> for Failure {
-    fn from(err: SealError) -> Self {
-        match err {
+impl Failure {
+    fn of(err: SealError) -> Result<Self, OrganError> {
+        Ok(match err {
             SealError::Retryable {
                 stage,
                 code,
@@ -219,13 +225,13 @@ impl From<SealError> for Failure {
             },
             SealError::Fatal { stage, code } => Self::Fatal { stage, code },
             SealError::VerifyFailed { report } => Self::VerifyFailed {
-                verdict: Box::new(Verdict::of(*report)),
+                verdict: Box::new(Verdict::of(&report)?),
             },
             SealError::BackendUnavailable { retry_after_ms } => {
                 Self::BackendUnavailable { retry_after_ms }
             }
             SealError::InputInvalid { code } => Self::InputInvalid { code },
-        }
+        })
     }
 }
 
@@ -234,7 +240,7 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
     let pdf = the_pdf(call)?;
     let engine = match engine(args.config, args.now_ms, began, call.asker())? {
         Ok(engine) => engine,
-        Err(err) => return report(&SealReport::Failed(err.into())),
+        Err(err) => return report(&SealReport::Failed(Failure::of(err)?)),
     };
     let request = SealRequest {
         operation_id: args.operation_id,
@@ -242,7 +248,7 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
     };
     let sealed = match block_on(engine.seal_pdf(pdf, &request)) {
         Ok(sealed) => sealed,
-        Err(err) => return report(&SealReport::Failed(err.into())),
+        Err(err) => return report(&SealReport::Failed(Failure::of(err)?)),
     };
     let degraded = sealed
         .warnings
@@ -264,7 +270,7 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
         requested: sealed.requested_profile,
         achieved: sealed.achieved_profile,
         degraded,
-        self_verify: Verdict::of(sealed.self_verify_report),
+        self_verify: Verdict::of(&sealed.self_verify_report)?,
     })?;
     answer.outputs.push(OutputBytes {
         name: SEALED_OUTPUT.to_owned(),
@@ -281,8 +287,8 @@ fn verify(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> 
     let checked = engine(args.config, args.now_ms, began, Asker::default())?
         .and_then(|engine| engine.verify_sealed_pdf(pdf));
     match checked {
-        Ok(checked) => report(&VerifyReply::Verified(Verdict::of(checked))),
-        Err(err) => report(&VerifyReply::Failed(err.into())),
+        Ok(checked) => report(&VerifyReply::Verified(Verdict::of(&checked)?)),
+        Err(err) => report(&VerifyReply::Failed(Failure::of(err)?)),
     }
 }
 
@@ -303,15 +309,46 @@ fn engine(
     asker: Asker,
 ) -> Result<Result<NativeSealEngine, SealError>, OrganError> {
     let config = seal_config(config)?;
+    let asks = Arc::new(CallAsks {
+        asker,
+        spent: AtomicBool::new(false),
+    });
     Ok(NativeSealEngine::new(
         config,
         Arc::new(AskedBackend {
-            asker: asker.clone(),
+            asks: Arc::clone(&asks),
             identity: Mutex::new(None),
         }),
-        Arc::new(AskedFetcher { asker }),
+        Arc::new(AskedFetcher { asks }),
         Arc::new(CallClock { now_ms, began }),
     ))
+}
+
+/// This call's asks, shared by the signer and the fetcher. After one
+/// `budget` refusal the engine ends the call at the next ask, so none is
+/// sent: each later ask fails here, and the seal degrades (no timestamp, no
+/// validation material) or fails, as it chooses.
+struct CallAsks {
+    asker: Asker,
+    spent: AtomicBool,
+}
+
+impl CallAsks {
+    fn ask(&self, verb: &str, value: rmpv::Value) -> Result<AskReply, AskRefusal> {
+        if self.spent.load(Ordering::SeqCst) {
+            return Err(AskRefusal::new(
+                AskCode::Budget,
+                "this call's asks are spent",
+            ));
+        }
+        let answer = self.asker.ask(verb, value);
+        if let Err(refusal) = &answer
+            && refusal.code == AskCode::Budget
+        {
+            self.spent.store(true, Ordering::SeqCst);
+        }
+        answer
+    }
 }
 
 fn seal_config(args: ConfigArgs) -> Result<SealConfig, OrganError> {
@@ -349,7 +386,7 @@ fn seal_config(args: ConfigArgs) -> Result<SealConfig, OrganError> {
 
 /// The signer, as asks: the key never leaves the engine.
 struct AskedBackend {
-    asker: Asker,
+    asks: Arc<CallAsks>,
     /// The identity the engine gave, asked once per call.
     identity: Mutex<Option<SigningIdentity>>,
 }
@@ -393,7 +430,7 @@ impl SealBackend for AskedBackend {
             return Ok(identity.clone());
         }
         let reply = self
-            .asker
+            .asks
             .ask(ASK_IDENTITY, rmpv::Value::Map(Vec::new()))
             .map_err(|refusal| backend_error(&refusal, BackendRejectCode::IdentityUnavailable))?;
         let answer: IdentityAnswer =
@@ -423,7 +460,7 @@ impl SealBackend for AskedBackend {
             code: BackendRejectCode::InvalidResponse,
         })?;
         let reply = self
-            .asker
+            .asks
             .ask(ASK_SIGN, value)
             .map_err(|refusal| backend_error(&refusal, BackendRejectCode::Unauthorized))?;
         let answer: SignAnswer =
@@ -440,7 +477,7 @@ impl SealBackend for AskedBackend {
 /// Every fetch, as an ask: the engine's guarded fetch, inside the grant's
 /// allowlist. The seal fetches only timestamps and CRLs.
 struct AskedFetcher {
-    asker: Asker,
+    asks: Arc<CallAsks>,
 }
 
 #[async_trait]
@@ -467,7 +504,7 @@ impl SealFetcher for AskedFetcher {
         };
         let value = to_value(&ask).map_err(|_| FetchError::InvalidResponse)?;
         let reply = self
-            .asker
+            .asks
             .ask(ASK_NET_FETCH, value)
             .map_err(|refusal| match refusal.code {
                 AskCode::NotGranted | AskCode::BadRequest => FetchError::Denied,

@@ -37,6 +37,7 @@ native = [
   "dep:oneiron-organ-protocol",
   "dep:rmp-serde",
   "dep:rmpv",
+  "dep:serde_json",
 ]
 network-fetch = [
   "native",
@@ -67,6 +68,8 @@ thiserror = { workspace = true }
 oneiron-organ-protocol = { version = "0.1.0", path = "../oneiron-organ-protocol", optional = true }
 rmp-serde = { workspace = true, optional = true }
 rmpv = { workspace = true, optional = true }
+# The verify report crosses as JSON bytes.
+serde_json = { workspace = true, optional = true }
 
 # Exact-pinned PDF/CMS/X.509 and cryptographic wire stack. Any update to an
 # exact-pinned crypto/wire dependency requires the complete native + oracle
