@@ -1,9 +1,11 @@
 //! MCP code-execution host seam and the engine-native host binding.
 
 use super::actors::McpResolvedActor;
+use super::run_seats::RunSeats;
 use oneiron::code_run::GatedActorWrite;
 use oneiron::engine_executor::{
-    EngineExecutorConfig, EngineExecutorOutcome, EngineNativeExecutor, JsCodeModeRuntime,
+    EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, EngineNativeExecutor,
+    JsCodeModeRuntime, RunCompaction,
 };
 use oneiron::llm::seat::{SeatJudge, SeatKind, SeatTask};
 use oneiron::{BudgetLease, EntityId, LlmBackend, Vault, WriteActor};
@@ -175,6 +177,11 @@ pub trait McpCodeModeProvider: Send + Sync {
         run_id: EntityId,
         task: &str,
     ) -> oneiron::Result<EngineExecutorConfig>;
+    /// A compaction seat for a run the host holds none for, its summaries
+    /// bylined `byline`; `None` keeps the run's window raw.
+    fn compaction(&self, _byline: WriteActor) -> Option<RunCompaction> {
+        None
+    }
     /// Injected typed judgment, above the raw backend; absent for legacy vaults.
     fn seat_judge(&self) -> Option<&dyn SeatJudge> {
         None
@@ -185,11 +192,15 @@ pub trait McpCodeModeProvider: Send + Sync {
     }
 }
 
+/// Builds one run's compaction seat from the run's write actor.
+pub type RunCompactionSeat = Arc<dyn Fn(WriteActor) -> RunCompaction + Send + Sync>;
+
 /// The PRODUCTION adapter: the injected provider, entered through the engine's
 /// own durable executor.
 pub struct McpEngineNativeCodeHost {
     provider: Arc<dyn McpCodeModeProvider>,
     active: Arc<Mutex<HashSet<EntityId>>>,
+    seats: Arc<Mutex<RunSeats>>,
 }
 
 impl fmt::Debug for McpEngineNativeCodeHost {
@@ -204,6 +215,7 @@ impl McpEngineNativeCodeHost {
         Self {
             provider,
             active: Arc::new(Mutex::new(HashSet::new())),
+            seats: Arc::default(),
         }
     }
 }
@@ -222,6 +234,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
         let vault = Arc::clone(&request.vault);
         let provider = Arc::clone(&self.provider);
         let active = Arc::clone(&self.active);
+        let seats = Arc::clone(&self.seats);
         let write_actor = request.actor.write_actor();
         let verbs = Arc::clone(&request.verbs);
         // The gated run source is HOST-derived: the caller's handle is a label
@@ -242,6 +255,12 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
             if config.run_id != request.run_id || config.task != request.task {
                 return Err(changed());
             }
+            let run_id = request.run_id;
+            let mut seat = seats
+                .lock()
+                .map_err(|_| McpCodeExecutionError::RunBinding("run seats poisoned".into()))?
+                .take(run_id)
+                .or_else(|| provider.compaction(write_actor));
             let (sender, receiver) = tokio::sync::oneshot::channel();
             // The engine REPL driver holds `&mut dyn JsCodeModeRuntime` across
             // its own awaits, so its future is deliberately not `Send`. It runs
@@ -258,7 +277,18 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                         &run_ref,
                         &config,
                         verbs,
+                        seat.as_mut(),
                     );
+                    if let (Some(seat), Ok(mut seats)) = (seat, seats.lock()) {
+                        let ended = outcome.as_ref().is_ok_and(|outcome| {
+                            matches!(
+                                outcome.status,
+                                EngineExecutorStatus::Complete
+                                    | EngineExecutorStatus::HardStepLimitReached
+                            )
+                        });
+                        seats.put(run_id, seat, ended);
+                    }
                     // Completion must release single-flight before waking an
                     // awaiter that may immediately re-enter this persisted run.
                     drop(guard);
@@ -288,6 +318,7 @@ fn run_engine_native_code_mode(
     run_ref: &str,
     config: &EngineExecutorConfig,
     verbs: Arc<dyn oneiron::code_run::AgentVerbDoor>,
+    compaction: Option<&mut RunCompaction>,
 ) -> Result<EngineExecutorOutcome, McpCodeExecutionError> {
     let gated_write = GatedActorWrite::new(vault, write_actor, run_ref)
         .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
@@ -350,6 +381,9 @@ fn run_engine_native_code_mode(
         routed_config.model_locality = seat.locality();
         routed_config.seat_effort = Some(seat.effort());
         executor = executor.with_model_seat(seat);
+    }
+    if let Some(seat) = compaction {
+        executor = executor.with_compaction(seat);
     }
     reactor
         .block_on(executor.run(&routed_config))

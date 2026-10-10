@@ -32,6 +32,29 @@ pub fn compaction_reply_schema() -> Value {
     })
 }
 
+/// What a compaction backend reads, as one JSON document: the span to cover
+/// (`from`, `through`), the summary's token ceiling, the lines it must keep
+/// word for word, the check the last try failed, and the window's messages.
+/// The host's prompt explains these keys; no prose lives here.
+#[must_use]
+pub fn compaction_request_input(
+    request: &CompactionRequest,
+    retry: Option<CompactionCheck>,
+) -> Value {
+    serde_json::json!({
+        "from": request.turn_start,
+        "through": request.window.last().map_or(request.turn_start, |message| message.turn),
+        "max_summary_tokens": request.summary_token_budget,
+        "pins": request.pins,
+        "retry": retry.map(CompactionCheck::as_str),
+        "steps": request
+            .window
+            .iter()
+            .map(|message| serde_json::json!({"step": message.turn, "text": message.content}))
+            .collect::<Vec<_>>(),
+    })
+}
+
 /// One pre-swap check, in gate order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CompactionCheck {
@@ -121,7 +144,10 @@ impl GatedCompaction {
 
     /// Test fixtures for the mint mechanics, which judge no reply.
     #[cfg(test)]
-    pub(crate) fn ungated_for_test(request: &CompactionRequest, product: CompactionProduct) -> Self {
+    pub(crate) fn ungated_for_test(
+        request: &CompactionRequest,
+        product: CompactionProduct,
+    ) -> Self {
         Self {
             request: request.clone(),
             product,
@@ -174,7 +200,10 @@ pub fn gate_compaction(
         ));
     }
     if summary_tokens < policy.floor_tokens {
-        return Err(fail(CompactionCheck::Size, "the summary is below the floor"));
+        return Err(fail(
+            CompactionCheck::Size,
+            "the summary is below the floor",
+        ));
     }
     if summary_tokens > request.summary_token_budget {
         return Err(fail(
@@ -183,7 +212,11 @@ pub fn gate_compaction(
         ));
     }
 
-    if request.pins.iter().any(|pin| !summary.contains(pin.as_str())) {
+    if request
+        .pins
+        .iter()
+        .any(|pin| !summary.contains(pin.as_str()))
+    {
         return Err(fail(CompactionCheck::Pins, "a verbatim pin is missing"));
     }
 
@@ -200,7 +233,11 @@ pub fn gate_compaction(
             "the summary's span is not the requested span",
         ));
     }
-    if request.watermark.turn.is_some_and(|watermark| last > watermark) {
+    if request
+        .watermark
+        .turn
+        .is_some_and(|watermark| last > watermark)
+    {
         return Err(fail(
             CompactionCheck::Coverage,
             "the window runs past the watermark",
@@ -220,8 +257,8 @@ pub fn gate_compaction(
 /// Strict: one JSON object with exactly `from`, `through` and `summary`.
 fn parse_reply(reply: &str) -> Result<(u64, u64, String), CompactionGateFailure> {
     let schema = |detail| fail(CompactionCheck::Schema, detail);
-    let value: Value =
-        serde_json::from_str(reply.trim()).map_err(|_| schema("the reply is not one JSON value"))?;
+    let value: Value = serde_json::from_str(reply.trim())
+        .map_err(|_| schema("the reply is not one JSON value"))?;
     let Value::Object(map) = value else {
         return Err(schema("the reply is not a JSON object"));
     };
@@ -333,6 +370,8 @@ impl CompactionSuppression {
 pub enum CompactionOff {
     /// The host configures no model at all.
     NoModels,
+    /// The host's config turns compaction off.
+    Disabled,
     /// The prompt package holds no compaction prompt.
     NoPrompt,
     /// No configured seat serves the compaction role.
@@ -350,6 +389,7 @@ impl CompactionOff {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::NoModels => "no_model_configured",
+            Self::Disabled => "disabled",
             Self::NoPrompt => "no_compaction_prompt",
             Self::NoSeat => "no_compaction_seat",
             Self::BackendFailed => "backend_failed",

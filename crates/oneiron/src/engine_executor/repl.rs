@@ -89,7 +89,10 @@ impl EngineNativeExecutor<'_> {
             self.output_run = Some(config.run_id);
         }
         if let Some(seat) = self.compaction.as_deref_mut() {
-            seat.begin_turn();
+            seat.begin_turn(matches!(
+                self.storage,
+                crate::code_run::ExecutorStorage::Canonical(_)
+            ));
         }
         if let Some(status) = loaded.terminal_status {
             self.recover_checkpointed_implicit_speak(&loaded.record, &status, config)?;
@@ -102,31 +105,33 @@ impl EngineNativeExecutor<'_> {
         loop {
             let completed_steps = completed_step_count(&record)?;
             if completed_steps >= u64::from(config.limits.hard_steps) {
-                return Ok(self.outcome(EngineExecutorStatus::HardStepLimitReached, steps_run, record));
+                return Ok(self.outcome(
+                    EngineExecutorStatus::HardStepLimitReached,
+                    steps_run,
+                    record,
+                ));
             }
             if steps_run >= config.limits.soft_steps {
-                return Ok(EngineExecutorOutcome {
-                    status: EngineExecutorStatus::Yielded {
+                return Ok(self.outcome(
+                    EngineExecutorStatus::Yielded {
                         next_step_seq: completed_steps,
                     },
                     steps_run,
-                    replay_record: record,
-                    seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
-                });
+                    record,
+                ));
             }
 
             self.land_finished_compaction()?;
             let request = self.build_llm_request(config, &record, &wire_prompt.text)?;
             if let Some(reason) = self.feed_compaction(config, &record, &request)? {
-                return Ok(EngineExecutorOutcome {
-                    status: EngineExecutorStatus::WindowFull {
+                return Ok(self.outcome(
+                    EngineExecutorStatus::WindowFull {
                         next_step_seq: completed_steps,
                         reason,
                     },
                     steps_run,
-                    replay_record: record,
-                    seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
-                });
+                    record,
+                ));
             }
             let request_hash = request.canonical_hash()?;
             let response = self.backend.generate(request, self.lease).await?;

@@ -19,6 +19,8 @@ use crate::server::SyncServer;
 
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod code_mode;
+#[cfg(feature = "code-sandbox-wasmtime")]
+mod compaction;
 mod dreamer;
 mod policy;
 mod status;
@@ -32,7 +34,9 @@ mod turns;
 mod workflows;
 
 pub(crate) use policy::route_dreamer_extraction;
-pub use status::{AiHealth, AiStatus, IdleReason, WorkState, WorkStatus};
+pub use status::{
+    AiHealth, AiStatus, CompactionState, CompactionStatus, IdleReason, WorkState, WorkStatus,
+};
 
 use dreamer::{DreamerHost, DreamerStart};
 use policy::DreamerRoute;
@@ -82,6 +86,10 @@ impl AiHandle {
                 dreamer: idle(),
                 workflows: idle(),
                 chat,
+                compaction: CompactionStatus::off(match models {
+                    None => oneiron::compaction::CompactionOff::NoModels.as_str(),
+                    Some(_) => status::CODE_MODE_OFF,
+                }),
             })),
             hints: None,
             chat: models.map_or(
@@ -248,7 +256,8 @@ impl AiHost {
         .await;
         let server = server.with_ai(host.handle.clone());
         #[cfg(feature = "code-sandbox-wasmtime")]
-        let server = code_mode::bind(server, &host.handle.runtime, models).await;
+        let server =
+            code_mode::bind(server, &host.handle.runtime, models, &host.handle.status).await;
         (server, host)
     }
 

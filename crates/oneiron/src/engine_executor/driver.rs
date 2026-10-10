@@ -178,8 +178,7 @@ impl<'a> EngineNativeExecutor<'a> {
         let ExecutorStorage::Canonical(vault) = &self.storage else {
             unreachable!("canonical storage checked before sync")
         };
-        let plan =
-            driver.integrate_with_coverage(vault, byline, gated, accumulated, &span)?;
+        let plan = driver.integrate_with_coverage(vault, byline, gated, accumulated, &span)?;
         // This is only an in-memory cache; the next assembly re-derives it
         // from the typed row joined to the committed SUMMARY.
         let last = request

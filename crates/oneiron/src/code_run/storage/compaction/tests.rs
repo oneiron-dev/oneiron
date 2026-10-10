@@ -25,8 +25,11 @@ fn malformed_or_misbound_coverage_never_becomes_a_view_decision() -> Result<()> 
     vault.with_write_txn(|txn| COVERAGE.put_undecodable(&vault.store, txn, &key, &raw))?;
     assert!(vault.code_run_compaction_coverage(run).is_err());
     vault.with_write_txn(|txn| COVERAGE.put(&vault.store, txn, &key, &bogus))?;
-    assert!(
-        vault.code_run_compaction_coverage(run).is_err(),
+    // A summary gone from the vault is withdrawn: its steps stay covered and
+    // render no words, so an erasure never bricks the run.
+    assert_eq!(
+        vault.code_run_compaction_epochs(run)?,
+        vec![(bogus, None)],
         "no minted SUMMARY exists"
     );
     Ok(())

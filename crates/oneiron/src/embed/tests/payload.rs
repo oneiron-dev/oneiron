@@ -17,7 +17,10 @@ impl crate::compaction::CompactionBackend for SummaryBackend {
         &self,
         _request: &crate::compaction::CompactionRequest,
         _retry: Option<crate::compaction::CompactionCheck>,
-    ) -> std::result::Result<crate::compaction::CompactionProduct, crate::compaction::CompactionRefusal> {
+    ) -> std::result::Result<
+        crate::compaction::CompactionProduct,
+        crate::compaction::CompactionRefusal,
+    > {
         Ok(crate::compaction::CompactionProduct {
             summary_text: "the native epoch prose".to_owned(),
             finish: crate::FinishReason::Stop,
@@ -63,7 +66,10 @@ fn mint_pending_summary(vault: &Vault) -> Result<EntityId> {
             tokens: 3,
         }],
     )?;
-    let product = driver.backend().compact(&request, None).expect("the fixture backend answers");
+    let product = driver
+        .backend()
+        .compact(&request, None)
+        .expect("the fixture backend answers");
     let plan = driver.integrate(
         vault,
         &session,

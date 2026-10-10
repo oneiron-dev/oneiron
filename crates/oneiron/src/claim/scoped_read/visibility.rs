@@ -94,6 +94,11 @@ impl ScopedRead<'_> {
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
         let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        if header.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
+            && let Some(admitted) = self.epoch_sources_readable_in(rtxn, policy, id, body)?
+        {
+            return Ok(admitted);
+        }
         let names = |needle: &[u8]| body.windows(needle.len()).any(|window| window == needle);
         let sources = match header.entity_type {
             crate::registry::ENTITY_TYPE_SUMMARY => crate::scope_summary::body_covers_in_txn(
@@ -146,6 +151,32 @@ impl ScopedRead<'_> {
             }
         }
         Ok(true)
+    }
+
+    /// An epoch summary's sources are its `DerivedFrom` targets, through any
+    /// nested epoch summary (agent-runtime-v1 §d7); `None` for any other
+    /// SUMMARY body.
+    fn epoch_sources_readable_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+        body: &[u8],
+    ) -> Result<Option<bool>> {
+        let floor = self.actor_retrieval_floor(policy)?;
+        let admit = |source: &EntityId, row: &crate::ports::EntityRecord| {
+            self.is_entity_raw_readable_own_in(rtxn, policy, source, &row.encode(), &floor)
+        };
+        match self.session_view {
+            Some(view) => crate::compaction::epoch_sources_admitted_in(view, rtxn, id, body, admit),
+            None => crate::compaction::epoch_sources_admitted_in(
+                &self.vault.store,
+                rtxn,
+                id,
+                body,
+                admit,
+            ),
+        }
     }
 
     /// The row's own admission, before what it was written from.

@@ -20,7 +20,8 @@ use crate::error::{Error, Result};
 use crate::federation::{Scope, record_scope::scope_for_blob};
 use crate::interlocutor::{InterlocutorSet, InterlocutorStamp};
 use crate::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY,
+    ENTITY_TYPE_TURN,
 };
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
@@ -329,7 +330,9 @@ impl DisclosureContext {
     /// A TURN's text and vector are its messages' (`embed::turn_text_in_txn`),
     /// so the clamp admits a turn only when it admits each of them too: a
     /// withheld message would otherwise reach the assembly through its turn's
-    /// vector hit or joined text.
+    /// vector hit or joined text. An epoch summary's words are its sources',
+    /// so it is admitted only with each of them
+    /// (`compaction::epoch_sources_admitted_in`).
     pub(crate) fn admits(
         &self,
         store: &Store,
@@ -341,6 +344,34 @@ impl DisclosureContext {
         if self.mode == DisclosureMode::OwnerAlone {
             return Ok(true);
         }
+        if !self.admits_row(store, rtxn, id, entity_type, claim_body)? {
+            return Ok(false);
+        }
+        if entity_type != ENTITY_TYPE_SUMMARY {
+            return Ok(true);
+        }
+        let Some(row) = store.port_entity_record(rtxn, id)? else {
+            return Ok(false);
+        };
+        let admitted = crate::compaction::epoch_sources_admitted_in(
+            store,
+            rtxn,
+            id,
+            &row.body,
+            |source, source_row| self.admits_row(store, rtxn, source, source_row.entity_type, None),
+        )?;
+        Ok(admitted.unwrap_or(true))
+    }
+
+    /// [`Self::admits`] for one record's own row, not what it was written from.
+    fn admits_row(
+        &self,
+        store: &Store,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        entity_type: u8,
+        claim_body: Option<&ClaimBody>,
+    ) -> Result<bool> {
         if !Self::below_tier_a(store, rtxn, id, entity_type, claim_body)? {
             return Ok(false);
         }

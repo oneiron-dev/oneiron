@@ -83,12 +83,51 @@ impl WorkStatus {
     }
 }
 
-/// The three AI surfaces a server runs.
+/// Whether code mode's runs compact their own window (agent-runtime-v1 §d7).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactionState {
+    On,
+    Off,
+}
+
+/// Compaction's reason when the server serves no code mode.
+pub(crate) const CODE_MODE_OFF: &str = "code_mode_off";
+
+/// Code mode's compaction: on, or off and why. Settled at bind.
+#[derive(Clone, Debug, Serialize)]
+pub struct CompactionStatus {
+    pub state: CompactionState,
+    /// Why it is off: an engine `CompactionOff` name, or `code_mode_off`
+    /// when the server serves no code mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<&'static str>,
+    /// The seat role its passes run on, when it is on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    /// The window budget a run parks at, when it is on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_tokens: Option<u64>,
+}
+
+impl CompactionStatus {
+    pub(crate) fn off(reason: &'static str) -> Self {
+        Self {
+            state: CompactionState::Off,
+            reason: Some(reason),
+            role: None,
+            window_tokens: None,
+        }
+    }
+}
+
+/// The AI surfaces a server runs.
 #[derive(Clone, Debug, Serialize)]
 pub struct AiStatus {
     pub dreamer: WorkStatus,
     pub workflows: WorkStatus,
     pub chat: WorkStatus,
+    pub compaction: CompactionStatus,
 }
 
 /// Interior-mutable status cell owned by one server.
@@ -127,6 +166,13 @@ pub struct AiHealth {
     #[schema(value_type = Option<String>, example = "no_model_configured")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dreamer_reason: Option<IdleReason>,
+    /// Whether code mode's runs compact their window: `on` or `off`.
+    #[schema(value_type = String, example = "off")]
+    pub compaction: CompactionState,
+    /// Why compaction is off, when it is.
+    #[schema(value_type = Option<String>, example = "no_model_configured")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compaction_reason: Option<&'static str>,
 }
 
 impl AiStatus {
@@ -134,6 +180,8 @@ impl AiStatus {
         AiHealth {
             dreamer: self.dreamer.state,
             dreamer_reason: self.dreamer.reason,
+            compaction: self.compaction.state,
+            compaction_reason: self.compaction.reason,
         }
     }
 }

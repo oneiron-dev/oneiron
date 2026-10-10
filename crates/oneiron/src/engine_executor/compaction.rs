@@ -38,7 +38,7 @@ pub struct RunCompaction {
 }
 
 enum Seat {
-    Off(CompactionOff),
+    Off,
     Live(Box<LiveSeat>),
 }
 
@@ -93,7 +93,7 @@ impl RunCompaction {
     #[must_use]
     pub fn off(why: CompactionOff) -> Self {
         Self {
-            seat: Seat::Off(why),
+            seat: Seat::Off,
             report: CompactionReport {
                 suppressed: Some(CompactionSuppression::Sticky { why }),
                 ..CompactionReport::default()
@@ -137,8 +137,14 @@ impl RunCompaction {
         &self.report
     }
 
-    /// A new `run` call is a new turn: a turn-scoped hold ends.
-    pub(super) fn begin_turn(&mut self) {
+    /// A new `run` call is a new turn: a turn-scoped hold ends. A run with
+    /// no durable record (an off-record room's overlay) does not compact:
+    /// its overlay compaction is not built.
+    pub(super) fn begin_turn(&mut self, on_record: bool) {
+        if !on_record {
+            *self = Self::off(CompactionOff::OffRecordRun);
+            return;
+        }
         if let Seat::Live(seat) = &mut self.seat
             && matches!(seat.held, Some(CompactionSuppression::TurnScoped { .. }))
         {
@@ -148,7 +154,9 @@ impl RunCompaction {
     }
 
     /// Takes a finished pass, if one is ready, without waiting.
-    pub(super) fn take_finished(&mut self) -> Option<Result<GatedCompaction, CompactionSuppression>> {
+    pub(super) fn take_finished(
+        &mut self,
+    ) -> Option<Result<GatedCompaction, CompactionSuppression>> {
         let Seat::Live(seat) = &mut self.seat else {
             return None;
         };
@@ -200,7 +208,7 @@ impl RunCompaction {
     pub(super) fn driver_and_byline(&mut self) -> Option<(&mut CompactionDriver, WriteActor)> {
         match &mut self.seat {
             Seat::Live(seat) => Some((&mut seat.driver, seat.byline)),
-            Seat::Off(_) => None,
+            Seat::Off => None,
         }
     }
 
@@ -438,9 +446,11 @@ const PIN_MAX_BYTES: usize = 240;
 /// A failed step's first console line, verbatim from `content`: failures
 /// are never compacted away (agent-runtime-v1 §d7).
 pub(super) fn failure_pin(content: &str) -> Option<String> {
-    let line = content
-        .lines()
-        .find(|line| FAILED_STEP_PREFIXES.iter().any(|prefix| line.starts_with(prefix)))?;
+    let line = content.lines().find(|line| {
+        FAILED_STEP_PREFIXES
+            .iter()
+            .any(|prefix| line.starts_with(prefix))
+    })?;
     let mut end = line.len().min(PIN_MAX_BYTES);
     while !line.is_char_boundary(end) {
         end -= 1;
@@ -490,7 +500,10 @@ pub(super) fn epoch_frame(
     seq: usize,
     views: &[crate::compaction::output::OutputContextView],
 ) -> super::EngineExecutorResult<Option<Option<crate::LlmMessage>>> {
-    let Some((row, text)) = epochs.iter().find(|(row, _)| row.covers(run_id, seq as u64)) else {
+    let Some((row, text)) = epochs
+        .iter()
+        .find(|(row, _)| row.covers(run_id, seq as u64))
+    else {
         return Ok(None);
     };
     if seq as u64 != row.first() {
@@ -498,7 +511,10 @@ pub(super) fn epoch_frame(
     }
     let mut handles = Vec::new();
     for covered in row.first()..=row.last() {
-        let Some(view) = usize::try_from(covered).ok().and_then(|index| views.get(index)) else {
+        let Some(view) = usize::try_from(covered)
+            .ok()
+            .and_then(|index| views.get(index))
+        else {
             continue;
         };
         handles.push(serde_json::to_string(&serde_json::json!({
@@ -511,7 +527,13 @@ pub(super) fn epoch_frame(
     Ok(Some(Some(crate::LlmMessage {
         role: crate::LlmMessageRole::User,
         content: vec![ContentPart::Text {
-            text: compacted_frame(row.epoch(), row.first(), row.last(), text.as_deref(), &handles),
+            text: compacted_frame(
+                row.epoch(),
+                row.first(),
+                row.last(),
+                text.as_deref(),
+                &handles,
+            ),
         }],
     })))
 }

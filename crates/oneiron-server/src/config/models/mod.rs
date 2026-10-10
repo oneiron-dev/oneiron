@@ -18,11 +18,13 @@ use std::path::{Path, PathBuf};
 use oneiron::llm::manifest::ModelRole;
 use serde::Deserialize;
 
+mod compaction;
 mod levels;
 mod provider;
 #[cfg(test)]
 mod tests;
 
+pub use compaction::CompactionSettings;
 pub use levels::{ModelRef, Rung, SHORTHAND_ROLES, role_key};
 pub use provider::{OutputLimitField, ProviderConfig, ProviderKind};
 
@@ -86,6 +88,8 @@ struct WorkflowFile {
 struct CodeModeFile {
     prompt_package: Option<PathBuf>,
     budget_units: Option<u64>,
+    #[serde(default)]
+    compaction: compaction::CompactionFile,
 }
 
 /// The resolved `[models]` section: providers plus one ladder per role.
@@ -143,6 +147,7 @@ pub struct CodeModeSettings {
     pub prompt_package: Option<PathBuf>,
     /// Process-lifetime meter for code mode's model calls.
     pub budget_units: u64,
+    pub compaction: CompactionSettings,
 }
 
 const DEFAULT_SESSION_CEILING_SECS: u64 = 12 * 60 * 60;
@@ -230,6 +235,7 @@ impl ModelsFile {
                 .code_mode
                 .budget_units
                 .unwrap_or(DEFAULT_CODE_MODE_BUDGET_UNITS),
+            compaction: self.code_mode.compaction.resolve()?,
         };
         if [
             dreamer.pass_budget_units,

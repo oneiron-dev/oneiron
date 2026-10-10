@@ -69,15 +69,15 @@ pub use driver::{
     CompactionProduct, CompactionRequest, CompactionSignal, CompactionTierClass,
     CompactionWatermark, CompactionWindowMessage, MarginLaw, SwapPlan,
 };
-pub(crate) use epoch::EpochMint;
 pub use epoch::{
     EPOCH_SUMMARY_BODY_KEYS, EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL,
     EPOCH_SUMMARY_MAX_DERIVED_EDGES, EPOCH_SUMMARY_MAX_SOURCES, EpochSummaryBody,
     decode_epoch_summary_body, encode_epoch_summary_body,
 };
+pub(crate) use epoch::{EpochMint, epoch_sources_admitted_in};
 pub use gate::{
-    CompactionCheck, CompactionGateFailure, CompactionGatePolicy, CompactionOff,
-    CompactionRefusal, CompactionSuppression, GatedCompaction, compaction_reply_schema,
+    CompactionCheck, CompactionGateFailure, CompactionGatePolicy, CompactionOff, CompactionRefusal,
+    CompactionSuppression, GatedCompaction, compaction_reply_schema, compaction_request_input,
     gate_compaction,
 };
 

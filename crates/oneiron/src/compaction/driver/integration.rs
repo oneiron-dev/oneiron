@@ -33,7 +33,6 @@ impl CompactionDriver {
         Ok(plan)
     }
 
-
     /// Commit executor run/span coverage with the actual minted SUMMARY.
     /// Read-time views project this record; the driver advances only on commit.
     pub(crate) fn integrate_with_coverage(

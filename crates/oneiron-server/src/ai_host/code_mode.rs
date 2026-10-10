@@ -17,6 +17,8 @@ use oneiron::{
 };
 
 use super::CHAT_ROLE;
+use super::compaction::CodeModeCompaction;
+use super::status::StatusCell;
 use crate::config::models::ModelsConfig;
 use crate::mcp::McpQuickJsProvider;
 use crate::models::{ModelRuntime, settle_answered};
@@ -29,6 +31,7 @@ pub(super) async fn bind(
     server: SyncServer,
     runtime: &Arc<ModelRuntime>,
     models: Option<&ModelsConfig>,
+    status: &StatusCell,
 ) -> SyncServer {
     let Some(models) = models else {
         return server;
@@ -78,6 +81,13 @@ pub(super) async fn bind(
             return server;
         }
     };
+    let compaction = CodeModeCompaction::resolve(
+        server.vault(),
+        runtime,
+        models,
+        &prompt_package,
+        guard.clone(),
+    );
     let backend = Arc::new(CodeModeBackend {
         vault: Arc::clone(server.vault()),
         models: Arc::clone(runtime),
@@ -96,7 +106,9 @@ pub(super) async fn bind(
         limits: EngineExecutorLimits::default(),
     };
     match McpQuickJsProvider::new(Arc::new(component), backend, lease, config) {
-        Ok(provider) => server.with_mcp_quickjs_provider(provider.with_clock_from_first_start()),
+        Ok(provider) => server.with_mcp_quickjs_provider(
+            compaction.attach(provider.with_clock_from_first_start(), status),
+        ),
         Err(error) => {
             tracing::error!(%error, "code mode's executor config is invalid");
             server

@@ -1,13 +1,13 @@
 //! Epoch-summary codec and transactional lineage mint.
 
-use crate::ports::EntityStoreRead;
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityRecord, EntityStoreRead};
 use rmpv::Value;
 
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SUMMARY;
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
 use crate::tokenizer::count_context_pack_tokens;
 use crate::vault::Vault;
@@ -226,6 +226,54 @@ pub fn decode_epoch_summary_body(bytes: &[u8]) -> Result<EpochSummaryBody> {
         return Err(Error::InvariantViolation("epoch summary text is empty"));
     }
     Ok(body)
+}
+
+/// Walks every record an epoch summary's words came from: its `DerivedFrom`
+/// targets, and theirs through any nested epoch summary, each record once.
+///
+/// A summary's own birth scope is generic and cannot stand for what it was
+/// written from, so a reader that is not the owner takes an epoch summary
+/// only while `admit` takes each record reached here (nested summaries
+/// included). The walk refuses as soon as one is refused or a source no
+/// longer resolves. `Ok(None)` when `body` is not an epoch summary.
+pub(crate) fn epoch_sources_admitted_in(
+    dbs: &impl ManifestDbs,
+    rtxn: &heed::RoTxn<'_>,
+    summary: &EntityId,
+    body: &[u8],
+    mut admit: impl FnMut(&EntityId, &EntityRecord) -> Result<bool>,
+) -> Result<Option<bool>> {
+    if decode_epoch_summary_body(body).is_err() {
+        return Ok(None);
+    }
+    let mut seen = std::collections::BTreeSet::from([*summary]);
+    let mut pending = vec![*summary];
+    while let Some(next) = pending.pop() {
+        for edge in dbs.port_edges(
+            rtxn,
+            &next,
+            EdgeDirection::Out,
+            Some(EdgeKind::DerivedFrom),
+            None,
+        )? {
+            let source = edge?.target;
+            if !seen.insert(source) {
+                continue;
+            }
+            let Some(row) = dbs.port_entity_record(rtxn, &source)? else {
+                return Ok(Some(false));
+            };
+            if !admit(&source, &row)? {
+                return Ok(Some(false));
+            }
+            if row.entity_type == ENTITY_TYPE_SUMMARY
+                && decode_epoch_summary_body(&row.body).is_ok()
+            {
+                pending.push(source);
+            }
+        }
+    }
+    Ok(Some(true))
 }
 
 /// A 32-hex entity ref, validated as one rather than accepted as any string.

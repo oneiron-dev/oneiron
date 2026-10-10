@@ -16,6 +16,9 @@ pub const ENGINE_EXECUTOR_HARD_STEP_LIMIT: u32 = 50;
 
 pub const ENGINE_EXECUTOR_PURPOSE_NAME: &str = "engine_native_executor";
 
+/// The call purpose of a run's compaction pass (agent-runtime-v1 §d7).
+pub const ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME: &str = "engine_native_executor_compaction";
+
 pub const ENGINE_EXECUTOR_FALLBACK_NAME: &str = "engine_native_js_executor_v1";
 
 /// Reserved guest response key carrying the budget legibility envelope
@@ -259,7 +262,9 @@ impl JsCodeModeStepOutcome {
 pub enum EngineExecutorStatus {
     Complete,
     Waiting(SelfDurableWait),
-    Yielded { next_step_seq: u64 },
+    Yielded {
+        next_step_seq: u64,
+    },
     HardStepLimitReached,
     /// The window reached its budget with no accepted swap (agent-runtime-v1
     /// §d7). Not terminal: the same run continues once a swap lands.
@@ -275,4 +280,6 @@ pub struct EngineExecutorOutcome {
     pub steps_run: u32,
     pub replay_record: CodeRunReplayRecord,
     pub seat_receipt: Option<crate::llm::seat::SeatChoiceReceipt>,
+    /// The run's compaction after this call, when the host keeps a seat.
+    pub compaction: Option<super::compaction::CompactionReport>,
 }

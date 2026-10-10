@@ -24,9 +24,18 @@ fn refuse_wrong_request(
     let summaries = summary_row_count(vault);
     let markers = pending_embedding_marker_count(vault);
     let margin = *driver.margin();
-    let product = driver.backend().compact(request).expect("backend product");
+    let product = driver
+        .backend()
+        .compact(request, None)
+        .expect("backend product");
     let error = driver
-        .integrate(vault, &session, actor, crate::compaction::GatedCompaction::ungated_for_test(request, product), &[])
+        .integrate(
+            vault,
+            &session,
+            actor,
+            crate::compaction::GatedCompaction::ungated_for_test(request, product),
+            &[],
+        )
         .expect_err("a different request cannot consume the active flight");
     assert_eq!(
         invariant(error),
@@ -62,8 +71,17 @@ fn an_abandoned_result_cannot_mint_or_clear_a_new_flight() -> Result<()> {
     );
     refuse_wrong_request(&vault, &mut driver, session, actor, &old);
 
-    let product = driver.backend().compact(&current, None).expect("the fixture backend answers");
-    let plan = driver.integrate(&vault, &session, actor, crate::compaction::GatedCompaction::ungated_for_test(&current, product), &[])?;
+    let product = driver
+        .backend()
+        .compact(&current, None)
+        .expect("the fixture backend answers");
+    let plan = driver.integrate(
+        &vault,
+        &session,
+        actor,
+        crate::compaction::GatedCompaction::ungated_for_test(&current, product),
+        &[],
+    )?;
     assert_eq!(plan.epoch, 1);
     assert_eq!(summary_row_count(&vault), 1);
     assert!(!driver.is_compacting());
@@ -91,8 +109,17 @@ fn edited_request_fields_cannot_change_the_sealed_backend_input() -> Result<()> 
         change(&mut edited);
         refuse_wrong_request(&vault, &mut driver, session, actor, &edited);
     }
-    let product = driver.backend().compact(&request, None).expect("the fixture backend answers");
-    driver.integrate(&vault, &session, actor, crate::compaction::GatedCompaction::ungated_for_test(&request, product), &[])?;
+    let product = driver
+        .backend()
+        .compact(&request, None)
+        .expect("the fixture backend answers");
+    driver.integrate(
+        &vault,
+        &session,
+        actor,
+        crate::compaction::GatedCompaction::ungated_for_test(&request, product),
+        &[],
+    )?;
     Ok(())
 }
 
@@ -151,8 +178,17 @@ fn request_refuses_gaps_reordering_and_wrong_durable_boundaries() -> Result<()> 
     let request = driver.request_for(&vault, &session, window.clone())?;
     assert_eq!(request.window, window);
     assert_eq!(request.turn_start, 5);
-    let product = driver.backend().compact(&request, None).expect("the fixture backend answers");
-    let plan = driver.integrate(&vault, &session, actor, crate::compaction::GatedCompaction::ungated_for_test(&request, product), &[])?;
+    let product = driver
+        .backend()
+        .compact(&request, None)
+        .expect("the fixture backend answers");
+    let plan = driver.integrate(
+        &vault,
+        &session,
+        actor,
+        crate::compaction::GatedCompaction::ungated_for_test(&request, product),
+        &[],
+    )?;
     let body = stored_summary_body(&vault, &plan.summary_id);
     assert_eq!((body.turn_start, body.turn_end), (5, 6));
     assert_eq!(
@@ -205,17 +241,32 @@ fn working_outputs_decay_and_compaction_restores_exact_bytes() -> Result<()> {
     let request = driver.request_for(&vault, &session, host_window(&vault, 0xB0, 1, 3))?;
     let mut wrong = request.clone();
     wrong.turn_start += 1;
-    let product = driver.backend().compact(&request, None).expect("the fixture backend answers");
+    let product = driver
+        .backend()
+        .compact(&request, None)
+        .expect("the fixture backend answers");
     assert!(
         driver
-            .integrate_with_outputs(&vault, actor, crate::compaction::GatedCompaction::ungated_for_test(&wrong, product.clone()), &[], &mut outputs)
+            .integrate_with_outputs(
+                &vault,
+                actor,
+                crate::compaction::GatedCompaction::ungated_for_test(&wrong, product.clone()),
+                &[],
+                &mut outputs
+            )
             .is_err()
     );
     assert_eq!(
         outputs.assemble(&vault, 3, policy)?[1].tier,
         OutputTier::Full
     );
-    driver.integrate_with_outputs(&vault, actor, crate::compaction::GatedCompaction::ungated_for_test(&request, product), &[], &mut outputs)?;
+    driver.integrate_with_outputs(
+        &vault,
+        actor,
+        crate::compaction::GatedCompaction::ungated_for_test(&request, product),
+        &[],
+        &mut outputs,
+    )?;
     let early_compacted = outputs.assemble(&vault, 3, policy)?;
     assert_eq!(early_compacted[0].tier, OutputTier::Stub);
     assert_eq!(early_compacted[1].tier, OutputTier::Stub);
@@ -260,7 +311,10 @@ fn marker_failure_rolls_back_summary_and_leaves_request_retryable() -> Result<()
     };
     driver.evaluate_now(&vault, u64::MAX)?;
     let request = driver.request_for(&vault, &session, host_window(&vault, 0xB1, 1, 2))?;
-    let product = driver.backend().compact(&request, None).expect("the fixture backend answers");
+    let product = driver
+        .backend()
+        .compact(&request, None)
+        .expect("the fixture backend answers");
     let run = entity(0xB8);
     let mut replay = CodeRunReplayRecord::new(run, CodeRunDeterminism::new(1, [0x55; 32]));
     for seq in 0..3_u64 {
@@ -316,12 +370,24 @@ fn marker_failure_rolls_back_summary_and_leaves_request_retryable() -> Result<()
         &request,
     )?;
     driver
-        .integrate_with_coverage(&vault, actor, crate::compaction::GatedCompaction::ungated_for_test(&request, product.clone()), &[], &wrong)
+        .integrate_with_coverage(
+            &vault,
+            actor,
+            crate::compaction::GatedCompaction::ungated_for_test(&request, product.clone()),
+            &[],
+            &wrong,
+        )
         .expect_err("a different run's span cannot bind this SUMMARY");
     assert_eq!(summary_row_count(&vault), before);
     assert!(vault.code_run_compaction_coverage(run)?.is_empty());
 
-    let plan = driver.integrate_with_coverage(&vault, actor, crate::compaction::GatedCompaction::ungated_for_test(&request, product), &[], &span)?;
+    let plan = driver.integrate_with_coverage(
+        &vault,
+        actor,
+        crate::compaction::GatedCompaction::ungated_for_test(&request, product),
+        &[],
+        &span,
+    )?;
     assert_eq!(summary_row_count(&vault), before + 1);
     outputs.compact_span(request.turn_start, request.window.last().unwrap().turn);
     let coverage = vault.code_run_compaction_coverage(run)?;

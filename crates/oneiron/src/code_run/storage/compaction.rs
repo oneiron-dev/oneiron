@@ -104,9 +104,6 @@ impl CodeRunCompactionCoverage {
     pub(crate) fn last(&self) -> u64 {
         self.last
     }
-    pub(crate) fn session_ref(&self) -> EntityId {
-        self.session_ref
-    }
 }
 
 impl RawValue for CodeRunCompactionCoverage {
@@ -170,7 +167,9 @@ fn verify_summary(
     let Some(summary) = vault.store.port_entity_record(txn, &row.summary_id)? else {
         return Ok(None);
     };
-    if crate::ports::stale_in_txn(&vault.store, txn, &row.summary_id)? {
+    let state =
+        crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, &row.summary_id)?;
+    if state.deleted || state.stale || summary.body.is_empty() {
         return Ok(None);
     }
     if summary.entity_type != ENTITY_TYPE_SUMMARY {

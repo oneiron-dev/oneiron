@@ -33,19 +33,21 @@ impl EngineNativeExecutor<'_> {
                     None => Ok(()),
                     // The tail is re-derived from typed coverage at the next
                     // assembly, so no host-side splice is carried here.
-                    Some((driver, byline)) => match self.integrate_compaction(driver, byline, gated, &[]) {
-                        Ok(plan) => {
-                            seat.swapped(plan.epoch, first, last);
-                            Ok(())
+                    Some((driver, byline)) => {
+                        match self.integrate_compaction(driver, byline, gated, &[]) {
+                            Ok(plan) => {
+                                seat.swapped(plan.epoch, first, last);
+                                Ok(())
+                            }
+                            Err(error) => {
+                                tracing::warn!(%error, "a gated compaction did not land");
+                                seat.hold(crate::compaction::CompactionSuppression::TurnScoped {
+                                    check: None,
+                                });
+                                Ok(())
+                            }
                         }
-                        Err(error) => {
-                            tracing::warn!(%error, "a gated compaction did not land");
-                            seat.hold(crate::compaction::CompactionSuppression::TurnScoped {
-                                check: None,
-                            });
-                            Ok(())
-                        }
-                    },
+                    }
                 }
             }
         };
@@ -115,16 +117,17 @@ impl EngineNativeExecutor<'_> {
         if vault.entity_exists(&turn_id)? {
             sources.push(turn_id);
         }
-        Ok(Some(driver.request_for_log(
-            vault, &session, window, pins, sources,
-        )?))
+        Ok(Some(
+            driver.request_for_log(vault, &session, window, pins, sources)?,
+        ))
     }
 
     /// This run's swapped epochs with their summaries' prose.
     pub(super) fn compaction_epochs(
         &self,
         run_id: crate::EntityId,
-    ) -> EngineExecutorResult<Vec<(crate::code_run::CodeRunCompactionCoverage, Option<String>)>> {
+    ) -> EngineExecutorResult<Vec<(crate::code_run::CodeRunCompactionCoverage, Option<String>)>>
+    {
         Ok(match &self.storage {
             crate::code_run::ExecutorStorage::Canonical(vault) => {
                 vault.code_run_compaction_epochs(run_id)?
@@ -145,6 +148,7 @@ impl EngineNativeExecutor<'_> {
             steps_run,
             replay_record,
             seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
+            compaction: self.compaction.as_ref().map(|seat| seat.report().clone()),
         }
     }
 }
