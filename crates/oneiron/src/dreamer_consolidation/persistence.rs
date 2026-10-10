@@ -194,12 +194,11 @@ pub fn close_persistent_conflict(
             .unwrap_or(ClaimSource::Generated),
     );
     let mut candidate = ClaimCandidate::new(PREDICATE_CONFLICT_RESOLVED, body.subject, value, 1.0);
-    // The marker's own stamp is its project; an opaque scope-map entry can
-    // never move it.
+    // The marker's own stamp is its project; a scope-map entry can never move
+    // it. Promotion keeps only a map scope, so a non-map one adds nothing.
     let mut fields = match body.scope {
         Some(Value::Map(fields)) => fields,
-        Some(_) => return Err(invalid_consolidation("conflict marker scope")),
-        None => Vec::new(),
+        _ => Vec::new(),
     };
     fields.retain(|(key, _)| key.as_str() != Some(SCOPE_PROJECT_KEY));
     if project != crate::claim::default_project_id() {
