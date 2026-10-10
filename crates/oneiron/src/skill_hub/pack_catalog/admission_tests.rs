@@ -1823,3 +1823,202 @@ fn script_snapshot_reserves_the_full_output_from_merged_workspace_budget() -> Re
     );
     Ok(())
 }
+
+/// ARCH-0059 §4 through the install door: an update migrates, with a receipt,
+/// the saved queries its migration map covers, and pauses loudly the ones
+/// reading a predicate it dropped with no rewrite.
+#[test]
+fn pack_update_runs_the_drift_ladder_on_saved_queries() -> Result<()> {
+    use crate::saved_query::{
+        ClaimComparison, CreateSavedQueryRequest, EvalMode, EvalPolicy, FilterAst, MatcherSpec,
+        PackDrift, PackMigrationMap, PackPredicateRewrite, QueryScope, SAVED_QUERY_SCHEMA_VERSION,
+        SavedQueryLifecycle,
+    };
+    let versioned = |version: u32, predicates: &str| {
+        PackSource::from_files(vec![
+            HubFile::new(
+                "PACK.md",
+                format!(
+                    "---\nname: alice.tools\ndescription: fixture\nversion: {version}\nkind: capability\npredicates: [{predicates}]\n---\nExact pack source\n"
+                )
+                .into_bytes(),
+            ),
+            HubFile::new(
+                "skills/format/SKILL.md",
+                b"---\nname: alice.format\ndescription: format\nversion: 1\n---\nKeep facts exact.\n"
+                    .to_vec(),
+            ),
+        ])
+    };
+    let first = versioned(1, "\"alice.tools.topic\", \"alice.tools.tag\"")?;
+    let (_dir, vault, owner, reference, publisher) = fixture(SkillHubTrustTier::Verified, &first)?;
+    crate::campaign::register_crm_pack(
+        &vault,
+        107,
+        108,
+        crate::registry::TypeByteFamily::Productivity,
+    )?;
+    let id = fetched_fixture(&vault, &first, &reference, &publisher, 3)?;
+    let ask = vault.prepare_pack_install(id, &reference, &publisher, &policy())?;
+    assert!(matches!(
+        vault.install_pack(&ask)?,
+        PackInstallDisposition::Installed(_)
+    ));
+    let term = |predicate: &str| FilterAst::Claim {
+        predicate: predicate.to_owned(),
+        cmp: ClaimComparison::Exists,
+        value: serde_json::Value::Null,
+    };
+    let reads = |predicate: &str| {
+        crate::saved_query::create_saved_query(
+            &vault,
+            owner.actor(),
+            &CreateSavedQueryRequest {
+                schema_version: SAVED_QUERY_SCHEMA_VERSION,
+                scope: QueryScope::default(),
+                filter: term(predicate),
+                matcher: MatcherSpec::Hard {
+                    expression: term(predicate),
+                },
+                eval: EvalPolicy {
+                    mode: EvalMode::Manual,
+                    max_entities_per_wake: 8,
+                    max_judges_per_wake: 4,
+                },
+            },
+            10,
+        )
+    };
+    let topic = reads("alice.tools.topic")?;
+    let tag = reads("alice.tools.tag")?;
+    crate::saved_query::put_pack_migration_map(
+        &vault,
+        &PackDrift {
+            from_pack_id: "alice.tools".to_owned(),
+            from_version: "1".to_owned(),
+            to_pack_id: "alice.tools".to_owned(),
+            to_version: "2".to_owned(),
+            affected_predicates: Vec::new(),
+        },
+        &PackMigrationMap {
+            rewrites: [(
+                "alice.tools.topic".to_owned(),
+                PackPredicateRewrite::Rename {
+                    to: "alice.tools.subject".to_owned(),
+                },
+            )]
+            .into_iter()
+            .collect(),
+        },
+    )?;
+
+    let second = versioned(2, "\"alice.tools.subject\"")?;
+    let second_ref = HubRef::new(
+        reference.hub_id,
+        "pack/v2",
+        HubPin::ContentHash(second.content_hash().to_hex()),
+    )?;
+    let id = fetched_fixture(&vault, &second, &second_ref, &publisher, 4)?;
+    let ask = vault.prepare_pack_install(id, &second_ref, &publisher, &policy())?;
+    assert!(matches!(
+        vault.install_pack(&ask)?,
+        PackInstallDisposition::Installed(_)
+    ));
+
+    let read = |query: EntityId| {
+        crate::saved_query::read_saved_query(&vault, owner.actor(), query)
+            .map(|record| record.expect("the query survives the update"))
+    };
+    let migrated = read(topic.query_ref)?;
+    assert_eq!(migrated.definition.filter, term("alice.tools.subject"));
+    assert_eq!(migrated.definition.lifecycle, SavedQueryLifecycle::Active);
+    assert_eq!(migrated.definition.definition_version, 2);
+    let paused = read(tag.query_ref)?;
+    let SavedQueryLifecycle::Paused { error } = paused.definition.lifecycle else {
+        panic!("a query reading a dropped predicate pauses");
+    };
+    assert!(error.contains("alice.tools.tag"), "{error}");
+    assert_eq!(paused.definition.filter, term("alice.tools.tag"));
+    let repairs = crate::saved_query::pack_drift_repairs(&vault)?;
+    assert!(
+        repairs
+            .iter()
+            .any(|repair| repair.query_ref == topic.query_ref
+                && repair.summary.starts_with("auto-migrated"))
+    );
+
+    let tag_lifecycle = read(tag.query_ref)?.definition.lifecycle;
+
+    // A changed source under the same version string is a move too.
+    let third = versioned(2, "\"alice.tools.other\"")?;
+    let third_ref = HubRef::new(
+        reference.hub_id,
+        "pack/v2b",
+        HubPin::ContentHash(third.content_hash().to_hex()),
+    )?;
+    let id = fetched_fixture(&vault, &third, &third_ref, &publisher, 5)?;
+    let ask = vault.prepare_pack_install(id, &third_ref, &publisher, &policy())?;
+    assert!(matches!(
+        vault.install_pack(&ask)?,
+        PackInstallDisposition::Installed(_)
+    ));
+    let SavedQueryLifecycle::Paused { error } = read(topic.query_ref)?.definition.lifecycle else {
+        panic!("a dropped predicate pauses the query even under the same version");
+    };
+    assert!(error.contains("alice.tools.subject"), "{error}");
+    // The query paused earlier keeps its own cause: this move did not touch it.
+    assert_eq!(read(tag.query_ref)?.definition.lifecycle, tag_lifecycle);
+
+    // An update never applies a map that is not its own, nor a rewrite onto
+    // a predicate it drops: a query reading a predicate the new source keeps
+    // stays as it was.
+    let map_move = |from: &str, to: &str, predicate: &str, target: &str| {
+        crate::saved_query::put_pack_migration_map(
+            &vault,
+            &PackDrift {
+                from_pack_id: "alice.tools".to_owned(),
+                from_version: from.to_owned(),
+                to_pack_id: "alice.tools".to_owned(),
+                to_version: to.to_owned(),
+                affected_predicates: Vec::new(),
+            },
+            &PackMigrationMap {
+                rewrites: [(
+                    predicate.to_owned(),
+                    PackPredicateRewrite::Rename {
+                        to: target.to_owned(),
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            },
+        )
+    };
+    let install = |source: &PackSource, pin: &str, at: u64| -> Result<()> {
+        let pinned = HubRef::new(
+            reference.hub_id,
+            pin,
+            HubPin::ContentHash(source.content_hash().to_hex()),
+        )?;
+        let id = fetched_fixture(&vault, source, &pinned, &publisher, at)?;
+        let ask = vault.prepare_pack_install(id, &pinned, &publisher, &policy())?;
+        assert!(matches!(
+            vault.install_pack(&ask)?,
+            PackInstallDisposition::Installed(_)
+        ));
+        Ok(())
+    };
+    let other = reads("alice.tools.other")?;
+    map_move("2", "2", "alice.tools.other", "alice.tools.kept")?;
+    install(
+        &versioned(2, "\"alice.tools.other\", \"alice.tools.extra\"")?,
+        "pack/v2c",
+        6,
+    )?;
+    map_move("2", "3", "alice.tools.other", "alice.tools.extra")?;
+    install(&versioned(3, "\"alice.tools.other\"")?, "pack/v3", 7)?;
+    let kept = read(other.query_ref)?;
+    assert_eq!(kept.definition.filter, term("alice.tools.other"));
+    assert_eq!(kept.definition.lifecycle, SavedQueryLifecycle::Active);
+    Ok(())
+}

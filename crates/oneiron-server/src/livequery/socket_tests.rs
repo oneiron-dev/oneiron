@@ -43,6 +43,7 @@ impl LiveQuerySource for Source {
                 batch: 0,
             },
             dependencies: BTreeSet::from([format!("world/{world}")]),
+            followed: BTreeSet::new(),
         })
     }
     fn can_resume(&self, cursor: &Cursor) -> Result<bool, AppError> {

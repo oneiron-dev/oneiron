@@ -171,6 +171,63 @@ impl Vault {
         })
     }
 
+    /// Ensures and returns the PERSON a named agent acts as when the owner
+    /// mints it a credential (`oneiron token agent`).
+    ///
+    /// The id is derived from the name, so every mint for one name lands on
+    /// the same principal and what the agent wrote stays one actor's history.
+    /// Idempotent and single-transaction, like
+    /// [`Vault::ensure_embedded_owner_actor`]: an occupant that is not a
+    /// `PERSON` is a typed refusal, never a retype, and a hard-deleted
+    /// principal is not brought back. A PERSON may act as class `agent`.
+    #[doc(hidden)]
+    pub fn ensure_agent_principal(&self, name: &str) -> crate::memory::MemoryResult<EntityId> {
+        if name.trim().is_empty() {
+            return Err(Error::InvalidClaimBody("agent principal name").into());
+        }
+        let principal = EntityId::derive(
+            crate::entity_id::derived_domains::AGENT_PRINCIPAL,
+            &[name.as_bytes()],
+        )?;
+        let mut body = Vec::new();
+        rmpv::encode::write_value(
+            &mut body,
+            &rmpv::Value::Map(vec![(rmpv::Value::from("name"), rmpv::Value::from(name))]),
+        )
+        .map_err(|_| Error::InvariantViolation("agent principal body encode"))?;
+        self.try_with_write_txn_grouped(|wtxn| {
+            if self.local_hard_delete_marker_exists_in_txn(wtxn, &principal)? {
+                return Err(crate::memory::hard_deleted_refusal(&principal));
+            }
+            match self.get_entity_type_in_txn(wtxn, &principal)? {
+                Some(crate::registry::ENTITY_TYPE_PERSON) => return Ok(principal),
+                Some(existing) => {
+                    return Err(Error::Registry(RegistryError::EntityTypeImmutable {
+                        id: principal,
+                        existing,
+                        attempted: crate::registry::ENTITY_TYPE_PERSON,
+                    })
+                    .into());
+                }
+                None => {}
+            }
+            let now = self.store.clock.now_recorded_at();
+            self.batch_in()
+                .put(
+                    &principal,
+                    crate::registry::ENTITY_TYPE_PERSON,
+                    TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                    &body,
+                )
+                .apply(wtxn)?;
+            Ok(principal)
+        })
+    }
+
     /// [`Vault::ensure_embedded_owner_actor`] inside the caller's transaction,
     /// born at `now`, for the seeded open and any other door that must see the
     /// owner PERSON before it writes.

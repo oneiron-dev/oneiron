@@ -311,6 +311,7 @@ pub enum ErrorKind {
     SideTableKeyUndeclared,
     ScopedReadOwnerNotLive,
     EmbeddingTransformChanged,
+    ArchivedVault,
 }
 
 /// Crate error type.

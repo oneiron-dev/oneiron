@@ -7,6 +7,7 @@ use oneiron::{HostingPrivacyPosture, VaultDataKeyCustody, VaultPrivacyConfig};
 
 use super::backup::BackupConfig;
 use super::embedder::EmbedderConfig;
+use super::feedback::FeedbackConfig;
 use super::lookup::{LEGACY_DEFAULT_VAULT_PATH, redacted_secret};
 use super::oneironer::OneironerConfig;
 use crate::runtime::RuntimeConfig;
@@ -229,6 +230,8 @@ pub struct ServeConfig {
     pub oneironer: Option<OneironerConfig>,
     /// The `[backup]` section: local backup directory, schedule and retention.
     pub backup: BackupConfig,
+    /// The `[feedback]` section: where the owner's feedback goes.
+    pub feedback: FeedbackConfig,
     /// The `[import]` section: the queue a running `serve` imports session
     /// logs from, off unless set.
     pub import: super::ImportConfig,
@@ -285,6 +288,7 @@ impl Default for ServeConfig {
             embedder: None,
             oneironer: None,
             backup: BackupConfig::default(),
+            feedback: FeedbackConfig::default(),
             import: super::ImportConfig::default(),
             models: None,
             // Hosting is opt-in: an operator must name the posture AND supply
@@ -342,6 +346,7 @@ impl fmt::Debug for ServeConfig {
             .field("embedder", &self.embedder)
             .field("oneironer", &self.oneironer)
             .field("backup", &self.backup)
+            .field("feedback", &self.feedback)
             .field("import", &self.import)
             .field("models", &self.models)
             .field("privacy_posture", &self.privacy_posture)

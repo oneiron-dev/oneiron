@@ -425,6 +425,7 @@ fn prepared_effect(
             prepared: Box::new(prepared),
         },
         verified_actor: None,
+        owner_proof: None,
         dedupe_key: None,
         suppression_receipt: None,
     }

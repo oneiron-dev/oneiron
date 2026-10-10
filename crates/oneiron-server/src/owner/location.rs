@@ -33,6 +33,36 @@ pub(crate) struct Backups {
     /// Hours between scheduled backups; `None` when the schedule is off.
     pub(crate) every_hours: Option<u64>,
     pub(crate) keep: usize,
+    /// Every restore this vault came from, oldest first: the engine writes one
+    /// record per restore, wake or migration (OF-296). `None` when the vault
+    /// could not be read.
+    pub(crate) restores: Option<Vec<RestoreRecord>>,
+}
+
+/// One restore the vault came from.
+#[derive(Debug, Serialize)]
+pub(crate) struct RestoreRecord {
+    /// The checkpoint the vault was restored from; a backup lists the same id.
+    pub(crate) checkpoint_id: String,
+    /// RFC 3339 UTC time of the restore.
+    pub(crate) restored_at: String,
+    /// `restore`, `wake` or `migrate`.
+    pub(crate) reason: &'static str,
+}
+
+impl From<oneiron::recovery::checkpoint::RestoreEpoch> for RestoreRecord {
+    fn from(epoch: oneiron::recovery::checkpoint::RestoreEpoch) -> Self {
+        use oneiron::recovery::checkpoint::RestoreReason;
+        Self {
+            checkpoint_id: epoch.checkpoint_id,
+            restored_at: super::stamp::rfc3339_secs(epoch.restored_at),
+            reason: match epoch.reason {
+                RestoreReason::Restore => "restore",
+                RestoreReason::Wake => "wake",
+                RestoreReason::Migrate => "migrate",
+            },
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -53,17 +83,24 @@ pub(crate) fn locate(
 ) -> anyhow::Result<Location> {
     let disk_bytes = disk_usage(vault_path)?;
     let backups = backup::list(plan)?;
-    let (last_export, secret_scan) = match vault {
+    let (last_export, secret_scan, restores) = match vault {
         Some(vault) => (
             vault.export_receipts()?.pop().map(|receipt| LastExport {
-                at: super::stamp::rfc3339(receipt.at.saturating_mul(1_000)),
+                at: super::stamp::rfc3339_secs(receipt.at),
                 format: receipt.format,
                 bytes: receipt.bytes,
                 by: receipt.by,
             }),
             Some(vault.secret_scan_mode()?),
+            Some(
+                vault
+                    .restore_epochs()?
+                    .into_iter()
+                    .map(RestoreRecord::from)
+                    .collect(),
+            ),
         ),
-        None => (None, None),
+        None => (None, None, None),
     };
     Ok(Location {
         vault: vault_path
@@ -77,6 +114,7 @@ pub(crate) fn locate(
             last: backups.last().cloned(),
             every_hours,
             keep: plan.keep,
+            restores,
         },
         last_export,
         secret_scan,
