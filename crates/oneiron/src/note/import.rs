@@ -8,6 +8,10 @@
 //! becomes a `mentions` edge between the two notes. Approve is one write
 //! transaction: the approve-once receipt, the batch's decision slot, every
 //! note and every link. Decline is a denial receipt and admits nothing.
+//!
+//! With the vault's secret scan on, a note lands only when the scan passes
+//! everything of it that lands: its text, and also its title, which lands
+//! beside the text, and what the host decoded from the file to choose it.
 
 use std::collections::{HashMap, HashSet};
 
@@ -21,6 +25,7 @@ use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::derived_domains;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_NOTE;
+use crate::store::Store;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, TimeRange, Vault};
 
@@ -73,6 +78,18 @@ pub struct ImportedNoteBatchReceipt {
     pub links: usize,
 }
 
+/// One file as the host read it, asked where it stands.
+#[derive(Debug, Clone, Copy)]
+pub struct ImportedFile<'a> {
+    /// Under the folder, `/`-separated.
+    pub path: &'a str,
+    /// The file as written.
+    pub markdown: &'a str,
+    /// What the host decoded from the file (its frontmatter, written out
+    /// again without escapes). A title can come from it, or from the path.
+    pub decoded: &'a str,
+}
+
 /// Where one file stands against the vault.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportedNoteStanding {
@@ -84,7 +101,8 @@ pub enum ImportedNoteStanding {
     Changed,
     /// The note it became was deleted or archived; it is not imported again.
     Removed,
-    /// New, but the write door's secret scan would refuse its text.
+    /// New, but the write door's secret scan would refuse its text, its
+    /// path or what it decodes to.
     Refused,
 }
 
@@ -100,20 +118,25 @@ impl Vault {
         )
     }
 
-    /// Where each `(path, markdown)` of `folder` stands against the vault.
+    /// Where each file of `folder` stands against the vault.
     ///
     /// # Errors
     /// A storage error, or an id that is taken by something other than a NOTE.
     pub fn imported_note_standings(
         &self,
         folder: &str,
-        files: &[(&str, &str)],
+        files: &[ImportedFile<'_>],
     ) -> Result<Vec<ImportedNoteStanding>> {
         let txn = self.store.env.read_txn()?;
         let scanning = secret_scan_mode_in_txn(&self.store, &txn)? == SecretScanMode::On;
         files
             .iter()
-            .map(|(path, markdown)| {
+            .map(|file| {
+                let ImportedFile {
+                    path,
+                    markdown,
+                    decoded,
+                } = *file;
                 let id = Self::imported_note_id(folder, path)?;
                 // Deleted (its shell kept, or purged) or archived.
                 let raw = self.get_raw_in(&txn, &id)?;
@@ -123,7 +146,11 @@ impl Vault {
                     return Ok(ImportedNoteStanding::Removed);
                 }
                 match self.get_entity_type_in_txn(&txn, &id)? {
-                    None if scanning && scan_write_payload(markdown.as_bytes()).is_err() => {
+                    None if scanning
+                        && [markdown, path, decoded]
+                            .iter()
+                            .any(|text| scan_write_payload(text.as_bytes()).is_err()) =>
+                    {
                         Ok(ImportedNoteStanding::Refused)
                     }
                     None => Ok(ImportedNoteStanding::New),
@@ -161,13 +188,15 @@ impl Vault {
     ///
     /// # Errors
     /// Refuses an empty batch, a repeated path or title, a blank or oversize
-    /// note, an invalid title and a link that is not between two paths.
+    /// note, an invalid title, a title the secret scan refuses and a link
+    /// that is not between two paths.
     pub fn imported_note_batch_effect(
         &self,
         owner: &AuthenticatedOwner,
         batch: &ImportedNoteBatch,
     ) -> Result<ComposedEffect> {
         validate_batch(batch)?;
+        scan_titles(&self.store, &self.store.env.read_txn()?, batch)?;
         let bound = GrantBound::action(
             ActorBound::new(owner.actor().to_hex())?,
             ActionClass::new(REVIEW)?,
@@ -190,7 +219,8 @@ impl Vault {
     /// [`GateError::ConsentApproveOnceSpent`](crate::error::GateError::ConsentApproveOnceSpent)
     /// when any owner already approved or declined this exact batch; an
     /// error when a note's id is no longer new, a link's end is not a note,
-    /// a kind is unknown or a title is taken. Nothing lands then.
+    /// a kind is unknown, a title is taken or the secret scan refuses it.
+    /// Nothing lands then.
     pub fn approve_imported_note_batch(
         &self,
         owner: &AuthenticatedOwner,
@@ -211,6 +241,7 @@ impl Vault {
         let actor = WriteActor::new(owner.actor(), EdgeActorClass::Human);
         self.with_write_txn(|txn| {
             owner.revalidate_in_txn(self, txn)?;
+            scan_titles(&self.store, txn, batch)?;
             let receipt = self.approve_once_in_txn(txn, owner, digest)?;
             self.take_decision_slot_in_txn(txn, &slot, receipt.decision_id())?;
             for id in &ids {
@@ -329,6 +360,17 @@ impl Vault {
             Ok(receipt)
         })
     }
+}
+
+/// Refuses `batch` when the secret scan is on and would refuse a title: the
+/// write door scans each note's body, and a title lands beside it.
+fn scan_titles(store: &Store, txn: &heed::RoTxn<'_>, batch: &ImportedNoteBatch) -> Result<()> {
+    if secret_scan_mode_in_txn(store, txn)? == SecretScanMode::On {
+        for title in batch.notes.iter().filter_map(|note| note.title.as_deref()) {
+            scan_write_payload(title.as_bytes())?;
+        }
+    }
+    Ok(())
 }
 
 /// The NOTE body's source revision: which text of which file landed. A

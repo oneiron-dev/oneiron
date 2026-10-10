@@ -6,6 +6,8 @@
 //! which may run over the lines of one paragraph. This is a reader of the
 //! common shapes, not a full CommonMark parser.
 
+use std::collections::HashMap;
+
 /// A `[[link]]` as written: its target, and whether it embeds (`![[...]]`).
 pub(super) struct Link {
     /// The note it names, without an alias (`|...`), heading (`#...`) or
@@ -20,6 +22,9 @@ pub(super) struct Front {
     pub(super) title: Option<String>,
     /// `type`, else `metadata.type`.
     pub(super) label: Option<String>,
+    /// All of it as it decodes, written out again without escapes: an escape
+    /// can spell what the file's own text does not show.
+    pub(super) decoded: String,
 }
 
 /// The YAML a note opens with, between a first line `---` and the next line
@@ -47,6 +52,7 @@ pub(super) fn split_frontmatter(text: &str) -> (Option<&str>, &str) {
 /// The frontmatter's title and type; `None` when it is not YAML.
 pub(super) fn frontmatter(yaml: &str) -> Option<Front> {
     let value: serde_yaml_ng::Value = serde_yaml_ng::from_str(yaml).ok()?;
+    let decoded = serde_yaml_ng::to_string(&value).ok()?;
     let text = |value: Option<&serde_yaml_ng::Value>| {
         value
             .and_then(serde_yaml_ng::Value::as_str)
@@ -63,6 +69,7 @@ pub(super) fn frontmatter(yaml: &str) -> Option<Front> {
                     .and_then(|metadata| metadata.get("type")),
             )
         }),
+        decoded,
     })
 }
 
@@ -266,11 +273,22 @@ fn list_item(content: &str) -> Option<&str> {
 }
 
 /// The links in one paragraph's text, skipping its inline code spans and
-/// escaped brackets. A span
-/// runs from a run of backticks to the next run of exactly as many; a run
-/// with no match is plain text.
+/// escaped brackets. A span runs from a run of backticks to the next run of
+/// exactly as many; a run with no match is plain text.
+///
+/// One pass: the scan keeps where the next `]]` is and which backtick runs
+/// lie ahead (as cmark does), so it never searches the same bytes twice for
+/// either.
 fn span_links(text: &str, links: &mut Vec<Link>) {
     let bytes = text.as_bytes();
+    // The first `]]` at or after where one was last looked for; `Some(None)`
+    // once none is left.
+    let mut closing: Option<Option<usize>> = None;
+    // The last start of each length of backtick run seen ahead, and whether
+    // a search for a closing run has reached the end: past that, a length
+    // not seen beyond an opening run has no match.
+    let mut runs: HashMap<usize, usize> = HashMap::new();
+    let mut runs_seen = false;
     let mut at = 0;
     while at < bytes.len() {
         // A backslash makes the punctuation after it plain text.
@@ -282,43 +300,83 @@ fn span_links(text: &str, links: &mut Vec<Link>) {
             let ticks = bytes[at..].iter().take_while(|&&b| b == b'`').count();
             let after = at + ticks;
             let mut close = None;
-            let mut probe = after;
-            while probe < bytes.len() {
-                if bytes[probe] == b'`' {
-                    let found = bytes[probe..].iter().take_while(|&&b| b == b'`').count();
-                    if found == ticks {
-                        close = Some(probe + found);
-                        break;
+            if !runs_seen || runs.get(&ticks).is_some_and(|&last| last >= after) {
+                let mut probe = after;
+                while probe < bytes.len() {
+                    if bytes[probe] == b'`' {
+                        let found = bytes[probe..].iter().take_while(|&&b| b == b'`').count();
+                        let last = runs.entry(found).or_insert(probe);
+                        *last = (*last).max(probe);
+                        if found == ticks {
+                            close = Some(probe + found);
+                            break;
+                        }
+                        probe += found;
+                    } else {
+                        probe += 1;
                     }
-                    probe += found;
-                } else {
-                    probe += 1;
                 }
+                reading(probe - after);
+                runs_seen |= close.is_none();
             }
             at = close.unwrap_or(after);
             continue;
         }
-        if bytes[at..].starts_with(b"[[")
-            && let Some(end) = text[at + 2..].find("]]")
-        {
-            let inner = &text[at + 2..at + 2 + end];
-            if !inner.contains(['[', '\n']) {
-                links.push(Link {
-                    target: inner
-                        .split('|')
-                        .next()
-                        .and_then(|target| target.split(['#', '^']).next())
-                        .unwrap_or_default()
-                        .trim()
-                        .to_owned(),
-                    embed: at > 0 && bytes[at - 1] == b'!',
-                });
-                at += end + 4;
-                continue;
+        if bytes[at..].starts_with(b"[[") {
+            let start = at + 2;
+            let end = match closing {
+                Some(Some(end)) if end >= start => Some(end),
+                Some(None) => None,
+                _ => {
+                    let found = text[start..].find("]]").map(|end| start + end);
+                    reading(found.map_or(text.len(), |end| end + 2) - start);
+                    closing = Some(found);
+                    found
+                }
+            };
+            if let Some(end) = end {
+                let inner = &text[start..end];
+                let stop = inner.find(['[', '\n']);
+                reading(stop.map_or(inner.len(), |stop| stop + 1));
+                if stop.is_none() {
+                    links.push(Link {
+                        target: inner
+                            .split('|')
+                            .next()
+                            .and_then(|target| target.split(['#', '^']).next())
+                            .unwrap_or_default()
+                            .trim()
+                            .to_owned(),
+                        embed: at > 0 && bytes[at - 1] == b'!',
+                    });
+                    at = end + 2;
+                    continue;
+                }
             }
         }
         at += 1;
     }
+}
+
+/// The bytes the link scan may still read ahead of where it stands: a test
+/// sets it, and the scan panics past it.
+#[cfg(test)]
+thread_local! {
+    static READS_LEFT: std::cell::Cell<usize> = const { std::cell::Cell::new(usize::MAX) };
+}
+
+/// Counts `bytes` the link scan read ahead of where it stands (a test hook).
+fn reading(bytes: usize) {
+    #[cfg(test)]
+    READS_LEFT.with(|left| {
+        left.set(
+            left.get()
+                .checked_sub(bytes)
+                .expect("the link scan read a paragraph more than once"),
+        );
+    });
+    #[cfg(not(test))]
+    let _ = bytes;
 }
 
 #[cfg(test)]
@@ -372,5 +430,29 @@ mod tests {
         assert_eq!(targets("1. ```\n   [[a]]\n\n  [[b]]\n"), ["b"]);
         assert_eq!(targets("1. ```\n   [[a]]\n   ```\n   [[b]]\n"), ["b"]);
         assert_eq!(targets("Heading `\n===\nSee [[b]] and `.\n"), ["b"]);
+    }
+
+    /// Astra 4 and Greptile (markdown.rs:301): at every `[[` the scan looked
+    /// for `]]` through the rest of the paragraph, and at every backtick run
+    /// for its closer, so a 1 MiB paragraph of unclosed ones took about
+    /// 2^39 steps. Each such paragraph is now read ahead a bounded number
+    /// of times.
+    #[test]
+    fn a_paragraph_is_read_in_one_pass() {
+        let mib = 1 << 20;
+        let paragraphs = [
+            format!("x{}", "[".repeat(mib)),
+            format!("{}]]", "[".repeat(mib)),
+            // Runs of 1448 backticks down to one: none has a closer.
+            (1..=1448).rev().fold("x ".to_owned(), |text, ticks| {
+                text + &"`".repeat(ticks) + " "
+            }),
+        ];
+        for paragraph in paragraphs {
+            READS_LEFT.with(|left| left.set(4 * paragraph.len()));
+            let links = wikilinks(&paragraph);
+            READS_LEFT.with(|left| left.set(usize::MAX));
+            assert!(links.iter().all(|link| link.target.is_empty()));
+        }
     }
 }

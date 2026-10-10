@@ -294,9 +294,15 @@ fn read_batch(source: &str) -> anyhow::Result<Batch> {
         std::fs::read_to_string(source)
             .map_err(|error| anyhow::anyhow!("read batch {source}: {error}"))?
     };
-    // A saved `import preview` output works as is: take its `batch`.
-    let value: serde_json::Value = serde_json::from_str(&raw)?;
-    let batch = value.get("batch").cloned().unwrap_or(value);
+    // A saved `import preview` output works as is: take its `batch`. A notes
+    // batch holds a folder's text, so it is moved, never copied.
+    let mut value: serde_json::Value = serde_json::from_str(&raw)?;
+    drop(raw);
+    let batch = if value.get("batch").is_some() {
+        value["batch"].take()
+    } else {
+        value
+    };
     let read = if batch.get("notes").is_some() {
         serde_json::from_value(batch).map(Batch::Notes)
     } else {
@@ -337,12 +343,12 @@ pub fn import(command: ImportCommand) -> anyhow::Result<()> {
         (Batch::Claims(batch), Some((false, digest))) => {
             emit(&imports::decline(&vault, &owner, &batch, &digest)?)
         }
-        (Batch::Notes(batch), None) => emit(&note_imports::preview(&vault, &owner, &batch)?),
+        (Batch::Notes(batch), None) => emit(&note_imports::preview(&vault, &owner, batch)?),
         (Batch::Notes(batch), Some((true, digest))) => {
-            emit(&note_imports::approve(&vault, &owner, &batch, &digest)?)
+            emit(&note_imports::approve(&vault, &owner, batch, &digest)?)
         }
         (Batch::Notes(batch), Some((false, digest))) => {
-            emit(&note_imports::decline(&vault, &owner, &batch, &digest)?)
+            emit(&note_imports::decline(&vault, &owner, batch, &digest)?)
         }
     }
 }

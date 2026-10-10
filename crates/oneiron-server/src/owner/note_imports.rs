@@ -83,35 +83,45 @@ pub(crate) struct NoteDeclined {
 pub(crate) fn preview(
     vault: &Vault,
     owner: &AuthenticatedOwner,
-    batch: &NoteBatch,
+    batch: NoteBatch,
 ) -> OwnerResult<NotePreview> {
+    let (source_id, request_id) = (batch.source_id.clone(), batch.request_id.clone());
     let exact = engine_batch(batch)?;
-    let digest = vault
-        .imported_note_batch_effect(owner, &exact)?
-        .digest()
-        .to_hex();
     Ok(NotePreview {
-        digest,
-        source_id: batch.source_id.clone(),
-        request_id: batch.request_id.clone(),
-        notes: batch.notes.len(),
-        links: batch.links.len(),
+        digest: digest(vault, owner, &exact)?,
+        source_id,
+        request_id,
+        notes: exact.notes.len(),
+        links: exact.links.len(),
     })
+}
+
+/// The digest that approves or declines exactly `batch`.
+pub(crate) fn digest(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    batch: &ImportedNoteBatch,
+) -> OwnerResult<String> {
+    Ok(vault
+        .imported_note_batch_effect(owner, batch)?
+        .digest()
+        .to_hex())
 }
 
 /// Lands every note and link of the previewed batch, in one transaction.
 pub(crate) fn approve(
     vault: &Vault,
     owner: &AuthenticatedOwner,
-    batch: &NoteBatch,
+    batch: NoteBatch,
     digest: &str,
 ) -> OwnerResult<NoteApproved> {
+    let request_id = batch.request_id.clone();
     let exact = previewed(vault, owner, batch, digest)?;
     let receipt = vault.approve_imported_note_batch(owner, &exact)?;
     Ok(NoteApproved {
         digest: receipt.approval_digest,
         approval: "approved",
-        request_id: batch.request_id.clone(),
+        request_id,
         notes: receipt.note_ids.len(),
         links: receipt.links,
     })
@@ -121,7 +131,7 @@ pub(crate) fn approve(
 pub(crate) fn decline(
     vault: &Vault,
     owner: &AuthenticatedOwner,
-    batch: &NoteBatch,
+    batch: NoteBatch,
     digest: &str,
 ) -> OwnerResult<NoteDeclined> {
     let exact = previewed(vault, owner, batch, digest)?;
@@ -137,12 +147,11 @@ pub(crate) fn decline(
 fn previewed(
     vault: &Vault,
     owner: &AuthenticatedOwner,
-    batch: &NoteBatch,
+    batch: NoteBatch,
     digest: &str,
 ) -> OwnerResult<ImportedNoteBatch> {
     let exact = engine_batch(batch)?;
-    let effect = vault.imported_note_batch_effect(owner, &exact)?.digest();
-    if effect.to_hex() != digest {
+    if self::digest(vault, owner, &exact)? != digest {
         return Err(OwnerError::Changed(
             "this batch is not the one that was previewed; import the folder again".into(),
         ));
@@ -150,7 +159,8 @@ fn previewed(
     Ok(exact)
 }
 
-pub(crate) fn engine_batch(batch: &NoteBatch) -> OwnerResult<ImportedNoteBatch> {
+/// The engine's batch, taking the wire batch's text rather than copying it.
+pub(crate) fn engine_batch(batch: NoteBatch) -> OwnerResult<ImportedNoteBatch> {
     if batch.source_id != NOTES_IMPORT_SOURCE {
         return Err(OwnerError::Invalid(format!(
             "a notes batch has source_id {NOTES_IMPORT_SOURCE:?}"
@@ -159,25 +169,55 @@ pub(crate) fn engine_batch(batch: &NoteBatch) -> OwnerResult<ImportedNoteBatch> 
     let request_id: EntityId = entity_id("request_id", &batch.request_id)?;
     Ok(ImportedNoteBatch {
         request_id,
-        folder: batch.folder.clone(),
+        folder: batch.folder,
         notes: batch
             .notes
-            .iter()
+            .into_iter()
             .map(|note| ImportedNote {
-                path: note.path.clone(),
-                kind: note.kind.clone(),
-                title: note.title.clone(),
+                path: note.path,
+                kind: note.kind,
+                title: note.title,
                 written_at: note.written_at,
-                markdown: note.markdown.clone(),
+                markdown: note.markdown,
             })
             .collect(),
         links: batch
             .links
-            .iter()
+            .into_iter()
             .map(|link| ImportedNoteLink {
-                from: link.from.clone(),
-                to: link.to.clone(),
+                from: link.from,
+                to: link.to,
             })
             .collect(),
     })
+}
+
+/// The wire form of an engine batch, taking its text.
+impl From<ImportedNoteBatch> for NoteBatch {
+    fn from(batch: ImportedNoteBatch) -> Self {
+        Self {
+            request_id: batch.request_id.to_hex(),
+            source_id: NOTES_IMPORT_SOURCE.to_owned(),
+            folder: batch.folder,
+            notes: batch
+                .notes
+                .into_iter()
+                .map(|note| NoteFile {
+                    path: note.path,
+                    kind: note.kind,
+                    title: note.title,
+                    written_at: note.written_at,
+                    markdown: note.markdown,
+                })
+                .collect(),
+            links: batch
+                .links
+                .into_iter()
+                .map(|link| NoteLink {
+                    from: link.from,
+                    to: link.to,
+                })
+                .collect(),
+        }
+    }
 }

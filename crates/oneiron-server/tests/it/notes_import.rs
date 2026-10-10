@@ -314,3 +314,83 @@ fn a_batch_edited_after_its_preview_is_refused() {
     assert!(!home.decide("approve", &report).status.success());
     assert_eq!(note_count(&home.open()), 0);
 }
+
+/// Astra 1 (#1351): the secret scan read each file as written, not what its
+/// frontmatter decodes to. A YAML escape spells a token the file's text does
+/// not show; decoded, it landed as the note's title, or reached stdout as
+/// its type. A file name lands as a title too. Each such note is refused at
+/// preview, nothing of it is approved, and a batch that names the token as a
+/// title outright is refused.
+#[test]
+fn a_credential_the_frontmatter_decodes_to_is_refused() {
+    let home = Home::new();
+    let token = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
+    let escaped = token.replacen('p', "\\u0070", 1);
+    home.write(
+        "titled.md",
+        &format!("---\ntitle: \"{escaped}\"\n---\nAn ordinary note.\n"),
+    );
+    home.write(
+        "typed.md",
+        &format!("---\ntype: \"{escaped}\"\n---\nAnother note.\n"),
+    );
+    let named = format!("{token}.md");
+    home.write(&named, "A third note.\n");
+    home.write("plain.md", "Links to [[titled]] and [[typed]].\n");
+
+    let report = home.import("batch.json");
+    assert_eq!(report["notes"]["refused"], 3);
+    assert_eq!(report["notes"]["new"], 1);
+    assert!(!report.to_string().contains(token), "stdout names no token");
+    let file = report["batch"]["file"].as_str().expect("a batch file");
+    let written = std::fs::read_to_string(file).expect("test fixture");
+    assert!(!written.contains(token) && !written.contains(&escaped));
+    assert!(home.decide("approve", &report).status.success());
+    let vault = home.open();
+    assert_eq!(note_count(&vault), 1);
+    for path in ["titled.md", "typed.md", named.as_str()] {
+        assert!(
+            vault
+                .read_note(&home.id(path))
+                .expect("test fixture")
+                .is_none()
+        );
+    }
+    drop(vault);
+
+    let mut batch: Value = serde_json::from_str(&written).expect("test fixture");
+    batch["notes"][0]["title"] = token.into();
+    let edited = home.dir.path().join("edited.json");
+    std::fs::write(&edited, batch.to_string()).expect("test fixture");
+    let preview = home.oneiron(&["import", "preview", edited.to_str().expect("test fixture")]);
+    let stderr = String::from_utf8_lossy(&preview.stderr);
+    assert!(
+        !preview.status.success() && stderr.contains("gate.secret_scan"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains(token), "the refusal names no token");
+}
+
+/// Astra 2 (#1351): a hard link is a regular file to the walk, so a file
+/// whose text lives outside the folder was read into the batch. A file with
+/// more than one link is passed over, counted and named in a warning; its
+/// text never reaches the batch.
+#[test]
+fn a_hard_linked_file_is_passed_over() {
+    let home = Home::new();
+    home.write("inside.md", "An inside note.\n");
+    let outside = home.dir.path().join("outside.md");
+    std::fs::write(&outside, "Text from outside the folder.\n").expect("test fixture");
+    std::fs::hard_link(&outside, home.notes.join("alias.md")).expect("test fixture");
+
+    let report = home.import("batch.json");
+    assert_eq!(report["notes"]["found"], 1);
+    assert_eq!(report["notes"]["hard_linked"], 1);
+    assert_eq!(
+        report["warnings"],
+        serde_json::json!([{ "warning": "hard_linked", "files": 1 }])
+    );
+    let file = report["batch"]["file"].as_str().expect("a batch file");
+    let written = std::fs::read_to_string(file).expect("test fixture");
+    assert!(!written.contains("outside the folder"));
+}

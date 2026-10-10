@@ -408,7 +408,7 @@ pub(crate) fn live_frontier_in_txn(
 mod document_store;
 mod import;
 pub use import::{
-    ImportedNote, ImportedNoteBatch, ImportedNoteBatchReceipt, ImportedNoteLink,
+    ImportedFile, ImportedNote, ImportedNoteBatch, ImportedNoteBatchReceipt, ImportedNoteLink,
     ImportedNoteStanding, NOTES_IMPORT_SOURCE,
 };
 mod title_index;

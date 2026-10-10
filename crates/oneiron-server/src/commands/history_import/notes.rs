@@ -17,8 +17,10 @@
 //! `type` (or `metadata.type`) when that names a note kind the vault knows,
 //! else `--kind`. A link resolves to a note by path, title or file name,
 //! ignoring case; one that resolves to nothing stays text and is counted. A
-//! note the vault's secret scan would refuse is left out and counted, so the
-//! rest of the batch can land.
+//! note the vault's secret scan would refuse (its text, its path, or what its
+//! frontmatter decodes to) is left out and counted, so the rest of the batch
+//! can land. A file with another name (a hard link) is passed over: that
+//! name may be outside the folder.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{self, Write};
@@ -27,12 +29,15 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use oneiron::EntityId;
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::note::{ImportedNoteStanding, NOTES_IMPORT_SOURCE};
+use oneiron::note::{
+    ImportedFile, ImportedNote, ImportedNoteBatch, ImportedNoteLink, ImportedNoteStanding,
+    NOTES_IMPORT_SOURCE,
+};
 use serde::Serialize;
 
 use crate::cli::ImportNotesArgs;
 use crate::config::resolve_serve_config;
-use crate::owner::note_imports::{self, NoteBatch, NoteFile, NoteLink};
+use crate::owner::note_imports::{self, NoteBatch};
 
 mod markdown;
 use markdown::{Front, Link};
@@ -46,6 +51,25 @@ const MAX_NOTES: usize = 100_000;
 /// The longest title a note keeps.
 const MAX_TITLE_BYTES: usize = 256;
 
+/// The most text one import reads, every note together: they are all held
+/// while their links resolve.
+const MAX_FOLDER_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Why a folder is refused whole; nothing of it is imported.
+#[derive(Debug, thiserror::Error)]
+enum FolderRefused {
+    #[error(
+        "{folder} holds more than {MAX_NOTES} notes; nothing was imported. Import one folder \
+         under it at a time"
+    )]
+    TooManyNotes { folder: String },
+    #[error(
+        "{folder} holds more than {budget} bytes of notes; nothing was imported. Import one \
+         folder under it at a time"
+    )]
+    TooManyBytes { folder: String, budget: u64 },
+}
+
 /// One file, read and parsed.
 struct Note {
     /// Under the folder, `/`-separated.
@@ -56,6 +80,8 @@ struct Note {
     title: Option<String>,
     /// The frontmatter's `type` or `metadata.type`.
     label: Option<String>,
+    /// The frontmatter as it decodes, for the secret scan.
+    decoded: String,
     links: Vec<Link>,
 }
 
@@ -73,6 +99,9 @@ struct NoteCounts {
     /// Files passed over: larger than a note may be, or blank.
     too_large: usize,
     blank: usize,
+    /// Files passed over because they have another name (a hard link),
+    /// which may be outside the folder.
+    hard_linked: usize,
     /// Files whose name is not UTF-8: it could not name its note.
     unreadable_name: usize,
     /// Notes whose frontmatter is not YAML: title from the file name, kind
@@ -119,11 +148,21 @@ struct BatchOut {
     decline: String,
 }
 
+/// What the owner should know before approving, by name.
+#[derive(Serialize)]
+#[serde(tag = "warning", rename_all = "snake_case")]
+enum Warning {
+    /// Files with another name were passed over: a hard link can bring in a
+    /// file from outside the folder.
+    HardLinked { files: usize },
+}
+
 #[derive(Serialize)]
 struct Outcome {
     source: &'static str,
     folder: String,
     notes: NoteCounts,
+    warnings: Vec<Warning>,
     /// New notes per kind.
     kinds: BTreeMap<String, usize>,
     /// New notes per frontmatter `type`: `""` when they have none,
@@ -166,7 +205,7 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
         .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
     anyhow::ensure!(folder.is_dir(), "{} is not a folder", path.display());
     let mut counts = NoteCounts::default();
-    let notes = read_folder(&folder, &mut counts)?;
+    let mut notes = read_folder(&folder, &mut counts, MAX_FOLDER_BYTES)?;
     super::progress(&format!("read {} note(s)", notes.len()));
     let folder = folder
         .to_str()
@@ -182,7 +221,11 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
         &folder,
         &notes
             .iter()
-            .map(|note| (note.path.as_str(), note.markdown.as_str()))
+            .map(|note| ImportedFile {
+                path: &note.path,
+                markdown: &note.markdown,
+                decoded: &note.decoded,
+            })
             .collect::<Vec<_>>(),
     )?;
     for standing in &standings {
@@ -201,7 +244,9 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
     let mut known_kinds = HashMap::new();
     let mut taken = HashSet::new();
     let mut files = Vec::new();
-    for (note, standing) in notes.iter().zip(&standings) {
+    for (note, standing) in notes.iter_mut().zip(&standings) {
+        // The batch takes a new note's text; the rest is not needed again.
+        let markdown = std::mem::take(&mut note.markdown);
         if *standing != ImportedNoteStanding::New {
             continue;
         }
@@ -219,12 +264,12 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
             .entry(shown_label(note.label.as_deref()).to_owned())
             .or_insert(0) += 1;
         let title = choose_title(&vault, &owner, note, &mut taken, &mut titles)?;
-        files.push(NoteFile {
+        files.push(ImportedNote {
             path: note.path.clone(),
             kind,
             title,
             written_at: note.written_at,
-            markdown: note.markdown.clone(),
+            markdown,
         });
     }
     // The title a changed note had when it landed: links resolved by it then.
@@ -249,14 +294,15 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
     let batch = if files.is_empty() {
         None
     } else {
-        let batch = NoteBatch {
-            request_id: EntityId::now().to_hex(),
-            source_id: NOTES_IMPORT_SOURCE.to_owned(),
+        let batch = ImportedNoteBatch {
+            request_id: EntityId::now(),
             folder: folder.clone(),
             notes: files,
             links,
         };
-        let preview = note_imports::preview(&vault, &owner, &batch)?;
+        let digest = note_imports::digest(&vault, &owner, &batch)?;
+        let (note_count, link_count) = (batch.notes.len(), batch.links.len());
+        let batch = NoteBatch::from(batch);
         super::super::owner::write_new_file(&out, |file| {
             let mut writer = io::BufWriter::new(&mut *file);
             serde_json::to_writer(&mut writer, &batch).map_err(io::Error::other)?;
@@ -275,24 +321,31 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
             format!(
                 "oneiron import {verb} {} --digest {}{config_flag} --vault-path {}",
                 quoted(&out.to_string_lossy()),
-                preview.digest,
+                digest,
                 quoted(&config.vault_path.to_string_lossy()),
             )
         };
         Some(BatchOut {
             file: out.display().to_string(),
-            request_id: preview.request_id.clone(),
             approve: decision("approve"),
             decline: decision("decline"),
-            digest: preview.digest,
-            notes: preview.notes,
-            links: preview.links,
+            request_id: batch.request_id,
+            digest,
+            notes: note_count,
+            links: link_count,
         })
     };
+    let warnings = (counts.hard_linked > 0)
+        .then_some(Warning::HardLinked {
+            files: counts.hard_linked,
+        })
+        .into_iter()
+        .collect();
     let outcome = Outcome {
         source: NOTES_IMPORT_SOURCE,
         folder,
         notes: counts,
+        warnings,
         kinds,
         types,
         titles,
@@ -306,15 +359,23 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
     Ok(())
 }
 
-/// Every note under `folder`, in path order.
-fn read_folder(folder: &Path, counts: &mut NoteCounts) -> anyhow::Result<Vec<Note>> {
+/// Every note under `folder`, in path order. Refused whole past `budget`
+/// bytes of text held.
+fn read_folder(folder: &Path, counts: &mut NoteCounts, budget: u64) -> anyhow::Result<Vec<Note>> {
     let mut notes = Vec::new();
+    let mut held = 0_u64;
     super::walk_notes(folder, &mut |shown, file| {
         let Some(path) = relative(folder, shown) else {
             counts.unreadable_name += 1;
             return Ok(());
         };
+        // Of the open file, so a name swapped after the walk listed it
+        // changes nothing.
         let metadata = file.metadata()?;
+        if names(&metadata) > 1 {
+            counts.hard_linked += 1;
+            return Ok(());
+        }
         if metadata.len() > MAX_NOTE_BYTES {
             counts.too_large += 1;
             return Ok(());
@@ -324,12 +385,12 @@ fn read_folder(folder: &Path, counts: &mut NoteCounts) -> anyhow::Result<Vec<Not
             counts.blank += 1;
             return Ok(());
         }
-        anyhow::ensure!(
-            notes.len() < MAX_NOTES,
-            "{} holds more than {MAX_NOTES} notes; nothing was imported. Import one \
-             folder under it at a time",
-            folder.display()
-        );
+        if notes.len() >= MAX_NOTES {
+            return Err(FolderRefused::TooManyNotes {
+                folder: folder.display().to_string(),
+            }
+            .into());
+        }
         // A file whose time cannot be read was written by now at the latest.
         let written_at = metadata
             .modified()
@@ -337,16 +398,29 @@ fn read_folder(folder: &Path, counts: &mut NoteCounts) -> anyhow::Result<Vec<Not
             .duration_since(UNIX_EPOCH)
             .map_or(0, |since| since.as_secs());
         let (front, body) = markdown::split_frontmatter(&text);
-        let Front { title, label } = match front.map(markdown::frontmatter) {
+        let Front {
+            title,
+            label,
+            decoded,
+        } = match front.map(markdown::frontmatter) {
             Some(Some(found)) => found,
             unread => {
                 counts.unreadable_frontmatter += usize::from(unread.is_some());
                 Front {
                     title: None,
                     label: None,
+                    decoded: String::new(),
                 }
             }
         };
+        held += u64::try_from(text.len() + decoded.len()).unwrap_or(u64::MAX);
+        if held > budget {
+            return Err(FolderRefused::TooManyBytes {
+                folder: folder.display().to_string(),
+                budget,
+            }
+            .into());
+        }
         let links = markdown::wikilinks(body);
         counts.found += 1;
         notes.push(Note {
@@ -354,12 +428,24 @@ fn read_folder(folder: &Path, counts: &mut NoteCounts) -> anyhow::Result<Vec<Not
             written_at,
             title,
             label,
+            decoded,
             links,
             markdown: text,
         });
         Ok(())
     })?;
     Ok(notes)
+}
+
+/// How many names the open file has.
+#[cfg(unix)]
+fn names(metadata: &std::fs::Metadata) -> u64 {
+    std::os::unix::fs::MetadataExt::nlink(metadata)
+}
+
+#[cfg(not(unix))]
+fn names(_metadata: &std::fs::Metadata) -> u64 {
+    1
 }
 
 /// A frontmatter `type` as stdout shows it: a short name as it is, anything
@@ -460,7 +546,7 @@ fn resolve_links(
     notes: &[Note],
     standings: &[ImportedNoteStanding],
     earlier_titles: &[Option<String>],
-) -> (Vec<NoteLink>, LinkCounts) {
+) -> (Vec<ImportedNoteLink>, LinkCounts) {
     let now = Index::new(notes, |_| true, |at| notes[at].title.as_deref());
     let before = Index::new(
         notes,
@@ -520,7 +606,7 @@ fn resolve_links(
                 | ImportedNoteStanding::Refused => false,
             };
             if lands && seen.insert((from, to)) {
-                batch.push(NoteLink {
+                batch.push(ImportedNoteLink {
                     from: note.path.clone(),
                     to: notes[to].path.clone(),
                 });
@@ -574,5 +660,34 @@ fn key(name: &str) -> String {
     match name.strip_suffix(".md") {
         Some(stem) => stem.to_owned(),
         None => name,
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// Astra 3 and Greptile (notes.rs:327): only the note count bounded a
+    /// folder, so about 100 GiB of notes under the per-file cap were read
+    /// into memory before any limit. Past its byte budget a folder is
+    /// refused while it is read.
+    #[test]
+    fn a_folder_past_its_byte_budget_is_refused_while_it_is_read() {
+        let dir = tempfile::tempdir().expect("test fixture");
+        for name in ["a.md", "b.md", "c.md"] {
+            std::fs::write(dir.path().join(name), "x".repeat(400)).expect("test fixture");
+        }
+        let mut counts = NoteCounts::default();
+        let refused = read_folder(dir.path(), &mut counts, 1000)
+            .err()
+            .and_then(|error| error.downcast::<FolderRefused>().ok());
+        assert!(
+            matches!(
+                refused,
+                Some(FolderRefused::TooManyBytes { budget: 1000, .. })
+            ),
+            "{refused:?}"
+        );
+        assert_eq!(counts.found, 2, "refused at the file past the budget");
     }
 }
