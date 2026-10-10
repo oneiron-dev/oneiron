@@ -161,6 +161,15 @@ pub struct HistoryConversation {
     pub title: Option<String>,
     /// Unix milliseconds, when the source recorded when it started.
     pub started_at_ms: Option<u64>,
+    /// When this thread itself began, when its source records that apart from
+    /// its messages (a Codex rollout's own meta). The import makes the
+    /// conversation occur then; otherwise it occurs with its first message
+    /// that landed, since a resumed or forked log's first lines are copies
+    /// of another conversation's.
+    pub own_started_at_ms: Option<u64>,
+    /// The folder the session ran in, when the source records one (a coding
+    /// agent's working directory).
+    pub cwd: Option<String>,
     pub messages: Vec<HistoryMessage>,
     pub skipped: HistorySkips,
 }
@@ -173,6 +182,8 @@ impl HistoryConversation {
             parent,
             title: None,
             started_at_ms: None,
+            own_started_at_ms: None,
+            cwd: None,
             messages: Vec::new(),
             skipped: HistorySkips::default(),
         }

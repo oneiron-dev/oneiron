@@ -26,6 +26,7 @@ use super::{
     HistoryConversation, HistoryMessage, HistoryRole, HistorySkips, HistorySource,
     HistoryThreadKind,
 };
+use crate::TimeRange;
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -37,7 +38,10 @@ use crate::memory::{
     Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage, WitnessTurn,
     next_witness_message_order,
 };
+use crate::ports::EntityStoreRead;
+use crate::registry::ENTITY_TYPE_CONVERSATION;
 use crate::side_table::SideTableDbs;
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// The most messages one TURN holds; a longer run of one side (an agent's long
 /// unattended stretch) continues in the next turn.
@@ -51,6 +55,9 @@ const MAX_TOOL_LABELS: usize = 64;
 
 /// Bytes of an id or a label kept in metadata.
 const MAX_LABEL_BYTES: usize = 512;
+
+/// The imported CONVERSATION body key naming the folder the session ran in.
+const IMPORT_CWD_KEY: &str = "import_cwd";
 
 /// How many times a turn is read and built again when other imports keep
 /// landing its messages first. Past that it is counted as refused, and the
@@ -213,6 +220,9 @@ pub(super) fn conversation_body(
     if let Some(title) = &conversation.title {
         fields.push((Msgpack::from("title"), Msgpack::from(label(title))));
     }
+    if let Some(cwd) = &conversation.cwd {
+        fields.push((Msgpack::from(IMPORT_CWD_KEY), Msgpack::from(label(cwd))));
+    }
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &Msgpack::Map(fields))
         .map_err(|_| MemoryError::bad_request("imported conversation body is not encodable"))?;
@@ -343,6 +353,7 @@ impl Vault {
                 attempt += 1;
             }
         }
+        import.settle(&mut report)?;
         Ok(report)
     }
 
@@ -371,6 +382,92 @@ struct Import<'v> {
 }
 
 impl Import<'_> {
+    /// Puts the session's start time and folder on its conversation: the row
+    /// occurs when the thread's source says it began, and its body names the
+    /// folder. A conversation imported before the import kept them gets them
+    /// from the next import of its log, which changes nothing else of it; one
+    /// that already holds them is not written. A conversation that never
+    /// landed, was since erased or archived, or is not this import's is left
+    /// alone.
+    fn settle(&self, report: &mut HistoryImportReport) -> MemoryResult<()> {
+        let started = self.conversation.own_started_at_ms.map(|ms| ms / 1000);
+        let cwd = self.conversation.cwd.as_deref().map(label);
+        if started.is_none() && cwd.is_none() {
+            return Ok(());
+        }
+        let id = self.conversation_id;
+        let settled = self.vault.with_write_txn_grouped(|wtxn| {
+            let store = &self.vault.store;
+            let LiveEntityRow::Live { entity_type, body } =
+                live_entity_row_in_txn(store, wtxn, &id)?
+            else {
+                return Ok(());
+            };
+            if entity_type != ENTITY_TYPE_CONVERSATION
+                || self.vault.archive_tombstone_in_txn(wtxn, &id)?.is_some()
+            {
+                return Ok(());
+            }
+            let Some(record) = store.port_entity_record(wtxn, &id)? else {
+                return Ok(());
+            };
+            let Ok(Msgpack::Map(mut fields)) = rmpv::decode::read_value(&mut body.as_slice())
+            else {
+                return Ok(());
+            };
+            // Only the conversation this import landed: a row another writer
+            // put at the derived id is not this source's thread.
+            let field = |name: &str| {
+                fields
+                    .iter()
+                    .find(|(key, _)| key.as_str() == Some(name))
+                    .and_then(|(_, value)| value.as_str())
+            };
+            if field(IMPORTED_SOURCE_KEY) != Some(self.source.source_id())
+                || field("import_conversation")
+                    != Some(label(&self.conversation.native_id).as_str())
+            {
+                return Ok(());
+            }
+            let mut changed = false;
+            if let Some(cwd) = &cwd
+                && !fields
+                    .iter()
+                    .any(|(key, _)| key.as_str() == Some(IMPORT_CWD_KEY))
+            {
+                fields.push((Msgpack::from(IMPORT_CWD_KEY), Msgpack::from(cwd.as_str())));
+                changed = true;
+            }
+            let occurred = started.map_or(record.occurred, |at| TimeRange { start: at, end: at });
+            if !changed && occurred == record.occurred {
+                return Ok(());
+            }
+            self.owner.revalidate_in_txn(self.vault, wtxn)?;
+            let mut out = Vec::new();
+            rmpv::encode::write_value(&mut out, &Msgpack::Map(fields))
+                .map_err(|_| crate::error::Error::InvalidConfig("conversation body".into()))?;
+            self.vault
+                .batch_in()
+                .put(
+                    &id,
+                    ENTITY_TYPE_CONVERSATION,
+                    occurred,
+                    self.imported_at,
+                    &out,
+                )
+                .apply(wtxn)
+        });
+        match settled {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let error = MemoryError::from(error);
+                let reasons = refusal(&error).ok_or(error)?;
+                report.refusal_reasons.extend(reasons);
+                Ok(())
+            }
+        }
+    }
+
     /// Lands one run as a turn and counts it. `false`, with nothing counted,
     /// when another import landed one of its messages between this read of
     /// the ledger and the write; the caller reads the run again. On the
@@ -505,3 +602,6 @@ impl Import<'_> {
         Ok(true)
     }
 }
+
+#[cfg(test)]
+mod tests;

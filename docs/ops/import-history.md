@@ -72,6 +72,14 @@ original, never as a duplicate. Copies of earlier messages land once: Claude
 Code copies a resumed session's lines into the new session's log, and Codex
 copies a parent thread's items into a forked or spawned thread's rollout.
 
+A Claude Code or Codex conversation keeps the folder its session ran in (the
+`import_cwd` field) and occurs when the session started (`occurred` in
+`GET /v1/core/conversations?view=full`). A vault imported before the import
+kept them gets both from the next import of the same logs: run
+`oneiron import claude-code` or `oneiron import codex` on them again. That
+import writes the folder and start time on each conversation that lacks them,
+changes nothing else and adds no row; the import after it writes nothing.
+
 ## Size limits
 
 An export's `conversations.json` is read up to 2 GiB unzipped, and one

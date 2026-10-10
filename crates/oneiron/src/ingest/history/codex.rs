@@ -100,6 +100,8 @@ struct Rollout {
     started_at_ms: Option<u64>,
     responses: Vec<Candidate>,
     events: Vec<Candidate>,
+    /// The folder the session ran in, from the file's own meta.
+    cwd: Option<String>,
     /// Tool calls by line, to label the assistant message they belong to.
     tool_calls: Vec<(usize, String)>,
     skipped: HistorySkips,
@@ -228,7 +230,14 @@ impl Rollout {
 
     fn line(&mut self, kind: &str, payload: &Value, line: usize, at: Option<u64>) {
         match kind {
-            "session_meta" => self.meta(payload, line, at),
+            "session_meta" => {
+                // The file's own meta comes first; a copied history's metas
+                // are its parent's.
+                if self.session.is_none() {
+                    self.cwd = str_field(payload, "cwd").map(str::to_owned);
+                }
+                self.meta(payload, line, at);
+            }
             "response_item" => self.response_item(payload, line, at),
             "event_msg" => self.event(payload, line, at),
             // Turn context, compaction (its replacement history is a copy),
@@ -523,6 +532,8 @@ impl Rollout {
             last.tools.extend(tool_calls.map(|(_, name)| name));
         }
         conversation.skipped = self.skipped;
+        conversation.own_started_at_ms = self.started_at_ms;
+        conversation.cwd = self.cwd;
         vec![conversation]
     }
 }

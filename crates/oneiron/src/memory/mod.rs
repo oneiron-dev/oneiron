@@ -51,6 +51,7 @@ mod room_turn;
 mod structural;
 mod subscriptions;
 mod support;
+mod transcript;
 mod witness;
 
 #[cfg(test)]
@@ -114,6 +115,9 @@ pub use structural::{
 };
 pub use subscriptions::{MemorySubscriptionOwner, ScopedView};
 pub use support::{HostWriteOrigin, Memory, parse_actor_key, resolve_entity_ref};
+pub use transcript::{
+    MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
+};
 pub use witness::{
     DEFAULT_MESSAGE_STREAM_IDLE_MS, MAX_MESSAGE_STREAM_BYTES, MAX_MESSAGE_STREAMS,
     MessageStreamError, MessageStreamHandle, MessageStreamPartial, MessageStreamPolicy,
