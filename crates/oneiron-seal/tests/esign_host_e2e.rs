@@ -7,6 +7,8 @@
 //! the key. Keys and certificates are synthetic, made fresh by rcgen.
 #![cfg(unix)]
 
+use std::time::Instant;
+
 use oneiron::attempt_queue::{AttemptQueue, ClaimAttempt, ClaimOutcome};
 use oneiron::blob_artifact::esign::{
     DocumentKind, DocumentStatus, ESIGN_NOTICE_ATTEMPT_KIND, ESIGN_SEAL_ATTEMPT_KIND,
@@ -31,7 +33,7 @@ struct Keys {
 }
 
 impl SealKeys for Keys {
-    fn identity(&self) -> Result<SealIdentity, SealKeyError> {
+    fn identity(&self, _: Instant) -> Result<SealIdentity, SealKeyError> {
         Ok(SealIdentity {
             algorithm: SealAlgorithm::EcdsaP256Sha256,
             signer_certificate: self.cert.clone(),
@@ -39,7 +41,12 @@ impl SealKeys for Keys {
         })
     }
 
-    fn sign_prehash(&self, _: &str, digest: &[u8; 32]) -> Result<Vec<u8>, SealKeyError> {
+    fn sign_prehash(
+        &self,
+        _: &str,
+        digest: &[u8; 32],
+        _: Instant,
+    ) -> Result<Vec<u8>, SealKeyError> {
         let signature: p256::ecdsa::Signature =
             self.key.sign_prehash(digest).map_err(|err| SealKeyError {
                 detail: err.to_string(),

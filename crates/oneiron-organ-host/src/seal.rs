@@ -51,20 +51,27 @@ const MAX_FETCH_BYTES: u64 = MIB;
 const MAX_SEALED_BYTES: u64 = 96 * MIB;
 
 /// The signing key's custody, a local signer or a KMS. The key never
-/// crosses the socket.
+/// crosses the socket. Both run on the caller's thread inside its call, so
+/// each must return by `deadline`, the call's: a KMS bounds its whole
+/// request by it.
 pub trait SealKeys: Send + Sync {
     /// The key's certificate and chain.
     ///
     /// # Errors
     /// The key store's.
-    fn identity(&self) -> Result<SealIdentity, SealKeyError>;
+    fn identity(&self, deadline: Instant) -> Result<SealIdentity, SealKeyError>;
 
     /// Signs a SHA-256 prehash with the key [`Self::identity`] names: an
     /// RSA PKCS#1 v1.5 signature, or an ECDSA P-256 one in DER.
     ///
     /// # Errors
     /// The key store's.
-    fn sign_prehash(&self, operation_id: &str, digest: &[u8; 32]) -> Result<Vec<u8>, SealKeyError>;
+    fn sign_prehash(
+        &self,
+        operation_id: &str,
+        digest: &[u8; 32],
+        deadline: Instant,
+    ) -> Result<Vec<u8>, SealKeyError>;
 }
 
 /// The signature algorithm of a seal key. The serde names are the seal
@@ -478,8 +485,8 @@ struct IdentityAnswer {
 }
 
 impl AskHandler for Identity<'_> {
-    fn answer(&self, _: &AskRequest<'_>) -> Result<Answered, AskRefusal> {
-        let identity = self.keys.identity().map_err(key_refusal)?;
+    fn answer(&self, ask: &AskRequest<'_>) -> Result<Answered, AskRefusal> {
+        let identity = self.keys.identity(ask.deadline).map_err(key_refusal)?;
         let value = to_value(&IdentityAnswer {
             algorithm: identity.algorithm,
             signer_certificate: ByteBuf::from(identity.signer_certificate),
@@ -532,7 +539,7 @@ impl AskHandler for Sign<'_> {
         }
         let signature = self
             .keys
-            .sign_prehash(&request.operation_id, &digest)
+            .sign_prehash(&request.operation_id, &digest, ask.deadline)
             .map_err(key_refusal)?;
         Ok(Answered {
             value: to_value(&SignAnswer {
