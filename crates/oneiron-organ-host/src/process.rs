@@ -243,8 +243,9 @@ impl Drop for Seated<'_> {
 enum Overrun {
     /// The handler returned before the deadline.
     InTime,
-    /// The deadline passed and the call was cancelled; the organ replied
-    /// within the grace and lives on.
+    /// The deadline passed and the call was cancelled; within the grace
+    /// the reader took the call's entry, for its reply or as the process
+    /// ended.
     Cancelled,
     /// The organ did not reply within the grace, or ended: it was stopped.
     Stopped,
@@ -288,6 +289,19 @@ fn wait_reply(reply: &mpsc::Receiver<Delivery>, grace: Duration) -> bool {
     let until = Instant::now() + grace;
     loop {
         match reply.recv_timeout(until.saturating_duration_since(Instant::now())) {
+            Ok(Delivery::Reply(..)) => return true,
+            Ok(Delivery::Ask(_)) => {}
+            Ok(Delivery::Closed) | Err(_) => return false,
+        }
+    }
+}
+
+/// Whether a call whose entry the reader has taken got its reply, rather
+/// than the process ending. Never waits long: the entry held the only
+/// sender, and the reader drops it right after delivering.
+fn replied(reply: &mpsc::Receiver<Delivery>) -> bool {
+    loop {
+        match reply.recv() {
             Ok(Delivery::Reply(..)) => return true,
             Ok(Delivery::Ask(_)) => {}
             Ok(Delivery::Closed) | Err(_) => return false,
@@ -581,13 +595,7 @@ impl OrganProcess {
             }
             thread::sleep(left.min(Duration::from_millis(5)));
         }
-        // The entry also goes when the process ends.
-        if self.is_alive() {
-            Overrun::Cancelled
-        } else {
-            self.stop();
-            Overrun::Stopped
-        }
+        Overrun::Cancelled
     }
 
     fn exchange(
@@ -638,8 +646,15 @@ impl OrganProcess {
                         self.run_handler(id, deadline, grace, |watched| asks.take(ask, watched));
                     match overrun {
                         Overrun::InTime => {}
-                        Overrun::Cancelled => return Err(CallFailure::Deadline { stopped: false }),
-                        Overrun::Stopped => return Err(CallFailure::Deadline { stopped: true }),
+                        // A reply in the grace counts even if the organ then
+                        // ended: its end is the reader's to report, as a crash.
+                        Overrun::Cancelled if replied(reply) => {
+                            return Err(CallFailure::Deadline { stopped: false });
+                        }
+                        Overrun::Cancelled | Overrun::Stopped => {
+                            self.stop();
+                            return Err(CallFailure::Deadline { stopped: true });
+                        }
                     }
                     // The organ broke the protocol while the handler ran.
                     if !self.is_alive() {
