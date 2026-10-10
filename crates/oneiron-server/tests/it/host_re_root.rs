@@ -204,6 +204,17 @@ fn a_leaked_host_secret_moves_to_a_new_one_and_the_vault_keeps_its_id() {
     ));
     assert!(error.contains("chmod 600"), "{error}");
     assert!(!error.contains(NEW) && !error.contains(OLD), "{error}");
+    // A config line the parser cannot read is named by its file alone: the
+    // TOML error would print the line, and the line holds the secret.
+    let broken = dir.path().join("broken.toml");
+    std::fs::write(&broken, format!("auth_secret = \"{OLD}\" trailing\n")).unwrap();
+    let error = refused(oneiron(
+        &["host", "re-root", "--new-secret-file", file_arg],
+        &broken,
+        OLD,
+    ));
+    assert!(error.contains("broken.toml"), "{error}");
+    assert!(!error.contains(OLD), "{error}");
 
     secret_file(&new_secret, NEW, 0o600);
     let output = run(oneiron(

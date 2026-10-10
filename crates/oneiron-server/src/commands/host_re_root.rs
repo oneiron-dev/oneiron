@@ -31,7 +31,11 @@ pub fn host_re_root(args: HostReRootArgs) -> anyhow::Result<()> {
         args.serve.auth_secret.is_none(),
         "set ONEIRON_AUTH_SECRET or a protected config file; never pass the issuer key in argv"
     );
-    let config = resolve_serve_config(&args.serve)?;
+    // A TOML error renders the line it failed on, and that line may hold a
+    // host secret, so only the outermost message leaves this command.
+    let config = resolve_serve_config(&args.serve).map_err(|error| {
+        anyhow::anyhow!("{error} (detail withheld: the file may hold a secret)")
+    })?;
     anyhow::ensure!(
         config.vault_path.join("data.mdb").is_file(),
         "vault {} does not exist",
