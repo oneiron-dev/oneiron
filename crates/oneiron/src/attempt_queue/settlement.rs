@@ -31,8 +31,10 @@ impl AttemptQueue<'_> {
                     Ok(outcome @ CompleteOutcome::Completed(_)) => Rows::Commit(outcome),
                     answer => Rows::Discard(answer),
                 })?;
-        if matches!(outcome, CompleteOutcome::Completed(_)) {
+        if let CompleteOutcome::Completed(record) = &outcome {
             self.store.notify_attempt_observers();
+            // The TASK this attempt realizes folds its board status from it.
+            self.store.notify_task_updates(realized_task(record));
         }
         Ok(outcome)
     }
@@ -46,8 +48,9 @@ impl AttemptQueue<'_> {
                     Ok(outcome @ FailOutcome::Failed(_)) => Rows::Commit(outcome),
                     answer => Rows::Discard(answer),
                 })?;
-        if matches!(outcome, FailOutcome::Failed(_)) {
+        if let FailOutcome::Failed(record) = &outcome {
             self.store.notify_attempt_observers();
+            self.store.notify_task_updates(realized_task(record));
         }
         Ok(outcome)
     }
@@ -135,4 +138,12 @@ impl AttemptQueue<'_> {
     ) -> Result<FailOutcome> {
         crate::ports::JobQueue::port_job_fail(self, txn, input)
     }
+}
+
+/// The TASK an attempt realizes, when it names one.
+fn realized_task(record: &super::AttemptRecord) -> Option<crate::EntityId> {
+    record
+        .task_ref
+        .as_deref()
+        .and_then(|task| crate::EntityId::from_hex(task).ok())
 }
