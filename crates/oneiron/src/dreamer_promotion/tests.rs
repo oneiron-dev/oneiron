@@ -490,7 +490,7 @@ fn imported_evidence_lands_proposed_in_its_import_review_whatever_the_policy_gra
 
     // No other parent edge takes the import away (Sol 9A-3B round 3 #2): a
     // plain TURN that sorts first, made a second parent of the MESSAGE.
-    let plain = EntityId::from_bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])?;
+    let plain = EntityId::from_bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0])?;
     let mut body = Vec::new();
     rmpv::encode::write_value(
         &mut body,
