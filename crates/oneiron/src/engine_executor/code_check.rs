@@ -91,7 +91,9 @@ impl<'a> ShadowStep<'a> {
                     .take(RECORDED_DIAGNOSTICS)
                     .map(|diagnostic| {
                         let mut diagnostic = diagnostic.clone();
-                        let cut = diagnostic.message.floor_char_boundary(RECORDED_MESSAGE_BYTES);
+                        let cut = diagnostic
+                            .message
+                            .floor_char_boundary(RECORDED_MESSAGE_BYTES);
                         diagnostic.message.truncate(cut);
                         diagnostic
                     })

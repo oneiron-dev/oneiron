@@ -200,7 +200,11 @@ async fn shadow_mode_changes_no_programs_behaviour_or_result() {
         for step in steps {
             let at = |kind: &str| checked.text(&format!("executor/repl/{:06}.{kind}", step.seq));
             let Some(report) = at("code-check.json") else {
-                assert_ne!(Some(step.seq), last, "{name}: the last step keeps its report");
+                assert_ne!(
+                    Some(step.seq),
+                    last,
+                    "{name}: the last step keeps its report"
+                );
                 continue;
             };
             let report: Value = serde_json::from_str(&report).unwrap();
