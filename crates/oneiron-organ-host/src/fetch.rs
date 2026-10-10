@@ -293,24 +293,22 @@ fn is_global(ip: IpAddr) -> bool {
                 || o[0] >= 240
                 || (o[0] == 100 && (o[1] & 0xc0) == 64)
                 || (o[0] == 192 && o[1] == 0 && o[2] == 0)
+                || (o[0] == 192 && o[1] == 88 && o[2] == 99)
                 || (o[0] == 198 && (o[1] == 18 || o[1] == 19)))
         }
+        // Global unicast is 2000::/3; outside it nothing is global (the
+        // NAT64 and v4-mapped forms were judged as v4 above). Inside it,
+        // drop the special-purpose blocks: 2001::/23 (Teredo, ORCHID,
+        // benchmarking and the rest), 2001:db8::/32 (documentation), 6to4
+        // (2002::/16), and 3ff0::/12, which holds documentation (3fff::/20)
+        // and the retired 6bone and is allocated to no registry.
         IpAddr::V6(v6) => {
             let seg = v6.segments();
-            !(v6.is_loopback()
-                || v6.is_unspecified()
-                || v6.is_multicast()
-                || (seg[0] & 0xfe00) == 0xfc00
-                || (seg[0] & 0xffc0) == 0xfe80
-                || (seg[0] & 0xffc0) == 0xfec0
-                || seg[..6] == [0, 0, 0, 0, 0, 0]
-                || (seg[0] == 0x0064 && seg[1] == 0xff9b && seg[2] == 1)
-                || (seg[0] == 0x0100 && seg[1..4] == [0, 0, 0])
-                || (seg[0] == 0x2001 && seg[1] == 0x0000)
-                || (seg[0] == 0x2001 && seg[1] == 0x0002)
-                || (seg[0] == 0x2001 && (seg[1] & 0xfff0) == 0x0020)
-                || (seg[0] == 0x2001 && seg[1] == 0x0db8)
-                || seg[0] == 0x2002)
+            (seg[0] & 0xe000) == 0x2000
+                && !((seg[0] == 0x2001 && seg[1] < 0x0200)
+                    || (seg[0] == 0x2001 && seg[1] == 0x0db8)
+                    || seg[0] == 0x2002
+                    || (seg[0] & 0xfff0) == 0x3ff0)
         }
     }
 }

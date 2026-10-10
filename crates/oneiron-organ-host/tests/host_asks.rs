@@ -228,6 +228,87 @@ fn an_ask_past_the_deadline_is_cancelled_and_the_organ_lives() {
     .expect("the next call runs");
 }
 
+/// Outlasts the call's deadline, then records whether the organ was still
+/// running when it came back.
+struct Outlasts<'a> {
+    host: &'a OrganHost,
+    sleep: Duration,
+    pid_after: Mutex<Option<Option<u32>>>,
+}
+
+impl AskHandler for Outlasts<'_> {
+    fn answer(&self, _: &AskRequest<'_>) -> Result<Answered, AskRefusal> {
+        thread::sleep(self.sleep);
+        let pid = self.host.status("probe").expect("installed").pid;
+        *self.pid_after.lock().expect("pid") = Some(pid);
+        Ok(Answered::default())
+    }
+}
+
+#[test]
+fn a_deadline_stops_an_organ_deaf_to_its_cancel_while_the_handler_runs() {
+    let (_dir, vault) = vault();
+    let mut deaf = spec(vec![AskGrant::new(ANSWER, 4)]);
+    deaf.args = vec!["--ask-once".into()];
+    let host = host(deaf);
+    let handler = Outlasts {
+        host: &host,
+        sleep: Duration::from_millis(1500),
+        pid_after: Mutex::new(None),
+    };
+    let asks = AskHandlers::none().with(ANSWER, &handler);
+    let result = host.call_with(
+        &vault,
+        ask_call(ANSWER, rmpv::Value::Nil, 1, Duration::from_millis(200)),
+        Vec::new(),
+        &asks,
+    );
+    assert!(
+        matches!(result, Err(HostError::DeadlineExceeded)),
+        "{result:?}"
+    );
+    // Cancelled at the deadline and stopped after the grace, while the
+    // handler still ran: the organ was gone before it came back.
+    assert_eq!(*handler.pid_after.lock().expect("pid"), Some(None));
+}
+
+struct Panics;
+
+impl AskHandler for Panics {
+    fn answer(&self, _: &AskRequest<'_>) -> Result<Answered, AskRefusal> {
+        panic!("a handler bug");
+    }
+}
+
+#[test]
+fn a_handler_that_panics_frees_its_call() {
+    let (_dir, vault) = vault();
+    let mut one = spec(vec![AskGrant::new(ANSWER, 4)]);
+    one.threads = 1;
+    let host = host(one);
+    let asks = AskHandlers::none().with(ANSWER, &Panics);
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        host.call_with(
+            &vault,
+            ask_call(ANSWER, rmpv::Value::Nil, 1, Duration::from_secs(10)),
+            Vec::new(),
+            &asks,
+        )
+    }));
+    assert!(panicked.is_err());
+    // The one seat is free, and the cancel woke the organ's waiting ask, so
+    // its one thread takes the next call.
+    let fast = bytes(4);
+    let asks = AskHandlers::none().with(ANSWER, &fast);
+    host.call_with(
+        &vault,
+        ask_call(ANSWER, rmpv::Value::Nil, 1, Duration::from_secs(5)),
+        Vec::new(),
+        &asks,
+    )
+    .expect("the next call runs");
+}
+
 #[test]
 fn an_organ_that_keeps_asking_is_refused_once_then_cut_off() {
     let (_dir, vault) = vault();

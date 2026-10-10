@@ -3,8 +3,9 @@
 //! `probe.fork`, `probe.outputs` and `probe.ask`. Hostile modes stand in for
 //! a broken organ: `--deaf` answers the handshake and then never reads its
 //! socket, `--drip` sends its `hello_ack` one byte at a time, `--ask-twice`
-//! sends a second ask before the first is answered, and `--stale-asks` asks
-//! for calls that are not in flight. `--v1-0` is an organ built against
+//! sends a second ask before the first is answered, `--ask-once` asks and
+//! then ignores the call and its cancel, and `--stale-asks` asks for calls
+//! that are not in flight. `--v1-0` is an organ built against
 //! protocol 1.0: it acks 1.0, echoes, and dies on any message 1.0 lacks.
 
 #[cfg(unix)]
@@ -242,6 +243,11 @@ mod rogue {
         asking(|call| vec![ask(call, 1), ask(call, 2)]);
     }
 
+    /// Asks once per call, then never answers the call or takes its cancel.
+    pub(super) fn ask_once() {
+        asking(|call| vec![ask(call, 1)]);
+    }
+
     /// Asks a hundred times for a call that is not in flight.
     pub(super) fn stale_asks() {
         asking(|call| (0..100).map(|n| ask(call + 1000, n)).collect());
@@ -314,6 +320,10 @@ fn main() -> std::process::ExitCode {
         }
         Some("--ask-twice") => {
             rogue::ask_twice();
+            std::process::ExitCode::SUCCESS
+        }
+        Some("--ask-once") => {
+            rogue::ask_once();
             std::process::ExitCode::SUCCESS
         }
         Some("--stale-asks") => {
