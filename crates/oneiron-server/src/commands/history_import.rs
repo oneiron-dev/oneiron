@@ -321,11 +321,12 @@ impl Files {
             Ok(text) => return Ok(Some(text)),
             Err(left_out) => left_out,
         };
-        let ImportWarning::LogTooLarge { bytes, .. } = &left_out;
-        progress(&format!(
-            "left out {}: {bytes} bytes, over the {MAX_LOG_BYTES}-byte limit for one log",
-            shown.display()
-        ));
+        if let ImportWarning::LogTooLarge { bytes, .. } = &left_out {
+            progress(&format!(
+                "left out {}: {bytes} bytes, over the {MAX_LOG_BYTES}-byte limit for one log",
+                shown.display()
+            ));
+        }
         self.too_large += 1;
         self.warnings.push(left_out);
         Ok(None)

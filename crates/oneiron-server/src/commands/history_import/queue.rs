@@ -315,14 +315,15 @@ impl ImportQueue {
             "queued import landed"
         );
         for left_out in &landed.left_out {
-            let ImportWarning::LogTooLarge { path, bytes, limit } = left_out;
-            tracing::warn!(
-                warning = "log_too_large",
-                path = %path,
-                bytes,
-                limit,
-                "queued import left out a session log over the per-log limit; the rest landed"
-            );
+            if let ImportWarning::LogTooLarge { path, bytes, limit } = left_out {
+                tracing::warn!(
+                    warning = "log_too_large",
+                    path = %path,
+                    bytes,
+                    limit,
+                    "queued import left out a session log over the per-log limit; the rest landed"
+                );
+            }
         }
         for (mut held, mid_line) in done {
             if mid_line && held.entry.passes < MID_LINE_PASSES {
