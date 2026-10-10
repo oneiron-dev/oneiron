@@ -212,8 +212,9 @@ fn a_guest_call_through_a_memory_row_is_refused_as_before() {
     assert!(vault.get_claim(&claim).expect("read").is_none());
 
     let program = format!(
-        "await self.memory.put_edge({{src: '{subject}', kind: 'same_as', tgt: '{subject}', \
-           weight: 0}}); finish('written');",
+        "try {{ await self.memory.put_edge({{src: '{subject}', kind: 'same_as', \
+           tgt: '{subject}', weight: 0}}); finish('written'); }} \
+         catch (error) {{ finish(String(error)); }}",
         subject = subject.to_hex(),
     );
     let error = run_program(&vault, 0x73, &program).expect_err("same_as is refused");
