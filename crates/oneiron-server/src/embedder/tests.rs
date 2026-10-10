@@ -166,6 +166,11 @@ enum MockBehaviour {
     OneironWireOther,
     /// The listing answers 503.
     ListingDown,
+    /// No listing route (404), as many OpenAI-compatible servers have.
+    NoListing,
+    /// Lists the model as [`Self::OneironWire`] does, but answers with
+    /// [`OTHER_TRANSFORM`]: two backends behind one address.
+    ListingDisagrees,
 }
 
 /// The transform the [`MockBehaviour::OneironWire`] listing reports.
@@ -261,7 +266,10 @@ async fn mock_models(State(state): State<Arc<MockState>>) -> Result<axum::Json<V
             axum::Json(json!({ "data": [{ "id": "some-other-model" }] }))
         }
         MockBehaviour::ListingDown => return Err(StatusCode::SERVICE_UNAVAILABLE),
-        MockBehaviour::OneironWire | MockBehaviour::OneironWireOther => axum::Json(json!({
+        MockBehaviour::NoListing => return Err(StatusCode::NOT_FOUND),
+        MockBehaviour::OneironWire
+        | MockBehaviour::OneironWireOther
+        | MockBehaviour::ListingDisagrees => axum::Json(json!({
             "data": [{
                 "id": MODEL_KEY,
                 "oneiron_wire": 1,
@@ -366,9 +374,14 @@ async fn mock_embeddings(
     }
     if matches!(
         state.behaviour(),
-        MockBehaviour::OneironWire | MockBehaviour::OneironWireOther
+        MockBehaviour::OneironWire
+            | MockBehaviour::OneironWireOther
+            | MockBehaviour::ListingDisagrees
     ) {
-        let transform = mock_transform(state.behaviour());
+        let transform = match state.behaviour() {
+            MockBehaviour::ListingDisagrees => OTHER_TRANSFORM,
+            behaviour => mock_transform(behaviour),
+        };
         return Ok(axum::Json(json!({ "data": rows, "transform": transform })));
     }
     Ok(axum::Json(json!({ "data": rows })))
@@ -656,6 +669,64 @@ fn a_probe_against_an_unreachable_endpoint_is_not_fatal() {
         endpoint::probe_endpoint(embedder.as_ref()),
         Ok(ProbeOutcome::Unreachable(_))
     ));
+}
+
+/// Review R4-3: a remote with no listing route is the OpenAI wire with an
+/// unknown catalog. Bug repro: the probe called it unreachable, so `reembed`
+/// refused to move a vault to it; it now checks its width.
+#[test]
+fn a_remote_with_no_listing_route_is_probed_at_its_width() {
+    let mock = MockEndpoint::start(MockBehaviour::NoListing);
+    assert!(matches!(
+        endpoint::probe_endpoint(mock.embedder().as_ref()),
+        Ok(ProbeOutcome::Ready)
+    ));
+    assert_eq!(
+        endpoint::resolve_transform(&endpoint_config(&mock.base)).expect("resolved"),
+        None
+    );
+}
+
+/// Review R4-4: a vault moves to the transform an answer came from. Bug
+/// repro: the probe's answer was held to nothing and the listing was read
+/// again after it, so a remote whose listing names one transform while its
+/// answers carry another moved the vault to the listed one.
+#[test]
+fn a_move_is_refused_when_the_answers_do_not_carry_the_listed_transform() {
+    let mock = MockEndpoint::start(MockBehaviour::ListingDisagrees);
+    endpoint::resolve_transform(&endpoint_config(&mock.base))
+        .expect_err("answers from another transform than the listed one");
+    mock.set_behaviour(MockBehaviour::OneironWire);
+    assert_eq!(
+        endpoint::resolve_transform(&endpoint_config(&mock.base)).expect("resolved"),
+        Some(MOCK_TRANSFORM.to_owned())
+    );
+}
+
+/// Review R4-1: a vault on the shipped model takes its measured evidence
+/// floors, which were measured with unprompted queries. Bug repro: with no
+/// instruction of its own the vault sent none, so the shared server's own
+/// query prompt applied.
+#[test]
+fn a_vault_on_the_shipped_model_sends_its_queries_unprompted() {
+    let mock = MockEndpoint::start(MockBehaviour::OneironWire);
+    let shipped = EmbedderConfig {
+        model_id: crate::config::embedder::DEFAULT_MODEL_ID.to_owned(),
+        ..endpoint_config(&mock.base)
+    };
+    for config in [shipped, endpoint_config(&mock.base)] {
+        endpoint::HttpEmbedder::from_config(&config)
+            .expect("http embedder")
+            .embed_query("cats")
+            .expect("query embedded");
+    }
+    let requests = mock.requests();
+    assert_eq!(requests[0]["instruction"], json!(""));
+    assert_eq!(
+        requests[1].get("instruction"),
+        None,
+        "another model's vault leaves the server's query prompt to it"
+    );
 }
 
 /// A pending row that projects to nothing is refused rather than embedded: the

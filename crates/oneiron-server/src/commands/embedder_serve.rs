@@ -1,12 +1,14 @@
 //! `oneiron-server embedder serve`: resolves which model to serve, then hands
 //! it to the endpoint ([`crate::embedder::serve`]).
 
+use std::path::PathBuf;
+
 use zeroize::Zeroizing;
 
 use crate::cli::EmbedderServeArgs;
-use crate::config::embedder::DEFAULT_DIMENSIONS;
 use crate::config::{
-    EmbedderConfig, EmbedderProvider, ServeArgs, default_config_path, resolve_serve_config,
+    EmbedderArgs, EmbedderConfig, EmbedderProvider, EnvConfig, ServeArgs, default_config_path,
+    resolve_serve_config_with_sources,
 };
 use crate::embedder::serve::{Listen, run};
 
@@ -38,27 +40,42 @@ pub async fn embedder_serve(args: EmbedderServeArgs) -> anyhow::Result<()> {
 /// and environment. A local section is served as it stands; with none at all,
 /// the default local model is.
 fn served_config(args: &EmbedderServeArgs) -> anyhow::Result<EmbedderConfig> {
-    // There is no vault here, so the vault-wide width only has to agree with
-    // the model's. With no config file to name it, it is the model's: the
-    // flags' width, or the default model's.
-    let config_file = args.config.is_some()
-        || std::env::var_os("ONEIRON_CONFIG").is_some()
-        || default_config_path().is_some_and(|path| path.exists());
-    let dimensions = match (args.dimensions, config_file) {
-        (Some(dimensions), _) => Some(dimensions),
-        (None, true) => None,
-        (None, false) => Some(
-            args.embedder
-                .embedder_dimensions
-                .unwrap_or(DEFAULT_DIMENSIONS),
-        ),
+    served_config_from(args, &EnvConfig::from_process()?, default_config_path())
+}
+
+fn served_config_from(
+    args: &EmbedderServeArgs,
+    env: &EnvConfig,
+    default_config_path: Option<PathBuf>,
+) -> anyhow::Result<EmbedderConfig> {
+    let resolve = |embedder: EmbedderArgs, dimensions: Option<usize>| {
+        resolve_serve_config_with_sources(
+            &ServeArgs {
+                config: args.config.clone(),
+                embedder,
+                dimensions,
+                ..ServeArgs::default()
+            },
+            env.clone(),
+            default_config_path.clone(),
+        )
     };
-    let resolved = resolve_serve_config(&ServeArgs {
-        config: args.config.clone(),
-        embedder: args.embedder.clone(),
-        dimensions,
-        ..ServeArgs::default()
-    })?;
+    // There is no vault here, so the vault-wide width only has to agree with
+    // the model's, and unless --dimensions names it, it is the model's: the
+    // section's width as every layer resolves it, read with the section held
+    // inactive, which the vault check skips. Should that read fail, the full
+    // resolution below says why.
+    let dimensions = args.dimensions.or_else(|| {
+        let inactive = EmbedderArgs {
+            embedder_provider: Some(EmbedderProvider::None),
+            ..args.embedder.clone()
+        };
+        resolve(inactive, None)
+            .ok()
+            .and_then(|resolved| resolved.embedder)
+            .map(|embedder| embedder.dimensions)
+    });
+    let resolved = resolve(args.embedder.clone(), dimensions)?;
     match resolved.embedder {
         Some(embedder) if embedder.provider == EmbedderProvider::Local => Ok(embedder),
         Some(embedder) if embedder.provider == EmbedderProvider::Endpoint => anyhow::bail!(
@@ -76,3 +93,6 @@ fn served_config(args: &EmbedderServeArgs) -> anyhow::Result<EmbedderConfig> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

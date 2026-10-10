@@ -481,8 +481,9 @@ fn reembed_refuses_a_commit_that_is_not_a_plain_name_before_writing_anything() {
 }
 
 /// An endpoint that answers `/v1/models` with `listing` and every embedding
-/// request with one unit vector of `width` components: all reembed asks of
-/// it. The address it serves; the thread ends with the test process.
+/// request with one unit vector of `width` components, naming the listed
+/// transform as `embedder serve` does: all reembed asks of it. The address
+/// it serves; the thread ends with the test process.
 fn listing_endpoint(listing: &'static str, width: usize) -> String {
     use std::io::{Read, Write};
 
@@ -490,7 +491,12 @@ fn listing_endpoint(listing: &'static str, width: usize) -> String {
     let addr = listener.local_addr().expect("addr");
     let mut vector = vec![0.0f32; width];
     vector[0] = 1.0;
-    let embedded = serde_json::json!({ "data": [{ "index": 0, "embedding": vector }] }).to_string();
+    let listed: serde_json::Value = serde_json::from_str(listing).expect("listing json");
+    let mut embedded = serde_json::json!({ "data": [{ "index": 0, "embedding": vector }] });
+    if let Some(transform) = listed["data"][0].get("transform") {
+        embedded["transform"] = transform.clone();
+    }
+    let embedded = embedded.to_string();
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };

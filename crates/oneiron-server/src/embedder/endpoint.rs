@@ -142,7 +142,9 @@ pub(crate) struct HttpEmbedder {
     model_key: String,
     locality: EmbedderLocality,
     max_input_chars: usize,
-    /// The vault's own query prompt, if it names one.
+    /// The vault's own query prompt, if it names one; an empty one for a vault
+    /// on a shipped model's measured evidence floors, which were measured
+    /// with no query prompt, so the server's own never applies to it.
     query_instruction: Option<String>,
     /// The remote's last `/models` listing that answered, read before the
     /// first request that depends on it and again at every admission.
@@ -229,7 +231,10 @@ impl HttpEmbedder {
             model_key,
             locality: engine_locality(config.endpoint.locality),
             max_input_chars: config.max_input_tokens.saturating_mul(CHARS_PER_TOKEN),
-            query_instruction: config.query_instruction.clone(),
+            query_instruction: config.query_instruction.clone().or_else(|| {
+                super::local::model_manager::pinned_endpoint_evidence(config)
+                    .map(|_| String::new())
+            }),
             listing: Mutex::new(None),
             admitted: Mutex::new(Admitted::Unchecked),
             client,
@@ -300,12 +305,7 @@ impl HttpEmbedder {
         let listed = if status.is_success() {
             let bytes = bounded_body(response)?;
             serde_json::from_slice::<ModelsResponse>(&bytes).ok()
-        } else if matches!(
-            status,
-            reqwest::StatusCode::NOT_FOUND
-                | reqwest::StatusCode::METHOD_NOT_ALLOWED
-                | reqwest::StatusCode::NOT_IMPLEMENTED
-        ) {
+        } else if no_listing_route(status) {
             None
         } else {
             return Err(oneiron::Error::UpstreamToolFailure {
@@ -564,15 +564,30 @@ impl QueryEmbedder for HttpEmbedder {
     }
 }
 
+/// Whether a `/models` answer says the remote has no listing route, which
+/// any OpenAI-compatible server may lack: the OpenAI wire, with an unknown
+/// catalog.
+fn no_listing_route(status: reqwest::StatusCode) -> bool {
+    matches!(
+        status,
+        reqwest::StatusCode::NOT_FOUND
+            | reqwest::StatusCode::METHOD_NOT_ALLOWED
+            | reqwest::StatusCode::NOT_IMPLEMENTED
+    )
+}
+
 /// How the configured remote makes vectors, asked now: what `embedder serve`
-/// lists for the model, `None` for any other remote. The remote must first
-/// pass the startup probe — it lists the model and answers at the configured
-/// width — so a vault is never moved to a remote that cannot fill it. An
-/// error when it does not answer or does not pass.
+/// lists for the model, `None` for any other remote. The remote must then
+/// pass the startup probe held to that answer — it lists the model and
+/// answers at the configured width, naming the listed transform — so a vault
+/// is never moved to a remote that cannot fill it, nor to a listing no answer
+/// came from. An error when it does not answer or does not pass.
 pub(crate) fn resolve_transform(config: &EmbedderConfig) -> oneiron::Result<Option<String>> {
     let embedder = HttpEmbedder::from_config(config)?;
+    let served = embedder.served_transform()?;
+    embedder.admit(served.clone());
     match probe_endpoint(&embedder) {
-        Ok(ProbeOutcome::Ready) => embedder.served_transform(),
+        Ok(ProbeOutcome::Ready) => Ok(served),
         Ok(ProbeOutcome::Unreachable(why)) => Err(oneiron::Error::UpstreamToolFailure {
             tool: EMBEDDER_TOOL,
             code: format!("embedder endpoint did not answer the probe: {why}"),
@@ -595,6 +610,8 @@ pub(crate) fn probe_endpoint(embedder: &HttpEmbedder) -> Result<ProbeOutcome, Pr
             Ok(bytes) => serde_json::from_slice::<ModelsResponse>(&bytes).ok(),
             Err(error) => return Ok(ProbeOutcome::Unreachable(error.to_string())),
         },
+        // No listing route: an unknown catalog, so only the width is checked.
+        Ok(response) if no_listing_route(response.status()) => None,
         Ok(response) => {
             return Ok(ProbeOutcome::Unreachable(format!(
                 "GET {url} returned HTTP {}",
@@ -622,8 +639,8 @@ pub(crate) fn probe_endpoint(embedder: &HttpEmbedder) -> Result<ProbeOutcome, Pr
         .listing
         .lock()
         .unwrap_or_else(PoisonError::into_inner) = Some(embedder.listing_of(listed.as_ref()));
-    // Unmarked, so any remote answers it as a document; before any admission,
-    // so it is held to no transform.
+    // Unmarked, so any remote answers it as a document; held to the transform
+    // admitted, if any (none at startup, the listed one before a move).
     match embedder.post_embeddings(&[PROBE_TEXT], Side::default()) {
         Ok(vectors) => {
             let got = vectors.first().map_or(0, Vec::len);
