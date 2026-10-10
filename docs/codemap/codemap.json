@@ -49607,6 +49607,16 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/embedder/local/model_manager/tests.rs",
+     "purpose": "Servers sharing one models directory",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/embedder/local/prompts.rs",
@@ -51716,7 +51726,7 @@
      "purpose": "Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every…"
     },
     "embedder": {
-     "files": 16,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51873,7 +51883,7 @@
    "over_bar": 8,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 306,
-   "test_files": 118
+   "test_files": 119
   },
   "oneiron-uniffi": {
    "files": [
