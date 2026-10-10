@@ -593,9 +593,9 @@ fn now_ms() -> u64 {
         })
 }
 
-/// A unit enum's serde name.
+/// A unit enum's wire name.
 fn name<T: Serialize>(value: &T) -> String {
-    rmpv::ext::to_value(value)
+    to_value(value)
         .ok()
         .and_then(|value| value.as_str().map(str::to_owned))
         .unwrap_or_default()
