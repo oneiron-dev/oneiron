@@ -11,7 +11,7 @@ use oneiron_organ_protocol::{
 use serde::Deserialize;
 
 use crate::body::{Filter, Format, Icc, ImageBody, KIND, Shape, Source, Stroke, bad, from_value};
-use crate::decode::{Header, Profile, check_size, decode, read_header};
+use crate::decode::{Header, Profile, check_size, decode, header_cost, read_header};
 use crate::ops::{self, Edited};
 use crate::render::{check_paint, encode_png, render};
 
@@ -32,7 +32,9 @@ const VERBS: [(&str, bool); 6] = [
     (VERB_EXPORT, true),
 ];
 
-const UNTAGGED: &str = "the source has no colour profile; it is read as sRGB";
+/// The warning code for a source with no colour profile, read as sRGB. Notes
+/// carry codes; the host words them.
+const UNTAGGED: &str = "untagged_read_as_srgb";
 
 /// The image organ. It keeps decoded sources by content hash, within a
 /// quarter of its memory grant, so an export after `open` does not decode
@@ -193,7 +195,7 @@ impl Organ for ImageOrgan {
 
     fn call(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
         match call.verb {
-            VERB_INSPECT => inspect(call),
+            VERB_INSPECT => self.inspect(call),
             VERB_OPEN => self.open(call),
             VERB_CROP => {
                 let args: CropArgs = from_value(call.args, "crop args")?;
@@ -238,19 +240,6 @@ fn only_input<'a>(call: &'a CallContext<'_>) -> Result<&'a InputBytes, OrganErro
         [input] => Ok(input),
         _ => Err(bad("this verb reads exactly one image input")),
     }
-}
-
-/// `image.inspect`: the header only, no pixels.
-fn inspect(call: &CallContext<'_>) -> Result<Answer, OrganError> {
-    let input = only_input(call)?;
-    let header = read_header(input)?;
-    let mut notes = Notes::default();
-    note_source(&mut notes, input, &header);
-    Ok(Answer {
-        report: header_report(&header, check_size(&header, decode_budget(call)).err()),
-        notes,
-        ..Answer::default()
-    })
 }
 
 fn note_source(notes: &mut Notes, input: &InputBytes, header: &Header) {
@@ -323,6 +312,26 @@ fn source_from(input: &InputBytes, header: &Header, icc: Icc) -> Source {
 }
 
 impl ImageOrgan {
+    /// Reads a header with what the read may hold booked, and lets the
+    /// booking go once the decoder that read it is gone.
+    fn header(&self, call: &CallContext<'_>, input: &InputBytes) -> Result<Header, OrganError> {
+        let _held = self.hold(call, header_cost(input))?;
+        read_header(input)
+    }
+
+    /// `image.inspect`: the header only, no pixels.
+    fn inspect(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
+        let input = only_input(call)?;
+        let header = self.header(call, input)?;
+        let mut notes = Notes::default();
+        note_source(&mut notes, input, &header);
+        Ok(Answer {
+            report: header_report(&header, check_size(&header, decode_budget(call)).err()),
+            notes,
+            ..Answer::default()
+        })
+    }
+
     /// Books `bytes` of the shared work allowance, or says why not.
     fn hold(&self, call: &CallContext<'_>, bytes: u64) -> Result<Held<'_>, OrganError> {
         let allowance = work_budget(call);
@@ -362,7 +371,7 @@ impl ImageOrgan {
     /// `image.open`: checks the header, decodes once, returns a fresh body.
     fn open(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
         let input = only_input(call)?;
-        let header = read_header(input)?;
+        let header = self.header(call, input)?;
         let icc = admit(&header, decode_budget(call))?;
         if lock(&self.decoded).get(&input.content_hash).is_none() {
             let _held = self.hold(call, decode_cost(&header, input))?;
@@ -398,7 +407,7 @@ impl ImageOrgan {
             .iter()
             .find(|input| input.content_hash == body.source.hash)
             .ok_or_else(|| bad("export needs the source image as an input"))?;
-        let header = read_header(input)?;
+        let header = self.header(call, input)?;
         let icc = admit(&header, decode_budget(call))?;
         if source_from(input, &header, icc) != body.source {
             return Err(bad("the input does not match the body's source"));
