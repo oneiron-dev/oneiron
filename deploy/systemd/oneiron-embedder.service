@@ -1,0 +1,19 @@
+[Unit]
+Description=Oneiron shared embedder (/v1/embeddings for vaults on the endpoint provider)
+Documentation=https://github.com/oneiron-dev/oneiron
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# One copy of the model for every vault on this host. See DEPLOYMENT.md,
+# "Shared Embedder".
+Environment=MALLOC_ARENA_MAX=2
+ExecStart=%h/.cargo/bin/oneiron-server embedder serve --host 127.0.0.1 --port 7399
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

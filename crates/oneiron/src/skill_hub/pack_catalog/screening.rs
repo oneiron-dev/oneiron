@@ -149,6 +149,9 @@ impl Vault {
         if let Some(license) = &manifest.license {
             decoded.push(("license", license));
         }
+        if let Some(contact) = &manifest.contact {
+            decoded.push(("contact", contact));
+        }
         if let Some(adapter) = &manifest.adapter {
             match adapter {
                 super::PackAdapter::Builtin(value) | super::PackAdapter::Script(value) => {

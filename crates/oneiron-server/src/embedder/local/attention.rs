@@ -8,7 +8,7 @@
 
 use candle_core::{D, Device, Tensor};
 
-/// Grouped-query attention over equal-length, unpadded sequences.
+/// Grouped-query attention over one unpadded input.
 ///
 /// `q` is `[b, heads, seq, head_dim]`, `k` and `v` are
 /// `[b, kv_heads, seq, head_dim]`, NOT pre-tiled to `heads`: candle's fused
@@ -22,8 +22,8 @@ use candle_core::{D, Device, Tensor};
 /// caller builds nothing for it.
 ///
 /// A bidirectional body lets every position see every other. The provider
-/// never pads a group (`batcher` groups equal lengths), so there is no pad key
-/// to hide either, and neither branch takes a mask at all.
+/// never pads an input (`batcher` packs instead), so there is no pad key to
+/// hide either, and neither branch takes a mask at all.
 pub(super) fn grouped_attention(
     q: &Tensor,
     k: &Tensor,
