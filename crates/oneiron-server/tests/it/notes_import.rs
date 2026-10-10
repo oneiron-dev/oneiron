@@ -424,3 +424,28 @@ fn a_hard_linked_file_is_passed_over() {
     let written = std::fs::read_to_string(file).expect("test fixture");
     assert!(!written.contains("outside the folder"));
 }
+
+/// Greptile (#1351, confined.rs:219): the walk matched `.md` with case, so
+/// `BETA.MD` was never read. It was not counted, not imported, and a link to
+/// it stayed unresolved. A note's extension matches in any case, and a title
+/// taken from the file name drops it in any case.
+#[test]
+fn an_upper_case_extension_is_a_note() {
+    let home = Home::new();
+    home.write("BETA.MD", "Beta, saved by an editor that shouts.\n");
+    home.write("alpha.md", "Alpha points at [[beta]].\n");
+
+    let report = home.import("batch.json");
+    assert_eq!(report["notes"]["found"], 2);
+    assert_eq!(report["notes"]["new"], 2);
+    assert_eq!(report["links"]["resolved"], 1);
+    assert_eq!(report["links"]["unresolved"], 0);
+    assert!(home.decide("approve", &report).status.success());
+    let vault = home.open();
+    let beta = home.id("BETA.MD");
+    assert_eq!(
+        vault.note_document(beta).expect("a note").title.as_deref(),
+        Some("BETA")
+    );
+    assert_eq!(mentions_of(&vault, home.id("alpha.md")), vec![beta]);
+}

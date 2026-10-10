@@ -64,7 +64,16 @@ pub(crate) async fn core_propose(
             .is_some()
     };
     if !exists {
-        return Err(ApiError::forbidden_scope("proposal:subject").into());
+        // One answer for absent and unreadable, so the refusal discloses
+        // nothing; its words say what a caller can do about either.
+        return Err(ApiError::new(
+            "subject not found or not readable",
+            crate::error::ApiErrorDetails::Forbidden {
+                required_scope: Some("proposal:subject".to_owned()),
+            },
+            ["Create the subject entity first, or propose against one this credential can read."],
+        )
+        .into());
     }
     let bytes = rmp_serde::to_vec_named(&request.value)
         .map_err(|_| ApiError::bad_request("invalid proposal value", Some("value")))?;

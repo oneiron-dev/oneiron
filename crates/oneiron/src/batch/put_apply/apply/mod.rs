@@ -135,7 +135,15 @@ pub(in crate::batch) fn apply_put(
     // A provisional entity's id is held for its confirmation, on the same
     // choke point, so no claim candidate or replay lands under it either.
     crate::tagging::hold_id_in_txn(store, wtxn, &id, replicated)?;
-    validate_refinement_admission(store, wtxn, &id, entity_type, data, refinement_admission)?;
+    validate_refinement_admission(
+        store,
+        wtxn,
+        &id,
+        entity_type,
+        data,
+        refinement_admission,
+        transition,
+    )?;
     crate::claim::validate_claim_write_target_in_txn(store, wtxn, &id, allow_reserved_predicate)?;
     // Type-byte validation runs in `apply_ops` (public-vs-maintenance gate:
     // public writes reject engine-authored system kinds, the sync
