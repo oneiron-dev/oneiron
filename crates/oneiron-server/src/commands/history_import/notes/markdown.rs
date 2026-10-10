@@ -116,7 +116,8 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
     // Where the current list item's content starts.
     let mut item_column = 0;
     let mut after_blank = true;
-    // The quote depth of a heading, rule or closed fence on the line before.
+    // The quote depth of the line before, when it was a heading, a rule or
+    // a closing fence that stood on its own (`own_block` below).
     let mut after_block: Option<usize> = None;
     for line in body.lines() {
         let line = expand_prefix(line);
@@ -134,7 +135,9 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
                     && content.trim_start_matches(open.mark).trim().is_empty()
                 {
                     fence = None;
-                    after_block = Some(depth);
+                    if open.own_block && indent(inner) < 2 {
+                        after_block = Some(depth);
+                    }
                 }
                 continue;
             }
@@ -154,9 +157,8 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
         }
         indented_code = false;
         // Indented code cannot interrupt a paragraph. It follows a blank
-        // line, or a heading, rule or closed fence in the same quote: one in
-        // a deeper quote may sit in a list item, whose next line is the
-        // item's text.
+        // line, or a heading, rule or closed fence in the same quote that
+        // stood on its own.
         if indent >= 4
             && !in_list
             && paragraph.is_empty()
@@ -176,11 +178,16 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
         } else if indent < 2 && after_blank {
             in_list = false;
         }
+        // A block at its quote's margin, with no text before it and no item
+        // opened on its line, stands on its own. One that interrupts text or
+        // sits inside an item is left to the blank-line rule: where that text
+        // or item ends (raw HTML, a lazy line, a nested item) is past what
+        // this reader tracks, and its next line may be the text's own.
+        let own_block = !item && indent < 2 && paragraph.is_empty();
         after_blank = false;
         // A `===` line under a paragraph makes it a heading, which ends there.
         if !paragraph.is_empty() && content.trim_end().chars().all(|c| c == '=') {
             span_links(&std::mem::take(&mut paragraph), &mut links);
-            after_block = Some(depth);
             continue;
         }
         // A rule or a heading is a block of its own, and one at the margin
@@ -189,7 +196,9 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
             span_links(&std::mem::take(&mut paragraph), &mut links);
             span_links(content, &mut links);
             in_list &= item || indent >= 2;
-            after_block = Some(depth);
+            if own_block {
+                after_block = Some(depth);
+            }
             continue;
         }
         if let Some(mark) = fence_mark(content)
@@ -202,6 +211,7 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
                 len: run(content, mark),
                 depth,
                 item_column: in_list.then_some(item_column),
+                own_block,
             });
             continue;
         }
@@ -213,13 +223,15 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
 }
 
 /// An open code fence: its character and length, the block-quote depth it
-/// opened at, and where the content of the list item it opened in starts.
+/// opened at, where the content of the list item it opened in starts, and
+/// whether it opened as a block on its own.
 #[derive(Clone, Copy)]
 struct Fence {
     mark: char,
     len: usize,
     depth: usize,
     item_column: Option<usize>,
+    own_block: bool,
 }
 
 /// The line with the tabs among its leading spaces and quote markers
@@ -481,8 +493,9 @@ mod tests {
 
     /// Greptile (#1351, markdown.rs:154): indented code was code only after
     /// a blank line, so an indented line right after a heading or a closed
-    /// fence read as text and made a link. It is code after such a block in
-    /// the same quote too; a paragraph's indented line still links.
+    /// fence read as text and made a link. It is code after such a block
+    /// when the block stands on its own in the same quote; a paragraph's
+    /// indented line still links.
     #[test]
     fn indented_code_after_a_block_is_code() {
         let none = Vec::<String>::new();
@@ -493,12 +506,13 @@ mod tests {
             none
         );
         assert_eq!(targets("***\n    [[alpha]]\n"), none);
-        assert_eq!(targets("Heading\n===\n    [[alpha]]\n"), none);
         assert_eq!(targets("> # Heading\n>     [[alpha]]\n"), none);
         assert_eq!(targets("Text and\n    [[alpha]]\n"), ["alpha"]);
         assert_eq!(targets("# Heading\nText and\n    [[alpha]]\n"), ["alpha"]);
-        // Sol on #1359: a block in a quote inside a list item is followed by
-        // the item's text, and a list the quote ends stays ended.
+        // Sol on #1359, rounds 1-3: a block that does not stand on its own
+        // (in a quote inside an item, after text, inside raw HTML, indented
+        // into a paragraph or an item) leaves its next line to the
+        // blank-line rule, which keeps these lines text.
         assert_eq!(targets("- item\n  > # Heading\n    [[alpha]]\n"), ["alpha"]);
         assert_eq!(targets("- item\n  > ***\n    [[alpha]]\n"), ["alpha"]);
         assert_eq!(
@@ -510,6 +524,20 @@ mod tests {
             ["alpha"]
         );
         assert_eq!(targets("1. item\n  > # Heading\n\n    [[alpha]]\n"), none);
+        assert_eq!(targets("Text\n    ===\n    [[alpha]]\n"), ["alpha"]);
+        assert_eq!(targets("Text\n> ===\n>     [[alpha]]\n"), ["alpha"]);
+        assert_eq!(
+            targets("<div>\n# Heading\n    [[alpha]]\n</div>\n"),
+            ["alpha"]
+        );
+        assert_eq!(
+            targets("- item\n  - ```\n    code\n  # Heading\n    [[alpha]]\n"),
+            ["alpha"]
+        );
+        assert_eq!(
+            targets("- item\n  > # Heading\n  # Heading\n    [[alpha]]\n"),
+            ["alpha"]
+        );
     }
 
     /// Astra 4 and Greptile (markdown.rs:301): at every `[[` the scan looked
