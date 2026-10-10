@@ -453,10 +453,12 @@ pub(crate) struct RetainedBody {
     pub(crate) body: Vec<u8>,
 }
 
-/// `entity`'s record body as each retained change of its document left it,
-/// oldest first; `None` for an unmigrated row. A state that no single change
-/// ends (concurrent heads) or whose history was purged is not listed; past
-/// `limit` changes, only the newest `limit` are.
+/// `entity`'s record body at the states its document's retained history
+/// names, newest first: the current one, then for each of the newest
+/// `limit` changes the state it left and the state it was made on (its
+/// dependencies, which name a merged state the next edit followed). `None`
+/// for an unmigrated row. A state of concurrent heads no later change was
+/// made on, or whose history was purged, is not listed.
 pub(crate) fn record_body_history_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -469,23 +471,34 @@ pub(crate) fn record_body_history_in_txn(
     }
     let h = head(store, txn, entity)?;
     let doc = load(store, txn, &h)?;
-    let mut changes = Vec::new();
+    let current = doc.doc.oplog_frontiers();
+    let mut frontiers = vec![current.encode()];
+    let mut visited = 0;
     doc.doc
-        .travel_change_ancestors(&doc.doc.oplog_frontiers().to_vec(), &mut |meta| {
-            changes.push((meta.lamport, meta.id.peer, meta.id.inc(meta.len as i32 - 1)));
-            std::ops::ControlFlow::Continue(())
+        .travel_change_ancestors(&current.to_vec(), &mut |meta| {
+            let last = meta.id.inc(i32::try_from(meta.len).unwrap_or(i32::MAX) - 1);
+            frontiers.push(loro::Frontiers::from_id(last).encode());
+            if !meta.deps.is_empty() {
+                frontiers.push(meta.deps.encode());
+            }
+            visited += 1;
+            if visited < limit {
+                std::ops::ControlFlow::Continue(())
+            } else {
+                std::ops::ControlFlow::Break(())
+            }
         })
         .map_err(|_| Error::CorruptedIndex("document change history"))?;
-    changes.sort_unstable();
-    let skip = changes.len().saturating_sub(limit);
-    let mut states = Vec::with_capacity(changes.len() - skip);
-    for (_, _, last) in changes.into_iter().skip(skip) {
-        let frontier = loro::Frontiers::from_id(last).encode();
+    let mut states: Vec<RetainedBody> = Vec::with_capacity(frontiers.len());
+    for frontier in frontiers {
+        let mut pin = h.incarnation.clone().into_bytes();
+        pin.extend_from_slice(&frontier);
+        if states.iter().any(|state| state.frontier == pin) {
+            continue;
+        }
         let Ok(text) = doc.text_at(&frontier) else {
             continue;
         };
-        let mut pin = h.incarnation.clone().into_bytes();
-        pin.extend_from_slice(&frontier);
         states.push(RetainedBody {
             frontier: pin,
             body: body_with_text(&h.field, body, text)?,

@@ -317,12 +317,14 @@ pub(crate) fn entity_owns_revision_in_txn(
     Ok(reference(id, &raw) == revision || FRONTIER.contains(store, txn, &(*id, revision.0))?)
 }
 
-/// Every revision `id`'s row can be read at: its current row, its live and
-/// indexed frontiers, and each retained one.
-pub(super) fn row_revisions_in_txn(
+/// Every revision `id`'s row can be read at whose first byte is `first`: of
+/// its current row, its live and indexed frontiers, and each retained one.
+/// The retained ones are read from that byte's key range alone.
+pub(super) fn row_revisions_starting_with_in_txn(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
+    first: u8,
 ) -> Result<Vec<RevisionRef>> {
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(Vec::new());
@@ -331,12 +333,15 @@ pub(super) fn row_revisions_in_txn(
     if let Some(current) = state(store, txn, id)? {
         revisions.extend([current.live, current.indexed]);
     }
+    let mut prefix = id.as_bytes().to_vec();
+    prefix.push(first);
     revisions.extend(
         FRONTIER
-            .scan_keys(store, txn, id.as_bytes())?
+            .scan_keys(store, txn, &prefix)?
             .into_iter()
             .map(|(_, revision)| RevisionRef(revision)),
     );
+    revisions.retain(|revision| revision.0[0] == first);
     revisions.sort_unstable();
     revisions.dedup();
     Ok(revisions)

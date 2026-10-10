@@ -10,15 +10,23 @@
 //!
 //! A read pinned at a text revision serves the words it was read with, at
 //! whichever retained revision of the turn's row it named. Each source is
-//! found again among the states its own history retains: its row's retained
-//! revisions and its document's retained changes. A message the turn gained
-//! since, or one hidden then, reads as absent. A source that was erased,
-//! archived or purged since, or that this search does not reach, is not
-//! found, and the revision then resolves to nothing, as a pin whose revision
-//! is gone does: it never serves other words under the revision it showed.
+//! found again among the states its own history retains: a row-backed
+//! message's retained row revisions, and a document-backed one's retained
+//! document states, never its rows from before the move, which a purge of
+//! the document's history does not reach. A message the turn gained since,
+//! or one that showed no text at some state, may read as absent. A source
+//! that was erased, archived or purged since, or that this search does not
+//! reach, is not found, and the revision then resolves to nothing, as a pin
+//! whose revision is gone does: it never serves other words under the
+//! revision it showed.
+//!
+//! The revision's first two bytes hint at its turn and its third is its row
+//! revision's first, so a pin of another turn, or of a row this turn never
+//! had, is refused before any source is read.
 
 use super::storage::{
-    entity_owns_revision_in_txn, reference, retained_rows_in_txn, row_revisions_in_txn, state,
+    entity_owns_revision_in_txn, reference, retained_rows_in_txn,
+    row_revisions_starting_with_in_txn, state,
 };
 use super::{ReadMode, RevisionRef};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -29,8 +37,18 @@ use heed::RoTxn;
 /// Retained row revisions, and document changes, of one source message a
 /// search reads; a text revision that needs one past these is not found.
 const MAX_SOURCE_STATES: usize = 64;
-/// Sets of source states one search tries before it gives up.
-const MAX_SOURCE_SETS: usize = 4096;
+/// Revisions one search computes before it gives up: one for each set of
+/// source states read at each row revision it may have been read at.
+const MAX_SEARCH_DIGESTS: usize = 4096;
+/// Messages a turn may hold for a search past its current sources; a larger
+/// turn's text revision resolves only while its sources stand.
+const MAX_SEARCH_MEMBERS: usize = 64;
+
+#[cfg(test)]
+thread_local! {
+    /// Searches past a turn's current sources, which a check counts.
+    pub(crate) static HISTORY_SEARCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 /// The words a read of a TURN serves, under the revision that pins them.
 pub(crate) struct TurnText {
@@ -140,13 +158,20 @@ fn resolve_in_txn(
     turn: &EntityId,
     revision: RevisionRef,
 ) -> Result<Option<Served>> {
+    if revision.0[..2] != turn_hint(turn) {
+        return Ok(None);
+    }
+    let rows = row_revisions_starting_with_in_txn(&vault.store, txn, turn, revision.0[2])?;
+    if rows.is_empty() {
+        return Ok(None);
+    }
     let Some(members) = crate::tagging::turn_members_in_txn(vault, txn, turn)? else {
         return Ok(None);
     };
     let target = Target {
         turn,
         revision,
-        rows: row_revisions_in_txn(&vault.store, txn, turn)?,
+        rows,
     };
     let mut current = Vec::with_capacity(members.len());
     for (id, text) in members {
@@ -160,14 +185,14 @@ fn resolve_in_txn(
     if let Some(served) = target.served(&now) {
         return Ok(Some(served));
     }
+    if current.len() > MAX_SEARCH_MEMBERS {
+        return Ok(None);
+    }
+    #[cfg(test)]
+    HISTORY_SEARCHES.with(|count| count.set(count.get() + 1));
     let mut sources = Vec::with_capacity(current.len());
     for (id, state) in current {
-        let shown = state.is_some();
-        sources.push(Source {
-            id,
-            shown,
-            states: source_states_in_txn(vault, txn, &id, state)?,
-        });
+        sources.push(source_in_txn(vault, txn, id, state)?);
     }
     Ok(target.search(&sources))
 }
@@ -184,10 +209,10 @@ struct Target<'a> {
 }
 
 /// A member of the turn: the states it retains in which it shows text, and
-/// whether it shows text now.
+/// whether it may have shown none (now, or at a state it retains).
 struct Source {
     id: EntityId,
-    shown: bool,
+    may_be_absent: bool,
     states: Vec<SourceState>,
 }
 
@@ -211,9 +236,10 @@ impl Target<'_> {
         Some((row, messages))
     }
 
-    /// Each set of states `sources` can make, at most [`MAX_SOURCE_SETS`].
+    /// Each set of states `sources` can make, while [`MAX_SEARCH_DIGESTS`]
+    /// lasts.
     /// A member may stand at any state it retains, and as absent when it
-    /// shows no text now (hidden or emptied since). Members past the first
+    /// shows no text now or at a state it retains. Members past the first
     /// `present` are absent too: the turn gained them after.
     fn search(&self, sources: &[Source]) -> Option<Served> {
         let choices: Vec<Vec<Option<usize>>> = sources
@@ -221,18 +247,18 @@ impl Target<'_> {
             .map(|source| {
                 (0..source.states.len())
                     .map(Some)
-                    .chain((!source.shown).then_some(None))
+                    .chain(source.may_be_absent.then_some(None))
                     .collect()
             })
             .collect();
-        let mut budget = MAX_SOURCE_SETS;
+        let mut budget = MAX_SEARCH_DIGESTS;
         for present in (1..=sources.len()).rev() {
             if choices[..present].iter().any(Vec::is_empty) {
                 continue;
             }
             let mut picks = vec![0_usize; present];
             loop {
-                budget = budget.checked_sub(1)?;
+                budget = budget.checked_sub(self.rows.len())?;
                 let chosen: Vec<(EntityId, &SourceState)> = sources[..present]
                     .iter()
                     .zip(&choices)
@@ -310,48 +336,59 @@ fn current_state_in_txn(
     Ok(Some(SourceState { commitment, text }))
 }
 
-/// Every state `message` retains in which it shows text, `current` first:
-/// its row at each retained revision, and its document after each retained
-/// change.
-fn source_states_in_txn(
+/// The member `message` as a search may pick it: every state it retains in
+/// which it shows text, `current` first. A row-backed message's are its
+/// row at each retained revision; a document-backed one's are its
+/// document's retained states alone ([`MAX_SOURCE_STATES`] of each).
+fn source_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
-    message: &EntityId,
+    message: EntityId,
     current: Option<SourceState>,
-) -> Result<Vec<SourceState>> {
-    let mut states: Vec<SourceState> = current.into_iter().collect();
-    let mut push = |commitment: Vec<u8>, text: Option<String>| {
-        if let Some(text) = text
-            && !states.iter().any(|state| state.commitment == commitment)
-        {
-            states.push(SourceState { commitment, text });
-        }
+) -> Result<Source> {
+    let mut source = Source {
+        id: message,
+        may_be_absent: current.is_none(),
+        states: current.into_iter().collect(),
     };
-    for raw in retained_rows_in_txn(&vault.store, txn, message, MAX_SOURCE_STATES)? {
-        let text = raw
-            .get(ENTITY_METADATA_HEADER_LEN..)
-            .and_then(crate::tagging::shown_message_text);
-        push(row_commitment(message, &raw), text);
-    }
+    let mut push = |commitment: Vec<u8>, text: Option<String>| match text {
+        Some(text) => {
+            if !source
+                .states
+                .iter()
+                .any(|state| state.commitment == commitment)
+            {
+                source.states.push(SourceState { commitment, text });
+            }
+        }
+        None => source.may_be_absent = true,
+    };
     #[cfg(feature = "sync")]
-    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, message)?
+    if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &message)?
         && let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..)
         && let Some(history) = crate::entity_doc::record_body_history_in_txn(
             &vault.store,
             txn,
-            message,
+            &message,
             body,
             MAX_SOURCE_STATES,
         )?
     {
         for state in history {
             push(
-                document_commitment(message, &raw, &state.frontier),
+                document_commitment(&message, &raw, &state.frontier),
                 crate::tagging::shown_message_text(&state.body),
             );
         }
+        return Ok(source);
     }
-    Ok(states)
+    for raw in retained_rows_in_txn(&vault.store, txn, &message, MAX_SOURCE_STATES)? {
+        let text = raw
+            .get(ENTITY_METADATA_HEADER_LEN..)
+            .and_then(crate::tagging::shown_message_text);
+        push(row_commitment(&message, &raw), text);
+    }
+    Ok(source)
 }
 
 /// A message whose text is its row: the row as stored.
@@ -381,6 +418,8 @@ fn digest<'a>(sources: impl IntoIterator<Item = (&'a EntityId, &'a Vec<u8>)>) ->
     *digest.finalize().as_bytes()
 }
 
+/// The text revision of `turn` read at `row` with `sources`: the turn's
+/// hint, the row's first byte, then 13 bytes of their digest.
 fn text_revision(turn: &EntityId, row: RevisionRef, sources: &[u8; 32]) -> RevisionRef {
     let mut digest = blake3::Hasher::new();
     digest.update(b"oneiron:turn-text-revision:v1");
@@ -388,6 +427,17 @@ fn text_revision(turn: &EntityId, row: RevisionRef, sources: &[u8; 32]) -> Revis
     digest.update(&row.0);
     digest.update(sources);
     let mut bytes = [0; 16];
-    bytes.copy_from_slice(&digest.finalize().as_bytes()[..16]);
+    bytes[..2].copy_from_slice(&turn_hint(turn));
+    bytes[2] = row.0[0];
+    bytes[3..].copy_from_slice(&digest.finalize().as_bytes()[..13]);
     RevisionRef(bytes)
+}
+
+/// The first two bytes of each text revision of `turn`.
+fn turn_hint(turn: &EntityId) -> [u8; 2] {
+    let mut digest = blake3::Hasher::new();
+    digest.update(b"oneiron:turn-text-revision:turn");
+    digest.update(turn.as_bytes());
+    let hash = digest.finalize();
+    [hash.as_bytes()[0], hash.as_bytes()[1]]
 }
