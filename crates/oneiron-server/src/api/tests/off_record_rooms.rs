@@ -216,8 +216,7 @@ fn stored(dir: &tempfile::TempDir, words: &str) -> bool {
                 .any(|entry| walk(&entry.unwrap().path(), needle));
         }
         std::fs::read(path)
-            .map(|bytes| bytes.windows(needle.len()).any(|window| window == needle))
-            .unwrap_or(false)
+            .is_ok_and(|bytes| bytes.windows(needle.len()).any(|window| window == needle))
     }
     walk(dir.path(), words.as_bytes())
 }
