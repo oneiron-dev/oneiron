@@ -143,13 +143,12 @@ fn run(
     )
 }
 
-/// An extraction of `(predicate, value, topic, byte range)` claims about
-/// `subject`, each citing its range of `turn`.
-fn extraction(
-    subject: EntityId,
-    turn: EntityId,
-    claims: &[(&str, &str, Option<&str>, (usize, usize))],
-) -> crate::LlmResponse {
+/// One extracted claim: its predicate, value, topic and the byte range of
+/// the TURN it cites.
+type Extracted<'a> = (&'a str, &'a str, Option<&'a str>, (usize, usize));
+
+/// An extraction of `claims` about `subject`, each citing its range of `turn`.
+fn extraction(subject: EntityId, turn: EntityId, claims: &[Extracted<'_>]) -> crate::LlmResponse {
     let candidates: Vec<_> = claims
         .iter()
         .map(|(predicate, value, topic, (start, end))| {

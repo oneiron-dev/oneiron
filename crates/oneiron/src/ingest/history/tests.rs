@@ -867,12 +867,12 @@ fn owner_words_an_ambiguous_codex_copy_landed_first_land_again_from_their_own_ro
     let (_dir, vault, owner) = vault_and_owner();
     assert_eq!(import_all(&vault, &owner, source, &gap), (5, 0, 0));
     let copied = source_ledger_row(&vault, source, "msg_parent_u1");
-    assert_eq!(copied.hashes, [unknown.clone()]);
+    assert_eq!(copied.hashes, std::slice::from_ref(&unknown));
     // The root's own rollout knows they are the owner's: they land again,
     // in the root's own conversation, as the owner's revision.
     assert_eq!(import_all(&vault, &owner, source, &root), (0, 1, 1));
     let known = source_ledger_row(&vault, source, "msg_parent_u1");
-    assert_eq!(known.hashes, [unknown.clone(), owners.clone()]);
+    assert_eq!(known.hashes, [unknown, owners.clone()]);
     assert_ne!(known.message, copied.message);
     assert_ne!(known.turn, copied.turn);
     // Another import of the copy takes nothing back.
