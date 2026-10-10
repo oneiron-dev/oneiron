@@ -45,7 +45,7 @@ impl Vault {
                 "imported evidence is required",
             )));
         }
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let subject = &import.subject;
 
             if let Some(edge) =

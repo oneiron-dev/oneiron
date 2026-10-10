@@ -377,6 +377,7 @@ fn a_witness_that_rolls_back_leaves_no_marker() {
         .witness_with_route_and_txn_effect(
             &turn(None, vec![message(0, "rolled back with the turn")]),
             None,
+            crate::store::Callback::Audited,
             || {},
             |_| Err(crate::Error::InvalidConfig("fixture refusal".into()).into()),
         );

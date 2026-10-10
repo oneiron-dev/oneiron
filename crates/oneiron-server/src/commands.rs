@@ -17,8 +17,8 @@ use tracing_subscriber::EnvFilter;
 
 use crate::auth::{CoreScope, revoke_token_jti};
 use crate::cli::{
-    ProvenanceArgs, RevokeArgs, SkillsPackArgs, TokenBootstrapArgs, TokenPairArgs, TokenReadArgs,
-    TokenRevokeArgs, VaultArgs,
+    AgentTier, ProvenanceArgs, RevokeArgs, SkillsPackArgs, TokenAgentArgs, TokenBootstrapArgs,
+    TokenPairArgs, TokenReadArgs, TokenRevokeArgs, VaultArgs,
 };
 #[cfg(test)]
 use crate::config::ServeConfig;
@@ -36,6 +36,8 @@ mod host_init;
 pub use self::host_init::host_init;
 
 pub use self::api::api;
+mod mcp_bridge;
+pub use self::mcp_bridge::mcp;
 
 pub const NO_CJK_DICT_WARNING: &str = "NO CJK DICTIONARY FOUND: Japanese, Chinese, and Korean text will use portable n-gram tokenization. Install dictionaries under an XDG oneiron dict root or set --dict-search-paths.";
 /// Below this the auth secret is weak MAC key material; warn, do not refuse.
@@ -173,10 +175,11 @@ fn token_bootstrap_link(args: &TokenBootstrapArgs) -> anyhow::Result<String> {
     ))
 }
 
-/// What `token read` prints: the credential in the SDK's one-string form and
-/// in the CLI's slip-plus-seed form, and the slip id `token revoke` takes.
+/// What `token read` and `token agent` print: the credential in the SDK's
+/// one-string form and in the CLI's slip-plus-seed form, and the slip id
+/// `token revoke` takes.
 #[derive(serde::Serialize)]
-struct ReadCredential {
+struct PairedCredential {
     principal_ref: String,
     actor_class: String,
     expires_at: u64,
@@ -193,7 +196,6 @@ struct ReadCredential {
 /// `core:read`, and this process redeems it at once with a fresh connection
 /// key. The slip is logged like every paired slip and revoked by its id.
 pub fn token_read(args: TokenReadArgs) -> anyhow::Result<()> {
-    use ed25519_dalek::{Signer, SigningKey};
     anyhow::ensure!(
         !args.serve.managed_by_hypnos,
         "managed vaults pair through their supervisor; local minting is self-host only"
@@ -225,51 +227,296 @@ pub fn token_read(args: TokenReadArgs) -> anyhow::Result<()> {
             })?;
     let principal = principal.to_hex();
     vault.ensure_host_root_slip(&issuer)?;
-    let mut scope = oneiron::federation::Scope::top();
-    scope.verbs = oneiron::federation::ScopeAxis::Some(
-        [CoreScope::Read.as_str().to_owned()].into_iter().collect(),
-    );
-    let link = vault.issue_pairing_link_for_principal(
+    let credential = mint_paired_credential(
+        &vault,
         &issuer,
-        scope,
+        &principal,
+        &args.actor_class,
+        [CoreScope::Read.as_str().to_owned()].into_iter().collect(),
         args.lifetime_secs,
+    )?;
+    println!("{}", serde_json::to_string_pretty(&credential)?);
+    Ok(())
+}
+
+/// A credential for one named agent, minted on the stopped vault.
+///
+/// The agent acts as a PERSON principal derived from its name (so a second
+/// mint for one name is the same agent with a new slip), of class `agent`,
+/// never the owner. Its tier is ARCH-0028's registration-time tier (see
+/// `agent_tier_authority`), and the latest mint holds: it revokes the
+/// agent's earlier slips and sets its ceiling. The slip comes through the
+/// host-rooted pairing doors `token read` uses and carries only its tier's
+/// verbs: scoped, paired and bound to a fresh connection key, never
+/// owner-grade. `token revoke` takes its slip id.
+pub fn token_agent(args: TokenAgentArgs) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !args.serve.managed_by_hypnos,
+        "managed vaults pair through their supervisor; local minting is self-host only"
+    );
+    anyhow::ensure!(
+        args.serve.auth_secret.is_none(),
+        "set ONEIRON_AUTH_SECRET or a protected config file; never pass the issuer key in argv"
+    );
+    anyhow::ensure!(
+        !args.name.is_empty()
+            && args.name.len() <= 64
+            && args
+                .name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')),
+        "an agent name is 1 to 64 letters, digits, `-`, `_` or `.`"
+    );
+    anyhow::ensure!(args.lifetime_secs > 0, "--lifetime-secs must be at least 1");
+    // The file exists before the slip does, so a path that cannot be written
+    // fails here rather than after a slip nobody holds is logged.
+    let mut out = match &args.out {
+        Some(path) => Some((path, create_owner_only(path)?)),
+        None => None,
+    };
+    let minted = mint_agent_credential(&args, |credential| match out.as_mut() {
+        Some((path, file)) => file
+            .write_all(format!("{}\n", credential.credential).as_bytes())
+            .and_then(|()| file.sync_all())
+            .map_err(|error| anyhow::anyhow!("write {}: {error}", path.display())),
+        None => {
+            let printed = serde_json::to_string_pretty(credential)?;
+            writeln!(io::stdout().lock(), "{printed}")
+                .map_err(|error| anyhow::anyhow!("print the credential: {error}"))
+        }
+    });
+    match (minted, out) {
+        (Ok(minted), Some((path, _))) => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "principal_ref": minted.credential.principal_ref,
+                    "actor_class": minted.credential.actor_class,
+                    "ceiling": minted.ceiling.as_str(),
+                    "expires_at": minted.credential.expires_at,
+                    "slip_id": minted.credential.slip_id,
+                    "credential_file": path,
+                    "revoked_slip_ids": minted.replaced,
+                }))?
+            );
+            Ok(())
+        }
+        // stdout already holds the credential, as one JSON document.
+        (Ok(minted), None) => {
+            if !minted.replaced.is_empty() {
+                eprintln!(
+                    "revoked {}'s earlier slips: {}",
+                    args.name,
+                    minted.replaced.join(", ")
+                );
+            }
+            Ok(())
+        }
+        (Err(error), out) => {
+            if let Some((path, _)) = out {
+                let _ = std::fs::remove_file(path);
+            }
+            Err(error)
+        }
+    }
+}
+
+/// ARCH-0028's tiers as stored authority: the verbs the slip carries and the
+/// agent's ceiling. Propose-only writes with `core:propose`, which only doors
+/// that hold a write for review honour: `/v1/core/propose`, and the MCP door,
+/// where every write is bound to the agent and lands at its `proposed`
+/// ceiling. `core:write`, which every unbound write door requires, is
+/// full-access's alone. Nothing else — `core:auth`, an organization power, a
+/// companion scope — is ever an agent's.
+fn agent_tier_authority(
+    tier: AgentTier,
+) -> (
+    std::collections::BTreeSet<String>,
+    oneiron::agent_def::AgentCeiling,
+) {
+    use oneiron::agent_def::AgentCeiling;
+    let (verbs, ceiling): (&[CoreScope], _) = match tier {
+        AgentTier::ReadOnly => (&[CoreScope::Read], AgentCeiling::Proposed),
+        AgentTier::ProposeOnly => (
+            &[CoreScope::Read, CoreScope::Propose],
+            AgentCeiling::Proposed,
+        ),
+        AgentTier::FullAccess => (
+            &[CoreScope::Read, CoreScope::Propose, CoreScope::Write],
+            AgentCeiling::Auto,
+        ),
+    };
+    (
+        verbs.iter().map(|verb| verb.as_str().to_owned()).collect(),
+        ceiling,
+    )
+}
+
+/// `token agent`'s vault half: principal, slip and grant, on the stopped vault.
+/// `deliver` hands the credential to the owner between the slip and the grant.
+fn mint_agent_credential(
+    args: &TokenAgentArgs,
+    deliver: impl FnOnce(&PairedCredential) -> anyhow::Result<()>,
+) -> anyhow::Result<MintedAgent> {
+    let config = resolve_serve_config(&args.serve)?;
+    ensure_existing_vault_for_revoke(&config.vault_path)?;
+    let secret = config
+        .sync_server_config()
+        .auth_secret
+        .ok_or_else(|| anyhow::anyhow!("configured host issuer secret is required"))?;
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+    let vault = oneiron::Vault::open_owned(&config.vault_path, config.vault_config()).map_err(
+        |error| match error {
+            oneiron::Error::ConcurrentWrite(oneiron::VAULT_WRITER_LEASE_HELD) => anyhow::anyhow!(
+                "vault {} is open in a running `oneiron serve`; stop it, mint, and start it again",
+                config.vault_path.display()
+            ),
+            error => anyhow::anyhow!("open vault {}: {error}", config.vault_path.display()),
+        },
+    )?;
+    let owner = crate::owner::local_owner(&vault)?;
+    let principal = vault
+        .ensure_agent_principal(&args.name)
+        .map_err(|error| anyhow::anyhow!("agent {}: {}", args.name, error.message))?;
+    let principal = principal.to_hex();
+    // The same store-truth class check `token read` makes, before rooting.
+    oneiron::memory::parse_actor_key(&vault, &format!("agent:{principal}")).map_err(|error| {
+        anyhow::anyhow!(
+            "agent {} cannot hold a credential: {}",
+            args.name,
+            error.message
+        )
+    })?;
+    vault.ensure_host_root_slip(&issuer)?;
+    let (verbs, ceiling) = agent_tier_authority(args.tier);
+    // The slip, its delivery, the revocation of the agent's earlier slips,
+    // then the grant: the latest mint is the agent's one credential, so no
+    // earlier slip keeps a verb this tier lacks. A mint that fails anywhere
+    // leaves the standing ceiling as it was, and one that fails after the
+    // slip takes the new slip back, so a failure leaves the agent with less,
+    // never more.
+    let credential = mint_paired_credential(
+        &vault,
+        &issuer,
+        &principal,
+        "agent",
+        verbs,
+        args.lifetime_secs,
+    )?;
+    let slip_id = oneiron::authority::CapabilitySlip::from_token(&credential.token)?
+        .claims
+        .slip_id;
+    let granted = deliver(&credential)
+        .and_then(|()| {
+            vault
+                .revoke_held_capability_slips(&issuer, &principal, slip_id)
+                .map_err(anyhow::Error::from)
+        })
+        .and_then(|replaced| {
+            vault
+                .grant_agent_principal(&owner, &principal, ceiling)
+                .map_err(anyhow::Error::from)?;
+            Ok(replaced)
+        });
+    match granted {
+        Ok(replaced) => Ok(MintedAgent {
+            credential,
+            ceiling,
+            replaced: replaced.iter().map(|id| hex(id)).collect(),
+        }),
+        Err(error) => {
+            vault
+                .revoke_capability_slip_once(&issuer, slip_id)
+                .map_err(|revoke| {
+                    anyhow::anyhow!(
+                        "agent {}: {error}; then revoking its new slip {}: {revoke}",
+                        args.name,
+                        credential.slip_id
+                    )
+                })?;
+            Err(error)
+        }
+    }
+}
+
+/// What one `token agent` mint produced: the credential, the ceiling it set,
+/// and the ids of the agent's earlier slips it revoked.
+struct MintedAgent {
+    credential: PairedCredential,
+    ceiling: oneiron::agent_def::AgentCeiling,
+    replaced: Vec<String>,
+}
+
+/// Issues a one-use link for an existing `principal` carrying `verbs`, and
+/// redeems it at once with a fresh connection key: the host-rooted pairing
+/// doors `/v1/core/pairing/redeem` uses, on the stopped vault. The slip is
+/// logged like every paired slip and revoked by its id.
+fn mint_paired_credential(
+    vault: &oneiron::Vault,
+    issuer: &oneiron::authority::HostSlipIssuer,
+    principal: &str,
+    actor_class: &str,
+    verbs: std::collections::BTreeSet<String>,
+    lifetime_secs: u64,
+) -> anyhow::Result<PairedCredential> {
+    use ed25519_dalek::{Signer, SigningKey};
+    let mut scope = oneiron::federation::Scope::top();
+    scope.verbs = oneiron::federation::ScopeAxis::Some(verbs);
+    let link = vault.issue_pairing_link_for_principal(
+        issuer,
+        scope,
+        lifetime_secs,
         oneiron::authority::PairingPrincipal {
-            holder_ref: Some(principal.clone()),
-            actor_class: Some(args.actor_class.clone()),
+            holder_ref: Some(principal.to_owned()),
+            actor_class: Some(actor_class.to_owned()),
             org_ref: None,
         },
     )?;
     let key = SigningKey::generate(&mut rand_core::OsRng);
     let binding_key = key.verifying_key().to_bytes();
     let transcript =
-        oneiron::authority::pairing_binding_transcript(&link.code, &binding_key, &principal)?;
+        oneiron::authority::pairing_binding_transcript(&link.code, &binding_key, principal)?;
     let slip = vault.redeem_pairing_link(
-        &issuer,
+        issuer,
         &link.code,
-        &principal,
+        principal,
         binding_key,
         &key.sign(&transcript).to_bytes(),
     )?;
-    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
     let token = slip.to_token()?;
     let seed = hex(key.as_bytes());
     let credential = format!(
         "v2.cred.{}.{seed}",
         token.strip_prefix("v2.slip.").unwrap_or(&token)
     );
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&ReadCredential {
-            principal_ref: principal,
-            actor_class: args.actor_class,
-            expires_at: slip.claims.expires_at,
-            slip_id: hex(&slip.claims.slip_id),
-            credential,
-            token,
-            binding_key: seed,
-        })?
-    );
-    Ok(())
+    Ok(PairedCredential {
+        principal_ref: principal.to_owned(),
+        actor_class: actor_class.to_owned(),
+        expires_at: slip.claims.expires_at,
+        slip_id: hex(&slip.claims.slip_id),
+        credential,
+        token,
+        binding_key: seed,
+    })
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// A new file only its owner can read. It must not exist yet: a credential
+/// never lands on top of a file someone else may already hold open.
+fn create_owner_only(path: &Path) -> anyhow::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options
+        .open(path)
+        .map_err(|error| anyhow::anyhow!("create {}: {error}", path.display()))
 }
 
 /// Creates a pairing link on the running server and prints it.

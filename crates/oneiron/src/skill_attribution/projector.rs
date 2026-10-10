@@ -26,7 +26,7 @@ use super::unclear::{UnclearAttribution, delete_unclear_in_txn, put_unclear_in_t
 /// posture, and the reason a re-run can be replayed against a fixed judge).
 pub fn record_attribution_evidence(vault: &Vault, evidence: &OutcomeEvidence) -> Result<u64> {
     validate_evidence(vault, evidence)?;
-    vault.with_write_txn(|txn| record_evidence_in_txn(vault, txn, evidence))
+    vault.with_write_txn_grouped(|txn| record_evidence_in_txn(vault, txn, evidence))
 }
 
 /// The sweep validates first, then commits the evidence and receipt marker together.

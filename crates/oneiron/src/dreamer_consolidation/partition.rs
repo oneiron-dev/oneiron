@@ -359,7 +359,7 @@ pub fn enqueue_partition_attempts(
     now: u64,
 ) -> Result<Vec<EnqueueDreamerAttemptOutcome>> {
     let turn_ids: Vec<_> = dirty_turns.iter().map(|turn| turn.turn_id).collect();
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         enqueue_partition_attempts_in_txn(
             vault,
             wtxn,

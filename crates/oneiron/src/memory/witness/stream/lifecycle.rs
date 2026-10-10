@@ -2,6 +2,7 @@
 use super::*;
 use crate::error::Error;
 use crate::memory::MemoryResult;
+use crate::store::Callback;
 
 /// A pump attempts every due handle even if another actor has lost admission.
 #[derive(Debug, Default)]
@@ -231,8 +232,15 @@ fn commit_terminal(
         ),
     };
     let memory = vault.memory(seed.actor, seed.class()?);
+    // A host's gate is host code inside the transaction, so a gated write
+    // takes the hosts' door: a group of its own.
+    let callback = if gate.is_some() {
+        Callback::Opaque
+    } else {
+        Callback::Audited
+    };
     let written: MessageStreamResult<()> = if seed.continuation {
-        vault.try_with_write_txn(|txn| -> MessageStreamResult<()> {
+        vault.write_txn_door(callback, |txn| -> MessageStreamResult<()> {
             admit_terminal(gate, txn)?;
             let base = admission::committed_text(vault, txn, seed)?.ok_or(Error::EntityNotFound)?;
             let text = format!("{base}{}", state.pending);
@@ -274,6 +282,7 @@ fn commit_terminal(
             .witness_with_route_and_txn_effect(
                 &seed.turn(text),
                 None,
+                callback,
                 || {},
                 |txn| -> MemoryResult<()> {
                     admit_terminal(gate, txn)?;

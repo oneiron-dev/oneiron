@@ -179,7 +179,7 @@ impl Vault {
             return Err(Error::ConcurrentWrite("stale origin authority lease"));
         }
         let id = origin_publication_id(&request)?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             // A publication decided in an earlier epoch cannot be reauthorized.
             if let Some(epoch) = AUTHORITY_PERMIT.get(&self.store, txn, &id)? {
                 if epoch != lease.epoch {

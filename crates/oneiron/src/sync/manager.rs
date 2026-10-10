@@ -615,7 +615,7 @@ impl WindowManager {
 
     /// Deletes the window-scoped `rm:w:{key}` marker.
     fn clear_sync_state_marker(&self, key: &WindowKey) -> Result<()> {
-        self.vault.with_write_txn(|wtxn| {
+        self.vault.with_write_txn_grouped(|wtxn| {
             REMAT_WINDOW_MARKER.delete(&self.vault.store, wtxn, &key.as_str().to_owned())?;
             Ok(())
         })

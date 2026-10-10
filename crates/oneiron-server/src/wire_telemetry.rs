@@ -146,7 +146,7 @@ impl WireTelemetry {
                 evidence: active.window.clone().expect("window"),
             };
             let key = format!("{QUESTION}{start:020}:{end:020}");
-            self.vault.with_write_txn(|txn| {
+            self.vault.with_write_txn_grouped(|txn| {
                 if self.vault.sync_state_get_in_write_txn(txn, &key)?.is_none() {
                     self.vault
                         .sync_state_put_in_write_txn(txn, &key, &encode(&question)?)?;

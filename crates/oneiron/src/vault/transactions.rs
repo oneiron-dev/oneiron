@@ -10,7 +10,9 @@ use crate::hnsw;
 use crate::maintain::MaintenanceBuilder;
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
-use crate::store::{EMBEDDING_TRANSFORM_KEY, MODEL_ID_KEY, Rows, validate_embedding_model_id};
+use crate::store::{
+    Callback, EMBEDDING_TRANSFORM_KEY, MODEL_ID_KEY, Rows, validate_embedding_model_id,
+};
 
 /// Cap for `sync_state_keys_with_prefix` to prevent unbounded allocation when
 /// a pathological prefix scans a very large sync_state database.
@@ -187,7 +189,7 @@ impl Vault {
     /// adopted where none is pinned, refused (`EmbeddingTransformChanged`)
     /// where another is.
     pub fn adopt_embedding_transform(&self, transform: &str) -> Result<()> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             crate::store::admit_embedding_transform_in_txn(&self.store, wtxn, transform)
         })
     }
@@ -204,7 +206,7 @@ impl Vault {
         transform: Option<&str>,
         refill: bool,
     ) -> Result<()> {
-        let held = self.with_write_txn(|wtxn| {
+        let held = self.with_write_txn_grouped(|wtxn| {
             self.swap_embedding_space_in_txn(wtxn, new_model, transform, refill)
         })?;
         self.config.embedding_model = Some(new_model.to_owned());
@@ -299,14 +301,12 @@ impl Vault {
     /// Executes a closure within a single LMDB write transaction and allows
     /// callers to return their own error type.
     ///
-    /// The transaction commits on `Ok` return and rolls back on `Err`. It is
-    /// this write's share of the vault's group commit (OF-536): concurrent
-    /// writes commit together with one fsync, a failing one rolls back only
-    /// its own rows, and `Ok` returns once the shared commit is durable. The
-    /// closure runs on the calling thread. Its result is held until the whole
-    /// group commits, so it must not carry a lock or permit that another
-    /// write's closure takes (an installed session-overlay segment closes its
-    /// group instead).
+    /// The transaction commits on `Ok` return and rolls back on `Err`, and
+    /// `Ok` returns once the commit is durable. The closure runs on the
+    /// calling thread. In the vault's group commit (OF-536) this write is a
+    /// group of its own: it joins no group already open, so it never waits on
+    /// what an earlier write's caller holds, and its group commits right after
+    /// it, so no later write waits on a lock or permit its result carries.
     /// Explicit Dreamer approvals applied through [`Self::batch_in`] run VAD
     /// consolidation after commit. A postcommit error retains Approved; retry
     /// [`Self::consolidate_claim_vad_now`] to finish that work.
@@ -315,11 +315,54 @@ impl Vault {
         F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
         E: From<Error>,
     {
+        self.write_txn_door(Callback::Opaque, f)
+    }
+
+    /// [`Self::with_write_txn`] for the engine's own write paths, audited to
+    /// hold nothing across the group commit.
+    #[doc(hidden)]
+    pub fn with_write_txn_grouped<F, T>(&self, f: F) -> Result<T>
+    where
+        F: FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
+    {
+        self.try_with_write_txn_grouped(f)
+    }
+
+    /// [`Self::try_with_write_txn`] for the engine's own write paths, audited
+    /// to hold nothing across the group commit: the group goes on after this
+    /// write, so more writes share its fsync.
+    ///
+    /// The caller promises that neither the closure's result (`Ok` or `Err`)
+    /// nor anything the calling thread holds while it waits keeps a lock,
+    /// permit or guard that another write's closure takes. Those stay alive
+    /// until the whole group commits, and the group cannot commit while a
+    /// later member waits on them. A write that breaks the promise deadlocks
+    /// the vault's writer. Hosts use [`Self::try_with_write_txn`].
+    #[doc(hidden)]
+    pub fn try_with_write_txn_grouped<F, T, E>(&self, f: F) -> std::result::Result<T, E>
+    where
+        F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
+        E: From<Error>,
+    {
+        self.write_txn_door(Callback::Audited, f)
+    }
+
+    /// The write door for a closure of either kind (`try_with_write_txn` and
+    /// `try_with_write_txn_grouped` name it).
+    pub(crate) fn write_txn_door<F, T, E>(
+        &self,
+        callback: Callback,
+        f: F,
+    ) -> std::result::Result<T, E>
+    where
+        F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
+        E: From<Error>,
+    {
         // One logical write in the single writer's group commit: the closure
         // runs in a transaction of its own, and `Ok` comes back only once the
         // shared commit is durable.
         let (result, approved_vad_ids, proactivity_changed, task_ids, retirement_staged) =
-            self.store.group_write(None, |wtxn| {
+            self.store.group_write_as(callback, None, |wtxn| {
                 let retirements_before = match self.store.gate_retirements_staged_in_txn(wtxn) {
                     Ok(staged) => staged,
                     Err(err) => return Rows::Discard(Err(E::from(err))),
@@ -417,7 +460,7 @@ impl Vault {
     #[cfg(feature = "sync")]
     pub fn sync_state_put(&self, key: &str, value: &[u8]) -> Result<()> {
         check_generic_sync_state_key(key)?;
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             crate::side_table::host_sync_state_put(&self.store, wtxn, key, value)
         })
     }
@@ -441,7 +484,7 @@ impl Vault {
     #[cfg(feature = "sync")]
     pub fn sync_state_delete(&self, key: &str) -> Result<bool> {
         check_generic_sync_state_key(key)?;
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             crate::side_table::host_sync_state_delete(&self.store, wtxn, key)
         })
     }

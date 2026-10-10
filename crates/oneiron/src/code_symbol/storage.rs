@@ -70,7 +70,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             self.put_code_symbol_graph_in_txn(wtxn, code_artifact_id, graph, occurred, learned_at)
         })
     }
