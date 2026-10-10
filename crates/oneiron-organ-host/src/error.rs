@@ -37,8 +37,14 @@ pub enum HostError {
         verb: String,
         schema: u32,
     },
+    /// The organ refused the handshake or broke its protocol: a permanent
+    /// incompatibility until reinstall.
     #[error("organ handshake refused: {0}")]
     Handshake(String),
+    /// The organ died or stalled before its `hello_ack`: counted as a crash,
+    /// so it backs off and may start next time.
+    #[error("organ {organ} failed to start: {reason}")]
+    StartFailed { organ: String, reason: String },
     #[error("organ {0} crashed")]
     Crashed(String),
     #[error("organ call missed its deadline")]

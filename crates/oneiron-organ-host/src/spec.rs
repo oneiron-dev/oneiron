@@ -39,6 +39,9 @@ pub struct OrganSpec {
     pub call_memory_bytes: u64,
     pub max_call_frame: u32,
     pub max_reply_frame: u32,
+    /// The most bytes one reply's region outputs may hold together. The host
+    /// checks the sealed sizes before it maps or hashes any of them.
+    pub max_output_bytes: u64,
 }
 
 impl OrganSpec {
@@ -58,6 +61,7 @@ impl OrganSpec {
             call_memory_bytes: 128 * 1024 * 1024,
             max_call_frame: DEFAULT_FRAME_LIMIT,
             max_reply_frame: DEFAULT_FRAME_LIMIT,
+            max_output_bytes: 512 * 1024 * 1024,
         }
     }
 }
