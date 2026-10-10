@@ -583,8 +583,9 @@ fn registering_then_rotating_copies_no_row_that_holds_the_value_unwiped() {
 /// keys were refused as repeats, a dotted key could make a key a table and
 /// then a value, and an empty array element was dropped. A manifest TOML
 /// refuses, or reads apart from this parser, is refused too: a multi-line
-/// string reads, in TOML, as text what the line parser read as a binding.
-/// Valid TOML extensions still register.
+/// string reads, in TOML, as text what the line parser read as a binding, and
+/// an escape takes hex digits only. Valid TOML extensions still register, a
+/// multi-line string closed on its own line among them.
 #[test]
 fn a_manifest_that_says_one_thing_twice_or_unlike_toml_is_refused() {
     let dir = tempfile::tempdir().expect("vault dir");
@@ -649,6 +650,13 @@ declared_paths = [".env.deploy"]
             "[[secrets.bindings]]\neffector = \"deploy\"\ntier_ceiling = 02\nscopes = [\"read\"]\n",
         ),
         (
+            // TOML reads `\u` only before four hex digits; `+079` is not
+            // four, though Rust's radix parse reads it as `y`.
+            "an escape whose digits carry a sign",
+            "signed-escape",
+            "[[secrets.bindings]]\neffector = \"deplo\\u+079\"\ntier_ceiling = 2\nscopes = [\"read\"]\n",
+        ),
+        (
             // TOML reads every line up to `"""` as the note's text, so this
             // entry has one binding, at T0.
             "a binding inside a multi-line string",
@@ -702,10 +710,11 @@ declared_paths = [".env.deploy"]
 
     // Distinct keys that only look alike are distinct: a quoted key with a dot
     // or an `=` in it is one key, apart from the dotted key it resembles. An
-    // extension's one-line value of any type, a comment after it, a trailing
-    // comma and a `+` sign are TOML too.
+    // extension's one-line value of any type, a multi-line string that closes
+    // on its line, a comment after it, a trailing comma and a `+` sign are
+    // TOML too.
     let extended = format!(
-        "{entry}\"extension.flag\" = 0\nextension.flag = 1\n\"vendor=left\" = 0\n\"vendor=right\" = 1\next_bool = true\next_inline = {{ a = 1 }}\next_array = [1, [2]]\next_text = \"a # b\" # a comment\n\n[[secrets.bindings]]\neffector = \"deploy\"\ntier_ceiling = +1\nscopes = [\"read\",]\n"
+        "{entry}\"extension.flag\" = 0\nextension.flag = 1\n\"vendor=left\" = 0\n\"vendor=right\" = 1\next_bool = true\next_inline = {{ a = 1 }}\next_array = [1, [2]]\next_text = \"a # b\" # a comment\next_long = \"\"\"a \"\" b\"\"\"\next_literal = '''it's'''\n\n[[secrets.bindings]]\neffector = \"deploy\"\ntier_ceiling = +1\nscopes = [\"read\",]\n"
     );
     publish_manifest(&vault, "extended", &extended);
     let registered = vault

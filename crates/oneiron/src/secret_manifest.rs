@@ -284,45 +284,66 @@ fn is_control(c: char) -> bool {
 /// An extension key's value is not read, but it must end on its line, as
 /// every value this subset reads does. A multi-line string or array, or an
 /// unterminated one, would make TOML read the lines after it as its text,
-/// where this parser would read them as keys and tables.
+/// where this parser would read them as keys and tables. A multi-line string
+/// that closes on its opening line ends there.
 fn extension_value(value: &str) -> Result<()> {
-    let mut quote = None;
-    let mut escaped = false;
+    let bytes = value.as_bytes();
     let mut depth = 0_usize;
-    let mut end = value.len();
-    for (at, c) in value.char_indices() {
-        match quote {
-            Some('"') if escaped => escaped = false,
-            Some('"') if c == '\\' => escaped = true,
-            Some(open) if c == open => quote = None,
-            Some(_) => {}
-            None if c == '#' => {
+    let mut at = 0;
+    let mut end = bytes.len();
+    while let Some(&c) = bytes.get(at) {
+        match c {
+            b'#' => {
                 end = at;
                 break;
             }
-            None if c == '"' || c == '\'' => {
-                if value.get(at..at + 3) == Some(if c == '"' { "\"\"\"" } else { "'''" }) {
-                    return Err(invalid_manifest(
-                        "a manifest value opens a multi-line string",
-                    ));
-                }
-                quote = Some(c);
+            b'"' | b'\'' => {
+                at = string_end(bytes, at, c).ok_or_else(|| {
+                    invalid_manifest("a manifest value does not end on its line")
+                })?;
+                continue;
             }
-            None if c == '[' || c == '{' => depth += 1,
-            None if c == ']' || c == '}' => {
+            b'[' | b'{' => depth += 1,
+            b']' | b'}' => {
                 depth = depth.checked_sub(1).ok_or_else(|| {
                     invalid_manifest("a manifest value closes what it never opened")
                 })?;
             }
-            None => {}
+            _ => {}
         }
+        at += 1;
     }
-    if toml_trim(&value[..end]).is_empty() || quote.is_some() || depth != 0 {
+    if toml_trim(&value[..end]).is_empty() || depth != 0 {
         return Err(invalid_manifest(
             "a manifest value does not end on its line",
         ));
     }
     Ok(())
+}
+
+/// The offset just past the string that `quote` opens at `start`, if it
+/// closes on the line. A basic string skips what a backslash escapes. A
+/// multi-line one (`"""`, `'''`) holds one or two of its quotes, inside or
+/// just before its closing three.
+fn string_end(bytes: &[u8], start: usize, quote: u8) -> Option<usize> {
+    let multi_line = bytes.get(start..)?.starts_with(&[quote; 3]);
+    let mut at = start + if multi_line { 3 } else { 1 };
+    while let Some(&c) = bytes.get(at) {
+        if c == b'\\' && quote == b'"' {
+            at += 2;
+        } else if c != quote {
+            at += 1;
+        } else if !multi_line {
+            return Some(at + 1);
+        } else {
+            let run = bytes[at..].iter().take_while(|&&b| b == quote).count();
+            if run >= 3 {
+                return (run <= 5).then_some(at + run);
+            }
+            at += run;
+        }
+    }
+    None
 }
 
 fn invalid_manifest(msg: &'static str) -> Error {
@@ -412,11 +433,12 @@ fn parse_string(value: &str) -> Result<String> {
 }
 
 /// The character named by the next `digits` hex digits of an escape.
+/// `from_str_radix` alone would take a sign, reading `\u+061` as `a`.
 fn hex_char(chars: &mut std::str::Chars<'_>, digits: usize) -> Result<char> {
     let code: String = chars.take(digits).collect();
-    u32::from_str_radix(&code, 16)
-        .ok()
-        .filter(|_| code.len() == digits)
+    Some(&code)
+        .filter(|code| code.len() == digits && code.bytes().all(|b| b.is_ascii_hexdigit()))
+        .and_then(|code| u32::from_str_radix(code, 16).ok())
         .and_then(char::from_u32)
         .ok_or_else(|| invalid_manifest("a string escape names no character"))
 }
