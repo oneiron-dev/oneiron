@@ -93,14 +93,17 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         if ctx.vault.composed_scope_summary_landed(attempt_id)? {
             return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
         }
-        let plan = ctx.vault.plan_scope_summary(&attempt.status.payload.input)?;
+        let plan = ctx
+            .vault
+            .plan_scope_summary(&attempt.status.payload.input)?;
         let evidence = scope_evidence(ctx.vault, &plan.covers)?;
         if evidence.is_empty() {
             return Err(invalid_consolidation("summary scope has no text"));
         }
-        let locality = self.inference.selected_locality().ok_or_else(|| {
-            Error::InvalidConfig("summary host binding needs locality".into())
-        })?;
+        let locality = self
+            .inference
+            .selected_locality()
+            .ok_or_else(|| Error::InvalidConfig("summary host binding needs locality".into()))?;
         let request = LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
@@ -205,9 +208,9 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             return Ok(charges.park("the model wrote an empty summary"));
         }
         // The body must summarize the text as it stands: an edit while the
-        // model wrote sends the declaration round again.
+        // model wrote sends the declaration round again, soon.
         if scope_evidence(ctx.vault, &plan.covers)? != evidence {
-            return Ok(charges.checkpoint());
+            return Ok(compose_again(&charges, ctx.now_ms));
         }
         match ctx
             .vault
@@ -216,7 +219,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             Ok(_) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
             }),
-            Err(Error::ConcurrentWrite(_)) => Ok(charges.checkpoint()),
+            Err(Error::ConcurrentWrite(_)) => Ok(compose_again(&charges, ctx.now_ms)),
             // A refusal at the landing door (the requester's gate, a landing
             // turn gone) is this declaration's end; the paid call still settles.
             Err(error) => Ok(charges.park(&format!("summary landing refused: {error}"))),
@@ -224,10 +227,41 @@ impl<E> ScopeSummaryExecutor<'_, E> {
     }
 }
 
+/// How long a declaration whose scope moved waits before it composes again.
+const SCOPE_DRIFT_RETRY_SECS: u64 = 60;
+
+/// A scope that moved under the model is ordinary progress, not a stop: the
+/// attempt keeps its spend and composes again over the scope as it is then.
+fn compose_again(charges: &StepChargeTally, now_ms: u64) -> DreamerAttemptExecution {
+    DreamerAttemptExecution::Deferred {
+        completed_units: charges.units,
+        retry_at: now_ms.div_ceil(1_000).saturating_add(SCOPE_DRIFT_RETRY_SECS),
+    }
+}
+
+/// A summary's own reply record carries a `summary` pointer. Its text is
+/// generated prose, and the records it summarized are still in the scope.
+fn is_summary_reply(vault: &crate::Vault, record: &crate::EntityId) -> Result<bool> {
+    let Some(raw) = vault.get_raw(record)? else {
+        return Ok(false);
+    };
+    let mut body = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN.min(raw.len())..];
+    Ok(match rmpv::decode::read_value(&mut body) {
+        Ok(rmpv::Value::Map(entries)) => entries
+            .iter()
+            .any(|(key, _)| key.as_str() == Some("summary")),
+        _ => false,
+    })
+}
+
 /// The covered records' text as the model reads it, one line per record.
+/// An earlier summary's reply is left out, so a summary never feeds on one.
 fn scope_evidence(vault: &crate::Vault, covers: &[crate::EntityId]) -> Result<String> {
     let mut evidence = String::new();
     for record in covers {
+        if is_summary_reply(vault, record)? {
+            continue;
+        }
         if let Some(text) = read_turn_text(vault, record)?.into_text() {
             evidence.push_str(&format!("[{}] {text}\n", record.to_hex()));
         }

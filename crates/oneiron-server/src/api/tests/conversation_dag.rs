@@ -106,7 +106,12 @@ fn assert_dreamer_body(server: &SyncServer, summary: &EntityId, text: &str) {
     assert_eq!(body.text, text);
     assert_eq!(
         body.actor,
-        server.vault.dreamer_authority().unwrap().entity_ref().to_hex()
+        server
+            .vault
+            .dreamer_authority()
+            .unwrap()
+            .entity_ref()
+            .to_hex()
     );
 }
 
@@ -989,4 +994,58 @@ async fn room_with_only_deleted_childof_turns_lists_after_dag_migration() {
         rows.iter().find(|row| row["id"] == healthy["id"]).unwrap()["lastMessageSnippet"],
         "healthy retained text"
     );
+}
+
+/// ARCH-0006a #dag-summaries: a summary never feeds on summary prose. The first
+/// canonical summary leaves its reply on the trunk; the second one reads the
+/// records, not that reply (review repro).
+#[tokio::test]
+async fn a_second_canonical_summary_never_reads_the_first_summarys_reply() {
+    let reply = Reply::Text {
+        text: "summary prose one".to_owned(),
+        model: "test-model".to_owned(),
+    };
+    let fake = FakeLlm::start(vec![], Some(reply)).await;
+    let (_dir, server, actor, host) = setup_with_dreamer(&fake).await;
+    let conv = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+    let path = format!("/v1/core/conversations/{}", conv["id"].as_str().unwrap());
+    let root = post(
+        &server,
+        &format!("{path}/records"),
+        json!({"advance": true, "body": {"txt": "the original record"}, "actor": actor}),
+    )
+    .await;
+    let summaries = || {
+        server
+            .vault
+            .entities_by_type(oneiron::registry::ENTITY_TYPE_SUMMARY)
+            .unwrap()
+            .len()
+    };
+    declare(
+        &server,
+        &format!("{path}/summaries"),
+        json!({"scope": {"path": "canonical"}, "actor": actor, "land_on": root["id"], "as_record": true}),
+    )
+    .await;
+    assert!(eventually(Duration::from_secs(30), || summaries() == 1).await);
+    declare(
+        &server,
+        &format!("{path}/summaries"),
+        json!({"scope": {"path": "canonical"}, "actor": actor}),
+    )
+    .await;
+    assert!(eventually(Duration::from_secs(30), || summaries() == 2).await);
+    let prompts = fake
+        .seen()
+        .iter()
+        .map(|seen| seen.body["messages"].to_string())
+        .filter(|messages| messages.contains("Summarize these records."))
+        .collect::<Vec<_>>();
+    let [_, second] = &prompts[..] else {
+        panic!("two summary calls expected, saw {}", prompts.len());
+    };
+    assert!(second.contains("the original record"), "{second}");
+    assert!(!second.contains("summary prose one"), "{second}");
+    host.shutdown().await;
 }

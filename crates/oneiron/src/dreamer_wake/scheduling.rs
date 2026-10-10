@@ -2,12 +2,12 @@
 
 use rmpv::Value;
 
+use crate::Vault;
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerConsolidationScope, DreamerRunnerStore,
     EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
     EnqueueDreamerVaultCleanupAttempt,
 };
-use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
@@ -261,8 +261,13 @@ impl Vault {
         let scope = DreamerConsolidationScope::Micro;
         let queued = self.with_write_txn(|txn| {
             let watermark = read_watermark_in_txn(self, txn, scope)?;
-            let ids =
-                collect_dirty_turn_ids_in_txn(self, txn, scope, watermark.last_learned_at, u64::MAX)?;
+            let ids = collect_dirty_turn_ids_in_txn(
+                self,
+                txn,
+                scope,
+                watermark.last_learned_at,
+                u64::MAX,
+            )?;
             let mut window = read_partition_turns_in_txn(self, txn, scope, &ids)?;
             // Session close's cut rule: a turn without its conversation edge
             // stops the window at its second, same-second ties with it.

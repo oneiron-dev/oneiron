@@ -31,9 +31,10 @@ fn appended_response(
     server: &SyncServer,
     appended: oneiron::conversation_dag::AppendedRecord,
 ) -> Result<Json<DagAppendResponse>, EnvelopedApiError> {
-    server
-        .ai
-        .turn_landed(server.vault(), oneiron::dreamer_wake::WakeTurnSubject::Vault);
+    server.ai.turn_landed(
+        server.vault(),
+        oneiron::dreamer_wake::WakeTurnSubject::Vault,
+    );
     let Json(item) = project_core_entity(&server.vault, &appended.id, View::Full)?;
     Ok(Json(DagAppendResponse {
         entity: CoreEntityWriteResponse {
@@ -284,7 +285,12 @@ fn declare_summary(
     Ok((
         StatusCode::ACCEPTED,
         Json(DagSummaryQueuedResponse {
-            attempt: queued.attempt.as_bytes().iter().map(|b| format!("{b:02x}")).collect(),
+            attempt: queued
+                .attempt
+                .as_bytes()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect(),
             coalesced: queued.coalesced,
         }),
     ))

@@ -50,11 +50,11 @@ pub use self::wake_event::{
 pub use self::wake_fire::{
     CommitmentWakeFireOutcome, CommitmentWakeSkip, fire_due_commitment_wake,
 };
+pub(crate) use self::wake_proposal::entity_id_from_digest_prefix;
 pub use self::wake_proposal::{
     CommitmentWakeExecutor, CommitmentWakeProposalDraft, CommitmentWakeProposalPlanner,
     CommitmentWakeProposalSkip, commitment_wake_proposal_claim_id,
 };
-pub(crate) use self::wake_proposal::entity_id_from_digest_prefix;
 
 #[cfg(test)]
 mod tests;

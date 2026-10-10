@@ -401,9 +401,10 @@ pub(crate) async fn create_core_conversation_turn(
         tracing::error!(error = %error, "core turn create failed");
         core_engine_error("core turn create failed", error)
     })?;
-    server
-        .ai
-        .turn_landed(server.vault(), oneiron::dreamer_wake::WakeTurnSubject::Vault);
+    server.ai.turn_landed(
+        server.vault(),
+        oneiron::dreamer_wake::WakeTurnSubject::Vault,
+    );
 
     let body = core_body_for_write(ENTITY_TYPE_TURN, &req.body);
     let item = projection::project_entity_parts(

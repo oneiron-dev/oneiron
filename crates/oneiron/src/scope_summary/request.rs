@@ -70,7 +70,10 @@ impl Vault {
     ///
     /// The scope, landing turn and requester are checked now, so a bad
     /// declaration is refused to its caller rather than parked in the queue.
-    pub fn request_scope_summary(&self, request: &ScopeSummaryRequest) -> Result<ScopeSummaryQueued> {
+    pub fn request_scope_summary(
+        &self,
+        request: &ScopeSummaryRequest,
+    ) -> Result<ScopeSummaryQueued> {
         if let ScopeSummaryTarget::Scope {
             land_on: None,
             as_record: true,
@@ -215,7 +218,9 @@ impl Vault {
                 live_entity_row_in_txn(&self.store, txn, &id)?
             {
                 if entity_type != ENTITY_TYPE_SUMMARY {
-                    return Err(Error::CorruptedIndex("composed summary id names another entity"));
+                    return Err(Error::CorruptedIndex(
+                        "composed summary id names another entity",
+                    ));
                 }
                 return Ok((id, None));
             }
@@ -269,7 +274,10 @@ fn encode_request(request: &ScopeSummaryRequest) -> Value {
             as_record,
         } => entries.extend([
             (Value::from("scope"), scope_value(scope)),
-            (Value::from("land_on"), land_on.as_ref().map_or(Value::Nil, hex)),
+            (
+                Value::from("land_on"),
+                land_on.as_ref().map_or(Value::Nil, hex),
+            ),
             (Value::from("as_record"), Value::Boolean(*as_record)),
         ]),
         ScopeSummaryTarget::Thread { trunk } => {

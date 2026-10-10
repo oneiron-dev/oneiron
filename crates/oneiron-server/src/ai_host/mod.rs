@@ -8,8 +8,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use oneiron::attempt_queue::{AttemptQueue, AttemptState, CleanupAttemptLeases};
-use oneiron::llm::manifest::ModelRole;
 use oneiron::dreamer_wake::{AgentWakeSignals, WakeTurnSubject};
+use oneiron::llm::manifest::ModelRole;
 use oneiron::{DreamerRunnerStore, EdgeActorClass, EntityId, ModelId, ModelLocality, Vault};
 use oneiron_driver::{HintPusher, SessionHint};
 
@@ -209,7 +209,9 @@ impl AiHandle {
     /// vault's grain.
     pub fn turn_landed_by(&self, vault: &Arc<Vault>, actor: EntityId, class: EdgeActorClass) {
         let agent = class == EdgeActorClass::Agent
-            && vault.get_agent_definition(&actor).is_ok_and(|found| found.is_some());
+            && vault
+                .get_agent_definition(&actor)
+                .is_ok_and(|found| found.is_some());
         self.turn_landed(
             vault,
             if agent {

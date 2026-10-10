@@ -400,7 +400,7 @@ pub fn schedule_approved_commitment_wakes(
                 .and_then(|approved| {
                     let class = dreamer
                         .filter(|actor| actor.entity_ref() == approved.bound_actor)
-                        .map_or(crate::EdgeActorClass::Agent, |actor| actor.actor_class());
+                        .map_or(crate::EdgeActorClass::Agent, crate::WriteActor::actor_class);
                     let facade = vault.memory(approved.bound_actor, class);
                     schedule_approved_commitment_wake(&facade, approved)
                 });

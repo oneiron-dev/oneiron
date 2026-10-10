@@ -6,12 +6,12 @@ use super::codec::{
 use crate::affect::Vad;
 use crate::batch::EdgeValueFields;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
+#[cfg(test)]
+use crate::conversation_dag::selected_thread_in_txn;
 use crate::conversation_dag::{
     AppendRecord, ScopePath, ScopeSelector, actor_in_txn, append_in_txn, conversation_of, edge_ids,
     is_sub_session_record, prove_branch_anchor, prove_branch_span, require_type, resolve_in_txn,
 };
-#[cfg(test)]
-use crate::conversation_dag::selected_thread_in_txn;
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::limits::MAX_ANCESTOR_DEPTH;
