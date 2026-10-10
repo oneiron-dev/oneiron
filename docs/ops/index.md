@@ -21,6 +21,8 @@ surfaces. They do not replace counsel review for jurisdiction-specific calls.
   revocable agent credential; `oneiron mcp` serves MCP on stdio to the agent.
 - [Import your history](import-history.md) — `oneiron import` for ChatGPT and Claude.ai exports
   and Claude Code and Codex sessions: what lands, what is counted, and how re-imports dedup.
+- [Claude Code hooks](claude-code-hooks.md) — recall at session start and each session handed to
+  the running `serve` for import (`[import] queue`, `oneiron import claude-code <log> --queue`).
 - [Forked dependencies](forked-dependencies.md) — the crates pinned by `rev` to the org forks
   (sudachi, formualizer): upstream base, fork branch, our commits, and how to change one.
 - [Code map](../CODEMAP.md) — generated crate/module/file map (`python3 scripts/codemap/codemap.py`);

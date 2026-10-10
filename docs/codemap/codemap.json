@@ -48247,7 +48247,7 @@
      "path": "src/commands/history_import.rs",
      "purpose": "`oneiron import <source> <path>`: the owner's own history, imported into a stopped vault (ARCH-0027)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -48257,7 +48257,17 @@
      "path": "src/commands/history_import/confined.rs",
      "purpose": "Reading under one folder without leaving it",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/history_import/queue.rs",
+     "purpose": "The import queue",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -48430,6 +48440,21 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ImportConfig",
+      "ImportConfigOverride"
+     ],
+     "path": "src/config/import.rs",
+     "purpose": "The `[import]` section: whether a running `serve` imports the session logs queued for it (`oneiron import…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/config/lookup.rs",
      "purpose": "Leaf config helpers: env lookups, value parsing, and secret redaction",
@@ -48458,8 +48483,8 @@
      "path": "src/config/mod.rs",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
-      "mod": 8,
-      "re-export": 8
+      "mod": 9,
+      "re-export": 9
      }
     },
     {
@@ -49742,7 +49767,7 @@
      "path": "src/models/http.rs",
      "purpose": "The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -50640,7 +50665,7 @@
      "path": "tests/support/fake_llm.rs",
      "purpose": "A scripted local model server speaking the OpenAI-compatible (`/v1/chat/completions`) and…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -50696,14 +50721,14 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 15,
+     "files": 16,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 19,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -50873,7 +50898,7 @@
    },
    "over_bar": 3,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 292,
+   "source_files": 294,
    "test_files": 113
   },
   "oneiron-uniffi": {

@@ -7,7 +7,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::os::fd::OwnedFd;
 use std::os::unix::ffi::OsStrExt;
-use std::path::Path;
+use std::path::{Component, Path};
 
 use rustix::fs::{AtFlags, CWD, Dir, FileType, Mode, OFlags, openat, statat};
 
@@ -41,7 +41,7 @@ fn kind(dir: &OwnedFd, name: &OsStr, listed: FileType) -> anyhow::Result<FileTyp
 /// not block, so an entry swapped for a FIFO after it was listed is refused
 /// by the type check rather than waited on; reading a regular file is the
 /// same either way.
-fn open_file(dir: &OwnedFd, name: &OsStr, shown: &Path) -> anyhow::Result<File> {
+pub(super) fn open_file(dir: &OwnedFd, name: &OsStr, shown: &Path) -> anyhow::Result<File> {
     let file = File::from(
         openat(
             dir,
@@ -99,7 +99,45 @@ pub(super) fn walk_logs(
     }
 }
 
-fn walk(
+/// The session log `relative` names below `root`, and the folder it sits in.
+/// Every folder below `root` is opened relative to the one above it and never
+/// through a link, so a queued path can reach nothing outside `root`; links
+/// in `root` itself are the owner's, as in a path they type.
+pub(super) fn open_below(root: &Path, relative: &Path) -> anyhow::Result<(OwnedFd, File)> {
+    let mut dir = open_root(root)?;
+    let mut shown = root.to_path_buf();
+    let mut components = relative.components().peekable();
+    while let Some(component) = components.next() {
+        let Component::Normal(name) = component else {
+            anyhow::bail!(
+                "{} is not a plain path below {}",
+                relative.display(),
+                root.display()
+            );
+        };
+        shown.push(name);
+        if components.peek().is_none() {
+            let file = open_file(&dir, name, &shown)?;
+            return Ok((dir, file));
+        }
+        dir = openat(&dir, name, directory_flags(), Mode::empty())
+            .map_err(|error| anyhow::anyhow!("open {}: {error}", shown.display()))?;
+    }
+    anyhow::bail!("no session log named below {}", root.display())
+}
+
+/// The folder `name` in `dir`, never through a link; `None` when there is
+/// no such folder.
+pub(super) fn open_dir_in(dir: &OwnedFd, name: &OsStr) -> anyhow::Result<Option<OwnedFd>> {
+    match statat(dir, name, AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(stat) if FileType::from_raw_mode(stat.st_mode) == FileType::Directory => {
+            Ok(Some(openat(dir, name, directory_flags(), Mode::empty())?))
+        }
+        _ => Ok(None),
+    }
+}
+
+pub(super) fn walk(
     dir: &OwnedFd,
     shown: &Path,
     depth: usize,
