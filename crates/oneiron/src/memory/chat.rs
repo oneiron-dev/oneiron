@@ -605,6 +605,7 @@ fn document_item(view: &EntityView) -> MemoryItem {
         salience: None,
         reactions: Vec::new(),
         cited_messages: Vec::new(),
+        conversation_id: None,
     }
 }
 

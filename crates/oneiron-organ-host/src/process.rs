@@ -25,6 +25,7 @@ use std::time::{Duration, Instant};
 use oneiron_organ_protocol::{
     Ask, Call, CancelReason, DEFAULT_FRAME_LIMIT, FrameError, FromOrgan, Hello, HelloAck, Limits,
     PROTOCOL, ProtocolVersion, Reply, ToOrgan, recv_frame, recv_frame_until, send_frame_until,
+    spin,
 };
 
 use crate::asks::{AskStep, CallAsks};
@@ -441,7 +442,7 @@ impl OrganProcess {
     }
 
     /// Sends one call and waits for its reply until `deadline`, answering
-    /// the organ's asks through `on_ask` as they come; then cancels, waits
+    /// the organ's asks through `asks` as they come; then cancels, waits
     /// `grace`, and kills the process if it still has not answered.
     ///
     /// The process is marked as holding `grant` before `revoked` is asked,
@@ -622,7 +623,7 @@ impl OrganProcess {
             }
         }
         loop {
-            match reply.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            match spin::recv_spinning(reply, Some(deadline)) {
                 Ok(Delivery::Reply(reply, fds)) => return Ok((reply, fds)),
                 Ok(Delivery::Ask(ask)) => {
                     // A revocation is ending the call: run and answer nothing
@@ -851,6 +852,7 @@ fn check_handshake(spec: &OrganSpec, ack: &HelloAck) -> Result<(), HostError> {
 /// so an organ that exits while idle is reaped at once.
 fn read_replies(stream: &UnixStream, inbox: &Inbox, lifeline: &Lifeline, limit: u32) {
     loop {
+        spin::poll_readable(stream);
         match recv_frame::<FromOrgan>(stream, limit) {
             Ok((FromOrgan::Reply(reply), fds)) => {
                 let waiter = lock(&inbox.pending).remove(&reply.id);
