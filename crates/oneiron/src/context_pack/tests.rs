@@ -1905,13 +1905,15 @@ fn n8_disjoint_scopes_intersect_most_restrictive_wins() -> Result<()> {
     let base = crate::claim::base_world_id();
     let world_a = disclosure_id(0xF3);
     let world_c = disclosure_id(0xF4);
+    // Private, so only the clearance branch can admit them: a positively
+    // public record reaches every audience (P7).
     put_disclosure_claim_in_world(
         &vault,
         &event_a,
         event_a,
         "event.alpha",
         "event alpha needle8",
-        Some("public"),
+        Some("private"),
         Some(world_a),
     );
     put_disclosure_claim_in_world(
@@ -1920,7 +1922,7 @@ fn n8_disjoint_scopes_intersect_most_restrictive_wins() -> Result<()> {
         event_b,
         "event.beta",
         "event beta needle8",
-        Some("public"),
+        Some("private"),
         None,
     );
     put_disclosure_claim_in_world(
@@ -1929,7 +1931,7 @@ fn n8_disjoint_scopes_intersect_most_restrictive_wins() -> Result<()> {
         event_c,
         "event.gamma",
         "event gamma needle8",
-        Some("public"),
+        Some("private"),
         Some(world_c),
     );
 

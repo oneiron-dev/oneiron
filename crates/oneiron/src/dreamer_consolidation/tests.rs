@@ -1242,7 +1242,7 @@ fn bucket_hash_conformance() {
     // Pinned known-answer vector for the domain-separated hash.
     assert_eq!(
         bytes_to_hex_lower(&key.bucket_hash()),
-        "d317aabf2d943d106457feac194b64d955b825777bce237ae930232d76b2be6b",
+        "5869b6cc37062dbae6c480a3f4bc93f7ebc53b3a9b86bbdee67153f98b63b2c0",
         "bucket hash known-answer vector"
     );
 

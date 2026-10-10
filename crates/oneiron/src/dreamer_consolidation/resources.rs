@@ -233,6 +233,8 @@ impl<'a> BranchResources<'a> {
                 },
             );
         }
+        // One read txn per thread: the admission reads below open their own.
+        drop(position_txn);
         let texts = match (texts, prepared_wake) {
             (Some(texts), _) => texts,
             (None, Some(pin)) => pin.turn_texts(turns)?,
