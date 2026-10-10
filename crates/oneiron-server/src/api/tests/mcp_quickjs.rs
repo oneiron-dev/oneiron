@@ -503,24 +503,28 @@ async fn quickjs_code_mode_keeps_connector_narrowing() {
     assert!(!text.contains("north gate"), "{text}");
     // The guest's refusal is the door's stable code alone; no prose rides
     // along as a reason.
-    let steps = body["result"]["structuredContent"]["steps"]
-        .as_array()
-        .expect("step log");
-    let refusals: Vec<_> = steps
-        .iter()
-        .filter(|step| step["effect"] == "self.verbs.call")
-        .map(|step| &step["outcome"])
-        .collect();
     assert_eq!(
-        refusals,
-        [&json!({
-            "kind": "denied",
-            "effect": "self.verbs.call",
-            "outcome": "mcp_verb_not_bound",
-            "reason_codes": [],
-        })],
+        verb_call_outcomes(&body),
+        [verb_refusal("mcp_verb_not_bound")],
         "{text}"
     );
+}
+
+/// The outcome of each verb call a code-mode run made, from its step log.
+fn verb_call_outcomes(body: &Value) -> Vec<Value> {
+    body["result"]["structuredContent"]["steps"]
+        .as_array()
+        .expect("step log")
+        .iter()
+        .filter(|step| step["effect"] == "self.verbs.call")
+        .map(|step| step["outcome"].clone())
+        .collect()
+}
+
+/// A verb call the door refused, as the step log records it: the door's
+/// stable code and no reason text.
+fn verb_refusal(code: &str) -> Value {
+    json!({"kind": "denied", "effect": "self.verbs.call", "outcome": code, "reason_codes": []})
 }
 
 /// Code mode applies the per-verb argument rules a `tools/call` of the verb
@@ -684,8 +688,9 @@ async fn quickjs_code_mode_and_tool_list_refuse_a_field_the_schema_does_not_list
     .await;
     assert!(body.get("error").is_none(), "{body}");
     let steps = body["result"]["structuredContent"]["steps"].to_string();
-    assert!(
-        steps.contains("tool_args_invalid") && steps.contains("scope.facet_ref"),
+    assert_eq!(
+        verb_call_outcomes(&body),
+        [verb_refusal("tool_args_invalid")],
         "{steps}"
     );
     assert!(!steps.contains("north gate"), "{steps}");
@@ -720,8 +725,9 @@ async fn quickjs_code_mode_cannot_witness_a_users_words() {
     .await;
     assert!(body.get("error").is_none(), "{body}");
     let steps = body["result"]["structuredContent"]["steps"].to_string();
-    assert!(
-        steps.contains("generated code cannot author a user or system message"),
+    assert_eq!(
+        verb_call_outcomes(&body),
+        [verb_refusal("facade_error")],
         "{steps}"
     );
     for message in mode
