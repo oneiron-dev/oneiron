@@ -79,8 +79,13 @@ fn stopped_organs_give_their_descriptors_back() {
     for n in 3..66 {
         hosts.push(stopped(&vault, n));
     }
-    // A leak would be two descriptors a host, 126 in all.
-    let after = settled_fds();
+    // A leak would be two descriptors a host, 126 in all; a reader still
+    // closing its socket is given up to 5 s.
+    let until = Instant::now() + Duration::from_secs(5);
+    while open_fds() > before && Instant::now() < until {
+        thread::sleep(Duration::from_millis(10));
+    }
+    let after = open_fds();
     assert!(
         after <= before,
         "63 hosts with a stopped organ hold {after} descriptors, {before} before"
