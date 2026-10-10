@@ -257,23 +257,35 @@ async fn an_archived_attempt_is_in_the_review_and_restores_onto_the_queue() {
     assert_eq!(row["kind"], "completed_attempt", "{row}");
     assert!(row["archived_at"].is_string(), "{row}");
 
+    let restore = json!({ "entity": attempt, "kind": "completed_attempt" });
     for recipe in refused_recipes(&server) {
         let (status, _) = call(
             &server,
             "POST",
             "/v1/owner/cleanup/restore",
             recipe,
-            Some(&json!({ "entity": attempt })),
+            Some(&restore),
         )
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN);
     }
-    let (status, restored) = call(
+    // The kind names the table: no archived record has this id.
+    let (status, record) = call(
         &server,
         "POST",
         "/v1/owner/cleanup/restore",
         owner.clone(),
         Some(&json!({ "entity": attempt })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{record}");
+    assert!(!listed(&queue));
+    let (status, restored) = call(
+        &server,
+        "POST",
+        "/v1/owner/cleanup/restore",
+        owner.clone(),
+        Some(&restore),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{restored}");
@@ -292,7 +304,7 @@ async fn an_archived_attempt_is_in_the_review_and_restores_onto_the_queue() {
         "POST",
         "/v1/owner/cleanup/restore",
         owner,
-        Some(&json!({ "entity": attempt })),
+        Some(&restore),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "{again}");

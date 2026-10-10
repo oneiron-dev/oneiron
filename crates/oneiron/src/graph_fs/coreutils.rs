@@ -392,7 +392,7 @@ impl GraphFsResolver<'_, '_> {
         max_scan_rows: usize,
     ) -> Result<(Vec<u8>, Option<String>, usize)> {
         let mut out = CommandOutputBuilder::new(self.options);
-        let scope = self.cursor_scope(&format!("find -newer {path}"));
+        let scope = self.cursor_scope(&format!("find -newer {newer_than} {path}"));
         let cursor = scope.open_temporal(cursor)?;
         let mut last_emitted = cursor;
         let mut last_scanned: Option<TemporalCursor> = None;

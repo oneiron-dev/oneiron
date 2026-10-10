@@ -512,6 +512,21 @@ fn a_scan_limit_cursor_never_names_the_row_the_walk_passed_over() -> Result<()> 
             .ls_claims_by_time_pushdown_with_scan_cap(Some(&first), cap)
             .is_err()
     );
+    // Stopping on the same row twice hands out two unequal tokens, so
+    // comparing tokens says nothing about where a walk stopped.
+    let (_, again, _) = fs.ls_claims_by_time_pushdown_with_scan_cap(None, cap)?;
+    assert_ne!(again.as_deref(), Some(first.as_str()));
+    // A find cursor opens only under the threshold it was minted for.
+    let (_, found, _) = fs.find_newer_pushdown_with_scan_cap("/claims", 0, None, 1)?;
+    let found = found.expect("the scan limit leaves a cursor");
+    assert!(
+        fs.find_newer_pushdown_with_scan_cap("/claims", 0, Some(&found), 1)
+            .is_ok()
+    );
+    assert!(
+        fs.find_newer_pushdown_with_scan_cap("/claims", 1, Some(&found), 1)
+            .is_err()
+    );
     Ok(())
 }
 

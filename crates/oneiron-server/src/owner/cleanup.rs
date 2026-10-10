@@ -18,6 +18,9 @@ use serde::{Deserialize, Serialize};
 use super::stamp::rfc3339_secs;
 use super::{OwnerError, OwnerResult, entity_id};
 
+/// The `kind` of an archived record, as against a completed attempt.
+const RECORD: &str = "record";
+
 /// Everything the owner reviews about cleanup.
 #[derive(Debug, Serialize)]
 pub(crate) struct CleanupReview {
@@ -74,7 +77,7 @@ pub(crate) struct Digest {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct Archived {
-    /// Send this to `/cleanup/restore` as `entity` to bring it back.
+    /// Send this and `kind` to `/cleanup/restore` to bring it back.
     pub(crate) entity: String,
     /// `record`, or `completed_attempt` for a finished queue record.
     pub(crate) kind: &'static str,
@@ -109,14 +112,17 @@ pub(crate) fn review(vault: &Vault) -> OwnerResult<CleanupReview> {
     let digests = vault_cleanup::cleanup_digests(vault)?;
     let mut archived: Vec<Archived> = vault.archived_entities()?.iter().map(archived).collect();
     for attempt in vault.archived_attempts()? {
-        let id = EntityId::from_bytes_unchecked(*attempt.as_bytes());
         archived.push(Archived {
-            entity: id.to_hex(),
+            entity: attempt_hex(attempt),
             kind: CleanupKind::CompletedAttempt.as_str(),
             archived_at: digests
                 .iter()
                 .rev()
-                .find(|row| row.archived.contains(&id))
+                .find(|row| {
+                    row.archived
+                        .iter()
+                        .any(|id| id.as_bytes() == attempt.as_bytes())
+                })
                 .map(|row| rfc3339_secs(row.at)),
         });
     }
@@ -182,15 +188,27 @@ pub(crate) fn configure(
     review(vault)
 }
 
-/// Brings back what the review lists as archived: a record, or a completed
-/// attempt, each through its own owner-bound door.
-pub(crate) fn restore(vault: &Vault, owner: &AuthenticatedOwner, entity: &str) -> OwnerResult<()> {
+/// Brings back one entry of the review's `archived` list, named by its
+/// `entity` and `kind`: a record or a completed attempt, each through its own
+/// owner-bound door. Records and attempts are separate tables, so the kind
+/// says which one, never a guess.
+pub(crate) fn restore(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    entity: &str,
+    kind: Option<&str>,
+) -> OwnerResult<()> {
     let id = entity_id("entity", entity)?;
-    let attempt = AttemptId::from_bytes(id.as_bytes())?;
-    let restored = if vault.archived_entity(&id)?.is_none() && vault.archived_attempt(attempt)? {
-        vault.restore_archived_attempt_as(owner, attempt)
-    } else {
-        vault.restore_archived_as(owner, &id)
+    let restored = match kind.unwrap_or(RECORD) {
+        RECORD => vault.restore_archived_as(owner, &id),
+        kind if kind == CleanupKind::CompletedAttempt.as_str() => {
+            vault.restore_archived_attempt_as(owner, AttemptId::from_bytes(id.as_bytes())?)
+        }
+        _ => {
+            return Err(OwnerError::Invalid(
+                "kind must be `record` or `completed_attempt`".to_owned(),
+            ));
+        }
     };
     restored.map_err(|error| match error.kind() {
         ErrorKind::VaultCleanupRestoreNotArchived => {
@@ -247,7 +265,7 @@ fn digest(row: &CleanupDigest) -> Digest {
 fn archived(row: &ArchivedEntity) -> Archived {
     Archived {
         entity: row.entity.to_hex(),
-        kind: "record",
+        kind: RECORD,
         archived_at: Some(rfc3339_secs(row.archived_at)),
     }
 }

@@ -73,9 +73,11 @@ impl EdgeCursor {
     }
 }
 
-/// Tag bytes a sealed position carries; with a 24-byte temporal position the
-/// token stays inside the page's `_more` reserve.
-const SEALED_TAG_LEN: usize = 12;
+/// A sealed position is its nonce, its tag, then the position's own bytes:
+/// 52 bytes for a temporal one, 104 hex characters, which the page's `_more`
+/// reserve holds.
+const SEALED_NONCE_LEN: usize = 12;
+const SEALED_TAG_LEN: usize = 16;
 
 /// This process's key for sealing walk positions. A restart retires every
 /// position it sealed, and a listing given one starts again from the top.
@@ -143,14 +145,18 @@ impl CursorScope {
             .transpose()
     }
 
-    /// Deterministic authenticated encryption (SIV): the tag is a keyed hash
-    /// of the position, and the position travels XORed with a stream keyed by
-    /// that tag.
+    /// Authenticated encryption under a fresh nonce: the tag is a keyed hash
+    /// of the nonce and the position, and the position travels XORed with a
+    /// stream keyed by that tag. Two tokens never compare equal, even for one
+    /// position, so comparing them says nothing about where a walk stopped.
     fn seal(&self, position: &[u8]) -> String {
-        let tag = self.tag(position);
-        let mut token = tag.to_vec();
+        let mut nonce = [0; SEALED_NONCE_LEN];
+        OsRng.fill_bytes(&mut nonce);
+        let tag = self.tag(&nonce, position);
+        let mut token = nonce.to_vec();
+        token.extend_from_slice(&tag);
         token.extend_from_slice(position);
-        self.xor_stream(&tag, &mut token[SEALED_TAG_LEN..]);
+        self.xor_stream(&tag, &mut token[SEALED_NONCE_LEN + SEALED_TAG_LEN..]);
         bytes_to_hex_lower(&token)
     }
 
@@ -162,10 +168,11 @@ impl CursorScope {
             .step_by(2)
             .map(|at| u8::from_str_radix(&token[at..at + 2], 16).ok())
             .collect::<Option<Vec<u8>>>()?;
-        let (tag, sealed) = bytes.split_first_chunk::<SEALED_TAG_LEN>()?;
+        let (nonce, rest) = bytes.split_first_chunk::<SEALED_NONCE_LEN>()?;
+        let (tag, sealed) = rest.split_first_chunk::<SEALED_TAG_LEN>()?;
         let mut position = sealed.to_vec();
         self.xor_stream(tag, &mut position);
-        let expected = self.tag(&position);
+        let expected = self.tag(nonce, &position);
         let mismatch = expected
             .iter()
             .zip(tag)
@@ -173,9 +180,10 @@ impl CursorScope {
         (mismatch == 0).then_some(position)
     }
 
-    fn tag(&self, position: &[u8]) -> [u8; SEALED_TAG_LEN] {
+    fn tag(&self, nonce: &[u8], position: &[u8]) -> [u8; SEALED_TAG_LEN] {
         let mut hasher = blake3::Hasher::new_keyed(&self.0);
         hasher.update(b"tag");
+        hasher.update(nonce);
         hasher.update(position);
         let mut tag = [0; SEALED_TAG_LEN];
         tag.copy_from_slice(&hasher.finalize().as_bytes()[..SEALED_TAG_LEN]);

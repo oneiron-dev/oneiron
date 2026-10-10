@@ -443,9 +443,11 @@ async fn reject_cleanup(
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RestoreArchived {
-    /// An id from the `archived` list of `GET /v1/owner/cleanup`: a record
-    /// or a completed attempt.
+    /// An id from the `archived` list of `GET /v1/owner/cleanup`.
     entity: String,
+    /// That entry's `kind`: `record` (the default) or `completed_attempt`.
+    #[serde(default)]
+    kind: Option<String>,
 }
 
 async fn restore_archived(
@@ -456,7 +458,12 @@ async fn restore_archived(
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
     let review = blocking(move || {
-        cleanup::restore(server.vault(), &owner, &request.entity)?;
+        cleanup::restore(
+            server.vault(),
+            &owner,
+            &request.entity,
+            request.kind.as_deref(),
+        )?;
         cleanup::review(server.vault())
     })
     .await?;

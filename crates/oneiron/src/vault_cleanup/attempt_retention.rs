@@ -233,7 +233,7 @@ pub(super) fn restore_archived_attempt_in_txn(
 ) -> Result<()> {
     let not_archived = || {
         Error::Maintenance(MaintenanceError::VaultCleanupRestoreNotArchived {
-            entity: EntityId::from_bytes_unchecked(*id.as_bytes()).to_hex(),
+            entity: crate::entity_id::bytes_to_hex_lower(id.as_bytes()),
         })
     };
     let raw = vault
