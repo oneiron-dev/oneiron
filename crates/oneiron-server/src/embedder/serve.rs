@@ -13,11 +13,15 @@
 //! exactly as the local provider does, so an endpoint vault stores the very
 //! vectors a local vault would rather than a rounding of them.
 //!
-//! The wire is OpenAI's, plus one optional field, `input_type` (`query` or
-//! `document`), for a model whose two sides carry different prompts. Without
-//! it a request is a document request. A request of one input runs at query
-//! priority and a longer one parks for queries ([`super::local::Priority`]),
-//! because a recall sends one input and the fill worker sends batches.
+//! The wire is OpenAI's plus two optional fields, which the vault's endpoint
+//! client sends once `/v1/models` marks the server as this one
+//! (`oneiron_wire`): `input_type` (`query` or `document`) picks the prompt and
+//! the pool's prompt rows as the local provider would, and `instruction` is a
+//! vault's own `query_instruction`. That client then also leaves the input cap
+//! to this server's tokenizer, as a local vault's is. A request without
+//! `input_type` is a document request; one input runs at query priority and
+//! more park for queries ([`super::local::Priority`]), since a recall sends one
+//! input and the fill worker sends batches.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -42,6 +46,9 @@ use crate::config::{EmbedderConfig, EmbedderProvider};
 const MAX_INPUTS: usize = 2_048;
 /// Request bodies above this are refused before they are parsed.
 const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
+/// The version of the two fields beyond OpenAI's that this server reads,
+/// advertised on every `/v1/models` row.
+pub(crate) const ONEIRON_WIRE: u32 = 1;
 
 /// Where to listen, and who may ask.
 pub(crate) struct Listen {
@@ -121,13 +128,15 @@ struct ModelRow {
     object: &'static str,
     created: u64,
     owned_by: &'static str,
-    /// Beyond OpenAI's fields: what an operator checks a vault against.
+    /// Beyond OpenAI's fields: what an operator checks a vault against, and
+    /// the mark the vault's client reads.
     dimensions: usize,
     transform: String,
+    oneiron_wire: u32,
 }
 
 async fn models(State(served): State<Arc<Served>>, headers: HeaderMap) -> Response {
-    if let Err(refused) = authorise(&served, &headers) {
+    if let Some(refused) = unauthorised(&served, &headers) {
         return refused;
     }
     let data = served
@@ -140,6 +149,7 @@ async fn models(State(served): State<Arc<Served>>, headers: HeaderMap) -> Respon
             owned_by: "oneiron",
             dimensions: served.embedder.dimensions(),
             transform: served.embedder.transform().to_owned(),
+            oneiron_wire: ONEIRON_WIRE,
         })
         .collect();
     axum::Json(ModelList {
@@ -159,6 +169,8 @@ struct EmbeddingsRequest {
     dimensions: Option<usize>,
     #[serde(default)]
     input_type: Option<String>,
+    #[serde(default)]
+    instruction: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -202,7 +214,7 @@ async fn embeddings(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    if let Err(refused) = authorise(&served, &headers) {
+    if let Some(refused) = unauthorised(&served, &headers) {
         return refused;
     }
     let request: EmbeddingsRequest = match serde_json::from_slice(&body) {
@@ -268,8 +280,8 @@ async fn embeddings(
     }
     let (side, priority) = match (request.input_type.as_deref(), texts.len()) {
         (Some("query"), _) => (Side::Query, Priority::Query),
-        (None | Some("document" | "passage"), 1) => (Side::Document, Priority::Query),
-        (None | Some("document" | "passage"), _) => (Side::Document, Priority::Bulk),
+        (Some("document" | "passage"), _) | (None, 2..) => (Side::Document, Priority::Bulk),
+        (None, _) => (Side::Document, Priority::Query),
         (Some(other), _) => {
             return refuse(
                 StatusCode::BAD_REQUEST,
@@ -278,9 +290,19 @@ async fn embeddings(
             );
         }
     };
+    if request.instruction.is_some() && side != Side::Query {
+        return refuse(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error",
+            "instruction goes with input_type query",
+        );
+    }
     let embedder = Arc::clone(&served.embedder);
-    let embedded =
-        tokio::task::spawn_blocking(move || embedder.embed_raw(&texts, side, priority)).await;
+    let instruction = request.instruction;
+    let embedded = tokio::task::spawn_blocking(move || {
+        embedder.embed_raw(&texts, side, instruction.as_deref(), priority)
+    })
+    .await;
     let embedded = match embedded {
         Ok(Ok(embedded)) => embedded,
         Ok(Err(error)) => {
@@ -327,20 +349,19 @@ async fn embeddings(
     .into_response()
 }
 
-/// `Ok` when no key is configured or the request carries it as a bearer token.
-fn authorise(served: &Served, headers: &HeaderMap) -> Result<(), Response> {
-    let Some(key) = served.key.as_ref() else {
-        return Ok(());
-    };
+/// The refusal for a request without the configured bearer key; `None` when
+/// no key is configured or the request carries it.
+fn unauthorised(served: &Served, headers: &HeaderMap) -> Option<Response> {
+    let key = served.key.as_ref()?;
     let presented = headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
         .unwrap_or_default();
     if bool::from(presented.as_bytes().ct_eq(key.as_bytes())) {
-        return Ok(());
+        return None;
     }
-    Err(refuse(
+    Some(refuse(
         StatusCode::UNAUTHORIZED,
         "invalid_api_key",
         "this endpoint needs its bearer key",
@@ -377,9 +398,11 @@ mod tests {
 
     /// The check the shared endpoint exists for: a vault on the `endpoint`
     /// provider pointed at it stores the vectors a vault on the `local`
-    /// provider makes, to the bit, and embeds queries the same way. Both
-    /// sides run the same loaded model here, so any difference is the wire's
-    /// or the request path's.
+    /// provider makes, to the bit, and embeds queries the same way, with and
+    /// without a vault-side query instruction. One document is longer than
+    /// the input cap, which the server's tokenizer must cut where a local
+    /// vault's does. Both sides run the same loaded model, so any difference
+    /// is the wire's or the request path's.
     #[test]
     #[ignore = "needs the 2.38 GB pplx-embed-v1 checkpoint; run with --run-ignored=all"]
     fn an_endpoint_vault_stores_the_vectors_a_local_vault_makes() {
@@ -394,46 +417,62 @@ mod tests {
         std::thread::spawn(move || {
             runtime.block_on(async move { axum::serve(listener, app).await })
         });
-
-        let remote = HttpEmbedder::from_config(&EmbedderConfig {
-            provider: EmbedderProvider::Endpoint,
-            endpoint: EndpointEmbedderConfig {
-                endpoint: Some(format!("http://{addr}/v1")),
-                model_key: Some(local_config.model_id.clone()),
-                ..EndpointEmbedderConfig::default()
-            },
-            ..local_config.clone()
-        })
-        .expect("client");
+        let endpoint_vault = |query_instruction: Option<&str>| {
+            HttpEmbedder::from_config(&EmbedderConfig {
+                provider: EmbedderProvider::Endpoint,
+                query_instruction: query_instruction.map(str::to_owned),
+                endpoint: EndpointEmbedderConfig {
+                    endpoint: Some(format!("http://{addr}/v1")),
+                    model_key: Some(local_config.model_id.clone()),
+                    ..EndpointEmbedderConfig::default()
+                },
+                ..local_config.clone()
+            })
+            .expect("client")
+        };
+        let remote = endpoint_vault(None);
         assert_eq!(probe_endpoint(&remote), Ok(ProbeOutcome::Ready));
+        let bits = |vector: &[f32]| vector.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
 
         let mut texts = synthetic_documents(48, 21);
         texts.push(texts[0].clone());
+        let long = texts.join(" ");
+        assert!(
+            long.len() > 4 * local_config.max_input_tokens,
+            "past the input cap"
+        );
+        texts.push(long);
         let inputs: Vec<PendingEmbeddingInput> = texts.iter().map(|text| document(text)).collect();
         let stored_locally = local.embed(&inputs).expect("local");
         let stored_remotely = remote.embed(&inputs).expect("remote");
         let differing = stored_locally
             .iter()
             .zip(&stored_remotely)
-            .filter(|(a, b)| {
-                a.iter()
-                    .map(|v| v.to_bits())
-                    .ne(b.iter().map(|v| v.to_bits()))
-            })
+            .filter(|(a, b)| bits(a) != bits(b))
             .count();
         assert_eq!(differing, 0, "documents whose stored vector differs");
+
+        let instructed_config = EmbedderConfig {
+            query_instruction: Some("query: ".to_owned()),
+            ..local_config.clone()
+        };
+        let instructed_local =
+            LocalEmbedder::load(&instructed_config, &ModelManager::default()).expect("loads");
+        let instructed_remote = endpoint_vault(Some("query: "));
         for query in synthetic_queries(12, 22) {
-            let near = local.embed_query(&query).expect("local query");
-            let far = remote.embed_query(&query).expect("remote query");
-            assert!(
-                near.iter()
-                    .map(|v| v.to_bits())
-                    .eq(far.iter().map(|v| v.to_bits())),
+            assert_eq!(
+                bits(&local.embed_query(&query).expect("local query")),
+                bits(&remote.embed_query(&query).expect("remote query")),
                 "a query vector differs"
+            );
+            assert_eq!(
+                bits(&instructed_local.embed_query(&query).expect("local query")),
+                bits(&instructed_remote.embed_query(&query).expect("remote query")),
+                "an instructed query vector differs"
             );
         }
         println!(
-            "{} documents and 12 queries equal to the bit over the wire",
+            "{} documents and 24 queries equal to the bit over the wire",
             texts.len()
         );
     }

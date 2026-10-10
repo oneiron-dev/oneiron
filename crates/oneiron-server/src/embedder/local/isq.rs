@@ -44,6 +44,7 @@ pub(super) enum Q8Kernel {
     /// The tiled kernel, wherever it reproduces candle's numbers ([`cpu_q8`]).
     Tiled,
     /// candle's own everywhere: the reference the tiled kernel is held to.
+    #[cfg(test)]
     Candle,
 }
 

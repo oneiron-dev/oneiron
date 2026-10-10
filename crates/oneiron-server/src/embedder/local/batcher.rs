@@ -1,16 +1,15 @@
 //! Tokenisation and packing.
 //!
-//! Inputs are packed, never padded: a forward takes several inputs' tokens
+//! Inputs are never padded. On the CPU a forward packs several inputs' tokens
 //! back to back, runs every row-wise step over all of them at once, and splits
-//! them only for attention ([`super::qwen3_embedding::Model::forward`]). No
-//! padding means no padding mask and no position shifts: a causal model keeps
-//! its pure causal mask, a bidirectional one needs no mask, and a mean pool
-//! averages exactly the input's own rows.
+//! them only for attention ([`super::qwen3_embedding::Model::forward`]). On a
+//! GPU a forward takes inputs of IDENTICAL length, as the upstream runtime
+//! did. Either way there is no padding mask and no position shift: a causal
+//! model keeps its pure causal mask, a bidirectional one needs no mask, and a
+//! mean pool averages exactly the input's own rows.
 //!
-//! The upstream runtime batched only inputs of IDENTICAL length, which is what
-//! made its unmasked right-padding correct. Packing keeps that property and
-//! drops the cost: real text rarely shares a length, so grouping by length ran
-//! one input per forward.
+//! Real text rarely shares a length, so grouping by length runs about one
+//! input per forward. That is cheap on a GPU and was the CPU's bottleneck.
 
 use tokenizers::{Tokenizer, TruncationDirection, TruncationParams, TruncationStrategy};
 
@@ -112,27 +111,48 @@ fn strip(text: &str) -> &str {
 }
 
 /// Splits inputs, in order, into forwards of at most `max_inputs` inputs and
-/// `max_tokens` tokens. An input longer than `max_tokens` runs alone.
-///
-/// In order on purpose: each forward's outputs are the next rows of the
-/// result, so nothing has to be scattered back by index.
-pub(super) fn pack(
-    lengths: &[usize],
-    max_inputs: usize,
-    max_tokens: usize,
-) -> Vec<std::ops::Range<usize>> {
+/// `max_tokens` tokens. An input longer than `max_tokens` runs alone. For the
+/// CPU, where an input's states do not depend on what it is packed with.
+pub(super) fn pack(lengths: &[usize], max_inputs: usize, max_tokens: usize) -> Vec<Vec<usize>> {
     let mut forwards = Vec::new();
-    let (mut start, mut tokens) = (0, 0);
+    let mut forward: Vec<usize> = Vec::new();
+    let mut tokens = 0;
     for (index, &length) in lengths.iter().enumerate() {
-        let full = index - start >= max_inputs.max(1) || tokens + length > max_tokens;
-        if index > start && full {
-            forwards.push(start..index);
-            (start, tokens) = (index, 0);
+        let full = forward.len() >= max_inputs.max(1) || tokens + length > max_tokens;
+        if !forward.is_empty() && full {
+            forwards.push(std::mem::take(&mut forward));
+            tokens = 0;
         }
+        forward.push(index);
         tokens += length;
     }
-    if start < lengths.len() {
-        forwards.push(start..lengths.len());
+    if !forward.is_empty() {
+        forwards.push(forward);
     }
     forwards
+}
+
+/// Groups input indices by identical token length, in first-appearance order,
+/// chunked at `batch_size`: every forward on a GPU, whose quantised kernels
+/// pick by row count, so its vectors stay the ones it always made.
+///
+/// Stable on purpose: the caller scatters results back by index, and a group
+/// order that depended on a hash would make two identical batches produce two
+/// different orders of the same work.
+pub(super) fn group_equal_lengths(lengths: &[usize], batch_size: usize) -> Vec<Vec<usize>> {
+    let cap = batch_size.max(1);
+    let mut buckets: Vec<(usize, Vec<usize>)> = Vec::new();
+    for (index, &length) in lengths.iter().enumerate() {
+        match buckets.iter_mut().find(|(bucket, _)| *bucket == length) {
+            Some((_, members)) => members.push(index),
+            None => buckets.push((length, vec![index])),
+        }
+    }
+    let mut groups = Vec::new();
+    for (_, members) in buckets {
+        for chunk in members.chunks(cap) {
+            groups.push(chunk.to_vec());
+        }
+    }
+    groups
 }

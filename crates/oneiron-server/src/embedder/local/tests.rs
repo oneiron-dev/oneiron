@@ -705,7 +705,8 @@ mod with_model {
         let mut config = pplx_config(EmbedderDevice::Auto);
         config.local.quant = EmbedderQuant::None;
         for (dtype, floor) in [(DType::F32, 0.999), (DType::BF16, 0.99)] {
-            let embedder = LocalEmbedder::load_at(&config, &manager(), dtype).expect("model loads");
+            let embedder = LocalEmbedder::load_at(&config, &manager(), dtype, Q8Kernel::Tiled)
+                .expect("model loads");
             let measured = embedder
                 .embed_documents(&pplx_parity_texts())
                 .expect("embedded");

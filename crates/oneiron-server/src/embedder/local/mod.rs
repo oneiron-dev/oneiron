@@ -100,7 +100,7 @@ pub(super) struct Embedded {
 
 /// Queries first. A bulk forward checks in before every layer and waits there
 /// while any query runs; a query never waits for a bulk forward, so a recall
-/// shares the CPU with at most one bulk layer already under way.
+/// shares the device with at most one bulk layer already under way.
 #[derive(Default)]
 struct QueryFirst {
     running: Mutex<usize>,
@@ -265,19 +265,32 @@ impl LocalEmbedder {
         &self.transform
     }
 
-    /// Embeds texts in input order, each behind `side`'s prompt.
+    /// Embeds texts in input order, each behind `side`'s prompt, or behind
+    /// `instruction` when a caller names its own query prompt (as a vault's
+    /// `query_instruction` does).
     pub(super) fn embed_raw(
         &self,
         texts: &[String],
         side: Side,
+        instruction: Option<&str>,
         priority: Priority,
     ) -> oneiron::Result<Embedded> {
-        let (prompt, prompt_tokens) = match side {
-            Side::Query => (&self.prompts.query, self.query_prompt_tokens),
-            Side::Document => (&self.prompts.document, self.document_prompt_tokens),
+        let (prompt, prompt_tokens) = match (side, instruction) {
+            (_, Some(instruction)) => (instruction, self.prompt_tokens(instruction)?),
+            (Side::Query, None) => (self.prompts.query.as_str(), self.query_prompt_tokens),
+            (Side::Document, None) => (self.prompts.document.as_str(), self.document_prompt_tokens),
         };
         let prompted: Vec<String> = texts.iter().map(|text| format!("{prompt}{text}")).collect();
         self.embed_texts(&prompted, prompt_tokens, priority)
+    }
+
+    /// Leading rows a prompt takes that the pool skips: none when the pool
+    /// includes the prompt.
+    fn prompt_tokens(&self, prompt: &str) -> oneiron::Result<usize> {
+        if self.modules.chain().pooling.include_prompt {
+            return Ok(0);
+        }
+        batcher::prompt_tokens(&self.tokenizer, prompt)
     }
 
     /// Embeds already-prompted texts in input order. `prompt_tokens` leading
@@ -300,32 +313,52 @@ impl LocalEmbedder {
             self.truncations.fetch_add(truncated, Ordering::Relaxed);
         }
         let lengths: Vec<usize> = tokenized.iter().map(|item| item.ids.len()).collect();
+        let cpu = matches!(self.model.device(), Device::Cpu);
+        let forwards = if cpu {
+            batcher::pack(&lengths, self.batch_size, self.forward_tokens)
+        } else {
+            batcher::group_equal_lengths(&lengths, self.batch_size)
+        };
         let _query = (priority == Priority::Query).then(|| self.queries_first.enter());
         let park = || {
             if priority == Priority::Bulk {
+                // A GPU runs what it was handed in order, so a query would
+                // queue behind every layer a bulk forward had already
+                // submitted: finish each layer before checking. A failure
+                // here surfaces on the forward's next operation.
+                if !cpu {
+                    let _ = self.model.device().synchronize();
+                }
                 self.queries_first.make_way();
             }
         };
-        let mut rows = Vec::with_capacity(texts.len());
-        for packed in batcher::pack(&lengths, self.batch_size, self.forward_tokens) {
-            let inputs: Vec<&[u32]> = tokenized[packed]
+        let mut rows: Vec<Option<Vec<f32>>> = vec![None; texts.len()];
+        for forward in &forwards {
+            let inputs: Vec<&[u32]> = forward
                 .iter()
-                .map(|item| item.ids.as_slice())
+                .map(|index| tokenized[*index].ids.as_slice())
                 .collect();
             let states = self.model.forward(&inputs, &park).map_err(candle_failed)?;
+            let mut indices = forward.iter();
             for state in &states {
-                let pooled = self
+                let pooled: Vec<Vec<f32>> = self
                     .modules
                     .apply(state, prompt_tokens)
+                    .and_then(|pooled| pooled.to_dtype(DType::F32)?.to_vec2())
                     .map_err(candle_failed)?;
-                rows.push(
-                    pooled
-                        .to_dtype(DType::F32)
-                        .and_then(|pooled| pooled.flatten_all()?.to_vec1())
-                        .map_err(candle_failed)?,
-                );
+                for (index, row) in indices.by_ref().zip(pooled) {
+                    rows[*index] = Some(row);
+                }
             }
         }
+        let rows = rows
+            .into_iter()
+            .map(|row| {
+                row.ok_or(oneiron::Error::InvariantViolation(
+                    "embedder left an input unembedded",
+                ))
+            })
+            .collect::<oneiron::Result<_>>()?;
         Ok(Embedded {
             rows,
             tokens: lengths.iter().sum(),
@@ -339,7 +372,7 @@ impl LocalEmbedder {
         side: Side,
         priority: Priority,
     ) -> oneiron::Result<Vec<Vec<f32>>> {
-        self.embed_raw(texts, side, priority)?
+        self.embed_raw(texts, side, None, priority)?
             .rows
             .into_iter()
             .map(|row| self.common.finish_vector(row))

@@ -4,10 +4,14 @@
 //! `llama-server`, a cloud. The server cannot see what the remote actually
 //! loaded, so the configured artifact string is provenance it logs and never
 //! verifies; the `model_id` it reports is the vault's space id, unchanged.
+//!
+//! One remote gets more: `oneiron-server embedder serve` marks its `/models`
+//! rows, and to it this client sends what a local vault's provider would see —
+//! whole texts, each marked query or document ([`Wire::Oneiron`]).
 
 use std::io::Read;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use oneiron::embed::{Embedder, EmbedderLocality, PendingEmbeddingInput};
@@ -51,6 +55,31 @@ pub(crate) enum ProbeError {
 struct EmbeddingsRequest<'a> {
     model: &'a str,
     input: Vec<&'a str>,
+    #[serde(flatten)]
+    side: Side<'a>,
+}
+
+/// The fields beyond OpenAI's, sent only on [`Wire::Oneiron`].
+#[derive(Clone, Copy, Default, serde::Serialize)]
+struct Side<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    input_type: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    instruction: Option<&'a str>,
+}
+
+/// What the remote reads beyond OpenAI's fields.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Wire {
+    /// Any OpenAI-compatible server. A query carries the configured
+    /// instruction in its text, and the input cap is approximated here in
+    /// characters, there being no tokenizer on this side.
+    OpenAi,
+    /// `oneiron-server embedder serve`, running the local provider: inputs go
+    /// whole, marked query or document, with any configured instruction
+    /// beside a query, so its tokenizer caps them and its prompts apply as in
+    /// a local vault.
+    Oneiron,
 }
 
 #[derive(serde::Deserialize)]
@@ -72,6 +101,9 @@ struct ModelsResponse {
 #[derive(serde::Deserialize)]
 struct ModelRow {
     id: String,
+    /// Set by `oneiron-server embedder serve`.
+    #[serde(default)]
+    oneiron_wire: Option<u32>,
 }
 
 pub(crate) struct HttpEmbedder {
@@ -80,6 +112,11 @@ pub(crate) struct HttpEmbedder {
     model_key: String,
     locality: EmbedderLocality,
     max_input_chars: usize,
+    /// The vault's own query prompt, if it names one.
+    query_instruction: Option<String>,
+    /// Read from the remote's `/models` listing once, before the first
+    /// request that depends on it.
+    wire: OnceLock<Wire>,
     client: reqwest::blocking::Client,
     truncations: AtomicU64,
 }
@@ -159,6 +196,8 @@ impl HttpEmbedder {
             model_key,
             locality: engine_locality(config.endpoint.locality),
             max_input_chars: config.max_input_tokens.saturating_mul(CHARS_PER_TOKEN),
+            query_instruction: config.query_instruction.clone(),
+            wire: OnceLock::new(),
             client,
             truncations: AtomicU64::new(0),
         }))
@@ -181,11 +220,43 @@ impl HttpEmbedder {
         text
     }
 
-    fn post_embeddings(&self, texts: &[&str]) -> oneiron::Result<Vec<Vec<f32>>> {
+    /// What the remote reads, from its `/models` listing. A listing that
+    /// does not answer is an error and is asked again next time; one that
+    /// answers without the mark, or not with a listing, is the OpenAI wire.
+    fn wire(&self) -> oneiron::Result<Wire> {
+        if let Some(wire) = self.wire.get() {
+            return Ok(*wire);
+        }
+        let url = format!("{}/models", self.endpoint);
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .map_err(|e| transport_error("models listing", &e))?;
+        let listed = if response.status().is_success() {
+            bounded_body(response)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<ModelsResponse>(&bytes).ok())
+        } else {
+            None
+        };
+        let wire = listed.map_or(Wire::OpenAi, |listed| self.wire_of(&listed));
+        Ok(*self.wire.get_or_init(|| wire))
+    }
+
+    fn wire_of(&self, listed: &ModelsResponse) -> Wire {
+        let marked = listed.data.iter().any(|row| {
+            row.id == self.model_key && row.oneiron_wire == Some(super::serve::ONEIRON_WIRE)
+        });
+        if marked { Wire::Oneiron } else { Wire::OpenAi }
+    }
+
+    fn post_embeddings(&self, texts: &[&str], side: Side<'_>) -> oneiron::Result<Vec<Vec<f32>>> {
         let url = format!("{}/embeddings", self.endpoint);
         let body = EmbeddingsRequest {
             model: &self.model_key,
             input: texts.to_vec(),
+            side,
         };
         let response = self
             .client
@@ -323,16 +394,25 @@ impl Embedder for HttpEmbedder {
         if inputs.is_empty() {
             return Ok(Vec::new());
         }
+        let wire = self.wire()?;
         let texts: Vec<String> = inputs
             .iter()
             .map(|input| {
-                self.common
-                    .document_text(input)
-                    .map(|text| self.truncate(text))
+                self.common.document_text(input).map(|text| match wire {
+                    Wire::OpenAi => self.truncate(text),
+                    Wire::Oneiron => text,
+                })
             })
             .collect::<oneiron::Result<_>>()?;
         let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
-        self.post_embeddings(&refs)
+        let side = match wire {
+            Wire::OpenAi => Side::default(),
+            Wire::Oneiron => Side {
+                input_type: Some("document"),
+                instruction: None,
+            },
+        };
+        self.post_embeddings(&refs, side)
     }
 }
 
@@ -346,8 +426,19 @@ impl QueryEmbedder for HttpEmbedder {
     }
 
     fn embed_query(&self, text: &str) -> oneiron::Result<Vec<f32>> {
-        let prefixed = self.truncate(self.common.query_text(text));
-        let mut vectors = self.post_embeddings(&[prefixed.as_str()])?;
+        let mut vectors = match self.wire()? {
+            Wire::OpenAi => {
+                let prefixed = self.truncate(self.common.query_text(text));
+                self.post_embeddings(&[prefixed.as_str()], Side::default())?
+            }
+            Wire::Oneiron => self.post_embeddings(
+                &[text],
+                Side {
+                    input_type: Some("query"),
+                    instruction: self.query_instruction.as_deref(),
+                },
+            )?,
+        };
         vectors.pop().ok_or(oneiron::Error::InvariantViolation(
             "embedder endpoint answered a single query with no row",
         ))
@@ -382,7 +473,7 @@ pub(crate) fn probe_endpoint(embedder: &HttpEmbedder) -> Result<ProbeOutcome, Pr
     // A remote that answers but cannot be parsed is treated as reachable with
     // an unknown catalog: some servers omit `/models` entirely, and refusing
     // to start over a missing listing would be stricter than the contract.
-    if let Some(listed) = listed
+    if let Some(listed) = &listed
         && !listed.data.iter().any(|row| row.id == embedder.model_key)
     {
         return Err(ProbeError::ModelKeyMissing {
@@ -390,7 +481,10 @@ pub(crate) fn probe_endpoint(embedder: &HttpEmbedder) -> Result<ProbeOutcome, Pr
             model_key: embedder.model_key.clone(),
         });
     }
-    match embedder.post_embeddings(&[PROBE_TEXT]) {
+    let _ = embedder
+        .wire
+        .set(listed.map_or(Wire::OpenAi, |listed| embedder.wire_of(&listed)));
+    match embedder.post_embeddings(&[PROBE_TEXT], Side::default()) {
         Ok(vectors) => {
             let got = vectors.first().map_or(0, Vec::len);
             if got == embedder.common.dimensions {

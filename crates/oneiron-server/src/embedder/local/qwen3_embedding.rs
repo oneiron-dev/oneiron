@@ -15,8 +15,9 @@
 
 use std::sync::Mutex;
 
-use candle_core::{DType, Device, IndexOp, Module, Tensor};
+use candle_core::{DType, Device, IndexOp, Module, Storage, Tensor};
 use candle_nn::{RmsNorm, VarBuilder};
+use rayon::prelude::*;
 use serde::Deserialize;
 
 use super::attention::{causal_mask, grouped_attention};
@@ -197,52 +198,75 @@ impl Attention {
         })
     }
 
-    /// `xs` is `[tokens, hidden]`, every input's rows back to back. The
+    /// `xs` holds the forward's rows as its [`Layout`] shapes them. The
     /// projections run once over all of them; attention runs per input, over
-    /// that input's own rows.
-    fn forward(&self, xs: &Tensor, spans: &[Span], model: &Model) -> candle_core::Result<Tensor> {
+    /// that input's own rows, or once over a group of equal-length inputs.
+    fn forward(&self, xs: &Tensor, layout: &Layout, model: &Model) -> candle_core::Result<Tensor> {
         let queries = self.q_proj.forward(xs)?;
         let keys = self.k_proj.forward(xs)?;
         let values = self.v_proj.forward(xs)?;
-        let mut attended = Vec::with_capacity(spans.len());
-        for span in spans {
-            // Per-HEAD q/k norms, as the source applies them: reshape to heads
-            // first, normalise inside each head, then rotate.
-            let split = |projected: &Tensor, heads: usize| -> candle_core::Result<Tensor> {
-                projected
-                    .narrow(0, span.start, span.len)?
-                    .reshape((1, span.len, heads, self.head_dim))?
-                    .transpose(1, 2)
-            };
-            let q = split(&queries, self.heads)?;
-            let k = split(&keys, self.kv_heads)?;
-            let v = split(&values, self.kv_heads)?;
-            let q = model
-                .rotary
-                .apply(&self.q_norm.forward(&q.contiguous()?)?, span.len)?;
-            let k = model
-                .rotary
-                .apply(&self.k_norm.forward(&k.contiguous()?)?, span.len)?;
-            let mask = model.mask(span.len)?;
-            let heads = grouped_attention(
-                &q,
-                &k,
-                &v.contiguous()?,
-                mask.as_ref(),
-                model.causal,
-                self.scale,
-            )?;
-            attended.push(
-                heads
-                    .transpose(1, 2)?
-                    .reshape((span.len, self.heads * self.head_dim))?,
-            );
-        }
-        let merged = match attended.len() {
-            1 => attended.remove(0),
-            _ => Tensor::cat(&attended, 0)?,
+        let merged = match layout {
+            Layout::Group { inputs, len } => {
+                self.attend([&queries, &keys, &values], *inputs, *len, model)?
+            }
+            Layout::Packed(spans) => {
+                let mut attended = Vec::with_capacity(spans.len());
+                for span in spans {
+                    let rows = |projected: &Tensor| projected.narrow(0, span.start, span.len);
+                    let heads = self.attend(
+                        [&rows(&queries)?, &rows(&keys)?, &rows(&values)?],
+                        1,
+                        span.len,
+                        model,
+                    )?;
+                    attended.push(heads.reshape((span.len, self.heads * self.head_dim))?);
+                }
+                match attended.len() {
+                    1 => attended.remove(0),
+                    _ => Tensor::cat(&attended, 0)?,
+                }
+            }
         };
         self.o_proj.forward(&merged)
+    }
+
+    /// Attention over `inputs` inputs of `len` tokens each, from their
+    /// projected rows in order; `[inputs, len, heads * head_dim]`.
+    fn attend(
+        &self,
+        [queries, keys, values]: [&Tensor; 3],
+        inputs: usize,
+        len: usize,
+        model: &Model,
+    ) -> candle_core::Result<Tensor> {
+        // Per-HEAD q/k norms, as the source applies them: reshape to heads
+        // first, normalise inside each head, then rotate.
+        let split = |projected: &Tensor, heads: usize| -> candle_core::Result<Tensor> {
+            projected
+                .reshape((inputs, len, heads, self.head_dim))?
+                .transpose(1, 2)
+        };
+        let q = split(queries, self.heads)?;
+        let k = split(keys, self.kv_heads)?;
+        let v = split(values, self.kv_heads)?;
+        let q = model
+            .rotary
+            .apply(&self.q_norm.forward(&q.contiguous()?)?, len)?;
+        let k = model
+            .rotary
+            .apply(&self.k_norm.forward(&k.contiguous()?)?, len)?;
+        let mask = model.mask(len)?;
+        let attended = grouped_attention(
+            &q,
+            &k,
+            &v.contiguous()?,
+            mask.as_ref(),
+            model.causal,
+            self.scale,
+        )?;
+        attended
+            .transpose(1, 2)?
+            .reshape((inputs, len, self.heads * self.head_dim))
     }
 }
 
@@ -263,10 +287,57 @@ impl Mlp {
     }
 
     fn forward(&self, xs: &Tensor) -> candle_core::Result<Tensor> {
-        let gated = self.gate_proj.forward(xs)?.silu()?;
-        self.down_proj
-            .forward(&(gated * self.up_proj.forward(xs)?)?)
+        let gate = self.gate_proj.forward(xs)?;
+        let up = self.up_proj.forward(xs)?;
+        let gated = match cpu_swiglu(&gate, &up)? {
+            Some(gated) => gated,
+            None => (gate.silu()? * up)?,
+        };
+        self.down_proj.forward(&gated)
     }
+}
+
+/// Values one task of [`cpu_swiglu`] covers.
+const SWIGLU_CHUNK: usize = 16 * 1024;
+
+/// `silu(gate) * up` on the CPU in one pass over every thread, computed per
+/// value exactly as candle's two ops compute it (`v / (1 + exp(-v))`, then the
+/// product). candle runs each of those on one thread, over the widest
+/// activations a packed forward has. `None` off the CPU or away from
+/// contiguous f32, where candle's ops run.
+fn cpu_swiglu(gate: &Tensor, up: &Tensor) -> candle_core::Result<Option<Tensor>> {
+    if !matches!(gate.device(), Device::Cpu)
+        || gate.dtype() != DType::F32
+        || up.dtype() != DType::F32
+        || gate.shape() != up.shape()
+    {
+        return Ok(None);
+    }
+    let (gate_storage, gate_layout) = gate.storage_and_layout();
+    let (up_storage, up_layout) = up.storage_and_layout();
+    let (Storage::Cpu(gate_values), Storage::Cpu(up_values)) = (&*gate_storage, &*up_storage)
+    else {
+        return Ok(None);
+    };
+    let (Some((gate_start, gate_end)), Some((up_start, up_end))) = (
+        gate_layout.contiguous_offsets(),
+        up_layout.contiguous_offsets(),
+    ) else {
+        return Ok(None);
+    };
+    let gate_values = &gate_values.as_slice::<f32>()?[gate_start..gate_end];
+    let up_values = &up_values.as_slice::<f32>()?[up_start..up_end];
+    let mut gated = vec![0f32; gate_values.len()];
+    gated
+        .par_chunks_mut(SWIGLU_CHUNK)
+        .zip(gate_values.par_chunks(SWIGLU_CHUNK))
+        .zip(up_values.par_chunks(SWIGLU_CHUNK))
+        .for_each(|((gated, gate), up)| {
+            for ((out, &v), &u) in gated.iter_mut().zip(gate).zip(up) {
+                *out = v / (1.0 + (-v).exp()) * u;
+            }
+        });
+    Tensor::from_vec(gated, gate.shape(), &Device::Cpu).map(Some)
 }
 
 struct DecoderLayer {
@@ -293,10 +364,10 @@ impl DecoderLayer {
         })
     }
 
-    fn forward(&self, xs: &Tensor, spans: &[Span], model: &Model) -> candle_core::Result<Tensor> {
+    fn forward(&self, xs: &Tensor, layout: &Layout, model: &Model) -> candle_core::Result<Tensor> {
         let attended = self
             .self_attn
-            .forward(&self.input_layernorm.forward(xs)?, spans, model)?;
+            .forward(&self.input_layernorm.forward(xs)?, layout, model)?;
         let xs = (xs + attended)?;
         let fed = self
             .mlp
@@ -453,6 +524,16 @@ struct Span {
     len: usize,
 }
 
+/// How one forward's rows are laid out.
+enum Layout {
+    /// Inputs of one length, as `[inputs, len, hidden]`, attended together:
+    /// the shapes every forward had before packing, which a GPU's quantised
+    /// kernels choose between by.
+    Group { inputs: usize, len: usize },
+    /// Inputs of several lengths back to back, as `[tokens, hidden]`.
+    Packed(Vec<Span>),
+}
+
 /// The body. `forward` returns post-norm hidden states, one row per token.
 pub(super) struct Model {
     /// Kept at bf16 whatever the run precision: 152k × 1024 values is the
@@ -521,16 +602,23 @@ impl Model {
         })
     }
 
-    /// Several inputs' token ids to each input's post-norm hidden states,
-    /// `[1, len, hidden]` apiece, in input order.
+    pub(super) fn device(&self) -> &Device {
+        &self.device
+    }
+
+    /// Several inputs' token ids to their post-norm hidden states, in input
+    /// order: one `[inputs, len, hidden]` block for inputs of one length,
+    /// otherwise one `[1, len, hidden]` block per input.
     ///
-    /// The inputs are packed, not padded: their tokens run back to back as
-    /// one `[tokens, hidden]` matrix through every row-wise step — the
-    /// embedding lookup, the projections, the norms, the MLP — which is where
-    /// a forward spends its time, and only attention splits it, so each input
-    /// attends to its own tokens alone. Every row-wise step treats a row the
-    /// same whatever rows surround it, and attention sees exactly one input,
-    /// so an input's states do not depend on what it was packed with.
+    /// Inputs of several lengths are packed, not padded: their tokens run
+    /// back to back as one `[tokens, hidden]` matrix through every row-wise
+    /// step — the embedding lookup, the projections, the norms, the MLP —
+    /// which is where a forward spends its time, and only attention splits
+    /// it, so each input attends to its own tokens alone. On the CPU every
+    /// row-wise step treats a row the same whatever rows surround it, so an
+    /// input's states do not depend on what it was packed with. A GPU's
+    /// quantised matmul picks its kernel by the row count, which is why the
+    /// provider sends a GPU only groups of one length (`batcher`).
     ///
     /// `between_layers` runs before each layer. The provider parks a bulk
     /// forward there while a query runs.
@@ -549,21 +637,37 @@ impl Model {
             ids.extend_from_slice(input);
         }
         let tokens = ids.len();
+        let len = spans.first().map_or(0, |span| span.len);
+        let layout = if spans.iter().all(|span| span.len == len) {
+            Layout::Group {
+                inputs: spans.len(),
+                len,
+            }
+        } else {
+            Layout::Packed(spans)
+        };
+        let shape: candle_core::Shape = match &layout {
+            Layout::Group { inputs, len } => (*inputs, *len, self.hidden_size).into(),
+            Layout::Packed(_) => (tokens, self.hidden_size).into(),
+        };
         let ids = Tensor::from_vec(ids, tokens, &self.device)?;
         let mut xs = self
             .embed_tokens
             .index_select(&ids, 0)?
-            .reshape((tokens, self.hidden_size))?
+            .reshape(shape)?
             .to_dtype(self.dtype)?;
         for layer in &self.layers {
             between_layers();
-            xs = layer.forward(&xs, &spans, self)?;
+            xs = layer.forward(&xs, &layout, self)?;
         }
         let xs = self.norm.forward(&xs)?;
-        spans
-            .iter()
-            .map(|span| xs.narrow(0, span.start, span.len)?.unsqueeze(0))
-            .collect()
+        match layout {
+            Layout::Group { .. } => Ok(vec![xs]),
+            Layout::Packed(spans) => spans
+                .iter()
+                .map(|span| xs.narrow(0, span.start, span.len)?.unsqueeze(0))
+                .collect(),
+        }
     }
 
     /// The additive mask attention over `len` positions takes, if any.
