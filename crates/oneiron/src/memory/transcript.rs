@@ -174,7 +174,11 @@ impl Memory<'_> {
             for ((key, ids), turn_view) in chunk.iter().zip(&members).zip(turn_views) {
                 let (own, rest) = message_views.split_at(ids.len());
                 message_views = rest;
-                let Some(turn) = turn_view else {
+                // A turn whose time moved since the turns were listed is left
+                // to the read that lists it where it now is, so a page stays
+                // in order and its cursor names a time the page served.
+                let Some(turn) = turn_view.as_ref().filter(|turn| turn.occurred_start == key.0)
+                else {
                     continue;
                 };
                 let mut messages: Vec<_> = own

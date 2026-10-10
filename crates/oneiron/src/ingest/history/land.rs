@@ -396,7 +396,9 @@ impl Import<'_> {
             return Ok(());
         }
         let id = self.conversation_id;
-        let settled = self.vault.with_write_txn_grouped(|wtxn| {
+        // The importer's write door: in a shared vault, its content-write
+        // grant as of this transaction, as for every turn the import lands.
+        let settled = self.memory.with_verified_actor_write_txn(|wtxn| {
             let store = &self.vault.store;
             let LiveEntityRow::Live { entity_type, body } =
                 live_entity_row_in_txn(store, wtxn, &id)?
@@ -455,12 +457,12 @@ impl Import<'_> {
                     self.imported_at,
                     &out,
                 )
-                .apply(wtxn)
+                .apply(wtxn)?;
+            Ok(())
         });
         match settled {
             Ok(()) => Ok(()),
             Err(error) => {
-                let error = MemoryError::from(error);
                 let reasons = refusal(&error).ok_or(error)?;
                 report.refusal_reasons.extend(reasons);
                 Ok(())

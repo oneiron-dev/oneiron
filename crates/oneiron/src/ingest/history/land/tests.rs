@@ -259,3 +259,91 @@ fn an_import_leaves_a_plain_conversation_at_its_derived_id_alone() {
     assert_eq!(vault.get_occurred(&id).expect("occurred"), at(IMPORTED_AT));
     assert_eq!(vault.get_learned_at(&id).expect("learned at"), learned);
 }
+
+/// In a shared vault the fill-in is a content write like each turn the import
+/// lands: an owner whose grant there no longer lets them write content gets a
+/// refusal, and the conversation keeps its body, time and learned time.
+#[test]
+fn a_fill_in_needs_the_shared_vault_content_write_a_turn_needs() {
+    use crate::batch::ENTITY_METADATA_HEADER_LEN;
+    use crate::federation::{
+        FederationGrantRole, InitialSharedMember, SharedVaultPreset, decode_federation_grant_body,
+        encode_federation_grant_body, scope_codec,
+    };
+
+    let (_dir, vault, owner) = vault_and_owner();
+    let source = HistorySource::Codex;
+    let conversation = decode(
+        source,
+        "rollout-2026-09-20T10-00-00-s-garden",
+        &CODEX_ROLLOUT,
+    );
+    let mut earlier = conversation.clone();
+    earlier.cwd = None;
+    earlier.own_started_at_ms = None;
+    import(&vault, &owner, source, &earlier, IMPORTED_AT);
+    let id = conversation_id(source, &conversation);
+
+    // The vault is shared, and the owner's grant there is cut to reading.
+    let other = EntityId::now();
+    vault
+        .put_entity(
+            &other,
+            crate::registry::ENTITY_TYPE_PERSON,
+            at(1),
+            1,
+            b"another owner",
+        )
+        .expect("put another owner");
+    vault
+        .initialize_shared_vault(
+            &owner,
+            42,
+            Some(SharedVaultPreset::Team),
+            &[InitialSharedMember {
+                member_ref: other,
+                role: Some(FederationGrantRole::Owner),
+            }],
+            10,
+        )
+        .expect("share the vault");
+    let creation = vault
+        .shared_vault_creation()
+        .expect("read the shared vault")
+        .expect("a shared vault");
+    for grant_ref in creation.grant_refs {
+        let grant_id = EntityId::from_hex(&grant_ref).expect("grant id");
+        let raw = vault.get_raw(&grant_id).expect("read a grant").expect("grant");
+        let mut grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])
+            .expect("decode a grant");
+        if grant.member_ref != owner.actor() {
+            continue;
+        }
+        grant.authority_scope = scope_codec::read_preset();
+        vault
+            .batch()
+            .put_replicated(
+                &grant_id,
+                crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+                at(11),
+                11,
+                &encode_federation_grant_body(&grant).expect("encode the grant"),
+            )
+            .commit()
+            .expect("cut the owner's grant to reading");
+    }
+    let body = vault.get(&id).expect("read the conversation");
+    let learned = vault.get_learned_at(&id).expect("learned at");
+
+    let report = vault
+        .import_history(&owner, source, &conversation, IMPORTED_AT + 60)
+        .expect("import");
+    assert!(!report.refusal_reasons.is_empty(), "{report:?}");
+    assert_eq!(vault.get(&id).expect("read it again"), body);
+    assert_eq!(folder(&vault, id), None);
+    assert_eq!(
+        vault.get_occurred(&id).expect("occurred"),
+        at(CODEX_FIRST_MESSAGE)
+    );
+    assert_eq!(vault.get_learned_at(&id).expect("learned at"), learned);
+}
