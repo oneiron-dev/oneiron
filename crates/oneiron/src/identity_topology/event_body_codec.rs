@@ -16,18 +16,21 @@ use super::ledger_fold::IdentityTopologyAction;
 use super::op_apply::is_effective_approval;
 use super::op_vocabulary::{IdentityOpEvidence, IdentityTopologyOp};
 use super::proposal_resolution::{decode_amendable_kind, validate_resolution_scope_stateless};
-use super::reassignment_map::{decode_reassignment_map, encode_reassignment_map};
+use super::reassignment_map::{
+    ReassignmentTarget, decode_reassignment_map, encode_reassignment_map,
+};
 use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
 use super::transition_table::{ProposalOutcome, ProposalScope, evaluate_transition};
 use super::wire_keys::{
     BODY_KEY_ACTOR, BODY_KEY_ACTOR_CLASS, BODY_KEY_AMENDED, BODY_KEY_APPLIED_ASSIGNED,
-    BODY_KEY_APPLIED_RESIDUE, BODY_KEY_CLAIM, BODY_KEY_ENTITY, BODY_KEY_FACETS, BODY_KEY_HEADS,
-    BODY_KEY_MAP, BODY_KEY_OUTCOME, BODY_KEY_PAIR_A, BODY_KEY_PAIR_B, BODY_KEY_PLAN,
-    BODY_KEY_PROPOSAL, BODY_KEY_SCOPE_ACTOR, BODY_KEY_SCOPE_OP_KIND, BODY_KEY_SCOPE_TARGET_CLASS,
-    BODY_KEY_SOURCES, BODY_KEY_SURVIVOR, BODY_KEY_TARGET, EVENT_KIND_ASSERT_DISTINCT,
-    EVENT_KIND_FACET, EVENT_KIND_MERGE, EVENT_KIND_PROPOSAL_CANCELLATION,
-    EVENT_KIND_PROPOSAL_RESOLUTION, EVENT_KIND_SPLIT, EVENT_KIND_UNDO, EVIDENCE_KEY_RATIONALE,
-    EVIDENCE_KEY_REFS, IDENTITY_TOPOLOGY_REPLICATED_SEQ_LIMIT, PLAN_READ_THROUGH,
+    BODY_KEY_APPLIED_RESIDUE, BODY_KEY_CLAIM, BODY_KEY_ENTITY, BODY_KEY_FACETS, BODY_KEY_FORKED,
+    BODY_KEY_HEADS, BODY_KEY_MAP, BODY_KEY_OUTCOME, BODY_KEY_PAIR_A, BODY_KEY_PAIR_B,
+    BODY_KEY_PLAN, BODY_KEY_PROPOSAL, BODY_KEY_SCOPE_ACTOR, BODY_KEY_SCOPE_OP_KIND,
+    BODY_KEY_SCOPE_TARGET_CLASS, BODY_KEY_SOURCES, BODY_KEY_SURVIVOR, BODY_KEY_TARGET,
+    EVENT_KIND_ASSERT_DISTINCT, EVENT_KIND_FACET, EVENT_KIND_MERGE,
+    EVENT_KIND_PROPOSAL_CANCELLATION, EVENT_KIND_PROPOSAL_RESOLUTION, EVENT_KIND_SPLIT,
+    EVENT_KIND_UNDO, EVIDENCE_KEY_RATIONALE, EVIDENCE_KEY_REFS,
+    IDENTITY_TOPOLOGY_REPLICATED_SEQ_LIMIT, PLAN_READ_THROUGH,
 };
 use super::{
     IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING, MAX_IDENTITY_TOPOLOGY_EVENT_BODY_BYTES,
@@ -69,6 +72,7 @@ pub(super) fn encode_action_entries(
             reassignment,
             applied_assigned,
             applied_residue,
+            forked,
         } => {
             entries.push((Value::from(BODY_KEY_ENTITY), id_value(entity)));
             entries.push((Value::from(BODY_KEY_FACETS), ids_value(facets)));
@@ -77,6 +81,9 @@ pub(super) fn encode_action_entries(
                 encode_reassignment_map(reassignment),
             ));
             encode_applied_counts(*applied_assigned, *applied_residue, entries);
+            if !forked.is_empty() {
+                entries.push((Value::from(BODY_KEY_FORKED), ids_value(forked)));
+            }
         }
         StoredIdentityOpAction::AssertDistinct { a, b, claim } => {
             entries.push((Value::from(BODY_KEY_PAIR_A), id_value(a)));
@@ -271,17 +278,39 @@ pub(super) fn decode_action(kind: &str, map: &[(Value, Value)]) -> Result<Stored
             })
         }
         EVENT_KIND_FACET => {
+            const FORKED_CONTEXT: &str = "identity topology facet forks";
             let (applied_assigned, applied_residue) = decode_applied_counts(map)?;
+            let reassignment =
+                decode_reassignment_map(map_field(map, BODY_KEY_MAP).ok_or(Error::Sync(
+                    SyncError::InvalidIdentityTopologyEventBody("identity topology event map"),
+                ))?)?;
+            let forked = if map_field(map, BODY_KEY_FORKED).is_some() {
+                decode_ids_field(map, BODY_KEY_FORKED, FORKED_CONTEXT)?
+            } else {
+                Vec::new()
+            };
+            // Present only when non-empty, strictly sorted, and every fork an
+            // origin the map scoped to a mask: one spelling per fork set.
+            if map_field(map, BODY_KEY_FORKED).is_some() && forked.is_empty()
+                || forked.windows(2).any(|pair| pair[0] >= pair[1])
+                || forked.iter().any(|origin| {
+                    !reassignment.entries.iter().any(|entry| {
+                        entry.item == crate::claim::ClaimSubject::Entity(*origin)
+                            && matches!(entry.target, ReassignmentTarget::Facet { .. })
+                    })
+                })
+            {
+                return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                    FORKED_CONTEXT,
+                )));
+            }
             Ok(StoredIdentityOpAction::Facet {
                 entity: decode_id_field(map, BODY_KEY_ENTITY, "identity topology event entity")?,
                 facets: decode_ids_field(map, BODY_KEY_FACETS, "identity topology event facets")?,
-                reassignment: decode_reassignment_map(map_field(map, BODY_KEY_MAP).ok_or(
-                    Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
-                        "identity topology event map",
-                    )),
-                )?)?,
+                reassignment,
                 applied_assigned,
                 applied_residue,
+                forked,
             })
         }
         EVENT_KIND_ASSERT_DISTINCT => {
