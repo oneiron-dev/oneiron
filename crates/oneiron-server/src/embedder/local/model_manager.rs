@@ -33,6 +33,11 @@ const HUGGINGFACE_BASE_URL: &str = "https://huggingface.co";
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// How long nothing may have written a temporary download before a sweep asks
+/// whether its fetch is still alive ([`sweep_stale_partials`]): longer than
+/// any fetch may run, so a fetch that has created its file and not yet locked
+/// it is never asked about.
+const STALE_PARTIAL: Duration = Duration::from_secs(2 * DOWNLOAD_TIMEOUT.as_secs());
 /// Refuse a file larger than this before writing it: a redirect to the wrong
 /// place must not fill the disk.
 const MAX_ARTIFACT_BYTES: u64 = 4 * 1024 * 1024 * 1024;
@@ -639,13 +644,14 @@ impl ModelManager {
         artifact: &PinnedArtifact,
     ) -> oneiron::Result<()> {
         let path = dir.join(artifact.file.as_ref());
+        sweep_stale_partials(&path);
         if path.is_file() || absent_marker(&path).is_file() {
             return Ok(());
         }
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(oneiron::Error::Io)?;
         }
-        let fetched = download(&self.url(config, artifact), &path, artifact)?;
+        let fetched = download(&self.url(config, artifact), &path, artifact)?.is_some();
         if !fetched {
             std::fs::write(absent_marker(&path), b"").map_err(oneiron::Error::Io)?;
         }
@@ -672,16 +678,18 @@ impl ModelManager {
         artifact: &PinnedArtifact,
     ) -> oneiron::Result<bool> {
         let path = dir.join(artifact.file.as_ref());
+        sweep_stale_partials(&path);
         if path.is_file() {
             match self.verify_unless_unchanged(&path, artifact) {
                 Ok(()) => return Ok(false),
                 Err(error) => {
                     // A file that does not match its digest is not a file we can
-                    // use, and leaving it in place would fail the same way on every
-                    // restart. Remove it and fetch it again.
+                    // use, and it would fail the same way on every restart. The
+                    // fetch below renames a verified file over it; removing it
+                    // first would leave another server fetching the same file a
+                    // moment in which the name holds nothing.
                     tracing::warn!(path = %path.display(), ?error, "embedder artifact failed verification; refetching");
                     self.forget(&path);
-                    std::fs::remove_file(&path).map_err(oneiron::Error::Io)?;
                 }
             }
         }
@@ -689,14 +697,13 @@ impl ModelManager {
             std::fs::create_dir_all(parent).map_err(oneiron::Error::Io)?;
         }
         tracing::info!(file = %artifact.file, "downloading embedder model artifact");
-        if !download(&self.url(config, artifact), &path, artifact)? {
+        let Some(stamp) = download(&self.url(config, artifact), &path, artifact)? else {
             return Err(download_failed(&artifact.file, "HTTP 404 Not Found"));
-        }
-        self.verify_unless_unchanged(&path, artifact)
-            .inspect_err(|_| {
-                // Never leave a bad artifact on disk: the next start would load it.
-                let _ = std::fs::remove_file(&path);
-            })?;
+        };
+        self.verified
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(path, stamp);
         Ok(true)
     }
 
@@ -733,13 +740,21 @@ impl ModelManager {
     }
 }
 
-/// Fetches one file to a temporary sibling, then renames it into place.
-/// Returns `false`, writing nothing, when the source has no such file.
+/// Fetches one file to a temporary sibling, verifies it there, then renames it
+/// into place. Returns the placed file's stamp, or `None`, writing nothing,
+/// when the source has no such file.
 ///
-/// The rename is what makes a killed download safe: a partial file never
-/// carries the final name, so the next start refetches rather than loading a
-/// truncated tensor file.
-fn download(url: &str, path: &Path, artifact: &PinnedArtifact) -> oneiron::Result<bool> {
+/// The final name only ever receives a whole file that passed its check, so a
+/// killed download never leaves a truncated tensor file under it. The
+/// temporary name belongs to this process and this attempt alone
+/// ([`partial_path`]): two servers fetching one file into one directory at
+/// once each write their own, and the later rename replaces the earlier
+/// file with the same verified bytes.
+fn download(
+    url: &str,
+    path: &Path,
+    artifact: &PinnedArtifact,
+) -> oneiron::Result<Option<FileStamp>> {
     // Redirects ARE followed here, unlike the rest of this crate's transports:
     // Hugging Face answers a large-file `resolve` URL with a redirect to its
     // CDN, and the digest check below is what makes following one safe.
@@ -753,7 +768,7 @@ fn download(url: &str, path: &Path, artifact: &PinnedArtifact) -> oneiron::Resul
         .send()
         .map_err(|e| download_failed(&artifact.file, &transport_class(&e)))?;
     if response.status() == reqwest::StatusCode::NOT_FOUND {
-        return Ok(false);
+        return Ok(None);
     }
     if !response.status().is_success() {
         return Err(download_failed(
@@ -767,17 +782,116 @@ fn download(url: &str, path: &Path, artifact: &PinnedArtifact) -> oneiron::Resul
     {
         return Err(download_failed(&artifact.file, "exceeds the artifact cap"));
     }
-    let temp = path.with_extension("partial");
-    let mut file = std::fs::File::create(&temp).map_err(oneiron::Error::Io)?;
-    let written = std::io::copy(&mut response.take(MAX_ARTIFACT_BYTES + 1), &mut file)
-        .map_err(oneiron::Error::Io)?;
-    drop(file);
-    if written > MAX_ARTIFACT_BYTES {
+    let (temp, file) = locked_partial(path)?;
+    #[cfg(test)]
+    tests::partial_created(path);
+    let placed = place(response, &file, &temp, path, artifact);
+    if placed.is_err() {
         let _ = std::fs::remove_file(&temp);
+    }
+    // The lock goes with the file, once it is renamed or removed.
+    drop(file);
+    placed.map(Some)
+}
+
+/// Creates this attempt's temporary file and takes its lock, which the fetch
+/// holds until the file is renamed or removed: a sweep never takes a
+/// temporary file whose fetch is alive, however long that fetch pauses.
+///
+/// A fetch that stalls between creating its file and locking it can lose the
+/// file to a sweep. Only a sweep removes these names and nothing else creates
+/// them, so a name still there once the lock is held is this fetch's; a name
+/// gone is replaced by a fresh one.
+fn locked_partial(path: &Path) -> oneiron::Result<(PathBuf, std::fs::File)> {
+    loop {
+        let temp = partial_path(path);
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .map_err(oneiron::Error::Io)?;
+        if let Err(error) = file.lock() {
+            let _ = std::fs::remove_file(&temp);
+            return Err(oneiron::Error::Io(error));
+        }
+        if temp.is_file() {
+            return Ok((temp, file));
+        }
+    }
+}
+
+/// Writes a response body to its locked temporary file, checks it there, then
+/// renames it into place.
+fn place(
+    response: reqwest::blocking::Response,
+    file: &std::fs::File,
+    temp: &Path,
+    path: &Path,
+    artifact: &PinnedArtifact,
+) -> oneiron::Result<FileStamp> {
+    let mut writer = file;
+    let written = std::io::copy(&mut response.take(MAX_ARTIFACT_BYTES + 1), &mut writer)
+        .map_err(oneiron::Error::Io)?;
+    if written > MAX_ARTIFACT_BYTES {
         return Err(download_failed(&artifact.file, "exceeds the artifact cap"));
     }
-    std::fs::rename(&temp, path).map_err(oneiron::Error::Io)?;
-    Ok(true)
+    verify(temp, artifact)?;
+    let stamp = FileStamp::read(temp)?;
+    std::fs::rename(temp, path).map_err(oneiron::Error::Io)?;
+    Ok(stamp)
+}
+
+/// A temporary name beside `path` that no other fetch writes: this process's
+/// id and a random number for the attempt, hidden, ending `.partial`.
+fn partial_path(path: &Path) -> PathBuf {
+    use rand_core::RngCore as _;
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    path.with_file_name(format!(
+        ".{name}.{}-{:016x}.partial",
+        std::process::id(),
+        rand_core::OsRng.next_u64()
+    ))
+}
+
+/// Removes what killed fetches of this file left behind: a temporary file
+/// under this build's names that nothing has written for [`STALE_PARTIAL`]
+/// and whose lock nobody holds. A fetch that is alive holds its lock, however
+/// long it has paused, so its file stays. The one shared name earlier builds
+/// used is left alone: they never lock it, so nothing shows whether its
+/// writer is alive, and they reuse it themselves. Best effort: a leftover
+/// that cannot be removed costs disk, never the file itself.
+fn sweep_stale_partials(path: &Path) {
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let prefix = format!(".{}.", name.to_string_lossy());
+    for entry in entries.flatten() {
+        let candidate = entry.path();
+        let partial = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|file| file.starts_with(&prefix) && file.ends_with(".partial"));
+        let stale = || {
+            entry
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .ok()
+                .and_then(|modified| modified.elapsed().ok())
+                .is_some_and(|age| age > STALE_PARTIAL)
+        };
+        if !partial || !stale() {
+            continue;
+        }
+        let Ok(file) = std::fs::File::open(&candidate) else {
+            continue;
+        };
+        if file.try_lock().is_ok() {
+            let _ = std::fs::remove_file(&candidate);
+        }
+    }
 }
 
 /// Size first, then digest.
@@ -851,3 +965,6 @@ fn missing_file(path: &Path) -> oneiron::Error {
         path.display()
     ))
 }
+
+#[cfg(test)]
+mod tests;
