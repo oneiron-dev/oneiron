@@ -88,10 +88,11 @@ pub(crate) fn render_peak(body: &ImageBody) -> Result<u64, OrganError> {
     } else {
         pixel_count(canvas)
     };
-    let png = last
-        .saturating_add(u64::from(canvas.h))
+    // The encoder streams: its output (sized up front to the stored size),
+    // its compressor and three rows; never a second whole image.
+    let encode = crate::render::png_bound(canvas.w, canvas.h, 4)
+        .saturating_add(3 * (4 * u64::from(canvas.w) + 1))
         .saturating_add(1 << 20);
-    let encode = pixel_count(canvas).saturating_mul(3).saturating_add(png);
     peak = peak.max(last.saturating_add(mask.max(encode)));
     Ok(rgba_bytes(source).saturating_add(peak))
 }
@@ -121,6 +122,7 @@ pub(crate) fn crop(
         overlay.clipped = clipped;
     }
     body.check()?;
+    crate::render::check_paint(&body)?;
     Ok(Edited { body, touched })
 }
 
@@ -162,6 +164,7 @@ pub(crate) fn resize(
         overlay.clipped = overlay.clipped_by(to);
     }
     body.check()?;
+    crate::render::check_paint(&body)?;
     Ok(Edited {
         body,
         touched: vec![pixels(0, 0, w, h)],

@@ -268,6 +268,12 @@ impl ImageBody {
             if overlay.id >= self.next_overlay || !ids.insert(overlay.id) {
                 return Err(bad(format!("overlay id {} is reused", overlay.id)));
             }
+            if overlay.clipped != overlay.clipped_by(self.canvas) {
+                return Err(bad(format!(
+                    "overlay {} says clipped is {}, but its bounds say otherwise",
+                    overlay.id, overlay.clipped
+                )));
+            }
         }
         Ok(())
     }
