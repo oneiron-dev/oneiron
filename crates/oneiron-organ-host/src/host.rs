@@ -386,10 +386,9 @@ impl OrganHost {
         };
         let revoked = || self.grant_revoked(&call.grant);
         let grace = self.config.cancel_grace;
-        let mut on_ask = |ask| asked.take(ask);
         let wait = Wait {
             revoked: &revoked,
-            on_ask: &mut on_ask,
+            asks: asked,
             deadline,
             grace,
         };
