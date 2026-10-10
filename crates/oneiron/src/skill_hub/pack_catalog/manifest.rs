@@ -258,6 +258,12 @@ fn contact(value: &str) -> Result<String> {
     if text.trim().is_empty() || text.len() > CONTACT_MAX_BYTES {
         return Err(invalid("PACK.md contact is blank or exceeds its bound"));
     }
+    // The source scans read the raw file, where a JSON escape can hide a
+    // credential; the decoded text gets both detectors again.
+    crate::batch::secret_scan::scan_metadata_field(&text)?;
+    if crate::batch::secret_scan::scan_file_content("PACK.md", text.as_bytes()).is_some() {
+        return Err(invalid("pack source contains credential material"));
+    }
     Ok(text)
 }
 fn validate_agent_text(value: &str, max_bytes: usize) -> Result<()> {

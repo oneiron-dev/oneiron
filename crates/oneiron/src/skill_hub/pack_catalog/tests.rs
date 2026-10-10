@@ -414,11 +414,13 @@ fn hub_pack_contact_line_loads_and_is_carried() -> Result<()> {
     };
     let source = pack(CONTACT)?;
     assert_eq!(source.manifest().contact.as_deref(), Some(CONTACT));
-    // Bounded display text: no control characters, not blank, at most 512 bytes.
+    // Bounded display text: no control characters, not blank, at most 512
+    // bytes, and no credential hidden behind a JSON escape.
     for bad in [
         "\"legal@oneiron.dev\\u0007\"".to_owned(),
         "\" \"".to_owned(),
         "a".repeat(513),
+        "\"\\u0067hp_0123456789abcdefghijklmnopqrstuvwxyz\"".to_owned(),
     ] {
         assert!(pack(&bad).is_err(), "{bad}");
     }
