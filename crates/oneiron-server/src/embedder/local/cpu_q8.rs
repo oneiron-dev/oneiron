@@ -8,9 +8,11 @@
 //! Measured on 2026-10-10 at about 20 tokens a second on 8 threads.
 //!
 //! This kernel takes candle's own Q8_0 blocks at load and multiplies a whole
-//! packed forward against them in tiles that stay in cache: four weight
-//! columns are read once for every two input rows, tasks cover 32 rows by 64
-//! columns, and AVX2 is picked at run time rather than at build time.
+//! packed forward against them in tiles that stay in cache: eight weight
+//! columns are read once for every four input rows, tasks cover 32 rows by 64
+//! columns, and AVX2 is picked at run time rather than at build time. The
+//! columns are stored interleaved, four values of each in turn, so one vector
+//! lane accumulates one column's block and no product is summed across lanes.
 //!
 //! The numbers are candle's portable dot product's, bit for bit, which is the
 //! path every x86_64 build without `target-feature=+avx2` runs. Each input row
@@ -27,12 +29,17 @@ use rayon::prelude::*;
 const BLOCK: usize = 32;
 /// Bytes per Q8_0 block in candle's layout: an f16 scale, then 32 values.
 const BLOCK_BYTES: usize = 2 + BLOCK;
+/// Values of one column side by side in the interleaved layout: one 32-bit
+/// vector lane.
+const RUN: usize = 4;
 /// Input rows one task covers.
 const TASK_ROWS: usize = 32;
-/// Weight columns one task covers, in groups of four.
+/// Weight columns one task covers, in groups of eight.
 const TASK_COLUMNS: usize = 64;
-/// Weight columns one kernel call reads.
-const QUAD: usize = 4;
+/// Weight columns one kernel call reads: one per lane of a 256-bit vector.
+const OCT: usize = 8;
+/// Input rows one kernel call reads at most.
+const ROWS: usize = 4;
 
 /// Whether this build's candle runs the portable dot product this kernel
 /// reproduces. Elsewhere candle keeps the projection: aarch64 and an AVX2
@@ -44,23 +51,25 @@ pub(super) const REPRODUCES_CANDLE: bool =
 pub(super) struct CpuQ8 {
     out_dim: usize,
     in_dim: usize,
-    /// Every value, one row of `in_dim` per output column.
+    /// Every value, by groups of eight columns: for every group and block,
+    /// eight runs of 32 bytes, each the eight columns' next four values side
+    /// by side.
     values: Vec<i8>,
-    /// Each block's f16 scale bits, by groups of four columns: for every group
-    /// and block, the four columns' scales side by side.
-    scales: Vec<[u16; QUAD]>,
+    /// Each block's f16 scale bits, by groups of eight columns: for every
+    /// group and block, the eight columns' scales side by side.
+    scales: Vec<[u16; OCT]>,
 }
 
 impl CpuQ8 {
     /// Takes over a CPU Q8_0 tensor shaped `(out, in)`, or `None` for one this
     /// kernel does not cover: another type, another device, or an output width
-    /// that is not a multiple of four.
+    /// that is not a multiple of eight.
     pub(super) fn from_qtensor(tensor: &QTensor) -> candle_core::Result<Option<Self>> {
         if tensor.dtype() != GgmlDType::Q8_0 || !matches!(tensor.device(), Device::Cpu) {
             return Ok(None);
         }
         let (out_dim, in_dim) = tensor.shape().dims2()?;
-        if !out_dim.is_multiple_of(QUAD) || !in_dim.is_multiple_of(BLOCK) {
+        if !out_dim.is_multiple_of(OCT) || !in_dim.is_multiple_of(BLOCK) {
             return Ok(None);
         }
         let blocks = in_dim / BLOCK;
@@ -72,13 +81,18 @@ impl CpuQ8 {
                 out_dim * blocks * BLOCK_BYTES
             );
         }
-        let mut values = Vec::with_capacity(out_dim * in_dim);
-        let mut scales = vec![[0u16; QUAD]; out_dim / QUAD * blocks];
+        let mut values = vec![0i8; out_dim * in_dim];
+        let mut scales = vec![[0u16; OCT]; out_dim / OCT * blocks];
         for (index, block) in data.chunks_exact(BLOCK_BYTES).enumerate() {
             let (column, at) = (index / blocks, index % blocks);
-            scales[column / QUAD * blocks + at][column % QUAD] =
-                u16::from_le_bytes([block[0], block[1]]);
-            values.extend(block[2..].iter().map(|&byte| byte.cast_signed()));
+            let group = column / OCT * blocks + at;
+            scales[group][column % OCT] = u16::from_le_bytes([block[0], block[1]]);
+            for (run, source) in block[2..].chunks_exact(RUN).enumerate() {
+                let start = (group * (BLOCK / RUN) + run) * OCT * RUN + column % OCT * RUN;
+                for (value, &byte) in values[start..start + RUN].iter_mut().zip(source) {
+                    *value = byte.cast_signed();
+                }
+            }
         }
         Ok(Some(Self {
             out_dim,
@@ -152,49 +166,59 @@ impl CpuQ8 {
     ) -> Vec<f32> {
         let width = columns.len();
         let mut out = vec![0f32; rows.len() * width];
-        for quad in (columns.start..columns.end).step_by(QUAD) {
-            let weights = self.quad(quad);
-            for first in rows.clone().step_by(2) {
-                // An odd last row runs as its own pair and keeps one half.
-                let second = if first + 1 < rows.end {
-                    first + 1
-                } else {
-                    first
-                };
-                let pair = [input.row(first), input.row(second)];
-                let sums = if simd {
-                    simd::pair_by_quad(pair, weights)
-                } else {
-                    portable_pair_by_quad(pair, weights)
-                };
-                for (offset, row) in [first, second].into_iter().enumerate() {
-                    let at = (row - rows.start) * width + quad - columns.start;
-                    out[at..at + QUAD].copy_from_slice(&sums[offset * QUAD..(offset + 1) * QUAD]);
+        let mut sums = [[0f32; OCT]; ROWS];
+        for first_column in columns.clone().step_by(OCT) {
+            let weights = self.oct(first_column);
+            for first in rows.clone().step_by(ROWS) {
+                let count = ROWS.min(rows.end - first);
+                match count {
+                    1 => by_oct::<1>(input, first, weights, simd, &mut sums),
+                    2 => by_oct::<2>(input, first, weights, simd, &mut sums),
+                    3 => by_oct::<3>(input, first, weights, simd, &mut sums),
+                    _ => by_oct::<ROWS>(input, first, weights, simd, &mut sums),
+                }
+                for (offset, row) in sums[..count].iter().enumerate() {
+                    let at = (first + offset - rows.start) * width + first_column - columns.start;
+                    out[at..at + OCT].copy_from_slice(row);
                 }
             }
         }
         out
     }
 
-    /// The four columns starting at `first`.
-    fn quad(&self, first: usize) -> Quad<'_> {
+    /// The eight columns starting at `first`.
+    fn oct(&self, first: usize) -> Oct<'_> {
         let blocks = self.in_dim / BLOCK;
-        let column = |offset: usize| {
-            let start = (first + offset) * self.in_dim;
-            &self.values[start..start + self.in_dim]
-        };
-        Quad {
-            values: [column(0), column(1), column(2), column(3)],
-            scales: &self.scales[first / QUAD * blocks..(first / QUAD + 1) * blocks],
+        let group = first / OCT;
+        Oct {
+            values: &self.values[group * OCT * self.in_dim..(group + 1) * OCT * self.in_dim],
+            scales: &self.scales[group * blocks..(group + 1) * blocks],
         }
     }
 }
 
-/// Four weight columns and their block scales.
+/// `R` rows from `first` against eight columns, into `sums`' first `R` rows.
+fn by_oct<const R: usize>(
+    input: &Rows,
+    first: usize,
+    weights: Oct<'_>,
+    simd: bool,
+    sums: &mut [[f32; OCT]; ROWS],
+) {
+    let rows: [Row<'_>; R] = std::array::from_fn(|offset| input.row(first + offset));
+    let got = if simd {
+        simd::rows_by_oct(rows, weights)
+    } else {
+        portable_rows_by_oct(rows, weights)
+    };
+    sums[..R].copy_from_slice(&got);
+}
+
+/// Eight weight columns, interleaved, and their block scales.
 #[derive(Clone, Copy)]
-struct Quad<'a> {
-    values: [&'a [i8]; QUAD],
-    scales: &'a [[u16; QUAD]],
+struct Oct<'a> {
+    values: &'a [i8],
+    scales: &'a [[u16; OCT]],
 }
 
 /// One input row, quantised: its values and each block's scale as the dot
@@ -272,21 +296,26 @@ fn quantise_block(input: &[f32], values: &mut [i8]) -> f32 {
     half::f16::from_f32(d).to_f32()
 }
 
-/// Two rows against four columns without SIMD: lane `r * 4 + c` is row `r`
-/// against column `c`, summed exactly as candle's `vec_dot_unopt` sums it.
-fn portable_pair_by_quad(rows: [Row<'_>; 2], quad: Quad<'_>) -> [f32; 2 * QUAD] {
-    let mut sums = [0f32; 2 * QUAD];
-    for (block, (column_scales, at)) in quad.scales.iter().zip((0..).step_by(BLOCK)).enumerate() {
-        for (r, row) in rows.iter().enumerate() {
-            let input = &row.values[at..at + BLOCK];
-            for (c, column) in quad.values.iter().enumerate() {
-                let dot: i32 = column[at..at + BLOCK]
+/// `R` rows against eight columns without SIMD, summed exactly as candle's
+/// `vec_dot_unopt` sums each pair.
+fn portable_rows_by_oct<const R: usize>(rows: [Row<'_>; R], oct: Oct<'_>) -> [[f32; OCT]; R] {
+    let mut sums = [[0f32; OCT]; R];
+    let (runs, _) = oct.values.as_chunks::<{ OCT * RUN }>();
+    for (block, column_scales) in oct.scales.iter().enumerate() {
+        let runs = &runs[block * BLOCK / RUN..(block + 1) * BLOCK / RUN];
+        for (row, sums) in rows.iter().zip(&mut sums) {
+            let input = &row.values[block * BLOCK..(block + 1) * BLOCK];
+            for (column, sum) in sums.iter_mut().enumerate() {
+                let dot: i32 = runs
                     .iter()
-                    .zip(input)
+                    .zip(input.chunks_exact(RUN))
+                    .flat_map(|(run, input)| {
+                        run[column * RUN..(column + 1) * RUN].iter().zip(input)
+                    })
                     .map(|(&w, &x)| i32::from(w) * i32::from(x))
                     .sum();
-                let weight_scale = half::f16::from_bits(column_scales[c]).to_f32();
-                sums[r * QUAD + c] += dot as f32 * weight_scale * row.scales[block];
+                let weight_scale = half::f16::from_bits(column_scales[column]).to_f32();
+                *sum += dot as f32 * weight_scale * row.scales[block];
             }
         }
     }
@@ -297,124 +326,89 @@ fn portable_pair_by_quad(rows: [Row<'_>; 2], quad: Quad<'_>) -> [f32; 2 * QUAD] 
 #[cfg(target_arch = "x86_64")]
 mod simd {
     use std::arch::x86_64::{
-        __m128i, __m256i, _mm_cvtph_ps, _mm_loadl_epi64, _mm_set1_ps, _mm256_abs_epi8,
-        _mm256_add_epi32, _mm256_add_ps, _mm256_cvtepi32_ps, _mm256_hadd_epi32, _mm256_loadu_si256,
-        _mm256_madd_epi16, _mm256_maddubs_epi16, _mm256_mul_ps, _mm256_permute2x128_si256,
-        _mm256_set_m128, _mm256_set1_epi16, _mm256_setzero_ps, _mm256_sign_epi8, _mm256_storeu_ps,
+        __m128i, __m256, __m256i, _mm_loadu_si128, _mm256_abs_epi8, _mm256_add_epi32,
+        _mm256_add_ps, _mm256_cvtepi32_ps, _mm256_cvtph_ps, _mm256_loadu_si256, _mm256_madd_epi16,
+        _mm256_maddubs_epi16, _mm256_mul_ps, _mm256_set1_epi16, _mm256_set1_epi32, _mm256_set1_ps,
+        _mm256_setzero_ps, _mm256_setzero_si256, _mm256_sign_epi8, _mm256_storeu_ps,
     };
 
-    use super::{BLOCK, QUAD, Quad, Row};
+    use super::{BLOCK, OCT, Oct, RUN, Row};
 
     pub(super) fn available() -> bool {
         std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("f16c")
     }
 
-    /// [`super::portable_pair_by_quad`], eight dot products at a time.
-    pub(super) fn pair_by_quad(rows: [Row<'_>; 2], quad: Quad<'_>) -> [f32; 2 * QUAD] {
+    /// [`super::portable_rows_by_oct`], one column per lane.
+    pub(super) fn rows_by_oct<const R: usize>(rows: [Row<'_>; R], oct: Oct<'_>) -> [[f32; OCT]; R] {
         // SAFETY: the caller asked `available`, which found both features.
-        unsafe { pair_by_quad_avx2(rows, quad) }
+        unsafe { rows_by_oct_avx2(rows, oct) }
     }
 
     #[target_feature(enable = "avx2,f16c")]
-    fn pair_by_quad_avx2(rows: [Row<'_>; 2], quad: Quad<'_>) -> [f32; 2 * QUAD] {
-        let mut sums = _mm256_setzero_ps();
-        let (row0, _) = rows[0].values.as_chunks::<BLOCK>();
-        let (row1, _) = rows[1].values.as_chunks::<BLOCK>();
-        let (c0, _) = quad.values[0].as_chunks::<BLOCK>();
-        let (c1, _) = quad.values[1].as_chunks::<BLOCK>();
-        let (c2, _) = quad.values[2].as_chunks::<BLOCK>();
-        let (c3, _) = quad.values[3].as_chunks::<BLOCK>();
-        for (block, column_scales) in quad.scales.iter().enumerate() {
-            let w = [
-                load(&c0[block]),
-                load(&c1[block]),
-                load(&c2[block]),
-                load(&c3[block]),
-            ];
-            let w_abs = [
-                _mm256_abs_epi8(w[0]),
-                _mm256_abs_epi8(w[1]),
-                _mm256_abs_epi8(w[2]),
-                _mm256_abs_epi8(w[3]),
-            ];
-            let x0 = load(&row0[block]);
-            let x1 = load(&row1[block]);
-            let dots = totals([
-                partial(w[0], w_abs[0], x0),
-                partial(w[1], w_abs[1], x0),
-                partial(w[2], w_abs[2], x0),
-                partial(w[3], w_abs[3], x0),
-                partial(w[0], w_abs[0], x1),
-                partial(w[1], w_abs[1], x1),
-                partial(w[2], w_abs[2], x1),
-                partial(w[3], w_abs[3], x1),
-            ]);
-            // SAFETY: four f16 bit patterns are exactly the eight bytes read.
-            let scales4 =
-                _mm_cvtph_ps(unsafe { _mm_loadl_epi64(column_scales.as_ptr().cast::<__m128i>()) });
-            let weight_scales = _mm256_set_m128(scales4, scales4);
-            let input_scales = _mm256_set_m128(
-                _mm_set1_ps(rows[1].scales[block]),
-                _mm_set1_ps(rows[0].scales[block]),
-            );
-            let term = _mm256_mul_ps(
-                _mm256_mul_ps(_mm256_cvtepi32_ps(dots), weight_scales),
-                input_scales,
-            );
-            sums = _mm256_add_ps(sums, term);
+    fn rows_by_oct_avx2<const R: usize>(rows: [Row<'_>; R], oct: Oct<'_>) -> [[f32; OCT]; R] {
+        let ones = _mm256_set1_epi16(1);
+        let mut sums = [_mm256_setzero_ps(); R];
+        let (runs, _) = oct.values.as_chunks::<{ OCT * RUN }>();
+        let inputs: [&[[i8; RUN]]; R] = std::array::from_fn(|r| rows[r].values.as_chunks().0);
+        for (block, column_scales) in oct.scales.iter().enumerate() {
+            let mut dots = [_mm256_setzero_si256(); R];
+            let first_run = block * BLOCK / RUN;
+            for (run, weights) in runs[first_run..first_run + BLOCK / RUN].iter().enumerate() {
+                // SAFETY: `weights` is 32 readable bytes; the load is unaligned.
+                let w = unsafe { _mm256_loadu_si256(weights.as_ptr().cast::<__m256i>()) };
+                let w_abs = _mm256_abs_epi8(w);
+                for (dot, input) in dots.iter_mut().zip(&inputs) {
+                    let x = input[first_run + run].map(i8::cast_unsigned);
+                    let x = _mm256_set1_epi32(i32::from_le_bytes(x));
+                    // Every value is in -127..=127, so a pair of products fits
+                    // an i16; lane `c` then sums column `c`'s four products.
+                    let products = _mm256_maddubs_epi16(w_abs, _mm256_sign_epi8(x, w));
+                    *dot = _mm256_add_epi32(*dot, _mm256_madd_epi16(products, ones));
+                }
+            }
+            let weight_scales = scales(column_scales);
+            for ((sum, dot), row) in sums.iter_mut().zip(dots).zip(&rows) {
+                let term = _mm256_mul_ps(
+                    _mm256_mul_ps(_mm256_cvtepi32_ps(dot), weight_scales),
+                    _mm256_set1_ps(row.scales[block]),
+                );
+                *sum = _mm256_add_ps(*sum, term);
+            }
         }
-        let mut out = [0f32; 2 * QUAD];
-        // SAFETY: `out` is eight writable floats; the store is unaligned.
-        unsafe { _mm256_storeu_ps(out.as_mut_ptr(), sums) };
+        let mut out = [[0f32; OCT]; R];
+        for (out, sum) in out.iter_mut().zip(sums) {
+            // SAFETY: `out` is eight writable floats; the store is unaligned.
+            unsafe { _mm256_storeu_ps(out.as_mut_ptr(), sum) };
+        }
         out
     }
 
-    #[target_feature(enable = "avx2")]
-    fn load(values: &[i8; BLOCK]) -> __m256i {
-        // SAFETY: `values` is 32 readable bytes; the load is unaligned.
-        unsafe { _mm256_loadu_si256(values.as_ptr().cast::<__m256i>()) }
-    }
-
-    /// One block of one column against one row, as eight partial sums. Every
-    /// value is in -127..=127, so a pair of products fits an i16.
-    #[target_feature(enable = "avx2")]
-    fn partial(w: __m256i, w_abs: __m256i, x: __m256i) -> __m256i {
-        let products = _mm256_maddubs_epi16(w_abs, _mm256_sign_epi8(x, w));
-        _mm256_madd_epi16(products, _mm256_set1_epi16(1))
-    }
-
-    /// Lane `i` of the result is the sum of `partials[i]`'s eight lanes.
-    #[target_feature(enable = "avx2")]
-    fn totals(partials: [__m256i; 8]) -> __m256i {
-        let p01 = _mm256_hadd_epi32(partials[0], partials[1]);
-        let p23 = _mm256_hadd_epi32(partials[2], partials[3]);
-        let p45 = _mm256_hadd_epi32(partials[4], partials[5]);
-        let p67 = _mm256_hadd_epi32(partials[6], partials[7]);
-        let p0123 = _mm256_hadd_epi32(p01, p23);
-        let p4567 = _mm256_hadd_epi32(p45, p67);
-        _mm256_add_epi32(
-            _mm256_permute2x128_si256::<0x20>(p0123, p4567),
-            _mm256_permute2x128_si256::<0x31>(p0123, p4567),
-        )
+    /// Eight f16 scales, widened.
+    #[target_feature(enable = "avx2,f16c")]
+    fn scales(bits: &[u16; OCT]) -> __m256 {
+        // SAFETY: eight f16 bit patterns are exactly the sixteen bytes read.
+        _mm256_cvtph_ps(unsafe { _mm_loadu_si128(bits.as_ptr().cast::<__m128i>()) })
     }
 }
 
 /// No SIMD path off x86_64: there candle keeps the projection.
 #[cfg(not(target_arch = "x86_64"))]
 mod simd {
-    use super::{QUAD, Quad, Row};
+    use super::{OCT, Oct, Row};
 
     pub(super) const fn available() -> bool {
         false
     }
 
-    pub(super) fn pair_by_quad(rows: [Row<'_>; 2], quad: Quad<'_>) -> [f32; 2 * QUAD] {
-        super::portable_pair_by_quad(rows, quad)
+    pub(super) fn rows_by_oct<const R: usize>(rows: [Row<'_>; R], oct: Oct<'_>) -> [[f32; OCT]; R] {
+        super::portable_rows_by_oct(rows, oct)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use candle_core::Module;
     use candle_core::quantized::QMatMul;
 
@@ -440,7 +434,7 @@ mod tests {
     /// reproduces.
     #[test]
     fn the_tiled_kernel_matches_candle_to_the_bit() {
-        for (rows, out_dim, in_dim) in [(1, 4, 32), (7, 68, 96), (33, 132, 1024), (70, 1024, 3072)]
+        for (rows, out_dim, in_dim) in [(1, 8, 32), (7, 72, 96), (33, 136, 1024), (70, 1024, 3072)]
         {
             let weight =
                 Tensor::from_vec(values(out_dim * in_dim, 7), (out_dim, in_dim), &Device::Cpu)
@@ -476,6 +470,48 @@ mod tests {
                     assert!((a - b).abs() <= 1e-3 * b.abs().max(1.0), "{a} vs {b}");
                 }
             }
+        }
+    }
+
+    /// One projection's throughput, this kernel against candle's, on synthetic
+    /// weights at the model's widest shapes. Threads come from
+    /// `RAYON_NUM_THREADS`; each shape prints one `BENCH kernel` line.
+    #[test]
+    #[ignore = "a timing row, reported in the PR body"]
+    fn bench_projection() {
+        let time = |run: &dyn Fn() -> Tensor| {
+            run();
+            let started = Instant::now();
+            let mut runs = 0u32;
+            while runs < 3 || started.elapsed() < Duration::from_secs(2) {
+                run();
+                runs += 1;
+            }
+            started.elapsed().as_secs_f64() / f64::from(runs)
+        };
+        for (rows, out_dim, in_dim) in [(512, 3072, 1024), (512, 1024, 3072), (16, 3072, 1024)] {
+            let weight =
+                Tensor::from_vec(values(out_dim * in_dim, 7), (out_dim, in_dim), &Device::Cpu)
+                    .expect("weight");
+            let quantised = QTensor::quantize(&weight, GgmlDType::Q8_0).expect("quantised");
+            let ours = CpuQ8::from_qtensor(&quantised)
+                .expect("read")
+                .expect("a Q8_0 CPU tensor is covered");
+            let candle = QMatMul::from_qtensor(quantised).expect("qmatmul");
+            let input =
+                Tensor::from_vec(values(rows * in_dim, 11), (1, rows, in_dim), &Device::Cpu)
+                    .expect("input");
+            let tiled = time(&|| ours.forward(&input).expect("ours"));
+            let theirs = time(&|| candle.forward(&input).expect("candle"));
+            let macs = (rows * out_dim * in_dim) as f64;
+            println!(
+                "BENCH kernel threads={} rows={rows} out={out_dim} in={in_dim} tiled_ms={:.2} tiled_gmacs={:.1} candle_ms={:.2} candle_gmacs={:.2}",
+                std::env::var("RAYON_NUM_THREADS").unwrap_or_default(),
+                tiled * 1e3,
+                macs / tiled / 1e9,
+                theirs * 1e3,
+                macs / theirs / 1e9
+            );
         }
     }
 }
