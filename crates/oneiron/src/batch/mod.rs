@@ -43,6 +43,8 @@ pub(crate) use self::vad_postcommit::VadPostcommitScope;
 #[cfg(feature = "sync")]
 #[cfg(feature = "sync")]
 pub(crate) use self::vad_postcommit::queue_proactivity_change;
+#[cfg(feature = "sync")]
+pub(crate) use self::vad_postcommit::queue_task_updates;
 
 pub(crate) use self::authority_log::validate_replicated_authority_log_for_local_vault;
 use self::base_apply::apply_ops_with_origin;
