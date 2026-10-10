@@ -459,6 +459,7 @@ impl<'a> DreamerWakeDriver<'a> {
             // refunds its budget reservation and parks it before the pass
             // stops.
             let cancel_requested = cancel.is_cancelled();
+            let mut backlog_left = false;
             let executed = if cancel_requested {
                 Ok(DreamerAttemptExecution::Park {
                     reason: DREAMER_CANCELLED_PARK_REASON.to_owned(),
@@ -474,8 +475,11 @@ impl<'a> DreamerWakeDriver<'a> {
             } else if admitted.status.attempt.kind == input.scope.attempt_kind()
                 && !prepared_wake.contains_attempt(attempt_id)
             {
-                // Enqueued after the frozen wake revision: never admit it to
-                // this snapshot or fall back to a newer per-attempt read.
+                // Enqueued after the frozen wake revision, or past the head of
+                // a backlog larger than one wake prepares: never admit it to
+                // this snapshot or fall back to a newer per-attempt read. Past
+                // the head, the pass ends here and the next prepares the rest.
+                backlog_left = prepared_wake.left_for_later(attempt_id);
                 Ok(DreamerAttemptExecution::Deferred {
                     completed_units: 0,
                     retry_at: input.now.saturating_add(1),
@@ -757,6 +761,10 @@ impl<'a> DreamerWakeDriver<'a> {
                 // through the Park arm above — the pass may now stop at this
                 // attempt boundary (H-S5/R2).
                 report.stop = WakePassStop::Cancelled;
+                break;
+            }
+            if backlog_left {
+                report.stop = WakePassStop::BacklogLeft;
                 break;
             }
         }

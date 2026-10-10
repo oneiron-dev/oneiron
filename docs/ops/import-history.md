@@ -39,6 +39,10 @@ Only logs under `claude_code_root` (default `~/.claude/projects`) or
 them is followed. The [Claude Code hooks](claude-code-hooks.md) queue each
 session this way at every stop.
 
+Each pass lands what is queued, earliest session first, up to the size
+limit of one import below. What is past it waits for the next pass, which
+comes 5 seconds later; a waiting log is not read again until it lands.
+
 ## What lands
 
 - Each source conversation becomes a conversation in the vault; each message a
@@ -84,7 +88,10 @@ Each session log is read up to 1 GiB. A larger log in a folder is left out,
 unread, and the rest of the folder lands: the report counts it under
 `files.too_large` and names it in `warnings`, and the import still succeeds.
 Importing the folder again once the limit allows that log lands it, and only
-what is new. A larger log named on its own is refused.
+what is new. A larger log named on its own is refused. A queued session is
+read the same way: a log over the limit, the session's own or a subagent's,
+is left out with a `log_too_large` warning in `serve`'s log (its `path`,
+`bytes` and `limit`), the rest of the session lands, and the entry is done.
 
 ## The report
 
@@ -92,14 +99,41 @@ stdout is one JSON document of counts: per conversation (its source id, kind,
 `new`, `skipped`, `changed`, `refused`, `not_kept`), totals, `files` (`read`;
 `passed`: other `.jsonl` files under the path, such as a workflow journal;
 `too_large`: session logs left out), and `warnings`, one per log left out
-(`"warning": "log_too_large"`, its `path`, `bytes` and the `limit`). It never
-holds message text or titles. `--dry-run` prints the same counts and
+(`"warning": "log_too_large"`, its `path`, `bytes` and the `limit`), and
+`review`, where the claims drawn from this import wait (below; `null` for a
+dry run and for an import that landed nothing). It never holds message text
+or titles. `--dry-run` prints the same counts and
 predicts the secret scan's refusals; a refusal from a policy gate shows only
 in a real import.
 
 ## Claims
 
-Imported turns carry an import stamp. The Dreamer classifies what it extracts
-from them as imported evidence, and imported material never approves itself
-(ARCH-0027, ARCH-0040). Reviewing those claims in bulk is the next step and
-is not wired by this command.
+Imported turns carry an import stamp. Each import queues the Dreamer over what
+it landed, since no session ends for an import, and `serve` with a model runs
+it. Every claim the Dreamer draws from imported words is `imported` and waits
+for you, Proposed: imported material never approves itself, whatever the
+policy's source-trust rows grant (ARCH-0027, ARCH-0040). The prompts a
+delegating agent gave its subagents are not your words and are not read for
+claims; what the subagents answered is. Neither are words whose speaker the
+log does not say, such as a Codex thread's copy of history whose own thread
+the copy left out: they land with `said_by: unknown`, and once you import the
+rollout that says they were yours, they land again as yours and are read.
+
+Each import is one review, named in the report's `review` (`run_id`
+`import:<source>:<time>`, its `run_ref`, and the Dreamer attempts it queued).
+Approve or decline it whole, with one receipt, as any run
+([Approve or decline an agent run in one act](owner-actions.md#approve-or-decline-an-agent-run-in-one-act)):
+
+```bash
+oneiron runs pending
+oneiron runs show import:claude-code:1791234567
+oneiron runs approve import:claude-code:1791234567 --bundle <bundle id from show>
+```
+
+The review fills as the Dreamer runs; `show` lists what waits so far and its
+bundle id binds exactly that. A claim citing words a later import added to the
+same turn waits in the later import's review; a claim you declined is not
+proposed again from the same words. A large import drains over several Dreamer
+passes, each reading about one round of turns. Each import takes a second of
+its own on the vault's clock: if that clock is ahead of the machine's (the
+system clock moved back), the import is refused until the machine catches up.

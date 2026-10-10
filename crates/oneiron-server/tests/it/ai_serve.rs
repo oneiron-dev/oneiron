@@ -16,9 +16,9 @@ use oneiron::{DreamerConsolidationScope, EntityId, TimeRange, Vault, VaultConfig
 
 use crate::fake_llm::{FakeLlm, Reply};
 
-const SECRET: &str = "ai-restart-test-host-secret-0001";
+pub(crate) const SECRET: &str = "ai-restart-test-host-secret-0001";
 
-fn free_port() -> u16 {
+pub(crate) fn free_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
@@ -26,7 +26,12 @@ fn free_port() -> u16 {
         .port()
 }
 
-fn write_config(dir: &Path, vault: &Path, port: u16, models: &str) -> std::path::PathBuf {
+pub(crate) fn write_config(
+    dir: &Path,
+    vault: &Path,
+    port: u16,
+    models: &str,
+) -> std::path::PathBuf {
     let path = dir.join("oneiron.toml");
     std::fs::write(
         &path,
@@ -40,7 +45,7 @@ fn write_config(dir: &Path, vault: &Path, port: u16, models: &str) -> std::path:
 }
 
 /// One local fake model for every seat, egress to it opted in.
-fn models_section(model_url: &str) -> String {
+pub(crate) fn models_section(model_url: &str) -> String {
     format!(
         r#"
 [models]
@@ -54,7 +59,7 @@ base_url = "{model_url}"
     )
 }
 
-fn oneiron(config: &Path, args: &[&str]) -> Command {
+pub(crate) fn oneiron(config: &Path, args: &[&str]) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_oneiron"));
     command
         .args(args)
@@ -65,7 +70,7 @@ fn oneiron(config: &Path, args: &[&str]) -> Command {
     command
 }
 
-fn serve(config: &Path) -> Child {
+pub(crate) fn serve(config: &Path) -> Child {
     oneiron(config, &["serve"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -73,7 +78,7 @@ fn serve(config: &Path) -> Child {
         .unwrap()
 }
 
-fn vault_config() -> VaultConfig {
+pub(crate) fn vault_config() -> VaultConfig {
     let mut config = VaultConfig::server();
     config.dimensions = 8;
     config
@@ -137,7 +142,7 @@ fn extraction(subject: EntityId, turn: EntityId) -> String {
     .to_string()
 }
 
-async fn wait_for(timeout: Duration, mut done: impl FnMut() -> bool) -> bool {
+pub(crate) async fn wait_for(timeout: Duration, mut done: impl FnMut() -> bool) -> bool {
     let started = Instant::now();
     while started.elapsed() < timeout {
         if done() {
@@ -148,7 +153,7 @@ async fn wait_for(timeout: Duration, mut done: impl FnMut() -> bool) -> bool {
     done()
 }
 
-fn stop(mut child: Child) {
+pub(crate) fn stop(mut child: Child) {
     // SIGTERM: the graceful path; a pass in flight finishes its boundary.
     let sent = Command::new("kill")
         .args(["-TERM", &child.id().to_string()])

@@ -7,6 +7,7 @@ use crate::actor_claims::{actor_archive_references, is_actor_claim_predicate};
 use crate::dreamer_consolidation::decode_consolidation_evidence;
 use crate::error::Result;
 use crate::store::Store;
+use crate::write_envelope::envelope_carried_evidence;
 
 use super::ClaimBody;
 
@@ -14,11 +15,24 @@ use super::ClaimBody;
 /// cited turn remains live. This is a read-time test: sync can deliver a claim
 /// after the deletion that erased its source. Ordinary claims have no such
 /// evidence obligation, and claim history remains available through get_claim.
+/// A stamped successor of a raw claim keeps that claim's obligation: the
+/// evidence it carries is read as the raw claim's own.
 pub(crate) fn has_live_support_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     body: &ClaimBody,
 ) -> Result<bool> {
+    let carried;
+    let body = match body.evidence.as_ref().and_then(envelope_carried_evidence) {
+        Some(evidence) => {
+            carried = ClaimBody {
+                evidence: Some(evidence.clone()),
+                ..body.clone()
+            };
+            &carried
+        }
+        None => body,
+    };
     let (refs, turns_only) = if is_actor_claim_predicate(&body.predicate) {
         let chat_lane = body
             .evidence

@@ -195,6 +195,17 @@ pub enum ClaimError {
     /// Peer transition/handoff lacks its signed birth; quarantine and re-offer.
     #[error("remote machine claim history dependency pending")]
     RemoteMachineHistoryPending,
+    /// An engine MACHINE writer has no signer on this vault handle. A vault
+    /// handle retains no signer of its own: after every open, the host calls
+    /// `Vault::provision_engine_machine_identities` (after
+    /// `ensure_host_root_slip`). This is that missing setup step, not an
+    /// authority denial; a writer whose binding was revoked is refused with
+    /// [`ClaimError::ActorLacksClaimAuthority`] instead. Nothing was written.
+    #[error(
+        "engine machine writer {} has no signer on this vault handle: the host must call provision_engine_machine_identities after it opens the vault",
+        machine.to_hex()
+    )]
+    EngineIdentitiesNotProvisioned { machine: EntityId },
     /// A scoped read under the vault-owner key found the owner's binding no
     /// longer holding in its own snapshot. Carries the owner verification's
     /// refusal, so the facade reports that code (a revoked binding, a
@@ -233,6 +244,9 @@ impl ClaimError {
             Self::InvalidMachineClaimProof => ErrorKind::InvalidMachineClaimProof,
             Self::MachineClaimHistoryIncomplete => ErrorKind::MachineClaimHistoryIncomplete,
             Self::RemoteMachineHistoryPending => ErrorKind::RemoteMachineHistoryPending,
+            Self::EngineIdentitiesNotProvisioned { .. } => {
+                ErrorKind::EngineIdentitiesNotProvisioned
+            }
         }
     }
 }

@@ -245,7 +245,8 @@ async fn stub_extract(
 }
 
 /// An endpoint section in shadow mode, with a short timeout and no retry
-/// backoff so a test can watch every attempt.
+/// backoff so a test can watch every attempt. Its vault ([`open_vault`]) is
+/// armed in shadow too.
 pub(super) fn endpoint_config(base: &str) -> OneironerConfig {
     OneironerConfig {
         provider: OneironerProvider::Endpoint,
@@ -271,10 +272,29 @@ pub(super) fn open_vault(path: &std::path::Path, armed: bool, pinned: bool) -> A
         config.store_clock = oneiron::store::ports::ManualClock::new(NOW).bundle();
     }
     if armed {
-        config.tagging =
-            Some(oneiron::tagging::TaggingMarkerConfig::new(CHECKPOINT).expect("checkpoint"));
+        config.tagging = Some(
+            marker_config()
+                .with_mode(oneiron::tagging::TaggingMode::Shadow)
+                .with_labels(endpoint_config("").marker_config().expect("armed").labels),
+        );
     }
     Arc::new(Vault::open(path, config).expect("open vault"))
+}
+
+/// A vault whose tagger saves its tags, as `serve` arms one in save mode.
+pub(super) fn open_saving_vault(path: &std::path::Path) -> Arc<Vault> {
+    let mut config = VaultConfig::device();
+    config.dimensions = 4;
+    config.tagging = OneironerConfig {
+        mode: OneironerMode::Save,
+        ..endpoint_config("")
+    }
+    .marker_config();
+    Arc::new(Vault::open(path, config).expect("open vault"))
+}
+
+fn marker_config() -> oneiron::tagging::TaggingMarkerConfig {
+    oneiron::tagging::TaggingMarkerConfig::new(CHECKPOINT).expect("checkpoint")
 }
 
 /// Copies a closed vault's files, so two vaults start from the same bytes.

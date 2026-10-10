@@ -578,6 +578,17 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     ));
 
     spawn_sigterm_shutdown(shutdown.clone())?;
+    // The receipts every vault signs (ARCH-0066 §8-§9), each admitted through
+    // the reap freeze like a served write: a frozen vault signs nothing, and a
+    // reap never reads quiescent over a set in flight. The first set comes
+    // before ctl is served, so no reap can freeze the vault ahead of it.
+    let oversight = sync_server
+        .start_healer_oversight(crate::server::HEALER_OVERSIGHT_EVERY, {
+            let state = Arc::clone(&state);
+            move || state.admit_http_mutation().ok()
+        })
+        .await?;
+
     let ctl_task = tokio::spawn({
         let state = Arc::clone(&state);
         let ctl_shutdown = shutdown.triggered();
@@ -610,6 +621,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // No new durable background work from here on.
     lifecycle_handle.abort();
     let _ = lifecycle_handle.await;
+    // Frozen, so nothing new is admitted; an admitted write ends before exit.
+    oversight.stop().await;
 
     if let Some(path) = http_owned_path {
         // Only ever the path this process created. An inherited socket's inode

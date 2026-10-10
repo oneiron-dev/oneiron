@@ -641,6 +641,254 @@ fn the_same_codex_request_in_two_turns_stays_two_messages() {
     assert_eq!(user_words(&conversations), ["continue", "continue"]);
 }
 
+/// Sol 9A-3B #6: a spawned thread's rollout copies its parent's history
+/// before its own start. The owner's words in that copy stay the owner's;
+/// only the spawned thread's own prompt is the delegating agent's, which the
+/// Dreamer then leaves out.
+#[test]
+fn a_spawned_codex_rollout_keeps_the_owners_copied_words_as_the_owners() {
+    let conversations = decode_log(
+        HistorySource::Codex,
+        "rollout-2026-09-24T10-00-00-s-spawned",
+        &[
+            r#"{"timestamp":"2026-09-24T10:00:00.000Z","type":"session_meta","payload":{"id":"s-spawned","parent_thread_id":"s-parent","subagent_history_start_ordinal":4,"timestamp":"2026-09-24T10:00:00.000Z","cli_version":"0.100.0"}}"#,
+            r#"{"timestamp":"2026-09-24T10:00:00.050Z","type":"session_meta","payload":{"id":"s-parent","timestamp":"2026-09-24T09:00:00.000Z","cli_version":"0.100.0"}}"#,
+            r#"{"timestamp":"2026-09-24T10:00:00.080Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Keep every amount in integer cents."}],"id":"msg_parent_u1"}}"#,
+            r#"{"timestamp":"2026-09-24T10:00:00.100Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Cents it is."}],"id":"msg_parent_a1"}}"#,
+            r#"{"timestamp":"2026-09-24T10:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"List every call site of parse_amount."}],"id":"msg_spawned_u1"}}"#,
+            r#"{"timestamp":"2026-09-24T10:00:05.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Three call sites."}],"id":"msg_spawned_a1"}}"#,
+        ],
+    );
+    let users: Vec<_> = conversations[0]
+        .messages
+        .iter()
+        .filter(|message| message.role == HistoryRole::User)
+        .map(|message| (message.text.as_str(), message.said_by))
+        .collect();
+    assert_eq!(
+        users,
+        [
+            ("Keep every amount in integer cents.", None),
+            (
+                "List every call site of parse_amount.",
+                Some(super::DELEGATING_AGENT)
+            ),
+        ]
+    );
+
+    // Sol 9A-3B round 2 #2: a thread spawned by a spawned thread copies its
+    // parent's history, and that parent's own prompt came from an agent too.
+    // Only the root's words are the owner's.
+    let conversations = decode_log(
+        HistorySource::Codex,
+        "rollout-2026-09-24T11-00-00-s-nested",
+        &[
+            r#"{"timestamp":"2026-09-24T11:00:00.000Z","type":"session_meta","payload":{"id":"s-nested","parent_thread_id":"s-spawned","subagent_history_start_ordinal":7,"timestamp":"2026-09-24T11:00:00.000Z","cli_version":"0.100.0"}}"#,
+            r#"{"timestamp":"2026-09-24T11:00:00.010Z","type":"session_meta","payload":{"id":"s-spawned","parent_thread_id":"s-parent","subagent_history_start_ordinal":4,"timestamp":"2026-09-24T10:00:00.000Z","cli_version":"0.100.0"}}"#,
+            r#"{"timestamp":"2026-09-24T11:00:00.020Z","type":"session_meta","payload":{"id":"s-parent","timestamp":"2026-09-24T09:00:00.000Z","cli_version":"0.100.0"}}"#,
+            r#"{"timestamp":"2026-09-24T11:00:00.030Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Keep every amount in integer cents."}],"id":"msg_parent_u1"}}"#,
+            r#"{"timestamp":"2026-09-24T11:00:00.040Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Cents it is."}],"id":"msg_parent_a1"}}"#,
+            r#"{"timestamp":"2026-09-24T11:00:00.050Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"List every call site of parse_amount."}],"id":"msg_spawned_u1"}}"#,
+            r#"{"timestamp":"2026-09-24T11:00:00.060Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Three call sites."}],"id":"msg_spawned_a1"}}"#,
+            r#"{"timestamp":"2026-09-24T11:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Check the qif.rs call site."}],"id":"msg_nested_u1"}}"#,
+            r#"{"timestamp":"2026-09-24T11:00:05.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"It rounds."}],"id":"msg_nested_a1"}}"#,
+        ],
+    );
+    let users: Vec<_> = conversations[0]
+        .messages
+        .iter()
+        .filter(|message| message.role == HistoryRole::User)
+        .map(|message| (message.text.as_str(), message.said_by))
+        .collect();
+    assert_eq!(
+        users,
+        [
+            ("Keep every amount in integer cents.", None),
+            (
+                "List every call site of parse_amount.",
+                Some(super::DELEGATING_AGENT)
+            ),
+            ("Check the qif.rs call site.", Some(super::DELEGATING_AGENT)),
+        ]
+    );
+
+    // Sol 9A-3B round 3 #1: a fork that names no start of its own, over a
+    // spawned thread's copy. Past the spawned thread's start, the fork's own
+    // words cannot be told from that agent's, so the speaker is unknown: left
+    // out rather than read as the owner's.
+    let conversations = decode_log(
+        HistorySource::Codex,
+        "rollout-2026-09-24T12-00-00-s-fork",
+        &[
+            r#"{"timestamp":"2026-09-24T12:00:00.000Z","type":"session_meta","payload":{"id":"s-fork","forked_from_id":"s-spawned","timestamp":"2026-09-24T12:00:00.000Z","cli_version":"0.100.0"}}"#,
+            r#"{"timestamp":"2026-09-24T12:00:00.010Z","type":"session_meta","payload":{"id":"s-spawned","parent_thread_id":"s-parent","subagent_history_start_ordinal":4,"timestamp":"2026-09-24T10:00:00.000Z","cli_version":"0.100.0"}}"#,
+            r#"{"timestamp":"2026-09-24T12:00:00.020Z","type":"session_meta","payload":{"id":"s-parent","timestamp":"2026-09-24T09:00:00.000Z","cli_version":"0.100.0"}}"#,
+            r#"{"timestamp":"2026-09-24T12:00:00.030Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Keep every amount in integer cents."}],"id":"msg_parent_u1"}}"#,
+            r#"{"timestamp":"2026-09-24T12:00:00.040Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Cents it is."}],"id":"msg_parent_a1"}}"#,
+            r#"{"timestamp":"2026-09-24T12:00:00.050Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"List every call site of parse_amount."}],"id":"msg_spawned_u1"}}"#,
+            r#"{"timestamp":"2026-09-24T12:00:00.060Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Three call sites."}],"id":"msg_spawned_a1"}}"#,
+            r#"{"timestamp":"2026-09-24T12:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"In this fork, try rust_decimal."}],"id":"msg_fork_u1"}}"#,
+        ],
+    );
+    let users: Vec<_> = conversations[0]
+        .messages
+        .iter()
+        .filter(|message| message.role == HistoryRole::User)
+        .map(|message| (message.text.as_str(), message.said_by))
+        .collect();
+    assert_eq!(
+        users,
+        [
+            ("Keep every amount in integer cents.", None),
+            (
+                "List every call site of parse_amount.",
+                Some(super::UNKNOWN_SPEAKER)
+            ),
+            (
+                "In this fork, try rust_decimal.",
+                Some(super::UNKNOWN_SPEAKER)
+            ),
+        ]
+    );
+
+    // Sol 9A-3B round 4 #1: a spawned thread's copy that left out its
+    // parent's meta. Whose words the copy holds is unknown, so they are
+    // left out rather than read as the owner's; the thread's own prompt is
+    // its agent's.
+    let conversations = decode_log(
+        HistorySource::Codex,
+        "rollout-2026-09-24T13-00-00-s-bare",
+        &[
+            r#"{"timestamp":"2026-09-24T13:00:00.000Z","type":"session_meta","payload":{"id":"s-bare","parent_thread_id":"s-spawned","subagent_history_start_ordinal":3,"timestamp":"2026-09-24T13:00:00.000Z","cli_version":"0.100.0"}}"#,
+            r#"{"timestamp":"2026-09-24T13:00:00.010Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"List every call site of parse_amount."}],"id":"msg_spawned_u1"}}"#,
+            r#"{"timestamp":"2026-09-24T13:00:00.020Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Three call sites."}],"id":"msg_spawned_a1"}}"#,
+            r#"{"timestamp":"2026-09-24T13:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Check the qif.rs call site."}],"id":"msg_bare_u1"}}"#,
+        ],
+    );
+    assert_eq!(
+        said_by(&conversations),
+        [
+            (
+                "List every call site of parse_amount.",
+                Some(super::UNKNOWN_SPEAKER)
+            ),
+            ("Check the qif.rs call site.", Some(super::DELEGATING_AGENT)),
+        ]
+    );
+
+    // Sol 9A-3B round 5: a nested spawn's copy that kept the root's meta but
+    // left out its spawned parent's. The chain of copies is broken, so the
+    // root's meta proves nothing about the lines after it.
+    let conversations = decode_log(
+        HistorySource::Codex,
+        "rollout-2026-09-24T14-00-00-s-gap",
+        &[
+            r#"{"timestamp":"2026-09-24T14:00:00.000Z","type":"session_meta","payload":{"id":"s-gap","parent_thread_id":"s-spawned","subagent_history_start_ordinal":6,"timestamp":"2026-09-24T14:00:00.000Z","cli_version":"0.100.0"}}"#,
+            r#"{"timestamp":"2026-09-24T14:00:00.010Z","type":"session_meta","payload":{"id":"s-parent","timestamp":"2026-09-24T09:00:00.000Z","cli_version":"0.100.0"}}"#,
+            r#"{"timestamp":"2026-09-24T14:00:00.020Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Keep every amount in integer cents."}],"id":"msg_parent_u1"}}"#,
+            r#"{"timestamp":"2026-09-24T14:00:00.030Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Cents it is."}],"id":"msg_parent_a1"}}"#,
+            r#"{"timestamp":"2026-09-24T14:00:00.040Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"List every call site of parse_amount."}],"id":"msg_spawned_u1"}}"#,
+            r#"{"timestamp":"2026-09-24T14:00:00.050Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Three call sites."}],"id":"msg_spawned_a1"}}"#,
+            r#"{"timestamp":"2026-09-24T14:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Check the qif.rs call site."}],"id":"msg_gap_u1"}}"#,
+        ],
+    );
+    assert_eq!(
+        said_by(&conversations),
+        [
+            (
+                "Keep every amount in integer cents.",
+                Some(super::UNKNOWN_SPEAKER)
+            ),
+            (
+                "List every call site of parse_amount.",
+                Some(super::UNKNOWN_SPEAKER)
+            ),
+            ("Check the qif.rs call site.", Some(super::DELEGATING_AGENT)),
+        ]
+    );
+}
+
+/// Each user message's words and who said them when it was not the owner.
+fn said_by(conversations: &[HistoryConversation]) -> Vec<(&str, Option<&'static str>)> {
+    conversations[0]
+        .messages
+        .iter()
+        .filter(|message| message.role == HistoryRole::User)
+        .map(|message| (message.text.as_str(), message.said_by))
+        .collect()
+}
+
+/// Astra 1357 #2: a copy whose chain is broken lands the root's words with
+/// the speaker unknown. Importing the root's own rollout afterwards lands
+/// them again as the owner's, a revision the Dreamer reads, whichever file
+/// was imported first; a copy imported after never takes them back.
+#[test]
+fn owner_words_an_ambiguous_codex_copy_landed_first_land_again_from_their_own_rollout() {
+    let source = HistorySource::Codex;
+    let gap = decode_log(
+        source,
+        "rollout-2026-09-24T14-00-00-s-gap",
+        &[
+            r#"{"timestamp":"2026-09-24T14:00:00.000Z","type":"session_meta","payload":{"id":"s-gap","parent_thread_id":"s-spawned","subagent_history_start_ordinal":6,"timestamp":"2026-09-24T14:00:00.000Z","cli_version":"0.100.0"}}"#,
+            r#"{"timestamp":"2026-09-24T14:00:00.010Z","type":"session_meta","payload":{"id":"s-parent","timestamp":"2026-09-24T09:00:00.000Z","cli_version":"0.100.0"}}"#,
+            r#"{"timestamp":"2026-09-24T14:00:00.020Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Keep every amount in integer cents."}],"id":"msg_parent_u1"}}"#,
+            r#"{"timestamp":"2026-09-24T14:00:00.030Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Cents it is."}],"id":"msg_parent_a1"}}"#,
+            r#"{"timestamp":"2026-09-24T14:00:00.040Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"List every call site of parse_amount."}],"id":"msg_spawned_u1"}}"#,
+            r#"{"timestamp":"2026-09-24T14:00:00.050Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Three call sites."}],"id":"msg_spawned_a1"}}"#,
+            r#"{"timestamp":"2026-09-24T14:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Check the qif.rs call site."}],"id":"msg_gap_u1"}}"#,
+        ],
+    );
+    let root = decode_log(
+        source,
+        "rollout-2026-09-24T09-00-00-s-parent",
+        &[
+            r#"{"timestamp":"2026-09-24T09:00:00.000Z","type":"session_meta","payload":{"id":"s-parent","timestamp":"2026-09-24T09:00:00.000Z","cli_version":"0.100.0"}}"#,
+            r#"{"timestamp":"2026-09-24T09:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Keep every amount in integer cents."}],"id":"msg_parent_u1"}}"#,
+            r#"{"timestamp":"2026-09-24T09:00:05.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Cents it is."}],"id":"msg_parent_a1"}}"#,
+        ],
+    );
+    assert_eq!(
+        said_by(&root),
+        [("Keep every amount in integer cents.", None)]
+    );
+
+    // What landed of the root's words: as the owner's, or speaker unknown.
+    let mut words = message(
+        "msg_parent_u1",
+        HistoryRole::User,
+        "Keep every amount in integer cents.",
+        0,
+    );
+    let owners = ledger::content_hash(&words);
+    words.said_by = Some(super::UNKNOWN_SPEAKER);
+    let unknown = ledger::content_hash(&words);
+
+    // The ambiguous copy first: the root's words land, speaker unknown.
+    let (_dir, vault, owner) = vault_and_owner();
+    assert_eq!(import_all(&vault, &owner, source, &gap), (5, 0, 0));
+    let copied = source_ledger_row(&vault, source, "msg_parent_u1");
+    assert_eq!(copied.hashes, std::slice::from_ref(&unknown));
+    // The root's own rollout knows they are the owner's: they land again,
+    // in the root's own conversation, as the owner's revision.
+    assert_eq!(import_all(&vault, &owner, source, &root), (0, 1, 1));
+    let known = source_ledger_row(&vault, source, "msg_parent_u1");
+    assert_eq!(known.hashes, [unknown, owners.clone()]);
+    assert_ne!(known.message, copied.message);
+    assert_ne!(known.turn, copied.turn);
+    // Another import of the copy takes nothing back.
+    assert_eq!(import_all(&vault, &owner, source, &gap), (0, 5, 0));
+    assert_eq!(source_ledger_row(&vault, source, "msg_parent_u1"), known);
+
+    // The root first: the copy's unknown speaker never lands over the owner.
+    let (_dir, vault, owner) = vault_and_owner();
+    assert_eq!(import_all(&vault, &owner, source, &root), (2, 0, 0));
+    assert_eq!(import_all(&vault, &owner, source, &gap), (3, 2, 0));
+    assert_eq!(
+        source_ledger_row(&vault, source, "msg_parent_u1").hashes,
+        [owners]
+    );
+}
+
 /// Astra 1310 #3, Greptile 1310 (claude_code.rs:283): a prompt typed early
 /// in a session, and the same words queued later while the assistant was
 /// busy, are two requests. The later one is kept only by the queue and a meta
