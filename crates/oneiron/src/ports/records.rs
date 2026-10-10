@@ -61,4 +61,13 @@ impl EntityRecord {
         bytes.extend_from_slice(&self.body);
         bytes
     }
+
+    /// [`encode`](Self::encode) for a row that may carry a secret: the
+    /// encoded copy wipes when it drops, and this record's body is wiped now.
+    pub(crate) fn into_encoded_wiped(mut self) -> zeroize::Zeroizing<Vec<u8>> {
+        use zeroize::Zeroize;
+        let encoded = zeroize::Zeroizing::new(self.encode());
+        self.body.zeroize();
+        encoded
+    }
 }

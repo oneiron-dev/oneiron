@@ -242,7 +242,9 @@ pub(crate) fn reconcile_project_rooms(
     let mut room_ops = Vec::new();
     let mut origins = Vec::new();
     for id in touched {
-        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
+            .map(zeroize::Zeroizing::new)
+        else {
             continue;
         };
         let header = EntityMetadataHeader::parse(&raw)
@@ -393,7 +395,9 @@ pub(crate) fn reconcile_project_rooms(
     }
     // Generic room writes cannot silently widen the derived membership/scope.
     for id in touched {
-        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
+            .map(zeroize::Zeroizing::new)
+        else {
             continue;
         };
         let header = EntityMetadataHeader::parse(&raw)

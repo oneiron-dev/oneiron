@@ -49,7 +49,10 @@ pub(crate) fn read_secret_custody_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<SecretCustodyRecord>> {
-    let Some(raw) = store.port_entity_record(txn, id)?.map(|row| row.encode()) else {
+    let Some(raw) = store
+        .port_entity_record(txn, id)?
+        .map(crate::ports::EntityRecord::into_encoded_wiped)
+    else {
         return Ok(None);
     };
     let Some(header) = EntityMetadataHeader::parse(&raw) else {

@@ -20,7 +20,10 @@ pub(crate) fn validate_claim_write_target_in_txn(
     if allow_reserved {
         return Ok(());
     }
-    let Some(raw) = store.port_entity_record(txn, id)?.map(|row| row.encode()) else {
+    let Some(raw) = store
+        .port_entity_record(txn, id)?
+        .map(crate::ports::EntityRecord::into_encoded_wiped)
+    else {
         return Ok(());
     };
     let header = EntityMetadataHeader::parse(&raw)
