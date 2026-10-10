@@ -245,15 +245,27 @@ fn ask_and_answer(
 
 /// Waits until `witness` has been woken by its own later consult. The
 /// publisher routes announcements in commit order, so everything committed
-/// before that ask has been routed by then.
+/// before that ask has been routed by then. The witness's wakes are drained
+/// while it waits, so a later fence never returns on an earlier wake.
 async fn publisher_passed(
     server: &Arc<SyncServer>,
     witness: oneiron::EntityId,
     connection: &oneiron::context_board::StreamConnectionId,
     seed: u128,
 ) {
-    ask(server, witness, seed);
-    eventually(server, |streams| streams.next_wake(connection)).await;
+    let asked = ask(server, witness, seed)
+        .task_refs
+        .iter()
+        .map(|task| task.to_hex())
+        .collect::<Vec<_>>();
+    eventually(server, |streams| {
+        streams
+            .drain_wakes(connection)
+            .iter()
+            .any(|wake| asked.contains(&wake.task_ref))
+            .then_some(())
+    })
+    .await;
 }
 
 /// The carrier rows the next few tool results deliver to the connection
