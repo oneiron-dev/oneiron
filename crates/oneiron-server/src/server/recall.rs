@@ -153,8 +153,9 @@ impl SyncServer {
                 let _ = sender.send(answer);
             })
             .map_err(|_| recall_did_not_finish())?;
-        let left = (arrived + budget).saturating_duration_since(Instant::now());
-        match blocking(move || answer.recv_timeout(left)) {
+        // The wait counts down to the due instant from wherever it starts.
+        let due = arrived + budget;
+        match blocking(move || answer.recv_timeout(due.saturating_duration_since(Instant::now()))) {
             Ok(answer) => answer,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => ready.take(),
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(recall_did_not_finish()),

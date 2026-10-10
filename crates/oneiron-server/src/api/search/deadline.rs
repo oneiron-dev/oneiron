@@ -54,12 +54,20 @@ fn cut_page(server: &SyncServer, count_mode: CountMode) -> Result<ScopedSearchRe
     let receipt = scoped_read_for_legacy_api(server)?
         .read_receipt(None, 0)
         .map_err(|_| ApiError::internal_server_error("read receipt failed"))?;
+    let mut page = unread_page(count_mode);
+    page.narrowing.push(receipt);
+    Ok(page)
+}
+
+/// The page a search answers with when its deadline came due before it read
+/// anything: no hits, `meta.partial`, and no receipt.
+fn unread_page(count_mode: CountMode) -> ScopedSearchResponse {
     let mut meta = search_meta(count_mode, 0);
     meta.partial = true;
-    Ok(ScopedSearchResponse {
+    ScopedSearchResponse {
         response: PaginatedResponse::new(Vec::new(), None, meta),
-        narrowing: vec![receipt],
-    })
+        narrowing: Vec::new(),
+    }
 }
 
 /// Runs a raw search page. With no deadline it runs inline, as it always
@@ -90,7 +98,10 @@ pub(super) async fn search_page_by_deadline(
 /// counted from `arrived`. The read first publishes [`cut_page`], off the
 /// async thread because the reader's receipt reads the store, and the door
 /// answers when the deadline comes due: with the page if the read finished,
-/// else with the cut page.
+/// else with the cut page. When the read has not reached even that (the
+/// blocking pool had not started it, or proving the host's root slip waits
+/// on a writer), the door answers with no hits and no receipt, marked
+/// partial: nothing was read.
 pub(super) async fn read_by_deadline(
     server: Arc<SyncServer>,
     arrived: Instant,
@@ -112,8 +123,6 @@ pub(super) async fn read_by_deadline(
         Ok(joined) => {
             joined.unwrap_or_else(|_| Err(ApiError::internal_server_error("search did not finish")))
         }
-        Err(_) => ready.try_recv().map_err(|_| {
-            ApiError::internal_server_error("search reached its deadline before it could read")
-        }),
+        Err(_) => Ok(ready.try_recv().unwrap_or_else(|_| unread_page(count_mode))),
     }
 }

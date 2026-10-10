@@ -618,9 +618,6 @@ impl Memory<'_> {
                 narrowing: Box::new(receipt),
             });
         }
-        if let Some(on_cut) = execution.on_cut {
-            on_cut(cut_pack(&receipt, deep_pending));
-        }
         let kinds = recall_kinds(scope)?;
         // A scope that names TURN but not MESSAGE still finds a turn by its
         // messages' words: each message comes back as its turn or not at all.
@@ -938,7 +935,7 @@ impl Memory<'_> {
 /// deadline before retrieval finished: nothing was ready, so no items, marked
 /// partial, under the reader's own read receipt. The census did not run, so
 /// it says it stopped early.
-fn cut_pack(receipt: &ScopedReadReceipt, deep_pending: Option<bool>) -> MemoryPack {
+fn cut_pack(receipt: &ScopedReadReceipt) -> MemoryPack {
     let quality = RetrievalQuality::Passthrough;
     MemoryPack {
         items: Vec::new(),
@@ -951,7 +948,6 @@ fn cut_pack(receipt: &ScopedReadReceipt, deep_pending: Option<bool>) -> MemoryPa
             confidence_adjustment: quality.confidence_adjustment(),
             sparse: Some(true),
             partial: true,
-            deep_pending,
             ..RetrievalMeta::default()
         },
         pack_version: MEMORY_PACK_VERSION,

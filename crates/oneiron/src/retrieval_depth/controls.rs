@@ -2,7 +2,8 @@
 //! the share of the budget the answer keeps.
 use crate::error::{Error, Result};
 use crate::rerank::Reranker;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use crate::store::RetrievalSignal;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 /// The share of a [`RetrievalDeadline::hard`] budget the retrieval stages may
@@ -15,9 +16,12 @@ const STAGE_QUARTERS: u32 = 3;
 /// No stage starts once the stage time is spent, and a running stage yields
 /// at its next checkpoint (every candidate its scope gate reads) when its
 /// share of that time runs out: the stage drops its partial work, and the
-/// stages that finished are fused and returned. Admission and the final
-/// filters always run. `was_cut_short` means requested work was actually
-/// skipped or cut, not just that time passed.
+/// stages that finished are fused and returned. A channel cut that way is not
+/// opened again in the same retrieval: a context pack reads its memory, skill
+/// and agent lanes in turn, and the slow channel would spend the share of the
+/// stages after it in each. Admission and the final filters always run.
+/// `was_cut_short` means requested work was actually skipped or cut, not just
+/// that time passed.
 pub struct RetrievalDeadline {
     /// When the answer is due.
     at: Instant,
@@ -28,6 +32,10 @@ pub struct RetrievalDeadline {
     /// Nanoseconds after `origin` the open stage may run to; 0 when no stage
     /// is open, so a checkpoint outside a stage never fires.
     stage_until: AtomicU64,
+    /// The open stage's channel, as its bit in `cut_channels`; 0 when none.
+    open_channel: AtomicU32,
+    /// The channels cut at their share so far, one bit per signal.
+    cut_channels: AtomicU32,
     cut_short: AtomicBool,
     cancelled: AtomicBool,
 }
@@ -58,6 +66,8 @@ impl RetrievalDeadline {
             stages_by,
             origin,
             stage_until: AtomicU64::new(0),
+            open_channel: AtomicU32::new(0),
+            cut_channels: AtomicU32::new(0),
             cut_short: AtomicBool::new(false),
             cancelled: AtomicBool::new(false),
         }
@@ -88,11 +98,17 @@ impl RetrievalDeadline {
             false
         }
     }
-    /// Opens the next of `stages_left` stages with an equal share of the
-    /// stage time left, so one slow stage cannot starve the ones after it.
-    /// `false`, with nothing opened, once the stage time is spent.
-    pub(crate) fn open_stage(&self, stages_left: usize) -> bool {
+    /// Opens the next of `stages_left` stages, the `signal` channel's, with
+    /// an equal share of the stage time left, so one slow stage cannot
+    /// starve the ones after it. `false`, with nothing opened, once the stage
+    /// time is spent or when this channel was already cut.
+    pub(crate) fn open_stage(&self, signal: RetrievalSignal, stages_left: usize) -> bool {
         if self.stop_before_stage() {
+            return false;
+        }
+        let channel = channel_bit(signal);
+        if self.cut_channels.load(Ordering::Relaxed) & channel != 0 {
+            self.cut_short.store(true, Ordering::Relaxed);
             return false;
         }
         let now = Instant::now();
@@ -101,10 +117,12 @@ impl RetrievalDeadline {
         let until = (now + share).saturating_duration_since(self.origin);
         let nanos = u64::try_from(until.as_nanos()).unwrap_or(u64::MAX).max(1);
         self.stage_until.store(nanos, Ordering::Relaxed);
+        self.open_channel.store(channel, Ordering::Relaxed);
         true
     }
     pub(crate) fn close_stage(&self) {
         self.stage_until.store(0, Ordering::Relaxed);
+        self.open_channel.store(0, Ordering::Relaxed);
     }
     /// The in-stage checkpoint. Inside an open stage whose share has run out
     /// it marks the run cut and raises [`Error::RetrievalStageCut`], which
@@ -119,10 +137,17 @@ impl RetrievalDeadline {
             || u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX) >= until
         {
             self.cut_short.store(true, Ordering::Relaxed);
+            self.cut_channels
+                .fetch_or(self.open_channel.load(Ordering::Relaxed), Ordering::Relaxed);
             return Err(Error::RetrievalStageCut);
         }
         Ok(())
     }
+}
+
+/// `signal`'s bit in [`RetrievalDeadline`]'s channel sets.
+fn channel_bit(signal: RetrievalSignal) -> u32 {
+    1 << signal as u32
 }
 
 /// A deliberately slow retrieval stage, for deadline tests: the stage of
@@ -185,10 +210,9 @@ pub struct RecallExecution<'a> {
     /// Unix seconds the query's time words resolve against (`yesterday`
     /// is the day before it), and the clock recency ages from. `None` is now.
     pub as_of: Option<u64>,
-    /// Receives each pack this recall answers with if its door stops waiting
-    /// at the deadline, the later replacing the earlier: before retrieval
-    /// runs, no items under the reader's own read receipt; once the items are
-    /// assembled, those items before the scope census. Both are marked
-    /// partial.
+    /// Receives the pack this recall answers with if its door stops waiting
+    /// at the deadline during the scope census: the assembled items, marked
+    /// partial. The door itself published the empty pack it answers with
+    /// before then ([`crate::task_verb::sdk::RecallDoor`]).
     pub on_cut: Option<&'a (dyn Fn(crate::memory::MemoryPack) + Sync)>,
 }

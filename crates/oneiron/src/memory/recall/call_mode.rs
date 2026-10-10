@@ -112,6 +112,6 @@ impl crate::memory::Memory<'_> {
             .read_lane(crate::claim::ClaimReadStatus::Surfaceable)?
             .within_worlds(worlds)
             .read_receipt(None, 0)?;
-        Ok(super::cut_pack(&receipt, None))
+        Ok(super::cut_pack(&receipt))
     }
 }

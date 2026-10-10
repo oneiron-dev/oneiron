@@ -31,7 +31,7 @@ impl<'a> PipelineBuilder<'a> {
         let Some(deadline) = self.deadline else {
             return stage().map(Some);
         };
-        if !deadline.open_stage(stages_left) {
+        if !deadline.open_stage(signal, stages_left) {
             return Ok(None);
         }
         #[cfg(any(test, feature = "test-hooks"))]
@@ -40,10 +40,7 @@ impl<'a> PipelineBuilder<'a> {
             .run_slow_retrieval_stage(signal, deadline)
             .and_then(|()| stage());
         #[cfg(not(any(test, feature = "test-hooks")))]
-        let outcome = {
-            let _ = signal;
-            stage()
-        };
+        let outcome = stage();
         deadline.close_stage();
         match outcome {
             Err(Error::RetrievalStageCut) => Ok(None),
