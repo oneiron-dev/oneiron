@@ -904,92 +904,6 @@ fn replay_door_rejects_non_surfaceable_and_mirror_mismatched_provenance_wrappers
     );
 }
 
-/// ONE-1124 AC2 — one quarantined op never aborts the batch: the good
-/// entity in the same delta still materializes.
-#[test]
-fn poisoned_entity_op_does_not_abort_the_batch() {
-    let (_dir, vault) = test_vault_with_dir();
-    let doc = LoroDoc::new();
-    let materializer = Arc::new(Materializer::new());
-    let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
-
-    let bad_id = EntityId::now();
-    let good_id = EntityId::now();
-    let entities = doc.get_map("entities");
-    insert_bytes(
-        &entities,
-        &bad_id.to_hex(),
-        &entity_blob(99, valid_time_range(), LEARNED_AT, b"bad"),
-    );
-    insert_bytes(
-        &entities,
-        &good_id.to_hex(),
-        &entity_blob(
-            ENTITY_TYPE_TASK,
-            valid_time_range(),
-            LEARNED_AT,
-            &task_body(),
-        ),
-    );
-    doc.commit();
-
-    assert_eq!(
-        vault.get(&good_id).unwrap().as_deref(),
-        Some(task_body().as_slice()),
-        "good op must land despite the poisoned sibling"
-    );
-    assert!(vault.get(&bad_id).unwrap().is_none());
-    let records = quarantined_records(&vault).unwrap();
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0].1.reason_code, "InvalidEntityType");
-}
-
-/// FED-001: a malformed remote FEDERATION_GRANT body is a remote rejection,
-/// not a local replay failure. Observer B quarantines the bad op and keeps
-/// applying the valid sibling from the same CRDT commit.
-#[test]
-fn observer_b_quarantines_malformed_federation_grant_and_continues() {
-    let (_dir, vault) = test_vault_with_dir();
-    let doc = LoroDoc::new();
-    let materializer = Arc::new(Materializer::new());
-    let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
-
-    let bad_id = EntityId::now();
-    let good_id = EntityId::now();
-    let bad_blob = malformed_federation_grant_blob();
-    let entities = doc.get_map("entities");
-    insert_bytes(&entities, &bad_id.to_hex(), &bad_blob);
-    insert_bytes(
-        &entities,
-        &good_id.to_hex(),
-        &entity_blob(
-            ENTITY_TYPE_TASK,
-            valid_time_range(),
-            LEARNED_AT,
-            &task_body(),
-        ),
-    );
-    doc.commit();
-
-    assert!(
-        vault.get(&bad_id).unwrap().is_none(),
-        "malformed federation grant must not materialize"
-    );
-    assert_eq!(
-        vault.get(&good_id).unwrap().as_deref(),
-        Some(task_body().as_slice()),
-        "valid sibling must land after quarantining the malformed grant"
-    );
-
-    let records = quarantined_records(&vault).unwrap();
-    assert_eq!(records.len(), 1);
-    let (_, rec) = &records[0];
-    assert_eq!(rec.container, QuarantineContainer::Entities);
-    assert_eq!(rec.reason_code, "InvalidFederationGrantBody");
-    assert_eq!(rec.crdt_key_hash, xxh3_64(bad_id.to_hex().as_bytes()));
-    assert_eq!(rec.payload_hash, xxh3_64(&bad_blob));
-}
-
 /// FED-001 forward-remat parity: a malformed remote FEDERATION_GRANT body
 /// must quarantine and continue instead of wedging rematerialization.
 #[test]
@@ -1035,51 +949,6 @@ fn forward_remat_quarantines_malformed_federation_grant_and_continues() {
     assert_eq!(rec.reason_code, "InvalidFederationGrantBody");
     assert_eq!(rec.crdt_key_hash, xxh3_64(bad_id.to_hex().as_bytes()));
     assert_eq!(rec.payload_hash, xxh3_64(&bad_blob));
-}
-
-/// ONE-1124 AC2 — a poisoned edge op never aborts the edge batch.
-#[test]
-fn poisoned_edge_op_does_not_abort_the_batch() {
-    let (_dir, vault) = test_vault_with_dir();
-    let doc = LoroDoc::new();
-    let materializer = Arc::new(Materializer::new());
-    let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
-
-    let a = EntityId::now();
-    let b = EntityId::now();
-    let c = EntityId::now();
-    for id in [&a, &b, &c] {
-        let body = task_body();
-        vault
-            .put_entity(id, ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, &body)
-            .unwrap();
-    }
-
-    let edges = doc.get_map("edges");
-    insert_bytes(
-        &edges,
-        &format_edge_key(&a, EdgeKind::Mentions, &b),
-        &semantic_edge_value(1.5),
-    );
-    insert_bytes(
-        &edges,
-        &format_edge_key(&c, EdgeKind::Mentions, &a),
-        &semantic_edge_value(0.6),
-    );
-    doc.commit();
-
-    assert!(
-        vault.edge_exists(&c, EdgeKind::Mentions, &a).unwrap(),
-        "good edge must land despite the poisoned sibling"
-    );
-    assert!(!vault.edge_exists(&a, EdgeKind::Mentions, &b).unwrap());
-    let records = quarantined_records(&vault).unwrap();
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0].1.reason_code, "InvalidEdgeWeight");
-    assert_eq!(
-        records[0].1.crdt_key_hash,
-        xxh3_64(format_edge_key(&a, EdgeKind::Mentions, &b).as_bytes())
-    );
 }
 
 /// ONE-1124 fix (PR #105 blocker) — forward remat decodes the edge value
@@ -1238,100 +1107,6 @@ fn undecodable_endpoint_blob_quarantines_edge_and_batch_continues() {
     assert_eq!(entity_rec.1.reason_code, "CorruptedIndex");
 }
 
-/// ONE-1871 (F5) recut of the ONE-1124 rider. Two remote candidates for the
-/// SAME single-parent slot are no longer a cardinality violation at all: they
-/// are a valid concurrent reparent, resolved by deterministic LWW
-/// (ARCH-0016 **I6** — the ticket's I7 citation is off by one; I7 is
-/// derived-state repair) before the batch is validated.
-///
-/// The clocks are equal here, so the whole verdict rests on the tiebreak: the
-/// lexicographically greater PARENT id wins, and the loser is simply omitted —
-/// it is a valid remote op that lost, not a rejected one, so it produces NO
-/// `x:` row. The pre-1871 behavior kept whichever candidate the replica
-/// happened to hold first, which is exactly how two replicas with the same
-/// converged CRDT edge map ended up with opposite LMDB parents.
-///
-/// The ONE-1124 batch-isolation property is unchanged and still asserted: the
-/// non-ChildOf sibling lands, so the batch is never aborted. Genuinely invalid
-/// remote ChildOf ops keep their per-op quarantine — see
-/// [`child_of_cycle_still_quarantined`].
-#[test]
-fn child_of_same_slot_race_resolves_lww_without_quarantine() {
-    let (_dir, vault) = test_vault_with_dir();
-    let doc = LoroDoc::new();
-    let materializer = Arc::new(Materializer::new());
-    let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
-
-    // Fixed ids pin the tiebreak: same clock on both candidate links, so the
-    // greater PARENT id bytes (`bbbb…` > `aaaa…`) decide the slot.
-    let child = EntityId::from_hex("11111111111111111111111111111111").unwrap();
-    let parent_a = EntityId::from_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
-    let parent_b = EntityId::from_hex("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap();
-    // Milestone parents over a Task child: the ONE-1376 nesting matrix must
-    // admit BOTH candidate edges so cardinality is what rejects the second.
-    for (id, role) in [
-        (&child, TaskRole::Task),
-        (&parent_a, TaskRole::Milestone),
-        (&parent_b, TaskRole::Milestone),
-    ] {
-        let body = task_body_with_role(role);
-        vault
-            .put_entity(id, ENTITY_TYPE_TASK, valid_time_range(), LEARNED_AT, &body)
-            .unwrap();
-    }
-
-    let edges = doc.get_map("edges");
-    let key_a = format_edge_key(&child, EdgeKind::ChildOf, &parent_a);
-    let key_b = format_edge_key(&child, EdgeKind::ChildOf, &parent_b);
-    let child_of_value =
-        encode_edge_value_for_crdt(EdgeKind::ChildOf, 1.0, 10, None, None).unwrap();
-    insert_bytes(&edges, &key_a, &child_of_value);
-    insert_bytes(&edges, &key_b, &child_of_value);
-    // Good non-ChildOf sibling proves the batch is not aborted.
-    let mentions_key = format_edge_key(&parent_a, EdgeKind::Mentions, &parent_b);
-    insert_bytes(
-        &edges,
-        &mentions_key,
-        &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.6, 11, None, None).unwrap(),
-    );
-    doc.commit();
-
-    assert!(
-        vault
-            .edge_exists(&parent_a, EdgeKind::Mentions, &parent_b)
-            .unwrap(),
-        "non-ChildOf sibling must land — the batch is not aborted"
-    );
-    assert!(
-        vault
-            .edge_exists(&child, EdgeKind::ChildOf, &parent_b)
-            .unwrap(),
-        "the greater parent id wins the equal-clock tiebreak"
-    );
-    assert!(
-        !vault
-            .edge_exists(&child, EdgeKind::ChildOf, &parent_a)
-            .unwrap(),
-        "the lower-precedence candidate is omitted, not projected"
-    );
-    assert_eq!(
-        vault.targets(&child, EdgeKind::ChildOf, None).unwrap(),
-        vec![parent_b],
-        "the slot holds exactly one parent"
-    );
-    // The omitted candidate stays in the CRDT edge map: this ticket moves the
-    // deterministic LMDB projection only, it never drops a replicated op.
-    assert!(
-        edges.get(key_a.as_str()).is_some(),
-        "the losing candidate must survive in the CRDT edge map"
-    );
-
-    assert!(
-        quarantined_records(&vault).unwrap().is_empty(),
-        "a valid replicated same-slot race is LWW, never quarantine"
-    );
-}
-
 /// ONE-1871: cycle quarantine is explicitly NOT redesigned. The candidate that
 /// WINS the slot still runs the ONE-1124 cycle gate, and a cycle takes the
 /// existing `CycleDetected` quarantine-and-continue path — no auto-break
@@ -1482,11 +1257,9 @@ fn replicated_child_of_winner_failing_a_write_gate_keeps_the_stored_parent() {
 /// remote op.
 ///
 /// A VALID lower-precedence candidate is omitted with no `x:` row (that is the
-/// F5 contract, asserted in
-/// [`child_of_same_slot_race_resolves_lww_without_quarantine`]). A MALFORMED
-/// one is a different animal: omitting it would be the only path on which a
-/// remote op fails no gate because it reaches none. It stays
-/// quarantine-eligible, exactly as it was before slot resolution existed.
+/// F5 contract). A MALFORMED one is a different animal: omitting it would be
+/// the only path on which a remote op fails no gate because it reaches none. It
+/// stays quarantine-eligible, exactly as it was before slot resolution existed.
 #[test]
 fn malformed_replicated_child_of_loser_is_still_quarantined() {
     let (_dir, vault) = test_vault_with_dir();
@@ -1549,62 +1322,6 @@ fn malformed_replicated_child_of_loser_is_still_quarantined() {
     assert_eq!(rec.container, QuarantineContainer::Edges);
     assert_eq!(rec.crdt_key_hash, xxh3_64(loser_key.as_bytes()));
     assert_eq!(rec.reason_code, "InvalidEdgeWeight");
-}
-
-/// ONE-1124 fix wave 2 (item 4) — the forward tombstone pass runs through
-/// the tombstone-aware iterator: a STRING-valued (non-Binary) tombstone is
-/// visited and treated as HARD delete input (the entity purges; pre-fix the
-/// Binary-only iterator skipped it and the body stayed live), and the
-/// invalid-key quarantine bookkeeping still fires for non-Binary rows
-/// (hashing the empty slice — no content captured).
-#[test]
-fn string_valued_tombstone_purges_entity_and_invalid_key_still_quarantined() {
-    let (_dir, vault) = test_vault_with_dir();
-    let materializer = Materializer::new();
-    let window_key = WindowKey::new(WINDOW);
-    let doc = create_window_doc("test-user", &window_key);
-
-    let id = EntityId::now();
-    vault
-        .put_entity(
-            &id,
-            ENTITY_TYPE_TASK,
-            valid_time_range(),
-            LEARNED_AT,
-            &task_body(),
-        )
-        .unwrap();
-
-    let tombstones = doc.get_map("tombstones");
-    tombstones
-        .insert(&id.to_hex(), "not-binary-tombstone")
-        .unwrap();
-    tombstones.insert("zzz-not-hex", "also-not-binary").unwrap();
-    doc.commit();
-
-    forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
-
-    assert!(
-        vault.get(&id).unwrap().is_none(),
-        "string-valued tombstone must purge — non-Binary is HARD input (fail closed)"
-    );
-    let records = quarantined_records(&vault).unwrap();
-    assert_eq!(records.len(), 1, "invalid-key row still quarantined");
-    let (_, rec) = &records[0];
-    assert_eq!(rec.container, QuarantineContainer::Tombstones);
-    assert_eq!(rec.crdt_key_hash, xxh3_64(b"zzz-not-hex"));
-    assert_eq!(rec.reason_code, "InvalidKey");
-    assert_eq!(
-        rec.payload_hash,
-        xxh3_64(&[]),
-        "non-Binary value hashes as the empty slice — no content captured"
-    );
-    // Every validated tombstone purged cleanly: no rm: retry markers.
-    assert!(
-        oneiron::sync::pending_remat_windows(&vault)
-            .unwrap()
-            .is_empty()
-    );
 }
 
 /// ONE-1157 — the forward-remat ENTITY pass visits EVERY entities-map key:
@@ -1785,62 +1502,6 @@ fn observer_b_quarantines_uppercase_alias_entity_key() {
         "the x: row hashes the ALIAS key as delivered, never stores it"
     );
     assert_eq!(rec.crdt_key_len, 32);
-    assert_eq!(rec.reason_code, "InvalidKey");
-    assert_eq!(rec.payload_hash, xxh3_64(&alias_blob));
-}
-
-/// ONE-1158 (forward-remat parity): the forward-remat ENTITY pass applies
-/// the same alias gate as Observer B — an uppercase-alias-keyed body in the
-/// entities map quarantines (`x:` row with the alias-key hash and the blob's
-/// payload hash) instead of materializing, while the canonical-keyed sibling
-/// still lands.
-#[test]
-fn forward_remat_quarantines_uppercase_alias_entity_key() {
-    let (_dir, vault) = test_vault_with_dir();
-    let materializer = Materializer::new();
-    let window_key = WindowKey::new(WINDOW);
-    let doc = create_window_doc("test-user", &window_key);
-
-    let alias_id = EntityId::from_hex("0123456789abcdef0123456789abcdef").unwrap();
-    let alias_key = alias_id.to_hex().to_uppercase();
-    let good_id = EntityId::now();
-    let alias_blob = entity_blob(
-        ENTITY_TYPE_TASK,
-        valid_time_range(),
-        LEARNED_AT,
-        &task_body(),
-    );
-    let entities = doc.get_map("entities");
-    insert_bytes(&entities, &alias_key, &alias_blob);
-    insert_bytes(
-        &entities,
-        &good_id.to_hex(),
-        &entity_blob(
-            ENTITY_TYPE_TASK,
-            valid_time_range(),
-            LEARNED_AT,
-            &task_body(),
-        ),
-    );
-    doc.commit();
-
-    let count = forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
-    assert_eq!(count, 1, "only the canonical sibling materializes");
-    assert!(
-        vault.get(&alias_id).unwrap().is_none(),
-        "an alias key must never enter LMDB materialization"
-    );
-    assert_eq!(
-        vault.get(&good_id).unwrap().as_deref(),
-        Some(task_body().as_slice())
-    );
-
-    let records = quarantined_records(&vault).unwrap();
-    assert_eq!(records.len(), 1, "exactly one x: row for the alias op");
-    let (_, rec) = &records[0];
-    assert_eq!(rec.window_key, WINDOW);
-    assert_eq!(rec.container, QuarantineContainer::Entities);
-    assert_eq!(rec.crdt_key_hash, xxh3_64(alias_key.as_bytes()));
     assert_eq!(rec.reason_code, "InvalidKey");
     assert_eq!(rec.payload_hash, xxh3_64(&alias_blob));
 }

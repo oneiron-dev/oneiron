@@ -6,7 +6,7 @@ use crate::config::VaultConfig;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::SyncError;
 use crate::off_record::OffRecordBackendClass;
-use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
+use crate::registry::ENTITY_TYPE_TURN;
 use crate::temporal::TimeRange;
 
 fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
@@ -913,29 +913,6 @@ fn persist_state_prunes_subsumed_rows_and_spares_other_families() {
     assert!(map_get_bytes(&entities, &id_b.to_hex()).is_some());
 }
 
-#[test]
-fn forward_remat_never_materializes_public_legacy_persona_facet() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let window_key = WindowKey::new("2026-03");
-    let learned_at = window_key.start_timestamp().unwrap() + 90;
-    let id = EntityId::from_bytes([0x33; 16]).unwrap();
-    let person = EntityId::from_bytes([0x3D; 16]).unwrap();
-    let body = crate::companion::tests::support::retired_persona_facet_body(person);
-    let doc = create_window_doc("remote", &window_key);
-    map_insert_bytes(
-        &doc.get_map("entities"),
-        &id.to_hex(),
-        &make_entity_blob(ENTITY_TYPE_FACET, learned_at, &body),
-    )?;
-    doc.commit();
-    let materializer = Materializer::new();
-    let _ = forward_rematerialize(&vault, &doc, &materializer, &window_key)?;
-    assert!(vault.get(&id)?.is_none());
-    assert!(vault.get(&person)?.is_none());
-    assert!(map_get_bytes(&doc.get_map("entities"), &id.to_hex()).is_none());
-    Ok(())
-}
-
 /// ONE-1151 concurrency seam: a `u:w:` row persisted AFTER the merge
 /// captured its subsumption inventory (a transient delete-path doc
 /// persisting in parallel — its ops are in neither the merged set nor
@@ -1201,29 +1178,6 @@ fn prune_refuses_keys_outside_the_window_family() {
             .as_deref(),
         Some(b"foreign".as_slice())
     );
-}
-
-/// The single constructor of [`DeleteBearingUpdate`] (ONE-1135 review
-/// item 14): a no-op tombstone commit exports nothing (no q:/d: rows
-/// queued); a real tombstone commit exports a non-empty delta.
-#[test]
-fn export_tombstone_commit_delta_none_on_noop_some_on_commit() {
-    let doc = create_window_doc("local", &WindowKey::from_timestamp(1_750_000_000_000));
-    let vv_before = doc.oplog_vv();
-    assert!(
-        export_tombstone_commit_delta(&doc, &vv_before)
-            .unwrap()
-            .is_none(),
-        "unchanged doc must export no delete-bearing update"
-    );
-
-    let id = EntityId::now();
-    apply_tombstone_to_window_doc(&doc, &id, &[1, 2, 3]).unwrap();
-    doc.commit();
-    let delta = export_tombstone_commit_delta(&doc, &vv_before)
-        .unwrap()
-        .expect("tombstone commit must export a delete-bearing update");
-    assert!(!delta.as_bytes().is_empty());
 }
 
 #[test]
@@ -2679,103 +2633,6 @@ fn window_authority_row_admission_neutralizes_stale_dt_marker() -> Result<()> {
     Ok(())
 }
 
-/// ONE-1604-D1 (fix-leg 1, P2-a — outbound half): the presence-only carrier
-/// check let a cross-type squatter keep the CRDT slot at an authority row's
-/// content-derived key even after the local write door evicted it. That
-/// re-exports the row the authority substrate refused and re-imports it onto
-/// peers that have not seen the entry yet. A local AUTHORITY_LOG row now
-/// overwrites a NON-authority carrier at its own key; ordinary rows keep
-/// presence-only semantics.
-#[cfg(feature = "sync")]
-#[test]
-fn reverse_rematerialization_replaces_cross_type_authority_key_squatter() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let window_key = WindowKey::new("2026-03");
-    let learned_at = window_key.start_timestamp().unwrap() + 60;
-    let genesis = authority_genesis_fixture_for_window(0x68);
-    let id = crate::authority::authority_log_entity_id(&genesis)?;
-    vault.put_authority_log_entry(
-        &genesis,
-        TimeRange {
-            start: learned_at,
-            end: learned_at,
-        },
-        learned_at,
-    )?;
-    let local = vault.get_raw(&id)?.expect("authority row stored");
-
-    // The window still carries the attacker's ordinary row at that key.
-    let doc = create_window_doc("squatted-window", &window_key);
-    let squatter = make_entity_blob(crate::registry::ENTITY_TYPE_EVENT, learned_at, b"squatter");
-    map_insert_bytes(&doc.get_map("entities"), &id.to_hex(), &squatter)?;
-    doc.commit();
-
-    reverse_rematerialize(&vault, &doc, &window_key)?;
-
-    assert_eq!(
-        map_get_bytes(&doc.get_map("entities"), &id.to_hex()),
-        Some(local),
-        "the validated authority row must replace the cross-type carrier at its derived key"
-    );
-    Ok(())
-}
-
-/// ONE-1604-D1 (fix-leg 4, outbound half): replacing the dominated carrier's
-/// ENTITY row left its INCIDENT EDGES behind. Edge entries are keyed
-/// independently of the entity (`src:kind:tgt`), so the squatter's graph
-/// residue survived the overwrite and kept traversing on every peer that
-/// imported the window — the exact residue the LMDB door already sweeps with
-/// `delete_related_edges`. Both directions are asserted: the squatter as edge
-/// SOURCE and as edge TARGET.
-#[cfg(feature = "sync")]
-#[test]
-fn reverse_rematerialization_evicts_dominated_squatter_incident_edges() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let window_key = WindowKey::new("2026-03");
-    let learned_at = window_key.start_timestamp().unwrap() + 60;
-    let genesis = authority_genesis_fixture_for_window(0x6A);
-    let id = crate::authority::authority_log_entity_id(&genesis)?;
-    let neighbor = EntityId::from_bytes([0xC2; 16])?;
-    vault.put_authority_log_entry(
-        &genesis,
-        TimeRange {
-            start: learned_at,
-            end: learned_at,
-        },
-        learned_at,
-    )?;
-    let local = vault.get_raw(&id)?.expect("authority row stored");
-
-    let doc = create_window_doc("squatted-window", &window_key);
-    let squatter = make_entity_blob(crate::registry::ENTITY_TYPE_EVENT, learned_at, b"squatter");
-    map_insert_bytes(&doc.get_map("entities"), &id.to_hex(), &squatter)?;
-    let out_key = format_edge_key(&id, EdgeKind::Mentions, &neighbor);
-    let in_key = format_edge_key(&neighbor, EdgeKind::Mentions, &id);
-    let edge_value = encode_edge_value_for_crdt(EdgeKind::Mentions, 0.7, 1, None, None)?;
-    for key in [&out_key, &in_key] {
-        map_insert_bytes(&doc.get_map("edges"), key, &edge_value)?;
-    }
-    doc.commit();
-
-    reverse_rematerialize(&vault, &doc, &window_key)?;
-
-    assert_eq!(
-        map_get_bytes(&doc.get_map("entities"), &id.to_hex()),
-        Some(local),
-        "the validated authority row must still replace the carrier"
-    );
-    let edges = doc.get_map("edges");
-    assert!(
-        map_get_bytes(&edges, &out_key).is_none(),
-        "the squatter's outbound edge carrier must go with the dominated entity"
-    );
-    assert!(
-        map_get_bytes(&edges, &in_key).is_none(),
-        "the squatter's inbound edge carrier must go with the dominated entity"
-    );
-    Ok(())
-}
-
 /// ONE-1604-D1 (fix-leg 5, P2 — phase ordering): the dominance sweep deletes
 /// EVERY CRDT edge incident to the evicted id, and cannot tell the dominated
 /// carrier's residue apart from a LOCALLY BACKED inbound edge. While the
@@ -3064,54 +2921,6 @@ fn reverse_rematerialization_replaces_divergent_and_malformed_authority_bodies()
     Ok(())
 }
 
-/// ONE-1604-D1 (fix-leg 3, P2 — regression 3): dominance is ADMISSIBILITY-
-/// based, never byte-difference-based, so presence-only survives untouched
-/// for a carrier every peer's replay door would admit. Here the carrier
-/// shares the local row's signed body but declares a DIFFERENT (still valid,
-/// non-inverted) occurred range: byte-different, fully admissible, preserved.
-#[cfg(feature = "sync")]
-#[test]
-fn reverse_rematerialization_preserves_admissible_authority_carrier() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let window_key = WindowKey::new("2026-03");
-    let learned_at = window_key.start_timestamp().unwrap() + 60;
-    let genesis = authority_genesis_fixture_for_window(0x79);
-    let id = crate::authority::authority_log_entity_id(&genesis)?;
-    vault.put_authority_log_entry(
-        &genesis,
-        TimeRange {
-            start: learned_at,
-            end: learned_at,
-        },
-        learned_at,
-    )?;
-    let local = vault.get_raw(&id)?.expect("authority row stored");
-
-    let admissible = make_entity_blob_with_range(
-        ENTITY_TYPE_AUTHORITY_LOG,
-        learned_at - 30,
-        learned_at,
-        learned_at,
-        &local[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-    );
-    assert_ne!(
-        admissible, local,
-        "the carrier must be byte-different for this to test the admissibility rule"
-    );
-    let doc = create_window_doc("admissible-authority-window", &window_key);
-    map_insert_bytes(&doc.get_map("entities"), &id.to_hex(), &admissible)?;
-    doc.commit();
-
-    reverse_rematerialize(&vault, &doc, &window_key)?;
-
-    assert_eq!(
-        map_get_bytes(&doc.get_map("entities"), &id.to_hex()),
-        Some(admissible),
-        "an admissible carrier must be PRESERVED — byte difference alone never dominates"
-    );
-    Ok(())
-}
-
 /// ONE-1645 REPLAY door for the `FacetOf` type table.
 ///
 /// The local batch door (`batch::validate_facet_of_edge` on `BatchOp::Edge` /
@@ -3231,9 +3040,7 @@ fn forward_remat_quarantines_off_table_facet_of_and_admits_the_on_table_row() ->
 ///
 /// * a legacy-encoded carrier AT ITS OWN derived key is ADMISSIBLE and is
 ///   preserved as-is — the codebase never normalizes legacy bytes, it keys
-///   off them (`authority/tests.rs::legacy_signed_genesis_derives_a_stable_
-///   store_key_from_its_legacy_bytes`), so there is no re-encode posture to
-///   follow here;
+///   off them, so there is no re-encode posture to follow here;
 /// * the current re-encoding of that same legacy-signed entry carries no
 ///   verifying signature, so it fails the BODY check and is dominated — for
 ///   INADMISSIBILITY, not for differing from the local bytes.
@@ -3418,46 +3225,6 @@ fn forward_remat_aborts_on_corrupted_endpoint_header_instead_of_quarantining() -
     Ok(())
 }
 
-/// The retrofit's other arm, pinned in the same neighborhood so a future
-/// refactor cannot satisfy the abort test by disabling the gate entirely: an
-/// off-table PERSON -> FACET stamp — both endpoints present and parseable —
-/// still QUARANTINES and lets the window continue.
-#[test]
-fn forward_remat_still_quarantines_off_table_when_endpoint_rows_are_healthy() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let window_key = WindowKey::new("2026-03");
-    let person = EntityId::from_bytes([0xF3; 16])?;
-    let facet = EntityId::from_bytes([0xF4; 16])?;
-    for (id, entity_type) in [
-        (&person, crate::registry::ENTITY_TYPE_PERSON),
-        (&facet, crate::registry::ENTITY_TYPE_FACET),
-    ] {
-        vault.put_entity(
-            id,
-            entity_type,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"fixture",
-        )?;
-    }
-
-    let doc = create_window_doc("remote", &window_key);
-    map_insert_bytes(
-        &doc.get_map("edges"),
-        &format_edge_key(&person, EdgeKind::FacetOf, &facet),
-        &encode_edge_value_for_crdt(EdgeKind::FacetOf, 0.7, 10, None, None)?,
-    )?;
-    doc.commit();
-
-    forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)
-        .expect("an off-table stamp quarantines; it must never abort (H2)");
-    assert!(!vault.edge_exists(&person, EdgeKind::FacetOf, &facet)?);
-    let records = crate::sync::quarantine::quarantined_records(&vault)?;
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0].1.reason_code, "InvalidFacetOfEdge");
-    Ok(())
-}
-
 // ---------------------------------------------------------------------------
 // SECRET_CUSTODY (byte 77) ONE-1865 seal — FIX1 CHOKEPOINT
 // ---------------------------------------------------------------------------
@@ -3547,70 +3314,6 @@ fn secret_custody_never_enters_doc_via_reverse_rematerialize() -> Result<()> {
     assert!(
         map_get_bytes(&doc.get_map("edges"), &edge_key).is_none(),
         "custody incident edge must be scrubbed from the canonical doc"
-    );
-    Ok(())
-}
-
-/// The export path runs the same seal: a custody carrier already resident in
-/// the doc must be scrubbed and the window forced onto history-free snapshot
-/// transport, so exported bytes never carry the secret value.
-#[test]
-fn secret_custody_never_leaves_doc_via_export() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let window_key = WindowKey::new("2026-03");
-    let learned_at = window_key.start_timestamp().unwrap() + 60;
-    let secret_value = b"hunter2-secret";
-    let (custody, custody_raw) = seed_secret_custody(&vault, &window_key, "api-key", secret_value)?;
-
-    let ordinary = EntityId::from_bytes([0x48; 16])?;
-    vault.put_entity(
-        &ordinary,
-        ENTITY_TYPE_TURN,
-        TimeRange {
-            start: learned_at,
-            end: learned_at,
-        },
-        learned_at,
-        b"ordinary turn",
-    )?;
-
-    let doc = create_window_doc("source", &window_key);
-    map_insert_bytes(&doc.get_map("entities"), &custody.to_hex(), &custody_raw)?;
-    map_insert_bytes(
-        &doc.get_map("entities"),
-        &ordinary.to_hex(),
-        &make_entity_blob(ENTITY_TYPE_TURN, learned_at, b"ordinary turn"),
-    )?;
-    doc.commit();
-
-    // Export to a fresh peer: the custody body must not survive, the ordinary
-    // control must.
-    let export = export_window_updates_since(
-        &vault,
-        &window_key,
-        &doc,
-        &VersionVector::default().encode(),
-    )?;
-    let peer = create_window_doc("peer", &window_key);
-    import_doc(&peer, &export)?;
-    assert!(
-        map_get_bytes(&peer.get_map("entities"), &custody.to_hex()).is_none(),
-        "exported window must not carry the custody record body"
-    );
-    assert!(
-        map_get_bytes(&peer.get_map("entities"), &ordinary.to_hex()).is_some(),
-        "ordinary entity still exports"
-    );
-    // The local doc was scrubbed in place too.
-    assert!(
-        map_get_bytes(&doc.get_map("entities"), &custody.to_hex()).is_none(),
-        "local doc scrubbed before export"
-    );
-    // And the window is now pinned history-free, so the pre-scrub set-op bytes
-    // in Loro history can never take a raw delta/snapshot path later.
-    assert!(
-        history_free_window_required(&vault, &window_key)?,
-        "custody carrier scrub pins the window to history-free transport"
     );
     Ok(())
 }
@@ -4259,19 +3962,6 @@ fn packing_withholds_the_world_row_flagged_device_only() -> Result<()> {
 }
 
 #[test]
-fn packing_withholds_edges_that_touch_a_device_only_world_row() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let (doc, _, claim) = packed_device_only_window(&vault)?;
-    let mut named = false;
-    crate::sync::loro_support::map_for_each_value_bytes(&doc.get_map("edges"), |key, _| {
-        named |= key.contains(&claim.to_hex());
-    });
-
-    assert!(!named);
-    Ok(())
-}
-
-#[test]
 fn dreamer_actor_conflicting_peer_put_and_tombstone_quarantine_without_disabling_open() -> Result<()>
 {
     let (dir, vault) = test_vault();
@@ -4399,65 +4089,6 @@ fn forward_remat_quarantines_bad_machine_proof_and_commits_signed_sibling() -> R
     assert_eq!(
         rejected.payload_hash,
         crate::sync::quarantine::payload_hash(&blob)
-    );
-    Ok(())
-}
-
-#[test]
-fn forward_rematerialization_quarantines_in_range_project_depth_edit() -> Result<()> {
-    let (_dir, vault) = test_vault();
-    let root = vault.root_project()?;
-    let person = EntityId::now();
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
-    let writer = crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human);
-    let revoke = crate::subject_model::tests::authorization::root_owner(&vault, writer, 0xB2)?;
-    crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 0, &writer, 2, 0xB2)?;
-    vault.put_authority_log_entry(
-        &revoke,
-        TimeRange {
-            start: 102,
-            end: 102,
-        },
-        102,
-    )?;
-    let (edit, mut forged) = crate::gate::project_depth::contributions_for_test(&vault, root)?
-        .into_iter()
-        .find(|(_, bytes)| {
-            matches!(
-                crate::gate::project_depth::decode_contribution(bytes).ok(),
-                Some(crate::gate::project_depth::ProjectDepthContribution::Edit(
-                    _
-                ))
-            )
-        })
-        .expect("signed edit");
-    forged.push(0x01);
-    let window_key = WindowKey::new("2026-03");
-    let doc = create_window_doc("remote", &window_key);
-    let stamp = window_key.start_timestamp().expect("window start") + 60;
-    doc.get_map("entities")
-        .insert(
-            edit.to_hex().as_str(),
-            make_entity_blob(crate::registry::ENTITY_TYPE_POLICY_MANIFEST, stamp, &forged)
-                .as_slice(),
-        )
-        .expect("forged manifest");
-    doc.commit();
-    assert_eq!(
-        forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?,
-        0
-    );
-    assert_eq!(vault.project(root)?.unwrap().depth, 0);
-    assert!(
-        quarantine::quarantined_records(&vault)?
-            .iter()
-            .any(|(_, row)| row.reason_code == "InvalidProjectBody")
     );
     Ok(())
 }

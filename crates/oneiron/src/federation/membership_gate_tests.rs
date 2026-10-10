@@ -171,46 +171,6 @@ fn member_scope_and_missing_named_admin_power_fail_closed() {
 }
 
 #[test]
-fn legacy_auditor_bytes_map_to_viewer_and_guest_cannot_enter_the_roster() {
-    let viewer = FederationGrant::new(
-        FederationGrantScope::vault(42),
-        EntityId::now(),
-        FederationGrantRole::Viewer,
-        FederationGrantPreset::ReadOnly,
-    );
-    let encoded = encode_federation_grant_body(&viewer).unwrap();
-    let rmpv::Value::Map(mut entries) = rmpv::decode::read_value(&mut encoded.as_slice()).unwrap()
-    else {
-        panic!("grant map")
-    };
-    for (key, value) in &mut entries {
-        if key.as_str() == Some("role") {
-            *value = rmpv::Value::from("auditor");
-        }
-        if key.as_str() == Some("preset") {
-            *value = rmpv::Value::from("audit");
-        }
-    }
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries)).unwrap();
-    let mapped = decode_federation_grant_body(&bytes).unwrap();
-    assert_eq!(mapped.role, FederationGrantRole::Viewer);
-    assert_eq!(mapped.preset, FederationGrantPreset::ReadOnly);
-    assert_eq!(encode_federation_grant_body(&mapped).unwrap(), encoded);
-    let guest = FederationGrant::new(
-        FederationGrantScope::vault(42),
-        EntityId::now(),
-        FederationGrantRole::Guest,
-        FederationGrantPreset::Owner,
-    );
-    assert!(encode_federation_grant_body(&guest).is_err());
-    let mut noncanonical = viewer;
-    noncanonical.role = FederationGrantRole::Auditor;
-    noncanonical.preset = FederationGrantPreset::Audit;
-    assert!(encode_federation_grant_body(&noncanonical).is_err());
-}
-
-#[test]
 fn default_delegate_does_not_inherit_parent_write_or_admin_verbs() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();

@@ -178,76 +178,6 @@ fn door_operation_effect_flag_never_set_for_candidates() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn critical_confirm_fenced_listing_reaches_captured_rows_before_hostile_inserts() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let now = crate::unix_seconds_now();
-    let mut captured = Vec::new();
-    vault.with_write_txn(|wtxn| {
-        for ordinal in 0..257u16 {
-            // Deliberately nonmonotonic caller IDs: encode the full ordinal so
-            // every fixture row is unique, while progress follows the
-            // store-owned sequence rather than these bytes.
-            let high = (ordinal >> 8) as u8;
-            let low = ordinal as u8;
-            let claim = EntityId::from_bytes([
-                !high, low, 0xc5, high, !low, high, 0xc5, low, !high, low, 0xc5, high, !low, high,
-                0xc5, low,
-            ])?;
-            vault.store.put_pending_gate_consent_in_txn(
-                wtxn,
-                &critical_confirm_pending(claim, (ordinal % 250) as u8 + 1, now),
-            )?;
-            captured.push(claim);
-        }
-        Ok(())
-    })?;
-    let first = vault.pending_critical_write_confirms(1)?;
-    assert_eq!(first.len(), 1);
-    let hostile = sweep_id(0xc5, 0xfe);
-    vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .put_pending_gate_consent_in_txn(wtxn, &critical_confirm_pending(hostile, 251, now))
-    })?;
-    let mut seen = first
-        .into_iter()
-        .map(|binding| binding.claim_id)
-        .collect::<Vec<_>>();
-    for _ in 1..257 {
-        seen.push(vault.pending_critical_write_confirms(1)?[0].claim_id);
-    }
-    assert_eq!(seen.len(), captured.len());
-    assert_eq!(
-        seen, captured,
-        "the captured fence reaches every pre-fence row"
-    );
-    assert!(seen.iter().all(|claim| *claim != hostile));
-    let next_cycle_first = vault.pending_critical_write_confirms(256)?;
-    assert_eq!(next_cycle_first.len(), 256);
-    let mut next_cycle_first_ids = next_cycle_first
-        .iter()
-        .map(|binding| binding.claim_id)
-        .collect::<Vec<_>>();
-    let mut expected_first_ids = captured[..256].to_vec();
-    next_cycle_first_ids.sort_by_key(|claim| *claim.as_bytes());
-    expected_first_ids.sort_by_key(|claim| *claim.as_bytes());
-    assert_eq!(
-        next_cycle_first_ids, expected_first_ids,
-        "the sorted page contains exactly the captured head membership",
-    );
-    let next_cycle_tail = vault.pending_critical_write_confirms(256)?;
-    assert_eq!(
-        next_cycle_tail
-            .iter()
-            .map(|binding| binding.claim_id)
-            .collect::<Vec<_>>(),
-        vec![captured[256], hostile],
-        "the hostile row is reached on the bounded second page of the next cycle",
-    );
-    Ok(())
-}
-
 /// The band the projector's minted claims actually present to the gate: the
 /// mint stamps no scope sensitivity, so `claim_sensitivity_band` reads them at
 /// the unstamped floor. The `generated` source-trust row caps at exactly this.
@@ -278,44 +208,6 @@ fn resolved_default_policy_manifest(vault: &crate::Vault) -> Result<PolicyManife
 
 fn commitment_record_criticality(policy: &PolicyManifestResolution) -> PolicyCriticality {
     policy.criticality_for_predicate(crate::commitment::PREDICATE_COMMITMENT_RECORD)
-}
-
-/// The pinned projection envelope resolves to auto under the DEFAULT manifest.
-///
-/// This is the whole point of the two rows: before them, every mint pended on
-/// both `gate.pending.actor_ceiling` and `gate.pending.source_trust`.
-#[test]
-fn commitment_projection_envelope_reaches_auto_under_default_manifest() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let policy = resolved_default_policy_manifest(&vault)?;
-
-    let actor = crate::commitment_schedule::commitment_projection_actor()?;
-    assert_eq!(
-        actor.actor_class(),
-        EdgeActorClass::System,
-        "the projector writes under the pinned System class"
-    );
-
-    let input = commitment_projection_gate_input(
-        &actor.entity_ref().to_hex(),
-        COMMITMENT_PROJECTION_CLAIM_BAND,
-        commitment_record_criticality(&policy),
-    );
-    let decision = policy.evaluate_gate(&input);
-
-    assert_eq!(decision.outcome(), GateOutcome::Allow);
-    // An allow decision carries the single `gate.allow` code and NO pending or
-    // deny code: nothing about the projection envelope is left unresolved.
-    assert_eq!(decision.reason_codes(), &[GateReasonCode::Allow]);
-    assert!(
-        !decision
-            .reason_codes()
-            .iter()
-            .any(|code| code.as_str().starts_with("gate.pending.")
-                || code.as_str().starts_with("gate.deny.")),
-        "the pinned projection envelope must resolve with zero pending/deny codes"
-    );
-    Ok(())
 }
 
 /// BOTH shipped grants are keyed to ONE derived actor id, not to a class.

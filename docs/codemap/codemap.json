@@ -1906,7 +1906,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/basic_fold.rs",
@@ -1962,7 +1962,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/federation_merge.rs",
@@ -1994,7 +1994,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/instant_widen.rs",
@@ -2026,7 +2026,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/peer_roster.rs",
@@ -2082,7 +2082,7 @@
      "path": "src/authority/tests/support.rs",
      "purpose": "Shared fixtures and fold helpers for the authority tests",
      "surface": {
-      "crate-vis": 59
+      "crate-vis": 54
      }
     },
     {
@@ -3818,6 +3818,7 @@
      "kind": "src",
      "notable": [
       "BlobArtifactVersion",
+      "BlobBytes",
       "CalcEngineStamp"
      ],
      "path": "src/blob_artifact/versions.rs",
@@ -3825,8 +3826,8 @@
      "surface": {
       "const": 1,
       "crate-vis": 22,
-      "fn": 11,
-      "struct": 2
+      "fn": 15,
+      "struct": 3
      }
     },
     {
@@ -7590,7 +7591,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DreamerIsolationClass"
@@ -7598,7 +7599,7 @@
      "path": "src/claim/predicate_grammar.rs",
      "purpose": "Predicate vocabulary and the D17 grammar gate: namespace constants, the crate-owned well-known predicate…",
      "surface": {
-      "const": 13,
+      "const": 14,
       "crate-vis": 5,
       "enum": 1,
       "fn": 2
@@ -10658,7 +10659,7 @@
      "purpose": "—",
      "surface": {
       "const": 5,
-      "crate-vis": 19,
+      "crate-vis": 18,
       "struct": 5
      }
     },
@@ -10669,7 +10670,7 @@
      "path": "src/connector_key/mod.rs",
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 8,
       "mod": 2,
       "re-export": 9
      }
@@ -17251,7 +17252,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/federation/pending_act/tests.rs",
@@ -17617,7 +17618,7 @@
      "path": "src/gate/decision.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 30
      }
     },
     {
@@ -17707,7 +17708,7 @@
      "path": "src/gate/decode/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 4
      }
     },
     {
@@ -17994,7 +17995,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 56,
+      "crate-vis": 55,
       "re-export": 8
      }
     },
@@ -18009,7 +18010,7 @@
      "path": "src/gate/operational_policy.rs",
      "purpose": "Vault-resident operational schedules and per-pass limits (DEC-0005)",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 13,
       "fn": 6,
       "struct": 3
      }
@@ -18032,7 +18033,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/gate/owner_policy_mutation/tests.rs",
@@ -18059,7 +18060,7 @@
      "path": "src/gate/policy_values.rs",
      "purpose": "Typed behaviour values and deterministic, scoped manifest-row selection",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 24
      }
     },
     {
@@ -18124,7 +18125,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "ProposalPolicySource",
@@ -18151,7 +18152,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/gate/repair_tests.rs",
@@ -18165,7 +18166,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 66
+      "crate-vis": 63
      }
     },
     {
@@ -18241,7 +18242,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/gate/retrieval_filter/tests.rs",
@@ -18257,14 +18258,6 @@
      "surface": {
       "crate-vis": 9
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/gate/retrieval_retention/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -18287,7 +18280,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "RoomThreadFill"
@@ -18341,7 +18334,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/gate/tests/actor_fork.rs",
@@ -18349,35 +18342,11 @@
      "surface": {}
     },
     {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/gate/tests/ask_policy.rs",
-     "purpose": "Ask operating rows: shipped defaults, strict overrides, and precedence",
-     "surface": {}
-    },
-    {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/gate/tests/auto_checker.rs",
      "purpose": "ONE-1296 auto_checker knob: decode and fold, checker routing, and lineage",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/gate/tests/auto_signals.rs",
-     "purpose": "W7-C01: rate and failure streak are soft checker inputs, never a durable trip",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/gate/tests/budget_policy.rs",
-     "purpose": "ONE-1348 budget_policy manifest parse, resolution, and factory tests",
      "surface": {}
     },
     {
@@ -18389,7 +18358,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/gate/tests/carry_forward.rs",
@@ -18407,7 +18376,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/gate/tests/charter_ceiling.rs",
@@ -18425,15 +18394,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/gate/tests/class_policy.rs",
-     "purpose": "`wait_policy` / `act_policy` manifest parse and resolution tests",
-     "surface": {}
-    },
-    {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/gate/tests/connector_budget.rs",
@@ -18490,14 +18451,6 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
-     "path": "src/gate/tests/docedit_resource.rs",
-     "purpose": "Docedit resource-policy decode, trusted fold and engine-to-organ factory",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
      "path": "src/gate/tests/docx_zip_budget.rs",
      "purpose": "Archive budgets live in trusted policy, not in the DOCX organ's graph",
      "surface": {}
@@ -18513,7 +18466,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/gate/tests/effect_policy.rs",
@@ -18523,7 +18476,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/gate/tests/evaluator_core.rs",
@@ -18531,19 +18484,11 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/gate/tests/external_effect_grants.rs",
      "purpose": "External-effect grants: scoped, standing, and outbound MCP grants plus counterparty contacts",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/gate/tests/failure_policy.rs",
-     "purpose": "Failure-class rows are vault policy, not JSON fallback payload rules",
      "surface": {}
     },
     {
@@ -18552,14 +18497,6 @@
      "notable": [],
      "path": "src/gate/tests/gate_door.rs",
      "purpose": "Write-door chokepoint: consent lifecycle, session bundles, batch atomicity, and edge provenance",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/gate/tests/hosted_tts_policy.rs",
-     "purpose": "Hosted TTS policy rows: defaults, scope, precedence and strict decoding",
      "surface": {}
     },
     {
@@ -18579,7 +18516,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/gate/tests/manifest_auto.rs",
@@ -18595,14 +18532,6 @@
      "surface": {}
     },
     {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/gate/tests/operational_policy.rs",
-     "purpose": "Manifest-resident scheduler policy: defaults, restrictive fold and holder cap",
-     "surface": {}
-    },
-    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -18611,7 +18540,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/gate/tests/policy_inputs.rs",
@@ -18630,38 +18559,6 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
-     "path": "src/gate/tests/pptx_limits.rs",
-     "purpose": "Shipped PowerPoint limits and owner/holder policy precedence",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/gate/tests/project_collaboration.rs",
-     "purpose": "Manifest-resident project talk and widening defaults",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/gate/tests/project_conversion.rs",
-     "purpose": "Project-conversion manifest policy: default, strict parse, narrowing and frontier",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/gate/tests/residence_operation_budgets.rs",
-     "purpose": "Residence operation budget manifest parsing and restrictive resolution tests",
-     "surface": {}
-    },
-    {
-     "bucket": "L",
-     "kind": "test",
-     "notable": [],
      "path": "src/gate/tests/scoped_policy_values.rs",
      "purpose": "Vault-resident behaviour rows: precedence, changeability, and deciding receipts",
      "surface": {}
@@ -18672,14 +18569,6 @@
      "notable": [],
      "path": "src/gate/tests/scoped_read.rs",
      "purpose": "Scoped read and retrieval filtering: core-read grants, context-pack scrubbing, and facet edges",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/gate/tests/slide_review_policy.rs",
-     "purpose": "Shipped slide-review limits, scoped manifest narrowing, and strict row decode",
      "surface": {}
     },
     {
@@ -18699,16 +18588,8 @@
      "path": "src/gate/tests/support.rs",
      "purpose": "Shared fixtures and assertion helpers for the gate test modules",
      "surface": {
-      "crate-vis": 60
+      "crate-vis": 58
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/gate/tests/tracker_limits.rs",
-     "purpose": "Policy rows bound the server's revision-provenance lifecycle",
-     "surface": {}
     },
     {
      "bucket": "m",
@@ -18724,14 +18605,6 @@
      "notable": [],
      "path": "src/gate/tests/vad_vetting.rs",
      "purpose": "Dreamer-approval VAD vetting and bundle hooks",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/gate/tests/voice_serving.rs",
-     "purpose": "Manifest-backed voice serving limits: precedence, narrowing, and fail closure",
      "surface": {}
     },
     {
@@ -18788,14 +18661,6 @@
      "surface": {
       "crate-vis": 13
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/gate/weave_policy/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "m",
@@ -19414,14 +19279,6 @@
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/hnsw/archive_tests.rs",
-     "purpose": "Archive visibility must not turn the bounded beam into a full graph walk",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/hnsw/delete.rs",
@@ -19447,7 +19304,7 @@
      "path": "src/hnsw/entry_point.rs",
      "purpose": "Tarjan-SCC entry-point selection",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -19531,7 +19388,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/hnsw/tests.rs",
@@ -21354,7 +21211,7 @@
      "path": "src/lib.rs",
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 18,
       "mod": 172,
       "re-export": 72
      }
@@ -27205,13 +27062,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ports/lmdb_aux.rs",
      "purpose": "LMDB audit, dependency, content-addressed blob and queue adapters",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -27478,7 +27335,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/ports/tests/migration_conformance.rs",
@@ -27494,7 +27351,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/ports/tests/step21_conformance.rs",
@@ -29827,7 +29684,7 @@
      "path": "src/saved_query/storage.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -29935,7 +29792,7 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 12,
       "re-export": 2
      }
     },
@@ -30042,7 +29899,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/secret_lease/tests.rs",
@@ -30580,7 +30437,7 @@
      "path": "src/serialize/item_budget.rs",
      "purpose": "Per-item token-budget enforcement and value truncation",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -30659,7 +30516,7 @@
      "path": "src/serialize/pack_preparation.rs",
      "purpose": "Pack preparation: entity selection, field projection, value normalization, and the per-format split of a…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
@@ -30683,7 +30540,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/serialize/tests.rs",
@@ -30697,7 +30554,7 @@
      "path": "src/serialize/token_budget.rs",
      "purpose": "Grouping, section/type token-budget enforcement, size estimation, and pack token-stats collection",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 13
      }
     },
     {
@@ -31833,7 +31690,7 @@
      "path": "src/skill_hub/pack_catalog/admission.rs",
      "purpose": "Post-fit installation of pinned pack source; requested powers stay inert",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 7
      }
     },
@@ -31945,8 +31802,22 @@
      "path": "src/skill_hub/pack_catalog/manifest.rs",
      "purpose": "Closed PACK.md manifest parser",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PackMigration"
+     ],
+     "path": "src/skill_hub/pack_catalog/migrations.rs",
+     "purpose": "Predicate migration maps a pack ships in PACK.md (ARCH-0059 §4, rung 1)",
+     "surface": {
+      "crate-vis": 2,
       "struct": 1
      }
     },
@@ -31958,7 +31829,7 @@
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
       "crate-vis": 5,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -32951,7 +32822,7 @@
      "path": "src/store/gate_decision/mod.rs",
      "purpose": "The append-only gate-decision ledger: decision rows, claim/grant-ref indexes, the pending-deletion sidecar…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 15,
       "re-export": 1
      }
     },
@@ -33056,7 +32927,7 @@
      "path": "src/store/handle.rs",
      "purpose": "The vault handle shape: [`RawDatabases`], [`StoreCore`], [`StoreOwner`], [`Store`], [`SessionStoreView`]…",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 20,
       "struct": 4
      }
     },
@@ -33131,7 +33002,7 @@
      "path": "src/store/open_gates/mod.rs",
      "purpose": "`Store::open` / `Store::open_existing` and the fail-closed open-time gate sequence: vault-root preflight…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 11,
       "re-export": 2
      }
     },
@@ -33337,7 +33208,7 @@
      "path": "src/store/retrieval_telemetry/mod.rs",
      "purpose": "Retrieval telemetry: run records, trace fork index, outcome rows, and reward-weighted blend-weight tuning",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 6,
       "re-export": 2
      }
     },
@@ -33358,7 +33229,7 @@
      "path": "src/store/retrieval_telemetry/run_store.rs",
      "purpose": "Retrieval-run, outcome, and trace-fork persistence: `Store` and `SessionStoreView` methods, staging bodies…",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 29,
       "fn": 3
      }
     },
@@ -33379,7 +33250,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/store/retrieval_telemetry/state_tests.rs",
@@ -33993,7 +33864,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/sync/chunks/tests.rs",
@@ -34151,7 +34022,7 @@
      "path": "src/sync/client/types.rs",
      "purpose": "Sync client configuration, events, and sync_state key constants",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 6,
       "enum": 4,
       "fn": 2,
       "struct": 3
@@ -34214,7 +34085,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/sync/connection/tests.rs",
@@ -34342,7 +34213,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/sync/federation_burst/tests.rs",
@@ -34427,7 +34298,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/sync/loro_support.rs",
@@ -34438,7 +34309,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "WindowManager"
@@ -34705,7 +34576,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/sync/queue/tests.rs",
@@ -34723,18 +34594,10 @@
      "purpose": "Device-local maintenance ingest security bounds",
      "surface": {
       "const": 2,
-      "crate-vis": 7,
+      "crate-vis": 6,
       "fn": 3,
       "struct": 2
      }
-    },
-    {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/sync/quota/tests.rs",
-     "purpose": "—",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -34809,7 +34672,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/sync/schema.rs",
@@ -38635,7 +38498,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/it_sync/rung0_cold_start_conformance.rs",
@@ -38643,7 +38506,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it_sync/sync_bridge.rs",
@@ -38667,7 +38530,7 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/it_sync/sync_convergence_props.rs",
@@ -38699,21 +38562,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/it_sync/sync_facet_of_replay_gating.rs",
-     "purpose": "ONE-1645 — the `FacetOf` type table on the FEDERATED REPLAY door",
-     "surface": {}
-    },
-    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/it_sync/sync_harness/mod.rs",
      "purpose": "Two-vault sync test harness (ONE-1136 / M4-14)",
      "surface": {
-      "crate-vis": 38
+      "crate-vis": 36
      }
     },
     {
@@ -38741,7 +38596,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it_sync/sync_remat_correctness.rs",
@@ -38773,7 +38628,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it_sync/sync_window_manager.rs",
@@ -39572,7 +39427,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 133,
+     "files": 116,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -39607,7 +39462,7 @@
      "purpose": "Productivity-pack task-role vocabulary + task/habit checkin validators, plus the derived Habit streak…"
     },
     "hnsw": {
-     "files": 14,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40076,7 +39931,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 65,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40146,7 +40001,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 117,
+     "files": 116,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40286,10 +40141,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 33,
+   "over_bar": 32,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2436,
-   "test_files": 792
+   "source_files": 2437,
+   "test_files": 772
   },
   "oneiron-android": {
    "files": [
@@ -40583,14 +40438,6 @@
     },
     {
      "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "src/federation/selector_kind/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/lib.rs",
@@ -40624,7 +40471,7 @@
      "purpose": "Credential-door bounds the authority log's slip checks share with the door itself"
     },
     "federation": {
-     "files": 7,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40634,7 +40481,7 @@
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs and…",
    "source_files": 20,
-   "test_files": 2
+   "test_files": 1
   },
   "oneiron-bench": {
    "files": [
@@ -45674,6 +45521,402 @@
    "source_files": 19,
    "test_files": 1
   },
+  "oneiron-organ-host": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/bin/oneiron-organ-probe.rs",
+     "purpose": "A diagnostics organ for the host's own checks: the runtime's built-in verbs (`organ.touch`, `organ.echo`)…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BudgetConfig"
+     ],
+     "path": "src/budget.rs",
+     "purpose": "One admission budget for every organ: threads, memory, in-flight calls",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostError",
+      "Unavailable"
+     ],
+     "path": "src/error.rs",
+     "purpose": "What can go wrong on the engine side of an organ call",
+     "surface": {
+      "enum": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OrganHost",
+      "OrganOutcome",
+      "OrganOutput"
+     ],
+     "path": "src/host.rs",
+     "purpose": "The organ host: install, call, unload, revoke",
+     "surface": {
+      "fn": 10,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
+     "surface": {
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/process.rs",
+     "purpose": "One live organ process: spawn, handshake, a reader thread, calls",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CallReceipt",
+      "ReceiptInput",
+      "ReceiptOutput"
+     ],
+     "path": "src/receipt.rs",
+     "purpose": "The engine's receipt for one organ call: facts the host computed, plus the organ's bounded notes",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/regions.rs",
+     "purpose": "Regions kept for reuse, keyed by content hash: a blob is copied out of the store once, then every later call…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sandbox.rs",
+     "purpose": "What the host does to an organ process between fork and exec",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OrganState",
+      "OrganStatus"
+     ],
+     "path": "src/slot.rs",
+     "purpose": "One installed organ: its process, its crash history, its condition",
+     "surface": {
+      "crate-vis": 13,
+      "enum": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CallClass",
+      "HostConfig",
+      "OrganCall",
+      "OrganInput",
+      "OrganSpec",
+      "OrganTier"
+     ],
+     "path": "src/spec.rs",
+     "purpose": "What the engine installs and what a caller asks",
+     "surface": {
+      "enum": 2,
+      "fn": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/host_e2e.rs",
+     "purpose": "The host against a real organ process (the probe), over real vault blobs",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/host_fds.rs",
+     "purpose": "A stopped organ gives its descriptors back: hosts whose organ was unloaded, revoked or crashed hold no more…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/organ_fence.rs",
+     "purpose": "OF-060 F4: the engine never depends on an organ, and an organ never depends on the engine (ARCH-0075 section…",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "budget": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "One admission budget for every organ: threads, memory, in-flight calls"
+    },
+    "error": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "What can go wrong on the engine side of an organ call"
+    },
+    "host": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The organ host: install, call, unload, revoke"
+    },
+    "process": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "One live organ process: spawn, handshake, a reader thread, calls"
+    },
+    "receipt": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The engine's receipt for one organ call: facts the host computed, plus the organ's bounded notes"
+    },
+    "regions": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Regions kept for reuse, keyed by content hash: a blob is copied out of the store once, then every later call…"
+    },
+    "sandbox": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "What the host does to an organ process between fork and exec"
+    },
+    "slot": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "One installed organ: its process, its crash history, its condition"
+    },
+    "spec": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "What the engine installs and what a caller asks"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
+   "source_files": 11,
+   "test_files": 3
+  },
+  "oneiron-organ-protocol": {
+   "files": [
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FrameError"
+     ],
+     "path": "src/frame.rs",
+     "purpose": "Framing: `len: u32 LE | MessagePack body`, with descriptors riding as `SCM_RIGHTS` on the send that carries…",
+     "surface": {
+      "enum": 1,
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
+     "surface": {
+      "mod": 1,
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MappedRegion",
+      "SharedRegion"
+     ],
+     "path": "src/region.rs",
+     "purpose": "Read-only shared regions: how blob bytes cross without being copied",
+     "surface": {
+      "fn": 7,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Answer",
+      "CallContext",
+      "InputBytes",
+      "Organ",
+      "OutputBytes"
+     ],
+     "path": "src/runtime.rs",
+     "purpose": "The organ side: handshake, frames, a small worker pool and cancel flags",
+     "surface": {
+      "const": 2,
+      "fn": 7,
+      "struct": 4,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/shape.rs",
+     "purpose": "A structural check of a MessagePack frame before it is decoded",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Call",
+      "CancelReason",
+      "ErrorCode",
+      "FromOrgan",
+      "Hash32",
+      "Hello",
+      "HelloAck",
+      "Input",
+      "Limits",
+      "Locator",
+      "Loss",
+      "Notes",
+      "OrganError",
+      "OrganIdentity",
+      "Outcome",
+      "Output",
+      "Payload",
+      "Proposal",
+      "ProtocolVersion",
+      "Reply",
+      "ToOrgan",
+      "TypedBody",
+      "VerbSpec"
+     ],
+     "path": "src/wire.rs",
+     "purpose": "The protocol's messages",
+     "surface": {
+      "const": 4,
+      "enum": 7,
+      "fn": 3,
+      "struct": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/frames.rs",
+     "purpose": "A frame is bounded by what it decodes to, not only by its bytes: a peer cannot make the other side…",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "frame": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Framing: `len: u32 LE | MessagePack body`, with descriptors riding as `SCM_RIGHTS` on the send that carries…"
+    },
+    "region": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Read-only shared regions: how blob bytes cross without being copied"
+    },
+    "runtime": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The organ side: handshake, frames, a small worker pool and cancel flags"
+    },
+    "shape": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A structural check of a MessagePack frame before it is decoded"
+    },
+    "wire": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The protocol's messages"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
+   "source_files": 6,
+   "test_files": 1
+  },
   "oneiron-py": {
    "files": [
     {
@@ -49364,6 +49607,16 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/embedder/local/model_manager/tests.rs",
+     "purpose": "Servers sharing one models directory",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/embedder/local/prompts.rs",
@@ -50460,7 +50713,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/models/served.rs",
-     "purpose": "Which model actually answered: the receipt field a ladder fills in",
+     "purpose": "Which model actually answered: the receipt field a ladder fills in, and what an answered call is charged",
      "surface": {
       "crate-vis": 4
      }
@@ -51473,7 +51726,7 @@
      "purpose": "Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every…"
     },
     "embedder": {
-     "files": 16,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51630,7 +51883,7 @@
    "over_bar": 8,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 306,
-   "test_files": 118
+   "test_files": 119
   },
   "oneiron-uniffi": {
    "files": [

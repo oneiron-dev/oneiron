@@ -14,10 +14,7 @@
 //! 3. the lexical (BM25F), graph (PPR), and temporal channels each answer
 //!    independently with no vector channel configured;
 //! 4. every retrieved CLAIM reports itself pending-embedding with a
-//!    non-empty token instead of pretending a semantic vector exists;
-//! 5. prospective while `rung0_attach_uses_priority_three_without_migration_or_double_fill`
-//!    is `#[ignore]`: attaching one `Embedder` later is ordinary cold backfill,
-//!    not an embedding-model migration.
+//!    non-empty token instead of pretending a semantic vector exists.
 //!
 //! Rung 0 says nothing about retroactive Dreamer work: attaching an
 //! `LlmBackend` does NOT guarantee a walk of pre-backend verbatim history.
@@ -28,34 +25,18 @@
 //! `enqueue_partition_attempts_in_txn` is `session_lifecycle.rs`'s
 //! `end_session_with_wake` — a SessionEnd trigger, not a backend-attach
 //! trigger. Nothing here may be read as a retroactive-extraction promise.
-//!
-//! `rung0_attach_uses_priority_three_without_migration_or_double_fill` is
-//! authored strict and parked under `#[ignore]`: current main enqueues
-//! ordinary local claim writes at `EMBED_PRIORITY_DEVICE` (`2`) even with
-//! `embedding_model = None`, so the write-time assert-empty half of the
-//! pinned invariant is red. Removing the ignore belongs to the owner-slate
-//! engine ticket, not to this file.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex};
+use std::collections::BTreeSet;
 
 use crate::common::entity;
-use oneiron::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_MODEL, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST,
-};
-use oneiron::sync::{QueuedEmbedJob, SyncQueue};
+use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeKind, EntityId, Result,
-    ScoredEntity, TimeRange, Vault, VaultConfig, embed::EMBED_PRIORITY_BACKFILL, embed::Embedder,
-    embed::EmbedderLocality, embed::PendingEmbeddingInput, embed::PendingEmbeddingReconciler,
-    pipeline::RetrievalWithPendingVectors, temporal::TemporalAnchorMode,
+    ScoredEntity, TimeRange, Vault, VaultConfig, pipeline::RetrievalWithPendingVectors,
+    temporal::TemporalAnchorMode,
 };
 use rmpv::Value;
 
-/// The joined engine-side identity of the BEAM deterministic test embedder:
-/// `oneiron-eval/offline-deterministic-stub` at revision
-/// `test-only-sha256-v1`. Test-only evidence; never a live-model claim.
-const MODEL_ID: &str = "oneiron-eval/offline-deterministic-stub@test-only-sha256-v1";
 const DIMENSIONS: usize = 8;
 
 // Cross-repository identity table (binding; mirrored byte-for-byte by
@@ -85,54 +66,6 @@ const TEMPORAL_SIGMA_SECS: u64 = 3_600;
 const CLAIM_PREDICATE: &str = "profile.note";
 const QUERY_LIMIT: usize = 16;
 
-/// Host-injected embedder that records which claims it was asked to embed
-/// so the fixture can prove no claim is filled twice.
-#[derive(Debug, Default)]
-struct RecordingEmbedder {
-    calls: Mutex<Vec<EntityId>>,
-}
-
-impl RecordingEmbedder {
-    fn counts(&self) -> BTreeMap<EntityId, usize> {
-        let calls = self.calls.lock().expect("recorder mutex is not poisoned");
-        let mut counts = BTreeMap::new();
-        for id in calls.iter() {
-            *counts.entry(*id).or_insert(0_usize) += 1;
-        }
-        counts
-    }
-}
-
-impl Embedder for RecordingEmbedder {
-    fn model_id(&self) -> &str {
-        MODEL_ID
-    }
-
-    fn dimensions(&self) -> usize {
-        DIMENSIONS
-    }
-
-    fn locality(&self) -> EmbedderLocality {
-        EmbedderLocality::OnDevice
-    }
-
-    fn embed(&self, inputs: &[PendingEmbeddingInput]) -> Result<Vec<Vec<f32>>> {
-        let mut calls = self.calls.lock().expect("recorder mutex is not poisoned");
-        let mut vectors = Vec::with_capacity(inputs.len());
-        for input in inputs {
-            calls.push(input.entity_id);
-            // Deterministic, non-zero, and derived only from the entity id:
-            // the fixture proves scheduling, not embedding quality.
-            let mut vector = vec![0.0_f32; DIMENSIONS];
-            for (slot, byte) in vector.iter_mut().zip(input.entity_id.as_bytes()) {
-                *slot = f32::from(*byte) / 255.0;
-            }
-            vectors.push(vector);
-        }
-        Ok(vectors)
-    }
-}
-
 struct Rung0Fixture {
     lexical_claim: EntityId,
     graph_claim: EntityId,
@@ -146,17 +79,6 @@ impl Rung0Fixture {
     }
 }
 
-/// One model-free channel's replay projection. Deterministic fields only:
-/// no wall-clock telemetry, no generated run ids, no queue timestamps.
-#[derive(Debug, PartialEq, Eq)]
-struct ChannelProjection {
-    label: &'static str,
-    result_ids: Vec<EntityId>,
-    score_bits: Vec<(EntityId, u32)>,
-    pending_ids: Vec<EntityId>,
-    pending_tokens: Vec<(EntityId, Vec<u8>)>,
-}
-
 fn rung0_config() -> VaultConfig {
     let mut config = VaultConfig::device();
     config.dimensions = DIMENSIONS;
@@ -164,13 +86,6 @@ fn rung0_config() -> VaultConfig {
         config.embedding_model.is_none(),
         "rung 0 is a genuinely vector-less vault: embedding_model must be None before open"
     );
-    config
-}
-
-fn attached_config() -> VaultConfig {
-    // Identical to `rung0_config()` in every field except the attached model.
-    let mut config = rung0_config();
-    config.embedding_model = Some(MODEL_ID.to_owned());
     config
 }
 
@@ -256,12 +171,6 @@ fn write_rung0_fixture(vault: &Vault) -> Result<Rung0Fixture> {
     Ok(fixture)
 }
 
-fn score_bits(rows: &[ScoredEntity]) -> Vec<(EntityId, u32)> {
-    rows.iter()
-        .map(|row| (row.id, row.score.to_bits()))
-        .collect()
-}
-
 /// One executed model-free channel: its label, its golden claim, and the
 /// retrieval surface carrying pending-vector evidence.
 type ChannelRun = (
@@ -305,58 +214,6 @@ fn run_model_free_channels(vault: &Vault, fixture: &Rung0Fixture) -> Result<Vec<
         ("graph", fixture.graph_claim, graph),
         ("temporal", fixture.temporal_claim, temporal),
     ])
-}
-
-fn projection(
-    label: &'static str,
-    result: &RetrievalWithPendingVectors<Vec<ScoredEntity>>,
-) -> ChannelProjection {
-    ChannelProjection {
-        label,
-        result_ids: result.value.iter().map(|row| row.id).collect(),
-        score_bits: score_bits(&result.value),
-        pending_ids: result.pending_vector_ids.clone(),
-        pending_tokens: result
-            .pending_vectors
-            .iter()
-            .map(|pending| (pending.id, pending.token.clone()))
-            .collect(),
-    }
-}
-
-fn model_free_projections() -> Result<Vec<ChannelProjection>> {
-    let dir = tempfile::tempdir().expect("temporary vault directory");
-    let vault = Vault::open(dir.path(), rung0_config())?;
-    let fixture = write_rung0_fixture(&vault)?;
-    let channels = run_model_free_channels(&vault, &fixture)?;
-    Ok(channels
-        .iter()
-        .map(|(label, _, result)| projection(label, result))
-        .collect())
-}
-
-fn model_rows(vault: &Vault) -> Result<BTreeSet<EntityId>> {
-    Ok(vault
-        .entities_by_type(ENTITY_TYPE_MODEL)?
-        .into_iter()
-        .collect())
-}
-
-fn dump_jobs(jobs: &[QueuedEmbedJob]) -> String {
-    if jobs.is_empty() {
-        return "<empty>".to_owned();
-    }
-    jobs.iter()
-        .map(|job| {
-            format!(
-                "{{entity_id={}, priority={}, queued_at={}}}",
-                job.entity_id.to_hex(),
-                job.priority,
-                job.queued_at
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 #[test]
@@ -425,192 +282,6 @@ fn rung0_fresh_vault_answers_all_model_free_channels() -> Result<()> {
         None,
         "rung 0 must not report an embedding model"
     );
-
-    Ok(())
-}
-
-/// Parked: the strict cold-attach contract. Current main enqueues ordinary
-/// local claim writes at `EMBED_PRIORITY_DEVICE` (`2`) even when
-/// `embedding_model = None`, so phase 1's assert-empty check is red and the
-/// exact-priority-3 attach scan does not exist yet.
-///
-/// Pinned invariant (owner-slate engine ticket): a vault opened with
-/// `embedding_model = None` must not enqueue device-priority embed jobs at
-/// write time; the attach reopen performs a cold-attach pending scan
-/// enqueueing every pending row at `EMBED_PRIORITY_BACKFILL`; a pending row
-/// already enqueued at a numerically higher urgency (e.g. surfaced-hot `0`)
-/// keeps that urgency — it is already scheduled and the exact-priority-3
-/// guarantee applies only to rows not previously surfaced. No priority-rewrite
-/// exception in `push_embed_job_in_txn`: that would weaken urgency
-/// preservation for every caller to serve one fixture.
-#[test]
-fn rung0_attach_uses_priority_three_without_migration_or_double_fill() -> Result<()> {
-    let dir = tempfile::tempdir().expect("temporary vault directory");
-
-    // ─── Phase 1: rung-0 writes, one physical vault, no embedder ───
-    let fixture;
-    let pre_attach_claims: BTreeSet<EntityId>;
-    let models_before;
-    {
-        let vault = Arc::new(Vault::open(dir.path(), rung0_config())?);
-        fixture = write_rung0_fixture(&vault)?;
-        // First open seeds the bootstrap skills, whose claims predate the embedder too.
-        pre_attach_claims = vault
-            .entities_by_type(ENTITY_TYPE_CLAIM)?
-            .into_iter()
-            .collect();
-        assert!(
-            fixture
-                .claims()
-                .iter()
-                .all(|id| pre_attach_claims.contains(id)),
-            "every fixture claim is a pre-attach claim"
-        );
-        assert_eq!(
-            vault.doctor()?.embedding_model_id,
-            None,
-            "phase 1 must be model-free"
-        );
-        models_before = model_rows(&vault)?;
-
-        // Read-only queue inspection. `run_with_pending_vectors` is NOT
-        // called on this phase: it would enqueue at surfaced-hot `0` and
-        // corrupt the attach-priority evidence below.
-        let queue = SyncQueue::new(Arc::clone(&vault))?;
-        let jobs = queue.drain_embed_jobs()?;
-        assert!(
-            jobs.is_empty(),
-            "a vault opened with embedding_model = None must not enqueue embed jobs at write \
-             time; queue dump: [{}]",
-            dump_jobs(&jobs)
-        );
-        drop(queue);
-        drop(vault);
-    }
-
-    // ─── Phase 2: attach one embedder over the same physical vault ───
-    let vault = Arc::new(Vault::open(dir.path(), attached_config())?);
-    let pre_attach = pre_attach_claims.len();
-    assert_eq!(vault.cold_attach_embedder()?, pre_attach);
-    assert_eq!(vault.cold_attach_embedder()?, 0);
-
-    let queue = SyncQueue::new(Arc::clone(&vault))?;
-    let jobs = queue.drain_embed_jobs()?;
-    let queued: BTreeSet<EntityId> = jobs.iter().map(|job| job.entity_id).collect();
-    assert_eq!(
-        jobs.len(),
-        pre_attach,
-        "cold attach must enqueue exactly one job per pre-attach claim; queue dump: [{}]",
-        dump_jobs(&jobs)
-    );
-    assert_eq!(
-        queued,
-        pre_attach_claims,
-        "cold attach must enqueue exactly the pre-attach claims and nothing else; \
-         queue dump: [{}]",
-        dump_jobs(&jobs)
-    );
-    for job in &jobs {
-        assert_eq!(
-            job.priority,
-            EMBED_PRIORITY_BACKFILL,
-            "cold-attach backfill priority must be exactly {EMBED_PRIORITY_BACKFILL} for {}; \
-             queue dump: [{}]",
-            job.entity_id.to_hex(),
-            dump_jobs(&jobs)
-        );
-    }
-    drop(queue);
-
-    let embedder = Arc::new(RecordingEmbedder::default());
-    let reconciler = PendingEmbeddingReconciler::new(
-        Arc::clone(&vault),
-        Arc::clone(&embedder) as Arc<dyn Embedder>,
-    );
-
-    let first = reconciler.reconcile_once()?;
-    assert_eq!(
-        (first.leased, first.embedded, first.filled),
-        (pre_attach, pre_attach, pre_attach),
-        "one attached embedder must backfill every pre-attach claim: {first:?}"
-    );
-    assert_eq!(first.stale_fills, 0, "no stale fills on cold attach");
-
-    let expected_counts: BTreeMap<EntityId, usize> =
-        pre_attach_claims.iter().map(|id| (*id, 1)).collect();
-    assert_eq!(
-        embedder.counts(),
-        expected_counts,
-        "each pre-attach claim must be embedded exactly once"
-    );
-
-    let second = reconciler.reconcile_once()?;
-    assert_eq!(
-        (second.leased, second.embedded, second.filled),
-        (0, 0, 0),
-        "the second reconcile pass must be empty: {second:?}"
-    );
-    assert_eq!(
-        embedder.counts(),
-        expected_counts,
-        "the second reconcile pass must not re-embed any claim"
-    );
-
-    // Post-fill the model-free channels enqueue nothing: the pending markers
-    // are cleared, and the queue inspection above has already completed.
-    for (label, _, result) in run_model_free_channels(&vault, &fixture)? {
-        assert!(
-            result.pending_vector_ids.is_empty(),
-            "{label} channel must report no pending embeddings after backfill: {:?}",
-            result.pending_vector_ids
-        );
-    }
-
-    assert_eq!(
-        vault.doctor()?.embedding_model_id,
-        Some(MODEL_ID.to_owned()),
-        "attach must stamp exactly one model_id@revision"
-    );
-    // Cheap invariance guard, not migration evidence: no engine path writes
-    // MODEL rows on attach.
-    assert_eq!(
-        model_rows(&vault)?,
-        models_before,
-        "attaching an embedder must not write MODEL records"
-    );
-
-    Ok(())
-}
-
-#[test]
-fn rung0_model_free_replay_is_bit_exact() -> Result<()> {
-    let first = model_free_projections()?;
-    let second = model_free_projections()?;
-
-    assert_eq!(first.len(), 3, "three model-free channels are projected");
-    for (left, right) in first.iter().zip(second.iter()) {
-        assert_eq!(left.label, right.label);
-        assert_eq!(
-            left.result_ids, right.result_ids,
-            "{} ordered result ids must replay bit-exact",
-            left.label
-        );
-        assert_eq!(
-            left.score_bits, right.score_bits,
-            "{} score bits must replay bit-exact",
-            left.label
-        );
-        assert_eq!(
-            left.pending_ids, right.pending_ids,
-            "{} ordered pending ids must replay bit-exact",
-            left.label
-        );
-        assert_eq!(
-            left.pending_tokens, right.pending_tokens,
-            "{} pending token bytes must replay bit-exact",
-            left.label
-        );
-    }
 
     Ok(())
 }

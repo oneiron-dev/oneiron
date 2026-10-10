@@ -154,7 +154,11 @@ stops, and the message is cancelled rather than saved as an answer. The seeded
 default agent answers; an owner-grade credential may name another with
 `agent_ref`, which must be live, approved and enabled. A turn still running
 at shutdown gets a grace to finish, then its message is cancelled, not left
-open.
+open. A turn spends from `models.chat.turn_budget_units`: the tokens the
+reply reports, or the turn's reservation (one call's 8000 units, or the whole
+budget if smaller) when it reports none, plus one reservation for each rung
+that failed before it. A turn that ends without a reply spends its
+reservation.
 
 Chat turns and workflow steps are calls of the `generative_reasoner` role. If
 the vault has a model manifest, its binding for that role at the vault's
@@ -176,7 +180,9 @@ call the provider answered with a retryable error is tried again after
 tries. Any other failure, or a fifth retryable one, ends the step for a
 person to look at, and its workflow stops. Spend per step:
 `models.workflows.step_budget_units` (64000, at least one call's 8000-unit
-reservation), one budget for all of a step's tries: each failed try is
+reservation), one budget for all of a step's tries: an answered try spends
+the tokens it reports, or its reservation when it reports none, plus one
+reservation for each rung that failed before it; each failed try is
 charged its reservation, every budget policy row the step matches (its
 agent's cap, its purpose's) counts those charges too, and a try the
 remainder cannot admit ends the step. `models.workflows.enabled = false` turns the pump
