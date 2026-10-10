@@ -180,19 +180,25 @@ pub(crate) fn pinned_evidence(config: &EmbedderConfig) -> Option<VectorEvidenceF
 /// Whether the section runs its model with the settings a pinned model's
 /// floors were measured under: the pinned files themselves (an operator's
 /// `model_dir` is taken as it stands, prompt file included), Q8_0 weights,
-/// the attention and output quantization the checkpoint declares, and
-/// queries embedded with no prompt. Each of these moves where a paraphrase
-/// and noise score, so any other profile is unmeasured.
+/// the attention and output quantization the checkpoint declares, an input
+/// cap that reads at least what the shipped one does, and queries embedded
+/// with no prompt. Each of these moves where a paraphrase and noise score,
+/// so any other profile is unmeasured.
 fn runs_as_measured(config: &EmbedderConfig) -> bool {
     let local = &config.local;
+    // The tokenizer strips what it encodes, so an instruction of blanks puts
+    // the same tokens through the model as none.
     let unprompted = config
         .query_instruction
         .as_deref()
-        .map_or(config.query_prompt_name.is_none(), str::is_empty);
+        .map_or(config.query_prompt_name.is_none(), |instruction| {
+            super::batcher::strip(instruction).is_empty()
+        });
     local.model_dir.is_none()
         && local.quant == EmbedderQuant::Q8_0
         && local.attention == EmbedderAttention::Auto
         && local.output_quantization == EmbedderOutputQuantization::default()
+        && config.max_input_tokens >= crate::config::embedder::DEFAULT_MAX_INPUT_TOKENS
         && unprompted
 }
 
