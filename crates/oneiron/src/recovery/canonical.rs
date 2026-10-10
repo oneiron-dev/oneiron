@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use super::document::{self, CanonicalDocument, CanonicalHead, CanonicalHeadMove};
 use super::validation;
-use super::{decode_recovery_artifact, encode_recovery_artifact};
-use crate::deletion::{HARD_DELETE_MARKER, PENDING_TOMBSTONE, ROW_DELETION_FENCE};
+use super::{decode_recovery_artifact, seal_recovery_artifact};
+use crate::deletion::{HARD_DELETE_MARKER, PENDING_TOMBSTONE};
 use crate::error::{ArtifactError, Error, Result};
 use crate::side_table::HexId;
 use crate::{EntityId, Vault};
@@ -123,10 +123,25 @@ impl CanonicalSnapshot {
 
     /// Deterministic MessagePack, protected by the blake3 artifact envelope.
     pub fn encode(&self) -> Result<Vec<u8>> {
+        self.encode_within(CANONICAL_SNAPSHOT_MAX_BYTES)
+    }
+
+    /// [`Self::encode`], refused with [`ArtifactError::OverlayLimit`] once the
+    /// artifact would pass `limit` bytes. The payload is written straight
+    /// into the artifact's one buffer, which stops growing at the limit, so
+    /// an artifact too large is never held whole before it is refused.
+    pub(crate) fn encode_within(&self, limit: usize) -> Result<Vec<u8>> {
         self.validate()?;
-        let payload = pack(self)?;
-        check_size(payload.len().saturating_add(super::HEADER_LEN))?;
-        encode_recovery_artifact(CANONICAL_SNAPSHOT_ARTIFACT_TYPE, &payload)
+        let mut out = BoundedWriter {
+            bytes: Vec::new(),
+            budget: ByteBudget::new(limit.min(CANONICAL_SNAPSHOT_MAX_BYTES)),
+            refused: None,
+        };
+        // Room for the envelope header, sealed once the payload is written.
+        std::io::Write::write_all(&mut out, &[0; super::HEADER_LEN]).map_err(|_| out.refusal())?;
+        rmp_serde::encode::write_named(&mut out, self).map_err(|_| out.refusal())?;
+        seal_recovery_artifact(CANONICAL_SNAPSHOT_ARTIFACT_TYPE, &mut out.bytes);
+        Ok(out.bytes)
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self> {
@@ -202,7 +217,24 @@ pub fn capture_canonical_window(
     window: &str,
     doc: &LoroDoc,
 ) -> Result<CanonicalSnapshot> {
-    let LoroValue::Map(containers) = doc.get_deep_value() else {
+    capture_canonical_window_within(vault, window, doc, usize::MAX)
+}
+
+/// [`capture_canonical_window`] holding at most `limit` bytes of copies: the
+/// window's rows and their keys, documents, receipts and NOTE workflows. A
+/// copy that would pass `limit` is refused with
+/// [`ArtifactError::OverlayLimit`] before it is made, so the copies of a
+/// window far over the limit cost the limit, not the window. One document
+/// is read whole before it is counted, as opening it reads it.
+pub(crate) fn capture_canonical_window_within(
+    vault: &Vault,
+    window: &str,
+    doc: &LoroDoc,
+    limit: usize,
+) -> Result<CanonicalSnapshot> {
+    let budget = &mut ByteBudget::new(limit);
+    // The shallow value names the roots without copying what they hold.
+    let LoroValue::Map(containers) = doc.get_value() else {
         return Err(invalid("window root"));
     };
     if containers.keys().any(|name| {
@@ -250,13 +282,13 @@ pub fn capture_canonical_window(
             .as_bytes(),
         },
     };
-    for (key, blob) in binary_rows(doc, "entities")? {
+    for (key, blob) in binary_rows_within(doc, "entities", budget)? {
         snapshot.entity_blobs.push(CanonicalEntity {
             id: parse_id(&key)?,
             blob,
         });
     }
-    for (key, value) in binary_rows(doc, "edges")? {
+    for (key, value) in binary_rows_within(doc, "edges", budget)? {
         let parts: Vec<_> = key.split(':').collect();
         if parts.len() != 3 {
             return Err(invalid("edge key"));
@@ -272,7 +304,7 @@ pub fn capture_canonical_window(
         }
         snapshot.base_edges.push(edge);
     }
-    for (key, value) in binary_rows(doc, "tombstones")? {
+    for (key, value) in binary_rows_within(doc, "tombstones", budget)? {
         snapshot.tombstones.push(CanonicalTombstone {
             id: parse_id(&key)?,
             deleted_at: crate::deletion::decode_tombstone_value(&value).deleted_at,
@@ -282,7 +314,8 @@ pub fn capture_canonical_window(
     let txn = vault.store.env.read_txn()?;
     // Pending delete intent is Layer 1 even when a crash preceded CRDT publication.
     let window_prefix = [window.as_bytes(), b":".as_slice()].concat();
-    for (key, value) in PENDING_TOMBSTONE.scan_from(&vault.store, &txn, &window_prefix)? {
+    for row in PENDING_TOMBSTONE.iter_from(&vault.store, &txn, &window_prefix)? {
+        let (key, value) = row?;
         let entity = *key.id.as_bytes();
         if let Some(previous) = snapshot.tombstones.iter_mut().find(|row| row.id == entity) {
             if crate::deletion::decode_tombstone_value(&previous.value).is_hard()
@@ -293,6 +326,7 @@ pub fn capture_canonical_window(
             previous.deleted_at = crate::deletion::decode_tombstone_value(&value).deleted_at;
             previous.value = value;
         } else {
+            budget.take(entity.len() + value.len())?;
             snapshot.tombstones.push(CanonicalTombstone {
                 id: entity,
                 deleted_at: crate::deletion::decode_tombstone_value(&value).deleted_at,
@@ -324,14 +358,22 @@ pub fn capture_canonical_window(
     // A row this vault fenced as deleted, whose tombstone the window no longer
     // holds, was a delete a peer withdrew. A soft tombstone cannot be rebuilt
     // faithfully, and exporting the row would make it live wherever the
-    // artifact lands, so the snapshot is refused.
+    // artifact lands, so the snapshot is refused. The stored row decides, as
+    // on every read: a delete-protected record stays live under a fence a
+    // peer's tombstone planted before it arrived.
     for row in &snapshot.entity_blobs {
-        if !snapshot
+        if snapshot
             .tombstones
             .iter()
             .any(|tombstone| tombstone.id == row.id)
-            && ROW_DELETION_FENCE.contains(&vault.store, &txn, &HexId(id(row.id)?))?
         {
+            continue;
+        }
+        let entity = id(row.id)?;
+        // Borrowed: only the stored row's header decides, so the body of a
+        // projection under repair is never copied to answer it.
+        let stored = vault.store.entities.get(&txn, entity.as_bytes())?;
+        if crate::deletion::row_deletion_marked(&vault.store, &txn, &entity, stored.as_deref())? {
             return Err(invalid("deleted row without its tombstone"));
         }
     }
@@ -341,9 +383,11 @@ pub fn capture_canonical_window(
     // of the CRDT map key must not hide a committed event from a fresh vault.
     let mut protected_receipts = std::collections::BTreeSet::new();
     let mut restored_receipts = Vec::new();
-    for (receipt_id, local_blob) in
-        crate::receipt::canonical_records_in_window(&vault.store, &txn, window)?
-    {
+    let receipts =
+        crate::receipt::canonical_records_in_window(&vault.store, &txn, window, |raw| {
+            budget.take(16 + raw.len())
+        })?;
+    for (receipt_id, local_blob) in receipts {
         let bytes = *receipt_id.as_bytes();
         if let Some(candidate) = snapshot.entity_blobs.iter().find(|row| row.id == bytes) {
             if candidate.blob != local_blob {
@@ -433,6 +477,7 @@ pub fn capture_canonical_window(
                 && !hard.contains(&source)
                 && !hard.contains(&target)
             {
+                budget.take(key.len() + value.len())?;
                 snapshot.base_edges.push(CanonicalBaseEdge {
                     source,
                     kind: key[16],
@@ -442,21 +487,28 @@ pub fn capture_canonical_window(
             }
         }
     }
-    document::capture(vault, &txn, &mut snapshot)?;
+    document::capture(vault, &txn, &mut snapshot, budget)?;
     #[cfg(feature = "sync")]
     for entity in &snapshot.entity_blobs {
         if crate::batch::EntityMetadataHeader::parse(&entity.blob)
             .is_some_and(|h| h.entity_type != crate::registry::ENTITY_TYPE_NOTE)
             && let Some(row) = crate::entity_doc::capture_canonical(vault, &txn, entity.id)?
         {
+            budget.take(
+                row.entity_id.len()
+                    + row.document_id.len()
+                    + row.field.as_ref().map_or(0, String::len)
+                    + row.text.len(),
+            )?;
             snapshot.entity_documents.push(row);
         }
     }
     snapshot.entity_documents.sort_by_key(|row| row.entity_id);
     snapshot.entity_blobs.sort_by_key(|row| row.id);
-    let carried: std::collections::BTreeMap<_, _> = binary_rows(doc, "retained_claim_worlds")?
-        .into_iter()
-        .collect();
+    let carried: std::collections::BTreeMap<_, _> =
+        binary_rows_within(doc, "retained_claim_worlds", budget)?
+            .into_iter()
+            .collect();
     if let Some((_, hex)) = window.split_once('@') {
         let world = EntityId::from_hex(hex).map_err(|_| invalid("window world"))?;
         for entity in &snapshot.entity_blobs {
@@ -583,7 +635,20 @@ pub fn rebuild_vault_window_from_canonical(snapshot: &CanonicalSnapshot) -> Resu
     Ok(doc)
 }
 
+#[cfg(feature = "sync")]
 pub(super) fn binary_rows(doc: &LoroDoc, name: &str) -> Result<BTreeMap<String, Vec<u8>>> {
+    binary_rows_within(doc, name, &mut ByteBudget::new(usize::MAX))
+}
+
+/// The shortest key a Layer-1 window map holds: one hex entity id.
+const ROW_KEY_BYTES: usize = 32;
+
+/// The binary rows of the window map `name`, copying no row past `budget`.
+fn binary_rows_within(
+    doc: &LoroDoc,
+    name: &str,
+    budget: &mut ByteBudget,
+) -> Result<BTreeMap<String, Vec<u8>>> {
     let mut rows = BTreeMap::new();
     let LoroValue::Map(containers) = doc.get_value() else {
         return Err(invalid("window root"));
@@ -597,17 +662,30 @@ pub(super) fn binary_rows(doc: &LoroDoc, name: &str) -> Result<BTreeMap<String, 
             .ok_or(invalid("nonmap Layer-1 carrier"))?,
         Some(_) => return Err(invalid("nonmap Layer-1 carrier")),
     };
+    // The map walk lists every key before its first row, so the keys are
+    // admitted first, each at the shortest key a Layer-1 map holds.
+    budget.take(map.len().saturating_mul(ROW_KEY_BYTES))?;
     let mut failed = false;
+    let mut refused = None;
     map.for_each(|key, value| match value {
+        _ if refused.is_some() => {}
         ValueOrContainer::Value(LoroValue::Binary(value)) => {
-            rows.insert(key.to_owned(), value.to_vec());
+            match budget.take(key.len().saturating_sub(ROW_KEY_BYTES) + value.len()) {
+                Ok(()) => {
+                    rows.insert(key.to_owned(), value.to_vec());
+                }
+                Err(error) => refused = Some(error),
+            }
         }
         _ => failed = true,
     });
     if failed {
         return Err(invalid("nonbinary Layer-1 carrier"));
     }
-    Ok(rows)
+    match refused {
+        Some(error) => Err(error),
+        None => Ok(rows),
+    }
 }
 pub(super) fn insert(doc: &LoroDoc, map: &str, key: &str, bytes: &[u8]) -> Result<()> {
     doc.get_map(map)
@@ -630,6 +708,76 @@ pub(super) fn pack<T: Serialize>(value: &T) -> Result<Vec<u8>> {
 pub(super) fn invalid(reason: &'static str) -> Error {
     ArtifactError::InvalidRecoveryArtifact(reason).into()
 }
+
+/// The bytes one capture or encoding has copied, refused with
+/// [`ArtifactError::OverlayLimit`] before a copy would pass `limit`.
+#[derive(Debug)]
+pub(super) struct ByteBudget {
+    held: usize,
+    limit: usize,
+}
+
+impl ByteBudget {
+    pub(super) const fn new(limit: usize) -> Self {
+        Self { held: 0, limit }
+    }
+
+    /// Admits `bytes` more, before they are copied.
+    pub(super) fn take(&mut self, bytes: usize) -> Result<()> {
+        let held = self.held.saturating_add(bytes);
+        if held > self.limit {
+            return Err(ArtifactError::OverlayLimit {
+                required: held,
+                limit: self.limit,
+            }
+            .into());
+        }
+        self.held = held;
+        #[cfg(test)]
+        held_bytes::note(held);
+        Ok(())
+    }
+}
+
+/// The artifact's one buffer: a write past its budget is refused, and the
+/// buffer never reserves past the budget either.
+struct BoundedWriter {
+    bytes: Vec<u8>,
+    budget: ByteBudget,
+    refused: Option<Error>,
+}
+
+impl BoundedWriter {
+    /// Why a write failed: the budget it would pass, else the encoder.
+    fn refusal(&mut self) -> Error {
+        self.refused
+            .take()
+            .unwrap_or_else(|| invalid("canonical encoding"))
+    }
+}
+
+impl std::io::Write for BoundedWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if let Err(error) = self.budget.take(buf.len()) {
+            self.refused = Some(error);
+            return Err(std::io::ErrorKind::OutOfMemory.into());
+        }
+        let need = self.bytes.len() + buf.len();
+        if need > self.bytes.capacity() {
+            let grown = need
+                .max(self.bytes.capacity().saturating_mul(2))
+                .min(self.budget.limit);
+            self.bytes.reserve_exact(grown - self.bytes.len());
+        }
+        self.bytes.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 fn check_size(size: usize) -> Result<()> {
     if size > CANONICAL_SNAPSHOT_MAX_BYTES {
         return Err(ArtifactError::OverlayLimit {
@@ -639,4 +787,22 @@ fn check_size(size: usize) -> Result<()> {
         .into());
     }
     Ok(())
+}
+
+/// Test hook: the most bytes any one capture or encoding held.
+#[cfg(test)]
+pub(super) mod held_bytes {
+    use std::cell::Cell;
+
+    thread_local!(static PEAK: Cell<usize> = const { Cell::new(0) });
+
+    pub(super) fn note(held: usize) {
+        PEAK.with(|peak| peak.set(peak.get().max(held)));
+    }
+
+    /// The peak since the last call; the next count starts from zero.
+    #[cfg(feature = "sync")]
+    pub(in crate::recovery) fn take_peak() -> usize {
+        PEAK.with(|peak| peak.replace(0))
+    }
 }

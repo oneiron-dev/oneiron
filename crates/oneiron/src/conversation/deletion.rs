@@ -47,7 +47,9 @@ pub(crate) fn room_person_write_allowed(
     }
 }
 
-fn record_author(body: &[u8]) -> Result<Option<EntityId>> {
+/// The author a TURN's door stamped into its body: a room, DAG or witness
+/// TURN's `actor`, if it names one.
+pub(crate) fn record_author(body: &[u8]) -> Result<Option<EntityId>> {
     let mut bytes = body;
     let Value::Map(fields) =
         rmpv::decode::read_value(&mut bytes).map_err(|_| invalid("invalid room record"))?

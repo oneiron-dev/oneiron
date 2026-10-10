@@ -17,6 +17,61 @@ pub struct BoardSelection {
     pub index_only: BTreeSet<EntityId>,
 }
 
+impl BoardSelection {
+    /// The MEMORIES a turn's board rendered: its PINNED and snippet rows, and
+    /// the index-only handles, which never persist. A row that names no
+    /// entity carries no history. The world tiers stay empty until the turn
+    /// resolves a world selection.
+    #[must_use]
+    pub fn from_memories(memories: &crate::context_board::MemoriesSection) -> Self {
+        let mut selection = Self::default();
+        for row in &memories.rows {
+            let Ok(id) = EntityId::from_hex(&row.id) else {
+                continue;
+            };
+            match row.tier {
+                crate::context_board::MemoryTier::Pinned => selection.pinned.insert(id),
+                crate::context_board::MemoryTier::Snippet => selection.top_snippet.insert(id),
+                crate::context_board::MemoryTier::IndexOnly => selection.index_only.insert(id),
+            };
+        }
+        // A row shown at two tiers persists at the stronger one.
+        selection
+            .top_snippet
+            .retain(|id| !selection.pinned.contains(id));
+        selection
+            .index_only
+            .retain(|id| !selection.pinned.contains(id) && !selection.top_snippet.contains(id));
+        selection
+    }
+
+    /// The revision each persisted row of `memories` was served at, where
+    /// its read pinned one. A row read LIVE names none, and records the live
+    /// revision. A row shown at two tiers keeps its persisted tier's revision.
+    pub(crate) fn served_revisions(
+        &self,
+        memories: &crate::context_board::MemoriesSection,
+    ) -> BTreeMap<EntityId, RevisionRef> {
+        let mut served = BTreeMap::new();
+        for row in &memories.rows {
+            let Ok(id) = EntityId::from_hex(&row.id) else {
+                continue;
+            };
+            let persisted = match row.tier {
+                crate::context_board::MemoryTier::Pinned => true,
+                crate::context_board::MemoryTier::Snippet => !self.pinned.contains(&id),
+                crate::context_board::MemoryTier::IndexOnly => false,
+            };
+            match row.source_revision.filter(|_| persisted) {
+                Some(revision) => served.insert(id, revision),
+                None if persisted => served.remove(&id),
+                None => None,
+            };
+        }
+        served
+    }
+}
+
 /// Turn order is strict within one board owner. `at` is the valid-time axis;
 /// `learned_at` on the writer is the independent transaction-time axis.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,8 +98,8 @@ pub struct BoardTurnReceipt {
     pub turn: EntityId,
     pub source_revision_ref: RevisionRef,
     pub changed_claims: Vec<EntityId>,
-    /// The owner's scoped read of the selected claims, resolved in the
-    /// recording transaction. A claim the owner cannot read refuses the turn.
+    /// The recorder's scoped read of the selected documents, resolved in the
+    /// recording transaction. A document it cannot read refuses the turn.
     pub read_receipt: crate::claim::ScopedReadReceipt,
 }
 
@@ -58,8 +113,8 @@ pub struct ReconstructedBoard {
     pub selection: BoardSelection,
     /// Exact body bytes at the frontier recorded by this turn.
     pub documents: BTreeMap<EntityId, Vec<u8>>,
-    /// The owner's scoped read of the reconstructed claims, resolved in the
-    /// reconstruction snapshot. A claim the owner cannot read refuses it.
+    /// The reader's scoped read of the reconstructed documents, resolved in
+    /// the reconstruction snapshot. A document it cannot read refuses it.
     pub read_receipt: crate::claim::ScopedReadReceipt,
 }
 
@@ -68,6 +123,10 @@ pub struct ReconstructedBoard {
 pub enum BoardHistoryError {
     #[error("turn {turn:?} predates board retention horizon {retained_from}")]
     BeyondCompactionHorizon { turn: EntityId, retained_from: u64 },
+    #[error("board turn {0:?} was folded by compaction")]
+    Compacted(EntityId),
+    #[error("board turn {0:?} was written by another actor")]
+    NotTurnAuthor(EntityId),
     #[error("board turn {0:?} has no frontier anchor")]
     UnknownTurn(EntityId),
     #[error("board owner {0:?} is no longer live")]

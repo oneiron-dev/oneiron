@@ -263,6 +263,36 @@ pub(crate) fn invalidate_thread_meta(
     Ok(())
 }
 
+/// Folds every trunk's thread projection again from the retained reply
+/// edges. Thread meta is a derived cache: a checkpoint never carries it, so a
+/// restore rebuilds it here instead of trusting copied rows. A trunk whose
+/// chain does not fold stays dirty, and its first read reports the error a
+/// live vault would. Returns the number of trunks rebuilt.
+pub(crate) fn rebuild_thread_meta_projection_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+) -> Result<usize> {
+    let mut trunks = std::collections::BTreeSet::new();
+    for row in crate::ports::EdgeStoreInventory::port_edge_rows_raw(&vault.store, txn)? {
+        let (key, _) = row?;
+        if key.len() == 33 && key[16] == EdgeKind::RepliesTo as u8 {
+            trunks.insert(
+                EntityId::from_bytes(key[17..].try_into().map_err(|_| invalid("reply edge"))?)
+                    .map_err(|_| invalid("reply edge"))?,
+            );
+        }
+    }
+    let mut rebuilt = 0;
+    for trunk in trunks {
+        match rebuild_thread_meta_in_txn(vault, txn, trunk) {
+            Ok(_) => rebuilt += 1,
+            Err(error @ (Error::Storage(_) | Error::MapFull | Error::Io(_))) => return Err(error),
+            Err(_) => THREAD_DIRTY.put(&vault.store, txn, &trunk, &[1])?,
+        }
+    }
+    Ok(rebuilt)
+}
+
 /// A replayed TURN body may arrive after its RepliesTo edge.
 pub(crate) fn invalidate_thread_meta_for_turn_put(
     store: &crate::store::Store,

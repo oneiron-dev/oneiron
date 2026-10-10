@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 
 #[cfg(feature = "sync")]
 use super::canonical::parse_id;
-use super::canonical::{CanonicalSnapshot, id, invalid, pack};
+use super::canonical::{ByteBudget, CanonicalSnapshot, id, invalid, pack};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -67,6 +67,20 @@ pub struct CanonicalDocument {
     pub authorship: Vec<crate::note::NoteAuthorship>,
 }
 impl CanonicalDocument {
+    /// The bytes this document holds: its ids, text, title and authorship.
+    fn held(&self) -> usize {
+        let authorship = self.authorship.iter().map(|record| {
+            2 * 16
+                + record.command_hash.len()
+                + record.actor_class.len()
+                + record.grant.as_ref().map_or(0, String::len)
+        });
+        self.entity_id.len()
+            + self.head.len()
+            + self.text.len()
+            + self.title.as_ref().map_or(0, String::len)
+            + authorship.sum::<usize>()
+    }
     pub(super) fn key(&self) -> String {
         // All callers validate the UUID bytes before they reach storage.
         format!("note-value:v2:{}:{}", hex(self.entity_id), hex(self.head))
@@ -116,6 +130,7 @@ pub(super) fn capture(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     snapshot: &mut CanonicalSnapshot,
+    budget: &mut ByteBudget,
 ) -> Result<()> {
     let ids: BTreeSet<_> = snapshot
         .entity_blobs
@@ -140,37 +155,42 @@ pub(super) fn capture(
         // The live text plane is its head's document.
         let (live_head, _) = crate::note::documents::head_in(&vault.store, txn, note)?;
         let live = crate::note::recovery::capture(vault, txn, note)?;
-        snapshot.doc_snapshots.push(from_doc(
+        let row = from_doc(
             entity.id,
             *live_head.as_bytes(),
             &live,
             true,
             *core.author_ref.as_bytes(),
             header.learned_at,
-        )?);
+        )?;
+        budget.take(row.held())?;
+        snapshot.doc_snapshots.push(row);
         snapshot.document_heads.push(CanonicalHead {
             entity_id: entity.id,
             head: *live_head.as_bytes(),
         });
         let note_prefix = [note.to_hex().as_bytes(), b":".as_slice()].concat();
-        for row in NOTE_PROPOSAL_DOC.scan_from(&vault.store, txn, &note_prefix)? {
-            let (DocKey(_, head), bytes) = row;
+        for row in NOTE_PROPOSAL_DOC.iter_from(&vault.store, txn, &note_prefix)? {
+            let (DocKey(_, head), bytes) = row?;
             let head = *head.as_bytes();
             if head == *live_head.as_bytes() {
                 continue;
             }
             let doc = LoroDoc::from_snapshot(&bytes).map_err(|_| invalid("proposal document"))?;
-            snapshot.doc_snapshots.push(from_doc(
+            let row = from_doc(
                 entity.id,
                 head,
                 &doc,
                 false,
                 *core.author_ref.as_bytes(),
                 header.learned_at,
-            )?);
+            )?;
+            budget.take(row.held())?;
+            snapshot.doc_snapshots.push(row);
         }
     }
-    for (receipt_id, receipt) in NOTE_RECEIPT.scan(&vault.store, txn)? {
+    for row in NOTE_RECEIPT.iter_from(&vault.store, txn, &[])? {
+        let (receipt_id, receipt) = row?;
         if ids.contains(receipt.note.as_bytes()) {
             if receipt_id != receipt.id {
                 return Err(invalid("stored receipt key"));
@@ -181,6 +201,7 @@ pub(super) fn capture(
                 receipt: NOTE_RECEIPT.encode_value(&receipt)?,
             };
             value.decode()?;
+            budget.take(value.id.len() + value.entity_id.len() + value.receipt.len())?;
             snapshot.head_move_receipts.push(value);
         }
     }
@@ -189,7 +210,7 @@ pub(super) fn capture(
         .sort_by_key(|row| (row.entity_id, row.head));
     snapshot.document_heads.sort_by_key(|row| row.entity_id);
     snapshot.head_move_receipts.sort_by_key(|row| row.id);
-    workflow::capture(vault, txn, snapshot, &ids)?;
+    workflow::capture(vault, txn, snapshot, &ids, budget)?;
     Ok(())
 }
 pub(super) fn from_doc(

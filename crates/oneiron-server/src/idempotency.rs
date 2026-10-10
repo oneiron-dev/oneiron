@@ -75,6 +75,7 @@ impl IdempotencyStore {
     fn lookup(
         &self,
         store_key: &str,
+        request_target: &str,
         request_body: &[u8],
     ) -> Result<IdempotencyLookup, IdempotencyStoreError> {
         let Some(raw) = self
@@ -93,7 +94,12 @@ impl IdempotencyStore {
                 .map_err(IdempotencyStoreError::storage)?;
             return Ok(IdempotencyLookup::Miss);
         }
-        if stored.request_body != request_body {
+        if stored.request_body != request_body
+            || stored
+                .request_target
+                .as_deref()
+                .is_some_and(|target| target != request_target)
+        {
             return Ok(IdempotencyLookup::Conflict);
         }
 
@@ -103,10 +109,16 @@ impl IdempotencyStore {
     fn insert(
         &self,
         store_key: &str,
+        request_target: String,
         request_body: Vec<u8>,
         response: CachedHttpResponse,
     ) -> Result<(), IdempotencyStoreError> {
-        let stored = StoredIdempotencyEntry::from_cached(self.now_secs(), request_body, response);
+        let stored = StoredIdempotencyEntry::from_cached(
+            self.now_secs(),
+            request_target,
+            request_body,
+            response,
+        );
         let raw = rmp_serde::to_vec(&stored).map_err(IdempotencyStoreError::encode)?;
         self.vault
             .sync_state_put(store_key, &raw)
@@ -192,11 +204,17 @@ struct StoredIdempotencyEntry {
     status: u16,
     headers: Vec<(String, Vec<u8>)>,
     response_body: Vec<u8>,
+    /// The method and request target this entry answers: the same key and
+    /// body sent to any other operation is a conflict, never a replay of this
+    /// response. Entries written before it was kept name none.
+    #[serde(default)]
+    request_target: Option<String>,
 }
 
 impl StoredIdempotencyEntry {
     fn from_cached(
         created_at_secs: u64,
+        request_target: String,
         request_body: Vec<u8>,
         cached: CachedHttpResponse,
     ) -> Self {
@@ -211,6 +229,7 @@ impl StoredIdempotencyEntry {
             status: cached.status.as_u16(),
             headers,
             response_body: cached.body,
+            request_target: Some(request_target),
         }
     }
 }
@@ -297,6 +316,18 @@ pub(crate) async fn idempotency_middleware(
     request: Request,
     next: Next,
 ) -> Response {
+    idempotent(state, request, next, |_, _, _| None).await
+}
+
+/// The idempotency layer. `release` sees a cached success before it is
+/// replayed, with the caller's authority as it stands now: a response it
+/// returns is sent in the cached one's place, and the cached entry stays.
+async fn idempotent(
+    state: IdempotencyLayerState,
+    request: Request,
+    next: Next,
+    release: impl FnOnce(&SyncServer, Option<&CoreAuth>, &[u8]) -> Option<Response>,
+) -> Response {
     let has_idempotency_header = request.headers().contains_key(IDEMPOTENCY_KEY_HEADER);
     let is_core_auth_route = is_core_auth_route(request_path(&request));
     let revoked = state.server.vault().as_ref();
@@ -325,6 +356,7 @@ pub(crate) async fn idempotency_middleware(
         None => principal_for_non_core_route(&state.server.config),
     };
     let store_key = store_key(&principal, &key);
+    let target = request_target(&request);
     let (parts, body) = request.into_parts();
     let body = match to_bytes(body, IDEMPOTENCY_MAX_REQUEST_BODY_BYTES).await {
         Ok(body) => body,
@@ -336,8 +368,14 @@ pub(crate) async fn idempotency_middleware(
     let request_body = body.to_vec();
 
     let _guard = state.store.lock_for(&store_key).await;
-    match state.store.lookup(&store_key, &request_body) {
-        Ok(IdempotencyLookup::Replay(response)) => return response.into_response(),
+    match state.store.lookup(&store_key, &target, &request_body) {
+        Ok(IdempotencyLookup::Replay(response)) => {
+            let auth = core_auth.as_ref().and_then(|auth| auth.as_ref().ok());
+            if let Some(refused) = release(&state.server, auth, &response.body) {
+                return refused;
+            }
+            return response.into_response();
+        }
         Ok(IdempotencyLookup::Conflict) => return conflict_response(&key, is_core_auth_route),
         Ok(IdempotencyLookup::Miss) => {}
         Err(error) => {
@@ -378,7 +416,7 @@ pub(crate) async fn idempotency_middleware(
             body: response_body.clone(),
         };
 
-        if let Err(error) = state.store.insert(&store_key, request_body, cached) {
+        if let Err(error) = state.store.insert(&store_key, target, request_body, cached) {
             tracing::error!(error = %error, "failed to persist idempotency response");
             return api_error_response(
                 ApiError::internal_server_error("failed to persist idempotency response"),
@@ -388,6 +426,40 @@ pub(crate) async fn idempotency_middleware(
     }
 
     Response::from_parts(parts, Body::from(response_body))
+}
+
+/// The idempotency layer for a route that mutates in one request form only.
+/// A keyed request's body tells the form: the mutating form takes the layer,
+/// with `release` judging each replay; any other form runs as if the layer
+/// were absent, never cached and never replayed. The body is read up to
+/// axum's default extractor limit, so no body the route would accept is cut
+/// short.
+pub(crate) async fn idempotency_for_mutating_form(
+    state: IdempotencyLayerState,
+    request: Request,
+    next: Next,
+    mutates: impl FnOnce(&[u8]) -> bool,
+    release: impl FnOnce(&SyncServer, Option<&CoreAuth>, &[u8]) -> Option<Response>,
+) -> Response {
+    const ROUTE_BODY_LIMIT_BYTES: usize = 2 * 1024 * 1024;
+    if !request.headers().contains_key(IDEMPOTENCY_KEY_HEADER) {
+        return next.run(request).await;
+    }
+    let (parts, body) = request.into_parts();
+    let body = match to_bytes(body, ROUTE_BODY_LIMIT_BYTES).await {
+        Ok(body) => body,
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to read keyed request body");
+            return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+        }
+    };
+    let mutating = mutates(&body);
+    let request = Request::from_parts(parts, Body::from(body));
+    if mutating {
+        idempotent(state, request, next, release).await
+    } else {
+        next.run(request).await
+    }
 }
 
 enum IdempotencyKey {
@@ -411,6 +483,18 @@ fn request_path(request: &Request) -> &str {
         .extensions()
         .get::<OriginalUri>()
         .map_or_else(|| request.uri().path(), |uri| uri.0.path())
+}
+
+/// The method and target (path and query) a request names, as routed.
+fn request_target(request: &Request) -> String {
+    let uri = request
+        .extensions()
+        .get::<OriginalUri>()
+        .map_or_else(|| request.uri(), |uri| &uri.0);
+    let target = uri
+        .path_and_query()
+        .map_or_else(|| uri.path(), axum::http::uri::PathAndQuery::as_str);
+    format!("{} {target}", request.method())
 }
 
 fn is_core_auth_route(path: &str) -> bool {

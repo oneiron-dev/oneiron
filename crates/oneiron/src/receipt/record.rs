@@ -137,11 +137,13 @@ pub(crate) fn validated_local_record_for_canonical(
 /// Enumerate the validated receipt family owned by this canonical window,
 /// rather than letting a peer-controlled entities map or tombstone set name
 /// which local audit events capture may see. The index is rebuildable from
-/// accepted records and contains no ordinary ASSET rows.
+/// accepted records and contains no ordinary ASSET rows. `admit` sees each
+/// window record before it is kept, and refuses one the caller cannot hold.
 pub(crate) fn canonical_records_in_window(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     window: &str,
+    mut admit: impl FnMut(&[u8]) -> Result<()>,
 ) -> Result<Vec<(EntityId, Vec<u8>)>> {
     let mut records = Vec::new();
     for (count, row) in INDEX.iter_raw_from(store, txn, &[])?.enumerate() {
@@ -167,6 +169,7 @@ pub(crate) fn canonical_records_in_window(
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("canonical receipt record header"))?;
         if crate::deletion::window_label_from_timestamp(header.learned_at) == window {
+            admit(raw.as_slice())?;
             records.push((id, raw));
         }
     }

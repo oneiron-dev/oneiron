@@ -37,7 +37,10 @@ pub(crate) use graph::{
 };
 pub(crate) use redacted::{capture_before_erase, read as redacted_record_pin};
 pub use reply::{ReplyStrip, Thread, ThreadMeta};
-pub(crate) use reply::{invalidate_thread_meta, invalidate_thread_meta_for_turn_put};
+pub(crate) use reply::{
+    invalidate_thread_meta, invalidate_thread_meta_for_turn_put,
+    rebuild_thread_meta_projection_in_txn,
+};
 pub(crate) use scopes::resolve_in_txn;
 pub(crate) use thread_projection::selected_thread_in_txn;
 pub use types::{
