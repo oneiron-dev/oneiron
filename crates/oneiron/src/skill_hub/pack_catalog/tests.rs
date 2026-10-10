@@ -396,3 +396,32 @@ fn agent_knowledge_rejects_typed_credentials_at_source_stage_and_archive_doors()
     );
     Ok(())
 }
+// The hub folder contract lists an optional `contact` (2026-09-22). This is
+// oneiron-hub's claude-seat frontmatter with its real `contact` line, after the
+// hub-side fix (one-line grants; terms and notes moved into the body).
+#[test]
+fn hub_pack_contact_line_loads_and_is_carried() -> Result<()> {
+    const CONTACT: &str =
+        "legal@oneiron.dev for removal requests, contact@oneiron.dev for everything else";
+    let pack = |contact: &str| {
+        PackSource::from_files(vec![HubFile::new(
+            "PACK.md",
+            format!(
+                "---\nname: oneiron.claude-seat\ndescription: \"A person's own Claude Code, signed in by them, run headless inside their vault as a seat. Installs Anthropic's tool from Anthropic's source at first use. Never holds a token.\"\nversion: 0.1.1\nlicense: Apache-2.0\nkind: capability\ngrants: [\"run: the claude binary inside this vault's sandbox, as the seat's own user\", \"network: api.anthropic.com and claude.ai, for the login flow and the tool's own requests\", \"store: the seat's login directory on the vault volume, read and written only by the seat process\"]\nwakes: []\nadapter: built-in:seat-headless\ncontact: {contact}\n---\n\n# claude-seat\n"
+            )
+            .into_bytes(),
+        )])
+    };
+    let source = pack(CONTACT)?;
+    assert_eq!(source.manifest().contact.as_deref(), Some(CONTACT));
+    // Bounded display text: no control characters, not blank, at most 512 bytes.
+    for bad in [
+        "\"legal@oneiron.dev\\u0007\"".to_owned(),
+        "\" \"".to_owned(),
+        "a".repeat(513),
+    ] {
+        assert!(pack(&bad).is_err(), "{bad}");
+    }
+    assert!(pack(&"a".repeat(512)).is_ok());
+    Ok(())
+}

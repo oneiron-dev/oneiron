@@ -28,6 +28,9 @@ pub struct PackManifest {
     pub description: String,
     pub version: String,
     pub license: Option<String>,
+    /// An address for removal or defect requests (hub folder contract,
+    /// 2026-09-22). Display text only; it grants nothing.
+    pub contact: Option<String>,
     pub kind: PackKind,
     pub adapter: Option<PackAdapter>,
     /// Named, typed facet paths for the inert agent-pack container.
@@ -81,6 +84,7 @@ impl PackManifest {
                     | "description"
                     | "version"
                     | "license"
+                    | "contact"
                     | "kind"
                     | "adapter"
                     | "predicates"
@@ -216,6 +220,7 @@ impl PackManifest {
                 .get("license")
                 .map(|v| scalar(v, false))
                 .transpose()?,
+            contact: fields.get("contact").map(|v| contact(v)).transpose()?,
             kind,
             adapter,
             agent_facets,
@@ -244,6 +249,14 @@ fn scalar(value: &str, allow_controls: bool) -> Result<String> {
         || (!allow_controls && text.chars().any(char::is_control))
     {
         return Err(invalid("invalid manifest scalar"));
+    }
+    Ok(text)
+}
+const CONTACT_MAX_BYTES: usize = 512;
+fn contact(value: &str) -> Result<String> {
+    let text = scalar(value, false)?;
+    if text.trim().is_empty() || text.len() > CONTACT_MAX_BYTES {
+        return Err(invalid("PACK.md contact is blank or exceeds its bound"));
     }
     Ok(text)
 }
