@@ -466,17 +466,9 @@ pub(crate) fn run_curl(
     exit_status_result(&output.status)
 }
 
-/// The one execution path, parameterized only by where the child's streams go.
-///
-/// Production INHERITS both, which is what makes a success body byte-identical:
-/// the bytes never pass through this process at all, so there is nothing here
-/// that could re-encode, buffer, or truncate them. Tests capture instead, to
-/// read exactly what a fake curl was handed.
-///
-/// `secret` is `None` when the environment names no credential. That sends the
-/// request WITHOUT an `Authorization` header — no config channel, no empty
-/// header, no placeholder — because a public route answers an anonymous call
-/// and refuses a bogus one.
+/// [`run_curl_output_inner`] for a bearer read from no variable: what the
+/// tests drive with a fake curl.
+#[cfg(test)]
 pub(crate) fn run_curl_output(
     program: &OsStr,
     request: &CurlRequest,
@@ -491,6 +483,17 @@ pub(crate) fn run_curl_output(
     run_curl_output_inner(program, request, credential, stdout, stderr)
 }
 
+/// The one execution path, parameterized only by where the child's streams go.
+///
+/// Production INHERITS both, which is what makes a success body byte-identical:
+/// the bytes never pass through this process at all, so there is nothing here
+/// that could re-encode, buffer, or truncate them. Tests capture instead, to
+/// read exactly what a fake curl was handed.
+///
+/// `credential.secret` is `None` when the environment names no credential.
+/// That sends the request WITHOUT an `Authorization` header — no config
+/// channel, no empty header, no placeholder — because a public route answers
+/// an anonymous call and refuses a bogus one.
 fn run_curl_output_inner(
     program: &OsStr,
     request: &CurlRequest,

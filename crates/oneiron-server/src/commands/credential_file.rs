@@ -16,7 +16,9 @@ pub(crate) enum CredentialFileError {
     /// The mode lets the group or other users in.
     #[error("{} can be read by other users (mode {mode:o}); run `chmod 600` on it", path.display())]
     OpenMode { path: PathBuf, mode: u32 },
-    /// An ACL entry can grant what the mode does not show.
+    /// An ACL entry can grant what the mode does not show. Only macOS keeps
+    /// entries the mode does not mask.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     #[error(
         "{} has an access control list, which can let other users read it; run `chmod -N` on it",
         path.display()
