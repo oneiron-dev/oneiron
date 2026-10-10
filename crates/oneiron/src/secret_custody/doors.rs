@@ -355,6 +355,34 @@ pub(crate) fn put_secret_custody_in_txn(
 }
 
 impl Vault {
+    /// Registers an active custody-portable secret from outside any manifest
+    /// flow, for out-of-crate tests. No door outside the crate registers a
+    /// record yet, and the record itself stays unconstructible out of crate.
+    #[cfg(feature = "test-support")]
+    pub fn register_test_secret(
+        &self,
+        name: &str,
+        value: &[u8],
+        bindings: Vec<SecretBinding>,
+        registered_at: u64,
+    ) -> Result<EntityId> {
+        self.register_secret(SecretCustodyRecord {
+            schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
+            name: name.to_owned(),
+            class: CustodyClass::CustodyPortable,
+            device_only: false,
+            value_bytes: value.to_vec(),
+            status: SecretCustodyStatus::Active,
+            registered_at,
+            rotated_at: None,
+            rotation_generation: 0,
+            bindings,
+            manifest_ref: String::new(),
+            declared_paths: Vec::new(),
+            policy_floor_snapshot: SecretCustodyFloor::default(),
+        })
+    }
+
     /// Registers a secret-custody record, minting the `EntityId` and writing
     /// the name index. Denies a duplicate LIVE name (a name held by an
     /// `Active`/`Suspended` record); a `Revoked` name frees for

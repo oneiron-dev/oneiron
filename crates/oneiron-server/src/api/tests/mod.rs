@@ -14,6 +14,7 @@ mod mcp_source_gate;
 
 mod auth_idempotency;
 mod org_admin;
+mod owner_healer;
 mod owner_routes;
 mod owner_surfaces;
 mod slips;

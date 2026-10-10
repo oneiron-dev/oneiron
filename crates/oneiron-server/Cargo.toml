@@ -50,7 +50,9 @@ tokio-tungstenite = "0.26"
 futures-util = "0.3"
 zstd = "0.13"
 serde = { workspace = true }
-serde_json = { workspace = true }
+# `raw_value`: secret rotation borrows the value from its own wiped body
+# instead of letting the parser copy it.
+serde_json = { workspace = true, features = ["raw_value"] }
 toml = "0.9"
 rmp-serde = { workspace = true }
 rmpv = { workspace = true }

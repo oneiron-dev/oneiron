@@ -758,3 +758,34 @@ fn permanent_failure_healer_reads_diagnostic_and_emits_case_bound_proposal() -> 
     );
     Ok(())
 }
+
+/// The owner's read of the oversight receipts never takes the writer. It used
+/// to load the device identity in a write transaction, so every read waited
+/// behind any write in flight (Greptile on #1339).
+#[test]
+fn oversight_receipts_read_while_another_write_holds_the_writer() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    vault.emit_healer_oversight(30)?;
+    let vault = &vault;
+    std::thread::scope(|scope| {
+        let (entered, entered_rx) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let holder = scope.spawn(move || {
+            vault.with_write_txn(|_| {
+                entered.send(()).expect("test waits for the writer");
+                released.recv().expect("test releases the writer");
+                Ok(())
+            })
+        });
+        entered_rx.recv().expect("the writer is held");
+        let (read, read_rx) = std::sync::mpsc::channel();
+        scope.spawn(move || read.send(vault.healer_oversight_receipts()));
+        let receipts = read_rx.recv_timeout(std::time::Duration::from_secs(10));
+        release.send(()).expect("the holder is waiting");
+        holder.join().expect("holder thread")?;
+        let receipts = receipts.expect("the read waited behind the held writer")?;
+        assert_eq!(receipts.len(), 3);
+        assert!(receipts.iter().all(|(_, verified)| *verified));
+        Ok(())
+    })
+}

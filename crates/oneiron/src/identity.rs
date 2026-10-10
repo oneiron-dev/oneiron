@@ -172,6 +172,22 @@ pub(crate) fn ensure_device_identity_in_txn(
     })
 }
 
+/// This device's verifying key under the caller's transaction, or `None`
+/// before the identity is minted. Reads the cached public row only, so a
+/// verifier never loads the seed or takes the writer.
+pub(crate) fn read_device_verifying_key_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<[u8; 32]>> {
+    DEVICE_PK
+        .get(&vault.store, txn, &())?
+        .map(|raw| {
+            <[u8; 32]>::try_from(raw.as_slice())
+                .map_err(|_| Error::CorruptedIndex("device public key row"))
+        })
+        .transpose()
+}
+
 /// Own-txn wrapper around [`ensure_device_identity_in_txn`].
 #[cfg_attr(not(feature = "sync"), allow(dead_code))]
 pub(crate) fn ensure_device_identity(vault: &Vault) -> Result<DeviceIdentity> {

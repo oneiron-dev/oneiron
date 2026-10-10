@@ -39,6 +39,13 @@ pub enum OversightKind {
     ReviewLatency,
     EscalationRate,
 }
+/// The three receipts, in the order builders read them.
+const KINDS: [OversightKind; 3] = [
+    OversightKind::Coverage,
+    OversightKind::ReviewLatency,
+    OversightKind::EscalationRate,
+];
+
 impl OversightKind {
     fn tag(self) -> u8 {
         match self {
@@ -149,6 +156,27 @@ impl Vault {
             Ok(())
         })
     }
+    /// Stores a healer case's activity as given, without the order check the
+    /// doors keep, so a test can hold a vault whose stored activity no longer
+    /// reads back valid.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn put_healer_activity_for_test(
+        &self,
+        case: &str,
+        proposed_at: u64,
+        reviewed_at: Option<u64>,
+    ) -> Result<()> {
+        validate_case_ref(case)?;
+        let activity = Activity {
+            proposed_at,
+            reviewed_at,
+            escalated: false,
+        };
+        self.with_write_txn_grouped(|txn| {
+            ACTIVITY.put(&self.store, txn, &case.to_owned(), &activity)
+        })
+    }
     /// Emits all three receipts in one transaction. Each contains counts so
     /// empty denominators remain explicit instead of yielding NaN rates.
     pub fn emit_healer_oversight(&self, now: u64) -> Result<Vec<OversightReceipt>> {
@@ -180,11 +208,7 @@ impl Vault {
                 }
             }
             let mut receipts = Vec::new();
-            for kind in [
-                OversightKind::Coverage,
-                OversightKind::ReviewLatency,
-                OversightKind::EscalationRate,
-            ] {
+            for kind in KINDS {
                 let counts = OversightCounts {
                     kind,
                     ..counts.clone()
@@ -203,5 +227,30 @@ impl Vault {
             }
             Ok(receipts)
         })
+    }
+    /// The latest receipts [`Vault::emit_healer_oversight`] stored, coverage
+    /// first, then latency, then escalation rate, each paired with whether it
+    /// verifies against this vault device's own signing key. Empty until the
+    /// host first emits. A read transaction only: the read never waits for
+    /// the writer.
+    pub fn healer_oversight_receipts(&self) -> Result<Vec<(OversightReceipt, bool)>> {
+        let txn = self.store.env.read_txn()?;
+        let stored = KINDS
+            .into_iter()
+            .filter_map(|kind| RECEIPT.get(&self.store, &txn, &[kind.tag()]).transpose())
+            .collect::<Result<Vec<_>>>()?;
+        if stored.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Emission mints the identity in the transaction that stores the
+        // receipts. Without a key, no receipt verifies.
+        let signer = crate::identity::read_device_verifying_key_in_txn(self, &txn)?;
+        Ok(stored
+            .into_iter()
+            .map(|receipt| {
+                let verified = signer.is_some_and(|signer| receipt.verify(&signer));
+                (receipt, verified)
+            })
+            .collect())
     }
 }

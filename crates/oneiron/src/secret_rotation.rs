@@ -64,8 +64,7 @@ use crate::error::{Error, Result, SecretError};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::secret_custody::{
     SecretCustodyStatus, policy_manifest_bodies_strict, put_secret_custody_in_txn,
-    read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
-    refuse_bindings_wider_than_live_floor, resolve_secret_ref_in_txn,
+    read_secret_custody_admission_in_txn, read_secret_custody_in_txn, resolve_secret_ref_in_txn,
 };
 use crate::secret_lease::{
     SecretLease, SecretLeaseStatus, SecretTaintRef, teardown_local_registration_in_txn,
@@ -631,51 +630,7 @@ impl Vault {
         at: u64,
     ) -> Result<RotationReceipt> {
         let mut wtxn = self.store.env.write_txn()?;
-        let id = resolve_secret_ref_in_txn(&self.store, &wtxn, secret_ref)?.ok_or_else(|| {
-            Error::Secret(SecretError::SecretRefNotFound {
-                name: secret_ref.to_owned(),
-            })
-        })?;
-        let mut rec = read_secret_custody_in_txn(&self.store, &wtxn, &id)?
-            .ok_or(Error::CorruptedIndex("secret custody record for live name"))?;
-        if rec.status != SecretCustodyStatus::Active {
-            return Err(Error::Secret(SecretError::SecretCustodyNotActive {
-                name: rec.name,
-            }));
-        }
-
-        // Narrow-only, re-checked against the LIVE floor through the body
-        // registration enforces: a rotation is a fresh authorization of this
-        // record's exposure, not a grandfather clause for the posture it
-        // registered under.
-        refuse_bindings_wider_than_live_floor(&self.store, &wtxn, &rec)?;
-
-        let from_generation = rec.rotation_generation;
-        let to_generation = from_generation
-            .checked_add(1)
-            .ok_or(Error::ArithmeticOverflow("secret rotation generation"))?;
-        rec.rotation_generation = to_generation;
-        rec.rotated_at = Some(at);
-        // The DEK-plane value write. `value_bytes` is `pub(crate)` precisely
-        // so this stays inside the crate's custody plane; the new bytes reach
-        // no receipt, log, claim or export from here.
-        rec.value_bytes = new_value.to_vec();
-
-        let receipt = RotationReceipt {
-            receipt_id: self.store.clock.entity_id()?,
-            secret_ref: rec.name.clone(),
-            from_generation,
-            to_generation,
-            rotated_at: at,
-            kind: RotationKind::Rotated,
-        };
-        put_secret_custody_in_txn(self, &mut wtxn, &id, &rec, at)?;
-        RECEIPTS.put(
-            &self.store,
-            &mut wtxn,
-            &HexId(receipt.receipt_id),
-            &encode_rotation_receipt_body(&receipt)?,
-        )?;
+        let receipt = self.rotate_secret_in_txn(&mut wtxn, secret_ref, new_value, at)?;
         wtxn.commit()?;
         Ok(receipt)
     }
@@ -790,6 +745,8 @@ impl Vault {
         allow_stale_publish_in_txn(&self.store, &rtxn)
     }
 }
+
+mod owner_door;
 
 #[cfg(test)]
 mod tests;

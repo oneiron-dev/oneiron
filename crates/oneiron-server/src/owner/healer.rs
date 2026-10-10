@@ -1,0 +1,121 @@
+//! The owner reads the self-healing loop (ARCH-0066): the three signed
+//! oversight receipts the vault emits, and the custom-agent dispatches the
+//! failure ladder ended, grouped by failure class, with a drill into one.
+
+use oneiron::attempt_queue::{AttemptEvent, AttemptId, AttemptResultRef, AttemptState};
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::failure_ladder::FailureSignalClass;
+use oneiron::failure_ladder::oversight::OversightCounts;
+use serde::{Deserialize, Serialize};
+
+use super::{OwnerResult, entity_id};
+
+/// An attempt id in the lowercase hex its drill query takes back.
+pub(crate) fn attempt_hex(id: &AttemptId) -> String {
+    id.as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// One stored oversight receipt and whether it verifies against this vault
+/// device's own key.
+#[derive(Debug, Serialize)]
+pub(crate) struct OversightRead {
+    #[serde(flatten)]
+    pub(crate) counts: OversightCounts,
+    pub(crate) signer: String,
+    pub(crate) verified: bool,
+}
+
+pub(crate) fn oversight(vault: &oneiron::Vault) -> OwnerResult<Vec<OversightRead>> {
+    Ok(vault
+        .healer_oversight_receipts()?
+        .into_iter()
+        .map(|(receipt, verified)| OversightRead {
+            counts: receipt.counts,
+            signer: receipt
+                .signer
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+            verified,
+        })
+        .collect())
+}
+
+/// Ended custom-agent dispatches of one failure class.
+#[derive(Debug, Serialize)]
+pub(crate) struct FailureGroup {
+    pub(crate) class: FailureSignalClass,
+    pub(crate) count: u64,
+    pub(crate) attempts: Vec<String>,
+}
+
+pub(crate) fn failure_groups(vault: &oneiron::Vault) -> OwnerResult<Vec<FailureGroup>> {
+    Ok(vault
+        .custom_agent_failure_groups()?
+        .into_iter()
+        .map(|group| FailureGroup {
+            class: group.class,
+            count: group.count,
+            attempts: group.member_refs.iter().map(attempt_hex).collect(),
+        })
+        .collect())
+}
+
+/// One member of a group, named by the class it was listed under.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DrillQuery {
+    pub(crate) class: FailureSignalClass,
+    pub(crate) attempt: String,
+}
+
+/// The ended attempt as the vault stores it, and the receipts its run left.
+/// The output reference and the intervention trace are the evidence a review
+/// reads; a drill is the only owner read of an attempt that has no run id.
+#[derive(Debug, Serialize)]
+pub(crate) struct FailureDrill {
+    pub(crate) attempt: String,
+    pub(crate) kind: String,
+    pub(crate) state: AttemptState,
+    pub(crate) tries: u32,
+    pub(crate) last_error: Option<String>,
+    pub(crate) task_ref: Option<String>,
+    pub(crate) run_id: Option<String>,
+    pub(crate) retry_of: Option<String>,
+    pub(crate) created_at: u64,
+    pub(crate) updated_at: u64,
+    /// The artifact version the try's durable output lives in, if it left one.
+    pub(crate) result_ref: Option<String>,
+    /// Every interrupt, pause, resume, cancel and redirect, with its actor and
+    /// note, in order.
+    pub(crate) events: Vec<AttemptEvent>,
+    pub(crate) receipt_refs: Vec<String>,
+}
+
+pub(crate) fn drill(
+    vault: &oneiron::Vault,
+    owner: &AuthenticatedOwner,
+    query: DrillQuery,
+) -> OwnerResult<FailureDrill> {
+    let attempt = AttemptId::from_bytes(entity_id("attempt", &query.attempt)?.as_bytes())?;
+    let drill = vault.drill_custom_agent_failure(owner, query.class, attempt)?;
+    let trace = drill.trace;
+    Ok(FailureDrill {
+        attempt: attempt_hex(&trace.id),
+        kind: trace.kind,
+        state: trace.state,
+        tries: trace.attempt_count,
+        last_error: trace.last_error,
+        task_ref: trace.task_ref,
+        run_id: trace.run_id,
+        retry_of: trace.retry_of.as_ref().map(attempt_hex),
+        created_at: trace.created_at,
+        updated_at: trace.updated_at,
+        result_ref: trace.result_ref.map(AttemptResultRef::into_string),
+        events: trace.events,
+        receipt_refs: drill.receipt_refs,
+    })
+}
