@@ -228,7 +228,7 @@ impl<'a> DreamerRunnerStore<'a> {
         run_id: Option<String>,
         now: u64,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
-        self.vault.with_write_txn(|wtxn| {
+        self.vault.with_write_txn_grouped(|wtxn| {
             crate::dreamer_wake::request_wake_in_txn(
                 self,
                 wtxn,
@@ -363,7 +363,7 @@ impl<'a> DreamerRunnerStore<'a> {
         if budget.child_attempt != source.id || retry_at <= budget.now {
             return Err(invalid_dreamer_runner("invalid selection retry"));
         }
-        self.vault.with_write_txn(|txn| {
+        self.vault.with_write_txn_grouped(|txn| {
             self.settle_budget_in_txn(txn, budget.clone())?;
             let crate::attempt_queue::RetryOutcome::Retried(record) = self.attempts.retry_in_txn(
                 txn,
@@ -397,7 +397,7 @@ impl<'a> DreamerRunnerStore<'a> {
     pub fn complete(&self, input: CompleteDreamerAttempt) -> Result<CompleteDreamerAttemptOutcome> {
         self.ensure_terminal_transition_target(input.id)?;
         let attempt_id = input.id;
-        let outcome = self.vault.with_write_txn(|wtxn| {
+        let outcome = self.vault.with_write_txn_grouped(|wtxn| {
             let outcome = crate::ports::JobQueue::port_job_complete(
                 self.vault,
                 wtxn,
@@ -446,7 +446,7 @@ impl<'a> DreamerRunnerStore<'a> {
         &self,
         input: crate::attempt_queue::RetryAttempt,
     ) -> Result<AttemptRecord> {
-        self.vault.with_write_txn(|txn| {
+        self.vault.with_write_txn_grouped(|txn| {
             let source = self
                 .attempts
                 .get_in_write_txn(txn, input.id)?
@@ -474,7 +474,7 @@ impl<'a> DreamerRunnerStore<'a> {
         self.ensure_terminal_transition_target(input.id)?;
         let attempt_id = input.id;
         let outcome =
-            self.vault.with_write_txn(|wtxn| {
+            self.vault.with_write_txn_grouped(|wtxn| {
                 let record = self.attempts.get_in_write_txn(wtxn, attempt_id)?.ok_or(
                     invalid_dreamer_runner("dreamer terminal transition attempt must exist"),
                 )?;

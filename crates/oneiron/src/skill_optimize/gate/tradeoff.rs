@@ -250,7 +250,7 @@ pub fn set_skill_tradeoff_preferences(
     rules: Vec<TradeoffRule>,
     jev_band: DecisionBand,
 ) -> Result<String> {
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         owner.revalidate_in_txn(vault, txn)?;
         let definition = goal_definition_in_txn(vault, txn, skill)?;
         let previous = preferences_in_txn(vault, txn, &definition.goal_id)?;
@@ -590,7 +590,7 @@ pub fn settle_skill_tradeoff_ask(
     choice: TradeoffChoice,
     at: u64,
 ) -> Result<HeldOutVerdict> {
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         owner.revalidate_in_txn(vault, txn)?;
         let ask: SkillTradeoffAsk = load(vault, txn, &key(ASK_PREFIX, proposal))?
             .ok_or(invalid("no pending skill tradeoff ask"))?;

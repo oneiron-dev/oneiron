@@ -48,7 +48,7 @@ struct EsignSink<'a> {
 }
 impl OutboundExecutionSink for EsignSink<'_> {
     fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
-        let result = self.vault.with_write_txn(|txn| {
+        let result = self.vault.with_write_txn_grouped(|txn| {
             let id = EntityId::from_hex(&self.command.document)?;
             let marker = *blake3::hash(request.intent_ref.as_bytes()).as_bytes();
             let binding = request

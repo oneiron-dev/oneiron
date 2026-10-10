@@ -39,44 +39,46 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
         if r.holder_ref.is_empty() {
             return Err(CheckoutError::Invalid("checkout holder empty"));
         }
-        let a = self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
-            if load_act_in_txn(self.vault, t, r.checkout_id)?.is_some() {
-                return Err(CheckoutError::StaleEpoch {
-                    held: 1,
-                    presented: 0,
-                });
-            }
-            // Epochs are monotone per checkout_id *across* lifecycles: a fresh id
-            // has no tombstone and starts at 1, while a re-claimed id resumes
-            // above every epoch its earlier lifecycles ever held, so an old fence
-            // can never match a new lifecycle.
-            let epoch = load_tombstone_in_txn(self.vault, t, r.checkout_id)?
-                .unwrap_or(0)
-                .checked_add(1)
-                .ok_or(CheckoutError::Invalid("lease epoch overflow"))?;
-            let expires = r
-                .ttl_secs
-                .map(|ttl| {
-                    r.now
-                        .checked_add(ttl)
-                        .ok_or(CheckoutError::Invalid("lease expiry overflow"))
-                })
-                .transpose()?;
-            let a = CheckoutLeaseAct {
-                checkout_id: r.checkout_id,
-                task_ref: r.task_ref,
-                repo_ref: r.repo_ref.clone(),
-                holder_ref: r.holder_ref.clone(),
-                epoch,
-                task_class: r.task_class,
-                state: CheckoutLeaseState::Active,
-                claimed_at: r.now,
-                lease_expires_at: expires,
-                updated_at: r.now,
-            };
-            store_act_in_txn(self.vault, t, &a)?;
-            Ok(a)
-        })?;
+        let a = self
+            .vault
+            .try_with_write_txn_grouped::<_, _, CheckoutError>(|t| {
+                if load_act_in_txn(self.vault, t, r.checkout_id)?.is_some() {
+                    return Err(CheckoutError::StaleEpoch {
+                        held: 1,
+                        presented: 0,
+                    });
+                }
+                // Epochs are monotone per checkout_id *across* lifecycles: a fresh id
+                // has no tombstone and starts at 1, while a re-claimed id resumes
+                // above every epoch its earlier lifecycles ever held, so an old fence
+                // can never match a new lifecycle.
+                let epoch = load_tombstone_in_txn(self.vault, t, r.checkout_id)?
+                    .unwrap_or(0)
+                    .checked_add(1)
+                    .ok_or(CheckoutError::Invalid("lease epoch overflow"))?;
+                let expires = r
+                    .ttl_secs
+                    .map(|ttl| {
+                        r.now
+                            .checked_add(ttl)
+                            .ok_or(CheckoutError::Invalid("lease expiry overflow"))
+                    })
+                    .transpose()?;
+                let a = CheckoutLeaseAct {
+                    checkout_id: r.checkout_id,
+                    task_ref: r.task_ref,
+                    repo_ref: r.repo_ref.clone(),
+                    holder_ref: r.holder_ref.clone(),
+                    epoch,
+                    task_class: r.task_class,
+                    state: CheckoutLeaseState::Active,
+                    claimed_at: r.now,
+                    lease_expires_at: expires,
+                    updated_at: r.now,
+                };
+                store_act_in_txn(self.vault, t, &a)?;
+                Ok(a)
+            })?;
         self.facts
             .apply_checkout_fact(CheckoutFactMutation::Claimed {
                 task_ref: a.task_ref,
@@ -98,18 +100,20 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
         ttl: u64,
         now: u64,
     ) -> CheckoutResult<CheckoutLeaseGrant> {
-        let a = self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
-            let mut a = fenced_in_txn(self.vault, t, &f)?;
-            require_not_regressed(&a, now)?;
-            require_active(&a)?;
-            a.lease_expires_at = Some(
-                now.checked_add(ttl)
-                    .ok_or(CheckoutError::Invalid("lease expiry overflow"))?,
-            );
-            a.updated_at = now;
-            store_act_in_txn(self.vault, t, &a)?;
-            Ok(a)
-        })?;
+        let a = self
+            .vault
+            .try_with_write_txn_grouped::<_, _, CheckoutError>(|t| {
+                let mut a = fenced_in_txn(self.vault, t, &f)?;
+                require_not_regressed(&a, now)?;
+                require_active(&a)?;
+                a.lease_expires_at = Some(
+                    now.checked_add(ttl)
+                        .ok_or(CheckoutError::Invalid("lease expiry overflow"))?,
+                );
+                a.updated_at = now;
+                store_act_in_txn(self.vault, t, &a)?;
+                Ok(a)
+            })?;
         self.liveness.publish(CheckoutLivenessPulse {
             checkout_id: a.checkout_id,
             epoch: a.epoch,
@@ -127,39 +131,41 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
         if new.is_empty() {
             return Err(CheckoutError::Invalid("checkout holder empty"));
         }
-        let a = self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
-            let mut a = load_act_in_txn(self.vault, t, id)?
-                .ok_or(CheckoutError::Invalid("checkout missing"))?;
-            require_not_regressed(&a, now)?;
-            require_active(&a)?;
-            if a.holder_ref == new {
-                return Ok((a, false));
-            }
-            let expiry = a
-                .lease_expires_at
-                .ok_or(CheckoutError::Invalid("ttl reclaim requires ttl"))?;
-            if !a.task_class.allows_ttl_reclaim() || now < expiry {
-                return Err(CheckoutError::StaleEpoch {
-                    held: a.epoch,
-                    presented: a.epoch,
-                });
-            }
-            let ttl = expiry
-                .checked_sub(a.updated_at)
-                .ok_or(CheckoutError::Invalid("invalid lease ttl"))?;
-            a.epoch = a
-                .epoch
-                .checked_add(1)
-                .ok_or(CheckoutError::Invalid("lease epoch overflow"))?;
-            a.holder_ref = new.clone();
-            a.updated_at = now;
-            a.lease_expires_at = Some(
-                now.checked_add(ttl)
-                    .ok_or(CheckoutError::Invalid("lease expiry overflow"))?,
-            );
-            store_act_in_txn(self.vault, t, &a)?;
-            Ok((a, true))
-        })?;
+        let a = self
+            .vault
+            .try_with_write_txn_grouped::<_, _, CheckoutError>(|t| {
+                let mut a = load_act_in_txn(self.vault, t, id)?
+                    .ok_or(CheckoutError::Invalid("checkout missing"))?;
+                require_not_regressed(&a, now)?;
+                require_active(&a)?;
+                if a.holder_ref == new {
+                    return Ok((a, false));
+                }
+                let expiry = a
+                    .lease_expires_at
+                    .ok_or(CheckoutError::Invalid("ttl reclaim requires ttl"))?;
+                if !a.task_class.allows_ttl_reclaim() || now < expiry {
+                    return Err(CheckoutError::StaleEpoch {
+                        held: a.epoch,
+                        presented: a.epoch,
+                    });
+                }
+                let ttl = expiry
+                    .checked_sub(a.updated_at)
+                    .ok_or(CheckoutError::Invalid("invalid lease ttl"))?;
+                a.epoch = a
+                    .epoch
+                    .checked_add(1)
+                    .ok_or(CheckoutError::Invalid("lease epoch overflow"))?;
+                a.holder_ref = new.clone();
+                a.updated_at = now;
+                a.lease_expires_at = Some(
+                    now.checked_add(ttl)
+                        .ok_or(CheckoutError::Invalid("lease expiry overflow"))?,
+                );
+                store_act_in_txn(self.vault, t, &a)?;
+                Ok((a, true))
+            })?;
         if a.1 {
             self.facts
                 .apply_checkout_fact(CheckoutFactMutation::Reclaimed {
@@ -187,46 +193,54 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
         if r.observed_ref.is_empty() || r.result_ref.is_empty() {
             return Err(CheckoutError::Invalid("settlement references empty"));
         }
-        let (a, receipt, new) = self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
-            let mut a = fenced_in_txn(self.vault, t, &r.fence)?;
-            require_not_regressed(&a, r.now)?;
-            let identity =
-                checkout_result_identity(a.checkout_id, a.epoch, &r.observed_ref, &r.result_ref);
-            let key = SettlementKey {
-                checkout_id: a.checkout_id,
-                epoch: a.epoch,
-                identity,
-            };
-            if let Some(old) = SETTLEMENT.get(&self.vault.store, &*t, &key)? {
-                if old.checkout_id == a.checkout_id
-                    && old.epoch == a.epoch
-                    && old.result_identity == identity
-                    && old.disposition == r.disposition
-                    && old.observed_ref == r.observed_ref
-                    && old.result_ref == r.result_ref
-                {
-                    return Ok((a, old, false));
+        let (a, receipt, new) = self
+            .vault
+            .try_with_write_txn_grouped::<_, _, CheckoutError>(|t| {
+                let mut a = fenced_in_txn(self.vault, t, &r.fence)?;
+                require_not_regressed(&a, r.now)?;
+                let identity = checkout_result_identity(
+                    a.checkout_id,
+                    a.epoch,
+                    &r.observed_ref,
+                    &r.result_ref,
+                );
+                let key = SettlementKey {
+                    checkout_id: a.checkout_id,
+                    epoch: a.epoch,
+                    identity,
+                };
+                if let Some(old) = SETTLEMENT.get(&self.vault.store, &*t, &key)? {
+                    if old.checkout_id == a.checkout_id
+                        && old.epoch == a.epoch
+                        && old.result_identity == identity
+                        && old.disposition == r.disposition
+                        && old.observed_ref == r.observed_ref
+                        && old.result_ref == r.result_ref
+                    {
+                        return Ok((a, old, false));
+                    }
+                    return Err(CheckoutError::SettlementAlreadyWon);
                 }
-                return Err(CheckoutError::SettlementAlreadyWon);
-            }
-            require_settleable(&a)?;
-            let receipt = CheckoutSettlementReceipt {
-                receipt_id: *blake3::hash(&[identity.as_slice(), &r.now.to_le_bytes()].concat())
+                require_settleable(&a)?;
+                let receipt = CheckoutSettlementReceipt {
+                    receipt_id: *blake3::hash(
+                        &[identity.as_slice(), &r.now.to_le_bytes()].concat(),
+                    )
                     .as_bytes(),
-                checkout_id: a.checkout_id,
-                epoch: a.epoch,
-                result_identity: identity,
-                disposition: r.disposition,
-                observed_ref: r.observed_ref.clone(),
-                result_ref: r.result_ref.clone(),
-                settled_at: r.now,
-            };
-            SETTLEMENT.put(&self.vault.store, t, &key, &receipt)?;
-            a.state = CheckoutLeaseState::Settled;
-            a.updated_at = r.now;
-            store_act_in_txn(self.vault, t, &a)?;
-            Ok((a, receipt, true))
-        })?;
+                    checkout_id: a.checkout_id,
+                    epoch: a.epoch,
+                    result_identity: identity,
+                    disposition: r.disposition,
+                    observed_ref: r.observed_ref.clone(),
+                    result_ref: r.result_ref.clone(),
+                    settled_at: r.now,
+                };
+                SETTLEMENT.put(&self.vault.store, t, &key, &receipt)?;
+                a.state = CheckoutLeaseState::Settled;
+                a.updated_at = r.now;
+                store_act_in_txn(self.vault, t, &a)?;
+                Ok((a, receipt, true))
+            })?;
         if new {
             let fact = if receipt.disposition == CheckoutSettlementDisposition::Release {
                 CheckoutFactMutation::Released {
@@ -273,22 +287,25 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
         ops: &R,
         now: u64,
     ) -> CheckoutResult<CheckoutTeardownOutcome> {
-        let mut a = self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
-            let current = fenced_in_txn(self.vault, t, &f)?;
-            require_not_regressed(&current, now)?;
-            Ok(current)
-        })?;
+        let mut a = self
+            .vault
+            .try_with_write_txn_grouped::<_, _, CheckoutError>(|t| {
+                let current = fenced_in_txn(self.vault, t, &f)?;
+                require_not_regressed(&current, now)?;
+                Ok(current)
+            })?;
         if a.state != CheckoutLeaseState::Settling {
             if let Some(reason) = self.teardown_reason(&a, receipt, ops)? {
                 self.retain(&f, now)?;
                 return Ok(retained(&a, reason));
             }
-            self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
-                let mut current = fenced_in_txn(self.vault, t, &f)?;
-                current.state = CheckoutLeaseState::Settling;
-                current.updated_at = now;
-                store_act_in_txn(self.vault, t, &current)
-            })?;
+            self.vault
+                .try_with_write_txn_grouped::<_, _, CheckoutError>(|t| {
+                    let mut current = fenced_in_txn(self.vault, t, &f)?;
+                    current.state = CheckoutLeaseState::Settling;
+                    current.updated_at = now;
+                    store_act_in_txn(self.vault, t, &current)
+                })?;
             a.state = CheckoutLeaseState::Settling;
             a.updated_at = now;
         }
@@ -299,22 +316,23 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
                 epoch: a.epoch,
             })?;
         self.liveness.clear(a.checkout_id, a.epoch)?;
-        self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
-            let current = fenced_in_txn(self.vault, t, &f)?;
-            require_settling(&current)?;
-            // Same txn as the delete: the epoch this row held is tombstoned
-            // before the namespace is freed, so no crash window can free the id
-            // without recording the epoch it just retired. Monotone-only.
-            let prior = load_tombstone_in_txn(self.vault, t, current.checkout_id)?.unwrap_or(0);
-            TOMBSTONE.put(
-                &self.vault.store,
-                t,
-                &current.checkout_id,
-                &TombstoneRow(prior.max(current.epoch)),
-            )?;
-            LEASE.delete(&self.vault.store, t, &current.checkout_id)?;
-            Ok(())
-        })?;
+        self.vault
+            .try_with_write_txn_grouped::<_, _, CheckoutError>(|t| {
+                let current = fenced_in_txn(self.vault, t, &f)?;
+                require_settling(&current)?;
+                // Same txn as the delete: the epoch this row held is tombstoned
+                // before the namespace is freed, so no crash window can free the id
+                // without recording the epoch it just retired. Monotone-only.
+                let prior = load_tombstone_in_txn(self.vault, t, current.checkout_id)?.unwrap_or(0);
+                TOMBSTONE.put(
+                    &self.vault.store,
+                    t,
+                    &current.checkout_id,
+                    &TombstoneRow(prior.max(current.epoch)),
+                )?;
+                LEASE.delete(&self.vault.store, t, &current.checkout_id)?;
+                Ok(())
+            })?;
         Ok(CheckoutTeardownOutcome::Collected {
             checkout_id: a.checkout_id,
             epoch: a.epoch,
@@ -354,12 +372,13 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
     /// Records a retain decision under the same fence. It accepts any state a
     /// restartable teardown can observe, so a retained lease stays retryable.
     fn retain(&self, f: &CheckoutLeaseFence, now: u64) -> CheckoutResult<()> {
-        self.vault.try_with_write_txn::<_, _, CheckoutError>(|t| {
-            let mut current = fenced_in_txn(self.vault, t, f)?;
-            current.state = CheckoutLeaseState::Retained;
-            current.updated_at = now;
-            store_act_in_txn(self.vault, t, &current)
-        })
+        self.vault
+            .try_with_write_txn_grouped::<_, _, CheckoutError>(|t| {
+                let mut current = fenced_in_txn(self.vault, t, f)?;
+                current.state = CheckoutLeaseState::Retained;
+                current.updated_at = now;
+                store_act_in_txn(self.vault, t, &current)
+            })
     }
 }
 /// Only a *foreign* occupant blocks collection. The fenced holder's own

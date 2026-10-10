@@ -167,7 +167,7 @@ impl Vault {
         record: &GoalRecord,
         now: u64,
     ) -> Result<EntityId> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             self.write_project_goal_in_txn(txn, owner, project_id, record, now)
         })
     }

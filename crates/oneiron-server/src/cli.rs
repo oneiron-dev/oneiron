@@ -8,8 +8,8 @@ use crate::config::ServeArgs;
 mod owner_args;
 pub use owner_args::{
     BackupArgs, DoctorArgs, ExportArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs,
-    ImportSourceArgs, RecoverWindowArgs, RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand,
-    SecretScanArgs, SecretScanSwitch, ServeOnlyArgs, WhoamiArgs,
+    ImportNotesArgs, ImportSourceArgs, RecoverWindowArgs, RestoreArgs, RunArgs, RunDecisionArgs,
+    RunsCommand, SecretScanArgs, SecretScanSwitch, ServeOnlyArgs, WhoamiArgs,
 };
 
 const DEFAULT_SERVER_DIMENSIONS: usize = 4096;
@@ -64,8 +64,8 @@ pub enum Command {
     /// Turn the write-door secret scan on or off, or show it.
     SecretScan(Box<SecretScanArgs>),
     /// Import your own history into a stopped vault (ChatGPT and Claude.ai
-    /// exports, Claude Code and Codex sessions), or preview, approve or
-    /// decline one whole import batch.
+    /// exports, Claude Code and Codex sessions, a folder of markdown notes),
+    /// or preview, approve or decline one whole import batch.
     #[command(subcommand)]
     Import(ImportCommand),
     /// Agent runs waiting for consent: list, review, approve or decline whole.
@@ -81,6 +81,10 @@ pub enum Command {
     Token(TokenCommand),
     /// Make short curl-shaped calls against the existing HTTP API.
     Api(ApiArgs),
+    /// Serve MCP on stdio for an agent that spawns a command (Claude Code,
+    /// Codex), forwarding each message to a running server with a paired
+    /// credential and a fresh holder proof.
+    Mcp(McpArgs),
     /// Scaffold a self-host node from the shipped deployment templates.
     #[command(subcommand)]
     Host(HostCommand),
@@ -143,6 +147,9 @@ pub enum TokenCommand {
     Pair(Box<TokenPairArgs>),
     /// Mint a read-only credential for a local agent on the stopped vault.
     Read(Box<TokenReadArgs>),
+    /// Mint a scoped credential for one named agent (Claude Code, Codex) on
+    /// the stopped vault, for `oneiron mcp`.
+    Agent(Box<TokenAgentArgs>),
     /// Revoke one previously minted token by its id.
     Revoke(Box<TokenRevokeArgs>),
 }
@@ -220,6 +227,49 @@ pub struct TokenReadArgs {
 
     #[command(flatten)]
     pub serve: ServeArgs,
+}
+
+/// A named agent's credential: a paired slip for the agent's own principal,
+/// class `agent`, carrying at most read, propose and write. Never owner-grade;
+/// `token revoke` takes the slip id it prints.
+#[derive(Args, Clone, Debug)]
+pub struct TokenAgentArgs {
+    /// The agent's name, e.g. `claude-code`. One name is one agent principal,
+    /// however many times it is minted.
+    #[arg(long)]
+    pub name: String,
+
+    /// What the agent may do. The latest mint for a name holds: it sets that
+    /// agent's tier and revokes the agent's earlier slips.
+    #[arg(long, value_enum, default_value_t = AgentTier::FullAccess)]
+    pub tier: AgentTier,
+
+    /// The credential's lifetime in seconds, capped by the vault's policy.
+    #[arg(long = "lifetime-secs", default_value_t = 30 * 24 * 60 * 60)]
+    pub lifetime_secs: u64,
+
+    /// Write the credential to this new file, readable by its owner only, and
+    /// print only its slip id and principal. Without it the credential is
+    /// printed.
+    #[arg(long, value_name = "FILE")]
+    pub out: Option<PathBuf>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+/// ARCH-0028's registration-time authority tiers for an agent.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
+pub enum AgentTier {
+    /// Retrieve and inspect; no write capability.
+    ReadOnly,
+    /// Write capability at ceiling `proposed`: what it writes waits for the
+    /// owner's review. It proposes (`core:propose`) and holds no `core:write`,
+    /// so no write door that cannot hold a write for review admits it.
+    ProposeOnly,
+    /// Write capability at ceiling `auto`: its writes land through the same
+    /// write gate as the owner's.
+    FullAccess,
 }
 
 /// Revoking one token is an explicit act on one named identity. It is
@@ -312,6 +362,64 @@ pub enum ApiCommand {
         #[arg(long, value_name = "MIME")]
         content_type: Option<String>,
     },
+}
+
+/// `oneiron mcp`: a stdio MCP server in front of a running server's MCP
+/// endpoint. The endpoint is the operator's choice, made here in the agent's
+/// MCP config; nothing the agent sends can change it.
+#[derive(Args, Clone, Debug)]
+pub struct McpArgs {
+    /// The running server's origin. The default is where `oneiron serve`
+    /// listens unless told otherwise.
+    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:9090")]
+    pub url: String,
+
+    /// Which MCP endpoint to forward to.
+    #[arg(long, value_enum, default_value_t = McpSurface::ToolFirst)]
+    pub surface: McpSurface,
+
+    /// File holding the paired credential, as `token agent --out` writes it.
+    /// Only its owner may be able to read it. Without this flag the slip and
+    /// its seed come from the two environment variables below.
+    #[arg(long, value_name = "FILE")]
+    pub credential_file: Option<PathBuf>,
+
+    /// Environment variable holding the paired slip.
+    #[arg(long, default_value = "ONEIRON_SECRET")]
+    pub secret_env: String,
+
+    /// Environment variable holding its binding seed (64 hex characters).
+    #[arg(long, default_value = "ONEIRON_BINDING_KEY")]
+    pub binding_key_env: String,
+
+    /// Seconds one request may take, answer included, before it fails as
+    /// `server_unreachable`.
+    #[arg(long, default_value_t = 120, value_parser = clap::value_parser!(u64).range(1..))]
+    pub request_timeout_secs: u64,
+
+    /// Seconds an answer may stall once it has started arriving before the
+    /// request fails as `server_unreachable`.
+    #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..))]
+    pub idle_timeout_secs: u64,
+}
+
+/// The two MCP endpoints a server registers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
+pub enum McpSurface {
+    /// `/mcp/tool-first`: one tool per exported verb.
+    ToolFirst,
+    /// `/mcp`: the code-mode catalog (`setup_oneiron`, `execute_code`).
+    Primary,
+}
+
+impl McpSurface {
+    #[must_use]
+    pub const fn path(self) -> &'static str {
+        match self {
+            Self::ToolFirst => "/mcp/tool-first",
+            Self::Primary => "/mcp",
+        }
+    }
 }
 
 #[derive(Args, Clone, Debug)]
@@ -496,8 +604,10 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Token(TokenCommand::Bootstrap(args)) => commands::token_bootstrap(*args),
         Command::Token(TokenCommand::Pair(args)) => commands::token_pair(*args),
         Command::Token(TokenCommand::Read(args)) => commands::token_read(*args),
+        Command::Token(TokenCommand::Agent(args)) => commands::token_agent(*args),
         Command::Token(TokenCommand::Revoke(args)) => commands::token_revoke(*args),
         Command::Api(args) => commands::api(args).await,
+        Command::Mcp(args) => commands::mcp(args),
         Command::Host(HostCommand::Init(args)) => commands::host_init(args),
         Command::Dreamer(DreamerCommand::Grant(args)) => commands::dreamer_grant(*args),
     }

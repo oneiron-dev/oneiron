@@ -63,7 +63,7 @@ impl Vault {
     /// resurrection; the OID marker also blocks new manifests with new chunking.
     pub fn delete_lfs_object(&self, oid: LfsOid) -> Result<bool> {
         let Some(object) = self.lfs_object(oid)? else {
-            self.with_write_txn(|txn| {
+            self.with_write_txn_grouped(|txn| {
                 DELETED.put(&self.store, txn, &oid, &())?;
                 Ok(())
             })?;
@@ -94,7 +94,7 @@ impl Vault {
         {
             return Ok(0);
         }
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let pending = GC.iter_from(&self.store, txn, &[])?.next().transpose()?;
             let Some((owner, ())) = pending else {
                 return Ok(0);
@@ -143,7 +143,7 @@ impl Vault {
     /// Cancellation is transactional. A still-running uploader observes its
     /// missing journal before its next chunk or publication and fails closed.
     pub fn recover_lfs_uploads_before(&self, cutoff: u64) -> Result<usize> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let mut rows = Vec::new();
             for row in JOURNAL.iter_from(&self.store, txn, &[])? {
                 let (owner, value) = row?;
@@ -165,7 +165,7 @@ impl Vault {
 
     /// Removes at most 128 obsolete Git ref rows after explicit object deletion.
     pub fn collect_deleted_lfs_ref_rows(&self) -> Result<usize> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let mut rows = Vec::new();
             for row in super::store::REFS.iter_from(&self.store, txn, &[])? {
                 let (key, _) = row?;

@@ -112,7 +112,7 @@ impl Vault {
                 .try_into()
                 .expect("digest prefix"),
         )?;
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             if let Some(review_id) = RECEIVED_DIGESTS.get(&self.store, txn, &digest)? {
                 let raw = crate::vault::entity_revision::read_entity_revision_in_txn(
                     self,
@@ -213,7 +213,7 @@ impl Vault {
     }
     /// Host-authorized review changes queue state, never deletes evidence.
     pub fn close_feedback_review(&self, id: &EntityId) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let item = QUEUE_ITEMS
                 .get(&self.store, txn, id)?
                 .ok_or(Error::EntityNotFound)?;

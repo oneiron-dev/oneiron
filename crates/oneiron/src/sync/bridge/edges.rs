@@ -79,7 +79,7 @@ pub(super) fn materialize_edges_from_delta(
     // BEFORE `applied_edges.push`).
     let mut hydrated_endpoints: Vec<(EntityId, Vec<u8>)> = Vec::new();
     let mut pending_companion_scrubs = Vec::new();
-    let result = vault.with_write_txn(|wtxn| {
+    let result = vault.with_write_txn_grouped(|wtxn| {
         let entities_map = doc.get_map("entities");
         let tombstones_map = doc.get_map("tombstones");
         let edges_map = doc.get_map("edges");

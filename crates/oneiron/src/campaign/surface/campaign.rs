@@ -137,7 +137,7 @@ pub fn create_campaign(
         updated_at: now,
     };
     let kind = campaign_type_byte(vault)?;
-    vault.with_write_txn(|wtxn| store_campaign_in_txn(vault, wtxn, &record, kind))?;
+    vault.with_write_txn_grouped(|wtxn| store_campaign_in_txn(vault, wtxn, &record, kind))?;
     Ok(record)
 }
 
@@ -178,7 +178,7 @@ pub fn update_campaign(
     now: u64,
 ) -> Result<CampaignRecord> {
     let kind = campaign_type_byte(vault)?;
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let mut record =
             owned_campaign_in_txn(vault, wtxn, authenticated_principal, campaign_ref, kind)?;
         require_expected_campaign_version(&record, request.expected_definition_version)?;
@@ -212,7 +212,7 @@ pub fn archive_campaign(
     now: u64,
 ) -> Result<CampaignRecord> {
     let kind = campaign_type_byte(vault)?;
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let mut record =
             owned_campaign_in_txn(vault, wtxn, authenticated_principal, campaign_ref, kind)?;
         require_expected_campaign_version(&record, expected_definition_version)?;

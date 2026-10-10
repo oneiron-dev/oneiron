@@ -267,7 +267,7 @@ impl Vault {
             .entity_docs
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?;
-        let out = self.with_write_txn(|txn| {
+        let out = self.with_write_txn_grouped(|txn| {
             for req in requests {
                 validate_actor(self, txn, req.actor)?;
                 let h = storage::head(&self.store, txn, &req.entity)?;
@@ -352,7 +352,7 @@ impl Vault {
             .entity_docs
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?;
-        let out = self.with_write_txn(|txn| {
+        let out = self.with_write_txn_grouped(|txn| {
             let bundle = read_bundle(&self.store, txn, proposal)?;
             if bundle.settled {
                 return Err(Error::Artifact(ArtifactError::EditProposalAlreadySettled {

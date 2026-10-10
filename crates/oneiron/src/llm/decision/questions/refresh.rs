@@ -105,7 +105,7 @@ pub fn refresh_question(
             },
         });
     }
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         let current = owned_head(vault, txn, principal, question)?;
         if current.version != head.version
             || current.paused
