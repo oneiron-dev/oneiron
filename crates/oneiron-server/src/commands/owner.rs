@@ -79,7 +79,10 @@ pub fn doctor(args: DoctorArgs) -> anyhow::Result<()> {
 fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Value> {
     let serve = ServeArgs {
         config: args.config,
-        vault_path: Some(args.vault.path.clone()),
+        vault_path: Some(args.path.clone()),
+        dimensions: args.dimensions,
+        map_size: args.map_size,
+        dict_search_paths: args.dict_search_paths.clone(),
         ..ServeArgs::default()
     };
     let mut config_errors = Vec::new();
@@ -89,48 +92,59 @@ fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Value> {
             config_errors.push(error);
         }
     };
-    if let Err(error) = resolve_serve_config(&serve) {
-        note_error(error);
-    }
+    // The shape `serve` and `import` open the vault in: the config's
+    // dimensions, map size and dictionaries, under the flags. The rest stays
+    // the server default, so a configured embedder that disagrees with the
+    // vault does not keep doctor from reporting it. Settings that do not
+    // resolve leave the flags over the defaults.
+    let mut vault_config = oneiron::VaultConfig::server();
+    let serve_config = resolve_serve_config(&serve);
+    let unresolved = serve_config.is_err();
+    let dict_search_paths = match serve_config {
+        Ok(config) => {
+            vault_config.dimensions = config.dimensions;
+            vault_config.map_size = config.map_size;
+            config.dict_search_paths
+        }
+        Err(error) => {
+            note_error(error);
+            vault_config.dimensions = args.dimensions.unwrap_or(vault_config.dimensions);
+            vault_config.map_size = args.map_size.unwrap_or(vault_config.map_size);
+            args.dict_search_paths.unwrap_or_default()
+        }
+    };
+    vault_config.dict_search_paths = super::resolve_dict_search_paths(&dict_search_paths).paths;
     let backup = resolve_backup_config(&serve).unwrap_or_else(|error| {
         note_error(error.context(
             "the [backup] settings did not resolve, so the backups shown are at the default location",
         ));
         BackupConfig::default()
     });
-    let plan = BackupPlan::new(
-        &args.vault.path,
-        backup.dir_for(&args.vault.path),
-        backup.keep,
-    );
+    let plan = BackupPlan::new(&args.path, backup.dir_for(&args.path), backup.keep);
     let every = backup.enabled.then_some(backup.every_hours);
-    let mut vault_config = oneiron::VaultConfig::server();
-    vault_config.dimensions = args.vault.dimensions;
-    vault_config.map_size = args.vault.map_size;
-    vault_config.dict_search_paths =
-        super::resolve_dict_search_paths(&args.vault.dict_search_paths.clone().unwrap_or_default())
-            .paths;
-    let mut report = match oneiron::Vault::open_owned(&args.vault.path, vault_config) {
+    let mut report = match oneiron::Vault::open_owned(&args.path, vault_config) {
         Ok(vault) => {
             let mut report = serde_json::to_value(vault.doctor()?)?;
-            report["location"] = serde_json::to_value(location::locate(
-                &args.vault.path,
-                Some(&vault),
-                &plan,
-                every,
-            )?)?;
+            report["location"] =
+                serde_json::to_value(location::locate(&args.path, Some(&vault), &plan, every)?)?;
             report
         }
         Err(oneiron::Error::ConcurrentWrite(oneiron::VAULT_WRITER_LEASE_HELD)) => {
             // The filesystem facts still answer "where is my data".
-            let mut location = location::locate(&args.vault.path, None, &plan, every)?;
+            let mut location = location::locate(&args.path, None, &plan, every)?;
             location.note = Some(
                 "a running `oneiron serve` holds this vault; `oneiron api raw GET /v1/owner/status` reads the rest"
                     .to_owned(),
             );
             serde_json::json!({ "location": location })
         }
-        Err(error) => anyhow::bail!("open vault {} failed: {error}", args.vault.path.display()),
+        Err(error) if unresolved => anyhow::bail!(
+            "open vault {} failed: {error}; it was opened without the config's dimensions and \
+             map size, which did not resolve: {}",
+            args.path.display(),
+            config_errors.join("; ")
+        ),
+        Err(error) => anyhow::bail!("open vault {} failed: {error}", args.path.display()),
     };
     if !config_errors.is_empty() {
         report["config_errors"] = serde_json::to_value(config_errors)?;
