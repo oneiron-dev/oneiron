@@ -70,12 +70,6 @@ fn speculative_passes_answer_by_the_session_deadline() -> Result<()> {
     const DEADLINE: Duration = Duration::from_secs(3);
     // The waiting caller wakes at the deadline; this is scheduling slack.
     const WAKE: Duration = Duration::from_millis(500);
-    let (_dir, vault) = vault();
-    let tokyo = put_text(&vault, 7, "Tokyo launch")?;
-    let config = || SpeculativeSessionConfig {
-        deadline: Some(DEADLINE),
-        ..SpeculativeSessionConfig::default()
-    };
     fn heard(terms: &[String]) -> SpeculativePartial<'_> {
         SpeculativePartial {
             text: "Tokyo launch",
@@ -84,6 +78,12 @@ fn speculative_passes_answer_by_the_session_deadline() -> Result<()> {
             salient_terms: terms,
         }
     }
+    let (_dir, vault) = vault();
+    let tokyo = put_text(&vault, 7, "Tokyo launch")?;
+    let config = || SpeculativeSessionConfig {
+        deadline: Some(DEADLINE),
+        ..SpeculativeSessionConfig::default()
+    };
     let [tokyo_terms, launch_terms, osaka_terms] =
         ["tokyo", "launch", "osaka"].map(|term| vec![term.to_owned()]);
     let ids = |scores: &[crate::pipeline::ScoredEntity]| -> Vec<String> {
@@ -97,7 +97,7 @@ fn speculative_passes_answer_by_the_session_deadline() -> Result<()> {
         session.observe_partial(heard(&tokyo_terms))?,
         SpeculativeFireDecision::Fired { partial: false, .. }
     ));
-    assert_eq!(ids(session.warm_candidates()), [tokyo.clone()]);
+    assert_eq!(ids(session.warm_candidates()), [tokyo.as_str()]);
     vault.arm_slow_retrieval_stage_for_test(Some(SlowRetrievalStage {
         signal: RetrievalSignal::Text,
         duration: Duration::from_secs(6),
@@ -114,7 +114,7 @@ fn speculative_passes_answer_by_the_session_deadline() -> Result<()> {
         started.elapsed()
     );
     assert_eq!(session.fires_used(), 2);
-    assert_eq!(ids(session.warm_candidates()), [tokyo.clone()]);
+    assert_eq!(ids(session.warm_candidates()), [tokyo.as_str()]);
     let started = Instant::now();
     let SpeculativeFinal::Finalized {
         scores,
