@@ -14,6 +14,9 @@ use super::wake::{
     WakeEnvelope,
 };
 
+/// Pending wakes one connection holds before the oldest is dropped.
+const PENDING_WAKES_CAP: usize = 256;
+
 #[derive(Debug)]
 pub struct StreamConnectionState {
     pub mode: BoardRenderMode,
@@ -33,6 +36,7 @@ pub struct BoardStreamRegistry {
     pub(super) connections: HashMap<StreamConnectionId, StreamConnectionState>,
     pub(super) instances: BTreeMap<HarnessInstanceKey, InstanceAdapterState>,
     pub(super) wake_observations: WakeDispatchObservations,
+    pub(super) published_tasks: super::publish::PublishedTasks,
 }
 
 impl BoardStreamRegistry {
@@ -226,6 +230,11 @@ impl BoardStreamRegistry {
             match e.clone() {
                 BoardEvent::ConsultArrived { event, line }
                 | BoardEvent::OwnTaskFailed { event, line } => {
+                    // Wakes wait for a host-side adapter that may never come.
+                    // The oldest goes first; the durable TASK still stands.
+                    if st.wakes.len() >= PENDING_WAKES_CAP {
+                        st.wakes.pop_front();
+                    }
                     st.wakes.push_back(WakeEnvelope {
                         event_ref: event.event_ref().into(),
                         task_ref: event.task_ref().into(),

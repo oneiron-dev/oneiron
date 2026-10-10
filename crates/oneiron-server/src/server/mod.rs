@@ -1,4 +1,5 @@
 //! Sync server state and maintenance jobs, split by concern.
+mod board_publisher;
 mod core;
 mod embedding;
 mod leases;

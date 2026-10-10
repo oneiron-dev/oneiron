@@ -102,10 +102,16 @@ pub(super) fn materialize_entities_with_changes(
                         // The savepoint has no postcommit owner. Carry its
                         // claim change to the outer transaction's watch,
                         // which fires only after THAT commit.
-                        if EntityMetadataHeader::parse(blob)
-                            .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM)
-                        {
-                            crate::batch::queue_proactivity_change(vault, wtxn);
+                        match EntityMetadataHeader::parse(blob).map(|h| h.entity_type) {
+                            Some(ENTITY_TYPE_CLAIM) => {
+                                crate::batch::queue_proactivity_change(vault, wtxn);
+                            }
+                            // A peer's consult or settlement reaches this
+                            // vault's board subscribers only after commit.
+                            Some(crate::registry::ENTITY_TYPE_TASK) => {
+                                crate::batch::queue_task_updates(vault, wtxn, [id]);
+                            }
+                            _ => {}
                         }
                         let revision =
                             revision_for_mode_in_txn(&vault.store, wtxn, &id, ReadMode::Live)?;

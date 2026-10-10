@@ -595,6 +595,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     }
 
     let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
+    let board_publisher = sync_server.spawn_board_publisher();
     // The managed surface, not the bare one: the reap freeze has to be
     // enforceable by the socket the supervisor routes traffic to, or
     // `quiescent: true` is a claim about a gate that nothing reaches.
@@ -610,6 +611,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // No new durable background work from here on.
     lifecycle_handle.abort();
     let _ = lifecycle_handle.await;
+    board_publisher.abort();
+    let _ = board_publisher.await;
 
     if let Some(path) = http_owned_path {
         // Only ever the path this process created. An inherited socket's inode

@@ -318,7 +318,7 @@ impl Vault {
         // One logical write in the single writer's group commit: the closure
         // runs in a transaction of its own, and `Ok` comes back only once the
         // shared commit is durable.
-        let (result, approved_vad_ids, proactivity_changed, retirement_staged) =
+        let (result, approved_vad_ids, proactivity_changed, task_ids, retirement_staged) =
             self.store.group_write(None, |wtxn| {
                 let retirements_before = match self.store.gate_retirements_staged_in_txn(wtxn) {
                     Ok(staged) => staged,
@@ -345,6 +345,7 @@ impl Vault {
                         result,
                         approved,
                         postcommit.proactivity_changed,
+                        postcommit.task_ids,
                         staged != retirements_before,
                     )),
                     Err(err) => Rows::Discard(Err(E::from(err))),
@@ -354,6 +355,7 @@ impl Vault {
         if proactivity_changed {
             self.store.notify_proactivity_changes();
         }
+        self.store.notify_task_updates(task_ids);
         if retirement_staged {
             self.finish_gate_decision_retirements_after_commit();
         }

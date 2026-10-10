@@ -168,6 +168,10 @@ pub struct StoreCore {
     /// Content-free local invalidations. Readers always re-read committed rows.
     #[cfg(feature = "sync")]
     pub(crate) attempt_updates: tokio::sync::broadcast::Sender<()>,
+    /// Committed TASK ids, sent after their write commits. Readers re-read
+    /// the TASK; a lagged reader has lost ids, never seen a false one.
+    #[cfg(feature = "sync")]
+    pub(crate) task_updates: tokio::sync::broadcast::Sender<crate::EntityId>,
     /// Serializes this vault's foreign-import admission window: the receipt
     /// read, the selector admission and the stage-if-absent write are one
     /// logical step, and the durable re-read is the cross-process guard. It was

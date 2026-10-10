@@ -142,8 +142,9 @@ impl BatchBuilder<'_> {
                 after_apply,
             );
             match applied {
-                Ok((changes_claims, approved_vad_ids)) => Rows::Commit(Committed {
+                Ok((changes_claims, tasks, approved_vad_ids)) => Rows::Commit(Committed {
                     changes_claims,
+                    tasks,
                     staged_gate_decisions,
                     approved_vad_ids,
                 }),
@@ -152,6 +153,7 @@ impl BatchBuilder<'_> {
         });
         let Committed {
             changes_claims,
+            tasks,
             staged_gate_decisions,
             approved_vad_ids,
         } = match committed {
@@ -166,6 +168,7 @@ impl BatchBuilder<'_> {
         if changes_claims {
             vault.store.notify_proactivity_changes();
         }
+        vault.store.notify_task_updates(tasks);
         while vault.collect_lfs_garbage(32)? != 0 {}
         // A delete in this batch staged its claim-key retirement.
         vault.finish_gate_decision_retirements_after_commit();
@@ -192,14 +195,18 @@ struct AdmittedBatch<'a> {
 }
 
 /// Phase 2 in the writer: apply, the caller's `after_apply`, and the Dreamer
-/// approvals to consolidate after commit. Returns whether claims changed and
-/// those approvals.
+/// approvals to consolidate after commit. Returns whether claims changed, the
+/// TASKs written, and those approvals.
 fn apply_admitted(
     vault: &crate::Vault,
     wtxn: &mut RwTxn<'_>,
     batch: AdmittedBatch<'_>,
     after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
-) -> Result<(bool, Vec<crate::entity_id::EntityId>)> {
+) -> Result<(
+    bool,
+    Vec<crate::entity_id::EntityId>,
+    Vec<crate::entity_id::EntityId>,
+)> {
     let pending_vad_ids =
         super::vad_postcommit::pending_dreamer_vad_approvals(vault, wtxn, &batch.ops)?;
     // ONE-1741: batch deletes no longer pre-scan for scan-verdict
@@ -207,6 +214,7 @@ fn apply_admitted(
     // `deindex_entity` inside `apply_ops`, and verdicts anchor to the
     // content bytes rather than to any departing holder.
     let changes_claims = super::super::vad_postcommit::ops_change_proactivity(&batch.ops);
+    let tasks = super::super::vad_postcommit::ops_put_tasks(&batch.ops);
     apply_ops_with_origin(
         &vault.store,
         &vault.config,
@@ -220,12 +228,13 @@ fn apply_admitted(
     after_apply(wtxn)?;
     let approved_vad_ids = vault.resolved_dreamer_vad_approvals_in_txn(wtxn, pending_vad_ids)?;
     crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
-    Ok((changes_claims, approved_vad_ids))
+    Ok((changes_claims, tasks, approved_vad_ids))
 }
 
 /// What a committed batch still owes after its group commits.
 struct Committed {
     changes_claims: bool,
+    tasks: Vec<crate::entity_id::EntityId>,
     staged_gate_decisions: Vec<crate::gate::RecordedClaimGateDecision>,
     approved_vad_ids: Vec<crate::entity_id::EntityId>,
 }

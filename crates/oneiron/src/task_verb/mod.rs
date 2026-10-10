@@ -37,6 +37,7 @@ mod owner_index;
 mod policy_change_followup;
 mod presence_diagnostics;
 mod presence_scan;
+pub(crate) use presence_scan::board_task_for_id;
 mod query_facade;
 mod rate_limit;
 mod reconciliation;
