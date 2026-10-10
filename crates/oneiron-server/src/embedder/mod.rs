@@ -239,14 +239,23 @@ impl EmbedderSlot {
                     }
                     Ok(served)
                 });
-                self.admitted.store(admitted.is_ok(), Ordering::Relaxed);
-                http.admit(admitted?);
+                // The answers' pin goes in before queries are let through.
+                match admitted {
+                    Ok(served) => {
+                        http.admit(served);
+                        self.admitted.store(true, Ordering::Release);
+                    }
+                    Err(error) => {
+                        self.admitted.store(false, Ordering::Release);
+                        return Err(error);
+                    }
+                }
             }
             return Ok(Arc::clone(ready));
         }
         let local = local::LocalEmbedder::load(&self.config, &self.models)?;
         admit(local.transform())?;
-        self.admitted.store(true, Ordering::Relaxed);
+        self.admitted.store(true, Ordering::Release);
         let embedder = local as Arc<dyn QueryEmbedder>;
         let _ = self.ready.set(Arc::clone(&embedder));
         // `set` loses a race; the winner is the one every caller must see.
@@ -258,7 +267,7 @@ impl EmbedderSlot {
         let Some(embedder) = self.ready.get() else {
             return Err(EmbedQueryRefusal::NotReady);
         };
-        if !self.admitted.load(Ordering::Relaxed) {
+        if !self.admitted.load(Ordering::Acquire) {
             return Err(EmbedQueryRefusal::NotReady);
         }
         embedder.embed_query(text).map_err(|error| {

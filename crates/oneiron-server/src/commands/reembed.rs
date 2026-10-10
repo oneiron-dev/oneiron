@@ -32,7 +32,8 @@ struct ReembedOutcome {
     /// The configured space the vault holds now.
     to: String,
     /// The transform the vault holds now, when the configured embedder
-    /// declares one: the local provider always does, an endpoint never.
+    /// declares one: the local provider always does, an endpoint when it is
+    /// `embedder serve` and lists one.
     transform: Option<String>,
     /// Whether every embeddable record was queued to be embedded again.
     migrated: bool,

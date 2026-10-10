@@ -531,7 +531,10 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::SecretScan(args) => commands::secret_scan(*args),
         Command::Import(command) => commands::import(command),
         Command::Runs(command) => commands::runs(command),
-        Command::Reembed(args) => commands::reembed(*args),
+        // Blocking: an endpoint's transform is read over blocking HTTP.
+        Command::Reembed(args) => {
+            tokio::task::spawn_blocking(move || commands::reembed(*args)).await?
+        }
         Command::Provenance(args) => commands::provenance(*args),
         Command::Token(TokenCommand::Bootstrap(args)) => commands::token_bootstrap(*args),
         Command::Token(TokenCommand::Pair(args)) => commands::token_pair(*args),

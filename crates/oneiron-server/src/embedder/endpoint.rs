@@ -111,6 +111,18 @@ struct ModelRow {
     transform: Option<String>,
 }
 
+/// What the vault admitted for a remote.
+#[derive(Clone, Debug, Default)]
+enum Admitted {
+    /// Nothing yet, or never (a remote rung): answers are not checked.
+    #[default]
+    Unchecked,
+    /// The transform the remote listed when the vault admitted it, or none
+    /// for a remote that lists none. Every answer must name exactly this:
+    /// `embedder serve` names its transform in each, other servers none.
+    Transform(Option<String>),
+}
+
 /// What the remote's `/models` listing said about the configured model.
 #[derive(Clone, Debug)]
 struct Listing {
@@ -130,9 +142,9 @@ pub(crate) struct HttpEmbedder {
     /// The remote's last `/models` listing that answered, read before the
     /// first request that depends on it and again at every admission.
     listing: Mutex<Option<Listing>>,
-    /// The transform the vault admitted for this remote ([`Self::admit`]).
-    /// Every answer on the Oneiron wire must have been made that way.
-    admitted: Mutex<Option<String>>,
+    /// What the vault admitted for this remote ([`Self::admit`]), which every
+    /// answer is then held to.
+    admitted: Mutex<Admitted>,
     client: reqwest::blocking::Client,
     truncations: AtomicU64,
 }
@@ -214,7 +226,7 @@ impl HttpEmbedder {
             max_input_chars: config.max_input_tokens.saturating_mul(CHARS_PER_TOKEN),
             query_instruction: config.query_instruction.clone(),
             listing: Mutex::new(None),
-            admitted: Mutex::new(None),
+            admitted: Mutex::new(Admitted::Unchecked),
             client,
             truncations: AtomicU64::new(0),
         }))
@@ -258,12 +270,14 @@ impl HttpEmbedder {
         Ok(self.read_listing()?.transform)
     }
 
-    /// Records the transform the vault admitted. From then on an answer on
-    /// the Oneiron wire made any other way is refused, so a remote restarted
-    /// with other settings fills and answers nothing until it is restored or
-    /// the vault is reembedded.
+    /// Records what the vault admitted. From then on an answer that names
+    /// another transform, or names one where none was admitted, is refused: a
+    /// remote restarted with other settings, or whose listing could not be
+    /// read as one, fills and answers nothing until it is restored or the
+    /// vault is reembedded.
     pub(crate) fn admit(&self, transform: Option<String>) {
-        *self.admitted.lock().unwrap_or_else(PoisonError::into_inner) = transform;
+        *self.admitted.lock().unwrap_or_else(PoisonError::into_inner) =
+            Admitted::Transform(transform);
     }
 
     /// Reads the remote's `/models` listing and keeps it. A listing that does
@@ -317,14 +331,8 @@ impl HttpEmbedder {
         }
     }
 
-    /// Posts `texts`. `wire` says whether the answer must carry the admitted
-    /// transform: on [`Wire::Oneiron`], once the vault has admitted one.
-    fn post_embeddings(
-        &self,
-        texts: &[&str],
-        side: Side<'_>,
-        wire: Wire,
-    ) -> oneiron::Result<Vec<Vec<f32>>> {
+    /// Posts `texts`; the answer is held to what the vault admitted.
+    fn post_embeddings(&self, texts: &[&str], side: Side<'_>) -> oneiron::Result<Vec<Vec<f32>>> {
         let url = format!("{}/embeddings", self.endpoint);
         let body = EmbeddingsRequest {
             model: &self.model_key,
@@ -351,16 +359,14 @@ impl HttpEmbedder {
                     code: format!("embeddings response: {e}"),
                 }
             })?;
-        if wire == Wire::Oneiron {
-            let admitted = self.admitted.lock().unwrap_or_else(PoisonError::into_inner);
-            if let Some(admitted) = admitted.as_deref()
-                && parsed.transform.as_deref() != Some(admitted)
-            {
-                return Err(oneiron::Error::UpstreamToolFailure {
-                    tool: EMBEDDER_TOOL,
-                    code: "embedder endpoint now makes vectors another way than the vault admitted; restore its settings or run `oneiron-server reembed`".to_owned(),
-                });
-            }
+        if let Admitted::Transform(admitted) =
+            &*self.admitted.lock().unwrap_or_else(PoisonError::into_inner)
+            && parsed.transform != *admitted
+        {
+            return Err(oneiron::Error::UpstreamToolFailure {
+                tool: EMBEDDER_TOOL,
+                code: "embedder endpoint now makes vectors another way than the vault admitted; restore its settings or run `oneiron-server reembed`".to_owned(),
+            });
         }
         self.order_rows(parsed.data, texts.len())
     }
@@ -496,7 +502,7 @@ impl Embedder for HttpEmbedder {
                 instruction: None,
             },
         };
-        self.post_embeddings(&refs, side, wire)
+        self.post_embeddings(&refs, side)
     }
 }
 
@@ -513,7 +519,7 @@ impl QueryEmbedder for HttpEmbedder {
         let mut vectors = match self.wire()? {
             Wire::OpenAi => {
                 let prefixed = self.truncate(self.common.query_text(text));
-                self.post_embeddings(&[prefixed.as_str()], Side::default(), Wire::OpenAi)?
+                self.post_embeddings(&[prefixed.as_str()], Side::default())?
             }
             Wire::Oneiron => self.post_embeddings(
                 &[text],
@@ -521,7 +527,6 @@ impl QueryEmbedder for HttpEmbedder {
                     input_type: Some("query"),
                     instruction: self.query_instruction.as_deref(),
                 },
-                Wire::Oneiron,
             )?,
         };
         vectors.pop().ok_or(oneiron::Error::InvariantViolation(
@@ -578,8 +583,9 @@ pub(crate) fn probe_endpoint(embedder: &HttpEmbedder) -> Result<ProbeOutcome, Pr
         .listing
         .lock()
         .unwrap_or_else(PoisonError::into_inner) = Some(embedder.listing_of(listed.as_ref()));
-    // Unmarked, so any remote answers it as a document; held to no transform.
-    match embedder.post_embeddings(&[PROBE_TEXT], Side::default(), Wire::OpenAi) {
+    // Unmarked, so any remote answers it as a document; before any admission,
+    // so it is held to no transform.
+    match embedder.post_embeddings(&[PROBE_TEXT], Side::default()) {
         Ok(vectors) => {
             let got = vectors.first().map_or(0, Vec::len);
             if got == embedder.common.dimensions {
