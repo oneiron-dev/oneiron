@@ -298,17 +298,21 @@ fn is_global(ip: IpAddr) -> bool {
         }
         // Global unicast is 2000::/3; outside it nothing is global (the
         // NAT64 and v4-mapped forms were judged as v4 above). Inside it,
-        // drop the special-purpose blocks: 2001::/23 (Teredo, ORCHID,
-        // benchmarking and the rest), 2001:db8::/32 (documentation), 6to4
-        // (2002::/16), and 3ff0::/12, which holds documentation (3fff::/20)
-        // and the retired 6bone and is allocated to no registry.
+        // the special-purpose blocks are dropped.
         IpAddr::V6(v6) => {
             let seg = v6.segments();
-            (seg[0] & 0xe000) == 0x2000
-                && !((seg[0] == 0x2001 && seg[1] < 0x0200)
-                    || (seg[0] == 0x2001 && seg[1] == 0x0db8)
-                    || seg[0] == 0x2002
-                    || (seg[0] & 0xfff0) == 0x3ff0)
+            let special = match seg[0] {
+                // 2001::/23 (Teredo, ORCHID, benchmarking and the rest) and
+                // 2001:db8::/32 (documentation).
+                0x2001 => seg[1] < 0x0200 || seg[1] == 0x0db8,
+                // 6to4.
+                0x2002 => true,
+                // 3fff::/20 (documentation) and the retired 6bone; no
+                // registry holds any of 3ff0::/12.
+                0x3ff0..=0x3fff => true,
+                _ => false,
+            };
+            (seg[0] & 0xe000) == 0x2000 && !special
         }
     }
 }
