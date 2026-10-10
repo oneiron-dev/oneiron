@@ -228,7 +228,9 @@ pub fn code_mode_verb_names() -> impl Iterator<Item = &'static str> {
 
 /// The verb table as code mode's `self.memory` declarations: one signature
 /// per row, rendered from that verb's own input schema, so the methods a
-/// model is shown are exactly the rows the host serves.
+/// model is shown are exactly the rows the host serves. `self.memory` is an
+/// object type, not a namespace, so a row named by a reserved word (`export`)
+/// is a valid method: a namespace's `function export` does not parse.
 #[must_use]
 pub fn code_mode_declarations() -> &'static str {
     // GLOBAL STATE: rendered once from compiled verb schemas, which are
@@ -252,9 +254,9 @@ pub fn code_mode_declarations() -> &'static str {
                 node = next;
             }
         }
-        let mut out = String::from("declare namespace self {\n  namespace memory {\n");
+        let mut out = String::from("declare namespace self {\n  const memory: {\n");
         render_declarations(&tree, 2, &mut out);
-        out.push_str("  }\n}\n");
+        out.push_str("  };\n}\n");
         out
     });
     &DECLARATIONS
@@ -274,14 +276,14 @@ fn render_declarations(
     for (name, node) in tree {
         match node {
             DeclarationNode::Namespace(children) => {
-                out.push_str(&format!("{indent}namespace {name} {{\n"));
+                out.push_str(&format!("{indent}{name}: {{\n"));
                 render_declarations(children, depth + 1, out);
-                out.push_str(&format!("{indent}}}\n"));
+                out.push_str(&format!("{indent}}};\n"));
             }
             DeclarationNode::Verb(verb) => {
                 let input = input_schema(verb).map_or_else(|| "object".to_owned(), schema_type);
                 out.push_str(&format!(
-                    "{indent}function {name}(input: {input}): Promise<unknown>;\n"
+                    "{indent}{name}(input: {input}): Promise<unknown>;\n"
                 ));
             }
         }
