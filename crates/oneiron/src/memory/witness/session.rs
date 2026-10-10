@@ -187,14 +187,17 @@ impl Memory<'_> {
             || {},
             |_| Ok(()),
             |wtxn| {
-                let live = credential.is_none_or(|credential| {
-                    self.vault
-                        .capability_slip_is_live_in_txn(wtxn, credential)
-                        .unwrap_or(false)
-                });
-                match session.is_member_in_txn(wtxn, room, self.actor) {
-                    Ok(true) if live => Ok(()),
-                    _ => Err(refused()),
+                // A read that fails is that failure, not a refusal.
+                let live = match credential {
+                    Some(credential) => self
+                        .vault
+                        .capability_slip_is_live_in_txn(wtxn, credential)?,
+                    None => true,
+                };
+                if live && session.is_member_in_txn(wtxn, room, self.actor)? {
+                    Ok(())
+                } else {
+                    Err(refused())
                 }
             },
         )
