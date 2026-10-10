@@ -99,10 +99,8 @@ fn seal_organ_verifies_before_atomic_terminal_and_retries_from_pristine_original
     let dir = tempfile::tempdir()?;
     let now = unix_seconds_now();
     let clock = oneiron::store::ports::ManualClock::new(now);
-    let config = VaultConfig {
-        store_clock: clock.bundle(),
-        ..VaultConfig::default()
-    };
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
     let vault = Vault::open(dir.path(), config)?;
     let sealer = HostedSealer::new(&host, &vault, &keys, SealSettings::new(vec![cert], "seal"));
     let at = TimeRange {
