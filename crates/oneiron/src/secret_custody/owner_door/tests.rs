@@ -279,3 +279,62 @@ fn a_declared_name_carries_its_manifest_entry_and_a_wider_ask_stores_nothing() {
     assert_eq!(narrower.declared_paths, ["keys/signing.pem"]);
     assert_eq!(narrower.bindings[0].tier_ceiling, CustodyTier::T0Doored);
 }
+
+/// Sol on #1372: a `refs/replace/<commit>` entry in the served repository
+/// made every object read return the replacement, so a registration took a
+/// wider manifest than the published commit declares, under that commit's
+/// name.
+#[test]
+fn a_replacement_ref_never_decides_which_manifest_is_read() {
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = Vault::open(dir.path(), crate::config::VaultConfig::default()).expect("vault");
+    let narrow = MANIFEST.replace("tier_ceiling = 1", "tier_ceiling = 0");
+    let published = publish_manifest(&vault, "app", &narrow);
+
+    // A commit declaring tier 2, planted as the published commit's replacement.
+    let wide = tempfile::tempdir().expect("wide");
+    git(wide.path(), &["init", "--initial-branch=main"]);
+    let file = wide.path().join(SECRET_MANIFEST_PATH);
+    std::fs::create_dir_all(file.parent().expect("manifest dir")).expect("mkdir");
+    std::fs::write(
+        &file,
+        MANIFEST.replace("tier_ceiling = 1", "tier_ceiling = 2"),
+    )
+    .expect("manifest");
+    git(wide.path(), &["add", "."]);
+    git(
+        wide.path(),
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-m",
+            "wider",
+        ],
+    );
+    let replacement = git(wide.path(), &["rev-parse", "HEAD"]);
+    let bare = origin_serving_root(&vault).expect("root").join("app.git");
+    let wide_path = wide.path().to_str().expect("utf-8");
+    git(&bare, &["fetch", wide_path, "main:refs/planted/wide"]);
+    git(&bare, &["replace", &published, &replacement]);
+    git(&bare, &["update-ref", "-d", "refs/planted/wide"]);
+
+    let registered = vault
+        .register_secret_as_owner(
+            &owner(&vault),
+            &ask(
+                "deploy-token",
+                CustodyClass::CustodyPortable,
+                CustodyTier::T2LocalRegistered,
+            ),
+            7,
+        )
+        .expect("registered");
+    assert_eq!(
+        registered.manifest_ref,
+        format!("app:refs/heads/main@{published}:{SECRET_MANIFEST_PATH}")
+    );
+    assert_eq!(registered.bindings[0].tier_ceiling, CustodyTier::T0Doored);
+}

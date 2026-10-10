@@ -242,6 +242,29 @@ impl GitWire<'_> {
         parse_object_info(&output.stdout)
     }
 
+    /// The size in bytes of one object, `None` when it is missing. A caller
+    /// that bounds what it reads checks this first: `read_object` fails as a
+    /// whole once the output passes the process bound.
+    pub fn object_size(&self, repo: &GitWireRepo, oid: &GitOid) -> GitWireResult<Option<u64>> {
+        let output = self.run_read(repo, &FrozenGitArgv::object_info(std::slice::from_ref(oid)))?;
+        let text = String::from_utf8_lossy(&output.stdout);
+        let Some(line) = text.lines().next() else {
+            return Ok(None);
+        };
+        let mut fields = line.split(' ');
+        if fields.next() != Some(oid.as_str()) {
+            return Err(invalid("git object size answered another object"));
+        }
+        match (fields.next(), fields.next()) {
+            (Some("missing"), _) => Ok(None),
+            (Some(_), Some(size)) => size
+                .parse()
+                .map(Some)
+                .map_err(|_| invalid("git object size is not a number")),
+            _ => Err(invalid("git object size line is malformed")),
+        }
+    }
+
     /// Whether an object is present in this object store.
     pub fn object_exists(&self, repo: &GitWireRepo, oid: &GitOid) -> GitWireResult<bool> {
         let info = self.object_info(repo, std::slice::from_ref(oid))?;

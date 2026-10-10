@@ -69,25 +69,29 @@ impl Vault {
         };
         let wire = GitWire::new(self)?;
         let repo_id = lfs_repo_id(&wire.repository_identity(&repo_dir)?.as_hex())?;
-        // Any commit this ref was published at proves which object store the
-        // handle names. Which commit the ref names NOW is the projection's
-        // answer below, as for an advertisement.
-        let mut pin = None;
-        for id in self.origin_publication_ids(Some(repo_id))? {
-            if let Some(record) = self.origin_publication(id)?
-                && record.ref_name == ref_name
-                && record.status == OriginPublicationStatus::Published
-            {
-                pin = Some(record.new_oid);
-                break;
-            }
-        }
-        let pin = pin.ok_or_else(not_found)?;
         let path = repo_dir
             .to_str()
             .ok_or(Error::InvariantViolation("origin repo path must be UTF-8"))?;
-        let repo_ref = RepoRef::parse(&format!("local:{path}#{}", pin.as_str()))?;
-        let repo = wire.open_repo(repo_ref, &repo_dir)?;
+        // A pin only proves which object store the handle names, and only a
+        // commit can: any commit this repository published will do. Which
+        // object the ref names NOW is the projection's answer below, as for an
+        // advertisement. A ref published at a tag object pins nothing and
+        // holds no manifest.
+        let mut repo = None;
+        for id in self.origin_publication_ids(Some(repo_id))? {
+            let Some(record) = self.origin_publication(id)? else {
+                continue;
+            };
+            if record.status != OriginPublicationStatus::Published {
+                continue;
+            }
+            let repo_ref = RepoRef::parse(&format!("local:{path}#{}", record.new_oid.as_str()))?;
+            if let Ok(handle) = wire.open_repo(repo_ref, &repo_dir) {
+                repo = Some(handle);
+                break;
+            }
+        }
+        let repo = repo.ok_or_else(not_found)?;
         let commit = self
             .published_origin_refs(&wire, repo_id, &repo)?
             .into_iter()
@@ -144,11 +148,13 @@ fn manifest_bytes(
         };
         oid = entry.oid;
     }
-    let bytes = wire.read_object(repo, &oid)?;
-    if bytes.len() > MANIFEST_LIMIT {
-        return Err(Error::Secret(SecretError::InvalidSecretCustodyBody(
-            "secret manifest is larger than 256 KiB",
-        )));
+    // Sized before it is read: past the process's output bound the read
+    // fails as a whole, and that is no answer to give the owner.
+    match wire.object_size(repo, &oid)? {
+        None => Ok(None),
+        Some(size) if size > MANIFEST_LIMIT as u64 => Err(Error::Secret(
+            SecretError::InvalidSecretCustodyBody("secret manifest is larger than 256 KiB"),
+        )),
+        Some(_) => Ok(Some(wire.read_object(repo, &oid)?)),
     }
-    Ok(Some(bytes))
 }

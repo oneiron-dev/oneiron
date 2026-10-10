@@ -259,9 +259,14 @@ pub(crate) fn read_secret_custody_admission_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<SecretCustodyAdmission>> {
-    let Some(raw) = store.port_entity_record(txn, id)?.map(|row| row.encode()) else {
+    // The storage port hands back the row's body, value included, and the
+    // envelope copies it again: both are wiped once the projection, which
+    // holds no value, is read out of them.
+    let Some(mut row) = store.port_entity_record(txn, id)? else {
         return Ok(None);
     };
+    let raw = zeroize::Zeroizing::new(row.encode());
+    zeroize::Zeroize::zeroize(&mut row.body);
     let Some(header) = EntityMetadataHeader::parse(&raw) else {
         return Err(Error::CorruptedIndex("secret custody entity header"));
     };
