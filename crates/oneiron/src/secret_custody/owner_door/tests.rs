@@ -489,3 +489,36 @@ fn refs_beneath_a_deleted_published_ref_never_break_registration() {
         format!("app:refs/heads/main@{commit}:{SECRET_MANIFEST_PATH}")
     );
 }
+
+/// Astra on #1372: batch staging copied the stored record, value and all,
+/// into a row envelope it freed unwiped, on every registration.
+#[test]
+fn a_registration_wipes_the_staged_row_that_carried_its_value() {
+    const VALUE: &[u8] = b"wipe-check-staged-row-value";
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = Vault::open(dir.path(), crate::config::VaultConfig::default()).expect("vault");
+    let owner = owner(&vault);
+    crate::batch::wiped_rows::watch(VALUE);
+    vault
+        .register_secret_as_owner(
+            &owner,
+            &OwnerSecretRegistration {
+                bindings: vec![binding("deploy", None, &["read"])],
+                manifest: None,
+                value: VALUE,
+                ..ask(
+                    "deploy-token",
+                    CustodyClass::CustodyPortable,
+                    CustodyTier::T1Leased,
+                )
+            },
+            7,
+        )
+        .expect("registered");
+    assert_ne!(
+        crate::batch::wiped_rows::count(),
+        0,
+        "the staged row holding the value"
+    );
+}
+
