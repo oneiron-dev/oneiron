@@ -102,7 +102,7 @@ pub fn set_memory_watch(
         return Err(Error::EntityNotFound.into());
     }
     let query_ref = watch_id(owner, anchor)?;
-    vault.try_with_write_txn(|txn| {
+    vault.try_with_write_txn_grouped(|txn| {
         vault
             .memory(owner, EdgeActorClass::Human)
             .verify_owner_in_txn(&*txn)?;

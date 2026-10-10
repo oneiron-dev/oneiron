@@ -209,7 +209,7 @@ pub(super) fn answer_graduation_offer_at(
     at: u64,
 ) -> Result<OfferAnswerOutcome> {
     scope.validate()?;
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         if !crate::consent_graduation::offer_is_standing_in_txn(vault, &*wtxn, scope)? {
             return Err(Error::Gate(GateError::InvalidConsentBound(
                 "no graduation offer is standing for this scope",
@@ -256,7 +256,7 @@ pub fn unpin_scope(vault: &Vault, scope: &RampScope) -> Result<()> {
 /// [`unpin_scope`] against a caller-supplied clock.
 fn unpin_scope_at(vault: &Vault, scope: &RampScope, at: u64) -> Result<()> {
     scope.validate()?;
-    vault.with_write_txn(|wtxn| append_answer_in_txn(vault, wtxn, scope, ANSWER_UNPIN, at))
+    vault.with_write_txn_grouped(|wtxn| append_answer_in_txn(vault, wtxn, scope, ANSWER_UNPIN, at))
 }
 
 /// Records an accepted offer, called by MS-06's grant door inside the

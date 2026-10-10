@@ -59,7 +59,7 @@ impl Vault {
         let comment_envelope = annotation_envelope(author, "comment")?;
         let author_id = author.entity_ref();
 
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             self.require_anchor_version_in_txn(&*wtxn, &anchor.artifact_id, anchor.version)?;
             self.batch_in()
                 .claim_candidate(
@@ -117,7 +117,7 @@ impl Vault {
         let claim_id = self.store.clock.entity_id()?;
         let envelope = annotation_envelope(author, "comment")?;
         let author_id = author.entity_ref();
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             self.batch_in()
                 .claim_candidate(
                     &claim_id,
@@ -171,7 +171,7 @@ impl Vault {
             locator: thread.anchor.locator.clone(),
             drift: thread.drift,
         };
-        let new_head_id = self.with_write_txn(|wtxn| {
+        let new_head_id = self.with_write_txn_grouped(|wtxn| {
             let new_head_id = self.write_thread_head_in_txn(
                 wtxn,
                 artifact_id,
@@ -321,7 +321,7 @@ impl Vault {
             &thread_text,
         );
 
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let mut batch = self
                 .batch_in()
                 .put(&task_id, ENTITY_TYPE_TASK, occurred, learned_at, &task_body)

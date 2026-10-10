@@ -269,7 +269,7 @@ impl Vault {
         &self,
         event: &ConnectorEvent,
     ) -> Result<Vec<ConnectorWakeDecision>> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             self.ingest_connector_event_in_txn(txn, event, None, crate::unix_seconds_now())
         })
     }

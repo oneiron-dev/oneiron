@@ -29,7 +29,7 @@ pub fn project_bound_outcomes(
             })
             .collect::<Result<std::collections::BTreeSet<_>>>()?
     };
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         super::arrival::project_question_in_txn(&vault.store, txn, &facts, question)
     })
 }

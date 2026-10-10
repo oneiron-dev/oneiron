@@ -116,7 +116,7 @@ fn admit_work_at(
     let (writes, now) = sample;
     peer.revalidate(vault)?;
     let work = DeferredWork::new(peer, key, kind, payload)?;
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         // Duplicate/reconnected requests replay the exact durable item. They
         // neither add a debit nor go through the burst policy a second time.
         if let Some(saved) = work.load_in_txn(vault, txn)? {

@@ -226,7 +226,7 @@ impl CanonicalSnapshot {
 }
 
 pub(super) fn run(vault: &Vault, doc: &LoroDoc, snapshot: &CanonicalSnapshot) -> Result<()> {
-    vault.with_write_txn(|txn| run_in_txn(vault, txn, doc, snapshot))
+    vault.with_write_txn_grouped(|txn| run_in_txn(vault, txn, doc, snapshot))
 }
 
 pub(crate) fn run_in_txn(

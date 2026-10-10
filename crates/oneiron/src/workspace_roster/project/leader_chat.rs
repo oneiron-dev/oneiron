@@ -313,7 +313,7 @@ impl Vault {
         actor: WriteActor,
         at: u64,
     ) -> Result<LeaderChat> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let actors = [
                 EntityId::from_hex(&project_in(self, txn, projects[0])?.leader)?,
                 EntityId::from_hex(&project_in(self, txn, projects[1])?.leader)?,

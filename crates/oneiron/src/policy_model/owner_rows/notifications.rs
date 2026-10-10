@@ -436,7 +436,7 @@ impl Vault {
         let mut processed_digests = BTreeSet::new();
         for key in selected {
             // Cursor advancement is independent of the TASK transaction.
-            self.with_write_txn(|txn| self.store.vault_meta.put(txn, QUEUE_CURSOR, &key))?;
+            self.with_write_txn_grouped(|txn| self.store.vault_meta.put(txn, QUEUE_CURSOR, &key))?;
             if failure_retry.get(&key).is_some_and(|retry| *retry > now) {
                 continue;
             }
@@ -488,7 +488,7 @@ impl Vault {
         now: u64,
         error: &Error,
     ) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let failure_key = failure_key(key);
             let prior: Option<PolicyNotificationFailure> = self
                 .store

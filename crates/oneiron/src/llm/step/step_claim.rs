@@ -113,7 +113,7 @@ pub(super) fn log_terminal_step(
         .map_or(ctx.now_ms, |row| row.started_at);
 
     ctx.vault
-        .with_write_txn(|wtxn| {
+        .with_write_txn_grouped(|wtxn| {
             let response_ref = if inline {
                 None
             } else {
