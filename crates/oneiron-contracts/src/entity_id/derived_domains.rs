@@ -139,7 +139,7 @@ pub const IMPORTED_NOTE: &[u8] = b"oneiron.ingest.notes.note.v1";
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 34] = [
+pub(crate) const ALL: [&[u8]; 35] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
