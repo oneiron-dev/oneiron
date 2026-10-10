@@ -13,9 +13,13 @@
 //!   and what, never the content. Agents may suggest a save, which posts a
 //!   notice and saves nothing; only a person starts, saves or exports.
 //!
-//! These routes stay out of the idempotency layer. It keeps request and
-//! response bodies in the vault, and nothing of an off-record talk may land
-//! there.
+//! A stretch is named by its room and the host's `session_ref`; each room
+//! names its own. The owner's routes address it as
+//! `room:<room id>:<session_ref>`.
+//!
+//! These routes stay out of the idempotency layer, which keeps request and
+//! response bodies in the vault, and out of the wire receipts, which keep
+//! who called which route. Nothing of an off-record talk may land there.
 
 use std::sync::Arc;
 
@@ -65,13 +69,15 @@ struct Start {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SessionName {
+struct Stretch {
+    room: String,
     session_ref: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Witness {
+    room: String,
     session_ref: String,
     /// The turn, as `POST /v1/core/facade/witness` takes it; leave
     /// `conversation_ref` empty to write into the stretch's own conversation.
@@ -90,8 +96,6 @@ struct Room {
     mode: OffRecordMode,
     backend: OffRecordBackendClass,
     entered_at: String,
-    /// Turns already saved into this vault.
-    saved_turns: Vec<String>,
     closing: bool,
     /// The room's timeline of saves, exports and save suggestions.
     notices: Vec<Notice>,
@@ -104,16 +108,15 @@ struct Notice {
     at: String,
 }
 
-impl From<OffRecordSessionRecord> for Room {
-    fn from(record: OffRecordSessionRecord) -> Self {
+impl Room {
+    fn new(record: OffRecordSessionRecord, session_ref: &str) -> Self {
         Self {
-            session_ref: record.session_ref,
+            session_ref: session_ref.to_owned(),
             room: record.room.map(hex),
             started_by: record.started_by.map(hex),
             mode: record.mode,
             backend: record.backend,
             entered_at: rfc3339_secs(record.entered_at),
-            saved_turns: record.promoted_turns.into_iter().map(hex).collect(),
             closing: record.closing,
             notices: record
                 .notices
@@ -187,9 +190,9 @@ struct ExportTurn {
 }
 
 impl Export {
-    fn new(talk: OffRecordTalk, exported_at: u64) -> Self {
+    fn new(talk: OffRecordTalk, session_ref: &str, exported_at: u64) -> Self {
         Self {
-            session_ref: talk.session_ref,
+            session_ref: session_ref.to_owned(),
             room: talk.room.map(hex),
             exported_at: rfc3339_secs(exported_at),
             turns: talk
@@ -210,18 +213,19 @@ impl Export {
 async fn read_room(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    query: Result<Query<SessionName>, QueryRejection>,
+    query: Result<Query<Stretch>, QueryRejection>,
 ) -> Reply<Room> {
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let (actor, _) = participant(&auth)?;
     let Query(query) = query.map_err(|error| ApiError::bad_request(error.body_text(), None))?;
-    let room = blocking(move || {
-        bind(server.vault(), &query.session_ref, actor)?;
-        record(server.vault(), &query.session_ref)
+    let room = parse_entity_id_param(&query.room, "room")?;
+    let view = blocking(move || {
+        let session = bind(server.vault(), room, &query.session_ref, actor)?;
+        view(&session, &query.session_ref, actor)
     })
     .await?;
-    Ok(Json(room))
+    Ok(Json(view))
 }
 
 async fn start(
@@ -233,16 +237,16 @@ async fn start(
     let actor = person(&auth)?;
     let request = json(payload)?;
     let room = parse_entity_id_param(&request.room, "room")?;
-    let session = blocking(move || {
-        server
+    let view = blocking(move || {
+        let session = server
             .vault()
             .off_record_session_vault()
             .enter_in_room(&request.session_ref, request.backend, room, actor)
             .map_err(|error| engine_error(error, &request.session_ref))?;
-        record(server.vault(), &request.session_ref)
+        self::view(&session, &request.session_ref, actor)
     })
     .await?;
-    Ok(Json(session))
+    Ok(Json(view))
 }
 
 async fn witness(
@@ -253,12 +257,19 @@ async fn witness(
     auth.require(CoreScope::Write)?;
     let (actor, class) = participant(&auth)?;
     let request = json(payload)?;
+    let room = parse_entity_id_param(&request.room, "room")?;
+    let credential = auth.verified_slip().cloned();
     let receipt = blocking(move || {
         let vault = server.vault();
-        let session = bind(vault, &request.session_ref, actor)?;
+        let session = bind(vault, room, &request.session_ref, actor)?;
         vault
             .memory(actor, class)
-            .witness_into_session_as_member(&session, &request.turn, request.summary.as_deref())
+            .witness_into_session_as_member(
+                &session,
+                &request.turn,
+                request.summary.as_deref(),
+                credential.as_ref(),
+            )
             .map_err(witness_error)
     })
     .await?;
@@ -268,14 +279,16 @@ async fn witness(
 async fn save(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SessionName>, JsonRejection>,
+    payload: Result<Json<Stretch>, JsonRejection>,
 ) -> Reply<Saved> {
     auth.require(CoreScope::Write)?;
     let actor = person(&auth)?;
     let request = json(payload)?;
+    let room = parse_entity_id_param(&request.room, "room")?;
+    let credential = auth.verified_slip().cloned();
     let saved = blocking(move || {
-        bind(server.vault(), &request.session_ref, actor)?
-            .save_talk_by(actor)
+        bind(server.vault(), room, &request.session_ref, actor)?
+            .save_talk_by(actor, credential.as_ref())
             .map_err(|error| engine_error(error, &request.session_ref))
     })
     .await?;
@@ -285,18 +298,18 @@ async fn save(
 async fn export(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SessionName>, JsonRejection>,
+    payload: Result<Json<Stretch>, JsonRejection>,
 ) -> Result<impl IntoResponse, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let actor = person(&auth)?;
     let request = json(payload)?;
+    let room = parse_entity_id_param(&request.room, "room")?;
     let export = blocking(move || {
-        let vault = server.vault();
-        let talk = bind(vault, &request.session_ref, actor)?
+        let talk = bind(server.vault(), room, &request.session_ref, actor)?
             .export_talk_by(actor)
             .map_err(|error| engine_error(error, &request.session_ref))?;
-        Ok(Export::new(talk, unix_seconds_now()))
+        Ok(Export::new(talk, &request.session_ref, unix_seconds_now()))
     })
     .await?;
     Ok((
@@ -311,7 +324,7 @@ async fn export(
 async fn suggest_save(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SessionName>, JsonRejection>,
+    payload: Result<Json<Stretch>, JsonRejection>,
 ) -> Reply<Room> {
     auth.require(CoreScope::Write)?;
     let (actor, class) = participant(&auth)?;
@@ -319,14 +332,16 @@ async fn suggest_save(
         return Err(forbidden("only an agent suggests a save; a person saves or exports").into());
     }
     let request = json(payload)?;
-    let room = blocking(move || {
-        bind(server.vault(), &request.session_ref, actor)?
+    let room = parse_entity_id_param(&request.room, "room")?;
+    let view = blocking(move || {
+        let session = bind(server.vault(), room, &request.session_ref, actor)?;
+        session
             .suggest_save_by(actor)
             .map_err(|error| engine_error(error, &request.session_ref))?;
-        record(server.vault(), &request.session_ref)
+        self::view(&session, &request.session_ref, actor)
     })
     .await?;
-    Ok(Json(room))
+    Ok(Json(view))
 }
 
 /// The person or agent the slip names. An owner-grade credential names
@@ -355,29 +370,30 @@ fn person(auth: &CoreAuth) -> Result<EntityId, ApiError> {
     }
 }
 
-/// The stretch, when `actor` is in its room now. A stretch with no room, one
-/// in a room the actor is not in, and no stretch at all are the same 404.
+/// The stretch `session_ref` in `room`, when `actor` is in that room now. A
+/// room the actor is not in and no stretch at all are the same 404.
 fn bind<'vault>(
     vault: &'vault Vault,
+    room: EntityId,
     session_ref: &str,
     actor: EntityId,
 ) -> Result<OffRecordSession<'vault>, ApiError> {
-    let session = vault
+    vault
         .off_record_session_vault()
-        .bind(session_ref)
-        .map_err(|error| engine_error(error, session_ref))?;
-    session
-        .require_in_room(actor)
-        .map_err(|error| engine_error(error, session_ref))?;
-    Ok(session)
+        .bind_in_room(session_ref, room, actor)
+        .map_err(|error| engine_error(error, session_ref))
 }
 
-fn record(vault: &Vault, session_ref: &str) -> Result<Room, ApiError> {
-    vault
-        .off_record_session(session_ref)
-        .map_err(|error| engine_error(error, session_ref))?
-        .map(Room::from)
-        .ok_or_else(|| ApiError::not_found("off-record stretch", Some(session_ref)))
+/// The stretch as `actor` may see it.
+fn view(
+    session: &OffRecordSession<'_>,
+    session_ref: &str,
+    actor: EntityId,
+) -> Result<Room, ApiError> {
+    session
+        .record_for(actor)
+        .map(|record| Room::new(record, session_ref))
+        .map_err(|error| engine_error(error, session_ref))
 }
 
 async fn blocking<T: Send + 'static>(

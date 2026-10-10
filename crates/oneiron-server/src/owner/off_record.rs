@@ -158,15 +158,27 @@ pub(crate) fn enter(
         EnterMode::Anonymous => rooms.enter_anonymous(&request.session_ref, request.backend),
     }
     .map_err(|error| session_error(error, &request.session_ref))?;
-    record(vault, session.session_ref())
+    record(vault, owner, session.session_ref())
 }
 
-pub(crate) fn record(vault: &Vault, session_ref: &str) -> OwnerResult<Session> {
-    vault
+pub(crate) fn record(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    session_ref: &str,
+) -> OwnerResult<Session> {
+    let not_found = || OwnerError::NotFound("off-record session", session_ref.to_owned());
+    let record = vault
         .off_record_session(session_ref)
         .map_err(|error| session_error(error, session_ref))?
-        .map(Session::from)
-        .ok_or_else(|| OwnerError::NotFound("off-record session", session_ref.to_owned()))
+        .ok_or_else(not_found)?;
+    // A stretch in a room the owner is not in is the same 404 as none.
+    if let Some(room) = record.room {
+        let room = EntityId::from_bytes(room).map_err(OwnerError::from)?;
+        if !vault.members(room)?.contains(&owner.actor()) {
+            return Err(not_found());
+        }
+    }
+    Ok(Session::from(record))
 }
 
 pub(crate) fn flip(
@@ -175,7 +187,7 @@ pub(crate) fn flip(
     request: &Flip,
 ) -> OwnerResult<Session> {
     vault.recheck_owner(owner)?;
-    let session = bind(vault, &request.session_ref)?;
+    let session = bind(vault, owner, &request.session_ref)?;
     match request.mode {
         OffRecordMode::OnRecord => session.flip_on_record_as(owner),
         OffRecordMode::OffRecord => session.flip_off_record(),
@@ -186,7 +198,7 @@ pub(crate) fn flip(
         }
     }
     .map_err(|error| session_error(error, &request.session_ref))?;
-    record(vault, &request.session_ref)
+    record(vault, owner, &request.session_ref)
 }
 
 /// Witnesses one turn into the session as the owner.
@@ -196,7 +208,7 @@ pub(crate) fn witness(
     request: &Witness,
 ) -> OwnerResult<WitnessReceipt> {
     vault.recheck_owner(owner)?;
-    let session = bind(vault, &request.session_ref)?;
+    let session = bind(vault, owner, &request.session_ref)?;
     vault
         .memory(owner.actor(), EdgeActorClass::Human)
         .witness_into_session_as(owner, &session, &request.turn, request.summary.as_deref())
@@ -229,7 +241,7 @@ pub(crate) fn promote(
 ) -> OwnerResult<Promoted> {
     vault.recheck_owner(owner)?;
     let turn = entity_id("turn", &request.turn)?;
-    let session = bind(vault, &request.session_ref)?;
+    let session = bind(vault, owner, &request.session_ref)?;
     let outcome = session
         .promote_turn_as(owner, &turn)
         .map_err(|error| session_error(error, &request.session_ref))?;
@@ -250,7 +262,7 @@ pub(crate) fn save(
     request: &SessionName,
 ) -> OwnerResult<Saved> {
     vault.recheck_owner(owner)?;
-    let session = bind(vault, &request.session_ref)?;
+    let session = bind(vault, owner, &request.session_ref)?;
     let saved = session
         .save_talk_as(owner)
         .map_err(|error| session_error(error, &request.session_ref))?;
@@ -278,7 +290,7 @@ pub(crate) fn close(
     session_ref: &str,
 ) -> OwnerResult<Closed> {
     vault.recheck_owner(owner)?;
-    let outcome = bind(vault, session_ref)?
+    let outcome = bind(vault, owner, session_ref)?
         .close()
         .map_err(|error| session_error(error, session_ref))?;
     Ok(Closed {
@@ -291,16 +303,32 @@ pub(crate) fn close(
     })
 }
 
-fn bind<'vault>(vault: &'vault Vault, session_ref: &str) -> OwnerResult<OffRecordSession<'vault>> {
-    vault
+/// The session, when the owner may act on it: their own 1:1, or a stretch in
+/// a room they are in. Any other room's stretch is the same 404 as none.
+fn bind<'vault>(
+    vault: &'vault Vault,
+    owner: &AuthenticatedOwner,
+    session_ref: &str,
+) -> OwnerResult<OffRecordSession<'vault>> {
+    let session = vault
         .off_record_session_vault()
         .bind(session_ref)
-        .map_err(|error| session_error(error, session_ref))
+        .map_err(|error| session_error(error, session_ref))?;
+    if session
+        .room()
+        .map_err(|error| session_error(error, session_ref))?
+        .is_some()
+    {
+        session
+            .require_in_room(owner.actor())
+            .map_err(|error| session_error(error, session_ref))?;
+    }
+    Ok(session)
 }
 
 fn session_error(error: oneiron::Error, session_ref: &str) -> OwnerError {
     match error.kind() {
-        ErrorKind::OffRecordSessionNotFound => {
+        ErrorKind::OffRecordSessionNotFound | ErrorKind::OffRecordNotInRoom => {
             OwnerError::NotFound("off-record session", session_ref.to_owned())
         }
         ErrorKind::OffRecordSessionClosing => {

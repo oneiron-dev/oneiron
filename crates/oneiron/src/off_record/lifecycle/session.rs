@@ -17,7 +17,7 @@ use crate::vault::VaultId;
 use super::registry::{
     OffRecordSessionEntry, live_session_entry, session_entry_state, vet_off_record_session_ref,
 };
-use super::room::{is_transcript_entry, post_notice};
+use super::room::post_notice;
 use super::telemetry::SessionRetrievalTelemetry;
 use super::types::{OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode};
 use crate::error::OffRecordError;
@@ -618,10 +618,32 @@ impl OffRecordSession<'_> {
         self.vault.vault_id()
     }
 
+    /// Puts the room on record. A stretch in a room refuses this unbound
+    /// door: flipping saves everyone's later turns into this vault, so only
+    /// [`Self::flip_on_record_as`] may do it there.
     pub fn flip_on_record(&self) -> Result<()> {
+        if session_entry_state(&self.entry)?.record.room.is_some() {
+            return Err(super::room::unbound_in_room(&self.session_ref));
+        }
+        self.flip_on_record_unbound()
+    }
+
+    pub(super) fn flip_on_record_unbound(&self) -> Result<()> {
         self.vault
             .set_off_record_session_mode(&self.session_ref, OffRecordMode::OnRecord)?;
         Ok(())
+    }
+
+    /// Notes a turn witnessed while the room was on record: it landed in
+    /// base, where a copy of the talk reads it.
+    pub(crate) fn note_on_record_turn(&self, turn: EntityId) {
+        if let Ok(mut state) = session_entry_state(&self.entry)
+            && !state.record.closing
+            && !state.gone
+            && !state.on_record_turns.contains(&turn)
+        {
+            state.on_record_turns.push(turn);
+        }
     }
 
     /// K10 flip-back: returns the session to `OffRecord`, rearming the overlay
@@ -724,12 +746,31 @@ impl OffRecordSession<'_> {
             if let Some(receipt) = self.vault.off_record_promote_receipt(turn)? {
                 return Ok(receipt.outcome);
             }
+            // A stretch in a room is saved only by someone with a proof, who
+            // is in the room and could see the turn.
+            let room = state.record.room.map(EntityId::from_bytes).transpose()?;
+            if room.is_some() && owner.is_none() {
+                return Err(super::room::unbound_in_room(&self.session_ref));
+            }
             // The snapshot is taken under the state lock, so the journal this
             // plan is cut from is the journal the commit below applies against.
-            let plan = self.entry.overlay.snapshot()?.plan_promotion(*turn)?;
+            let snapshot = self.entry.overlay.snapshot()?;
+            let plan = snapshot.plan_promotion(*turn)?;
+            let times = super::room::turn_times(&snapshot, *turn);
+            drop(snapshot);
             let mut outcomes = self.promote_plans(&mut state, vec![plan], |wtxn| {
                 if let Some(owner) = owner {
                     owner.revalidate_in_txn(self.vault, wtxn)?;
+                    if let Some(room) = room {
+                        super::room::require_sight_in_txn(
+                            self.vault,
+                            wtxn,
+                            &self.session_ref,
+                            room,
+                            owner.actor(),
+                            &times,
+                        )?;
+                    }
                 }
                 Ok(())
             })?;
@@ -803,22 +844,10 @@ impl OffRecordSession<'_> {
                 })
                 .collect::<Result<Vec<_>>>()
         })?;
-        // Committed. Keep each turn's transcript for later copies of the
-        // talk, publish the RAM state, then drop the promoted rows and journal
-        // entries from the room — in that order, and never before.
-        let snapshot = self.entry.overlay.snapshot();
+        // Committed. Publish the RAM state, then drop the promoted rows and
+        // journal entries from the room — in that order, and never before.
         for plan in &plans {
-            let turn = plan.turn();
-            if let Ok(snapshot) = &snapshot {
-                state.saved_transcript.extend(
-                    snapshot
-                        .journal_entries()
-                        .iter()
-                        .filter(|entry| entry.scope.turn() == turn && is_transcript_entry(entry))
-                        .cloned(),
-                );
-            }
-            state.record.promoted_turns.push(*turn.as_bytes());
+            state.record.promoted_turns.push(*plan.turn().as_bytes());
         }
         self.entry.publish_state(state);
         for plan in &plans {

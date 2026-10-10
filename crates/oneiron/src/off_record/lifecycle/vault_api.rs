@@ -62,6 +62,9 @@ impl Vault {
             return Err(Error::OffRecord(OffRecordError::KillSwitchDisabled));
         }
         vet_off_record_session_ref(session_ref)?;
+        if room.is_none() {
+            vet_roomless_session_ref(session_ref)?;
+        }
         self.store.off_record_sessions.enter(
             session_ref,
             backend,
@@ -93,6 +96,7 @@ impl Vault {
             return Err(Error::OffRecord(OffRecordError::KillSwitchDisabled));
         }
         vet_off_record_session_ref(session_ref)?;
+        vet_roomless_session_ref(session_ref)?;
         self.store.off_record_sessions.enter(
             session_ref,
             backend,
@@ -331,4 +335,16 @@ impl Vault {
             promoted_turns_kept: record.promoted_turns.len(),
         })
     }
+}
+
+/// A stretch entered alone may not take a name a room's stretch is keyed by,
+/// so the two never collide.
+fn vet_roomless_session_ref(session_ref: &str) -> Result<()> {
+    if session_ref.starts_with(super::room::ROOM_KEY_PREFIX) {
+        return Err(Error::InvalidConfig(format!(
+            "off-record session refs starting with {:?} name a room's stretches",
+            super::room::ROOM_KEY_PREFIX
+        )));
+    }
+    Ok(())
 }

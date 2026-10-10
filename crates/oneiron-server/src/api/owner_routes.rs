@@ -580,9 +580,10 @@ async fn off_record_session(
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<off_record::SessionName>, QueryRejection>,
 ) -> OwnerReply<off_record::Session> {
-    owner(&auth, &server)?;
+    let owner = owner(&auth, &server)?;
     let query = query_params(query)?;
-    let session = blocking(move || off_record::record(server.vault(), &query.session_ref)).await?;
+    let session =
+        blocking(move || off_record::record(server.vault(), &owner, &query.session_ref)).await?;
     Ok(Json(session))
 }
 

@@ -8,7 +8,7 @@ use arc_swap::{ArcSwap, ArcSwapOption};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::receipt::SessionLocalReceiptLog;
-use crate::session_overlay::{JournalEntry, SessionOverlay};
+use crate::session_overlay::SessionOverlay;
 use crate::store::Store;
 
 use super::types::{
@@ -56,12 +56,10 @@ pub(super) struct OffRecordSessionEntryState {
     /// taint the K4 guard exists to reject — and would link on-record turns to
     /// a room that is supposed to be invisible from base.
     pub(super) continuation_shell: Option<EntityId>,
-    /// The transcript rows (TURN put, MESSAGE puts, attribution edges) of
-    /// every turn promoted out of the room, copied before promote retires
-    /// them from the overlay, so a later copy of the talk still holds the
-    /// turns someone already saved. In-memory and zeroized like the journal;
-    /// it evaporates with the room.
-    pub(super) saved_transcript: Vec<JournalEntry>,
+    /// Turns witnessed while the room was on record. They landed in base
+    /// directly, so a copy of the talk reads them there, as it reads the
+    /// promoted ones.
+    pub(super) on_record_turns: Vec<EntityId>,
 }
 
 impl Default for OffRecordSessionRegistry {
@@ -140,7 +138,7 @@ impl OffRecordSessionRegistry {
                 overlay_shell: clock.entity_id()?,
                 overlay_shell_staged: false,
                 continuation_shell: None,
-                saved_transcript: Vec::new(),
+                on_record_turns: Vec::new(),
             }),
             published_record: ArcSwapOption::from(Some(Arc::new(record))),
         });

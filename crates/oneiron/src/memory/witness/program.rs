@@ -265,6 +265,7 @@ impl Memory<'_> {
             ));
         }
         let session_route;
+        let mut on_record_session = None;
         let landing = match target {
             WitnessTarget::Base { route } => Landing::Base {
                 route,
@@ -295,6 +296,7 @@ impl Memory<'_> {
                 }
             }
             WitnessTarget::Session { session, summary } => {
+                on_record_session = Some(session);
                 session_route = session.write_route()?;
                 // WitnessReceipt promises materialized turns and messages.
                 // Anonymous sessions cannot fulfill that promise, so refuse
@@ -431,7 +433,14 @@ impl Memory<'_> {
 
         match landed {
             Landed::HardDeleted(id) => Err(hard_deleted_refusal(&id)),
-            Landed::Base => self.base_receipt(&plan),
+            Landed::Base => {
+                // A room on record took this turn into base; a copy of the
+                // talk reads it there.
+                if let Some(session) = on_record_session {
+                    session.note_on_record_turn(plan.turn_id);
+                }
+                self.base_receipt(&plan)
+            }
             Landed::Overlay { segment, aliases } => {
                 // The overlay segment and the base txn commit together: the
                 // segment applies staged rows only now, so a failure anywhere

@@ -34,6 +34,7 @@ pub use lifecycle::{
     ExecutorUtterance, OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode,
     OffRecordNotice, OffRecordNoticeAct, OffRecordSession, OffRecordSessionRecord,
     OffRecordSessionVault, OffRecordTalk, OffRecordTalkMessage, OffRecordTalkTurn, SavedTurns,
+    room_session_key,
 };
 pub use promote::{OffRecordPromoteReceipt, PromoteOutcome};
 
