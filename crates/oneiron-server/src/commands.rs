@@ -32,6 +32,7 @@ use crate::skills_pack::{self, OutputMode};
 /// serves — no endpoint, no authority model, and no response interpretation is
 /// added here.
 mod api;
+mod credential_file;
 mod host_init;
 pub use self::host_init::host_init;
 
@@ -271,7 +272,7 @@ pub fn token_agent(args: TokenAgentArgs) -> anyhow::Result<()> {
     // The file exists before the slip does, so a path that cannot be written
     // fails here rather than after a slip nobody holds is logged.
     let mut out = match &args.out {
-        Some(path) => Some((path, create_owner_only(path)?)),
+        Some(path) => Some((path, credential_file::create(path)?)),
         None => None,
     };
     let minted = mint_agent_credential(&args, |credential| match out.as_mut() {
@@ -323,11 +324,11 @@ pub fn token_agent(args: TokenAgentArgs) -> anyhow::Result<()> {
 
 /// ARCH-0028's tiers as stored authority: the verbs the slip carries and the
 /// agent's ceiling. Propose-only writes with `core:propose`, which only doors
-/// that hold a write for review honour: `/v1/core/propose`, and the MCP door,
-/// where every write is bound to the agent and lands at its `proposed`
-/// ceiling. `core:write`, which every unbound write door requires, is
-/// full-access's alone. Nothing else — `core:auth`, an organization power, a
-/// companion scope — is ever an agent's.
+/// that hold a write for review honour: `/v1/core/propose`, and the MCP verbs
+/// whose write lands at the agent's `proposed` ceiling (`AgentVerb::proposes`).
+/// `core:write`, which every unbound write door and every MCP write that takes
+/// effect at once requires, is full-access's alone. Nothing else —
+/// `core:auth`, an organization power, a companion scope — is ever an agent's.
 fn agent_tier_authority(
     tier: AgentTier,
 ) -> (
@@ -504,21 +505,6 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// A new file only its owner can read. It must not exist yet: a credential
-/// never lands on top of a file someone else may already hold open.
-fn create_owner_only(path: &Path) -> anyhow::Result<std::fs::File> {
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    options
-        .open(path)
-        .map_err(|error| anyhow::anyhow!("create {}: {error}", path.display()))
-}
-
 /// Creates a pairing link on the running server and prints it.
 ///
 /// stdout is exactly one line, the link, so piping it yields nothing else; the
@@ -542,7 +528,12 @@ pub fn token_pair(args: TokenPairArgs) -> anyhow::Result<()> {
         "lifetime_secs": args.lifetime_secs,
         "principal": principal,
     }))?;
-    let (origin, link) = api::create_pairing_link(&args.url, &token, &binding, body)?;
+    let credential = api::CurlCredential {
+        secret: Some(&token),
+        binding: Some(&binding),
+        env: &[args.token_env.clone(), args.binding_key_env.clone()],
+    };
+    let (origin, link) = api::create_pairing_link(&args.url, credential, body)?;
     println!(
         "{}",
         oneiron::authority::format_pairing_link(&origin, &link.code, &args.principal_ref)

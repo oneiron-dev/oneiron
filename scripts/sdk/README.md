@@ -19,6 +19,9 @@ scope, and MCP argument fields. The optional `admission` object adds boundary
 checks before actor resolution (an empty object still checks the DTO shape).
 `validate` is Rust over the typed `input`, shared by embedded and remote
 preflight; `unrestricted_record_scope` requires an unrestricted HTTP credential.
+`proposes` marks a `Write` row whose write lands at the actor's ceiling, so under
+`proposed` it waits for review: the MCP door admits it with `core:propose` (ARCH-0028
+propose-only). Every other write takes effect at once and needs `core:write`.
 `witness` and `claim_upsert` retain their size checks. `recall` and `receipts`
 need the scope restriction as well as query/limit validation. Their shared SDK
 request DTOs preserve the wire defaults. Language-specific DTO conversion stays

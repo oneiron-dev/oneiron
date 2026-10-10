@@ -154,8 +154,9 @@ pub enum TokenCommand {
 /// configured path. No issuer secret is sent over HTTP or printed.
 #[derive(Args, Clone, Debug)]
 pub struct TokenBootstrapArgs {
-    /// Origin clients will contact after `serve` starts.
-    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:3000")]
+    /// Origin clients will contact after `serve` starts. The default is
+    /// where `oneiron serve` listens unless told otherwise.
+    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:9090")]
     pub url: String,
 
     /// Optional shrink-only lifetime for the first owner slip (seconds).
@@ -170,8 +171,9 @@ pub struct TokenBootstrapArgs {
 /// the verbs here; whoever redeems the link chooses only the connection key.
 #[derive(Args, Clone, Debug)]
 pub struct TokenPairArgs {
-    /// The running server's origin. The link carries it.
-    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:3000")]
+    /// The running server's origin. The link carries it. The default is
+    /// where `oneiron serve` listens unless told otherwise.
+    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:9090")]
     pub url: String,
 
     /// Environment variable holding a logged owner-grade capability slip.
@@ -288,8 +290,9 @@ pub struct TokenRevokeArgs {
 /// envelope, and the same body bytes the server sent.
 #[derive(Args, Clone, Debug)]
 pub struct ApiArgs {
-    /// Existing Oneiron server root.
-    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:3000")]
+    /// Existing Oneiron server root. The default is where `oneiron serve`
+    /// listens unless told otherwise.
+    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:9090")]
     pub base_url: String,
 
     /// Environment variable holding a bearer slip. The credential is never
