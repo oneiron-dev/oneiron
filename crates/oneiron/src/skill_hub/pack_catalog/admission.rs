@@ -706,7 +706,7 @@ fn validate_qualification(source: &PackSource, result: &PackQualification) -> Re
 /// a declaration, so no shipped migration map can move an owner's query over
 /// engine state (ARCH-0059 §4). Checked where a source is admitted, not where
 /// a stored one is decoded, so a source stored before the rule still reads.
-fn refuse_engine_namespace(source: &PackSource) -> Result<()> {
+pub(super) fn refuse_engine_namespace(source: &PackSource) -> Result<()> {
     let manifest = &source.manifest;
     if manifest.kind != PackKind::Agent
         && std::iter::once(&manifest.name)

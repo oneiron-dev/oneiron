@@ -2176,6 +2176,15 @@ fn a_pack_named_after_an_engine_family_cannot_move_a_query_over_engine_state() -
         108,
         crate::registry::TypeByteFamily::Productivity,
     )?;
+    // First-party packs are not caught: every built-in seeded at open is
+    // installed, and its source passes the same admission rule.
+    for name in ["oneiron.email", "oneiron.line", "oneiron.linkedin", "oneiron.slack"] {
+        let receipt = vault.installed_pack(name)?.expect("seeded at open");
+        let source = vault
+            .get_pack_source(&EntityId::from_hex(&receipt.source_id)?)?
+            .expect("its source is stored");
+        super::admission::refuse_engine_namespace(&source)?;
+    }
     let saved = save_claim_query(&vault, &owner, BOUNCE)?;
     // Whatever is admitted is installed in order: v1 declares bounce rate,
     // v2 ships the rename onto complaint rate.
