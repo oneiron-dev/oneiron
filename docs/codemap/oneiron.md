@@ -3119,50 +3119,45 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/git_smart_http.rs` | test | L | — | — | Stock-git end-to-end coverage for the vault-as-origin serve wire (ARCH-0068 Phase A, ONE-1908) |
 | `tests/inference_default_bind.rs` | test | s | — | — | Public no-manifest local binding must use one registry snapshot, not a nested reader |
 | `tests/it/analyzer_asset_policy.rs` | test | s | — | — | License + asset governance gate for the analyzer (plan ONE-317 §11) |
-| `tests/it/booking_conversion.rs` | test | s | — | — | BK-07 host-facing conversion contracts across the merged booking packs |
 | `tests/it/booking_lifecycle.rs` | test | XL | — | — | ONE-1813 [BK-02] booking lifecycle oracle |
 | `tests/it/booking_lifecycle/busy_event.rs` | test | s | 1 crate-vis | — | Imported busy-event fixture and its source-permit binding oracle |
-| `tests/it/booking_solver.rs` | test | L | — | — | ONE-1823 [BK-00] availability-solver oracle |
+| `tests/it/booking_solver.rs` | test | m | — | — | ONE-1823 [BK-00] availability-solver oracle |
 | `tests/it/byte_space_v3_conformance.rs` | test | m | — | — | Byte-space v3 canon conformance (ONE-1754, ARCH-0058) |
 | `tests/it/calendar_connector_smoke.rs` | test | XL | — | — | CAL-05 connector smoke oracle (ONE-1787) |
-| `tests/it/calendar_ics_ingest_adapter.rs` | test | XL | — | — | CAL-02 ICS ingest adapter oracle (ONE-1784) |
-| `tests/it/calendar_outcome.rs` | test | L | — | — | CAL-07 outcome oracle (ONE-1789) |
-| `tests/it/calendar_prep.rs` | test | L | — | — | CAL-06 prep-pack oracle (ONE-1788) |
+| `tests/it/calendar_ics_ingest_adapter.rs` | test | L | — | — | CAL-02 ICS ingest adapter oracle (ONE-1784) |
+| `tests/it/calendar_outcome.rs` | test | m | — | — | CAL-07 outcome oracle (ONE-1789) |
+| `tests/it/calendar_prep.rs` | test | m | — | — | CAL-06 prep-pack oracle (ONE-1788) |
 | `tests/it/calendar_surface_oracle.rs` | test | L | — | — | CAL-09 surface oracle (ONE-1791) |
 | `tests/it/calendar_transcript.rs` | test | m | — | — | — |
 | `tests/it/campaign_claim_gate_oracle.rs` | test | s | — | — | ONE-1772 (CA-01) public-surface oracle for the `comm.do_not_contact` gate leg |
 | `tests/it/campaign_compliance_oracle.rs` | test | m | — | — | ONE-1777 (CA-06) shipping oracle for the campaign-compliance dispatch gate |
 | `tests/it/campaign_enrollment_oracle.rs` | test | L | — | — | ONE-1774 (CA-03) cross-module oracle for the enrollment consequence writer |
-| `tests/it/campaign_send_hygiene_oracle.rs` | test | L | — | — | ONE-1776 (CA-05) cross-module oracle for send hygiene |
-| `tests/it/campaign_stage_ladder_oracle.rs` | test | XL | — | — | ONE-1775 (CA-04) cross-module oracle for the stage ladder |
+| `tests/it/campaign_send_hygiene_oracle.rs` | test | m | — | — | ONE-1776 (CA-05) cross-module oracle for send hygiene |
+| `tests/it/campaign_stage_ladder_oracle.rs` | test | L | — | — | ONE-1775 (CA-04) cross-module oracle for the stage ladder |
 | `tests/it/cb_oracle_agents.rs` | test | XL | 39 crate-vis | — | Context Board forward test oracle — epic ONE-1692, opened by ONE-1693 (CB-01) |
-| `tests/it/cb_oracle_frame.rs` | test | m | — | — | Context Board forward test oracle — epic ONE-1692, opened by ONE-1693 (CB-01) |
-| `tests/it/cb_oracle_plugin.rs` | test | XL | 55 crate-vis | — | Context Board forward test oracle — epic ONE-1692, opened by ONE-1693 (CB-01) |
+| `tests/it/cb_oracle_frame.rs` | test | s | — | — | Context Board forward test oracle — epic ONE-1692, opened by ONE-1693 (CB-01) |
+| `tests/it/cb_oracle_plugin.rs` | test | L | 42 crate-vis | — | Context Board forward test oracle — epic ONE-1692, opened by ONE-1693 (CB-01) |
 | `tests/it/cb_oracle_plugin/admission.rs` | test | s | 3 crate-vis | — | Real marketplace admission for the plugin rendering fixtures |
-| `tests/it/cb_oracle_stream.rs` | test | m | — | — | Context Board forward test oracle — epic ONE-1692, opened by ONE-1693 (CB-01) |
-| `tests/it/cb_oracle_tasks.rs` | test | XL | 15 crate-vis | — | Context Board forward test oracle — epic ONE-1692, opened by ONE-1693 (CB-01) |
+| `tests/it/cb_oracle_tasks.rs` | test | XL | 14 crate-vis | — | Context Board forward test oracle — epic ONE-1692, opened by ONE-1693 (CB-01) |
 | `tests/it/channel_identity_email_adapter_smoke.rs` | test | s | — | — | — |
-| `tests/it/channel_identity_slack_adapter_smoke.rs` | test | m | — | — | — |
-| `tests/it/code_consent.rs` | test | L | — | — | Integration coverage for host-bound code-emission consent at the real write door |
+| `tests/it/channel_identity_slack_adapter_smoke.rs` | test | s | — | — | — |
+| `tests/it/code_consent.rs` | test | m | — | — | Integration coverage for host-bound code-emission consent at the real write door |
 | `tests/it/counterparty_opt_out_shipping_paths_oracle.rs` | test | m | — | — | ONE-1868 (CA-07) per-shipping-path oracle for the counterparty opt-out wall |
-| `tests/it/effect_spine_oracle.rs` | test | XL | 102 crate-vis | — | Effect Spine forward test oracle (doc 13, ONE-1713 epic) — authored by the ONE-1714 path opener |
+| `tests/it/effect_spine_oracle.rs` | test | XL | 73 crate-vis | — | Effect Spine forward test oracle (doc 13, ONE-1713 epic) — authored by the ONE-1714 path opener |
 | `tests/it/existing_only_open.rs` | test | s | — | — | ONE-218: `Vault::open_existing`, the fail-closed existing-only open door, exercised strictly through the… |
-| `tests/it/gate_regression.rs` | test | m | — | — | — |
+| `tests/it/gate_regression.rs` | test | s | — | — | — |
 | `tests/it/image_station_injection.rs` | test | s | — | — | — |
-| `tests/it/linkedin_connector_adapter.rs` | test | L | — | — | — |
+| `tests/it/linkedin_connector_adapter.rs` | test | m | — | — | — |
 | `tests/it/main.rs` | test | s | — | — | Consolidated integration-test binary (default-features lane) |
 | `tests/it/merge_split_oracle.rs` | test | L | 41 crate-vis | — | Identity-topology forward test oracle (ARCH-0055, ONE-1742 epic) — authored by the ONE-1743 path opener |
 | `tests/it/microvm_contract.rs` | test | m | — | — | CODE-01 (ONE-1429): backend-agnostic contract suite for the microVM lane |
 | `tests/it/of060_fitness.rs` | test | m | — | — | — |
-| `tests/it/of360_extraction_eval.rs` | test | m | — | — | — |
-| `tests/it/ops_docs.rs` | test | s | — | — | — |
 | `tests/it/outbound_intent_ledger.rs` | test | s | — | — | — |
 | `tests/it/prompt_blocks.rs` | test | s | — | — | — |
-| `tests/it/receipt_answerability.rs` | test | L | — | — | — |
-| `tests/it/receipt_context.rs` | test | m | — | — | ONE-1544 / RCPT-7 (OF-369, B2 RS9): context receipt field-set on emit-adjacent receipts |
-| `tests/it/saved_query_oracle.rs` | test | XL | — | — | ONE-1773 (CA-02) public-surface oracle for SAVED_QUERY |
+| `tests/it/receipt_context.rs` | test | s | — | — | ONE-1544 / RCPT-7 (OF-369, B2 RS9): context receipt field-set on emit-adjacent receipts |
+| `tests/it/saved_query_oracle.rs` | test | L | — | — | ONE-1773 (CA-02) public-surface oracle for SAVED_QUERY |
 | `tests/it/session_overlay_spec.rs` | test | s | — | — | ONE-1728 P4a seg-4 acceptance spec — the session overlay seen from OUTSIDE the crate (ARCH-0052 §7) |
-| `tests/it/skills_epic_oracle.rs` | test | XL | — | — | ARCH-0053 skills-epic forward oracle (authored by the ONE-1735 opener) |
+| `tests/it/skills_epic_oracle.rs` | test | s | — | — | ARCH-0053 skills-epic forward oracle (authored by the ONE-1735 opener) |
 | `tests/it/snapshot_custody_binding.rs` | test | s | — | — | ONE-1534 (OPS-SERVE): the custody contract for the scoped Wasabi snapshot credential, pinned through the… |
 | `tests/it/world_month_recovery.rs` | test | s | — | — | Featureless canonical world-month carry and retained-shell round trip |
 | `tests/it_project_conversion.rs` | test | m | — | — | — |
@@ -3188,8 +3183,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it_sync/sync_window_manager.rs` | test | L | — | — | Integration tests for the production window manager (ONE-1125) |
 | `tests/it_sync/sync_world_residence.rs` | test | m | — | — | World-month residence regressions through public engine doors |
 | `tests/it_sync/task_authority_convergence.rs` | test | m | — | — | TASK authority across two real vaults |
-| `tests/lens_regen.rs` | test | L | — | — | ONE-1431 — lens regen-on-update with the behavior-diff auto-adopt gate |
-| `tests/owner_reason.rs` | test | m | — | — | Public confirm → unsure re-ask → reconfirm → undo contract |
+| `tests/owner_reason.rs` | test | s | — | — | Public confirm → unsure re-ask → reconfirm → undo contract |
 | `tests/policy_row_verbs.rs` | test | s | — | — | Public-door policy-row proof independent of unrelated lib-test compilation |
 | `tests/relay_attestation_compilefail/a_witness_no_universal_mint.rs` | test | s | — | — | (a.2) Out-of-boundary construction of `AttestedRelayDomain` must fail: there is no absent-constructor… |
 | `tests/relay_attestation_compilefail/a_witness_struct_literal_private_field.rs` | test | s | — | — | (a.1) Out-of-boundary construction of `AttestedRelayDomain` must fail: BOTH fields are private — the trust… |
@@ -3200,7 +3194,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/secret_custody_compilefail/b_record_struct_literal_private_value_bytes.rs` | test | s | — | — | (b) `SecretCustodyRecord` cannot be struct-literalled out of crate: both `value_bytes` and `manifest_ref`… |
 | `tests/temporal_query_window.rs` | test | s | — | — | Query-derived occurred windows must not lose their eligible hit to learned-time candidates |
 | `tests/type_boundaries_compilefail.rs` | test | s | — | — | Compile-fail proofs of three type boundaries from external-crate positions |
-| `tests/vault_read_parity.rs` | test | L | — | — | ONE-1433 adapter parity suite: one read contract whose behavior does not change with deployment topology |
+| `tests/vault_read_parity.rs` | test | m | — | — | ONE-1433 adapter parity suite: one read contract whose behavior does not change with deployment topology |
 | `tests/voice_ref_bank.rs` | test | s | — | — | — |
 | `tests/voice_segment_sync.rs` | test | s | — | — | The recorder's engine contract (VOX-08) |
 | `tests/voice_voxcpm2.rs` | test | m | — | — | Host-visible banked-ref → TTS seam → PCM harness (CPU fixture, not GPU proof) |
