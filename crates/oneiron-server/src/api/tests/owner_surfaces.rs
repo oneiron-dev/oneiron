@@ -172,24 +172,38 @@ async fn an_archived_attempt_is_in_the_review_and_restores_onto_the_queue() {
     use oneiron::attempt_queue::{
         AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt,
     };
-    let (_dir, server) = auth_test_server();
-    let owner = owner_recipe(&server);
+    // A queue record completes on the vault's clock; retention counts from it.
+    let finished = 1_800_000_000;
+    let clock = oneiron::store::ports::ManualClock::new(finished);
+    let dir = tempfile::tempdir().unwrap();
+    let mut config = oneiron::VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), config).unwrap());
+    assert_default_policy_manifest_fixture(vault.as_ref());
+    let server = Arc::new(
+        SyncServer::new(
+            vault,
+            SyncServerConfig {
+                auth_secret: Some("secret".to_owned()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
     let queue = AttemptQueue::new(server.vault());
-    // Finished long before the 90-day retention window.
-    let long_ago = 1_000;
     queue
         .enqueue(EnqueueAttempt {
             kind: "owner-surface.finished".into(),
             payload: vec![1, 2, 3],
             dedupe_key: None,
             run_id: None,
-            now: long_ago,
+            now: finished,
         })
         .unwrap();
     let ClaimOutcome::Claimed(record) = queue
         .claim(ClaimAttempt {
             lease_owner: "owner-surface".into(),
-            now: long_ago,
+            now: finished,
         })
         .unwrap()
     else {
@@ -200,9 +214,12 @@ async fn an_archived_attempt_is_in_the_review_and_restores_onto_the_queue() {
             id: record.id,
             lease_owner: "owner-surface".into(),
             attempt_count: record.attempt_count,
-            now: long_ago,
+            now: finished,
         })
         .unwrap();
+    // Past the 90-day retention window.
+    clock.set(finished + 91 * 86_400);
+    let owner = owner_recipe(&server);
     let attempt = EntityId::from_bytes(*record.id.as_bytes())
         .unwrap()
         .to_hex();

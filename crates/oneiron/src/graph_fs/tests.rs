@@ -465,8 +465,20 @@ fn a_scan_limit_cursor_never_names_the_row_the_walk_passed_over() -> Result<()> 
         .iter()
         .position(|row| row.id == sealed)
         .expect("the sealed row is on the timeline");
-    let sealed_at = timeline[at].timestamp.to_string();
+    let sealed_at = timeline[at].timestamp;
     let cap = at + 1;
+    // Neither as text (`<time>:<id hex>`, the plain form) nor as raw bytes.
+    let names_sealed = |token: &str| {
+        let bytes: Vec<u8> = (0..token.len() / 2)
+            .filter_map(|at| u8::from_str_radix(token.get(2 * at..2 * at + 2)?, 16).ok())
+            .collect();
+        token.contains(&sealed.to_hex())
+            || token.contains(&format!("{sealed_at}:"))
+            || bytes.windows(16).any(|window| window == sealed.as_bytes())
+            || bytes
+                .windows(8)
+                .any(|window| window == sealed_at.to_be_bytes())
+    };
 
     let reader =
         vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("actor key"));
@@ -479,8 +491,7 @@ fn a_scan_limit_cursor_never_names_the_row_the_walk_passed_over() -> Result<()> 
             fs.ls_claims_by_time_pushdown_with_scan_cap(cursor.as_deref(), cap)?;
         emitted.push_str(std::str::from_utf8(&bytes).expect("utf8 ls output"));
         let Some(next) = next else { break };
-        assert!(!next.contains(&sealed.to_hex()), "{next}");
-        assert!(!next.contains(&sealed_at), "{next}");
+        assert!(!names_sealed(&next), "{next}");
         cursor = Some(next);
     }
     assert!(!emitted.contains(&sealed.to_hex()), "{emitted}");

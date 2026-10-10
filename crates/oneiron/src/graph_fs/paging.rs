@@ -155,7 +155,7 @@ impl CursorScope {
     }
 
     fn open(&self, token: &str) -> Option<Vec<u8>> {
-        if token.len() % 2 != 0 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        if !token.len().is_multiple_of(2) || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return None;
         }
         let bytes = (0..token.len())
