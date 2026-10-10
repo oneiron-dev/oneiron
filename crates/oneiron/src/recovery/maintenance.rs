@@ -41,9 +41,10 @@ impl Vault {
     /// exceeds `budget.max_bytes` is refused with
     /// [`ArtifactError::OverlayLimit`](crate::error::ArtifactError::OverlayLimit)
     /// rather than spilled. The budget bounds what the act copies, not only
-    /// what it keeps: the capture stops copying, and the encoding writing, at
-    /// `budget.max_bytes`. `dir` holds only the window's manifest and any
-    /// manifest the ladder quarantined beside it.
+    /// what it keeps: the capture stops copying at `budget.max_bytes` (past
+    /// it by one document at most, read whole as opening it reads it), and
+    /// the encoding stops writing there. `dir` holds only the window's
+    /// manifest and any manifest the ladder quarantined beside it.
     pub fn recover_window_from_canonical_snapshot(
         &self,
         owner: &AuthenticatedOwner,

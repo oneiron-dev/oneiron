@@ -67,12 +67,19 @@ pub struct CanonicalDocument {
     pub authorship: Vec<crate::note::NoteAuthorship>,
 }
 impl CanonicalDocument {
-    /// The bytes this document's text, title and ids hold.
+    /// The bytes this document holds: its ids, text, title and authorship.
     fn held(&self) -> usize {
+        let authorship = self.authorship.iter().map(|record| {
+            2 * 16
+                + record.command_hash.len()
+                + record.actor_class.len()
+                + record.grant.as_ref().map_or(0, String::len)
+        });
         self.entity_id.len()
             + self.head.len()
             + self.text.len()
             + self.title.as_ref().map_or(0, String::len)
+            + authorship.sum::<usize>()
     }
     pub(super) fn key(&self) -> String {
         // All callers validate the UUID bytes before they reach storage.
@@ -163,8 +170,8 @@ pub(super) fn capture(
             head: *live_head.as_bytes(),
         });
         let note_prefix = [note.to_hex().as_bytes(), b":".as_slice()].concat();
-        for row in NOTE_PROPOSAL_DOC.scan_from(&vault.store, txn, &note_prefix)? {
-            let (DocKey(_, head), bytes) = row;
+        for row in NOTE_PROPOSAL_DOC.iter_from(&vault.store, txn, &note_prefix)? {
+            let (DocKey(_, head), bytes) = row?;
             let head = *head.as_bytes();
             if head == *live_head.as_bytes() {
                 continue;
@@ -182,7 +189,8 @@ pub(super) fn capture(
             snapshot.doc_snapshots.push(row);
         }
     }
-    for (receipt_id, receipt) in NOTE_RECEIPT.scan(&vault.store, txn)? {
+    for row in NOTE_RECEIPT.iter_from(&vault.store, txn, &[])? {
+        let (receipt_id, receipt) = row?;
         if ids.contains(receipt.note.as_bytes()) {
             if receipt_id != receipt.id {
                 return Err(invalid("stored receipt key"));
@@ -202,7 +210,7 @@ pub(super) fn capture(
         .sort_by_key(|row| (row.entity_id, row.head));
     snapshot.document_heads.sort_by_key(|row| row.entity_id);
     snapshot.head_move_receipts.sort_by_key(|row| row.id);
-    workflow::capture(vault, txn, snapshot, &ids)?;
+    workflow::capture(vault, txn, snapshot, &ids, budget)?;
     Ok(())
 }
 pub(super) fn from_doc(

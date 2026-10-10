@@ -314,8 +314,8 @@ fn owner_window_recovery_stops_copying_a_window_at_its_budget() -> Result<()> {
         budget.max_bytes
     );
 
-    let loaded = LoadedWindow::new("local", key.clone(), &vault, &Arc::new(Materializer::new()));
-    let snapshot = capture_canonical_window(&vault, window, &loaded.doc)?;
+    let doc = crate::sync::window::load_window_from_state(&vault, "", &key)?;
+    let snapshot = capture_canonical_window(&vault, window, &doc)?;
     let whole = snapshot.encode()?.len();
     assert!(whole > 8 * budget.max_bytes, "the whole window encodes");
     held_bytes::take_peak();

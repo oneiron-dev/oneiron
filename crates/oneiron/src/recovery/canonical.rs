@@ -212,29 +212,29 @@ impl CanonicalSnapshot {
 
 /// Captures a quiescent window plus every NOTE document and head receipt in its scope.
 /// The caller must stop window writers while taking this off-hot-path snapshot.
-/// A window whose copies outgrow the largest artifact,
-/// [`CANONICAL_SNAPSHOT_MAX_BYTES`], is refused with
-/// [`ArtifactError::OverlayLimit`] before the rest of it is copied.
 pub fn capture_canonical_window(
     vault: &Vault,
     window: &str,
     doc: &LoroDoc,
 ) -> Result<CanonicalSnapshot> {
-    capture_canonical_window_within(vault, window, doc, CANONICAL_SNAPSHOT_MAX_BYTES)
+    capture_canonical_window_within(vault, window, doc, usize::MAX)
 }
 
-/// [`capture_canonical_window`], refused with [`ArtifactError::OverlayLimit`]
-/// before its copies of the window's rows, documents and receipts pass
-/// `limit` bytes: a window far over the budget is refused once the budget's
-/// worth of it is copied, not after all of it is.
+/// [`capture_canonical_window`] holding at most `limit` bytes of copies: the
+/// window's rows and their keys, documents, receipts and NOTE workflows. A
+/// copy that would pass `limit` is refused with
+/// [`ArtifactError::OverlayLimit`] before it is made, so the copies of a
+/// window far over the limit cost the limit, not the window. One document
+/// is read whole before it is counted, as opening it reads it.
 pub(crate) fn capture_canonical_window_within(
     vault: &Vault,
     window: &str,
     doc: &LoroDoc,
     limit: usize,
 ) -> Result<CanonicalSnapshot> {
-    let budget = &mut ByteBudget::new(limit.min(CANONICAL_SNAPSHOT_MAX_BYTES));
-    let LoroValue::Map(containers) = doc.get_deep_value() else {
+    let budget = &mut ByteBudget::new(limit);
+    // The shallow value names the roots without copying what they hold.
+    let LoroValue::Map(containers) = doc.get_value() else {
         return Err(invalid("window root"));
     };
     if containers.keys().any(|name| {
@@ -314,7 +314,8 @@ pub(crate) fn capture_canonical_window_within(
     let txn = vault.store.env.read_txn()?;
     // Pending delete intent is Layer 1 even when a crash preceded CRDT publication.
     let window_prefix = [window.as_bytes(), b":".as_slice()].concat();
-    for (key, value) in PENDING_TOMBSTONE.scan_from(&vault.store, &txn, &window_prefix)? {
+    for row in PENDING_TOMBSTONE.iter_from(&vault.store, &txn, &window_prefix)? {
+        let (key, value) = row?;
         let entity = *key.id.as_bytes();
         if let Some(previous) = snapshot.tombstones.iter_mut().find(|row| row.id == entity) {
             if crate::deletion::decode_tombstone_value(&previous.value).is_hard()
@@ -369,7 +370,9 @@ pub(crate) fn capture_canonical_window_within(
             continue;
         }
         let entity = id(row.id)?;
-        let stored = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &entity)?;
+        // Borrowed: only the stored row's header decides, so the body of a
+        // projection under repair is never copied to answer it.
+        let stored = vault.store.entities.get(&txn, entity.as_bytes())?;
         if crate::deletion::row_deletion_marked(&vault.store, &txn, &entity, stored.as_deref())? {
             return Err(invalid("deleted row without its tombstone"));
         }
@@ -380,9 +383,11 @@ pub(crate) fn capture_canonical_window_within(
     // of the CRDT map key must not hide a committed event from a fresh vault.
     let mut protected_receipts = std::collections::BTreeSet::new();
     let mut restored_receipts = Vec::new();
-    for (receipt_id, local_blob) in
-        crate::receipt::canonical_records_in_window(&vault.store, &txn, window)?
-    {
+    let receipts =
+        crate::receipt::canonical_records_in_window(&vault.store, &txn, window, |raw| {
+            budget.take(16 + raw.len())
+        })?;
+    for (receipt_id, local_blob) in receipts {
         let bytes = *receipt_id.as_bytes();
         if let Some(candidate) = snapshot.entity_blobs.iter().find(|row| row.id == bytes) {
             if candidate.blob != local_blob {
@@ -391,7 +396,6 @@ pub(crate) fn capture_canonical_window_within(
                 ));
             }
         } else {
-            budget.take(bytes.len() + local_blob.len())?;
             restored_receipts.push(CanonicalEntity {
                 id: bytes,
                 blob: local_blob,
@@ -631,11 +635,15 @@ pub fn rebuild_vault_window_from_canonical(snapshot: &CanonicalSnapshot) -> Resu
     Ok(doc)
 }
 
+#[cfg(feature = "sync")]
 pub(super) fn binary_rows(doc: &LoroDoc, name: &str) -> Result<BTreeMap<String, Vec<u8>>> {
     binary_rows_within(doc, name, &mut ByteBudget::new(usize::MAX))
 }
 
-/// [`binary_rows`], copying no row past `budget`.
+/// The shortest key a Layer-1 window map holds: one hex entity id.
+const ROW_KEY_BYTES: usize = 32;
+
+/// The binary rows of the window map `name`, copying no row past `budget`.
 fn binary_rows_within(
     doc: &LoroDoc,
     name: &str,
@@ -654,12 +662,15 @@ fn binary_rows_within(
             .ok_or(invalid("nonmap Layer-1 carrier"))?,
         Some(_) => return Err(invalid("nonmap Layer-1 carrier")),
     };
+    // The map walk lists every key before its first row, so the keys are
+    // admitted first, each at the shortest key a Layer-1 map holds.
+    budget.take(map.len().saturating_mul(ROW_KEY_BYTES))?;
     let mut failed = false;
     let mut refused = None;
     map.for_each(|key, value| match value {
         _ if refused.is_some() => {}
         ValueOrContainer::Value(LoroValue::Binary(value)) => {
-            match budget.take(key.len() + value.len()) {
+            match budget.take(key.len().saturating_sub(ROW_KEY_BYTES) + value.len()) {
                 Ok(()) => {
                     rows.insert(key.to_owned(), value.to_vec());
                 }
@@ -767,6 +778,17 @@ impl std::io::Write for BoundedWriter {
     }
 }
 
+fn check_size(size: usize) -> Result<()> {
+    if size > CANONICAL_SNAPSHOT_MAX_BYTES {
+        return Err(ArtifactError::OverlayLimit {
+            required: size,
+            limit: CANONICAL_SNAPSHOT_MAX_BYTES,
+        }
+        .into());
+    }
+    Ok(())
+}
+
 /// Test hook: the most bytes any one capture or encoding held.
 #[cfg(test)]
 pub(super) mod held_bytes {
@@ -783,15 +805,4 @@ pub(super) mod held_bytes {
     pub(in crate::recovery) fn take_peak() -> usize {
         PEAK.with(|peak| peak.replace(0))
     }
-}
-
-fn check_size(size: usize) -> Result<()> {
-    if size > CANONICAL_SNAPSHOT_MAX_BYTES {
-        return Err(ArtifactError::OverlayLimit {
-            required: size,
-            limit: CANONICAL_SNAPSHOT_MAX_BYTES,
-        }
-        .into());
-    }
-    Ok(())
 }
