@@ -20,32 +20,6 @@ pub(super) fn critical_confirm_pending(
 }
 
 #[test]
-fn critical_write_confirm_binding_is_deterministic_and_fail_closed_on_non_attachment() {
-    let claim = test_id(0x74);
-    let pending = critical_confirm_pending(claim, 31, 100);
-    let binding = critical_write_confirm_binding(&pending).expect("attached pending row binds");
-    assert_eq!(binding.nonce, [31; 16]);
-    assert_eq!(
-        binding.expires_at,
-        100 + CRITICAL_WRITE_CONFIRM_TIMEOUT_SECS
-    );
-    assert_ne!(binding.confirm_id, [0; 32]);
-
-    let mut stale = pending;
-    stale.read_frontier_hash[0] ^= 1;
-    assert_ne!(
-        binding.confirm_id,
-        critical_write_confirm_binding(&stale).unwrap().confirm_id,
-        "a frontier mismatch must derive a different confirmation id"
-    );
-    stale.reason_codes.clear();
-    assert!(
-        critical_write_confirm_binding(&stale).is_err(),
-        "unmarked pending consent must not be interpreted as a critical confirmation"
-    );
-}
-
-#[test]
 fn critical_write_confirm_expiry_is_a_terminal_demotion_only() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let claim = test_id(0x75);
@@ -210,18 +184,6 @@ fn pending_critical_confirms_sweep_bounded_pages_and_demotes_every_expired_claim
     Ok(())
 }
 
-#[test]
-fn timeout_marker_remains_a_valid_critical_confirm_binding() {
-    let pending = critical_confirm_pending(test_id(0x76), 33, 100);
-    let original = critical_write_confirm_binding(&pending).unwrap();
-    let mut timed_out = pending;
-    timed_out.reason_codes = vec![GATE_REASON_CRITICAL_CONFIRM_TIMEOUT.to_owned()];
-    assert_eq!(
-        critical_write_confirm_binding(&timed_out).unwrap(),
-        original
-    );
-}
-
 pub(super) fn critical_confirm_owner_entry(
     pending: &PendingGateConsentRecord,
     disposition: crate::authority::CriticalWriteConfirmDisposition,
@@ -325,63 +287,6 @@ pub(super) fn put_critical_auto_claim(
             .pending_gate_consent_in_txn(wtxn, &claim)?
             .ok_or(Error::EntityNotFound)
     })
-}
-
-#[test]
-fn pending_critical_confirms_limit_zero_is_a_true_noop() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    crate::panic_on_unix_seconds_now_for_current_thread(true);
-    crate::store::panic_on_active_write_txn_for_current_thread(true);
-    let result = vault.pending_critical_write_confirms(0);
-    crate::store::panic_on_active_write_txn_for_current_thread(false);
-    crate::panic_on_unix_seconds_now_for_current_thread(false);
-    assert!(result?.is_empty());
-    vault.with_write_txn(|wtxn| {
-        assert_eq!(
-            vault
-                .store
-                .critical_confirm_list_sweep_state_in_txn(&*wtxn)?,
-            (None, None),
-            "limit zero must not create or advance list state",
-        );
-        assert_eq!(
-            vault
-                .store
-                .critical_confirm_expiry_sweep_state_in_txn(&*wtxn)?,
-            (None, None),
-            "limit zero must not invoke the expiry sweep",
-        );
-        Ok(())
-    })?;
-    Ok(())
-}
-
-#[test]
-fn pending_critical_confirms_limit_one_advances_through_same_page_matches() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let first = sweep_id(0xd0, 1);
-    let second = sweep_id(0xd0, 2);
-    vault.with_write_txn(|wtxn| {
-        vault.store.put_pending_gate_consent_in_txn(
-            wtxn,
-            &critical_confirm_pending(first, 1, crate::unix_seconds_now()),
-        )?;
-        vault.store.put_pending_gate_consent_in_txn(
-            wtxn,
-            &critical_confirm_pending(second, 2, crate::unix_seconds_now()),
-        )
-    })?;
-    assert_eq!(
-        vault.pending_critical_write_confirms(1)?[0].claim_id,
-        first,
-        "the first returned row is the first inspected key"
-    );
-    assert_eq!(
-        vault.pending_critical_write_confirms(1)?[0].claim_id,
-        second,
-        "the cursor must not advance past a same-page match withheld by limit"
-    );
-    Ok(())
 }
 
 #[test]

@@ -13,9 +13,11 @@ use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 use oneiron_docedit::ArchiveLimits;
 
 use super::frontier_hash::hash_policy_frontier_v0;
+#[cfg(feature = "sync")]
+use super::manifest_types::ResidenceOperationBudgetLimits;
 use super::manifest_types::{
     AttributionLimits, CommOptOutPosture, PolicyManifestDiagnostics, PolicyManifestResolution,
-    ProjectCollaborationPolicy, ResidenceOperationBudgetLimits, SheetAnswerPrecedence,
+    ProjectCollaborationPolicy, SheetAnswerPrecedence,
 };
 use crate::gate::class_policy::{ActPosture, WaitResolution};
 
@@ -95,6 +97,7 @@ impl PolicyManifestResolution {
     /// The effective residence-operation caps, absent when loaded policy is
     /// malformed or otherwise forces fail-closed. Holder narrowing has already
     /// been capped by the vault-level values during the trusted manifest fold.
+    #[cfg(feature = "sync")]
     #[must_use]
     pub(crate) fn residence_operation_budgets(&self) -> Option<ResidenceOperationBudgetLimits> {
         if self.diagnostics.loaded_manifest_forces_fail_closed() {
@@ -493,6 +496,7 @@ impl PolicyManifestResolution {
     /// table, which is exactly the single-pool meter.
     /// Resolved default mode; missing/bootstrapping manifests preserve the
     /// shipped non-home `opened` posture.
+    #[cfg(feature = "sync")]
     pub(crate) fn sync_default_all_worlds(&self) -> Result<bool> {
         if self.diagnostics.loaded_manifest_forces_fail_closed() {
             return Err(crate::Error::InvalidConfig(
@@ -504,6 +508,7 @@ impl PolicyManifestResolution {
 
     /// Trusted manifest cap for local world subscriptions. An absent manifest
     /// preserves bootstrap selection; a malformed loaded one grants nothing.
+    #[cfg(feature = "sync")]
     pub(crate) fn sync_world_ceiling(
         &self,
     ) -> Result<Option<&std::collections::BTreeSet<crate::EntityId>>> {
