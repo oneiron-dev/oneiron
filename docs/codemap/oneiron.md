@@ -722,9 +722,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/dispatcher/memory_verbs.rs` | src | m | 1 const · 6 crate-vis | — | The four durable memory writes, search, and the off-record policy that refuses them |
 | `src/code_run/dispatcher/mod.rs` | src | m | 1 struct · 8 fn · 1 type · 1 re-export · 10 crate-vis | HostSelfDispatcher | — |
 | `src/code_run/dispatcher/wake_policy.rs` | src | s | 1 crate-vis | — | Owner-authorized Dreamer wake-policy action; off-record never writes base |
-| `src/code_run/mod.rs` | src | s | 4 mod · 6 re-export · 5 crate-vis | — | Host-side skeleton for first-party `self.*` code-mode calls |
+| `src/code_run/mod.rs` | src | s | 4 mod · 7 re-export · 5 crate-vis | — | Host-side skeleton for first-party `self.*` code-mode calls |
 | `src/code_run/payload.rs` | src | m | 8 crate-vis | — | — |
 | `src/code_run/replay.rs` | src | m | 10 struct · 16 fn · 7 const · 1 crate-vis | CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism, CodeRunHistoryTurn, CodeRunOutputPreview, CodeRunRawOutput, CodeRunReplayCursor, CodeRunReplayGeneration +2 | — |
+| `src/code_run/run_verbs.rs` | src | s | 5 struct · 1 const | MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput, MemoryTimeRange | The inputs of the verb-table rows a code run answers itself (`context: "run"` in… |
 | `src/code_run/storage/compaction.rs` | src | s | 10 crate-vis | — | Node-local executor coverage: typed run/step binding to a committed epoch SUMMARY |
 | `src/code_run/storage/compaction/tests.rs` | test | s | — | — | — |
 | `src/code_run/storage/mod.rs` | src | s | 1 re-export · 5 crate-vis | — | Canonical code-run persistence rows and the executor's storage routing |
@@ -733,7 +734,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/storage/speech_identity.rs` | src | s | 7 crate-vis | — | Deterministic conversation, turn and message ids derived from a run's identity |
 | `src/code_run/support.rs` | src | s | 29 crate-vis | — | — |
 | `src/code_run/tests.rs` | test | XL | 1 crate-vis | — | — |
-| `src/code_run/types.rs` | src | m | 23 struct · 5 enum · 2 trait · 17 fn | AgentVerbDoor, AgentVerbRefusal, SelfAgentDefinitionPutCall, SelfAgentDefinitionPutResult, SelfAgentSpawnCall, SelfAgentSpawnResult, SelfAgentVerbCall, SelfAskCall +22 | — |
+| `src/code_run/types.rs` | src | m | 23 struct · 5 enum · 2 trait · 17 fn · 1 const | AgentVerbDoor, AgentVerbRefusal, SelfAgentDefinitionPutCall, SelfAgentDefinitionPutResult, SelfAgentSpawnCall, SelfAgentSpawnResult, SelfAgentVerbCall, SelfAskCall +22 | — |
 | `src/code_run/vault_read/context_pack.rs` | src | s | 12 struct · 3 enum · 1 re-export | CoreContextPackAccounting, CoreContextPackAccountingReason, CoreContextPackEdgeProvenance, CoreContextPackEdgeRecord, CoreContextPackEmpty, CoreContextPackEmptyReason, CoreContextPackEntityRecord, CoreContextPackItemTokenStats +7 | Context-pack request controls, record shapes, stats and projection types |
 | `src/code_run/vault_read/contract.rs` | src | s | 2 enum · 1 trait · 4 fn · 1 re-export · 1 crate-vis | VaultReadClient, VaultReadRequest, VaultReadResponse | The vault-read request / response carriers and the sealed client, generated from the contract table in… |
 | `src/code_run/vault_read/dispatch.rs` | src | s | 1 crate-vis | — | The one validated dispatch path: runtime stop, validation, then the sealed backend call |
@@ -1329,6 +1330,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/engine_executor/store.rs` | src | s | 16 crate-vis | — | Output envelope and path helpers for the routed raw-output store |
 | `src/engine_executor/tests.rs` | test | XL | — | — | — |
 | `src/engine_executor/tests/agent_verb_regressions.rs` | test | m | — | — | — |
+| `src/engine_executor/tests/memory_rows.rs` | test | m | — | — | The memory rows a run answers itself (`search`, `put_claim`, `supersede_claim`, `put_edge`) are verb-table… |
 | `src/engine_executor/tests/output_decay.rs` | test | m | — | — | Model-facing output decay and successful native compaction on the real REPL path |
 | `src/engine_executor/tests/speech_identity_regressions.rs` | test | s | — | — | — |
 | `src/engine_executor/types.rs` | src | s | 8 struct · 2 enum · 2 trait · 6 fn · 1 type · 5 const · 1 crate-vis | EngineExecutorConfig, EngineExecutorError, EngineExecutorLimits, EngineExecutorOutcome, EngineExecutorStatus, ExecutorLegibility, JsCodeModeHost, JsCodeModeOutput +4 | Public API surface of the engine-native executor: limits, config, errors, and code-mode step/outcome types |
@@ -2944,8 +2946,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/reconciliation.rs` | src | s | 1 fn · 1 crate-vis | — | Repository conflicts mint one linked reconciliation TASK and realizing attempt |
 | `src/task_verb/room_thread.rs` | src | s | 1 crate-vis | — | Existing TASK intent and follow-up facts projected onto a room thread |
 | `src/task_verb/route_receipts.rs` | src | s | 5 struct · 5 enum · 3 fn · 2 const · 1 crate-vis | TaskCancelMode, TaskCancelReceipt, TaskCancelTarget, TaskCreateReceipt, TaskDescription, TaskResultInput, TaskRouteLane, TaskRouteOutcome +2 | — |
+| `src/task_verb/run_verb_catalog.rs` | src | s | 1 enum · 4 fn · 1 const | RunVerb | — |
 | `src/task_verb/scheduling.rs` | src | s | 4 crate-vis | — | Live TASK dependency and symbol readiness at every attempt-claim door |
-| `src/task_verb/sdk.rs` | src | m | 18 struct · 1 enum · 2 fn | BoardExpandRequest, BoardRefreshRequest, BoardSubscriptionRequest, DescribeRequest, EmptyRequest, RecallRequest, ReceiptsRequest, RoomClaimRequest +11 | Shared typed agent-verb inputs and generated transport dispatch |
+| `src/task_verb/sdk.rs` | src | m | 18 struct · 1 enum · 3 fn | BoardExpandRequest, BoardRefreshRequest, BoardSubscriptionRequest, DescribeRequest, EmptyRequest, RecallRequest, ReceiptsRequest, RoomClaimRequest +11 | Shared typed agent-verb inputs and generated transport dispatch |
 | `src/task_verb/sdk_generated.rs` | src | L | 37 fn | — | — |
 | `src/task_verb/symbol_lease.rs` | src | s | 1 struct · 1 enum · 4 fn · 4 crate-vis | SymbolLease, SymbolLeaseOutcome | Node-local time-held symbol declarations and atomic queue ordering |
 | `src/task_verb/symbol_lease_tests.rs` | test | s | — | — | — |
