@@ -139,11 +139,12 @@ Each evidence ref names a source id and either a UTF-8 byte range in the display
                 locators.iter().map(|entry| entry.source_id()).collect();
             evidence_turn_refs.sort_unstable();
             evidence_turn_refs.dedup();
-            // A claim drawn from two projects' turns has no one audience.
+            // A claim drawn from two projects' turns has no one audience, and
+            // a project-bound branch writes only its own project's.
             let Some(project) = resources.evidence_project(&evidence_turn_refs)? else {
                 tracing::warn!(
                     target: "oneiron::dreamer",
-                    "extracted candidate cites sources in more than one project; not written"
+                    "extracted candidate's sources share no one branch project; not written"
                 );
                 continue;
             };

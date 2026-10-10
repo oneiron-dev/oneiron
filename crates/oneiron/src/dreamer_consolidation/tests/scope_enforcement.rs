@@ -660,6 +660,10 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
         10,
         &super::super::support::encode_value(&source)?,
     )?;
+    // A project-bound branch writes only from its own project's sources.
+    vault.with_write_txn_grouped(|txn| {
+        crate::federation::record_scope::stamp_leader_project(&vault.store, txn, turns[0], project)
+    })?;
     let partition = ConsolidationPartitionKey {
         conversation_ref: conversation,
         world_ref: Some(world),
@@ -888,8 +892,8 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
     assert_eq!(backend.seen.lock().unwrap()[0], scope);
     let facts = super::super::conflict::candidate_facts(&sink.accepted[0].candidate)?;
     assert_eq!(
-        (facts.world, facts.facet, facts.rel),
-        (Some(world), Some(facet), Some(relationship))
+        (facts.world, facts.facet, facts.rel, facts.project),
+        (Some(world), Some(facet), Some(relationship), project)
     );
     // The durable codec refuses ambiguity rather than silently dropping scope.
     let mut duplicate = attempt.status.payload.input.clone();

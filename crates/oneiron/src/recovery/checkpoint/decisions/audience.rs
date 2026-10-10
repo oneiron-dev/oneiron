@@ -138,9 +138,9 @@ fn participants(vault: &Vault, txn: &heed::RoTxn<'_>, relationship: EntityId) ->
 /// How a context assembly clamps what it discloses to the parties present
 /// (`Vault::resolve_interlocutors`, then `DisclosureContext::resolve`): the
 /// owner alone, or clamped to the met clearance of every non-owner whether
-/// or not the owner is present too, as a sender on a channel identity resolves to a contact or
-/// none, and as a voice session's roster resolves its speakers, with the
-/// owner's session present or not.
+/// or not the owner is present too, as a sender on a channel identity
+/// resolves to a contact or none, and as a voice session's roster resolves
+/// its speakers, with the owner's session present or not.
 pub(super) struct DisclosureClamps;
 
 /// Who is present to a conversation, as a host names them.
@@ -262,9 +262,10 @@ fn rosters(vault: &Vault) -> Result<BTreeMap<Vec<u8>, Option<String>>> {
 
 /// Whether a claim may reach anyone but the owner alone at all
 /// (`DisclosureContext::below_tier_a`): a signed history control never does,
-/// nor one the tier rules hold to tier A by its sensitivity band or predicate. The rest of what the clamp reads of a
-/// record does not move under one id: its kind and its birth scope stay, and
-/// its tier-A mark is a refused family.
+/// nor one the tier rules hold to tier A by its sensitivity band or
+/// predicate. The rest of what the clamp reads of a record does not move
+/// under one id: its kind and its birth scope stay, and its tier-A mark is a
+/// refused family.
 pub(super) struct DisclosureTiers;
 
 impl Decision for DisclosureTiers {

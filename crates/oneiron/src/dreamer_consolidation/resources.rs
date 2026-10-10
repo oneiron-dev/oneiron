@@ -293,32 +293,29 @@ impl<'a> BranchResources<'a> {
 
     /// The one PROJECT a claim drawn from these sources may land in: a
     /// consolidated claim inherits its sources' exposure and never mixes
-    /// scopes (ONE-1592 P3). A project-bound branch is that project's slice,
-    /// so its default-project sources take the bound project. `None` when
-    /// the sources span projects or a project stamp does not decode.
+    /// scopes (ONE-1592 P3). The default project is a project like any other.
+    /// A project-bound branch restricts the result to its project; it never
+    /// moves a source into it. `None` when the sources span projects, lie
+    /// outside the branch's project, or a project stamp does not decode.
     pub(in crate::dreamer_consolidation) fn evidence_project(
         &self,
         refs: &[EntityId],
     ) -> Result<Option<EntityId>> {
-        let default = crate::claim::default_project_id();
         let mut project = self.scope.project;
         for id in refs {
             let pin = self
                 .sources
                 .get(id)
                 .ok_or_else(|| invalid_consolidation("unadmitted evidence source"))?;
-            let Some(source) = pin.project else {
-                return Ok(None);
-            };
-            if self.scope.project.is_some() && source == default {
-                continue;
-            }
-            match project {
-                Some(project) if project != source => return Ok(None),
-                _ => project = Some(source),
+            match (pin.project, project) {
+                (None, _) => return Ok(None),
+                (Some(source), Some(project)) if source != project => return Ok(None),
+                (source, _) => project = source,
             }
         }
-        Ok(Some(project.unwrap_or(default)))
+        Ok(Some(
+            project.unwrap_or_else(crate::claim::default_project_id),
+        ))
     }
 
     pub(super) fn source_version(&self, id: &EntityId) -> Result<ScopeResource> {

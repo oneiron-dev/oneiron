@@ -164,8 +164,9 @@ fn fixture_with_head_source(vault: &Vault, source: ClaimSource) -> Result<Fixtur
     let pin = document_version(head, &vault.get(&head)?.expect("head body"));
     scope.readable.insert(pin.clone());
     scope.writable.insert(pin);
-    // Project semantics remain the exact source/head document slice.
-    scope.project = Some(EntityId::now());
+    // A project bound admits only its own project's sources and heads; the
+    // turn and the head sit in the default project.
+    scope.project = Some(crate::claim::default_project_id());
     scope
         .writable
         .remove(&super::super::gap::branch_gap_projection(
@@ -552,6 +553,43 @@ fn exact_persisted_head_attaches_evidence_without_judge_or_duplicate_and_survive
     assert_eq!(
         vault.sources(&fx.head, EdgeKind::Supports, None)?,
         vec![fx.turn]
+    );
+    Ok(())
+}
+
+/// Sol review #1364 round 2: a branch bound to another project never moves
+/// default-project evidence into that project (ONE-1592 P3). The turn and
+/// the head sit in the default project, so nothing lands and nothing
+/// attaches to the head.
+#[test]
+fn project_bound_branch_never_relabels_default_project_evidence() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fx = fixture(&vault)?;
+    let (partition, _, _) = decode_partition_payload(&fx.attempt.status.payload.input)?;
+    let mut scope = fx.scope.clone();
+    scope
+        .writable
+        .remove(&super::super::gap::branch_gap_projection(
+            &partition, &fx.scope,
+        ));
+    scope.project = Some(EntityId::now());
+    scope
+        .writable
+        .insert(super::super::gap::branch_gap_projection(&partition, &scope));
+    let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Oleksii"))]);
+    let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+    assert!(matches!(
+        execute(&vault, &fx, &backend, &mut sink, scope)?,
+        DreamerAttemptExecution::Completed { .. }
+    ));
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    assert!(sink.outcome.landed.is_empty());
+    drop(sink);
+    assert_eq!(names(&vault, fx.subject)?, vec![fx.head]);
+    assert!(
+        vault
+            .sources(&fx.head, EdgeKind::Supports, None)?
+            .is_empty()
     );
     Ok(())
 }
