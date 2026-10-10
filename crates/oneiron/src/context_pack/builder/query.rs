@@ -331,6 +331,14 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
+    /// Builds the pack's memory results alone. Skill and agent discovery
+    /// runs a full retrieval each; a caller that reads only `results`, never
+    /// `capabilities`, skips that work.
+    pub(crate) fn memory_results_only(mut self) -> Self {
+        self.pipeline = self.pipeline.memory_lane_only();
+        self
+    }
+
     /// Returns each MESSAGE hit as its TURN — the pack-surface twin of
     /// [`PipelineBuilder::fold_messages_into_turns`].
     pub(crate) fn fold_messages_into_turns(mut self, fold: crate::pipeline::TurnFold) -> Self {
