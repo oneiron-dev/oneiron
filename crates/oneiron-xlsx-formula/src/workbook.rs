@@ -136,6 +136,9 @@ fn options(limits: Limits, clock: &RecalcClock) -> XlsxRecalculateOptions {
         timezone: TimeZoneSpec::FixedOffsetSeconds(i32::from(clock.utc_offset_minutes()) * 60),
     };
     options.eval_config.workbook_seed = clock.seed();
+    // Long formulas recurse deeply; the writer evaluates on threads with a
+    // stack for the longest Excel saves (`crate::context`).
+    options.eval_config.worker_stack_bytes = Some(crate::context::EVAL_STACK_BYTES);
     options
 }
 

@@ -26,12 +26,12 @@ use crate::error::{FormulaError, Result};
 pub const ENGINE_NAME: &str = "formualizer-workbook";
 /// Owned evaluator version; upstream plus the error-concatenation repair and the Excel
 /// parity work on the fork's `oneiron/parity` branch (ONE-2700 part 1).
-pub const ENGINE_VERSION: &str = "0.9.3-oneiron.11";
+pub const ENGINE_VERSION: &str = "0.9.3-oneiron.12";
 /// Pinned upstream commit (tag `v0.9.3`).
 pub const ENGINE_UPSTREAM_REV: &str = "362becffa029d8f77349c2c477fc39eff7fc52d5";
 /// Full deterministic stamp recorded on every evaluation report.
 pub const ENGINE_STAMP: &str =
-    "formualizer-workbook 0.9.3-oneiron.11 upstream 362becffa029d8f77349c2c477fc39eff7fc52d5";
+    "formualizer-workbook 0.9.3-oneiron.12 upstream 362becffa029d8f77349c2c477fc39eff7fc52d5";
 
 /// Fixed instant every volatile function observes. 2026-01-01T00:00:00Z in
 /// UTC: deterministic across hosts and timezones, never the wall clock.
@@ -72,6 +72,7 @@ impl FormualizerEngine {
     fn fresh_workbook() -> Result<Workbook> {
         let mut config = WorkbookConfig::ephemeral();
         config.eval.date_system = DateSystem::Excel1900;
+        config.eval.worker_stack_bytes = Some(crate::context::EVAL_STACK_BYTES);
         let mut workbook = Workbook::new_with_config(config);
         let timestamp: DateTime<Utc> = PINNED_TIMESTAMP_UTC
             .parse()
@@ -114,6 +115,23 @@ impl RecalcEngine for FormualizerEngine {
                 crate::context::inspect_formula(expression)?;
             }
         }
+        let engine = self.engine_id();
+        // Evaluate where the writer does: on a stack for the longest formula
+        // Excel saves (`crate::context`).
+        crate::context::on_eval_stack(|| {
+            Self::evaluate_here(setup, formula, anchor, read_range, engine)
+        })
+    }
+}
+
+impl FormualizerEngine {
+    fn evaluate_here(
+        setup: &BTreeMap<String, StagedValue>,
+        formula: &str,
+        anchor: &str,
+        read_range: Option<&str>,
+        engine: EngineId,
+    ) -> Result<RecalcReport> {
         let mut workbook = Self::fresh_workbook()?;
         for (address, value) in setup {
             let (row, col, _, _) = parse_a1_1based(address)
@@ -173,7 +191,7 @@ impl RecalcEngine for FormualizerEngine {
             })
             .transpose()?;
         Ok(RecalcReport {
-            engine: self.engine_id(),
+            engine,
             value: from_literal(scalar),
             grid,
         })
