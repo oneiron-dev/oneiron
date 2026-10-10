@@ -50689,7 +50689,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/models/served.rs",
-     "purpose": "Which model actually answered: the receipt field a ladder fills in",
+     "purpose": "Which model actually answered: the receipt field a ladder fills in, and what an answered call is charged",
      "surface": {
       "crate-vis": 4
      }
