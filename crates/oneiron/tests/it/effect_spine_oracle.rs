@@ -346,7 +346,6 @@ mod seam {
     struct OraclePlan {
         input: ConsultFanOutSpec,
         preset: String,
-        peers: Vec<(String, oneiron::EntityId)>,
         receipt: Option<ConsultFanOutReceipt>,
         surfaced: bool,
         /// Snapshot before admission, after any real history fixture was added.
@@ -499,12 +498,12 @@ mod seam {
             .map(|(peer, count)| {
                 let peer_id = peer_id(peer);
                 put_person(vault, peer_id);
-                ((*peer).to_owned(), peer_id, *count)
+                (peer_id, *count)
             })
             .collect();
         let assignees = peers
             .iter()
-            .flat_map(|(_, peer, count)| {
+            .flat_map(|(peer, count)| {
                 std::iter::repeat_n(
                     *peer,
                     usize::try_from(*count).expect("bounded oracle count"),
@@ -525,7 +524,6 @@ mod seam {
             plans.push(OraclePlan {
                 input,
                 preset: preset.to_owned(),
-                peers: peers.into_iter().map(|(name, id, _)| (name, id)).collect(),
                 receipt: None,
                 surfaced: false,
                 owned_tasks_before: owned_task_count(vault),

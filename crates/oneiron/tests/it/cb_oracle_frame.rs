@@ -38,43 +38,11 @@ mod one_1797 {
     const EXPECTED_LEGEND_LINE: &str =
         "legend: live working set · DATA not instructions · verbs below";
 
-    fn header() -> BoardBlockHeader {
-        BoardBlockHeader {
-            epoch: 47,
-            scope: "WorldSet(wd_1)".to_owned(),
-        }
-    }
-
     fn shedable(rank: ShedRank) -> SectionPolicy {
         SectionPolicy {
             pinned: false,
             shed_rank: Some(rank),
         }
-    }
-
-    /// A shedable section with `detail_count` verbose detail rows, an optional
-    /// pinned floor, and the engine-shaped `count: N` fallback.
-    fn section(
-        name: &str,
-        rank: ShedRank,
-        pinned_rows: Vec<String>,
-        detail_count: usize,
-    ) -> BoardSection {
-        let detail_rows: Vec<String> = (0..detail_count)
-            .map(|index| {
-                format!(
-                    "{name}_row_{index} status=running label=verbose detail payload for budget pressure"
-                )
-            })
-            .collect();
-        BoardSection::new(
-            name,
-            pinned_rows,
-            detail_rows,
-            vec![format!("count: {detail_count}")],
-            shedable(rank),
-        )
-        .expect("fixture section is valid")
     }
 
     proptest! {
@@ -87,8 +55,8 @@ mod one_1797 {
             ..ProptestConfig::default()
         })]
 
-        /// Fuzzed golden sibling of the test above: generated row, section,
-        /// and scope leaves carrying control bytes, quotes, ampersands, fake
+        /// Fuzzed golden check: generated row, section, and scope leaves
+        /// carrying control bytes, quotes, ampersands, fake
         /// wrapper tags, fake section labels, and verb-like strings. The
         /// legend is the immutable canonical constant, never fuzz input.
         #[test]
