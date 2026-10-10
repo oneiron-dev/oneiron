@@ -159,25 +159,24 @@ impl<'a> CallContext<'a> {
 #[derive(Debug)]
 pub struct AskReply {
     pub value: rmpv::Value,
-    /// Bytes beside the value, valid while this lives.
+    /// Bytes beside the value.
     pub data: Option<AskBytes>,
 }
 
-/// An answer's bytes: inline, or a region the engine sealed, mapped
-/// read-only.
+/// An answer's bytes, in the organ's own memory. A region the engine
+/// sealed is copied out and unmapped as the answer arrives, so the engine's
+/// pages are never held past the ask, and what the organ keeps counts
+/// against its own memory grant.
 #[derive(Debug)]
 pub struct AskBytes {
     pub content_hash: Hash32,
-    data: InputData,
+    bytes: Vec<u8>,
 }
 
 impl Deref for AskBytes {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
-        match &self.data {
-            InputData::Inline(bytes) => bytes,
-            InputData::Mapped(region) => region,
-        }
+        &self.bytes
     }
 }
 
@@ -274,6 +273,10 @@ impl AskLine {
         let id = self.next.fetch_add(1, Ordering::SeqCst) + 1;
         let (wake, woken) = mpsc::sync_channel(1);
         *lock(&self.state.waiting) = Some((id, wake));
+        // The flag is read under the writer: the call's reply needs the
+        // writer too, and is sent only after the flag is set, so an ask is
+        // either on the wire before the reply or never sent.
+        let writer = lock(&self.writer);
         if self.state.cancel.load(Ordering::SeqCst) {
             lock(&self.state.waiting).take();
             return Err(cancelled());
@@ -284,7 +287,9 @@ impl AskLine {
             verb: verb.to_owned(),
             value,
         });
-        if send_frame(&lock(&self.writer), &ask, &[], self.limit).is_err() {
+        let sent = send_frame(&writer, &ask, &[], self.limit);
+        drop(writer);
+        if sent.is_err() {
             lock(&self.state.waiting).take();
             return Err(AskRefusal::new(AskCode::Failed, "the ask was not sent"));
         }
@@ -302,23 +307,22 @@ impl AskLine {
 fn answer_bytes(data: AskData, fds: Vec<OwnedFd>) -> Result<AskBytes, AskRefusal> {
     let broken = |what: &str| AskRefusal::new(AskCode::Failed, format!("answer data: {what}"));
     let bytes = match data.data {
-        Payload::Inline(bytes) if bytes.len() as u64 == data.len => {
-            InputData::Inline(bytes.into_vec())
-        }
+        Payload::Inline(bytes) if bytes.len() as u64 == data.len => bytes.into_vec(),
         Payload::Inline(_) => return Err(broken("inline length")),
         Payload::Slot(slot) => {
             let fd = fds
                 .into_iter()
                 .nth(usize::from(slot))
                 .ok_or_else(|| broken("slot"))?;
-            InputData::Mapped(
-                MappedRegion::map(fd, data.len).map_err(|err| broken(&err.to_string()))?,
-            )
+            // Mapped, copied, and unmapped here; the descriptor closes too.
+            MappedRegion::map(fd, data.len)
+                .map_err(|err| broken(&err.to_string()))?
+                .to_vec()
         }
     };
     Ok(AskBytes {
         content_hash: data.content_hash,
-        data: bytes,
+        bytes,
     })
 }
 

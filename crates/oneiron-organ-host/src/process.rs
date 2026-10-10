@@ -213,6 +213,38 @@ impl Drop for EndOnDrop {
     }
 }
 
+/// Ends a call's hold on its process however its wait ends, a handler's
+/// panic included. A call a panic ended is cancelled, so the organ's ask
+/// wakes rather than holding one of its threads.
+struct Seated<'p> {
+    process: &'p OrganProcess,
+    id: u64,
+    grace: Duration,
+}
+
+impl Drop for Seated<'_> {
+    fn drop(&mut self) {
+        if thread::panicking() {
+            let until = Instant::now() + self.grace;
+            self.process.cancel(self.id, CancelReason::Caller, until);
+        }
+        lock(&self.process.inbox.pending).remove(&self.id);
+        *lock(&self.process.last_used) = Instant::now();
+        self.process.free_seat();
+    }
+}
+
+/// What a call's deadline did while an ask's handler ran.
+enum Overrun {
+    /// The handler returned before the deadline.
+    InTime,
+    /// The deadline passed and the call was cancelled at `at`; the organ
+    /// took the cancel, or the handler returned within the grace.
+    Cancelled { at: Instant },
+    /// The organ did not take the cancel within the grace: it was stopped.
+    Stopped,
+}
+
 /// Why a call to a live process did not come back.
 #[derive(Debug)]
 pub(crate) enum CallFailure {
@@ -428,16 +460,17 @@ impl OrganProcess {
             asking: false,
         };
         lock(&self.inbox.pending).insert(id, pending);
+        let _seated = Seated {
+            process: self,
+            id,
+            grace: wait.grace,
+        };
         lock(&self.grants).insert(grant.to_owned());
-        let outcome = if (wait.revoked)() {
+        if (wait.revoked)() {
             Err(CallFailure::Revoked)
         } else {
             self.exchange(call, fds, &reply, wait)
-        };
-        lock(&self.inbox.pending).remove(&id);
-        *lock(&self.last_used) = Instant::now();
-        self.free_seat();
-        outcome
+        }
     }
 
     /// Sends one frame, the writer's lock and the frame both bounded by
@@ -452,6 +485,70 @@ impl OrganProcess {
     ) -> Result<(), FrameError> {
         let writer = lock_until(&self.writer, deadline).ok_or(FrameError::Late)?;
         send_frame_until(&writer, msg, fds, limit, Some(deadline))
+    }
+
+    /// Sends the answer to call `id`'s ask. The call may ask again only
+    /// once this holds the writer, so a second ask that comes while the
+    /// answer waits for the writer still breaks the protocol.
+    fn send_answer(
+        &self,
+        id: u64,
+        answer: &ToOrgan,
+        fds: &[BorrowedFd<'_>],
+        deadline: Instant,
+    ) -> Result<(), FrameError> {
+        let writer = lock_until(&self.writer, deadline).ok_or(FrameError::Late)?;
+        self.inbox.answered(id);
+        send_frame_until(&writer, answer, fds, self.max_call_frame, Some(deadline))
+    }
+
+    /// Runs an ask's handler on this thread while a watchdog keeps the
+    /// call's deadline: at the deadline it sends the cancel, and if the
+    /// organ has not replied within the grace it stops the process, however
+    /// long the handler takes.
+    fn run_handler<T>(
+        &self,
+        id: u64,
+        deadline: Instant,
+        grace: Duration,
+        handler: impl FnOnce() -> T,
+    ) -> (T, Overrun) {
+        let (done, finished) = mpsc::channel::<()>();
+        thread::scope(|scope| {
+            let watchdog = thread::Builder::new()
+                .name("organ-ask-deadline".into())
+                .spawn_scoped(scope, move || {
+                    let left = deadline.saturating_duration_since(Instant::now());
+                    if !matches!(finished.recv_timeout(left), Err(RecvTimeoutError::Timeout)) {
+                        return Overrun::InTime;
+                    }
+                    let at = Instant::now();
+                    self.cancel(id, CancelReason::Deadline, at + grace);
+                    loop {
+                        // The reader drops a call's entry when its reply comes.
+                        if !lock(&self.inbox.pending).contains_key(&id) {
+                            return Overrun::Cancelled { at };
+                        }
+                        let left = (at + grace).saturating_duration_since(Instant::now());
+                        if left.is_zero() {
+                            self.stop();
+                            return Overrun::Stopped;
+                        }
+                        match finished.recv_timeout(left.min(Duration::from_millis(5))) {
+                            Err(RecvTimeoutError::Timeout) => {}
+                            // The handler is back: its thread waits out the grace.
+                            _ => return Overrun::Cancelled { at },
+                        }
+                    }
+                });
+            let out = handler();
+            drop(done);
+            // With no watchdog, the call's own deadline check runs after.
+            let overrun = watchdog.map_or(Overrun::InTime, |watchdog| {
+                watchdog.join().unwrap_or(Overrun::InTime)
+            });
+            (out, overrun)
+        })
     }
 
     fn exchange(
@@ -498,7 +595,19 @@ impl OrganProcess {
                     if Instant::now() >= deadline {
                         break;
                     }
-                    let step = on_ask(ask);
+                    let (step, overrun) = self.run_handler(id, deadline, grace, || on_ask(ask));
+                    match overrun {
+                        Overrun::InTime => {}
+                        Overrun::Stopped => return Err(CallFailure::Deadline { stopped: true }),
+                        Overrun::Cancelled { at } => {
+                            let left = (at + grace).saturating_duration_since(Instant::now());
+                            if wait_reply(reply, left) {
+                                return Err(CallFailure::Deadline { stopped: false });
+                            }
+                            self.stop();
+                            return Err(CallFailure::Deadline { stopped: true });
+                        }
+                    }
                     // The organ broke the protocol while the handler ran.
                     if !self.is_alive() {
                         return Err(CallFailure::Crashed);
@@ -514,9 +623,8 @@ impl OrganProcess {
                         AskStep::Answer(answer, region) => {
                             let held: Vec<BorrowedFd<'_>> =
                                 region.iter().map(|region| region.fd()).collect();
-                            self.inbox.answered(id);
                             let answer = ToOrgan::Answer(answer);
-                            match self.send(&answer, &held, self.max_call_frame, deadline) {
+                            match self.send_answer(id, &answer, &held, deadline) {
                                 Ok(()) => {}
                                 Err(FrameError::Late) => break,
                                 Err(FrameError::TimedOut) => {

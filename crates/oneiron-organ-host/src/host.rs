@@ -331,6 +331,7 @@ impl OrganHost {
             inline_max,
         );
         let (reply, fds) = self.exchange(&slot, &process, &call, &inputs, &mut asked, deadline)?;
+        let lent = asked.lent_bytes();
         let asks = asked.receipts;
         // A grant withdrawn while the organ worked voids its answer too.
         if self.grant_revoked(&call.grant) {
@@ -349,7 +350,11 @@ impl OrganHost {
             queued,
             sent_at,
             deadline,
-            max_output_bytes: slot.spec.max_output_bytes.min(slot.spec.call_memory_bytes),
+            // Answers and outputs draw on the one booking.
+            max_output_bytes: slot
+                .spec
+                .max_output_bytes
+                .min(slot.spec.call_memory_bytes.saturating_sub(lent)),
             asks,
         };
         finish(&call, &process, &inputs, reply, &mut permit)

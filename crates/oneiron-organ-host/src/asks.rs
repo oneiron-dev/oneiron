@@ -155,6 +155,8 @@ pub(crate) struct CallAsks<'a> {
     asked: u32,
     per_verb: HashMap<String, u32>,
     bytes_left: u64,
+    /// Answer bytes lent so far.
+    lent: u64,
     refused_past_cap: bool,
     pub(crate) receipts: Vec<AskReceipt>,
 }
@@ -178,14 +180,25 @@ impl<'a> CallAsks<'a> {
             asked: 0,
             per_verb: HashMap::new(),
             bytes_left: spec.max_ask_bytes.min(spec.call_memory_bytes),
+            lent: 0,
             refused_past_cap: false,
             receipts: Vec::new(),
         }
     }
 
+    /// Answer bytes this call has lent the organ: they draw on the same
+    /// booking as its outputs.
+    pub(crate) fn lent_bytes(&self) -> u64 {
+        self.lent
+    }
+
     /// Decides one ask: refuse it, answer it through its handler, or end
-    /// the call when the organ asks again past a cap it was refused at.
+    /// the call when the organ asks again after a `budget` refusal.
     pub(crate) fn take(&mut self, ask: Ask) -> AskStep {
+        // One budget refusal, of either kind; any ask after it ends the call.
+        if self.refused_past_cap {
+            return AskStep::End(HostError::AskBudget);
+        }
         let started = Instant::now();
         let mut line = AskReceipt {
             id: ask.id,
@@ -211,9 +224,6 @@ impl<'a> CallAsks<'a> {
             *count > cap
         });
         if self.asked > self.spec.max_asks || over_verb {
-            if self.refused_past_cap {
-                return AskStep::End(HostError::AskBudget);
-            }
             self.refused_past_cap = true;
             let refusal = AskRefusal::new(AskCode::Budget, "this call's asks are spent");
             return self.refuse(&ask, line, refusal);
@@ -238,6 +248,7 @@ impl<'a> CallAsks<'a> {
             }
         }
         if self.bytes_left == 0 {
+            self.refused_past_cap = true;
             let refusal = AskRefusal::new(AskCode::Budget, "this call's answer bytes are spent");
             return self.refuse(&ask, line, refusal);
         }
@@ -299,6 +310,7 @@ impl<'a> CallAsks<'a> {
                     }
                 };
                 self.bytes_left -= len;
+                self.lent += len;
                 line.data_hash = Some(content_hash);
                 line.data_len = len;
                 Some(AskData {
