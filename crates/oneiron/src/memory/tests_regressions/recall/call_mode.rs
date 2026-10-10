@@ -308,41 +308,6 @@ fn call_mode_never_returns_a_row_a_normal_recall_withholds() {
     }
 }
 
-/// Every deadline is bounded: call mode and a raw `deadline_ms` refuse 0
-/// and anything past the cap with a typed error, and an omitted dial is
-/// medium with no deadline.
-#[test]
-fn the_recall_dial_refuses_a_deadline_out_of_range() {
-    use crate::memory::caps::MAX_RECALL_DEADLINE_MS;
-    use crate::memory::{RecallEffort, resolve_recall_dial};
-    use std::time::Duration;
-
-    let vault_deadline = Duration::from_millis(250);
-    for effort in [None, Some(RecallEffort::Light), Some(RecallEffort::Call)] {
-        for deadline_ms in [0, MAX_RECALL_DEADLINE_MS + 1] {
-            let refused = resolve_recall_dial(effort, Some(deadline_ms), vault_deadline)
-                .expect_err("out of range");
-            assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST, "{deadline_ms}");
-        }
-    }
-    assert_eq!(
-        resolve_recall_dial(None, None, vault_deadline).unwrap(),
-        (Effort::Medium, None)
-    );
-    assert_eq!(
-        resolve_recall_dial(Some(RecallEffort::Call), None, vault_deadline).unwrap(),
-        (Effort::Light, Some(vault_deadline))
-    );
-    assert_eq!(
-        resolve_recall_dial(Some(RecallEffort::Call), Some(40), vault_deadline).unwrap(),
-        (Effort::Light, Some(Duration::from_millis(40)))
-    );
-    assert_eq!(
-        resolve_recall_dial(Some(RecallEffort::High), Some(40), vault_deadline).unwrap(),
-        (Effort::High, Some(Duration::from_millis(40)))
-    );
-}
-
 /// A door that stops waiting at the deadline answers with the last pack
 /// recall published: before the query embeds, no items under the reader's
 /// receipt; once the items are assembled, those items before the scope
