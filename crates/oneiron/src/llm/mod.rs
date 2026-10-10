@@ -36,6 +36,7 @@ pub(crate) use oneiron_model::llm::{
 pub mod manifest;
 pub mod registry;
 pub mod routing;
+pub mod run_admission;
 pub mod score_scraper;
 pub mod seat;
 mod step;
@@ -65,7 +66,8 @@ pub use oneiron_model::llm::{
     BUDGET_RESUME_PREAMBLE_PROMPT_TEMPLATE, BUDGET_RESUME_PREAMBLE_PROMPT_TEMPLATE_ID,
     BudgetAdmission, BudgetExhaustionPolicy, BudgetGuard, BudgetLadderEvent, BudgetPromptTemplate,
     BudgetRead, BudgetSettlement, BudgetSignalDeliveryChannel, BudgetSteeringSignal,
-    BudgetThreshold, DEFAULT_BUDGET_RESERVE_UNITS,
+    BudgetThreshold, DEFAULT_BUDGET_RESERVE_UNITS, DispatchBinding, DispatchRefused,
+    FAILED_RUNGS_KEY, answered_units,
 };
 pub(crate) use oneiron_model::llm::{BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable};
 
