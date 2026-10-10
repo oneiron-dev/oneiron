@@ -233,3 +233,87 @@ fn a_shadow_whose_source_changed_saves_nothing() {
     assert_eq!(vault.turn_tags(&turn_id).unwrap(), None);
     assert!(vault.get_turn_vad_annotation(&turn_id).unwrap().is_none());
 }
+
+/// A turn whose messages were sent out of message order is the source the
+/// model read: the shadow reads them in the order they arrived, the save in
+/// message order, and the same messages with the same text are saved.
+#[test]
+fn a_shadow_of_messages_sent_out_of_order_is_saved() {
+    struct FindsAda(crate::ModelId);
+    impl ExtractionEncoder for FindsAda {
+        fn model_id(&self) -> &crate::ModelId {
+            &self.0
+        }
+        fn locality(&self) -> crate::embed::EmbedderLocality {
+            crate::embed::EmbedderLocality::OnDevice
+        }
+        fn infer(&self, input: &EncoderInput) -> crate::Result<EncoderOutput> {
+            let message = input
+                .messages
+                .iter()
+                .position(|message| message.text.starts_with("Ada"))
+                .ok_or_else(|| crate::Error::InvalidConfig("no Ada".into()))?;
+            Ok(EncoderOutput {
+                spans: vec![NerSpan {
+                    message,
+                    start: 0,
+                    end: 3,
+                    label: "PERSON".into(),
+                    confidence: 0.9,
+                }],
+                links: Vec::new(),
+                vad: None,
+            })
+        }
+    }
+    let message = |id: &str, order: u32, content: &str| WitnessMessage {
+        id: Some(id.into()),
+        author: WitnessAuthor::User,
+        message_type: "text".into(),
+        content: content.into(),
+        metadata: None,
+        is_visible: true,
+        order,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), armed()).unwrap();
+    let actor = person(&vault, 0x21);
+    let ada = named_person(&vault, 0x22, "Ada");
+    let memory = vault.memory(actor, EdgeActorClass::Human);
+    let result = memory
+        .witness_with_shadow(
+            &WitnessTurn {
+                conversation_ref: "34343434343434343434343434343434".into(),
+                turn_ref: Some("35353535353535353535353535353535".into()),
+                occurred_at: 100,
+                messages: vec![
+                    message("36363636363636363636363636363636", 1, "Bob replied"),
+                    message("37373737373737373737373737373737", 0, "Ada called"),
+                ],
+            },
+            &FindsAda("fixture/finds-ada@v1".parse().unwrap()),
+        )
+        .unwrap();
+    let golden = EncoderGolden {
+        model: result.trace.model.clone(),
+        input_hash: result.trace.input_hash.clone(),
+        output: result.trace.output.clone().unwrap(),
+    };
+    let parity = EncoderParity::verify(std::slice::from_ref(&result.trace), &[golden]).unwrap();
+
+    let tags = memory
+        .persist_extraction(&result.trace, &parity, 200)
+        .unwrap();
+
+    assert_eq!(
+        tags.mentions[0].link,
+        crate::tagging::MentionLink::Candidates {
+            kind: ENTITY_TYPE_PERSON,
+            entities: vec![ada],
+        }
+    );
+    assert_eq!(
+        tags.mentions[0].message,
+        EntityId::from_hex("37373737373737373737373737373737").unwrap()
+    );
+}

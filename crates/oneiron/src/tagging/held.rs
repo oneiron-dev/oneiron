@@ -114,12 +114,16 @@ pub(crate) fn settle_held_tags_in_txn(
             },
             None,
         ),
-        TurnInput::Empty => (
-            TaggingOutcome::Skipped {
-                reason: SkipReason::NoText,
-            },
-            None,
-        ),
+        TurnInput::Empty => {
+            // A turn with no text keeps no tags read from text it lost.
+            super::tags::replace_in_txn(vault, txn, turn, None)?;
+            (
+                TaggingOutcome::Skipped {
+                    reason: SkipReason::NoText,
+                },
+                None,
+            )
+        }
         TurnInput::Ready { input, hash, .. } => {
             if config.mode == TaggingMode::Save {
                 let answer = Answer {

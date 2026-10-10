@@ -67,8 +67,11 @@ pub(crate) use held::settle_held_tags_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use marker::text_entity_type_in_txn;
 pub(crate) use marker::{mark_on_publication_in_txn, mark_turn_in_txn};
+pub(crate) use provisional::hold_id_in_txn;
 pub(crate) use save::save_shadow_output_in_txn;
-pub(crate) use tags::{erase_in_txn, erase_scope_exists_in_txn, saved_turn_mood_in_txn};
+pub(crate) use tags::{
+    erase_in_txn, erase_scope_exists_in_txn, saved_turn_mood_in_txn, tear_in_txn,
+};
 
 #[cfg(test)]
 mod tests;

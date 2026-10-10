@@ -50,9 +50,11 @@ pub(crate) use integrity::{
 };
 pub use records::*;
 pub(crate) use time::{
-    CLOCK_FLOOR, authorization_floor_in_txn, job_recorded_at_in_txn, recorded_at_in_txn,
+    CLOCK_FLOOR, authorization_floor_in_txn, job_recorded_at_in_txn, persist_id_floor_in_txn,
+    recorded_at_in_txn,
 };
 pub use time::{Clock, IdGen, StoreClock};
 mod manual_clock;
+pub(crate) use lmdb_visibility::removed_in_txn;
 pub use manual_clock::ManualClock;
 pub(crate) use time::ID_FLOOR;

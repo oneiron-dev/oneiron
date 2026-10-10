@@ -107,8 +107,12 @@ pub struct TaggingMarkerConfig {
     /// Save the tags, or settle in shadow.
     pub mode: TaggingMode,
     /// The label table: model label to the entity kind a span with that
-    /// label is linked as. A label absent here stays a tag. No model's label
-    /// names sit in engine code; the host supplies the table.
+    /// label is linked as. It maps name labels only. A label absent here
+    /// stays a tag, and a coreferent span with one takes its antecedent's
+    /// link without a lookup: a pronoun's label (a tagger's reference or
+    /// pronoun mention class) stays out, so a pronoun is never linked by its
+    /// own text. No model's label names sit in engine code; the host
+    /// supplies the table.
     pub labels: BTreeMap<String, u8>,
 }
 

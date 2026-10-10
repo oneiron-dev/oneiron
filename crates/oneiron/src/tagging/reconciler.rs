@@ -677,7 +677,9 @@ impl TaggingReconciler {
         })
     }
 
-    /// Nothing is owed: the marker completes with no tagger call.
+    /// Nothing is owed: the marker completes with no tagger call. A turn
+    /// left with no text loses the tags it held, in the settling write: none
+    /// of them was read from text it still has.
     ///
     /// The skip stands only for the turn it read: a witness that added text
     /// since then was absorbed by this leased marker, so the settling
@@ -692,14 +694,15 @@ impl TaggingReconciler {
     ) -> Result<TaggingTrace> {
         trace.outcome = TaggingOutcome::Skipped { reason };
         let settled = self.vault.try_with_write_txn(|txn| -> Result<bool> {
-            let owes_nothing = !matches!(
-                turn_text_in_txn(&self.vault, txn, turn)?,
-                TurnInput::Ready { .. }
-            );
-            if owes_nothing {
-                self.settle_in_txn(txn, record, &trace)?;
+            let read = turn_text_in_txn(&self.vault, txn, turn)?;
+            if matches!(read, TurnInput::Ready { .. }) {
+                return Ok(false);
             }
-            Ok(owes_nothing)
+            if matches!(read, TurnInput::Empty) {
+                super::tags::replace_in_txn(&self.vault, txn, turn, None)?;
+            }
+            self.settle_in_txn(txn, record, &trace)?;
+            Ok(true)
         })?;
         if settled {
             return Ok(trace);

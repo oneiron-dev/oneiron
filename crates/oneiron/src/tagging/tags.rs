@@ -6,6 +6,11 @@
 //! write of a tag set goes through [`replace_in_txn`], which keeps the
 //! mention index in step and settles each provisional entity the change
 //! touches.
+//!
+//! A tag set reads only while the text it was read from does: once its turn
+//! or one of its messages reads deleted (a deletion published ahead of its
+//! purge, an archive), no read door returns it, its mood or a provisional
+//! name it holds.
 
 use std::collections::BTreeSet;
 use std::ops::Bound;
@@ -17,8 +22,7 @@ use super::provisional;
 use crate::affect::Vad;
 use crate::edge::EdgeKind;
 use crate::error::Result;
-use crate::ports::EdgeDirection;
-use crate::registry::ENTITY_TYPE_TURN;
+use crate::ports::{EdgeDirection, EdgeStoreRead, TombstoneStoreRead};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
@@ -157,6 +161,8 @@ pub struct MergeEvidence {
 pub struct TurnTags {
     pub turn: EntityId,
     pub envelope: DerivationEnvelope,
+    /// The MESSAGE rows the tags were read from, in the input's order.
+    pub messages: Vec<EntityId>,
     pub mentions: Vec<TaggedMention>,
     pub merge_evidence: Vec<MergeEvidence>,
     /// The turn's mood, when the tagger returned one.
@@ -186,10 +192,10 @@ pub struct MentionHit {
 }
 
 impl Vault {
-    /// The tags saved for a turn.
+    /// The tags saved for a turn, while the text they were read from reads.
     pub fn turn_tags(&self, turn: &EntityId) -> Result<Option<TurnTags>> {
         let txn = self.store.env.read_txn()?;
-        TAG_SET.get(&self.store, &txn, turn)
+        readable_in_txn(&self.store, &txn, turn)
     }
 
     /// Every saved mention that names `entity`, or an entity merged into
@@ -208,7 +214,7 @@ impl Vault {
         }
         let mut hits = Vec::new();
         for turn in turns {
-            let Some(tags) = TAG_SET.get(&self.store, &txn, &turn)? else {
+            let Some(tags) = readable_in_txn(&self.store, &txn, &turn)? else {
                 continue;
             };
             for (index, mention) in tags.mentions.into_iter().enumerate() {
@@ -256,6 +262,37 @@ pub(super) fn tag_set_in_txn(
     TAG_SET.get(store, txn, turn)
 }
 
+/// The tag set of `turn` while the text it was read from reads: the turn and
+/// every message it was read from are stored and none reads deleted.
+fn readable_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+) -> Result<Option<TurnTags>> {
+    let Some(tags) = TAG_SET.get(store, txn, turn)? else {
+        return Ok(None);
+    };
+    for source in std::iter::once(&tags.turn).chain(&tags.messages) {
+        if store.entities.get(txn, source.as_bytes())?.is_none()
+            || store.port_deletion_state(txn, source)?.deleted
+        {
+            return Ok(None);
+        }
+    }
+    Ok(Some(tags))
+}
+
+/// Whether the provisional entity `entity` reads: its origin turn's tag set
+/// reads and names it.
+pub(super) fn origin_reads_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    origin: &EntityId,
+    entity: &EntityId,
+) -> Result<bool> {
+    Ok(names_in_txn(store, txn, entity, origin)? && readable_in_txn(store, txn, origin)?.is_some())
+}
+
 /// The mood saved on a turn and when it was saved: what the turn-VAD read
 /// door reads when no annotation was written on the turn.
 pub(crate) fn saved_turn_mood_in_txn(
@@ -263,8 +300,7 @@ pub(crate) fn saved_turn_mood_in_txn(
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
 ) -> Result<Option<(Vad, u64)>> {
-    Ok(TAG_SET
-        .get(store, txn, turn)?
+    Ok(readable_in_txn(store, txn, turn)?
         .and_then(|tags| tags.mood.map(|mood| (mood, tags.saved_at))))
 }
 
@@ -445,24 +481,64 @@ pub(crate) fn erase_in_txn(
         replace_in_txn(vault, txn, id, None)?;
         existed = true;
     }
-    let turns = vault.filtered_edge_peers(
-        txn,
-        EdgeDirection::Out,
-        id,
-        EdgeKind::PartOf,
-        Some(ENTITY_TYPE_TURN),
-        "tagging erase turns",
-    )?;
-    for turn in turns {
-        if TAG_SET.contains(store, txn, &turn)? {
-            replace_in_txn(vault, txn, &turn, None)?;
-            super::mark_turn_in_txn(vault, txn, turn)?;
-            existed = true;
-        }
+    for turn in tagged_parts_of_in_txn(store, txn, id)? {
+        replace_in_txn(vault, txn, &turn, None)?;
+        super::mark_turn_in_txn(vault, txn, turn)?;
+        existed = true;
     }
     existed |= strip_in_txn(store, txn, id)?;
     existed |= provisional::retire_in_txn(store, txn, id)?;
     Ok(existed)
+}
+
+/// The physical tear's hook, which every door that tears an entity down
+/// reaches, a batch delete among them, with no vault in hand: `id` leaves
+/// every tag set that names it and is retired if provisional. A tag set of
+/// `id`, or of a turn `id` is part of, is the erase doors' to settle (they
+/// run [`erase_in_txn`] first); one still here is dropped without reading
+/// any text, so each provisional entity it was the origin of is retired
+/// rather than moved.
+pub(crate) fn tear_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
+    let mut turns = tagged_parts_of_in_txn(store, txn, id)?;
+    if TAG_SET.contains(store, txn, id)? {
+        turns.push(*id);
+    }
+    for turn in turns {
+        let Some(old) = TAG_SET.get(store, txn, &turn)? else {
+            continue;
+        };
+        TAG_SET.delete(store, txn, &turn)?;
+        for entity in old.entities() {
+            MENTION_REF.delete(store, txn, &(entity, turn))?;
+            if provisional::get_in_txn(store, txn, &entity)?
+                .is_some_and(|minted| minted.origin == turn)
+            {
+                strip_in_txn(store, txn, &entity)?;
+                provisional::retire_in_txn(store, txn, &entity)?;
+            }
+        }
+    }
+    strip_in_txn(store, txn, id)?;
+    provisional::retire_in_txn(store, txn, id)?;
+    Ok(())
+}
+
+/// The turns `id` is part of that hold a tag set. Every `PartOf` edge out of
+/// `id` is read, however many there are: an erase never refuses for a
+/// degree a query would cap.
+fn tagged_parts_of_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Vec<EntityId>> {
+    let mut turns = Vec::new();
+    for edge in store.port_edges(txn, id, EdgeDirection::Out, Some(EdgeKind::PartOf), None)? {
+        let target = edge?.target;
+        if TAG_SET.contains(store, txn, &target)? {
+            turns.push(target);
+        }
+    }
+    Ok(turns)
 }
 
 /// Whether erasing `id` has tagging rows to remove.

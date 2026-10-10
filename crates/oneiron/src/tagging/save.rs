@@ -1,14 +1,19 @@
 //! Save mode: a checked answer becomes the turn's tag set (ARCH-0036,
 //! serving the tagger).
 //!
-//! Each span whose label the label table maps to an entity kind is linked
-//! through the identity key (ARCH-0055 §10). The key is looked up before
-//! anything is minted, over the vault's entities and the provisional ones;
-//! every hit is a candidate the linker (the Dreamer) decides on, never a sure
-//! link; and a miss mints a provisional entity under the source turn's
-//! facet. A coreferent span takes its antecedent's link and never mints; one
-//! whose own name keys elsewhere keeps its own and is merge evidence. The
-//! mood lands on the turn. The save writes no claim, no edge and no merge.
+//! Each span whose label the label table maps to an entity kind is a name,
+//! linked through the identity key (ARCH-0055 §10). The key is looked up
+//! before anything is minted, over the vault's entities, archived ones
+//! included, and the provisional ones; every hit is a candidate the linker
+//! (the Dreamer) decides on, never a sure link; and a miss mints a
+//! provisional entity under the source turn's facet. A span whose label the
+//! table leaves out is never looked up: a pronoun, which a tagger labels as a
+//! reference and not as a name, takes its antecedent's link, so a pronoun
+//! that happens to spell someone's name is never linked to them. A
+//! coreferent name the key misses takes its antecedent's link and never
+//! mints; one whose own name keys elsewhere keeps its own and is merge
+//! evidence. The mood lands on the turn. The save writes no claim, no edge
+//! and no merge.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -26,8 +31,8 @@ use crate::error::{Error, Result};
 use crate::federation::record_scope::{birth_facet, scope_for_blob};
 use crate::federation::{ScopeAxis, ScopeId};
 use crate::memory::extraction::{EncoderInput, EncoderOutput};
-use crate::ports::EntityStoreRead;
-use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use crate::ports::{EntityStoreRead, TombstoneStoreRead};
+use crate::store::Store;
 use crate::{EntityId, Vault};
 
 /// The save path's version, the envelope's `version`.
@@ -184,6 +189,7 @@ pub(super) fn save_in_txn(
     let tags = TurnTags {
         turn,
         envelope,
+        messages,
         mentions,
         merge_evidence,
         mood: output.vad,
@@ -212,12 +218,16 @@ pub(crate) fn save_shadow_output_in_txn(
     let TurnInput::Ready { input: current, .. } = turn_text_in_txn(vault, txn, &turn)? else {
         return Ok(None);
     };
-    let unchanged = current.messages.len() == input.messages.len()
-        && current
-            .messages
+    // The same messages with the same text, in whatever order the host sent
+    // them: the spans index `input` as the model read it.
+    let read = |messages: &[crate::memory::extraction::EncoderMessage]| {
+        messages
             .iter()
-            .zip(&input.messages)
-            .all(|(now, then)| now.id == then.id && now.text == then.text);
+            .map(|message| (message.id.clone(), message.text.clone()))
+            .collect::<BTreeSet<_>>()
+    };
+    let unchanged = current.messages.len() == input.messages.len()
+        && read(&current.messages) == read(&input.messages);
     if !unchanged || check_output(input, output).is_err() {
         return Ok(None);
     }
@@ -229,6 +239,23 @@ pub(crate) fn save_shadow_output_in_txn(
     };
     save_in_txn(vault, txn, answer, &config.labels, now)?;
     tag_set_in_txn(&vault.store, txn, &turn)
+}
+
+/// Whether `id` is an entity of `kind` a mention may be linked to: stored,
+/// current, and live or archived. An archive keeps the row whole and
+/// resolution sees it; a deletion, published or pending, does not.
+pub(super) fn linkable_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    kind: u8,
+) -> Result<bool> {
+    let Some(row) = store.port_entity_record(txn, id)? else {
+        return Ok(false);
+    };
+    Ok(row.entity_type == kind
+        && !store.port_deletion_state(txn, id)?.stale
+        && !crate::ports::removed_in_txn(store, txn, id)?)
 }
 
 /// Links mentions over the identity key. It never compares names itself:
@@ -276,10 +303,8 @@ impl<'v> Linker<'v> {
         let mut found = BTreeSet::new();
         for hit in self.vault.lookup_identity_key_in_txn(txn, kind, mention)? {
             for head in self.vault.resolve_entity_in_txn(txn, &hit)? {
-                if matches!(
-                    live_entity_row_in_txn(&self.vault.store, txn, &head)?,
-                    LiveEntityRow::Live { entity_type, .. } if entity_type == kind
-                ) && self.shares_world(txn, &head)?
+                if linkable_in_txn(&self.vault.store, txn, &head, kind)?
+                    && self.shares_world(txn, &head)?
                 {
                     found.insert(head);
                 }
@@ -305,6 +330,9 @@ impl<'v> Linker<'v> {
             return Ok(MentionLink::Candidates { kind, entities });
         }
         let entity = self.vault.new_entity_id()?;
+        // The id lives in a row no entity write stamps, so its floor is
+        // persisted here: a reopen never allocates it again.
+        crate::ports::persist_id_floor_in_txn(&self.vault.store, txn)?;
         provisional::mint_in_txn(
             &self.vault.store,
             txn,
