@@ -16,20 +16,20 @@
   "sources": {
     "guest.c": "877e1c5ef7c6438d35501909e03d911607e02201752f9f662bdefd9010fbf352",
     "libc_denials.c": "34d4078d819b41381cfec7773434bc0a04a9c1d9c2895246a0a22ddf427808fd",
-    "bootstrap.js": "86e1e29291710137e0e856bb19212ef287c13e4d03721706ff3dc2901e1d654a",
+    "bootstrap.js": "8fe7ef6303317f32701332dd641b5f69724ae140896e7a67fffec2543240281e",
     "generate_bridge.py": "0de6341efbcc50a905d11180f9f015d6e6454db7a0ad90c22d1a76835ca6c681",
     "build.py": "55329a943f412758400d4cc11927efd7453163bbb7baee9443f5744fd20bae6b"
   },
   "artifacts": {
     "first-party": {
       "file": "quickjs-first-party.wasm",
-      "sha256": "0341f30f79254517ed18155733c99dd82d47030c6aa1cd811283c44a2ea06792",
-      "bytes": 1041316
+      "sha256": "daf0eceeb1e36a6e7a071fe05d8208023f0ca9384fb4937ed8e0479c377d41af",
+      "bytes": 1041364
     },
     "foreign": {
       "file": "quickjs-foreign.wasm",
-      "sha256": "307cff8650c48eaea9a07e47c8ad9e5ec6b41e54c2ea173ef29629cb5cda7ad8",
-      "bytes": 1033750
+      "sha256": "5a2fda75dcdf9c1783c941e624770b8867f4c74a41f6fd6df335aa6a1620462d",
+      "bytes": 1033798
     }
   }
 }
