@@ -2178,7 +2178,12 @@ fn a_pack_named_after_an_engine_family_cannot_move_a_query_over_engine_state() -
     )?;
     // First-party packs are not caught: every built-in seeded at open is
     // installed, and its source passes the same admission rule.
-    for name in ["oneiron.email", "oneiron.line", "oneiron.linkedin", "oneiron.slack"] {
+    for name in [
+        "oneiron.email",
+        "oneiron.line",
+        "oneiron.linkedin",
+        "oneiron.slack",
+    ] {
         let receipt = vault.installed_pack(name)?.expect("seeded at open");
         let source = vault
             .get_pack_source(&EntityId::from_hex(&receipt.source_id)?)?
@@ -2200,7 +2205,10 @@ fn a_pack_named_after_an_engine_family_cannot_move_a_query_over_engine_state() -
         "the owner's query still reads bounce rate"
     );
     assert!(installed.is_err(), "an engine family is no pack's name");
-    assert!(second.is_err(), "nor does a map move a query over engine state");
+    assert!(
+        second.is_err(),
+        "nor does a map move a query over engine state"
+    );
     Ok(())
 }
 
