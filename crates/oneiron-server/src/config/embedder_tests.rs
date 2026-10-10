@@ -88,3 +88,41 @@ locality = "third-party"
         EmbedderLocality::ThirdParty
     );
 }
+
+/// CodeRabbit 1333: the pinned model's evidence floors were measured with
+/// its shipped profile, Q8_0 weights and queries with no prompt. Bug repro:
+/// they matched the repository and commit alone, so another precision,
+/// a query prompt, another attention or output, or an operator's own files
+/// took floors no one measured for them, and admitted weak vector evidence.
+#[test]
+fn pinned_evidence_floors_hold_only_for_the_profile_they_were_measured_with() {
+    let floors = |settings: &str| {
+        resolve(&format!(
+            "dimensions = 1024\n\n[embedder]\ndimensions = 1024\n{settings}"
+        ))
+        .unwrap_or_else(|error| panic!("{settings}: {error:#}"))
+        .vault_config()
+        .vector_evidence
+    };
+    let measured = oneiron::config::VectorEvidenceFloors {
+        floor: 0.15,
+        strong: 0.25,
+    };
+    for settings in ["", "quant = \"q8_0\"\n", "query_instruction = \"\"\n"] {
+        assert_eq!(floors(settings), measured, "{settings:?}");
+    }
+    for settings in [
+        "quant = \"none\"\n",
+        "query_instruction = \"Represent this query: \"\n",
+        "query_prompt_name = \"query\"\n",
+        "attention = \"causal\"\n",
+        "output_quantization = \"binary\"\n",
+        "model_dir = \"/srv/models/pplx-embed\"\n",
+    ] {
+        assert_eq!(
+            floors(settings),
+            oneiron::config::VectorEvidenceFloors::default(),
+            "{settings:?}"
+        );
+    }
+}
