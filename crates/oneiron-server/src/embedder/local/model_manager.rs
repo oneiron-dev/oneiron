@@ -34,11 +34,9 @@ const HUGGINGFACE_BASE_URL: &str = "https://huggingface.co";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// How long nothing may have written a temporary download before a sweep asks
-/// whether its fetch is still alive ([`sweep_stale_partials`]). The age
-/// spares a fetch that has created its file and not yet locked it, and
-/// earlier builds, which wrote one shared name and never locked it: a live
-/// fetch of theirs writes as the bytes arrive and gives up after
-/// [`DOWNLOAD_TIMEOUT`].
+/// whether its fetch is still alive ([`sweep_stale_partials`]): longer than
+/// any fetch may run, so a fetch that has created its file and not yet locked
+/// it is never asked about.
 const STALE_PARTIAL: Duration = Duration::from_secs(2 * DOWNLOAD_TIMEOUT.as_secs());
 /// Refuse a file larger than this before writing it: a redirect to the wrong
 /// place must not fill the disk.
@@ -855,12 +853,13 @@ fn partial_path(path: &Path) -> PathBuf {
     ))
 }
 
-/// Removes what killed fetches of this file left behind, under this build's
-/// names or the single name earlier builds used: a temporary file nothing has
-/// written for [`STALE_PARTIAL`] and whose lock nobody holds. A fetch that is
-/// alive holds its lock, however long it has paused, so its file stays. Best
-/// effort: a leftover that cannot be removed costs disk, never the file
-/// itself.
+/// Removes what killed fetches of this file left behind: a temporary file
+/// under this build's names that nothing has written for [`STALE_PARTIAL`]
+/// and whose lock nobody holds. A fetch that is alive holds its lock, however
+/// long it has paused, so its file stays. The one shared name earlier builds
+/// used is left alone: they never lock it, so nothing shows whether its
+/// writer is alive, and they reuse it themselves. Best effort: a leftover
+/// that cannot be removed costs disk, never the file itself.
 fn sweep_stale_partials(path: &Path) {
     let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
         return;
@@ -869,7 +868,6 @@ fn sweep_stale_partials(path: &Path) {
         return;
     };
     let prefix = format!(".{}.", name.to_string_lossy());
-    let legacy = path.with_extension("partial");
     for entry in entries.flatten() {
         let candidate = entry.path();
         let partial = entry
@@ -884,7 +882,7 @@ fn sweep_stale_partials(path: &Path) {
                 .and_then(|modified| modified.elapsed().ok())
                 .is_some_and(|age| age > STALE_PARTIAL)
         };
-        if !(partial || candidate == legacy) || !stale() {
+        if !partial || !stale() {
             continue;
         }
         let Ok(file) = std::fs::File::open(&candidate) else {

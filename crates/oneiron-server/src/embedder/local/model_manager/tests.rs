@@ -141,9 +141,10 @@ fn two_servers_fetching_one_model_into_one_directory_both_get_it() {
 
 /// A temporary file a killed fetch left does not stay for good. The next
 /// server to check that model file removes one that nothing has written for
-/// longer than a fetch may run and whose lock nobody holds, under this
-/// build's names and the earlier one. A fetch that is alive keeps its file,
-/// however long it has paused, and so does a file created a moment ago.
+/// longer than a fetch may run and whose lock nobody holds. A fetch that is
+/// alive keeps its file, however long it has paused, and so does a file
+/// created a moment ago. So does the shared name earlier builds wrote: they
+/// never lock it, so nothing shows its writer is gone.
 #[test]
 fn a_killed_fetchs_leftover_is_removed_and_a_live_fetchs_file_is_kept() {
     let body = model_body();
@@ -183,8 +184,8 @@ fn a_killed_fetchs_leftover_is_removed_and_a_live_fetchs_file_is_kept() {
     assert!(!fetched);
     assert!(!killed.exists(), "the killed fetch's file is removed");
     assert!(
-        !earlier_build.exists(),
-        "an earlier build's leftover is removed"
+        earlier_build.exists(),
+        "an earlier build's shared name stays"
     );
     assert!(paused.exists(), "a paused live fetch keeps its file");
     assert!(just_created.exists(), "a file created a moment ago stays");
