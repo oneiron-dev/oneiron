@@ -383,6 +383,22 @@ impl From<Error> for MemoryError {
                 message,
                 &["Refresh the resource, merge local changes, then retry."],
             ),
+            // The vault no longer holds the bytes a restore needs; the
+            // request itself was sound.
+            ErrorKind::SkillPackageUnavailable => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &["Restore the revision's package (re-import it), or edit the skill by hand."],
+            ),
+            // The host skipped a setup step, so neither the request nor the
+            // caller's standing is what has to change.
+            ErrorKind::EngineIdentitiesNotProvisioned => Self::new(
+                MEMORY_CODE_INTERNAL,
+                message,
+                &[
+                    "The host must provision the engine's machine identities after it opens the vault, then retry.",
+                ],
+            ),
             ErrorKind::Storage
             | ErrorKind::Io
             | ErrorKind::CorruptedIndex

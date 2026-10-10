@@ -102,8 +102,7 @@ impl ExtractionEncoder for Scripted {
     }
 }
 
-/// Answers are built from the wire shape, so these tests read the same
-/// whether the contract's mood is a value or optional (ONE-2167).
+/// Answers are built from the wire shape a tagger sends.
 fn answer_json(value: serde_json::Value) -> EncoderOutput {
     serde_json::from_value(value).expect("an answer in the contract's wire shape")
 }
@@ -117,11 +116,20 @@ fn held(end: usize) -> EncoderOutput {
     }))
 }
 
+/// A marker configuration that settles in shadow (the test switch these laws
+/// are stated for), mapping the scripted tagger's `PERSON` label.
+fn shadow(checkpoint: &str) -> TaggingMarkerConfig {
+    TaggingMarkerConfig::new(checkpoint)
+        .expect("checkpoint")
+        .with_mode(TaggingMode::Shadow)
+        .with_labels(BTreeMap::from([("PERSON".to_owned(), ENTITY_TYPE_PERSON)]))
+}
+
 fn config(armed: bool) -> VaultConfig {
     let mut config = VaultConfig::device();
     config.store_clock = ManualClock::new(NOW).bundle();
     if armed {
-        config.tagging = Some(TaggingMarkerConfig::new(CHECKPOINT).expect("checkpoint"));
+        config.tagging = Some(shadow(CHECKPOINT));
     }
     config
 }
@@ -233,7 +241,6 @@ fn reconciler(vault: &Arc<Vault>, tagger: &Arc<Scripted>) -> TaggingReconciler {
         first_secs: 0,
         max_secs: 0,
     })
-    .with_label_kinds(BTreeMap::from([("PERSON".to_owned(), ENTITY_TYPE_PERSON)]))
 }
 
 /// Copies a closed vault's files, so two vaults start from the same bytes.
@@ -1498,7 +1505,7 @@ fn a_marker_for_another_checkpoint_moves_onto_the_active_one() {
     let dir = tempfile::tempdir().expect("dir");
     let turn = {
         let mut config = config(true);
-        config.tagging = Some(TaggingMarkerConfig::new(OTHER_CHECKPOINT).expect("checkpoint"));
+        config.tagging = Some(shadow(OTHER_CHECKPOINT));
         let vault = Vault::open(dir.path(), config).expect("open");
         witness(&vault, "Ada sailed north")
     };
@@ -1765,7 +1772,7 @@ fn a_checkpoint_that_is_not_sixteen_lowercase_hex_digits_is_refused_at_open() {
         let mut config = config(false);
         config.tagging = Some(TaggingMarkerConfig {
             checkpoint: bad.into(),
-            ..TaggingMarkerConfig::new(CHECKPOINT).expect("checkpoint")
+            ..shadow(CHECKPOINT)
         });
         assert!(matches!(
             Vault::open(dir.path(), config),
@@ -1942,7 +1949,7 @@ fn bind_resident(vault: &Vault) -> EntityId {
 fn a_vault_past_100k_settled_tagging_markers_still_serves_the_inbox_and_resident_dispatch() {
     let config = VaultConfig {
         store_clock: ManualClock::new(NOW).bundle(),
-        tagging: Some(TaggingMarkerConfig::new(CHECKPOINT).expect("checkpoint")),
+        tagging: Some(shadow(CHECKPOINT)),
         ..VaultConfig::default()
     };
     let (_dir, vault) = crate::test_util::open_test_vault_with(config);
@@ -2129,11 +2136,7 @@ fn a_live_turn_reads_the_earlier_window_and_never_a_later_turn() {
         (0, Vec::new()),
     ] {
         let mut config = config(true);
-        config.tagging = Some(
-            TaggingMarkerConfig::new(CHECKPOINT)
-                .expect("checkpoint")
-                .with_live_window_tokens(tokens),
-        );
+        config.tagging = Some(shadow(CHECKPOINT).with_live_window_tokens(tokens));
         let vault = Arc::new(Vault::open(dir.path(), config).expect("reopen"));
         let read = vault
             .store
@@ -2167,14 +2170,10 @@ fn pruning_keeps_exactly_the_configured_trace_history() {
     let vault = {
         let mut config = config(true);
         config.store_clock = clock.bundle();
-        config.tagging = Some(
-            TaggingMarkerConfig::new(CHECKPOINT)
-                .expect("checkpoint")
-                .with_trace_history(TaggingTraceHistory {
-                    per_turn: 3,
-                    max_age_secs: 100,
-                }),
-        );
+        config.tagging = Some(shadow(CHECKPOINT).with_trace_history(TaggingTraceHistory {
+            per_turn: 3,
+            max_age_secs: 100,
+        }));
         Arc::new(Vault::open(dir.path(), config).expect("open vault"))
     };
     let tagger = Scripted::new(Answer::Good);
@@ -2252,14 +2251,10 @@ fn a_turn_that_keeps_failing_keeps_a_bounded_lineage_and_still_backs_off() {
     let vault = {
         let mut config = config(true);
         config.store_clock = clock.bundle();
-        config.tagging = Some(
-            TaggingMarkerConfig::new(CHECKPOINT)
-                .expect("checkpoint")
-                .with_trace_history(TaggingTraceHistory {
-                    per_turn: PER_TURN as u32,
-                    max_age_secs: MAX_AGE_SECS,
-                }),
-        );
+        config.tagging = Some(shadow(CHECKPOINT).with_trace_history(TaggingTraceHistory {
+            per_turn: PER_TURN as u32,
+            max_age_secs: MAX_AGE_SECS,
+        }));
         Arc::new(Vault::open(dir.path(), config).expect("open vault"))
     };
     let turn = witness(&vault, "Ada sailed north");
@@ -2327,14 +2322,10 @@ fn a_retry_after_the_clock_ran_back_keeps_the_failed_tries_the_history_keeps() {
     let vault = {
         let mut config = config(true);
         config.store_clock = clock.bundle();
-        config.tagging = Some(
-            TaggingMarkerConfig::new(CHECKPOINT)
-                .expect("checkpoint")
-                .with_trace_history(TaggingTraceHistory {
-                    per_turn: 2,
-                    max_age_secs: 15,
-                }),
-        );
+        config.tagging = Some(shadow(CHECKPOINT).with_trace_history(TaggingTraceHistory {
+            per_turn: 2,
+            max_age_secs: 15,
+        }));
         Arc::new(Vault::open(dir.path(), config).expect("open vault"))
     };
     let turn = witness(&vault, "Ada sailed north");
@@ -2482,8 +2473,7 @@ fn a_pass_prunes_every_expired_trace_before_it_claims() {
         let mut config = config(true);
         config.store_clock = clock.bundle();
         config.tagging = Some(
-            TaggingMarkerConfig::new(CHECKPOINT)
-                .expect("checkpoint")
+            shadow(CHECKPOINT)
                 .with_live_window_tokens(0)
                 .with_trace_history(TaggingTraceHistory {
                     per_turn: 1,
@@ -2882,14 +2872,10 @@ fn a_smaller_per_turn_bound_trims_the_history_kept_under_a_larger_one() {
     let dir = tempfile::tempdir().expect("dir");
     let open_with = |per_turn: u32| {
         let mut config = config(true);
-        config.tagging = Some(
-            TaggingMarkerConfig::new(CHECKPOINT)
-                .expect("checkpoint")
-                .with_trace_history(TaggingTraceHistory {
-                    per_turn,
-                    ..TaggingTraceHistory::default()
-                }),
-        );
+        config.tagging = Some(shadow(CHECKPOINT).with_trace_history(TaggingTraceHistory {
+            per_turn,
+            ..TaggingTraceHistory::default()
+        }));
         Arc::new(Vault::open(dir.path(), config).expect("open vault"))
     };
     let turn_ref = Some("73737373737373737373737373737373".to_owned());
@@ -3117,11 +3103,7 @@ fn a_marker_an_earlier_build_left_below_the_range_is_moved_into_it() {
 fn an_earlier_message_is_read_only_as_far_as_the_window_keeps() {
     let dir = tempfile::tempdir().expect("dir");
     let mut config = config(true);
-    config.tagging = Some(
-        TaggingMarkerConfig::new(CHECKPOINT)
-            .expect("checkpoint")
-            .with_live_window_tokens(2),
-    );
+    config.tagging = Some(shadow(CHECKPOINT).with_live_window_tokens(2));
     let vault = Arc::new(Vault::open(dir.path(), config).expect("open vault"));
     // Within the 64 KiB entity payload cap.
     let text = format!("{}Ada sailed north", "ab ".repeat(20_000));
@@ -3300,14 +3282,10 @@ fn trimming_history_reads_outside_the_writer_a_bounded_part_a_pass() {
     let dir = tempfile::tempdir().expect("dir");
     let open_with = |per_turn: u32| {
         let mut config = config(true);
-        config.tagging = Some(
-            TaggingMarkerConfig::new(CHECKPOINT)
-                .expect("checkpoint")
-                .with_trace_history(TaggingTraceHistory {
-                    per_turn,
-                    ..TaggingTraceHistory::default()
-                }),
-        );
+        config.tagging = Some(shadow(CHECKPOINT).with_trace_history(TaggingTraceHistory {
+            per_turn,
+            ..TaggingTraceHistory::default()
+        }));
         Arc::new(Vault::open(dir.path(), config).expect("open vault"))
     };
     let turns: Vec<EntityId> = (0..TURNS)

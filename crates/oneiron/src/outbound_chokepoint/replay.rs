@@ -157,7 +157,7 @@ fn send_pending_with_gate<T: OutboundTransport>(
     // policy/authorization may still stop a Pending send. Do not charge, spend
     // approval, or record a second Allow. Terminal dedup never reaches here.
     if let Some(prepared) = prepared {
-        let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+        let mut wtxn = vault.store.env.write_txn()?;
         let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
         enforce_step_failure_policy(
             vault,
@@ -198,7 +198,7 @@ fn send_pending_with_gate<T: OutboundTransport>(
     } else if crate::llm::StepEffectBinding::from_frozen_payload(record.payload())?.is_some() {
         // Engine-owned Resume has no PreparedEffect. Its frozen step identity
         // still rechecks the resident restriction before a Pending live send.
-        let txn = vault.store.env.write_txn().map_err(Error::from)?;
+        let txn = vault.store.env.write_txn()?;
         let policy = gate::resolve_policy_manifest(&vault.store, &txn)?;
         let frozen: serde_json::Value = serde_json::from_slice(record.payload())
             .map_err(|_| IntentLedgerError::InvalidRecord("invalid frozen outbound payload"))?;

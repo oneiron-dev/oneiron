@@ -172,9 +172,12 @@ What the hooks already imported stays in your vault, like any import.
 - Messages are searchable at once, so the next `SessionStart` in that project
   can recall them.
 - Claims drawn from imported material never approve themselves (ARCH-0027,
-  ARCH-0040). Reviewing them in bulk is the import's open follow-up; until it
-  ships, no claim waits on these hooks. Queue entries waiting for a stopped
-  `serve` are the only pending items, and `serve` takes them up when it starts.
+  ARCH-0040). Each queue pass that lands something is one import: `serve`
+  queues the Dreamer over it and logs its review id
+  (`import:claude-code:<time>`). `oneiron runs pending` lists the reviews, and
+  `oneiron runs show|approve|decline` resolves each whole
+  ([Import your history](import-history.md#claims)). Queue entries waiting for
+  a stopped `serve` land when it starts.
 
 ## Limits and timings
 
@@ -184,8 +187,11 @@ What the hooks already imported stays in your vault, like any import.
 - `hand-over` takes well under a second: it writes one small file. Claude
   Code gives `SessionEnd` hooks 1.5 seconds unless a hook sets its own
   `timeout`; the `timeout` of 5 above raises that budget to 5 seconds.
-- `serve` looks at the queue every 5 seconds and imports one log at a time.
+- `serve` looks at the queue every 5 seconds and imports what waits there.
   One session log is read up to 1 GiB, the same limit as `oneiron import`.
+  A larger one, the session's or a subagent's, is left out with a
+  `log_too_large` warning in `serve`'s log, and the rest of the session
+  lands.
 - `--query "<words>"` on `session-start` recalls those words instead of the
   project's name.
 

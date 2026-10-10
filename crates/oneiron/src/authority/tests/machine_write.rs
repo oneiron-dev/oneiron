@@ -1076,25 +1076,39 @@ fn scoped_birth_control_follows_restrictive_current_demotion() {
                 },
                 later
             )
-            .unwrap(),
+            .unwrap()
+            .rung,
         ClaimDemotionRung::Decayed
     );
-    assert_eq!(
-        vault
-            .apply_claim_demotion(
-                &id,
-                ClaimDemotionAction::Weaken {
-                    new_confidence: 0.5
-                },
-                later + 1
-            )
-            .unwrap(),
-        ClaimDemotionRung::Weakened
-    );
+    // A weakening is the Dreamer's act: it births the Dreamer's own successor,
+    // signed by the Dreamer's retained signer, never the machine's.
+    vault.provision_engine_machine_identities(&issuer).unwrap();
+    let weakened = vault
+        .apply_claim_demotion(
+            &id,
+            ClaimDemotionAction::Weaken {
+                new_confidence: 0.5,
+            },
+            later + 1,
+        )
+        .unwrap();
+    assert_eq!(weakened.rung, ClaimDemotionRung::Weakened);
+    let id = weakened.claim;
+    let successor = vault.resolved_machine_claim(id).unwrap();
+    let birth_id = EntityId::from_bytes(successor.birth_digest[..16].try_into().unwrap()).unwrap();
+    let raw = vault.get_raw(&birth_id).unwrap().unwrap();
+    let txn = vault.store.env.read_txn().unwrap();
+    let weakened_scope =
+        crate::federation::record_scope::scope_for_blob(&vault.store, &txn, birth_id, &raw)
+            .unwrap()
+            .unwrap();
+    assert_eq!(weakened_scope.sensitivity, before_scope.sensitivity);
+    drop(txn);
     assert_eq!(
         vault
             .apply_claim_demotion(&id, ClaimDemotionAction::MarkStale, later + 2)
-            .unwrap(),
+            .unwrap()
+            .rung,
         ClaimDemotionRung::Stale
     );
     let txn = vault.store.env.read_txn().unwrap();

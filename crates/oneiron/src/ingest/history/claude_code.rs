@@ -14,11 +14,9 @@ use serde_json::Value;
 
 use super::text::{join_texts, json_record, str_field, time_field};
 use super::{
-    HistoryConversation, HistoryFile, HistoryMessage, HistoryRole, HistorySkips, HistoryThreadKind,
+    DELEGATING_AGENT, HistoryConversation, HistoryFile, HistoryMessage, HistoryRole, HistorySkips,
+    HistoryThreadKind,
 };
-
-/// The user side of a subagent's log is the agent that delegated the task.
-const DELEGATING_AGENT: &str = "delegating_agent";
 
 /// User-side text the host wrote rather than the person: command wrappers and
 /// their output, shell escapes, notifications, interruption markers.

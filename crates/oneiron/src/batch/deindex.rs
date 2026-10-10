@@ -144,6 +144,9 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     )?;
     #[cfg(feature = "sync")]
     crate::entity_doc::erase_in_txn(store, wtxn, id)?;
+    // Saved tags find a message's turn through its PartOf edge, so they go
+    // before the edges do.
+    crate::tagging::tear_in_txn(store, wtxn, id)?;
     store
         .l2_base_cache
         .lock()

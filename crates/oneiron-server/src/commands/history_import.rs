@@ -18,7 +18,7 @@ use oneiron::ingest::history::{
     HistoryConversation, HistoryDryRun, HistoryFile, HistoryImportReport, HistoryLedgerSnapshot,
     HistoryMessage, HistorySkips, HistorySource,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::cli::ImportSourceArgs;
 use crate::config::{ServeConfig, resolve_serve_config};
@@ -48,13 +48,17 @@ const MAX_DECODED_BYTES: usize = 1 << 30;
 const EXPORT_CONVERSATIONS: &str = "conversations.json";
 
 /// The files an import read, the other `.jsonl` files it passed over under
-/// the given folder (a workflow journal, a tool's prompt history), and the
-/// session logs it left out for being over [`MAX_LOG_BYTES`].
+/// the given folder (a workflow journal, a tool's prompt history), the
+/// session logs it left out for being over [`MAX_LOG_BYTES`], and those it
+/// passed over for having another name.
 #[derive(Serialize, Default)]
 struct Files {
     read: usize,
     passed: usize,
     too_large: usize,
+    /// Session logs with another name (a hard link), never read: that name
+    /// may be outside the folder.
+    hard_linked: usize,
     /// Each log left out, reported beside the counts.
     #[serde(skip)]
     warnings: Vec<ImportWarning>,
@@ -73,9 +77,9 @@ enum ImportWarning {
         bytes: u64,
         limit: u64,
     },
-    /// Notes whose file has another name (a hard link), never read: that
-    /// name can be outside the folder. Counted, not named, as stdout names
-    /// no note.
+    /// Files with another name (a hard link), never read: that name can be
+    /// outside the folder. Counted, not named, as a notes import's stdout
+    /// names no note.
     HardLinked { files: usize },
 }
 
@@ -90,6 +94,18 @@ struct Totals {
     not_kept: HistorySkips,
 }
 
+/// The owner's one review of the claims the Dreamer extracts from an import:
+/// they land Proposed, never Auto (ARCH-0027), and wait under `run_id` for
+/// `oneiron runs show|approve|decline`.
+#[derive(Serialize)]
+struct Review {
+    run_id: String,
+    run_ref: String,
+    /// Dreamer attempts this import queued; they run when `serve` runs with
+    /// a model.
+    dreamer_attempts: usize,
+}
+
 #[derive(Serialize)]
 struct ImportOutcome<'a> {
     source: &'static str,
@@ -100,6 +116,9 @@ struct ImportOutcome<'a> {
     totals: Totals,
     /// Messages of this source the vault's import ledger holds afterwards.
     ledger: usize,
+    /// Where what the Dreamer extracts from this import waits for the owner.
+    /// `None` for a dry run and for an import that landed nothing.
+    review: Option<Review>,
     seconds: f64,
     conversations: Vec<HistoryImportReport>,
 }
@@ -133,7 +152,7 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
     } else {
         let vault = open_vault(&config)?;
         let owner = crate::owner::local_owner(&vault)?;
-        let imported_at = vault.now_recorded_at();
+        let imported_at = own_second(&vault)?;
         Target::Land(Box::new((vault, owner, imported_at)))
     };
     let mut totals = Totals::default();
@@ -158,6 +177,31 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
             ));
         }
     }
+    // What landed goes in front of the Dreamer now, as a session end would
+    // put captured turns: no sitting ever ends for an import. Planning runs on
+    // every import, so a rerun after a crash plans what the crash left.
+    let review = match &target {
+        Target::Land(landing) => {
+            let (vault, _, imported_at) = &**landing;
+            let dreamer_attempts = queue_dreamer(vault, *imported_at)?;
+            if totals.new + totals.changed == 0 && dreamer_attempts > 0 {
+                progress(&format!(
+                    "queued {dreamer_attempts} Dreamer attempt(s) an earlier import left; \
+                     `oneiron runs pending` lists the reviews"
+                ));
+            }
+            (totals.new + totals.changed > 0).then(|| {
+                let run_id =
+                    oneiron::ingest::history::history_import_review_id(source, *imported_at);
+                Review {
+                    run_ref: crate::owner::runs::run_ref(&run_id),
+                    run_id,
+                    dreamer_attempts,
+                }
+            })
+        }
+        Target::Plan(..) => None,
+    };
     let outcome = ImportOutcome {
         source: source.source_id(),
         path: &path,
@@ -169,17 +213,32 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
             Target::Plan(snapshot, _) => snapshot.ledger_len(source)?,
             Target::Land(landing) => landing.0.history_import_ledger_len(source)?,
         },
+        review,
         seconds: started.elapsed().as_secs_f64(),
         conversations: reports,
     };
     let mut stdout = io::stdout().lock();
     serde_json::to_writer_pretty(&mut stdout, &outcome)?;
     writeln!(stdout)?;
+    if let Some(review) = &outcome.review {
+        progress(&format!(
+            "claims the Dreamer extracts from this import wait for your review: \
+             `oneiron runs show {}`",
+            review.run_id
+        ));
+    }
     if files.too_large > 0 {
         progress(&format!(
             "left out {} session log(s) over {MAX_LOG_BYTES} bytes; the report's \
              `warnings` names each",
             files.too_large
+        ));
+    }
+    if files.hard_linked > 0 {
+        progress(&format!(
+            "passed over {} session log(s) with another name (a hard link), which may \
+             be outside the folder",
+            files.hard_linked
         ));
     }
     Ok(())
@@ -218,6 +277,34 @@ fn order_key(conversation: &HistoryConversation) -> (u64, u64, String) {
         ended.unwrap_or(u64::MAX),
         conversation.native_id.clone(),
     )
+}
+
+/// The second this import lands at: after every write before it, so no two
+/// imports share one and each has a review of its own. Waits out the rest of
+/// the current second; a vault clock more than two seconds ahead of this
+/// machine's refuses the import rather than share a second with an earlier one.
+fn own_second(vault: &oneiron::Vault) -> anyhow::Result<u64> {
+    let start = vault.now_recorded_at();
+    let deadline = Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        let now = vault.now_recorded_at();
+        if now > start {
+            return Ok(now);
+        }
+        anyhow::ensure!(
+            Instant::now() < deadline,
+            "the vault's clock is ahead of this machine's; import again once \
+             the machine's clock passes it, so this import has a review of its own"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// Queues the Dreamer's rounds over every turn not yet planned, as a session
+/// end does for captured turns: no sitting ever ends for an import.
+fn queue_dreamer(vault: &oneiron::Vault, imported_at: u64) -> anyhow::Result<usize> {
+    oneiron::dreamer_consolidation::plan_dirty_turn_rounds(vault, imported_at)
+        .map_err(|error| anyhow::anyhow!("queue the Dreamer: {error}"))
 }
 
 /// Where conversations go: planned against a read-only ledger, or landed.
@@ -293,6 +380,15 @@ fn decode(source: HistorySource, path: &Path) -> anyhow::Result<(Files, Vec<Hist
             files.passed += 1;
             return Ok(());
         }
+        // Of the open file, as the notes walk does: a name swapped after the
+        // walk listed it changes nothing.
+        let metadata = file
+            .metadata()
+            .map_err(|error| anyhow::anyhow!("read {}: {error}", shown.display()))?;
+        if hard_linked(&metadata) {
+            files.hard_linked += 1;
+            return Ok(());
+        }
         let Some(text) = files.read_log(&file, shown)? else {
             return Ok(());
         };
@@ -309,53 +405,86 @@ fn decode(source: HistorySource, path: &Path) -> anyhow::Result<(Files, Vec<Hist
         files.read += 1;
         Ok(())
     })?;
+    if files.hard_linked > 0 {
+        files.warnings.push(ImportWarning::HardLinked {
+            files: files.hard_linked,
+        });
+    }
     Ok((files, conversations))
 }
 
 impl Files {
     /// A session log under the folder, or `None` when it is over
     /// [`MAX_LOG_BYTES`]: that log is left out with a warning, so one huge log
-    /// does not keep the rest from landing. Its size is checked before it is
-    /// read, so a log left out costs no memory, and the read holds a log that
-    /// grew since to the same bound.
+    /// does not keep the rest from landing.
     fn read_log(&mut self, file: &File, shown: &Path) -> anyhow::Result<Option<String>> {
-        let size = || {
-            file.metadata()
-                .map(|metadata| metadata.len())
-                .map_err(|error| anyhow::anyhow!("read {}: {error}", shown.display()))
+        let left_out = match read_log(file, shown)? {
+            Ok(text) => return Ok(Some(text)),
+            Err(left_out) => left_out,
         };
-        if size()? <= MAX_LOG_BYTES
-            && let Some(text) = read_within(file, shown, MAX_LOG_BYTES)?
-        {
-            return Ok(Some(text));
+        if let ImportWarning::LogTooLarge { bytes, .. } = &left_out {
+            progress(&format!(
+                "left out {}: {bytes} bytes, over the {MAX_LOG_BYTES}-byte limit for one log",
+                shown.display()
+            ));
         }
-        let bytes = size()?.max(MAX_LOG_BYTES + 1);
-        progress(&format!(
-            "left out {}: {bytes} bytes, over the {MAX_LOG_BYTES}-byte limit for one log",
-            shown.display()
-        ));
         self.too_large += 1;
-        self.warnings.push(ImportWarning::LogTooLarge {
-            path: shown.to_string_lossy().into_owned(),
-            bytes,
-            limit: MAX_LOG_BYTES,
-        });
+        self.warnings.push(left_out);
         Ok(None)
     }
 }
 
+/// A session log, or why it is left out: one over [`MAX_LOG_BYTES`] is never
+/// read. Its size is checked before it is read, so a log left out costs no
+/// memory, and the read holds a log that grew since to the same bound.
+fn read_log(file: &File, shown: &Path) -> anyhow::Result<Result<String, ImportWarning>> {
+    let size = || {
+        file.metadata()
+            .map(|metadata| metadata.len())
+            .map_err(|error| anyhow::anyhow!("read {}: {error}", shown.display()))
+    };
+    if size()? <= MAX_LOG_BYTES
+        && let Some(text) = read_within(file, shown, MAX_LOG_BYTES)?
+    {
+        return Ok(Ok(text));
+    }
+    Ok(Err(ImportWarning::LogTooLarge {
+        path: shown.to_string_lossy().into_owned(),
+        bytes: size()?.max(MAX_LOG_BYTES + 1),
+        limit: MAX_LOG_BYTES,
+    }))
+}
+
 /// What decoded conversations hold in memory: their messages, and every
 /// byte they keep, titles and ids included.
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 struct Decoded {
     messages: usize,
     bytes: usize,
 }
 
 impl Decoded {
+    /// What one import may hold decoded.
+    const LIMIT: Self = Self {
+        messages: MAX_DECODED_MESSAGES,
+        bytes: MAX_DECODED_BYTES,
+    };
+
     /// Within what one import may hold decoded.
     fn fits(self) -> bool {
-        self.messages <= MAX_DECODED_MESSAGES && self.bytes <= MAX_DECODED_BYTES
+        self.within(Self::LIMIT)
+    }
+
+    fn within(self, budget: Self) -> bool {
+        self.messages <= budget.messages && self.bytes <= budget.bytes
+    }
+
+    /// Both held at once.
+    fn and(self, other: Self) -> Self {
+        Self {
+            messages: self.messages.saturating_add(other.messages),
+            bytes: self.bytes.saturating_add(other.bytes),
+        }
     }
 
     fn add(&mut self, conversations: &[HistoryConversation]) {
@@ -389,20 +518,79 @@ use confined::{open_in, walk_logs, walk_notes};
 #[cfg(unix)]
 pub(super) mod queue;
 
-/// One session log queued for a running `serve`, read only below `root`:
-/// `path` must name a session log there, and every folder between `root` and
-/// it is opened relative to the one above and never through a link. A Claude
-/// Code session brings its own subagent logs from the folder beside it.
-///
-/// Also says whether a log ended mid-line, the session's or a subagent's: a
-/// live log whose last record was still being written, which a later pass
-/// reads whole.
+/// A queued session as read: its conversations, whether a log ended
+/// mid-line, each log left out for being over [`MAX_LOG_BYTES`], and the
+/// stamp of the logs it read.
 #[cfg(unix)]
-fn read_queued(
+#[derive(Default)]
+struct QueuedSession {
+    conversations: Vec<HistoryConversation>,
+    /// A live log whose last record was still being written, the session's
+    /// or a subagent's, which a later pass reads whole.
+    mid_line: bool,
+    left_out: Vec<ImportWarning>,
+    stamp: String,
+}
+
+/// One session log queued for a running `serve`, read only below `root`. A
+/// log over [`MAX_LOG_BYTES`], the session's or a subagent's, is left out, as
+/// in a folder import, and the rest of the session lands.
+#[cfg(unix)]
+fn read_queued(source: HistorySource, root: &Path, path: &Path) -> anyhow::Result<QueuedSession> {
+    let mut session = QueuedSession::default();
+    let mut stamp = Stamp::default();
+    let mut decoded = Decoded::default();
+    queued_logs(source, root, path, &mut |shown: &Path, file: File| {
+        // Taken before the read: a log that grows during it stamps older.
+        stamp.add(&file, shown)?;
+        let text = match read_log(&file, shown)? {
+            Ok(text) => text,
+            Err(left_out) => {
+                session.left_out.push(left_out);
+                return Ok(());
+            }
+        };
+        session.mid_line |= cut(&text);
+        let read = source
+            .decode(&text, &history_file(source, shown))
+            .map_err(|error| anyhow::anyhow!("{}: {error}", shown.display()))?;
+        drop(text);
+        decoded.add(&read);
+        anyhow::ensure!(
+            decoded.fits(),
+            "the session {} and its subagent logs hold more than {MAX_DECODED_MESSAGES} \
+             messages or {MAX_DECODED_BYTES} bytes of them; nothing was imported",
+            path.display()
+        );
+        session.conversations.extend(read);
+        Ok(())
+    })?;
+    session.stamp = stamp.finish();
+    Ok(session)
+}
+
+/// The stamp of a queued session's logs as they are now, read from their
+/// metadata alone: what [`read_queued`] would stamp them.
+#[cfg(unix)]
+fn queued_stamp(source: HistorySource, root: &Path, path: &Path) -> anyhow::Result<String> {
+    let mut stamp = Stamp::default();
+    queued_logs(source, root, path, &mut |shown: &Path, file: File| {
+        stamp.add(&file, shown)
+    })?;
+    Ok(stamp.finish())
+}
+
+/// Visits each log of a queued session: `path` must name a session log below
+/// `root`, and every folder between `root` and it is opened relative to the
+/// one above and never through a link. A Claude Code session brings its own
+/// subagent logs from the folder beside it.
+#[cfg(unix)]
+fn queued_logs(
     source: HistorySource,
     root: &Path,
     path: &Path,
-) -> anyhow::Result<(Vec<HistoryConversation>, bool)> {
+    visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
     let relative = below(root, path)?;
     anyhow::ensure!(
         session_log_name(source, path),
@@ -410,28 +598,8 @@ fn read_queued(
         path.display(),
         source.source_id()
     );
-    let decode_one = |text: &str, shown: &Path| {
-        source
-            .decode(text, &history_file(source, shown))
-            .map_err(|error| anyhow::anyhow!("{}: {error}", shown.display()))
-    };
-    let mut decoded = Decoded::default();
-    let mut keep = |read: &[HistoryConversation]| {
-        decoded.add(read);
-        anyhow::ensure!(
-            decoded.fits(),
-            "the session {} and its subagent logs hold more than {MAX_DECODED_MESSAGES} \
-             messages or {MAX_DECODED_BYTES} bytes of them; nothing was imported",
-            path.display()
-        );
-        Ok(())
-    };
     let (dir, file) = confined::open_below(root, relative)?;
-    let text = read_limited(file, path, MAX_LOG_BYTES)?;
-    let mut mid_line = cut(&text);
-    let mut conversations = decode_one(&text, path)?;
-    drop(text);
-    keep(&conversations)?;
+    visit(path, file)?;
     if source == HistorySource::ClaudeCode
         && let Some(stem) = path.file_stem()
         && let Some(folder) = confined::open_dir_in(&dir, stem)?
@@ -439,23 +607,59 @@ fn read_queued(
         confined::walk(
             &folder,
             &path.with_extension(""),
-            0,
             confined::LOGS,
             &mut |shown: &Path, file: File| {
                 if !session_log_name(source, shown) {
                     return Ok(());
                 }
-                let text = read_limited(file, shown, MAX_LOG_BYTES)?;
-                mid_line |= cut(&text);
-                let read = decode_one(&text, shown)?;
-                drop(text);
-                keep(&read)?;
-                conversations.extend(read);
-                Ok(())
+                visit(shown, file)
             },
         )?;
     }
-    Ok((conversations, mid_line))
+    Ok(())
+}
+
+/// What a queued session's logs are: each one's path, file, length and
+/// times, hashed in a stable order. Logs whose stamp did not change decode
+/// to the same conversations.
+#[cfg(unix)]
+#[derive(Default)]
+struct Stamp(Vec<(std::path::PathBuf, [i128; 6])>);
+
+#[cfg(unix)]
+impl Stamp {
+    fn add(&mut self, file: &File, shown: &Path) -> anyhow::Result<()> {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = file
+            .metadata()
+            .map_err(|error| anyhow::anyhow!("read {}: {error}", shown.display()))?;
+        self.0.push((
+            shown.to_path_buf(),
+            [
+                i128::from(metadata.ino()),
+                i128::from(metadata.len()),
+                i128::from(metadata.mtime()),
+                i128::from(metadata.mtime_nsec()),
+                i128::from(metadata.ctime()),
+                i128::from(metadata.ctime_nsec()),
+            ],
+        ));
+        Ok(())
+    }
+
+    fn finish(mut self) -> String {
+        self.0.sort();
+        let mut hasher = blake3::Hasher::new();
+        for (path, fields) in &self.0 {
+            let path = path.as_os_str().as_encoded_bytes();
+            hasher.update(&path.len().to_le_bytes());
+            hasher.update(path);
+            for field in fields {
+                hasher.update(&field.to_le_bytes());
+            }
+        }
+        hasher.finalize().to_hex()[..32].to_owned()
+    }
 }
 
 /// A log whose last record is not whole yet.
@@ -515,6 +719,18 @@ fn open_in(dir: &Path, name: &str) -> anyhow::Result<Option<File>> {
         .filter(std::fs::Metadata::is_file)
         .map(|_| File::open(&path))
         .transpose()?)
+}
+
+/// Whether the open file has another name (a hard link). A walk passes over
+/// such a file: the other name may be outside the folder it was given.
+#[cfg(unix)]
+fn hard_linked(metadata: &std::fs::Metadata) -> bool {
+    std::os::unix::fs::MetadataExt::nlink(metadata) > 1
+}
+
+#[cfg(not(unix))]
+fn hard_linked(_metadata: &std::fs::Metadata) -> bool {
+    false
 }
 
 /// An export's conversations: the zip, its `conversations.json`, or the

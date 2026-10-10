@@ -1,6 +1,6 @@
-//! Flags for the owner's own commands: doctor, backup, restore, export, the
-//! secret scan switch, importing history, import consent and agent-run
-//! consent.
+//! Flags for the owner's own commands: doctor, backup, restore, window
+//! recovery, export, the secret scan switch, importing history, import
+//! consent and agent-run consent.
 //!
 //! Every command that opens the vault reads the same config as `serve`
 //! (`--config`, `--vault-path`, `ONEIRON_*`) and needs the vault stopped: the
@@ -68,7 +68,14 @@ pub struct BackupArgs {
 #[derive(Args, Clone, Debug)]
 pub struct RestoreArgs {
     /// The backup file.
-    pub backup: PathBuf,
+    #[arg(required_unless_present = "activate")]
+    pub backup: Option<PathBuf>,
+
+    /// Activate the previous vault a restore set aside at this path, which
+    /// is archived and refuses writes, as a side vault of the configured
+    /// vault: it gets key custody of its own and opens for writing again.
+    #[arg(long, value_name = "PREVIOUS_VAULT", conflicts_with_all = ["backup", "rehearse"])]
+    pub activate: Option<PathBuf>,
 
     /// Restore into a scratch copy, open and check it, and report. The vault
     /// itself is never opened, so this also works while `serve` runs.
@@ -79,6 +86,15 @@ pub struct RestoreArgs {
     /// copy in it, at `<DIR>/vault`.
     #[arg(long, requires = "rehearse")]
     pub scratch: Option<PathBuf>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct RecoverWindowArgs {
+    /// The sync window: `YYYY-MM`, or `YYYY-MM@<world id>`.
+    pub window: String,
 
     #[command(flatten)]
     pub serve: ServeArgs,

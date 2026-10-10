@@ -72,7 +72,7 @@ The combined check returned 0. Each apply returned 0:
 
 Both conversation families remain present. HEAD room/thread APIs and routes
 are unchanged. C11 uses `append_dag_record`, `resolve_dag_scope`,
-`spawn_dag_sub_session`, `mint_dag_scope_summary`, `/dag/records`, and its own
+`spawn_dag_sub_session`, `mint_and_land_scope_summary`, `/dag/records`, and its own
 local HEAD key. Explicit per-conversation topology ownership refuses mixed
 adoption. Maintenance skips room-owned and empty unowned conversations.
 This is separate-conversation coexistence, not mixed topology semantics on

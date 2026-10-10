@@ -1,16 +1,12 @@
 //! Typed project proposal and owner-confirmed, write-free mint intent (OF-501).
 
 use super::consent_eval::{
-    ConsentActionKind, ConsentActionRequest, action_button_node, atom_id,
-    ensure_authenticated_actor, ensure_component_request, ensure_declared_action, lens_text,
-    meta_line, non_empty,
+    ConsentActionKind, ConsentActionRequest, ensure_authenticated_actor, ensure_component_request,
+    ensure_declared_action, lens_text, non_empty,
 };
 use super::protocol::Of336ActionDescriptor;
 use crate::consent::AuthenticatedOwner;
-use crate::lens::{
-    CollectionAtom, GeneratedLens, GeneratedUiActionDeclaration, GeneratedUiActionTier,
-    GeneratedUiCard, LensAtom, LensNode, LensRenderId, ReceiptAtom, SelfUiActionId,
-};
+use crate::lens::LensRenderId;
 use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -225,8 +221,8 @@ impl ProjectProposalCard {
         ] {
             lens_text(refs.join(", "))?;
         }
-        // Unsupported primitives compile from node fallbacks, not the outer
-        // Of336RenderedComponent fallback. Keep that complete and bounded.
+        // A client that cannot draw the card shows this text instead. Keep it
+        // complete and bounded.
         lens_text(self.fallback_text())?;
         Ok(())
     }
@@ -293,62 +289,6 @@ impl ProjectProposalCard {
             self.budget_share_bps,
             self.starting_skill_refs.join(", "),
         )
-    }
-
-    /// Expand the named proposal into the existing atom-kit envelope. No new
-    /// project-specific primitive or foreign renderer is required.
-    pub(super) fn generated_ui_card(&self) -> Result<GeneratedUiCard> {
-        self.validate()?;
-        let root = self.atom_kit_root()?;
-        let button = root
-            .children
-            .last()
-            .expect("proposal always has one action");
-        let LensAtom::SelfUi(control) = &button.atom else {
-            unreachable!("the proposal action is a self.ui button");
-        };
-        let declaration = GeneratedUiActionDeclaration {
-            element_id: button.id.clone(),
-            action_id: SelfUiActionId::new(PROJECT_PROPOSAL_MINT_ACTION_ID)?,
-            tier: GeneratedUiActionTier::DeterministicTool,
-            action: control.action().clone(),
-        };
-        GeneratedUiCard::interactive(
-            LensRenderId::new(self.card_id.clone())?,
-            GeneratedLens::new(root)?,
-            vec![declaration],
-            Default::default(),
-        )
-    }
-
-    pub(super) fn atom_kit_root(&self) -> Result<LensNode> {
-        let mut root = LensNode::new(
-            atom_id("project-proposal-root")?,
-            LensAtom::Sheet(CollectionAtom {
-                title: lens_text(&self.goal.goal)?,
-                rows: Vec::new(),
-            }),
-        );
-        root.children.push(LensNode::with_fallback_text(
-            atom_id("project-proposal-fields")?,
-            LensAtom::Receipt(ReceiptAtom {
-                title: lens_text(&self.goal.goal)?,
-                lines: vec![
-                    meta_line("why", &self.goal.why)?,
-                    meta_line("axes", &self.goal.axes.join(", "))?,
-                    meta_line("leader_agent_def_ref", &self.leader_agent_def_ref)?,
-                    meta_line("board_human_refs", &self.board_human_refs.join(", "))?,
-                    meta_line("budget_share_bps", &self.budget_share_bps.to_string())?,
-                    meta_line("starting_skill_refs", &self.starting_skill_refs.join(", "))?,
-                    meta_line("source_message_ref", &self.source_message_ref)?,
-                ],
-                seal: None,
-            }),
-            lens_text(self.fallback_text())?,
-        ));
-        root.children
-            .push(action_button_node(self.actions().remove(0))?);
-        Ok(root)
     }
 }
 

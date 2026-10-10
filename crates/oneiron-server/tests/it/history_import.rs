@@ -571,6 +571,42 @@ fn a_session_log_over_the_limit_is_left_out_and_the_rest_of_the_folder_lands() {
     assert_eq!(home.count(ENTITY_TYPE_MESSAGE), 12);
 }
 
+/// A #1351 follow-up: the notes walk passed over a file with another name
+/// (a hard link), since that name may be outside the folder, and the log
+/// walk did not. A session log with another name is passed over, counted
+/// and warned about, dry run or not; once it has one name, it lands.
+#[cfg(unix)]
+#[test]
+fn a_hard_linked_session_log_is_passed_over() {
+    let home = Home::new();
+    let sessions = home.dir.path().join("sessions");
+    copy_tree(&fixtures().join("codex/sessions"), &sessions);
+    let log = sessions
+        .join("2025/08/20/rollout-2025-08-20T11-00-00-5f4e3d2c-1b0a-4987-8654-3210fedcba98.jsonl");
+    let outside = home.dir.path().join("outside.jsonl");
+    std::fs::rename(&log, &outside).expect("test fixture");
+    std::fs::hard_link(&outside, &log).expect("test fixture");
+
+    for dry_run in [true, false] {
+        let report = home.import("codex", &sessions, dry_run);
+        assert_eq!(report["files"]["hard_linked"], 1, "{report}");
+        assert_eq!(report["files"]["read"], 4, "{report}");
+        assert_eq!(
+            report["warnings"],
+            serde_json::json!([{ "warning": "hard_linked", "files": 1 }])
+        );
+    }
+    let without = home.count(ENTITY_TYPE_MESSAGE);
+    assert!(without < 12, "the hard-linked log's messages did not land");
+
+    std::fs::remove_file(&outside).expect("test fixture");
+    let report = home.import("codex", &sessions, false);
+    assert_eq!(report["files"]["hard_linked"], 0, "{report}");
+    assert_eq!(report["files"]["read"], 5, "{report}");
+    assert_eq!(report["warnings"], serde_json::json!([]));
+    assert_eq!(home.count(ENTITY_TYPE_MESSAGE), 12);
+}
+
 /// Astra 1310 #5: session logs each within the per-log limit that together
 /// decode to more messages than one import holds are refused before anything
 /// lands, dry run or not.
@@ -647,7 +683,8 @@ fn session_logs_whose_titles_pass_the_decoded_limit_are_refused() {
 /// `--queue` while `serve` is down land when it starts, a session's subagent
 /// logs with it and a resumed session's copies once; a session handed over
 /// again while `serve` runs, after it grew, adds only its new messages; and a
-/// queued path that leaves the root through a link lands nothing.
+/// queued path that leaves the root through a link lands nothing. What lands
+/// is queued for the Dreamer, as after `oneiron import` (Wave 9a lane 3b).
 #[cfg(unix)]
 #[test]
 fn a_session_queued_while_serve_runs_lands_and_a_grown_one_adds_only_new_messages() {
@@ -767,6 +804,11 @@ fn a_session_queued_while_serve_runs_lands_and_a_grown_one_adds_only_new_message
         0,
         "nothing under the link was read"
     );
+    // No sitting ends for a queued import either.
+    let attempts = oneiron::attempt_queue::AttemptQueue::new(&home.open())
+        .list()
+        .expect("the attempt queue");
+    assert!(!attempts.is_empty(), "nothing was queued for the Dreamer");
 
     append(&session, &fixtures().join("claude-code/append.jsonl"));
     let server = start();

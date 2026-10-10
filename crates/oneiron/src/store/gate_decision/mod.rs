@@ -4,6 +4,7 @@
 
 use super::*;
 
+mod checkpoint_custody;
 mod claim_refs;
 mod keys;
 mod ledger;
@@ -17,12 +18,18 @@ mod sidecar;
 mod types;
 mod vet;
 
+pub(in crate::store) use self::checkpoint_custody::archived_by;
+#[cfg(test)]
+pub(crate) use self::checkpoint_custody::arm_before_activation_fork;
+pub(crate) use self::checkpoint_custody::{
+    LiveCustody, preflight_checkpoint_rows, read_live_custody, refuse_custody_beside,
+};
 pub(in crate::store) use self::keys::{
     GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY,
     GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE, GATE_DECISION_KEY_PREFIX,
     gate_decision_upper_bound,
 };
-pub(crate) use self::orcb::preflight_checkpoint_rows;
+pub(crate) use self::orcb::ForkedCustodyDir;
 pub(in crate::store) use self::orcb::{CUSTODY_ROOT_KEY, decode_custody_root};
 
 pub(in crate::store) use self::types::GATE_DIFF_HANDLE_MAX_LEN;

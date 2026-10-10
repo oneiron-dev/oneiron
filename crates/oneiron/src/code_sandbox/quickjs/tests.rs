@@ -161,9 +161,10 @@ fn quickjs_real_language_typed_writes_determinism_and_escape_refusal() {
 }
 
 /// ARCH-0028: code mode's `self.memory` IS the SDK verb table. Every row is a
-/// method beside only the engine's own typed WIT imports, so adding a row adds
-/// a method with no other edit, and one call carries the row's whole input to
-/// the host's verb door and hands back its output.
+/// method and nothing else is: the memory reads and writes the run answers
+/// itself are rows too, not hand-written WIT imports beside the table. Adding
+/// a row adds a method with no other edit, and one call carries the row's
+/// whole input to the host's verb door and hands back its output.
 #[test]
 fn quickjs_self_memory_is_the_verb_table() {
     let (bytes, hash) = artifact("first-party");
@@ -182,17 +183,18 @@ fn quickjs_self_memory_is_the_verb_table() {
     assert!(result.done, "{}", result.observation);
     let value: Value = serde_json::from_str(&result.observation).unwrap();
     let engine_imports: &[(&str, &str)] = include!("../../../wit/generated/imports.rs");
-    let mut expected: Vec<String> = crate::task_verb::sdk::AgentVerb::ALL
-        .iter()
-        .map(|verb| verb.as_str().to_owned())
-        .chain(
-            engine_imports
-                .iter()
-                .filter_map(|(_, js)| js.strip_prefix("self.memory.").map(str::to_owned)),
-        )
-        .collect();
-    expected.sort();
+    assert!(
+        !engine_imports
+            .iter()
+            .any(|(_, js)| js.starts_with("self.memory.")),
+        "a self.memory method is a verb-table row, never its own WIT import"
+    );
+    let mut expected: Vec<&str> = crate::task_verb::sdk::code_mode_verb_names().collect();
+    expected.sort_unstable();
     assert_eq!(value["names"], serde_json::json!(expected));
+    for row in ["search", "put_claim", "supersede_claim", "put_edge"] {
+        assert!(expected.contains(&row), "{row} is served from the table");
+    }
     assert_eq!(
         value["abi"], "undefined",
         "the call door itself stays bootstrap's"
@@ -380,34 +382,6 @@ impl crate::code_sandbox::wasmtime_boundary::bindings::GuestImports for ForeignH
         Err("unlinked capability".into())
     }
     fn json_validate(&mut self, _: String, _: String) -> std::result::Result<bool, String> {
-        Err("unlinked capability".into())
-    }
-    fn memory_search(
-        &mut self,
-        _: crate::code_sandbox::wasmtime_boundary::bindings::SearchInput,
-    ) -> std::result::Result<crate::code_sandbox::wasmtime_boundary::bindings::SearchOutput, String>
-    {
-        Err("unlinked capability".into())
-    }
-    fn memory_put_claim(
-        &mut self,
-        _: crate::code_sandbox::wasmtime_boundary::bindings::ClaimInput,
-    ) -> std::result::Result<crate::code_sandbox::wasmtime_boundary::bindings::ClaimOutput, String>
-    {
-        Err("unlinked capability".into())
-    }
-    fn memory_supersede_claim(
-        &mut self,
-        _: crate::code_sandbox::wasmtime_boundary::bindings::SupersedeInput,
-    ) -> std::result::Result<crate::code_sandbox::wasmtime_boundary::bindings::ClaimOutput, String>
-    {
-        Err("unlinked capability".into())
-    }
-    fn memory_put_edge(
-        &mut self,
-        _: crate::code_sandbox::wasmtime_boundary::bindings::EdgeInput,
-    ) -> std::result::Result<crate::code_sandbox::wasmtime_boundary::bindings::EdgeOutput, String>
-    {
         Err("unlinked capability".into())
     }
     fn report_blocked(

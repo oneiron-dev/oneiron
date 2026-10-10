@@ -173,6 +173,11 @@ pub struct MemoryRow {
     pub tier: MemoryTier,
     #[serde(default)]
     pub snippet: Option<String>,
+    /// The exact revision this row's body was served at, where the read
+    /// pinned one. Board history records it, never LIVE in its place. Not on
+    /// the wire: board refs stay as they were.
+    #[serde(skip)]
+    pub source_revision: Option<crate::vault::RevisionRef>,
 }
 
 /// Deterministic MEMORIES section envelope.

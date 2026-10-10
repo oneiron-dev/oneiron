@@ -25,7 +25,7 @@ pub use docs_import::{
 pub use summary_ladder::{DocsExpansion, DocsExpansionLevel, DocsSummaryHit};
 mod identity_key;
 pub use identity_key::identity_fields_for_kind;
-pub(crate) use identity_key::reindex_identity_hints;
+pub(crate) use identity_key::{identity_hint_digest, reindex_identity_hints};
 mod admission;
 mod bulk_review;
 pub mod image;
