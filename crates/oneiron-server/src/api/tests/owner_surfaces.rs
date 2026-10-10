@@ -871,7 +871,10 @@ async fn graph_fs_find_pages_through_every_path_once() {
     assert!(pages.len() > 1);
     let (last, cut) = pages.split_last().unwrap();
     assert!(cut.iter().all(|(_, more)| *more) && !last.1);
-    let found: Vec<&str> = pages.iter().flat_map(|(output, _)| output.lines()).collect();
+    let found: Vec<&str> = pages
+        .iter()
+        .flat_map(|(output, _)| output.lines())
+        .collect();
     let unique: BTreeSet<String> = found.iter().map(|path| (*path).to_owned()).collect();
     assert_eq!(unique.len(), found.len(), "a path came back twice");
     assert_eq!(unique, expected);
@@ -890,7 +893,10 @@ async fn graph_fs_grep_pages_through_one_file() {
     let query = format!("path=/entities/{id}/body&op=grep&pattern=match");
     let pages = graph_fs_pages(&server, &owner, &query).await;
     assert_eq!(pages.len(), 2);
-    let matches: Vec<&str> = pages.iter().flat_map(|(output, _)| output.lines()).collect();
+    let matches: Vec<&str> = pages
+        .iter()
+        .flat_map(|(output, _)| output.lines())
+        .collect();
     let expected: Vec<String> = short
         .iter()
         .map(|line| format!("/entities/{id}/body:{line}"))

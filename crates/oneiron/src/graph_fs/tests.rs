@@ -786,6 +786,21 @@ fn graph_fs_failed_telemetry_write_has_no_identity() -> Result<()> {
     Ok(())
 }
 
+/// Every page of one command, following its cursor to the end, joined.
+fn pages(mut next: impl FnMut(Option<&str>) -> Result<GraphFsCommandOutput>) -> Result<String> {
+    let mut joined = String::new();
+    let mut cursor: Option<String> = None;
+    for _ in 0..10_000 {
+        let page = next(cursor.as_deref())?;
+        joined.push_str(std::str::from_utf8(page.bytes()).expect("every page is text"));
+        cursor = page.next_cursor().map(str::to_owned);
+        if cursor.is_none() {
+            return Ok(joined);
+        }
+    }
+    panic!("paging must end");
+}
+
 /// Every page a limit cuts hands out a cursor, and paging on reaches the
 /// rest, each line once: `find` and `grep -r` paged small rejoin to the same
 /// walk in one page (stopping inside files and directory listings), `head`
@@ -815,7 +830,13 @@ fn a_page_a_limit_cut_always_hands_out_a_cursor() -> Result<()> {
     let body = lines.join("\n");
     vault.put_entity(&long, ENTITY_TYPE_PERSON, time_range(1), 1, body.as_bytes())?;
     let body = format!("{needle} alone");
-    vault.put_entity(&short, ENTITY_TYPE_PERSON, time_range(1), 1, body.as_bytes())?;
+    vault.put_entity(
+        &short,
+        ENTITY_TYPE_PERSON,
+        time_range(1),
+        1,
+        body.as_bytes(),
+    )?;
     put_policy_manifest(
         &vault,
         test_id(0x5B),
@@ -834,19 +855,6 @@ fn a_page_a_limit_cut_always_hands_out_a_cursor() -> Result<()> {
             .expect("every page is text")
             .to_owned()
     };
-    let pages = |next: &mut dyn FnMut(Option<&str>) -> Result<GraphFsCommandOutput>| {
-        let mut joined = String::new();
-        let mut cursor: Option<String> = None;
-        for _ in 0..10_000 {
-            let page = next(cursor.as_deref())?;
-            joined.push_str(&text(&page));
-            cursor = page.next_cursor().map(str::to_owned);
-            if cursor.is_none() {
-                return Ok(joined);
-            }
-        }
-        panic!("paging must end");
-    };
 
     // find and grep -r: many small pages rejoin to one uncut page.
     let small = resolver(&reader, 256);
@@ -860,7 +868,7 @@ fn a_page_a_limit_cut_always_hands_out_a_cursor() -> Result<()> {
     let found = text(&found);
     assert!(found.contains(&format!("/entities/{}/claims", subject.to_hex())));
     assert_eq!(
-        pages(&mut |cursor| small.find("/entities", None, cursor))?,
+        pages(|cursor| small.find("/entities", None, cursor))?,
         found
     );
     let grepped = whole.grep(needle, "/entities", true, None)?;
@@ -872,19 +880,19 @@ fn a_page_a_limit_cut_always_hands_out_a_cursor() -> Result<()> {
     }
     assert!(grepped.contains(&format!("/entities/{}/body:{needle} alone", short.to_hex())));
     assert_eq!(
-        pages(&mut |cursor| small.grep(needle, "/entities", true, cursor))?,
+        pages(|cursor| small.grep(needle, "/entities", true, cursor))?,
         grepped
     );
 
     // head past a page (512 lines).
     let fs = resolver(&reader, GRAPH_FS_DEFAULT_PAGE_BYTE_CAP);
     let path = format!("/entities/{}/body", long.to_hex());
-    let head = pages(&mut |cursor| fs.head(&path, 600, cursor))?;
+    let head = pages(|cursor| fs.head(&path, 600, cursor))?;
     assert_eq!(head.lines().collect::<Vec<_>>(), lines);
 
     // The claim text pushdown past its result cap (2 here).
     let capped = reader.graph_fs(GraphFsOptions::default().with_max_entries(2));
-    let grepped = pages(&mut |cursor| capped.grep(needle, "/claims", true, cursor))?;
+    let grepped = pages(|cursor| capped.grep(needle, "/claims", true, cursor))?;
     let mut ids: Vec<_> = grepped
         .lines()
         .filter_map(|line| line.strip_prefix("/claims/")?.split_once(':'))
@@ -915,7 +923,10 @@ fn a_page_a_limit_cut_always_hands_out_a_cursor() -> Result<()> {
     assert!(cursor.is_none(), "paging must end");
     assert!(empty_but_more);
     for id in shown {
-        assert_eq!(listed.iter().filter(|name| **name == id.to_hex()).count(), 1);
+        assert_eq!(
+            listed.iter().filter(|name| **name == id.to_hex()).count(),
+            1
+        );
     }
     for id in hidden {
         assert!(!listed.contains(&id.to_hex()));

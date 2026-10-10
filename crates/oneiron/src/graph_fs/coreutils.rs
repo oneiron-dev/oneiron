@@ -38,7 +38,7 @@ impl GraphFsResolver<'_, '_> {
             && recursive
             && matches!(normalized.as_str(), "/claims" | "/claims/by-id")
         {
-            let page = self.grep_claims_pushdown(literal, cursor)?;
+            let page = self.grep_claims_pushdown(literal, &normalized, cursor)?;
             return self.finish_coreutils_command(
                 GraphFsCoreutilsVerb::Grep,
                 started,

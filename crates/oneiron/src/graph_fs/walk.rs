@@ -52,7 +52,10 @@ struct WalkFrame {
 impl SealedPosition for WalkPosition {
     fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = vec![u8::from(self.root_done)];
-        put_optional(&mut bytes, self.lines.map(|lines| lines.to_bytes()).as_deref());
+        put_optional(
+            &mut bytes,
+            self.lines.map(|lines| lines.to_bytes()).as_deref(),
+        );
         for frame in &self.frames {
             put_field(&mut bytes, frame.name.as_bytes());
             put_optional(&mut bytes, frame.page.as_deref().map(str::as_bytes));
@@ -158,7 +161,13 @@ impl GraphFsResolver<'_, '_> {
     ) -> Result<WalkOutput> {
         let flag = if recursive { " -r" } else { "" };
         let listing = format!("grep{flag} {}:{pattern} {path}", pattern.len());
-        self.walk(path, recursive, WalkVerb::Grep { pattern }, &listing, cursor)
+        self.walk(
+            path,
+            recursive,
+            WalkVerb::Grep { pattern },
+            &listing,
+            cursor,
+        )
     }
 
     /// Walks `root` as `find` does: the root, then each directory's entries
@@ -326,10 +335,7 @@ impl GraphFsResolver<'_, '_> {
                     lines.unwrap_or_default(),
                     &mut walk.out,
                     usize::MAX,
-                    |line| {
-                        line.contains(pattern)
-                            .then(|| format!("{path}:{line}\n"))
-                    },
+                    |line| line.contains(pattern).then(|| format!("{path}:{line}\n")),
                 );
                 walk.total += matched;
                 Ok(next.map_or(Visited::Done, |lines| Visited::Cut(Some(lines))))

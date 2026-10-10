@@ -4,8 +4,8 @@ use crate::error::Result;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use rmpv::Value;
 
-use super::model::GraphFsResolver;
 use super::coreutils_text::LinePosition;
+use super::model::GraphFsResolver;
 use super::paging::CommandOutputBuilder;
 
 pub(super) struct ClaimGrepPage {
@@ -23,9 +23,10 @@ impl GraphFsResolver<'_, '_> {
     pub(super) fn grep_claims_pushdown(
         &self,
         pattern: &str,
+        path: &str,
         cursor: Option<&str>,
     ) -> Result<ClaimGrepPage> {
-        let scope = self.cursor_scope(&format!("grep -r {}:{pattern} /claims", pattern.len()));
+        let scope = self.cursor_scope(&format!("grep -r {}:{pattern} {path}", pattern.len()));
         let at: LinePosition = scope.open(cursor)?.unwrap_or_default();
         let (from, mut printed) = (at.line, at.printed);
         let cap = self.coreutils_result_cap();
@@ -35,7 +36,13 @@ impl GraphFsResolver<'_, '_> {
             None,
         )?;
         let more = hits.value.len() > from.saturating_add(cap);
-        let ids: Vec<_> = hits.value.iter().skip(from).take(cap).map(|hit| hit.id).collect();
+        let ids: Vec<_> = hits
+            .value
+            .iter()
+            .skip(from)
+            .take(cap)
+            .map(|hit| hit.id)
+            .collect();
         let reads: Vec<_> = ids.iter().copied().map(PointRead::id).collect();
         let projection = self
             .scoped_read

@@ -21,7 +21,9 @@ use super::model::{
 
 use super::coreutils::{claim_matches_world_in, grant_scope_world_name, read_grant_matches_actor};
 
-use super::paging::{DayPosition, EdgeCursor, PageBuilder, TemporalCursor, format_day_shard, parse_day_shard};
+use super::paging::{
+    DayPosition, EdgeCursor, PageBuilder, TemporalCursor, format_day_shard, parse_day_shard,
+};
 
 /// File lookup and the receipt of the scoped read, if a stored row was read.
 /// Fixed files and unmatched paths have no scoped-read receipt.
