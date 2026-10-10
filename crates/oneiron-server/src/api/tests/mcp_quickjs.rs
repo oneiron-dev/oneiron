@@ -99,6 +99,9 @@ fn factory() -> QuickJsRuntimeFactory {
 pub(super) struct CodeMode {
     pub(super) server: Arc<SyncServer>,
     pub(super) vault: Arc<oneiron::Vault>,
+    /// The config the provider gives a fixed run, so two providers' settings
+    /// compare apart from their runs' identities.
+    pub(super) config: EngineExecutorConfig,
     backend: Arc<Backend>,
     judge: Arc<Judge>,
     seat_model: ModelId,
@@ -225,6 +228,13 @@ pub(super) fn code_mode_server_with(
         Some(check) => provider.with_code_check(check),
         None => provider,
     };
+    let config = crate::mcp::McpCodeModeProvider::executor_config(
+        &provider,
+        &vault,
+        seeded_test_entity_id(0x0024_6505),
+        "probe",
+    )
+    .unwrap();
     let server = Arc::new(
         SyncServer::new(
             vault.clone(),
@@ -239,6 +249,7 @@ pub(super) fn code_mode_server_with(
     CodeMode {
         server,
         vault,
+        config,
         backend,
         judge,
         seat_model,
@@ -266,6 +277,7 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
         judge,
         seat_model,
         _dir,
+        ..
     } = code_mode_server(scripts);
     vault
         .put_entity(

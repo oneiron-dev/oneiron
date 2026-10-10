@@ -25,10 +25,12 @@ const POLL: Duration = Duration::from_millis(1);
 /// How long the reader may take to finish once the process has exited.
 const DRAIN: Duration = Duration::from_millis(100);
 /// Text through which a program can make tsc resolve a module: an import
-/// (statement, call, JSDoc type or tag, JSX import source), a `require` call,
-/// a reference directive, or a Unicode escape that spells one of them.
-/// Matched without regard to case.
-const MODULE_NAMING: [&str; 4] = ["import", "require", "reference", "\\u"];
+/// (statement, call, JSDoc type or tag, JSX import source), an export from
+/// another module (a program can close its envelope and write one at the top
+/// level), a `require` call, a reference directive, or a Unicode escape that
+/// spells one of them. Matched without regard to case, so a program that
+/// merely mentions one (`self.memory.export`) is left unchecked too.
+const MODULE_NAMING: [&str; 5] = ["import", "export", "require", "reference", "\\u"];
 /// `tsc --version` prints one short line.
 const VERSION_BYTES: usize = 256;
 
@@ -76,14 +78,18 @@ impl CodeCheck for MicrosoftTsc {
 
     fn check(&self, input: &CheckInput<'_>) -> Result<CheckReport, CheckFailure> {
         let deadline = Instant::now() + self.wall_time;
+        let files = project_files(input)?;
         // tsc runs with this host's file system, and resolving a module reads
         // or probes the path it names, so a program that could name one is
         // left unchecked here. tsc-rs reads only the check's own files.
-        let program = input.program.to_ascii_lowercase();
-        if MODULE_NAMING.iter().any(|token| program.contains(token)) {
+        let program = input.program.as_bytes();
+        if MODULE_NAMING.iter().any(|token| {
+            program
+                .windows(token.len())
+                .any(|window| window.eq_ignore_ascii_case(token.as_bytes()))
+        }) {
             return Err(CheckFailure::Unsupported);
         }
-        let files = project_files(input)?;
         let directory = tempfile::tempdir().map_err(|_| CheckFailure::Unavailable)?;
         for (name, bytes) in &files {
             std::fs::write(directory.path().join(name), bytes)

@@ -2,12 +2,12 @@
 //! result. The synthetic programs of the tsc-check evidence run through
 //! `execute_code` on the production QuickJS provider twice, with the type
 //! check off and in shadow mode on tsc-rs; the replies and the replay records
-//! match, and the shadow record carries what the check found. The two servers
-//! are built by one function that differs only in the check, but each keys
-//! its credentials afresh, so each run has its own run id (and the seed and
-//! config hash derived from it). The runs are compared on everything else:
-//! the replies, host calls, steps with their clock, outputs and the prompt
-//! fingerprint, with the run id and the run-identity hash masked.
+//! match, and the shadow record carries what the check found. Each server's
+//! vault keys its credentials afresh, so each run has its own run id, and the
+//! seed and config hash derived from it. The two providers give a fixed run
+//! the same config, and the runs are compared on everything else: the
+//! replies, host calls, steps with their clock, outputs and the prompt
+//! fingerprint, with the run id and the config hash masked.
 use super::mcp_quickjs::{CodeMode, code_mode_server_with};
 use super::*;
 use oneiron::code_run::CodeRunReplayRecord;
@@ -188,41 +188,43 @@ async fn shadow_mode_changes_no_programs_behaviour_or_result() {
     for (name, program, codes) in FIXTURES {
         let off = run(program, None).await;
         let checked = run(program, Some(shadow.clone())).await;
+        // The check changes no setting the masked config hash binds.
+        assert_eq!(off.mode.config, checked.mode.config, "{name}");
         assert_eq!(off.view(), checked.view(), "{name}");
         assert_eq!(off.checks(), 0, "{name}: off checks nothing");
-        // Every step in the shadow record carries its check.
-        assert_eq!(
-            checked.checks(),
-            checked.record.step_checkpoints.len(),
-            "{name}"
-        );
-        let report: Value = serde_json::from_str(
-            &checked
-                .text("executor/repl/000000.code-check.json")
-                .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(report["mode"], "shadow", "{name}");
-        assert_eq!(report["backend"], "tsc-rs", "{name}");
-        let found: Vec<u64> = report["diagnostics"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|diagnostic| diagnostic["code"].as_u64().unwrap())
-            .collect();
-        // Step 0 is the program's own (as the executor heals it, without its
-        // trailing newline) unless it failed before any host call.
-        let program_step = checked
-            .text("executor/repl/000000.generated.js")
-            .is_some_and(|generated| generated.trim_end() == program.trim_end());
-        let expected: Vec<u64> = if program_step {
-            codes.iter().copied().map(u64::from).collect()
-        } else {
-            Vec::new()
-        };
-        assert_eq!(found, expected, "{name}: {report}");
+        // A completed step keeps its check's report; a failed step keeps
+        // none, and its check is counted below. Every run here ends on a
+        // completed step.
+        let steps = &checked.record.step_checkpoints;
+        let last = steps.last().map(|step| step.seq);
+        for step in steps {
+            let at = |kind: &str| checked.text(&format!("executor/repl/{:06}.{kind}", step.seq));
+            let Some(report) = at("code-check.json") else {
+                assert_ne!(Some(step.seq), last, "{name}: the last step keeps its report");
+                continue;
+            };
+            let report: Value = serde_json::from_str(&report).unwrap();
+            assert_eq!(report["mode"], "shadow", "{name}");
+            assert_eq!(report["backend"], "tsc-rs", "{name}");
+            let found: Vec<u64> = report["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|diagnostic| diagnostic["code"].as_u64().unwrap())
+                .collect();
+            // The step ran the fixture (as the executor heals it, without its
+            // trailing newline), or the clean program that ends the run.
+            let program_step = at("generated.js")
+                .is_some_and(|generated| generated.trim_end() == program.trim_end());
+            let expected: Vec<u64> = if program_step {
+                codes.iter().copied().map(u64::from).collect()
+            } else {
+                Vec::new()
+            };
+            assert_eq!(found, expected, "{name}: {report}");
+        }
     }
-    // A program that failed before its step was recorded still counts.
+    // A program whose step failed still counts.
     let totals = shadow.metrics().snapshot();
     assert_eq!(totals.with_diagnostics, 4, "{totals:?}");
     assert_eq!(
