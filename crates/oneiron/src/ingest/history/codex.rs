@@ -110,35 +110,42 @@ struct Rollout {
 struct Thread {
     /// Its meta line.
     line: usize,
+    /// The thread it was spawned or forked from.
+    parent: Option<String>,
     /// A parent agent spawned it, so its own user messages are that agent's.
     spawned: bool,
     /// The line its own history starts at: its meta line plus its own start
     /// ordinal. `None` when it names none: its own history starts somewhere
     /// past its meta line.
     own_from: Option<usize>,
+    /// It is the file's own thread, or the parent of the resolved thread
+    /// before it: every copy between it and the file's own thread is present.
+    resolved: bool,
 }
 
-/// Whether the user message at `line` is a delegating agent's: the thread
-/// whose own history holds it was spawned. Copies nest, so each copied
-/// parent's own history ends where the thread that copied it starts its own.
-/// Where a thread's own start is unknown, a spawned thread may hold any line
-/// past its meta, so those are its agent's, and any other leaves the line to
-/// the copies it carries. Words are the owner's only when a thread no agent
-/// spawned holds them; copied history whose thread's meta the copy left out
-/// is no one's known words, so it is the agent's too. A rollout with no meta
-/// names no spawn at all: its words are the owner's.
+/// Whether the user message at `line` is a delegating agent's. Copies nest,
+/// so each copied parent's own history ends where the thread that copied it
+/// starts its own, and the thread whose own history holds the line decides.
+/// Words are the owner's only when a thread no agent spawned provably holds
+/// them: its own known range, or a root thread's whole span, and only through
+/// an unbroken chain of copies. Anything else (a spawned thread's span past an
+/// unknown start, copied history whose thread's meta the copy left out, a
+/// broken chain) is the agent's: left out of extraction, never the owner's.
+/// A rollout with no meta names no spawn at all: its words are the owner's.
 fn delegated(threads: &[Thread], line: usize) -> bool {
     let mut end = usize::MAX;
     let mut owners = threads.is_empty();
     for thread in threads {
         match thread.own_from {
-            Some(start) if (start..end).contains(&line) => return thread.spawned,
+            Some(start) if (start..end).contains(&line) => {
+                return thread.spawned || !thread.resolved;
+            }
             Some(start) => end = end.min(start),
             None if (thread.line..end).contains(&line) => {
                 if thread.spawned {
                     return true;
                 }
-                owners = true;
+                owners |= thread.resolved && thread.parent.is_none();
             }
             None => {}
         }
@@ -258,10 +265,19 @@ impl Rollout {
             .get("subagent_history_start_ordinal")
             .and_then(Value::as_u64)
             .and_then(|line| usize::try_from(line).ok());
+        let parent = spawned_by(payload)
+            .or_else(|| str_field(payload, "forked_from_id"))
+            .map(str::to_owned);
+        let resolved = self
+            .threads
+            .last()
+            .is_none_or(|copier| copier.resolved && copier.parent.is_some() && copier.parent == id);
         self.threads.push(Thread {
             line,
+            parent,
             spawned: spawned_by(payload).is_some(),
             own_from: ordinal.map(|ordinal| line.saturating_add(ordinal)),
+            resolved,
         });
         // A forked or spawned thread's rollout carries its parent's meta again
         // inside the history it copied; the file's own meta comes first.
