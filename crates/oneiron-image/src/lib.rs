@@ -18,10 +18,10 @@ mod organ;
 mod render;
 
 pub use body::{
-    Filter, Format, Icc, ImageBody, KIND, MAX_OVERLAYS, MAX_POINTS, MAX_STEPS, MAX_STROKE_WIDTH,
-    MAX_TOTAL_POINTS, Overlay, Point, SCHEMA, Shape, Size, Source, Step, Stroke,
+    Filter, Format, Icc, ImageBody, KIND, MAX_OVERLAYS, MAX_POINTS, MAX_SIDE, MAX_STEPS,
+    MAX_STROKE_WIDTH, MAX_TOTAL_POINTS, Overlay, Point, SCHEMA, Shape, Size, Source, Step, Stroke,
 };
-pub use decode::{Header, MAX_SIDE, Profile, read_header};
+pub use decode::{Header, Profile, read_header};
 pub use ops::overlay_locator;
 #[cfg(unix)]
 pub use organ::{

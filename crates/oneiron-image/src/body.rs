@@ -14,6 +14,8 @@ pub const KIND: &str = "image";
 /// The body schema this organ speaks.
 pub const SCHEMA: u32 = 1;
 
+/// The longest side a source or any step's canvas may have.
+pub const MAX_SIDE: u32 = 65_535;
 /// The most steps one body may carry.
 pub const MAX_STEPS: usize = 256;
 /// The most overlays one body may carry.
@@ -227,8 +229,9 @@ impl ImageBody {
     }
 
     /// Replays the steps from the source size and checks every bound, so a
-    /// body that reaches export always renders.
-    fn check(&self) -> Result<(), OrganError> {
+    /// body that reaches export always renders. Every edit checks the body
+    /// it returns too.
+    pub(crate) fn check(&self) -> Result<(), OrganError> {
         if !(1..=8).contains(&self.source.orientation) {
             return Err(bad("orientation must be 1 to 8"));
         }
@@ -244,6 +247,11 @@ impl ImageBody {
         };
         if canvas.w == 0 || canvas.h == 0 {
             return Err(bad("the source has no pixels"));
+        }
+        if canvas.w > MAX_SIDE || canvas.h > MAX_SIDE {
+            return Err(bad(format!(
+                "the source is wider or taller than {MAX_SIDE}"
+            )));
         }
         for step in &self.steps {
             canvas = step.apply_to(canvas)?;
@@ -302,6 +310,12 @@ impl Step {
             Self::Resize { w, h, .. } => {
                 if w == 0 || h == 0 {
                     return Err(bad("resize to zero pixels"));
+                }
+                if w > MAX_SIDE || h > MAX_SIDE {
+                    return Err(OrganError::new(
+                        ErrorCode::TooLarge,
+                        format!("resize to {w}x{h}: a side is past {MAX_SIDE}"),
+                    ));
                 }
                 Ok(Size { w, h })
             }

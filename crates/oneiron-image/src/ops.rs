@@ -29,20 +29,71 @@ pub fn overlay_locator(id: u32) -> Locator {
     }
 }
 
+fn pixel_count(size: Size) -> u64 {
+    u64::from(size.w).saturating_mul(u64::from(size.h))
+}
+
 /// Bytes a canvas of `size` takes as RGBA.
 pub(crate) fn rgba_bytes(size: Size) -> u64 {
-    u64::from(size.w) * u64::from(size.h) * 4
+    pixel_count(size).saturating_mul(4)
 }
 
 /// What a bilinear resize from `from` to `to` holds at its peak: the
 /// premultiplied float copy, the vertical pass, the float result and the
 /// RGBA result.
 pub(crate) fn bilinear_bytes(from: Size, to: Size) -> u64 {
-    let float = |w: u32, h: u32| u64::from(w) * u64::from(h) * 16;
+    let float = |w: u32, h: u32| pixel_count(Size { w, h }).saturating_mul(16);
     float(from.w, from.h)
         .saturating_add(float(from.w, to.h))
         .saturating_add(float(to.w, to.h))
         .saturating_add(rgba_bytes(to))
+}
+
+/// The most bytes rendering and exporting `body` holds at once: the decoded
+/// source throughout; at each step the canvas it reads (once it is no longer
+/// the source) and what it makes; then the final canvas with an overlay
+/// mask, or with the encoder's RGB copy and its output.
+///
+/// # Errors
+/// `bad_request` if a step does not fit.
+pub(crate) fn render_peak(body: &ImageBody) -> Result<u64, OrganError> {
+    let source = Size {
+        w: body.source.width,
+        h: body.source.height,
+    };
+    let mut canvas = source;
+    let mut owned = 0u64;
+    let mut peak = 0u64;
+    for step in &body.steps {
+        let next = step.apply_to(canvas)?;
+        let made = match step {
+            Step::Crop { .. }
+            | Step::Resize {
+                filter: Filter::Nearest,
+                ..
+            } => rgba_bytes(next),
+            Step::Resize {
+                filter: Filter::Bilinear,
+                ..
+            } => bilinear_bytes(canvas, next),
+        };
+        peak = peak.max(owned.saturating_add(made));
+        owned = rgba_bytes(next);
+        canvas = next;
+    }
+    // With no steps, painting starts from a copy of the source.
+    let last = rgba_bytes(canvas);
+    let mask = if body.overlays.is_empty() {
+        0
+    } else {
+        pixel_count(canvas)
+    };
+    let png = last
+        .saturating_add(u64::from(canvas.h))
+        .saturating_add(1 << 20);
+    let encode = pixel_count(canvas).saturating_mul(3).saturating_add(png);
+    peak = peak.max(last.saturating_add(mask.max(encode)));
+    Ok(rgba_bytes(source).saturating_add(peak))
 }
 
 /// Keeps `x, y, w, h` of the canvas. Overlays move with the pixels; one
@@ -69,7 +120,7 @@ pub(crate) fn crop(
         }
         overlay.clipped = clipped;
     }
-    check_steps(&body)?;
+    body.check()?;
     Ok(Edited { body, touched })
 }
 
@@ -77,7 +128,8 @@ pub(crate) fn crop(
 /// widths by the geometric mean, never under one pixel.
 ///
 /// # Errors
-/// `bad_request` for a zero size, `too_large` past `max_bytes`.
+/// `bad_request` for a zero size or an overlay pushed out of range,
+/// `too_large` if exporting the result would need more than `max_bytes`.
 pub(crate) fn resize(
     mut body: ImageBody,
     w: u32,
@@ -88,21 +140,18 @@ pub(crate) fn resize(
     let from = body.canvas;
     let step = Step::Resize { w, h, filter };
     let to = step.apply_to(from)?;
-    let peak = match filter {
-        Filter::Nearest => rgba_bytes(to),
-        Filter::Bilinear => bilinear_bytes(from, to),
-    };
+    body.canvas = to;
+    body.steps.push(step);
+    let peak = render_peak(&body)?;
     if peak > max_bytes {
         return Err(OrganError::new(
             ErrorCode::TooLarge,
             format!(
-                "resizing {}x{} to {w}x{h} needs {peak} bytes; this organ holds {max_bytes}",
+                "after resizing {}x{} to {w}x{h}, export needs {peak} bytes; this organ holds {max_bytes}",
                 from.w, from.h
             ),
         ));
     }
-    body.canvas = to;
-    body.steps.push(step);
     let sx = w as f32 / from.w as f32;
     let sy = h as f32 / from.h as f32;
     let widen = (sx * sy).sqrt();
@@ -112,7 +161,7 @@ pub(crate) fn resize(
             (overlay.stroke.width * widen).clamp(1.0, crate::body::MAX_STROKE_WIDTH);
         overlay.clipped = overlay.clipped_by(to);
     }
-    check_steps(&body)?;
+    body.check()?;
     Ok(Edited {
         body,
         touched: vec![pixels(0, 0, w, h)],
@@ -163,13 +212,6 @@ pub(crate) fn annotate(
         ));
     }
     body.overlays.push(overlay);
+    crate::render::check_paint(&body)?;
     Ok(Edited { body, touched })
-}
-
-fn check_steps(body: &ImageBody) -> Result<(), OrganError> {
-    if body.steps.len() > crate::body::MAX_STEPS {
-        Err(bad(format!("more than {} steps", crate::body::MAX_STEPS)))
-    } else {
-        Ok(())
-    }
 }

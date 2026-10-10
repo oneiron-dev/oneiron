@@ -10,12 +10,10 @@ use oneiron_organ_protocol::{
 };
 use serde::Deserialize;
 
-use crate::body::{
-    Filter, Icc, ImageBody, KIND, Shape, Size, Source, Step, Stroke, bad, from_value,
-};
+use crate::body::{Filter, Format, Icc, ImageBody, KIND, Shape, Source, Stroke, bad, from_value};
 use crate::decode::{Header, Profile, check_size, decode, read_header};
 use crate::ops::{self, Edited};
-use crate::render::{encode_png, render};
+use crate::render::{check_paint, encode_png, render};
 
 pub const VERB_INSPECT: &str = "image.inspect";
 pub const VERB_OPEN: &str = "image.open";
@@ -37,11 +35,27 @@ const VERBS: [(&str, bool); 6] = [
 const UNTAGGED: &str = "the source has no colour profile; it is read as sRGB";
 
 /// The image organ. It keeps decoded sources by content hash, within a
-/// quarter of its memory grant, so a crop or export after `open` does not
-/// decode again.
+/// quarter of its memory grant, so an export after `open` does not decode
+/// again. Pixel work books from one allowance, half the grant, that every
+/// call in flight shares.
 #[derive(Debug, Default)]
 pub struct ImageOrgan {
     decoded: Mutex<Decoded>,
+    /// Bytes of the work allowance the calls in flight hold.
+    held: Mutex<u64>,
+}
+
+/// Work memory one call holds, given back when it drops.
+struct Held<'a> {
+    organ: &'a ImageOrgan,
+    bytes: u64,
+}
+
+impl Drop for Held<'_> {
+    fn drop(&mut self) {
+        let mut held = lock(&self.organ.held);
+        *held = held.saturating_sub(self.bytes);
+    }
 }
 
 #[derive(Debug, Default)]
@@ -80,13 +94,28 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// What one decoded source may take: a quarter of the grant. The cache
-/// holds another quarter; pixel work at export gets the rest.
+/// holds another quarter, and pixel work (decodes, renders, encodes) books
+/// from the shared half.
 fn decode_budget(call: &CallContext<'_>) -> u64 {
     call.limits.memory_bytes / 4
 }
 
 fn work_budget(call: &CallContext<'_>) -> u64 {
     call.limits.memory_bytes / 2
+}
+
+/// The copy of the whole file a JPEG decoder makes before it decodes.
+fn file_copy(header: &Header, input: &InputBytes) -> u64 {
+    if header.format == Format::Jpeg {
+        input.len() as u64
+    } else {
+        0
+    }
+}
+
+/// What decoding `header` holds at once: the pixels and the file copy.
+fn decode_cost(header: &Header, input: &InputBytes) -> u64 {
+    header.rgba_bytes().saturating_add(file_copy(header, input))
 }
 
 #[derive(Deserialize)]
@@ -254,18 +283,51 @@ fn admit(header: &Header, budget: u64) -> Result<Icc, OrganError> {
         .ok_or_else(|| OrganError::new(ErrorCode::Unsupported, "the ICC profile is not sRGB"))
 }
 
+/// The body's record of a source, from the source itself.
+fn source_from(input: &InputBytes, header: &Header, icc: Icc) -> Source {
+    let (width, height) = header.size();
+    Source {
+        hash: input.content_hash,
+        media_type: header.format.media_type().to_owned(),
+        format: header.format,
+        width,
+        height,
+        orientation: header.orientation,
+        alpha: header.alpha,
+        icc,
+    }
+}
+
 impl ImageOrgan {
-    fn cached(&self, hash: &Hash32) -> Option<Arc<RgbaImage>> {
-        lock(&self.decoded).get(hash)
+    /// Books `bytes` of the shared work allowance, or says why not.
+    fn hold(&self, call: &CallContext<'_>, bytes: u64) -> Result<Held<'_>, OrganError> {
+        let allowance = work_budget(call);
+        if bytes > allowance {
+            return Err(OrganError::new(
+                ErrorCode::TooLarge,
+                format!("this needs {bytes} bytes at once; this organ works in {allowance}"),
+            ));
+        }
+        let mut held = lock(&self.held);
+        if held.saturating_add(bytes) > allowance {
+            return Err(OrganError::new(
+                ErrorCode::Budget,
+                "other calls hold the organ's working memory; retry",
+            ));
+        }
+        *held += bytes;
+        Ok(Held { organ: self, bytes })
     }
 
+    /// The decoded source: from the cache, or decoded now. The caller
+    /// holds work memory for the decode.
     fn decode_and_keep(
         &self,
         call: &CallContext<'_>,
         input: &InputBytes,
         header: &Header,
     ) -> Result<Arc<RgbaImage>, OrganError> {
-        if let Some(image) = self.cached(&input.content_hash) {
+        if let Some(image) = lock(&self.decoded).get(&input.content_hash) {
             return Ok(image);
         }
         let image = Arc::new(decode(input, header, decode_budget(call))?);
@@ -278,18 +340,11 @@ impl ImageOrgan {
         let input = only_input(call)?;
         let header = read_header(input)?;
         let icc = admit(&header, decode_budget(call))?;
-        self.decode_and_keep(call, input, &header)?;
-        let (width, height) = header.size();
-        let body = ImageBody::new(Source {
-            hash: input.content_hash,
-            media_type: header.format.media_type().to_owned(),
-            format: header.format,
-            width,
-            height,
-            orientation: header.orientation,
-            alpha: header.alpha,
-            icc,
-        });
+        if lock(&self.decoded).get(&input.content_hash).is_none() {
+            let _held = self.hold(call, decode_cost(&header, input))?;
+            self.decode_and_keep(call, input, &header)?;
+        }
+        let body = ImageBody::new(source_from(input, &header, icc));
         let mut notes = Notes::default();
         note_source(&mut notes, input, &header);
         Ok(Answer {
@@ -300,33 +355,9 @@ impl ImageOrgan {
         })
     }
 
-    /// The decoded source of `body`: from the cache, or from the input that
-    /// carries its hash.
-    fn source_of(
-        &self,
-        call: &CallContext<'_>,
-        body: &ImageBody,
-    ) -> Result<Arc<RgbaImage>, OrganError> {
-        if let Some(image) = self.cached(&body.source.hash) {
-            return Ok(image);
-        }
-        let input = call
-            .inputs
-            .iter()
-            .find(|input| input.content_hash == body.source.hash)
-            .ok_or_else(|| bad("export needs the source image as an input"))?;
-        let header = read_header(input)?;
-        admit(&header, decode_budget(call))?;
-        let fits = header.size() == (body.source.width, body.source.height)
-            && header.orientation == body.source.orientation
-            && header.format == body.source.format;
-        if !fits {
-            return Err(bad("the input does not match the body's source"));
-        }
-        self.decode_and_keep(call, input, &header)
-    }
-
-    /// `image.export {format: png}`: the only verb that makes pixels.
+    /// `image.export {format: png}`: the only verb that makes pixels. The
+    /// call must carry the source every time, and the source must be what
+    /// the body records: the cache only saves a decode.
     fn export(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
         let args: ExportArgs = from_value(call.args, "export args")?;
         if args.format != "png" {
@@ -336,13 +367,26 @@ impl ImageOrgan {
             ));
         }
         let body = ImageBody::from_typed(call.body)?;
-        check_work(&body, work_budget(call))?;
-        let source = self.source_of(call, &body)?;
+        let peak = ops::render_peak(&body)?;
+        check_paint(&body)?;
+        let input = call
+            .inputs
+            .iter()
+            .find(|input| input.content_hash == body.source.hash)
+            .ok_or_else(|| bad("export needs the source image as an input"))?;
+        let header = read_header(input)?;
+        let icc = admit(&header, decode_budget(call))?;
+        if source_from(input, &header, icc) != body.source {
+            return Err(bad("the input does not match the body's source"));
+        }
+        // The peak counts the source's pixels already.
+        let _held = self.hold(call, peak.saturating_add(file_copy(&header, input)))?;
+        let source = self.decode_and_keep(call, input, &header)?;
         call.check_cancel()?;
         let pixels = render(&source, &body, &|| call.check_cancel())?;
         drop(source);
         call.check_cancel()?;
-        let png = encode_png(&pixels, body.source.alpha)?;
+        let png = encode_png(&pixels, header.alpha)?;
         let report = rmpv::Value::Map(vec![
             ("format".into(), "png".into()),
             ("width".into(), pixels.width().into()),
@@ -350,7 +394,7 @@ impl ImageOrgan {
             ("bytes".into(), (png.len() as u64).into()),
         ]);
         let mut notes = Notes::default();
-        if body.source.icc == Icc::None {
+        if header.profile == Profile::Untagged {
             notes.warnings.push(UNTAGGED.to_owned());
         }
         if !body.overlays.is_empty() {
@@ -377,35 +421,4 @@ impl ImageOrgan {
             ..Answer::default()
         })
     }
-}
-
-/// Replays the steps' pixel cost, so a body made under a larger grant is
-/// refused rather than run out of memory.
-fn check_work(body: &ImageBody, max_bytes: u64) -> Result<(), OrganError> {
-    let mut canvas = Size {
-        w: body.source.width,
-        h: body.source.height,
-    };
-    for step in &body.steps {
-        let next = step.apply_to(canvas)?;
-        let peak = match step {
-            Step::Crop { .. }
-            | Step::Resize {
-                filter: Filter::Nearest,
-                ..
-            } => ops::rgba_bytes(next),
-            Step::Resize {
-                filter: Filter::Bilinear,
-                ..
-            } => ops::bilinear_bytes(canvas, next),
-        };
-        if peak > max_bytes {
-            return Err(OrganError::new(
-                ErrorCode::TooLarge,
-                format!("a step needs {peak} bytes; this organ holds {max_bytes}"),
-            ));
-        }
-        canvas = next;
-    }
-    Ok(())
 }

@@ -9,11 +9,56 @@ use image::imageops::{self, FilterType};
 use image::{ExtendedColorType, ImageBuffer, ImageEncoder, Rgba, Rgba32FImage, RgbaImage};
 use oneiron_organ_protocol::{ErrorCode, OrganError};
 
-use crate::body::{Filter, ImageBody, Overlay, Point, Step};
+use crate::body::{Filter, ImageBody, Overlay, Point, Size, Step};
 
 /// Segments longer than this (or than the brush radius, if wider) are cut so
 /// each piece's box stays thin.
 const PIECE: f32 = 32.0;
+/// Painting may visit at most this many times the canvas's pixels in all...
+const PAINT_FACTOR: f64 = 16.0;
+/// ...or this many pixels, if more, so a small canvas can still be drawn on.
+const PAINT_FLOOR: f64 = 16_777_216.0;
+
+/// Pixels painting `overlay` on a `canvas` visits: each segment's part on
+/// the canvas, swept by the brush and its one-pixel ramp.
+fn paint_work(canvas: Size, overlay: &Overlay) -> f64 {
+    let reach = overlay.stroke.width / 2.0 + 1.0;
+    let area = (
+        -reach,
+        -reach,
+        canvas.w as f32 + reach,
+        canvas.h as f32 + reach,
+    );
+    let side = f64::from(2.0 * reach);
+    overlay
+        .shape
+        .segments(overlay.stroke.width)
+        .into_iter()
+        .filter_map(|(a, b)| clip(a, b, area))
+        .map(|(a, b)| (f64::from((b.x - a.x).hypot(b.y - a.y)) + side) * side)
+        .sum()
+}
+
+/// Refuses overlays that would paint far more than their canvas holds.
+///
+/// # Errors
+/// `too_large`.
+pub(crate) fn check_paint(body: &ImageBody) -> Result<(), OrganError> {
+    let pixels = f64::from(body.canvas.w) * f64::from(body.canvas.h);
+    let allowed = (pixels * PAINT_FACTOR).max(PAINT_FLOOR);
+    let work: f64 = body
+        .overlays
+        .iter()
+        .map(|overlay| paint_work(body.canvas, overlay))
+        .sum();
+    if work > allowed {
+        return Err(OrganError::new(
+            ErrorCode::TooLarge,
+            format!("the overlays would paint {work:.0} pixels; this canvas allows {allowed:.0}"),
+        ));
+    }
+    Ok(())
+}
 
 /// Renders `body` over its decoded `source`. `check` runs between steps and
 /// returns an error once the call is cancelled.
@@ -45,7 +90,7 @@ pub(crate) fn render(
     let mut image = image.into_owned();
     for overlay in &body.overlays {
         check()?;
-        paint(&mut image, overlay);
+        paint(&mut image, overlay, check)?;
     }
     Ok(image)
 }
@@ -90,8 +135,13 @@ fn to_u8(unit: f32) -> u8 {
 
 /// Paints one overlay: coverage is the distance from each pixel centre to
 /// the stroke's segments, with a one-pixel ramp, kept as the maximum over
-/// segments so crossings do not darken; then one source-over blend.
-fn paint(image: &mut RgbaImage, overlay: &Overlay) {
+/// segments so crossings do not darken; then one source-over blend. `check`
+/// runs before each piece, so a cancel lands within one piece's work.
+fn paint(
+    image: &mut RgbaImage,
+    overlay: &Overlay,
+    check: &dyn Fn() -> Result<(), OrganError>,
+) -> Result<(), OrganError> {
     let (cw, ch) = image.dimensions();
     let b = overlay.bounds();
     let x0 = clamp_floor(b.x0 - 1.0, cw);
@@ -99,7 +149,7 @@ fn paint(image: &mut RgbaImage, overlay: &Overlay) {
     let x1 = clamp_ceil(b.x1 + 1.0, cw);
     let y1 = clamp_ceil(b.y1 + 1.0, ch);
     if x1 <= x0 || y1 <= y0 {
-        return;
+        return Ok(());
     }
     let (mw, mh) = (x1 - x0, y1 - y0);
     let mut mask = vec![0u8; mw as usize * mh as usize];
@@ -111,6 +161,7 @@ fn paint(image: &mut RgbaImage, overlay: &Overlay) {
             continue;
         };
         for (p, q) in pieces(a, b, PIECE.max(radius)) {
+            check()?;
             let px0 = clamp_floor(p.x.min(q.x) - radius - 1.0, cw).max(x0);
             let py0 = clamp_floor(p.y.min(q.y) - radius - 1.0, ch).max(y0);
             let px1 = clamp_ceil(p.x.max(q.x) + radius + 1.0, cw).min(x1);
@@ -139,6 +190,7 @@ fn paint(image: &mut RgbaImage, overlay: &Overlay) {
             *pixel = over(*pixel, [r, g, b], a * f32::from(cover) / 255.0);
         }
     }
+    Ok(())
 }
 
 /// Source-over onto a straight-alpha pixel.

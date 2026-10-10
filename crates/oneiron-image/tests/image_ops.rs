@@ -11,8 +11,8 @@ use std::sync::atomic::AtomicBool;
 
 use fixtures::{Extra, coded, decode_png, pixels, png};
 use oneiron_image::{
-    Icc, ImageBody, ImageOrgan, Shape, VERB_ANNOTATE, VERB_CROP, VERB_EXPORT, VERB_INSPECT,
-    VERB_OPEN, VERB_RESIZE, overlay_locator,
+    Filter, Icc, ImageBody, ImageOrgan, Shape, Size, Step, VERB_ANNOTATE, VERB_CROP, VERB_EXPORT,
+    VERB_INSPECT, VERB_OPEN, VERB_RESIZE, overlay_locator,
 };
 use oneiron_organ_protocol::{
     Answer, CallContext, ErrorCode, InputBytes, Limits, Organ, OrganError, TypedBody,
@@ -144,7 +144,7 @@ fn crop_and_nearest_resize_land_on_the_analytic_pixels() {
         )
         .expect("resize"),
     );
-    let (_, image) = export_png(&organ, &down, &[]);
+    let (_, image) = export_png(&organ, &down, &source());
     let columns = [1, 3, 5];
     let rows = [1, 3];
     for (x, y, pixel) in image.enumerate_pixels() {
@@ -229,6 +229,23 @@ fn corrupt_or_truncated_input_is_refused_never_half_read() {
         ErrorCode::BadRequest
     );
 
+    // An extended WebP whose canvas says 1x1 over a 2x2 frame: the frame
+    // is what a decoder would allocate for, so the header is refused.
+    let still = fixtures::webp_lossless(2, 2, &pixels(2, 2, coded));
+    let lying = [InputBytes::inline(
+        "image/webp",
+        fixtures::webp_extended(1, 1, &still),
+    )];
+    assert_eq!(
+        code(call(&organ, VERB_INSPECT, Value::Nil, None, &lying)),
+        ErrorCode::BadRequest
+    );
+    let honest = [InputBytes::inline(
+        "image/webp",
+        fixtures::webp_extended(2, 2, &still),
+    )];
+    assert!(call(&organ, VERB_OPEN, Value::Nil, None, &honest).is_ok());
+
     let text = [InputBytes::inline(
         "image/png",
         b"plain text, not an image".to_vec(),
@@ -281,10 +298,33 @@ fn animation_wide_channels_and_foreign_profiles_are_refused() {
                 &rgba,
                 Extra {
                     exif: None,
-                    icc: Some(fixtures::icc_named("Display P3")),
+                    icc: Some(fixtures::icc_profile("Display P3", fixtures::P3_COLORANTS)),
                 },
             ),
             "Display P3",
+        ),
+        // A wide-gamut profile that calls itself sRGB: the name proves nothing.
+        (
+            "image/png",
+            png(
+                2,
+                2,
+                &rgba,
+                Extra {
+                    exif: None,
+                    icc: Some(fixtures::icc_profile(
+                        "sRGB IEC61966-2.1",
+                        fixtures::P3_COLORANTS,
+                    )),
+                },
+            ),
+            "is not sRGB",
+        ),
+        // Linear samples, said by gAMA alone: not an untagged sRGB image.
+        (
+            "image/png",
+            fixtures::png_insert(&still_png, b"gAMA", &100_000u32.to_be_bytes()),
+            "gamma 1.00",
         ),
     ];
     for (media_type, bytes, why) in refused {
@@ -311,7 +351,10 @@ fn animation_wide_channels_and_foreign_profiles_are_refused() {
         &rgba,
         Extra {
             exif: None,
-            icc: Some(fixtures::icc_named("sRGB IEC61966-2.1")),
+            icc: Some(fixtures::icc_profile(
+                "a profile by any name",
+                fixtures::SRGB_COLORANTS,
+            )),
         },
     );
     let opened = call(
@@ -466,4 +509,124 @@ fn bilinear_resize_never_bleeds_colour_out_of_transparent_pixels() {
         }
     }
     assert!(partial > 0, "the edge is blended, not cut");
+}
+
+#[test]
+fn export_needs_its_source_every_time_and_checks_it_against_the_body() {
+    let organ = ImageOrgan::default();
+    let clear_red = [InputBytes::inline(
+        "image/png",
+        png(1, 1, &[255, 0, 0, 0], Extra::default()),
+    )];
+    let opened = body(&call(&organ, VERB_OPEN, Value::Nil, None, &clear_red).expect("open"));
+    let export = || map(vec![("format", "png".into())]);
+    // The organ has the pixels decoded, but this call grants no source.
+    assert_eq!(
+        code(call(&organ, VERB_EXPORT, export(), Some(&opened), &[])),
+        ErrorCode::BadRequest
+    );
+    // A body that restates its source cannot make a transparent pixel opaque.
+    let mut forged = parsed(&opened);
+    forged.source.alpha = false;
+    let forged = forged.to_typed().expect("encode");
+    assert_eq!(
+        code(call(
+            &organ,
+            VERB_EXPORT,
+            export(),
+            Some(&forged),
+            &clear_red
+        )),
+        ErrorCode::BadRequest
+    );
+    let (_, image) = export_png(&organ, &opened, &clear_red);
+    assert_eq!(image.get_pixel(0, 0).0[3], 0);
+}
+
+#[test]
+fn sizes_past_the_side_limit_are_refused_before_any_arithmetic() {
+    let organ = ImageOrgan::default();
+    let one = [InputBytes::inline(
+        "image/png",
+        png(1, 1, &[1, 2, 3, 255], Extra::default()),
+    )];
+    let opened = body(&call(&organ, VERB_OPEN, Value::Nil, None, &one).expect("open"));
+    let huge = 1u32 << 31;
+    assert_eq!(
+        code(call(
+            &organ,
+            VERB_RESIZE,
+            resize(huge, huge, "nearest"),
+            Some(&opened),
+            &[]
+        )),
+        ErrorCode::TooLarge
+    );
+    // The same step written straight into a body is refused as it is read.
+    let mut forged = parsed(&opened);
+    forged.steps.push(Step::Resize {
+        w: huge,
+        h: huge,
+        filter: Filter::Nearest,
+    });
+    forged.canvas = Size { w: huge, h: huge };
+    let forged = forged.to_typed().expect("encode");
+    assert_eq!(
+        code(call(
+            &organ,
+            VERB_EXPORT,
+            map(vec![("format", "png".into())]),
+            Some(&forged),
+            &one
+        )),
+        ErrorCode::TooLarge
+    );
+}
+
+#[test]
+fn an_edit_never_returns_a_body_the_next_call_refuses() {
+    // A far-off point is allowed, but doubling the canvas would carry it
+    // past the coordinate bound: the resize is refused, not returned.
+    let organ = ImageOrgan::default();
+    let one = [InputBytes::inline(
+        "image/png",
+        png(1, 1, &[1, 2, 3, 255], Extra::default()),
+    )];
+    let opened = body(&call(&organ, VERB_OPEN, Value::Nil, None, &one).expect("open"));
+    let far = map(vec![
+        (
+            "shape",
+            map(vec![
+                ("type", "freehand".into()),
+                (
+                    "points",
+                    Value::Array(vec![map(vec![
+                        ("x", Value::F32(16_777_216.0)),
+                        ("y", Value::F32(0.0)),
+                    ])]),
+                ),
+            ]),
+        ),
+        (
+            "stroke",
+            map(vec![
+                (
+                    "rgba",
+                    Value::Array([0u8, 0, 0, 255].iter().map(|c| Value::from(*c)).collect()),
+                ),
+                ("width", Value::F32(1.0)),
+            ]),
+        ),
+    ]);
+    let annotated = body(&call(&organ, VERB_ANNOTATE, far, Some(&opened), &[]).expect("annotate"));
+    assert_eq!(
+        code(call(
+            &organ,
+            VERB_RESIZE,
+            resize(2, 2, "nearest"),
+            Some(&annotated),
+            &[]
+        )),
+        ErrorCode::BadRequest
+    );
 }
