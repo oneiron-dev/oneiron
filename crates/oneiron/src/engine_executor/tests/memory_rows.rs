@@ -171,7 +171,8 @@ fn a_guest_call_through_each_memory_row_keeps_its_call_and_answer() {
 }
 
 /// A guest call through a memory row is refused as before: a non-finite
-/// number or a time past JavaScript's safe range never reaches the gate, the
+/// number (boxed or not), a time past JavaScript's safe range, an input JSON
+/// cannot carry and one past the message budget never reach the gate, the
 /// guest sees a stable code for each, and a write the gate refuses stops the
 /// run with the gate's own error, writing nothing.
 #[cfg(feature = "code-sandbox-wasmtime")]
@@ -188,6 +189,13 @@ fn a_guest_call_through_a_memory_row_is_refused_as_before() {
            weight: Infinity}}); out.infinite = 'written'; }} catch (error) {{ out.infinite = String(error); }} \
          try {{ await self.memory.put_claim({{id: '{claim}', subject, predicate: 'p.q', value: 1, \
            learnedAt: 2 ** 53}}); out.unsafe = 'written'; }} catch (error) {{ out.unsafe = String(error); }} \
+         try {{ await self.memory.put_claim({{id: '{claim}', subject, predicate: 'p.q', value: 1, \
+           confidence: new Number(NaN)}}); out.boxed = 'written'; }} catch (error) {{ out.boxed = String(error); }} \
+         const cyclic = {{}}; cyclic.self = cyclic; \
+         try {{ await self.memory.put_claim({{id: '{claim}', subject, predicate: 'p.q', value: cyclic}}); \
+           out.cyclic = 'written'; }} catch (error) {{ out.cyclic = String(error); }} \
+         try {{ await self.memory.search({{query: 'x'.repeat(1 << 20)}}); out.oversize = 'sent'; }} \
+         catch (error) {{ out.oversize = String(error); }} \
          finish(JSON.stringify(out));",
         subject = subject.to_hex(),
         claim = claim.to_hex(),
@@ -200,6 +208,9 @@ fn a_guest_call_through_a_memory_row_is_refused_as_before() {
             "nan": "RangeError: non_finite_verb_input",
             "infinite": "RangeError: non_finite_verb_input",
             "unsafe": "host_call_refused",
+            "boxed": "RangeError: non_finite_verb_input",
+            "cyclic": "TypeError: invalid_verb_input",
+            "oversize": "TypeError: invalid_host_argument",
         })
     );
     assert!(rows.is_empty(), "{rows:?}");
@@ -250,26 +261,43 @@ fn a_memory_row_refuses_a_field_its_input_does_not_list() {
     assert!(vault.get_claim(&claim).expect("read").is_none());
 }
 
-/// A row's input is read once: the call sends the snapshot the finite check
-/// saw, so a getter cannot pass the check and then send a different value.
+/// A row's input is encoded once and the call sends that text, so neither a
+/// getter nor an inherited `toJSON` can pass the finite check and then send a
+/// different value.
 #[cfg(feature = "code-sandbox-wasmtime")]
 #[test]
-fn a_memory_row_reads_its_input_once() {
+fn a_memory_row_sends_the_input_its_check_saw() {
     let (_dir, vault) = open_test_vault();
     let subject = seed_person(&vault, 0xB4);
-    let claim = entity(0xC5);
+    let [getter, hooked] = [entity(0xC5), entity(0xC6)];
     let program = format!(
-        "const input = {{id: '{claim}', subject: '{subject}', predicate: 'profile.favorite_drink', \
-           value: 'tea'}}; let reads = 0; \
+        "const fields = id => ({{id, subject: '{subject}', predicate: 'profile.favorite_drink', \
+           value: 'tea'}}); \
+         let reads = 0; const input = fields('{getter}'); \
          Object.defineProperty(input, 'confidence', {{enumerable: true, \
            get() {{ reads += 1; return reads === 1 ? 0.5 : NaN; }}}}); \
-         await self.memory.put_claim(input); finish(String(reads));",
+         await self.memory.put_claim(input); \
+         let hooks = 0; \
+         Object.defineProperty(Object.prototype, 'toJSON', {{configurable: true, value() {{ \
+           if (this.id !== '{hooked}') return this; hooks += 1; \
+           return {{...this, confidence: hooks === 1 ? 0.25 : NaN}}; }}}}); \
+         await self.memory.put_claim(fields('{hooked}')); \
+         finish(`${{reads}} ${{hooks}}`);",
         subject = subject.to_hex(),
-        claim = claim.to_hex(),
+        getter = getter.to_hex(),
+        hooked = hooked.to_hex(),
     );
     let (answer, rows) = run_program(&vault, 0x75, &program).expect("run");
-    assert_eq!(answer, "1");
-    assert_eq!(rows, ["self.memory.put_claim memory_write"]);
-    let stored = vault.get_claim(&claim).expect("read").expect("claim");
-    assert_eq!(stored.confidence, 0.5);
+    assert_eq!(answer, "1 1");
+    assert_eq!(
+        rows,
+        [
+            "self.memory.put_claim memory_write",
+            "self.memory.put_claim memory_write",
+        ]
+    );
+    for (id, confidence) in [(getter, 0.5), (hooked, 0.25)] {
+        let stored = vault.get_claim(&id).expect("read").expect("claim");
+        assert_eq!(stored.confidence, confidence);
+    }
 }

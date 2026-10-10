@@ -140,7 +140,7 @@ for row in schema['imports']:
     if first_party(row): parts.append('#ifndef ONEIRON_FOREIGN')
     name, result = snake(row['wit']), row['result']
     lines = [f'static JSValue call_{name}(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv) {{',
-             '(void)this_val;', f'if (argc != {len(row["params"])}) return JS_ThrowTypeError(ctx, "wrong host argument count");']
+             '(void)this_val;', f'if (argc != {len(row["params"])}) return JS_ThrowTypeError(ctx, "wrong_host_argument_count");']
     params = []
     clean = []
     for i, p in enumerate(row['params']):

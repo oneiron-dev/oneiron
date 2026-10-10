@@ -20,6 +20,7 @@ use serde::Deserialize;
 #[serde(deny_unknown_fields)]
 pub struct MemorySearchInput {
     pub query: String,
+    #[schemars(range(max = "u32::MAX"))]
     pub limit: Option<u32>,
 }
 

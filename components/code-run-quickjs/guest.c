@@ -14,7 +14,7 @@
 #define MESSAGE_LIMIT (1024 * 1024)
 
 static bool bad_value(JSContext *ctx) {
-    JS_ThrowTypeError(ctx, "invalid typed host argument");
+    JS_ThrowTypeError(ctx, "invalid_host_argument");
     return false;
 }
 

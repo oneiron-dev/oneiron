@@ -6,15 +6,26 @@
   // The SDK verb table: one `self.memory` method per row the host serves, so a
   // row added to the table reaches the guest with no component rebuild.
   if (sdk.self?.verbs) {
-    const {names, call} = sdk.self.verbs;
+    const {names} = sdk.self.verbs, send = abi["verb-call"];
     delete sdk.self.verbs;
-    // JSON has no NaN or Infinity: encoding one would send null, an absent
-    // value, so a non-finite number is refused before the call instead. The
-    // input is read once: the checked snapshot is what the call sends.
+    // JSON has no NaN or Infinity: encoding one, boxed or not, would send
+    // null, an absent value, so a non-finite number is refused before the
+    // call instead. The input is encoded once and that checked text is what
+    // the call sends; any input JSON cannot carry is refused as a code.
     const encode = JSON.stringify, decode = JSON.parse, finite = Number.isFinite;
-    const refuseNonFinite = (_, value) => {
-      if (typeof value === "number" && !finite(value)) throw new RangeError("non_finite_verb_input");
+    const nonFinite = Symbol();
+    const checked = (_, value) => {
+      if (value instanceof Number) value = +value;
+      if (typeof value === "number" && !finite(value)) throw nonFinite;
       return value;
+    };
+    const verbInput = input => {
+      let text;
+      try { text = encode(input, checked); } catch (error) {
+        throw error === nonFinite ? new RangeError("non_finite_verb_input") : new TypeError("invalid_verb_input");
+      }
+      if (typeof text !== "string") throw new TypeError("invalid_verb_input");
+      return text;
     };
     const memory = sdk.self.memory ??= Object.create(null);
     for (const name of names()) {
@@ -22,7 +33,10 @@
       let target = memory;
       for (const part of parts.slice(0, -1)) target = target[part] ??= Object.create(null);
       if (Object.hasOwn(target, parts.at(-1))) throw new TypeError("verb row shadows a host import");
-      target[parts.at(-1)] = (input = {}) => call(name, decode(encode(input, refuseNonFinite))).then(decode);
+      target[parts.at(-1)] = (input = {}) => {
+        const text = verbInput(input);
+        return Promise.resolve(send(name, text)).then(decode);
+      };
     }
   }
   const {clock, random} = sdk.oneiron;
