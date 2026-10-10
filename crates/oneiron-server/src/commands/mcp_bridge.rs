@@ -9,7 +9,10 @@
 //! writes the server's answer as one stdout line. Transport and signer are
 //! `oneiron api`'s: the host's curl, both headers on curl's config stdin and
 //! never in argv. The credential comes from an owner-only file or the
-//! environment, and nothing here prints it.
+//! environment, and nothing here prints it or lets curl inherit it. Every
+//! request ends within its deadline and every message and answer has a size
+//! limit, so a stalled or oversized exchange costs the agent one typed error
+//! for that request, not the session.
 //!
 //! The bridge states one thing the agent cannot know: who is calling. The
 //! server resolves that from the credential, and still asks every tool call to
@@ -23,6 +26,7 @@ use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 use serde_json::{Value, json};
 
@@ -34,8 +38,25 @@ use crate::cli::McpArgs;
 const CREDENTIAL_PREFIX: &str = "v2.cred.";
 
 /// How many requests may be in flight at once. A client that sends more
-/// waits for the oldest to finish rather than spawning without bound.
+/// waits for the oldest to finish rather than spawning without bound; each
+/// finishes within its deadline.
 const MAX_IN_FLIGHT: usize = 8;
+
+/// The longest message the bridge reads from the client: the server's own
+/// request-body limit on its MCP routes (axum's default), which nothing
+/// longer could pass anyway.
+const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
+
+/// The largest answer the bridge takes from the server for one request.
+const MAX_REPLY_BYTES: usize = 16 * 1024 * 1024;
+
+/// Credential variables curl never inherits from this process, beside the
+/// two the operator named: the defaults, and the host's issuer key.
+const WITHHELD_ENV: [&str; 3] = [
+    "ONEIRON_SECRET",
+    "ONEIRON_BINDING_KEY",
+    "ONEIRON_AUTH_SECRET",
+];
 
 /// The `initialize` the bridge sends for itself when a tool call arrives
 /// before it has seen the client's own.
@@ -46,12 +67,42 @@ const BRIDGE_INITIALIZE_ID: &str = "oneiron-mcp-bridge";
 pub fn mcp(args: McpArgs) -> anyhow::Result<()> {
     let bridge = Arc::new(Bridge::new(&args)?);
     let stdout = Arc::new(Mutex::new(io::stdout()));
+    let mut stdin = io::stdin().lock();
     let mut in_flight: Vec<JoinHandle<()>> = Vec::new();
-    for line in io::stdin().lock().lines() {
-        let line = line.map_err(|error| anyhow::anyhow!("read stdin: {error}"))?;
-        if line.trim().is_empty() {
-            continue;
-        }
+    while let Some(frame) =
+        read_frame(&mut stdin).map_err(|error| anyhow::anyhow!("read stdin: {error}"))?
+    {
+        let line = match frame {
+            Frame::Line(line) if line.trim_ascii().is_empty() => continue,
+            Frame::Line(line) => match String::from_utf8(line) {
+                Ok(line) => line,
+                Err(_) => {
+                    let refusal = rpc_error(
+                        &Value::Null,
+                        -32700,
+                        "parse_error",
+                        "the message is not UTF-8",
+                        None,
+                    );
+                    emit(&stdout, &refusal);
+                    continue;
+                }
+            },
+            // Refused whole, before a byte of it is sent.
+            Frame::TooLong(head) => {
+                let refusal = rpc_error(
+                    &leading_id(&head),
+                    -32600,
+                    "frame_too_large",
+                    &format!(
+                        "a message may be at most {MAX_FRAME_BYTES} bytes; this one was not sent"
+                    ),
+                    None,
+                );
+                emit(&stdout, &refusal);
+                continue;
+            }
+        };
         in_flight.retain(|call| !call.is_finished());
         while in_flight.len() >= MAX_IN_FLIGHT {
             let _ = in_flight.remove(0).join();
@@ -60,10 +111,7 @@ pub fn mcp(args: McpArgs) -> anyhow::Result<()> {
         let stdout = Arc::clone(&stdout);
         in_flight.push(std::thread::spawn(move || {
             if let Some(answer) = bridge.answer(&line) {
-                let mut stdout = stdout.lock().unwrap_or_else(PoisonError::into_inner);
-                // A client that closed its end has gone; there is no one left
-                // to tell.
-                let _ = writeln!(stdout, "{answer}").and_then(|()| stdout.flush());
+                emit(&stdout, &answer);
             }
         }));
     }
@@ -73,10 +121,99 @@ pub fn mcp(args: McpArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Writes one line to the client.
+fn emit(stdout: &Mutex<io::Stdout>, line: &str) {
+    let mut stdout = stdout.lock().unwrap_or_else(PoisonError::into_inner);
+    // A client that closed its end has gone; there is no one left to tell.
+    let _ = writeln!(stdout, "{line}").and_then(|()| stdout.flush());
+}
+
+/// One stdin line, read without holding more than [`MAX_FRAME_BYTES`] of it.
+enum Frame {
+    /// A whole line, without its newline.
+    Line(Vec<u8>),
+    /// A line past the limit: its head. The rest was read and dropped.
+    TooLong(Vec<u8>),
+}
+
+/// The next line, or `None` at the end of input.
+fn read_frame(input: &mut impl BufRead) -> io::Result<Option<Frame>> {
+    let mut line = Vec::new();
+    let limit = u64::try_from(MAX_FRAME_BYTES).unwrap_or(u64::MAX);
+    if input
+        .by_ref()
+        .take(limit + 1)
+        .read_until(b'\n', &mut line)?
+        == 0
+    {
+        return Ok(None);
+    }
+    if line.last() == Some(&b'\n') {
+        line.pop();
+        return Ok(Some(Frame::Line(line)));
+    }
+    if line.len() <= MAX_FRAME_BYTES {
+        return Ok(Some(Frame::Line(line)));
+    }
+    loop {
+        let available = input.fill_buf()?;
+        if available.is_empty() {
+            break;
+        }
+        match available.iter().position(|byte| *byte == b'\n') {
+            Some(at) => {
+                input.consume(at + 1);
+                break;
+            }
+            None => {
+                let all = available.len();
+                input.consume(all);
+            }
+        }
+    }
+    Ok(Some(Frame::TooLong(line)))
+}
+
+/// The `id` of a message cut off at `head`, when it comes before the cut, so
+/// the client hears which request was refused; `null` otherwise.
+fn leading_id(head: &[u8]) -> Value {
+    struct Seek<'a>(&'a mut Option<Value>);
+    impl<'de> serde::de::Visitor<'de> for Seek<'_> {
+        type Value = ();
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a JSON-RPC message object")
+        }
+        fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
+            while let Some(key) = map.next_key::<String>()? {
+                if key == "id" {
+                    *self.0 = Some(map.next_value()?);
+                    return Ok(());
+                }
+                map.next_value::<serde::de::IgnoredAny>()?;
+            }
+            Ok(())
+        }
+    }
+    let mut id = None;
+    // The head ends mid-message, so this parse fails; an id it passed on the
+    // way is already kept.
+    let _ = serde::Deserializer::deserialize_map(
+        &mut serde_json::Deserializer::from_slice(head),
+        Seek(&mut id),
+    );
+    id.filter(|id| id.is_string() || id.is_number())
+        .unwrap_or(Value::Null)
+}
+
 struct Bridge {
     endpoint: String,
     token: String,
     seed: String,
+    /// How long one request may take, and how long its answer may stall.
+    deadline: Duration,
+    idle: Duration,
+    /// Variables curl does not inherit: every name a credential may be in.
+    withheld_env: Vec<String>,
     /// The `actor` block the server returned at `initialize`, as JSON text.
     actor: Mutex<Option<String>>,
 }
@@ -102,6 +239,16 @@ impl Bridge {
             endpoint: format!("{base}{}", args.surface.path()),
             token,
             seed,
+            deadline: Duration::from_secs(args.request_timeout_secs),
+            idle: Duration::from_secs(args.idle_timeout_secs),
+            // The slip and seed stay in this process: curl gets the slip and
+            // a signed proof on its config stdin, and no variable either may
+            // be in.
+            withheld_env: [&args.secret_env, &args.binding_key_env]
+                .into_iter()
+                .cloned()
+                .chain(WITHHELD_ENV.map(str::to_owned))
+                .collect(),
             actor: Mutex::new(None),
         })
     }
@@ -204,12 +351,20 @@ impl Bridge {
         }
     }
 
-    /// One POST to the endpoint, signed for this request alone.
+    /// One POST to the endpoint, signed for this request alone, that ends
+    /// within its deadline whatever the server does.
     fn post(&self, body: Vec<u8>) -> Result<Reply, Refusal> {
         let binding = api::signed_binding_for_seed(&self.token, &self.seed)
             .map_err(|error| Refusal::Unreachable(error.to_string()))?;
-        let (output, status) = api::post_json_captured(&self.endpoint, &self.token, &binding, body)
-            .map_err(|error| Refusal::Unreachable(error.to_string()))?;
+        let bounds = api::CaptureBounds {
+            deadline: self.deadline,
+            idle: self.idle,
+            max_reply_bytes: MAX_REPLY_BYTES,
+            withheld_env: &self.withheld_env,
+        };
+        let (output, status) =
+            api::post_json_captured(&self.endpoint, &self.token, &binding, body, &bounds)
+                .map_err(|cut| self.refusal_for(cut))?;
         match output.status.code() {
             // `--fail-with-body`: an HTTP error status, with the server's body.
             Some(0 | api::CURL_HTTP_ERROR_EXIT) => Ok(Reply {
@@ -221,6 +376,24 @@ impl Bridge {
                 self.endpoint,
                 String::from_utf8_lossy(&output.stderr).trim()
             ))),
+        }
+    }
+
+    /// The request's error when its exchange was cut short.
+    fn refusal_for(&self, cut: api::CaptureCut) -> Refusal {
+        match cut {
+            api::CaptureCut::Curl(error) => Refusal::Unreachable(error.to_string()),
+            api::CaptureCut::Deadline => Refusal::Unreachable(format!(
+                "{} gave no whole answer within {}s (--request-timeout-secs)",
+                self.endpoint,
+                self.deadline.as_secs()
+            )),
+            api::CaptureCut::Idle => Refusal::Unreachable(format!(
+                "{}'s answer stalled for {}s (--idle-timeout-secs)",
+                self.endpoint,
+                self.idle.as_secs()
+            )),
+            api::CaptureCut::TooLarge => Refusal::TooLarge,
         }
     }
 }
@@ -280,8 +453,10 @@ enum Refusal {
     /// The server answered, but not with a JSON-RPC answer to this request:
     /// any other HTTP error, or a body that answers something else.
     Server(String, Value),
-    /// No answer at all.
+    /// No answer at all, or none whole within the request's deadline.
     Unreachable(String),
+    /// An answer past [`MAX_REPLY_BYTES`], dropped unread.
+    TooLarge,
 }
 
 impl Refusal {
@@ -310,6 +485,13 @@ impl Refusal {
             Self::Unreachable(message) => {
                 rpc_error(id, -32000, "server_unreachable", message, None)
             }
+            Self::TooLarge => rpc_error(
+                id,
+                -32000,
+                "reply_too_large",
+                &format!("the server's answer is over {MAX_REPLY_BYTES} bytes; it was dropped"),
+                None,
+            ),
         }
     }
 }

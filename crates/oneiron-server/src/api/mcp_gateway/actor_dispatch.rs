@@ -114,6 +114,33 @@ fn mcp_proof_error() -> McpGatewayError {
     )
 }
 
+/// The verb a call needs on this door: Read, or for a write, Write — or
+/// Propose when the actor's live ceiling holds what it writes for review.
+/// Every write here is bound to its actor and lands at that ceiling, so a
+/// propose-only credential (ARCH-0028: write capability at `proposed`) writes
+/// here, and on no unbound door: those all require Write.
+fn mcp_call_scope(
+    server: &SyncServer,
+    actor: &McpResolvedActor,
+    auth: &crate::auth::CoreAuth,
+    writes: bool,
+) -> crate::auth::CoreScope {
+    use crate::auth::CoreScope;
+    if !writes {
+        return CoreScope::Read;
+    }
+    let held_for_review = !auth.has_scope(CoreScope::Write)
+        && server
+            .vault
+            .gate_actor_ceiling_is_proposed(actor.gate_actor_class, &actor.gate_actor_ref)
+            .unwrap_or(false);
+    if held_for_review {
+        CoreScope::Propose
+    } else {
+        CoreScope::Write
+    }
+}
+
 pub(crate) fn mcp_connector_credential(headers: &HeaderMap) -> Result<String, McpGatewayError> {
     if let Some(value) = headers
         .get(MCP_CREDENTIAL_HEADER)
@@ -334,12 +361,8 @@ pub(crate) async fn execute_mcp_tool(
             | McpValidatedToolArgs::ExecuteCode(_)
             | McpValidatedToolArgs::Calendar(_)
     ) || matches!(&args, McpValidatedToolArgs::Verb(verb) if verb.tool.writes());
-    auth.require(if writes {
-        crate::auth::CoreScope::Write
-    } else {
-        crate::auth::CoreScope::Read
-    })
-    .map_err(|_| mcp_proof_error())?;
+    auth.require(mcp_call_scope(server, actor, auth, writes))
+        .map_err(|_| mcp_proof_error())?;
     match args {
         McpValidatedToolArgs::Nav(args) => execute_mcp_nav(server, args, actor),
         McpValidatedToolArgs::Read(args) => execute_mcp_read(server, args, actor),

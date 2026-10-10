@@ -244,10 +244,11 @@ pub fn token_read(args: TokenReadArgs) -> anyhow::Result<()> {
 /// The agent acts as a PERSON principal derived from its name (so a second
 /// mint for one name is the same agent with a new slip), of class `agent`,
 /// never the owner. Its tier is ARCH-0028's registration-time tier (see
-/// `agent_tier_authority`); the latest mint sets the agent's ceiling. The
-/// slip comes through the host-rooted pairing doors `token read` uses and
-/// carries only its tier's verbs: scoped, paired and bound to a fresh
-/// connection key, never owner-grade. `token revoke` takes its slip id.
+/// `agent_tier_authority`), and the latest mint holds: it revokes the
+/// agent's earlier slips and sets its ceiling. The slip comes through the
+/// host-rooted pairing doors `token read` uses and carries only its tier's
+/// verbs: scoped, paired and bound to a fresh connection key, never
+/// owner-grade. `token revoke` takes its slip id.
 pub fn token_agent(args: TokenAgentArgs) -> anyhow::Result<()> {
     anyhow::ensure!(
         !args.serve.managed_by_hypnos,
@@ -285,21 +286,32 @@ pub fn token_agent(args: TokenAgentArgs) -> anyhow::Result<()> {
         }
     });
     match (minted, out) {
-        (Ok((credential, ceiling)), Some((path, _))) => {
+        (Ok(minted), Some((path, _))) => {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({
-                    "principal_ref": credential.principal_ref,
-                    "actor_class": credential.actor_class,
-                    "ceiling": ceiling.as_str(),
-                    "expires_at": credential.expires_at,
-                    "slip_id": credential.slip_id,
+                    "principal_ref": minted.credential.principal_ref,
+                    "actor_class": minted.credential.actor_class,
+                    "ceiling": minted.ceiling.as_str(),
+                    "expires_at": minted.credential.expires_at,
+                    "slip_id": minted.credential.slip_id,
                     "credential_file": path,
+                    "revoked_slip_ids": minted.replaced,
                 }))?
             );
             Ok(())
         }
-        (Ok(_), None) => Ok(()),
+        // stdout already holds the credential, as one JSON document.
+        (Ok(minted), None) => {
+            if !minted.replaced.is_empty() {
+                eprintln!(
+                    "revoked {}'s earlier slips: {}",
+                    args.name,
+                    minted.replaced.join(", ")
+                );
+            }
+            Ok(())
+        }
         (Err(error), out) => {
             if let Some((path, _)) = out {
                 let _ = std::fs::remove_file(path);
@@ -310,10 +322,12 @@ pub fn token_agent(args: TokenAgentArgs) -> anyhow::Result<()> {
 }
 
 /// ARCH-0028's tiers as stored authority: the verbs the slip carries and the
-/// agent's ceiling. Both tiers that write carry `core:propose` and
-/// `core:write`; the ceiling, not the verbs, decides whether a write lands
-/// (`auto`) or waits for review (`proposed`). Nothing else — `core:auth`, an
-/// organization power, a companion scope — is ever an agent's.
+/// agent's ceiling. Propose-only writes with `core:propose`, which only doors
+/// that hold a write for review honour: `/v1/core/propose`, and the MCP door,
+/// where every write is bound to the agent and lands at its `proposed`
+/// ceiling. `core:write`, which every unbound write door requires, is
+/// full-access's alone. Nothing else — `core:auth`, an organization power, a
+/// companion scope — is ever an agent's.
 fn agent_tier_authority(
     tier: AgentTier,
 ) -> (
@@ -321,12 +335,16 @@ fn agent_tier_authority(
     oneiron::agent_def::AgentCeiling,
 ) {
     use oneiron::agent_def::AgentCeiling;
-    let reads: &[CoreScope] = &[CoreScope::Read];
-    let writes: &[CoreScope] = &[CoreScope::Read, CoreScope::Propose, CoreScope::Write];
-    let (verbs, ceiling) = match tier {
-        AgentTier::ReadOnly => (reads, AgentCeiling::Proposed),
-        AgentTier::ProposeOnly => (writes, AgentCeiling::Proposed),
-        AgentTier::FullAccess => (writes, AgentCeiling::Auto),
+    let (verbs, ceiling): (&[CoreScope], _) = match tier {
+        AgentTier::ReadOnly => (&[CoreScope::Read], AgentCeiling::Proposed),
+        AgentTier::ProposeOnly => (
+            &[CoreScope::Read, CoreScope::Propose],
+            AgentCeiling::Proposed,
+        ),
+        AgentTier::FullAccess => (
+            &[CoreScope::Read, CoreScope::Propose, CoreScope::Write],
+            AgentCeiling::Auto,
+        ),
     };
     (
         verbs.iter().map(|verb| verb.as_str().to_owned()).collect(),
@@ -339,7 +357,7 @@ fn agent_tier_authority(
 fn mint_agent_credential(
     args: &TokenAgentArgs,
     deliver: impl FnOnce(&PairedCredential) -> anyhow::Result<()>,
-) -> anyhow::Result<(PairedCredential, oneiron::agent_def::AgentCeiling)> {
+) -> anyhow::Result<MintedAgent> {
     let config = resolve_serve_config(&args.serve)?;
     ensure_existing_vault_for_revoke(&config.vault_path)?;
     let secret = config
@@ -371,10 +389,12 @@ fn mint_agent_credential(
     })?;
     vault.ensure_host_root_slip(&issuer)?;
     let (verbs, ceiling) = agent_tier_authority(args.tier);
-    // The slip, then its delivery, then the grant. Earlier slips for this
-    // agent keep reading its live ceiling, so a mint that fails anywhere must
-    // leave that ceiling as it was; a delivery or grant that fails takes the
-    // new slip back.
+    // The slip, its delivery, the revocation of the agent's earlier slips,
+    // then the grant: the latest mint is the agent's one credential, so no
+    // earlier slip keeps a verb this tier lacks. A mint that fails anywhere
+    // leaves the standing ceiling as it was, and one that fails after the
+    // slip takes the new slip back, so a failure leaves the agent with less,
+    // never more.
     let credential = mint_paired_credential(
         &vault,
         &issuer,
@@ -383,25 +403,48 @@ fn mint_agent_credential(
         verbs,
         args.lifetime_secs,
     )?;
-    let granted = deliver(&credential).and_then(|()| {
-        vault
-            .grant_agent_principal(&owner, &principal, ceiling)
-            .map_err(anyhow::Error::from)
-    });
-    if let Err(error) = granted {
-        let slip = oneiron::authority::CapabilitySlip::from_token(&credential.token)?;
-        vault
-            .revoke_capability_slip_once(&issuer, slip.claims.slip_id)
-            .map_err(|revoke| {
-                anyhow::anyhow!(
-                    "agent {}: {error}; then revoking its new slip {}: {revoke}",
-                    args.name,
-                    credential.slip_id
-                )
-            })?;
-        return Err(error);
+    let slip_id = oneiron::authority::CapabilitySlip::from_token(&credential.token)?
+        .claims
+        .slip_id;
+    let granted = deliver(&credential)
+        .and_then(|()| {
+            vault
+                .revoke_held_capability_slips(&issuer, &principal, slip_id)
+                .map_err(anyhow::Error::from)
+        })
+        .and_then(|replaced| {
+            vault
+                .grant_agent_principal(&owner, &principal, ceiling)
+                .map_err(anyhow::Error::from)?;
+            Ok(replaced)
+        });
+    match granted {
+        Ok(replaced) => Ok(MintedAgent {
+            credential,
+            ceiling,
+            replaced: replaced.iter().map(|id| hex(id)).collect(),
+        }),
+        Err(error) => {
+            vault
+                .revoke_capability_slip_once(&issuer, slip_id)
+                .map_err(|revoke| {
+                    anyhow::anyhow!(
+                        "agent {}: {error}; then revoking its new slip {}: {revoke}",
+                        args.name,
+                        credential.slip_id
+                    )
+                })?;
+            Err(error)
+        }
     }
-    Ok((credential, ceiling))
+}
+
+/// What one `token agent` mint produced: the credential, the ceiling it set,
+/// and the ids of the agent's earlier slips it revoked.
+struct MintedAgent {
+    credential: PairedCredential,
+    ceiling: oneiron::agent_def::AgentCeiling,
+    replaced: Vec<String>,
 }
 
 /// Issues a one-use link for an existing `principal` carrying `verbs`, and
@@ -440,7 +483,6 @@ fn mint_paired_credential(
         binding_key,
         &key.sign(&transcript).to_bytes(),
     )?;
-    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
     let token = slip.to_token()?;
     let seed = hex(key.as_bytes());
     let credential = format!(
@@ -456,6 +498,10 @@ fn mint_paired_credential(
         token,
         binding_key: seed,
     })
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// A new file only its owner can read. It must not exist yet: a credential

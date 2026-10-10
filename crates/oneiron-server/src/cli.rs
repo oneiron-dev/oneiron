@@ -235,8 +235,8 @@ pub struct TokenAgentArgs {
     #[arg(long)]
     pub name: String,
 
-    /// What the agent may do. The latest mint for a name sets that agent's
-    /// tier.
+    /// What the agent may do. The latest mint for a name holds: it sets that
+    /// agent's tier and revokes the agent's earlier slips.
     #[arg(long, value_enum, default_value_t = AgentTier::FullAccess)]
     pub tier: AgentTier,
 
@@ -260,7 +260,8 @@ pub enum AgentTier {
     /// Retrieve and inspect; no write capability.
     ReadOnly,
     /// Write capability at ceiling `proposed`: what it writes waits for the
-    /// owner's review.
+    /// owner's review. It proposes (`core:propose`) and holds no `core:write`,
+    /// so no write door that cannot hold a write for review admits it.
     ProposeOnly,
     /// Write capability at ceiling `auto`: its writes land through the same
     /// write gate as the owner's.
@@ -364,8 +365,9 @@ pub enum ApiCommand {
 /// MCP config; nothing the agent sends can change it.
 #[derive(Args, Clone, Debug)]
 pub struct McpArgs {
-    /// The running server's origin.
-    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:3000")]
+    /// The running server's origin. The default is where `oneiron serve`
+    /// listens unless told otherwise.
+    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:9090")]
     pub url: String,
 
     /// Which MCP endpoint to forward to.
@@ -385,6 +387,16 @@ pub struct McpArgs {
     /// Environment variable holding its binding seed (64 hex characters).
     #[arg(long, default_value = "ONEIRON_BINDING_KEY")]
     pub binding_key_env: String,
+
+    /// Seconds one request may take, answer included, before it fails as
+    /// `server_unreachable`.
+    #[arg(long, default_value_t = 120, value_parser = clap::value_parser!(u64).range(1..))]
+    pub request_timeout_secs: u64,
+
+    /// Seconds an answer may stall once it has started arriving before the
+    /// request fails as `server_unreachable`.
+    #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..))]
+    pub idle_timeout_secs: u64,
 }
 
 /// The two MCP endpoints a server registers.
