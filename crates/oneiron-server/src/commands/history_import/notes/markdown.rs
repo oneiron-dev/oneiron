@@ -149,7 +149,9 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
             continue;
         }
         indented_code = false;
-        if indent >= 4 && after_blank && !in_list && paragraph.is_empty() {
+        // Indented code cannot interrupt a paragraph, but it follows any
+        // other block (a heading, a rule, a closed fence) directly.
+        if indent >= 4 && !in_list && paragraph.is_empty() {
             indented_code = true;
             continue;
         }
@@ -463,6 +465,26 @@ mod tests {
         assert_eq!(targets("1. ```\n   [[a]]\n\n  [[b]]\n"), ["b"]);
         assert_eq!(targets("1. ```\n   [[a]]\n   ```\n   [[b]]\n"), ["b"]);
         assert_eq!(targets("Heading `\n===\nSee [[b]] and `.\n"), ["b"]);
+    }
+
+    /// Greptile (#1351, markdown.rs:154): indented code was code only after
+    /// a blank line, so an indented line right after a heading or a closed
+    /// fence read as text and made a link. It is code wherever no paragraph
+    /// is open; a paragraph's indented line still links.
+    #[test]
+    fn indented_code_after_a_block_is_code() {
+        let none = Vec::<String>::new();
+        assert_eq!(targets("# Heading\n    [[alpha]]\n"), none);
+        assert_eq!(targets("```\ncode\n```\n    [[alpha]]\n"), none);
+        assert_eq!(
+            targets("~~~\ncode\n~~~\n    [[alpha]]\n    [[beta]]\n"),
+            none
+        );
+        assert_eq!(targets("***\n    [[alpha]]\n"), none);
+        assert_eq!(targets("Heading\n===\n    [[alpha]]\n"), none);
+        assert_eq!(targets("> ```\n> code\n    [[alpha]]\n"), none);
+        assert_eq!(targets("Text and\n    [[alpha]]\n"), ["alpha"]);
+        assert_eq!(targets("# Heading\nText and\n    [[alpha]]\n"), ["alpha"]);
     }
 
     /// Astra 4 and Greptile (markdown.rs:301): at every `[[` the scan looked
