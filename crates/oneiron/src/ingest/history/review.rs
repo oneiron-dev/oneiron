@@ -18,7 +18,9 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::EdgeDirection;
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::registry::{
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN,
+};
 
 /// The review id of the import of `source` that ran at `imported_at`.
 #[must_use]
@@ -28,17 +30,18 @@ pub fn history_import_review_id(source: HistorySource, imported_at: u64) -> Stri
 
 /// What a claim's evidence says about imports.
 pub(crate) struct ImportedEvidence {
-    /// Some ref is an imported TURN or a CLAIM whose source or taint is
-    /// imported: the claim is `Imported`, whatever meet a caller computed for
-    /// it.
+    /// Some ref is imported words (an imported TURN, one of its MESSAGEs or
+    /// its CONVERSATION) or a CLAIM whose source or taint is imported: the
+    /// claim is `Imported`, whatever meet a caller computed for it.
     pub(crate) imported: bool,
     /// The review of the latest import that landed the words the claim cites.
     pub(crate) review: Option<String>,
 }
 
-/// Reads `refs` for imported TURNs and CLAIMs. The review is the latest import
-/// among the cited MESSAGEs (`cited`) of each imported TURN, or among all its
-/// MESSAGEs when the citation names none, so words one import landed stay in
+/// Reads `refs` for imported words and claims built on them. The review is
+/// the latest import among the cited MESSAGEs (`cited`) of each imported TURN,
+/// or among all its MESSAGEs when the citation names none, and the import that
+/// learned a MESSAGE cited by its own id; so words one import landed stay in
 /// its review after a later import adds more to the same TURN.
 pub(crate) fn imported_evidence_in_txn(
     vault: &Vault,
@@ -48,25 +51,48 @@ pub(crate) fn imported_evidence_in_txn(
 ) -> Result<ImportedEvidence> {
     let mut imported = false;
     let mut latest: Option<(u64, HistorySource)> = None;
-    for turn in refs {
-        let Some(raw) = vault.get_raw_in(txn, turn)? else {
+    for id in refs {
+        let Some((header, body)) = row(vault, txn, id)? else {
             continue;
         };
-        let Some(header) = EntityMetadataHeader::parse(&raw) else {
+        let (turn, words) = match header.entity_type {
+            ENTITY_TYPE_CLAIM => {
+                // A claim built on imported words carries them on; it names no
+                // review of its own, so the Dreamer run's review holds it.
+                imported |=
+                    evidence_source_from_row(ENTITY_TYPE_CLAIM, &body)? == ClaimSource::Imported;
+                continue;
+            }
+            // An imported conversation carries its turns' stamp, and names no
+            // review of its own either.
+            ENTITY_TYPE_CONVERSATION => {
+                imported |= decode_turn_body(&body).imported;
+                continue;
+            }
+            // A message's words are its turn's, landed by the import that
+            // learned the message.
+            ENTITY_TYPE_MESSAGE => {
+                let parents = vault.filtered_edge_peers(
+                    txn,
+                    EdgeDirection::Out,
+                    id,
+                    EdgeKind::PartOf,
+                    Some(ENTITY_TYPE_TURN),
+                    "imported message review scan",
+                )?;
+                let Some(turn) = parents.first() else {
+                    continue;
+                };
+                (*turn, Some(vec![*id]))
+            }
+            ENTITY_TYPE_TURN => (*id, None),
+            _ => continue,
+        };
+        let Some((turn_header, turn_body)) = row(vault, txn, &turn)? else {
             continue;
         };
-        let body = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
-        if header.entity_type == ENTITY_TYPE_CLAIM {
-            // A claim built on imported words carries them on; it names no
-            // review of its own, so the Dreamer run's review holds it.
-            imported |= evidence_source_from_row(ENTITY_TYPE_CLAIM, body)? == ClaimSource::Imported;
-            continue;
-        }
-        if header.entity_type != ENTITY_TYPE_TURN {
-            continue;
-        }
-        let facts = decode_turn_body(body);
-        if !facts.imported {
+        let facts = decode_turn_body(&turn_body);
+        if turn_header.entity_type != ENTITY_TYPE_TURN || !facts.imported {
             continue;
         }
         imported = true;
@@ -78,21 +104,27 @@ pub(crate) fn imported_evidence_in_txn(
         else {
             continue;
         };
-        let messages = vault.filtered_edge_peers(
-            txn,
-            EdgeDirection::In,
-            turn,
-            EdgeKind::PartOf,
-            Some(ENTITY_TYPE_MESSAGE),
-            "imported turn review scan",
-        )?;
-        let named: Vec<_> = messages
-            .iter()
-            .filter(|message| cited.contains(message))
-            .copied()
-            .collect();
+        let words = match words {
+            Some(words) => words,
+            None => {
+                let messages = vault.filtered_edge_peers(
+                    txn,
+                    EdgeDirection::In,
+                    &turn,
+                    EdgeKind::PartOf,
+                    Some(ENTITY_TYPE_MESSAGE),
+                    "imported turn review scan",
+                )?;
+                let named: Vec<_> = messages
+                    .iter()
+                    .filter(|message| cited.contains(message))
+                    .copied()
+                    .collect();
+                if named.is_empty() { messages } else { named }
+            }
+        };
         let mut imported_at = None;
-        for message in if named.is_empty() { &messages } else { &named } {
+        for message in &words {
             let learned = vault
                 .get_raw_in(txn, message)?
                 .as_deref()
@@ -100,7 +132,7 @@ pub(crate) fn imported_evidence_in_txn(
                 .map(|header| header.learned_at);
             imported_at = imported_at.max(learned);
         }
-        let imported_at = imported_at.unwrap_or(header.learned_at);
+        let imported_at = imported_at.unwrap_or(turn_header.learned_at);
         if latest.as_ref().is_none_or(|(at, _)| imported_at > *at) {
             latest = Some((imported_at, source));
         }
@@ -109,4 +141,21 @@ pub(crate) fn imported_evidence_in_txn(
         imported,
         review: latest.map(|(at, source)| history_import_review_id(source, at)),
     })
+}
+
+/// A row's header and body.
+fn row(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<(EntityMetadataHeader, Vec<u8>)>> {
+    let Some(raw) = vault.get_raw_in(txn, id)? else {
+        return Ok(None);
+    };
+    Ok(EntityMetadataHeader::parse(&raw).map(|header| {
+        (
+            header,
+            raw[crate::batch::ENTITY_METADATA_HEADER_LEN..].to_vec(),
+        )
+    }))
 }

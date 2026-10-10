@@ -93,6 +93,9 @@ struct Rollout {
     /// The line a forked or spawned thread's own history starts at; the lines
     /// before it are its parent's, copied.
     own_history_from: Option<usize>,
+    /// Every meta line's thread, in file order: the file's own, then each
+    /// parent whose history a copy carries.
+    threads: Vec<Thread>,
     spawned_by: Option<String>,
     forked_from: Option<String>,
     started_at_ms: Option<u64>,
@@ -101,6 +104,40 @@ struct Rollout {
     /// Tool calls by line, to label the assistant message they belong to.
     tool_calls: Vec<(usize, String)>,
     skipped: HistorySkips,
+}
+
+/// A thread a rollout holds words of.
+struct Thread {
+    /// A parent agent spawned it, so its own user messages are that agent's.
+    spawned: bool,
+    /// The line its own history starts at: its meta line plus its own start
+    /// ordinal, or its meta line when it names none.
+    own_from: usize,
+}
+
+/// Whether the user message at `line` is a delegating agent's: the thread
+/// whose own history holds it was spawned. Copies nest, so each copied
+/// parent's own history ends where the thread that copied it starts its own.
+/// A message before every thread's own start falls to the deepest copy.
+fn delegated(threads: &[Thread], line: usize) -> bool {
+    let mut end = usize::MAX;
+    for thread in threads {
+        if (thread.own_from..end).contains(&line) {
+            return thread.spawned;
+        }
+        end = end.min(thread.own_from);
+    }
+    threads.last().is_some_and(|thread| thread.spawned)
+}
+
+/// The thread that spawned this one, at the top level in current rollouts and
+/// under its subagent source in earlier ones.
+fn spawned_by(payload: &Value) -> Option<&str> {
+    str_field(payload, "parent_thread_id").or_else(|| {
+        payload
+            .pointer("/source/subagent/thread_spawn/parent_thread_id")
+            .and_then(Value::as_str)
+    })
 }
 
 pub(super) fn decode(text: &str, file: &HistoryFile) -> Vec<HistoryConversation> {
@@ -201,26 +238,23 @@ impl Rollout {
         if let Some(id) = &id {
             self.metas.push((line, id.clone()));
         }
+        let ordinal = payload
+            .get("subagent_history_start_ordinal")
+            .and_then(Value::as_u64)
+            .and_then(|line| usize::try_from(line).ok());
+        self.threads.push(Thread {
+            spawned: spawned_by(payload).is_some(),
+            own_from: ordinal.map_or(line, |ordinal| line.saturating_add(ordinal)),
+        });
         // A forked or spawned thread's rollout carries its parent's meta again
         // inside the history it copied; the file's own meta comes first.
         if self.session.is_some() {
             return;
         }
         self.session = id;
-        // A spawned agent names its parent thread at the top level in current
-        // rollouts, and under its subagent source in earlier ones.
-        self.spawned_by = str_field(payload, "parent_thread_id")
-            .or_else(|| {
-                payload
-                    .pointer("/source/subagent/thread_spawn/parent_thread_id")
-                    .and_then(Value::as_str)
-            })
-            .map(str::to_owned);
+        self.spawned_by = spawned_by(payload).map(str::to_owned);
         self.forked_from = str_field(payload, "forked_from_id").map(str::to_owned);
-        self.own_history_from = payload
-            .get("subagent_history_start_ordinal")
-            .and_then(Value::as_u64)
-            .and_then(|line| usize::try_from(line).ok());
+        self.own_history_from = ordinal;
         self.started_at_ms = time_field(payload, "timestamp").or(at);
     }
 
@@ -451,7 +485,6 @@ impl Rollout {
         } else {
             HistoryThreadKind::Main
         };
-        let said_by = self.spawned_by.is_some().then_some(DELEGATING_AGENT);
         let messages = self.messages();
         let mut conversation = HistoryConversation::new(session.clone(), kind, parent);
         conversation.started_at_ms = self.started_at_ms;
@@ -488,6 +521,7 @@ impl Rollout {
                     _ => pending.push(name),
                 }
             }
+            let line = candidate.line;
             let chained = chained_id(candidate.role, &previous);
             let (native_id, alias) = match candidate.id {
                 Some(id) => (id, Some(chained)),
@@ -508,10 +542,8 @@ impl Rollout {
                 HistoryRole::Assistant => message.tools = std::mem::take(&mut pending),
                 HistoryRole::User => {
                     pending.clear();
-                    // History copied from the parent before the spawned
-                    // thread's own start is the parent's, owner's words included.
-                    if own_chain || self.own_history_from.is_none() {
-                        message.said_by = said_by;
+                    if delegated(&self.threads, line) {
+                        message.said_by = Some(DELEGATING_AGENT);
                     }
                 }
             }

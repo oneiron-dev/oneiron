@@ -28,19 +28,13 @@ pub(super) fn park_open_conflict(
         .ok_or_else(|| super::support::invalid_consolidation("open conflict has no evidence"))?;
     let meet = verified.meet();
     let evidence = verified.envelope(Vec::new());
-    let envelope = WriteEnvelope::with_lineage(
-        actor,
-        meet,
-        WriteProvenance::new(Value::Map(vec![
-            (Value::from("surface"), Value::from("dreamer")),
-            (
-                Value::from("run"),
-                Value::from(crate::entity_id::bytes_to_hex_lower(attempt.as_bytes())),
-            ),
-        ]))?,
-        ClaimApprovalStatus::Proposed,
-        SourceLineage::of(ClaimSource::Generated).with(meet),
-    );
+    let provenance = vec![
+        (Value::from("surface"), Value::from("dreamer")),
+        (
+            Value::from("run"),
+            Value::from(crate::entity_id::bytes_to_hex_lower(attempt.as_bytes())),
+        ),
+    ];
     let mut candidate = ClaimCandidate::new(
         crate::claim::PREDICATE_CONFLICT_OPEN,
         ClaimSubject::Entity(conflict.identity.subject),
@@ -109,7 +103,30 @@ pub(super) fn park_open_conflict(
     vault.with_write_txn(|txn| {
         crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         fence.validate_in_txn(vault, txn)?;
-        let mut envelope = envelope.clone();
+        // An open question over imported words waits in their import's review,
+        // beside the claims drawn from them.
+        let mut provenance = provenance.clone();
+        if meet == ClaimSource::Imported
+            && let Some(review) = crate::ingest::history::imported_evidence_in_txn(
+                vault,
+                txn,
+                &verified.refs(),
+                &verified.cited_messages(),
+            )?
+            .review
+        {
+            provenance.push((
+                Value::from(crate::gate::DREAMER_PROVENANCE_IMPORT_REVIEW_KEY),
+                Value::from(review),
+            ));
+        }
+        let mut envelope = WriteEnvelope::with_lineage(
+            actor,
+            meet,
+            WriteProvenance::new(Value::Map(provenance))?,
+            ClaimApprovalStatus::Proposed,
+            SourceLineage::of(ClaimSource::Generated).with(meet),
+        );
         vault.sign_retained_machine_claim_in_txn(&*txn, &id, &candidate, &mut envelope)?;
         vault
             .batch_in()

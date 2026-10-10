@@ -452,6 +452,42 @@ fn imported_evidence_lands_proposed_in_its_import_review_whatever_the_policy_gra
     assert_eq!(pending[0].claim_id, *claim_id.as_bytes());
     assert_eq!(pending[0].dreamer_run_id.as_deref(), Some(review.as_str()));
 
+    // Citing the imported MESSAGE itself, or its CONVERSATION, is the same:
+    // Sol 9A-3B round 2 #4. The MESSAGE names the import that learned it.
+    let message = {
+        let rtxn = vault.store.env.read_txn()?;
+        vault.filtered_edge_peers(
+            &rtxn,
+            crate::ports::EdgeDirection::In,
+            &turn,
+            EdgeKind::PartOf,
+            Some(crate::registry::ENTITY_TYPE_MESSAGE),
+            "imported message",
+        )?[0]
+    };
+    let conversation = EntityId::derive(
+        crate::entity_id::derived_domains::HISTORY_CONVERSATION,
+        &[b"claude-code".as_slice(), b"session-ana"],
+    )?;
+    for (predicate, cited, group) in [
+        ("profile.city", message, review.as_str()),
+        ("profile.pet", conversation, fixture.run.run_id.as_str()),
+    ] {
+        let promoted = candidate(&fixture, predicate, "Kyoto", vec![cited]);
+        let id = promoted.claim_id;
+        let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
+        assert_eq!(outcome.pended, vec![id], "{predicate}: {outcome:?}");
+        let body = vault.get_claim(&id)?.expect("the proposed claim");
+        assert_eq!(body.source, Some(ClaimSource::Imported), "{predicate}");
+        assert_eq!(body.approval, ClaimApprovalStatus::Proposed, "{predicate}");
+        let pending = vault.store.pending_gate_consents(10)?;
+        let row = pending
+            .iter()
+            .find(|row| row.claim_id == *id.as_bytes())
+            .expect("its pending row");
+        assert_eq!(row.dreamer_run_id.as_deref(), Some(group), "{predicate}");
+    }
+
     // A claim built on an approved imported claim carries the import on: it
     // too waits for the owner, in the Dreamer run's review.
     let head = approved_head(&vault, &fixture, ClaimSource::Imported, "profile.home")?;
@@ -1847,11 +1883,9 @@ mod vad_deferral_tests {
 
     #[test]
     fn promotion_auto_all_landed_classes_must_remain_non_consolidatable_tripwire() -> Result<()> {
-        for source in [
-            ClaimSource::Generated,
-            ClaimSource::ToolOutput,
-            ClaimSource::Imported,
-        ] {
+        // Imported evidence never lands Auto (ARCH-0027):
+        // `imported_evidence_lands_proposed_in_its_import_review_whatever_the_policy_grants`.
+        for source in [ClaimSource::Generated, ClaimSource::ToolOutput] {
             let (_dir, vault) = open_auto_vault();
             let fixture = annotated_fixture(&vault)?;
             let mut promoted = candidate(&fixture, "profile.name", "review me", vec![fixture.turn]);

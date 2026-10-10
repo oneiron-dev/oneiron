@@ -11,6 +11,7 @@ use std::rc::Rc;
 struct Fixture {
     _dir: tempfile::TempDir,
     vault: Vault,
+    owner: EntityId,
     subject: EntityId,
     evidence: EntityId,
     skill: EntityId,
@@ -145,9 +146,9 @@ impl Fixture {
                 2,
             )
             .map_err(|error| Error::InvalidConfig(error.to_string()))?;
-        let owner =
+        let authenticated =
             vault.authenticate_owner(owner, "principal:recipe", true, GateDecisionId::now())?;
-        vault.admit_and_enqueue_weave_recipe(&owner, skill, subject, evidence, 3)?;
+        vault.admit_and_enqueue_weave_recipe(&authenticated, skill, subject, evidence, 3)?;
         let outcome =
             DreamerRunnerStore::new(&vault).admit_next_weave_recipe(AdmitDreamerAttempt {
                 lease_owner: "worker".into(),
@@ -163,6 +164,7 @@ impl Fixture {
         Ok(Self {
             _dir: dir,
             vault,
+            owner,
             subject,
             evidence,
             skill,
@@ -432,6 +434,64 @@ fn recipe_persists_source_meet_and_transitive_taint() -> Result<()> {
             expected
         );
     }
+    Ok(())
+}
+
+/// Sol 9A-3B round 2 #3: a recipe over imported evidence waits for the owner
+/// in its run's review. When the owner declines it between the commit and the
+/// attempt's settlement, the retry settles the committed result, without the
+/// interpreter, instead of failing an already finished recipe.
+#[test]
+fn a_committed_result_the_owner_declined_still_settles() -> Result<()> {
+    let fixture = Fixture::new_with_claim(
+        Some(EdgeActorClass::System),
+        Some((ClaimSource::Imported, ClaimSource::Imported)),
+    )?;
+    let mut runtime = CountingRuntime::new();
+    assert_eq!(
+        fixture.run(&mut runtime)?,
+        DreamerAttemptExecution::Completed { completed_units: 0 }
+    );
+    let id = claim_id(&fixture.attempt)?;
+    let run = fixture
+        .attempt
+        .status
+        .attempt
+        .run_id
+        .clone()
+        .ok_or_else(invalid)?;
+    let reviewer = WriteActor::new(fixture.owner, EdgeActorClass::Human);
+    let bundle = fixture.vault.review_gate_consent_bundle(&reviewer, &run)?;
+    let members: Vec<EntityId> = bundle
+        .members
+        .iter()
+        .map(|member| member.claim_id)
+        .collect();
+    assert_eq!(members, [id]);
+    let owner = fixture.vault.authenticate_owner(
+        fixture.owner,
+        "principal:recipe",
+        true,
+        GateDecisionId::now(),
+    )?;
+    fixture.vault.resolve_gate_consent_bundle(
+        &owner,
+        bundle.bundle_id,
+        &run,
+        crate::GateConsentBundleAction::Decline,
+        6,
+    )?;
+    assert_eq!(fixture.output()?.approval, ClaimApprovalStatus::Rejected);
+
+    let mut retry = CountingRuntime {
+        calls: runtime.calls.clone(),
+        panic: true,
+    };
+    assert_eq!(
+        fixture.run(&mut retry)?,
+        DreamerAttemptExecution::Completed { completed_units: 0 }
+    );
+    assert_eq!(runtime.calls.get(), 1);
     Ok(())
 }
 
