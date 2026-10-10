@@ -1214,8 +1214,14 @@ fn a_route_that_could_carry_a_credential_into_a_receipt_is_refused() {
         "https://model.test/v1?key=sk-secret",
         "https://model.test/#sk-secret",
         "https://model.test/sk-secret/v1",
+        "https:model.test/sk-secret/v1",
+        "https://model.test\\sk-secret\\v1",
+        "wss://model.test/sk-secret",
         "HTTP://model.test:443/",
         "https://",
+        "https://[::1",
+        "https://model.test:",
+        "https://model.test:44a",
         "https://model.test/ v1",
         "",
     ] {
@@ -1234,6 +1240,7 @@ fn a_route_that_could_carry_a_credential_into_a_receipt_is_refused() {
     }
     for origin in [
         MODEL_ORIGIN,
+        "HTTPS://Model.Test",
         "http://[::1]:8080",
         "unix:///tmp/model.sock",
         "cli:vendor-seat",

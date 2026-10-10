@@ -38,8 +38,8 @@ pub enum KeyCustody {
 
 /// The adapter and the origin a call goes out through. The origin names
 /// where the call goes, never how it authenticates: it lands in every receipt.
-/// An `http` or `https` origin is its scheme and authority alone, since a
-/// path, like userinfo or a query, could carry a proxy's key.
+/// A web origin (`http`, `https`, `ws`, `wss`) is `scheme://host[:port]`
+/// alone, since a path, like userinfo or a query, could carry a proxy's key.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct OfferRoute {
     adapter: String,
@@ -52,10 +52,10 @@ pub struct OfferRoute {
 pub enum OfferRouteError {
     #[error("an adapter name is non-empty, without '@', whitespace or control characters")]
     Adapter,
-    /// An origin with userinfo, a query, a fragment or an HTTP path could
-    /// carry a credential into a receipt.
+    /// An origin with userinfo, a query, a fragment or a web path could carry
+    /// a credential into a receipt.
     #[error(
-        "an origin is non-empty, without '@', '?', '#', whitespace, control characters or an HTTP path"
+        "an origin is non-empty, without '@', '?', '#', '\\', whitespace or control characters, and a web origin is scheme://host[:port]"
     )]
     Origin,
 }
@@ -75,11 +75,13 @@ impl OfferRoute {
         if !plain(&adapter, &['@']) {
             return Err(OfferRouteError::Adapter);
         }
-        let http_path = origin.split_once("://").is_some_and(|(scheme, rest)| {
-            (scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https"))
-                && (rest.is_empty() || rest.contains('/'))
+        let web = origin.split_once(':').filter(|(scheme, _)| {
+            WEB_SCHEMES
+                .iter()
+                .any(|web| scheme.eq_ignore_ascii_case(web))
         });
-        if !plain(&origin, &['@', '?', '#']) || http_path {
+        let web_ok = web.is_none_or(|(_, rest)| rest.strip_prefix("//").is_some_and(is_authority));
+        if !plain(&origin, &['@', '?', '#', '\\']) || !web_ok {
             return Err(OfferRouteError::Origin);
         }
         Ok(Self { adapter, origin })
@@ -98,6 +100,41 @@ impl OfferRoute {
     pub(super) fn key(&self) -> String {
         format!("{}@{}", self.adapter, self.origin)
     }
+}
+
+/// Schemes whose origin is a host and a port, and whose path a URL parser
+/// would read even from a lax spelling.
+const WEB_SCHEMES: [&str; 4] = ["http", "https", "ws", "wss"];
+
+/// `host[:port]`: a DNS name or IPv4 address, or a bracketed IPv6 address.
+fn is_authority(authority: &str) -> bool {
+    let (host_ok, port) = match authority.strip_prefix('[') {
+        Some(bracketed) => match bracketed.split_once(']') {
+            Some((address, port)) => (
+                !address.is_empty()
+                    && address
+                        .chars()
+                        .all(|c| c.is_ascii_hexdigit() || matches!(c, ':' | '.')),
+                port,
+            ),
+            None => return false,
+        },
+        None => {
+            let (host, port) = authority.split_at(authority.find(':').unwrap_or(authority.len()));
+            (
+                !host.is_empty()
+                    && host
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-')),
+                port,
+            )
+        }
+    };
+    let port_ok = port.is_empty()
+        || port
+            .strip_prefix(':')
+            .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()));
+    host_ok && port_ok
 }
 
 /// How many units of `unit` one native unit of an offer costs, as a rational:
