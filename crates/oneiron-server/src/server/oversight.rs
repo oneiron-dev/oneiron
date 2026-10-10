@@ -7,15 +7,51 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::sync::oneshot;
+use tokio::task::{JoinError, JoinHandle};
+
 use super::core::SyncServer;
 
 /// How often the host signs the receipts again.
 pub(crate) const HEALER_OVERSIGHT_EVERY: Duration = Duration::from_secs(60 * 60);
 
+/// Why a host could not sign its first receipts. A vault carries them from
+/// its first serve (ARCH-0066 §9), so the host stops here instead of
+/// reporting ready.
+#[derive(Debug, thiserror::Error)]
+pub enum OversightStartError {
+    /// The vault refused the write.
+    #[error("the first healer oversight receipts were not signed: {0}")]
+    Refused(oneiron::Error),
+    /// The write's blocking task panicked or was cancelled.
+    #[error("the first healer oversight emission did not finish: {0}")]
+    Interrupted(JoinError),
+}
+
+/// The running cadence. Dropping it stops future ticks; [`Self::stop`] also
+/// waits for a write already admitted.
+pub(crate) struct HealerOversight {
+    stop: oneshot::Sender<()>,
+    task: JoinHandle<()>,
+}
+
+impl HealerOversight {
+    /// Stops future ticks, then waits for an emission already admitted to end
+    /// its write. That write runs on a blocking thread, which no abort
+    /// reaches, so shutdown goes on only once it is done.
+    pub(crate) async fn stop(self) {
+        let _ = self.stop.send(());
+        if let Err(error) = self.task.await {
+            tracing::warn!(%error, "healer oversight task failed");
+        }
+    }
+}
+
 impl SyncServer {
     /// Signs the receipts once, then starts the cadence. Awaited before the
-    /// host reports ready, so a vault carries its receipts from its first
-    /// serve.
+    /// host reports ready, and a failed first emission is returned, so a
+    /// vault carries its receipts from its first serve. Later failures are
+    /// logged and the next tick tries again.
     ///
     /// `admit` is the host's write gate. Each emission holds what it returns
     /// until the write finishes, so the host can see the write in flight, and
@@ -24,39 +60,50 @@ impl SyncServer {
         self: &Arc<Self>,
         every: Duration,
         admit: impl Fn() -> Option<A> + Send + 'static,
-    ) -> tokio::task::JoinHandle<()> {
-        let first = admit();
-        self.emit_healer_oversight_admitted(first).await;
+    ) -> Result<HealerOversight, OversightStartError> {
+        if let Some(admission) = admit() {
+            match self.emit_healer_oversight_admitted(admission).await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => return Err(OversightStartError::Refused(error)),
+                Err(error) => return Err(OversightStartError::Interrupted(error)),
+            }
+        }
+        let (stop, mut stopped) = oneshot::channel();
         let server = Arc::clone(self);
-        tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             let mut interval = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
-                interval.tick().await;
-                let admission = admit();
-                server.emit_healer_oversight_admitted(admission).await;
+                // A stop, or a dropped handle, ends the cadence between
+                // emissions, never during one.
+                tokio::select! {
+                    biased;
+                    _ = &mut stopped => return,
+                    _ = interval.tick() => {}
+                }
+                let Some(admission) = admit() else {
+                    continue;
+                };
+                match server.emit_healer_oversight_admitted(admission).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => tracing::warn!(%error, "healer oversight emission failed"),
+                    Err(error) => tracing::warn!(%error, "healer oversight task failed"),
+                }
             }
-        })
+        });
+        Ok(HealerOversight { stop, task })
     }
 
     async fn emit_healer_oversight_admitted<A: Send + 'static>(
         self: &Arc<Self>,
-        admission: Option<A>,
-    ) {
-        let Some(admission) = admission else {
-            return;
-        };
+        admission: A,
+    ) -> Result<Result<(), oneiron::Error>, JoinError> {
         let server = Arc::clone(self);
-        let emitted = tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             let _admission = admission;
             server.emit_healer_oversight_once()
         })
-        .await;
-        match emitted {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => tracing::warn!(%error, "healer oversight emission failed"),
-            Err(error) => tracing::warn!(%error, "healer oversight task failed"),
-        }
+        .await
     }
 
     /// Signs and stores the three receipts as of the vault's clock.

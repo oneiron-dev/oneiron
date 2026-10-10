@@ -155,6 +155,66 @@ async fn host_emits_signed_oversight_receipts_the_owner_reads() {
     }
 }
 
+/// Shutdown waits for a receipt write the cadence already admitted. That
+/// write runs on a blocking thread, which no abort reaches; shutdown used to
+/// abort the cadence and go on while the write was still running.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_waits_for_an_admitted_receipt_write() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let dir = tempfile::tempdir().unwrap();
+    let clock = oneiron::store::ports::ManualClock::new(1_000);
+    let mut config = oneiron::VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), config).unwrap());
+    let server =
+        Arc::new(SyncServer::new(Arc::clone(&vault), SyncServerConfig::default()).unwrap());
+    let admitted = Arc::new(AtomicUsize::new(0));
+    let oversight = server
+        .start_healer_oversight(std::time::Duration::from_millis(20), {
+            let admitted = Arc::clone(&admitted);
+            move || Some(admitted.fetch_add(1, Ordering::SeqCst))
+        })
+        .await
+        .unwrap();
+    clock.set(2_000);
+
+    // The vault's writer, held, so the next emission waits inside its write.
+    let (entered, entered_rx) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn({
+        let vault = Arc::clone(&vault);
+        move || {
+            vault.with_write_txn(|_| {
+                entered.send(()).unwrap();
+                released.recv().unwrap();
+                Ok(())
+            })
+        }
+    });
+    entered_rx.recv().unwrap();
+    while admitted.load(Ordering::SeqCst) < 2 {
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+
+    let stopping = tokio::spawn(oversight.stop());
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(
+        !stopping.is_finished(),
+        "shutdown went on while an admitted receipt write was still running"
+    );
+
+    release.send(()).unwrap();
+    holder.join().unwrap().unwrap();
+    stopping.await.unwrap();
+    // The held write ended before the stop did.
+    let receipts = vault.healer_oversight_receipts().unwrap();
+    assert_eq!(receipts.len(), 3);
+    for (receipt, _) in &receipts {
+        assert_eq!(receipt.counts.observed_at, 2_000, "{receipt:?}");
+    }
+}
+
 /// A custom AGENT_DEF the ladder's scope can bind to.
 fn custom_agent(server: &SyncServer) -> oneiron::EntityId {
     let id = oneiron::EntityId::now();

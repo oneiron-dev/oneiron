@@ -110,17 +110,17 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
     let (sync_server, ai) =
         crate::ai_host::AiHost::attach(sync_server, config.models.as_ref()).await;
     let sync_server = Arc::new(sync_server);
+    // The vault's first oversight receipts, before the host's own workers
+    // start: a vault that cannot sign them never reports ready.
+    let oversight = sync_server
+        .start_healer_oversight(crate::server::HEALER_OVERSIGHT_EVERY, || Some(()))
+        .await?;
     let linear_handle = crate::linear_host::spawn(sync_server.clone()).await?;
     let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
     let mut workers = sync_server.spawn_slot_workers();
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
     #[cfg(unix)]
     workers.extend(import_queue.map(|queue| queue.spawn(Arc::clone(&sync_server))));
-    workers.push(
-        sync_server
-            .start_healer_oversight(crate::server::HEALER_OVERSIGHT_EVERY, || Some(()))
-            .await,
-    );
     let app = build_app(sync_server).layer(cors_layer);
     host.ready()?;
     // Open sockets may never close by themselves, so the drain is bounded.
@@ -145,6 +145,8 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
     };
     // A pass or step in flight reaches its own boundary before this returns.
     ai.shutdown().await;
+    // A receipt write already admitted ends before the process does.
+    oversight.stop().await;
     host.on_stop()?;
     lifecycle_handle.abort();
     let _ = lifecycle_handle.await;

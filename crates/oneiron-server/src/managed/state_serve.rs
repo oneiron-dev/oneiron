@@ -593,7 +593,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             let state = Arc::clone(&state);
             move || state.admit_http_mutation().ok()
         })
-        .await;
+        .await?;
 
     // Both sockets are bound, the credentials are consumed, and the open gates
     // have passed. Only now is this process something the supervisor may route
@@ -621,8 +621,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // No new durable background work from here on.
     lifecycle_handle.abort();
     let _ = lifecycle_handle.await;
-    oversight.abort();
-    let _ = oversight.await;
+    // The freeze admits no new emission; one already admitted ends its write
+    // before the final ledger push and the exit.
+    oversight.stop().await;
 
     if let Some(path) = http_owned_path {
         // Only ever the path this process created. An inherited socket's inode

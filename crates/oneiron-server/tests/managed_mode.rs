@@ -54,7 +54,9 @@
 //!   byte is the supervisor's only evidence that any of the ordering held.
 //! - **oversight** — `a_managed_start_signs_the_three_oversight_receipts` boots
 //!   the real binary and reads the receipts back from the vault it left, since
-//!   no route a supervisor reaches exposes them.
+//!   no route a supervisor reaches exposes them;
+//!   `a_managed_start_that_cannot_sign_its_receipts_never_reports_ready` boots
+//!   over a vault whose emission refuses and reads the typed error back.
 
 use std::os::fd::{IntoRawFd, RawFd};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -70,7 +72,7 @@ use oneiron_server::managed::{
     WRITES_FROZEN_TAG, WakeLedger, check_managed_open_gates, final_ledger_push,
     read_managed_credentials, serve_managed,
 };
-use oneiron_server::server::SyncServer;
+use oneiron_server::server::{OversightStartError, SyncServer};
 use oneiron_vault_contract::{
     CONTRACT_VERSION, CREDENTIALS_LEN, Credentials, CtlResponse, DEK_LEN, LedgerAck, LedgerUpdate,
     MAX_CTL_LINE, READY_BYTE, Schedule, TOKEN_LEN, read_credentials, validate_wake_entries,
@@ -1547,4 +1549,48 @@ fn a_managed_start_signs_the_three_oversight_receipts() {
     for (receipt, verified) in &receipts {
         assert!(verified, "{receipt:?}");
     }
+}
+
+/// A managed vault that cannot sign its first oversight receipts never
+/// reports ready (ARCH-0066 §9: every vault carries them from day one). The
+/// start used to log the refusal and write the ready byte anyway.
+#[tokio::test]
+async fn a_managed_start_that_cannot_sign_its_receipts_never_reports_ready() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = sockets_dir(dir.path());
+    {
+        let vault = open_vault(&run.join("data"));
+        vault
+            .sync_state_put(CANARY_MARKER_KEY, CANARY_MARKER_VALUE)
+            .unwrap();
+        // A stored review older than its proposal: the emission's own
+        // transaction refuses to count it.
+        vault
+            .put_healer_activity_for_test(&"ab".repeat(16), 2_000, Some(1_000))
+            .unwrap();
+    }
+
+    let (args, ready_path) = managed_boot_args(&run);
+    let managed = ManagedArgs::from_serve_args(&args).unwrap().unwrap();
+    let boot = tokio::spawn(async move { serve_managed(&args, managed).await });
+    // Until the boot ends, the ready file stays empty.
+    while !boot.is_finished() {
+        assert!(
+            std::fs::read(&ready_path).unwrap().is_empty(),
+            "a vault that signed no receipts reported ready"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let error = boot.await.unwrap().unwrap_err();
+
+    assert!(
+        matches!(
+            error.downcast_ref::<OversightStartError>(),
+            Some(OversightStartError::Refused(
+                oneiron::Error::CorruptedIndex(_)
+            ))
+        ),
+        "unexpected: {error:#}"
+    );
+    assert!(std::fs::read(&ready_path).unwrap().is_empty());
 }

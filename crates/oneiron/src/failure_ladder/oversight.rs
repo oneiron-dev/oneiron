@@ -156,6 +156,25 @@ impl Vault {
             Ok(())
         })
     }
+    /// Stores a healer case's activity as given, without the order check the
+    /// doors keep, so a test can hold a vault whose stored activity no longer
+    /// reads back valid.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn put_healer_activity_for_test(
+        &self,
+        case: &str,
+        proposed_at: u64,
+        reviewed_at: Option<u64>,
+    ) -> Result<()> {
+        validate_case_ref(case)?;
+        let activity = Activity {
+            proposed_at,
+            reviewed_at,
+            escalated: false,
+        };
+        self.with_write_txn(|txn| ACTIVITY.put(&self.store, txn, &case.to_owned(), &activity))
+    }
     /// Emits all three receipts in one transaction. Each contains counts so
     /// empty denominators remain explicit instead of yielding NaN rates.
     pub fn emit_healer_oversight(&self, now: u64) -> Result<Vec<OversightReceipt>> {
@@ -210,26 +229,24 @@ impl Vault {
     /// The latest receipts [`Vault::emit_healer_oversight`] stored, coverage
     /// first, then latency, then escalation rate, each paired with whether it
     /// verifies against this vault device's own signing key. Empty until the
-    /// host first emits.
+    /// host first emits. A read transaction only: the read never waits for
+    /// the writer.
     pub fn healer_oversight_receipts(&self) -> Result<Vec<(OversightReceipt, bool)>> {
-        let stored = {
-            let txn = self.store.env.read_txn()?;
-            KINDS
-                .into_iter()
-                .filter_map(|kind| RECEIPT.get(&self.store, &txn, &[kind.tag()]).transpose())
-                .collect::<Result<Vec<_>>>()?
-        };
+        let txn = self.store.env.read_txn()?;
+        let stored = KINDS
+            .into_iter()
+            .filter_map(|kind| RECEIPT.get(&self.store, &txn, &[kind.tag()]).transpose())
+            .collect::<Result<Vec<_>>>()?;
         if stored.is_empty() {
             return Ok(Vec::new());
         }
-        let signer = crate::identity::ensure_device_identity(self)?
-            .signing_key
-            .verifying_key()
-            .to_bytes();
+        // Emission mints the identity in the transaction that stores the
+        // receipts. Without a key, no receipt verifies.
+        let signer = crate::identity::read_device_verifying_key_in_txn(self, &txn)?;
         Ok(stored
             .into_iter()
             .map(|receipt| {
-                let verified = receipt.verify(&signer);
+                let verified = signer.is_some_and(|signer| receipt.verify(&signer));
                 (receipt, verified)
             })
             .collect())

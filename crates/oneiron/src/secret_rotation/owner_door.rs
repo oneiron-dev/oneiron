@@ -10,10 +10,11 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, GateError, Result, SecretError};
 use crate::secret_custody::{
-    SecretCustodyStatus, put_secret_custody_in_txn, read_secret_custody_in_txn,
-    refuse_bindings_wider_than_live_floor, resolve_secret_ref_in_txn,
+    SecretCustodyRecord, SecretCustodyStatus, put_secret_custody_in_txn,
+    read_secret_custody_in_txn, refuse_bindings_wider_than_live_floor, resolve_secret_ref_in_txn,
 };
 use crate::side_table::HexId;
+use zeroize::Zeroize;
 
 impl Vault {
     /// Rotates a secret on the vault owner's behalf: [`Vault::rotate_secret`]
@@ -55,11 +56,14 @@ impl Vault {
                 name: secret_ref.to_owned(),
             })
         })?;
-        let mut rec = read_secret_custody_in_txn(&self.store, wtxn, &id)?
-            .ok_or(Error::CorruptedIndex("secret custody record for live name"))?;
+        let mut rec = Held(
+            read_secret_custody_in_txn(&self.store, wtxn, &id)?
+                .ok_or(Error::CorruptedIndex("secret custody record for live name"))?,
+        );
+        let rec = &mut rec.0;
         if rec.status != SecretCustodyStatus::Active {
             return Err(Error::Secret(SecretError::SecretCustodyNotActive {
-                name: rec.name,
+                name: rec.name.clone(),
             }));
         }
 
@@ -77,7 +81,9 @@ impl Vault {
         rec.rotated_at = Some(at);
         // The DEK-plane value write. `value_bytes` is `pub(crate)` precisely
         // so this stays inside the crate's custody plane; the new bytes reach
-        // no receipt, log, claim or export from here.
+        // no receipt, log, claim or export from here. The old value is wiped
+        // before its buffer is freed.
+        wipe(&mut rec.value_bytes);
         rec.value_bytes = new_value.to_vec();
 
         let receipt = RotationReceipt {
@@ -88,7 +94,7 @@ impl Vault {
             rotated_at: at,
             kind: RotationKind::Rotated,
         };
-        put_secret_custody_in_txn(self, wtxn, &id, &rec, at)?;
+        put_secret_custody_in_txn(self, wtxn, &id, rec, at)?;
         RECEIPTS.put(
             &self.store,
             wtxn,
@@ -96,5 +102,47 @@ impl Vault {
             &encode_rotation_receipt_body(&receipt)?,
         )?;
         Ok(receipt)
+    }
+}
+
+/// The record a rotation reads. It holds the old value and then the new one,
+/// and its value is wiped when the rotation is done with it, on every path.
+struct Held(SecretCustodyRecord);
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        wipe(&mut self.0.value_bytes);
+    }
+}
+
+/// Every value buffer the rotation owns ends here.
+fn wipe<B: Zeroize + AsRef<[u8]> + ?Sized>(buffer: &mut B) {
+    #[cfg(test)]
+    wiped::saw(buffer.as_ref());
+    buffer.zeroize();
+}
+
+/// The wipe hook's record, so a test can name a buffer by its contents and
+/// see that it went through [`wipe`].
+#[cfg(test)]
+pub(super) mod wiped {
+    use std::sync::{Mutex, PoisonError};
+
+    static SEEN: Mutex<Vec<blake3::Hash>> = Mutex::new(Vec::new());
+
+    pub(super) fn saw(buffer: &[u8]) {
+        SEEN.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(blake3::hash(buffer));
+    }
+
+    /// How many wiped buffers held exactly `bytes` just before the wipe.
+    pub(in crate::secret_rotation) fn count(bytes: &[u8]) -> usize {
+        let held = blake3::hash(bytes);
+        SEEN.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .filter(|seen| **seen == held)
+            .count()
     }
 }
