@@ -83,14 +83,20 @@ impl CodeCheck for MicrosoftTsc {
     }
 }
 
-/// Runs `command` with an empty environment until it exits, killing it at
-/// `deadline` or as soon as its stdout passes `limit` bytes. No more than
-/// `limit + 1` bytes of its output are ever held, and one byte of stderr.
+/// Runs `command` with an empty environment until it exits, killing it and
+/// its process group at `deadline` or as soon as its stdout passes `limit`
+/// bytes. No more than `limit + 1` bytes of its output are ever held, and one
+/// byte of stderr.
 fn run_bounded(
     mut command: Command,
     deadline: Instant,
     limit: usize,
 ) -> Result<Exited, CheckFailure> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     let mut child = command
         .env_clear()
         .stdin(Stdio::null())
@@ -99,8 +105,7 @@ fn run_bounded(
         .spawn()
         .map_err(|_| CheckFailure::Unavailable)?;
     let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
-        let _ = child.kill();
-        let _ = child.wait();
+        stop(&mut child);
         return Err(CheckFailure::Unavailable);
     };
     let stdout = read_bounded(stdout, limit);
@@ -127,13 +132,13 @@ fn run_bounded(
     let status = match ended {
         Ok(status) => status,
         Err(failure) => {
-            let _ = child.kill();
-            let _ = child.wait();
+            stop(&mut child);
             return Err(failure);
         }
     };
-    // After the exit, each reader ends at its pipe's end, unless something
-    // the process left behind still holds it open.
+    // After the exit, each reader ends at its pipe's end. A process that
+    // escaped the group and holds a pipe open (tsc starts none) leaves its
+    // reader parked, and the check times out after a short drain.
     let drain = deadline.saturating_duration_since(Instant::now()).max(DRAIN);
     let printed = match printed {
         Some(read) => read,
@@ -172,4 +177,19 @@ fn read_bounded(
         let _ = sender.send(result.map(|_| read));
     });
     receiver
+}
+
+/// Kills a live child and its process group, then reaps it. Only a child not
+/// yet reaped is signalled, so its group id cannot have been reused.
+fn stop(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    if let Ok(pid) = i32::try_from(child.id()) {
+        // SAFETY: this live, unreaped child leads the process group it was
+        // spawned into above.
+        unsafe {
+            libc::kill(-pid, libc::SIGKILL);
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }

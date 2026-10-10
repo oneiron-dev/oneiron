@@ -220,19 +220,20 @@ backend = "tsc-rs"           # "tsc-rs" in process (default) or "microsoft"
 microsoft_tsc = "/opt/typescript-7.1.0-dev.20261010.1/package/lib/tsc"  # optional
 ```
 
-Shadow mode blocks nothing and changes no program's result: the check's
-report lands in the run's replay record as
-`executor/repl/<step>.code-check.json` (backend and pin, latency, diagnostics
-in program coordinates, or a failure code), and each check logs one
-`oneiron::code_check` line with the step's outcome (`completed`, `waiting`,
-`continued` or `failed`) and the running counts. A step that fails before any
-host call leaves no record, and a run in an off-record session keeps no report
-in its quota-bounded overlay, so their checks are only in the log.
+Shadow mode blocks nothing and changes no program's result. Once a step's own
+state is saved, the check's report is appended to the run's replay record as
+`executor/repl/<step>.code-check.json`: backend and pin, latency, the first 32
+diagnostics in program coordinates (`diagnostics_omitted` counts the rest), or
+a failure code. Each check also logs one `oneiron::code_check` line with the
+step's outcome (`completed`, `waiting`, `continued` or `failed`) and the
+running counts. A step that fails keeps no report, and neither does a run in an
+off-record session, whose overlay is quota-bounded; their checks are only in
+the log.
 
 `tsc-rs` is the pinned Wasm module in `components/tsc-rs`, compiled once at
-startup (a few seconds) and run in a fresh instance per check, two at a time. `microsoft` runs
-Microsoft's native `tsc` (`@typescript/typescript-<platform>`, version
-`7.1.0-dev.20261010.1` only) as a process per check. With `tsc-rs` selected, a
+startup (a few seconds) and run in a fresh instance per check, two at a time.
+`microsoft` runs Microsoft's native `tsc` (`@typescript/typescript-<platform>`,
+version `7.1.0-dev.20261010.1` only) as a process per check. With `tsc-rs` selected, a
 set `microsoft_tsc` is the fallback for a check tsc-rs cannot finish. When no
 checker loads, code mode runs unchecked and the server logs why.
 

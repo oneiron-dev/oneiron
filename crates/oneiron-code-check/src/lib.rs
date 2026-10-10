@@ -262,6 +262,14 @@ const TSC_ARGS: [&str; 4] = ["-p", PROJECT_FILE, "--pretty", "false"];
 /// Every file of one check, by name: the declarations, the program in its
 /// envelope, and the project that lists them.
 fn project_files(input: &CheckInput<'_>) -> Result<Vec<(String, Vec<u8>)>, CheckFailure> {
+    if input.declarations.len() > MAX_DECLARATIONS
+        || input
+            .declarations
+            .iter()
+            .any(|declaration| declaration.name.len() > MAX_NAME_BYTES)
+    {
+        return Err(CheckFailure::InvalidInput);
+    }
     let size = input
         .declarations
         .iter()
@@ -344,6 +352,9 @@ impl Exited {
 
 /// The most declaration and program text one check takes.
 const DEFAULT_INPUT_BYTES: usize = 4 << 20;
+/// The most declaration files one check takes, and the longest name.
+const MAX_DECLARATIONS: usize = 16;
+const MAX_NAME_BYTES: usize = 64;
 /// How long a check may take before it is abandoned.
 const DEFAULT_WALL_TIME: Duration = Duration::from_secs(10);
 /// The most diagnostic text a check may print.

@@ -2,10 +2,12 @@
 //! result. The synthetic programs of the tsc-check evidence run through
 //! `execute_code` on the production QuickJS provider twice, with the type
 //! check off and in shadow mode on tsc-rs; the replies and the replay records
-//! match, and the shadow record carries what the check found. Each server
-//! mints its own run id, clock and seed, so the two runs are compared on what
-//! they did: the replies, host calls, steps and outputs, with the run id and
-//! the run-identity hash masked (the prompt fingerprint stays compared).
+//! match, and the shadow record carries what the check found. The two servers
+//! are built by one function that differs only in the check, but each keys
+//! its credentials afresh, so each run has its own run id (and the seed and
+//! config hash derived from it). The runs are compared on everything else:
+//! the replies, host calls, steps with their clock, outputs and the prompt
+//! fingerprint, with the run id and the run-identity hash masked.
 use super::mcp_quickjs::{CodeMode, code_mode_server_with};
 use super::*;
 use oneiron::code_run::CodeRunReplayRecord;
@@ -137,16 +139,21 @@ impl Run {
                 "request": call.request,
                 "outcome": call.outcome,
             })).collect::<Vec<_>>(),
+            "clock": record.determinism.frozen_unix_ms,
             "steps": record.step_checkpoints.iter().map(|step| json!({
                 "seq": step.seq,
                 "label": step.label,
+                "created_at_ms": step.created_at_ms,
             })).collect::<Vec<_>>(),
             "outputs": record.outputs.iter()
                 .filter(|output| !output.path.ends_with(".code-check.json"))
-                .map(|output| json!({
-                    "path": output.path,
-                    "text": self.text(&output.path).map(mask_run_identity),
-                })).collect::<Vec<_>>(),
+                .map(|output| {
+                    let text = self.text(&output.path);
+                    json!({
+                        "path": output.path,
+                        "text": if output.path == RUN_CONFIG { text.map(mask_run_identity) } else { text },
+                    })
+                }).collect::<Vec<_>>(),
         });
         let run_id = record.run_id.to_hex();
         serde_json::from_str(&view.to_string().replace(&run_id, "<run>")).unwrap()
@@ -161,16 +168,16 @@ impl Run {
     }
 }
 
-/// The run's config marker hashes its identity (run id, storage, clock and
-/// seed), which each server mints afresh.
+/// The executor's config marker.
+const RUN_CONFIG: &str = "executor/repl/run.config.json";
+
+/// The config marker's hash binds the run id with the rest of the run's
+/// config; only the hash is masked, and the marker must carry one.
 fn mask_run_identity(text: String) -> String {
-    match serde_json::from_str::<Value>(&text) {
-        Ok(mut marker) if marker.get("config_hash").is_some() => {
-            marker["config_hash"] = json!("<run identity>");
-            marker.to_string()
-        }
-        _ => text,
-    }
+    let mut marker: Value = serde_json::from_str(&text).unwrap();
+    assert!(marker["config_hash"].is_string(), "{text}");
+    marker["config_hash"] = json!("<run identity>");
+    marker.to_string()
 }
 
 #[tokio::test]

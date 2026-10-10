@@ -39,6 +39,9 @@ const MAX_WASM_STACK: usize = 32 << 20;
 const THREAD_STACK: usize = MAX_WASM_STACK + (8 << 20);
 /// How often a check past its deadline is woken to end.
 const EPOCH_TICK: Duration = Duration::from_millis(10);
+/// Host calls that loop over guest memory check the deadline every this many
+/// bytes or entries.
+const HOST_WORK_BLOCK: usize = 1 << 16;
 
 const ESUCCESS: i32 = 0;
 const EBADF: i32 = 8;
@@ -121,7 +124,7 @@ impl TscRsWasm {
         if Instant::now() >= deadline {
             return Err(CheckFailure::Timeout);
         }
-        let mut store = Store::new(&self.engine, Host::new(files, self.budget));
+        let mut store = Store::new(&self.engine, Host::new(files, self.budget, deadline));
         store.limiter(|host| host);
         store.set_epoch_deadline(1);
         // Epochs belong to the Engine: another check's timeout wakes this
@@ -288,10 +291,12 @@ struct Host {
     over_budget: bool,
     clock_ns: u64,
     random: u64,
+    /// Host work past it ends the check, as the epoch does guest work.
+    deadline: Instant,
 }
 
 impl Host {
-    fn new(files: BTreeMap<String, Vec<u8>>, budget: TscRsBudget) -> Self {
+    fn new(files: BTreeMap<String, Vec<u8>>, budget: TscRsBudget, deadline: Instant) -> Self {
         Self {
             files,
             staged: Vec::new(),
@@ -304,7 +309,16 @@ impl Host {
             // 2026-01-01T00:00:00Z; tsc reads the clock only for timings.
             clock_ns: 1_767_225_600_000_000_000,
             random: 0x9E37_79B9_7F4A_7C15,
+            deadline,
         }
+    }
+
+    /// Ends long host work at the check's deadline.
+    fn on_time(&self) -> wasmtime::Result<()> {
+        if Instant::now() >= self.deadline {
+            return Err(wasmtime::Error::new(Deadline));
+        }
+        Ok(())
     }
 
     /// splitmix64: the same bytes for every check.
@@ -501,8 +515,14 @@ fn link(linker: &mut Linker<Host>, module: &Module) -> wasmtime::Result<()> {
             };
             let mut total = 0_usize;
             for index in 0..count {
-                let entry = iovs + index * 8;
-                let (Some(at), Some(length)) = (word(entry), word(entry + 4)) else {
+                if index % HOST_WORK_BLOCK == 0 {
+                    host.on_time()?;
+                }
+                let entry = index.checked_mul(8).and_then(|offset| iovs.checked_add(offset));
+                let (Some(at), Some(length)) = (
+                    entry.and_then(word),
+                    entry.and_then(|entry| word(entry.checked_add(4)?)),
+                ) else {
                     return Ok(EFAULT);
                 };
                 let Some(chunk) = data.get(at..at.saturating_add(length)) else {
@@ -575,8 +595,11 @@ fn link(linker: &mut Linker<Host>, module: &Module) -> wasmtime::Result<()> {
             else {
                 return Ok(EFAULT);
             };
-            for chunk in target.chunks_mut(8) {
-                chunk.copy_from_slice(&host.next_random().to_le_bytes()[..chunk.len()]);
+            for block in target.chunks_mut(HOST_WORK_BLOCK) {
+                host.on_time()?;
+                for chunk in block.chunks_mut(8) {
+                    chunk.copy_from_slice(&host.next_random().to_le_bytes()[..chunk.len()]);
+                }
             }
             Ok(ESUCCESS)
         },

@@ -11,10 +11,9 @@ use super::record::{
     validate_executor_config_marker,
 };
 use super::store::{
-    RECOVERABLE_OUTPUT_CHUNK_BYTES, checkpoint_label, code_check_output_path,
-    fallback_speech_marker, implicit_speak_output_path, load_utf8_output, observation_output_path,
-    record_output, record_text_output, recoverable_chunk_path, script_output_path,
-    validate_runtime_outputs,
+    RECOVERABLE_OUTPUT_CHUNK_BYTES, checkpoint_label, fallback_speech_marker,
+    implicit_speak_output_path, load_utf8_output, observation_output_path, record_output,
+    record_text_output, recoverable_chunk_path, script_output_path, validate_runtime_outputs,
 };
 use super::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig,
@@ -33,7 +32,6 @@ use crate::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback, Error, LlmMessage,
     LlmMessageRole, LlmRequest, ResponseFormat, TierPrecedence,
 };
-use crate::session_overlay::RouteTarget;
 use serde_json::json;
 use std::collections::{BTreeMap, HashMap};
 
@@ -142,29 +140,12 @@ impl EngineNativeExecutor<'_> {
                 script_output_path(completed_steps),
                 &script,
             )?;
-            // Shadow mode records what a type check finds and acts on none
-            // of it: a check that cannot be recorded is traced and dropped,
-            // never a reason for the step to fail. Its report joins the
-            // record only in the vault's own storage: an off-record overlay
-            // is quota-bounded, and the report must not take room a later
-            // write of the step needs (nor may a discarding route keep it).
+            // Shadow mode type-checks the program before it runs and acts on
+            // nothing it finds. The report is appended once the step's own
+            // state is durable.
             let mut shadow = self
                 .code_check
                 .map(|shadow| ShadowStep::check(shadow, config.run_id, completed_steps, &script));
-            let records_checks = matches!(
-                self.storage.session_route_target(),
-                None | Some(RouteTarget::Base)
-            );
-            if let Some(shadow) = shadow.as_ref().filter(|_| records_checks)
-                && let Err(error) = record_text_output(
-                    &self.storage,
-                    &mut record,
-                    code_check_output_path(completed_steps),
-                    &shadow.record(),
-                )
-            {
-                tracing::warn!(target: "oneiron::code_check", %error, "shadow check not recorded");
-            }
 
             let bridge_start = record.bridge_calls.len();
             // ONE-1314: the DURABLE history is the load-bearing half of the
@@ -364,7 +345,7 @@ impl EngineNativeExecutor<'_> {
             // Replay persistence and its one-per-healed-turn signal are one
             // transaction. A generation conflict, tally error, or failed
             // commit advances neither; a durable append has already counted.
-            let next_generation = self
+            let mut next_generation = self
                 .storage
                 .put_code_run_replay_record_if_generation_with_heal(
                     &record,
@@ -381,6 +362,11 @@ impl EngineNativeExecutor<'_> {
             steps_run += 1;
             if let Some(shadow) = &mut shadow {
                 shadow.ended(terminal_status.as_ref());
+                if let Some(generation) =
+                    shadow.append_report(&self.storage, &mut record, next_generation)
+                {
+                    next_generation = generation;
+                }
             }
 
             if let Some(status) = terminal_status {

@@ -18,5 +18,9 @@ tracing = "0.1"
 # The engine's pinned Wasmtime (crates/oneiron), which runs the tsc-rs module.
 wasmtime = { version = "=48.0.3", default-features = false, features = ["cranelift", "runtime", "std"] }
 
+# The Microsoft backend's process group is killed whole on a timeout.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [lints]
 workspace = true
