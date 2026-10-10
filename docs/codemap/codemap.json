@@ -1873,7 +1873,7 @@
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
       "crate-vis": 12,
-      "fn": 23,
+      "fn": 24,
       "struct": 1
      }
     },
@@ -17862,7 +17862,7 @@
      "purpose": "Owner-bound foreign introductions",
      "surface": {
       "crate-vis": 2,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -36199,7 +36199,7 @@
      "purpose": "Vault actor binding, structural kinds and code-memory attachment",
      "surface": {
       "crate-vis": 2,
-      "fn": 22,
+      "fn": 23,
       "struct": 1
      }
     },
@@ -36446,7 +36446,7 @@
      "purpose": "Vault text and vector search, batch and query builders, and retrieval telemetry",
      "surface": {
       "crate-vis": 5,
-      "fn": 22
+      "fn": 23
      }
     },
     {
@@ -41669,7 +41669,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 34,
+      "const": 35,
       "crate-vis": 1
      }
     },
@@ -47760,7 +47760,7 @@
      "path": "src/api/pairing.rs",
      "purpose": "Pairing-only enrollment and unauthenticated liveness discovery",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -48225,6 +48225,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "AgentTier",
       "ApiArgs",
       "ApiCommand",
       "Cli",
@@ -48234,10 +48235,13 @@
       "HostCommand",
       "HostInitArgs",
       "InitArgs",
+      "McpArgs",
+      "McpSurface",
       "ProvenanceArgs",
       "ReembedArgs",
       "RevokeArgs",
       "SkillsPackArgs",
+      "TokenAgentArgs",
       "TokenBootstrapArgs",
       "TokenCommand",
       "TokenPairArgs",
@@ -48248,10 +48252,10 @@
      "path": "src/cli.rs",
      "purpose": "—",
      "surface": {
-      "enum": 5,
-      "fn": 2,
+      "enum": 7,
+      "fn": 3,
       "re-export": 1,
-      "struct": 14
+      "struct": 16
      }
     },
     {
@@ -48283,7 +48287,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DictSearchResolution"
@@ -48293,19 +48297,19 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 10,
-      "re-export": 6,
+      "fn": 11,
+      "re-export": 7,
       "struct": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/commands/api.rs",
      "purpose": "`oneiron api …` — the bash/curl lane of the packaging ladder",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 19,
       "fn": 1
      }
     },
@@ -48385,6 +48389,16 @@
      "notable": [],
      "path": "src/commands/init.rs",
      "purpose": "First-run embedder and tagger choices, using the same config and providers as serve",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/mcp_bridge.rs",
+     "purpose": "`oneiron mcp`: MCP over stdio for an agent that spawns a command (Claude Code's `claude mcp add`, Codex's…",
      "surface": {
       "fn": 1
      }
@@ -49579,7 +49593,7 @@
      "path": "src/mcp/codec.rs",
      "purpose": "MCP argument codecs: parsed-value and raw-JSON integer normalization",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1,
       "struct": 1
      }
@@ -49642,7 +49656,7 @@
      "path": "src/mcp/mod.rs",
      "purpose": "MCP connector actor registry",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "mod": 2,
       "re-export": 12
      }
@@ -50689,6 +50703,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/mcp_stdio_agent.rs",
+     "purpose": "An agent that spawns a command (Claude Code, Codex) reaches a running vault over MCP with a scoped…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -50815,9 +50837,9 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 18,
+     "files": 19,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
@@ -50990,10 +51012,10 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 5,
+   "over_bar": 7,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 294,
-   "test_files": 112
+   "source_files": 295,
+   "test_files": 113
   },
   "oneiron-uniffi": {
    "files": [
