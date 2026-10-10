@@ -59,11 +59,13 @@ pub const SECRET_MANIFEST_SCHEMA_VERSION: u16 = 1;
 /// (the canon kebab-case noun), a `declared_paths` string array, and inline
 /// `[[secrets.bindings]]` tables with `effector`, `tier_ceiling` (integer
 /// 0..=2), and a `scopes` string array. Unknown keys are ignored so the
-/// format can grow. A key set twice in one table, a key made both a value and
-/// a table, or an effector bound twice in one entry, is refused: the manifest
-/// would say two things, and keeping either would let a wider value pass for
-/// a narrower one. The parser is a deliberately small TOML subset — the
-/// engine takes no `toml` crate dependency for this one file.
+/// format can grow, but each value must still end on its line. A key set twice
+/// in one table, a key made both a value and a table, a key under one this
+/// subset reads, or an effector bound twice in one entry, is refused: the
+/// manifest would say two things, and keeping either would let a wider value
+/// pass for a narrower one. The parser is a deliberately small TOML subset —
+/// the engine takes no `toml` crate dependency for this one file — and refuses
+/// what TOML refuses in the values it reads.
 pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
     // Scratch shape during parse: class stays Option so a missing `class`
     // key is a typed error at finish, not a silent default.
@@ -96,14 +98,16 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
     let mut seen: Vec<Vec<String>> = Vec::new();
 
     for raw in text.lines() {
-        let line = raw.trim();
+        let line = toml_trim(raw);
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
+        if line.chars().any(is_control) {
+            return Err(invalid_manifest(
+                "a manifest line holds a control character",
+            ));
+        }
         if line == "[[secrets]]" {
-            if matches!(scope, Scope::Root) && redefines(&seen, &["secrets".to_owned()]) {
-                return Err(invalid_manifest("[[secrets]] redefines a root key"));
-            }
             secrets.push(ScratchEntry::default());
             scope = Scope::Secrets;
             seen.clear();
@@ -115,11 +119,6 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
                     "[[secrets.bindings]] before any [[secrets]]",
                 )));
             };
-            if matches!(scope, Scope::Secrets) && redefines(&seen, &["bindings".to_owned()]) {
-                return Err(invalid_manifest(
-                    "[[secrets.bindings]] redefines an entry key",
-                ));
-            }
             entry.bindings.push(ScratchBinding::default());
             scope = Scope::Binding;
             seen.clear();
@@ -131,10 +130,27 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
         };
         let (key, value) = (&line[..at], &line[at + 1..]);
         let path = key_path(key)?;
-        let value = value.trim();
+        let value = toml_trim(value);
         if redefines(&seen, &path) {
             return Err(invalid_manifest(
                 "a manifest key is set twice, or as a value and a table",
+            ));
+        }
+        // The keys this subset reads in the current table, and the array of
+        // tables beneath it. A dotted key under one of them, or any key under
+        // that array, would make it something TOML reads apart from what this
+        // parser reads.
+        let (reads, beneath): (&[&str], Option<&str>) = match scope {
+            Scope::Root => (&["schema_version"], Some("secrets")),
+            Scope::Secrets => (&["name", "class", "declared_paths"], Some("bindings")),
+            Scope::Binding => (&["effector", "tier_ceiling", "scopes"], None),
+        };
+        let head = path.first().map(String::as_str);
+        if head
+            .is_some_and(|head| beneath == Some(head) || (path.len() > 1 && reads.contains(&head)))
+        {
+            return Err(invalid_manifest(
+                "a manifest key redefines a key or table the manifest reads",
             ));
         }
         // Only a one-part key can be one this subset reads; a dotted key is an
@@ -150,6 +166,8 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
             Scope::Root => {
                 if key == "schema_version" {
                     schema_version = Some(parse_u16(value)?);
+                } else {
+                    extension_value(value)?;
                 }
             }
             Scope::Secrets => {
@@ -168,7 +186,7 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
                         )?);
                     }
                     "declared_paths" => entry.declared_paths = parse_string_array(value)?,
-                    _ => {}
+                    _ => extension_value(value)?,
                 }
             }
             Scope::Binding => {
@@ -186,7 +204,7 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
                         )?);
                     }
                     "scopes" => binding.scopes = parse_string_array(value)?,
-                    _ => {}
+                    _ => extension_value(value)?,
                 }
             }
         }
@@ -252,6 +270,61 @@ fn redefines(seen: &[Vec<String>], path: &[String]) -> bool {
         .any(|prior| prior.starts_with(path) || path.starts_with(prior))
 }
 
+/// `text` without TOML whitespace (space and tab) at either end.
+fn toml_trim(text: &str) -> &str {
+    text.trim_matches([' ', '\t'])
+}
+
+/// A character TOML refuses raw outside a comment: a control character other
+/// than tab.
+fn is_control(c: char) -> bool {
+    c != '\t' && (c < ' ' || c == '\u{7f}')
+}
+
+/// An extension key's value is not read, but it must end on its line, as
+/// every value this subset reads does. A multi-line string or array, or an
+/// unterminated one, would make TOML read the lines after it as its text,
+/// where this parser would read them as keys and tables.
+fn extension_value(value: &str) -> Result<()> {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut depth = 0_usize;
+    let mut end = value.len();
+    for (at, c) in value.char_indices() {
+        match quote {
+            Some('"') if escaped => escaped = false,
+            Some('"') if c == '\\' => escaped = true,
+            Some(open) if c == open => quote = None,
+            Some(_) => {}
+            None if c == '#' => {
+                end = at;
+                break;
+            }
+            None if c == '"' || c == '\'' => {
+                if value.get(at..at + 3) == Some(if c == '"' { "\"\"\"" } else { "'''" }) {
+                    return Err(invalid_manifest(
+                        "a manifest value opens a multi-line string",
+                    ));
+                }
+                quote = Some(c);
+            }
+            None if c == '[' || c == '{' => depth += 1,
+            None if c == ']' || c == '}' => {
+                depth = depth.checked_sub(1).ok_or_else(|| {
+                    invalid_manifest("a manifest value closes what it never opened")
+                })?;
+            }
+            None => {}
+        }
+    }
+    if toml_trim(&value[..end]).is_empty() || quote.is_some() || depth != 0 {
+        return Err(invalid_manifest(
+            "a manifest value does not end on its line",
+        ));
+    }
+    Ok(())
+}
+
 fn invalid_manifest(msg: &'static str) -> Error {
     Error::Secret(SecretError::InvalidSecretCustodyBody(msg))
 }
@@ -295,13 +368,20 @@ fn key_path(key: &str) -> Result<Vec<String>> {
     split_outside_quotes(key, '.')
         .into_iter()
         .map(|part| {
-            let part = part.trim();
+            let part = toml_trim(part);
             if part.is_empty() {
                 Err(invalid_manifest("a key has an empty part"))
             } else if part.starts_with(['"', '\'']) {
                 parse_string(part)
-            } else {
+            } else if part
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            {
                 Ok(part.to_owned())
+            } else {
+                Err(invalid_manifest(
+                    "a bare key holds a character TOML refuses",
+                ))
             }
         })
         .collect()
@@ -359,27 +439,46 @@ fn unescape(chars: &mut std::str::Chars<'_>) -> Result<char> {
     }
 }
 
+/// The digits of a TOML decimal integer: an optional `+`, then `0` or digits
+/// without a leading zero. TOML refuses `01`, which `str::parse` reads as 1.
+fn decimal(value: &str) -> Option<&str> {
+    let digits = value.strip_prefix('+').unwrap_or(value);
+    let leading = digits.bytes().next()?;
+    (digits.bytes().all(|b| b.is_ascii_digit()) && (leading != b'0' || digits == "0"))
+        .then_some(digits)
+}
+
 fn parse_u16(value: &str) -> Result<u16> {
-    value
-        .parse::<u16>()
-        .map_err(|_| invalid_manifest("expected an unsigned integer"))
+    decimal(value)
+        .and_then(|digits| digits.parse::<u16>().ok())
+        .ok_or_else(|| invalid_manifest("expected an unsigned integer"))
 }
 
 fn parse_u8(value: &str) -> Result<u8> {
-    value
-        .parse::<u8>()
-        .map_err(|_| invalid_manifest("expected an unsigned tier"))
+    decimal(value)
+        .and_then(|digits| digits.parse::<u8>().ok())
+        .ok_or_else(|| invalid_manifest("expected an unsigned tier"))
 }
 
+/// A one-line array of strings. TOML takes one trailing comma, and no other
+/// empty element.
 fn parse_string_array(value: &str) -> Result<Vec<String>> {
     let Some(inner) = value.strip_prefix('[').and_then(|v| v.strip_suffix(']')) else {
         return Err(invalid_manifest("expected an array of strings"));
     };
-    split_outside_quotes(inner, ',')
+    if toml_trim(inner).is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut items = split_outside_quotes(inner, ',');
+    if items.last().is_some_and(|item| toml_trim(item).is_empty()) {
+        items.pop();
+    }
+    items
         .into_iter()
-        .map(str::trim)
-        .filter(|item| !item.is_empty())
-        .map(parse_string)
+        .map(|item| match toml_trim(item) {
+            "" => Err(invalid_manifest("an array has an empty element")),
+            item => parse_string(item),
+        })
         .collect()
 }
 
