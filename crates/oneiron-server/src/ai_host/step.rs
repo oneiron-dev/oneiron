@@ -166,11 +166,11 @@ impl StepRunner {
                 });
             }
         };
-        guard
-            .settle_per_call(&lease, &response.usage)
-            .map_err(|denied| {
-                Error::InvalidConfig(format!("workflow step settlement: {denied:?}"))
-            })?;
+        // An answer pays its tokens, or the reservation when it reports none,
+        // plus the reservation for each rung that failed before it.
+        crate::models::settle_answered(&guard, &lease, &response.usage, reserve).map_err(
+            |denied| Error::InvalidConfig(format!("workflow step settlement: {denied:?}")),
+        )?;
         let text: String = response
             .message
             .content

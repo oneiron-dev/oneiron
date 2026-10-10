@@ -35,7 +35,7 @@ mod tests;
 
 pub use role_route::{RoleCall, RoleRefusal, RoleRoute};
 pub use router::ModelRouter;
-pub(crate) use served::FAILED_RUNGS_KEY;
+pub(crate) use served::settle_answered;
 pub use status::{ModelsStatus, ProviderStatus, RungStatus, SeatState, SeatStatus};
 
 use catalog::{catalog_entry, engine_model_id, locality_rank};
