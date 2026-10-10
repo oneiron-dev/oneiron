@@ -101,6 +101,9 @@ pub trait EgressPredicate: Send + Sync {
     /// Called under a held write transaction: host trait impls invoked
     /// under a held txn/lock must be non-blocking cached lookups; hosts run
     /// arbitrary inference in the async phases the engine exposes for it.
+    /// That transaction may be one group commit shared with other writes:
+    /// `decide` must not call into the vault or wait on anything a vault
+    /// caller can hold while it writes, or the vault's writer deadlocks.
     fn decide(&self, input: &PendingEmbeddingInput) -> EgressDecision;
 }
 

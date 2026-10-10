@@ -408,6 +408,12 @@ impl Vault {
     /// Binds a MACHINE's claim writes to its enrolled software signing key.
     /// Transport authentication alone cannot supply this proof. Other memory
     /// verbs remain subject to their own authorization and write doors.
+    ///
+    /// The surface's claim and key-value writes call `sign` inside the vault's
+    /// write transaction, which may be one group commit shared with other
+    /// writes. `sign` must only sign: it must not call into this vault or wait
+    /// on anything a vault caller can hold while it writes, or the vault's
+    /// writer deadlocks.
     #[must_use]
     pub fn memory_signed_machine<'a>(
         &'a self,
