@@ -10,6 +10,7 @@ impl Memory<'_> {
         id: &EntityId,
         facet_hint: Option<EntityId>,
         mode: crate::vault::ReadMode,
+        cited: &[EntityId],
         receipt: &mut ScopedReadReceipt,
     ) -> MemoryResult<Option<MemoryItem>> {
         let ScopedReadResult {
@@ -21,13 +22,35 @@ impl Memory<'_> {
             };
             let entity_type = row.entity_type;
             let body = row.body.clone();
+            // A TURN's text is its messages', which its own body does not
+            // hold: those this actor may read, under the text revision that
+            // pins them, both read in this snapshot. A pin at a text revision
+            // reads the words it was served with.
+            let turn = if entity_type == ENTITY_TYPE_TURN {
+                match crate::vault::entity_revision::served_turn_text_in_txn(
+                    self.vault, txn, id, mode,
+                )? {
+                    Some(text) => {
+                        let revision = text.revision;
+                        let messages =
+                            text.readable(|message| lane.is_entity_readable_in(txn, message))?;
+                        Some((messages, Some(revision)))
+                    }
+                    None => Some((Vec::new(), None)),
+                }
+            } else {
+                None
+            };
             let view = self.entity_view_of_in_txn(txn, row, mode)?;
-            Ok(Some((entity_type, body, view)))
+            Ok(Some((entity_type, body, view, turn)))
         })?;
         receipt.restrict_with(&read);
-        let Some((entity_type, Some(body), Some(view))) = admitted else {
+        let Some((entity_type, Some(body), Some(view), turn)) = admitted else {
             return Ok(None);
         };
+        let (turn_messages, turn_revision) = turn.unzip();
+        let turn_messages = turn_messages.unwrap_or_default();
+        let turn_text = crate::embed::joined_turn_text(&turn_messages);
         let ScopedReadResult {
             value: edges,
             receipt: graph,
@@ -59,8 +82,12 @@ impl Memory<'_> {
                     .to_owned()
             },
         );
+        // A TURN names the text revision of the words it serves, not the
+        // revision of its row, which holds none of them.
         let source_revision_ref = match mode {
-            crate::vault::ReadMode::Pinned(revision) => Some(revision.to_hex()),
+            crate::vault::ReadMode::Pinned(revision) => {
+                Some(turn_revision.flatten().unwrap_or(revision).to_hex())
+            }
             crate::vault::ReadMode::Live | crate::vault::ReadMode::Indexed => None,
         };
         let kind = kind_string_for_type(entity_type);
@@ -90,13 +117,17 @@ impl Memory<'_> {
                 facet,
                 salience: body.salience,
                 reactions: Vec::new(),
+                cited_messages: Vec::new(),
             }))
         } else {
-            let value_text = view
-                .body
-                .as_ref()
-                .and_then(|body| body.get("content"))
-                .and_then(serde_json::Value::as_str)
+            let value_text = turn_text
+                .as_deref()
+                .or_else(|| {
+                    view.body
+                        .as_ref()
+                        .and_then(|body| body.get("content"))
+                        .and_then(serde_json::Value::as_str)
+                })
                 .map_or_else(
                     || {
                         view.body
@@ -106,7 +137,7 @@ impl Memory<'_> {
                     },
                     str::to_owned,
                 );
-            let reactions = if matches!(entity_type, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN) {
+            let mut reactions = if matches!(entity_type, ENTITY_TYPE_MESSAGE | ENTITY_TYPE_TURN) {
                 lane.reaction_lines(id)?
             } else {
                 Vec::new()
@@ -120,6 +151,31 @@ impl Memory<'_> {
             } else {
                 Vec::new()
             };
+            // Each message a TURN took in is read through the same lane, so a
+            // quote is one the actor may read. Its words are the ones the
+            // turn's text joined in the turn's own snapshot, which the turn's
+            // text revision pins; a message that text left out is not quoted.
+            // Its reactions ride on the turn that returns it.
+            let mut cited_messages = Vec::with_capacity(cited.len());
+            for message in cited {
+                let Some((_, text)) = turn_messages.iter().find(|(id, _)| id == message) else {
+                    continue;
+                };
+                if let Some(item) = self.memory_item_for(
+                    lane,
+                    message,
+                    None,
+                    crate::vault::ReadMode::Live,
+                    &[],
+                    receipt,
+                )? {
+                    reactions.extend(item.reactions);
+                    cited_messages.push(CitedMessage {
+                        short_id: item.short_id,
+                        value_text: truncate_text(text, DEFAULT_MAX_FIELD_CHARS),
+                    });
+                }
+            }
             Ok(Some(MemoryItem {
                 short_id,
                 source_revision_ref,
@@ -137,6 +193,7 @@ impl Memory<'_> {
                 facet,
                 salience: None,
                 reactions,
+                cited_messages,
             }))
         }
     }

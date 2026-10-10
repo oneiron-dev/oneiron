@@ -55,11 +55,14 @@ fn recalled_and_context_packed_message_carries_its_grouped_reactions() {
                 None,
             )
             .unwrap();
+        // The message comes back as its turn, which quotes it (ARCH-0004).
         let item = pack
             .items
             .iter()
-            .find(|item| item.kind == "MESSAGE")
-            .expect("the message is recalled");
+            .find(|item| item.kind == "TURN")
+            .expect("the message's turn is recalled");
+        assert_eq!(item.cited_messages.len(), 1, "{effort:?}");
+        assert_eq!(item.cited_messages[0].value_text, PLAN, "{effort:?}");
         assert_eq!(item.reactions, expected, "{effort:?}");
         if effort == Effort::Medium {
             let rendered = pack.rendered.expect("rendered pack");
