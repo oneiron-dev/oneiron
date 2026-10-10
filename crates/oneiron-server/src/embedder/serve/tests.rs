@@ -23,7 +23,8 @@ fn an_endpoint_vault_stores_the_vectors_a_local_vault_makes() {
         .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
         .expect("bound");
     let addr = listener.local_addr().expect("address");
-    let app = router(Arc::clone(&local), vec!["pplx".to_owned()], None);
+    let served: Arc<dyn ServedModel> = Arc::<LocalEmbedder>::clone(&local);
+    let app = router(served, vec!["pplx".to_owned()], None);
     std::thread::spawn(move || runtime.block_on(async move { axum::serve(listener, app).await }));
     let endpoint_vault = |query_instruction: Option<&str>| {
         HttpEmbedder::from_config(&EmbedderConfig {
