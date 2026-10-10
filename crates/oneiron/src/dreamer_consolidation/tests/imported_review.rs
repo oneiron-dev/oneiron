@@ -581,14 +581,12 @@ fn imported_turns_never_count_toward_the_wake_grain() -> Result<()> {
         imported_at,
     );
     assert_eq!(plan_dirty_turn_rounds(&vault, imported_at)?, 1);
-    let mut imported_through = 0;
-    for native in [b"u1".as_slice(), b"u2"] {
-        let turn = EntityId::derive(
-            HISTORY_TURN,
-            &[b"claude-code".as_slice(), b"session-ana", native],
-        )?;
-        imported_through = imported_through.max(learned_at(&vault, &turn)?);
-    }
+    // The owner's two lines land as one imported TURN, keyed by the first.
+    let imported = EntityId::derive(
+        HISTORY_TURN,
+        &[b"claude-code".as_slice(), b"session-ana", b"u1"],
+    )?;
+    let imported_through = learned_at(&vault, &imported)?;
     let session = seed_session(&vault, 7, imported_at);
     let first_at = imported_through + 1;
     let first = seed_turn(
