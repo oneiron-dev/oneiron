@@ -92,7 +92,7 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
     let mut scope = Scope::Root;
     // The keys the current table has set. TOML forbids setting one twice, and
     // keeping the last would let a later, wider tier erase a narrower one.
-    let mut seen: Vec<&str> = Vec::new();
+    let mut seen: Vec<Vec<String>> = Vec::new();
 
     for raw in text.lines() {
         let line = raw.trim();
@@ -117,15 +117,23 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
             continue;
         }
 
-        let Some((key, value)) = line.split_once('=') else {
+        let Some(&at) = separators(line, '=').first() else {
             return Err(invalid_manifest("expected `key = value`"));
         };
-        let key = unquote_key(key.trim());
+        let (key, value) = (&line[..at], &line[at + 1..]);
+        let path = key_path(key)?;
         let value = value.trim();
-        if seen.contains(&key) {
+        if seen.contains(&path) {
             return Err(invalid_manifest("a key is set twice in one manifest table"));
         }
-        seen.push(key);
+        // Only a one-part key can be one this subset reads; a dotted key is an
+        // extension, kept apart from them and ignored.
+        let key = match path.as_slice() {
+            [key] => key.clone(),
+            _ => String::new(),
+        };
+        seen.push(path);
+        let key = key.as_str();
 
         match scope {
             Scope::Root => {
@@ -229,20 +237,107 @@ fn invalid_manifest(msg: &'static str) -> Error {
     Error::Secret(SecretError::InvalidSecretCustodyBody(msg))
 }
 
-/// A bare key as written, or a quoted one without its quotes: TOML reads
-/// `tier_ceiling` and `"tier_ceiling"` as one key.
-fn unquote_key(key: &str) -> &str {
-    ['"', '\'']
-        .into_iter()
-        .find_map(|quote| key.strip_prefix(quote)?.strip_suffix(quote))
-        .unwrap_or(key)
+/// The byte offsets of `sep` in `text` outside a basic (`"…"`) or literal
+/// (`'…'`) string.
+fn separators(text: &str, sep: char) -> Vec<usize> {
+    let mut found = Vec::new();
+    let mut quote = None;
+    let mut escaped = false;
+    for (at, c) in text.char_indices() {
+        match quote {
+            Some('"') if escaped => escaped = false,
+            Some('"') if c == '\\' => escaped = true,
+            Some(open) if c == open => quote = None,
+            Some(_) => {}
+            None if c == '"' || c == '\'' => quote = Some(c),
+            None if c == sep => found.push(at),
+            None => {}
+        }
+    }
+    found
 }
 
+/// `text` cut at each `sep` outside a string.
+fn split_outside_quotes(text: &str, sep: char) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    for at in separators(text, sep) {
+        parts.push(&text[start..at]);
+        start = at + sep.len_utf8();
+    }
+    parts.push(&text[start..]);
+    parts
+}
+
+/// A key's parts, unquoted and unescaped. TOML reads `tier_ceiling`,
+/// `"tier_ceiling"` and `"\u0074ier_ceiling"` as one key, and
+/// `"extension.flag"` (one part) apart from `extension.flag` (two).
+fn key_path(key: &str) -> Result<Vec<String>> {
+    split_outside_quotes(key, '.')
+        .into_iter()
+        .map(|part| {
+            let part = part.trim();
+            if part.is_empty() {
+                Err(invalid_manifest("a key has an empty part"))
+            } else if part.starts_with(['"', '\'']) {
+                parse_string(part)
+            } else {
+                Ok(part.to_owned())
+            }
+        })
+        .collect()
+}
+
+/// A basic (`"…"`, escapes decoded) or literal (`'…'`) string. TOML reads
+/// `"deploy"` and `"de\u0070loy"` as one string, so they compare equal here.
 fn parse_string(value: &str) -> Result<String> {
+    if let Some(inner) = value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')) {
+        if inner.contains('\'') {
+            return Err(invalid_manifest("a literal string holds a quote"));
+        }
+        return Ok(inner.to_owned());
+    }
     let Some(inner) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) else {
-        return Err(invalid_manifest("expected a double-quoted string"));
+        return Err(invalid_manifest("expected a quoted string"));
     };
-    Ok(inner.to_owned())
+    let mut text = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => return Err(invalid_manifest("a basic string holds an unescaped quote")),
+            '\\' => text.push(unescape(&mut chars)?),
+            c => text.push(c),
+        }
+    }
+    Ok(text)
+}
+
+/// The character named by the next `digits` hex digits of an escape.
+fn hex_char(chars: &mut std::str::Chars<'_>, digits: usize) -> Result<char> {
+    let code: String = chars.take(digits).collect();
+    u32::from_str_radix(&code, 16)
+        .ok()
+        .filter(|_| code.len() == digits)
+        .and_then(char::from_u32)
+        .ok_or_else(|| invalid_manifest("a string escape names no character"))
+}
+
+/// One basic-string escape, read after its backslash.
+fn unescape(chars: &mut std::str::Chars<'_>) -> Result<char> {
+    match chars.next() {
+        Some('b') => Ok('\u{8}'),
+        Some('t') => Ok('\t'),
+        Some('n') => Ok('\n'),
+        Some('f') => Ok('\u{c}'),
+        Some('r') => Ok('\r'),
+        Some('e') => Ok('\u{1b}'),
+        Some('"') => Ok('"'),
+        Some('\\') => Ok('\\'),
+        Some('x') => hex_char(chars, 2),
+        Some('u') => hex_char(chars, 4),
+        Some('U') => hex_char(chars, 8),
+        _ => Err(invalid_manifest("a string has an unknown escape")),
+    }
 }
 
 fn parse_u16(value: &str) -> Result<u16> {
@@ -261,8 +356,8 @@ fn parse_string_array(value: &str) -> Result<Vec<String>> {
     let Some(inner) = value.strip_prefix('[').and_then(|v| v.strip_suffix(']')) else {
         return Err(invalid_manifest("expected an array of strings"));
     };
-    inner
-        .split(',')
+    split_outside_quotes(inner, ',')
+        .into_iter()
         .map(str::trim)
         .filter(|item| !item.is_empty())
         .map(parse_string)

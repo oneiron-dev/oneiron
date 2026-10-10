@@ -524,8 +524,10 @@ fn a_registration_wipes_the_staged_row_that_carried_its_value() {
 
 /// Astra on #1372: the parser kept the last of a repeated key, so a binding
 /// declaring `tier_ceiling = 0` and then `tier_ceiling = 2` registered at
-/// tier 2. A manifest that says one thing twice is refused, and nothing is
-/// stored.
+/// tier 2. A manifest that says one thing twice is refused, under any
+/// spelling TOML reads as the same key or string, and nothing is stored. Sol
+/// on the fix: escapes still aliased a key or an effector, and distinct
+/// extension keys were refused as repeats.
 #[test]
 fn a_manifest_that_says_one_thing_twice_is_refused() {
     let dir = tempfile::tempdir().expect("vault dir");
@@ -548,6 +550,16 @@ declared_paths = [".env.deploy"]
             "a tier set twice, once as a quoted key",
             "dup-quoted",
             "[[secrets.bindings]]\neffector = \"deploy\"\n\"tier_ceiling\" = 0\ntier_ceiling = 2\nscopes = [\"read\"]\n",
+        ),
+        (
+            "a tier set twice, once with an escape",
+            "dup-escaped",
+            "[[secrets.bindings]]\neffector = \"deploy\"\n\"\\u0074ier_ceiling\" = 0\ntier_ceiling = 2\nscopes = [\"read\"]\n",
+        ),
+        (
+            "an effector bound twice, once with an escape",
+            "dup-escaped-effector",
+            "[[secrets.bindings]]\neffector = \"de\\u0070loy\"\ntier_ceiling = 0\nscopes = [\"read\"]\n\n[[secrets.bindings]]\neffector = \"deploy\"\ntier_ceiling = 2\nscopes = [\"read\"]\n",
         ),
         (
             "an effector bound twice",
@@ -587,4 +599,29 @@ declared_paths = [".env.deploy"]
             "{why}"
         );
     }
+
+    // Distinct keys that only look alike are distinct: a quoted key with a dot
+    // or an `=` in it is one key, apart from the dotted key it resembles.
+    let extended = format!(
+        "{entry}\"extension.flag\" = 0\nextension.flag = 1\n\"vendor=left\" = 0\n\"vendor=right\" = 1\n\n[[secrets.bindings]]\neffector = \"deploy\"\ntier_ceiling = 1\nscopes = [\"read\"]\n"
+    );
+    publish_manifest(&vault, "extended", &extended);
+    let registered = vault
+        .register_secret_as_owner(
+            &owner,
+            &OwnerSecretRegistration {
+                manifest: Some(ManifestSource {
+                    repo: "extended".to_owned(),
+                    git_ref: "refs/heads/main".to_owned(),
+                }),
+                ..ask(
+                    "deploy-token",
+                    CustodyClass::CustodyPortable,
+                    CustodyTier::T2LocalRegistered,
+                )
+            },
+            7,
+        )
+        .expect("distinct extension keys are read");
+    assert_eq!(registered.bindings[0].tier_ceiling, CustodyTier::T1Leased);
 }
