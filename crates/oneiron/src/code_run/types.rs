@@ -439,12 +439,16 @@ pub struct SelfAgentVerbCall {
     pub input: serde_json::Value,
 }
 
-/// A verb call the bound door refused or could not run, as the guest sees it.
+/// A verb call the bound door refused or could not run, as the guest sees it:
+/// a stable code, never prose. Agent-facing words are configuration, so the
+/// host or prompt layer supplies any wording for a code.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentVerbRefusal {
     pub code: String,
-    pub message: String,
 }
+
+/// The refusal a verb call gets from a run whose host binds no verb door.
+pub const AGENT_VERB_DOOR_UNBOUND: &str = "agent_verb_door_unbound";
 
 /// The host's door onto the SDK verb table.
 ///

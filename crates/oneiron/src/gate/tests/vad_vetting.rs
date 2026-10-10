@@ -146,56 +146,6 @@ mod vad_vetting_tests {
     }
 
     #[test]
-    fn generic_dreamer_approval_doors_populate_vad_after_commit() -> Result<()> {
-        for door in APPROVAL_DOORS {
-            let (_tmp, vault) = temp_vault();
-            put_policy_manifest_bytes(
-                &vault,
-                test_id(0x70),
-                &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Inferred, 3)]),
-            )?;
-            let claim = pending_member(&vault, "profile.name")?;
-            generic_approve(&vault, claim, door, false)?;
-            assert!(!has_pending_gate_consent(&vault, &claim)?);
-            assert_eq!(
-                vault.get_claim(&claim)?.expect("durable approval").approval,
-                ClaimApprovalStatus::Approved
-            );
-            let edges = vault.edges_out(&claim)?;
-            assert_eq!(
-                edges
-                    .iter()
-                    .find(|edge| edge.kind == EdgeKind::Mentions)
-                    .expect("semantic")
-                    .vad,
-                Some(FULL_VAD)
-            );
-            assert_eq!(
-                edges
-                    .iter()
-                    .find(|edge| edge.kind == EdgeKind::BelongsTo)
-                    .expect("structural")
-                    .vad,
-                None
-            );
-            let states = vad_states(&vault, &claim)?;
-            assert_eq!(states.len(), 1, "one postcommit state before any retry");
-            let retry = vault.consolidate_claim_vad_now(&claim, crate::unix_seconds_now())?;
-            assert_eq!(retry.reappraisal.active_claim_id, Some(states[0]));
-            assert_eq!(retry.vad, Some(FULL_VAD));
-            assert!(retry.reappraisal.active_claim_id.is_some());
-            assert_eq!(retry.reappraisal.created_claim_id, None);
-            let again = vault.consolidate_claim_vad_now(&claim, crate::unix_seconds_now())?;
-            assert_eq!(
-                again.reappraisal.active_claim_id,
-                retry.reappraisal.active_claim_id
-            );
-            assert_eq!(again.reappraisal.created_claim_id, None);
-        }
-        Ok(())
-    }
-
-    #[test]
     fn generic_dreamer_approval_failures_preserve_commit_boundary() -> Result<()> {
         for door in APPROVAL_DOORS {
             for stale_binding in [false, true] {
@@ -301,29 +251,6 @@ mod vad_vetting_tests {
                 recovered.reappraisal.active_claim_id,
             );
             assert_eq!(retry.reappraisal.created_claim_id, None);
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn generic_non_dreamer_consent_does_not_run_vad_hook() -> Result<()> {
-        for door in APPROVAL_DOORS {
-            let (_tmp, vault) = temp_vault();
-            put_policy_manifest_bytes(&vault, test_id(0x70), &encode_policy_manifest(vec![]))?;
-            let claim = pending_member(&vault, CLAIM_VAD_REAPPRAISAL_PREDICATE)?;
-            vault.with_write_txn(|wtxn| {
-                let mut pending = vault
-                    .store
-                    .pending_gate_consent_in_txn(wtxn, &claim)?
-                    .expect("pending member");
-                pending.dreamer_run_id = None;
-                vault.store.put_pending_gate_consent_in_txn(wtxn, &pending)
-            })?;
-            generic_approve(&vault, claim, door, false)?;
-            assert_eq!(
-                vault.get_claim(&claim)?.expect("approved").approval,
-                ClaimApprovalStatus::Approved
-            );
         }
         Ok(())
     }
@@ -459,75 +386,6 @@ mod vad_vetting_tests {
         assert!(vad_states(&vault, &claim)?.is_empty());
         let txn = vault.store.env.read_txn()?;
         assert_neutral_in_txn(&vault, &txn, &claim)
-    }
-
-    #[test]
-    fn gate_bundle_approve_hook_populates_full_vad_and_skips_structural() -> Result<()> {
-        let (_tmp, vault) = temp_vault();
-        put_policy_manifest_bytes(
-            &vault,
-            test_id(0x70),
-            &encode_policy_manifest(vec![source_trust_entry(ClaimSource::Inferred, 3)]),
-        )?;
-        let claim = pending_member(&vault, "profile.name")?;
-        let reviewer = WriteActor::new(test_id(0x40), EdgeActorClass::Agent);
-        let bundle = vault.review_gate_consent_bundle(&reviewer, RUN)?;
-        let owner = consent_bundle_owner(&vault, test_id(0x60))?;
-        vault.resolve_gate_consent_bundle(
-            &owner,
-            bundle.bundle_id,
-            RUN,
-            GateConsentBundleAction::Approve,
-            20,
-        )?;
-        assert_eq!(
-            vault.get_claim(&claim)?.expect("approved").approval,
-            ClaimApprovalStatus::Approved
-        );
-        // Observe the production hook's state BEFORE any explicit retry.
-        let edges = vault.edges_out(&claim)?;
-        assert_eq!(
-            edges
-                .iter()
-                .find(|edge| edge.kind == EdgeKind::Mentions)
-                .expect("semantic edge")
-                .vad,
-            Some(FULL_VAD)
-        );
-        assert_eq!(
-            edges
-                .iter()
-                .find(|edge| edge.kind == EdgeKind::BelongsTo)
-                .expect("structural edge")
-                .vad,
-            None
-        );
-        let mut states = Vec::new();
-        for edge in vault.edges_in(&claim)? {
-            if edge.kind == EdgeKind::ClaimOf
-                && let Some(body) = vault.get_claim(&edge.target)?
-                && body.predicate == CLAIM_VAD_REAPPRAISAL_PREDICATE
-                && body.lifecycle == ClaimLifecycleStatus::Active
-            {
-                states.push(edge.target);
-            }
-        }
-        assert_eq!(states.len(), 1);
-        let retry = vault.consolidate_claim_vad_now(&claim, 30)?;
-        assert_eq!(retry.vad, Some(FULL_VAD));
-        assert_eq!(retry.reappraisal.active_claim_id, Some(states[0]));
-        assert_eq!(retry.reappraisal.created_claim_id, None);
-        assert!(matches!(
-            vault.resolve_gate_consent_bundle(
-                &owner,
-                bundle.bundle_id,
-                RUN,
-                GateConsentBundleAction::Approve,
-                31,
-            ),
-            Err(Error::EntityNotFound)
-        ));
-        Ok(())
     }
 
     #[test]

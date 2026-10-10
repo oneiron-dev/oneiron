@@ -1,7 +1,6 @@
 //! The drain pass a host worker drives: claim ready markers, read each turn,
 //! call the tagger outside any write transaction, check the answer, settle.
 
-use std::collections::BTreeMap;
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -10,9 +9,11 @@ use std::time::Instant;
 use super::history;
 use super::input::{TurnInput, turn_input_in_txn, turn_text_in_txn};
 use super::marker::{
-    MarkerPayload, TAGGING_MARKER_KIND, enqueue_marker_in_txn, retry_marker_in_txn,
+    MarkerPayload, TAGGING_MARKER_KIND, TaggingMarkerConfig, TaggingMode, enqueue_marker_in_txn,
+    retry_marker_in_txn,
 };
-use super::output::{AnswerMood, check_output};
+use super::output::check_output;
+use super::save::{self, Answer};
 use super::trace::{
     HandBackReason, SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace, attempt_hex,
 };
@@ -100,7 +101,8 @@ pub struct TaggingReconciler {
     lease_owner: String,
     batch_size: usize,
     backoff: TaggingBackoff,
-    label_kinds: BTreeMap<String, u8>,
+    /// The vault's tagging configuration: its mode and label table.
+    config: TaggingMarkerConfig,
     /// Markers leased under this owner that no pass is settling, each with
     /// the reason it is handed back: a claim whose settling write failed, or
     /// a lease a stopped worker left. No claim, witness or publication
@@ -123,14 +125,9 @@ impl TaggingReconciler {
     /// leaves the device only behind the host egress predicate, which no
     /// tagger door has yet; so it is refused here.
     pub fn new(vault: Arc<Vault>, encoder: Arc<dyn ExtractionEncoder>) -> Result<Self> {
-        let checkpoint = vault
-            .config
-            .tagging
-            .as_ref()
-            .map(|tagging| tagging.checkpoint.clone())
-            .ok_or_else(|| {
-                Error::InvalidConfig("tagging markers are not armed on this vault".to_owned())
-            })?;
+        let config = vault.config.tagging.clone().ok_or_else(|| {
+            Error::InvalidConfig("tagging markers are not armed on this vault".to_owned())
+        })?;
         if encoder.locality() != EmbedderLocality::OnDevice {
             return Err(Error::InvalidConfig(
                 "a tagger off the device needs the host egress predicate".to_owned(),
@@ -139,11 +136,11 @@ impl TaggingReconciler {
         Ok(Self {
             vault,
             encoder,
-            checkpoint,
+            checkpoint: config.checkpoint.clone(),
             lease_owner: DEFAULT_LEASE_OWNER.to_owned(),
             batch_size: DEFAULT_BATCH_SIZE,
             backoff: TaggingBackoff::default(),
-            label_kinds: BTreeMap::new(),
+            config,
             unsettled: Mutex::new(Vec::new()),
             stale_scanned: AtomicBool::new(false),
             history_trimmed: AtomicBool::new(false),
@@ -185,14 +182,6 @@ impl TaggingReconciler {
     #[must_use]
     pub fn with_lease_owner(mut self, lease_owner: impl Into<String>) -> Self {
         self.lease_owner = lease_owner.into();
-        self
-    }
-
-    /// The configured label table: model label to entity type byte. In shadow
-    /// it only counts the spans it maps.
-    #[must_use]
-    pub fn with_label_kinds(mut self, label_kinds: BTreeMap<String, u8>) -> Self {
-        self.label_kinds = label_kinds;
         self
     }
 
@@ -617,7 +606,7 @@ impl TaggingReconciler {
                 text_hash,
             } => (input, hash, text_hash),
         };
-        trace.input_hash = Some(hash);
+        trace.input_hash = Some(hash.clone());
         trace.model = Some(self.encoder.model_id().as_str().to_owned());
         pass.calls += 1;
         let started = Instant::now();
@@ -643,29 +632,61 @@ impl TaggingReconciler {
         }
         // The answer stands only for the text it tagged: settle against the
         // turn's own text as the settling transaction sees it. The window was
-        // context; the settling write never reads it.
-        trace.outcome = self.shadowed(&output);
-        let settled = self
-            .vault
-            .try_with_write_txn_grouped(|txn| -> Result<bool> {
-                let current = matches!(
-                    turn_text_in_txn(&self.vault, txn, &payload.turn)?,
-                    TurnInput::Ready { text_hash: ref now, .. } if *now == text_hash
-                );
-                if current {
-                    self.settle_in_txn(txn, record, &trace)?;
-                }
-                Ok(current)
-            })?;
-        if settled {
-            return Ok(trace);
+        // context; the settling write never reads it. In save mode the tags
+        // land in that same write, so a turn's marker settles exactly when
+        // its tags are saved.
+        let made_by = self.encoder.model_id().as_str().to_owned();
+        let settled =
+            self.vault
+                .try_with_write_txn_grouped(|txn| -> Result<Option<TaggingTrace>> {
+                    let current = matches!(
+                        turn_text_in_txn(&self.vault, txn, &payload.turn)?,
+                        TurnInput::Ready { text_hash: ref now, .. } if *now == text_hash
+                    );
+                    if !current {
+                        return Ok(None);
+                    }
+                    let mut settled = trace.clone();
+                    settled.outcome = match self.config.mode {
+                        TaggingMode::Shadow => self.shadowed(&output),
+                        TaggingMode::Save => {
+                            let answer = Answer {
+                                turn: payload.turn,
+                                input: &input,
+                                output: &output,
+                                envelope: save::envelope(&hash, &made_by, &self.config),
+                            };
+                            let now = self.stamp_in_txn(txn)?;
+                            let saved = save::save_in_txn(
+                                &self.vault,
+                                txn,
+                                answer,
+                                &self.config.labels,
+                                now,
+                            )?;
+                            TaggingOutcome::Saved {
+                                spans: output.spans.len(),
+                                links: output.links.len(),
+                                mood: output.vad.is_some(),
+                                linked: saved.linked,
+                                minted: saved.minted,
+                            }
+                        }
+                    };
+                    self.settle_in_txn(txn, record, &settled)?;
+                    Ok(Some(settled))
+                })?;
+        if let Some(settled) = settled {
+            return Ok(settled);
         }
         self.retry_traced(record, 0, "superseded", trace, |retry_at| {
             TaggingOutcome::Superseded { retry_at }
         })
     }
 
-    /// Nothing is owed: the marker completes with no tagger call.
+    /// Nothing is owed: the marker completes with no tagger call. In save
+    /// mode a turn left with no text loses the tags it held, in the settling
+    /// write: none of them was read from text it still has.
     ///
     /// The skip stands only for the turn it read: a witness that added text
     /// since then was absorbed by this leased marker, so the settling
@@ -682,14 +703,15 @@ impl TaggingReconciler {
         let settled = self
             .vault
             .try_with_write_txn_grouped(|txn| -> Result<bool> {
-                let owes_nothing = !matches!(
-                    turn_text_in_txn(&self.vault, txn, turn)?,
-                    TurnInput::Ready { .. }
-                );
-                if owes_nothing {
-                    self.settle_in_txn(txn, record, &trace)?;
+                let read = turn_text_in_txn(&self.vault, txn, turn)?;
+                if matches!(read, TurnInput::Ready { .. }) {
+                    return Ok(false);
                 }
-                Ok(owes_nothing)
+                if self.config.mode == TaggingMode::Save && matches!(read, TurnInput::Empty) {
+                    super::tags::replace_in_txn(&self.vault, txn, turn, None)?;
+                }
+                self.settle_in_txn(txn, record, &trace)?;
+                Ok(true)
             })?;
         if settled {
             return Ok(trace);
@@ -703,11 +725,11 @@ impl TaggingReconciler {
         TaggingOutcome::Shadowed {
             spans: output.spans.len(),
             links: output.links.len(),
-            mood: output.vad.present(),
+            mood: output.vad.is_some(),
             mapped_spans: output
                 .spans
                 .iter()
-                .filter(|span| self.label_kinds.contains_key(&span.label))
+                .filter(|span| self.config.labels.contains_key(&span.label))
                 .count(),
         }
     }

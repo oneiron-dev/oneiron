@@ -63,10 +63,6 @@ const GATE_BUNDLE_REF_PREFIX: &str = "bundle:";
 /// Provenance stamped on the envelope every member replay rides.
 const GATE_BUNDLE_PROVENANCE: &str = "gate-consent-bundle-resolve";
 
-/// Bound on the pending-consent rows one bundle projection accepts. Read one
-/// extra row and reject overflow rather than clear a run with omitted members.
-const GATE_BUNDLE_PENDING_SCAN_LIMIT: usize = 10_000;
-
 impl Vault {
     pub fn review_session_bundle(
         &self,
@@ -648,8 +644,11 @@ fn gate_consent_bundle_ref(bundle_id: &[u8; 32]) -> String {
 /// Every still-pending consent row stamped with exactly `dreamer_run_id`,
 /// paired with its live claim body hash and sorted into digest order.
 ///
-/// Membership comes from the authoritative pending rows themselves; the bundle
-/// owns no membership table that could drift from them.
+/// Membership comes from the authoritative pending rows themselves, read
+/// through their run index in the same snapshot; the bundle owns no membership
+/// table that could drift from them. The index holds every row of the run
+/// however many other runs have waiting, so a large import's review resolves
+/// whole and no member is left out.
 fn gate_consent_bundle_members_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -658,15 +657,9 @@ fn gate_consent_bundle_members_in_txn(
     let mut members = Vec::new();
     let mut seen_decisions = BTreeSet::new();
     let mut seen_claims = BTreeSet::new();
-    let records = store.pending_gate_consents_in_txn(txn, GATE_BUNDLE_PENDING_SCAN_LIMIT + 1)?;
-    if records.len() > GATE_BUNDLE_PENDING_SCAN_LIMIT {
-        return Err(Error::InvalidClaimBody(
-            "gate consent bundle scan limit exceeded",
-        ));
-    }
-    for record in records {
+    for record in store.pending_gate_consents_for_run_in_txn(txn, dreamer_run_id)? {
         if record.dreamer_run_id.as_deref() != Some(dreamer_run_id) {
-            continue;
+            return Err(Error::CorruptedIndex("gate consent bundle member"));
         }
         let claim_id = EntityId::from_bytes(record.claim_id)
             .map_err(|_| Error::CorruptedIndex("gate consent bundle member"))?;

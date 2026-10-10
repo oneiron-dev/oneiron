@@ -24,6 +24,7 @@ use crate::{
 use super::*;
 
 mod failure_rules;
+mod imported_review;
 mod late_budget;
 mod persistent_conflicts;
 mod person_extraction;

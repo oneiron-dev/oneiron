@@ -2,9 +2,10 @@
 //! A projection grant is mandatory. Model-selected ids never grant vector access.
 
 use super::{BranchResources, document_version};
-use crate::claim::{ClaimSubject, PointRead, ReadRow, decode_claim_body};
-use crate::dreamer_consolidation::conflict::{candidate_facts, canonical_value_bytes};
+use crate::claim::{PointRead, ReadRow, decode_claim_body};
+use crate::dreamer_consolidation::conflict::candidate_facts;
 use crate::dreamer_consolidation::provenance::PromotionCandidate;
+use crate::dreamer_consolidation::reviewed::{names, reviewed_output};
 use crate::dreamer_consolidation::support::{
     TURN_BODY_FACET_REF_KEY, TURN_BODY_WORLD_REF_KEY, invalid_consolidation,
 };
@@ -54,12 +55,17 @@ impl BranchResources<'_> {
         }
         // The candidate projection also permits host-materialized vector-only
         // rows under engine-derived output ids. If an entity exists at that id,
-        // it must be an actor-readable matching claim, never another resource.
+        // it must be an actor-readable matching claim, never another resource;
+        // or this attempt's own output, which an earlier pass committed into
+        // the owner's review and `reviewed_output` matched to this candidate.
+        // The ordinary lane serves surfaceable claims only, so it cannot read
+        // one the review holds or the owner declined.
         if self
             .read
             .vault()
             .get_entity_type(&candidate.claim_id)?
             .is_some()
+            && !reviewed_output(self.read.vault(), candidate)?
         {
             let stored = self
                 .read
@@ -82,13 +88,7 @@ impl BranchResources<'_> {
                 ));
             }
             let body = decode_claim_body(&bytes, true)?;
-            if body.subject != ClaimSubject::Entity(facts.subject)
-                || body.predicate != facts.predicate
-                || canonical_value_bytes(&body.value)? != canonical_value_bytes(&facts.value)?
-                || body.world != facts.world
-                || facet(body.scope.as_ref())? != facts.facet
-                || body.rel != facts.rel
-            {
+            if !names(&facts, &body)? {
                 return Err(invalid_consolidation("candidate vector identity changed"));
             }
         }
@@ -167,7 +167,7 @@ impl BranchResources<'_> {
     }
 }
 
-pub(super) fn facet(scope: Option<&Value>) -> Result<Option<EntityId>> {
+pub(in crate::dreamer_consolidation) fn facet(scope: Option<&Value>) -> Result<Option<EntityId>> {
     let Some(Value::Map(entries)) = scope else {
         return Ok(None);
     };

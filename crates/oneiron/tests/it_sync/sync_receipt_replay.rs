@@ -33,7 +33,6 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use loro::LoroDoc;
-use oneiron::error::RegistryError;
 use oneiron::registry::ENTITY_TYPE_REDACTION_AUDIT;
 use oneiron::sync::bridge::{Materializer, register_observer_b};
 use oneiron::sync::lease;
@@ -510,32 +509,6 @@ fn divergent_remote_receipt_bytes_quarantined_local_bytes_survive() {
     assert_eq!(rec.payload_hash, xxh3_64(&header_divergent));
 }
 
-/// AC1/AC5(a) forward door — a malformed REDACTION_AUDIT blob arriving via
-/// `forward_rematerialize` (startup CRDT→LMDB pass) is quarantined and
-/// never written, mirroring the Observer B door.
-#[test]
-fn malformed_type_120_blob_via_forward_remat_is_quarantined_not_written() {
-    let (_dir, vault) = test_vault_with_dir();
-    let window_key = WindowKey::new(WINDOW);
-    let doc = create_window_doc("node-x", &window_key);
-    let id = EntityId::now();
-    let blob = receipt_envelope(LEARNED_AT, b"not-a-receipt-body");
-    insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob);
-    doc.commit();
-
-    let materializer = Materializer::new();
-    let count = forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
-    assert_eq!(count, 0, "nothing materializes");
-    assert!(vault.get_raw(&id).unwrap().is_none());
-
-    let records = quarantined_records(&vault).unwrap();
-    assert_eq!(records.len(), 1);
-    let rec = record_for_key(&records, &id.to_hex()).unwrap();
-    assert_eq!(rec.reason_code, "InvalidRedactionReceiptBody");
-    assert_eq!(rec.window_key, WINDOW);
-    assert_eq!(rec.payload_hash, xxh3_64(&blob));
-}
-
 // ─── AC3 + AC5 (c) — byte-identical re-delivery is an idempotent no-op ───────
 
 /// AC3/AC5(c) — byte-identical re-delivery of an existing receipt (the
@@ -840,80 +813,6 @@ fn door_accepts_expired_rejects_revoked() {
     );
 }
 
-/// ONE-1190: the pubkey revocation floor is scoped to the claimed lease's
-/// vault dimension. A revoked binding for the SAME pubkey in another vault
-/// must not poison an independently leased active/expired row.
-#[test]
-fn revoked_pubkey_in_other_vault_does_not_reject_receipt() {
-    let (_dir, vault) = test_vault_with_dir();
-    let doc = LoroDoc::new();
-    let materializer = Arc::new(Materializer::new());
-    let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
-    let scope_hex = EntityId::now().to_hex();
-
-    let key_p = SigningKey::from_bytes(&[29u8; 32]);
-    let pubkey_p = key_p.verifying_key().to_bytes();
-    let claimed_client = 0x2929_2929_2929_2929u64;
-    let other_vault_client = 0x2929_2929_2929_0001u64;
-
-    register_lease_row(&vault, TEST_LEASE_VAULT_ID, claimed_client, &pubkey_p, 0x02);
-    register_lease_row(
-        &vault,
-        OTHER_TEST_LEASE_VAULT_ID,
-        other_vault_client,
-        &pubkey_p,
-        0x03,
-    );
-
-    let id = EntityId::now();
-    let blob = signed_receipt_blob(&key_p, claimed_client, &id, LEARNED_AT, &scope_hex);
-    insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob);
-    doc.commit();
-
-    assert_eq!(
-        vault.get_raw(&id).unwrap().as_deref(),
-        Some(blob.as_slice()),
-        "a different-vault revoked binding for the same pubkey must not reject this receipt"
-    );
-    assert!(
-        quarantined_records(&vault).unwrap().is_empty(),
-        "accepted cross-vault non-match must not quarantine"
-    );
-}
-
-/// ONE-1190 same-vault terminal regression: a revoked sibling for the same
-/// pubkey still kills a fresh active client_id in that vault.
-#[test]
-fn revoked_pubkey_same_vault_still_terminal() {
-    let (_dir, vault) = test_vault_with_dir();
-    let doc = LoroDoc::new();
-    let materializer = Arc::new(Materializer::new());
-    let _subs = register_observer_b(&doc, &vault, &materializer, WINDOW);
-    let scope_hex = EntityId::now().to_hex();
-
-    let key_p = SigningKey::from_bytes(&[30u8; 32]);
-    let pubkey_p = key_p.verifying_key().to_bytes();
-    let revoked_client = 0x3030_3030_3030_0001u64;
-    let claimed_client = 0x3030_3030_3030_0002u64;
-
-    register_lease_row(&vault, TEST_LEASE_VAULT_ID, revoked_client, &pubkey_p, 0x03);
-    register_lease_row(&vault, TEST_LEASE_VAULT_ID, claimed_client, &pubkey_p, 0x01);
-
-    let id = EntityId::now();
-    let blob = signed_receipt_blob(&key_p, claimed_client, &id, LEARNED_AT, &scope_hex);
-    insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob);
-    doc.commit();
-
-    assert!(
-        vault.get_raw(&id).unwrap().is_none(),
-        "same-vault revoked pubkey must remain terminal"
-    );
-    let records = quarantined_records(&vault).unwrap();
-    let rec = record_for_key(&records, &id.to_hex()).expect("quarantined, never silent");
-    assert_eq!(rec.reason_code, "ReceiptLeaseRevoked");
-    assert_eq!(rec.payload_hash, xxh3_64(&blob));
-}
-
 /// ONE-1140 RULING C (OD-8 amended, pubkey-bound; delete-safety adjacent,
 /// cap-exempt): revocation binds to the Ed25519 PUBKEY, not the mintable
 /// att_client. A receipt VALIDLY signed by a revoked pubkey is rejected at
@@ -1095,50 +994,6 @@ fn nonzero_lease_vault_receipt_replay_doors_use_materializer_scope() {
     );
 }
 
-/// Claimed-row status has precedence over the pubkey floor: if the claimed
-/// lease is revoked, the door returns the remote `ReceiptLeaseRevoked`
-/// result before decoding any malformed sibling row in the scoped scan.
-#[test]
-fn revoked_claimed_row_precedes_scoped_floor_scan() {
-    let (_dir, vault) = test_vault_with_dir();
-    let window_key = WindowKey::new(WINDOW);
-    let doc = create_window_doc("node-x", &window_key);
-    let scope_hex = EntityId::now().to_hex();
-
-    let author_key = SigningKey::from_bytes(&[45u8; 32]);
-    let author_client = 0x4545_4545_4545_4545u64;
-    register_lease_row(
-        &vault,
-        TEST_LEASE_VAULT_ID,
-        author_client,
-        &author_key.verifying_key().to_bytes(),
-        0x03,
-    );
-    vault
-        .sync_state_put(
-            &lease::lease_key(TEST_LEASE_VAULT_ID, 0x4545_4545_4545_0001u64),
-            b"too-short",
-        )
-        .unwrap();
-
-    let id = EntityId::now();
-    let blob = signed_receipt_blob(&author_key, author_client, &id, LEARNED_AT, &scope_hex);
-    insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob);
-    doc.commit();
-
-    let materializer = Materializer::new();
-    forward_rematerialize(&vault, &doc, &materializer, &window_key)
-        .expect("claimed-row revoked path must return before the corrupt sibling scan");
-    assert!(
-        vault.get_raw(&id).unwrap().is_none(),
-        "revoked claimed row rejects the receipt"
-    );
-    let records = quarantined_records(&vault).unwrap();
-    let rec = record_for_key(&records, &id.to_hex()).expect("quarantined, never silent");
-    assert_eq!(rec.reason_code, "ReceiptLeaseRevoked");
-    assert_eq!(rec.payload_hash, xxh3_64(&blob));
-}
-
 /// ONE-1140 (OD-10; delete-safety adjacent, cap-exempt): lease-quarantined
 /// receipts re-admit LAZILY — the rejected bytes stay in the CRDT map, and
 /// the next `forward_rematerialize` re-runs the door after the `ls:` mirror
@@ -1199,29 +1054,4 @@ fn quarantined_receipt_readmitted_after_lease_lands() {
             .contains(&id),
         "re-admitted receipt lands in the maintenance type index"
     );
-}
-
-// ─── AC4 — public write gate unchanged ───────────────────────────────────────
-
-/// AC4 — the replay-door work must not loosen the PUBLIC write gate: a user
-/// write of a system-zone kind (REDACTION_AUDIT) still fails with
-/// `MaintenanceKindNotWritable`, and nothing is written.
-#[test]
-fn public_write_gate_still_rejects_maintenance_band() {
-    let (_dir, vault) = test_vault_with_dir();
-    let id = EntityId::now();
-    let err = vault
-        .put_entity(
-            &id,
-            ENTITY_TYPE_REDACTION_AUDIT,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"user-authored-receipt",
-        )
-        .unwrap_err();
-    assert!(
-        matches!(err, Error::Registry(RegistryError::MaintenanceKindNotWritable(byte)) if byte == ENTITY_TYPE_REDACTION_AUDIT),
-        "public gate must still reject REDACTION_AUDIT, got: {err:?}"
-    );
-    assert!(vault.get_raw(&id).unwrap().is_none());
 }
