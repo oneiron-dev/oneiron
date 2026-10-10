@@ -6,22 +6,28 @@ use std::os::unix::net::UnixStream;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError};
 use std::time::{Duration, Instant};
 
+use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::io::Errno;
-use rustix::net::{RecvFlags, recv};
 
 const SPIN_US: u64 = 100;
 
 /// How long a waiting thread polls before it sleeps.
 pub const SPIN: Duration = Duration::from_micros(SPIN_US);
 
-/// Polls `stream` for up to [`SPIN`] until a byte (or the end) is there to
-/// read, then returns; the caller's blocking read follows.
+/// Polls `stream` for up to [`SPIN`] until a byte, the end or an error is
+/// there to read, then returns; the caller's blocking read follows and
+/// meets it. A zero-timeout poll reads nothing, so a pending socket error
+/// is left for that read (a peek would clear it on Linux).
 pub fn poll_readable(stream: &UnixStream) {
     let until = Instant::now() + SPIN;
-    let mut probe = [0u8; 1];
+    let now = Timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     while Instant::now() < until {
-        match recv(stream, &mut probe, RecvFlags::PEEK | RecvFlags::DONTWAIT) {
-            Err(Errno::AGAIN | Errno::INTR) => std::hint::spin_loop(),
+        let mut fds = [PollFd::new(stream, PollFlags::IN)];
+        match poll(&mut fds, Some(&now)) {
+            Ok(0) | Err(Errno::INTR) => std::hint::spin_loop(),
             _ => return,
         }
     }
