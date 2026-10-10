@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::edge::EdgeActorClass;
-use crate::memory::{SafeDeleteReason, WitnessAuthor, WitnessMessage, WitnessTurn};
+use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::test_util::entity;
 use crate::{TimeRange, Vault, VaultConfig};
@@ -94,7 +94,7 @@ fn a_transcript_reads_turns_in_order_and_never_returns_an_erased_message() {
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let room = entity(0xD0);
     let (first, second, third) = (entity(0xD3), entity(0xD1), entity(0xD2));
-    let last = witness(
+    witness(
         &vault,
         owner,
         room,
@@ -102,7 +102,7 @@ fn a_transcript_reads_turns_in_order_and_never_returns_an_erased_message() {
         AT + 20,
         vec![said(0, WitnessAuthor::User, "last words")],
     );
-    let opening = witness(
+    witness(
         &vault,
         owner,
         room,
@@ -151,13 +151,32 @@ fn a_transcript_reads_turns_in_order_and_never_returns_an_erased_message() {
     }
     assert_eq!(paged, whole);
 
-    let memory = vault.memory(owner, EdgeActorClass::Human);
-    memory
-        // The receipt names the messages as given: "and more" first.
-        .safe_delete(&opening[0], SafeDeleteReason::UserHardDelete)
+    // Their author erases one message of the first turn and deletes the third
+    // turn's only message, through the room's door.
+    let message = |text: &str| {
+        page.turns
+            .iter()
+            .flat_map(|turn| &turn.messages)
+            .find(|message| message.text == text)
+            .map(|message| EntityId::from_hex(&message.id).expect("message id"))
+            .expect("the message")
+    };
+    let author = crate::WriteActor::new(owner, EdgeActorClass::Human);
+    vault
+        .delete_room_record(
+            room,
+            message("and more"),
+            author,
+            crate::DeleteReason::UserHardDelete,
+        )
         .expect("erase one message of the first turn");
-    memory
-        .safe_delete(&last[0], SafeDeleteReason::UserDelete)
+    vault
+        .delete_room_record(
+            room,
+            message("last words"),
+            author,
+            crate::DeleteReason::UserDelete,
+        )
         .expect("delete the third turn's only message");
     let page = transcript(&vault, owner, room, None, 2);
     assert_eq!(
