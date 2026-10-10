@@ -59,11 +59,11 @@ pub const SECRET_MANIFEST_SCHEMA_VERSION: u16 = 1;
 /// (the canon kebab-case noun), a `declared_paths` string array, and inline
 /// `[[secrets.bindings]]` tables with `effector`, `tier_ceiling` (integer
 /// 0..=2), and a `scopes` string array. Unknown keys are ignored so the
-/// format can grow. A key set twice in one table, or an effector bound twice
-/// in one entry, is refused: the manifest would say two things, and keeping
-/// either would let a wider value pass for a narrower one. The parser is a
-/// deliberately small TOML subset — the engine takes no `toml` crate
-/// dependency for this one file.
+/// format can grow. A key set twice in one table, a key made both a value and
+/// a table, or an effector bound twice in one entry, is refused: the manifest
+/// would say two things, and keeping either would let a wider value pass for
+/// a narrower one. The parser is a deliberately small TOML subset — the
+/// engine takes no `toml` crate dependency for this one file.
 pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
     // Scratch shape during parse: class stays Option so a missing `class`
     // key is a typed error at finish, not a silent default.
@@ -90,8 +90,9 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
     let mut schema_version = None;
     let mut secrets = Vec::new();
     let mut scope = Scope::Root;
-    // The keys the current table has set. TOML forbids setting one twice, and
-    // keeping the last would let a later, wider tier erase a narrower one.
+    // The keys the current table has set. TOML forbids setting one twice, or
+    // making it a value and a table, and keeping the last would let a later,
+    // wider tier erase a narrower one.
     let mut seen: Vec<Vec<String>> = Vec::new();
 
     for raw in text.lines() {
@@ -100,6 +101,9 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
             continue;
         }
         if line == "[[secrets]]" {
+            if matches!(scope, Scope::Root) && redefines(&seen, &["secrets".to_owned()]) {
+                return Err(invalid_manifest("[[secrets]] redefines a root key"));
+            }
             secrets.push(ScratchEntry::default());
             scope = Scope::Secrets;
             seen.clear();
@@ -111,6 +115,11 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
                     "[[secrets.bindings]] before any [[secrets]]",
                 )));
             };
+            if matches!(scope, Scope::Secrets) && redefines(&seen, &["bindings".to_owned()]) {
+                return Err(invalid_manifest(
+                    "[[secrets.bindings]] redefines an entry key",
+                ));
+            }
             entry.bindings.push(ScratchBinding::default());
             scope = Scope::Binding;
             seen.clear();
@@ -123,8 +132,10 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
         let (key, value) = (&line[..at], &line[at + 1..]);
         let path = key_path(key)?;
         let value = value.trim();
-        if seen.contains(&path) {
-            return Err(invalid_manifest("a key is set twice in one manifest table"));
+        if redefines(&seen, &path) {
+            return Err(invalid_manifest(
+                "a manifest key is set twice, or as a value and a table",
+            ));
         }
         // Only a one-part key can be one this subset reads; a dotted key is an
         // extension, kept apart from them and ignored.
@@ -231,6 +242,14 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
         schema_version,
         secrets,
     })
+}
+
+/// Whether `path` sets a key `seen` already holds, or a key inside one, or a
+/// table around one. TOML refuses each: a key is set once, and is a value or
+/// a table, never both.
+fn redefines(seen: &[Vec<String>], path: &[String]) -> bool {
+    seen.iter()
+        .any(|prior| prior.starts_with(path) || path.starts_with(prior))
 }
 
 fn invalid_manifest(msg: &'static str) -> Error {

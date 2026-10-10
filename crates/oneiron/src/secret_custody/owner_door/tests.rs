@@ -563,8 +563,9 @@ fn registering_then_rotating_copies_no_row_that_holds_the_value_unwiped() {
 /// declaring `tier_ceiling = 0` and then `tier_ceiling = 2` registered at
 /// tier 2. A manifest that says one thing twice is refused, under any
 /// spelling TOML reads as the same key or string, and nothing is stored. Sol
-/// on the fix: escapes still aliased a key or an effector, and distinct
-/// extension keys were refused as repeats.
+/// on the fix: escapes still aliased a key or an effector, distinct extension
+/// keys were refused as repeats, and a dotted key could make a key a table
+/// and then a value.
 #[test]
 fn a_manifest_that_says_one_thing_twice_is_refused() {
     let dir = tempfile::tempdir().expect("vault dir");
@@ -603,9 +604,19 @@ declared_paths = [".env.deploy"]
             "dup-effector",
             "[[secrets.bindings]]\neffector = \"deploy\"\ntier_ceiling = 0\nscopes = [\"read\"]\n\n[[secrets.bindings]]\neffector = \"deploy\"\ntier_ceiling = 2\nscopes = [\"read\"]\n",
         ),
+        (
+            "a tier that a dotted key made a table",
+            "dup-dotted",
+            "[[secrets.bindings]]\neffector = \"deploy\"\ntier_ceiling.extension = 0\ntier_ceiling = 2\nscopes = [\"read\"]\n",
+        ),
+        (
+            "a binding table an entry key already set",
+            "dup-table",
+            "bindings.extension = 0\n\n[[secrets.bindings]]\neffector = \"deploy\"\ntier_ceiling = 2\nscopes = [\"read\"]\n",
+        ),
     ];
-    for (why, repo, bindings) in cases {
-        publish_manifest(&vault, repo, &format!("{entry}\n{bindings}"));
+    let refused = |why: &str, repo: &str, manifest: &str| {
+        publish_manifest(&vault, repo, manifest);
         let error = vault
             .register_secret_as_owner(
                 &owner,
@@ -635,7 +646,18 @@ declared_paths = [".env.deploy"]
             None,
             "{why}"
         );
+    };
+    for (why, repo, bindings) in cases {
+        refused(why, repo, &format!("{entry}\n{bindings}"));
     }
+    refused(
+        "a secrets table a root key already set",
+        "dup-root",
+        &format!(
+            "{}\n[[secrets.bindings]]\neffector = \"deploy\"\ntier_ceiling = 2\nscopes = [\"read\"]\n",
+            entry.replacen("[[secrets]]", "secrets.extension = 0\n\n[[secrets]]", 1)
+        ),
+    );
 
     // Distinct keys that only look alike are distinct: a quoted key with a dot
     // or an `=` in it is one key, apart from the dotted key it resembles.
