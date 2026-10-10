@@ -1,39 +1,10 @@
 //! MCP argument codecs: parsed-value and raw-JSON integer normalization.
 
-use super::tool_catalog::{McpToolName, McpToolValidationError, mcp_tool_schema};
-use super::validate::ValidateMcpArgs;
 use serde::Deserialize;
 use serde::Deserializer;
-use serde::de::DeserializeOwned;
 use serde::de::Error as DeError;
 use serde_json::Value;
 use std::ops::Range;
-
-pub(super) fn decode_tool_args<T>(
-    tool: McpToolName,
-    args: McpToolArguments,
-) -> Result<T, McpToolValidationError>
-where
-    T: DeserializeOwned + ValidateMcpArgs,
-{
-    // The ADVERTISED schema decides where an integer lives, so the decoder's
-    // domain is the advertised domain at every one of those positions —
-    // including the ones nested in engine-owned input types this door does not
-    // define. Nothing else in the payload is touched.
-    let args = schema_normalized_arguments(&mcp_tool_schema(tool).input_schema, args).map_err(
-        |message| McpToolValidationError::Decode {
-            tool: tool.as_str(),
-            message,
-        },
-    )?;
-    let parsed =
-        serde_json::from_value::<T>(args).map_err(|error| McpToolValidationError::Decode {
-            tool: tool.as_str(),
-            message: error.to_string(),
-        })?;
-    parsed.validate(tool)?;
-    Ok(parsed)
-}
 
 /// Restates mathematically integral JSON numbers in their integer spelling at
 /// every position the ADVERTISED schema types as `integer` (ONE-1704 repair).

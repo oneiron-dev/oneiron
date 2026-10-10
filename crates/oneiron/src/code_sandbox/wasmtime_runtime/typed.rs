@@ -123,6 +123,28 @@ pub(super) fn link_imports(
                     })();
                     Ok((reply,))
                 }),
+            // The verb table is the host's own generated catalog: no bridge row.
+            "self.verbs.names" => root.func_wrap(wit,
+                |mut cx: StoreContextMut<'_, State>, (): ()| {
+                    cx.data_mut().begin_call()?;
+                    let names: Reply<Vec<String>> = Ok(crate::task_verb::sdk::AgentVerb::ALL
+                        .iter().map(|verb| verb.as_str().to_owned()).collect());
+                    Ok((names,))
+                }),
+            "self.verbs.call" => root.func_wrap(wit,
+                |mut cx: StoreContextMut<'_, State>, (verb, input): (String, String)| {
+                    cx.data_mut().begin_call()?;
+                    let reply: Reply<String> = (|| {
+                        if input.len() > cx.data().message_bytes {
+                            return Err("verb input exceeds message budget".into());
+                        }
+                        let input: Value = serde_json::from_str(&input).map_err(|_| "invalid verb input JSON")?;
+                        cx.data_mut().call("self.verbs.call", json!({"verb":verb,"input":input}))
+                            .and_then(|value| field::<Value>(&value,"output"))
+                            .map(|output| output.to_string())
+                    })();
+                    Ok((reply,))
+                }),
             "oneiron.clock.now_unix_ms" => root.func_wrap(wit,
                 |mut cx: StoreContextMut<'_, State>, (): ()| {
                     cx.data_mut().begin_call()?;

@@ -1,55 +1,6 @@
-//! Shared MCP test harness: legacy adapter, tool-first endpoints, scoping, code-run fixtures.
+//! Shared MCP test harness: tool-first endpoints, scoping, code-run fixtures.
 
 use super::*;
-
-pub(super) fn mcp_call_request(
-    credential: &str,
-    id: &str,
-    name: &str,
-    arguments: Value,
-) -> McpLegacyCall {
-    McpLegacyCall {
-        credential: credential.to_owned(),
-        id: id.to_owned(),
-        name: name.to_owned(),
-        arguments,
-    }
-}
-
-/// Drives one retired adapter and returns the same `(status, JSON-RPC body)`
-/// pair the wire used to return, so every row below keeps its exact assertions.
-pub(super) async fn mcp_legacy_adapter_json(
-    server: Arc<SyncServer>,
-    call: McpLegacyCall,
-) -> (StatusCode, Value) {
-    let headers = mcp_credential_headers(&server, &call.credential);
-    let id = Value::from(call.id.clone());
-    let body = match mcp_legacy_adapter_result(&server, &headers, &call).await {
-        Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
-        Err(error) => crate::api::mcp_error_response(id, error),
-    };
-    (StatusCode::OK, body)
-}
-
-pub(super) async fn mcp_legacy_adapter_result(
-    server: &Arc<SyncServer>,
-    headers: &axum::http::HeaderMap,
-    call: &McpLegacyCall,
-) -> Result<Value, crate::api::McpGatewayError> {
-    let actor = crate::api::resolve_mcp_gateway_actor(
-        crate::mcp::McpSurfaceMode::Primary,
-        &call.id,
-        headers,
-        server,
-    )
-    .await?;
-    let tool = crate::mcp::McpToolName::from_name(&call.name)
-        .unwrap_or_else(|| panic!("{} is not a retired plain-verb name", call.name));
-    let args = crate::mcp::validate_mcp_tool_args(tool, call.arguments.clone())
-        .map_err(crate::api::mcp_tool_validation_error)?;
-    crate::api::ensure_mcp_actor_matches(&args, &actor)?;
-    crate::api::execute_mcp_tool(server, args, &actor).await
-}
 
 pub(super) async fn register_mcp_actor(
     server: &Arc<SyncServer>,
@@ -112,42 +63,6 @@ pub(super) fn mcp_consent_json(purpose: &str, require_human_approval: bool) -> V
         "consent_receipt_ref": "consent:one-1222",
         "require_human_approval": require_human_approval,
     })
-}
-
-pub(super) fn mcp_propose_claim_args(
-    actor_ref: oneiron::EntityId,
-    subject_ref: oneiron::EntityId,
-    idempotency_key: &str,
-) -> Value {
-    json!({
-        "schema_version": crate::mcp::MCP_TOOL_ARGS_SCHEMA_VERSION,
-        "actor": mcp_actor_json(actor_ref, "human"),
-        "consent": mcp_consent_json("write_memory", false),
-        "verb": "propose_claim",
-        "idempotency_key": idempotency_key,
-        "subject": { "entity": subject_ref.to_hex() },
-        "predicate": "profile.mcp_gateway",
-        "value": "MCP gateway write",
-        "confidence": 0.8
-    })
-}
-
-/// Issues one `oneiron.edit` call and returns the JSON-RPC `error` object,
-/// failing loudly when the call unexpectedly succeeded.
-pub(super) async fn mcp_edit_error(
-    server: &Arc<SyncServer>,
-    credential: &str,
-    args: Value,
-) -> Value {
-    let (status, body) = mcp_legacy_adapter_json(
-        server.clone(),
-        mcp_call_request(credential, "mcp-stale-edit", "oneiron.edit", args),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    body.get("error")
-        .cloned()
-        .unwrap_or_else(|| panic!("the edit should have been refused: {body:#}"))
 }
 
 pub(super) const MCP_TOOL_FIRST_PATH: &str = "/mcp/tool-first";
@@ -218,7 +133,6 @@ pub(super) fn mcp_listed_tool_names(body: &Value) -> Vec<&str> {
 pub(super) fn mcp_expected_generated_names() -> Vec<&'static str> {
     let mut expected = oneiron::task_verb::sdk::AgentVerb::ALL
         .iter()
-        .filter(|verb| verb.is_mcp())
         .map(|verb| verb.as_str())
         .chain(oneiron::code_run::vault_read::MEMORY_VERBS.iter().copied())
         .collect::<Vec<_>>();
@@ -419,12 +333,13 @@ impl crate::mcp::McpCodeModeProvider for McpFixtureCodeProvider {
 
     fn executor_config(
         &self,
+        _: &oneiron::Vault,
         run_id: oneiron::EntityId,
         task: &str,
-    ) -> oneiron::engine_executor::EngineExecutorConfig {
+    ) -> oneiron::Result<oneiron::engine_executor::EngineExecutorConfig> {
         // The earliest point the injected host is entered for a run at all.
         MCP_FIXTURE_CODE_RUNS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        oneiron::engine_executor::EngineExecutorConfig {
+        Ok(oneiron::engine_executor::EngineExecutorConfig {
             run_id,
             task: task.to_owned(),
             // ONE-1929: the executor wire teaching comes from the DEPLOYED
@@ -440,7 +355,7 @@ impl crate::mcp::McpCodeModeProvider for McpFixtureCodeProvider {
                 [7; oneiron::code_run::CODE_RUN_RNG_SEED_LEN],
             ),
             limits: oneiron::engine_executor::EngineExecutorLimits::default(),
-        }
+        })
     }
 }
 

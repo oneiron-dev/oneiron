@@ -100,7 +100,7 @@ impl McpGatewayError {
 /// The mode is REGISTRATION state carried down from the route, never something
 /// the request could select. Everything that already spoke `McpResolvedActor`
 /// still does, through `Deref`.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct McpCallContext {
     pub(crate) actor: McpResolvedActor,
     pub(crate) mode: McpSurfaceMode,

@@ -502,6 +502,44 @@ fn code_run_replay_denied_and_failed_bridge_rows_return_errors() -> Result<()> {
     Ok(())
 }
 
+/// Review repro: a refused SDK verb is a typed refusal the guest handles live,
+/// so replay hands back that same refusal, not an unrelated gate trap.
+#[test]
+fn code_run_replay_returns_a_refused_agent_verb_as_the_live_refusal() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let actor = seed_person(&vault, 0x62);
+    let dispatcher = HostSelfDispatcher::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "run-agent-verb",
+    )?;
+    let call = SelfCall::AgentVerb(SelfAgentVerbCall {
+        verb: crate::task_verb::sdk::AgentVerb::Recall,
+        input: serde_json::json!({"query": "heron lantern"}),
+    });
+    // No verb door is bound, so the live answer is a typed refusal.
+    let live = dispatcher.dispatch(call.clone())?;
+    let SelfDispatchOutcome::Denied(refusal) = &live else {
+        panic!("expected a typed refusal, got {live:?}");
+    };
+    assert_eq!(refusal.outcome, "agent_verb_door_unbound");
+
+    let determinism = CodeRunDeterminism::new(1_719_000_002_000, [0xAC; 32]);
+    let run_id = EntityId::from_bytes([0x75; 16]).expect("run id");
+    let mut record = CodeRunReplayRecord::new(run_id, determinism);
+    record.bridge_calls.push(CodeRunBridgeCall::record(
+        0,
+        &call,
+        &live,
+        determinism.frozen_unix_ms,
+        determinism.frozen_unix_ms,
+    )?);
+    let decoded = decode_code_run_replay_record(&encode_code_run_replay_record(&record)?)?;
+    let replay = decoded.replay_cursor();
+    assert_eq!(replay.dispatch(call)?, live);
+    Ok(())
+}
+
 #[test]
 fn code_run_replay_large_output_persists_raw_bytes_and_compact_preview() -> Result<()> {
     let (_dir, vault) = open_test_vault();
@@ -2113,6 +2151,15 @@ fn code_run_claim_doors_preserve_owned_keyed_revisions() -> Result<()> {
     Ok(())
 }
 
+fn executor_site(run_id: EntityId) -> ExecutorCallSite<'static> {
+    ExecutorCallSite {
+        run_id,
+        seq: 0,
+        step_start: 0,
+        earlier: &[],
+    }
+}
+
 #[test]
 fn ask_void_notice_replays_until_durable_bridge_result_then_reparks()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -2154,7 +2201,7 @@ fn ask_void_notice_replays_until_durable_bridge_result_then_reparks()
         "void-replay",
     )?;
     let call = SelfCall::TasksWait(handle);
-    let changed = dispatcher.dispatch_for_executor_run(run, call.clone())?;
+    let changed = dispatcher.dispatch_for_executor_run(executor_site(run), call.clone())?;
     let SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Changed { voided, generation }) =
         &changed
     else {
@@ -2163,7 +2210,7 @@ fn ask_void_notice_replays_until_durable_bridge_result_then_reparks()
     assert_eq!(voided, &vec![friend]);
     assert_eq!(*generation, 1);
     assert_eq!(
-        dispatcher.dispatch_for_executor_run(run, call.clone())?,
+        dispatcher.dispatch_for_executor_run(executor_site(run), call.clone())?,
         changed,
         "an unrecorded result must be replayed after a crash"
     );
@@ -2174,7 +2221,7 @@ fn ask_void_notice_replays_until_durable_bridge_result_then_reparks()
     vault.put_code_run_replay_record(&record)?;
     assert!(
         matches!(
-            dispatcher.dispatch_for_executor_run(run, call.clone())?,
+            dispatcher.dispatch_for_executor_run(executor_site(run), call.clone())?,
             SelfDispatchOutcome::DurableWait(_)
         ),
         "the recorded generation permits the next wait to park"
@@ -2186,7 +2233,7 @@ fn ask_void_notice_replays_until_durable_bridge_result_then_reparks()
     let next = memory.tasks_ask_option_link(handle, friend)?;
     vault.void_ask_option_link(&next.token)?;
     let SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Changed { generation, .. }) =
-        dispatcher.dispatch_for_executor_run(run, call)?
+        dispatcher.dispatch_for_executor_run(executor_site(run), call)?
     else {
         panic!("later void wakes again")
     };

@@ -40,14 +40,7 @@ pub(crate) fn mcp_admit_scoped_call(
     actor: &McpCallContext,
 ) -> Result<(), McpGatewayError> {
     let tool_name = mcp_called_tool_name(args);
-    if !actor.admits_tool(tool_name) {
-        return Err(McpGatewayError::new(
-            -32020,
-            "mcp_verb_not_bound",
-            format!("{tool_name} is not bound to this connector credential"),
-        )
-        .with_field("name"));
-    }
+    mcp_admit_bound_tool(actor, tool_name)?;
     let verb = match args {
         // Setup reads a board that is ALREADY narrowed to this credential's
         // ceiling row by row (`mcp_scoped_tasks_section`), so it is the one
@@ -59,30 +52,59 @@ pub(crate) fn mcp_admit_scoped_call(
             return mcp_admit_unscoped_execution(actor, crate::mcp::MCP_EXECUTE_CODE_TOOL, "name");
         }
         McpValidatedToolArgs::Verb(verb) => verb,
-        // The retired plain-verb adapters carry no scope projection either, so
-        // a narrowed credential is refused on them by the same rule. After M1
-        // no wire name resolves onto them at all.
-        _ => return mcp_admit_unscoped_execution(actor, tool_name, "name"),
     };
-    if verb.tool.memory_method().is_some() {
+    mcp_admit_verb_scope(server, verb.tool, &verb.payload.arguments, actor)
+}
+
+/// One generated verb call, whichever door it arrived at: a `tools/call` or a
+/// code-mode `self.memory.<verb>`. Both meet exactly this admission.
+pub(crate) fn mcp_admit_scoped_verb(
+    server: &Arc<SyncServer>,
+    tool: crate::mcp::McpGeneratedVerbTool,
+    arguments: &crate::mcp::McpVerbArguments,
+    actor: &McpCallContext,
+) -> Result<(), McpGatewayError> {
+    mcp_admit_bound_tool(actor, tool.name)?;
+    mcp_admit_verb_scope(server, tool, arguments, actor)
+}
+
+fn mcp_admit_bound_tool(actor: &McpCallContext, tool_name: &str) -> Result<(), McpGatewayError> {
+    if actor.admits_tool(tool_name) {
+        return Ok(());
+    }
+    Err(McpGatewayError::new(
+        -32020,
+        "mcp_verb_not_bound",
+        format!("{tool_name} is not bound to this connector credential"),
+    )
+    .with_field("name"))
+}
+
+fn mcp_admit_verb_scope(
+    server: &Arc<SyncServer>,
+    tool: crate::mcp::McpGeneratedVerbTool,
+    arguments: &crate::mcp::McpVerbArguments,
+    actor: &McpCallContext,
+) -> Result<(), McpGatewayError> {
+    if tool.memory_method().is_some() {
         // Actor-scoped reads do NOT by themselves carry a connector's narrower
         // ceiling. Never confuse the principal's grants with this credential.
-        mcp_admit_unscoped_execution(actor, verb.tool.name, "arguments.request")?;
+        mcp_admit_unscoped_execution(actor, tool.name, "arguments.request")?;
     }
-    if verb.payload.arguments.self_target == Some(true) {
+    if arguments.self_target == Some(true) {
         // `describe(self)` renders the host-installed run brief whole: it has
         // no world/facet projection, so a narrowed connector cannot read it.
-        mcp_admit_unscoped_execution(actor, verb.tool.name, "arguments.self")?;
+        mcp_admit_unscoped_execution(actor, tool.name, "arguments.self")?;
     }
-    if let Some(scopes) = verb.payload.arguments.scopes.as_ref() {
+    if let Some(scopes) = arguments.scopes.as_ref() {
         mcp_admit_subscription_scopes(actor, scopes)?;
     }
-    if let Some(task_ref) = verb.payload.arguments.task_ref.as_deref() {
+    if let Some(task_ref) = arguments.task_ref.as_deref() {
         let id = parse_entity_id_param(task_ref, "arguments.task_ref").map_err(mcp_api_error)?;
         mcp_admit_scoped_entity(server, actor, &id, "arguments.task_ref")?;
     }
-    if verb.tool.requires_unscoped() {
-        mcp_admit_unscoped_execution(actor, verb.tool.name, "arguments.spec")?;
+    if tool.requires_unscoped() {
+        mcp_admit_unscoped_execution(actor, tool.name, "arguments.spec")?;
     }
     Ok(())
 }
@@ -122,8 +144,6 @@ fn mcp_called_tool_name(args: &McpValidatedToolArgs) -> &'static str {
         McpValidatedToolArgs::Setup(_) => crate::mcp::MCP_SETUP_TOOL,
         McpValidatedToolArgs::ExecuteCode(_) => crate::mcp::MCP_EXECUTE_CODE_TOOL,
         McpValidatedToolArgs::Verb(verb) => verb.tool.name,
-        // Unreachable from the wire after M1: no unlisted name resolves.
-        _ => "",
     }
 }
 

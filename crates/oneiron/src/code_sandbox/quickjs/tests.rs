@@ -58,6 +58,9 @@ impl JsCodeModeHost for Host {
                 reason: SelfDurableWaitReason::HumanInput,
                 prompt: None,
             }),
+            SelfCall::AgentVerb(call) => SelfDispatchOutcome::AgentVerb(
+                serde_json::json!({"verb": call.verb.as_str(), "input": call.input}),
+            ),
             _ => return Err(Error::InvalidConfig("unexpected test call".into())),
         };
         Ok(SelfDispatchResponse {
@@ -154,6 +157,49 @@ fn quickjs_real_language_typed_writes_determinism_and_escape_refusal() {
             .unwrap()
             .observation,
         "undefined"
+    );
+}
+
+/// ARCH-0028: code mode's `self.memory` IS the SDK verb table. Every row is a
+/// method beside only the engine's own typed WIT imports, so adding a row adds
+/// a method with no other edit, and one call carries the row's whole input to
+/// the host's verb door and hands back its output.
+#[test]
+fn quickjs_self_memory_is_the_verb_table() {
+    let (bytes, hash) = artifact("first-party");
+    let factory =
+        QuickJsRuntimeFactory::from_component(&bytes, hash, ComponentBudget::default()).unwrap();
+    let mut runtime = factory.runtime().unwrap();
+    let mut host = Host::default();
+    let script = "const names = []; \
+        const walk = (node, path) => { for (const key of Object.keys(node)) { \
+          const name = path ? path + '.' + key : key; \
+          if (typeof node[key] === 'function') names.push(name); else walk(node[key], name); } }; \
+        walk(self.memory, ''); \
+        const echo = await self.memory.tasks.outcomes({group_ref: 'g1'}); \
+        finish(JSON.stringify({names: names.sort(), echo, abi: typeof self.verbs}));";
+    let result = run(&mut runtime, script, &mut host).unwrap();
+    assert!(result.done, "{}", result.observation);
+    let value: Value = serde_json::from_str(&result.observation).unwrap();
+    let engine_imports: &[(&str, &str)] = include!("../../../wit/generated/imports.rs");
+    let mut expected: Vec<String> = crate::task_verb::sdk::AgentVerb::ALL
+        .iter()
+        .map(|verb| verb.as_str().to_owned())
+        .chain(
+            engine_imports
+                .iter()
+                .filter_map(|(_, js)| js.strip_prefix("self.memory.").map(str::to_owned)),
+        )
+        .collect();
+    expected.sort();
+    assert_eq!(value["names"], serde_json::json!(expected));
+    assert_eq!(
+        value["abi"], "undefined",
+        "the call door itself stays bootstrap's"
+    );
+    assert_eq!(
+        value["echo"],
+        serde_json::json!({"verb": "tasks.outcomes", "input": {"group_ref": "g1"}})
     );
 }
 
@@ -370,6 +416,12 @@ impl crate::code_sandbox::wasmtime_boundary::bindings::GuestImports for ForeignH
         _: String,
     ) -> std::result::Result<crate::code_sandbox::wasmtime_boundary::bindings::BlockedOutput, String>
     {
+        Err("unlinked capability".into())
+    }
+    fn verb_names(&mut self) -> std::result::Result<Vec<String>, String> {
+        Err("unlinked capability".into())
+    }
+    fn verb_call(&mut self, _: String, _: String) -> std::result::Result<String, String> {
         Err("unlinked capability".into())
     }
     fn ask(

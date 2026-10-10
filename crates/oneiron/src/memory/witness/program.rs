@@ -223,6 +223,20 @@ impl Memory<'_> {
             .into());
         }
         distinct_message_orders(&turn.messages)?;
+        // Generated code speaks as the companion: a person's word or the
+        // engine's system voice needs an origin a guest cannot assert.
+        if self.writes_generated()
+            && turn
+                .messages
+                .iter()
+                .any(|message| message.author != WitnessAuthor::Companion)
+        {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "generated code cannot author a user or system message",
+                &["Witness generated text as the companion."],
+            ));
+        }
         let session_route;
         let landing = match target {
             WitnessTarget::Base { route } => Landing::Base {

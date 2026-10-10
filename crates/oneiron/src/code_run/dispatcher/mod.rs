@@ -1,3 +1,4 @@
+mod agent_verb;
 mod coordination;
 mod emission;
 mod envelope;
@@ -58,6 +59,20 @@ pub struct HostSelfDispatcher<'a> {
     /// set it is never cleared, so a later step cannot launder an earlier
     /// external effect out of the run.
     pub(super) external_effect_seen: Cell<bool>,
+    /// The host's door onto the SDK verb table, if it binds one.
+    pub(super) agent_verbs: Option<std::sync::Arc<dyn crate::code_run::AgentVerbDoor>>,
+}
+
+/// One bridge call's place in a durable engine-executor run.
+#[derive(Clone, Copy)]
+pub(crate) struct ExecutorCallSite<'h> {
+    pub(crate) run_id: EntityId,
+    /// The call's bridge position.
+    pub(crate) seq: u64,
+    /// The first bridge position of the step the call belongs to.
+    pub(crate) step_start: u64,
+    /// This attempt's earlier calls in the step, as recorded.
+    pub(crate) earlier: &'h [CodeRunBridgeCall],
 }
 
 /// Explicit first-party GatedActorWrite trap surface for engine-native code.
@@ -153,7 +168,19 @@ impl<'a> HostSelfDispatcher<'a> {
             code_emission: None,
             owner_proof: None,
             external_effect_seen: Cell::new(false),
+            agent_verbs: None,
         })
+    }
+
+    /// Binds the host's door onto the SDK verb table, so `self.memory.<verb>`
+    /// runs each verb with that host's ceiling and gate.
+    #[must_use]
+    pub fn with_agent_verb_door(
+        mut self,
+        door: std::sync::Arc<dyn crate::code_run::AgentVerbDoor>,
+    ) -> Self {
+        self.agent_verbs = Some(door);
+        self
     }
 
     /// Binds a host-authenticated owner proof to one agent action dispatch.
@@ -227,22 +254,24 @@ impl<'a> HostSelfDispatcher<'a> {
     ///
     /// The ordinary [`SelfDispatcher`] implementation intentionally has no run
     /// id and preserves the standalone run-ref-only speech identity. The engine
-    /// executor owns the durable id, so it enters through this crate-private
-    /// door and binds that id only to transcript identity; guest payloads still
-    /// cannot name or forge it.
+    /// executor owns the durable id and the call's place in the run, so it
+    /// enters through this crate-private door and binds them only to
+    /// transcript identity and to the receipt a verb write keeps; guest
+    /// payloads still cannot name or forge either.
     pub(crate) fn dispatch_for_executor_run(
         &self,
-        run_id: EntityId,
+        site: ExecutorCallSite<'_>,
         call: SelfCall,
     ) -> Result<SelfDispatchOutcome> {
-        self.dispatch_bound(call, Some(run_id))
+        self.dispatch_bound(call, Some(site))
     }
 
     fn dispatch_bound(
         &self,
         call: SelfCall,
-        run_id: Option<EntityId>,
+        site: Option<ExecutorCallSite<'_>>,
     ) -> Result<SelfDispatchOutcome> {
+        let run_id = site.map(|site| site.run_id);
         // The descriptor bridge answers before the policy probe: that probe is
         // itself a vault read, and `self.context` must perform none.
         if !matches!(call, SelfCall::Context(_)) {
@@ -292,6 +321,7 @@ impl<'a> HostSelfDispatcher<'a> {
                 self.dispatch_inference_defaults(Some(&json))
             }
             SelfCall::WakePolicyWrite(call) => self.dispatch_wake_policy_write(call),
+            SelfCall::AgentVerb(call) => self.dispatch_agent_verb(call, site),
         }
     }
 }

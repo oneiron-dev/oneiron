@@ -292,6 +292,15 @@ impl Memory<'_> {
         handle: &super::TaskAskHandle,
         word: &super::TaskAskWord,
     ) -> MemoryResult<super::TaskAskAnswer> {
+        // A person's word is theirs to give: a human connector running
+        // generated code does not make that code's answer the person's.
+        if self.writes_generated() && self.actor_class() == crate::EdgeActorClass::Human {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "generated code cannot answer in a person's name",
+                &["Ask the person to answer through their own client."],
+            ));
+        }
         let answer = self.with_verified_actor_write_txn(|txn| {
             let group = super::ask_record::read_group(self.vault(), txn, handle.group_ref)?
                 .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;

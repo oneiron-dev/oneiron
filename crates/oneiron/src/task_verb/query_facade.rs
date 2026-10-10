@@ -603,12 +603,15 @@ impl Memory<'_> {
             value,
             1.0,
         );
-        let envelope = WriteEnvelope::new(
-            WriteActor::new(self.actor(), self.actor_class()),
-            ClaimSource::ToolOutput,
-            WriteProvenance::new(provenance)?,
-            ClaimApprovalStatus::Proposed,
-        );
+        let envelope = match self.host_envelope(ClaimApprovalStatus::Proposed)? {
+            Some(envelope) => envelope,
+            None => WriteEnvelope::new(
+                WriteActor::new(self.actor(), self.actor_class()),
+                ClaimSource::ToolOutput,
+                WriteProvenance::new(provenance)?,
+                ClaimApprovalStatus::Proposed,
+            ),
+        };
         let occurred = TimeRange {
             start: now,
             end: now,

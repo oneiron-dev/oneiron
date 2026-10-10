@@ -58,6 +58,8 @@ impl std::fmt::Display for RoleRefusal {
 pub struct RoleCall {
     pub request: LlmRequest,
     pub backend: Arc<dyn LlmBackend>,
+    /// How many provider calls the backend makes for a request it fails.
+    pub attempts: usize,
 }
 
 /// Where a call of a role runs: the model, its route, and the backend that
@@ -66,6 +68,9 @@ pub struct RoleRoute {
     pub model: ModelId,
     pub locality: ModelLocality,
     pub backend: Arc<dyn LlmBackend>,
+    /// How many provider calls the backend makes for a request it fails:
+    /// every rung of a seat's ladder, or the one model a manifest pins.
+    pub attempts: usize,
     /// No manifest binds the role, so the seat is the binding.
     seat_bound: bool,
 }
@@ -86,6 +91,7 @@ impl ModelRuntime {
                 model: seat.model.clone(),
                 locality: seat.locality,
                 backend: Arc::clone(&seat.backend),
+                attempts: seat.rung_count,
                 seat_bound: true,
             });
         };
@@ -112,20 +118,32 @@ impl ModelRuntime {
             .as_ref()
             .and_then(|router| router.served(&model))
         {
-            Some((served, backend)) if served == route => Ok(RoleRoute {
+            Some((served, backend)) if served == route => {
                 // A manifest-bound model on this role's own ladder (else the
                 // calling seat's) answers as that rung, with its prompt and
-                // receipt; the bare provider behind it has neither.
-                backend: self
+                // receipt; the bare provider behind it has neither. A pinned
+                // seat id is that seat's whole ladder.
+                let rung = self
                     .seat(role)
                     .into_iter()
                     .chain([seat])
-                    .find_map(|seat| seat.rung(&model))
-                    .unwrap_or(backend),
-                model,
-                locality: served,
-                seat_bound: false,
-            }),
+                    .find_map(|seat| seat.rung(&model));
+                let attempts = match rung {
+                    Some(_) => 1,
+                    None => self
+                        .seats
+                        .values()
+                        .find(|seat| seat.model == model)
+                        .map_or(1, |seat| seat.rung_count),
+                };
+                Ok(RoleRoute {
+                    backend: rung.unwrap_or(backend),
+                    attempts,
+                    model,
+                    locality: served,
+                    seat_bound: false,
+                })
+            }
             _ => Err(RoleRefusal::RouteNotServed { model, route }),
         }
     }
@@ -163,6 +181,7 @@ impl ModelRuntime {
         Ok(RoleCall {
             request,
             backend: route.backend,
+            attempts: route.attempts,
         })
     }
 }

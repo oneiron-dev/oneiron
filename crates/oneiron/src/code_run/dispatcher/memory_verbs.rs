@@ -63,6 +63,8 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::InferenceDefaultsRead
             | SelfEffect::InferenceDefaultsReplace
             | SelfEffect::WakePolicyWrite
+            // The bound verb door runs against the canonical vault.
+            | SelfEffect::AgentVerb
             | SelfEffect::AgentsSpawn
             | SelfEffect::AgentsPut
             | SelfEffect::TasksAsk

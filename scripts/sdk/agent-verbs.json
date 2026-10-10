@@ -7,7 +7,6 @@
       "call": "crate::board_verb::dispatch_board_verb(context, crate::board_verb::BoardVerbCall::Expand { key: input.key, frame_epoch: input.frame_epoch })?",
       "scope": "Read",
       "context": "board",
-      "mcp": "tool-first",
       "mcp_fields": {
         "key": "key",
         "frame_epoch": "frame_epoch"
@@ -26,7 +25,6 @@
       "call": "crate::board_verb::dispatch_board_verb(context, crate::board_verb::BoardVerbCall::Refresh { frame_epoch: input.frame_epoch })?",
       "scope": "Read",
       "context": "board",
-      "mcp": "tool-first",
       "mcp_fields": {
         "frame_epoch": "frame_epoch"
       },
@@ -41,7 +39,6 @@
       "call": "crate::board_verb::dispatch_board_verb(context, crate::board_verb::BoardVerbCall::Subscribe { scopes: input.scopes })?",
       "scope": "Read",
       "context": "board",
-      "mcp": "tool-first",
       "mcp_fields": {
         "scopes": "scopes"
       },
@@ -58,7 +55,6 @@
       "call": "crate::board_verb::dispatch_board_verb(context, crate::board_verb::BoardVerbCall::Unsubscribe { scopes: input.scopes })?",
       "scope": "Read",
       "context": "board",
-      "mcp": "tool-first",
       "mcp_fields": {
         "scopes": "scopes"
       },
@@ -74,7 +70,7 @@
       "output": "crate::task_verb::TaskCancelReceipt",
       "call": "memory.cancel(crate::task_verb::TaskCancelTarget::Task(crate::EntityId::from_hex(&input.task_ref)?))?",
       "scope": "Write",
-      "mcp": "tool-first",
+      "mcp_scope": "addressed",
       "mcp_fields": {
         "task_ref": "task_ref"
       },
@@ -107,7 +103,6 @@
       "output": "crate::task_verb::TaskDescription",
       "call": "if input.self_target { Err(MemoryError::bad_request(\"describe(self) requires a bound run session\"))? } else { memory.describe(input.task_ref.as_deref().map(crate::EntityId::from_hex).transpose()?)? }",
       "scope": "Read",
-      "mcp": "tool-first",
       "mcp_fields": {
         "task_ref": "task_ref",
         "self": "self",
@@ -147,7 +142,6 @@
       "output": "crate::task_verb::TaskCreateReceipt",
       "call": "memory.tasks_create(&crate::task_verb::TaskCreateSpec::new(crate::companion_value_from_json(&input.spec)?, input.label, Some(memory.actor()), Some(memory.vault().now_recorded_at())))?",
       "scope": "Write",
-      "mcp": "tool-first",
       "mcp_fields": {
         "spec": "spec",
         "label": "label"
@@ -167,7 +161,7 @@
       "output": "crate::task_verb::TaskUpdateReceipt",
       "call": "memory.tasks_update(crate::EntityId::from_hex(&input.task_ref)?)?",
       "scope": "Write",
-      "mcp": "tool-first",
+      "mcp_scope": "addressed",
       "mcp_fields": {
         "task_ref": "task_ref"
       },
@@ -188,7 +182,6 @@
       "admission": {
         "validate": "crate::memory::caps::check_witness_turn(&input)?;"
       },
-      "mcp": "none",
       "section": false,
       "binding": {
         "args": [
@@ -219,7 +212,6 @@
       "admission": {
         "validate": "crate::memory::caps::check_claim_input(&input)?;"
       },
-      "mcp": "none",
       "section": false,
       "binding": {
         "args": [
@@ -252,7 +244,6 @@
         "unrestricted_record_scope": true,
         "validate": "crate::memory::caps::check_query(&input.query)?; crate::memory::caps::check_limit(input.limit.unwrap_or(10))?; crate::memory::caps::check_as_of(input.as_of)?;"
       },
-      "mcp": "none",
       "section": false,
       "binding": {
         "assemble": true,
@@ -313,7 +304,6 @@
         "unrestricted_record_scope": true,
         "owner_grade": true
       },
-      "mcp": "none",
       "section": false,
       "binding": {
         "native": "agent_verb",
@@ -341,7 +331,6 @@
         "unrestricted_record_scope": true,
         "validate": "crate::memory::caps::check_limit(input.limit.unwrap_or(100))?;"
       },
-      "mcp": "none",
       "section": false,
       "binding": {
         "assemble": true,
@@ -372,7 +361,6 @@
       "call": "memory.key_value_get(&input)?",
       "scope": "Read",
       "admission": {},
-      "mcp": "none",
       "section": false,
       "binding": {
         "wire": "json",
@@ -396,7 +384,6 @@
       "call": "memory.key_value_put(&input)?",
       "scope": "Write",
       "admission": {},
-      "mcp": "none",
       "section": false,
       "binding": {
         "wire": "json",
@@ -428,7 +415,6 @@
       "call": "memory.key_value_delete(&input)?",
       "scope": "Write",
       "admission": {},
-      "mcp": "none",
       "section": false,
       "binding": {
         "wire": "json",
@@ -456,7 +442,6 @@
       "call": "memory.key_value_search(&input)?",
       "scope": "Read",
       "admission": {},
-      "mcp": "none",
       "section": false,
       "binding": {
         "wire": "json",
@@ -486,7 +471,6 @@
       "call": "memory.key_value_namespaces(&input)?",
       "scope": "Read",
       "admission": {},
-      "mcp": "none",
       "section": false,
       "binding": {
         "wire": "json",
@@ -512,7 +496,6 @@
       "output": "crate::task_verb::TaskAskPreflight",
       "call": "memory.tasks_can_ask(&input.ask)?",
       "scope": "Read",
-      "mcp": "none",
       "section": false,
       "binding": {
         "wire": "json",
@@ -535,7 +518,6 @@
       "output": "Vec<crate::task_verb::TaskAskPersonEvidence>",
       "call": "memory.tasks_ask_peek(input)?",
       "scope": "Read",
-      "mcp": "none",
       "section": false,
       "binding": {
         "wire": "json",
@@ -561,7 +543,6 @@
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp": "tool-first",
       "mcp_scope": "unrestricted",
       "section": true
     },
@@ -574,7 +555,6 @@
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp": "tool-first",
       "mcp_scope": "unrestricted",
       "section": true
     },
@@ -587,7 +567,6 @@
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp": "tool-first",
       "mcp_scope": "unrestricted",
       "section": true
     },
@@ -600,7 +579,6 @@
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp": "tool-first",
       "mcp_scope": "unrestricted",
       "section": true
     },
@@ -611,7 +589,6 @@
       "call": "memory.rooms_list()?.into_iter().map(|(id, room)| RoomEntry { id: id.to_hex(), room }).collect::<Vec<_>>()",
       "scope": "Read",
       "mcp_fields": {},
-      "mcp": "tool-first",
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -628,7 +605,6 @@
       "mcp_required_fields": [
         "room_ref"
       ],
-      "mcp": "tool-first",
       "page": {
         "rows": "rows",
         "cursor": "next_after"
@@ -644,7 +620,6 @@
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "mcp_fields": {"room_ref": "room_ref"},
-      "mcp": "tool-first",
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -657,7 +632,6 @@
       "admission": {"unrestricted_record_scope": true},
       "mcp_fields": {"room_ref": "room_ref", "turn_ref": "after"},
       "mcp_required_fields": ["room_ref"],
-      "mcp": "tool-first",
       "page": {"rows": "rows", "cursor": "next_after"},
       "mcp_scope": "unrestricted",
       "section": false
@@ -670,7 +644,6 @@
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "mcp_fields": {"room_ref": "room_ref", "turn_ref": "turn_ref"},
-      "mcp": "tool-first",
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -682,7 +655,6 @@
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "mcp_fields": {"room_ref": "room_ref", "turn_ref": "turn_ref"},
-      "mcp": "tool-first",
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -696,7 +668,6 @@
         "room_ref": "room_ref",
         "turn_ref": "turn_ref"
       },
-      "mcp": "tool-first",
       "mcp_scope": "unrestricted",
       "section": false
     },
@@ -710,7 +681,6 @@
         "spec": "$",
         "room_ref": "=conversation_ref"
       },
-      "mcp": "tool-first",
       "mcp_scope": "unrestricted",
       "section": false
     },

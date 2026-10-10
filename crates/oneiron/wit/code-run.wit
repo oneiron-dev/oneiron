@@ -85,6 +85,17 @@ world guest {
     import memory-supersede-claim: func(input: supersede-input) -> result<claim-output, string>;
     // @js self.memory.put_edge
     import memory-put-edge: func(input: edge-input) -> result<edge-output, string>;
+    // The SDK verb table, served from the host's generated catalog, and one
+    // call of any verb in it. Bootstrap builds `self.memory.<verb>` from these
+    // two, so a verb row reaches the guest with no component rebuild.
+    // @js self.verbs.names @sync @abi
+    import verb-names: func() -> result<list<string>, string>;
+    // @js self.verbs.call @abi
+    import verb-call: func(
+        verb: string,
+        // @json
+        input: string
+    ) -> result<string, string>;
     // @js self.report_blocked
     import report-blocked: func(category: string, detail: string) -> result<blocked-output, string>;
     // @js ask
