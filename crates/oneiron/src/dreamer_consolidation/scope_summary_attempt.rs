@@ -5,9 +5,10 @@
 //! summary instruction, and lands the body under the Dreamer's byline. The
 //! instruction is host configuration: the engine ships no summary prompt.
 
+use super::resources::document_version;
 use super::step_charge::StepChargeTally;
 use super::support::{DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE, invalid_consolidation};
-use super::turn_text::read_turn_text;
+use super::turn_text::{collect_in, dreamer_read, snapshot};
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::dreamer_wake::{
     DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, DreamerAttemptExecutor,
@@ -17,10 +18,14 @@ use crate::error::{Error, Result};
 use crate::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
     DurableStepError, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
-    ModelId, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence, call_as_step,
+    ModelId, ModelTierRef, ResponseFormat, ScopeResource, StepOutcome, TierPrecedence,
+    call_as_step,
 };
+use crate::registry::ENTITY_TYPE_TURN;
+use crate::scope_summary::{ComposedSummary, SummarySourceMessage};
 use crate::write_envelope::WriteActor;
-use std::collections::BTreeMap;
+use crate::{EntityId, Vault};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Wraps an executor with the declared-summary arm. Every other attempt is
 /// delegated untouched.
@@ -96,9 +101,29 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         let plan = ctx
             .vault
             .plan_scope_summary(&attempt.status.payload.input)?;
-        let evidence = scope_evidence(ctx.vault, &plan.covers)?;
-        if evidence.is_empty() {
+        // Nothing is spent yet: a scope that cannot be read just refuses.
+        let evidence =
+            scope_evidence(ctx.vault, &plan.sources).map_err(EvidenceError::into_error)?;
+        let Some(first) = evidence.covers.first().copied() else {
             return Err(invalid_consolidation("summary scope has no text"));
+        };
+        let memo = plan.composition_memo(
+            &evidence
+                .covers
+                .iter()
+                .copied()
+                .zip(evidence.versions.iter().copied())
+                .collect::<Vec<_>>(),
+            &evidence.messages,
+            &[instruction, self.model.as_str()],
+        )?;
+        // The same composition already stands: no second call, no second
+        // SUMMARY; only the landing this declaration asks for.
+        if ctx
+            .vault
+            .reuse_composed_scope_summary(&plan, &first, &memo)?
+        {
+            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
         }
         let locality = self
             .inference
@@ -108,7 +133,12 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             model: self.model.clone(),
             envelope: CallEnvelope {
                 seat_effort: None,
-                scope: crate::llm::Scope::default(),
+                // The call reads exactly the versions the Dreamer was admitted
+                // to read.
+                scope: crate::llm::Scope {
+                    readable: evidence.readable.clone(),
+                    ..crate::llm::Scope::default()
+                },
                 // The scope's transcript leaves the vault exactly as an
                 // extraction's does, so it passes the same egress gate.
                 purpose: CallPurpose::Extraction,
@@ -131,7 +161,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 LlmMessage {
                     role: LlmMessageRole::User,
                     content: vec![ContentPart::Text {
-                        text: evidence.clone(),
+                        text: evidence.text.clone(),
                     }],
                 },
             ],
@@ -208,13 +238,28 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             return Ok(charges.park("the model wrote an empty summary"));
         }
         // The body must summarize the text as it stands: an edit while the
-        // model wrote sends the declaration round again, soon.
-        if scope_evidence(ctx.vault, &plan.covers)? != evidence {
-            return Ok(compose_again(&charges, ctx.now_ms));
+        // model wrote sends the declaration round again, soon. The call is
+        // paid either way, so every outcome here carries its spend.
+        match scope_evidence(ctx.vault, &plan.sources) {
+            Ok(now) if now == evidence => {}
+            // The Dreamer may no longer read what the body was written from:
+            // this declaration ends here.
+            Err(EvidenceError::Withheld(error)) => {
+                return Ok(charges.park(&format!("summary evidence withheld: {error}")));
+            }
+            Ok(_) | Err(EvidenceError::Failed(_)) => {
+                return Ok(compose_again(&charges, ctx.now_ms));
+            }
         }
+        let composed = ComposedSummary {
+            text: body,
+            covers: evidence.covers,
+            messages: evidence.messages,
+            memo,
+        };
         match ctx
             .vault
-            .land_composed_scope_summary(attempt_id, &plan, body, self.actor)
+            .land_composed_scope_summary(attempt_id, &plan, &composed, self.actor)
         {
             Ok(_) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
@@ -241,15 +286,83 @@ fn compose_again(charges: &StepChargeTally, now_ms: u64) -> DreamerAttemptExecut
     }
 }
 
-/// The covered records' text as the model reads it, one line per record.
-/// The plan's covers never hold an earlier summary's reply, so a summary
-/// never feeds on summary prose.
-fn scope_evidence(vault: &crate::Vault, covers: &[crate::EntityId]) -> Result<String> {
-    let mut evidence = String::new();
-    for record in covers {
-        if let Some(text) = read_turn_text(vault, record)?.into_text() {
-            evidence.push_str(&format!("[{}] {text}\n", record.to_hex()));
+/// The scope as the Dreamer may read it, read in one snapshot.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ScopeEvidence {
+    /// One line per covered record, as the model reads it.
+    text: String,
+    /// The records whose text the model reads: the summary's covers.
+    covers: Vec<EntityId>,
+    /// Content hash of each covered record's body, in `covers` order.
+    versions: Vec<[u8; 32]>,
+    /// The MESSAGEs that text came from, at the revisions read.
+    messages: Vec<SummarySourceMessage>,
+    /// Every record and MESSAGE version read: the model call's read scope.
+    readable: BTreeSet<ScopeResource>,
+}
+
+/// Why the scope could not be read.
+enum EvidenceError {
+    /// The Dreamer's read authority withholds a MESSAGE a record's text needs.
+    Withheld(Error),
+    /// Anything else: the scope moved under the read, or storage failed.
+    Failed(Error),
+}
+
+impl EvidenceError {
+    fn into_error(self) -> Error {
+        match self {
+            Self::Withheld(error) | Self::Failed(error) => error,
         }
     }
+}
+
+/// The sources' text as the Dreamer reads it, one line per record. Every
+/// record is read through the Dreamer's own scoped read, inline text
+/// included: a record it may not read is neither in the prompt nor covered.
+/// The plan's sources never hold an earlier summary's reply, so a summary
+/// never feeds on summary prose.
+fn scope_evidence(
+    vault: &Vault,
+    sources: &[EntityId],
+) -> std::result::Result<ScopeEvidence, EvidenceError> {
+    let read = dreamer_read(vault).map_err(EvidenceError::Failed)?;
+    let txn = snapshot(vault).map_err(EvidenceError::Failed)?;
+    let rows = read
+        .get_entities_parts_in_txn(&txn, sources)
+        .map_err(EvidenceError::Failed)?;
+    let mut evidence = ScopeEvidence::default();
+    for (record, row) in sources.iter().zip(rows) {
+        let Some((ENTITY_TYPE_TURN, _, body)) = row else {
+            continue;
+        };
+        let mut withheld = 0;
+        let turn = collect_in(&read, &txn, record, &body, &mut withheld).map_err(|error| {
+            if withheld == 0 {
+                EvidenceError::Failed(error)
+            } else {
+                EvidenceError::Withheld(error)
+            }
+        })?;
+        let Some(text) = turn.text() else {
+            continue;
+        };
+        evidence
+            .text
+            .push_str(&format!("[{}] {text}\n", record.to_hex()));
+        evidence.covers.push(*record);
+        evidence
+            .versions
+            .push(super::swarm_evidence_content_hash(&body));
+        evidence.readable.insert(document_version(*record, &body));
+        for (message, revision, version) in turn.message_pins() {
+            evidence.messages.push(SummarySourceMessage {
+                id: message,
+                revision,
+            });
+            evidence.readable.insert(version.clone());
+        }
+    }
+    evidence.messages.sort_unstable();
     Ok(evidence)
 }

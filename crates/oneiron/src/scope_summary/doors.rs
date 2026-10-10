@@ -1,7 +1,8 @@
 //! Transactional spawn, summary mint, merge-header and drill doors.
 
 use super::codec::{
-    ScopeSummaryBody, decode_scope_summary_body, encode_scope_summary_body, invalid, scope_value,
+    ScopeSummaryBody, SummarySourceMessage, decode_scope_summary_body, encode_scope_summary_body,
+    invalid, scope_value,
 };
 use crate::affect::Vad;
 use crate::batch::EdgeValueFields;
@@ -49,10 +50,21 @@ fn summary_in_txn(vault: &Vault, txn: &RoTxn<'_>, summary: &EntityId) -> Result<
 }
 
 fn validate_covers_in_txn(vault: &Vault, txn: &RoTxn<'_>, body: &ScopeSummaryBody) -> Result<()> {
+    // A composed body holds the words of every MESSAGE it names: once one is
+    // erased, the summary is not served again.
+    for message in &body.messages {
+        if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &message.id)?.is_live()
+            || vault.archive_tombstone_in_txn(txn, &message.id)?.is_some()
+        {
+            return Err(invalid("summary source message was erased"));
+        }
+    }
     let scope = &body.scope;
     if let ScopePath::BranchSpan { after, through } = scope.path {
+        // The span's records, of which the body covers those it was written
+        // from: a reply the Dreamer could not read is not claimed.
         let exact = prove_branch_span(&vault.store, txn, scope, after, through)?;
-        if body.covers != exact {
+        if !body.covers.iter().all(|covered| exact.contains(covered)) {
             return Err(invalid("summary covers differ from bounded reply span"));
         }
         return Ok(());
@@ -200,7 +212,41 @@ pub(super) fn scope_sources_in_txn(
     Ok(ScopeSources { members, sources })
 }
 
-/// Mints a summary whose `covers` are exactly the scope's sources.
+/// What a summary body was written from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SummarySources {
+    /// The records whose text the body was written from.
+    pub(crate) covers: Vec<EntityId>,
+    /// The MESSAGEs those records' text came from, at the revisions read.
+    pub(crate) messages: Vec<SummarySourceMessage>,
+    /// The composition memo of a Dreamer-composed body.
+    pub(crate) memo: Option<[u8; 32]>,
+}
+
+impl SummarySources {
+    /// Every source the scope resolves to, for a body written outside the
+    /// Dreamer (test fixtures).
+    #[cfg(test)]
+    fn whole_scope(vault: &Vault, txn: &mut RwTxn<'_>, scope: &ScopeSelector) -> Result<Self> {
+        Ok(Self {
+            covers: scope_sources_in_txn(vault, txn, scope)?.sources,
+            messages: Vec::new(),
+            memo: None,
+        })
+    }
+}
+
+/// Every source a summary's words came from: what erasing must reach.
+fn word_sources(body: &ScopeSummaryBody) -> impl Iterator<Item = &EntityId> {
+    body.covers
+        .iter()
+        .chain(body.messages.iter().map(|message| &message.id))
+}
+
+/// Mints a summary of `sources`. Each MESSAGE is registered as a dependency
+/// beside the covers' DerivedFrom edges, so erasing one invalidates the
+/// summary in the erasing transaction.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn mint_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -209,15 +255,18 @@ pub(super) fn mint_in_txn(
     text: &str,
     actor: WriteActor,
     now: u64,
+    sources: SummarySources,
 ) -> Result<EntityId> {
     actor_in_txn(&vault.store, txn, actor)?;
     let body = ScopeSummaryBody {
-        v: 1,
+        v: if sources.memo.is_some() { 2 } else { 1 },
         scope: scope.clone(),
         text: text.to_owned(),
         actor: actor.entity_ref().to_hex(),
-        covers: scope_sources_in_txn(vault, txn, scope)?.sources,
+        covers: sources.covers,
         minted_at: now,
+        messages: sources.messages,
+        memo: sources.memo,
     };
     let encoded = encode_scope_summary_body(&body)?;
     let mut batch = vault
@@ -237,7 +286,65 @@ pub(super) fn mint_in_txn(
         batch = batch.edge(&id, EdgeKind::DerivedFrom, covered, 1.0);
     }
     batch.apply(txn)?;
+    for message in &body.messages {
+        crate::ports::record_derived_edge_in_txn(&vault.store, txn, &id, &message.id)?;
+    }
     Ok(id)
+}
+
+/// A standing composed summary with this memo, found among the summaries
+/// derived from `first`, the first record it covers. Stale, erased or no
+/// longer valid summaries never match.
+pub(super) fn standing_composition_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    first: &EntityId,
+    memo: &[u8; 32],
+) -> Result<Option<EntityId>> {
+    let candidates = match vault.filtered_edge_peers(
+        txn,
+        crate::ports::EdgeDirection::In,
+        first,
+        EdgeKind::DerivedFrom,
+        Some(ENTITY_TYPE_SUMMARY),
+        "summary composition scan",
+    ) {
+        Ok(candidates) => candidates,
+        // Too many to scan: compose afresh rather than guess.
+        Err(Error::IndexOverflow(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    for candidate in candidates {
+        if crate::ports::stale_in_txn(&vault.store, txn, &candidate)? {
+            continue;
+        }
+        // A summary that no longer validates is not reused, whatever failed.
+        if summary_in_txn(vault, txn, &candidate).is_ok_and(|body| body.memo.as_ref() == Some(memo))
+        {
+            return Ok(Some(candidate));
+        }
+    }
+    Ok(None)
+}
+
+/// Whether `summary`'s merge header already stands on `turn`.
+pub(super) fn header_landed_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    summary: &EntityId,
+    turn: &EntityId,
+) -> Result<bool> {
+    for claim in vault.claims_for_subject_in_txn(txn, turn)? {
+        let Some(body) = vault.get_claim_in_txn(txn, &claim)? else {
+            continue;
+        };
+        if body.lifecycle == crate::claim::ClaimLifecycleStatus::Active
+            && merge_summary_ref(&body)? == Some((*turn, *summary))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 pub(super) fn land_in_txn(
@@ -305,6 +412,9 @@ pub(super) fn land_in_txn(
             &Value::Map(vec![(Value::from("txt"), Value::from(body.text.clone()))]),
         )
         .map_err(|_| invalid("reply body encode failed"))?;
+        // The reply copies the summary's words, so it depends on everything
+        // they came from: erasing any of it invalidates the reply as well.
+        let sources = word_sources(&body).copied().collect::<Vec<_>>();
         let appended = append_in_txn(
             vault,
             txn,
@@ -329,6 +439,9 @@ pub(super) fn land_in_txn(
             Some(*summary),
             false,
         )?;
+        for source in &sources {
+            crate::ports::record_derived_edge_in_txn(&vault.store, txn, &appended.id, source)?;
+        }
         Some(appended.id)
     } else {
         None
@@ -343,10 +456,12 @@ pub(crate) fn body_covers_in_txn(
     entity_type: u8,
     bytes: &[u8],
 ) -> Result<Option<Vec<EntityId>>> {
+    // A reader of the body must be able to read every record and MESSAGE
+    // its words came from.
     if entity_type == ENTITY_TYPE_SUMMARY && super::codec::is_scope_summary(bytes) {
         let body = decode_scope_summary_body(bytes)?;
         validate_covers_in_txn(vault, txn, &body)?;
-        return Ok(Some(body.covers));
+        return Ok(Some(word_sources(&body).copied().collect()));
     }
     if entity_type == ENTITY_TYPE_TURN
         && let Some(summary) = super::codec::reply_summary(bytes)?
@@ -355,7 +470,7 @@ pub(crate) fn body_covers_in_txn(
         if conversation_of(&vault.store, txn, record)? != summary.scope.conversation {
             return Err(invalid("reply and summary conversations differ"));
         }
-        return Ok(Some(summary.covers));
+        return Ok(Some(word_sources(&summary).copied().collect()));
     }
     Ok(None)
 }
@@ -462,6 +577,7 @@ impl Vault {
         actor: WriteActor,
     ) -> Result<EntityId> {
         self.with_write_txn_grouped(|txn| {
+            let sources = SummarySources::whole_scope(self, txn, scope)?;
             mint_in_txn(
                 self,
                 txn,
@@ -470,6 +586,7 @@ impl Vault {
                 text,
                 actor,
                 self.store.clock.now_recorded_at(),
+                sources,
             )
         })
     }
@@ -502,6 +619,7 @@ impl Vault {
                 return Err(invalid("selected thread differs from bounded span"));
             }
             let now = self.store.clock.now_recorded_at();
+            let sources = SummarySources::whole_scope(self, txn, &scope)?;
             let summary = mint_in_txn(
                 self,
                 txn,
@@ -510,6 +628,7 @@ impl Vault {
                 text,
                 actor,
                 now,
+                sources,
             )?;
             let landed = land_in_txn(self, txn, &summary, &trunk, actor, false, now)?;
             Ok((summary, landed))
@@ -533,6 +652,7 @@ impl Vault {
         }
         self.with_write_txn_grouped(|txn| {
             let now = self.store.clock.now_recorded_at();
+            let sources = SummarySources::whole_scope(self, txn, scope)?;
             let summary = mint_in_txn(
                 self,
                 txn,
@@ -541,6 +661,7 @@ impl Vault {
                 text,
                 actor,
                 now,
+                sources,
             )?;
             let landed = land_on
                 .map(|turn| land_in_txn(self, txn, &summary, &turn, actor, as_record, now))

@@ -37,6 +37,7 @@ mod wake_event;
 mod wake_fire;
 mod wake_proposal;
 
+pub(crate) use self::wake_approval::scheduled_commitment_wake_authorised;
 pub use self::wake_approval::{
     ApprovedCommitmentWake, approved_commitment_wake, schedule_approved_commitment_wake,
     schedule_approved_commitment_wakes,

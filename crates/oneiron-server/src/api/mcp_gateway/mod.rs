@@ -6,6 +6,7 @@ mod code_mode_verbs;
 mod envelope;
 mod exec_board_verbs;
 mod memory_response;
+mod stream_reads;
 mod tasks_response;
 
 pub(crate) use self::actor_dispatch::{
@@ -15,6 +16,7 @@ pub(crate) use self::actor_dispatch::{
 pub(crate) use self::admission::mcp_admit_scoped_call;
 use self::admission::{mcp_credential_reads, mcp_scope_covers_entity, mcp_validated_call_args};
 pub(crate) use self::board_setup::{McpBoardOmissions, execute_mcp_setup};
+pub(crate) use self::stream_reads::mcp_stream_reads_task;
 use self::board_setup::{
     McpBoardState, McpCarrierPolicy, mcp_board_frame_error, mcp_board_verb_error,
     mcp_current_board, mcp_endpoint_result, mcp_page_cursor_error, mcp_preflight_page,

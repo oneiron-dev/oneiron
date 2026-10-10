@@ -206,14 +206,14 @@ impl BoardStreamRegistry {
     }
 
     pub fn route_event(&mut self, e: BoardEvent) -> RouteObservation {
-        self.route_event_where(e, |_| true)
+        self.route_event_where(e, |_, _| true)
     }
 
     /// [`Self::route_event`] over the connections `admit` accepts.
     pub(super) fn route_event_where(
         &mut self,
         e: BoardEvent,
-        admit: impl Fn(&StreamConnectionState) -> bool,
+        admit: impl Fn(&StreamConnectionId, &StreamConnectionState) -> bool,
     ) -> RouteObservation {
         let mut o = RouteObservation::default();
         let class = e.class();
@@ -221,8 +221,8 @@ impl BoardStreamRegistry {
             o.on_demand_ignored = self.connections.len();
             return o;
         }
-        for st in self.connections.values_mut() {
-            if !admit(st) || !st.subscribed.contains(&e.subscription_scope()) {
+        for (c, st) in &mut self.connections {
+            if !admit(c, st) || !st.subscribed.contains(&e.subscription_scope()) {
                 continue;
             }
             let matches = match &e {

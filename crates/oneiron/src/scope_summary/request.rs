@@ -6,10 +6,11 @@
 //! under its own byline; the merge header and optional reply stay the
 //! requester's move on its own turn.
 
+use super::codec::SummarySourceMessage;
 use super::codec::{invalid, parse_scope, scope_value};
 use super::doors::{
-    LandedHeader, ScopeSources, land_in_txn, mint_in_txn, scope_sources_in_txn,
-    validate_landing_in_txn,
+    LandedHeader, ScopeSources, SummarySources, header_landed_in_txn, land_in_txn, mint_in_txn,
+    scope_sources_in_txn, standing_composition_in_txn, validate_landing_in_txn,
 };
 use crate::attempt_queue::{AttemptId, EnqueueAttempt, EnqueueOutcome};
 use crate::conversation_dag::{
@@ -27,6 +28,7 @@ use rmpv::Value;
 
 const REQUEST_VERSION: u64 = 1;
 const SUMMARY_ID_DOMAIN: &[u8] = b"oneiron:dreamer-scope-summary:v1";
+const MEMO_DOMAIN: &[u8] = b"oneiron:dreamer-scope-summary-memo:v1";
 
 /// What the caller asks the Dreamer to summarize.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,11 +65,57 @@ pub(crate) struct ScopeSummaryPlan {
     pub(crate) scope: ScopeSelector,
     /// Everything the scope resolved to: the landing fence.
     pub(crate) members: Vec<EntityId>,
-    /// The records the body is written from, and so its `covers`.
-    pub(crate) covers: Vec<EntityId>,
+    /// The members a body may be written from (never an earlier summary's
+    /// reply). The covers are those of them the Dreamer could read.
+    pub(crate) sources: Vec<EntityId>,
     pub(crate) land_on: Option<EntityId>,
     pub(crate) as_record: bool,
     pub(crate) requester: WriteActor,
+}
+
+impl ScopeSummaryPlan {
+    /// The composition memo (ARCH-0006a scope content hash): this scope,
+    /// each covered record with the content hash of the body read, each
+    /// MESSAGE at its revision, and the composing `policy`. Landing requests
+    /// are not part of it: they never change the body.
+    pub(crate) fn composition_memo(
+        &self,
+        covers: &[(EntityId, [u8; 32])],
+        messages: &[SummarySourceMessage],
+        policy: &[&str],
+    ) -> Result<[u8; 32]> {
+        let mut scope = Vec::new();
+        rmpv::encode::write_value(&mut scope, &scope_value(&self.scope))
+            .map_err(|_| invalid("summary scope encode failed"))?;
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(MEMO_DOMAIN);
+        hasher.update(&(scope.len() as u64).to_be_bytes());
+        hasher.update(&scope);
+        hasher.update(&(covers.len() as u64).to_be_bytes());
+        for (record, version) in covers {
+            hasher.update(record.as_bytes());
+            hasher.update(version);
+        }
+        hasher.update(&(messages.len() as u64).to_be_bytes());
+        for message in messages {
+            hasher.update(message.id.as_bytes());
+            hasher.update(&message.revision);
+        }
+        for part in policy {
+            hasher.update(&(part.len() as u64).to_be_bytes());
+            hasher.update(part.as_bytes());
+        }
+        Ok(*hasher.finalize().as_bytes())
+    }
+}
+
+/// A body the Dreamer composed, and what it was written from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ComposedSummary<'a> {
+    pub(crate) text: &'a str,
+    pub(crate) covers: Vec<EntityId>,
+    pub(crate) messages: Vec<SummarySourceMessage>,
+    pub(crate) memo: [u8; 32],
 }
 
 impl Vault {
@@ -185,7 +233,7 @@ impl Vault {
             Ok(ScopeSummaryPlan {
                 scope,
                 members,
-                covers: sources,
+                sources,
                 land_on,
                 as_record,
                 requester: request.requester,
@@ -202,6 +250,43 @@ impl Vault {
         ))
     }
 
+    /// Reuses a standing summary of exactly this composition (`memo`), so an
+    /// unchanged declaration makes no second model call and no second
+    /// SUMMARY. Only the landing this declaration asks for is done, and only
+    /// once per summary and turn. `first` is the first record the body would
+    /// cover. False when the scope moved or no such summary stands.
+    pub(crate) fn reuse_composed_scope_summary(
+        &self,
+        plan: &ScopeSummaryPlan,
+        first: &EntityId,
+        memo: &[u8; 32],
+    ) -> Result<bool> {
+        self.with_write_txn(|txn| {
+            let current = scope_sources_in_txn(self, txn, &plan.scope)?;
+            if current.members != plan.members || current.sources != plan.sources {
+                return Ok(false);
+            }
+            let Some(summary) = standing_composition_in_txn(self, txn, first, memo)? else {
+                return Ok(false);
+            };
+            if let Some(turn) = plan.land_on
+                && !header_landed_in_txn(self, txn, &summary, &turn)?
+            {
+                let now = self.store.clock.now_recorded_at();
+                land_in_txn(
+                    self,
+                    txn,
+                    &summary,
+                    &turn,
+                    plan.requester,
+                    plan.as_record,
+                    now,
+                )?;
+            }
+            Ok(true)
+        })
+    }
+
     /// Lands a body the Dreamer composed over `plan`, once per attempt.
     ///
     /// The scope must still resolve as it did when the body was written, so
@@ -211,7 +296,7 @@ impl Vault {
         &self,
         attempt: AttemptId,
         plan: &ScopeSummaryPlan,
-        text: &str,
+        composed: &ComposedSummary<'_>,
         author: WriteActor,
     ) -> Result<(EntityId, Option<LandedHeader>)> {
         if author != self.dreamer_authority()? {
@@ -232,13 +317,27 @@ impl Vault {
                 return Ok((id, None));
             }
             let current = scope_sources_in_txn(self, txn, &plan.scope)?;
-            if current.members != plan.members || current.sources != plan.covers {
+            if current.members != plan.members || current.sources != plan.sources {
                 return Err(Error::ConcurrentWrite(
                     "summary scope changed while the Dreamer composed it",
                 ));
             }
             let now = self.store.clock.now_recorded_at();
-            mint_in_txn(self, txn, id, &plan.scope, text, author, now)?;
+            let sources = SummarySources {
+                covers: composed.covers.clone(),
+                messages: composed.messages.clone(),
+                memo: Some(composed.memo),
+            };
+            mint_in_txn(
+                self,
+                txn,
+                id,
+                &plan.scope,
+                composed.text,
+                author,
+                now,
+                sources,
+            )?;
             let landed = plan
                 .land_on
                 .map(|turn| land_in_txn(self, txn, &id, &turn, plan.requester, plan.as_record, now))

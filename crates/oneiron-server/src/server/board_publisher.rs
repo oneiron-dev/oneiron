@@ -3,10 +3,14 @@
 //! The engine announces every committed TASK write and decides what it means
 //! to the board (`oneiron::context_board::CommittedTaskBoardState`). This loop
 //! is the host half: it carries each announcement into the process-local
-//! stream registry the MCP gateway owns. Done deltas then ride the
-//! subscriber's next tool result; wakes wait in the registry for a host-side
-//! adapter. The read runs on a blocking thread, outside the registry lock.
+//! stream registry the MCP gateway owns. A recipient's connection hears the
+//! event only if its bound credential may read the TASK now, by the same
+//! predicate the board door filters TASK rows with. Done deltas then ride the
+//! subscriber's next tool result, read again there; wakes wait in the
+//! registry for a host-side adapter. The reads run on a blocking thread,
+//! outside the registry lock.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::context_board::CommittedTaskBoardState;
@@ -45,8 +49,30 @@ impl SyncServer {
                     .await;
             match state {
                 Ok(Ok(Some(state))) => {
+                    let readers = self
+                        .mcp_registry
+                        .lock()
+                        .await
+                        .stream_readers_for(&state.recipients().collect::<Vec<_>>());
+                    let vault = Arc::clone(self.vault());
+                    let admitted = tokio::task::spawn_blocking(move || {
+                        readers
+                            .into_iter()
+                            .filter(|reader| {
+                                crate::api::mcp_stream_reads_task(&vault, reader, &task)
+                            })
+                            .map(|reader| reader.stream_connection)
+                            .collect::<BTreeSet<_>>()
+                    })
+                    .await;
+                    let Ok(admitted) = admitted else {
+                        tracing::warn!(task = %task.to_hex(), "board publisher admission did not finish");
+                        continue;
+                    };
                     let mut registry = self.mcp_registry.lock().await;
-                    registry.streams_mut().publish_task_state(state);
+                    registry
+                        .streams_mut()
+                        .publish_task_state(state, |connection| admitted.contains(connection));
                 }
                 Ok(Ok(None)) => {}
                 Ok(Err(error)) => {

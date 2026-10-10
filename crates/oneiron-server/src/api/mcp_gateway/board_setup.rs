@@ -4,6 +4,7 @@ use super::{
     McpCallContext, McpGatewayError, mcp_actor_result, mcp_credential_reads, mcp_engine_error,
     mcp_facade_error, mcp_scope_covers_entity, mcp_scoped_read, mcp_text_content,
 };
+use super::stream_reads::mcp_live_task_lines;
 use crate::mcp::McpPageBudget;
 use crate::mcp::McpPageCursorState;
 use crate::mcp::McpPageSnapshot;
@@ -53,6 +54,11 @@ pub(super) enum McpCarrierPolicy {
 /// at all. This is a delivery ceiling, not a discard: the server takes no
 /// payload for such a connection, so nothing the engine queued is destroyed
 /// here. Vault-wide connections are untouched.
+///
+/// A vault-wide call also binds this credential as the connection's reader,
+/// the one the board publisher admits own-task events under, and every
+/// queued TASK line is read again before it rides: a line whose TASK was
+/// erased, or that this credential may no longer read, is dropped.
 pub(super) async fn mcp_endpoint_result(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
@@ -65,6 +71,7 @@ pub(super) async fn mcp_endpoint_result(
         None
     } else {
         let mut registry = server.mcp_registry.lock().await;
+        registry.bind_stream_reader(actor);
         match policy {
             McpCarrierPolicy::Drain => registry.next_carrier_frame(&actor.stream_connection),
             McpCarrierPolicy::DrainWithCapabilities(hits) => {
@@ -80,6 +87,7 @@ pub(super) async fn mcp_endpoint_result(
             }
         }
     };
+    let carrier = carrier.and_then(|frame| mcp_live_task_lines(server, actor, frame));
     // Never turn lifecycle movement into a push. A narrowed connector never
     // reaches the rider and an empty queue remains empty.
     let carrier = if carrier.is_some() {
@@ -482,7 +490,7 @@ pub(super) fn mcp_scoped_tasks_section(
 ///
 /// A row whose id is not an entity id cannot be proven in scope, so a narrowed
 /// credential does not see it: this fails closed.
-fn mcp_scope_admits_row(
+pub(super) fn mcp_scope_admits_row(
     vault: &oneiron::Vault,
     actor: &McpResolvedActor,
     scoped_read: &oneiron::claim::ScopedRead<'_>,

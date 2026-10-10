@@ -1030,6 +1030,28 @@ async fn a_second_canonical_summary_never_reads_the_first_summarys_reply() {
     )
     .await;
     assert!(eventually(Duration::from_secs(30), || summaries() == 1).await);
+    // A later record after the first summary's reply is new evidence, so the
+    // second declaration composes again; over unchanged records it would
+    // reuse the first summary.
+    let head = server
+        .vault
+        .resolve_dag_scope(&oneiron::conversation_dag::ScopeSelector {
+            conversation: EntityId::from_hex(conv["id"].as_str().unwrap()).unwrap(),
+            session: None,
+            path: oneiron::conversation_dag::ScopePath::Canonical,
+            include_forks: false,
+        })
+        .unwrap()
+        .records
+        .last()
+        .copied()
+        .unwrap();
+    let later = post(
+        &server,
+        &format!("{path}/records"),
+        json!({"parent": head.to_hex(), "advance": true, "body": {"txt": "a later record"}, "actor": actor}),
+    )
+    .await;
     declare(
         &server,
         &format!("{path}/summaries"),
@@ -1047,18 +1069,25 @@ async fn a_second_canonical_summary_never_reads_the_first_summarys_reply() {
         panic!("two summary calls expected, saw {}", prompts.len());
     };
     assert!(second.contains("the original record"), "{second}");
+    assert!(second.contains("a later record"), "{second}");
     assert!(!second.contains("summary prose one"), "{second}");
+    let mut covers = Vec::new();
     for summary in server
         .vault
         .entities_by_type(oneiron::registry::ENTITY_TYPE_SUMMARY)
         .unwrap()
     {
-        let covers = get(
+        let read = get(
             &server,
             &format!("/v1/core/summaries/{}/covers", summary.to_hex()),
         )
         .await;
-        assert_eq!(covers["covers"], json!([root["id"]]));
+        covers.push(read["covers"].clone());
     }
+    covers.sort_by_key(|covers| covers.as_array().map_or(0, Vec::len));
+    assert_eq!(
+        covers,
+        [json!([root["id"]]), json!([root["id"], later["id"]])]
+    );
     host.shutdown().await;
 }

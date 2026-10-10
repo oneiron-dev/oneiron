@@ -2,7 +2,8 @@
 //!
 //! Every committed TASK write is announced after its commit
 //! ([`crate::Vault::subscribe_task_updates`]). The host reads what the TASK now
-//! is with [`CommittedTaskBoardState::read`], outside any lock, and hands it to
+//! is with [`CommittedTaskBoardState::read`], outside any lock, decides which
+//! of the recipients' connections may read that TASK now, and hands both to
 //! [`BoardStreamRegistry::publish_task_state`]. The event, its recipient and its
 //! line all come from the committed TASK, never from a caller's claim. The
 //! engine only publishes: the queued wakes wait for a host-side adapter
@@ -12,7 +13,7 @@
 use std::collections::VecDeque;
 
 use super::events::{BoardEvent, RouteObservation, SubscriptionScope};
-use super::frames::DeltaRow;
+use super::frames::{DeltaRow, StreamConnectionId};
 use super::provenance::VerifiedOwnTaskEvent;
 use super::registry::{BoardStreamRegistry, StreamConnectionState};
 use crate::context_board::TaskBoardStatus;
@@ -57,6 +58,12 @@ impl CommittedTaskBoardState {
             line: crate::context_board::tasks::intent_row(&presence).line,
         }))
     }
+
+    /// The actors an event about this TASK can reach: its owner, and the
+    /// actor an open consult addresses.
+    pub fn recipients(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.owner_ref.as_str()).chain(self.consultee_ref.as_deref())
+    }
 }
 
 /// What this registry last routed for one TASK.
@@ -100,7 +107,14 @@ impl BoardStreamRegistry {
     /// Only connections whose ceiling spans the vault hear these events: the
     /// row is not projected through a world or facet ceiling, so a narrowed
     /// connection hears none, as the carrier drain already delivers it none.
-    pub fn publish_task_state(&mut self, state: CommittedTaskBoardState) -> RouteObservation {
+    /// Of those, only the ones `reads` admits: a subscription is to a
+    /// category of events, never a grant to read the TASK behind one, so the
+    /// host answers with each connection's own live read of the TASK.
+    pub fn publish_task_state(
+        &mut self,
+        state: CommittedTaskBoardState,
+        reads: impl Fn(&StreamConnectionId) -> bool,
+    ) -> RouteObservation {
         let previous = self.published_tasks.swap(
             &state.task_ref,
             Routed {
@@ -115,10 +129,11 @@ impl BoardStreamRegistry {
             actor_ref: actor_ref.to_owned(),
             event_ref: format!("{}:{what}", state.task_ref),
         };
-        let vault_wide = |st: &StreamConnectionState| {
+        let vault_wide = |c: &StreamConnectionId, st: &StreamConnectionState| {
             SubscriptionScope::ALL
                 .iter()
                 .all(|scope| st.allowed.contains(scope))
+                && reads(c)
         };
         match state.status {
             TaskBoardStatus::Done
