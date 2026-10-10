@@ -799,7 +799,9 @@ fn a_vault_a_restore_replaced_is_archived_until_activated() {
         ..receipt.clone()
     };
     assert!(archived(replacement.with_write_txn(|txn| {
-        replacement.store.append_gate_decision_in_txn(txn, &unminted)
+        replacement
+            .store
+            .append_gate_decision_in_txn(txn, &unminted)
     })));
     // As `oneiron restore` runs it.
     source
@@ -915,9 +917,10 @@ fn a_writer_waiting_through_a_swap_is_refused() {
     assert!(archived(source.with_write_txn(|txn| {
         RESTORE_EPOCH.put(&source.store, txn, &u64::MAX, &late)
     })));
-    assert!(archived(
-        source.delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
-    ));
+    assert!(archived(source.delete_entity_with_reason(
+        &claim,
+        crate::DeleteReason::UserHardDelete
+    )));
     drop((source, replacement));
     let previous = Vault::open(&staged, VaultConfig::device()).unwrap();
     assert!(!previous.restore_epochs().unwrap().contains(&late));
@@ -944,9 +947,10 @@ fn a_swap_that_leaves_the_vault_in_place_is_refused() {
     ));
     drop((source, replacement));
     let staged = Vault::open(root.path().join("staged"), VaultConfig::device()).unwrap();
-    assert!(archived(
-        staged.delete_entity_with_reason(&claim, crate::DeleteReason::UserHardDelete)
-    ));
+    assert!(archived(staged.delete_entity_with_reason(
+        &claim,
+        crate::DeleteReason::UserHardDelete
+    )));
     drop(staged);
     Vault::open(root.path().join("vault"), VaultConfig::device())
         .unwrap()
