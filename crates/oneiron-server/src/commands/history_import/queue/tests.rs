@@ -304,6 +304,44 @@ fn a_waiting_claim_whose_logs_changed_is_placed_anew_before_a_pass_chooses() {
     assert!(bench.waiting().is_empty());
 }
 
+/// Sol 1354 R3-1: the same change, made while a pass chooses, after it
+/// stamped the waiting claim and chose a later session that spends the
+/// budget. The claim is stamped again before anything lands, placed anew,
+/// and nothing that sorts after it lands first.
+#[test]
+fn a_claim_whose_logs_change_while_a_pass_chooses_still_lands_first() {
+    let bench = Bench::new(Decoded {
+        messages: 4,
+        bytes: usize::MAX,
+    });
+    let vault = bench.vault();
+    let (first, changed, later) = (bench.log(1), bench.log(9), bench.log(5));
+    bench.write(&first, 1, 0..4);
+    bench.hand_over(&first);
+    bench.write(&changed, 9, 0..2);
+    bench.hand_over(&changed);
+    bench.pass(&vault).0.unwrap();
+    assert_eq!(bench.waiting(), names(&[&changed]));
+
+    bench.write(&later, 5, 0..4);
+    bench.hand_over(&later);
+    WHILE_CHOOSING.set(Some(Box::new(move || {
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&changed)
+            .unwrap()
+            .write_all(said(9, 2, 2).as_bytes())
+            .unwrap();
+    })));
+    bench.pass(&vault).0.unwrap();
+    assert_eq!(messages(&vault), 4, "the later session does not land first");
+    bench.pass(&vault).0.unwrap();
+    assert_eq!(bench.waiting(), names(&[&later]), "the changed one landed");
+    bench.pass(&vault).0.unwrap();
+    assert_eq!(messages(&vault), 11);
+    assert!(bench.waiting().is_empty());
+}
+
 /// A live session's last record still being written lands whole on a later
 /// pass, once the log has it.
 #[test]

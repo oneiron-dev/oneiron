@@ -183,6 +183,10 @@ struct Landed {
 thread_local! {
     /// Each log a pass read, in order, for the tests to count.
     static READS: std::cell::RefCell<Vec<PathBuf>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Run once while a pass chooses, after it read what lands: the tests'
+    /// way to change a log during a pass.
+    static WHILE_CHOOSING: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 impl Claimed {
@@ -406,6 +410,28 @@ impl ImportQueue {
             ahead = ahead.and(held.size());
             landing.push((held, read));
         }
+        #[cfg(test)]
+        if let Some(change) = WHILE_CHOOSING.take() {
+            change();
+        }
+        // A waiting claim whose logs changed while this pass chose may now
+        // sort before what it chose: it is placed anew, and nothing chosen
+        // that sorts after it lands before it.
+        let mut unchosen = Vec::new();
+        for held in &mut waits {
+            let changed =
+                !held.placed
+                    && held.entry.place.as_ref().is_some_and(|place| {
+                        self.stamp(&held.entry).as_ref() != Some(&place.stamp)
+                    });
+            if !changed || self.read(dir, held).is_none() {
+                continue;
+            }
+            let after = landing
+                .partition_point(|(chosen, _): &(Claimed, Log)| chosen.order() < held.order());
+            unchosen.extend(landing.drain(after..).map(|(chosen, _)| chosen));
+        }
+        waits.extend(unchosen);
         Ok(Chosen { landing, waits })
     }
 
