@@ -28,15 +28,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use oneiron::ingest::history::{HistoryConversation, HistorySource};
+use oneiron::ingest::history::{HistoryConversation, HistorySource, HistoryThreadKind};
 use rustix::fs::{AtFlags, CWD, Dir, Mode, OFlags, fstat, openat, renameat, statat, unlinkat};
 use rustix::io::Errno;
 use serde::{Deserialize, Serialize};
 
 use super::confined::open_file;
 use super::{
-    Decoded, ImportWarning, QueuedSession, Totals, below, earliest_first, order_key, queued_stamp,
-    read_queued,
+    Decoded, ImportWarning, QueuedSession, Totals, below, earliest_first, queued_stamp, read_queued,
 };
 use crate::config::{ImportConfig, ServeConfig};
 use crate::server::SyncServer;
@@ -74,8 +73,11 @@ struct Entry {
 /// it chooses. The earliest claim is read whatever its place says.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 struct Place {
-    /// When its earliest conversation started, then ended.
-    first: (u64, u64),
+    /// When the session's conversations started, and when its own thread
+    /// ended (without one, its last message): a resumed copy starts with its
+    /// original's first line and goes on after it, whatever sidechain it
+    /// carries or subagent outlived the original's thread.
+    span: (u64, u64),
     size: Decoded,
     /// The session's logs as they were read.
     stamp: String,
@@ -192,12 +194,12 @@ thread_local! {
 impl Claimed {
     /// Where it lands among the others; its name breaks a tie.
     fn order(&self) -> ((u64, u64), &str) {
-        let first = self
+        let span = self
             .entry
             .place
             .as_ref()
-            .map_or((u64::MAX, u64::MAX), |place| place.first);
-        (first, &self.name)
+            .map_or((u64::MAX, u64::MAX), |place| place.span);
+        (span, &self.name)
     }
 
     fn size(&self) -> Decoded {
@@ -264,9 +266,10 @@ impl ImportQueue {
 
     /// One pass: claims every entry waiting, then lands the earliest that fit
     /// the decoded budget, entry by entry, and removes them. Entries land
-    /// whole, in the order of their earliest conversation: a resumed or forked
-    /// session starts with its original's first line, time and all, so its
-    /// entry never sorts before the original's.
+    /// whole, in the order of their span: when they started, then when they
+    /// ended. A resumed or forked session starts with its original's first
+    /// line, time and all, and ends after it, so its entry never sorts before
+    /// the original's.
     ///
     /// A pass reads a log at most once. One no pass has read yet is read to
     /// place it, and what it decodes is held while it can still land this
@@ -483,13 +486,23 @@ impl ImportQueue {
                 let conversations = &read.session.conversations;
                 let mut size = Decoded::default();
                 size.add(conversations);
-                let first = conversations
+                let started = conversations
                     .iter()
-                    .map(order_key)
-                    .min()
-                    .map_or((u64::MAX, u64::MAX), |(started, ended, _)| (started, ended));
+                    .filter_map(|conversation| conversation.started_at_ms)
+                    .min();
+                let ended = |own: bool| {
+                    conversations
+                        .iter()
+                        .filter(|conversation| !own || conversation.kind == HistoryThreadKind::Main)
+                        .flat_map(|conversation| &conversation.messages)
+                        .filter_map(|message| message.at_ms)
+                        .max()
+                };
                 held.entry.place = Some(Place {
-                    first,
+                    span: (
+                        started.unwrap_or(u64::MAX),
+                        ended(true).or_else(|| ended(false)).unwrap_or(u64::MAX),
+                    ),
                     size,
                     stamp: read.session.stamp.clone(),
                 });

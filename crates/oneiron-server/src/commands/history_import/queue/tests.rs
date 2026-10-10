@@ -210,7 +210,7 @@ fn a_claim_that_says_it_holds_more_than_a_pass_does_not_stop_the_queue() {
     bench.kept(
         &first,
         Place {
-            first: (0, 0),
+            span: (0, 0),
             size: Decoded {
                 messages: usize::MAX,
                 bytes: usize::MAX,
@@ -339,6 +339,56 @@ fn a_claim_whose_logs_change_while_a_pass_chooses_still_lands_first() {
     assert_eq!(bench.waiting(), names(&[&later]), "the changed one landed");
     bench.pass(&vault).0.unwrap();
     assert_eq!(messages(&vault), 11);
+    assert!(bench.waiting().is_empty());
+}
+
+/// Sol 1354 R3-2: a resumed copy starts with its original's first line, here
+/// an inline sidechain said before the session's own first message, which
+/// the copy carries too. The original still lands first, whatever the
+/// queue's names say: the copy ends later.
+#[test]
+fn a_resumed_copy_that_carries_its_originals_sidechain_lands_after_it() {
+    let bench = Bench::new(Decoded {
+        messages: 3,
+        bytes: usize::MAX,
+    });
+    let vault = bench.vault();
+    // The copy gets the name that sorts first, so a tie on names would land
+    // it first.
+    let (mut original, mut copy) = (bench.log(1), bench.log(2));
+    if entry_name(HistorySource::ClaudeCode, &copy)
+        > entry_name(HistorySource::ClaudeCode, &original)
+    {
+        std::mem::swap(&mut original, &mut copy);
+    }
+    let line = |uuid: &str, parent: Option<&str>, sidechain: bool, minute: u32| {
+        format!(
+            "{}\n",
+            serde_json::json!({
+                "parentUuid": parent,
+                "isSidechain": sidechain,
+                "type": "user",
+                "uuid": format!("c1000000-0000-4000-8000-{uuid}"),
+                "timestamp": format!("2026-09-01T08:{minute:02}:00.000Z"),
+                "message": {"role": "user", "content": format!("note {uuid}")},
+            })
+        )
+    };
+    let carried = line("000000000001", None, true, 0) + &line("000000000002", None, false, 10);
+    fs::write(&original, &carried).unwrap();
+    let parent = "c1000000-0000-4000-8000-000000000002";
+    fs::write(
+        &copy,
+        carried + &line("000000000003", Some(parent), false, 20),
+    )
+    .unwrap();
+    bench.hand_over(&copy);
+    bench.hand_over(&original);
+
+    bench.pass(&vault).0.unwrap();
+    assert_eq!(bench.waiting(), names(&[&copy]), "the original lands first");
+    bench.pass(&vault).0.unwrap();
+    assert_eq!(messages(&vault), 3, "the copy adds only its own message");
     assert!(bench.waiting().is_empty());
 }
 
