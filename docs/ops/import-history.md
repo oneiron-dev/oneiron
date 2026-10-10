@@ -23,6 +23,22 @@ oneiron import chatgpt ~/Downloads/chatgpt-export.zip
 Only the path you give is read. Symbolic links under it are not followed, and
 a file or folder that changes into something else while it is read is refused.
 
+## While `serve` runs: the import queue
+
+With `queue = true` under `[import]` in the serve config, `serve` imports
+session logs handed to it, so you need not stop it:
+
+```bash
+oneiron import claude-code ~/.claude/projects/<project>/<session>.jsonl --queue
+```
+
+`--queue` writes one small file naming the log and returns. `serve` imports
+it within seconds, the same way as above, with the session's subagent logs.
+Only logs under `claude_code_root` (default `~/.claude/projects`) or
+`codex_root` (default `~/.codex/sessions`) are imported, and no link under
+them is followed. The [Claude Code hooks](claude-code-hooks.md) queue each
+session this way at every stop.
+
 ## What lands
 
 - Each source conversation becomes a conversation in the vault; each message a
