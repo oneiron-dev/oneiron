@@ -27,8 +27,8 @@ pub fn poll_readable(stream: &UnixStream) {
     }
 }
 
-/// Receives from `rx`, polling for up to [`SPIN`] before it blocks until
-/// `deadline` (or for as long as it takes).
+/// Receives from `rx`, polling for up to [`SPIN`] (never past `deadline`)
+/// before it blocks until `deadline` (or for as long as it takes).
 ///
 /// # Errors
 /// As [`Receiver::recv_timeout`].
@@ -36,7 +36,8 @@ pub fn recv_spinning<T>(
     rx: &Receiver<T>,
     deadline: Option<Instant>,
 ) -> Result<T, RecvTimeoutError> {
-    let until = Instant::now() + SPIN;
+    let spun = Instant::now() + SPIN;
+    let until = deadline.map_or(spun, |deadline| spun.min(deadline));
     while Instant::now() < until {
         match rx.try_recv() {
             Ok(value) => return Ok(value),
