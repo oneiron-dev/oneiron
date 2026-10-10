@@ -96,8 +96,9 @@ impl RawValue for VerdictMemoRow {
 
 /// Predicate rewrite map for one pack move. An operator's is keyed by
 /// `{from_pack_id}@{from_version}->{to_pack_id}@{to_version}`; one a pack
-/// shipped by both sources too, each content hash beside its version:
-/// `{pack}@{from_version}#{from_source}->{pack}@{to_version}#{to_source}`.
+/// shipped by its two sources' content hashes alone,
+/// `src:{from_source}->{to_source}`, which stays short whatever the pack's
+/// name and version (each PACK.md names both, so its hash pins them too).
 pub(super) const PACK_MIGRATION_MAPS: SideTable<String, PackMigrationMap, LegacyJson> =
     SideTable::new(&side_table::SAVED_QUERY_PACK_MIGRATION_MAP);
 
@@ -109,14 +110,7 @@ pub(super) fn migration_map_key(drift: &PackDrift) -> String {
 }
 
 pub(super) fn source_migration_map_key(moved: &PackMove<'_>) -> String {
-    format!(
-        "{pack}@{}#{}->{pack}@{}#{}",
-        moved.from_version,
-        moved.from_source,
-        moved.to_version,
-        moved.to_source,
-        pack = moved.pack
-    )
+    format!("src:{}->{}", moved.from_source, moved.to_source)
 }
 
 /// Receipt of one pack-drift repair action, keyed by its own id.

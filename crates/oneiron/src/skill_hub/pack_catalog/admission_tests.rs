@@ -2032,12 +2032,14 @@ fn a_pack_ships_its_migration_map_and_a_same_version_update_applies_it() -> Resu
         ClaimComparison, CreateSavedQueryRequest, EvalMode, EvalPolicy, FilterAst, MatcherSpec,
         QueryScope, SAVED_QUERY_SCHEMA_VERSION, SavedQueryLifecycle,
     };
-    let source = |predicates: &str, migrations: &str| {
+    use serde_json::json;
+    let source = |name: &str, version: &str, predicates: &[&str], migrations: &str| {
         PackSource::from_files(vec![
             HubFile::new(
                 "PACK.md",
                 format!(
-                    "---\nname: alice.tools\ndescription: fixture\nversion: 3\nkind: capability\npredicates: [{predicates}]\n{migrations}---\nExact pack source\n"
+                    "---\nname: {name}\ndescription: fixture\nversion: {version}\nkind: capability\npredicates: {}\n{migrations}---\nExact pack source\n",
+                    json!(predicates)
                 )
                 .into_bytes(),
             ),
@@ -2048,22 +2050,66 @@ fn a_pack_ships_its_migration_map_and_a_same_version_update_applies_it() -> Resu
             ),
         ])
     };
-    let shipped = |from: &str, source: Option<&str>, to: &str| {
-        let source = source.map_or(String::new(), |hash| format!(",\"source\":\"{hash}\""));
-        format!(
-            "migrations: [{{\"from\":\"{from}\"{source},\"rewrites\":{{\"alice.tools.topic\":{{\"kind\":\"rename\",\"to\":\"{to}\"}}}}}}]\n"
-        )
-    };
-    let first = source("\"alice.tools.topic\"", "")?;
+    let shipped = |maps: serde_json::Value| format!("migrations: {maps}\n");
+    // A 100-byte name and version, so a map key spelling both beside the two
+    // sources would pass LMDB's 511-byte key bound.
+    let name = format!("alice.{}", "t".repeat(94));
+    let version = format!("v{}", "3".repeat(99));
+    let (topic, subject) = (format!("{name}.topic"), format!("{name}.subject"));
+    let first = source(&name, &version, &[topic.as_str()], "")?;
     let first_hash = first.content_hash().to_hex();
+    let update = |rewrite: serde_json::Value| {
+        shipped(json!([{"from": version, "source": first_hash, "rewrites": {&topic: rewrite}}]))
+    };
+
     // A map for the pack's own version names the exact source it moves from,
     // and moves the pack's predicates only onto ones the new source declares.
-    let subject = "\"alice.tools.subject\"";
-    assert!(source(subject, &shipped("3", None, "alice.tools.subject")).is_err());
+    let refused =
+        |migrations: &str| source(&name, &version, &[subject.as_str()], migrations).is_err();
+    let rename = json!({"kind": "rename", "to": subject});
+    assert!(refused(&shipped(
+        json!([{"from": version, "rewrites": {&topic: rename}}])
+    )));
+    assert!(refused(&update(
+        json!({"kind": "rename", "to": "bob.notes.subject"})
+    )));
+    // A declaration may hold a hyphen; a Claim predicate may not, so a query
+    // moved there would watch a predicate nothing can write.
+    let hyphen = format!("{name}.subject-name");
     assert!(
         source(
-            subject,
-            &shipped("3", Some(&first_hash), "bob.notes.subject")
+            &name,
+            &version,
+            &[hyphen.as_str()],
+            &update(json!({"kind": "rename", "to": hyphen}))
+        )
+        .is_err()
+    );
+    // The line is closed: no repeated key, which would let the map say two
+    // things, and no field a rewrite kind does not carry.
+    let changed = json!({"kind": "semantics_changing", "to": subject, "note": "Meaning changed"});
+    let twice = format!(
+        "migrations: [{{\"from\":{},\"source\":\"{first_hash}\",\"rewrites\":{{\"{topic}\":{changed},\"{topic}\":{rename}}}}}]\n",
+        json!(version)
+    );
+    assert!(refused(&twice));
+    assert!(refused(&update(
+        json!({"kind": "rename", "to": subject, "note": "Meaning changed"})
+    )));
+    assert!(refused(&update(
+        json!({"kind": "rename", "to": subject, "requires_owner": true})
+    )));
+    // A pack may sit under an engine namespace, but its map never moves a
+    // query onto the engine's own predicates.
+    let engine = ["core.conflict.topic", "core.conflict.open"];
+    assert!(source("core.conflict", "2", &engine, "").is_ok());
+    assert!(
+        source(
+            "core.conflict",
+            "2",
+            &engine,
+            &shipped(json!([{"from": "1", "rewrites": {"core.conflict.topic":
+                {"kind": "rename", "to": "core.conflict.open"}}}]))
         )
         .is_err()
     );
@@ -2095,15 +2141,15 @@ fn a_pack_ships_its_migration_map_and_a_same_version_update_applies_it() -> Resu
         cmp: ClaimComparison::Exists,
         value: serde_json::Value::Null,
     };
-    let topic = crate::saved_query::create_saved_query(
+    let saved = crate::saved_query::create_saved_query(
         &vault,
         owner.actor(),
         &CreateSavedQueryRequest {
             schema_version: SAVED_QUERY_SCHEMA_VERSION,
             scope: QueryScope::default(),
-            filter: term("alice.tools.topic"),
+            filter: term(&topic),
             matcher: MatcherSpec::Hard {
-                expression: term("alice.tools.topic"),
+                expression: term(&topic),
             },
             eval: EvalPolicy {
                 mode: EvalMode::Manual,
@@ -2114,19 +2160,16 @@ fn a_pack_ships_its_migration_map_and_a_same_version_update_applies_it() -> Resu
         10,
     )?;
 
-    let second = source(
-        subject,
-        &shipped("3", Some(&first_hash), "alice.tools.subject"),
-    )?;
+    let second = source(&name, &version, &[subject.as_str()], &update(rename))?;
     install(&second, "pack/v3b", 4)?;
-    let migrated = crate::saved_query::read_saved_query(&vault, owner.actor(), topic.query_ref)?
+    let migrated = crate::saved_query::read_saved_query(&vault, owner.actor(), saved.query_ref)?
         .expect("the query survives the update");
-    assert_eq!(migrated.definition.filter, term("alice.tools.subject"));
+    assert_eq!(migrated.definition.filter, term(&subject));
     assert_eq!(migrated.definition.lifecycle, SavedQueryLifecycle::Active);
     assert!(
         crate::saved_query::pack_drift_repairs(&vault)?
             .iter()
-            .any(|repair| repair.query_ref == topic.query_ref
+            .any(|repair| repair.query_ref == saved.query_ref
                 && repair.summary.starts_with("auto-migrated")),
         "rung 1 leaves a receipt"
     );
