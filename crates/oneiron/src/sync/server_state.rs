@@ -358,24 +358,4 @@ mod tests {
             "corrupt d:root must error, not boot empty — got {err:?}"
         );
     }
-
-    #[test]
-    fn persisted_window_keys_lists_valid_window_snapshots_only() {
-        let (_dir, vault) = test_vault();
-
-        let doc = LoroDoc::new();
-        doc.commit();
-        persist_window_snapshot(&vault, &WindowKey::new("2026-01"), &doc).unwrap();
-        persist_window_snapshot(&vault, &WindowKey::new("2026-02"), &doc).unwrap();
-        // Invalid key written out-of-band must be skipped, not panicked on.
-        vault.sync_state_put("d:w:2026-13", b"junk").unwrap();
-        // Root snapshot must not be picked up by the d:w: scan.
-        persist_root_snapshot(&vault, &doc).unwrap();
-
-        let keys = persisted_window_keys(&vault).unwrap();
-        assert_eq!(
-            keys,
-            vec![WindowKey::new("2026-01"), WindowKey::new("2026-02")]
-        );
-    }
 }

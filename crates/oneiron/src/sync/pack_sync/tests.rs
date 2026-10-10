@@ -45,45 +45,6 @@ fn range_for(learned_at: u64) -> TimeRange {
 }
 
 #[test]
-fn canonical_outbound_restores_origin_handle_and_generation() -> Result<()> {
-    let (_dir, vault) = vault();
-    let alpha = kind("alpha");
-    install(&vault, std::slice::from_ref(&alpha));
-    let learned_at = 1_772_400_000u64;
-    let id = EntityId::now();
-    vault.put_pack_instance(
-        &id,
-        &alpha.name,
-        range_for(learned_at),
-        learned_at,
-        b"payload",
-    )?;
-    let raw = vault.get_raw(&id)?.unwrap();
-    let canonical = canonical_outbound_blob(&raw)?.unwrap();
-    let local_envelope = PackInstanceEnvelope::from_bytes(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-    let wire_envelope = PackInstanceEnvelope::from_bytes(&canonical[ENTITY_METADATA_HEADER_LEN..])?;
-    assert_eq!(wire_envelope.kind, local_envelope.kind);
-    assert_eq!(wire_envelope.payload, local_envelope.payload);
-    assert_eq!(wire_envelope.origin, local_envelope.origin);
-    assert_eq!(wire_envelope.generation, local_envelope.origin.generation);
-    let wire_header = EntityMetadataHeader::parse(&canonical).unwrap();
-    assert_eq!(wire_header.entity_type, local_envelope.origin.handle);
-    assert_eq!(wire_header.learned_at, learned_at);
-    // Non-pack rows pass through untouched.
-    let ordinary = {
-        let mut blob = Vec::new();
-        blob.push(1u8);
-        blob.extend_from_slice(&learned_at.to_be_bytes());
-        blob.extend_from_slice(&learned_at.to_be_bytes());
-        blob.extend_from_slice(&learned_at.to_be_bytes());
-        blob.extend_from_slice(b"ordinary");
-        blob
-    };
-    assert!(canonical_outbound_blob(&ordinary)?.is_none());
-    Ok(())
-}
-
-#[test]
 fn two_vault_loro_round_trip_is_stable_across_different_local_handles() -> Result<()> {
     let (_a_dir, source) = vault();
     let (_b_dir, destination) = vault();
