@@ -36,13 +36,16 @@
 
 mod audit;
 mod codec;
-pub(crate) use self::codec::manifest_entry_names_skill;
+pub(crate) use self::codec::{ground_attempt_receipt, manifest_entry_names_skill};
 mod judge;
 mod judge_supersession;
 #[cfg(test)]
 pub(crate) use judge_supersession::set_pre_writer_hook;
 pub(crate) use judge_supersession::{judgment_displaced, judgment_displaced_in_txn};
 mod projector;
+pub(crate) use self::projector::{
+    draw_proposal_sequence_in_txn, mint_edit_proposal_in_txn, withdraw_edit_proposal_in_txn,
+};
 mod split;
 pub(crate) use self::split::{classify_split, unclear_floor};
 mod types;
