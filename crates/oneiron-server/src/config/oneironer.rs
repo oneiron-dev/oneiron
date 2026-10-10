@@ -71,8 +71,7 @@ impl fmt::Display for OneironerProvider {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum OneironerMode {
-    /// A vault with a tagger saves its tags (owner ruling 2026-09-29). Not
-    /// built yet: refused at startup.
+    /// A vault with a tagger saves its tags (owner ruling 2026-09-29).
     #[default]
     Save,
     /// Tag and write nothing but the marker's settlement: the test switch.
@@ -170,8 +169,8 @@ impl OneironerConfig {
 
     /// The checkpoint a write's marker is committed for, when markers are on.
     ///
-    /// Only an endpoint arms markers in this build: the local provider and
-    /// save mode stop `serve` before a write could commit one.
+    /// Only an endpoint arms markers in this build: the local provider stops
+    /// `serve` before a write could commit one.
     pub fn marker_checkpoint(&self) -> Option<&str> {
         (self.provider == OneironerProvider::Endpoint)
             .then_some(self.checkpoint_sha16.as_deref())
@@ -179,13 +178,18 @@ impl OneironerConfig {
     }
 
     /// The vault's marker configuration, when markers are on: the checkpoint,
-    /// the live window and the trace history.
+    /// the live window, the trace history, the mode and the label table.
     pub fn marker_config(&self) -> Option<oneiron::tagging::TaggingMarkerConfig> {
         let checkpoint = self.marker_checkpoint()?;
         Some(oneiron::tagging::TaggingMarkerConfig {
             checkpoint: checkpoint.to_owned(),
             live_window_tokens: self.live_window_tokens,
             trace_history: self.trace_history(),
+            mode: match self.mode {
+                OneironerMode::Save => oneiron::tagging::TaggingMode::Save,
+                OneironerMode::Shadow => oneiron::tagging::TaggingMode::Shadow,
+            },
+            labels: self.label_kinds(),
         })
     }
 
@@ -251,8 +255,7 @@ impl OneironerConfig {
     }
 
     /// Refuses a section that cannot produce a working slot. The local
-    /// provider and save mode pass here and are refused, typed, when the slot
-    /// is built.
+    /// provider passes here and is refused, typed, when the slot is built.
     pub fn validate(&self) -> anyhow::Result<()> {
         if self.live_window_tokens > oneiron::tagging::MAX_LIVE_WINDOW_TOKENS {
             anyhow::bail!("oneironer.live_window_tokens must be at most 2048");
@@ -267,8 +270,13 @@ impl OneironerConfig {
             if label.is_empty() || label.len() > MAX_LABEL_BYTES {
                 anyhow::bail!("oneironer.labels keys must be 1 to 64 bytes");
             }
-            if registry_type_byte(kind).is_none() {
+            let Some(byte) = registry_type_byte(kind) else {
                 anyhow::bail!("oneironer.labels maps a label to unknown entity kind {kind:?}");
+            };
+            if !oneiron::tagging::label_kind_admitted(byte) {
+                anyhow::bail!(
+                    "oneironer.labels maps a label to {kind}, a kind with no identity key; leave the label out to keep it a tag"
+                );
             }
         }
         if self.provider != OneironerProvider::Endpoint {

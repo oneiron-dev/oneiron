@@ -35,7 +35,8 @@ use serde::{Deserialize, Serialize};
 
 use super::confined::open_file;
 use super::{
-    Decoded, ImportWarning, QueuedSession, Totals, below, earliest_first, queued_stamp, read_queued,
+    Decoded, ImportWarning, QueuedSession, Totals, below, earliest_first, own_second,
+    queue_dreamer, queued_stamp, read_queued,
 };
 use crate::config::{ImportConfig, ServeConfig};
 use crate::server::SyncServer;
@@ -618,22 +619,36 @@ fn rewrite(dir: &OwnedFd, name: &str, entry: &Entry) -> std::io::Result<()> {
     written
 }
 
-/// Lands each entry in turn, its conversations earliest first.
+/// Lands each entry in turn, its conversations earliest first, and puts what
+/// landed in front of the Dreamer, as `oneiron import` does. Each pass is an
+/// import of its own: its claims wait in their own review.
 fn land(
     vault: &oneiron::Vault,
     entries: Vec<(HistorySource, Vec<HistoryConversation>)>,
 ) -> anyhow::Result<Totals> {
     let owner = crate::owner::local_owner(vault)?;
-    let imported_at = vault.now_recorded_at();
+    let imported_at = own_second(vault)?;
     let mut totals = Totals::default();
+    let mut reviewed = Vec::new();
     for (source, mut conversations) in entries {
         earliest_first(&mut conversations);
         for conversation in &conversations {
             let report = vault
                 .import_history(&owner, source, conversation, imported_at)
                 .map_err(|error| anyhow::anyhow!("import stopped: {error}"))?;
+            if (report.new > 0 || report.changed > 0) && !reviewed.contains(&source) {
+                reviewed.push(source);
+            }
             totals.add(&report);
         }
     }
+    for source in reviewed {
+        tracing::info!(
+            source = source.source_id(),
+            review = %oneiron::ingest::history::history_import_review_id(source, imported_at),
+            "queued import's claims wait for the owner in this review"
+        );
+    }
+    queue_dreamer(vault, imported_at)?;
     Ok(totals)
 }
