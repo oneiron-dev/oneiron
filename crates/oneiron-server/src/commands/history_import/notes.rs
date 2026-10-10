@@ -363,7 +363,7 @@ fn read_folder(folder: &Path, counts: &mut NoteCounts, budget: u64) -> anyhow::R
         // Of the open file, so a name swapped after the walk listed it
         // changes nothing.
         let metadata = file.metadata()?;
-        if names(&metadata) > 1 {
+        if super::hard_linked(&metadata) {
             counts.hard_linked += 1;
             return Ok(());
         }
@@ -428,17 +428,6 @@ fn read_folder(folder: &Path, counts: &mut NoteCounts, budget: u64) -> anyhow::R
     Ok(notes)
 }
 
-/// How many names the open file has.
-#[cfg(unix)]
-fn names(metadata: &std::fs::Metadata) -> u64 {
-    std::os::unix::fs::MetadataExt::nlink(metadata)
-}
-
-#[cfg(not(unix))]
-fn names(_metadata: &std::fs::Metadata) -> u64 {
-    1
-}
-
 /// A frontmatter `type` as stdout shows it: a short name as it is, anything
 /// else (prose, a long value) as `(other)`, so no note text reaches stdout.
 fn shown_label(label: Option<&str>) -> &str {
@@ -495,7 +484,7 @@ fn choose_title(
     taken: &mut HashSet<String>,
     counts: &mut TitleCounts,
 ) -> anyhow::Result<Option<String>> {
-    let path = note.path.strip_suffix(".md").unwrap_or(&note.path);
+    let path = without_extension(&note.path);
     let stem = path.rsplit('/').next().unwrap_or(path);
     let candidates = [
         (note.title.as_deref(), &mut counts.frontmatter),
@@ -525,6 +514,20 @@ fn choose_title(
     }
     counts.none += 1;
     Ok(None)
+}
+
+/// `path` without its `.md`, in any case.
+fn without_extension(path: &str) -> &str {
+    match path.len().checked_sub(3) {
+        Some(at)
+            if path
+                .get(at..)
+                .is_some_and(|end| end.eq_ignore_ascii_case(".md")) =>
+        {
+            &path[..at]
+        }
+        _ => path,
+    }
 }
 
 /// Resolves every note's links. The batch carries the links that start at a

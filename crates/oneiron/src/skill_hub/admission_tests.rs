@@ -30,6 +30,16 @@ fn package(name: &str, version: &str, body: &str) -> HubPackage {
     )])
     .expect("package")
 }
+/// A delta of the fixture base that also asks for a tool: a permission
+/// widening, which still needs the owner's answer to merge.
+fn widened_package() -> HubPackage {
+    super::folder::package_from_files(vec![HubFile::new(
+        "SKILL.md",
+        b"---\nname: fixture.base\ndescription: fixture\nversion: 2\nallowed-tools: [\"read_file\"]\n---\ncheck result\n"
+            .to_vec(),
+    )])
+    .expect("widened package")
+}
 struct Fixture {
     vault: Vault,
     _temp: tempfile::TempDir,
@@ -610,19 +620,8 @@ fn federation_and_company_merge_only_submitted_bytes_with_useful_and_replay_line
             company
                 .vault
                 .prepare_shared_skill_merge(id, company.resident, useful_question(id))?;
-        assert_eq!(
-            company.vault.merge_shared_skill_delta(
-                &ask,
-                &Useful(true),
-                &Replay::new(true),
-                at(21),
-                21
-            )?,
-            SharedSkillMergeDisposition::PendingConsent
-        );
-        company
-            .vault
-            .approve_shared_skill_merge(&ask, &company.owner)?;
+        // A merge is reversible, so it lands on the useful yes and the
+        // held-out win alone: no per-merge approval (ARCH-0053 r4).
         let SharedSkillMergeDisposition::Ruled(receipt) = company.vault.merge_shared_skill_delta(
             &ask,
             &Useful(true),
@@ -631,7 +630,7 @@ fn federation_and_company_merge_only_submitted_bytes_with_useful_and_replay_line
             22,
         )?
         else {
-            panic!("consented");
+            panic!("a reversible merge needs no approval");
         };
         assert!(receipt.accepted);
         assert_eq!(receipt.judge_revision.as_deref(), Some("fixture-judge@1"));
@@ -708,9 +707,6 @@ fn resident_fork_delta_without_held_out_gain_cannot_merge_upstream() -> Result<(
         company
             .vault
             .prepare_shared_skill_merge(id, company.resident, useful_question(id))?;
-    company
-        .vault
-        .approve_shared_skill_merge(&ask, &company.owner)?;
     let SharedSkillMergeDisposition::Ruled(receipt) = company.vault.merge_shared_skill_delta(
         &ask,
         &Useful(true),
@@ -760,9 +756,6 @@ fn useless_shared_delta_never_runs_replay_or_changes_base() -> Result<()> {
         fixture
             .vault
             .prepare_shared_skill_merge(id, fixture.resident, useful_question(id))?;
-    fixture
-        .vault
-        .approve_shared_skill_merge(&ask, &fixture.owner)?;
     let replay = NoReplay;
     let SharedSkillMergeDisposition::Ruled(receipt) =
         fixture
@@ -833,7 +826,8 @@ impl UsefulUpstreamJudge for WrongQuestion {
 #[test]
 fn merge_refuses_non_system_one_and_unbound_receipts_without_spending_consent() -> Result<()> {
     let fixture = Fixture::new();
-    let offered = encode_hub_package(&package("fixture.base", "2", "check result"))?;
+    // A widening delta, so the merge spends an owner answer a bad verdict must not burn.
+    let offered = encode_hub_package(&widened_package())?;
     let id = fixture.vault.submit_shared_skill_delta(
         &fixture.baseline,
         &offered,
@@ -938,9 +932,6 @@ fn local_refinement_stays_a_fork_until_the_same_merge_gate_admits_it() -> Result
         fixture
             .vault
             .prepare_shared_skill_merge(id, fixture.resident, useful_question(id))?;
-    fixture
-        .vault
-        .approve_shared_skill_merge(&ask, &fixture.owner)?;
     let ruled =
         fixture
             .vault
@@ -998,9 +989,6 @@ fn local_refinement_yes_needs_independent_held_out_win() -> Result<()> {
         fixture
             .vault
             .prepare_shared_skill_merge(id, fixture.resident, useful_question(id))?;
-    fixture
-        .vault
-        .approve_shared_skill_merge(&ask, &fixture.owner)?;
     let ruled = fixture.vault.merge_shared_skill_delta(
         &ask,
         &Useful(true),
@@ -1062,9 +1050,6 @@ fn rejected_local_delta_cannot_activate_through_same_byte_hub_alias() -> Result<
         fixture
             .vault
             .prepare_shared_skill_merge(id, fixture.resident, useful_question(id))?;
-    fixture
-        .vault
-        .approve_shared_skill_merge(&ask, &fixture.owner)?;
     assert!(matches!(
         fixture.vault.merge_shared_skill_delta(&ask, &Useful(false), &NoReplay, at(21), 21)?,
         SharedSkillMergeDisposition::Ruled(receipt) if !receipt.accepted
@@ -1152,9 +1137,6 @@ fn local_refinement_retargeted_upstream_version_is_independent_of_branch_version
         fixture
             .vault
             .prepare_shared_skill_merge(id, fixture.resident, useful_question(id))?;
-    fixture
-        .vault
-        .approve_shared_skill_merge(&ask, &fixture.owner)?;
     assert!(matches!(
         fixture.vault.merge_shared_skill_delta(&ask, &Useful(true), &Replay::new(true), at(21), 21)?,
         SharedSkillMergeDisposition::Ruled(receipt) if receipt.accepted
@@ -1185,7 +1167,8 @@ fn shared_merge_scans_questions_and_provider_receipts_before_any_ruling() -> Res
     for useful in [false, true] {
         let fixture = Fixture::new();
         let replay = Replay::new(true);
-        let offered = encode_hub_package(&package("fixture.base", "2", "check result"))?;
+        // A widening delta, so the merge spends an owner answer a secret must not burn.
+        let offered = encode_hub_package(&widened_package())?;
         let id = fixture.vault.submit_shared_skill_delta(
             &fixture.baseline,
             &offered,
@@ -1273,9 +1256,6 @@ fn shared_skill_merge_deletion_purges_current_and_every_historical_question() ->
             let ask = fixture
                 .vault
                 .prepare_shared_skill_merge(id, fixture.resident, question)?;
-            fixture
-                .vault
-                .approve_shared_skill_merge(&ask, &fixture.owner)?;
             let SharedSkillMergeDisposition::Ruled(receipt) =
                 fixture.vault.merge_shared_skill_delta(
                     &ask,
@@ -1336,9 +1316,6 @@ fn replayed_shared_skill_delete_purges_merge_questions_for_both_outcomes() -> Re
                 fixture.resident,
                 useful_question(id),
             )?;
-            fixture
-                .vault
-                .approve_shared_skill_merge(&ask, &fixture.owner)?;
             let SharedSkillMergeDisposition::Ruled(receipt) =
                 fixture.vault.merge_shared_skill_delta(
                     &ask,
@@ -1393,9 +1370,6 @@ fn shared_skill_erase_matrix_retains_denial_after_raw_local_and_replayed_delete(
                     fixture.resident,
                     useful_question(candidate),
                 )?;
-                fixture
-                    .vault
-                    .approve_shared_skill_merge(&ask, &fixture.owner)?;
                 fixture.vault.merge_shared_skill_delta(
                     &ask,
                     &Useful(state == "admitted"),
@@ -1867,9 +1841,6 @@ fn marketplace_and_shared_merge_keep_scores_but_mark_displaced_judge() -> Result
         fixture.resident,
         useful_question(merged),
     )?;
-    fixture
-        .vault
-        .approve_shared_skill_merge(&merge_ask, &fixture.owner)?;
     let SharedSkillMergeDisposition::Ruled(merge_receipt) = fixture
         .vault
         .merge_shared_skill_delta(&merge_ask, &Useful(true), &Replay::new(true), at(41), 41)?
@@ -2006,7 +1977,6 @@ fn judge_replaced_mid_marketplace_or_merge_scoring_cannot_write_a_ruling() -> Re
         other.resident,
         useful_question(candidate),
     )?;
-    other.vault.approve_shared_skill_merge(&ask, &other.owner)?;
     let scorer = Replacing {
         vault: &other.vault,
         changed: std::cell::Cell::new(false),
@@ -2129,5 +2099,484 @@ fn edited_shared_fork_persists_each_role_and_callable_contract_change() -> Resul
         .expect("knowledge fork");
     assert_eq!(third.role, crate::skill::SkillRole::Knowledge);
     assert_eq!(third.call, None);
+    Ok(())
+}
+
+fn submit_fixture_delta(fixture: &Fixture, delta: &HubPackage) -> Result<EntityId> {
+    fixture.vault.submit_shared_skill_delta(
+        &fixture.baseline,
+        &encode_hub_package(delta)?,
+        SharedSkillLane::FederationMergeBack,
+        "member:fixture",
+        &EntityId::now(),
+        at(20),
+        20,
+    )
+}
+
+/// REV-9 D1 (ARCH-0053 r4, ARCH-0043, DEC-0006 reversibility-primary): a
+/// shared merge is reversible, so it lands on the useful-upstream yes and the
+/// held-out win with no per-merge approval. Rolling it back restores the
+/// displaced revision's content as the active revision, and every earlier
+/// revision stays readable.
+#[test]
+fn shared_merge_lands_without_approval_and_rolls_back_to_the_old_revision() -> Result<()> {
+    let fixture = Fixture::new();
+    let original = fixture
+        .vault
+        .get_skill_record(&fixture.baseline)?
+        .expect("baseline");
+    // A revision that never had a package rolls back as its record alone.
+    assert_eq!(original.content_hash, None);
+    let merged = submit_fixture_delta(&fixture, &package("fixture.base", "2", "check result"))?;
+    let ask = fixture.vault.prepare_shared_skill_merge(
+        merged,
+        fixture.resident,
+        useful_question(merged),
+    )?;
+    let SharedSkillMergeDisposition::Ruled(receipt) = fixture.vault.merge_shared_skill_delta(
+        &ask,
+        &Useful(true),
+        &Replay::new(true),
+        at(21),
+        21,
+    )?
+    else {
+        panic!("a reversible merge needs no approval");
+    };
+    assert!(receipt.accepted);
+    let lifecycle = |id: &EntityId| -> Result<SkillLifecycle> {
+        Ok(fixture
+            .vault
+            .get_skill_record(id)?
+            .expect("revision stays readable")
+            .lifecycle_status)
+    };
+    assert_eq!(lifecycle(&merged)?, SkillLifecycle::Active);
+    assert_eq!(lifecycle(&fixture.baseline)?, SkillLifecycle::Superseded);
+
+    let SharedSkillRollback::Restored(restored) =
+        fixture
+            .vault
+            .roll_back_shared_skill_merge(&merged, None, at(30), 30)?
+    else {
+        panic!("a rollback that widens nothing needs no answer");
+    };
+    let current = fixture
+        .vault
+        .get_skill_record(&restored)?
+        .expect("restoring revision");
+    assert_eq!(current.lifecycle_status, SkillLifecycle::Active);
+    assert_eq!(current.skill_id, original.skill_id);
+    assert_eq!(current.desc, original.desc);
+    assert_ne!(current.version, "2");
+    assert_eq!(lifecycle(&merged)?, SkillLifecycle::Superseded);
+    let mut displaced = original;
+    displaced.lifecycle_status = SkillLifecycle::Superseded;
+    assert_eq!(
+        fixture.vault.get_skill_record(&fixture.baseline)?,
+        Some(displaced),
+        "the old revision stays readable, unchanged"
+    );
+    let edges = fixture.vault.edges_out(&restored)?;
+    assert!(
+        edges.iter().any(|edge| {
+            edge.kind == crate::edge::EdgeKind::Supersedes && edge.target == merged
+        })
+    );
+    assert!(edges.iter().any(|edge| {
+        edge.kind == crate::edge::EdgeKind::DerivedFrom && edge.target == fixture.baseline
+    }));
+    assert!(
+        fixture
+            .vault
+            .roll_back_shared_skill_merge(&merged, None, at(31), 31)
+            .is_err(),
+        "a merge rolls back once; the restoring revision is now current"
+    );
+    Ok(())
+}
+
+/// A delta that widens the skill's permissions still asks, like any widening:
+/// the merge waits for the owner's answer on that exact effect.
+#[test]
+fn shared_merge_that_widens_permissions_waits_for_the_owner() -> Result<()> {
+    let fixture = Fixture::new();
+    let merged = submit_fixture_delta(&fixture, &widened_package())?;
+    let ask = fixture.vault.prepare_shared_skill_merge(
+        merged,
+        fixture.resident,
+        useful_question(merged),
+    )?;
+    assert_eq!(
+        fixture.vault.merge_shared_skill_delta(
+            &ask,
+            &Useful(true),
+            &Replay::new(true),
+            at(21),
+            21
+        )?,
+        SharedSkillMergeDisposition::PendingConsent
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .get_skill_record(&merged)?
+            .expect("candidate")
+            .lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    fixture
+        .vault
+        .approve_shared_skill_merge(&ask, &fixture.owner)?;
+    let SharedSkillMergeDisposition::Ruled(receipt) = fixture.vault.merge_shared_skill_delta(
+        &ask,
+        &Useful(true),
+        &Replay::new(true),
+        at(22),
+        22,
+    )?
+    else {
+        panic!("the owner answered the widening");
+    };
+    assert!(receipt.accepted);
+    assert_eq!(
+        fixture
+            .vault
+            .get_skill_record(&merged)?
+            .expect("merged")
+            .lifecycle_status,
+        SkillLifecycle::Active
+    );
+    Ok(())
+}
+
+/// Greptile #1336 repro: dropping the per-merge approve-once must not drop a
+/// review the scan requires. With the dial at `Low`, a delta that keeps the
+/// base's admitted tool scans `ProposedRequired`. It widens nothing, and the
+/// merge still waits for the owner.
+#[test]
+fn shared_merge_the_scan_flags_waits_for_the_owner() -> Result<()> {
+    let fixture = Fixture::new();
+    let delta = widened_package();
+    fixture.vault.with_write_txn(|txn| {
+        fixture.vault.write_admitted_capability_surface_in_txn(
+            txn,
+            &fixture.baseline,
+            &delta.capabilities,
+        )
+    })?;
+    crate::skill_scan::set_skill_scan_activation_risk_threshold(
+        &fixture.vault,
+        super::ScanRiskLevel::Low,
+    )?;
+    let merged = submit_fixture_delta(&fixture, &delta)?;
+    let ask = fixture.vault.prepare_shared_skill_merge(
+        merged,
+        fixture.resident,
+        useful_question(merged),
+    )?;
+    let lifecycle = || -> Result<SkillLifecycle> {
+        Ok(fixture
+            .vault
+            .get_skill_record(&merged)?
+            .expect("candidate")
+            .lifecycle_status)
+    };
+    assert_eq!(
+        fixture.vault.merge_shared_skill_delta(
+            &ask,
+            &Useful(true),
+            &Replay::new(true),
+            at(21),
+            21
+        )?,
+        SharedSkillMergeDisposition::PendingConsent
+    );
+    assert_eq!(lifecycle()?, SkillLifecycle::Candidate);
+    fixture
+        .vault
+        .approve_shared_skill_merge(&ask, &fixture.owner)?;
+    let SharedSkillMergeDisposition::Ruled(receipt) = fixture.vault.merge_shared_skill_delta(
+        &ask,
+        &Useful(true),
+        &Replay::new(true),
+        at(22),
+        22,
+    )?
+    else {
+        panic!("the owner answered the review");
+    };
+    assert!(receipt.accepted);
+    assert_eq!(lifecycle()?, SkillLifecycle::Active);
+    Ok(())
+}
+
+/// Astra #1336 R2 repro: a rollback asks where a review is required, as a
+/// merge does. Rolling back a merge that narrowed the skill restores the
+/// wider admitted surface, so only the owner rolls it back.
+#[test]
+fn rollback_that_widens_permissions_waits_for_the_owner() -> Result<()> {
+    let fixture = Fixture::new();
+    fixture.vault.with_write_txn(|txn| {
+        fixture.vault.write_admitted_capability_surface_in_txn(
+            txn,
+            &fixture.baseline,
+            &widened_package().capabilities,
+        )
+    })?;
+    let merged = submit_fixture_delta(&fixture, &package("fixture.base", "2", "check result"))?;
+    let ask = fixture.vault.prepare_shared_skill_merge(
+        merged,
+        fixture.resident,
+        useful_question(merged),
+    )?;
+    let SharedSkillMergeDisposition::Ruled(receipt) = fixture.vault.merge_shared_skill_delta(
+        &ask,
+        &Useful(true),
+        &Replay::new(true),
+        at(21),
+        21,
+    )?
+    else {
+        panic!("a narrowing merge needs no answer");
+    };
+    assert!(receipt.accepted);
+    assert_eq!(
+        fixture
+            .vault
+            .roll_back_shared_skill_merge(&merged, None, at(30), 30)?,
+        SharedSkillRollback::PendingOwner
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .get_skill_record(&merged)?
+            .expect("merged")
+            .lifecycle_status,
+        SkillLifecycle::Active
+    );
+    // Astra #1336 R3 repro: another vault's owner proof answers nothing here.
+    let elsewhere = Fixture::new();
+    // CodeRabbit #1336 repro: a deleted owner keeps a PERSON shell that the
+    // owner proof's liveness check still reads as live; only the deletion
+    // tombstone tells, and that owner rolls nothing back either.
+    let deleted = EntityId::now();
+    fixture.vault.put_entity(
+        &deleted,
+        crate::registry::ENTITY_TYPE_PERSON,
+        at(1),
+        1,
+        b"deleted owner",
+    )?;
+    let deleted = fixture.vault.authenticate_owner(
+        deleted,
+        "principal:deleted-owner",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    assert!(fixture.vault.delete_entity(&deleted.actor())?);
+    for (stranger, why) in [
+        (
+            &elsewhere.owner,
+            "another vault's owner does not roll this one back",
+        ),
+        (&deleted, "a deleted owner does not roll back"),
+    ] {
+        let error = fixture
+            .vault
+            .roll_back_shared_skill_merge(&merged, Some(stranger), at(30), 30)
+            .expect_err(why);
+        assert_eq!(error.kind(), ErrorKind::ConsentOwnerNotAuthenticated);
+        assert_eq!(
+            fixture
+                .vault
+                .get_skill_record(&merged)?
+                .expect("merged")
+                .lifecycle_status,
+            SkillLifecycle::Active
+        );
+    }
+    let SharedSkillRollback::Restored(restored) =
+        fixture
+            .vault
+            .roll_back_shared_skill_merge(&merged, Some(&fixture.owner), at(31), 31)?
+    else {
+        panic!("the owner rolls back");
+    };
+    assert_eq!(
+        fixture
+            .vault
+            .get_skill_record(&restored)?
+            .expect("restoring revision")
+            .lifecycle_status,
+        SkillLifecycle::Active
+    );
+    Ok(())
+}
+
+/// Scores instructions that say "twice" above any that do not, so a delta can
+/// beat a stored revision the default fixture scorer already rates highest.
+struct PrefersTwice;
+impl HeldOutReplayScorer for PrefersTwice {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
+    fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
+        assert!(!case.held_out_receipts.is_empty());
+        Ok(if case.instructions.contains("twice") {
+            0.95
+        } else {
+            0.2
+        })
+    }
+}
+
+/// Admits `stored` (version "1": the held-out reserve stamps that version on
+/// its receipts) as a stored revision, then merges a delta over it with no
+/// approval. Returns the stored revision and the merged one.
+fn merge_over_a_stored_revision(
+    fixture: &Fixture,
+    stored: &HubPackage,
+) -> Result<(EntityId, EntityId)> {
+    let (original, publisher) = fixture.hub(SkillHubTrustTier::Community);
+    let source = HubRef::new(
+        original.hub_id,
+        "stored",
+        HubPin::ContentHash(stored.content_hash()?.to_hex()),
+    )?;
+    let base = fixture
+        .vault
+        .import_skill_from_hub(&source, stored, at(20), 20)?;
+    let ask = fixture.vault.prepare_marketplace_activation(
+        base,
+        &source,
+        &publisher,
+        fixture.baseline,
+    )?;
+    fixture
+        .vault
+        .approve_marketplace_activation(&ask, &fixture.owner)?;
+    let HubAdmissionDisposition::Ruled(admitted) =
+        fixture
+            .vault
+            .admit_marketplace_skill(&ask, &Replay::new(true), at(22), 22)?
+    else {
+        panic!("consented stored source")
+    };
+    assert!(admitted.accepted);
+    reserve(&fixture.vault, &base, "fixture.stored");
+
+    let merged = fixture.vault.submit_shared_skill_delta(
+        &base,
+        &encode_hub_package(&package("fixture.stored", "2", "check the result twice"))?,
+        SharedSkillLane::FederationMergeBack,
+        "member:fixture",
+        &EntityId::now(),
+        at(30),
+        30,
+    )?;
+    let merge_ask = fixture.vault.prepare_shared_skill_merge(
+        merged,
+        fixture.resident,
+        useful_question(merged),
+    )?;
+    let SharedSkillMergeDisposition::Ruled(receipt) = fixture.vault.merge_shared_skill_delta(
+        &merge_ask,
+        &Useful(true),
+        &PrefersTwice,
+        at(31),
+        31,
+    )?
+    else {
+        panic!("a reversible merge needs no approval");
+    };
+    assert!(receipt.accepted);
+    Ok((base, merged))
+}
+
+/// Rolling back a merge over a stored revision restores that revision's own
+/// source in its own format: a native tree byte for byte (its version is
+/// native metadata), a folder tree with only its frontmatter version renewed.
+#[test]
+fn rollback_restores_a_stored_revision_in_its_own_format() -> Result<()> {
+    for format in [SkillPackageFormat::Native, SkillPackageFormat::Folder] {
+        let fixture = Fixture::new();
+        let mut stored = package("fixture.stored", "1", "check result");
+        if format == SkillPackageFormat::Native {
+            stored.files = vec![HubFile::new(
+                "SKILL.md",
+                b"---\nname: source-name\n---\ncheck result\n".to_vec(),
+            )];
+            stored.format = SkillPackageFormat::Native;
+        }
+        stored.record.content_hash = Some(stored.content_hash()?);
+        let (_, merged) = merge_over_a_stored_revision(&fixture, &stored)?;
+
+        let SharedSkillRollback::Restored(restored) =
+            fixture
+                .vault
+                .roll_back_shared_skill_merge(&merged, None, at(40), 40)?
+        else {
+            panic!("restoring a stored revision widens nothing");
+        };
+        let record = fixture
+            .vault
+            .get_skill_record(&restored)?
+            .expect("restoring revision");
+        assert_eq!(record.lifecycle_status, SkillLifecycle::Active);
+        let txn = fixture.vault.store.env.read_txn()?;
+        let source = fixture
+            .vault
+            .export_hub_package_in_txn(&txn, &restored)?
+            .expect("restored source package");
+        assert_eq!(source.format, format);
+        match format {
+            SkillPackageFormat::Native => assert_eq!(source.files, stored.files),
+            SkillPackageFormat::Folder => assert_eq!(
+                source.files,
+                package("fixture.stored", &record.version, "check result").files
+            ),
+        }
+    }
+    Ok(())
+}
+
+/// Greptile #1336 repro: a rollback never restores a revision without the
+/// instructions it had. Deleting the displaced revision's source carrier
+/// leaves its record but not its package, so the rollback is refused with a
+/// typed error and nothing changes. A revision that never had a package
+/// still rolls back as its record alone: see
+/// `shared_merge_lands_without_approval_and_rolls_back_to_the_old_revision`.
+#[test]
+fn rollback_refuses_a_revision_whose_package_is_gone() -> Result<()> {
+    let fixture = Fixture::new();
+    let mut stored = package("fixture.stored", "1", "check result");
+    stored.record.content_hash = Some(stored.content_hash()?);
+    let (base, merged) = merge_over_a_stored_revision(&fixture, &stored)?;
+    let carrier = super::source_carrier::source_carrier_id(&base, &stored.content_hash()?)?;
+    assert!(fixture.vault.delete_entity(&carrier)?);
+    let records = || -> Result<_> {
+        Ok((
+            fixture.vault.get_skill_record(&base)?.expect("displaced"),
+            fixture.vault.get_skill_record(&merged)?.expect("merged"),
+        ))
+    };
+    let before = records()?;
+    assert!(before.0.content_hash.is_some());
+    let error = fixture
+        .vault
+        .roll_back_shared_skill_merge(&merged, None, at(40), 40)
+        .expect_err("the displaced revision's instructions are gone");
+    assert_eq!(error.kind(), ErrorKind::SkillPackageUnavailable);
+    assert_eq!(records()?, before);
+    assert_eq!(before.1.lifecycle_status, SkillLifecycle::Active);
+    assert!(
+        fixture
+            .vault
+            .edges_in(&merged)?
+            .iter()
+            .all(|edge| edge.kind != crate::edge::EdgeKind::Supersedes)
+    );
     Ok(())
 }

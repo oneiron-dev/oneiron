@@ -171,15 +171,29 @@ pub fn backup(args: BackupArgs) -> anyhow::Result<()> {
 
 pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
     let config = resolve_serve_config(&args.serve)?;
+    if let Some(previous) = &args.activate {
+        return emit(&backup::activate(
+            previous,
+            &config.vault_path,
+            vault_config(&config),
+        )?);
+    }
+    let backup = args
+        .backup
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("name the backup file to restore"))?;
     if args.rehearse {
+        // Read off the disk, beside a `serve` that may hold the vault.
+        let source = oneiron::recovery::checkpoint::SideRestoreSource::read(&config.vault_path)?;
         return emit(&backup::rehearse(
-            &args.backup,
+            backup,
             vault_config(&config),
             args.scratch.as_deref(),
+            &source,
         )?);
     }
     emit(&backup::restore_over(
-        &args.backup,
+        backup,
         &config.vault_path,
         vault_config(&config),
     )?)
