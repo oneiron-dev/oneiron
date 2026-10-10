@@ -10,7 +10,7 @@ use futures_util::StreamExt as _;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::secret_custody::{
     CustodyClass, CustodyTier, ManifestSource, OwnerSecretRegistration, RequestedBinding,
-    SecretRegistered,
+    SECRET_NAME_MAX_BYTES, SecretRegistered,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -61,10 +61,18 @@ impl RotateSecret {
             return Err(OwnerError::Invalid("a rotated secret needs a value".into()));
         }
         Ok(Self {
-            name: fields.name,
+            name: secret_name(fields.name)?,
             value,
         })
     }
+}
+
+/// A name the custody index can key: 1 to 255 bytes.
+fn secret_name(name: String) -> OwnerResult<String> {
+    if name.is_empty() || name.len() > SECRET_NAME_MAX_BYTES {
+        return Err(OwnerError::Invalid("name must be 1 to 255 bytes".into()));
+    }
+    Ok(name)
 }
 
 /// Decodes a borrowed `value_base64` into a buffer sized up front, so decoding
@@ -149,11 +157,13 @@ impl ManifestFields {
         let git_ref = self
             .git_ref
             .unwrap_or_else(|| DEFAULT_MANIFEST_REF.to_owned());
-        oneiron::git_wire::GitRefName::parse_full(git_ref.as_str()).map_err(|_| {
-            OwnerError::Invalid(
-                "manifest.ref must be a full ref name, such as refs/heads/main".into(),
-            )
-        })?;
+        if oneiron::git_wire::GitRefName::parse_full(git_ref.as_str()).is_err()
+            || !git_ref.starts_with("refs/heads/")
+        {
+            return Err(OwnerError::Invalid(
+                "manifest.ref must be a branch, such as refs/heads/main".into(),
+            ));
+        }
         Ok(ManifestSource {
             repo: self.repo,
             git_ref,
@@ -184,7 +194,7 @@ impl RegisterSecret {
             })
             .collect::<OwnerResult<_>>()?;
         Ok(Self {
-            name: fields.name,
+            name: secret_name(fields.name)?,
             class,
             device_only: fields.device_only,
             rung: rung(fields.rung)?,

@@ -15,8 +15,8 @@ use crate::vault::Vault;
 use super::codec::{decode_secret_custody_body, encode_secret_custody_body, invalid_body};
 use super::types::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_SCHEMA_VERSION,
-    SecretBinding, SecretCustodyFloor, SecretCustodyMetadata, SecretCustodyRecord,
-    SecretCustodyStatus, TierBand,
+    SECRET_NAME_MAX_BYTES, SecretBinding, SecretCustodyFloor, SecretCustodyMetadata,
+    SecretCustodyRecord, SecretCustodyStatus, TierBand,
 };
 use crate::error::SecretError;
 
@@ -470,6 +470,10 @@ pub(super) fn register_secret_in_txn(
     if rec.name.is_empty() {
         return Err(invalid_body("secret name must not be empty"));
     }
+    // Checked before the name reaches an index key.
+    if rec.name.len() > SECRET_NAME_MAX_BYTES {
+        return Err(invalid_body("secret name is longer than 255 bytes"));
+    }
     if rec.schema_version != SECRET_CUSTODY_SCHEMA_VERSION {
         return Err(invalid_body("unsupported secret custody schema version"));
     }
@@ -494,7 +498,11 @@ pub(super) fn register_secret_in_txn(
 
     if let Some(existing_id) = NAME_INDEX.get(&vault.store, wtxn, &rec.name)? {
         // A live name denies; a revoked or missing record frees the index.
-        if let Some(existing) = read_secret_custody_in_txn(&vault.store, wtxn, &existing_id)? {
+        // The admission projection reads status and generation without
+        // copying the existing value out of the store.
+        if let Some(existing) =
+            read_secret_custody_admission_in_txn(&vault.store, wtxn, &existing_id)?
+        {
             if existing.status != SecretCustodyStatus::Revoked {
                 return Err(Error::Secret(SecretError::SecretNameInUse {
                     name: rec.name.clone(),

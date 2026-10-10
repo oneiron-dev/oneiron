@@ -363,11 +363,21 @@ pub fn secret_scan(args: SecretScanArgs) -> anyhow::Result<()> {
 const SECRET_VALUE_LIMIT: usize = 1 << 20;
 
 pub fn secrets(command: SecretsCommand) -> anyhow::Result<()> {
-    let value = read_secret_value(io::stdin().lock())?;
+    let value = read_secret_value(raw_stdin()?)?;
     match command {
         SecretsCommand::Register(args) => emit(&register_secret(*args, &value)?),
         SecretsCommand::Rotate(args) => emit(&rotate_secret(*args, &value)?),
     }
+}
+
+/// Stdin's own file, unbuffered. `io::Stdin` copies a short read through a
+/// process-wide buffer that is never wiped.
+fn raw_stdin() -> io::Result<std::fs::File> {
+    #[cfg(unix)]
+    let owned = std::os::fd::AsFd::as_fd(&io::stdin()).try_clone_to_owned()?;
+    #[cfg(windows)]
+    let owned = std::os::windows::io::AsHandle::as_handle(&io::stdin()).try_clone_to_owned()?;
+    Ok(std::fs::File::from(owned))
 }
 
 /// The value on stdin, exactly as given, in one buffer sized up front: the

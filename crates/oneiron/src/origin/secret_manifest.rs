@@ -53,6 +53,14 @@ impl Vault {
     ) -> Result<OriginSecretManifest> {
         let repo_dir = origin_repo_dir(self, repo_name)?;
         let ref_name = GitRefName::parse_full(ref_name)?;
+        // A branch names a commit, and git refuses any other object there. A
+        // tag may name a tag object, which pins no repository and holds no
+        // tree to read.
+        if !ref_name.as_str().starts_with("refs/heads/") {
+            return Err(Error::Secret(SecretError::InvalidSecretCustodyBody(
+                "a secret manifest is read from a branch, refs/heads/...",
+            )));
+        }
         let source_ref = format!("{repo_name}:{}", ref_name.as_str());
         let not_found = || {
             Error::Secret(SecretError::SecretManifestNotFound {
@@ -107,12 +115,15 @@ fn manifest_bytes(
     commit: &GitOid,
 ) -> Result<Option<Vec<u8>>> {
     let object = wire.read_object(repo, commit)?;
-    let tree = object
+    // Anything but a commit holds no manifest.
+    let Some(tree) = object
         .split(|byte| *byte == b'\n')
         .next()
         .and_then(|line| line.strip_prefix(b"tree "))
         .and_then(|hex| std::str::from_utf8(hex).ok())
-        .ok_or(Error::InvariantViolation("commit object names no tree"))?;
+    else {
+        return Ok(None);
+    };
     let mut oid = GitOid::parse_hex(tree)?;
     let mut components = SECRET_MANIFEST_PATH.split('/').peekable();
     while let Some(component) = components.next() {

@@ -198,6 +198,12 @@ async fn owner_registers_a_secret_then_rotates_it_and_nobody_else_can() {
     let refusals = [
         (body.clone(), StatusCode::CONFLICT, "secret_name_in_use"),
         (
+            // Longer than a name-index key holds (Sol on #1372: a 500 before).
+            json!({ "name": "n".repeat(300), "class": "cross-vault", "rung": 0, "value_base64": first }),
+            StatusCode::BAD_REQUEST,
+            "name must be 1 to 255 bytes",
+        ),
+        (
             json!({ "name": "t", "class": "custody-cloud", "rung": 0, "value_base64": first }),
             StatusCode::BAD_REQUEST,
             "class must be",
@@ -229,6 +235,16 @@ async fn owner_registers_a_secret_then_rotates_it_and_nobody_else_can() {
             }),
             StatusCode::NOT_FOUND,
             "repo",
+        ),
+        (
+            // A tag can name a tag object, which holds no tree (Sol on #1372:
+            // a published annotated tag answered 500).
+            json!({
+                "name": "t", "class": "custody-portable", "rung": 0,
+                "manifest": { "repo": "app", "ref": "refs/tags/v1" }, "value_base64": first,
+            }),
+            StatusCode::BAD_REQUEST,
+            "manifest.ref must be a branch",
         ),
     ];
     for (body, expected, says) in refusals {
