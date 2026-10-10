@@ -3224,6 +3224,7 @@ fn the_code_run_candidate_put_refuses_an_expression_preference() -> Result<()> {
         &envelope,
         TimeRange { start: 5, end: 5 },
         5,
+        |_| Ok(()),
     );
 
     assert_matches!(refusal, Err(Error::InvalidClaimBody(_)));
