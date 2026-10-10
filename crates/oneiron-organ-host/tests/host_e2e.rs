@@ -15,7 +15,7 @@ use oneiron_organ_host::{
     CallClass, HostConfig, HostError, OrganCall, OrganHost, OrganInput, OrganSpec, OrganState,
     Unavailable,
 };
-use oneiron_organ_protocol::{FrameError, Hash32, touch_fold};
+use oneiron_organ_protocol::{FrameError, Hash32, MAX_FRAME_DEPTH, MAX_FRAME_VALUES, touch_fold};
 
 const PROBE: &str = env!("CARGO_BIN_EXE_oneiron-organ-probe");
 const BIN: &str = "application/octet-stream";
@@ -76,6 +76,7 @@ fn host() -> OrganHost {
         "probe.sleep",
         "probe.crash",
         "probe.fork",
+        "probe.outputs",
     ]
     .map(String::from)
     .into();
@@ -318,6 +319,13 @@ fn a_dripped_handshake_fails_at_its_deadline() {
         ..HostConfig::default()
     };
     let host = rogue("--drip", config);
+    // A caller whose own deadline ends the start first is the one that is
+    // late: the organ is not charged a crash.
+    let mut hurried = call("organ.echo", 1.into(), Vec::new(), "g");
+    hurried.deadline = Duration::from_millis(200);
+    let err = host.call(&vault, hurried).expect_err("caller deadline");
+    assert!(matches!(err, HostError::DeadlineExceeded), "{err:?}");
+    assert_eq!(host.status("probe").expect("installed").recent_crashes, 0);
     let started = Instant::now();
     let err = host
         .call(&vault, call("organ.echo", 1.into(), Vec::new(), "g"))
@@ -353,6 +361,23 @@ fn a_call_too_large_to_send_leaves_the_organ_unharmed() {
             "{err:?}"
         );
     }
+    // Small on the wire but past what the organ decodes: deeper than the
+    // depth limit, or more values than the value limit.
+    let deep: fn() -> rmpv::Value =
+        || (0..MAX_FRAME_DEPTH).fold(rmpv::Value::Nil, |inner, _| rmpv::Value::Array(vec![inner]));
+    let wide: fn() -> rmpv::Value = || {
+        let count = usize::try_from(MAX_FRAME_VALUES).expect("fits");
+        rmpv::Value::Array(vec![rmpv::Value::Nil; count])
+    };
+    for args in [deep, deep, deep, wide, wide, wide] {
+        let err = host
+            .call(&vault, call("organ.echo", args(), Vec::new(), "g"))
+            .expect_err("refused");
+        assert!(
+            matches!(err, HostError::Frame(FrameError::Refused(_))),
+            "{err:?}"
+        );
+    }
     let status = host.status("probe").expect("installed");
     assert_eq!(
         (status.spawns, status.recent_crashes),
@@ -360,6 +385,70 @@ fn a_call_too_large_to_send_leaves_the_organ_unharmed() {
         "refused calls neither kill nor count"
     );
     host.call(&vault, small()).expect("still warm");
+}
+
+#[test]
+fn a_call_late_for_the_writer_harms_no_other_call() {
+    // A paused organ (stopped by a signal) lets one large call fill the
+    // socket. A second call whose deadline passes while it waits for the
+    // writer sent nothing: it fails alone, and the large call lands.
+    let (_dir, vault) = vault();
+    let host = host();
+    host.call(&vault, call("organ.echo", 1.into(), Vec::new(), "g"))
+        .expect("warm");
+    let pid = host.status("probe").expect("installed").pid.expect("warm");
+    let pid = i32::try_from(pid).expect("pid");
+    // SAFETY: kill(2) on the organ this test started.
+    unsafe {
+        libc::kill(pid, libc::SIGSTOP);
+    }
+    let resume = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(400));
+        // SAFETY: as above.
+        unsafe {
+            libc::kill(pid, libc::SIGCONT);
+        }
+    });
+    thread::scope(|scope| {
+        let large = scope.spawn(|| {
+            let args = "x".repeat(8 * 1024 * 1024).into();
+            host.call(&vault, call("organ.echo", args, Vec::new(), "g"))
+        });
+        thread::sleep(Duration::from_millis(100));
+        let mut quick = call("organ.echo", 2.into(), Vec::new(), "g");
+        quick.deadline = Duration::from_millis(50);
+        let err = host.call(&vault, quick).expect_err("deadline");
+        assert!(matches!(err, HostError::DeadlineExceeded), "{err:?}");
+        large
+            .join()
+            .expect("large call thread")
+            .expect("the large call lands");
+    });
+    resume.join().expect("resume");
+    let status = host.status("probe").expect("installed");
+    assert_eq!((status.spawns, status.recent_crashes), (1, 0));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn an_answer_with_too_many_regions_is_refused_and_the_organ_lives() {
+    // Each output is over the inline threshold, so each wants a region; a
+    // frame carries at most 16.
+    let (_dir, vault) = vault();
+    let host = host();
+    let args = rmpv::Value::Map(vec![
+        ("count".into(), 17.into()),
+        ("bytes".into(), (70 * 1024).into()),
+    ]);
+    let err = host
+        .call(&vault, call("probe.outputs", args, Vec::new(), "g"))
+        .expect_err("too many regions");
+    assert!(
+        matches!(&err, HostError::Organ(error) if matches!(error.code, oneiron_organ_protocol::ErrorCode::TooLarge)),
+        "{err:?}"
+    );
+    let status = host.status("probe").expect("installed");
+    assert_eq!((status.spawns, status.recent_crashes), (1, 0));
 }
 
 /// Whether `pid` is a live process (a zombie is not).

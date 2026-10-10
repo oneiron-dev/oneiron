@@ -1,6 +1,6 @@
 //! A diagnostics organ for the host's own checks: the runtime's built-in
-//! verbs (`organ.touch`, `organ.echo`) plus `probe.sleep`, `probe.crash`
-//! and `probe.fork`. Two hostile modes stand in for a broken organ:
+//! verbs (`organ.touch`, `organ.echo`) plus `probe.sleep`, `probe.crash`,
+//! `probe.fork` and `probe.outputs`. Two hostile modes stand in for a broken organ:
 //! `--deaf` answers the handshake and then never reads its socket, and
 //! `--drip` sends its `hello_ack` one byte at a time.
 
@@ -9,7 +9,7 @@ mod probe {
     use std::time::{Duration, Instant};
 
     use oneiron_organ_protocol::{
-        Answer, CallContext, ErrorCode, Organ, OrganError, OrganIdentity, VerbSpec,
+        Answer, CallContext, ErrorCode, Organ, OrganError, OrganIdentity, OutputBytes, VerbSpec,
     };
 
     pub(super) struct Probe;
@@ -23,7 +23,7 @@ mod probe {
         }
 
         fn verbs(&self) -> Vec<VerbSpec> {
-            ["probe.sleep", "probe.crash", "probe.fork"]
+            ["probe.sleep", "probe.crash", "probe.fork", "probe.outputs"]
                 .map(|name| VerbSpec {
                     name: name.into(),
                     schema: 1,
@@ -34,16 +34,17 @@ mod probe {
 
         /// `probe.sleep {ms, obey_cancel}` sleeps; with `obey_cancel` false
         /// it ignores cancels, as a hostile organ would. `probe.fork` leaves
-        /// a child behind and reports its pid.
+        /// a child behind and reports its pid. `probe.outputs {count, bytes}`
+        /// answers with `count` outputs of `bytes` bytes each.
         fn call(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
+            let field = |key: &str| {
+                call.args
+                    .as_map()
+                    .and_then(|map| map.iter().find(|(k, _)| k.as_str() == Some(key)))
+                    .map(|(_, value)| value.clone())
+            };
             match call.verb {
                 "probe.sleep" => {
-                    let field = |key: &str| {
-                        call.args
-                            .as_map()
-                            .and_then(|map| map.iter().find(|(k, _)| k.as_str() == Some(key)))
-                            .map(|(_, value)| value.clone())
-                    };
                     let ms = field("ms").and_then(|v| v.as_u64()).unwrap_or(0);
                     let obey = field("obey_cancel")
                         .and_then(|v| v.as_bool())
@@ -58,6 +59,21 @@ mod probe {
                     Ok(Answer::default())
                 }
                 "probe.crash" => std::process::abort(),
+                "probe.outputs" => {
+                    let count = field("count").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let bytes = field("bytes").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let bytes = usize::try_from(bytes).unwrap_or(usize::MAX);
+                    Ok(Answer {
+                        outputs: (0..count)
+                            .map(|n| OutputBytes {
+                                name: format!("out-{n}"),
+                                media_type: "application/octet-stream".into(),
+                                bytes: vec![0x5a; bytes],
+                            })
+                            .collect(),
+                        ..Answer::default()
+                    })
+                }
                 "probe.fork" => {
                     // SAFETY: the child only calls pause(2), which is
                     // async-signal-safe, until a signal ends it.

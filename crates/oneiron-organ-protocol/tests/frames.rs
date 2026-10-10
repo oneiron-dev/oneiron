@@ -1,13 +1,16 @@
 //! A frame is bounded by what it decodes to, not only by its bytes: a peer
 //! cannot make the other side materialize gigabytes from a compact frame.
+//! And a frame's deadline ends with the frame.
 #![cfg(unix)]
 
 use std::io::Write;
 use std::os::unix::net::UnixStream;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use oneiron_organ_protocol::{
-    FrameError, FromOrgan, MAX_FRAME_VALUES, Notes, Outcome, Proposal, Reply, recv_frame,
+    DEFAULT_FRAME_LIMIT, FrameError, FromOrgan, MAX_FRAME_VALUES, Notes, Outcome, Proposal, Reply,
+    recv_frame, recv_frame_until, send_frame, send_frame_until,
 };
 
 /// A valid reply whose report is an array of `count` nils: one byte each on
@@ -71,4 +74,34 @@ fn a_compact_frame_that_unfolds_into_millions_of_values_is_refused() {
         panic!("a proposal");
     };
     assert_eq!(proposal.report.as_array().map(Vec::len), Some(1000));
+}
+
+#[test]
+fn a_timed_frame_leaves_no_timeout_behind() {
+    let (ours, theirs) = UnixStream::pair().expect("pair");
+    let soon = Some(Instant::now() + Duration::from_millis(50));
+    send_frame_until(&ours, &1u8, &[], DEFAULT_FRAME_LIMIT, soon).expect("timed send");
+    let (one, _) = recv_frame_until::<u8>(&theirs, DEFAULT_FRAME_LIMIT, soon).expect("timed recv");
+    assert_eq!(one, 1);
+    // Untimed frames afterwards wait as long as their peer needs, on the
+    // same socket or a clone of it.
+    let sender = ours.try_clone().expect("clone");
+    let late = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(200));
+        send_frame(&sender, &2u8, &[], DEFAULT_FRAME_LIMIT)
+    });
+    let (two, _) =
+        recv_frame::<u8>(&theirs, DEFAULT_FRAME_LIMIT).expect("an untimed receive waits");
+    assert_eq!(two, 2);
+    late.join().expect("sender").expect("sent");
+    let reader = theirs.try_clone().expect("clone");
+    let slow = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(200));
+        recv_frame::<String>(&reader, DEFAULT_FRAME_LIMIT)
+    });
+    // Far larger than the socket buffer: the send waits for the reader.
+    let big = "x".repeat(4 * 1024 * 1024);
+    send_frame(&ours, &big, &[], DEFAULT_FRAME_LIMIT).expect("an untimed send waits");
+    let (got, _) = slow.join().expect("reader").expect("frame");
+    assert_eq!(got.len(), big.len());
 }
