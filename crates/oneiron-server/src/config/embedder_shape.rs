@@ -12,11 +12,11 @@
 
 use std::str::FromStr;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// How the body attends. On a filled vault a change is refused at open
 /// (`EmbeddingTransformChanged`); `reembed` migrates the vault to it.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum EmbedderAttention {
     /// What the checkpoint's `config.json` declares (`use_bidirectional_attention`
@@ -57,7 +57,7 @@ impl FromStr for EmbedderAttention {
 /// What a `FlexibleQuantizer` module in the chain emits. On a filled vault a
 /// change is refused at open (`EmbeddingTransformChanged`); `reembed` migrates
 /// the vault to it.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum EmbedderOutputQuantization {
     /// `round(tanh(x) · 127)`, clamped to the int8 range: the module's own

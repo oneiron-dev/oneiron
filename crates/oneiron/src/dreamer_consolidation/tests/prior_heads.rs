@@ -119,6 +119,18 @@ fn fixture(vault: &Vault) -> Result<Fixture> {
 }
 
 fn fixture_with_head_source(vault: &Vault, source: ClaimSource) -> Result<Fixture> {
+    fixture_in_project(vault, source, crate::claim::default_project_id(), false)
+}
+
+/// The turn and the head sit in `project`, the turn on its record position
+/// as a leader-chat turn's is. A non-default head carries its project as a
+/// body stamp, and with `nested` also as a scope-map entry.
+fn fixture_in_project(
+    vault: &Vault,
+    source: ClaimSource,
+    project: EntityId,
+    nested: bool,
+) -> Result<Fixture> {
     let actor = vault.dreamer_authority()?;
     policy(vault, actor.entity_ref(), true)?;
     let store = DreamerRunnerStore::new(vault);
@@ -136,20 +148,32 @@ fn fixture_with_head_source(vault: &Vault, source: ClaimSource) -> Result<Fixtur
         WriteProvenance::new("owner statement".into())?,
         ClaimApprovalStatus::Approved,
     );
+    let mut candidate = ClaimCandidate::new(
+        "profile.name",
+        ClaimSubject::Entity(subject),
+        "Oleksii".into(),
+        0.9,
+    );
+    if project != crate::claim::default_project_id() {
+        vault.with_write_txn_grouped(|txn| {
+            crate::federation::record_scope::stamp_leader_project(
+                &vault.store,
+                txn,
+                turns[0],
+                project,
+            )
+        })?;
+        candidate = candidate.with_scope_stamps(vault.default_facet()?, project);
+        if nested {
+            candidate = candidate.with_scope(Value::Map(vec![(
+                "scopeProjectId".into(),
+                Value::Binary(project.as_bytes().to_vec()),
+            )]));
+        }
+    }
     vault
         .batch()
-        .claim_candidate(
-            &head,
-            ClaimCandidate::new(
-                "profile.name",
-                ClaimSubject::Entity(subject),
-                "Oleksii".into(),
-                0.9,
-            ),
-            &envelope,
-            occurred(2),
-            2,
-        )
+        .claim_candidate(&head, candidate, &envelope, occurred(2), 2)
         .commit()?;
     let (partition, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
     let branch = BranchResources::open(
@@ -164,8 +188,8 @@ fn fixture_with_head_source(vault: &Vault, source: ClaimSource) -> Result<Fixtur
     let pin = document_version(head, &vault.get(&head)?.expect("head body"));
     scope.readable.insert(pin.clone());
     scope.writable.insert(pin);
-    // Project semantics remain the exact source/head document slice.
-    scope.project = Some(EntityId::now());
+    // A project bound admits only its own project's sources and heads.
+    scope.project = Some(project);
     scope
         .writable
         .remove(&super::super::gap::branch_gap_projection(
@@ -556,6 +580,140 @@ fn exact_persisted_head_attaches_evidence_without_judge_or_duplicate_and_survive
     Ok(())
 }
 
+/// Sol review #1364 round 2: a branch bound to another project never moves
+/// default-project evidence into that project (ONE-1592 P3). The turn and
+/// the head sit in the default project, so nothing lands and nothing
+/// attaches to the head.
+#[test]
+fn project_bound_branch_never_relabels_default_project_evidence() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fx = fixture(&vault)?;
+    let (partition, _, _) = decode_partition_payload(&fx.attempt.status.payload.input)?;
+    let mut scope = fx.scope.clone();
+    scope
+        .writable
+        .remove(&super::super::gap::branch_gap_projection(
+            &partition, &fx.scope,
+        ));
+    scope.project = Some(EntityId::now());
+    scope
+        .writable
+        .insert(super::super::gap::branch_gap_projection(&partition, &scope));
+    let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Oleksii"))]);
+    let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+    assert!(matches!(
+        execute(&vault, &fx, &backend, &mut sink, scope)?,
+        DreamerAttemptExecution::Completed { .. }
+    ));
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    assert!(sink.outcome.landed.is_empty());
+    drop(sink);
+    assert_eq!(names(&vault, fx.subject)?, vec![fx.head]);
+    assert!(
+        vault
+            .sources(&fx.head, EdgeKind::Supports, None)?
+            .is_empty()
+    );
+    Ok(())
+}
+
+/// The ids a project's scoped export carries.
+fn project_export(
+    vault: &Vault,
+    project: EntityId,
+) -> Result<std::collections::BTreeSet<EntityId>> {
+    use crate::federation::{Scope as RecordScope, ScopeAxis, ScopeId};
+    let mut selector = RecordScope::top();
+    selector.audience = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(project)]));
+    Ok(vault
+        .export_records_in_scope(&selector, &RecordScope::top(), &RecordScope::top())?
+        .into_iter()
+        .map(|row| row.id)
+        .collect())
+}
+
+/// Astra review #1364 P2: in a project-bound branch an exact match attaches
+/// the project's TURN to the project's head. The provenance row lands in that
+/// project and its scoped export, never the default project's, and so does the
+/// attachment's gate receipt; a replay and a reopen keep it there. The head
+/// carries its project as a body stamp alone, or also in its scope map.
+#[test]
+fn project_local_exact_head_attachment_keeps_its_provenance_in_the_project() -> Result<()> {
+    for nested in [false, true] {
+        let (dir, vault) = open_vault();
+        let project = EntityId::now();
+        let fx = fixture_in_project(&vault, ClaimSource::UserStated, project, nested)?;
+        let before = vault.get_raw(&fx.head)?.expect("head");
+        let backend = ScriptedBackend::new(vec![Ok(extract(&fx, "Oleksii"))]);
+        let mut sink = PromotionWriterSink::new(&vault, fx.run.clone());
+        assert!(matches!(
+            execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?,
+            DreamerAttemptExecution::Completed { .. }
+        ));
+        assert_eq!(sink.outcome.landed, vec![fx.head], "nested: {nested}");
+        assert_eq!(vault.get_raw(&fx.head)?.as_ref(), Some(&before));
+        assert_eq!(
+            vault.sources(&fx.head, EdgeKind::Supports, None)?,
+            vec![fx.turn]
+        );
+        let (wrapper, body) = attachment_wrapper_row(&vault, fx.turn, fx.head)?;
+        assert_eq!(body.scope_project, project, "nested: {nested}");
+        let exported = project_export(&vault, project)?;
+        assert!(
+            [fx.turn, fx.head, wrapper]
+                .iter()
+                .all(|id| exported.contains(id)),
+            "nested: {nested}"
+        );
+        assert!(!project_export(&vault, crate::claim::default_project_id())?.contains(&wrapper));
+        let dreamer = fx.run.agent_actor.entity_ref().to_hex();
+        let receipts: Vec<_> = vault
+            .store
+            .gate_decisions(1_000)?
+            .into_iter()
+            .filter(|receipt| {
+                receipt.claim_id == Some(*fx.head.as_bytes())
+                    && receipt.actor_ref.as_deref() == Some(dreamer.as_str())
+            })
+            .collect();
+        assert!(!receipts.is_empty());
+        {
+            let txn = vault.store.env.read_txn()?;
+            for receipt in &receipts {
+                assert_eq!(
+                    vault
+                        .store
+                        .gate_retention_context_in_txn(&txn, receipt)?
+                        .project,
+                    Some(project),
+                    "nested: {nested}"
+                );
+            }
+        }
+        // A memoized replay binds the stored row to the same project and adds
+        // no second row.
+        assert!(matches!(
+            execute(&vault, &fx, &backend, &mut sink, fx.scope.clone())?,
+            DreamerAttemptExecution::Completed { .. }
+        ));
+        assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+        assert!(
+            sink.outcome.rejected.is_empty(),
+            "{:?}",
+            sink.outcome.rejected
+        );
+        drop(sink);
+        drop(vault);
+        let vault = Vault::open(dir.path(), VaultConfig::device())?;
+        assert_eq!(
+            attachment_wrapper_row(&vault, fx.turn, fx.head)?,
+            (wrapper, body)
+        );
+        assert!(project_export(&vault, project)?.contains(&wrapper));
+    }
+    Ok(())
+}
+
 #[test]
 fn fast_path_and_judge_merge_share_deferred_closure() -> Result<()> {
     for fast_path in [false, true] {
@@ -878,6 +1036,14 @@ fn wrapper_first_wake_consumes_explicit_host_claim_scope() -> Result<()> {
 }
 
 fn attachment_wrapper(vault: &Vault, source: EntityId, head: EntityId) -> Result<ClaimBody> {
+    Ok(attachment_wrapper_row(vault, source, head)?.1)
+}
+
+fn attachment_wrapper_row(
+    vault: &Vault,
+    source: EntityId,
+    head: EntityId,
+) -> Result<(EntityId, ClaimBody)> {
     let edge = crate::provenance::EdgeRef {
         source,
         kind: EdgeKind::Supports,
@@ -889,7 +1055,7 @@ fn attachment_wrapper(vault: &Vault, source: EntityId, head: EntityId) -> Result
             && body.predicate == crate::provenance::PREDICATE_EDGE_PROVENANCE
             && body.subject == ClaimSubject::from(edge)
         {
-            matches.push(body);
+            matches.push((id, body));
         }
     }
     let [wrapper] = matches.as_slice() else {
@@ -1512,6 +1678,70 @@ fn owned_attempt_sink_promotes_under_the_executors_own_run() -> Result<()> {
     assert!(matches!(
         sink.accept(Vec::new()),
         Err(crate::Error::InvalidClaimBody(_))
+    ));
+    Ok(())
+}
+
+/// A generated support row never spans two projects: the write door's
+/// project derivation refuses a source and a head that sit in different ones.
+#[test]
+fn generated_support_refuses_a_source_and_head_in_different_projects() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let project = EntityId::now();
+    let fx = fixture_in_project(&vault, ClaimSource::UserStated, project, true)?;
+    let owner = EntityId::now();
+    vault.put_entity(&owner, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    let other = EntityId::now();
+    vault
+        .batch()
+        .claim_candidate(
+            &other,
+            ClaimCandidate::new(
+                "profile.city",
+                ClaimSubject::Entity(fx.subject),
+                "Kyiv".into(),
+                0.9,
+            ),
+            &WriteEnvelope::new(
+                WriteActor::new(owner, EdgeActorClass::Human),
+                ClaimSource::UserStated,
+                WriteProvenance::new("owner statement".into())?,
+                ClaimApprovalStatus::Approved,
+            ),
+            occurred(3),
+            3,
+        )
+        .commit()?;
+    let txn = vault.store.env.read_txn()?;
+    let raw = |id: &EntityId| -> Result<Vec<u8>> {
+        Ok(crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, id)?.expect("row"))
+    };
+    let edge = |target| crate::provenance::EdgeRef {
+        source: fx.turn,
+        kind: EdgeKind::Supports,
+        target,
+    };
+    assert_eq!(
+        crate::provenance::support_project(
+            &vault,
+            &txn,
+            &edge(fx.head),
+            &raw(&fx.turn)?,
+            &raw(&fx.head)?
+        )?,
+        project
+    );
+    assert!(matches!(
+        crate::provenance::support_project(
+            &vault,
+            &txn,
+            &edge(other),
+            &raw(&fx.turn)?,
+            &raw(&other)?
+        ),
+        Err(crate::Error::InvalidClaimBody(
+            "derived support crosses projects"
+        ))
     ));
     Ok(())
 }

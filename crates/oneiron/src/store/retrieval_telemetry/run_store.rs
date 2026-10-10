@@ -604,15 +604,6 @@ pub(in crate::store) fn retrieval_run_key(run_id: RetrievalRunId) -> Vec<u8> {
     RETRIEVAL_RUN.key_bytes(&run_id)
 }
 
-/// Test-only, see [`retrieval_run_key`].
-#[cfg(test)]
-pub(in crate::store) fn retrieval_trace_fork_key(
-    fork_hash: &RetrievalTraceForkHash,
-    run_id: RetrievalRunId,
-) -> Vec<u8> {
-    RETRIEVAL_TRACE_FORK_INDEX.key_bytes(&(*fork_hash, run_id))
-}
-
 fn is_unknown_retrieval_trace_fork_hash(fork_hash: &RetrievalTraceForkHash) -> bool {
     fork_hash.iter().all(|byte| *byte == 0)
 }

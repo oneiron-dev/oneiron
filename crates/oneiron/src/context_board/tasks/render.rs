@@ -92,7 +92,7 @@ pub(super) fn single_token(value: &str) -> String {
         .join("_")
 }
 
-pub(super) fn intent_row(intent: &TaskIntentPresence) -> TaskRow {
+pub(crate) fn intent_row(intent: &TaskIntentPresence) -> TaskRow {
     let folded_job_count = intent.realizing_jobs.len();
     let mut tokens = vec![one_line_token(&intent.id)];
     if let Some(label) = intent.label.as_deref() {

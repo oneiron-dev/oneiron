@@ -187,6 +187,7 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
         | ErrorCode::InternalServerError
         | ErrorCode::DeepRetrievalUnavailable
         | ErrorCode::EmbedderUnavailable
+        | ErrorCode::SummaryWriterUnavailable
         | ErrorCode::CrdtAuthExpired
         | ErrorCode::CrdtDecodeError => {}
     }

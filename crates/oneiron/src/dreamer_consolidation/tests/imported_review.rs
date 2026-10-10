@@ -7,7 +7,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::dreamer_promotion::{DreamerRunContext, PromotionWriterSink};
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::dreamer_wake::{
-    DreamerWakeDriver, RunWakePass, WakeCancellation, WakePassStop, WakeTrigger,
+    DreamerWakeDriver, RunWakePass, WakeCancellation, WakePassStop, WakeTrigger, WakeTurnSubject,
 };
 use crate::entity_id::derived_domains::HISTORY_TURN;
 use crate::ingest::history::{
@@ -38,6 +38,8 @@ fn conversation(native_id: &str, messages: Vec<HistoryMessage>) -> HistoryConver
         parent: None,
         title: None,
         started_at_ms: None,
+        own_started_at_ms: None,
+        cwd: None,
         messages,
         skipped: HistorySkips::default(),
     }
@@ -493,5 +495,121 @@ fn a_wake_prepares_no_paused_or_parked_import_work() -> Result<()> {
     for id in paused.iter().chain([&parked]) {
         assert!(wake.contains_attempt(*id), "{id:?} was not prepared");
     }
+    Ok(())
+}
+
+fn learned_at(vault: &Vault, id: &EntityId) -> Result<u64> {
+    let raw = vault.get_raw(id)?.expect("the TURN");
+    Ok(crate::batch::EntityMetadataHeader::parse(&raw)
+        .expect("a TURN header")
+        .learned_at)
+}
+
+/// The TURNs each queued Micro attempt plans.
+fn micro_planned_turns(vault: &Vault) -> Result<Vec<EntityId>> {
+    let mut turns = Vec::new();
+    for row in AttemptQueue::new(vault).list()? {
+        if row.kind == crate::DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND {
+            let payload = decode_dreamer_attempt_payload(&row.payload)?;
+            turns.extend(decode_partition_payload(&payload.input)?.1);
+        }
+    }
+    Ok(turns)
+}
+
+/// #1353 with #1357: serve starts on a vault holding imported history and one
+/// live turn. Imported TURNs belong to their import's review, so the turn
+/// wake plans a Micro round for the live turn only, and its watermark ends
+/// past both, so a later wake counts neither again.
+#[test]
+fn a_turn_wake_plans_the_live_turn_and_steps_over_imported_ones() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (_, owner) = owner(&vault)?;
+    let imported_at = vault.now_recorded_at();
+    import(
+        &vault,
+        &owner,
+        conversation(
+            "session-ana",
+            vec![
+                said("u1", HistoryRole::User, "my name is Ana"),
+                said("u2", HistoryRole::User, "I live in Kyoto"),
+            ],
+        ),
+        imported_at,
+    );
+    assert_eq!(plan_dirty_turn_rounds(&vault, imported_at)?, 1);
+    let imported = EntityId::derive(
+        HISTORY_TURN,
+        &[b"claude-code".as_slice(), b"session-ana", b"u1"],
+    )?;
+    let session = seed_session(&vault, 7, imported_at);
+    let live_at = learned_at(&vault, &imported)? + 1;
+    let live = seed_turn(&vault, &session, "user", "my sister is called Mia", live_at);
+
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, live_at)?);
+    assert_eq!(micro_planned_turns(&vault)?, vec![live]);
+    let watermark = read_watermark(&vault, DreamerConsolidationScope::Micro)?;
+    assert!(
+        watermark.last_learned_at >= live_at.max(learned_at(&vault, &imported)?),
+        "{watermark:?}"
+    );
+    // Nothing new: the next wake queues nothing and counts no imported turn.
+    assert!(!vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, live_at + 1)?);
+    assert_eq!(micro_planned_turns(&vault)?, vec![live]);
+    Ok(())
+}
+
+/// Imported turns never count toward the wake grain. Under a two-turn grain,
+/// imported history plus one live turn queues nothing, and the watermark steps
+/// over the imported turns only. The second live turn then queues a Micro
+/// round for the two live turns alone.
+#[test]
+fn imported_turns_never_count_toward_the_wake_grain() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let (_, owner) = owner(&vault)?;
+    vault.set_wake_grain(&owner, crate::dreamer_wake::WakeGrain::new(2)?)?;
+    let imported_at = vault.now_recorded_at();
+    import(
+        &vault,
+        &owner,
+        conversation(
+            "session-ana",
+            vec![
+                said("u1", HistoryRole::User, "my name is Ana"),
+                said("u2", HistoryRole::User, "I live in Kyoto"),
+            ],
+        ),
+        imported_at,
+    );
+    assert_eq!(plan_dirty_turn_rounds(&vault, imported_at)?, 1);
+    // The owner's two lines land as one imported TURN, keyed by the first.
+    let imported = EntityId::derive(
+        HISTORY_TURN,
+        &[b"claude-code".as_slice(), b"session-ana", b"u1"],
+    )?;
+    let imported_through = learned_at(&vault, &imported)?;
+    let session = seed_session(&vault, 7, imported_at);
+    let first_at = imported_through + 1;
+    let first = seed_turn(
+        &vault,
+        &session,
+        "user",
+        "my sister is called Mia",
+        first_at,
+    );
+
+    assert!(!vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, first_at)?);
+    assert!(micro_planned_turns(&vault)?.is_empty());
+    let watermark = read_watermark(&vault, DreamerConsolidationScope::Micro)?;
+    assert!(
+        (imported_through..first_at).contains(&watermark.last_learned_at),
+        "{watermark:?}"
+    );
+
+    let second = seed_turn(&vault, &session, "user", "she lives in Osaka", first_at + 1);
+    assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, first_at + 1)?);
+    let planned: std::collections::BTreeSet<_> = micro_planned_turns(&vault)?.into_iter().collect();
+    assert_eq!(planned, [first, second].into_iter().collect());
     Ok(())
 }

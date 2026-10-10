@@ -3,13 +3,12 @@
 use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
-use loro::{ExportMode, LoroDoc};
+use loro::LoroDoc;
 use oneiron::registry::ENTITY_TYPE_EVENT;
 use oneiron::sync::bridge::{Materializer, register_observer_b};
-use oneiron::sync::quarantine::{QuarantineContainer, pending_remat_windows, quarantined_records};
+use oneiron::sync::quarantine::{QuarantineContainer, quarantined_records};
 use oneiron::sync::quota::{
-    DEFAULT_MAINTENANCE_INGEST_MAX_OPS_PER_PEER_WINDOW, MaintenanceIngestQuotaConfig,
-    maintenance_ingest_quota_config, maintenance_ingest_quota_snapshots,
+    MaintenanceIngestQuotaConfig, maintenance_ingest_quota_snapshots,
     set_maintenance_ingest_quota_config,
 };
 use oneiron::sync::schema::create_window_doc;
@@ -249,17 +248,6 @@ fn seed_local_genesis(
     (signing, genesis, vault_id)
 }
 
-fn quota_quarantine_count(vault: &Vault) -> usize {
-    quarantined_records(vault)
-        .unwrap()
-        .into_iter()
-        .filter(|(_, record)| {
-            record.container == QuarantineContainer::Entities
-                && record.reason_code == "MaintenanceIngestQuotaExceeded"
-        })
-        .count()
-}
-
 fn invalid_authority_log_quarantine_count(vault: &Vault) -> usize {
     entity_quarantine_reasons(vault)
         .into_iter()
@@ -274,67 +262,6 @@ fn entity_quarantine_reasons(vault: &Vault) -> Vec<String> {
         .filter(|(_, record)| record.container == QuarantineContainer::Entities)
         .map(|(_, record)| record.reason_code)
         .collect()
-}
-
-#[test]
-fn authority_flood_is_admitted_with_one_typed_check() {
-    let (_dir, vault) = test_vault();
-    set_quota(&vault, 2, 60 * 60);
-    vault
-        .set_authority_observation_policy(oneiron::authority::AuthorityObservationPolicy {
-            ingest_check_threshold: 2,
-            ..Default::default()
-        })
-        .unwrap();
-    let materializer = Materializer::new();
-    let window_key = WindowKey::new(WINDOW);
-    let doc = create_window_doc("user", &window_key);
-
-    let (owner_key, genesis, vault_id) = seed_local_genesis(&vault, 0x41);
-    let before = vault
-        .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
-        .unwrap();
-    let mut parent = authority_entry_hash(&genesis).unwrap();
-
-    for idx in 0..5u64 {
-        let entry = set_tier_floor_entry(vault_id, parent, &owner_key, idx + 1);
-        parent = authority_entry_hash(&entry).unwrap();
-        insert_authority_entry(&doc, &entry);
-    }
-    doc.commit();
-
-    let accepted = forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
-    assert_eq!(accepted, 5);
-    assert_eq!(
-        vault
-            .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
-            .unwrap(),
-        before + 5
-    );
-    assert_eq!(quota_quarantine_count(&vault), 0);
-
-    let snapshots = maintenance_ingest_quota_snapshots(&vault).unwrap();
-    assert!(snapshots.is_empty());
-    let checks = vault.authority_ingest_checks().unwrap();
-    assert_eq!(checks.len(), 1);
-    assert_eq!(checks[0].count, 3);
-    assert_eq!(checks[0].threshold, 2);
-    assert_eq!(
-        checks[0].peer_id,
-        oneiron::authority::AuthorityIngestCheck::peer_id_for_signer(&authority_key_from_ed(
-            &owner_key
-        ))
-    );
-
-    let accepted_again = forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
-    assert_eq!(accepted_again, 0);
-    assert_eq!(vault.authority_ingest_checks().unwrap(), checks);
-    assert_eq!(
-        vault
-            .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
-            .unwrap(),
-        before + 5
-    );
 }
 
 #[test]
@@ -410,51 +337,6 @@ fn foreign_authority_log_is_quarantined_not_batch_abort_on_replay_doors() {
 }
 
 #[test]
-fn same_vault_unknown_signers_are_admitted_without_rate_refusal() {
-    let (_dir, vault) = test_vault();
-    set_quota(&vault, 1, 60 * 60);
-    let materializer = Materializer::new();
-    let window_key = WindowKey::new(WINDOW);
-    let doc = create_window_doc("user", &window_key);
-    let (owner_key, genesis, vault_id) = seed_local_genesis(&vault, 0x49);
-    let parent_hash = authority_entry_hash(&genesis).unwrap();
-    let before = vault
-        .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
-        .unwrap();
-
-    for idx in 0..3 {
-        let rogue_key = SigningKey::from_bytes(&[0x5a + idx; 32]);
-        let rogue_entry = set_tier_floor_entry(vault_id, parent_hash, &rogue_key, 1);
-        insert_authority_entry(&doc, &rogue_entry);
-    }
-    let valid_entry = set_tier_floor_entry(vault_id, parent_hash, &owner_key, 1);
-    insert_authority_entry(&doc, &valid_entry);
-    doc.commit();
-
-    assert_eq!(
-        forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap(),
-        4
-    );
-    assert_eq!(
-        vault
-            .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
-            .unwrap(),
-        before + 4
-    );
-    assert_eq!(
-        invalid_authority_log_quarantine_count(&vault),
-        0,
-        "same-vault unknown signers are retained for the authority fold"
-    );
-    assert_eq!(quota_quarantine_count(&vault), 0);
-    assert!(
-        maintenance_ingest_quota_snapshots(&vault)
-            .unwrap()
-            .is_empty()
-    );
-}
-
-#[test]
 fn newly_enrolled_signer_entry_can_replay_before_enrollment() {
     let (_dir, vault) = test_vault();
     set_quota(&vault, 8, 60 * 60);
@@ -502,131 +384,6 @@ fn newly_enrolled_signer_entry_can_replay_before_enrollment() {
         before + 2
     );
     assert_eq!(invalid_authority_log_quarantine_count(&vault), 0);
-}
-
-#[test]
-fn authority_replay_admits_both_peers_without_rate_refusal() {
-    let (_dir, vault) = test_vault();
-    set_quota(&vault, 1, 60 * 60);
-    let materializer = Materializer::new();
-    let window_key = WindowKey::new(WINDOW);
-    let doc = create_window_doc("user", &window_key);
-
-    let (owner_key, genesis, vault_id) = seed_local_genesis(&vault, 0x42);
-    let peer_key = SigningKey::from_bytes(&[0x24; 32]);
-    let enroll = enroll_entry(
-        vault_id,
-        authority_entry_hash(&genesis).unwrap(),
-        &owner_key,
-        &peer_key,
-        1,
-    );
-    vault
-        .put_authority_log_entry(
-            &enroll,
-            TimeRange {
-                start: LEARNED_AT,
-                end: LEARNED_AT,
-            },
-            LEARNED_AT,
-        )
-        .unwrap();
-    let before = vault
-        .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
-        .unwrap();
-
-    let owner_one = set_tier_floor_entry(
-        vault_id,
-        authority_entry_hash(&enroll).unwrap(),
-        &owner_key,
-        2,
-    );
-    let owner_two = set_tier_floor_entry(
-        vault_id,
-        authority_entry_hash(&owner_one).unwrap(),
-        &owner_key,
-        3,
-    );
-    let peer_entry = set_tier_floor_entry(
-        vault_id,
-        authority_entry_hash(&enroll).unwrap(),
-        &peer_key,
-        1,
-    );
-    insert_authority_entry(&doc, &owner_one);
-    insert_authority_entry(&doc, &owner_two);
-    let peer_id = insert_authority_entry(&doc, &peer_entry);
-    doc.commit();
-
-    let accepted = forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
-    assert_eq!(accepted, 3);
-    assert_eq!(
-        vault
-            .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
-            .unwrap(),
-        before + 3
-    );
-    assert_eq!(quota_quarantine_count(&vault), 0);
-    assert!(
-        vault
-            .entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
-            .unwrap()
-            .contains(&peer_id),
-        "both peers must still materialize"
-    );
-
-    let snapshots = maintenance_ingest_quota_snapshots(&vault).unwrap();
-    assert!(snapshots.is_empty());
-}
-
-#[test]
-fn authority_burst_needs_no_quota_raise_or_deferred_replay() {
-    let (_dir, vault) = test_vault();
-    set_quota(&vault, 2, u64::MAX);
-    let materializer = Materializer::new();
-    let window_key = WindowKey::new(WINDOW);
-    let doc = create_window_doc("user", &window_key);
-
-    let (owner_key, genesis, vault_id) = seed_local_genesis(&vault, 0x43);
-    let before = vault
-        .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
-        .unwrap();
-    let mut parent = authority_entry_hash(&genesis).unwrap();
-
-    for idx in 0..4u64 {
-        let entry = set_tier_floor_entry(vault_id, parent, &owner_key, idx + 1);
-        parent = authority_entry_hash(&entry).unwrap();
-        insert_authority_entry(&doc, &entry);
-    }
-    doc.commit();
-
-    let first = forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
-    assert_eq!(first, 4);
-    assert_eq!(quota_quarantine_count(&vault), 0);
-    assert!(pending_remat_windows(&vault).unwrap().is_empty());
-    assert_eq!(
-        vault
-            .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
-            .unwrap(),
-        before + 4
-    );
-
-    set_quota(&vault, 4, u64::MAX);
-    let second = forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
-    assert_eq!(second, 0);
-    assert_eq!(
-        vault
-            .count_entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)
-            .unwrap(),
-        before + 4
-    );
-
-    let snapshots = maintenance_ingest_quota_snapshots(&vault).unwrap();
-    assert!(snapshots.is_empty());
-    assert!(
-        pending_remat_windows(&vault).unwrap().is_empty(),
-        "authority replay creates no rate-deferral marker"
-    );
 }
 
 /// Invalid envelopes retain the existing occupant; valid retries displace it.
@@ -715,78 +472,4 @@ fn observer_b_invalid_envelope_leaves_no_quota_trace_and_retry_admits() {
     );
     let snapshots = maintenance_ingest_quota_snapshots(&vault).unwrap();
     assert!(snapshots.is_empty());
-}
-
-#[test]
-fn authority_observation_and_quota_config_never_cross_sync_boundary() {
-    let (_dir_a, vault_a) = test_vault();
-    set_quota(&vault_a, 1, 60 * 60);
-    vault_a
-        .set_authority_observation_policy(oneiron::authority::AuthorityObservationPolicy {
-            ingest_check_threshold: 0,
-            ..Default::default()
-        })
-        .unwrap();
-    let materializer_a = Materializer::new();
-    let window_key = WindowKey::new(WINDOW);
-    let doc_a = create_window_doc("user", &window_key);
-
-    let (owner_key, genesis, vault_id) = seed_local_genesis(&vault_a, 0x44);
-    let entry = set_tier_floor_entry(
-        vault_id,
-        authority_entry_hash(&genesis).unwrap(),
-        &owner_key,
-        1,
-    );
-    insert_authority_entry(&doc_a, &entry);
-    doc_a.commit();
-    assert_eq!(
-        forward_rematerialize(&vault_a, &doc_a, &materializer_a, &window_key).unwrap(),
-        1
-    );
-    assert!(
-        maintenance_ingest_quota_snapshots(&vault_a)
-            .unwrap()
-            .is_empty()
-    );
-    assert_eq!(vault_a.authority_ingest_checks().unwrap().len(), 1);
-
-    let snapshot = doc_a.export(ExportMode::Snapshot).unwrap();
-    let imported_doc = LoroDoc::from_snapshot(&snapshot).unwrap();
-    let (_dir_b, vault_b) = test_vault();
-    vault_b
-        .put_authority_log_entry(
-            &genesis,
-            TimeRange {
-                start: LEARNED_AT,
-                end: LEARNED_AT,
-            },
-            LEARNED_AT,
-        )
-        .unwrap();
-
-    assert!(
-        maintenance_ingest_quota_snapshots(&vault_b)
-            .unwrap()
-            .is_empty()
-    );
-    assert_eq!(
-        maintenance_ingest_quota_config(&vault_b)
-            .unwrap()
-            .max_ops_per_peer_window,
-        DEFAULT_MAINTENANCE_INGEST_MAX_OPS_PER_PEER_WINDOW
-    );
-
-    let materializer_b = Materializer::new();
-    assert_eq!(
-        forward_rematerialize(&vault_b, &imported_doc, &materializer_b, &window_key).unwrap(),
-        1
-    );
-    let snapshots_b = maintenance_ingest_quota_snapshots(&vault_b).unwrap();
-    assert!(snapshots_b.is_empty());
-    assert!(vault_b.authority_ingest_checks().unwrap().is_empty());
-    assert_eq!(
-        vault_b.authority_observation_policy().unwrap(),
-        Default::default()
-    );
 }

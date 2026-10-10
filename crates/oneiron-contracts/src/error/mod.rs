@@ -204,6 +204,8 @@ pub enum ErrorKind {
     OffRecordTalkOnly,
     OffRecordTurnNotInJournal,
     OffRecordPromoteAuthorMissing,
+    OffRecordNotInRoom,
+    OffRecordSavingStopped,
     #[cfg(feature = "sync")]
     RedactionReceiptDivergence,
     #[cfg(feature = "sync")]
