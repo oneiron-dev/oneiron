@@ -12,7 +12,7 @@ use super::filter::{FilterAst, MatcherSpec, filter_dependencies};
 use super::lifecycle::{next_version, validate_definition};
 use super::storage::{
     PACK_MIGRATION_MAPS, REPAIRS, RepairReceipt, load_record_in_txn, migration_map_key,
-    saved_query_type_byte, store_record_in_txn,
+    saved_query_type_byte, source_migration_map_key, store_record_in_txn,
 };
 use super::support::invalid;
 
@@ -299,18 +299,24 @@ pub(crate) struct PackMove<'a> {
     pub(crate) pack: &'a str,
     pub(crate) from_version: &'a str,
     pub(crate) to_version: &'a str,
+    /// Content hash of the installed source.
+    pub(crate) from_source: &'a str,
+    /// Content hash of the new source.
+    pub(crate) to_source: &'a str,
     /// Predicates the installed source declared.
     pub(crate) from_predicates: &'a BTreeSet<String>,
     /// Predicates the new source declares.
     pub(crate) to_predicates: &'a BTreeSet<String>,
+    /// The map the new source ships for a move from the installed one.
+    pub(crate) shipped: Option<PackMigrationMap>,
 }
 
 /// The pack-update rung of the drift ladder (ARCH-0059 §4), in the install's
-/// own write transaction, so the new pack and the repairs it forces commit
-/// together or not at all. Every saved query that is not archived and reads a
-/// predicate the move dropped, or one the move's migration map rewrites, runs
-/// the ladder. Its lifecycle is kept: a query paused for another cause stays
-/// paused.
+/// own write transaction, so the new pack, the map it ships and the repairs
+/// they force commit together or not at all. Every saved query that is not
+/// archived and reads a predicate the move dropped, or one the move's
+/// migration map rewrites, runs the ladder. Its lifecycle is kept: a query
+/// paused for another cause stays paused.
 ///
 /// # Errors
 ///
@@ -328,15 +334,20 @@ pub(crate) fn repair_saved_queries_after_pack_move_in_txn(
         to_version: moved.to_version.to_owned(),
         affected_predicates: Vec::new(),
     };
-    // A migration map names a move between two versions. A source changed
-    // under the same version has no map of its own, so it never reuses one
-    // an earlier move recorded: what it drops pauses with no rewrite.
-    let mut map = if moved.from_version == moved.to_version {
-        PackMigrationMap::default()
-    } else {
-        PACK_MIGRATION_MAPS
+    // A shipped map names its move by both sources, so it applies under one
+    // version too. An operator's names a move between two versions, and a
+    // source changed under the same version never reuses one an earlier move
+    // recorded: what it drops pauses with no rewrite.
+    let source_key = source_migration_map_key(moved);
+    if let Some(shipped) = &moved.shipped {
+        PACK_MIGRATION_MAPS.put(&vault.store, wtxn, &source_key, shipped)?;
+    }
+    let mut map = match PACK_MIGRATION_MAPS.get(&vault.store, wtxn, &source_key)? {
+        Some(map) => map,
+        None if moved.from_version == moved.to_version => PackMigrationMap::default(),
+        None => PACK_MIGRATION_MAPS
             .get(&vault.store, wtxn, &migration_map_key(&drift))?
-            .unwrap_or_default()
+            .unwrap_or_default(),
     };
     // A rewrite onto a predicate this very move drops is no rewrite.
     map.rewrites.retain(|_, rewrite| {

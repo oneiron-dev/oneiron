@@ -7591,7 +7591,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DreamerIsolationClass"
@@ -7599,7 +7599,7 @@
      "path": "src/claim/predicate_grammar.rs",
      "purpose": "Predicate vocabulary and the D17 grammar gate: namespace constants, the crate-owned well-known predicate…",
      "surface": {
-      "const": 13,
+      "const": 14,
       "crate-vis": 5,
       "enum": 1,
       "fn": 2
@@ -29684,7 +29684,7 @@
      "path": "src/saved_query/storage.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -31690,7 +31690,7 @@
      "path": "src/skill_hub/pack_catalog/admission.rs",
      "purpose": "Post-fit installation of pinned pack source; requested powers stay inert",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 7
      }
     },
@@ -31802,8 +31802,22 @@
      "path": "src/skill_hub/pack_catalog/manifest.rs",
      "purpose": "Closed PACK.md manifest parser",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PackMigration"
+     ],
+     "path": "src/skill_hub/pack_catalog/migrations.rs",
+     "purpose": "Predicate migration maps a pack ships in PACK.md (ARCH-0059 §4, rung 1)",
+     "surface": {
+      "crate-vis": 2,
       "struct": 1
      }
     },
@@ -31815,7 +31829,7 @@
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
       "crate-vis": 5,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -39917,7 +39931,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 65,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -40129,7 +40143,7 @@
    },
    "over_bar": 32,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2436,
+   "source_files": 2437,
    "test_files": 772
   },
   "oneiron-android": {
@@ -49593,6 +49607,16 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/embedder/local/model_manager/tests.rs",
+     "purpose": "Servers sharing one models directory",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/embedder/local/prompts.rs",
@@ -50689,7 +50713,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/models/served.rs",
-     "purpose": "Which model actually answered: the receipt field a ladder fills in",
+     "purpose": "Which model actually answered: the receipt field a ladder fills in, and what an answered call is charged",
      "surface": {
       "crate-vis": 4
      }
@@ -51702,7 +51726,7 @@
      "purpose": "Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every…"
     },
     "embedder": {
-     "files": 16,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -51859,7 +51883,7 @@
    "over_bar": 8,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 306,
-   "test_files": 118
+   "test_files": 119
   },
   "oneiron-uniffi": {
    "files": [

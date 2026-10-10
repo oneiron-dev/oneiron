@@ -2022,3 +2022,253 @@ fn pack_update_runs_the_drift_ladder_on_saved_queries() -> Result<()> {
     assert_eq!(kept.definition.lifecycle, SavedQueryLifecycle::Active);
     Ok(())
 }
+
+/// ARCH-0059 §4 rung 1 from the pack itself: a source that changes under the
+/// same version ships the map for the move from the exact source it
+/// replaces, and the install migrates the saved query with a receipt.
+#[test]
+fn a_pack_ships_its_migration_map_and_a_same_version_update_applies_it() -> Result<()> {
+    use crate::saved_query::SavedQueryLifecycle;
+    use serde_json::json;
+    let source = |name: &str, version: &str, predicates: &[&str], migrations: &str| {
+        PackSource::from_files(vec![
+            HubFile::new(
+                "PACK.md",
+                format!(
+                    "---\nname: {name}\ndescription: fixture\nversion: {version}\nkind: capability\npredicates: {}\n{migrations}---\nExact pack source\n",
+                    json!(predicates)
+                )
+                .into_bytes(),
+            ),
+            HubFile::new(
+                "skills/format/SKILL.md",
+                b"---\nname: alice.format\ndescription: format\nversion: 1\n---\nKeep facts exact.\n"
+                    .to_vec(),
+            ),
+        ])
+    };
+    let shipped = |maps: serde_json::Value| format!("migrations: {maps}\n");
+    // A 100-byte name and a 200-byte version: a map key spelling both beside
+    // the two sources would pass LMDB's 511-byte key bound, and a version
+    // past 128 bytes is still one a map can start from.
+    let name = format!("alice.{}", "t".repeat(94));
+    let version = format!("v{}", "3".repeat(199));
+    let (topic, subject) = (format!("{name}.topic"), format!("{name}.subject"));
+    let first = source(&name, &version, &[topic.as_str()], "")?;
+    let first_hash = first.content_hash().to_hex();
+    let update = |rewrite: serde_json::Value| {
+        shipped(json!([{"from": version, "source": first_hash, "rewrites": {&topic: rewrite}}]))
+    };
+
+    // A map for the pack's own version names the exact source it moves from,
+    // and moves the pack's predicates only onto ones the new source declares.
+    let refused =
+        |migrations: &str| source(&name, &version, &[subject.as_str()], migrations).is_err();
+    let rename = json!({"kind": "rename", "to": subject});
+    assert!(refused(&shipped(
+        json!([{"from": version, "rewrites": {&topic: rename}}])
+    )));
+    assert!(refused(&update(
+        json!({"kind": "rename", "to": "bob.notes.subject"})
+    )));
+    // A declaration may hold a hyphen; a Claim predicate may not, so a query
+    // moved there would watch a predicate nothing can write.
+    let hyphen = format!("{name}.subject-name");
+    assert!(
+        source(
+            &name,
+            &version,
+            &[hyphen.as_str()],
+            &update(json!({"kind": "rename", "to": hyphen}))
+        )
+        .is_err()
+    );
+    // The line is closed: no repeated key, which would let the map say two
+    // things, and no field a rewrite kind does not carry.
+    let changed = json!({"kind": "semantics_changing", "to": subject, "note": "Meaning changed"});
+    let twice = format!(
+        "migrations: [{{\"from\":{},\"source\":\"{first_hash}\",\"rewrites\":{{\"{topic}\":{changed},\"{topic}\":{rename}}}}}]\n",
+        json!(version)
+    );
+    assert!(refused(&twice));
+    assert!(refused(&update(
+        json!({"kind": "rename", "to": subject, "note": "Meaning changed"})
+    )));
+    assert!(refused(&update(
+        json!({"kind": "rename", "to": subject, "requires_owner": true})
+    )));
+    // A pack under an engine namespace still reads (the install door refuses
+    // it), but its map never moves a query onto the engine's own predicates.
+    let engine = ["core.conflict.topic", "core.conflict.open"];
+    assert!(source("core.conflict", "2", &engine, "").is_ok());
+    assert!(
+        source(
+            "core.conflict",
+            "2",
+            &engine,
+            &shipped(json!([{"from": "1", "rewrites": {"core.conflict.topic":
+                {"kind": "rename", "to": "core.conflict.open"}}}]))
+        )
+        .is_err()
+    );
+
+    let (_dir, vault, owner, reference, publisher) = fixture(SkillHubTrustTier::Verified, &first)?;
+    crate::campaign::register_crm_pack(
+        &vault,
+        107,
+        108,
+        crate::registry::TypeByteFamily::Productivity,
+    )?;
+    let install = |source: &PackSource, pin: &str, at: u64| {
+        install_pinned(&vault, &reference, &publisher, source, pin, at)
+    };
+    install(&first, "pack/v3", 3)?;
+    let saved = save_claim_query(&vault, &owner, &topic)?;
+
+    let second = source(&name, &version, &[subject.as_str()], &update(rename))?;
+    install(&second, "pack/v3b", 4)?;
+    let migrated = crate::saved_query::read_saved_query(&vault, owner.actor(), saved.query_ref)?
+        .expect("the query survives the update");
+    assert_eq!(migrated.definition.filter, claim_exists(&subject));
+    assert_eq!(migrated.definition.lifecycle, SavedQueryLifecycle::Active);
+    assert!(
+        crate::saved_query::pack_drift_repairs(&vault)?
+            .iter()
+            .any(|repair| repair.query_ref == saved.query_ref
+                && repair.summary.starts_with("auto-migrated")),
+        "rung 1 leaves a receipt"
+    );
+    Ok(())
+}
+
+/// ARCH-0059 §4 rung 1 never reaches the engine's own state. Sender
+/// reputation is an engine family under `channel_identity`. A pack that names
+/// itself after it is refused where a pack is admitted, and a map that moves
+/// a query from bounce rate to complaint rate is refused where the source is
+/// read, so an owner's query over engine state stays as the owner wrote it.
+#[test]
+fn a_pack_named_after_an_engine_family_cannot_move_a_query_over_engine_state() -> Result<()> {
+    use crate::identity_reputation::{
+        PREDICATE_IDENTITY_REPUTATION_BOUNCE_RATE as BOUNCE,
+        PREDICATE_IDENTITY_REPUTATION_COMPLAINT_RATE as COMPLAINT,
+    };
+    let pack = |name: &str, version: &str, predicate: &str, migrations: &str| {
+        PackSource::from_files(vec![HubFile::new(
+            "PACK.md",
+            format!(
+                "---\nname: {name}\ndescription: fixture\nversion: {version}\nkind: capability\npredicates: [\"{predicate}\"]\n{migrations}---\nExact pack source\n"
+            )
+            .into_bytes(),
+        )])
+    };
+    let family = "channel_identity.reputation";
+    let first = pack(family, "1", BOUNCE, "")?;
+    let rename = format!(
+        "migrations: [{{\"from\":\"1\",\"rewrites\":{{\"{BOUNCE}\":{{\"kind\":\"rename\",\"to\":\"{COMPLAINT}\"}}}}}}]\n"
+    );
+    let second = pack(family, "2", COMPLAINT, &rename);
+
+    let tools = pack("alice.tools", "1", "alice.tools.topic", "")?;
+    let (_dir, vault, owner, reference, publisher) = fixture(SkillHubTrustTier::Verified, &tools)?;
+    crate::campaign::register_crm_pack(
+        &vault,
+        107,
+        108,
+        crate::registry::TypeByteFamily::Productivity,
+    )?;
+    // First-party packs are not caught: every built-in seeded at open is
+    // installed, and its source passes the same admission rule.
+    for name in [
+        "oneiron.email",
+        "oneiron.line",
+        "oneiron.linkedin",
+        "oneiron.slack",
+    ] {
+        let receipt = vault.installed_pack(name)?.expect("seeded at open");
+        let source = vault
+            .get_pack_source(&EntityId::from_hex(&receipt.source_id)?)?
+            .expect("its source is stored");
+        super::admission::refuse_engine_namespace(&source)?;
+    }
+    let saved = save_claim_query(&vault, &owner, BOUNCE)?;
+    // Whatever is admitted is installed in order: v1 declares bounce rate,
+    // v2 ships the rename onto complaint rate.
+    let installed = install_pinned(&vault, &reference, &publisher, &first, "pack/r1", 3);
+    if let (Ok(()), Ok(second)) = (&installed, &second) {
+        install_pinned(&vault, &reference, &publisher, second, "pack/r2", 4)?;
+    }
+    let kept = crate::saved_query::read_saved_query(&vault, owner.actor(), saved.query_ref)?
+        .expect("the query is still there");
+    assert_eq!(
+        kept.definition.filter,
+        claim_exists(BOUNCE),
+        "the owner's query still reads bounce rate"
+    );
+    assert!(installed.is_err(), "an engine family is no pack's name");
+    assert!(
+        second.is_err(),
+        "nor does a map move a query over engine state"
+    );
+    Ok(())
+}
+
+/// One pinned fetch and install of `source` from the fixture's hub.
+fn install_pinned(
+    vault: &Vault,
+    reference: &HubRef,
+    publisher: &ForeignSkillPublisher,
+    source: &PackSource,
+    pin: &str,
+    at: u64,
+) -> Result<()> {
+    let pinned = HubRef::new(
+        reference.hub_id,
+        pin,
+        HubPin::ContentHash(source.content_hash().to_hex()),
+    )?;
+    let id = fetched_fixture(vault, source, &pinned, publisher, at)?;
+    let ask = vault.prepare_pack_install(id, &pinned, publisher, &policy())?;
+    assert!(matches!(
+        vault.install_pack(&ask)?,
+        PackInstallDisposition::Installed(_)
+    ));
+    Ok(())
+}
+
+fn claim_exists(predicate: &str) -> crate::saved_query::FilterAst {
+    crate::saved_query::FilterAst::Claim {
+        predicate: predicate.to_owned(),
+        cmp: crate::saved_query::ClaimComparison::Exists,
+        value: serde_json::Value::Null,
+    }
+}
+
+/// An owner's manual query whose filter and hard matcher read `predicate`.
+fn save_claim_query(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    predicate: &str,
+) -> Result<crate::saved_query::SavedQueryRecord> {
+    use crate::saved_query::{
+        CreateSavedQueryRequest, EvalMode, EvalPolicy, MatcherSpec, QueryScope,
+        SAVED_QUERY_SCHEMA_VERSION,
+    };
+    crate::saved_query::create_saved_query(
+        vault,
+        owner.actor(),
+        &CreateSavedQueryRequest {
+            schema_version: SAVED_QUERY_SCHEMA_VERSION,
+            scope: QueryScope::default(),
+            filter: claim_exists(predicate),
+            matcher: MatcherSpec::Hard {
+                expression: claim_exists(predicate),
+            },
+            eval: EvalPolicy {
+                mode: EvalMode::Manual,
+                max_entities_per_wake: 8,
+                max_judges_per_wake: 4,
+            },
+        },
+        10,
+    )
+}
