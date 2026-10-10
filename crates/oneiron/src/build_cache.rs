@@ -372,7 +372,7 @@ impl<'a> BuildCache<'a> {
         // This scope does index work ONLY. Copy a winner before aborting the
         // write transaction, then decode/admit it outside the transaction.
         let winner = {
-            let mut wtxn = store.env.write_txn().map_err(Error::from)?;
+            let mut wtxn = store.env.write_txn()?;
             let winner = BUILD_CACHE_REAPI_ROW.get(store, &wtxn, key.as_bytes())?;
             if winner.is_none() {
                 BUILD_CACHE_REAPI_ROW.put(store, &mut wtxn, key.as_bytes(), &candidate)?;
