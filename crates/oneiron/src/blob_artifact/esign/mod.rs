@@ -9,9 +9,9 @@ pub use lifecycle::{EsignLifecycleRules, EsignNoticeSwitches};
 pub use notice_dispatch::{ESIGN_NOTICE_ATTEMPT_KIND, EsignNotice};
 #[cfg(test)]
 mod tests;
-pub(crate) use ledger::{reject_event_delete, validate_event_claim};
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use ledger::mark_sent_for_test;
+pub(crate) use ledger::{reject_event_delete, validate_event_claim};
 pub use model::{
     AccessStatus, DeliveryStatus, DocumentKind, DocumentStatus, EsignAuditActor, EsignDocument,
     EsignEvent, EsignEventRow, EsignField, EsignItem, EsignRecipient, EsignState, FieldGeometry,
