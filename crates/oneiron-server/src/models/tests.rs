@@ -171,6 +171,50 @@ async fn a_call_that_picks_its_own_model_or_route_never_reaches_the_provider() {
     assert!(fake.seen().is_empty());
 }
 
+/// Astra R6 and R7 for chat turns and workflow steps, #1338's code-mode rule:
+/// an answer after a failed rung pays for that rung too, and a reply that
+/// reports no usage pays the reservation, never nothing. The key the ladder
+/// stamps is the key the charge reads.
+#[tokio::test]
+async fn an_answer_pays_for_the_rungs_that_failed_before_it_and_never_nothing() {
+    let failing = FakeLlm::start(vec![], Some(Reply::Status(500))).await;
+    let no_usage = Reply::NoUsage {
+        deltas: vec!["ok".into()],
+        model: "big".into(),
+    };
+    let answering = FakeLlm::start(vec![Reply::text("ok"), no_usage], None).await;
+    let runtime = ModelRuntime::build(Some(&config(&format!(
+        r#"
+[providers.first]
+kind = "local-openai-compat"
+base_url = "{}"
+[providers.second]
+kind = "local-openai-compat"
+base_url = "{}"
+[roles.generative_reasoner]
+rungs = [{{ model = "first:small" }}, {{ model = "second:big" }}]
+"#,
+        failing.base_url, answering.base_url
+    ))));
+    let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
+    let floor = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS;
+    let guard = BudgetGuard::new("models-test", 100 * floor, BudgetExhaustionPolicy::Suspend);
+    let mut charges = Vec::new();
+    for _ in 0..2 {
+        let lease = guard.admit().unwrap().lease;
+        let before = guard.read().used_units;
+        let response = seat
+            .backend
+            .generate(request(&seat.model, "hi"), &lease)
+            .await
+            .expect("the second rung answers");
+        settle_answered(&guard, &lease, &response.usage, floor).unwrap();
+        charges.push(guard.read().used_units - before);
+    }
+    // 11 + 7 tokens and one failed rung; then no usage and one failed rung.
+    assert_eq!(charges, [18 + floor, 2 * floor]);
+}
+
 #[tokio::test]
 async fn anthropic_compatible_provider_generates_and_streams_through_a_seat() {
     let fake = FakeLlm::start(
