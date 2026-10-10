@@ -71,9 +71,10 @@ pub(crate) fn imported_evidence_in_txn(
             }
             // A message's words were landed by the import that learned it. Its
             // own import provenance or any imported turn it is part of makes it
-            // imported; no other parent edge can take that away.
+            // imported; no other parent edge can take that away. Only its own
+            // provenance names the import, so a parent edge names no review.
             ENTITY_TYPE_MESSAGE => {
-                let mut source = message_import_source(&body);
+                let source = message_import_source(&body);
                 let mut stamped = source.is_some();
                 for parent in vault.filtered_edge_peers(
                     txn,
@@ -87,10 +88,7 @@ pub(crate) fn imported_evidence_in_txn(
                         continue;
                     };
                     let facts = decode_turn_body(&parent_body);
-                    if parent_header.entity_type == ENTITY_TYPE_TURN && facts.imported {
-                        stamped = true;
-                        source = source.or(facts.import_source);
-                    }
+                    stamped |= parent_header.entity_type == ENTITY_TYPE_TURN && facts.imported;
                 }
                 imported |= stamped;
                 if let Some(source) = source.as_deref().and_then(HistorySource::parse)

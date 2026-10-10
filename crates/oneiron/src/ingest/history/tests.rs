@@ -750,6 +750,27 @@ fn a_spawned_codex_rollout_keeps_the_owners_copied_words_as_the_owners() {
             ),
         ]
     );
+
+    // Sol 9A-3B round 4 #1: a spawned thread's copy that left out its
+    // parent's meta. Whose words the copy holds is unknown, so they are
+    // left out rather than read as the owner's.
+    let conversations = decode_log(
+        HistorySource::Codex,
+        "rollout-2026-09-24T13-00-00-s-bare",
+        &[
+            r#"{"timestamp":"2026-09-24T13:00:00.000Z","type":"session_meta","payload":{"id":"s-bare","parent_thread_id":"s-spawned","subagent_history_start_ordinal":3,"timestamp":"2026-09-24T13:00:00.000Z","cli_version":"0.100.0"}}"#,
+            r#"{"timestamp":"2026-09-24T13:00:00.010Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"List every call site of parse_amount."}],"id":"msg_spawned_u1"}}"#,
+            r#"{"timestamp":"2026-09-24T13:00:00.020Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Three call sites."}],"id":"msg_spawned_a1"}}"#,
+            r#"{"timestamp":"2026-09-24T13:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Check the qif.rs call site."}],"id":"msg_bare_u1"}}"#,
+        ],
+    );
+    assert!(
+        conversations[0]
+            .messages
+            .iter()
+            .filter(|message| message.role == HistoryRole::User)
+            .all(|message| message.said_by == Some(super::DELEGATING_AGENT))
+    );
 }
 
 /// Astra 1310 #3, Greptile 1310 (claude_code.rs:283): a prompt typed early

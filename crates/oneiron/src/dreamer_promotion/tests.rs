@@ -515,6 +515,32 @@ fn imported_evidence_lands_proposed_in_its_import_review_whatever_the_policy_gra
         .expect("its pending row");
     assert_eq!(row.dreamer_run_id.as_deref(), Some(review.as_str()));
 
+    // A MESSAGE with no import provenance of its own, given an imported TURN
+    // as a parent, is imported evidence, but the edge names no import: it
+    // waits in the Dreamer run's review (Sol 9A-3B round 4 #2).
+    let bare = EntityId::now();
+    vault.put_entity(
+        &bare,
+        crate::registry::ENTITY_TYPE_MESSAGE,
+        occurred(5),
+        5,
+        b"bare",
+    )?;
+    vault.put_edge(&bare, EdgeKind::PartOf, &turn, 1.0)?;
+    let promoted = candidate(&fixture, "profile.drink", "tea", vec![bare]);
+    let id = promoted.claim_id;
+    let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
+    assert_eq!(outcome.pended, vec![id], "{outcome:?}");
+    let pending = vault.store.pending_gate_consents(10)?;
+    let row = pending
+        .iter()
+        .find(|row| row.claim_id == *id.as_bytes())
+        .expect("its pending row");
+    assert_eq!(
+        row.dreamer_run_id.as_deref(),
+        Some(fixture.run.run_id.as_str())
+    );
+
     // A claim built on an approved imported claim carries the import on: it
     // too waits for the owner, in the Dreamer run's review.
     let head = approved_head(&vault, &fixture, ClaimSource::Imported, "profile.home")?;

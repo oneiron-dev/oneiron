@@ -122,19 +122,28 @@ struct Thread {
 /// whose own history holds it was spawned. Copies nest, so each copied
 /// parent's own history ends where the thread that copied it starts its own.
 /// Where a thread's own start is unknown, a spawned thread may hold any line
-/// past its meta, so those are its agent's; the owner's words are only those
-/// no spawned thread could hold.
+/// past its meta, so those are its agent's, and any other leaves the line to
+/// the copies it carries. Words are the owner's only when a thread no agent
+/// spawned holds them; copied history whose thread's meta the copy left out
+/// is no one's known words, so it is the agent's too. A rollout with no meta
+/// names no spawn at all: its words are the owner's.
 fn delegated(threads: &[Thread], line: usize) -> bool {
     let mut end = usize::MAX;
+    let mut owners = threads.is_empty();
     for thread in threads {
         match thread.own_from {
             Some(start) if (start..end).contains(&line) => return thread.spawned,
             Some(start) => end = end.min(start),
-            None if thread.spawned && (thread.line..end).contains(&line) => return true,
+            None if (thread.line..end).contains(&line) => {
+                if thread.spawned {
+                    return true;
+                }
+                owners = true;
+            }
             None => {}
         }
     }
-    false
+    !owners
 }
 
 /// The thread that spawned this one, at the top level in current rollouts and
