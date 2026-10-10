@@ -140,7 +140,11 @@ impl ScopedRead<'_> {
         id: &EntityId,
         mode: ReadMode,
     ) -> Result<Option<AdmittedRevision>> {
-        if !self.is_entity_retrievable_with_policy_in(txn, policy, filter, id)? {
+        // A read by id matches no meaning, so it takes the row predicate
+        // alone. The TURN rule of `is_entity_retrievable_with_policy_in`
+        // guards the doors that find a row (search, recall, packs, graph
+        // edges), and each runs it before it reads the row here.
+        if !self.is_entity_readable_with_filter_in(txn, policy, id, filter)? {
             return Ok(None);
         }
         let raw = match self.session_view {

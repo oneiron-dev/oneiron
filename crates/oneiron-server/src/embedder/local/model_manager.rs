@@ -23,6 +23,7 @@ use std::time::{Duration, SystemTime};
 use sha2::{Digest, Sha256};
 
 use crate::config::LocalEmbedderConfig;
+use oneiron::config::VectorEvidenceFloors;
 
 /// Where the pinned artifacts live. Only a test ever points this elsewhere.
 const HUGGINGFACE_BASE_URL: &str = "https://huggingface.co";
@@ -130,6 +131,9 @@ pub(crate) struct PinnedModel {
     /// A digest for every file the planner names at this commit, and for the
     /// prompt file when the commit carries one.
     pub(crate) files: &'static [PinnedArtifact],
+    /// Where vector evidence starts in this model's space, as measured with
+    /// its shipped settings; `None` keeps the engine's default.
+    pub(crate) evidence: Option<VectorEvidenceFloors>,
 }
 
 /// The shipped defaults: the current one first, then the earlier one, which
@@ -139,13 +143,31 @@ pub(crate) const PINNED_MODELS: [PinnedModel; 2] = [
         repo: crate::config::embedder::DEFAULT_LOCAL_REPO,
         revision: crate::config::embedder::DEFAULT_LOCAL_REVISION,
         files: &PPLX_EMBED_V1_06_FILES,
+        // A compressed space. Q8_0 with no prompts (2026-10-09): unrelated
+        // sentence pairs score at most 0.12, a paraphrase that shares no word
+        // with its target 0.21 to 0.47, a shared-word query 0.61. The
+        // engine's 0.3 floor withheld every paraphrase.
+        evidence: Some(VectorEvidenceFloors {
+            floor: 0.15,
+            strong: 0.25,
+        }),
     },
     PinnedModel {
         repo: "microsoft/harrier-oss-v1-0.6b",
         revision: "f9b9dc8d367d443f2479d27aa5d8d2850c0774ee",
         files: &HARRIER_06_FILES,
+        evidence: None,
     },
 ];
+
+/// Where vector evidence starts for the configured repository and commit,
+/// when it is a shipped default this build measured.
+pub(crate) fn pinned_evidence(config: &LocalEmbedderConfig) -> Option<VectorEvidenceFloors> {
+    PINNED_MODELS
+        .iter()
+        .find(|model| model.repo == config.repo && model.revision == config.revision)
+        .and_then(|model| model.evidence)
+}
 
 /// The pinned digests of the configured repository and commit, when it is a
 /// shipped default.

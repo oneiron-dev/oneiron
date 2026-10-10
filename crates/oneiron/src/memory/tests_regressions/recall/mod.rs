@@ -8,4 +8,7 @@ include!("bounds_execution.rs");
 include!("temporal.rs");
 include!("control_kinds.rs");
 include!("read_grants.rs");
+include!("turn_fold.rs");
+include!("turn_disclosure.rs");
+include!("turn_text_revision.rs");
 include!("clock_consistency.rs");

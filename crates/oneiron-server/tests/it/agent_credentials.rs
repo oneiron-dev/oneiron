@@ -147,10 +147,16 @@ async fn whoami_names_the_principal_a_write_accepts_and_token_read_only_reads() 
                 None,
             )
             .unwrap();
+        // The message comes back as its turn, quoting it (ARCH-0004).
         assert!(
             pack.items
                 .iter()
-                .any(|item| Some(&item.short_id) == witnessed.message_short_ids.first()),
+                .any(|item| item.short_id == witnessed.turn_short_id
+                    && item
+                        .cited_messages
+                        .iter()
+                        .any(|message| Some(&message.short_id)
+                            == witnessed.message_short_ids.first())),
             "{pack:?}"
         );
         let refused = reader.witness(&turn("an agent may not write")).unwrap_err();

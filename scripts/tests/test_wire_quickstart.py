@@ -173,8 +173,17 @@ def test_remote_sdk_parity():
     # precede the older Node message, not their creation/ID order. This makes
     # the age separation load-bearing without normalizing away engine ranking.
     # Recall and witness name a message by the same short id; recall carries
-    # the revision it ranked beside it.
-    short_ids = [item["short_id"] for item in recalled["items"]]
+    # the revision it ranked beside it. A hit on a message comes back as its
+    # TURN, which quotes the message (ARCH-0004).
+    short_ids = [
+        short_id
+        for item in recalled["items"]
+        for short_id in (
+            [quoted["short_id"] for quoted in item.get("cited_messages", [])]
+            if item["kind"] == "TURN"
+            else [item["short_id"]]
+        )
+    ]
     older = normalize(node_written)["witnessed"]["message_short_ids"][0]
     newer = witnessed["message_short_ids"][0]
     assert older in short_ids

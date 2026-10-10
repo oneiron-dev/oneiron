@@ -1,6 +1,6 @@
 //! vault_meta scope/tier-A rows, Vault impl, and agent-visible assembly block.
 
-use crate::ports::EntityStoreRead;
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use heed::RoTxn;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
@@ -19,7 +19,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, Result};
 use crate::federation::{Scope, record_scope::scope_for_blob};
 use crate::interlocutor::{InterlocutorSet, InterlocutorStamp};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT};
+use crate::registry::{
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN,
+};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
@@ -350,6 +352,11 @@ impl DisclosureContext {
     /// whose record-position Scope is admitted by the intersected contact Scope.
     /// Tier is checked FIRST so clearance can
     /// never override tier (never-widen, I2).
+    ///
+    /// A TURN's text and vector are its messages' (`embed::turn_text_in_txn`),
+    /// so the clamp admits a turn only when it admits each of them too: a
+    /// withheld message would otherwise reach the assembly through its turn's
+    /// vector hit or joined text.
     pub(crate) fn admits(
         &self,
         store: &Store,
@@ -394,6 +401,9 @@ impl DisclosureContext {
         if disclosure_tier(store, rtxn, id, entity_type, body)? == DisclosureTier::TierA {
             return Ok(false);
         }
+        if entity_type == ENTITY_TYPE_TURN && !self.admits_turn_messages(store, rtxn, id)? {
+            return Ok(false);
+        }
         if self.mode == DisclosureMode::Supervised && !self.room {
             return Ok(true);
         }
@@ -407,6 +417,30 @@ impl DisclosureContext {
             return Ok(false);
         };
         Ok(scope.admits("read", &record_scope, &Scope::top()))
+    }
+
+    /// Whether the clamp admits every MESSAGE `PartOf` `turn`. An erased
+    /// message is a shell whose words left the turn's text and vector in its
+    /// erasing write, so it does not count.
+    fn admits_turn_messages(
+        &self,
+        store: &Store,
+        rtxn: &RoTxn<'_>,
+        turn: &EntityId,
+    ) -> Result<bool> {
+        for part in store.port_edges(rtxn, turn, EdgeDirection::In, Some(EdgeKind::PartOf), None)? {
+            let message = part?.target;
+            let Some(row) = store.port_entity_record(rtxn, &message)? else {
+                continue;
+            };
+            if row.entity_type != ENTITY_TYPE_MESSAGE || row.body.is_empty() {
+                continue;
+            }
+            if !self.admits(store, rtxn, &message, ENTITY_TYPE_MESSAGE, None)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Builds the agent-visible assembly block for this clamp.

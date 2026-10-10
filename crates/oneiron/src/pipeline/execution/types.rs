@@ -28,6 +28,9 @@ pub(super) struct RetrievalTxnOutput {
     pub(super) revisions: HashMap<EntityId, crate::vault::RevisionRef>,
     pub(super) diagnostics: RetrievalDiagnostics,
     pub(super) scores: Vec<ScoredEntity>,
+    /// Per TURN in `scores`, the MESSAGE rows it took the place of, best
+    /// first (`PipelineBuilder::fold_messages_into_turns`).
+    pub(super) cited_messages: HashMap<EntityId, Vec<EntityId>>,
     pub(super) capabilities: Vec<ScoredEntity>,
     pub(super) pending_vectors: Vec<PendingVectorEmbedding>,
     pub(super) claim_gate: ClaimStatusGateCache,

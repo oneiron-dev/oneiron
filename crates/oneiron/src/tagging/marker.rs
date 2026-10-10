@@ -323,17 +323,17 @@ pub(crate) fn mark_turn_in_txn(
     enqueue_marker_in_txn(vault, wtxn, turn, &tagging.checkpoint, recorded_at).map(|_| ())
 }
 
-/// The type of an entity whose document text a turn's tag pass reads, on an
-/// armed vault: a MESSAGE or a TURN. `None` for any other entity, and on a
-/// vault with no tagger, so a document write there compares no text.
-/// Entity documents exist only on a sync build.
+/// The type of an entity whose document text a turn's tag pass or vector
+/// reads, on a vault with a tagger or an embedder: a MESSAGE or a TURN.
+/// `None` for any other entity, and on a vault with neither, so a document
+/// write there compares no text. Entity documents exist only on a sync build.
 #[cfg(feature = "sync")]
 pub(crate) fn text_entity_type_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     entity: &EntityId,
 ) -> Result<Option<u8>> {
-    if vault.config.tagging.is_none() {
+    if vault.config.tagging.is_none() && vault.config.embedding_model.is_none() {
         return Ok(None);
     }
     Ok(

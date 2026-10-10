@@ -39,6 +39,7 @@ impl PipelineBuilder<'_> {
                 // No channel ran: an authority refusal is not a cache failure.
                 retrieval_quality: Default::default(),
                 scores: Vec::new(),
+                cited_messages: HashMap::new(),
                 capabilities: Vec::new(),
                 claim_bodies: HashMap::new(),
                 pending_vectors: Vec::new(),
@@ -217,6 +218,7 @@ impl PipelineBuilder<'_> {
                 revisions: HashMap::new(),
                 retrieval_quality: classify_retrieval_quality(&attempt.diagnostics),
                 scores: Vec::new(),
+                cited_messages: HashMap::new(),
                 capabilities: Vec::new(),
                 claim_bodies: HashMap::new(),
                 pending_vectors: Vec::new(),
@@ -233,6 +235,7 @@ impl PipelineBuilder<'_> {
         let mut diagnostics = attempt.diagnostics;
         let mut ppr_expand_executed = attempt.ppr_expand_executed;
         let mut scores = attempt.scores;
+        let mut cited_messages = attempt.cited_messages;
         let mut revisions = attempt.revisions;
         let mut capabilities = attempt.capabilities;
         let mut pending_vectors = attempt.pending_vectors;
@@ -307,6 +310,7 @@ impl PipelineBuilder<'_> {
                 // A retry cache hit must not erase an earlier miss in this run.
                 merge_retrieval_diagnostics(&mut diagnostics, retry.diagnostics);
                 scores = retry.scores;
+                cited_messages = retry.cited_messages;
                 revisions = retry.revisions;
                 capabilities = retry.capabilities;
                 pending_vectors = retry.pending_vectors;
@@ -345,9 +349,11 @@ impl PipelineBuilder<'_> {
                         &signal_components,
                         self.text_search.as_ref().map(|(query, _)| query.as_str()),
                         self.vector_search.is_some() || hyde_expansion.is_some(),
+                        self.vault.config.vector_evidence,
                     ));
             if abstain {
                 scores.clear();
+                cited_messages.clear();
                 pending_vectors.clear();
                 retrieval_trace = None;
                 empty_reason = Some(EmptyReason::BelowThreshold);
@@ -460,6 +466,7 @@ impl PipelineBuilder<'_> {
             revisions,
             retrieval_quality,
             scores,
+            cited_messages,
             capabilities,
             claim_bodies,
             pending_vectors,

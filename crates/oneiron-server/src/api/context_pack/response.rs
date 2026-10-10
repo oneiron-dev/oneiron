@@ -298,7 +298,7 @@ pub(crate) async fn run_context_pack_builder(
     })?;
     let clamped_out = pack.clamped_out();
     let mut narrowing = scoped_read
-        .filter_context_pack(&mut pack.value)
+        .filter_context_pack_under(&mut pack.value, disclosure.as_ref())
         .map_err(|error| {
             pack.discard_telemetry();
             tracing::error!(error = %error, "core context-pack scoped read failed");

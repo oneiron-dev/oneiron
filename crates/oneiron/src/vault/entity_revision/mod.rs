@@ -4,11 +4,16 @@
 
 mod citations;
 mod idle;
+pub(crate) use idle::drop_vector_state;
 mod pending_index;
 mod phonetic;
 pub(crate) use pending_index::{defer_index_inputs, drop_staged_vectors};
 pub(crate) use phonetic::defer_phonetic;
 mod storage;
+mod turn_text;
+#[cfg(test)]
+pub(crate) use turn_text::HISTORY_SEARCHES;
+pub(crate) use turn_text::{served_turn_text_in_txn, turn_row_for_text_revision_in_txn};
 mod types;
 mod vector_refill;
 pub(crate) use vector_refill::schedule_vector_refills;

@@ -190,10 +190,24 @@ impl Agent {
                 None => short_id.to_owned(),
             })
         };
-        if !items
-            .iter()
-            .any(|item| reference(item).as_deref() == Some(self.expected_message.as_str()))
-        {
+        // A hit on a message comes back as its TURN, which quotes the message
+        // by its short id (ARCH-0004).
+        let (message, _) = self
+            .expected_message
+            .split_once('@')
+            .ok_or("committed message has no pinned revision")?;
+        let quotes_message = |item: &Value| {
+            item["kind"] == "TURN"
+                && item["cited_messages"].as_array().is_some_and(|cited| {
+                    cited
+                        .iter()
+                        .any(|quoted| quoted["short_id"].as_str() == Some(message))
+                })
+        };
+        if !items.iter().any(|item| {
+            reference(item).as_deref() == Some(self.expected_message.as_str())
+                || quotes_message(item)
+        }) {
             return Err(
                 format!("agent {} recall omitted its committed message", self.index).into(),
             );

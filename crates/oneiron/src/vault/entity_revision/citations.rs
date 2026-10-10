@@ -174,8 +174,12 @@ fn resolve_reference(
     reference: &str,
     revision: RevisionRef,
 ) -> Result<Option<EntityId>> {
-    let Some(id) = super::storage::IDENTITY.get(&vault.store, txn, &revision.0)? else {
-        return Ok(None);
+    let id = match super::storage::IDENTITY.get(&vault.store, txn, &revision.0)? {
+        Some(id) => id,
+        None => match turn_of_text_revision(vault, txn, reference, revision)? {
+            Some(id) => id,
+            None => return Ok(None),
+        },
     };
     let Some(raw) = read_entity_revision_in_txn(vault, txn, &id, ReadMode::Pinned(revision))?
     else {
@@ -206,6 +210,49 @@ fn resolve_reference(
         }
     }
     Ok(None)
+}
+
+/// The TURN `reference` names, when `revision` is a text revision of it that
+/// still resolves (`turn_text`). No row revision indexes a text revision, so
+/// it is found from the reference, which the caller then checks as any pin's.
+/// The name is looked up whatever its hash: the hash is the one the row had
+/// when the revision was served, which the caller checks against that row,
+/// and the live row may have moved since.
+fn turn_of_text_revision(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    reference: &str,
+    revision: RevisionRef,
+) -> Result<Option<EntityId>> {
+    let id = match crate::entity_id::parse_short_ref_syntax(reference) {
+        Ok((short, hash)) => {
+            let mut named = None;
+            for candidate in
+                std::iter::once(hash).chain((0..=u8::MAX).filter(|other| *other != hash))
+            {
+                if let Some(entry) = vault.hydrate_short_id_in(txn, short, candidate)? {
+                    named = Some(entry.id);
+                    break;
+                }
+            }
+            match named {
+                Some(id) => id,
+                None => return Ok(None),
+            }
+        }
+        Err(_) => match EntityId::from_hex(reference) {
+            Ok(id) => id,
+            Err(_) => return Ok(None),
+        },
+    };
+    let is_turn = crate::ports::EntityStoreRead::port_entity_record(&vault.store, txn, &id)?
+        .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_TURN);
+    if !is_turn
+        || super::turn_text::turn_row_for_text_revision_in_txn(vault, txn, &id, revision)?.is_none()
+    {
+        return Ok(None);
+    }
+    Ok(Some(id))
 }
 
 fn cursor_quote(doc: &loro::LoroDoc, field: &str, start: &Cursor, end: &Cursor) -> Option<String> {

@@ -4,6 +4,19 @@ use crate::context_pack::{ContextPack, EmptyContext, EmptyReason};
 
 impl ScopedRead<'_> {
     pub fn filter_context_pack(&self, pack: &mut ContextPack) -> Result<ScopedReadReceipt> {
+        self.filter_context_pack_under(pack, None)
+    }
+
+    /// [`Self::filter_context_pack`] for a pack assembled under `disclosure`.
+    /// This filter joins each TURN's text from its messages, in its own read,
+    /// so a turn keeps the clamp's admission here
+    /// (`DisclosureContext::admits`): a message withheld since the assembly
+    /// takes its turn out of the pack.
+    pub fn filter_context_pack_under(
+        &self,
+        pack: &mut ContextPack,
+        disclosure: Option<&crate::disclosure::DisclosureContext>,
+    ) -> Result<ScopedReadReceipt> {
         let rtxn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&rtxn, None)?;
         // One authority fold for this read snapshot, not one per claim in a
@@ -58,6 +71,7 @@ impl ScopedRead<'_> {
                     &rtxn,
                     &policy,
                     &filter,
+                    disclosure,
                     std::mem::take(&mut pack.results),
                 )?;
             let (mut neighbors, neighbor_suppressed, neighbor_rows_suppressed) = self
@@ -65,6 +79,7 @@ impl ScopedRead<'_> {
                     &rtxn,
                     &policy,
                     &filter,
+                    disclosure,
                     std::mem::take(&mut pack.neighbors),
                 )?;
             let (reachability_claims, reachability_rows) = self
@@ -111,6 +126,7 @@ impl ScopedRead<'_> {
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         filter: &ResolvedRetrievalFilter,
+        disclosure: Option<&crate::disclosure::DisclosureContext>,
         entities: Vec<ContextEntity>,
     ) -> Result<(Vec<ContextEntity>, usize, usize)> {
         let mut kept = Vec::with_capacity(entities.len());
@@ -130,7 +146,9 @@ impl ScopedRead<'_> {
             if admission.suppression() > 0 && entity.entity_type == ENTITY_TYPE_CLAIM {
                 claims_suppressed += 1;
             }
-            if admission.visible() {
+            if admission.visible()
+                && self.add_turn_content(rtxn, policy, disclosure, &mut entity)?
+            {
                 self.filter_context_entity_edges(rtxn, policy, filter, &mut entity)?;
                 kept.push(entity);
             }
@@ -252,6 +270,61 @@ impl ScopedRead<'_> {
             .collect();
         edges.retain(|edge| permitted.contains(&(edge.kind, edge.target)));
         Ok(())
+    }
+
+    /// A TURN's text is its messages' (ARCH-0004), which its own body does
+    /// not hold: a hydrated turn gets as `txt` those this read may see, and
+    /// its revision becomes the text revision that pins them, read in this
+    /// snapshot (`entity_revision::served_turn_text_in_txn`). A turn read at
+    /// a text revision gets the words it was served with. Added after
+    /// admission, whose snapshot check compares each field with the turn's
+    /// own body. Returns whether the turn stays: under a disclosure clamp,
+    /// only while the clamp still admits each of its messages.
+    fn add_turn_content(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        disclosure: Option<&crate::disclosure::DisclosureContext>,
+        entity: &mut ContextEntity,
+    ) -> Result<bool> {
+        if entity.entity_type != crate::registry::ENTITY_TYPE_TURN {
+            return Ok(true);
+        }
+        if let Some(clamp) = disclosure
+            && !clamp.admits(
+                &self.vault.store,
+                rtxn,
+                &entity.id,
+                crate::registry::ENTITY_TYPE_TURN,
+                None,
+            )?
+        {
+            return Ok(false);
+        }
+        let Some(fields) = entity.fields.as_mut() else {
+            return Ok(true);
+        };
+        let mode = entity
+            .source_revision_ref
+            .map_or(crate::vault::ReadMode::Live, |revision| {
+                crate::vault::ReadMode::Pinned(crate::vault::RevisionRef(revision))
+            });
+        let Some(served) = crate::vault::entity_revision::served_turn_text_in_txn(
+            self.vault, rtxn, &entity.id, mode,
+        )?
+        else {
+            return Ok(true);
+        };
+        let revision = served.revision;
+        let messages = served
+            .readable(|message| self.is_entity_readable_with_policy_in(rtxn, policy, message))?;
+        if let Some(text) = crate::embed::joined_turn_text(&messages) {
+            fields.insert("txt".to_owned(), serde_json::Value::String(text));
+            if entity.source_revision_ref.is_some() {
+                entity.source_revision_ref = Some(revision.0);
+            }
+        }
+        Ok(true)
     }
 }
 

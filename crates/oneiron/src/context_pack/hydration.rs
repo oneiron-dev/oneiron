@@ -109,6 +109,8 @@ pub(super) fn hydrate_entity(
     else {
         return Ok(None);
     };
+    // A TURN's pin may be the text revision a recall served it under, which
+    // its row does not own.
     if let crate::vault::ReadMode::Pinned(revision) = options.read_mode
         && !crate::vault::entity_revision::entity_owns_revision_in_txn(
             &vault.store,
@@ -116,6 +118,10 @@ pub(super) fn hydrate_entity(
             &id,
             revision,
         )?
+        && crate::vault::entity_revision::turn_row_for_text_revision_in_txn(
+            vault, rtxn, &id, revision,
+        )?
+        .is_none()
     {
         return Ok(None);
     }

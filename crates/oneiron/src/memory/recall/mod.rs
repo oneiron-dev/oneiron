@@ -128,16 +128,50 @@ pub struct RecallScope {
 /// worlds and facets that scope memories. Recall returns them only when
 /// [`RecallScope::kinds`] names them.
 ///
-/// TURN is here only until turns are embedded: ARCH-0004 makes the turn the
-/// embedding unit, but today a turn's text repeats its messages, so a turn hit
-/// would take the slot of the message it copies.
-pub const CONTAINER_KINDS: [u8; 5] = [
-    crate::registry::ENTITY_TYPE_TURN,
+/// A TURN is content, not a container: it is the embedding unit (ARCH-0004),
+/// and recall returns a matched MESSAGE as its turn, quoting the message
+/// ([`MemoryItem::cited_messages`]).
+pub const CONTAINER_KINDS: [u8; 4] = [
     crate::registry::ENTITY_TYPE_CONVERSATION,
     crate::registry::ENTITY_TYPE_SESSION,
     crate::registry::ENTITY_TYPE_FACET,
     crate::registry::ENTITY_TYPE_WORLD,
 ];
+
+/// What recall refuses from its request alone, before it reads the vault: a
+/// zero limit, an `as_of` out of range, a paid effort without its lease and
+/// reranker, an unknown format or kind. A door that pays for a query vector
+/// runs this first, so a request recall would refuse costs no embedding.
+pub(crate) fn check_recall_request(
+    effort: Effort,
+    scope: &RecallScope,
+    limit: usize,
+    format: Option<&str>,
+    lease: Option<&BudgetLease>,
+    execution: &RecallExecution<'_>,
+) -> MemoryResult<()> {
+    if limit == 0 {
+        return Err(MemoryError::bad_request("recall limit must be at least 1"));
+    }
+    crate::memory::caps::check_as_of(execution.as_of)?;
+    if effort.requires_rerank() {
+        if lease.is_none() {
+            return Err(MemoryError::new(
+                MEMORY_CODE_LEASE_REQUIRED,
+                "high, xhigh and max recall require a budget lease",
+                &["Use light or medium, or present a lease."],
+            ));
+        }
+        if execution.reranker.is_none() {
+            return Err(MemoryError::bad_request(
+                "paid recall requires a prepared reranker",
+            ));
+        }
+    }
+    format.map(parse_pack_format).transpose()?;
+    recall_kinds(scope)?;
+    Ok(())
+}
 
 /// The kinds a recall admits, resolved once from its scope. `None` is the
 /// default: every kind but [`CONTAINER_KINDS`].
@@ -182,7 +216,11 @@ pub struct MemoryItem {
     /// a witness receipt returns, never revision-qualified.
     pub short_id: String,
     /// The retained revision (32 hex) retrieval read this item at, when it
-    /// pinned one. [`Self::reference`] joins it to `short_id`.
+    /// pinned one. [`Self::reference`] joins it to `short_id`. A TURN's is
+    /// the text revision of the words it serves, its own and those its
+    /// cited messages quote: it commits to each source message's state, and
+    /// reads those words back after an edit while the messages' history
+    /// holds them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_revision_ref: Option<String>,
     /// Registry kind string.
@@ -205,9 +243,25 @@ pub struct MemoryItem {
     /// Salience, when stamped.
     pub salience: Option<f32>,
     /// A conversation record's current reactions, one grouped line per
-    /// glyph (`👍×8 (Anna, Ben, +6)`); empty for every other item.
+    /// glyph (`👍×8 (Anna, Ben, +6)`); a TURN's lines are followed by those of
+    /// each message it quotes ([`Self::cited_messages`]). Empty for every
+    /// other item.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reactions: Vec<String>,
+    /// For a TURN item, the messages whose words the query matched, best
+    /// first: a hit on a message returns its turn, which quotes the message
+    /// here. Empty for every other item.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cited_messages: Vec<CitedMessage>,
+}
+
+/// A MESSAGE a TURN item quotes: the words a query matched, as they were said.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CitedMessage {
+    /// The message's short ref, the one its witness receipt returned.
+    pub short_id: String,
+    /// The message's text (capped), as the turn's text revision pins it.
+    pub value_text: String,
 }
 
 impl MemoryItem {
@@ -484,10 +538,7 @@ impl Memory<'_> {
         candidate_filter: Option<&crate::pipeline::CandidateFilter<'_>>,
         execution: &RecallExecution<'_>,
     ) -> MemoryResult<MemoryPack> {
-        if limit == 0 {
-            return Err(MemoryError::bad_request("recall limit must be at least 1"));
-        }
-        crate::memory::caps::check_as_of(execution.as_of)?;
+        check_recall_request(effort, scope, limit, format, lease, execution)?;
         if let Some(session) = session {
             // A session handle names a room in ONE store, and this facade's
             // vault is an independent borrow — nothing in the lifetimes ties
@@ -515,20 +566,6 @@ impl Memory<'_> {
             (Some(session), Some(route)) => Some(session.retrieval_telemetry(route)?),
             _ => None,
         };
-        if effort.requires_rerank() {
-            if lease.is_none() {
-                return Err(MemoryError::new(
-                    MEMORY_CODE_LEASE_REQUIRED,
-                    "high, xhigh and max recall require a budget lease",
-                    &["Use light or medium, or present a lease."],
-                ));
-            }
-            if execution.reranker.is_none() {
-                return Err(MemoryError::bad_request(
-                    "paid recall requires a prepared reranker",
-                ));
-            }
-        }
         let worlds = self.recall_worlds(scope)?;
         let canonical_lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let session_view = session
@@ -575,6 +612,16 @@ impl Memory<'_> {
             });
         }
         let kinds = recall_kinds(scope)?;
+        // A scope that names TURN but not MESSAGE still finds a turn by its
+        // messages' words: each message comes back as its turn or not at all.
+        let messages_only_as_turns = kinds.as_ref().is_some_and(|kinds| {
+            kinds.contains(&ENTITY_TYPE_TURN) && !kinds.contains(&ENTITY_TYPE_MESSAGE)
+        });
+        let turn_fold = if messages_only_as_turns {
+            crate::pipeline::TurnFold::TurnsOnly
+        } else {
+            crate::pipeline::TurnFold::Fold
+        };
         // Admission runs in each candidate's retrieval transaction before ranking.
         let admitted = |store: &crate::store::Store, txn: &heed::RoTxn<'_>, id: &EntityId| {
             // Reject irrelevant kind/predicate rows before the actor gate.
@@ -591,7 +638,10 @@ impl Memory<'_> {
                     return Ok(false);
                 };
                 let wanted = match &kinds {
-                    Some(kinds) => kinds.contains(&kind),
+                    Some(kinds) => {
+                        kinds.contains(&kind)
+                            || (messages_only_as_turns && kind == ENTITY_TYPE_MESSAGE)
+                    }
                     None => !CONTAINER_KINDS.contains(&kind),
                 };
                 if !wanted {
@@ -651,7 +701,11 @@ impl Memory<'_> {
                 // pipeline.rs/context_pack.rs are consume-only for this
                 // chain. No pack rendering on this path.
                 let facet_id = self.resolve_ref(facet_ref)?;
-                let mut pipeline = self.vault.query().search_text(query, limit);
+                let mut pipeline = self
+                    .vault
+                    .query()
+                    .search_text(query, limit)
+                    .fold_messages_into_turns(turn_fold);
                 if let Some(as_of) = execution.as_of {
                     pipeline = pipeline.with_temporal_now(as_of);
                 }
@@ -697,9 +751,18 @@ impl Memory<'_> {
                         continue;
                     };
                     let mode = crate::vault::ReadMode::Pinned(*revision);
-                    if let Some(item) =
-                        self.memory_item_for(&lane, &hit.id, Some(facet_id), mode, &mut receipt)?
-                    {
+                    let cited = retrieval
+                        .cited_messages
+                        .get(&hit.id)
+                        .map_or(&[][..], Vec::as_slice);
+                    if let Some(item) = self.memory_item_for(
+                        &lane,
+                        &hit.id,
+                        Some(facet_id),
+                        mode,
+                        cited,
+                        &mut receipt,
+                    )? {
                         items.push(item);
                     }
                 }
@@ -715,7 +778,11 @@ impl Memory<'_> {
                 )
             }
             None => {
-                let mut builder = self.vault.context_pack().search_text(query, limit);
+                let mut builder = self
+                    .vault
+                    .context_pack()
+                    .search_text(query, limit)
+                    .fold_messages_into_turns(turn_fold);
                 if let Some(as_of) = execution.as_of {
                     builder = builder.with_temporal_now(as_of);
                 }
@@ -768,11 +835,10 @@ impl Memory<'_> {
                             .boost_confidence();
                     }
                 }
-                let (scoped, vector_completed, temporal_hints) =
-                    builder.run_scoped_with_run_status(&lane)?;
+                let (scoped, status) = builder.run_scoped_with_run_status(&lane)?;
                 receipt.restrict_with(&scoped.receipt);
                 let mut pack = scoped.value;
-                lane.attach_reactions(&mut pack)?;
+                lane.attach_reactions_quoting(&mut pack, &status.cited_messages)?;
 
                 let rendered = pack_format.map(|fmt| {
                     let config = SerializeConfig {
@@ -800,8 +866,12 @@ impl Memory<'_> {
                             crate::vault::ReadMode::Pinned(crate::vault::RevisionRef(revision))
                         },
                     );
+                    let cited = status
+                        .cited_messages
+                        .get(&entity.id)
+                        .map_or(&[][..], Vec::as_slice);
                     if let Some(item) =
-                        self.memory_item_for(&lane, &entity.id, None, mode, &mut receipt)?
+                        self.memory_item_for(&lane, &entity.id, None, mode, cited, &mut receipt)?
                     {
                         items.push(item);
                     }
@@ -813,8 +883,8 @@ impl Memory<'_> {
                     total,
                     rendered,
                     pack.retrieval_quality,
-                    vector_completed,
-                    temporal_hints,
+                    status.vector_completed,
+                    status.temporal_hints,
                 )
             }
         };

@@ -252,6 +252,50 @@ impl Default for HnswConfig {
     }
 }
 
+/// Where vector evidence starts in one embedding space, for the check that
+/// withholds a pack with no real match (ARCH-0004, pre-assembly validation).
+///
+/// A raw cosine means different things in different models: a compressed
+/// space scores a true paraphrase below where a wide one scores noise. The
+/// host that knows its model states these; the default is the engine's
+/// original calibration.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VectorEvidenceFloors {
+    /// The similarity floor: with no keyword hit, a pack whose every vector
+    /// score sits under it abstains.
+    pub floor: f32,
+    /// The score of a strong match: under it, a top hit that barely leads
+    /// the next is uniformly mediocre and the pack abstains.
+    pub strong: f32,
+}
+
+impl Default for VectorEvidenceFloors {
+    fn default() -> Self {
+        Self {
+            floor: 0.3,
+            strong: 0.5,
+        }
+    }
+}
+
+impl VectorEvidenceFloors {
+    /// Both are cosine similarities, so each lies in `0.0..=1.0`, and a strong
+    /// match is no weaker than the floor: `0 <= floor <= strong <= 1`. A value
+    /// outside that, or not a number, would admit evidence the check exists
+    /// to withhold, so it is refused, never clamped.
+    pub fn validate(&self) -> crate::error::Result<()> {
+        let in_range = |value: f32| value.is_finite() && (0.0..=1.0).contains(&value);
+        if !in_range(self.floor) || !in_range(self.strong) || self.floor > self.strong {
+            return Err(crate::Error::InvalidConfig(format!(
+                "vector evidence floors must satisfy 0 <= floor <= strong <= 1, \
+                 got floor {} and strong {}",
+                self.floor, self.strong
+            )));
+        }
+        Ok(())
+    }
+}
+
 /// Vault runtime configuration.
 ///
 /// The struct is `#[non_exhaustive]`, so downstream callers cannot build it
@@ -308,6 +352,10 @@ pub struct VaultConfig {
     /// refused (`EmbeddingTransformChanged`), and a vault that has none
     /// adopts it. `None` checks nothing.
     pub embedding_transform: Option<String>,
+    /// Where vector evidence starts in this vault's embedding space
+    /// ([`VectorEvidenceFloors`]), as the host's embedder states it. Opening
+    /// a vault refuses floors outside [`VectorEvidenceFloors::validate`].
+    pub vector_evidence: VectorEvidenceFloors,
     /// Arms the tagging marker (ARCH-0036, serving the tagger): a base witness
     /// commits one marker per touched turn inside its own transaction, keyed
     /// by the turn and this tagger checkpoint. `None` commits none.
@@ -556,6 +604,7 @@ impl VaultConfig {
             fast_dims: None,
             embedding_model: None,
             embedding_transform: None,
+            vector_evidence: VectorEvidenceFloors::default(),
             tagging: None,
             privacy: VaultPrivacyConfig::default(),
             map_size: 1 << 30,
@@ -583,6 +632,7 @@ impl VaultConfig {
             fast_dims: None,
             embedding_model: None,
             embedding_transform: None,
+            vector_evidence: VectorEvidenceFloors::default(),
             tagging: None,
             // The server preset is still self-host/local by default: running a
             // server does not by itself mean a third party hosts the vault.

@@ -33,12 +33,38 @@ fn recall_returns_versioned_pack_with_provenance() {
         assert!(pack.retrieval_meta.total_candidates >= 1);
     }
 
-    // MESSAGE items carry their TURN as structural evidence.
+    // The message comes back as its TURN, which quotes it (ARCH-0004).
     let pack = facade
         .recall(
             "aurora",
             Effort::Medium,
             &RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+        .expect("recall");
+    let turn_item = pack
+        .items
+        .iter()
+        .find(|item| item.kind == "TURN")
+        .expect("turn item");
+    assert_eq!(
+        turn_item.cited_messages[0].value_text,
+        "aurora borealis sighting over the fjord"
+    );
+    assert!(pack.items.iter().all(|item| item.kind != "MESSAGE"));
+
+    // MESSAGE items, when the scope names that kind alone, carry their TURN
+    // as structural evidence.
+    let pack = facade
+        .recall(
+            "aurora",
+            Effort::Medium,
+            &RecallScope {
+                kinds: Some(vec!["MESSAGE".to_owned()]),
+                ..RecallScope::default()
+            },
             10,
             None,
             None,
@@ -381,18 +407,22 @@ fn recall_and_query_verbs_respect_limits() {
     let actor = put_person(&vault, 0x28);
     let facade = facade_for(&vault, actor);
 
-    // Seed limit + 3 matching docs (limit = 2).
-    let messages = (0..5)
-        .map(|i| witness_message(i, WitnessAuthor::User, &format!("pelican count {i}")))
-        .collect();
-    facade
-        .witness(&WitnessTurn {
-            conversation_ref: EntityId::from_bytes([0x29; 16]).unwrap().to_hex(),
-            turn_ref: None,
-            messages,
-            occurred_at: 1700,
-        })
-        .expect("witness");
+    // Seed limit + 3 matching docs (limit = 2), one turn each: recall
+    // returns a matched message as its turn (ARCH-0004).
+    for i in 0..5 {
+        facade
+            .witness(&WitnessTurn {
+                conversation_ref: EntityId::from_bytes([0x29; 16]).unwrap().to_hex(),
+                turn_ref: None,
+                messages: vec![witness_message(
+                    0,
+                    WitnessAuthor::User,
+                    &format!("pelican count {i}"),
+                )],
+                occurred_at: 1700,
+            })
+            .expect("witness");
+    }
 
     assert_eq!(facade.query_bm25("pelican", 2).expect("bm25").len(), 2);
     assert_eq!(

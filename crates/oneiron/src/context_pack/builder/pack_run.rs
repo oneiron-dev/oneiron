@@ -98,6 +98,8 @@ impl ContextPackTelemetry<'_> {
 pub(in crate::context_pack) struct ContextPackRun<'a> {
     pub(in crate::context_pack) vector_completed: bool,
     pub(in crate::context_pack) temporal_hints: Vec<crate::temporal::TemporalHintReport>,
+    pub(in crate::context_pack) cited_messages:
+        std::collections::HashMap<crate::EntityId, Vec<crate::EntityId>>,
     pub(in crate::context_pack) pack: ContextPack,
     pub(in crate::context_pack) telemetry_run_id: Option<RetrievalRunId>,
     pub(in crate::context_pack) telemetry: ContextPackTelemetry<'a>,

@@ -84,6 +84,11 @@ class MemoryItem(TypedDict):
     world: str | None
     facet: str | None
     salience: float | None
+    cited_messages: NotRequired[list[CitedMessage]]
+
+class CitedMessage(TypedDict):
+    short_id: str
+    value_text: str
 
 class ScopeHonesty(TypedDict):
     out_of_scope_worlds: list[str]

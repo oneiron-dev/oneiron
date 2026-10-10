@@ -11,7 +11,7 @@ mod execution;
 mod execution_binding;
 mod filters;
 mod scoped_channels;
-pub(crate) use types::CandidateFilter;
+pub(crate) use types::{CandidateFilter, TurnFold};
 mod l2_evidence;
 mod support;
 mod trace;
