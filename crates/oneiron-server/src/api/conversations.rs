@@ -238,9 +238,20 @@ fn project_conversation_ids(
         else {
             continue;
         };
-        let Value::Object(entity) = item else {
+        let Value::Object(mut entity) = item else {
             continue;
         };
+        // The full view says when the conversation occurred: an imported
+        // one, when its session started.
+        if view == View::Full {
+            let occurred = vault
+                .get_occurred(&id)
+                .map_err(|e| core_engine_error("conversation projection failed", e))?;
+            entity.insert(
+                "occurred".to_owned(),
+                serde_json::json!({ "start": occurred.start, "end": occurred.end }),
+            );
+        }
         items.push(ConversationListRow {
             entity,
             last_message_snippet: vault

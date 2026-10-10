@@ -255,6 +255,10 @@ pub struct MemoryItem {
     /// here. Empty for every other item.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cited_messages: Vec<CitedMessage>,
+    /// For a TURN or MESSAGE item, the conversation it is in (32 hex), when
+    /// the reader may read that conversation. `None` for every other item.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<String>,
 }
 
 /// A MESSAGE a TURN item quotes: the words a query matched, as they were said.

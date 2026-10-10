@@ -38,6 +38,8 @@ fn conversation(native_id: &str, messages: Vec<HistoryMessage>) -> HistoryConver
         parent: None,
         title: None,
         started_at_ms: None,
+        own_started_at_ms: None,
+        cwd: None,
         messages,
         skipped: HistorySkips::default(),
     }

@@ -112,6 +112,7 @@ pub(crate) fn add_security_scheme(spec: &mut Value) {
         ("/v1/core/conversations", "get"),
         ("/v1/core/conversations", "post"),
         ("/v1/core/conversations/{conversation_id}/turns", "get"),
+        ("/v1/core/conversations/{conversation_id}/transcript", "get"),
         ("/v1/core/conversations/{conversation_id}/turns", "post"),
         ("/v1/core/turns/{turn_id}", "get"),
         ("/v1/core/batch", "post"),
