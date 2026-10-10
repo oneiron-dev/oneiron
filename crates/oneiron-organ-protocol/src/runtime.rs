@@ -291,8 +291,14 @@ fn answer<O: Organ>(shared: &Shared<O>, job: Job) -> (Outcome, Vec<OwnedFd>) {
         return (Outcome::Error(error), Vec::new());
     };
     if spec.schema != call.schema {
-        let detail = format!("{} speaks schema {}, not {}", spec.name, spec.schema, call.schema);
-        return (Outcome::Error(OrganError::new(ErrorCode::SchemaMismatch, detail)), Vec::new());
+        let detail = format!(
+            "{} speaks schema {}, not {}",
+            spec.name, spec.schema, call.schema
+        );
+        return (
+            Outcome::Error(OrganError::new(ErrorCode::SchemaMismatch, detail)),
+            Vec::new(),
+        );
     }
     let inputs = match map_inputs(call.inputs, fds) {
         Ok(inputs) => inputs,
@@ -356,7 +362,10 @@ fn map_inputs(inputs: Vec<Input>, fds: Vec<OwnedFd>) -> Result<Vec<InputBytes>, 
 }
 
 fn touch(ctx: &CallContext<'_>) -> Answer {
-    let fold = ctx.inputs.iter().fold(0, |fold, input| fold ^ touch_fold(input));
+    let fold = ctx
+        .inputs
+        .iter()
+        .fold(0, |fold, input| fold ^ touch_fold(input));
     let len: u64 = ctx.inputs.iter().map(|input| input.len() as u64).sum();
     let report = rmpv::Value::Map(vec![
         ("fold".into(), fold.into()),

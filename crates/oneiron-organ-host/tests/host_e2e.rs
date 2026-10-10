@@ -44,7 +44,12 @@ fn put_blob(vault: &Vault, bytes: &[u8], media_type: &str) -> OrganInput {
         .expect("actor");
     let artifact = EntityId::now();
     vault
-        .put_blob_artifact(&artifact, &BlobArtifactBody::new("blob", media_type), at(1), 1)
+        .put_blob_artifact(
+            &artifact,
+            &BlobArtifactBody::new("blob", media_type),
+            at(1),
+            1,
+        )
         .expect("artifact");
     let version = vault
         .append_blob_artifact_version(
@@ -106,21 +111,34 @@ fn report_u64(report: &rmpv::Value, key: &str) -> Option<u64> {
 #[test]
 fn inputs_cross_as_regions_and_the_engine_hashes_them() {
     let (_dir, vault) = vault();
-    let big: Vec<u8> = (0..3 * 1024 * 1024 + 5).map(|i: u32| (i % 251) as u8).collect();
+    let big: Vec<u8> = (0..3 * 1024 * 1024 + 5)
+        .map(|i: u32| (i % 251) as u8)
+        .collect();
     let small = b"seven bytes, then some".to_vec();
     let inputs = vec![put_blob(&vault, &big, BIN), put_blob(&vault, &small, BIN)];
     let host = host();
     for _ in 0..2 {
         let outcome = host
-            .call(&vault, call("organ.touch", rmpv::Value::Nil, inputs.clone(), "g"))
+            .call(
+                &vault,
+                call("organ.touch", rmpv::Value::Nil, inputs.clone(), "g"),
+            )
             .expect("touch");
         assert_eq!(
             report_u64(&outcome.report, "fold"),
             Some(touch_fold(&big) ^ touch_fold(&small)),
             "the organ read exactly the bytes the vault holds",
         );
-        assert_eq!(report_u64(&outcome.report, "len"), Some((big.len() + small.len()) as u64));
-        let hashes: Vec<Hash32> = outcome.receipt.inputs.iter().map(|i| i.content_hash).collect();
+        assert_eq!(
+            report_u64(&outcome.report, "len"),
+            Some((big.len() + small.len()) as u64)
+        );
+        let hashes: Vec<Hash32> = outcome
+            .receipt
+            .inputs
+            .iter()
+            .map(|i| i.content_hash)
+            .collect();
         assert_eq!(hashes, vec![Hash32::of(&big), Hash32::of(&small)]);
         assert_eq!(outcome.receipt.organ.name, "probe");
     }
@@ -135,7 +153,10 @@ fn a_missed_deadline_cancels_then_kills_and_the_next_call_starts_clean() {
     let started = Instant::now();
     let err = host.call(&vault, hostile).expect_err("deadline");
     assert!(matches!(err, HostError::DeadlineExceeded), "{err:?}");
-    assert!(started.elapsed() < Duration::from_secs(3), "killed promptly");
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "killed promptly"
+    );
     let echoed = host
         .call(&vault, call("organ.echo", "after".into(), Vec::new(), "g"))
         .expect("a fresh process answers");
@@ -153,7 +174,15 @@ fn a_revoked_grant_stops_a_hostile_call_mid_flight() {
     let started = Instant::now();
     let outcome = thread::scope(|scope| {
         let running = scope.spawn(|| {
-            host.call(&vault, call("probe.sleep", sleep_args(60_000, false), Vec::new(), "doomed"))
+            host.call(
+                &vault,
+                call(
+                    "probe.sleep",
+                    sleep_args(60_000, false),
+                    Vec::new(),
+                    "doomed",
+                ),
+            )
         });
         thread::sleep(Duration::from_millis(300));
         host.revoke_grant("doomed");
@@ -174,7 +203,10 @@ fn crashes_back_off_then_quarantine() {
     let mut crashes = 0;
     let deadline = Instant::now() + Duration::from_secs(60);
     while crashes < 5 && Instant::now() < deadline {
-        match host.call(&vault, call("probe.crash", rmpv::Value::Nil, Vec::new(), "g")) {
+        match host.call(
+            &vault,
+            call("probe.crash", rmpv::Value::Nil, Vec::new(), "g"),
+        ) {
             Err(HostError::Crashed(_)) => crashes += 1,
             Err(HostError::Backoff { retry_after, .. }) => thread::sleep(retry_after),
             other => panic!("unexpected {other:?}"),
@@ -186,7 +218,10 @@ fn crashes_back_off_then_quarantine() {
         OrganState::Unavailable(Unavailable::Quarantined),
     );
     let refused = host.call(&vault, call("organ.echo", 1.into(), Vec::new(), "g"));
-    assert!(matches!(refused, Err(HostError::Unavailable { .. })), "{refused:?}");
+    assert!(
+        matches!(refused, Err(HostError::Unavailable { .. })),
+        "{refused:?}"
+    );
 }
 
 #[test]
@@ -194,12 +229,21 @@ fn the_grant_refuses_what_it_does_not_name() {
     let (_dir, vault) = vault();
     let host = host();
     let png = put_blob(&vault, b"not granted", "image/png");
-    let refused = host.call(&vault, call("organ.touch", rmpv::Value::Nil, vec![png], "g"));
-    assert!(matches!(refused, Err(HostError::MediaTypeNotGranted(_))), "{refused:?}");
+    let refused = host.call(
+        &vault,
+        call("organ.touch", rmpv::Value::Nil, vec![png], "g"),
+    );
+    assert!(
+        matches!(refused, Err(HostError::MediaTypeNotGranted(_))),
+        "{refused:?}"
+    );
     let mut unnamed = call("organ.echo", 1.into(), Vec::new(), "g");
     unnamed.verb = "probe.unnamed".into();
     let refused = host.call(&vault, unnamed);
-    assert!(matches!(refused, Err(HostError::UnknownVerb { .. })), "{refused:?}");
+    assert!(
+        matches!(refused, Err(HostError::UnknownVerb { .. })),
+        "{refused:?}"
+    );
     assert_eq!(
         host.status("probe").expect("installed").spawns,
         0,
@@ -216,7 +260,10 @@ fn a_version_outside_the_pin_is_refused_at_handshake() {
     spec.version_pin = Some("0.0.0-elsewhere".into());
     host.install(spec);
     let refused = host.call(&vault, call("organ.echo", 1.into(), Vec::new(), "g"));
-    assert!(matches!(refused, Err(HostError::Handshake(_))), "{refused:?}");
+    assert!(
+        matches!(refused, Err(HostError::Handshake(_))),
+        "{refused:?}"
+    );
     assert!(matches!(
         host.status("probe").expect("installed").state,
         OrganState::Unavailable(Unavailable::Incompatible(_)),

@@ -314,28 +314,33 @@ impl OrganHost {
         input: OrganInput,
     ) -> Result<Resolved, HostError> {
         let inline_max = self.config.inline_max_bytes;
-        let lent = vault.lend_blob_artifact_version(&input.artifact, input.version, |record, bytes| {
-            let media_type = record.export_media_type.clone();
-            if !spec.media_types.iter().any(|granted| granted == &media_type) {
-                return Err(HostError::MediaTypeNotGranted(media_type));
-            }
-            let len = bytes.len() as u64;
-            let held = if bytes.len() <= inline_max {
-                Held::Inline(bytes.verified()?.to_vec())
-            } else if let Some(region) = self.regions.get(&record.content_hash) {
-                Held::Region(region)
-            } else {
-                let region = SharedRegion::from_bytes(&bytes.verified()?)?;
-                Held::Region(self.regions.insert(record.content_hash, region))
-            };
-            Ok(Resolved {
-                input,
-                media_type,
-                hash: Hash32(record.content_hash),
-                len,
-                held,
-            })
-        })?;
+        let lent =
+            vault.lend_blob_artifact_version(&input.artifact, input.version, |record, bytes| {
+                let media_type = record.export_media_type.clone();
+                if !spec
+                    .media_types
+                    .iter()
+                    .any(|granted| granted == &media_type)
+                {
+                    return Err(HostError::MediaTypeNotGranted(media_type));
+                }
+                let len = bytes.len() as u64;
+                let held = if bytes.len() <= inline_max {
+                    Held::Inline(bytes.verified()?.to_vec())
+                } else if let Some(region) = self.regions.get(&record.content_hash) {
+                    Held::Region(region)
+                } else {
+                    let region = SharedRegion::from_bytes(&bytes.verified()?)?;
+                    Held::Region(self.regions.insert(record.content_hash, region))
+                };
+                Ok(Resolved {
+                    input,
+                    media_type,
+                    hash: Hash32(record.content_hash),
+                    len,
+                    held,
+                })
+            })?;
         lent.unwrap_or_else(|| {
             Err(HostError::InputNotFound {
                 artifact: input.artifact.to_hex(),
@@ -445,9 +450,8 @@ fn take_outputs(outputs: Vec<Output>, fds: Vec<OwnedFd>) -> Result<Vec<OrganOutp
                         .ok_or_else(|| HostError::ReplyInvalid("output slot".into()))?;
                     let file = File::from(fd);
                     let len = file.metadata()?.len();
-                    let region = MappedRegion::map(OwnedFd::from(file), len).map_err(|err| {
-                        HostError::ReplyInvalid(format!("output region: {err}"))
-                    })?;
+                    let region = MappedRegion::map(OwnedFd::from(file), len)
+                        .map_err(|err| HostError::ReplyInvalid(format!("output region: {err}")))?;
                     OutputBytes::Mapped(region)
                 }
             };

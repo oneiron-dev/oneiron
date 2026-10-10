@@ -267,7 +267,9 @@ fn handshake(
         .map_err(|err| HostError::Handshake(format!("no hello_ack: {err}")))?;
     stream.set_read_timeout(None)?;
     let FromOrgan::HelloAck(ack) = ack else {
-        return Err(HostError::Handshake("the first reply was not hello_ack".into()));
+        return Err(HostError::Handshake(
+            "the first reply was not hello_ack".into(),
+        ));
     };
     check_handshake(spec, &ack)?;
     Ok(ack)
@@ -299,7 +301,9 @@ fn check_handshake(spec: &OrganSpec, ack: &HelloAck) -> Result<(), HostError> {
         .iter()
         .find(|verb| !ack.verbs.iter().any(|offered| &offered.name == *verb))
     {
-        return Err(HostError::Handshake(format!("the organ does not offer {missing}")));
+        return Err(HostError::Handshake(format!(
+            "the organ does not offer {missing}"
+        )));
     }
     Ok(())
 }

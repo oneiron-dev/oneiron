@@ -215,7 +215,9 @@ fn record_crash(state: &mut SlotState) {
         state.unavailable = Some(Unavailable::Quarantined);
         return;
     }
-    let shift = u32::try_from(recent.saturating_sub(1)).unwrap_or(u32::MAX).min(16);
+    let shift = u32::try_from(recent.saturating_sub(1))
+        .unwrap_or(u32::MAX)
+        .min(16);
     let backoff = BACKOFF_BASE.saturating_mul(1 << shift).min(BACKOFF_CAP);
     state.not_before = Some(now + backoff);
 }
