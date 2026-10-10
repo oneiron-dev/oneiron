@@ -142,9 +142,7 @@ async fn supervise(start: DreamerStart, ready: Ready) -> WakeSupervisorReport {
             PushTick::channel(settings.idle_floor_secs.saturating_mul(1_000));
         let ticks = SessionTicks::new(
             HybridTick::new(
-                TimerTick::new(
-                    AttemptQueueDeadlines::new(&vault, node_id).for_worker(LEASE_OWNER),
-                ),
+                TimerTick::new(AttemptQueueDeadlines::new(&vault, node_id).for_worker(LEASE_OWNER)),
                 push,
             ),
             lifecycle,
