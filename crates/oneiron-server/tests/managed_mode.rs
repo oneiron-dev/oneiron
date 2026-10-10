@@ -1513,7 +1513,10 @@ fn a_managed_start_signs_the_three_oversight_receipts() {
     let deadline = std::time::Instant::now() + Duration::from_secs(120);
     while !std::fs::read(&ready_path).unwrap().contains(&READY_BYTE) {
         if let Some(status) = child.try_wait().unwrap() {
-            panic!("managed boot exited {status} before ready; stderr: {}", stderr());
+            panic!(
+                "managed boot exited {status} before ready; stderr: {}",
+                stderr()
+            );
         }
         assert!(
             std::time::Instant::now() < deadline,
