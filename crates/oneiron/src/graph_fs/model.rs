@@ -34,7 +34,8 @@ const GRAPH_FS_HEAD_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("graph_fs.head", SandboxImportClass::ReadOnly);
 const GRAPH_FS_WC_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("graph_fs.wc", SandboxImportClass::ReadOnly);
-pub(super) const GRAPH_FS_MORE_RESERVE_BYTES: usize = 96;
+/// Room a page keeps for its `_more` entry, sealed cursor included.
+pub(super) const GRAPH_FS_MORE_RESERVE_BYTES: usize = 128;
 
 pub const GRAPH_FS_HOST_IMPORTS: &[SandboxLinkedImport] = &[
     GRAPH_FS_READDIR_IMPORT,

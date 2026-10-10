@@ -8,7 +8,6 @@ use std::ops::Bound;
 use crate::batch::EntityMetadataHeader;
 use crate::claim::{PointRead, ReadRow, ScopedRead, ScopedReadReceipt, ScopedReadResult};
 use crate::code_sandbox::SandboxLinkedImport;
-use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::gate::{PolicyManifestResolution, resolve_policy_manifest};
@@ -23,7 +22,7 @@ use super::model::{
 use super::coreutils::{claim_matches_world_in, grant_scope_world_name, read_grant_matches_actor};
 
 use super::paging::{
-    EdgeCursor, PageBuilder, TemporalCursor, format_day_shard, parse_day_shard, parse_edge_cursor,
+    DayPosition, EdgeCursor, PageBuilder, TemporalCursor, format_day_shard, parse_day_shard,
 };
 
 /// File lookup and the receipt of the scoped read, if a stored row was read.
@@ -284,7 +283,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     }
 
     /// One live point read, folded into a listing's receipt.
-    fn read_live_into(
+    pub(super) fn read_live_into(
         &self,
         id: EntityId,
         receipt: &mut ScopedReadReceipt,
@@ -383,7 +382,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     }
 
     fn listdir_entities(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsPage> {
-        let cursor = TemporalCursor::parse_optional(cursor)?;
+        let scope = self.cursor_scope(path);
+        let cursor = scope.open::<TemporalCursor>(cursor)?;
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
         let mut last_scanned = None;
@@ -402,7 +402,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             .enumerate()
         {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
-                next_cursor = last_scanned.map(|cursor: TemporalCursor| cursor.encode());
+                // Sealed: the last scanned row may be one the walk passed over.
+                next_cursor = last_scanned.map(|cursor| scope.seal(&cursor));
                 break;
             }
             let time = entry?;
@@ -411,74 +412,22 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 id: time.id,
             };
             last_scanned = Some(cursor);
-            if !self
-                .scoped_read
-                .is_entity_readable_with_policy_in(&rtxn, &policy, &cursor.id)?
-            {
+            if !sealed_is_absent(
+                self.scoped_read
+                    .is_entity_readable_with_policy_in(&rtxn, &policy, &cursor.id),
+            )? {
                 continue;
             }
             let entry = GraphFsEntry::directory(cursor.id.to_hex());
             if !builder.try_push(entry) {
-                next_cursor = builder.last_temporal_cursor();
+                next_cursor = builder
+                    .last_temporal_cursor()
+                    .map(|cursor| scope.seal(&cursor));
                 break;
             }
             builder.set_last_temporal_cursor(cursor);
         }
         Ok(builder.finish(next_cursor))
-    }
-
-    fn listdir_claims_by_id(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsPage> {
-        let after = cursor.map(parse_entity_id).transpose()?;
-        let mut builder = PageBuilder::new(path, self.options);
-        let mut next_cursor = None;
-        let mut receipt = self.scoped_read.read_receipt(None, 0)?;
-        for id in self.scoped_read.vault().entities_by_type_page(
-            ENTITY_TYPE_CLAIM,
-            after.as_ref(),
-            GRAPH_FS_MAX_PAGE_ENTRIES,
-        )? {
-            if self.read_live_into(id, &mut receipt)?.is_none() {
-                continue;
-            }
-            let entry = GraphFsEntry::file(id.to_hex(), None);
-            if !builder.try_push(entry) {
-                next_cursor = builder.last_entry_name();
-                break;
-            }
-        }
-        Ok(builder.finish(next_cursor).with_read_receipt(receipt))
-    }
-
-    fn listdir_claims_for_subject(
-        &self,
-        path: &str,
-        subject: &EntityId,
-        cursor: Option<&str>,
-    ) -> Result<GraphFsPage> {
-        if !self.scoped_read.is_entity_readable(subject)? {
-            return Ok(empty_page(path, self.options.mount));
-        }
-        let after = cursor.map(parse_entity_id).transpose()?;
-        let mut builder = PageBuilder::new(path, self.options);
-        let mut next_cursor = None;
-        let mut receipt = self.scoped_read.read_receipt(None, 0)?;
-        for claim in self.scoped_read.vault().sources_page(
-            subject,
-            EdgeKind::ClaimOf,
-            Some(ENTITY_TYPE_CLAIM),
-            after.as_ref(),
-            GRAPH_FS_MAX_PAGE_ENTRIES,
-        )? {
-            if self.read_live_into(claim, &mut receipt)?.is_none() {
-                continue;
-            }
-            let entry = GraphFsEntry::file(claim.to_hex(), None);
-            if !builder.try_push(entry) {
-                next_cursor = builder.last_entry_name();
-                break;
-            }
-        }
-        Ok(builder.finish(next_cursor).with_read_receipt(receipt))
     }
 
     fn listdir_claims_in_world(
@@ -487,8 +436,9 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         world: &str,
         cursor: Option<&str>,
     ) -> Result<GraphFsPage> {
+        let scope = self.cursor_scope(path);
         let world = parse_world_scope(world)?;
-        let cursor = TemporalCursor::parse_optional(cursor)?;
+        let cursor = scope.open::<TemporalCursor>(cursor)?;
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
         let mut last_scanned = None;
@@ -507,7 +457,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             .enumerate()
         {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
-                next_cursor = last_scanned.map(|cursor: TemporalCursor| cursor.encode());
+                // Sealed: the last scanned row may be one the walk passed over.
+                next_cursor = last_scanned.map(|cursor| scope.seal(&cursor));
                 break;
             }
             let time = entry?;
@@ -516,10 +467,11 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 id: time.id,
             };
             last_scanned = Some(temporal);
-            if !self
-                .scoped_read
-                .is_entity_readable_with_policy_in(&rtxn, &policy, &temporal.id)?
-            {
+            if !sealed_is_absent(self.scoped_read.is_entity_readable_with_policy_in(
+                &rtxn,
+                &policy,
+                &temporal.id,
+            ))? {
                 continue;
             }
             if !claim_matches_world_in(&self.scoped_read.vault().store, &rtxn, &temporal.id, world)?
@@ -528,7 +480,9 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             }
             let entry = GraphFsEntry::file(temporal.id.to_hex(), None);
             if !builder.try_push(entry) {
-                next_cursor = builder.last_temporal_cursor();
+                next_cursor = builder
+                    .last_temporal_cursor()
+                    .map(|cursor| scope.seal(&cursor));
                 break;
             }
             builder.set_last_temporal_cursor(temporal);
@@ -545,10 +499,12 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         if !self.scoped_read.is_entity_readable(target)? {
             return Ok(empty_page(path, self.options.mount));
         }
-        let after = cursor.map(parse_edge_cursor).transpose()?;
+        let scope = self.cursor_scope(path);
+        let after = scope.open::<EdgeCursor>(cursor)?;
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
-        let mut last_cursor = after;
+        let mut last_emitted = after;
+        let mut last_scanned = None;
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
@@ -565,42 +521,62 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             .enumerate()
         {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
-                next_cursor = last_cursor.map(EdgeCursor::encode);
+                // Sealed: the last scanned edge may be one the walk passed over.
+                next_cursor = last_scanned
+                    .or(last_emitted)
+                    .map(|cursor| scope.seal(&cursor));
                 break;
             }
             let edge = entry?;
             let cursor = EdgeCursor::from_port(&edge);
-            if !self
-                .scoped_read
-                .is_entity_readable_with_policy_in(&rtxn, &policy, &edge.target)?
-            {
+            last_scanned = Some(cursor);
+            if !sealed_is_absent(self.scoped_read.is_entity_readable_with_policy_in(
+                &rtxn,
+                &policy,
+                &edge.target,
+            ))? {
                 continue;
             }
             let name = format!("{}-{}", edge.kind as u8, edge.target.to_hex());
             let entry = GraphFsEntry::symlink(name, format!("/entities/{}", edge.target.to_hex()));
             if !builder.try_push(entry) {
-                next_cursor = last_cursor.map(EdgeCursor::encode);
+                next_cursor = last_emitted.map(|cursor| scope.seal(&cursor));
                 break;
             }
-            last_cursor = Some(cursor);
+            last_emitted = Some(cursor);
         }
         Ok(builder.finish(next_cursor))
     }
 
     fn listdir_claim_days(&self, path: &str, cursor: Option<&str>) -> Result<GraphFsPage> {
-        let after_day = cursor.map(parse_day_shard).transpose()?;
-        let mut days = BTreeSet::new();
+        self.listdir_claim_days_with_scan_cap(path, cursor, GRAPH_FS_MAX_SCAN_ROWS)
+    }
+
+    /// The days that hold a row this reader may read, oldest first.
+    pub(super) fn listdir_claim_days_with_scan_cap(
+        &self,
+        path: &str,
+        cursor: Option<&str>,
+        max_scan_rows: usize,
+    ) -> Result<GraphFsPage> {
+        let scope = self.cursor_scope(path);
+        let from: DayPosition = scope.open(cursor)?.unwrap_or_default();
+        let day_of = |row: TemporalCursor| row.learned_at / 86_400;
+        let mut listed = from.after.filter(|_| from.day_listed).map(day_of);
+        let mut last_scanned = from.after;
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
         self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
-            start: after_day
-                .and_then(|day| day.checked_add(1))
-                .and_then(|day| day.checked_mul(86_400))
-                .map_or(Bound::Unbounded, Bound::Included),
+            after: from.after.map(TemporalCursor::port_position),
             ..Default::default()
+        };
+        // Resumes after `after`, with its day listed or not.
+        let resume = |after: Option<TemporalCursor>, listed: Option<u64>| DayPosition {
+            after,
+            day_listed: after.is_some_and(|after| Some(day_of(after)) == listed),
         };
         for (scanned, entry) in self
             .scoped_read
@@ -609,8 +585,9 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             .port_entity_timeline(&rtxn, query)?
             .enumerate()
         {
-            if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
-                next_cursor = builder.last_entry_name();
+            if scanned >= max_scan_rows {
+                // Sealed: the last scanned row may be one the walk passed over.
+                next_cursor = Some(scope.seal(&resume(last_scanned, listed)));
                 break;
             }
             let time = entry?;
@@ -618,22 +595,24 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 learned_at: time.timestamp,
                 id: time.id,
             };
-            if !self
-                .scoped_read
-                .is_entity_readable_with_policy_in(&rtxn, &policy, &temporal.id)?
-            {
+            let scanned_before = last_scanned.replace(temporal);
+            if !sealed_is_absent(self.scoped_read.is_entity_readable_with_policy_in(
+                &rtxn,
+                &policy,
+                &temporal.id,
+            ))? {
                 continue;
             }
-            let day = temporal.learned_at / 86_400;
-            if !days.insert(day) {
+            let day = day_of(temporal);
+            if listed.is_some_and(|listed| day <= listed) {
                 continue;
             }
-            let day_name = format_day_shard(day);
-            let entry = GraphFsEntry::directory(day_name);
-            if !builder.try_push(entry) {
-                next_cursor = builder.last_entry_name();
+            if !builder.try_push(GraphFsEntry::directory(format_day_shard(day))) {
+                // Resumes before this row, the first of a day not listed yet.
+                next_cursor = Some(scope.seal(&resume(scanned_before, listed)));
                 break;
             }
+            listed = Some(day);
         }
         Ok(builder.finish(next_cursor))
     }
@@ -651,7 +630,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let end = start
             .checked_add(86_400)
             .ok_or_else(|| Error::InvalidConfig("graph-fs day shard overflowed".to_owned()))?;
-        let cursor = TemporalCursor::parse_optional(cursor)?;
+        let scope = self.cursor_scope(path);
+        let cursor = scope.open::<TemporalCursor>(cursor)?;
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
         let mut last_scanned = None;
@@ -672,7 +652,8 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             .enumerate()
         {
             if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
-                next_cursor = last_scanned.map(|cursor: TemporalCursor| cursor.encode());
+                // Sealed: the last scanned row may be one the walk passed over.
+                next_cursor = last_scanned.map(|cursor| scope.seal(&cursor));
                 break;
             }
             let time = entry?;
@@ -681,15 +662,18 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
                 id: time.id,
             };
             last_scanned = Some(temporal);
-            if !self
-                .scoped_read
-                .is_entity_readable_with_policy_in(&rtxn, &policy, &temporal.id)?
-            {
+            if !sealed_is_absent(self.scoped_read.is_entity_readable_with_policy_in(
+                &rtxn,
+                &policy,
+                &temporal.id,
+            ))? {
                 continue;
             }
             let entry = GraphFsEntry::file(temporal.id.to_hex(), None);
             if !builder.try_push(entry) {
-                next_cursor = builder.last_temporal_cursor();
+                next_cursor = builder
+                    .last_temporal_cursor()
+                    .map(|cursor| scope.seal(&cursor));
                 break;
             }
             builder.set_last_temporal_cursor(temporal);
@@ -704,7 +688,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     }
 }
 
-fn empty_page(path: &str, mount: GraphFsMount) -> GraphFsPage {
+pub(super) fn empty_page(path: &str, mount: GraphFsMount) -> GraphFsPage {
     GraphFsPage {
         path: path.to_owned(),
         mount,
@@ -754,5 +738,16 @@ fn parse_world_scope(value: &str) -> Result<Option<EntityId>> {
         Ok(None)
     } else {
         parse_entity_id(value).map(Some)
+    }
+}
+
+/// A walk passes over sealed secret custody as absent rather than failing:
+/// it is never part of the tree, and a raw read of it still refuses.
+pub(super) fn sealed_is_absent(readable: Result<bool>) -> Result<bool> {
+    match readable {
+        Err(error) if error.kind() == crate::error::ErrorKind::InvalidSecretCustodyBody => {
+            Ok(false)
+        }
+        readable => readable,
     }
 }
