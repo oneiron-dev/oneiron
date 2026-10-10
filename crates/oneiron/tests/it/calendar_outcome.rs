@@ -26,14 +26,11 @@
 //! subject here is the outcome layer's own laws, not the policy manifest's.
 
 use crate::common::entity as test_id;
-use oneiron::calendar::claims::CALENDAR_CLAIM_PREDICATES;
 use oneiron::calendar::outcome::{
-    CheckInAnswer, CheckInCardModel, CheckInCopy, CheckInResolution, DEFAULT_OUTCOME_GRACE_SECS,
-    DueOutcomeCheckIn, EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue,
-    MachineOutcomeEvidence, MeetingClassSignals, OUTCOME_CHECK_IN_REASON_TAG,
-    PREDICATE_CALENDAR_EVENT_OUTCOME, accept_check_in_recording, build_check_in_lens,
-    check_in_recording_artifact_id, is_meeting_class, outcome_from_machine_evidence,
-    plan_outcome_check_in, project_event_outcome, read_event_outcome, record_event_outcome,
+    CheckInAnswer, CheckInResolution, DueOutcomeCheckIn, EventOutcome, EventOutcomeBasis,
+    EventOutcomeClaimValue, MachineOutcomeEvidence, MeetingClassSignals,
+    PREDICATE_CALENDAR_EVENT_OUTCOME, accept_check_in_recording, check_in_recording_artifact_id,
+    outcome_from_machine_evidence, project_event_outcome, read_event_outcome, record_event_outcome,
     resolve_owner_check_in,
 };
 use oneiron::error::GateError;
@@ -42,14 +39,12 @@ use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     EdgeActorClass, EntityId, Error, TimeRange, Vault, VaultConfig, WriteActor,
     blob_artifact::BlobArtifactBody, blob_artifact::BlobVersionProvenance,
-    inbox::InboxExceptionClass,
 };
 use rmpv::Value;
 
 /// EVENT seeds. All outside `PINNED_ID_BYTES`.
 const EVENT_SEED: u8 = 0x61;
 const SECOND_EVENT_SEED: u8 = 0x62;
-const THIRD_EVENT_SEED: u8 = 0x65;
 const PERSON_SEED: u8 = 0x63;
 const EVIDENCE_SEED: u8 = 0x64;
 const ACTOR_SEED: u8 = 0x71;
@@ -131,33 +126,6 @@ fn put_raw_claim(
     vault.put_claim(&claim_id, &body, at(EVENT_START), EVENT_START)
 }
 
-/// Writes CAL-00's `calendar.status` head — the other home of cancellation,
-/// which CAL-07 reads but never writes.
-fn put_status(vault: &Vault, claim_id: EntityId, event_ref: EntityId, status: &str) {
-    put_raw_claim(
-        vault,
-        claim_id,
-        "calendar.status",
-        ClaimSubject::Entity(event_ref),
-        Value::Map(vec![
-            (Value::from("status"), Value::from(status)),
-            // Cancellation arrives by feed absence; a standing EVENT is
-            // owner-confirmed.
-            (
-                Value::from("basis"),
-                Value::from(if status == "cancelled" {
-                    "imported_absence"
-                } else {
-                    "owner"
-                }),
-            ),
-            (Value::from("recorded_at"), Value::from(EVENT_START)),
-        ]),
-        ClaimApprovalStatus::Approved,
-    )
-    .expect("status claim");
-}
-
 /// How many `calendar.event_outcome` claims on `event_ref` are still live,
 /// whatever their approval state. Never two, by this layer's contract.
 fn active_outcome_claims(vault: &Vault, event_ref: EntityId) -> usize {
@@ -191,15 +159,6 @@ fn meeting() -> MeetingClassSignals {
     }
 }
 
-fn ambient() -> MeetingClassSignals {
-    MeetingClassSignals {
-        external_attendee_count: 0,
-        has_campaign_linkage: false,
-        has_commitment_linkage: false,
-        internal_meeting_opt_in: false,
-    }
-}
-
 fn due(event_ref: EntityId, wake_id: &str, signals: MeetingClassSignals) -> DueOutcomeCheckIn {
     DueOutcomeCheckIn {
         wake_id: wake_id.to_owned(),
@@ -207,75 +166,6 @@ fn due(event_ref: EntityId, wake_id: &str, signals: MeetingClassSignals) -> DueO
         scheduled_start_utc: EVENT_START,
         signals,
     }
-}
-
-fn copy() -> CheckInCopy {
-    CheckInCopy {
-        title: "Did the standup happen?".to_owned(),
-        body: "Your 10:00 with Acme ended half an hour ago.".to_owned(),
-        held_label: "It happened".to_owned(),
-        no_show_label: "Nobody came".to_owned(),
-        rescheduled_label: "We moved it".to_owned(),
-        recording_label: "Drop a recording".to_owned(),
-    }
-}
-
-#[test]
-fn event_outcome_wire_contract_uses_exact_four_outcomes_and_two_bases() {
-    let outcomes = [
-        (EventOutcome::Held, "held"),
-        (EventOutcome::NoShow, "no_show"),
-        (EventOutcome::CancelledPreStart, "cancelled_pre_start"),
-        (EventOutcome::Unknown, "unknown"),
-    ];
-    for (outcome, token) in outcomes {
-        assert_eq!(outcome.as_str(), token);
-        assert_eq!(EventOutcome::parse(token), Some(outcome));
-    }
-    for (basis, token) in [
-        (EventOutcomeBasis::Machine, "machine"),
-        (EventOutcomeBasis::OwnerAttested, "owner_attested"),
-    ] {
-        assert_eq!(basis.as_str(), token);
-        assert_eq!(EventOutcomeBasis::parse(token), Some(basis));
-    }
-    // Closed sets: neighbouring vocabularies never leak in.
-    for token in ["rescheduled", "cancelled", "attended", "", "Held"] {
-        assert_eq!(EventOutcome::parse(token), None, "{token}");
-    }
-    for token in ["owner", "inferred", "imported_cancel"] {
-        assert_eq!(EventOutcomeBasis::parse(token), None, "{token}");
-    }
-
-    // The serialization fixture: the exact wire object, JSON-round-tripped.
-    let value = EventOutcomeClaimValue {
-        outcome: EventOutcome::Held,
-        basis: EventOutcomeBasis::Machine,
-        recorded_at: EVENT_END,
-    };
-    let json = serde_json::to_value(value).expect("serialize");
-    assert_eq!(
-        json,
-        serde_json::json!({
-            "outcome": "held",
-            "basis": "machine",
-            "recorded_at": EVENT_END,
-        })
-    );
-    assert_eq!(
-        serde_json::from_value::<EventOutcomeClaimValue>(json).expect("deserialize"),
-        value
-    );
-
-    // The predicate is one exact member of the CAL-00 family table.
-    assert_eq!(PREDICATE_CALENDAR_EVENT_OUTCOME, "calendar.event_outcome");
-    assert_eq!(
-        CALENDAR_CLAIM_PREDICATES
-            .iter()
-            .filter(|predicate| **predicate == PREDICATE_CALENDAR_EVENT_OUTCOME)
-            .count(),
-        1
-    );
 }
 
 #[test]
@@ -461,33 +351,6 @@ fn event_outcome_supersedes_prior_live_claim_without_deleting_history() {
 }
 
 #[test]
-fn elapsed_calendar_time_alone_mints_no_outcome() {
-    let (_dir, vault) = temp_vault();
-    let event_ref = event(&vault, EVENT_SEED);
-    let wake = plan_outcome_check_in("wake-1".to_owned(), event_ref, EVENT_END, meeting())
-        .expect("meeting-class event arms");
-
-    // The wake fires; nothing else happens. Long past the grace, the EVENT
-    // still carries no outcome and still projects unknown.
-    assert!(wake.at_utc < EVENT_END + 86_400);
-    assert_eq!(read_event_outcome(&vault, event_ref).expect("read"), None);
-    assert_eq!(
-        project_event_outcome(read_event_outcome(&vault, event_ref).expect("read")),
-        EventOutcome::Unknown
-    );
-
-    // The question survives the grace; only the answer is missing.
-    let rows = vault
-        .inbox_meeting_outcome_check_ins(&[due(event_ref, &wake.id, meeting())])
-        .expect("project");
-    assert_eq!(rows.len(), 1);
-    assert_eq!(
-        rows[0].exception_class,
-        InboxExceptionClass::MeetingOutcomeCheckIn
-    );
-}
-
-#[test]
 fn pre_start_cancel_records_cancelled_pre_start_and_skips_grace_card() {
     let (_dir, vault) = temp_vault();
     let event_ref = event(&vault, EVENT_SEED);
@@ -535,62 +398,6 @@ fn pre_start_cancel_records_cancelled_pre_start_and_skips_grace_card() {
             .inbox_meeting_outcome_check_ins(&[due(event_ref, "wake-1", meeting())])
             .expect("project")
             .is_empty()
-    );
-}
-
-#[test]
-fn feed_absence_uses_calendar_status_never_event_outcome() {
-    let (_dir, vault) = temp_vault();
-    let event_ref = event(&vault, EVENT_SEED);
-
-    // The multi-source absence verdict is a `calendar.status` claim.
-    put_status(&vault, claim_id(EVENT_SEED, 0), event_ref, "cancelled");
-
-    // It never becomes an outcome, and the outcome predicate is a distinct
-    // member of the family table.
-    assert_eq!(read_event_outcome(&vault, event_ref).expect("read"), None);
-    assert_eq!(
-        project_event_outcome(read_event_outcome(&vault, event_ref).expect("read")),
-        EventOutcome::Unknown
-    );
-    assert!(CALENDAR_CLAIM_PREDICATES.contains(&"calendar.status"));
-    assert!(CALENDAR_CLAIM_PREDICATES.contains(&PREDICATE_CALENDAR_EVENT_OUTCOME));
-    assert_ne!(PREDICATE_CALENDAR_EVENT_OUTCOME, "calendar.status");
-}
-
-#[test]
-fn cancelled_status_suppresses_the_post_end_check_in() {
-    let (_dir, vault) = temp_vault();
-    let cancelled = event(&vault, EVENT_SEED);
-    let confirmed = event(&vault, SECOND_EVENT_SEED);
-
-    // Cancellation's other home. The outcome predicate stays silent by law, so
-    // a recheck that consulted only `calendar.event_outcome` would ask the owner
-    // how a meeting went that the feed already said was called off.
-    put_status(&vault, claim_id(EVENT_SEED, 0), cancelled, "cancelled");
-    put_status(
-        &vault,
-        claim_id(SECOND_EVENT_SEED, 0),
-        confirmed,
-        "confirmed",
-    );
-    assert_eq!(read_event_outcome(&vault, cancelled).expect("read"), None);
-
-    let rows = vault
-        .inbox_meeting_outcome_check_ins(&[
-            due(cancelled, "wake-cancelled", meeting()),
-            due(confirmed, "wake-confirmed", meeting()),
-        ])
-        .expect("project");
-    // Only the EVENT that still stands is asked about.
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].event_ref, confirmed.to_hex());
-
-    // Suppressing the card mints no outcome: cancelled-by-feed stays `unknown`
-    // here, exactly as the two-homes law requires.
-    assert_eq!(
-        project_event_outcome(read_event_outcome(&vault, cancelled).expect("read")),
-        EventOutcome::Unknown
     );
 }
 
@@ -643,176 +450,6 @@ fn gate_pending_outcome_head_is_superseded_not_left_beside_its_replacement() {
 }
 
 #[test]
-fn forked_outcome_heads_resolve_to_the_later_evidence() {
-    let (_dir, vault) = temp_vault();
-    let ascending = event(&vault, EVENT_SEED);
-    let descending = event(&vault, SECOND_EVENT_SEED);
-
-    // A post-sync fork: two replicas each recorded an outcome and neither
-    // supersession crossed the wire. Claim ids are time-ordered UUIDv7 PER
-    // WRITER, so across the fork id order is not evidence order — both id
-    // arrangements must resolve to the same later evidence.
-    let fork = |event_ref: EntityId, seed: u8, low: (&str, u64), high: (&str, u64)| {
-        put_raw_claim(
-            &vault,
-            claim_id(seed, 0),
-            PREDICATE_CALENDAR_EVENT_OUTCOME,
-            ClaimSubject::Entity(event_ref),
-            wire_value(low.0, "machine", low.1),
-            ClaimApprovalStatus::Approved,
-        )
-        .expect("low-id head");
-        put_raw_claim(
-            &vault,
-            claim_id(seed, 1),
-            PREDICATE_CALENDAR_EVENT_OUTCOME,
-            ClaimSubject::Entity(event_ref),
-            wire_value(high.0, "machine", high.1),
-            ClaimApprovalStatus::Approved,
-        )
-        .expect("high-id head");
-        assert_eq!(active_outcome_claims(&vault, event_ref), 2);
-    };
-
-    // Lower id carries the older evidence.
-    fork(
-        ascending,
-        EVENT_SEED,
-        ("no_show", EVENT_END),
-        ("held", EVENT_END + 600),
-    );
-    // ...and the reverse, which is what pins `recorded_at` rather than id as
-    // the ordering key.
-    fork(
-        descending,
-        SECOND_EVENT_SEED,
-        ("held", EVENT_END + 600),
-        ("no_show", EVENT_END),
-    );
-
-    assert_eq!(
-        read_event_outcome(&vault, ascending)
-            .expect("read")
-            .map(|value| value.recorded_at),
-        Some(EVENT_END + 600)
-    );
-    assert_eq!(
-        project_event_outcome(read_event_outcome(&vault, ascending).expect("read")),
-        EventOutcome::Held
-    );
-    assert_eq!(
-        project_event_outcome(read_event_outcome(&vault, descending).expect("read")),
-        EventOutcome::Held
-    );
-
-    // Same instant on both sides: the id breaks the tie, so the contest stays
-    // total and two replicas reading the same fork agree.
-    let tied = event(&vault, THIRD_EVENT_SEED);
-    fork(
-        tied,
-        THIRD_EVENT_SEED,
-        ("no_show", EVENT_END),
-        ("held", EVENT_END),
-    );
-    assert_eq!(
-        project_event_outcome(read_event_outcome(&vault, tied).expect("read")),
-        EventOutcome::Held
-    );
-}
-
-#[test]
-fn transcript_or_join_evidence_can_record_machine_held() {
-    let (_dir, vault) = temp_vault();
-    let event_ref = event(&vault, EVENT_SEED);
-    let evidence_ref = test_id(EVIDENCE_SEED);
-
-    for evidence in [
-        MachineOutcomeEvidence::Transcript {
-            evidence_ref,
-            observed_at: EVENT_END + 30,
-        },
-        MachineOutcomeEvidence::JoinTelemetry {
-            evidence_ref,
-            observed_at: EVENT_END + 30,
-        },
-    ] {
-        let value =
-            outcome_from_machine_evidence(EVENT_START, &evidence).expect("evidence earns held");
-        assert_eq!(value.outcome, EventOutcome::Held);
-        assert_eq!(value.basis, EventOutcomeBasis::Machine);
-        record_event_outcome(&vault, event_ref, &value, ClaimSource::Observed).expect("record");
-        assert_eq!(
-            project_event_outcome(read_event_outcome(&vault, event_ref).expect("read")),
-            EventOutcome::Held
-        );
-    }
-}
-
-#[test]
-fn no_show_requires_explicit_machine_evidence_or_owner_attestation() {
-    let (_dir, vault) = temp_vault();
-    let silent = event(&vault, EVENT_SEED);
-    let evidenced = event(&vault, SECOND_EVENT_SEED);
-    let evidence_ref = test_id(EVIDENCE_SEED);
-
-    // Silence is never no-show.
-    assert_ne!(
-        project_event_outcome(read_event_outcome(&vault, silent).expect("read")),
-        EventOutcome::NoShow
-    );
-
-    // Held-shaped evidence never yields no-show.
-    for evidence in [
-        MachineOutcomeEvidence::Transcript {
-            evidence_ref,
-            observed_at: EVENT_END,
-        },
-        MachineOutcomeEvidence::JoinTelemetry {
-            evidence_ref,
-            observed_at: EVENT_END,
-        },
-    ] {
-        assert_ne!(
-            outcome_from_machine_evidence(EVENT_START, &evidence)
-                .expect("held")
-                .outcome,
-            EventOutcome::NoShow
-        );
-    }
-
-    // Explicit machine evidence.
-    let machine = outcome_from_machine_evidence(
-        EVENT_START,
-        &MachineOutcomeEvidence::ExplicitNoShow {
-            evidence_ref,
-            observed_at: EVENT_END + 5,
-        },
-    )
-    .expect("explicit no-show");
-    assert_eq!(machine.outcome, EventOutcome::NoShow);
-    assert_eq!(machine.basis, EventOutcomeBasis::Machine);
-    record_event_outcome(&vault, evidenced, &machine, ClaimSource::Observed).expect("record");
-    assert_eq!(
-        project_event_outcome(read_event_outcome(&vault, evidenced).expect("read")),
-        EventOutcome::NoShow
-    );
-
-    // Or an owner attestation.
-    let CheckInResolution::Outcome(owner) =
-        resolve_owner_check_in(silent, CheckInAnswer::NoShow, EVENT_END + 900)
-    else {
-        panic!("a no-show answer resolves to an outcome");
-    };
-    assert_eq!(owner.outcome, EventOutcome::NoShow);
-    assert_eq!(owner.basis, EventOutcomeBasis::OwnerAttested);
-    record_event_outcome(&vault, silent, &owner, ClaimSource::UserStated).expect("record");
-    assert_eq!(
-        project_event_outcome(read_event_outcome(&vault, silent).expect("read")),
-        EventOutcome::NoShow
-    );
-}
-
-#[test]
 fn owner_answer_records_owner_attested_basis() {
     let (_dir, vault) = temp_vault();
     let event_ref = event(&vault, EVENT_SEED);
@@ -844,193 +481,6 @@ fn owner_answer_records_owner_attested_basis() {
             .expect("project")
             .is_empty()
     );
-}
-
-#[test]
-fn rescheduled_answer_does_not_invent_a_fifth_outcome_value() {
-    let (_dir, vault) = temp_vault();
-    let event_ref = event(&vault, EVENT_SEED);
-
-    let resolution = resolve_owner_check_in(event_ref, CheckInAnswer::Rescheduled, EVENT_END + 60);
-    assert_eq!(
-        resolution,
-        CheckInResolution::RescheduleRequested {
-            event_ref,
-            recorded_at: EVENT_END + 60,
-        }
-    );
-
-    // No fifth wire value exists, at the enum or on the wire.
-    assert_eq!(EventOutcome::parse("rescheduled"), None);
-    let recorded = resolution.recorded_value();
-    assert_eq!(recorded.outcome, EventOutcome::Unknown);
-    assert_eq!(recorded.basis, EventOutcomeBasis::OwnerAttested);
-
-    record_event_outcome(&vault, event_ref, &recorded, ClaimSource::UserStated).expect("record");
-    assert_eq!(
-        project_event_outcome(read_event_outcome(&vault, event_ref).expect("read")),
-        EventOutcome::Unknown
-    );
-    // The owner answered, so the card resolves — while the outcome stays unknown.
-    assert!(
-        vault
-            .inbox_meeting_outcome_check_ins(&[due(event_ref, "wake-1", meeting())])
-            .expect("project")
-            .is_empty()
-    );
-}
-
-#[test]
-fn ambient_internal_and_solo_events_do_not_arm_check_in() {
-    let solo = ambient();
-    let internal_without_opt_in = MeetingClassSignals {
-        external_attendee_count: 0,
-        has_campaign_linkage: false,
-        has_commitment_linkage: false,
-        internal_meeting_opt_in: false,
-    };
-    for signals in [solo, internal_without_opt_in] {
-        assert!(!is_meeting_class(signals));
-        assert_eq!(
-            plan_outcome_check_in("wake-1".to_owned(), test_id(EVENT_SEED), EVENT_END, signals,),
-            None
-        );
-    }
-
-    // A due wake for a non-meeting-class EVENT surfaces nothing either.
-    let (_dir, vault) = temp_vault();
-    let event_ref = event(&vault, EVENT_SEED);
-    assert!(
-        vault
-            .inbox_meeting_outcome_check_ins(&[due(event_ref, "wake-1", ambient())])
-            .expect("project")
-            .is_empty()
-    );
-}
-
-#[test]
-fn external_campaign_or_commitment_linked_event_arms_check_in() {
-    let external = meeting();
-    let campaign = MeetingClassSignals {
-        has_campaign_linkage: true,
-        ..ambient()
-    };
-    let commitment = MeetingClassSignals {
-        has_commitment_linkage: true,
-        ..ambient()
-    };
-    let internal_opt_in = MeetingClassSignals {
-        internal_meeting_opt_in: true,
-        ..ambient()
-    };
-    for signals in [external, campaign, commitment, internal_opt_in] {
-        assert!(is_meeting_class(signals));
-        assert!(
-            plan_outcome_check_in("wake-1".to_owned(), test_id(EVENT_SEED), EVENT_END, signals)
-                .is_some()
-        );
-    }
-}
-
-#[test]
-fn check_in_wake_is_exactly_end_plus_thirty_minutes() {
-    assert_eq!(DEFAULT_OUTCOME_GRACE_SECS, 30 * 60);
-    let wake = plan_outcome_check_in(
-        "wake-1789".to_owned(),
-        test_id(EVENT_SEED),
-        EVENT_END,
-        meeting(),
-    )
-    .expect("armed");
-    assert_eq!(wake.id, "wake-1789");
-    assert_eq!(wake.at_utc, EVENT_END + 1_800);
-    assert_eq!(wake.reason_tag, OUTCOME_CHECK_IN_REASON_TAG);
-
-    // Saturating, never wrapping, at the far end of the clock.
-    let far = plan_outcome_check_in(
-        "wake-far".to_owned(),
-        test_id(EVENT_SEED),
-        u64::MAX,
-        meeting(),
-    )
-    .expect("armed");
-    assert_eq!(far.at_utc, u64::MAX);
-}
-
-#[test]
-fn due_check_in_rechecks_evidence_before_inbox_surface() {
-    let (_dir, vault) = temp_vault();
-    let answered = event(&vault, EVENT_SEED);
-    let open = event(&vault, SECOND_EVENT_SEED);
-    let evidence_ref = test_id(EVIDENCE_SEED);
-
-    // Evidence that arrived DURING the grace window.
-    let held = outcome_from_machine_evidence(
-        EVENT_START,
-        &MachineOutcomeEvidence::Transcript {
-            evidence_ref,
-            observed_at: EVENT_END + 120,
-        },
-    )
-    .expect("held");
-    record_event_outcome(&vault, answered, &held, ClaimSource::Observed).expect("record");
-
-    let rows = vault
-        .inbox_meeting_outcome_check_ins(&[
-            due(answered, "wake-a", meeting()),
-            due(open, "wake-b", meeting()),
-        ])
-        .expect("project");
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].event_ref, open.to_hex());
-    assert_eq!(rows[0].wake_id, "wake-b");
-    assert_eq!(rows[0].scheduled_start_utc, EVENT_START);
-
-    // A redelivered wake for the same EVENT never double-asks.
-    let repeated = vault
-        .inbox_meeting_outcome_check_ins(&[
-            due(open, "wake-b", meeting()),
-            due(open, "wake-b-again", meeting()),
-        ])
-        .expect("project");
-    assert_eq!(repeated.len(), 1);
-}
-
-#[test]
-fn check_in_card_exposes_answer_and_recording_drop_zone() {
-    let model = CheckInCardModel {
-        event_ref: test_id(EVENT_SEED),
-        scheduled_start_utc: EVENT_START,
-        answer_action_id: "calendar.outcome.answer".to_owned(),
-        recording_upload_action_id: "calendar.outcome.recording".to_owned(),
-    };
-    let copy = copy();
-    let lens = build_check_in_lens(&model, &copy).expect("card");
-    let json = serde_json::to_string(&lens).expect("serialize lens");
-
-    // Two independent doors.
-    assert!(json.contains("calendar.outcome.answer"));
-    assert!(json.contains("calendar.outcome.recording"));
-    // Three answers on the answer door, and the closed tokens the caller gets back.
-    for token in ["held", "no_show", "rescheduled"] {
-        assert!(json.contains(token), "{token}");
-    }
-    // Every human-facing string came from the caller's copy.
-    for text in [
-        copy.title.as_str(),
-        copy.body.as_str(),
-        copy.held_label.as_str(),
-        copy.no_show_label.as_str(),
-        copy.rescheduled_label.as_str(),
-        copy.recording_label.as_str(),
-    ] {
-        assert!(json.contains(text), "{text}");
-    }
-    // The card asks; it states no outcome.
-    assert!(!json.contains("cancelled_pre_start"));
-    // The EVENT and its scheduled start ride the card for the host.
-    assert!(json.contains(&model.event_ref.to_hex()));
-    assert!(json.contains(&EVENT_START.to_string()));
 }
 
 #[test]

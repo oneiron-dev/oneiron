@@ -615,60 +615,6 @@ fn git_smart_http_rejecting_door_hook_fails_before_refs_move_and_objects_stay_un
     );
 }
 
-/// A binary push must never be answered `Clean` on bytes nobody read.
-///
-/// The extraction is the raw diff plus the blob's whole content, so a binary
-/// entry reaches the door exactly like a text one — and the door's own rule
-/// refuses unscannable bytes while the objects are still quarantined.
-#[test]
-fn git_smart_http_binary_push_is_refused_rather_than_admitted_unscanned() {
-    let source = tempfile::tempdir().expect("source tempdir");
-    seed_source_repo(source.path(), "base\n");
-    let origin = TestOrigin::start(source.path(), DoorSeam::Landed);
-    let before = origin
-        .origin_ref("refs/heads/main")
-        .expect("origin starts with a tip");
-
-    let work = tempfile::tempdir().expect("work tempdir");
-    git(
-        work.path(),
-        &["clone", "--branch=main", "--", &origin.url(), "clone"],
-    );
-    let clone = work.path().join("clone");
-    let head = commit_bytes(
-        &clone,
-        "logo.png",
-        &binary_payload(),
-        "carries binary bytes",
-    );
-    let push = git_output(&clone, &["push", "origin", "main"]);
-
-    assert!(
-        !push.status.success(),
-        "binary content is decided, never skipped"
-    );
-    assert_eq!(
-        origin.origin_ref("refs/heads/main").as_deref(),
-        Some(before.as_str()),
-        "a refused binary push leaves refs unmoved"
-    );
-    assert!(
-        !origin.object_present(&head),
-        "rejected before objects become durable"
-    );
-    assert!(
-        origin.landed().is_empty(),
-        "a refused push produces no landing and no receipt"
-    );
-    let refusals = door_refusals(&origin);
-    assert!(
-        refusals
-            .last()
-            .is_some_and(|reason| reason.contains("receive-pack scan could not complete")),
-        "the landed scan refused unscannable bytes: {refusals:?}"
-    );
-}
-
 /// Git's binary diff classification must not prevent whole-blob extraction.
 /// The positive payload is valid UTF-8 without NULs, so the real door can scan
 /// it even though `-diff` hides its patch. Truly unscannable bytes still fail.

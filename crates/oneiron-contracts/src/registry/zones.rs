@@ -88,9 +88,9 @@ pub const TYPE_BYTE_ZONE_ENGINE_EXPERIMENTAL_END: u8 = 127;
 ///
 /// The pack half's edges are spelled as literals HERE and nowhere else. Byte
 /// 128 is not an allocation, but `pub const TYPE_BYTE_…: u8 = 128;` is
-/// indistinguishable from one at a glance and is exactly the shape the
-/// `byte_space_v3_has_no_static_pack_half_allocations` census forbids without
-/// exemption — so the engine half keeps its named edges and the pack half's
+/// indistinguishable from one at a glance and is exactly the shape byte-space
+/// v3 forbids without exemption (no static pack-half allocation) — so the
+/// engine half keeps its named edges and the pack half's
 /// live inside the match that IS the allocation table. Totality is still the
 /// compiler's: this match has no wildcard arm.
 #[must_use]

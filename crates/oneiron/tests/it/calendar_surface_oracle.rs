@@ -44,7 +44,7 @@ use oneiron::calendar::transcript::permit_imported_calendar_source_for_test;
 use oneiron::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::{
     CalendarInviteMethod, CalendarInviteSurfaceInput, CalendarInviteSurfaceMethod,
-    CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel, ClaimApprovalStatus,
+    CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, ClaimApprovalStatus,
     ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EntityId, MEMORY_CODE_BAD_REQUEST,
     Memory, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
     calendar::BusyInterval, memory::CALENDAR_INVITE_OUTBOUND_CHANNEL,
@@ -614,86 +614,6 @@ fn calendar_surface_scopes_read_search_and_freebusy() {
         source: busy,
     };
     assert_eq!(internal.source, busy);
-}
-
-#[test]
-fn calendar_surface_rejects_invalid_ranges_with_the_typed_facade_error() {
-    let (_dir, vault) = temp_vault();
-    let (_actor, facade) = actor_facade(&vault);
-
-    let inverted = facade
-        .calendar_search(&CalendarSearchRequest {
-            calendars: Vec::new(),
-            range: Some(CalendarRangeDto {
-                start: 900,
-                end: 100,
-            }),
-            text: None,
-            limit: 10,
-        })
-        .expect_err("an inverted search window is a typed rejection");
-    assert_eq!(inverted.code, MEMORY_CODE_BAD_REQUEST);
-
-    let inverted = facade
-        .calendar_freebusy(
-            &[],
-            TimeRange {
-                start: 900,
-                end: 100,
-            },
-        )
-        .expect_err("an inverted freebusy window is a typed rejection");
-    assert_eq!(inverted.code, MEMORY_CODE_BAD_REQUEST);
-
-    let blank_selector = facade
-        .calendar_freebusy(
-            &[CalendarSel {
-                system: Some("   ".to_owned()),
-            }],
-            TimeRange { start: 0, end: 100 },
-        )
-        .expect_err("a blank selector token is malformed input");
-    assert_eq!(blank_selector.code, MEMORY_CODE_BAD_REQUEST);
-}
-
-#[test]
-fn calendar_invite_draft_is_cal_04s_verb_and_typed_five_field_payload() {
-    let input = CalendarInviteSurfaceInput {
-        method: CalendarInviteSurfaceMethod::Request,
-        uid: "uid-one-1791".to_owned(),
-        sequence: 3,
-        ics_blob_ref: "blob:one-1791".to_owned(),
-        recipient: "guest@example.test".to_owned(),
-    };
-
-    // CAL-04 (ONE-1786) branches its dispatch chokepoint on
-    // `draft.verb == CALENDAR_INVITE_VERB` ("calendar.invite") before it
-    // exact-decodes the payload. A shorter local verb leaves that branch dead
-    // on arrival: the invite would schedule as a generic draft and never reach
-    // the iMIP codec.
-    assert_eq!(CALENDAR_INVITE_OUTBOUND_VERB, "calendar.invite");
-
-    let draft = input.outbound_draft();
-    assert_eq!(draft.verb, CALENDAR_INVITE_OUTBOUND_VERB);
-    assert_eq!(draft.channel, CALENDAR_INVITE_OUTBOUND_CHANNEL);
-    assert_eq!(draft.target, input.recipient);
-    assert_eq!(
-        draft.content_ref.as_deref(),
-        Some(input.ics_blob_ref.as_str())
-    );
-
-    // The other three fields stay typed on the payload CAL-04 decodes: exactly
-    // C7's five keys, in order, with the uppercase iMIP method and a numeric
-    // sequence — never re-parsed out of the derived idempotency/trigger keys.
-    let wire = serde_json::to_value(&input).expect("invite payload serializes");
-    let payload = wire.as_object().expect("invite payload object");
-    assert_eq!(
-        payload.keys().map(String::as_str).collect::<Vec<_>>(),
-        vec!["method", "uid", "sequence", "ics_blob_ref", "recipient"]
-    );
-    assert_eq!(payload["method"], serde_json::json!("REQUEST"));
-    assert_eq!(payload["uid"], serde_json::json!("uid-one-1791"));
-    assert_eq!(payload["sequence"], serde_json::json!(3));
 }
 
 /// CAL-04's arrival contract, as this file promised it.

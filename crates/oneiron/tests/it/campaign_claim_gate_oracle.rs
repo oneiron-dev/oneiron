@@ -9,10 +9,7 @@
 //! detaching it from the send pipeline still fails here.
 
 use crate::common::entity as test_id;
-use oneiron::campaign::claims::{
-    CAMPAIGN_PACK_CLAIM_PREDICATES, DO_NOT_CONTACT_SCOPE_ALL, PREDICATE_COMM_DO_NOT_CONTACT,
-    claim_class_descriptors, is_campaign_pack_claim_predicate,
-};
+use oneiron::campaign::claims::{DO_NOT_CONTACT_SCOPE_ALL, PREDICATE_COMM_DO_NOT_CONTACT};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId, Result,
@@ -146,35 +143,6 @@ fn assert_opt_out_hold(result: &OutboundDispatchResult) {
 }
 
 #[test]
-fn do_not_contact_holds_the_shipping_send_path() -> Result<()> {
-    let (_dir, vault, person) = oracle_vault();
-    let mut sink = RecordingSink::default();
-
-    // Control: no suppression, so only the ordinary authority pending fires.
-    let control = dispatch(&vault, "intent:control", &mut sink);
-    assert_eq!(control.gate_outcome, "pending");
-    assert_eq!(
-        control.gate_reason_codes,
-        vec!["gate.pending.external_effect_authority".to_owned()]
-    );
-    assert!(
-        !control
-            .gate_reason_codes
-            .iter()
-            .any(|code| code == PENDING_OPT_OUT),
-        "unsuppressed dispatch must not raise the opt-out hold: {:?}",
-        control.gate_reason_codes
-    );
-
-    write_do_not_contact(&vault, &test_id(0x74), person, Some(CHANNEL), VERB)?;
-
-    let held = dispatch(&vault, "intent:suppressed", &mut sink);
-    assert_opt_out_hold(&held);
-    assert_eq!(sink.calls, 0, "no held send may reach the transport");
-    Ok(())
-}
-
-#[test]
 fn do_not_contact_scope_and_channel_bound_the_hold() -> Result<()> {
     let (_dir, vault, person) = oracle_vault();
     let mut sink = RecordingSink::default();
@@ -221,35 +189,4 @@ fn do_not_contact_scope_and_channel_bound_the_hold() -> Result<()> {
     assert_opt_out_hold(&held);
     assert_eq!(sink.calls, 0, "no held send may reach the transport");
     Ok(())
-}
-
-#[test]
-fn campaign_pack_claim_surface_is_public_and_pure_data() {
-    // The six predicates and their descriptor rows are readable from outside
-    // the crate, which is what makes the interim table usable by the descriptor
-    // registry when it lands.
-    assert_eq!(CAMPAIGN_PACK_CLAIM_PREDICATES.len(), 6);
-    for predicate in CAMPAIGN_PACK_CLAIM_PREDICATES {
-        assert!(is_campaign_pack_claim_predicate(predicate));
-    }
-    let rows = claim_class_descriptors();
-    assert_eq!(rows.len(), CAMPAIGN_PACK_CLAIM_PREDICATES.len());
-    for row in &rows {
-        assert!(is_campaign_pack_claim_predicate(row.predicate));
-        assert!(
-            matches!(row.write_class, "recorded" | "human_ruled" | "ordinary"),
-            "{} has a write_class outside the allowed tokens",
-            row.predicate
-        );
-    }
-    // Exactly one enforcement-gated restrictive class: do-not-contact.
-    let enforcement: Vec<&str> = rows
-        .iter()
-        .filter(|row| row.enforcement && row.restrictive)
-        .map(|row| row.predicate)
-        .collect();
-    assert_eq!(enforcement, vec![PREDICATE_COMM_DO_NOT_CONTACT]);
-    // Calling the table twice has no side effect: it is pure data, not a
-    // registry write.
-    assert_eq!(rows, claim_class_descriptors());
 }

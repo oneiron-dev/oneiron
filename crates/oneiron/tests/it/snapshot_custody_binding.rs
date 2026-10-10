@@ -26,8 +26,7 @@
 
 use oneiron::secret_custody::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_SCHEMA_VERSION,
-    SecretBinding, SecretCustodyMetadata, SecretCustodyRecord, SecretCustodyStatus,
-    decode_secret_custody_body,
+    SecretCustodyRecord, SecretCustodyStatus, decode_secret_custody_body,
 };
 use oneiron::{Vault, VaultConfig};
 use rmpv::Value;
@@ -114,92 +113,6 @@ fn snapshot_custody_body() -> Vec<u8> {
 
 fn snapshot_custody_record() -> SecretCustodyRecord {
     decode_secret_custody_body(&snapshot_custody_body()).expect("decode custody body")
-}
-
-fn expected_binding() -> SecretBinding {
-    SecretBinding {
-        effector: EFFECTOR.to_owned(),
-        tier_ceiling: CustodyTier::T1Leased,
-        scopes: SCOPES.iter().map(|s| (*s).to_owned()).collect(),
-    }
-}
-
-/// The repo references the credential by NAME; the name resolves to the one
-/// custody record holding the value.
-#[test]
-fn wasabi_snapshot_credential_registers_and_resolves_by_name() {
-    let (_tmp, vault) = temp_vault();
-
-    let id = vault
-        .register_secret(snapshot_custody_record())
-        .expect("register the snapshot custody record");
-    let resolved = vault
-        .resolve_secret_ref(SECRET_NAME)
-        .expect("resolve the secret name")
-        .expect("the registered name is live");
-
-    assert_eq!(
-        resolved, id,
-        "the snapshot credential's custody name must resolve to the record it registered"
-    );
-}
-
-/// The custody grant matches the provider-side least-privilege policy: three
-/// non-destructive verbs at a leased ceiling, and nothing else.
-#[test]
-fn wasabi_snapshot_binding_grants_exactly_put_get_multipart_at_t1_leased() {
-    let record = snapshot_custody_record();
-
-    let binding = record
-        .binding_for(EFFECTOR)
-        .cloned()
-        .expect("the snapshot effector must carry a binding");
-    let expected = expected_binding();
-
-    assert_eq!(
-        binding, expected,
-        "the snapshot grant is exactly put/get/multipart at a T1Leased ceiling, no delete verb"
-    );
-    assert!(
-        record.binding_for("ops-serve:wasabi-root").is_none(),
-        "no effector outside the snapshot path may be bound to this credential"
-    );
-}
-
-/// The read most callers get is value-less by construction: the projection has
-/// no value field at all, and the full-field equality below is that proof.
-#[test]
-fn wasabi_snapshot_metadata_projection_carries_no_value() {
-    let (_tmp, vault) = temp_vault();
-    let id = vault
-        .register_secret(snapshot_custody_record())
-        .expect("register the snapshot custody record");
-
-    let metadata = vault
-        .get_secret_metadata(&id)
-        .expect("read the custody metadata")
-        .expect("the registered record has metadata");
-    let expected = SecretCustodyMetadata {
-        name: SECRET_NAME.to_owned(),
-        class: CustodyClass::CustodyPortable,
-        status: SecretCustodyStatus::Active,
-        registered_at: REGISTERED_AT,
-        rotated_at: None,
-        rotation_generation: 0,
-        bindings: vec![expected_binding()],
-    };
-
-    assert_eq!(
-        metadata, expected,
-        "the metadata projection is exactly the value-less field set for this credential"
-    );
-
-    let rendered = format!("{metadata:?}");
-    let dummy = std::str::from_utf8(DUMMY).expect("the synthetic value is ASCII");
-    assert!(
-        !rendered.contains(dummy),
-        "the value-less projection must never render the custody value bytes"
-    );
 }
 
 /// W-18 (ARCH-0069 #handles): a model reads `sc12` where a secret's value

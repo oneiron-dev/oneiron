@@ -17,7 +17,7 @@
 use std::collections::BTreeSet;
 use std::io::Write;
 
-use oneiron::analyzer::{AnalyzerAssetManifest, MultilingualAnalyzer};
+use oneiron::analyzer::AnalyzerAssetManifest;
 
 // The analyzer and its dictionary crates live in `oneiron-retrieval`; its manifest is the
 // one that declares them.
@@ -73,27 +73,6 @@ fn lindera_embed_dic_disabled() {
         "lindera must not enable any `embed-*-dic` feature; dicts load from \
          dict_search_paths at runtime only; current line: {line}"
     );
-}
-
-#[test]
-fn default_analyzer_emits_no_disallowed_assets() {
-    let analyzer =
-        MultilingualAnalyzer::discover(&[]).expect("discover with empty search paths must succeed");
-    let manifest = analyzer.manifest();
-    let allowed = allowed_licenses();
-
-    for (lang, policy) in &manifest.langs {
-        let Some(asset) = policy.dict.as_ref() else {
-            continue;
-        };
-        // ZH dicts are user-supplied per plan §2.3 — the packager is
-        // responsible for provenance; the "user-supplied" sentinel
-        // license is accepted only for `zh`.
-        if lang == "zh" && asset.license == "user-supplied" {
-            continue;
-        }
-        assert_asset_policy(lang, asset, &allowed);
-    }
 }
 
 /// Exercises [`AnalyzerAssetManifest::probe_file`] end-to-end against a

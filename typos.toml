@@ -62,20 +62,6 @@ DecodeParms = "DecodeParms"
 # ext4 filesystem creator tool `mke2fs`, invoked by scripts/microvm/build.py and named in its docs/tests. CI: https://github.com/oneiron-dev/oneiron/actions/runs/35562251441/job/106217236544
 mke2fs = "mke2fs"
 
-# The exact gold filename is unique to crates/oneiron/tests/fixtures/.
-# Root-walk discovery does not read nested configs; type globs match basenames.
-# Frozen gold names/acronyms are evidence, not spelling fixes.
-[type.of360-gold]
-extend-glob = ["of360_gold.v1.json"]
-
-[type.of360-gold.extend-identifiers]
-FLE = "FLE" # French as a foreign language support in the exchange-student case.
-Hav = "Hav" # Employer name in the ferry-commuter case.
-Ines = "Ines" # Given name in the pastry and trail-running cases.
-ND5 = "ND5" # Neutral-density solar filter; do not allow the split word globally.
-NWO = "NWO" # Dutch research funding panel in the thesis case.
-Stads = "Stads" # Clinic name in the health case.
-
 
 
 # One immutable failed-validation job ID in the uniquely named receipt. This

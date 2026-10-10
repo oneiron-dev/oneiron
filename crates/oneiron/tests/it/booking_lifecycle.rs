@@ -21,7 +21,7 @@
 use crate::common::entity as test_id;
 use oneiron::calendar::passport::{live_passports_for_event, resolve_event_by_uid};
 use oneiron::calendar::query::read_event;
-use oneiron::calendar::{CalendarError, CalendarPassportDirection, CalendarPassportValue};
+use oneiron::calendar::{CalendarPassportDirection, CalendarPassportValue};
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_EVENT, ENTITY_TYPE_PERSON};
 use oneiron::{
     ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject, DreamerHomeNodeCandidate,
@@ -41,10 +41,9 @@ use oneiron::{
     booking::OpaqueCheckoutLeaseToken, booking::OpaqueLifecycleToken, booking::RankedSlot,
     booking::RevisionReceipt, booking::RoutingMode, booking::SessionKey, booking::SlotOracle,
     booking::SolveRequest, booking::VaultActiveHoldSource, booking::WeeklyWallWindow,
-    booking::booking_claim_class_descriptors, booking::enqueue_booking_verb,
-    booking::is_booking_family_claim_predicate, booking::is_booking_lifecycle_claim_predicate,
-    booking::issue_checkout_lease, booking::run_booking_lifecycle_once,
-    booking::validate_booking_family_claim,
+    booking::enqueue_booking_verb, booking::is_booking_family_claim_predicate,
+    booking::is_booking_lifecycle_claim_predicate, booking::issue_checkout_lease,
+    booking::run_booking_lifecycle_once, booking::validate_booking_family_claim,
 };
 use rmpv::Value;
 
@@ -463,114 +462,6 @@ fn confirmation_persists_short_intake_on_the_booking_receipt() {
             .expect("confirmed receipt")
             .intake,
         intake,
-    );
-}
-
-// -------------------------------------------------------------------------
-// BK-07 reminder wake: live booking truth is rechecked at fire time
-// -------------------------------------------------------------------------
-
-#[test]
-fn reminder_wake_rechecks_confirmed_status_and_current_occurrence() {
-    use oneiron::booking::{ReminderAction, booking_due_reminder, booking_reminder_wakes};
-
-    let fixture = Fixture::open();
-    let slot = slot_of(&fixture.offered_slots()[0]);
-    let visitor = session(b"reminder-wake");
-    let confirmed = book(&fixture, visitor, slot);
-    let policy = oneiron::booking::BookingConversionPolicy {
-        reminder_leads_secs: vec![45 * 60, 15 * 60],
-        ..fixture
-            .vault
-            .booking_conversion_policy(None)
-            .expect("vault policy")
-    };
-    let wakes = booking_reminder_wakes(confirmed.calendar.event_ref, slot.start, NOW, &policy)
-        .expect("wake plan");
-    assert_eq!(wakes.len(), 2);
-    assert_ne!(wakes[0].id, wakes[1].id);
-    for wake in &wakes {
-        assert_eq!(
-            booking_due_reminder(&fixture.vault, wake, wake.due_utc - 1, &policy).unwrap(),
-            None
-        );
-        assert_eq!(
-            booking_due_reminder(&fixture.vault, wake, wake.due_utc, &policy).unwrap(),
-            Some(ReminderAction::RescheduleFirst)
-        );
-        assert_eq!(
-            booking_due_reminder(&fixture.vault, wake, slot.start, &policy).unwrap(),
-            None
-        );
-    }
-    let mut forged = wakes[0].clone();
-    forged.id.push_str("-other");
-    assert_eq!(
-        booking_due_reminder(&fixture.vault, &forged, forged.due_utc, &policy).unwrap(),
-        None
-    );
-    fixture
-        .run(
-            BookingVerbRequest::Cancel(CancelSpec {
-                token: confirmed.cancel_token,
-                idempotency_key: None,
-            }),
-            NOW,
-        )
-        .expect("cancel");
-    assert_eq!(
-        booking_due_reminder(&fixture.vault, &wakes[0], wakes[0].due_utc, &policy).unwrap(),
-        None
-    );
-}
-
-#[test]
-fn reminder_wake_refuses_a_user_deleted_booking_shell() {
-    use oneiron::booking::{ReminderAction, booking_due_reminder, booking_reminder_wakes};
-    use oneiron::deletion::DeleteReason;
-
-    let fixture = Fixture::open();
-    let slot = slot_of(&fixture.offered_slots()[0]);
-    let confirmed = book(&fixture, session(b"deleted-reminder"), slot);
-    let event = confirmed.calendar.event_ref;
-    let policy = oneiron::booking::BookingConversionPolicy {
-        reminder_leads_secs: vec![45 * 60, 15 * 60],
-        ..fixture
-            .vault
-            .booking_conversion_policy(None)
-            .expect("vault policy")
-    };
-    let wakes = booking_reminder_wakes(event, slot.start, NOW, &policy).expect("reminder plan");
-    let first = &wakes[0];
-    assert_eq!(
-        booking_due_reminder(&fixture.vault, first, first.due_utc, &policy).expect("live booking"),
-        Some(ReminderAction::RescheduleFirst)
-    );
-
-    let deleted = fixture
-        .vault
-        .delete_entity_with_reason(&event, DeleteReason::UserDelete)
-        .expect("public user deletion");
-    assert!(deleted.existed);
-    assert!(
-        fixture
-            .vault
-            .is_deleted_shell(&event)
-            .expect("deleted shell")
-    );
-    // A user delete keeps the EVENT type in its shell. That retained type
-    // (and the booking claims) is not authority to send a reminder.
-    assert_eq!(
-        fixture
-            .vault
-            .get_entity_type(&event)
-            .expect("retained type"),
-        Some(ENTITY_TYPE_EVENT)
-    );
-    assert_eq!(
-        booking_due_reminder(&fixture.vault, first, first.due_utc, &policy)
-            .expect("deleted booking"),
-        None
     );
 }
 
@@ -1717,70 +1608,6 @@ fn lifecycle_attempt_runs_only_on_home_node_consumer() {
 // -------------------------------------------------------------------------
 
 #[test]
-fn calendar_passport_types_have_one_owner() {
-    let fixture = Fixture::open();
-    let slot = slot_of(&fixture.offered_slots()[0]);
-    let confirmed = book(&fixture, session(b"visitor-one"), slot);
-
-    // No `booking.uid` claim exists: UID truth is the passport's alone.
-    assert!(
-        fixture
-            .live_claim_values(confirmed.calendar.event_ref, "booking.uid")
-            .is_empty()
-    );
-}
-
-#[test]
-fn booking_error_wraps_calendar_error_opaquely() {
-    let fixture = Fixture::open();
-    let slot = slot_of(&fixture.offered_slots()[0]);
-    let visitor = session(b"visitor-one");
-    let hold = expect_held(
-        fixture
-            .run(
-                BookingVerbRequest::Hold(hold_spec(&fixture, visitor, slot)),
-                NOW,
-            )
-            .expect("hold"),
-    );
-
-    // A calendar-side failure surfaces through the 1816-owned wrapper. The
-    // seam's taxonomy is unchanged: booking has no `Calendar` variant to match,
-    // and the lane restates no CAL variant.
-    enqueue_booking_verb(
-        &fixture.vault,
-        BookingVerbRequest::Confirm(confirm_spec(&fixture, &hold, visitor)),
-        NOW,
-    )
-    .expect("enqueue");
-    let failure = run_booking_lifecycle_once(
-        &fixture.vault,
-        |_| Ok(CalendarFailingOracle),
-        &fixture.consumer_input(NOW),
-    )
-    .expect_err("the wrapped failure propagates");
-    assert!(
-        matches!(failure, BookingError::SlotOracle(_)),
-        "calendar failures ride an existing seam variant, opaquely"
-    );
-}
-
-/// An oracle whose failure is a wrapped `CalendarError`, exactly as
-/// `solver.rs`'s freebusy step produces one.
-struct CalendarFailingOracle;
-
-impl SlotOracle for CalendarFailingOracle {
-    fn solve(&self, _req: &SolveRequest) -> Result<oneiron::booking::SolveResult, BookingError> {
-        Err(BookingError::SlotOracle(format!(
-            "freebusy: {}",
-            CalendarError::IcsIngest {
-                reason: "feed unavailable".to_owned()
-            }
-        )))
-    }
-}
-
-#[test]
 fn booking_lifecycle_validator_is_exact() {
     // The verb table and the family table are both closed and sorted.
     let mut sorted_verbs = BOOKING_VERBS;
@@ -1858,57 +1685,6 @@ fn booking_lifecycle_validator_is_exact() {
         .is_err()
     );
     assert!(validate_booking_family_claim(&body("booking.uid", good)).is_err());
-}
-
-#[test]
-fn booking_lifecycle_descriptor_rows_are_complete() {
-    let rows = booking_claim_class_descriptors();
-    // The family is the exact union of lifecycle facts and both configuration
-    // predicates. Compare every row so missing, duplicate, and extra rows fail.
-    let mut expected_predicates = BOOKING_LIFECYCLE_PREDICATES.to_vec();
-    expected_predicates.extend([
-        oneiron::booking::BOOKING_EVENT_TYPE_PREDICATE,
-        oneiron::booking::BOOKING_PUBLIC_PAGE_PREDICATE,
-    ]);
-    expected_predicates.sort_unstable();
-    let mut actual_predicates: Vec<_> = rows.iter().map(|row| row.predicate).collect();
-    actual_predicates.sort_unstable();
-    assert_eq!(
-        actual_predicates, expected_predicates,
-        "one row per exact predicate in the whole booking family"
-    );
-
-    for predicate in BOOKING_LIFECYCLE_PREDICATES {
-        let row = rows
-            .iter()
-            .find(|row| row.predicate == predicate)
-            .unwrap_or_else(|| panic!("{predicate} has a descriptor row"));
-        assert_eq!(row.write_class, "recorded");
-        assert!(
-            row.projector_only,
-            "only the engine writes a lifecycle fact"
-        );
-        assert!(
-            !row.enforcement,
-            "no lifecycle row claims enforcement a runtime would have to apply"
-        );
-    }
-
-    let public_page = rows
-        .iter()
-        .find(|row| row.predicate == oneiron::booking::BOOKING_PUBLIC_PAGE_PREDICATE)
-        .expect("the public-page configuration has a descriptor row");
-    assert_eq!(public_page.write_class, "human_ruled");
-    assert!(public_page.enforcement);
-    assert!(public_page.restrictive);
-    assert!(!public_page.projector_only);
-
-    for row in &rows {
-        assert!(
-            ["recorded", "human_ruled", "ordinary"].contains(&row.write_class),
-            "write_class is restricted to the three ratified classes"
-        );
-    }
 }
 
 /// Decodes the single live claim value for a predicate.

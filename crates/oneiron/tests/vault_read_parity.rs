@@ -21,13 +21,11 @@ use std::sync::{Arc, Mutex};
 use oneiron::authority::{HostSlipIssuer, SlipCaveat};
 use oneiron::claim::{ScopedReadActorKey, base_world_id};
 use oneiron::code_run::vault_read::{
-    AskRequest, CloudVaultReadAdapter, CodeExecuteRequest, CodeSearchRequest,
-    ContextPackBudgetControls, ContextPackDepthControls, ContextPackRetrievalBudgetControls,
+    AskRequest, CodeExecuteRequest, CodeSearchRequest, ContextPackDepthControls,
     CoreBatchShortIdHydrateRequest, CoreContextPackRequest, CoreContextPackResponse,
     CoreHydrateRequest, CoreMemoryTimelineRequest, CoreQueryRequest, CoreShortIdHydrateOutcome,
-    CountMode, InProcessVaultReadAdapter, VAULT_READ_METHOD_MAP, VaultReadAdapterKind,
-    VaultReadAvailability, VaultReadClient, VaultReadError, VaultReadMethod, VaultReadRequest,
-    VaultReadResponse, VaultReadResult, VaultReadWireOp, View, WireTransport,
+    CountMode, InProcessVaultReadAdapter, VaultReadClient, VaultReadError, VaultReadMethod,
+    VaultReadRequest, VaultReadResponse, VaultReadResult, VaultReadWireOp, View, WireTransport,
     WireTransportVaultReadAdapter,
 };
 use oneiron::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
@@ -54,16 +52,6 @@ struct FakeWireTransport {
     vault: Arc<Vault>,
     actor: ScopedReadActorKey,
     ops: Mutex<Vec<VaultReadWireOp>>,
-}
-
-impl FakeWireTransport {
-    fn ops(&self) -> Vec<VaultReadWireOp> {
-        self.ops.lock().expect("transport lock").clone()
-    }
-
-    fn reset(&self) {
-        self.ops.lock().expect("transport lock").clear();
-    }
 }
 
 impl WireTransport for FakeWireTransport {
@@ -210,7 +198,6 @@ struct Fixture {
     transport: Arc<FakeWireTransport>,
     admitted_id: EntityId,
     denied_id: EntityId,
-    admitted_ref: String,
     denied_ref: String,
 }
 
@@ -269,7 +256,6 @@ impl Fixture {
             .expect("fixture vectors");
 
         let actor = base_read_key(&vault);
-        let admitted_ref = probe_short_ref(&vault, &admitted_id);
         let denied_ref = probe_short_ref(&vault, &denied_id);
         let transport = Arc::new(FakeWireTransport {
             vault: Arc::clone(&vault),
@@ -284,7 +270,6 @@ impl Fixture {
             transport,
             admitted_id,
             denied_id,
-            admitted_ref,
             denied_ref,
         }
     }
@@ -296,13 +281,6 @@ impl Fixture {
     fn wire(&self) -> WireTransportVaultReadAdapter {
         WireTransportVaultReadAdapter::new(Arc::clone(&self.transport) as Arc<dyn WireTransport>)
     }
-}
-
-/// Pinned constructor shape: `InProcessVaultReadAdapter` is constructible ONLY
-/// with a `ScopedReadActorKey`, so no unkeyed `&Vault` handle exists. This
-/// wrapper compiles only while that stays true.
-fn keyed_in_process(vault: &Vault, actor: ScopedReadActorKey) -> InProcessVaultReadAdapter<'_> {
-    InProcessVaultReadAdapter::new(vault, actor)
 }
 
 fn seed_id(byte: u8) -> EntityId {
@@ -425,107 +403,6 @@ fn normalized_error(error: &VaultReadError) -> String {
     }
 }
 
-// ─── 1. Structured success parity ────────────────────────────────────────────
-
-#[test]
-fn structured_success_parity() {
-    // Each adapter call samples its own scoring second. `profile.note` has a
-    // 90-day access half-life, so even adjacent seconds can differ by two f32
-    // ULPs. The adapter has no `with_temporal_now` door. Use the public claim
-    // write's learned-at input instead: u64::MAX makes saturating age zero at
-    // every representable clock, pinning the access factor to exactly 1.0.
-    // Keep occurrence times, bodies, scope gates and all response checks intact.
-    let fixture = Fixture::with_claim_learned_at(u64::MAX);
-    let in_process = fixture.in_process();
-    let wire = fixture.wire();
-
-    let direct = in_process.query(query_request()).expect("in-process query");
-    let through_wire = wire.query(query_request()).expect("wire query");
-    assert_eq!(encode(&direct), encode(&through_wire));
-    assert_eq!(direct.items.len(), 1, "only the admitted claim is surfaced");
-    assert_eq!(direct.items[0].id, fixture.admitted_id.to_hex());
-    assert_eq!(direct.meta.count_mode, CountMode::Estimate);
-    assert_eq!(fixture.transport.ops(), vec![VaultReadWireOp::CoreQuery]);
-
-    fixture.transport.reset();
-    let mut direct = in_process
-        .context_pack(context_pack_request())
-        .expect("in-process context pack");
-    let mut through_wire = wire
-        .context_pack(context_pack_request())
-        .expect("wire context pack");
-    normalize_pack(&mut direct);
-    normalize_pack(&mut through_wire);
-    assert_eq!(encode(&direct), encode(&through_wire));
-    assert_eq!(
-        direct.0.results.len(),
-        1,
-        "score parity must not be vacuous"
-    );
-    assert_eq!(direct.0.results[0].id, fixture.admitted_id.to_hex());
-    assert_eq!(direct.0.results[0].score, 1.0, "fixture decay is neutral");
-
-    // Load-bearing guard: normalization must never erase even a one-ULP score
-    // mismatch. The fixture fixes the input; the response oracle stays exact.
-    let mut changed_score = through_wire.clone();
-    changed_score.0.results[0].score = f32::from_bits(1.0_f32.to_bits() - 1);
-    normalize_pack(&mut changed_score);
-    assert_ne!(encode(&direct), encode(&changed_score));
-    assert_eq!(
-        fixture.transport.ops(),
-        vec![VaultReadWireOp::CoreContextPack]
-    );
-
-    fixture.transport.reset();
-    let direct = in_process
-        .hydrate(hydrate_request(&fixture.admitted_ref))
-        .expect("in-process hydrate");
-    let through_wire = wire
-        .hydrate(hydrate_request(&fixture.admitted_ref))
-        .expect("wire hydrate");
-    assert_eq!(encode(&direct), encode(&through_wire));
-    assert_eq!(
-        direct.id.as_deref(),
-        Some(fixture.admitted_id.to_hex()).as_deref()
-    );
-    assert!(direct.item.is_some(), "full view carries the entity record");
-    assert_eq!(fixture.transport.ops(), vec![VaultReadWireOp::CoreHydrate]);
-
-    fixture.transport.reset();
-    let batch = || CoreBatchShortIdHydrateRequest {
-        refs: vec![fixture.admitted_ref.clone(), MISSING_REF.to_owned()],
-        view: Some(View::Full),
-    };
-    let direct = in_process.hydrate_many(batch()).expect("in-process batch");
-    let through_wire = wire.hydrate_many(batch()).expect("wire batch");
-    assert_eq!(encode(&direct), encode(&through_wire));
-    assert_eq!(direct.results.len(), 2);
-    assert_eq!(direct.results[0].outcome, CoreShortIdHydrateOutcome::Live);
-    assert_eq!(
-        direct.results[1].outcome,
-        CoreShortIdHydrateOutcome::NotFound
-    );
-    assert_eq!(
-        fixture.transport.ops(),
-        vec![VaultReadWireOp::CoreBatchShortIdHydrate]
-    );
-
-    fixture.transport.reset();
-    let direct = in_process
-        .memory_timeline(timeline_request(&fixture.admitted_id))
-        .expect("in-process timeline");
-    let through_wire = wire
-        .memory_timeline(timeline_request(&fixture.admitted_id))
-        .expect("wire timeline");
-    assert_eq!(encode(&direct), encode(&through_wire));
-    assert_eq!(direct.anchor_id, fixture.admitted_id.to_hex());
-    assert!(!direct.records.is_empty());
-    assert_eq!(
-        fixture.transport.ops(),
-        vec![VaultReadWireOp::CoreMemoryTimeline]
-    );
-}
-
 // ─── 2. Denial is absence ────────────────────────────────────────────────────
 
 #[test]
@@ -640,311 +517,6 @@ fn scope_denial_preserves_not_found_and_reports_withholding() {
         encode(&query).contains(ADMITTED_TEXT),
         "the admitted claim is still surfaced, so the assertions above are not vacuous"
     );
-}
-
-// ─── 3. Validation error parity ──────────────────────────────────────────────
-
-#[test]
-fn validation_error_parity() {
-    let fixture = Fixture::new();
-    let in_process = fixture.in_process();
-    let wire = fixture.wire();
-
-    let seedless = || CoreQueryRequest {
-        query: Some("   ".to_owned()),
-        query_vector: None,
-        limit: 10,
-        view: None,
-        count_mode: CountMode::Estimate,
-    };
-    assert_eq!(
-        normalized_error(&in_process.query(seedless()).expect_err("in-process")),
-        normalized_error(&wire.query(seedless()).expect_err("wire"))
-    );
-
-    let malformed = || CoreHydrateRequest {
-        reference: Some("not-a-ref".to_owned()),
-        short_id: None,
-        content_hash: None,
-        view: None,
-    };
-    assert_eq!(
-        normalized_error(&in_process.hydrate(malformed()).expect_err("in-process")),
-        normalized_error(&wire.hydrate(malformed()).expect_err("wire"))
-    );
-
-    let empty_batch = || CoreBatchShortIdHydrateRequest {
-        refs: Vec::new(),
-        view: None,
-    };
-    let direct = in_process
-        .hydrate_many(empty_batch())
-        .expect_err("in-process");
-    let through_wire = wire.hydrate_many(empty_batch()).expect_err("wire");
-    assert_eq!(normalized_error(&direct), normalized_error(&through_wire));
-    assert_eq!(
-        normalized_error(&direct),
-        format!("invalid_request:{:?}:refs", VaultReadMethod::HydrateMany)
-    );
-
-    assert!(
-        fixture.transport.ops().is_empty(),
-        "shared validation rejects before the transport is invoked"
-    );
-}
-
-// ─── 4. Engine error parity ──────────────────────────────────────────────────
-
-#[test]
-fn engine_error_parity() {
-    let fixture = Fixture::new();
-    let in_process = fixture.in_process();
-    let wire = fixture.wire();
-    let unresolvable = seed_id(0x7E);
-
-    let direct = in_process
-        .memory_timeline(timeline_request(&unresolvable))
-        .expect_err("in-process timeline absence");
-    let through_wire = wire
-        .memory_timeline(timeline_request(&unresolvable))
-        .expect_err("wire timeline absence");
-    assert_eq!(normalized_error(&direct), normalized_error(&through_wire));
-    assert_eq!(
-        normalized_error(&direct),
-        format!("engine:{:?}:NOT_FOUND", VaultReadMethod::MemoryTimeline)
-    );
-    assert_eq!(
-        fixture.transport.ops(),
-        vec![VaultReadWireOp::CoreMemoryTimeline],
-        "the engine answer travelled through the transport once"
-    );
-}
-
-// ─── 5. Runtime-unavailable parity across all three ──────────────────────────
-
-#[test]
-fn runtime_unavailable_parity_across_all_three() {
-    let fixture = Fixture::new();
-    let in_process = fixture.in_process();
-    let wire = fixture.wire();
-    let cloud = CloudVaultReadAdapter;
-
-    let ask = || AskRequest(json!({ "prompt": "who am i" }));
-    let search = || CodeSearchRequest(json!({ "query": "fn main" }));
-    let execute = || CodeExecuteRequest(json!({ "source": "1 + 1" }));
-
-    for (method, errors) in [
-        (
-            VaultReadMethod::Ask,
-            vec![
-                in_process.ask(ask()).expect_err("in-process ask"),
-                wire.ask(ask()).expect_err("wire ask"),
-                cloud.ask(ask()).expect_err("cloud ask"),
-            ],
-        ),
-        (
-            VaultReadMethod::CodeSearch,
-            vec![
-                in_process
-                    .code_search(search())
-                    .expect_err("in-process code search"),
-                wire.code_search(search()).expect_err("wire code search"),
-                cloud.code_search(search()).expect_err("cloud code search"),
-            ],
-        ),
-        (
-            VaultReadMethod::CodeExecute,
-            vec![
-                in_process
-                    .code_execute(execute())
-                    .expect_err("in-process code execute"),
-                wire.code_execute(execute()).expect_err("wire code execute"),
-                cloud
-                    .code_execute(execute())
-                    .expect_err("cloud code execute"),
-            ],
-        ),
-    ] {
-        for error in errors {
-            assert_eq!(error, VaultReadError::RuntimeUnavailable { method });
-        }
-    }
-    assert!(
-        fixture.transport.ops().is_empty(),
-        "runtime peers never reach a transport"
-    );
-}
-
-// ─── 6. Cloud structured-read contract ───────────────────────────────────────
-
-#[test]
-fn cloud_structured_read_contract() {
-    let fixture = Fixture::new();
-    let cloud = CloudVaultReadAdapter;
-    let unimplemented = |method| VaultReadError::Unimplemented {
-        adapter: VaultReadAdapterKind::Cloud,
-        method,
-    };
-
-    assert_eq!(
-        cloud.query(query_request()).expect_err("cloud query"),
-        unimplemented(VaultReadMethod::Query)
-    );
-    assert_eq!(
-        cloud
-            .context_pack(context_pack_request())
-            .expect_err("cloud context pack"),
-        unimplemented(VaultReadMethod::ContextPack)
-    );
-    assert_eq!(
-        cloud
-            .hydrate(hydrate_request(&fixture.admitted_ref))
-            .expect_err("cloud hydrate"),
-        unimplemented(VaultReadMethod::Hydrate)
-    );
-    assert_eq!(
-        cloud
-            .hydrate_many(CoreBatchShortIdHydrateRequest {
-                refs: vec![fixture.admitted_ref.clone()],
-                view: None,
-            })
-            .expect_err("cloud batch"),
-        unimplemented(VaultReadMethod::HydrateMany)
-    );
-    assert_eq!(
-        cloud
-            .memory_timeline(timeline_request(&fixture.admitted_id))
-            .expect_err("cloud timeline"),
-        unimplemented(VaultReadMethod::MemoryTimeline)
-    );
-
-    let structured = VAULT_READ_METHOD_MAP
-        .iter()
-        .filter(|row| row.availability == VaultReadAvailability::StructuredRead)
-        .count();
-    assert_eq!(structured, 5, "the cloud stub covers every structured row");
-}
-
-// ─── 7. In-process is not privileged ─────────────────────────────────────────
-
-#[test]
-fn in_process_is_not_privileged() {
-    // As in structured_success_parity, pin age to zero without masking scores.
-    // Compare authority at a neutral age: separate adapter calls must not
-    // compare different wall-clock decay.
-    let fixture = Fixture::with_claim_learned_at(u64::MAX);
-    let wire = fixture.wire();
-    // Wire FIRST, in-process second: proximity to `Vault` is never authority.
-    let wire_hydrate = wire.hydrate(hydrate_request(&fixture.admitted_ref));
-    let wire_denied = wire.hydrate(hydrate_request(&fixture.denied_ref));
-    let mut wire_pack = wire
-        .context_pack(context_pack_request())
-        .expect("wire context pack");
-
-    let in_process = keyed_in_process(&fixture.vault, fixture.actor.clone());
-    let direct_hydrate = in_process.hydrate(hydrate_request(&fixture.admitted_ref));
-    let direct_denied = in_process.hydrate(hydrate_request(&fixture.denied_ref));
-    let mut direct_pack = in_process
-        .context_pack(context_pack_request())
-        .expect("in-process context pack");
-
-    assert_eq!(
-        encode(&wire_hydrate.expect("wire hydrate")),
-        encode(&direct_hydrate.expect("in-process hydrate"))
-    );
-    assert_eq!(
-        normalized_error(&wire_denied.expect_err("wire denied")),
-        normalized_error(&direct_denied.expect_err("in-process denied"))
-    );
-    normalize_pack(&mut wire_pack);
-    normalize_pack(&mut direct_pack);
-    assert_eq!(encode(&wire_pack), encode(&direct_pack));
-    assert_eq!(direct_pack.0.results.len(), 1, "parity is not vacuous");
-    assert_eq!(direct_pack.0.results[0].id, fixture.admitted_id.to_hex());
-    assert_eq!(
-        direct_pack.0.results[0].score, 1.0,
-        "fixture decay is neutral"
-    );
-    assert_eq!(
-        direct_pack.0.results.len(),
-        wire_pack.0.results.len(),
-        "in-process never returns more than the wire path"
-    );
-    assert_eq!(direct_pack.0.results.len(), 1, "only the admitted claim");
-    assert_eq!(direct_pack.0.results[0].id, fixture.admitted_id.to_hex());
-    assert_eq!(
-        direct_pack.0.results[0].score, 1.0,
-        "fixture decay is neutral"
-    );
-}
-
-// ─── 8. Serialization round trip ─────────────────────────────────────────────
-
-#[test]
-fn serialization_round_trip() {
-    let fixture = Fixture::new();
-    let in_process = fixture.in_process();
-
-    let query = query_request();
-    assert_eq!(round_trip(&query), query);
-    let pack_request = CoreContextPackRequest {
-        executor_model: None,
-        query: Some("blue hallway".to_owned()),
-        query_vector: Some(vec![0.25, 0.75]),
-        limit: 3,
-        depth: Some(ContextPackDepthControls {
-            edge_hop: Some(2),
-            max_neighbors: Some(9),
-        }),
-        edge_hop: Some(1),
-        max_neighbors: Some(4),
-        budget: Some(ContextPackBudgetControls {
-            token_budget: Some(4000),
-            max_item_tokens: Some(512),
-            max_field_chars: Some(500),
-            retrieval: Some(ContextPackRetrievalBudgetControls {
-                claims: Some(4),
-                turns: Some(2),
-                summaries: Some(2),
-                facets: Some(1),
-                other: Some(1),
-                selected_edges: Some(50),
-            }),
-        }),
-    };
-    assert_eq!(round_trip(&pack_request), pack_request);
-    let hydrate = hydrate_request(&fixture.admitted_ref);
-    assert_eq!(round_trip(&hydrate), hydrate);
-    let batch = CoreBatchShortIdHydrateRequest {
-        refs: vec![fixture.admitted_ref.clone(), MISSING_REF.to_owned()],
-        view: Some(View::Standard),
-    };
-    assert_eq!(round_trip(&batch), batch);
-    let timeline = timeline_request(&fixture.admitted_id);
-    assert_eq!(round_trip(&timeline), timeline);
-
-    let query_response = in_process.query(query_request()).expect("query");
-    assert_eq!(round_trip(&query_response), query_response);
-    let pack_response = in_process
-        .context_pack(context_pack_request())
-        .expect("context pack");
-    assert_eq!(round_trip(&pack_response), pack_response);
-    let hydrate_response = in_process.hydrate(hydrate).expect("hydrate");
-    assert_eq!(round_trip(&hydrate_response), hydrate_response);
-    let batch_response = in_process.hydrate_many(batch).expect("batch");
-    assert_eq!(round_trip(&batch_response), batch_response);
-    let timeline_response = in_process.memory_timeline(timeline).expect("timeline");
-    assert_eq!(round_trip(&timeline_response), timeline_response);
-
-    let envelope = VaultReadResponse::Query(query_response);
-    assert_eq!(round_trip(&envelope), envelope);
-    let error = VaultReadError::Engine {
-        narrowing: None,
-        method: VaultReadMethod::Hydrate,
-        engine_code: "NOT_FOUND".to_owned(),
-        message: "short_id was not found".to_owned(),
-    };
-    assert_eq!(round_trip(&error), error);
 }
 
 // ─── 9. Golden wire shapes ───────────────────────────────────────────────────

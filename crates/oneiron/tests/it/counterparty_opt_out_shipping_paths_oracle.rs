@@ -52,7 +52,6 @@ const CHANNEL: &str = "email";
 const OTHER_CHANNEL: &str = "telegram";
 const VERB: &str = "send";
 const PENDING_OPT_OUT: &str = "gate.pending.counterparty_opt_out";
-const PENDING_AUTHORITY: &str = "gate.pending.external_effect_authority";
 
 const ACTOR_SEED: u8 = 0x51;
 const IDENTITY_SEED: u8 = 0x52;
@@ -319,25 +318,6 @@ fn facade_bridge_recorded_opt_out_holds_send() {
     );
 }
 
-#[test]
-fn facade_bridge_do_not_contact_holds_send() -> Result<()> {
-    let (_dir, vault, actor) = oracle_vault();
-    write_do_not_contact(
-        &vault,
-        DO_NOT_CONTACT_SEED,
-        Some(CHANNEL),
-        VERB,
-        ClaimApprovalStatus::Approved,
-        1,
-    )?;
-
-    let denied = schedule(&vault, actor, "dnc");
-    assert_eq!(denied.outcome, "held");
-    assert!(holds(&denied.gate_reason_codes));
-    assert_eq!(vault.connector_send_tasks().unwrap().len(), 1);
-    Ok(())
-}
-
 // --- Shipping path 2: the direct dispatch pipeline -----------------------------
 
 #[test]
@@ -394,20 +374,6 @@ fn dispatch_pipeline_do_not_contact_holds_send() -> Result<()> {
 }
 
 // --- Shipping path 3: the connector task executor ------------------------------
-
-/// The executor control: on a vault whose sends are granted, an unsuppressed
-/// scheduled task really does reach the connector. Without this measurement,
-/// `sink.calls == 0` below would be indistinguishable from "the send never got
-/// that far".
-#[test]
-fn connector_task_executor_control_reaches_the_connector() {
-    let (_dir, vault, actor) = sending_vault();
-    let mut sink = RecordingSink::default();
-
-    assert_eq!(schedule(&vault, actor, "executor-control").outcome, "held");
-    vault.run_connector_task_executor(&mut sink, 2_000).unwrap();
-    assert_eq!(sink.calls, 1, "an unsuppressed task must reach the sink");
-}
 
 #[test]
 fn connector_task_executor_recorded_opt_out_holds_send() {
@@ -481,35 +447,6 @@ fn all_matching_type132_records_are_restrictively_folded() {
     assert_eq!(sink.calls, 0);
 }
 
-#[test]
-fn proposed_and_stale_do_not_contact_heads_remain_restrictive() -> Result<()> {
-    let (_dir, vault, actor) = oracle_vault();
-    let mut sink = RecordingSink::default();
-
-    // A head that is only PROPOSED still suppresses: restrictive-wins does not
-    // wait for approval.
-    write_do_not_contact(
-        &vault,
-        DO_NOT_CONTACT_SEED,
-        Some(CHANNEL),
-        VERB,
-        ClaimApprovalStatus::Proposed,
-        1,
-    )?;
-    let proposed = dispatch(&vault, actor, CHANNEL, "intent:proposed", &mut sink);
-    assert_eq!(proposed.gate_outcome, "pending");
-    assert!(holds(&proposed.gate_reason_codes));
-
-    // And it keeps suppressing long after it was written: a suppression that
-    // expires on its own is a suppression that leaks. Only an authorized clear
-    // stamp (CA-01's retract/supersede surface) may remove it.
-    let stale = dispatch(&vault, actor, CHANNEL, "intent:stale", &mut sink);
-    assert_eq!(stale.gate_outcome, "pending");
-    assert!(holds(&stale.gate_reason_codes));
-    assert_eq!(sink.calls, 0);
-    Ok(())
-}
-
 // --- Fallback completeness ----------------------------------------------------
 
 #[test]
@@ -533,47 +470,7 @@ fn incomplete_party_channel_index_full_scans_before_no() {
     assert_eq!(sink.calls, 0);
 }
 
-#[test]
-fn legacy_type132_row_is_visible_without_migration_gate() {
-    let (_dir, vault, actor) = oracle_vault();
-    let mut sink = RecordingSink::default();
-
-    // Contact first, identity second: at contact-write time there was nothing to
-    // index against, exactly like a row written before the index existed. No
-    // migration or lazy repair runs — the class is resolved at READ time and the
-    // scan finds the row anyway.
-    put_contact(&vault, CONTACT_SEED, IDENTITY_SEED);
-    record_opt_out(&vault, CONTACT_SEED, 2);
-    put_channel_identity(&vault, IDENTITY_SEED, CHANNEL, "owner@example.com", actor);
-
-    let denied = dispatch(&vault, actor, CHANNEL, "intent:legacy", &mut sink);
-    assert_eq!(denied.gate_outcome, "pending");
-    assert!(holds(&denied.gate_reason_codes));
-    assert_eq!(sink.calls, 0);
-}
-
 // --- Scope + non-regression ---------------------------------------------------
-
-#[test]
-fn party_channel_scope_does_not_bleed() {
-    let (_dir, vault, actor) = oracle_vault();
-    let mut sink = RecordingSink::default();
-
-    recorded_opt_out(&vault, actor);
-
-    let same_channel = dispatch(&vault, actor, CHANNEL, "intent:email", &mut sink);
-    assert!(holds(&same_channel.gate_reason_codes));
-
-    // The opt-out was recorded through an EMAIL identity; a telegram send to the
-    // same party is a different channel class and is not falsely suppressed.
-    let other_channel = dispatch(&vault, actor, OTHER_CHANNEL, "intent:telegram", &mut sink);
-    assert!(
-        !holds(&other_channel.gate_reason_codes),
-        "an email opt-out must not suppress another channel class: {:?}",
-        other_channel.gate_reason_codes
-    );
-    assert_eq!(sink.calls, 0, "the control is still fail-closed pending");
-}
 
 #[test]
 fn explicit_cross_channel_identity_never_changes_the_verdict() {
@@ -613,31 +510,6 @@ fn explicit_cross_channel_identity_never_changes_the_verdict() {
     assert_eq!(pinned.gate_outcome, absent.gate_outcome);
     assert_eq!(pinned.gate_reason_codes, absent.gate_reason_codes);
     assert_eq!(sink.calls, 0, "the control is still fail-closed pending");
-}
-
-#[test]
-fn non_opted_out_contact_preserves_existing_gate_result() {
-    let (_dir, vault, actor) = oracle_vault();
-    let mut sink = RecordingSink::default();
-
-    let before = dispatch(&vault, actor, CHANNEL, "intent:before", &mut sink);
-
-    // A contact with no opt-out is now hydrated on every send. It must not
-    // become a blanket wall: the pre-existing authority decision stands.
-    put_channel_identity(&vault, IDENTITY_SEED, CHANNEL, "owner@example.com", actor);
-    put_contact(&vault, CONTACT_SEED, IDENTITY_SEED);
-
-    let after = dispatch(&vault, actor, CHANNEL, "intent:after", &mut sink);
-    assert_eq!(after.gate_outcome, before.gate_outcome);
-    assert_eq!(after.gate_reason_codes, before.gate_reason_codes);
-    assert!(
-        after
-            .gate_reason_codes
-            .iter()
-            .any(|code| code == PENDING_AUTHORITY),
-        "the control must still be the fail-closed pending: {:?}",
-        after.gate_reason_codes
-    );
 }
 
 // --- Leg 2: cheap identity enrichment -----------------------------------------

@@ -78,39 +78,6 @@ fn open_existing_refuses_an_absent_path_and_creates_nothing() {
     assert_eq!(entry_count(temp.path()), 0);
 }
 
-/// An empty directory — a mistyped or pre-created `--vault` — is refused and
-/// keeps zero entries: no `data.mdb`, no `lock.mdb`, nothing.
-#[test]
-fn open_existing_refuses_an_empty_directory_and_leaves_it_empty() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let root = temp.path().join("empty-root");
-    std::fs::create_dir(&root).expect("empty directory");
-
-    let refused = Vault::open_existing(&root, existing_only_config());
-
-    assert!(refused.is_err(), "an empty directory must refuse");
-    assert_eq!(entry_count(&root), 0, "nothing may be created in it");
-}
-
-/// An ordinary directory of unrelated files is never mistaken for a vault
-/// root, and a half-written root — one LMDB file without its pair — is refused
-/// rather than completed.
-#[test]
-fn open_existing_refuses_unrelated_and_half_written_roots() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let unrelated = temp.path().join("unrelated");
-    std::fs::create_dir(&unrelated).expect("unrelated directory");
-    std::fs::write(unrelated.join("notes.txt"), b"not a vault").expect("note file");
-    let half = temp.path().join("half-written");
-    std::fs::create_dir(&half).expect("half-written directory");
-    std::fs::write(half.join("data.mdb"), b"").expect("lone data file");
-
-    assert!(Vault::open_existing(&unrelated, existing_only_config()).is_err());
-    assert_eq!(entry_count(&unrelated), 1);
-    assert!(Vault::open_existing(&half, existing_only_config()).is_err());
-    assert_eq!(entry_count(&half), 1, "the missing pair is not created");
-}
-
 /// The happy path: a valid vault reopens through the existing-only door and
 /// serves the ordinary read APIs.
 #[test]

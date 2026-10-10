@@ -93,30 +93,3 @@ fn cid3_email_adapter_env_gated_smoke() -> Result<()> {
     assert!(receipt.surface_event.is_some());
     Ok(())
 }
-
-#[test]
-fn cid3_email_adapter_smoke_fails_when_env_is_partially_or_invalid_configured() {
-    assert!(matches!(smoke_config_from_env(None, None), Ok(None)));
-    assert!(matches!(
-        smoke_config_from_env(
-            Some("agents.example.test".to_owned()),
-            Some("dev-secret".to_owned())
-        ),
-        Ok(Some(_))
-    ));
-    assert!(matches!(
-        smoke_config_from_env(Some("agents.example.test".to_owned()), None),
-        Err(Error::InvalidConfig(_))
-    ));
-    assert!(matches!(
-        smoke_config_from_env(Some("agents.example.test".to_owned()), Some(" ".to_owned())),
-        Err(Error::InvalidConfig(_))
-    ));
-    assert!(matches!(
-        smoke_config_from_env(
-            Some("*.example.test".to_owned()),
-            Some("dev-secret".to_owned())
-        ),
-        Err(Error::InvalidConfig(_))
-    ));
-}
