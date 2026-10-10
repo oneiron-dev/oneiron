@@ -2,7 +2,7 @@
 #![allow(clippy::unwrap_used)]
 //! ONE-1645 — the `FacetOf` type table at the FEDERATION ADMISSION BOUNDARY.
 //!
-//! The replay chokepoint (`sync_facet_of_replay_gating`) stops an off-table
+//! The replay chokepoint (forward rematerialization) stops an off-table
 //! stamp from reaching LMDB. That is not the whole exposure, because the
 //! federation SELECTOR does not read LMDB — `facet_scope_by_source` walks the
 //! RAW Loro edges map. A forged `PERSON -> <selected FACET>` row that merely
