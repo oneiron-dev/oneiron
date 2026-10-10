@@ -104,3 +104,72 @@ fn doctor_finds_the_configured_backups_beside_a_mistyped_serve_setting() {
         "{errors:?}"
     );
 }
+
+/// The CLI registers on a stopped vault through the engine door the route
+/// uses, as the local owner, and rotation runs beside it. Neither output
+/// carries the value.
+#[test]
+fn the_cli_registers_and_rotates_a_secret_on_a_stopped_vault() {
+    let root = tempfile::tempdir().unwrap();
+    let vault_path = root.path().join("vault");
+    drop(oneiron::Vault::open_owned(&vault_path, oneiron::VaultConfig::server()).unwrap());
+    let config = root.path().join("oneiron.toml");
+    std::fs::write(&config, "").unwrap();
+    let serve = ServeArgs {
+        config: Some(config),
+        vault_path: Some(vault_path.clone()),
+        ..ServeArgs::default()
+    };
+
+    let value = read_secret_value(&b"cli synthetic value"[..]).unwrap();
+    let registered = register_secret(
+        SecretRegisterArgs {
+            name: "cli-token".to_owned(),
+            class: SecretClass::CustodyPortable,
+            rung: 1,
+            device_only: false,
+            bindings: vec!["deploy=read".to_owned()],
+            repo: None,
+            git_ref: "refs/heads/main".to_owned(),
+            serve: serve.clone(),
+        },
+        &value,
+    )
+    .unwrap();
+    assert_eq!(registered.name, "cli-token");
+    assert_eq!(registered.rotation_generation, 0);
+    assert_eq!(registered.bindings.len(), 1);
+    assert_eq!(registered.bindings[0].effector, "deploy");
+    assert_eq!(registered.bindings[0].tier_ceiling, 1);
+    assert_eq!(registered.bindings[0].scopes, ["read"]);
+    let printed = serde_json::to_string(&registered).unwrap();
+    assert!(!printed.contains("cli synthetic value"), "{printed}");
+
+    // The command closed the vault: the next one opens it, as the owner does.
+    let rotated = rotate_secret(
+        SecretRotateArgs {
+            name: "cli-token".to_owned(),
+            serve,
+        },
+        &read_secret_value(&b"cli synthetic rotated"[..]).unwrap(),
+    )
+    .unwrap();
+    assert_eq!((rotated.from_generation, rotated.to_generation), (0, 1));
+    assert!(
+        !serde_json::to_string(&rotated)
+            .unwrap()
+            .contains("cli synthetic")
+    );
+
+    let vault = oneiron::Vault::open_owned(&vault_path, oneiron::VaultConfig::server()).unwrap();
+    let id = vault
+        .resolve_secret_ref("cli-token")
+        .unwrap()
+        .expect("in custody");
+    let stored = vault.get_secret_metadata(&id).unwrap().unwrap();
+    assert_eq!(stored.rotation_generation, 1);
+    assert!(
+        read_secret_value(&b""[..]).is_err(),
+        "an empty stdin is refused"
+    );
+}

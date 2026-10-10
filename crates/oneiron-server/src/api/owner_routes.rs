@@ -45,6 +45,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/backups", get(list_backups).post(take_backup))
         .route("/backups/rehearse", post(rehearse_backup))
         .route("/secret-scan", get(secret_scan).post(set_secret_scan))
+        .route("/secrets/register", post(register_secret))
         .route("/secrets/rotate", post(rotate_secret))
         .route("/healer/oversight", get(healer_oversight))
         .route("/healer/failures", get(healer_failures))
@@ -156,6 +157,21 @@ fn owner_error(error: OwnerError) -> ApiError {
             }
             oneiron::ErrorKind::ManifestWidensFloor => {
                 ApiError::invalid_state(Some("secret_wider_than_floor"))
+            }
+            oneiron::ErrorKind::SecretWiderThanManifest => {
+                ApiError::invalid_state(Some("secret_wider_than_manifest"))
+            }
+            oneiron::ErrorKind::SecretNameInUse => {
+                ApiError::invalid_state(Some("secret_name_in_use"))
+            }
+            oneiron::ErrorKind::SecretManifestNotFound => {
+                ApiError::not_found("secret_manifest", None)
+            }
+            oneiron::ErrorKind::GitHttpRepoNotFound => ApiError::not_found("repo", None),
+            // Each reason is a fixed sentence about the request's shape; none
+            // carries a value.
+            oneiron::ErrorKind::InvalidSecretCustodyBody => {
+                ApiError::bad_request(error.to_string(), None)
             }
             _ => core_engine_error("owner action failed", *error),
         },
@@ -279,6 +295,25 @@ async fn set_secret_scan(
     })
     .await?;
     Ok(Json(receipt))
+}
+
+/// The body is read by `RegisterSecret::read`, as rotation's is: the owner
+/// door runs first, so a refused caller's body is never read.
+async fn register_secret(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
+    body: Body,
+) -> OwnerReply<secrets::Registered> {
+    let owner = owner(&auth, &server)?;
+    if !has_json_content_type(&headers) {
+        return Err(ApiError::bad_request("invalid JSON request body", None).into());
+    }
+    let request = secrets::RegisterSecret::read(body)
+        .await
+        .map_err(owner_error)?;
+    let registered = blocking(move || secrets::register(server.vault(), &owner, &request)).await?;
+    Ok(Json(registered))
 }
 
 /// The body is read by `RotateSecret::read`, not `Json`: the extractor's

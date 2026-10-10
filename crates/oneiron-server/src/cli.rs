@@ -9,7 +9,8 @@ mod owner_args;
 pub use owner_args::{
     BackupArgs, DoctorArgs, ExportArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs,
     ImportNotesArgs, ImportSourceArgs, RecoverWindowArgs, RestoreArgs, RunArgs, RunDecisionArgs,
-    RunsCommand, SecretScanArgs, SecretScanSwitch, ServeOnlyArgs, WhoamiArgs,
+    RunsCommand, SecretClass, SecretRegisterArgs, SecretRotateArgs, SecretScanArgs,
+    SecretScanSwitch, SecretsCommand, ServeOnlyArgs, WhoamiArgs,
 };
 
 const DEFAULT_SERVER_DIMENSIONS: usize = 4096;
@@ -63,6 +64,10 @@ pub enum Command {
     Export(Box<ExportArgs>),
     /// Turn the write-door secret scan on or off, or show it.
     SecretScan(Box<SecretScanArgs>),
+    /// Register a secret in a stopped vault's custody, or rotate one. The
+    /// value is read from stdin.
+    #[command(subcommand)]
+    Secrets(SecretsCommand),
     /// Import your own history into a stopped vault (ChatGPT and Claude.ai
     /// exports, Claude Code and Codex sessions, a folder of markdown notes),
     /// or preview, approve or decline one whole import batch.
@@ -597,6 +602,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::RecoverWindow(args) => commands::recover_window(*args),
         Command::Export(args) => commands::export(*args),
         Command::SecretScan(args) => commands::secret_scan(*args),
+        Command::Secrets(command) => commands::secrets(command),
         Command::Import(command) => commands::import(command),
         Command::Runs(command) => commands::runs(command),
         Command::Reembed(args) => commands::reembed(*args),

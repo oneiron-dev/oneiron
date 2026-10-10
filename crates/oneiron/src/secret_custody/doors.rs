@@ -392,88 +392,14 @@ impl Vault {
     ///
     /// Reclaiming a `Revoked` name does NOT restart the generation counter:
     /// the new life is stamped one above the dead life's `rotation_generation`
-    /// (SECRET-04 monotonicity, see the reclaim branch below). A caller that
+    /// (SECRET-04 monotonicity, see the reclaim branch in
+    /// `register_secret_in_txn`). A caller that
     /// supplies a nonzero generation at or below that high-water is refused
     /// rather than silently corrected.
     pub fn register_secret(&self, mut rec: SecretCustodyRecord) -> Result<EntityId> {
-        if rec.status != SecretCustodyStatus::Active {
-            return Err(invalid_body("registration requires status active"));
-        }
-        if rec.name.is_empty() {
-            return Err(invalid_body("secret name must not be empty"));
-        }
-        if rec.schema_version != SECRET_CUSTODY_SCHEMA_VERSION {
-            return Err(invalid_body("unsupported secret custody schema version"));
-        }
         let id = self.store.clock.entity_id()?;
-
         let mut wtxn = self.store.env.write_txn()?;
-
-        // Resolve the floor against the LIVE vault inside this write
-        // transaction and enforce narrow-only against it (never against the
-        // caller-supplied snapshot, which may be stale).
-        let live_band = refuse_bindings_wider_than_live_floor(&self.store, &wtxn, &rec)?;
-        // The audit snapshot attached to the record must be narrower-or-equal
-        // to the live floor: a caller-attested WIDER floor would lie about
-        // the register-time posture. Most-restrictive-wins merge means a
-        // snapshot equal to or narrower than live is accepted as-is.
-        let snap_band = rec.policy_floor_snapshot.band_for(rec.class);
-        if snap_band.max > live_band.max {
-            return Err(Error::Secret(SecretError::ManifestWidensFloor {
-                secret_ref: rec.name.clone(),
-                class: rec.class,
-                requested: snap_band.max,
-                floor_max: live_band.max,
-            }));
-        }
-
-        if let Some(existing_id) = NAME_INDEX.get(&self.store, &wtxn, &rec.name)? {
-            // A live name denies; a revoked or missing record frees the index.
-            if let Some(existing) = read_secret_custody_in_txn(&self.store, &wtxn, &existing_id)? {
-                if existing.status != SecretCustodyStatus::Revoked {
-                    return Err(Error::Secret(SecretError::SecretNameInUse {
-                        name: rec.name,
-                    }));
-                }
-                // NAME RECLAIM. The dead record's generation is this name's
-                // HIGH-WATER, and the new life must start strictly above it.
-                //
-                // `SecretTaintRef` identity is `(secret_ref, generation)` and
-                // nothing else, and the taint check resolves the name to
-                // whatever record the index points at NOW. A reclaimed name
-                // that restarted at the caller's generation (every in-tree
-                // constructor writes 0, exactly where the dead life started)
-                // would let exhaust tagged against the REVOKED value compare
-                // equal to the live record and read `TaintedLive` — dead
-                // exhaust publishing unstamped and ungated as live. Advancing
-                // the counter across the reclaim is what keeps the old tag
-                // unmatched forever, without a reverse index and without
-                // rewriting one byte of exhaust (S7, amended 2026-08-05).
-                //
-                // The vault stamps this generation itself: the caller's
-                // number is not evidence of anything. A caller that
-                // nonetheless ASSERTS a generation the dead life already
-                // used is refused rather than silently corrected — that
-                // assertion is a replay of a dead value's identity. The
-                // default 0 asserts nothing and is simply stamped over.
-                if rec.rotation_generation != 0
-                    && rec.rotation_generation <= existing.rotation_generation
-                {
-                    return Err(invalid_body(
-                        "reclaimed name requires a generation above the revoked record",
-                    ));
-                }
-                rec.rotation_generation = existing
-                    .rotation_generation
-                    .checked_add(1)
-                    .ok_or(Error::ArithmeticOverflow("secret rotation generation"))?;
-            }
-        }
-
-        // SECRET-01 dedicated door: the sealed type-77 put shape lives in
-        // `put_secret_custody_in_txn`, shared with SECRET-04's rotate/revoke.
-        put_secret_custody_in_txn(self, &mut wtxn, &id, &rec, rec.registered_at)?;
-        NAME_INDEX.put(&self.store, &mut wtxn, &rec.name, &id)?;
+        register_secret_in_txn(self, &mut wtxn, &id, &mut rec)?;
         wtxn.commit()?;
         Ok(id)
     }
@@ -527,4 +453,91 @@ impl Vault {
         }
         Ok(Some(rec.value_bytes))
     }
+}
+
+/// The body of [`Vault::register_secret`], inside the caller's write
+/// transaction: the owner's door (`owner_door.rs`) rechecks its proof in the
+/// same transaction before it stores the value through here.
+pub(super) fn register_secret_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    rec: &mut SecretCustodyRecord,
+) -> Result<()> {
+    if rec.status != SecretCustodyStatus::Active {
+        return Err(invalid_body("registration requires status active"));
+    }
+    if rec.name.is_empty() {
+        return Err(invalid_body("secret name must not be empty"));
+    }
+    if rec.schema_version != SECRET_CUSTODY_SCHEMA_VERSION {
+        return Err(invalid_body("unsupported secret custody schema version"));
+    }
+
+    // Resolve the floor against the LIVE vault inside this write
+    // transaction and enforce narrow-only against it (never against the
+    // caller-supplied snapshot, which may be stale).
+    let live_band = refuse_bindings_wider_than_live_floor(&vault.store, wtxn, rec)?;
+    // The audit snapshot attached to the record must be narrower-or-equal
+    // to the live floor: a caller-attested WIDER floor would lie about
+    // the register-time posture. Most-restrictive-wins merge means a
+    // snapshot equal to or narrower than live is accepted as-is.
+    let snap_band = rec.policy_floor_snapshot.band_for(rec.class);
+    if snap_band.max > live_band.max {
+        return Err(Error::Secret(SecretError::ManifestWidensFloor {
+            secret_ref: rec.name.clone(),
+            class: rec.class,
+            requested: snap_band.max,
+            floor_max: live_band.max,
+        }));
+    }
+
+    if let Some(existing_id) = NAME_INDEX.get(&vault.store, wtxn, &rec.name)? {
+        // A live name denies; a revoked or missing record frees the index.
+        if let Some(existing) = read_secret_custody_in_txn(&vault.store, wtxn, &existing_id)? {
+            if existing.status != SecretCustodyStatus::Revoked {
+                return Err(Error::Secret(SecretError::SecretNameInUse {
+                    name: rec.name.clone(),
+                }));
+            }
+            // NAME RECLAIM. The dead record's generation is this name's
+            // HIGH-WATER, and the new life must start strictly above it.
+            //
+            // `SecretTaintRef` identity is `(secret_ref, generation)` and
+            // nothing else, and the taint check resolves the name to
+            // whatever record the index points at NOW. A reclaimed name
+            // that restarted at the caller's generation (every in-tree
+            // constructor writes 0, exactly where the dead life started)
+            // would let exhaust tagged against the REVOKED value compare
+            // equal to the live record and read `TaintedLive` — dead
+            // exhaust publishing unstamped and ungated as live. Advancing
+            // the counter across the reclaim is what keeps the old tag
+            // unmatched forever, without a reverse index and without
+            // rewriting one byte of exhaust (S7, amended 2026-08-05).
+            //
+            // The vault stamps this generation itself: the caller's
+            // number is not evidence of anything. A caller that
+            // nonetheless ASSERTS a generation the dead life already
+            // used is refused rather than silently corrected — that
+            // assertion is a replay of a dead value's identity. The
+            // default 0 asserts nothing and is simply stamped over.
+            if rec.rotation_generation != 0
+                && rec.rotation_generation <= existing.rotation_generation
+            {
+                return Err(invalid_body(
+                    "reclaimed name requires a generation above the revoked record",
+                ));
+            }
+            rec.rotation_generation = existing
+                .rotation_generation
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow("secret rotation generation"))?;
+        }
+    }
+
+    // SECRET-01 dedicated door: the sealed type-77 put shape lives in
+    // `put_secret_custody_in_txn`, shared with SECRET-04's rotate/revoke.
+    put_secret_custody_in_txn(vault, wtxn, id, rec, rec.registered_at)?;
+    NAME_INDEX.put(&vault.store, wtxn, &rec.name, id)?;
+    Ok(())
 }

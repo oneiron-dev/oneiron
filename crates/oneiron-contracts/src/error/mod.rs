@@ -230,6 +230,8 @@ pub enum ErrorKind {
     SecretTierDenied,
     SecretDoorPolicyRefused,
     SecretRefNotFound,
+    SecretWiderThanManifest,
+    SecretManifestNotFound,
     SecretLeaseNotFound,
     SecretLeaseNotActive,
     SecretLeasePathNotDeclared,

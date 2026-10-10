@@ -47,7 +47,9 @@
 //! * floor resolution over those bodies: [`SecretCustodyFloor::resolve`];
 //! * the `Vault` doors: [`Vault::register_secret`](crate::Vault::register_secret),
 //!   [`Vault::resolve_secret_ref`](crate::Vault::resolve_secret_ref), [`Vault::get_secret_metadata`](crate::Vault::get_secret_metadata), and the
-//!   SECRET-02 value-read door `Vault::get_secret_value_in_txn`.
+//!   SECRET-02 value-read door `Vault::get_secret_value_in_txn`;
+//! * the owner's registration door,
+//!   [`Vault::register_secret_as_owner`](crate::Vault::register_secret_as_owner).
 //!
 //! Companion [`crate::secret_manifest`] owns the repo-side TOML declaration
 //! and the narrow-only validator (manifest ∧ vault floor, most-restrictive
@@ -56,6 +58,7 @@
 mod codec;
 mod doors;
 mod floor;
+mod owner_door;
 mod replication;
 mod types;
 
@@ -83,6 +86,9 @@ pub(crate) use self::doors::{
 #[cfg(test)]
 pub(crate) use self::doors::decode_secret_custody_admission_body;
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
+pub use self::owner_door::{
+    ManifestSource, OwnerSecretRegistration, RequestedBinding, SecretRegistered,
+};
 pub(crate) use self::replication::{
     plan_replicated_name_index, stage_replicated_name_index, validate_replicated_custody_put,
 };
