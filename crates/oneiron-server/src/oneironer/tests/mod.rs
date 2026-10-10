@@ -325,11 +325,8 @@ fn the_probe_accepts_the_configured_tagger_and_refuses_another() {
     let mut wrong = card(CHECKPOINT);
     wrong["returns"]["mood"] = json!(false);
     stub.set_card(wrong);
-    if oneiron::tagging::spans_only_answers_admitted() {
-        assert!(matches!(tagger.probe(), Ok(ProbeOutcome::Ready(_))));
-    } else {
-        assert_eq!(tagger.probe(), Err(ProbeError::NoMood));
-    }
+    // A spans-only tagger is served: the contract's mood is optional.
+    assert!(matches!(tagger.probe(), Ok(ProbeOutcome::Ready(_))));
     stub.set_card(json!({"name": "something else"}));
     assert_eq!(tagger.probe(), Err(ProbeError::NoModelCard));
 }
@@ -555,7 +552,7 @@ fn the_tagger_client_never_routes_through_an_inherited_proxy() {
 // ─── the slot ───────────────────────────────────────────────────────────
 
 #[test]
-fn the_local_provider_and_save_mode_are_refused_by_name_and_none_builds_nothing() {
+fn the_local_provider_is_refused_by_name_save_mode_serves_and_none_builds_nothing() {
     let local = OneironerConfig {
         provider: OneironerProvider::Local,
         ..OneironerConfig::default()
@@ -570,11 +567,7 @@ fn the_local_provider_and_save_mode_are_refused_by_name_and_none_builds_nothing(
         mode: OneironerMode::Save,
         ..stub.config()
     };
-    let refused = build_slot(Some(&save)).err().expect("save refused");
-    assert_eq!(
-        refused.downcast_ref::<TaggerNotBuilt>(),
-        Some(&TaggerNotBuilt::SaveMode)
-    );
+    assert!(build_slot(Some(&save)).expect("save").is_some());
     let none = OneironerConfig {
         provider: OneironerProvider::None,
         ..stub.config()
@@ -624,7 +617,6 @@ fn init_writes_the_tagger_serve_reads_and_refuses_one_it_cannot_serve() {
         oneironer_url: Some(stub.base.clone()),
         oneironer_checkpoint_sha16: Some(CHECKPOINT.into()),
         oneironer_label_count: Some(LABEL_COUNT),
-        oneironer_mode: Some(OneironerMode::Shadow),
         ..init_args(dir.path())
     };
     crate::commands::init(args).expect("init");
@@ -639,40 +631,26 @@ fn init_writes_the_tagger_serve_reads_and_refuses_one_it_cannot_serve() {
     .expect("serve config");
     let section = serve.oneironer.as_ref().expect("section");
     assert_eq!(section.provider, OneironerProvider::Endpoint);
-    assert_eq!(section.mode, OneironerMode::Shadow);
+    // A tagger with no stated mode saves its tags.
+    assert_eq!(section.mode, OneironerMode::Save);
     assert_eq!(
         serve
             .vault_config()
             .tagging
-            .map(|tagging| tagging.checkpoint),
-        Some(CHECKPOINT.to_owned())
+            .map(|tagging| (tagging.checkpoint, tagging.mode)),
+        Some((CHECKPOINT.to_owned(), oneiron::tagging::TaggingMode::Save))
     );
 
-    for (provider, mode, refusal) in [
-        (
-            OneironerProvider::Local,
-            None,
-            TaggerNotBuilt::LocalProvider,
-        ),
-        (
-            OneironerProvider::Endpoint,
-            Some(OneironerMode::Save),
-            TaggerNotBuilt::SaveMode,
-        ),
-    ] {
-        let dir = tempfile::tempdir().expect("dir");
-        let endpoint = provider == OneironerProvider::Endpoint;
-        let args = crate::cli::InitArgs {
-            oneironer: Some(provider),
-            oneironer_url: endpoint.then(|| stub.base.clone()),
-            oneironer_checkpoint_sha16: endpoint.then(|| CHECKPOINT.to_owned()),
-            oneironer_label_count: endpoint.then_some(LABEL_COUNT),
-            oneironer_mode: mode,
-            ..init_args(dir.path())
-        };
-        let refused = crate::commands::init(args).expect_err("refused");
-        assert_eq!(refused.downcast_ref::<TaggerNotBuilt>(), Some(&refusal));
-        assert!(!dir.path().join("oneiron.toml").exists());
-        assert!(!dir.path().join("vault").exists());
-    }
+    let dir = tempfile::tempdir().expect("dir");
+    let args = crate::cli::InitArgs {
+        oneironer: Some(OneironerProvider::Local),
+        ..init_args(dir.path())
+    };
+    let refused = crate::commands::init(args).expect_err("refused");
+    assert_eq!(
+        refused.downcast_ref::<TaggerNotBuilt>(),
+        Some(&TaggerNotBuilt::LocalProvider)
+    );
+    assert!(!dir.path().join("oneiron.toml").exists());
+    assert!(!dir.path().join("vault").exists());
 }
