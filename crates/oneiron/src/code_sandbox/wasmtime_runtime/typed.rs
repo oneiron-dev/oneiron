@@ -54,30 +54,6 @@ fn field<T: serde::de::DeserializeOwned>(value: &Value, name: &str) -> Reply<T> 
     .map_err(|_| "invalid host response field".into())
 }
 
-fn claim(input: ClaimInput, limit: usize) -> Reply<Value> {
-    let size = [&input.id, &input.predicate, &input.subject, &input.value]
-        .into_iter()
-        .try_fold(0usize, |total, value| total.checked_add(value.len()));
-    if size.is_none_or(|size| size > limit) {
-        return Err("claim arguments exceed message budget".into());
-    }
-    if input.confidence.is_some_and(|v| !v.is_finite()) {
-        return Err("non-finite claim confidence".into());
-    }
-    // The SDK JSON-encodes a subject. The engine's current SelfCall contract
-    // accepts an entity hex string, not caller-selected authority metadata.
-    let subject: String = serde_json::from_str(&input.subject)
-        .map_err(|_| "claim subject must be a JSON entity hex string")?;
-    let value: Value =
-        serde_json::from_str(&input.value).map_err(|_| "invalid claim value JSON")?;
-    Ok(
-        json!({"id":input.id,"predicate":input.predicate,"subject":subject,
-        "value":value,"confidence":input.confidence,
-        "occurred":input.occurred.map(|v| json!({"start":v.start,"end":v.end})),
-        "learnedAt":input.learned_at}),
-    )
-}
-
 pub(super) fn link_imports(
     linker: &mut Linker<State>,
     contract: SandboxBoundaryContract,
@@ -103,64 +79,91 @@ pub(super) fn link_imports(
     let mut root = linker.root();
     for (wit, public) in imports {
         let result = match public {
-            "sandbox.fs.read_file" => root.func_wrap(wit,
+            "sandbox.fs.read_file" => root.func_wrap(
+                wit,
                 |mut cx: StoreContextMut<'_, State>, (path,): (String,)| {
                     cx.data_mut().begin_call()?;
-                    let reply: Reply<Vec<u8>> = cx.data_mut().call("sandbox.fs.read_file", json!({"path":path}))
-                        .and_then(|value| field(&value,"bytes"));
+                    let reply: Reply<Vec<u8>> = cx
+                        .data_mut()
+                        .call("sandbox.fs.read_file", json!({"path":path}))
+                        .and_then(|value| field(&value, "bytes"));
                     Ok((reply,))
-                }),
-            "sandbox.credential.call" => root.func_wrap(wit,
+                },
+            ),
+            "sandbox.credential.call" => root.func_wrap(
+                wit,
                 |mut cx: StoreContextMut<'_, State>, (input,): (CredentialInput,)| {
                     cx.data_mut().begin_call()?;
                     let reply: Reply<String> = (|| {
                         if input.args.len() > cx.data().message_bytes {
                             return Err("credential arguments exceed message budget".into());
                         }
-                        let args: Value = serde_json::from_str(&input.args).map_err(|_| "invalid credential arguments")?;
-                        cx.data_mut().call("sandbox.credential.call", json!({"operation":input.operation,
-                            "credentialHandle":input.credential_handle,"args":args})).map(|value| value.to_string())
+                        let args: Value = serde_json::from_str(&input.args)
+                            .map_err(|_| "invalid credential arguments")?;
+                        cx.data_mut()
+                            .call(
+                                "sandbox.credential.call",
+                                json!({"operation":input.operation,
+                            "credentialHandle":input.credential_handle,"args":args}),
+                            )
+                            .map(|value| value.to_string())
                     })();
                     Ok((reply,))
-                }),
+                },
+            ),
             // The verb table is the host's own generated catalog: no bridge row.
-            "self.verbs.names" => root.func_wrap(wit,
-                |mut cx: StoreContextMut<'_, State>, (): ()| {
+            "self.verbs.names" => {
+                root.func_wrap(wit, |mut cx: StoreContextMut<'_, State>, (): ()| {
                     cx.data_mut().begin_call()?;
-                    let names: Reply<Vec<String>> = Ok(crate::task_verb::sdk::AgentVerb::ALL
-                        .iter().map(|verb| verb.as_str().to_owned()).collect());
+                    let names: Reply<Vec<String>> =
+                        Ok(crate::task_verb::sdk::code_mode_verb_names()
+                            .map(str::to_owned)
+                            .collect());
                     Ok((names,))
-                }),
-            "self.verbs.call" => root.func_wrap(wit,
+                })
+            }
+            "self.verbs.call" => root.func_wrap(
+                wit,
                 |mut cx: StoreContextMut<'_, State>, (verb, input): (String, String)| {
                     cx.data_mut().begin_call()?;
                     let reply: Reply<String> = (|| {
                         if input.len() > cx.data().message_bytes {
                             return Err("verb input exceeds message budget".into());
                         }
-                        let input: Value = serde_json::from_str(&input).map_err(|_| "invalid verb input JSON")?;
-                        cx.data_mut().call("self.verbs.call", json!({"verb":verb,"input":input}))
-                            .and_then(|value| field::<Value>(&value,"output"))
+                        let input: Value =
+                            serde_json::from_str(&input).map_err(|_| "invalid verb input JSON")?;
+                        cx.data_mut()
+                            .call("self.verbs.call", json!({"verb":verb,"input":input}))
+                            .and_then(|value| field::<Value>(&value, "output"))
                             .map(|output| output.to_string())
                     })();
                     Ok((reply,))
-                }),
-            "oneiron.clock.now_unix_ms" => root.func_wrap(wit,
-                |mut cx: StoreContextMut<'_, State>, (): ()| {
+                },
+            ),
+            "oneiron.clock.now_unix_ms" => {
+                root.func_wrap(wit, |mut cx: StoreContextMut<'_, State>, (): ()| {
                     cx.data_mut().begin_call()?;
-                    let value = cx.data_mut().call("oneiron.clock.now_unix_ms", json!({}))
-                        .and_then(|value| field::<u64>(&value,"value"))
+                    let value = cx
+                        .data_mut()
+                        .call("oneiron.clock.now_unix_ms", json!({}))
+                        .and_then(|value| field::<u64>(&value, "value"))
                         .map_err(wasmtime::Error::msg)?;
                     Ok((value,))
-                }),
-            "oneiron.random.bytes" => root.func_wrap(wit,
+                })
+            }
+            "oneiron.random.bytes" => root.func_wrap(
+                wit,
                 |mut cx: StoreContextMut<'_, State>, (length,): (u32,)| {
                     cx.data_mut().begin_call()?;
-                    let reply: Reply<Vec<u8>> = cx.data_mut().call("oneiron.random.bytes", json!({"length":length}))
-                        .and_then(|value| field(&value,"bytes"));
+                    let reply: Reply<Vec<u8>> = cx
+                        .data_mut()
+                        .call("oneiron.random.bytes", json!({"length":length}))
+                        .and_then(|value| field(&value, "bytes"));
                     Ok((reply,))
-                }),
-            "vault.agents.put" => root.func_wrap(wit,
+                },
+            ),
+            "vault.agents.put" => root.func_wrap(
+                wit,
                 |mut cx: StoreContextMut<'_, State>, (input,): (AgentPutInput,)| {
                     cx.data_mut().begin_call()?;
                     let reply: Reply<AgentPutOutput> = (|| {
@@ -169,85 +172,77 @@ pub(super) fn link_imports(
                         }
                         let definition: Value = serde_json::from_str(&input.definition)
                             .map_err(|_| "invalid agent definition JSON")?;
-                        let value = cx.data_mut().call("vault.agents.put",
-                            json!({"id":input.id,"definition":definition}))?;
+                        let value = cx.data_mut().call(
+                            "vault.agents.put",
+                            json!({"id":input.id,"definition":definition}),
+                        )?;
                         Ok(AgentPutOutput {
                             id: field(&value, "id")?,
                             disposition: field(&value, "disposition")?,
                         })
                     })();
                     Ok((reply,))
-                }),
-            "self.json.validate" => root.func_wrap(wit,
+                },
+            ),
+            "self.json.validate" => root.func_wrap(
+                wit,
                 |mut cx: StoreContextMut<'_, State>, (schema, value): (String, String)| {
                     cx.data_mut().begin_call()?;
                     let reply: Reply<bool> = (|| {
-                        let schema: Value = serde_json::from_str(&schema).map_err(|_| "invalid schema JSON")?;
-                        let value: Value = serde_json::from_str(&value).map_err(|_| "invalid value JSON")?;
-                        cx.data_mut().call("self.json.validate", json!({"schema":schema,"value":value}))
-                            .and_then(|result| field(&result,"valid"))
+                        let schema: Value =
+                            serde_json::from_str(&schema).map_err(|_| "invalid schema JSON")?;
+                        let value: Value =
+                            serde_json::from_str(&value).map_err(|_| "invalid value JSON")?;
+                        cx.data_mut()
+                            .call("self.json.validate", json!({"schema":schema,"value":value}))
+                            .and_then(|result| field(&result, "valid"))
                     })();
                     Ok((reply,))
-                }),
-            "self.memory.search" => root.func_wrap(wit,
-                |mut cx: StoreContextMut<'_, State>, (input,): (SearchInput,)| {
-                    cx.data_mut().begin_call()?;
-                    let reply: Reply<SearchOutput> = cx.data_mut().call("self.memory.search", json!({"query":input.query,"limit":input.limit}))
-                        .and_then(|value| field::<Vec<Value>>(&value,"results"))
-                        .map(|values| SearchOutput { results: values.into_iter().map(|value| value.to_string()).collect() });
-                    Ok((reply,))
-                }),
-            "self.memory.put_claim" => root.func_wrap(wit,
-                |mut cx: StoreContextMut<'_, State>, (input,): (ClaimInput,)| {
-                    cx.data_mut().begin_call()?;
-                    let reply: Reply<ClaimOutput> = claim(input, cx.data().message_bytes)
-                        .and_then(|input| cx.data_mut().call("self.memory.put_claim", input))
-                        .and_then(|value| field(&value,"id")).map(|id| ClaimOutput { id });
-                    Ok((reply,))
-                }),
-            "self.memory.supersede_claim" => root.func_wrap(wit,
-                |mut cx: StoreContextMut<'_, State>, (input,): (SupersedeInput,)| {
-                    cx.data_mut().begin_call()?;
-                    let reply: Reply<ClaimOutput> = cx.data_mut().call("self.memory.supersede_claim",
-                        json!({"newId":input.new_id,"oldId":input.old_id,"now":input.now}))
-                        .and_then(|value| field(&value,"id")).map(|id| ClaimOutput { id });
-                    Ok((reply,))
-                }),
-            "self.memory.put_edge" => root.func_wrap(wit,
-                |mut cx: StoreContextMut<'_, State>, (input,): (EdgeInput,)| {
-                    cx.data_mut().begin_call()?;
-                    let reply: Reply<EdgeOutput> = (|| {
-                        if input.weight.is_some_and(|v| !v.is_finite()) { return Err("non-finite edge weight".into()); }
-                        crate::EdgeKind::from_name(&input.kind).ok_or("invalid edge kind")?;
-                        let result = cx.data_mut().call("self.memory.put_edge",
-                            json!({"src":input.src,"kind":input.kind,"tgt":input.tgt,"weight":input.weight}))?;
-                        Ok(EdgeOutput { src: field(&result,"src")?, kind: input.kind, tgt: field(&result,"tgt")? })
-                    })();
-                    Ok((reply,))
-                }),
-            "self.report_blocked" => root.func_wrap(wit,
+                },
+            ),
+            "self.report_blocked" => root.func_wrap(
+                wit,
                 |mut cx: StoreContextMut<'_, State>, (category, detail): (String, String)| {
                     cx.data_mut().begin_call()?;
-                    let reply: Reply<BlockedOutput> = cx.data_mut().call("self.report_blocked",
-                        json!({"category":category,"detail":detail}))
-                        .and_then(|value| field(&value,"receipt"))
+                    let reply: Reply<BlockedOutput> = cx
+                        .data_mut()
+                        .call(
+                            "self.report_blocked",
+                            json!({"category":category,"detail":detail}),
+                        )
+                        .and_then(|value| field(&value, "receipt"))
                         .map(|receipt| BlockedOutput { receipt });
                     Ok((reply,))
-                }),
-            "ask" => root.func_wrap(wit,
+                },
+            ),
+            "ask" => root.func_wrap(
+                wit,
                 move |mut cx: StoreContextMut<'_, State>, (input,): (PromptInput,)| {
                     cx.data_mut().begin_call()?;
-                    let reply: Reply<WaitOutput> = cx.data_mut().call(public, json!({"prompt":input.prompt}))
-                        .and_then(|value| field(&value,"waitId")).map(|wait_id| WaitOutput { wait_id });
+                    let reply: Reply<WaitOutput> = cx
+                        .data_mut()
+                        .call(public, json!({"prompt":input.prompt}))
+                        .and_then(|value| field(&value, "waitId"))
+                        .map(|wait_id| WaitOutput { wait_id });
                     Ok((reply,))
-                }),
-            "self.speak" | "self.think" | "self.express" => root.func_wrap(wit,
+                },
+            ),
+            "self.speak" | "self.think" | "self.express" => root.func_wrap(
+                wit,
                 move |mut cx: StoreContextMut<'_, State>, (input,): (TextInput,)| {
                     cx.data_mut().begin_call()?;
-                    let reply: Reply<SpeechOutput> = cx.data_mut().call(public, json!({"text":input.text}))
-                        .and_then(|value| Ok(SpeechOutput { order: field(&value,"order")?, is_visible:field(&value,"isVisible")? }));
+                    let reply: Reply<SpeechOutput> = cx
+                        .data_mut()
+                        .call(public, json!({"text":input.text}))
+                        .and_then(|value| {
+                            Ok(SpeechOutput {
+                                order: field(&value, "order")?,
+                                is_visible: field(&value, "isVisible")?,
+                            })
+                        });
                     Ok((reply,))
-                }),
+                },
+            ),
             _ => return Err(failure("canonical WIT import has no engine bridge")),
         };
         result.map_err(|_| failure("typed component import linking failed"))?;

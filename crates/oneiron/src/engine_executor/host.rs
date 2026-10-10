@@ -265,10 +265,9 @@ fn records_failed_effect(effect: SelfEffect) -> bool {
 
 pub(super) const EXECUTOR_REQUIRED_HOST_IMPORTS: &[&str] = &[
     "vault.agents.put",
-    "self.memory.search",
-    "self.memory.put_claim",
-    "self.memory.supersede_claim",
-    "self.memory.put_edge",
+    // `self.memory`: the verb table, the memory rows the run answers included.
+    "self.verbs.names",
+    "self.verbs.call",
     "self.report_blocked",
     "ask",
     "self.speak",

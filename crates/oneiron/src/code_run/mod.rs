@@ -18,6 +18,7 @@ mod coordination_codec;
 mod dispatcher;
 mod payload;
 mod replay;
+mod run_verbs;
 mod storage;
 mod support;
 mod types;
@@ -59,6 +60,9 @@ pub use self::types::{
     SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall, SelfMemorySearchResult,
     SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
     SelfSpeechCall, SelfSpeechResult, SelfWakePolicyWriteCall, peer_result_wait,
+};
+pub use run_verbs::{
+    MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput, MemoryTimeRange,
 };
 pub use types::{AGENT_VERB_DOOR_UNBOUND, AgentVerbDoor, AgentVerbRefusal, SelfAgentVerbCall};
 

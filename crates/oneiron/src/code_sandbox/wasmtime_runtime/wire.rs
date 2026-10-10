@@ -2,6 +2,7 @@
 
 use super::{Bridge, failure};
 use crate::code_run::{
+    MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput, MemoryTimeRange,
     SelfAskCall, SelfCall, SelfDispatchOutcome, SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall,
     SelfMemorySearchCall, SelfMemorySupersedeClaimCall, SelfSpeechCall,
     blocked::{BlockedCategory, SelfReportBlockedCall},
@@ -10,42 +11,11 @@ use crate::code_sandbox::{
     SandboxCredentialCall, SandboxCredentialHandle, SandboxReadFile, SandboxVirtualPath,
 };
 use crate::engine_executor::{JsCodeModeOutput, JsCodeModeStepOutcome, SelfDispatchResponse};
+use crate::task_verb::sdk::{AgentVerb, RunVerb};
 use crate::{ClaimCandidate, ClaimSubject, EdgeKind, EntityId, Result, TimeRange};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct Claim {
-    id: String,
-    predicate: String,
-    subject: String,
-    value: Value,
-    confidence: Option<f32>,
-    occurred: Option<Occurred>,
-    learned_at: Option<u64>,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Occurred {
-    start: u64,
-    end: u64,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct Supersede {
-    new_id: String,
-    old_id: String,
-    now: u64,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Edge {
-    src: String,
-    kind: String,
-    tgt: String,
-    weight: Option<f32>,
-}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JsonValidation {
@@ -57,12 +27,6 @@ struct JsonValidation {
 struct VerbCall {
     verb: String,
     input: Value,
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Search {
-    query: String,
-    limit: Option<usize>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -109,6 +73,10 @@ struct Empty {}
 
 fn parse<T: serde::de::DeserializeOwned>(input: &str) -> Result<T> {
     serde_json::from_str(input).map_err(|_| failure("invalid typed component arguments"))
+}
+
+fn decode<T: serde::de::DeserializeOwned>(input: Value) -> Result<T> {
+    serde_json::from_value(input).map_err(|_| failure("invalid typed component arguments"))
 }
 
 /// Fit a recoverable chunk inside the *encoded* host reply ceiling. The
@@ -215,8 +183,13 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
     Ok(match name {
         "self.verbs.call" => {
             let args: VerbCall = parse(input)?;
-            let verb = crate::task_verb::sdk::AgentVerb::from_name(&args.verb)
-                .ok_or_else(|| failure("unknown SDK verb"))?;
+            // A row the run answers itself is its own typed call, so it keeps
+            // the effect, gate and replay row it has always had.
+            if let Some(verb) = RunVerb::from_name(&args.verb) {
+                return run_verb_call(verb, args.input, now);
+            }
+            let verb =
+                AgentVerb::from_name(&args.verb).ok_or_else(|| failure("unknown SDK verb"))?;
             SelfCall::AgentVerb(crate::code_run::SelfAgentVerbCall {
                 verb,
                 input: args.input,
@@ -232,9 +205,40 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
         }
         "tasks.ask" => SelfCall::TasksAsk(Box::new(parse::<crate::task_verb::TaskAskSpec>(input)?)),
         "tasks.wait" => SelfCall::TasksWait(parse::<crate::task_verb::TaskAskHandle>(input)?),
-        "self.memory.put_claim" => {
-            let args: Claim = parse(input)?;
-            let occurred = args.occurred.unwrap_or(Occurred {
+        "self.report_blocked" => {
+            let args: ReportBlocked = parse(input)?;
+            let category: BlockedCategory = serde_json::from_value(Value::String(args.category))
+                .map_err(|_| failure("invalid blocked category"))?;
+            SelfCall::ReportBlocked(SelfReportBlockedCall::new(category, args.detail))
+        }
+        "ask" => SelfCall::Ask(SelfAskCall::new(parse::<Ask>(input)?.prompt)),
+        "self.speak" => SelfCall::Speak(SelfSpeechCall::new(parse::<Speech>(input)?.text)),
+        "self.think" => SelfCall::Think(SelfSpeechCall::new(parse::<Speech>(input)?.text)),
+        "self.express" => SelfCall::Express(SelfSpeechCall::new(parse::<Speech>(input)?.text)),
+        _ => return Err(failure("unlinked self call")),
+    })
+}
+
+/// The typed `self.*` call a run row makes: the call, effect and gate the row
+/// had as a hand-written import. Every row has its arm here, so a run row is
+/// never served undecoded.
+fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
+    Ok(match verb {
+        RunVerb::Search => {
+            let args: MemorySearchInput = decode(input)?;
+            SelfCall::MemorySearch(SelfMemorySearchCall::new(
+                args.query,
+                args.limit.unwrap_or(20),
+            ))
+        }
+        RunVerb::PutClaim => {
+            let args: MemoryClaimInput = decode(input)?;
+            // JSON carries no NaN, but an out-of-range number decodes as an
+            // infinite f32.
+            if args.confidence.is_some_and(|value| !value.is_finite()) {
+                return Err(failure("non-finite claim confidence"));
+            }
+            let occurred = args.occurred.unwrap_or(MemoryTimeRange {
                 start: now,
                 end: now,
             });
@@ -257,16 +261,19 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
                 args.learned_at.unwrap_or(now),
             ))
         }
-        "self.memory.supersede_claim" => {
-            let args: Supersede = parse(input)?;
+        RunVerb::SupersedeClaim => {
+            let args: MemorySupersedeInput = decode(input)?;
             SelfCall::MemorySupersedeClaim(SelfMemorySupersedeClaimCall::new(
                 EntityId::from_hex(&args.new_id)?,
                 EntityId::from_hex(&args.old_id)?,
                 args.now,
             ))
         }
-        "self.memory.put_edge" => {
-            let args: Edge = parse(input)?;
+        RunVerb::PutEdge => {
+            let args: MemoryEdgeInput = decode(input)?;
+            if args.weight.is_some_and(|value| !value.is_finite()) {
+                return Err(failure("non-finite edge weight"));
+            }
             let kind =
                 EdgeKind::from_name(&args.kind).ok_or_else(|| failure("invalid edge kind"))?;
             let weight = args
@@ -280,35 +287,20 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
                 weight,
             ))
         }
-        "self.memory.search" => {
-            let args: Search = parse(input)?;
-            SelfCall::MemorySearch(SelfMemorySearchCall::new(
-                args.query,
-                args.limit.unwrap_or(20),
-            ))
-        }
-        "self.report_blocked" => {
-            let args: ReportBlocked = parse(input)?;
-            let category: BlockedCategory = serde_json::from_value(Value::String(args.category))
-                .map_err(|_| failure("invalid blocked category"))?;
-            SelfCall::ReportBlocked(SelfReportBlockedCall::new(category, args.detail))
-        }
-        "ask" => SelfCall::Ask(SelfAskCall::new(parse::<Ask>(input)?.prompt)),
-        "self.speak" => SelfCall::Speak(SelfSpeechCall::new(parse::<Speech>(input)?.text)),
-        "self.think" => SelfCall::Think(SelfSpeechCall::new(parse::<Speech>(input)?.text)),
-        "self.express" => SelfCall::Express(SelfSpeechCall::new(parse::<Speech>(input)?.text)),
-        _ => return Err(failure("unlinked self call")),
     })
 }
 
 fn response(response: SelfDispatchResponse) -> Result<String> {
     let body = match &response.outcome {
-        SelfDispatchOutcome::MemoryWrite(value) => json!({"id":value.id.to_hex()}),
+        // A run row's answer is its output, framed as every verb's is.
+        SelfDispatchOutcome::MemoryWrite(value) => json!({"output":{"id":value.id.to_hex()}}),
         SelfDispatchOutcome::MemoryEdgeWrite(value) => {
-            json!({"src":value.src.to_hex(),"kind":value.kind as u8,"tgt":value.tgt.to_hex()})
+            json!({"output":{"src":value.src.to_hex(),"kind":value.kind.name(),"tgt":value.tgt.to_hex()}})
         }
-        SelfDispatchOutcome::MemorySearch(value) => json!({"results":value.results.iter().map(|hit|
-            json!({"id":hit.id.to_hex(),"score":hit.score})).collect::<Vec<_>>()}),
+        SelfDispatchOutcome::MemorySearch(value) => {
+            json!({"output":{"results":value.results.iter().map(|hit|
+            json!({"id":hit.id.to_hex(),"score":hit.score})).collect::<Vec<_>>()}})
+        }
         SelfDispatchOutcome::DurableWait(value) => json!({"waitId":value.wait_id.to_hex()}),
         SelfDispatchOutcome::AgentVerb(output) => json!({"output":output}),
         SelfDispatchOutcome::Denied(value) => {
