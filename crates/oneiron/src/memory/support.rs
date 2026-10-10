@@ -380,6 +380,32 @@ pub struct Memory<'v> {
     pub(super) read_proof: Option<crate::authority::VerifiedSlip>,
     /// The room turn this handle runs inside, when a host bound one.
     pub(super) room_turn: Option<crate::claim::RoomTurnCeiling>,
+    /// The write origin a host bound, when one did: claim doors stamp it in
+    /// place of the caller's declared source.
+    pub(super) host_origin: Option<HostWriteOrigin>,
+}
+
+/// A host-owned write origin: the source, lineage and provenance a [`Memory`]
+/// surface's claim doors stamp in place of the caller's declared source.
+///
+/// Only the engine builds one, from a write envelope it owns: the code-run
+/// dispatcher, for a guest's verb call. A host passes it through to
+/// [`Memory::with_host_origin`]; nothing the guest sends reaches its fields.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HostWriteOrigin {
+    envelope: crate::WriteEnvelope,
+}
+
+impl HostWriteOrigin {
+    pub(crate) const fn new(envelope: crate::WriteEnvelope) -> Self {
+        Self { envelope }
+    }
+
+    /// The source every claim written under this origin carries.
+    #[must_use]
+    pub const fn source(&self) -> ClaimSource {
+        self.envelope.source()
+    }
 }
 
 type MachineSignFn<'a> = dyn Fn(&[u8]) -> crate::Result<[u8; 64]> + Send + Sync + 'a;
@@ -402,6 +428,7 @@ impl Vault {
             machine_signer: None,
             read_proof: None,
             room_turn: None,
+            host_origin: None,
         }
     }
 
@@ -422,6 +449,7 @@ impl Vault {
             machine_signer: Some((public_key, sign)),
             read_proof: None,
             room_turn: None,
+            host_origin: None,
         }
     }
 }
@@ -453,6 +481,7 @@ impl<'v> Memory<'v> {
                 machine_signer: self.machine_signer,
                 read_proof: self.read_proof.clone(),
                 room_turn: Some(ceiling),
+                host_origin: self.host_origin.clone(),
             },
         })
     }
@@ -472,6 +501,68 @@ impl Memory<'_> {
     pub fn with_read_proof(mut self, proof: &crate::authority::VerifiedSlip) -> Self {
         self.read_proof = Some(proof.clone());
         self
+    }
+
+    /// Binds this surface's claim writes to a host-owned origin: every claim
+    /// door then stamps the origin's source, lineage and provenance, and the
+    /// caller's declared source is not read. Approval still follows from that
+    /// source and the gate decides.
+    #[must_use]
+    pub fn with_host_origin(mut self, origin: HostWriteOrigin) -> Self {
+        self.host_origin = Some(origin);
+        self
+    }
+
+    /// Whether a host bound this surface to generated code's origin. Such a
+    /// surface never speaks, answers or assigns in a person's name.
+    pub(crate) fn writes_generated(&self) -> bool {
+        self.host_origin
+            .as_ref()
+            .is_some_and(|origin| origin.source() == ClaimSource::Generated)
+    }
+
+    /// The source a claim door writes: the bound origin's, else the caller's.
+    pub(super) fn claim_source(&self, declared: &str) -> MemoryResult<ClaimSource> {
+        match &self.host_origin {
+            Some(origin) => Ok(origin.source()),
+            None => super::claims::parse_claim_source(declared),
+        }
+    }
+
+    /// The envelope a claim door writes under: the bound origin's, else the
+    /// facade's own provenance for `verb` over the caller's `source`.
+    pub(super) fn claim_envelope(
+        &self,
+        source: ClaimSource,
+        verb: &str,
+        approval: ClaimApprovalStatus,
+    ) -> crate::Result<crate::WriteEnvelope> {
+        match self.host_envelope(approval)? {
+            Some(envelope) => Ok(envelope),
+            None => Ok(crate::WriteEnvelope::new(
+                crate::WriteActor::new(self.actor, self.actor_class),
+                source,
+                crate::WriteProvenance::new(facade_provenance(verb))?,
+                approval,
+            )),
+        }
+    }
+
+    /// The bound origin's envelope at `approval`, for a writer that stamps its
+    /// own source and provenance when no origin is bound.
+    pub(crate) fn host_envelope(
+        &self,
+        approval: ClaimApprovalStatus,
+    ) -> crate::Result<Option<crate::WriteEnvelope>> {
+        let Some(origin) = &self.host_origin else {
+            return Ok(None);
+        };
+        if origin.envelope.actor() != crate::WriteActor::new(self.actor, self.actor_class) {
+            return Err(Error::InvalidClaimBody(
+                "host write origin does not match bound facade",
+            ));
+        }
+        Ok(Some(origin.envelope.clone().with_approval(approval)))
     }
 
     /// The room turn this handle is bound to, if any.

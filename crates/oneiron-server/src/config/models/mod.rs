@@ -51,6 +51,8 @@ pub(crate) struct ModelsFile {
     chat: ChatFile,
     #[serde(default)]
     workflows: WorkflowFile,
+    #[serde(default)]
+    code_mode: CodeModeFile,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -77,6 +79,13 @@ struct WorkflowFile {
     retry_backoff_secs: Option<u64>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CodeModeFile {
+    prompt_package: Option<PathBuf>,
+    budget_units: Option<u64>,
+}
+
 /// The resolved `[models]` section: providers plus one ladder per role.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModelsConfig {
@@ -91,6 +100,7 @@ pub struct ModelsConfig {
     pub dreamer: DreamerSettings,
     pub chat: ChatSettings,
     pub workflows: WorkflowSettings,
+    pub code_mode: CodeModeSettings,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -119,12 +129,23 @@ pub struct WorkflowSettings {
     pub retry_backoff_secs: u64,
 }
 
+/// MCP `execute_code`: generated programs on the generative seat.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CodeModeSettings {
+    /// The deployed prompt package the executor's wire prompt resolves from.
+    /// Code mode is served only when one is named.
+    pub prompt_package: Option<PathBuf>,
+    /// Process-lifetime meter for code mode's model calls.
+    pub budget_units: u64,
+}
+
 const DEFAULT_SESSION_CEILING_SECS: u64 = 12 * 60 * 60;
 const DEFAULT_PASS_BUDGET_UNITS: u64 = 400_000;
 const DEFAULT_TURN_BUDGET_UNITS: u64 = 64_000;
 const DEFAULT_STEP_BUDGET_UNITS: u64 = 64_000;
 const DEFAULT_STEP_RETRY_BACKOFF_SECS: u64 = 30;
 const DEFAULT_RAW_BUDGET_UNITS: u64 = 10_000_000;
+const DEFAULT_CODE_MODE_BUDGET_UNITS: u64 = 10_000_000;
 const DEFAULT_HISTORY_TURNS: usize = 24;
 
 impl ModelsFile {
@@ -188,11 +209,22 @@ impl ModelsFile {
                 .unwrap_or(DEFAULT_STEP_RETRY_BACKOFF_SECS),
         };
         let raw_budget_units = self.raw_budget_units.unwrap_or(DEFAULT_RAW_BUDGET_UNITS);
+        let code_mode = CodeModeSettings {
+            prompt_package: self.code_mode.prompt_package.map(|path| match base {
+                Some(base) if path.is_relative() => base.join(path),
+                _ => path,
+            }),
+            budget_units: self
+                .code_mode
+                .budget_units
+                .unwrap_or(DEFAULT_CODE_MODE_BUDGET_UNITS),
+        };
         if [
             dreamer.pass_budget_units,
             chat.turn_budget_units,
             workflows.step_budget_units,
             raw_budget_units,
+            code_mode.budget_units,
         ]
         .contains(&0)
         {
@@ -215,6 +247,7 @@ impl ModelsFile {
             dreamer,
             chat,
             workflows,
+            code_mode,
         })
     }
 }

@@ -28,7 +28,7 @@ fn actor_bound_recall_requires_its_read_grant_on_both_paths() {
                 .unwrap()
         };
         assert!(
-            recall().items.iter().all(|item| item.kind != "MESSAGE"),
+            !recall().items.iter().any(gives_control_message),
             "ungranted actor received the message"
         );
     }
@@ -51,7 +51,7 @@ fn actor_bound_recall_requires_its_read_grant_on_both_paths() {
             .recall("window seat", Effort::Light, &scope, 20, None, None)
             .unwrap();
         assert!(
-            pack.items.iter().all(|item| item.kind != "MESSAGE"),
+            !pack.items.iter().any(gives_control_message),
             "policy permit alone admitted a message: {scope:?}"
         );
     }
@@ -69,7 +69,7 @@ fn actor_bound_recall_requires_its_read_grant_on_both_paths() {
             .recall("window seat", Effort::Light, &scope, 20, None, None)
             .unwrap();
         assert!(
-            pack.items.iter().any(|item| item.kind == "MESSAGE"),
+            pack.items.iter().any(gives_control_message),
             "granted actor lost the message: {scope:?}"
         );
     }
@@ -264,10 +264,17 @@ fn scoped_recall_provenance_does_not_name_a_denied_supersedes_target() {
             &rmp_serde::to_vec_named(&serde_json::json!({"name": "facet"})).unwrap(),
         )
         .unwrap();
+    // The message's own item carries its provenance: a scope that names
+    // MESSAGE keeps it from returning as its turn.
+    let messages = Some(vec!["MESSAGE".to_owned()]);
     for scope in [
-        RecallScope::default(),
+        RecallScope {
+            kinds: messages.clone(),
+            ..Default::default()
+        },
         RecallScope {
             facet: Some(facet.to_hex()),
+            kinds: messages,
             ..Default::default()
         },
     ] {
@@ -331,7 +338,7 @@ fn scoped_recall_rechecks_a_grant_revoked_during_retrieval() {
             None,
         )
         .unwrap();
-    assert!(pack.items.iter().all(|item| item.kind != "MESSAGE"));
+    assert!(!pack.items.iter().any(gives_control_message));
     assert!(
         !pack
             .rendered
@@ -339,4 +346,132 @@ fn scoped_recall_rechecks_a_grant_revoked_during_retrieval() {
             .unwrap_or_default()
             .contains("window seat control recall")
     );
+}
+
+/// Sol 9B #2 (P1): a TURN's text, and so its vector, is all its messages'.
+/// A reader who may read the turn and one of its messages, but not the
+/// other, never retrieves the turn: not by the withheld message's meaning
+/// through the turn's vector, and not by the other message's words, which
+/// come back as that message alone. The owner finds the turn both ways.
+/// Bug repro: recall admitted the vector hit on the turn's own grants, so the
+/// scoped reader's paraphrase of the withheld message found the turn.
+#[test]
+fn a_turn_reaches_a_scoped_reader_only_when_it_may_read_every_message() {
+    const WITHHELD_MEANING: [f32; 4] = [0.0, 1.0, 0.0, 0.0];
+    let (_dir, vault, owner, scoped) = recall_after_control_writes_fixture_in(
+        true,
+        crate::config::VaultConfig {
+            embedding_model: Some("test/model@v1".to_owned()),
+            dimensions: WITHHELD_MEANING.len(),
+            ..crate::config::VaultConfig::default()
+        },
+    );
+    let space = EntityId::from_bytes([0x68; 16]).unwrap();
+    let mut granted = witness_message(0, WitnessAuthor::User, "harbor view table for two");
+    granted.metadata = Some(serde_json::json!({"rel": space.to_hex()}));
+    // No space: a message only its owner's grants admit.
+    let withheld = witness_message(1, WitnessAuthor::User, "harbor locker code is 4471");
+    let receipt = facade_for(&vault, owner)
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::from_bytes([0x77; 16]).unwrap().to_hex(),
+            turn_ref: None,
+            messages: vec![granted, withheld],
+            occurred_at: crate::unix_seconds_now() - 28 * 86_400,
+        })
+        .expect("witness a turn of two messages");
+    let turn = EntityId::from_hex(
+        receipt
+            .receipt_ref
+            .strip_prefix("witness:")
+            .expect("witness ref"),
+    )
+    .expect("turn id");
+    fill_turn(&vault, &turn, &WITHHELD_MEANING);
+
+    // A paraphrase of the withheld message, sharing no word with the turn.
+    let by_meaning = |actor| {
+        facade_for(&vault, actor)
+            .recall_with_execution(
+                "which digits open my storage box",
+                Effort::Medium,
+                &RecallScope::default(),
+                20,
+                None,
+                None,
+                &crate::retrieval_depth::RecallExecution {
+                    embedding: Some(WITHHELD_MEANING.as_slice()),
+                    ..Default::default()
+                },
+            )
+            .expect("recall by meaning")
+    };
+    let owner_pack = by_meaning(owner);
+    assert!(
+        owner_pack
+            .items
+            .iter()
+            .any(|item| item.kind == "TURN" && item.value_text.contains("4471")),
+        "the owner finds the turn by its meaning: {:?}",
+        owner_pack.items
+    );
+    let pack = by_meaning(scoped);
+    assert!(
+        pack.items.iter().all(|item| item.kind != "TURN"),
+        "the withheld message's meaning finds its turn: {:?}",
+        pack.items
+    );
+
+    let owner_pack = facade_for(&vault, owner)
+        .recall(
+            "harbor",
+            Effort::Light,
+            &RecallScope::default(),
+            20,
+            None,
+            None,
+        )
+        .expect("owner recall");
+    assert!(
+        owner_pack
+            .items
+            .iter()
+            .any(|item| item.kind == "TURN" && item.value_text.contains("4471")),
+        "the owner reads the whole turn: {:?}",
+        owner_pack.items
+    );
+
+    for effort in [Effort::Light, Effort::Medium] {
+        for format in [Some("json"), Some("md")] {
+            let pack = facade_for(&vault, scoped)
+                .recall("harbor", effort, &RecallScope::default(), 20, format, None)
+                .expect("scoped recall");
+            assert!(
+                pack.items
+                    .iter()
+                    .any(|item| item.kind == "MESSAGE"
+                        && item.value_text == "harbor view table for two"),
+                "{effort:?} returns the message it may read: {:?}",
+                pack.items
+            );
+            for item in &pack.items {
+                assert_ne!(item.kind, "TURN", "{effort:?}: {item:?}");
+                assert!(!item.value_text.contains("4471"), "{effort:?}: {item:?}");
+                assert!(
+                    item.cited_messages
+                        .iter()
+                        .all(|message| !message.value_text.contains("4471")),
+                    "{effort:?}: {item:?}"
+                );
+            }
+            let rendered = pack.rendered.expect("rendered pack");
+            // Light renders the minimal profile, which carries no content.
+            if effort == Effort::Medium {
+                assert!(rendered.contains("harbor view"), "{format:?}: {rendered}");
+            }
+            assert!(
+                !rendered.contains("4471"),
+                "{effort:?} {format:?}: {rendered}"
+            );
+        }
+    }
 }

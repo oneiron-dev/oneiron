@@ -159,4 +159,7 @@ oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync", "test-ho
 workspace = true
 
 [features]
+# The shipped server serves MCP `execute_code` over the checked-in QuickJS
+# component once `[models.code_mode]` asks for it.
+default = ["code-sandbox-wasmtime"]
 code-sandbox-wasmtime = ["oneiron/code-sandbox-wasmtime"]
