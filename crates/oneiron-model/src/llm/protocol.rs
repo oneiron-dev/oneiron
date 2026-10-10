@@ -15,8 +15,16 @@ pub struct LlmRequest {
     pub messages: Vec<LlmMessage>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<LlmToolSpec>,
+    /// Generic sampling and output params. Never `model`, `models`, `route` or
+    /// `provider`: the model id above and the host's binding pick the model and
+    /// its route, so the adapters, the catalog admission, the run admission and
+    /// the raw inference routes refuse a request that names one
+    /// ([`Self::route_selector_override`]).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub params: BTreeMap<String, JsonValue>,
+    /// Provider options by namespace (`openai`, `anthropic`, ...). Neither a
+    /// namespace nor a key inside one may be `model`, `models`, `route` or
+    /// `provider`, as for [`Self::params`].
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub provider_options: BTreeMap<String, JsonValue>,
 }
