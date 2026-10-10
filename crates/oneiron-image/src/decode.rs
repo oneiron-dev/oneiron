@@ -38,6 +38,9 @@ pub struct Header {
     pub alpha: bool,
     pub profile: Profile,
     pub animated: bool,
+    /// Bytes the decoder holds beside its output while it decodes (a
+    /// JPEG's row buffers and coefficient planes); 0 for the others.
+    pub scratch: u64,
 }
 
 /// The colour space the file declares, as far as the organ cares.
@@ -147,25 +150,28 @@ pub fn read_header(bytes: &[u8]) -> Result<Header, OrganError> {
             header_of(decoder, format, animated, Some(&chunks))
         }
         Format::Jpeg => {
-            let prefix = &bytes[..bytes.len().min(JPEG_HEADER_PREFIX)];
-            let header = JpegDecoder::new(Cursor::new(prefix))
-                .and_then(|mut decoder| {
-                    decoder.set_limits(header_limits())?;
-                    Ok(decoder)
-                })
-                .map_err(image_error)
-                .and_then(|decoder| header_of(decoder, format, false, None));
-            match header {
-                // The prefix ended before the header did: refused as too
-                // large, not called corrupt.
-                Err(err) if err.code == ErrorCode::BadRequest && bytes.len() > prefix.len() => {
-                    Err(OrganError::new(
-                        ErrorCode::TooLarge,
-                        format!("the JPEG's header runs past {JPEG_HEADER_PREFIX} bytes"),
-                    ))
-                }
-                header => header,
+            // The markers say where the header ends and how the decoder
+            // will hold the image; a missing scan is the decoder's to name.
+            let layout = jpeg_layout(bytes);
+            if layout
+                .as_ref()
+                .is_some_and(|layout| layout.header_end > JPEG_HEADER_PREFIX)
+            {
+                return Err(OrganError::new(
+                    ErrorCode::TooLarge,
+                    format!("the JPEG's header runs past {JPEG_HEADER_PREFIX} bytes"),
+                ));
             }
+            let prefix = &bytes[..bytes.len().min(JPEG_HEADER_PREFIX)];
+            let mut decoder = JpegDecoder::new(Cursor::new(prefix)).map_err(image_error)?;
+            decoder.set_limits(header_limits()).map_err(image_error)?;
+            let mut header = header_of(decoder, format, false, None)?;
+            header.scratch = jpeg_scratch(
+                header.stored_width,
+                header.stored_height,
+                &layout.unwrap_or(JpegLayout::WORST),
+            );
+            Ok(header)
         }
         Format::Webp => {
             // The WebP decoder takes no allocation limit for its metadata,
@@ -183,6 +189,7 @@ pub fn read_header(bytes: &[u8]) -> Result<Header, OrganError> {
                     alpha,
                     profile: Profile::Untagged,
                     animated: true,
+                    scratch: 0,
                 }),
                 Webp::Still {
                     riff,
@@ -232,6 +239,7 @@ fn header_of(
         alpha: color.has_alpha(),
         profile,
         animated,
+        scratch: 0,
     })
 }
 
@@ -262,6 +270,14 @@ fn icc_is_srgb(icc: &[u8]) -> bool {
     let Some(icc) = icc_whole(icc) else {
         return false;
     };
+    // A LUT transform, where present, is what a colour engine uses, not
+    // the colorants and curves checked here: such a profile is not proven.
+    if [b"A2B0", b"A2B1", b"A2B2", b"D2B0", b"D2B1", b"D2B2"]
+        .iter()
+        .any(|tag| icc_tag(icc, tag).is_some())
+    {
+        return false;
+    }
     let rgb = icc.get(16..20) == Some(b"RGB ".as_slice());
     let xyz = icc.get(20..24) == Some(b"XYZ ".as_slice());
     rgb && xyz
@@ -380,6 +396,112 @@ const SRGB_PARAMETERS: [f64; 7] = [
     0.0,
     0.0,
 ];
+
+/// What a JPEG's markers say, up to its first scan.
+#[derive(Debug)]
+struct JpegLayout {
+    /// SOF2, 6, 10 or 14.
+    progressive: bool,
+    components: u8,
+    /// The largest sampling factors: an MCU is 8 times these.
+    max_h: u8,
+    max_v: u8,
+    /// Components in the first scan.
+    first_scan: u8,
+    /// Where the first scan's header ends.
+    header_end: usize,
+}
+
+impl JpegLayout {
+    /// For a file whose markers did not say: progressive, four components,
+    /// 2x2 sampling.
+    const WORST: Self = Self {
+        progressive: true,
+        components: 4,
+        max_h: 2,
+        max_v: 2,
+        first_scan: 1,
+        header_end: 0,
+    };
+}
+
+/// Walks a JPEG's marker segments, over the borrowed bytes, to its first
+/// SOS. `None` if it never gets there.
+fn jpeg_layout(bytes: &[u8]) -> Option<JpegLayout> {
+    let mut frame: Option<(bool, u8, u8, u8)> = None;
+    let mut at = 2usize;
+    loop {
+        if *bytes.get(at)? != 0xff {
+            return None;
+        }
+        let marker = *bytes.get(at + 1)?;
+        match marker {
+            // Fill bytes, and markers with no segment.
+            0xff => {
+                at += 1;
+                continue;
+            }
+            0x01 | 0xd0..=0xd8 => {
+                at += 2;
+                continue;
+            }
+            0xd9 => return None,
+            _ => {}
+        }
+        let len = usize::from(u16::from_be_bytes([
+            *bytes.get(at + 2)?,
+            *bytes.get(at + 3)?,
+        ]));
+        let segment = bytes.get(at + 4..at.checked_add(2)?.checked_add(len)?);
+        match marker {
+            0xc0..=0xcf if !matches!(marker, 0xc4 | 0xc8 | 0xcc) => {
+                let segment = segment?;
+                let components = *segment.get(5)?;
+                let (mut max_h, mut max_v) = (1, 1);
+                for i in 0..usize::from(components) {
+                    let sampling = *segment.get(6 + i * 3 + 1)?;
+                    max_h = max_h.max(sampling >> 4);
+                    max_v = max_v.max(sampling & 0x0f);
+                }
+                let progressive = matches!(marker, 0xc2 | 0xc6 | 0xca | 0xce);
+                frame = Some((progressive, components, max_h, max_v));
+            }
+            0xda => {
+                let (progressive, components, max_h, max_v) = frame?;
+                return Some(JpegLayout {
+                    progressive,
+                    components,
+                    max_h,
+                    max_v,
+                    first_scan: *bytes.get(at + 4)?,
+                    header_end: at + 2 + len,
+                });
+            }
+            _ => {}
+        }
+        at = at.checked_add(2)?.checked_add(len)?;
+    }
+}
+
+/// What the pinned JPEG decoder holds beside its output: rows of 16-bit
+/// samples, one MCU high, for each component (three sets, for upsampling);
+/// and, for a progressive file or one whose first scan leaves a component
+/// out, a whole 16-bit coefficient plane per component. Every plane is
+/// padded to whole MCUs.
+fn jpeg_scratch(width: u32, height: u32, layout: &JpegLayout) -> u64 {
+    let mcu_w = 8 * u64::from(layout.max_h.max(1));
+    let mcu_h = 8 * u64::from(layout.max_v.max(1));
+    let padded_w = u64::from(width).div_ceil(mcu_w) * mcu_w;
+    let padded_h = u64::from(height).div_ceil(mcu_h) * mcu_h;
+    let components = u64::from(layout.components.max(1));
+    let rows = 3 * components * padded_w * mcu_h * 2;
+    let planes = if layout.progressive || layout.first_scan < layout.components {
+        components * padded_w * padded_h * 2
+    } else {
+        0
+    };
+    rows.saturating_add(planes)
+}
 
 /// The colour chunks a PNG carries before its pixels.
 #[derive(Debug, Default)]

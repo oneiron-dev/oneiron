@@ -125,17 +125,6 @@ fn file_copy(header: &Header, input: &InputBytes) -> u64 {
     }
 }
 
-/// A JPEG decoder keeps a 16-bit coefficient plane per component (up to
-/// four), each padded to whole 32-pixel blocks, beside its output.
-fn jpeg_scratch(header: &Header) -> u64 {
-    if header.format != Format::Jpeg {
-        return 0;
-    }
-    let padded = |side: u32| u64::from(side).div_ceil(32) * 32;
-    let components = if header.channels == 1 { 1 } else { 4 };
-    padded(header.stored_width) * padded(header.stored_height) * components * 2
-}
-
 /// What decoding `header` holds at its peak. While it decodes: the file
 /// copy, the scratch and the decoded pixels (counted at four bytes, the
 /// widest a decoder gives). Then the turned copy an EXIF orientation makes,
@@ -143,7 +132,7 @@ fn jpeg_scratch(header: &Header) -> u64 {
 fn decode_cost(header: &Header, input: &InputBytes) -> u64 {
     let decoded = header.rgba_bytes();
     let decoding = file_copy(header, input)
-        .saturating_add(jpeg_scratch(header))
+        .saturating_add(header.scratch)
         .saturating_add(decoded);
     let turning = if header.orientation == 1 {
         0

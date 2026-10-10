@@ -37,6 +37,24 @@ fn call(
     ))
 }
 
+fn open_under(memory_bytes: u64, media_type: &str, bytes: Vec<u8>) -> Result<Answer, OrganError> {
+    let inputs = [InputBytes::inline(media_type, bytes)];
+    let limits = Limits {
+        memory_bytes,
+        ..LIMITS
+    };
+    let cancel = AtomicBool::new(false);
+    ImageOrgan::default().call(&CallContext::new(
+        VERB_OPEN,
+        1,
+        &Value::Nil,
+        None,
+        &inputs,
+        limits,
+        &cancel,
+    ))
+}
+
 fn map(pairs: Vec<(&str, Value)>) -> Value {
     Value::Map(pairs.into_iter().map(|(k, v)| (k.into(), v)).collect())
 }
@@ -144,6 +162,26 @@ fn tone_curves_that_are_not_srgb_are_refused_whole() {
         },
     );
     assert_eq!(code(open("image/png", short)), ErrorCode::Unsupported);
+
+    // A LUT transform beside sRGB's colorants and curves: a colour engine
+    // uses the LUT, which this check does not read.
+    let table = fixtures::curv(&srgb_table(1024));
+    let lut = fixtures::icc_profile_tags(
+        "sRGB IEC61966-2.1",
+        fixtures::SRGB_COLORANTS,
+        table,
+        vec![(b"A2B0", b"mAB \0\0\0\0".to_vec())],
+    );
+    let lut = png(
+        2,
+        2,
+        &rgba,
+        Extra {
+            exif: None,
+            icc: Some(lut),
+        },
+    );
+    assert_eq!(code(open("image/png", lut)), ErrorCode::Unsupported);
 }
 
 #[test]
@@ -270,6 +308,20 @@ fn a_jpeg_header_past_the_prefix_is_too_large_not_corrupt() {
     }
     padded.extend(&jpeg[2..]);
     assert_eq!(code(inspect("image/jpeg", padded)), ErrorCode::TooLarge);
+
+    // A header that ends early, in a long file, is still corrupt.
+    let mut early = vec![0xff, 0xd8, 0xff, 0xd9];
+    early.resize(18 * 1024 * 1024, 0);
+    assert_eq!(code(inspect("image/jpeg", early)), ErrorCode::BadRequest);
+}
+
+#[test]
+fn a_baseline_jpeg_is_booked_for_rows_not_whole_coefficient_planes() {
+    // A single-scan baseline JPEG decodes a row of blocks at a time: at a
+    // 64 MiB grant (32 MiB of work), a 2000x1500 one opens. Booked for four
+    // whole coefficient planes, it would not.
+    let jpeg = fixtures::jpeg_flat(2000, 1500, [90, 120, 150], None);
+    open_under(64 * 1024 * 1024, "image/jpeg", jpeg).expect("open");
 }
 
 #[test]

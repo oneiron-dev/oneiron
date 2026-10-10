@@ -162,6 +162,17 @@ pub(crate) fn curv(entries: &[u16]) -> Vec<u8> {
 /// [`icc_profile`] with `curve` as all three tone curves.
 #[must_use]
 pub(crate) fn icc_profile_with(name: &str, colorants: [[f64; 3]; 3], curve: Vec<u8>) -> Vec<u8> {
+    icc_profile_tags(name, colorants, curve, Vec::new())
+}
+
+/// [`icc_profile_with`], plus `extra` tags.
+#[must_use]
+pub(crate) fn icc_profile_tags(
+    name: &str,
+    colorants: [[f64; 3]; 3],
+    curve: Vec<u8>,
+    extra: Vec<(&[u8; 4], Vec<u8>)>,
+) -> Vec<u8> {
     let mut desc = b"desc\0\0\0\0".to_vec();
     desc.extend((name.len() as u32 + 1).to_be_bytes());
     desc.extend(name.as_bytes());
@@ -174,13 +185,14 @@ pub(crate) fn icc_profile_with(name: &str, colorants: [[f64; 3]; 3], curve: Vec<
         tag.extend([x, y, z].into_iter().flat_map(s15f16));
         tag
     };
-    let blocks: Vec<(&[u8; 4], Vec<u8>)> = vec![
+    let mut blocks: Vec<(&[u8; 4], Vec<u8>)> = vec![
         (b"desc", desc),
         (b"rXYZ", xyz(colorants[0])),
         (b"gXYZ", xyz(colorants[1])),
         (b"bXYZ", xyz(colorants[2])),
         (b"rTRC", curve),
     ];
+    blocks.extend(extra);
     // The three curves share one block, as real profiles often do.
     let entries = blocks.len() + 2;
     let mut offset = 128 + 4 + 12 * entries;
