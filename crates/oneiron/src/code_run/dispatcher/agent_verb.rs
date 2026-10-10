@@ -7,8 +7,8 @@ use crate::code_run::payload::decode_self_dispatch_outcome;
 use crate::code_run::replay::{CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayRecord};
 use crate::code_run::storage::derived_executor_id;
 use crate::code_run::types::{
-    AgentVerbRefusal, SelfAgentVerbCall, SelfCall, SelfDeniedResult, SelfDispatchOutcome,
-    SelfEffect,
+    AGENT_VERB_DOOR_UNBOUND, AgentVerbRefusal, SelfAgentVerbCall, SelfCall, SelfDeniedResult,
+    SelfDispatchOutcome, SelfEffect,
 };
 use crate::error::{Error, Result};
 use crate::memory::HostWriteOrigin;
@@ -37,8 +37,7 @@ impl HostSelfDispatcher<'_> {
     ) -> Result<SelfDispatchOutcome> {
         let Some(door) = &self.agent_verbs else {
             return Ok(answered(Err(AgentVerbRefusal {
-                code: "agent_verb_door_unbound".to_owned(),
-                message: "this run's host binds no SDK verb door".to_owned(),
+                code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
             })));
         };
         let origin =
@@ -138,6 +137,8 @@ impl HostSelfDispatcher<'_> {
     }
 }
 
+/// A refusal reaches the guest as its stable code alone; the host or prompt
+/// layer words it.
 fn answered(
     outcome: std::result::Result<serde_json::Value, AgentVerbRefusal>,
 ) -> SelfDispatchOutcome {
@@ -146,7 +147,7 @@ fn answered(
             SelfDispatchOutcome::Denied(SelfDeniedResult {
                 effect: SelfEffect::AgentVerb,
                 outcome: refusal.code,
-                reason_codes: vec![refusal.message],
+                reason_codes: Vec::new(),
             })
         },
         SelfDispatchOutcome::AgentVerb,

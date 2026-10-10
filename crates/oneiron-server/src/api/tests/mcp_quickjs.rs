@@ -500,8 +500,27 @@ async fn quickjs_code_mode_keeps_connector_narrowing() {
     .await;
     assert!(body.get("error").is_none(), "{body}");
     let text = body["result"]["structuredContent"].to_string();
-    assert!(text.contains("mcp_verb_not_bound"), "{text}");
     assert!(!text.contains("north gate"), "{text}");
+    // The guest's refusal is the door's stable code alone; no prose rides
+    // along as a reason.
+    let steps = body["result"]["structuredContent"]["steps"]
+        .as_array()
+        .expect("step log");
+    let refusals: Vec<_> = steps
+        .iter()
+        .filter(|step| step["effect"] == "self.verbs.call")
+        .map(|step| &step["outcome"])
+        .collect();
+    assert_eq!(
+        refusals,
+        [&json!({
+            "kind": "denied",
+            "effect": "self.verbs.call",
+            "outcome": "mcp_verb_not_bound",
+            "reason_codes": [],
+        })],
+        "{text}"
+    );
 }
 
 /// Code mode applies the per-verb argument rules a `tools/call` of the verb
