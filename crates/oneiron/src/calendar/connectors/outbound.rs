@@ -655,7 +655,7 @@ fn write_outbox_row(
     row: &CalendarWriteOutboxRow,
 ) -> Result<(), CalendarConnectorError> {
     let stored = StoredOutboxRow::from_row(row);
-    vault.try_with_write_txn(|wtxn| {
+    vault.try_with_write_txn_grouped(|wtxn| {
         OUTBOX.put(&vault.store, wtxn, &OutboxKey(row.outbox_id), &stored)?;
         Ok::<_, crate::Error>(())
     })?;
@@ -700,7 +700,7 @@ pub(super) fn write_remote_object(
         last_seen_at: row.last_seen_at,
     };
     let digest = remote_object_digest(&row.system, &row.calendar_ref, &row.uid);
-    vault.try_with_write_txn(|wtxn| {
+    vault.try_with_write_txn_grouped(|wtxn| {
         REMOTE_OBJECT.put(&vault.store, wtxn, &RemoteObjectKey(digest), &stored)?;
         Ok::<_, crate::Error>(())
     })?;

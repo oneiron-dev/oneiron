@@ -138,7 +138,7 @@ pub fn measure_once(
         ));
     }
     let key = strategy.key()?;
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         if BEAM_ONCE.contains(&vault.store, txn, &key)? {
             return Err(invalid("BEAM candidate measurement already consumed"));
         }
@@ -159,7 +159,7 @@ pub fn measure_once(
         at: crate::unix_seconds_now(),
     };
     let bytes = BEAM_DEFAULT.encode_value(&receipt)?;
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         BEAM_ONCE.put(&vault.store, txn, &key, &bytes)?;
         if receipt.became_default {
             BEAM_DEFAULT.put(&vault.store, txn, &(), &receipt)?;

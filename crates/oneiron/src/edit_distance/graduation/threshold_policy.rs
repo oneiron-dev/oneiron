@@ -315,7 +315,7 @@ pub fn set_graduation_policy(vault: &Vault, row: &ThresholdRow) -> Result<()> {
         required_streak: row.required_streak,
         posterior_guard: row.posterior_guard,
     };
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         THRESHOLD.put(
             &vault.store,
             wtxn,
@@ -334,5 +334,5 @@ pub fn set_graduation_policy(vault: &Vault, row: &ThresholdRow) -> Result<()> {
 ///
 /// Storage failures.
 pub fn clear_graduation_policy(vault: &Vault, pattern: &str) -> Result<bool> {
-    vault.with_write_txn(|wtxn| THRESHOLD.delete(&vault.store, wtxn, &pattern_key(pattern)))
+    vault.with_write_txn_grouped(|wtxn| THRESHOLD.delete(&vault.store, wtxn, &pattern_key(pattern)))
 }

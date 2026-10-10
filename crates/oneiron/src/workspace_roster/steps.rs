@@ -52,7 +52,7 @@ pub(super) fn with_workspace_authority<T>(
     writer: &WriteActor,
     write: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
 ) -> Result<T> {
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         require_workspace_authority_in_txn(vault, txn, vault_id, writer)?;
         write(txn)
     })

@@ -91,7 +91,7 @@ impl crate::Vault {
     pub fn set_default_facet(&self, facet: EntityId, actor: WriteActor) -> MemoryResult<()> {
         let owner = self.ensure_embedded_owner_actor()?;
         let now = self.store.clock.now_recorded_at();
-        self.try_with_write_txn(|wtxn| {
+        self.try_with_write_txn_grouped(|wtxn| {
             if actor.actor_class() != EdgeActorClass::Human
                 || crate::memory::verify_owner_actor_binding_in_txn(self, wtxn, actor.entity_ref())
                     .is_err()

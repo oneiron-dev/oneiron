@@ -11,6 +11,7 @@ mod fake_llm;
 mod first_owner_bootstrap;
 mod history_import;
 mod mcp_oracle;
+mod notes_import;
 mod owner_backup;
 mod remote_pairing;
 // SIGTERM through `libc::kill` is Unix-only.

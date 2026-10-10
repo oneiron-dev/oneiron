@@ -393,7 +393,7 @@ impl Vault {
         &self,
         timestamp: SessionHintTimestamp,
     ) -> Result<SessionMintOutcome> {
-        self.with_write_txn(|wtxn| self.mint_session_from_hint_in_txn(wtxn, timestamp))
+        self.with_write_txn_grouped(|wtxn| self.mint_session_from_hint_in_txn(wtxn, timestamp))
     }
 
     /// Bumps the open session's `last_activity` to `now` (unix seconds,
@@ -401,7 +401,9 @@ impl Vault {
     /// hint alone never mints a session (fail-closed: presence is signaled
     /// by app-open only).
     pub fn bump_session_activity(&self, now: u64) -> Result<Option<EntityId>> {
-        self.with_write_txn(|wtxn| bump_open_session_activity_in_txn(&self.store, wtxn, now))
+        self.with_write_txn_grouped(|wtxn| {
+            bump_open_session_activity_in_txn(&self.store, wtxn, now)
+        })
     }
 
     /// Records an app-open point on the current sitting and advances its
@@ -410,7 +412,7 @@ impl Vault {
         &self,
         timestamp: SessionHintTimestamp,
     ) -> Result<Option<EntityId>> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let Some((id, mut record)) = open_session_in_txn(&self.store, wtxn)? else {
                 return Ok(None);
             };
@@ -431,7 +433,7 @@ impl Vault {
         period: SessionActivityPeriod,
         rollup_gap_ms: u64,
     ) -> Result<Option<EntityId>> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             let Some((id, mut record)) = open_session_in_txn(&self.store, wtxn)? else {
                 return Ok(None);
             };
@@ -464,7 +466,7 @@ impl Vault {
 
     /// Plans the standard session-end consolidation wake from current durable turns.
     pub fn plan_session_end_wake(&self) -> Result<SessionEndWake> {
-        self.with_write_txn(|wtxn| self.plan_session_end_wake_in_txn(wtxn))
+        self.with_write_txn_grouped(|wtxn| self.plan_session_end_wake_in_txn(wtxn))
     }
 
     /// The production planning trio (`read_watermark` → dirty scan →
@@ -553,7 +555,7 @@ impl Vault {
         now: u64,
         wake: &SessionEndWake,
     ) -> Result<Option<EndedSession>> {
-        self.with_write_txn(|wtxn| {
+        self.with_write_txn_grouped(|wtxn| {
             self.end_session_with_wake_and_hint_in_txn(wtxn, expected, predicate, now, wake, None)
         })
     }
@@ -680,7 +682,7 @@ impl Vault {
         wake: &SessionEndWake,
         end_hint: Option<SessionHintTimestamp>,
     ) -> Result<Option<EndedSession>> {
-        self.with_write_txn(|wtxn| match end_hint {
+        self.with_write_txn_grouped(|wtxn| match end_hint {
             Some(hint) => self.end_session_with_wake_and_hint_in_txn(
                 wtxn,
                 expected,

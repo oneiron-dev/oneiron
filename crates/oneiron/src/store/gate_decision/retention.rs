@@ -310,7 +310,7 @@ impl Vault {
         held: bool,
     ) -> Result<()> {
         let partition = Partition(claim_partition);
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             if held {
                 if let Some(claim) = claim_partition.as_ref()
                     && self.store.gate_partition_erase_pending_in_txn(txn, claim)?

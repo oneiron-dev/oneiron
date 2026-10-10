@@ -277,7 +277,9 @@ pub(crate) fn persist_window_update(
     window_key: &str,
     update_bytes: &[u8],
 ) -> Result<()> {
-    vault.with_write_txn(|wtxn| persist_window_update_in_txn(vault, wtxn, window_key, update_bytes))
+    vault.with_write_txn_grouped(|wtxn| {
+        persist_window_update_in_txn(vault, wtxn, window_key, update_bytes)
+    })
 }
 
 /// In-transaction form of [`persist_window_update`]. A live deletion

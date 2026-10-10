@@ -19,7 +19,7 @@ use crate::config::{
     BackupConfig, ServeArgs, ServeConfig, resolve_backup_config, resolve_serve_config,
 };
 use crate::owner::backup::{self, BackupPlan};
-use crate::owner::{imports, local_owner, location, runs};
+use crate::owner::{imports, local_owner, location, note_imports, runs};
 
 fn emit(value: &impl Serialize) -> anyhow::Result<()> {
     let mut stdout = io::stdout().lock();
@@ -268,7 +268,7 @@ pub fn export(args: ExportArgs) -> anyhow::Result<()> {
 /// Creates `out` (owner-only, never over an existing file) and fills it with
 /// `write`. A failed write removes the partial file, so the same `--out` can
 /// be retried.
-fn write_new_file(
+pub(super) fn write_new_file(
     out: &Path,
     write: impl FnOnce(&mut std::fs::File) -> io::Result<()>,
 ) -> anyhow::Result<()> {
@@ -307,7 +307,13 @@ pub fn secret_scan(args: SecretScanArgs) -> anyhow::Result<()> {
     emit(&vault.set_secret_scan_mode(&owner, mode, vault.now_recorded_at())?)
 }
 
-fn read_batch(source: &str) -> anyhow::Result<imports::ImportBatch> {
+/// A batch file: imported claims, or the notes `import notes` wrote.
+enum Batch {
+    Claims(imports::ImportBatch),
+    Notes(note_imports::NoteBatch),
+}
+
+fn read_batch(source: &str) -> anyhow::Result<Batch> {
     let raw = if source == "-" {
         let mut raw = String::new();
         io::stdin().read_to_string(&mut raw)?;
@@ -316,10 +322,21 @@ fn read_batch(source: &str) -> anyhow::Result<imports::ImportBatch> {
         std::fs::read_to_string(source)
             .map_err(|error| anyhow::anyhow!("read batch {source}: {error}"))?
     };
-    // A saved `import preview` output works as is: take its `batch`.
-    let value: serde_json::Value = serde_json::from_str(&raw)?;
-    let batch = value.get("batch").cloned().unwrap_or(value);
-    serde_json::from_value(batch).map_err(|error| anyhow::anyhow!("batch JSON: {error}"))
+    // A saved `import preview` output works as is: take its `batch`. A notes
+    // batch holds a folder's text, so it is moved, never copied.
+    let mut value: serde_json::Value = serde_json::from_str(&raw)?;
+    drop(raw);
+    let batch = if value.get("batch").is_some() {
+        value["batch"].take()
+    } else {
+        value
+    };
+    let read = if batch.get("notes").is_some() {
+        serde_json::from_value(batch).map(Batch::Notes)
+    } else {
+        serde_json::from_value(batch).map(Batch::Claims)
+    };
+    read.map_err(|error| anyhow::anyhow!("batch JSON: {error}"))
 }
 
 pub fn import(command: ImportCommand) -> anyhow::Result<()> {
@@ -338,6 +355,7 @@ pub fn import(command: ImportCommand) -> anyhow::Result<()> {
         ImportCommand::Codex(args) => {
             return super::history_import::import_history(HistorySource::Codex, *args);
         }
+        ImportCommand::Notes(args) => return super::history_import::notes::import_notes(*args),
         ImportCommand::Preview(args) => (args.batch, None, args.serve),
         ImportCommand::Approve(args) => (args.batch, Some((true, args.digest)), args.serve),
         ImportCommand::Decline(args) => (args.batch, Some((false, args.digest)), args.serve),
@@ -345,20 +363,21 @@ pub fn import(command: ImportCommand) -> anyhow::Result<()> {
     let config = resolve_serve_config(&serve)?;
     let vault = open_vault(&config, "POST /v1/owner/imports/<preview|approve|decline>")?;
     let owner = local_owner(&vault)?;
-    match digest {
-        None => emit(&imports::preview(&vault, &owner, read_batch(&batch)?)?),
-        Some((true, digest)) => emit(&imports::approve(
-            &vault,
-            &owner,
-            &read_batch(&batch)?,
-            &digest,
-        )?),
-        Some((false, digest)) => emit(&imports::decline(
-            &vault,
-            &owner,
-            &read_batch(&batch)?,
-            &digest,
-        )?),
+    match (read_batch(&batch)?, digest) {
+        (Batch::Claims(batch), None) => emit(&imports::preview(&vault, &owner, batch)?),
+        (Batch::Claims(batch), Some((true, digest))) => {
+            emit(&imports::approve(&vault, &owner, &batch, &digest)?)
+        }
+        (Batch::Claims(batch), Some((false, digest))) => {
+            emit(&imports::decline(&vault, &owner, &batch, &digest)?)
+        }
+        (Batch::Notes(batch), None) => emit(&note_imports::preview(&vault, &owner, batch)?),
+        (Batch::Notes(batch), Some((true, digest))) => {
+            emit(&note_imports::approve(&vault, &owner, batch, &digest)?)
+        }
+        (Batch::Notes(batch), Some((false, digest))) => {
+            emit(&note_imports::decline(&vault, &owner, batch, &digest)?)
+        }
     }
 }
 

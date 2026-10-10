@@ -276,7 +276,9 @@ pub fn record_event_outcome(
     source: ClaimSource,
 ) -> Result<EntityId> {
     require_event_subject(vault, &event_ref)?;
-    vault.with_write_txn(|txn| record_event_outcome_in_txn(vault, txn, event_ref, value, source))
+    vault.with_write_txn_grouped(|txn| {
+        record_event_outcome_in_txn(vault, txn, event_ref, value, source)
+    })
 }
 
 mod conditional;

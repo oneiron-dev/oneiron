@@ -361,7 +361,7 @@ impl SyncClient {
         let now_secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
-        self.vault.with_write_txn(|wtxn| {
+        self.vault.with_write_txn_grouped(|wtxn| {
             LAST_SYNC.put(&self.vault.store, wtxn, &(), &now_secs.to_le_bytes())?;
             Ok(())
         })
@@ -377,7 +377,7 @@ impl SyncClient {
         let frontiers_before = self.root_doc.state_frontiers();
         let snapshot = export_snapshot(&self.root_doc)?;
         let vv = doc_version_vector(&self.root_doc);
-        if let Err(err) = self.vault.with_write_txn(|wtxn| {
+        if let Err(err) = self.vault.with_write_txn_grouped(|wtxn| {
             ROOT_SNAPSHOT.put(&self.vault.store, wtxn, &(), &snapshot)?;
             ROOT_STATE_VECTOR.put(&self.vault.store, wtxn, &(), &vv)?;
             ROOT_SHALLOW_FENCE.put(&self.vault.store, wtxn, &(), &[SVF_FRESH])?;
