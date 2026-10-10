@@ -409,6 +409,8 @@ fn imported_evidence_lands_proposed_in_its_import_review_whatever_the_policy_gra
         parent: None,
         title: None,
         started_at_ms: None,
+        own_started_at_ms: None,
+        cwd: None,
         messages: vec![HistoryMessage {
             native_id: "u1".to_owned(),
             parent_id: None,

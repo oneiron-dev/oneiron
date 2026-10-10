@@ -2,6 +2,7 @@
 
 use super::Vault;
 use super::entities::MAX_LEARNED_RANGE_RESULTS;
+use crate::TimeRange;
 use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -83,6 +84,16 @@ impl Vault {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         Ok(header.learned_at)
+    }
+
+    /// Returns the occurred interval from an entity's header.
+    pub fn get_occurred(&self, id: &EntityId) -> Result<TimeRange> {
+        let rtxn = self.store.env.read_txn()?;
+        let row = self
+            .store
+            .port_entity_record(&rtxn, id)?
+            .ok_or(Error::EntityNotFound)?;
+        Ok(row.occurred)
     }
 
     /// Returns the greatest `learned_at` timestamp present in the temporal index.
