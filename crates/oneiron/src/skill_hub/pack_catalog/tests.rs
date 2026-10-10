@@ -427,3 +427,61 @@ fn hub_pack_contact_line_loads_and_is_carried() -> Result<()> {
     assert!(pack(&"a".repeat(512)).is_ok());
     Ok(())
 }
+
+#[test]
+fn escaped_credential_in_any_pack_md_value_is_refused() -> Result<()> {
+    // The source scans read the raw file, where a JSON escape hides a
+    // credential, so every value class is read decoded. Each pair differs only
+    // in what one escape decodes to.
+    const HIDDEN: &str = "\\u0067hp_0123456789abcdefghijklmnopqrstuvwxyz";
+    const KEPT: &str = "\\u0073elected";
+    let capability = |line: String| {
+        PackSource::from_files(vec![HubFile::new(
+            "PACK.md",
+            format!(
+                "---\nname: example.contacts\ndescription: Contact predicate pack\nversion: 1.0.0\nkind: capability\npredicates: [\"example.contacts.phone\"]\n{line}\n---\nExact pack source.\n"
+            )
+            .into_bytes(),
+        )])
+    };
+    let migration = |old: &str, note: &str| {
+        format!(
+            "migrations: [{{\"from\":\"0.9.0\",\"rewrites\":{{\"{old}\":{{\"kind\":\"equivalent\",\"to\":\"example.contacts.phone\",\"note\":\"{note}\"}}}}}}]"
+        )
+    };
+    let agent = |path: String| -> Result<PackSource> {
+        let mut files = agent_files()?;
+        let pack = files.iter_mut().find(|f| f.path == "PACK.md").unwrap();
+        pack.content = String::from_utf8(pack.content.clone())
+            .unwrap()
+            .replace("knowledge/selected.json", &path)
+            .into_bytes();
+        PackSource::from_files(files)
+    };
+    let classes = |word: &str| {
+        [
+            ("quoted scalar", capability(format!("license: \"{word}\""))),
+            ("list item", capability(format!("grants: [\"{word}\"]"))),
+            ("facet", agent(format!("knowledge/{word}.json"))),
+            (
+                "migration note",
+                capability(migration("example.contacts.tel", word)),
+            ),
+            (
+                "migration key",
+                capability(migration(&format!("example.contacts.{word}"), "Same field")),
+            ),
+        ]
+    };
+    for (class, kept) in classes(KEPT) {
+        assert!(kept.is_ok(), "{class}: {:?}", kept.err());
+    }
+    for (class, hidden) in classes(HIDDEN) {
+        let err = hidden.expect_err(class);
+        assert!(
+            format!("{err:?}").contains("gate.secret_scan.github_token"),
+            "{class}: {err:?}"
+        );
+    }
+    Ok(())
+}
