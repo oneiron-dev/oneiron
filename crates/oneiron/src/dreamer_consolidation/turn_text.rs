@@ -281,10 +281,13 @@ pub(super) fn collect_in(
         let out = |kind| peers(vault, txn, &id, EdgeDirection::Out, kind, None);
         let mut authors = out(EdgeKind::AuthoredBy)?;
         authors.sort_unstable();
+        // An imported row names its source's speaker in metadata and has no
+        // `AuthoredBy` edge: the importer did not write it.
+        let bylines = usize::from(message.author != WITNESS_AUTHOR_SYSTEM && !facts.imported);
         if entity_type != ENTITY_TYPE_MESSAGE
             || out(EdgeKind::PartOf)? != [*turn]
             || out(EdgeKind::BelongsTo)? != [*conversation]
-            || authors.len() != usize::from(message.author != WITNESS_AUTHOR_SYSTEM)
+            || authors.len() != bylines
         {
             return Err(invalid_consolidation(
                 "witnessed turn message binding changed",
@@ -306,7 +309,12 @@ pub(super) fn collect_in(
             frontier,
             stream,
         });
-        children.push((id, message, words));
+        // The user side of an imported subagent or sidechain thread is the
+        // agent that delegated it, not the owner: its words never reach
+        // extraction, so they cannot become what the owner said.
+        if !(facts.imported && message.delegated) {
+            children.push((id, message, words));
+        }
     }
     let (text, layout) = project(bucket, children)?;
     Ok(TurnText {
@@ -467,6 +475,8 @@ struct MessageText {
     content: String,
     is_visible: bool,
     order: u64,
+    /// An imported row the delegating agent said.
+    delegated: bool,
 }
 
 /// Strict reader of the four fields the projection uses. The logical body of
@@ -481,12 +491,17 @@ fn decode_message(body: &[u8]) -> Option<MessageText> {
         return None;
     }
     let (mut author, mut content, mut is_visible, mut order) = (None, None, None, None);
+    let mut delegated = false;
     for (key, value) in entries {
         let fresh = match key.as_str() {
             Some("author") => author.replace(value.as_str()?.to_owned()).is_none(),
             Some("content") => content.replace(value.as_str()?.to_owned()).is_none(),
             Some("is_visible") => is_visible.replace(value.as_bool()?).is_none(),
             Some("order") => order.replace(value.as_u64()?).is_none(),
+            Some("metadata") => {
+                delegated = said_by_delegating_agent(&value);
+                true
+            }
             _ => true,
         };
         if !fresh {
@@ -498,7 +513,23 @@ fn decode_message(body: &[u8]) -> Option<MessageText> {
         content: content?,
         is_visible: is_visible?,
         order: order?,
+        delegated,
     })
+}
+
+/// Whether an imported MESSAGE's `import.said_by` names the delegating agent
+/// (`ingest::history`): the prompt one agent gave a subagent it started.
+fn said_by_delegating_agent(metadata: &rmpv::Value) -> bool {
+    let field = |value: &rmpv::Value, name: &str| match value {
+        rmpv::Value::Map(entries) => entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(name))
+            .map(|(_, value)| value.clone()),
+        _ => None,
+    };
+    field(metadata, "import")
+        .and_then(|import| field(&import, "said_by"))
+        .is_some_and(|said_by| said_by.as_str() == Some(crate::ingest::history::DELEGATING_AGENT))
 }
 
 fn peers(

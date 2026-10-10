@@ -641,6 +641,42 @@ fn the_same_codex_request_in_two_turns_stays_two_messages() {
     assert_eq!(user_words(&conversations), ["continue", "continue"]);
 }
 
+/// Sol 9A-3B #6: a spawned thread's rollout copies its parent's history
+/// before its own start. The owner's words in that copy stay the owner's;
+/// only the spawned thread's own prompt is the delegating agent's, which the
+/// Dreamer then leaves out.
+#[test]
+fn a_spawned_codex_rollout_keeps_the_owners_copied_words_as_the_owners() {
+    let conversations = decode_log(
+        HistorySource::Codex,
+        "rollout-2026-09-24T10-00-00-s-spawned",
+        &[
+            r#"{"timestamp":"2026-09-24T10:00:00.000Z","type":"session_meta","payload":{"id":"s-spawned","parent_thread_id":"s-parent","subagent_history_start_ordinal":4,"timestamp":"2026-09-24T10:00:00.000Z","cli_version":"0.100.0"}}"#,
+            r#"{"timestamp":"2026-09-24T10:00:00.050Z","type":"session_meta","payload":{"id":"s-parent","timestamp":"2026-09-24T09:00:00.000Z","cli_version":"0.100.0"}}"#,
+            r#"{"timestamp":"2026-09-24T10:00:00.080Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Keep every amount in integer cents."}],"id":"msg_parent_u1"}}"#,
+            r#"{"timestamp":"2026-09-24T10:00:00.100Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Cents it is."}],"id":"msg_parent_a1"}}"#,
+            r#"{"timestamp":"2026-09-24T10:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"List every call site of parse_amount."}],"id":"msg_spawned_u1"}}"#,
+            r#"{"timestamp":"2026-09-24T10:00:05.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Three call sites."}],"id":"msg_spawned_a1"}}"#,
+        ],
+    );
+    let users: Vec<_> = conversations[0]
+        .messages
+        .iter()
+        .filter(|message| message.role == HistoryRole::User)
+        .map(|message| (message.text.as_str(), message.said_by))
+        .collect();
+    assert_eq!(
+        users,
+        [
+            ("Keep every amount in integer cents.", None),
+            (
+                "List every call site of parse_amount.",
+                Some(super::DELEGATING_AGENT)
+            ),
+        ]
+    );
+}
+
 /// Astra 1310 #3, Greptile 1310 (claude_code.rs:283): a prompt typed early
 /// in a session, and the same words queued later while the assistant was
 /// busy, are two requests. The later one is kept only by the queue and a meta

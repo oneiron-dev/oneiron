@@ -32,11 +32,9 @@ use serde_json::Value;
 
 use super::text::{join_texts, json_record, str_field, time_field};
 use super::{
-    HistoryConversation, HistoryFile, HistoryMessage, HistoryRole, HistorySkips, HistoryThreadKind,
+    DELEGATING_AGENT, HistoryConversation, HistoryFile, HistoryMessage, HistoryRole, HistorySkips,
+    HistoryThreadKind,
 };
-
-/// The user side of a spawned agent's thread is the agent that spawned it.
-const DELEGATING_AGENT: &str = "delegating_agent";
 
 /// How far apart (in lines) an event and the response item wrapping it may be.
 const WRAPPED_PAIR_WINDOW: usize = 200;
@@ -510,7 +508,11 @@ impl Rollout {
                 HistoryRole::Assistant => message.tools = std::mem::take(&mut pending),
                 HistoryRole::User => {
                     pending.clear();
-                    message.said_by = said_by;
+                    // History copied from the parent before the spawned
+                    // thread's own start is the parent's, owner's words included.
+                    if own_chain || self.own_history_from.is_none() {
+                        message.said_by = said_by;
+                    }
                 }
             }
             conversation.messages.push(message);

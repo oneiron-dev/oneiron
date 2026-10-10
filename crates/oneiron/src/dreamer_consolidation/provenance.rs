@@ -584,11 +584,16 @@ pub fn peer_answer_provenance_chain(
 }
 
 /// The one-row trust answer for bytes read under the caller's scoped snapshot.
-/// TURNs start at Generated; CLAIMs fold their stored source and transitive
-/// taint; anything else cannot supply recipe evidence.
+/// TURNs start at Generated, imported TURNs are Imported; CLAIMs fold their
+/// stored source and transitive taint; anything else cannot supply recipe
+/// evidence.
 pub(crate) fn evidence_source_from_row(entity_type: u8, data: &[u8]) -> Result<ClaimSource> {
     if entity_type == ENTITY_TYPE_TURN {
-        return Ok(ClaimSource::Generated);
+        return Ok(if super::watermark::decode_turn_body(data).imported {
+            ClaimSource::Imported
+        } else {
+            ClaimSource::Generated
+        });
     }
     if entity_type != ENTITY_TYPE_CLAIM {
         return Err(invalid_consolidation(
@@ -614,6 +619,7 @@ fn evidence_source_from_claim(body: &crate::claim::ClaimBody) -> ClaimSource {
 /// Classification, most-restrictive-wins from the Dreamer's own `Generated`
 /// floor (the same start `evidence_trust_meet` uses):
 ///
+/// * an imported TURN is `Imported` (ARCH-0027), whatever hop names it;
 /// * a ref named by an `AnswerTurn` hop is peer TOOL OUTPUT — `ToolOutput`;
 /// * any other stored TURN contributes the Dreamer floor `Generated` (a
 ///   `UserStated` turn cannot lift a meet that already starts at the floor);
@@ -632,6 +638,17 @@ pub fn evidence_chain_source(
         }
     }
     for entry in evidence_refs {
+        if vault.get_entity_type(entry)? == Some(ENTITY_TYPE_TURN)
+            && vault.get_raw(entry)?.is_some_and(|raw| {
+                super::watermark::decode_turn_body(
+                    &raw[crate::batch::ENTITY_METADATA_HEADER_LEN.min(raw.len())..],
+                )
+                .imported
+            })
+        {
+            meet = source_meet(meet, ClaimSource::Imported);
+            continue;
+        }
         let answered_by_peer = chain.iter().any(|hop| {
             hop.kind == ConsolidationProvenanceHopKind::AnswerTurn && hop.entity_ref == *entry
         });

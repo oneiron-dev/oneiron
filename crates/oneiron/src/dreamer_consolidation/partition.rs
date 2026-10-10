@@ -400,6 +400,56 @@ pub(crate) fn enqueue_partition_attempts_in_txn(
     Ok(outcomes)
 }
 
+/// Plans what a session end plans (Meso rounds over every turn dirty since
+/// the round watermark) for turns no sitting will end, such as the ones an
+/// import lands. Each round's plan, enqueue and watermark advance commit
+/// together, as the session close's do; rounds repeat until no dirty turn is
+/// left. A turn without a conversation stops planning at its second, exactly
+/// as it cuts a session's round. Returns how many attempts were enqueued.
+pub fn plan_dirty_turn_rounds(vault: &Vault, now: u64) -> Result<usize> {
+    let scope = DreamerConsolidationScope::Meso;
+    let mut enqueued = 0;
+    let mut previous = Vec::new();
+    loop {
+        let planned = vault.with_write_txn(|wtxn| {
+            let watermark = super::watermark::read_watermark_in_txn(vault, wtxn, scope)?;
+            let ids = super::watermark::collect_dirty_turn_ids_in_txn(
+                vault,
+                wtxn,
+                scope,
+                watermark.last_learned_at,
+                u64::MAX,
+            )?;
+            if ids.is_empty() || ids == previous {
+                return Ok(None);
+            }
+            let turns = read_partition_turns_in_txn(vault, wtxn, scope, &ids)?;
+            let round: Vec<_> = match turns
+                .iter()
+                .find(|turn| turn.conversation.is_none())
+                .map(|turn| turn.learned_at)
+            {
+                Some(cut) => turns.iter().filter(|turn| turn.learned_at < cut).collect(),
+                None => turns.iter().collect(),
+            };
+            let Some(advance_to) = round.iter().map(|turn| turn.learned_at).max() else {
+                return Ok(None);
+            };
+            let round_ids: Vec<_> = round.iter().map(|turn| turn.turn_id).collect();
+            let outcomes = enqueue_partition_attempts_in_txn(
+                vault, wtxn, scope, &round_ids, &watermark, None, now,
+            )?;
+            super::watermark::advance_watermark_in_txn(vault, wtxn, scope, advance_to)?;
+            Ok(Some((ids, outcomes.len())))
+        })?;
+        let Some((ids, count)) = planned else {
+            return Ok(enqueued);
+        };
+        enqueued += count;
+        previous = ids;
+    }
+}
+
 /// Reconstructs complete planning input before any lossy commit. An unreadable
 /// text field can still pass unscored, but a missing/non-TURN row cannot stand
 /// in for a planned turn. Resolve roles and structural membership from this

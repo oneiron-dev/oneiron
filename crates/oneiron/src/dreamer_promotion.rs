@@ -29,6 +29,11 @@
 //!   replacements share the deferred closure gate with memory upserts: every
 //!   replacement first persists Proposed. Only a later Auto or owner grant
 //!   writes the edge and its runner-owned provenance companion.
+//! * a claim whose evidence meets at `Imported` never requests `Auto`
+//!   (ARCH-0027 trust tier): it lands Proposed in the review of the import its
+//!   words came from (`ingest::history::history_import_review_id`), which the
+//!   owner approves or declines as one act. The gate holds the same floor for
+//!   every Dreamer write, whatever any source_trust row says.
 //!
 //! The actor axis is untouched: the Dreamer stays visible as the writing
 //! actor in the envelope/provenance while the epistemic source describes the
@@ -82,9 +87,13 @@ pub struct DreamerRunContext {
 pub struct PromotionOutcome {
     /// Landed with `Auto` approval (gate-granted).
     pub landed: Vec<EntityId>,
-    /// All destructive replacements and conflict markers retained as Proposed.
-    /// Ordinary create refusals still go to `rejected`.
+    /// All destructive replacements, conflict markers and claims from
+    /// imported evidence, retained as Proposed. Ordinary create refusals still
+    /// go to `rejected`.
     pub pended: Vec<EntityId>,
+    /// Existing heads that imported evidence restated: not attached, because
+    /// imported material reaches the vault only through the owner's review.
+    pub held: Vec<EntityId>,
     /// Not written (typed reason per candidate); the loop continues.
     pub rejected: Vec<(EntityId, String)>,
 }
@@ -171,6 +180,11 @@ fn promote_one(
     fence: Option<&crate::dreamer_consolidation::resources::ConsolidationFence>,
     verified: Option<&VerifiedEvidenceSet>,
 ) -> std::result::Result<ClaimApprovalStatus, String> {
+    // A blank run would hide the write from every Dreamer-run reader: the
+    // gate's imported floor and the owner's review grouping among them.
+    if run.run_id.trim().is_empty() {
+        return Err("promotion run id is blank".to_owned());
+    }
     let default_facet = vault
         .default_facet()
         .map_err(|error| format!("default facet read failed: {error}"))?;
@@ -213,11 +227,37 @@ fn promote_one(
             .and_then(claim_evidence_taint),
         None => None,
     };
+    // ARCH-0027 trust tier: imported material never auto-approves. Evidence
+    // on an imported TURN makes the claim `Imported` whatever meet a caller
+    // computed, and its claim lands Proposed in the review of the import its
+    // cited words came from.
+    let import = {
+        let cited = verified.map(VerifiedEvidenceSet::cited_messages);
+        let txn = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|error| error.to_string())?;
+        crate::ingest::history::imported_evidence_in_txn(
+            vault,
+            &txn,
+            &surviving,
+            cited.as_deref().unwrap_or_default(),
+        )
+        .map_err(|error| format!("imported evidence read failed: {error}"))?
+    };
     let computed_meet = effective_evidence_source(
         verified.map_or(candidate.evidence_meet, VerifiedEvidenceSet::meet),
         old_head_taint,
     );
+    let computed_meet = if import.imported {
+        ClaimSource::Imported
+    } else {
+        computed_meet
+    };
     let source = computed_meet;
+    let imported = source == ClaimSource::Imported;
+    let import_review = import.review.filter(|_| imported);
 
     // 3. Envelope — constructed HERE; callers cannot pass one. Provenance
     // keeps exactly the shape dreamer_run_id_from_provenance parses and
@@ -239,9 +279,13 @@ fn promote_one(
     let mut envelope = WriteEnvelope::with_lineage(
         run.agent_actor,
         source,
-        WriteProvenance::new(promotion_provenance(run, &candidate.provenance_chain))
-            .map_err(|error| error.to_string())?,
-        // Auto for every candidate (ARCH-0067 §7). The gate may still
+        WriteProvenance::new(promotion_provenance(
+            run,
+            &candidate.provenance_chain,
+            import_review.as_deref(),
+        ))
+        .map_err(|error| error.to_string())?,
+        // Auto for every native candidate (ARCH-0067 §7). The gate may still
         // refuse; it may never turn this into an owner-review row.
         ClaimApprovalStatus::Auto,
         lineage,
@@ -249,7 +293,7 @@ fn promote_one(
 
     let is_conflict_marker =
         candidate.candidate.predicate() == crate::claim::PREDICATE_CONFLICT_OPEN;
-    if candidate.supersedes.is_some() || is_conflict_marker {
+    if candidate.supersedes.is_some() || is_conflict_marker || imported {
         envelope = WriteEnvelope::with_lineage(
             envelope.actor(),
             source,
@@ -349,9 +393,19 @@ fn promote_one(
                 .ok_or(Error::InvalidClaimBody(
                     "consolidation claim is missing inside its own write transaction",
                 ))?;
+        // Never Auto, and never Proposed where no review holds it.
+        if imported
+            && (landed.approval == ClaimApprovalStatus::Auto
+                || store_pending_group(vault, wtxn, &candidate.claim_id)?.is_none())
+        {
+            return Err(Error::InvalidClaimBody(
+                "a claim from imported evidence lands only in an owner review",
+            ));
+        }
         if landed.approval != ClaimApprovalStatus::Auto
             && candidate.supersedes.is_none()
             && !is_conflict_marker
+            && !imported
         {
             return Err(Error::InvalidClaimBody(
                 "consolidation write was not granted Auto; no approval queue is created",
@@ -403,6 +457,18 @@ fn promote_one(
     verify_landed(vault, &candidate.claim_id, &probe_body.predicate, source)
 }
 
+/// The review group of the pending-consent row `claim` waits in, if any.
+fn store_pending_group(
+    vault: &Vault,
+    txn: &heed::RwTxn<'_>,
+    claim: &EntityId,
+) -> Result<Option<String>> {
+    Ok(vault
+        .store
+        .pending_gate_consent_in_txn(txn, claim)?
+        .and_then(|row| row.dreamer_run_id))
+}
+
 /// The candidate meet folded with the superseded head's taint, through the
 /// canonical `dreamer_consolidation::source_meet` lattice — one law, one
 /// implementation. Absent a superseded head the candidate meet stands.
@@ -417,10 +483,15 @@ fn effective_evidence_source(
 }
 
 /// Envelope provenance: the exact map `dreamer_run_id_from_provenance`
-/// parses, plus the typed peer lineage when the candidate carries one. The
-/// parser ignores unknown keys, so the addition is compatible; an empty
-/// chain adds nothing at all.
-fn promotion_provenance(run: &DreamerRunContext, chain: &[ConsolidationProvenanceHop]) -> Value {
+/// parses, plus the typed peer lineage when the candidate carries one and the
+/// import review a claim from imported evidence waits in. The parser ignores
+/// unknown keys, so the additions are compatible; an empty chain adds nothing
+/// at all.
+fn promotion_provenance(
+    run: &DreamerRunContext,
+    chain: &[ConsolidationProvenanceHop],
+    import_review: Option<&str>,
+) -> Value {
     let mut entries = vec![
         (
             Value::from("surface"),
@@ -456,6 +527,12 @@ fn promotion_provenance(run: &DreamerRunContext, chain: &[ConsolidationProvenanc
                     })
                     .collect(),
             ),
+        ));
+    }
+    if let Some(review) = import_review {
+        entries.push((
+            Value::from(crate::gate::DREAMER_PROVENANCE_IMPORT_REVIEW_KEY),
+            Value::from(review),
         ));
     }
     Value::Map(entries)
@@ -572,6 +649,7 @@ impl crate::dreamer_consolidation::ConsolidationSink for PromotionWriterSink<'_>
         let refused = !outcome.rejected.is_empty();
         self.outcome.landed.extend(outcome.landed);
         self.outcome.pended.extend(outcome.pended);
+        self.outcome.held.extend(outcome.held);
         self.outcome.rejected.extend(outcome.rejected);
         if refused {
             return Err(Error::InvalidClaimBody(
@@ -590,6 +668,7 @@ impl crate::dreamer_consolidation::ConsolidationSink for PromotionWriterSink<'_>
         )?;
         self.outcome.landed.extend(outcome.landed);
         self.outcome.pended.extend(outcome.pended);
+        self.outcome.held.extend(outcome.held);
         self.outcome.rejected.extend(outcome.rejected);
         Ok(())
     }

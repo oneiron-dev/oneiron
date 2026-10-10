@@ -18,6 +18,7 @@ mod codex;
 mod land;
 mod ledger;
 mod plan;
+mod review;
 mod text;
 mod tree;
 
@@ -26,10 +27,16 @@ mod tests;
 
 pub use land::HistoryImportReport;
 pub use plan::{HistoryDryRun, HistoryLedgerSnapshot};
+pub use review::history_import_review_id;
+pub(crate) use review::imported_evidence_in_txn;
 
 use serde::Serialize;
 
 use super::IngestResult;
+
+/// [`HistoryMessage::said_by`] for the user side of a subagent's or a spawned
+/// agent's thread: the agent that delegated the task, never the owner.
+pub const DELEGATING_AGENT: &str = "delegating_agent";
 
 /// The four history sources `oneiron import` reads. Their ids are the ingest
 /// registry's, which carries their Imported trust ceiling.
