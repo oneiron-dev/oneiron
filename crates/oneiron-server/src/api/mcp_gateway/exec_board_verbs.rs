@@ -123,7 +123,8 @@ fn mcp_code_run_health(
     match status {
         oneiron::engine_executor::EngineExecutorStatus::Complete => McpRetrievalHealth::Healthy,
         oneiron::engine_executor::EngineExecutorStatus::Waiting(_)
-        | oneiron::engine_executor::EngineExecutorStatus::Yielded { .. } => {
+        | oneiron::engine_executor::EngineExecutorStatus::Yielded { .. }
+        | oneiron::engine_executor::EngineExecutorStatus::WindowFull { .. } => {
             McpRetrievalHealth::Partial
         }
         oneiron::engine_executor::EngineExecutorStatus::HardStepLimitReached => {
@@ -150,6 +151,10 @@ fn mcp_code_run_help(status: &oneiron::engine_executor::EngineExecutorStatus) ->
         oneiron::engine_executor::EngineExecutorStatus::HardStepLimitReached => {
             vec!["this run reached its hard step limit and will not continue".to_owned()]
         }
+        oneiron::engine_executor::EngineExecutorStatus::WindowFull { .. } => vec![
+            "this run's context window is full and no compacted summary has landed yet".to_owned(),
+            "the same run_ref continues it once compaction lands".to_owned(),
+        ],
     }
 }
 
@@ -189,6 +194,14 @@ fn mcp_executor_status_value(status: &oneiron::engine_executor::EngineExecutorSt
         oneiron::engine_executor::EngineExecutorStatus::HardStepLimitReached => {
             json!({ "status": "hard_step_limit_reached" })
         }
+        oneiron::engine_executor::EngineExecutorStatus::WindowFull {
+            next_step_seq,
+            reason,
+        } => json!({
+            "status": "window_full",
+            "next_step_seq": next_step_seq,
+            "reason": mcp_window_full_reason(*reason),
+        }),
     }
 }
 
@@ -473,3 +486,25 @@ pub(crate) fn mcp_board_verb_page_source(
 
 /// The board section the TASKS producer's omissions belong to.
 pub(crate) const MCP_BOARD_TASKS_SECTION: &str = "TASKS";
+
+/// Why a run parked at its window budget, as typed wire data.
+fn mcp_window_full_reason(reason: oneiron::engine_executor::WindowFullReason) -> Value {
+    use oneiron::compaction::CompactionSuppression;
+    match reason {
+        oneiron::engine_executor::WindowFullReason::InFlight => json!({"kind": "in_flight"}),
+        oneiron::engine_executor::WindowFullReason::NothingToCompact => {
+            json!({"kind": "nothing_to_compact"})
+        }
+        oneiron::engine_executor::WindowFullReason::Suppressed(suppression) => {
+            let mut value = json!({"kind": "suppressed", "suppression": suppression.as_str()});
+            match suppression {
+                CompactionSuppression::TurnScoped { check: Some(check) } => {
+                    value["check"] = json!(check.as_str());
+                }
+                CompactionSuppression::Sticky { why } => value["why"] = json!(why.as_str()),
+                _ => {}
+            }
+            value
+        }
+    }
+}
