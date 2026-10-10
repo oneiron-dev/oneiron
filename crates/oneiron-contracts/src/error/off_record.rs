@@ -110,6 +110,15 @@ pub enum OffRecordError {
         "off-record promote of turn {turn_ref} refused: its author {actor_ref} does not exist in the vault"
     )]
     OffRecordPromoteAuthorMissing { turn_ref: String, actor_ref: String },
+    /// ARCH-0052 D5: a participant act (start, witness, save, export, a save
+    /// suggestion, or reading the room) named a room the actor is not a member
+    /// of, or a stretch that runs in no room at all. The same refusal covers
+    /// both, so it does not tell a stranger which stretches exist.
+    #[error("{actor_ref} is in no room with an off-record stretch {session_ref}")]
+    OffRecordNotInRoom {
+        session_ref: String,
+        actor_ref: String,
+    },
 }
 
 impl OffRecordError {
@@ -132,6 +141,7 @@ impl OffRecordError {
             Self::OffRecordTalkOnly { .. } => ErrorKind::OffRecordTalkOnly,
             Self::OffRecordTurnNotInJournal { .. } => ErrorKind::OffRecordTurnNotInJournal,
             Self::OffRecordPromoteAuthorMissing { .. } => ErrorKind::OffRecordPromoteAuthorMissing,
+            Self::OffRecordNotInRoom { .. } => ErrorKind::OffRecordNotInRoom,
         }
     }
 }

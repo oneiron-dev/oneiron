@@ -197,6 +197,16 @@ impl Vault {
     ) -> Result<Vec<MembershipWindow>> {
         windows_rows(&self.membership_ledger(conversation)?, person)
     }
+    /// [`Self::windows`] in the caller's snapshot.
+    pub(crate) fn windows_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        conversation: EntityId,
+        person: EntityId,
+    ) -> Result<Vec<MembershipWindow>> {
+        body::body_in(self, txn, conversation)?;
+        windows_rows(&rows_in(&self.store, txn, conversation)?, person)
+    }
     pub fn join_member(
         &self,
         conversation: EntityId,

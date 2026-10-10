@@ -140,6 +140,52 @@ impl Memory<'_> {
         )
     }
 
+    /// [`Self::witness_into_session`] for a participant of the stretch's room
+    /// (ARCH-0052 D5): this handle's actor must be on the room's roster, and
+    /// that, with `credential`'s liveness, is checked again in the
+    /// transaction that lands the turn, so a witness queued behind a leave or
+    /// a revocation writes nothing.
+    ///
+    /// # Errors
+    ///
+    /// `FORBIDDEN` when the actor is not in the stretch's room, or left it
+    /// or lost the credential while the witness waited; otherwise as
+    /// [`Self::witness_into_session`].
+    pub fn witness_into_session_as_member(
+        &self,
+        session: &OffRecordSession<'_>,
+        turn: &WitnessTurn,
+        summary: Option<&str>,
+        credential: Option<&crate::authority::VerifiedSlip>,
+    ) -> MemoryResult<WitnessReceipt> {
+        let refused = || {
+            MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "the speaker is not in this stretch's room".to_owned(),
+                &["Join the room before speaking in it."],
+            )
+        };
+        let room = session.require_in_room(self.actor).map_err(|_| refused())?;
+        self.run_witness(
+            turn,
+            WitnessTarget::Session { session, summary },
+            WitnessDoor::Guest,
+            || {},
+            |_| Ok(()),
+            |wtxn| {
+                let live = credential.is_none_or(|credential| {
+                    self.vault
+                        .capability_slip_is_live_in_txn(wtxn, credential)
+                        .unwrap_or(false)
+                });
+                match session.is_member_in_txn(wtxn, room, self.actor) {
+                    Ok(true) if live => Ok(()),
+                    _ => Err(refused()),
+                }
+            },
+        )
+    }
+
     /// Host-bound variant for executor speech. `host_turn_ref` is derived from
     /// the run identity behind a crate-private capability; it is deliberately a
     /// separate parameter from guest [`WitnessTurn::turn_ref`], so preserving a

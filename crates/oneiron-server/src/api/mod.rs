@@ -82,6 +82,7 @@ mod discover;
 mod entity;
 mod error_map;
 mod esign;
+mod off_record_rooms;
 mod org_admin;
 mod pairing;
 mod sessions;
@@ -406,6 +407,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // Published anonymous booking capabilities validate a live owner publication
         // and scoped tokens; they do not authorize access to private vault routes.
         .merge(self::booking::public_booking_router())
+        // ARCH-0052 D5: everyone in a room keeps their own copy of an
+        // off-record talk. Its own nest, outside the idempotency layer and
+        // the wire receipts: nothing of the stretch may outlive it.
+        .nest("/v1/core/off-record", self::off_record_rooms::routes())
         .with_state(server.clone())
         .layer(middleware::from_fn_with_state(
             server,

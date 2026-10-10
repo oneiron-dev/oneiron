@@ -13,6 +13,7 @@ use tower::ServiceExt;
 mod mcp_source_gate;
 
 mod auth_idempotency;
+mod off_record_rooms;
 mod org_admin;
 mod owner_healer;
 mod owner_routes;

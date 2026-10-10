@@ -17,6 +17,7 @@ use crate::vault::VaultId;
 use super::registry::{
     OffRecordSessionEntry, live_session_entry, session_entry_state, vet_off_record_session_ref,
 };
+use super::room::post_notice;
 use super::telemetry::SessionRetrievalTelemetry;
 use super::types::{OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode};
 use crate::error::OffRecordError;
@@ -65,7 +66,7 @@ impl Drop for OverlayShellReservation {
 pub struct OffRecordSession<'vault> {
     pub(in crate::off_record) vault: &'vault Vault,
     pub(super) session_ref: String,
-    entry: Arc<OffRecordSessionEntry>,
+    pub(super) entry: Arc<OffRecordSessionEntry>,
 }
 
 impl<'vault> OffRecordSessionVault<'vault> {
@@ -95,6 +96,7 @@ impl<'vault> OffRecordSessionVault<'vault> {
             session_ref,
             backend,
             self.vault.config.off_record_overlay_budget_bytes,
+            None,
         )?;
         Ok(OffRecordSession {
             vault: self.vault,
@@ -146,7 +148,7 @@ impl<'vault> OffRecordSessionVault<'vault> {
     ) -> Result<OffRecordSession<'vault>> {
         let entry =
             self.vault
-                .enter_off_record_session_entry(session_ref, backend, budget_bytes)?;
+                .enter_off_record_session_entry(session_ref, backend, budget_bytes, None)?;
         Ok(OffRecordSession {
             vault: self.vault,
             session_ref: session_ref.to_owned(),
@@ -616,10 +618,31 @@ impl OffRecordSession<'_> {
         self.vault.vault_id()
     }
 
+    /// Puts the room on record. A stretch in a room refuses this unbound
+    /// door: flipping saves everyone's later turns into this vault, so only
+    /// [`Self::flip_on_record_as`] may do it there.
     pub fn flip_on_record(&self) -> Result<()> {
+        if session_entry_state(&self.entry)?.record.room.is_some() {
+            return Err(super::room::unbound_in_room(&self.session_ref));
+        }
         self.vault
             .set_off_record_session_mode(&self.session_ref, OffRecordMode::OnRecord)?;
         Ok(())
+    }
+
+    /// Notes the messages of a turn witnessed while the room was on record:
+    /// they landed in base, where a copy of the talk reads them.
+    pub(crate) fn note_on_record_messages(
+        &self,
+        turn: EntityId,
+        messages: &[(EntityId, u64, &[u8])],
+    ) {
+        if let Ok(mut state) = session_entry_state(&self.entry)
+            && !state.record.closing
+            && !state.gone
+        {
+            state.keep_messages(turn, messages);
+        }
     }
 
     /// K10 flip-back: returns the session to `OffRecord`, rearming the overlay
@@ -710,77 +733,201 @@ impl OffRecordSession<'_> {
         turn: &EntityId,
         owner: Option<&crate::consent::AuthenticatedOwner>,
     ) -> Result<PromoteOutcome> {
+        // In a room, the owner must be on its roster before anything is
+        // answered (read before the state lock, which the roster read takes).
+        if let Some(owner) = owner
+            && self.room()?.is_some()
+        {
+            self.require_in_room(owner.actor())?;
+        }
         let outcome = {
-            let mut state = session_entry_state(&self.entry)?;
-            if state.record.closing || state.gone {
-                return Err(Error::OffRecord(OffRecordError::OffRecordSessionClosing {
-                    session_ref: self.session_ref.clone(),
-                }));
+            let mut state = self.recording_state()?;
+            // A stretch in a room is saved only by someone with a proof, who
+            // is in the room and could see the turn.
+            let room = state.record.room.map(EntityId::from_bytes).transpose()?;
+            if room.is_some() && owner.is_none() {
+                return Err(super::room::unbound_in_room(&self.session_ref));
             }
-            state
-                .record
-                .mode
-                .write_target()
-                .require_recording(&self.session_ref)?;
             // RETRY, ahead of the journal: a promoted turn's closure has
             // already been retired from the overlay, so planning it again would
             // fail with "no journaled turn" for a turn that IS promoted. The
             // durable receipt is the answer, and it stays the answer after
             // close. `FloorWrites::promote` re-reads it inside the write
             // transaction, which is where the atomicity of that decision lives;
-            // this read only spares the caller a plan it cannot build.
-            if let Some(receipt) = self.vault.off_record_promote_receipt(turn)? {
+            // this read only spares the caller a plan it cannot build. In a
+            // room only this stretch's own saved turns answer, so another
+            // room's receipt reads as a turn this stretch never had.
+            if (room.is_none() || state.record.promoted_turns.contains(turn.as_bytes()))
+                && let Some(receipt) = self.vault.off_record_promote_receipt(turn)?
+            {
+                // In a room the receipt answers only someone who could save
+                // the turn now: their proof holds, they own this vault, and
+                // their membership shows every moment of it.
+                if let (Some(room), Some(owner)) = (room, owner) {
+                    let times = state.kept_times(*turn);
+                    let txn = self.vault.store.env.read_txn()?;
+                    owner.revalidate_as_vault_owner_in_txn(self.vault, &txn)?;
+                    super::room::require_sight_in_txn(
+                        self.vault,
+                        &txn,
+                        &self.session_ref,
+                        room,
+                        owner.actor(),
+                        &times,
+                    )?;
+                }
                 return Ok(receipt.outcome);
             }
             // The snapshot is taken under the state lock, so the journal this
             // plan is cut from is the journal the commit below applies against.
-            let plan = self.entry.overlay.snapshot()?.plan_promotion(*turn)?;
-            let outcome = self.vault.with_write_txn_grouped(|wtxn| {
+            let snapshot = self.entry.overlay.snapshot()?;
+            let plan = snapshot.plan_promotion(*turn)?;
+            let times = super::room::turn_times(&snapshot, *turn);
+            drop(snapshot);
+            let mut outcomes = self.promote_plans(&mut state, vec![plan], |wtxn| {
                 if let Some(owner) = owner {
-                    owner.revalidate_in_txn(self.vault, wtxn)?;
+                    if room.is_some() {
+                        owner.revalidate_as_vault_owner_in_txn(self.vault, wtxn)?;
+                    } else {
+                        owner.revalidate_in_txn(self.vault, wtxn)?;
+                    }
+                    if let Some(room) = room {
+                        super::room::require_sight_in_txn(
+                            self.vault,
+                            wtxn,
+                            &self.session_ref,
+                            room,
+                            owner.actor(),
+                            &times,
+                        )?;
+                    }
                 }
-                FloorWrites::new(&self.vault.store).promote(
-                    self.vault,
-                    wtxn,
-                    &self.session_ref,
-                    &plan,
-                    self.vault.store.clock.now_recorded_at(),
-                )
+                Ok(())
             })?;
-            // Committed. Publish the RAM state, then drop the promoted rows and
-            // journal entries from the room — in that order, and never before.
-            // The receipt-first return above makes this the turn's first and
-            // only push: a second promote never reaches here.
-            state.record.promoted_turns.push(*turn.as_bytes());
-            self.entry.publish_state(&state);
-            // Best-effort for the same reason the window refresh below is: the
-            // subgraph and its receipt are already durable, so a failure to
-            // tidy the ROOM must not tell the caller their consented promotion
-            // did not happen. The un-retired rows are byte-identical to the
-            // base rows the replay just wrote and evaporate at close.
-            if let Err(error) = self.entry.overlay.retire_promoted_closure(&plan) {
-                tracing::warn!(
-                    turn = %turn.to_hex(),
-                    error = %error,
-                    "off-record promotion committed but overlay closure retirement deferred to close"
+            if let Some(owner) = owner {
+                post_notice(
+                    &mut state,
+                    super::types::OffRecordNoticeAct::SavedTurn,
+                    owner.actor(),
+                    self.vault.store.clock.now_recorded_at(),
                 );
+                self.entry.publish_state(&state);
             }
-            outcome
+            outcomes
+                .pop()
+                .map(|(_, outcome)| outcome)
+                .ok_or(Error::InvariantViolation(
+                    "a promote of one turn returned none",
+                ))?
         };
 
         // The promotion is durable here. The live-window refresh is best-effort
         // by contract: turning post-commit drift into an error would report a
         // failed promote for content that is committed and kept.
-        #[cfg(feature = "sync")]
-        if let Err(error) = self.vault.refresh_promoted_turn_in_live_window(turn) {
-            tracing::warn!(
-                turn = %turn.to_hex(),
-                error = %error,
-                "off-record promotion committed but live-window sync refresh deferred to recovery"
-            );
-        }
-
+        self.refresh_promoted_turns(&[*turn]);
         Ok(outcome)
+    }
+
+    /// The session state, refused when the room is closing or keeps nothing.
+    pub(super) fn recording_state(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, super::registry::OffRecordSessionEntryState>> {
+        let state = session_entry_state(&self.entry)?;
+        if state.record.closing || state.gone {
+            return Err(Error::OffRecord(OffRecordError::OffRecordSessionClosing {
+                session_ref: self.session_ref.clone(),
+            }));
+        }
+        state
+            .record
+            .mode
+            .write_target()
+            .require_recording(&self.session_ref)?;
+        Ok(state)
+    }
+
+    /// Replays `plans` into base in ONE write transaction, after `check`
+    /// passes inside it, then publishes them as promoted and retires them
+    /// from the room. The caller holds the state lock across selection and
+    /// this commit (state -> base writer, the one lock order).
+    ///
+    /// Nothing observable happens until the commit returns. Only then does
+    /// the record publish the turns as promoted and the overlay retire the
+    /// committed closures. A crash between the two is safe: the durable
+    /// receipts answer a retry, and a crashed process evaporates the overlay.
+    pub(super) fn promote_plans(
+        &self,
+        state: &mut super::registry::OffRecordSessionEntryState,
+        plans: Vec<crate::session_overlay::PromotePlan>,
+        check: impl FnOnce(&heed::RwTxn<'_>) -> Result<()>,
+    ) -> Result<Vec<(EntityId, PromoteOutcome)>> {
+        let outcomes = self.vault.with_write_txn_grouped(|wtxn| {
+            check(wtxn)?;
+            let floor = FloorWrites::new(&self.vault.store);
+            let promoted_at = self.vault.store.clock.now_recorded_at();
+            plans
+                .iter()
+                .map(|plan| {
+                    floor
+                        .promote(self.vault, wtxn, &self.session_ref, plan, promoted_at)
+                        .map(|outcome| (plan.turn(), outcome))
+                })
+                .collect::<Result<Vec<_>>>()
+        })?;
+        // Committed. Publish the RAM state, then drop the promoted rows and
+        // journal entries from the room — in that order, and never before.
+        for plan in &plans {
+            state.record.promoted_turns.push(*plan.turn().as_bytes());
+            let messages: Vec<(EntityId, u64, &[u8])> = plan
+                .ops
+                .iter()
+                .filter_map(|op| match op {
+                    crate::batch::BatchOp::Put {
+                        id,
+                        entity_type,
+                        occurred,
+                        data,
+                        ..
+                    } if *entity_type == crate::registry::ENTITY_TYPE_MESSAGE => {
+                        Some((*id, occurred.start, data.as_slice()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            state.keep_messages(plan.turn(), &messages);
+        }
+        self.entry.publish_state(state);
+        for plan in &plans {
+            // Best-effort for the same reason the window refresh is: the
+            // subgraph and its receipt are already durable, so a failure to
+            // tidy the ROOM must not tell the caller their consented promotion
+            // did not happen. The un-retired rows are byte-identical to the
+            // base rows the replay just wrote and evaporate at close.
+            if let Err(error) = self.entry.overlay.retire_promoted_closure(plan) {
+                tracing::warn!(
+                    turn = %plan.turn().to_hex(),
+                    error = %error,
+                    "off-record promotion committed but overlay closure retirement deferred to close"
+                );
+            }
+        }
+        Ok(outcomes)
+    }
+
+    /// Refreshes the live sync windows for turns whose promotion committed.
+    pub(super) fn refresh_promoted_turns(&self, turns: &[EntityId]) {
+        #[cfg(feature = "sync")]
+        for turn in turns {
+            if let Err(error) = self.vault.refresh_promoted_turn_in_live_window(turn) {
+                tracing::warn!(
+                    turn = %turn.to_hex(),
+                    error = %error,
+                    "off-record promotion committed but live-window sync refresh deferred to recovery"
+                );
+            }
+        }
+        #[cfg(not(feature = "sync"))]
+        let _ = turns;
     }
 
     pub fn close(self) -> Result<OffRecordCloseOutcome> {
