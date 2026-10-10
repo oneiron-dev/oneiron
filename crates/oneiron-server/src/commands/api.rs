@@ -49,6 +49,12 @@ pub(crate) const CURL_FLAGS: [&str; 3] = ["--silent", "--show-error", "--fail-wi
 /// [`CURL_FLAGS`] rather than a fourth entry inside it.
 pub(crate) const CURL_DISABLE_HOST_CONFIG: &str = "-q";
 
+/// curl also routes by the environment: an `http_proxy`, `https_proxy` or
+/// `all_proxy` the process inherited would receive the request, its bearer and
+/// its fresh holder proof, even for the loopback default. `-q` does not refuse
+/// those; `--noproxy *` does, so curl connects to the selected server itself.
+pub(crate) const CURL_NO_PROXY: [&str; 2] = ["--noproxy", "*"];
+
 /// The host's curl. There is no HTTP client dependency in this crate's CLI on
 /// purpose: a second HTTP stack would be a second set of defaults to explain.
 const CURL_PROGRAM: &str = "curl";
@@ -511,7 +517,7 @@ fn run_curl_output_inner(
 /// Starts curl for one request and hands it its config, returning the child
 /// and the staged body file it reads, which must outlive it. A captured
 /// request adds its own flags. The child inherits no variable the credential
-/// could be in.
+/// could be in, and no proxy setting routes it anywhere but the selected server.
 fn spawn_curl(
     program: &OsStr,
     request: &CurlRequest,
@@ -536,6 +542,7 @@ fn spawn_curl(
     // FIRST, before anything else: curl only honours the refusal there.
     command.arg(CURL_DISABLE_HOST_CONFIG);
     command.args(CURL_FLAGS);
+    command.args(CURL_NO_PROXY);
     command.arg("--request").arg(&request.method);
     if let Some(content_type) = request.content_type.as_deref() {
         command
