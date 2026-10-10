@@ -1111,3 +1111,74 @@ fn an_entity_write_never_lands_under_a_provisional_id() {
     );
     assert_eq!(found(&vault, "Mirela"), vec![(tagged, 0)]);
 }
+
+/// CodeRabbit on #1356, a substrate invariant of the sync door: a peer's row
+/// takes a provisional id only when it lands. One the time-range gate
+/// refuses is quarantined, and the provisional entity and the tags that name
+/// it are as they were; one that lands stands, and the provisional entity
+/// leaves the tags and is retired. Both cross the real Observer-B path.
+#[cfg(feature = "sync")]
+#[test]
+fn a_peers_row_takes_a_provisional_id_only_when_it_lands() {
+    use crate::sync::bridge::{Materializer, register_observer_b};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let vault = open(dir.path());
+    let tagger = Names::new(&["Mirela"]);
+    let tagged = witness(
+        &vault,
+        "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+        &[(0, "Mirela called")],
+    );
+    reconciler(&vault, &tagger).drain_once().expect("drain");
+    let mirela = minted(&tags(&vault, &tagged).mentions[0].link);
+    let doc = loro::LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _observers = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    let peer_row = |start: u64, end: u64| {
+        let mut blob = vec![crate::registry::ENTITY_TYPE_TASK];
+        for stamp in [start, end, end] {
+            blob.extend_from_slice(&stamp.to_be_bytes());
+        }
+        blob.extend(crate::habit::task_body_for_test(
+            crate::habit::TaskRole::Task,
+        ));
+        blob
+    };
+
+    crate::sync::loro_support::map_insert_bytes(
+        &doc.get_map("entities"),
+        &mirela.to_hex(),
+        &peer_row(9, 3),
+    )
+    .expect("a peer's row with an inverted range");
+    doc.commit();
+
+    assert!(
+        crate::sync::quarantine::quarantined_records(&vault)
+            .expect("quarantine")
+            .iter()
+            .any(|(_, record)| record.reason_code == "InvalidTimeRange")
+    );
+    assert_eq!(vault.get(&mirela).expect("read"), None);
+    assert_eq!(
+        vault
+            .provisional_entity(&mirela)
+            .expect("read")
+            .map(|entity| entity.name),
+        Some("Mirela".to_owned())
+    );
+    assert_eq!(found(&vault, "Mirela"), vec![(tagged, 0)]);
+
+    crate::sync::loro_support::map_insert_bytes(
+        &doc.get_map("entities"),
+        &mirela.to_hex(),
+        &peer_row(9, 9),
+    )
+    .expect("the peer's row again, well formed");
+    doc.commit();
+
+    assert!(vault.get(&mirela).expect("read").is_some());
+    assert_eq!(vault.provisional_entity(&mirela).expect("read"), None);
+    assert_eq!(tags(&vault, &tagged).mentions[0].link, MentionLink::Tag);
+}

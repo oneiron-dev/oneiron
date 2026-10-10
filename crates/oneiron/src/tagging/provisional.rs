@@ -268,19 +268,17 @@ fn rehome_in_txn(
 }
 
 /// A provisional id is held until it is confirmed, resolved or retired, so
-/// an entity write never lands under one. A local write is refused. A
-/// replicated one came from another device, which never saw this one's
+/// an entity write never lands under one, except a replicated one. A
+/// replicated row came from another device, which never saw this one's
 /// provisional entities: the synced row stands, and the local entity leaves
-/// every tag set and is retired.
-pub(crate) fn hold_id_in_txn(
+/// every tag set and is retired. The put runs this past every check that can
+/// reject the row remotely, since a rejected replicated put is quarantined
+/// and its transaction commits: a row that never lands takes nothing.
+pub(crate) fn release_held_id_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
-    replicated: bool,
 ) -> Result<()> {
-    if !replicated {
-        return refuse_held_id_in_txn(store, txn, id);
-    }
     if PROVISIONAL.contains(store, txn, id)? {
         tags::strip_in_txn(store, txn, id)?;
         retire_in_txn(store, txn, id)?;

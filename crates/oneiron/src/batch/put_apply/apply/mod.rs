@@ -133,8 +133,11 @@ pub(in crate::batch) fn apply_put(
     // same write origin the K4 decode-point guard reads.
     reject_overlay_member_base_write(store, &id, origin)?;
     // A provisional entity's id is held for its confirmation, on the same
-    // choke point, so no claim candidate or replay lands under it either.
-    crate::tagging::hold_id_in_txn(store, wtxn, &id, replicated)?;
+    // choke point, so no local claim candidate lands under it either. A
+    // replicated row takes the id at the pre-write site below.
+    if !replicated {
+        crate::tagging::refuse_held_id_in_txn(store, wtxn, &id)?;
+    }
     validate_refinement_admission(
         store,
         wtxn,
@@ -630,6 +633,12 @@ pub(in crate::batch) fn apply_put(
         }
     }
 
+    // Past every check that can reject this row remotely: a replicated row
+    // under a provisional id retires the local provisional entity only when
+    // it lands (see `release_held_id_in_txn`).
+    if replicated {
+        crate::tagging::release_held_id_in_txn(store, wtxn, &id)?;
+    }
     crate::ingest::invalidate_docs_source_before_put(store, wtxn, &id, entity_type, data)?;
 
     // ONE-1449 MATERIAL-6 R1: staged in the SAME transaction as the body it
