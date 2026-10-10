@@ -15,7 +15,8 @@
 //! ledger lands only what is new. A claim stays while landing fails, and
 //! for a few passes while its log ends mid-line; the next pass takes it up.
 //! A claim that waits past the decoded budget keeps where it sorts and what
-//! it decodes to, so it is read again only to land.
+//! it decodes to, with a stamp of its logs, so it is read again only to land
+//! while its logs stay as they were.
 
 use std::collections::{BTreeSet, VecDeque};
 use std::ffi::OsStr;
@@ -34,7 +35,8 @@ use serde::{Deserialize, Serialize};
 
 use super::confined::open_file;
 use super::{
-    Decoded, ImportWarning, QueuedSession, Totals, below, earliest_first, order_key, read_queued,
+    Decoded, ImportWarning, QueuedSession, Totals, below, earliest_first, order_key, queued_stamp,
+    read_queued,
 };
 use crate::config::{ImportConfig, ServeConfig};
 use crate::server::SyncServer;
@@ -67,14 +69,16 @@ struct Entry {
 }
 
 /// What a pass that read a log keeps of it while it waits: enough to choose
-/// what lands without reading it again. Only a hint: the earliest claim is
-/// read whatever its place says, and a log that starts elsewhere or grew past
-/// what is left when it is read waits to be placed anew.
-#[derive(Serialize, Deserialize, Clone, Copy)]
+/// what lands without reading it again. It holds while the stamp of the
+/// session's logs does; a pass places a claim whose logs changed anew before
+/// it chooses. The earliest claim is read whatever its place says.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 struct Place {
     /// When its earliest conversation started, then ended.
     first: (u64, u64),
     size: Decoded,
+    /// The session's logs as they were read.
+    stamp: String,
 }
 
 /// `oneiron import <source> <log> --queue`: checks what `serve` will check,
@@ -187,6 +191,7 @@ impl Claimed {
         let first = self
             .entry
             .place
+            .as_ref()
             .map_or((u64::MAX, u64::MAX), |place| place.first);
         (first, &self.name)
     }
@@ -194,17 +199,15 @@ impl Claimed {
     fn size(&self) -> Decoded {
         self.entry
             .place
+            .as_ref()
             .map_or_else(Decoded::default, |place| place.size)
-    }
-
-    fn start(&self) -> u64 {
-        self.order().0.0
     }
 }
 
-/// Lets go of what is held decoded past the budget, counting from `ahead`:
-/// what sorts after the budget is spent cannot land this pass.
-fn release(claimed: &mut VecDeque<Claimed>, mut ahead: Decoded, budget: Decoded) {
+/// Lets go of what is held decoded past the budget: what sorts after the
+/// budget is spent cannot land this pass.
+fn release(claimed: &mut VecDeque<Claimed>, budget: Decoded) {
+    let mut ahead = Decoded::default();
     for held in claimed {
         ahead = ahead.and(held.size());
         if !ahead.within(budget) {
@@ -274,16 +277,7 @@ impl ImportQueue {
             anyhow::anyhow!("a claim kept for the next pass is unwritten: {error}")
         };
         let mut kept = Ok(());
-        for mut held in waits.into_iter().filter(|held| held.placed) {
-            // A log with no start yet has nothing to sort by: the pass that
-            // reads it next places it again.
-            if held
-                .entry
-                .place
-                .is_some_and(|place| place.first.0 == u64::MAX)
-            {
-                held.entry.place = None;
-            }
+        for held in waits.iter().filter(|held| held.placed) {
             kept = kept.and(rewrite(&dir, &held.name, &held.entry));
         }
         if landing.is_empty() {
@@ -323,9 +317,6 @@ impl ImportQueue {
         for (mut held, mid_line) in done {
             if mid_line && held.entry.passes < MID_LINE_PASSES {
                 held.entry.passes += 1;
-                // Its log is still being written: the next pass places it
-                // again once it has read the rest.
-                held.entry.place = None;
                 kept = kept.and(rewrite(&dir, &held.name, &held.entry));
             } else {
                 remove(&dir, &held.name);
@@ -336,14 +327,24 @@ impl ImportQueue {
 
     /// Claims every entry waiting and chooses what lands: the earliest that
     /// fit the decoded budget, and always the first, whatever its claim says
-    /// it holds. A pass reads each log at most once; the rest wait.
+    /// it holds. A pass reads each log at most once; the rest wait. It holds
+    /// at most the budget decoded, besides the one entry it is reading, which
+    /// the reader bounds at the decoded limit.
     fn choose(&self, dir: &OwnedFd) -> anyhow::Result<Chosen> {
         let mut claimed = VecDeque::new();
         let mut unplaced = Vec::new();
         for name in waiting(dir)? {
-            let Some(entry) = take(dir, &name) else {
+            let Some(mut entry) = take(dir, &name) else {
                 continue;
             };
+            // A place holds only while the session's logs are as they were.
+            if entry
+                .place
+                .as_ref()
+                .is_some_and(|place| self.stamp(&entry).as_ref() != Some(&place.stamp))
+            {
+                entry.place = None;
+            }
             let held = Claimed {
                 name,
                 entry,
@@ -366,7 +367,7 @@ impl ImportQueue {
             held.read = Some(read);
             let at = claimed.partition_point(|known| known.order() < held.order());
             claimed.insert(at, held);
-            release(&mut claimed, Decoded::default(), self.budget);
+            release(&mut claimed, self.budget);
         }
 
         let mut ahead = Decoded::default();
@@ -384,14 +385,18 @@ impl ImportQueue {
             let read = match held.read.take() {
                 Some(read) => read,
                 None => {
-                    let start = held.start();
+                    let kept = held.entry.place.clone();
                     let Some(read) = self.read(dir, &mut held) else {
                         continue;
                     };
-                    // A log that starts elsewhere now sorts elsewhere, and
-                    // one that grew may no longer fit: it waits, placed anew.
-                    let fits = landing.is_empty() || ahead.and(held.size()).within(self.budget);
-                    if held.start() != start || !fits {
+                    // Its logs changed since this pass stamped them, or its
+                    // claim said otherwise: it waits, placed anew, and nothing
+                    // chosen that sorts after it lands before it.
+                    if held.entry.place != kept {
+                        let after = landing.partition_point(|(chosen, _): &(Claimed, Log)| {
+                            chosen.order() < held.order()
+                        });
+                        waits.extend(landing.drain(after..).map(|(chosen, _)| chosen));
                         waits.push(held);
                         continue;
                     }
@@ -400,8 +405,6 @@ impl ImportQueue {
             };
             ahead = ahead.and(held.size());
             landing.push((held, read));
-            // A log that grew holds more than its claim said.
-            release(&mut claimed, ahead, self.budget);
         }
         Ok(Chosen { landing, waits })
     }
@@ -424,6 +427,14 @@ impl ImportQueue {
             self.dir.display()
         );
         Ok(Some(dir))
+    }
+
+    /// The stamp of an entry's logs as they are now; `None` when they cannot
+    /// be found, which a read then says.
+    fn stamp(&self, entry: &Entry) -> Option<String> {
+        let source = HistorySource::parse(&entry.source)?;
+        let root = self.config.root_for(source)?;
+        queued_stamp(source, &root, &entry.path).ok()
     }
 
     /// Reads a claimed entry's log and places it. One that cannot be read is
@@ -451,7 +462,11 @@ impl ImportQueue {
                     .map(order_key)
                     .min()
                     .map_or((u64::MAX, u64::MAX), |(started, ended, _)| (started, ended));
-                held.entry.place = Some(Place { first, size });
+                held.entry.place = Some(Place {
+                    first,
+                    size,
+                    stamp: read.session.stamp.clone(),
+                });
                 held.placed = true;
                 Some(read)
             }

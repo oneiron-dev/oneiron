@@ -351,7 +351,7 @@ fn read_log(file: &File, shown: &Path) -> anyhow::Result<Result<String, ImportWa
 
 /// What decoded conversations hold in memory: their messages, and every
 /// byte they keep, titles and ids included.
-#[derive(Default, Clone, Copy, Serialize, Deserialize)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 struct Decoded {
     messages: usize,
     bytes: usize,
@@ -411,7 +411,8 @@ use confined::{open_in, walk_logs};
 pub(super) mod queue;
 
 /// A queued session as read: its conversations, whether a log ended
-/// mid-line, and each log left out for being over [`MAX_LOG_BYTES`].
+/// mid-line, each log left out for being over [`MAX_LOG_BYTES`], and the
+/// stamp of the logs it read.
 #[cfg(unix)]
 #[derive(Default)]
 struct QueuedSession {
@@ -420,27 +421,21 @@ struct QueuedSession {
     /// or a subagent's, which a later pass reads whole.
     mid_line: bool,
     left_out: Vec<ImportWarning>,
+    stamp: String,
 }
 
-/// One session log queued for a running `serve`, read only below `root`:
-/// `path` must name a session log there, and every folder between `root` and
-/// it is opened relative to the one above and never through a link. A Claude
-/// Code session brings its own subagent logs from the folder beside it. A
+/// One session log queued for a running `serve`, read only below `root`. A
 /// log over [`MAX_LOG_BYTES`], the session's or a subagent's, is left out, as
 /// in a folder import, and the rest of the session lands.
 #[cfg(unix)]
 fn read_queued(source: HistorySource, root: &Path, path: &Path) -> anyhow::Result<QueuedSession> {
-    let relative = below(root, path)?;
-    anyhow::ensure!(
-        session_log_name(source, path),
-        "{} is not a {} session log",
-        path.display(),
-        source.source_id()
-    );
     let mut session = QueuedSession::default();
+    let mut stamp = Stamp::default();
     let mut decoded = Decoded::default();
-    let mut add = |file: &File, shown: &Path| -> anyhow::Result<()> {
-        let text = match read_log(file, shown)? {
+    queued_logs(source, root, path, &mut |shown: &Path, file: File| {
+        // Taken before the read: a log that grows during it stamps older.
+        stamp.add(&file, shown)?;
+        let text = match read_log(&file, shown)? {
             Ok(text) => text,
             Err(left_out) => {
                 session.left_out.push(left_out);
@@ -461,10 +456,42 @@ fn read_queued(source: HistorySource, root: &Path, path: &Path) -> anyhow::Resul
         );
         session.conversations.extend(read);
         Ok(())
-    };
+    })?;
+    session.stamp = stamp.finish();
+    Ok(session)
+}
+
+/// The stamp of a queued session's logs as they are now, read from their
+/// metadata alone: what [`read_queued`] would stamp them.
+#[cfg(unix)]
+fn queued_stamp(source: HistorySource, root: &Path, path: &Path) -> anyhow::Result<String> {
+    let mut stamp = Stamp::default();
+    queued_logs(source, root, path, &mut |shown: &Path, file: File| {
+        stamp.add(&file, shown)
+    })?;
+    Ok(stamp.finish())
+}
+
+/// Visits each log of a queued session: `path` must name a session log below
+/// `root`, and every folder between `root` and it is opened relative to the
+/// one above and never through a link. A Claude Code session brings its own
+/// subagent logs from the folder beside it.
+#[cfg(unix)]
+fn queued_logs(
+    source: HistorySource,
+    root: &Path,
+    path: &Path,
+    visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let relative = below(root, path)?;
+    anyhow::ensure!(
+        session_log_name(source, path),
+        "{} is not a {} session log",
+        path.display(),
+        source.source_id()
+    );
     let (dir, file) = confined::open_below(root, relative)?;
-    add(&file, path)?;
-    drop(file);
+    visit(path, file)?;
     if source == HistorySource::ClaudeCode
         && let Some(stem) = path.file_stem()
         && let Some(folder) = confined::open_dir_in(&dir, stem)?
@@ -477,11 +504,54 @@ fn read_queued(source: HistorySource, root: &Path, path: &Path) -> anyhow::Resul
                 if !session_log_name(source, shown) {
                     return Ok(());
                 }
-                add(&file, shown)
+                visit(shown, file)
             },
         )?;
     }
-    Ok(session)
+    Ok(())
+}
+
+/// What a queued session's logs are: each one's path, file, length and
+/// times, hashed in a stable order. Logs whose stamp did not change decode
+/// to the same conversations.
+#[cfg(unix)]
+#[derive(Default)]
+struct Stamp(Vec<(std::path::PathBuf, [i128; 6])>);
+
+#[cfg(unix)]
+impl Stamp {
+    fn add(&mut self, file: &File, shown: &Path) -> anyhow::Result<()> {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = file
+            .metadata()
+            .map_err(|error| anyhow::anyhow!("read {}: {error}", shown.display()))?;
+        self.0.push((
+            shown.to_path_buf(),
+            [
+                i128::from(metadata.ino()),
+                i128::from(metadata.len()),
+                i128::from(metadata.mtime()),
+                i128::from(metadata.mtime_nsec()),
+                i128::from(metadata.ctime()),
+                i128::from(metadata.ctime_nsec()),
+            ],
+        ));
+        Ok(())
+    }
+
+    fn finish(mut self) -> String {
+        self.0.sort();
+        let mut hasher = blake3::Hasher::new();
+        for (path, fields) in &self.0 {
+            let path = path.as_os_str().as_encoded_bytes();
+            hasher.update(&path.len().to_le_bytes());
+            hasher.update(path);
+            for field in fields {
+                hasher.update(&field.to_le_bytes());
+            }
+        }
+        hasher.finalize().to_hex()[..32].to_owned()
+    }
 }
 
 /// A log whose last record is not whole yet.

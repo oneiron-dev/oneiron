@@ -117,6 +117,11 @@ fn session_id(log: u32) -> String {
 /// Message `message` of session `log`, one whole record: said on day `log`
 /// of the month, a minute after the one before.
 fn record(log: u32, message: usize) -> String {
+    said(log, message, log)
+}
+
+/// Message `message` of session `log`, said on `day` of the month.
+fn said(log: u32, message: usize, day: u32) -> String {
     let role = if message.is_multiple_of(2) {
         "user"
     } else {
@@ -129,7 +134,7 @@ fn record(log: u32, message: usize) -> String {
     };
     format!(
         "{{\"parentUuid\":{parent},\"isSidechain\":false,\"type\":\"{role}\",\"uuid\":\"{}\",\
-         \"sessionId\":\"{}\",\"timestamp\":\"2026-09-{log:02}T08:{message:02}:00.000Z\",\
+         \"sessionId\":\"{}\",\"timestamp\":\"2026-09-{day:02}T08:{message:02}:00.000Z\",\
          \"message\":{{\"role\":\"{role}\",\"content\":\"note {message} of session {log}\"}}}}\n",
         uuid(message),
         session_id(log),
@@ -210,6 +215,7 @@ fn a_claim_that_says_it_holds_more_than_a_pass_does_not_stop_the_queue() {
                 messages: usize::MAX,
                 bytes: usize::MAX,
             },
+            stamp: queued_stamp(HistorySource::ClaudeCode, &bench.root, &first).unwrap(),
         },
     );
     bench.write(&second, 2, 0..2);
@@ -227,9 +233,9 @@ fn a_claim_that_says_it_holds_more_than_a_pass_does_not_stop_the_queue() {
     assert!(bench.waiting().is_empty());
 }
 
-/// Sol 1354 F3: a log read once in a pass is not read again in it, even when
-/// the claim that sorted before it and spent the budget is gone by the time
-/// it would land. It lands on the next pass.
+/// Sol 1354 F3: a log is read once to land, even when the claim that sorted
+/// before it and would have spent the budget is gone by then: the pass sees
+/// that before it chooses, and the later log lands at once.
 #[test]
 fn a_pass_reads_a_log_once_even_when_what_sorted_before_it_is_gone() {
     let bench = Bench::new(Decoded {
@@ -255,10 +261,46 @@ fn a_pass_reads_a_log_once_even_when_what_sorted_before_it_is_gone() {
         1,
         "{reads:?}"
     );
-    let (landed, reads) = bench.pass(&vault);
-    landed.unwrap();
-    assert_eq!(reads, [logs[2].clone()]);
     assert_eq!(messages(&vault), 6);
+    assert!(bench.waiting().is_empty());
+}
+
+/// Sol 1354 R2-1, R2-2: a claim keeps its place only while its session's
+/// logs stay as they were. Here a waiting session gains a record said before
+/// it started (Claude Code hands a queued prompt over late, with the time it
+/// was typed), so it now starts before a session queued since. It is placed
+/// anew before the pass chooses, and lands first.
+#[test]
+fn a_waiting_claim_whose_logs_changed_is_placed_anew_before_a_pass_chooses() {
+    let bench = Bench::new(Decoded {
+        messages: 4,
+        bytes: usize::MAX,
+    });
+    let vault = bench.vault();
+    let (first, changed, later) = (bench.log(1), bench.log(9), bench.log(5));
+    bench.write(&first, 1, 0..4);
+    bench.hand_over(&first);
+    bench.write(&changed, 9, 0..2);
+    bench.hand_over(&changed);
+    bench.pass(&vault).0.unwrap();
+    assert_eq!(bench.waiting(), names(&[&changed]));
+
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&changed)
+        .unwrap()
+        .write_all(said(9, 2, 2).as_bytes())
+        .unwrap();
+    bench.write(&later, 5, 0..2);
+    bench.hand_over(&later);
+    bench.pass(&vault).0.unwrap();
+    assert_eq!(
+        bench.waiting(),
+        names(&[&later]),
+        "the changed session starts first now, so it lands first"
+    );
+    bench.pass(&vault).0.unwrap();
+    assert_eq!(messages(&vault), 9);
     assert!(bench.waiting().is_empty());
 }
 
