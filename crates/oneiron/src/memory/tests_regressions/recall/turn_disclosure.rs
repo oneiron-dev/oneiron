@@ -41,6 +41,15 @@ fn a_disclosure_clamp_keeps_out_a_turn_holding_a_withheld_message() {
     vault
         .create_counterparty_contact(&contact, &record)
         .expect("create contact");
+    // A clearance that admits every tier-B record, so only the tier-A mark
+    // can withhold the turn.
+    vault
+        .set_counterparty_disclosure_scope(
+            &contact,
+            &crate::disclosure::DisclosureScope::new(crate::federation::Scope::top(), "test", 10)
+                .expect("clearance"),
+        )
+        .expect("clear the contact");
     let supervised = || {
         crate::disclosure::DisclosureContext::resolve(
             &vault,

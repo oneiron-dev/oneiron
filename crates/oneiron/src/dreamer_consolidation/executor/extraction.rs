@@ -139,6 +139,15 @@ Each evidence ref names a source id and either a UTF-8 byte range in the display
                 locators.iter().map(|entry| entry.source_id()).collect();
             evidence_turn_refs.sort_unstable();
             evidence_turn_refs.dedup();
+            // A claim drawn from two projects' turns has no one audience, and
+            // a project-bound branch writes only its own project's.
+            let Some(project) = resources.evidence_project(&evidence_turn_refs)? else {
+                tracing::warn!(
+                    target: "oneiron::dreamer",
+                    "extracted candidate's sources share no one branch project; not written"
+                );
+                continue;
+            };
 
             let mut candidate =
                 ClaimCandidate::new(predicate, ClaimSubject::Entity(subject), value, confidence);
@@ -158,6 +167,12 @@ Each evidence ref names a source id and either a UTF-8 byte range in the display
             if let Some(topic) = item.get("topic_key").filter(|value| !value.is_null()) {
                 fields.push((Value::from("topic_key"), json_to_rmpv(topic)));
             }
+            if project != crate::claim::default_project_id() {
+                fields.push((
+                    Value::from(SCOPE_PROJECT_KEY),
+                    Value::Binary(project.as_bytes().to_vec()),
+                ));
+            }
             if !fields.is_empty() {
                 candidate = candidate.with_scope(Value::Map(fields));
             }
@@ -170,6 +185,7 @@ Each evidence ref names a source id and either a UTF-8 byte range in the display
                 partition.world_ref,
                 partition.facet_ref,
                 rel,
+                facts.project,
                 facts.topic.as_deref(),
             )?;
             candidates.push(super::super::evidence::ExtractedCandidate::new(
