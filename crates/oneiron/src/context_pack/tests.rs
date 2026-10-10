@@ -1832,44 +1832,62 @@ fn n3_unknown_counterparty_yields_empty_pack_not_error() -> Result<()> {
     Ok(())
 }
 
+/// ILDF2 room rule (ONE-1646): `disclosable_set = public ∪ (∩ clearances
+/// of every non-owner present)`. The guest's clearance bounds what an
+/// assembly with that guest present discloses, owner present or not: owner
+/// presence is not an explicit owner request (P6). A positively public record
+/// stays in the set under any clearance, and a wider clearance admits the
+/// record on the next assembly with no sticky state.
 #[test]
-fn n7_owner_drop_flips_on_next_assembly_with_no_sticky_state() -> Result<()> {
+fn n7_owner_presence_never_widens_a_guest_clearance() -> Result<()> {
     let (_tmp, vault) = open_test_vault();
     let contact_id = disclosure_id(0xC3);
     seed_disclosure_contact(&vault, contact_id, "kenji@example.com");
     let diary = disclosure_id(0xDA);
     put_disclosure_turn(&vault, &diary, "tier b private memory needle7");
+    let subject = disclosure_id(0xDB);
+    put_disclosure_turn(&vault, &subject, "subject turn");
+    let public = disclosure_id(0xDC);
+    put_disclosure_claim(
+        &vault,
+        &public,
+        subject,
+        "profile.city",
+        "public city needle7",
+        Some("public"),
+    );
     let scope =
         crate::disclosure::DisclosureScope::new(crate::federation::Scope::default(), "party", 100)?;
     vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
+    let assemble = |ctx: DisclosureContext| {
+        vault
+            .context_pack()
+            .search_text("needle7", 10)
+            .disclosure_context(ctx)
+            .run()
+    };
 
-    // Assembly 1 — supervised: Tier B present.
-    let supervised = supervised_ctx_for_contact(&vault, contact_id);
-    let pack = vault
-        .context_pack()
-        .search_text("needle7", 10)
-        .disclosure_context(supervised)
-        .run()?;
-    assert!(pack_ids(&pack).contains(&diary), "supervised admits Tier B");
+    for (ctx, case) in [
+        (
+            supervised_ctx_for_contact(&vault, contact_id),
+            "owner present",
+        ),
+        (absence_ctx_for_contact(&vault, contact_id), "owner absent"),
+    ] {
+        let pack = assemble(ctx)?;
+        assert_id_absent_everywhere(&pack, &diary, case);
+        assert!(pack_ids(&pack).contains(&public), "public stays: {case}");
+    }
 
-    // Assembly 2 — owner dropped: same query, id absent.
-    let clamped = absence_ctx_for_contact(&vault, contact_id);
-    let pack = vault
-        .context_pack()
-        .search_text("needle7", 10)
-        .disclosure_context(clamped)
-        .run()?;
-    assert_id_absent_everywhere(&pack, &diary, "owner-drop flip");
-
-    // Assembly 3 — owner back: present again (mode is request-keyed, no
-    // cache to poison).
-    let supervised = supervised_ctx_for_contact(&vault, contact_id);
-    let pack = vault
-        .context_pack()
-        .search_text("needle7", 10)
-        .disclosure_context(supervised)
-        .run()?;
-    assert!(pack_ids(&pack).contains(&diary), "flip back is stateless");
+    let scope =
+        crate::disclosure::DisclosureScope::new(crate::federation::Scope::top(), "party", 200)?;
+    vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
+    for ctx in [
+        supervised_ctx_for_contact(&vault, contact_id),
+        absence_ctx_for_contact(&vault, contact_id),
+    ] {
+        assert!(pack_ids(&assemble(ctx)?).contains(&diary), "cleared");
+    }
     Ok(())
 }
 

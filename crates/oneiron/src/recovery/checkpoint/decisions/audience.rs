@@ -8,9 +8,7 @@ use crate::counterparty_contact::read_counterparty_contact_in_txn;
 use crate::disclosure::{DisclosureContext, DisclosureMode};
 use crate::edge::EdgeKind;
 use crate::federation::Scope;
-use crate::interlocutor::{
-    Interlocutor, InterlocutorPartyInput, InterlocutorResolutionInput, InterlocutorSet,
-};
+use crate::interlocutor::{InterlocutorPartyInput, InterlocutorResolutionInput};
 use crate::ports::EntityStoreRead;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_COUNTERPARTY_CONTACT,
@@ -139,8 +137,8 @@ fn participants(vault: &Vault, txn: &heed::RoTxn<'_>, relationship: EntityId) ->
 
 /// How a context assembly clamps what it discloses to the parties present
 /// (`Vault::resolve_interlocutors`, then `DisclosureContext::resolve`): the
-/// owner alone, supervised, or clamped to the met clearance of every
-/// non-owner, as a sender on a channel identity resolves to a contact or
+/// owner alone, or clamped to the met clearance of every non-owner whether
+/// or not the owner is present too, as a sender on a channel identity resolves to a contact or
 /// none, and as a voice session's roster resolves its speakers, with the
 /// owner's session present or not.
 pub(super) struct DisclosureClamps;
@@ -158,7 +156,7 @@ pub(super) enum Party {
 pub(super) struct Clamp {
     mode: DisclosureMode,
     /// The met clearance a scoped admission checks records against.
-    scope: Option<Scope>,
+    scope: Scope,
 }
 
 impl Decision for DisclosureClamps {
@@ -220,30 +218,23 @@ impl Decision for DisclosureClamps {
                 let context = DisclosureContext::resolve(vault, set).ok()?;
                 Some(Clamp {
                     mode: context.mode(),
-                    scope: context.scope().cloned(),
+                    scope: context.scope().clone(),
                 })
             })
             .collect())
     }
 
     fn loosens(live: &Clamp, restored: &Clamp) -> bool {
-        // Each mode admits all a narrower one does: the owner alone sees
-        // everything, a supervised assembly every record below tier A, and
-        // one the owner is absent from what the met clearance admits.
+        // The owner alone sees everything; any other audience sees what the
+        // met clearance admits below tier A, owner present or not.
         let reach = |mode: DisclosureMode| match mode {
-            DisclosureMode::OwnerAlone => 2,
-            DisclosureMode::Supervised => 1,
-            DisclosureMode::AbsenceClamp => 0,
+            DisclosureMode::OwnerAlone => 1,
+            DisclosureMode::Supervised | DisclosureMode::AbsenceClamp => 0,
         };
         match reach(restored.mode).cmp(&reach(live.mode)) {
             Ordering::Greater => true,
             Ordering::Less => false,
-            // Where a clearance is checked, none admits nothing.
-            Ordering::Equal => match (&live.scope, &restored.scope) {
-                (None, Some(_)) => true,
-                (Some(live), Some(restored)) => !restored.is_narrowing_of(live),
-                _ => false,
-            },
+            Ordering::Equal => !restored.scope.is_narrowing_of(&live.scope),
         }
     }
 }
@@ -269,10 +260,9 @@ fn rosters(vault: &Vault) -> Result<BTreeMap<Vec<u8>, Option<String>>> {
     Ok(rosters)
 }
 
-/// Whether a claim reaches a party the owner supervises
-/// (`DisclosureContext::admits` under a supervised presence): a signed
-/// history control never does, nor one the tier rules hold to tier A by its
-/// sensitivity band or predicate. The rest of what the clamp reads of a
+/// Whether a claim may reach anyone but the owner alone at all
+/// (`DisclosureContext::below_tier_a`): a signed history control never does,
+/// nor one the tier rules hold to tier A by its sensitivity band or predicate. The rest of what the clamp reads of a
 /// record does not move under one id: its kind and its birth scope stay, and
 /// its tier-A mark is a refused family.
 pub(super) struct DisclosureTiers;
@@ -289,16 +279,11 @@ impl Decision for DisclosureTiers {
         vault: &Vault,
         subjects: &BTreeSet<Self::Subject>,
     ) -> Result<Vec<Option<Self::Answer>>> {
-        let supervised = DisclosureContext::resolve(
-            vault,
-            InterlocutorSet::with_session_owner(vec![Interlocutor::unknown(String::new(), false)]),
-        )?;
         let txn = vault.store.env.read_txn()?;
         Ok(subjects
             .iter()
             .map(|id| {
-                supervised
-                    .admits(&vault.store, &txn, id, ENTITY_TYPE_CLAIM, None)
+                DisclosureContext::below_tier_a(&vault.store, &txn, id, ENTITY_TYPE_CLAIM, None)
                     .ok()
             })
             .collect())
