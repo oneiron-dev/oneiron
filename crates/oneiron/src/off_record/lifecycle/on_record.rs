@@ -11,7 +11,7 @@ use std::cell::Cell;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, OffRecordError, Result};
-use crate::session_overlay::SessionWriteRoute;
+use crate::session_overlay::{RouteTarget, SessionWriteRoute};
 
 use super::registry::session_entry_state;
 use super::room::{is_member_in_txn, post_notice};
@@ -139,10 +139,26 @@ impl<'vault> OffRecordSession<'vault> {
         Ok((route, saver.map(|saver| self.check_saver(saver))))
     }
 
-    /// The check a landing in base runs while this stretch's room is on
-    /// record; `None` otherwise.
-    pub(crate) fn saver_check(&self) -> Result<Option<SaverCheck<'_, 'vault>>> {
-        Ok(self.on_record_saver()?.map(|saver| self.check_saver(saver)))
+    /// The check a write on `route`, a route taken earlier, runs in its
+    /// transaction while this stretch's room is on record; `None` otherwise.
+    /// The saver is the one `route` lands under: it is read with `route`
+    /// checked, under one lock, so saving that stopped since refuses here
+    /// rather than reading as no saver at all. Only the saver's door puts a
+    /// room on record, so a room's base route with no saver refuses too.
+    pub(crate) fn saver_check_for(
+        &self,
+        route: &SessionWriteRoute,
+    ) -> Result<Option<SaverCheck<'_, 'vault>>> {
+        let state = session_entry_state(&self.entry)?;
+        route.revalidate()?;
+        if route.target() != RouteTarget::Base || state.record.room.is_none() {
+            return Ok(None);
+        }
+        let saver = state.saver.clone().ok_or(Error::InvariantViolation(
+            "a room on record has no saver",
+        ))?;
+        drop(state);
+        Ok(Some(self.check_saver(saver)))
     }
 
     fn check_saver(&self, saver: OnRecordSaver) -> SaverCheck<'_, 'vault> {
