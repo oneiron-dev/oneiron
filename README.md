@@ -40,6 +40,9 @@ that applications can embed or run as a daemon.
   approval of an import batch or an agent run. A running server offers the same
   actions under `/v1/owner`, except two: restore is CLI-only, and export is
   `POST /v1/core/facade/export`. None of them needs a model. See [docs/ops/owner-actions.md](./docs/ops/owner-actions.md).
+- **Agents over MCP.** `oneiron mcp` connects Claude Code and Codex to a
+  running vault over stdio, with a scoped, revocable agent credential from
+  `oneiron token agent`. See [docs/ops/connect-an-agent.md](./docs/ops/connect-an-agent.md).
 
 These are implemented APIs and components. Oneiron is pre-release.
 

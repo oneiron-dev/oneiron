@@ -164,24 +164,37 @@ pub(super) async fn redeem(
     let token = slip.to_token().map_err(|_| ApiError::unauthorized())?;
     // The already redeemed/logged slip is the credential. MCP registration
     // only records its immutable adapter ceiling; it creates no authority.
-    register_paired_mcp(&server, &slip, &token).await?;
+    if let Some(record) = paired_mcp_record(&slip.claims)? {
+        server
+            .mcp_registry
+            .lock()
+            .await
+            .register(&token, record)
+            .map_err(|_| ApiError::unauthorized())?;
+    }
     Ok(Json(Paired { token }))
 }
-async fn register_paired_mcp(
-    server: &SyncServer,
-    slip: &oneiron::authority::CapabilitySlip,
-    token: &str,
-) -> Result<(), ApiError> {
+
+/// The MCP adapter record a paired slip's claims map to, or `None` for a slip
+/// the adapter cannot represent. The one rule for redeem and for a slip the
+/// registry learns later ([`register_live_paired_mcp`]).
+fn paired_mcp_record(
+    claims: &oneiron::authority::SlipClaims,
+) -> Result<Option<crate::mcp::McpConnectorActorRecord>, ApiError> {
     use oneiron::federation::{ScopeAxis, ScopeId};
-    let claims = &slip.claims;
-    if claims.org_ref.is_some() || !claims.scope.verbs.contains(&"read".to_owned()) {
-        return Ok(());
+    // `read` and `core:read` are one scope on every other door
+    // (`CoreAuth::from_verified`); this one reads both spellings too.
+    let reads = ["read", crate::auth::CoreScope::Read.as_str()]
+        .into_iter()
+        .any(|verb| claims.scope.verbs.contains(&verb.to_owned()));
+    if claims.org_ref.is_some() || !reads {
+        return Ok(None);
     }
     let class = match claims.actor_class.as_deref() {
         Some("human") => oneiron::EdgeActorClass::Human,
         Some("agent") => oneiron::EdgeActorClass::Agent,
         Some("system") => oneiron::EdgeActorClass::System,
-        _ => return Ok(()),
+        _ => return Ok(None),
     };
     // This MCP adapter can represent only all or one id on each legacy axis.
     // Other paired instruments still work on the canonical /v1 read door.
@@ -192,24 +205,59 @@ async fn register_paired_mcp(
     };
     let (Some(world), Some(facet)) = (axis(&claims.scope.worlds), axis(&claims.scope.facets))
     else {
-        return Ok(());
+        return Ok(None);
     };
     let actor =
         oneiron::EntityId::from_hex(&claims.holder_ref).map_err(|_| ApiError::unauthorized())?;
-    server
-        .mcp_registry
-        .lock()
-        .await
-        .register(
-            token,
-            crate::mcp::McpConnectorActorRecord::new(
-                actor,
-                class,
-                crate::mcp::McpConnectorScope::scoped(world, facet),
-            )
-            .with_expiry(claims.expires_at),
+    Ok(Some(
+        crate::mcp::McpConnectorActorRecord::new(
+            actor,
+            class,
+            crate::mcp::McpConnectorScope::scoped(world, facet),
         )
-        .map_err(|_| ApiError::unauthorized())
+        .with_expiry(claims.expires_at),
+    ))
+}
+
+/// Records a live paired slip the in-memory registry has not seen: one
+/// redeemed before this process started, or minted on the stopped vault
+/// (`token agent`, `token read`). The slip must verify with its holder proof
+/// first, against the log and its revocations, exactly as every request's
+/// does; then it gets the record redeem would have written. Returns whether
+/// it recorded one.
+///
+/// Only the slip as redeem minted it: a holder's caveated copy has its own
+/// token, and a fresh record for it would drop whatever the registry holds
+/// against the original.
+pub(super) fn register_live_paired_mcp(
+    registry: &mut crate::mcp::McpConnectorActorRegistry,
+    credential: &str,
+    headers: &HeaderMap,
+    server: &SyncServer,
+) -> bool {
+    let uncaveated = oneiron::authority::CapabilitySlip::from_token(credential)
+        .is_ok_and(|slip| slip.caveats.is_empty());
+    if !credential.starts_with("v2.slip.") || !uncaveated {
+        return false;
+    }
+    let verified = crate::auth::BindingProof::from_headers(headers).and_then(|proof| {
+        crate::auth::CoreAuth::from_slip_token(credential, &proof, server.vault().as_ref())
+    });
+    let Some(slip) = verified.as_ref().ok().and_then(|auth| auth.verified_slip()) else {
+        return false;
+    };
+    // Redeem pairs only a holder that exists; neither does this.
+    let holder_exists = oneiron::EntityId::from_hex(&slip.claims().holder_ref)
+        .ok()
+        .and_then(|holder| server.vault().get(&holder).ok().flatten())
+        .is_some();
+    if !holder_exists {
+        return false;
+    }
+    match paired_mcp_record(slip.claims()) {
+        Ok(Some(record)) => registry.register(credential, record).is_ok(),
+        _ => false,
+    }
 }
 
 fn with_issuer<T>(

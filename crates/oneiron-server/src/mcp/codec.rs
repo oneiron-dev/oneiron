@@ -178,9 +178,16 @@ pub(super) fn schema_normalized_arguments(
 /// which is exactly the previous behaviour.
 pub(crate) fn mcp_raw_call_arguments(body: &[u8]) -> Option<String> {
     let text = std::str::from_utf8(body).ok()?;
+    Some(text[mcp_raw_call_arguments_span(text)?].to_owned())
+}
+
+/// Where `params.arguments` sits in one raw JSON-RPC body, as a byte range.
+///
+/// `oneiron mcp` splices the caller identity into that object without
+/// re-serializing the call, so every other number keeps its spelling too.
+pub(crate) fn mcp_raw_call_arguments_span(text: &str) -> Option<Range<usize>> {
     let node = McpRawJsonNode::scan(text)?;
-    let arguments = node.entry("params")?.entry("arguments")?;
-    Some(text[arguments.span.clone()].to_owned())
+    Some(node.entry("params")?.entry("arguments")?.span.clone())
 }
 
 /// The deepest object/array nesting one raw scan descends.

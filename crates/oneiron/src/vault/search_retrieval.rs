@@ -379,6 +379,19 @@ impl Vault {
         Ok(policy.has_matching_actor_ceiling(actor_class, Some(actor_ref)))
     }
 
+    /// Whether the active Gate policy holds every write by an actor for
+    /// review: its resolved actor ceiling is `proposed`.
+    pub fn gate_actor_ceiling_is_proposed(
+        &self,
+        actor_class: &str,
+        actor_ref: &str,
+    ) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &rtxn)?;
+        Ok(policy.actor_ceiling(actor_class, Some(actor_ref))
+            == crate::gate::PolicyApprovalCeiling::Proposed)
+    }
+
     /// Returns pending Gate consent proposals grouped by Dreamer run id.
     ///
     /// Proposals without a Dreamer run id are returned in the default lane,

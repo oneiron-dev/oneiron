@@ -17,6 +17,8 @@ surfaces. They do not replace counsel review for jurisdiction-specific calls.
   one captured-review repair, not a response guide.
 - [Wave-6 module-split map](w6-module-split-map.md) — old→new paths for the fifteen 2026-08
   monolith splits; use it to re-anchor tickets, docs, and tooling.
+- [Connect Claude Code or Codex](connect-an-agent.md) — `oneiron token agent` mints a scoped,
+  revocable agent credential; `oneiron mcp` serves MCP on stdio to the agent.
 - [Import your history](import-history.md) — `oneiron import` for ChatGPT and Claude.ai exports
   and Claude Code and Codex sessions: what lands, what is counted, and how re-imports dedup.
 - [Claude Code hooks](claude-code-hooks.md) — recall at session start and each session handed to

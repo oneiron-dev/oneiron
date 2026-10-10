@@ -42,6 +42,10 @@ pub const CONNECTOR_ACTOR: &[u8] = b"oneiron.connector_actor.v0\0";
 /// WIRE-P1). No parts.
 pub const EMBEDDED_OWNER_ACTOR: &[u8] = b"oneiron 2026-08 embedded-owner-actor v1";
 
+/// A named agent principal the owner mints a credential for
+/// (`oneiron token agent`). Parts: agent name.
+pub const AGENT_PRINCIPAL: &[u8] = b"oneiron/agent-principal/v1";
+
 /// The System actor that owns engine projection writes
 /// (`commitment_schedule::commitment_projection_actor`). No parts.
 pub const COMMITMENT_PROJECTION_ACTOR: &[u8] = b"oneiron.commitment.projection.actor.v1\0";
@@ -135,7 +139,7 @@ pub const IMPORTED_NOTE: &[u8] = b"oneiron.ingest.notes.note.v1";
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 34] = [
+pub(crate) const ALL: [&[u8]; 35] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -146,6 +150,7 @@ pub(crate) const ALL: [&[u8]; 34] = [
     COMM_PROJECTED_CLAIM,
     CONNECTOR_ACTOR,
     EMBEDDED_OWNER_ACTOR,
+    AGENT_PRINCIPAL,
     COMMITMENT_PROJECTION_ACTOR,
     COMMITMENT_INSTANCE,
     LINKEDIN_ENTITY,
