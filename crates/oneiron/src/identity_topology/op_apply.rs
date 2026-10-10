@@ -276,8 +276,7 @@ impl Vault {
                         &split.entity,
                         &split.reassignment,
                         ReassignmentContext::Heads(&split.heads),
-                        &mut effects,
-                        now,
+                        &mut Vec::new(),
                     )?;
                 }
                 let action = StoredIdentityOpAction::Split {
@@ -316,7 +315,8 @@ impl Vault {
                         "identity topology event mints too many facets",
                     )));
                 }
-                let (minted, mut effects) = self.mint_facets_in_txn(facet, now)?;
+                let (minted, effects) = self.mint_facets_in_txn(facet, now)?;
+                let mut forks = Vec::new();
                 let stats = apply_reassignment_in_txn(
                     &self.store,
                     wtxn,
@@ -324,17 +324,19 @@ impl Vault {
                     &facet.entity,
                     &facet.reassignment,
                     ReassignmentContext::Facets(&minted),
-                    &mut effects,
-                    now,
+                    &mut forks,
                 )?;
+                let mut forked: Vec<EntityId> = forks.iter().map(|(origin, _)| *origin).collect();
+                forked.sort_unstable();
                 let action = StoredIdentityOpAction::Facet {
                     entity: facet.entity,
                     facets: minted,
                     reassignment: facet.reassignment.canonicalized(),
                     applied_assigned: stats.assigned as u64,
                     applied_residue: stats.residue as u64,
+                    forked,
                 };
-                self.write_identity_event_in_txn(
+                let outcome = self.write_identity_event_in_txn(
                     wtxn,
                     event_id,
                     write,
@@ -343,7 +345,20 @@ impl Vault {
                     Some(facet.evidence.clone()),
                     effects,
                     transitions,
-                )
+                )?;
+                // r9: fork, never restamp. Each assigned claim is born again
+                // under its mask once the masks exist, and the fork closes the
+                // origin. The event lists the forked origins and each fork id
+                // derives from (event, origin), so the undo door finds every
+                // fork from the event alone. Each fork is the deciding actor's
+                // claim, never its origin's author's: a machine's fork is
+                // `Generated`, so it cannot close user truth.
+                let writer = facet_fork_writer(write.actor, write.source);
+                for (origin, mask) in forks {
+                    let fork = facet_fork_id(&event_id, &origin)?;
+                    self.fork_claim_to_facet_in_txn(wtxn, (origin, fork), mask, true, writer, now)?;
+                }
+                Ok(outcome)
             }
             IdentityTopologyOp::AssertDistinct(distinct) => {
                 let pair = distinct_pair_key(distinct.a, distinct.b);
@@ -474,9 +489,9 @@ impl Vault {
             allow_reserved_predicate: false,
             hub_sync_imported: false,
         }];
-        // Order matters inside the batch: a facet op's minted FACET rows
-        // precede the `facet_of` stamps that point at them, and ONE-1645's
-        // write-time table fails closed on a stamp whose endpoint has no row.
+        // A facet op's minted FACET rows land here; its forks follow this
+        // batch, because ONE-1645's write-time table fails closed on a
+        // `facet_of` birth stamp whose endpoint has no row.
         ops.extend(effects);
         // The signed disposition is a separate immutable type-76 event. A
         // receiver can replay the two rows in either order and bind by digest.
@@ -584,4 +599,23 @@ impl Vault {
             Ok(IdentityOpOutcome::Parked { event: event_id })
         }
     }
+}
+
+/// The writer of a FACET event's forks: the event's deciding actor and source,
+/// as its record stores them, so the undo door re-derives each fork's birth.
+pub(super) fn facet_fork_writer(
+    actor: Option<WriteActor>,
+    source: ClaimSource,
+) -> crate::batch::SuccessionWriter {
+    crate::batch::SuccessionWriter::new(actor, source, "identity.facet")
+}
+
+/// The fork a FACET event births for one reassigned claim. Deriving it from
+/// the event and the origin lets the undo door recover every fork from the
+/// stored event without a second record of the pairs.
+pub(super) fn facet_fork_id(event: &EntityId, origin: &EntityId) -> Result<EntityId> {
+    EntityId::derive(
+        b"oneiron/identity-topology/facet-fork/v1",
+        &[event.as_bytes(), origin.as_bytes()],
+    )
 }

@@ -65,13 +65,21 @@ impl ClaimTransitionProjection {
         {
             return Err(TransitionFoldError::InvalidBirth);
         }
+        // A weakening successor is born carrying its rung (ARCH-0003: a
+        // confidence change supersedes), so its history continues from that
+        // rung. A birth can never carry the stale rung: it is born fresh.
+        let demotion_rung = crate::claim::claim_demotion_rung(body)
+            .map_err(|_| TransitionFoldError::InvalidBirth)?;
+        if demotion_rung == Some(ClaimDemotionRung::Stale) {
+            return Err(TransitionFoldError::InvalidBirth);
+        }
         Ok(Self {
             birth: body.clone(),
             approval: body.approval,
             lifecycle: body.lifecycle,
             confidence: body.confidence,
             claim_of_weight: initial_claim_of_weight,
-            demotion_rung: None,
+            demotion_rung,
             valid_to: body.valid_to,
             stale: false,
             scope_band_floor: None,

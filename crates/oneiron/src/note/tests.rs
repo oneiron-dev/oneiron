@@ -306,3 +306,94 @@ fn fork_to_facet_leaves_the_origin_stamp_unchanged() {
 
     assert_eq!(facet_stamps(&vault, note), vec![default]);
 }
+
+/// Greptile #1336 repro: an owner's fork of a raw claim keeps the claim's
+/// citations where the support check reads them. Once a claim's cited source
+/// is erased, the claim and the fork that moves it to a facet are both
+/// unsupported, and neither recall nor a point read returns the fork. The
+/// fork of a claim whose source is live still reads.
+#[test]
+fn a_fork_keeps_the_support_its_claim_needs() {
+    use crate::claim::{
+        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    };
+    use crate::dreamer_consolidation::{
+        ConsolidationEvidenceEnvelope, encode_consolidation_evidence,
+    };
+    use crate::memory::{Effort, RecallScope};
+    let (_dir, vault, owner) = owner_fixture();
+    let facet = put_facet(&vault, 0x55);
+    let claim = |source: EntityId, text: &str| {
+        let id = EntityId::now();
+        let mut body = ClaimBody::new(
+            "profile.note",
+            ClaimSubject::Entity(owner.entity_ref()),
+            Value::from(text),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        )
+        .unwrap();
+        body.source = Some(ClaimSource::UserStated);
+        body.evidence = Some(encode_consolidation_evidence(
+            &ConsolidationEvidenceEnvelope {
+                refs: vec![source],
+                chain: Vec::new(),
+                source_meet: ClaimSource::UserStated,
+            },
+        ));
+        vault
+            .put_claim(&id, &body, crate::TimeRange { start: 10, end: 10 }, 10)
+            .unwrap();
+        id
+    };
+    let erased = vault
+        .create_note("research", "erased source", owner)
+        .unwrap();
+    let live = vault.create_note("research", "live source", owner).unwrap();
+    let unsupported = claim(erased, "aurora erased citation");
+    let supported = claim(live, "aurora live citation");
+    vault
+        .delete_entity_with_options(
+            &erased,
+            crate::deletion::DeleteEntityOptions { purge: true },
+        )
+        .unwrap();
+    let forks = [unsupported, supported]
+        .map(|origin| vault.fork_to_facet(origin, facet, true, owner).unwrap());
+    for (id, text) in [
+        (forks[0], "aurora erased citation"),
+        (forks[1], "aurora live citation"),
+    ] {
+        vault.batch().text(&id, &[("body", text)]).commit().unwrap();
+    }
+    let support = {
+        let txn = vault.store.env.read_txn().unwrap();
+        [unsupported, supported, forks[0], forks[1]].map(|id| {
+            let body = vault.get_claim_in_txn(&txn, &id).unwrap().expect("claim");
+            crate::claim::has_live_support_in_txn(&vault.store, &txn, &body).unwrap()
+        })
+    };
+    assert_eq!(support, [false, true, false, true]);
+    let memory = vault.memory(owner.entity_ref(), owner.actor_class());
+    let pack = memory
+        .recall(
+            "aurora",
+            Effort::Light,
+            &RecallScope::default(),
+            10,
+            None,
+            None,
+        )
+        .unwrap();
+    let recalled: Vec<_> = pack
+        .items
+        .iter()
+        .filter_map(|item| crate::memory::resolve_entity_ref(&vault, &item.short_id).ok())
+        .collect();
+    assert!(recalled.contains(&forks[1]), "{recalled:?}");
+    assert!(!recalled.contains(&forks[0]), "{recalled:?}");
+    let read = |id: EntityId| memory.get_entity(&id.to_hex()).unwrap().value;
+    assert!(read(forks[1]).is_some());
+    assert!(read(forks[0]).is_none());
+}

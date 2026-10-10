@@ -33,13 +33,43 @@ fn fixture() -> Result<(tempfile::TempDir, Vault, WriteActor)> {
     Ok((dir, vault, actor))
 }
 
+/// Grants `actor` an explicit auto permit for each of `sources`.
 fn permit(vault: &Vault, actor: EntityId, sources: &[ClaimSource]) -> Result<()> {
+    let rows: Vec<_> = sources
+        .iter()
+        .map(|source| (*source, Some(actor)))
+        .collect();
+    permit_rows(vault, &rows)
+}
+
+/// Grants each `(source, actor)` row's actor, or with `None` every actor, an
+/// explicit auto permit for its source. Every such policy also gives the
+/// Dreamer an auto ceiling: a weakening is the Dreamer's own write (ARCH-0026
+/// Curate), gated under its own ceiling and permits.
+fn permit_rows(vault: &Vault, rows: &[(ClaimSource, Option<EntityId>)]) -> Result<()> {
     let mut manifest =
         rmpv::decode::read_value(&mut crate::gate::default_policy_manifest()?.as_slice())
             .expect("manifest");
     let Value::Map(entries) = &mut manifest else {
         panic!("manifest map");
     };
+    let (_, Value::Array(ceilings)) = entries
+        .iter_mut()
+        .find(|(k, _)| k.as_str() == Some("actor_ceilings"))
+        .expect("actor ceilings")
+    else {
+        panic!("ceiling rows");
+    };
+    ceilings.push(Value::Map(vec![
+        ("actor_class".into(), "system".into()),
+        (
+            "actor_ref".into(),
+            crate::dreamer_runner::authority::dreamer_actor_id()?
+                .to_hex()
+                .into(),
+        ),
+        ("ceiling".into(), "auto".into()),
+    ]));
     let (_, Value::Map(trust)) = entries
         .iter_mut()
         .find(|(k, _)| k.as_str() == Some("source_trust"))
@@ -47,20 +77,21 @@ fn permit(vault: &Vault, actor: EntityId, sources: &[ClaimSource]) -> Result<()>
     else {
         panic!("trust map");
     };
-    for source in sources {
+    for (source, actor) in rows {
         trust.retain(|(key, _)| key.as_str() != Some(source.as_str()));
-        trust.push((
-            Value::from(source.as_str()),
-            Value::Map(vec![
-                ("actor_ref".into(), actor.to_hex().into()),
-                (
-                    "max_auto_sensitivity".into(),
-                    u64::from(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND).into(),
-                ),
-                ("receipted".into(), true.into()),
-                ("warned".into(), true.into()),
-            ]),
-        ));
+        let mut row: Vec<(Value, Value)> = actor
+            .iter()
+            .map(|actor| ("actor_ref".into(), actor.to_hex().into()))
+            .collect();
+        row.extend([
+            (
+                "max_auto_sensitivity".into(),
+                u64::from(crate::claim::UNSTAMPED_CLAIM_SENSITIVITY_BAND).into(),
+            ),
+            ("receipted".into(), true.into()),
+            ("warned".into(), true.into()),
+        ]);
+        trust.push((Value::from(source.as_str()), Value::Map(row)));
     }
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &manifest).expect("manifest encode");

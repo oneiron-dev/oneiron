@@ -150,8 +150,9 @@ impl IdentityTopologyOp {
     /// the projection diverges by delivery order alone: claim-before-event
     /// records the row, event-before-claim never does.
     ///
-    /// Split only. A facet assignment's witness is its canonical `facet_of`
-    /// edge, which replicates as an ordinary edge and is derived by no
+    /// Split only. A facet assignment's witness is its fork: a claim born
+    /// under the mask with its canonical `facet_of` birth stamp, which
+    /// replicates as an ordinary claim and edge and is derived by no
     /// reconcile pass — there is nothing here for a trigger to re-run.
     /// A map item is never a participant: participants must exist and be
     /// `Active` at the door, and a map item must not.

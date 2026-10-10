@@ -23,6 +23,7 @@ pub(crate) use peripheral::check_federated_claim_admission;
 pub(super) use peripheral::edge_actor_class_str;
 pub(crate) use peripheral::{
     ClaimGateWrite, GateWriteMode, check_edge_provenance_claim_policy, check_reserved_claim_policy,
-    standing_outbound_grant_binding_parts, validate_write_envelope,
+    check_unattributed_claim_lineage, standing_outbound_grant_binding_parts,
+    validate_write_envelope,
 };
 pub(crate) use recorded::RecordedClaimGateDecision;

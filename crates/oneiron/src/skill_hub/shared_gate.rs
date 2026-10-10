@@ -6,11 +6,9 @@ use super::refinement_custody::RefinementReceipt;
 use super::{HubPackage, SharedSkillDelta, package_codec::invalid};
 use crate::{
     Vault,
-    consent::{
-        AuthenticatedOwner, ComposedEffect, ConsentReceipt, EffectDigest, EffectFacts, UndoFidelity,
-    },
+    consent::{AuthenticatedOwner, ComposedEffect, ConsentReceipt, EffectDigest, EffectFacts},
     entity_id::EntityId,
-    error::Result,
+    error::{ArtifactError, Error, Result},
     llm::decision::{
         AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung,
         TypedDecision,
@@ -71,8 +69,20 @@ pub struct SharedSkillMergeReceipt {
     pub displaced_by_revision: Option<String>,
     pub at: u64,
 }
+/// What a shared-skill rollback did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SharedSkillRollback {
+    /// The rollback needs the owner's answer (see
+    /// [`Vault::roll_back_shared_skill_merge`]): nothing changed.
+    PendingOwner,
+    /// The restoring revision, now the active one.
+    Restored(EntityId),
+}
 #[derive(Debug, Clone, PartialEq)]
 pub enum SharedSkillMergeDisposition {
+    /// The owner must answer this exact effect once: the delta widens the
+    /// skill's permissions (the fit ladder's ask rung), or the scan of its
+    /// bytes requires an owner review.
     PendingConsent,
     Ruled(Box<SharedSkillMergeReceipt>),
 }
@@ -82,6 +92,7 @@ struct MergeSnapshot {
     base: SkillRecord,
     record: SkillRecord,
     package: HubPackage,
+    scan: crate::skill_scan::ActivationPosture,
     baseline: String,
     evidence: Vec<String>,
     binding: String,
@@ -110,18 +121,18 @@ impl Vault {
         }
         let txn = self.store.env.read_txn()?;
         let snapshot = self.shared_merge_snapshot(&txn, &candidate)?;
-        let effect = ComposedEffect::new(
-            EffectFacts::new(format!(
-                "skill.merge:{}:{}:{}",
-                snapshot.binding,
-                resident.to_hex(),
-                blake3::hash(
-                    &serde_json::to_vec(&question)
-                        .map_err(|_| invalid("question encode failed"))?
-                )
-            ))?
-            .with_undo_fidelity(UndoFidelity::None),
-        )
+        // A merge is reversible (ARCH-0053 r4, DEC-0006): activation
+        // supersedes, the old revision stays readable, and
+        // `roll_back_shared_skill_merge` restores it. The effect keeps the
+        // default full undo fidelity.
+        let effect = ComposedEffect::new(EffectFacts::new(format!(
+            "skill.merge:{}:{}:{}",
+            snapshot.binding,
+            resident.to_hex(),
+            blake3::hash(
+                &serde_json::to_vec(&question).map_err(|_| invalid("question encode failed"))?
+            )
+        ))?)
         .digest();
         Ok(SharedSkillMergeAsk {
             candidate,
@@ -131,6 +142,9 @@ impl Vault {
             effect,
         })
     }
+    /// The owner's answer to a merge whose delta widens the skill's
+    /// permissions or whose scan requires review. Any other merge needs no
+    /// answer.
     pub fn approve_shared_skill_merge(
         &self,
         ask: &SharedSkillMergeAsk,
@@ -142,8 +156,15 @@ impl Vault {
         })
     }
     /// The one merge door. A caller cannot submit a bool or a precomputed score.
-    /// Both host callbacks run without a read or write transaction held. Binding
-    /// and human consent are rechecked when activation + supersession commit together.
+    /// The typed useful-upstream decision and the held-out replay are the gate;
+    /// no per-merge approval exists, because the merge is reversible (ARCH-0053
+    /// r4, ARCH-0043: "No publish step exists"). A required review still asks:
+    /// a delta that widens the skill's permissions, or whose scan sets
+    /// `ProposedRequired`, returns `PendingConsent` until the owner approves
+    /// that exact effect.
+    /// Both host callbacks run without a read or write transaction held. The
+    /// binding, which covers the scan posture, and any owner answer are
+    /// rechecked when activation + supersession commit together.
     pub fn merge_shared_skill_delta(
         &self,
         ask: &SharedSkillMergeAsk,
@@ -155,7 +176,12 @@ impl Vault {
         let snapshot = {
             let txn = self.store.env.read_txn()?;
             let snapshot = self.check_merge_ask(&txn, ask)?;
-            if crate::consent::approve_once_authorization_in_txn(&self.store, &txn, &ask.effect)?
+            if self.merge_needs_owner_in_txn(&txn, &snapshot)?
+                && crate::consent::approve_once_authorization_in_txn(
+                    &self.store,
+                    &txn,
+                    &ask.effect,
+                )?
                 .is_none()
             {
                 return Ok(SharedSkillMergeDisposition::PendingConsent);
@@ -216,10 +242,19 @@ impl Vault {
             if let Some(revision) = &judge_revision {
                 crate::skill_optimize::ensure_current_judge_in_txn(self, txn, revision)?;
             }
-            self.check_merge_ask(txn, ask)?;
-            let authorization =
-                crate::consent::approve_once_authorization_in_txn(&self.store, txn, &ask.effect)?
-                    .ok_or_else(|| invalid("human merge consent is missing"))?;
+            let current = self.check_merge_ask(txn, ask)?;
+            let answer = if self.merge_needs_owner_in_txn(txn, &current)? {
+                Some(
+                    crate::consent::approve_once_authorization_in_txn(
+                        &self.store,
+                        txn,
+                        &ask.effect,
+                    )?
+                    .ok_or_else(|| invalid("the owner's merge answer is missing"))?,
+                )
+            } else {
+                None
+            };
             let mut control = read_control(&self.store, txn, &ask.candidate)?
                 .ok_or_else(|| invalid("shared refinement control is missing"))?;
             if accepted {
@@ -239,7 +274,6 @@ impl Vault {
                     &snapshot.record,
                     occurred,
                     learned_at,
-                    &authorization,
                     refinement,
                 )?;
                 self.supersede_skill_record_in_txn(
@@ -250,8 +284,8 @@ impl Vault {
                     learned_at,
                 )?;
             }
-            if !accepted {
-                crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
+            if let Some(authorization) = &answer {
+                crate::consent::spend_approve_once_in_txn(&self.store, txn, authorization)?;
             }
             control.state = if accepted {
                 RefinementState::Admitted
@@ -268,6 +302,169 @@ impl Vault {
             )?;
             Ok(SharedSkillMergeDisposition::Ruled(Box::new(receipt)))
         })
+    }
+    /// Rolls back an admitted shared-skill merge. Rollback is supersede,
+    /// archive, fork (ARCH-0053), and a superseded revision never loads as
+    /// canon again, so the displaced revision is not revived: a new revision
+    /// carrying its content, under a fresh version, supersedes the merged one
+    /// and links `DerivedFrom` the revision it restores. Both earlier
+    /// revisions stay readable.
+    ///
+    /// A rollback asks only where a review is required, as a merge does: when
+    /// the restoring revision declares capabilities beyond the active
+    /// revision's admitted surface, or the scan of its bytes sets
+    /// `ProposedRequired`. Then only `owner` rolls back: without one, nothing
+    /// changes and the result is [`SharedSkillRollback::PendingOwner`].
+    ///
+    /// Refuses unless `merged` is the active revision a shared merge admitted.
+    /// Once a later revision has superseded it, roll that one back instead.
+    /// Refuses with [`ArtifactError::SkillPackageUnavailable`] when the
+    /// displaced revision had content whose package this vault no longer
+    /// holds.
+    /// A protected (identity/alignment) revision never rolls back here, as it
+    /// never merges here: the owner edits it by hand.
+    pub fn roll_back_shared_skill_merge(
+        &self,
+        merged: &EntityId,
+        owner: Option<&AuthenticatedOwner>,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<SharedSkillRollback> {
+        /// A pending rollback leaves the transaction without committing.
+        enum Stop {
+            PendingOwner,
+            Failed(crate::error::Error),
+        }
+        impl From<crate::error::Error> for Stop {
+            fn from(error: crate::error::Error) -> Self {
+                Self::Failed(error)
+            }
+        }
+        let restore = EntityId::now();
+        let restored = self.try_with_write_txn(|txn| -> std::result::Result<EntityId, Stop> {
+            let not_rollbackable =
+                || invalid("only the active revision a shared merge admitted rolls back");
+            let control = read_control(&self.store, txn, merged)?.ok_or_else(not_rollbackable)?;
+            let RefinementTarget::Skill { base, .. } = &control.target else {
+                return Err(not_rollbackable().into());
+            };
+            let base = EntityId::from_hex(base).map_err(|_| invalid("merge base is malformed"))?;
+            let current = self.read_skill_record_in_txn(txn, merged)?;
+            let displaced = self.read_skill_record_in_txn(txn, &base)?;
+            let protected = |record: &SkillRecord| {
+                record
+                    .governance_tier
+                    .is_some_and(crate::skill::SkillGovernanceTier::is_protected)
+            };
+            if control.state != RefinementState::Admitted
+                || current.lifecycle_status != SkillLifecycle::Active
+                || displaced.lifecycle_status != SkillLifecycle::Superseded
+                || protected(&current)
+                || protected(&displaced)
+            {
+                return Err(not_rollbackable().into());
+            }
+            let mut record = displaced.clone();
+            record.version = restore_version(&displaced.version, merged);
+            // The rollback restores content; the current governance state stays.
+            record.governance_tier = current.governance_tier;
+            record.lifecycle_status = SkillLifecycle::Candidate;
+            record.approval_status = crate::claim::ClaimApprovalStatus::Proposed;
+            let mut provenance = match &displaced.provenance {
+                rmpv::Value::Map(entries) => entries
+                    .iter()
+                    .filter(|(key, _)| !matches!(key.as_str(), Some("source" | "restores")))
+                    .cloned()
+                    .collect(),
+                _ => Vec::new(),
+            };
+            provenance.push(("source".into(), "shared-skill-rollback".into()));
+            provenance.push(("restores".into(), base.to_hex().into()));
+            record.provenance = rmpv::Value::Map(provenance);
+            let package = match self.export_hub_package_in_txn(txn, &base)? {
+                Some(package) => Some(restored_package(&package, &record)?),
+                // Only a revision that never had a package restores as its
+                // record alone. One whose package is gone has nothing to
+                // restore its instructions from.
+                None if displaced.content_hash.is_some() => {
+                    return Err(Error::Artifact(ArtifactError::SkillPackageUnavailable {
+                        revision: base,
+                    })
+                    .into());
+                }
+                None => None,
+            };
+            record.content_hash = package.as_ref().map(HubPackage::content_hash).transpose()?;
+            self.put_skill_record_in_txn(txn, &restore, &record, occurred, learned_at)?;
+            if let Some(package) = &package {
+                self.persist_hub_package_in_txn(txn, &restore, package)?;
+                let hash = package.content_hash()?;
+                self.scan_and_ingest_on_import_in_txn(
+                    txn, &restore, hash, package, occurred, learned_at,
+                )?;
+            }
+            let surface = self.read_admitted_capability_surface_in_txn(txn, &base)?;
+            if let Some(surface) = &surface {
+                self.write_admitted_capability_surface_in_txn(txn, &restore, surface)?;
+            }
+            let active = self
+                .read_admitted_capability_surface_in_txn(txn, merged)?
+                .unwrap_or_default();
+            let scan = match record.content_hash {
+                Some(hash) => {
+                    crate::skill_scan::scan_gate_for_activation_in_txn(&self.store, txn, hash)?
+                }
+                None => crate::skill_scan::ActivationPosture::AutoEligible,
+            };
+            if !surface
+                .unwrap_or_default()
+                .is_same_or_narrower_than(&active)
+                || matches!(
+                    scan,
+                    crate::skill_scan::ActivationPosture::ProposedRequired { .. }
+                )
+            {
+                let owner = owner.ok_or(Stop::PendingOwner)?;
+                // Only this vault's live owner answers. A proof minted
+                // elsewhere rolls nothing back, and neither does one whose
+                // holder was deleted or whose holder or credential has since
+                // lost ownership.
+                self.check_restore_owner_in_txn(txn, owner)?;
+                let effect = ComposedEffect::new(EffectFacts::new(format!(
+                    "skill.rollback:{}:{}:{scan:?}",
+                    merged.to_hex(),
+                    restore.to_hex(),
+                ))?)
+                .digest();
+                self.approve_once_in_txn(txn, owner, effect)?;
+                let answer =
+                    crate::consent::approve_once_authorization_in_txn(&self.store, txn, &effect)?
+                        .ok_or_else(|| invalid("the owner's rollback answer is missing"))?;
+                crate::consent::spend_approve_once_in_txn(&self.store, txn, &answer)?;
+            }
+            record.lifecycle_status = SkillLifecycle::Active;
+            record.approval_status = crate::claim::ClaimApprovalStatus::Approved;
+            let data = crate::skill::encode_skill_record(&record)?;
+            let proof = super::HubAdmissionProof::rollback(restore, &data);
+            self.admit_hub_skill_record_in_txn(txn, occurred, learned_at, data, proof)?;
+            self.batch_in()
+                .edge(
+                    &restore,
+                    crate::edge::EdgeKind::DerivedFrom,
+                    &base,
+                    crate::edge::EdgeKind::DerivedFrom
+                        .default_weight()
+                        .unwrap_or(0.2),
+                )
+                .apply(txn)?;
+            self.supersede_skill_record_in_txn(txn, merged, &restore, occurred, learned_at)?;
+            Ok(restore)
+        });
+        match restored {
+            Ok(restore) => Ok(SharedSkillRollback::Restored(restore)),
+            Err(Stop::PendingOwner) => Ok(SharedSkillRollback::PendingOwner),
+            Err(Stop::Failed(error)) => Err(error),
+        }
     }
     pub fn shared_skill_merge_receipt(
         &self,
@@ -288,6 +485,31 @@ impl Vault {
                 crate::skill_optimize::displaced_judge_revision_in_txn(self, &txn, revision)?;
         }
         Ok(receipt)
+    }
+    /// The owner answers a merge only where a review is required. A widening
+    /// is any capability the candidate declares beyond the base's admitted
+    /// surface; a base with no admitted surface admits none, so every declared
+    /// capability then widens. A `ProposedRequired` scan of the candidate's
+    /// bytes asks too: the activation stamps `Approved`, which the scan gate
+    /// never escalates, so the review must happen here.
+    fn merge_needs_owner_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        snapshot: &MergeSnapshot,
+    ) -> Result<bool> {
+        if matches!(
+            snapshot.scan,
+            crate::skill_scan::ActivationPosture::ProposedRequired { .. }
+        ) {
+            return Ok(true);
+        }
+        let admitted = self
+            .read_admitted_capability_surface_in_txn(txn, &snapshot.base_id)?
+            .unwrap_or_default();
+        Ok(!snapshot
+            .package
+            .capabilities
+            .is_same_or_narrower_than(&admitted))
     }
     fn check_merge_ask(
         &self,
@@ -386,6 +608,7 @@ impl Vault {
             base,
             record,
             package,
+            scan,
             baseline,
             evidence,
             binding: hash.finalize().to_hex().to_string(),
@@ -459,4 +682,78 @@ pub(super) fn checked_useful_decision(
         DecisionAnswer::Noul(value) => Ok(value),
         _ => Err(invalid("useful-upstream answer must be yes or no")),
     }
+}
+
+/// The rollback's version: fresh, and bounded like any skill version. It
+/// names the displaced version while that fits; provenance names the revision.
+fn restore_version(displaced: &str, merged: &EntityId) -> String {
+    let suffix = format!("restore-{}", &merged.to_hex()[..12]);
+    if displaced.len() + 1 + suffix.len() <= crate::skill::SKILL_VERSION_MAX_BYTES {
+        format!("{displaced}-{suffix}")
+    } else {
+        suffix
+    }
+}
+
+/// The displaced revision's package under the restoring record. A folder
+/// package carries its version in SKILL.md frontmatter, so that one line
+/// changes; a native package keeps its exact bytes, since its version is
+/// native metadata.
+fn restored_package(package: &HubPackage, record: &SkillRecord) -> Result<HubPackage> {
+    let (files, hash) = match package.format {
+        super::SkillPackageFormat::Native => (package.files.clone(), package.content_hash()?),
+        super::SkillPackageFormat::Folder => {
+            let files = with_frontmatter_version(&package.files, &record.version)?;
+            let hash = super::folder::package_from_files(files.clone())?.content_hash()?;
+            (files, hash)
+        }
+    };
+    let mut record = record.clone();
+    record.content_hash = Some(hash);
+    super::folder::package_from_source(&record, files, package.format)
+}
+
+fn with_frontmatter_version(
+    files: &[super::HubFile],
+    version: &str,
+) -> Result<Vec<super::HubFile>> {
+    let mut files = files.to_vec();
+    let file = files
+        .iter_mut()
+        .find(|file| file.path == "SKILL.md")
+        .ok_or_else(|| invalid("restored revision has no instructions"))?;
+    let text = std::str::from_utf8(&file.content)
+        .map_err(|_| invalid("restored instructions are not UTF-8"))?;
+    let (front, body) = text
+        .strip_prefix("---\n")
+        .and_then(|rest| rest.split_once("\n---\n"))
+        .ok_or_else(|| invalid("SKILL.md needs frontmatter"))?;
+    // Only a plainly safe version is written bare; any other is written
+    // JSON-quoted, the one quoted form the frontmatter reader decodes exactly.
+    let scalar = if version
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '+' | '~'))
+    {
+        version.to_owned()
+    } else {
+        serde_json::to_string(version).map_err(|_| invalid("restored version encode failed"))?
+    };
+    let mut versioned = false;
+    let front = front
+        .lines()
+        .map(|line| {
+            if !versioned && line.starts_with("version:") {
+                versioned = true;
+                format!("version: {scalar}")
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if !versioned {
+        return Err(invalid("SKILL.md frontmatter has no version"));
+    }
+    file.content = format!("---\n{front}\n---\n{body}").into_bytes();
+    Ok(files)
 }

@@ -127,6 +127,18 @@ pub(crate) fn check_reserved_claim_policy(
     )
 }
 
+/// An envelope-less write of a claim that continues another claim's history:
+/// its declared source keeps its normal check, and each restricted class in
+/// `lineage` must clear the unattributed source-trust row too, as it would
+/// riding an envelope. No envelope is left to carry that history to the Gate.
+pub(crate) fn check_unattributed_claim_lineage(
+    body: &ClaimBody,
+    lineage: &crate::write_envelope::SourceLineage,
+    policy: &PolicyManifestResolution,
+) -> Result<()> {
+    check_claim_source_trust(body, None, policy, Some(lineage))
+}
+
 #[cfg(feature = "sync")]
 pub(crate) fn check_federated_claim_admission(
     store: &Store,

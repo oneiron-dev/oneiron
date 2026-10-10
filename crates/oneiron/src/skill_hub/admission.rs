@@ -52,9 +52,10 @@ pub enum HubAdmissionDisposition {
     Ruled(Box<HubAdmissionReceipt>),
 }
 impl Vault {
-    /// Restore is owner-only even for a no-op. Plain user delete retains a
-    /// PERSON shell; the generic registry-lifecycle check alone cannot see
-    /// its deletion tombstone.
+    /// Restore, and a shared merge's rollback where it asks, is owner-only
+    /// even for a no-op. Plain user delete retains a PERSON shell; the
+    /// generic registry-lifecycle check alone cannot see its deletion
+    /// tombstone.
     pub(super) fn check_restore_owner_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -219,7 +220,6 @@ impl Vault {
         record: &crate::skill::SkillRecord,
         occurred: TimeRange,
         learned_at: u64,
-        authorization: &crate::consent::ApproveOnceAuthorization,
         refinement: super::refinement_admission::RefinementAdmissionProof,
     ) -> Result<()> {
         let candidate = refinement.candidate();
@@ -227,8 +227,9 @@ impl Vault {
         admitted.approval_status = ClaimApprovalStatus::Approved;
         admitted.lifecycle_status = SkillLifecycle::Active;
         let data = crate::skill::encode_skill_record(&admitted)?;
-        let proof =
-            super::HubAdmissionProof::consent(&self.store, txn, candidate, &data, authorization)?;
+        // The useful-upstream yes and the held-out win the refinement proof
+        // binds are the admission; a merge carries no per-merge approval.
+        let proof = super::HubAdmissionProof::refined(candidate, &data);
         self.admit_hub_skill_record_with_refinement_in_txn(
             txn,
             occurred,
