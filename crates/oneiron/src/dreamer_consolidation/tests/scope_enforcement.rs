@@ -529,7 +529,7 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
             crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
         crate::test_util::provision_engine_machines(&vault);
         authorize_test_inference(&vault)?;
-        grant_fixture_reads(&vault)?;
+        install_shipped_policy(&vault)?;
         let store = DreamerRunnerStore::new(&vault);
         let (attempt, turns, _) =
             admitted_attempt_fixture(&vault, &store, 0x46, &[("user", "two related facts")])?;
@@ -1302,7 +1302,7 @@ fn admitted_branch_does_not_infer_read_authority_from_its_queue() -> Result<()> 
         ),
         Err(Error::InvalidClaimBody(_))
     ));
-    grant_fixture_reads(&vault)?;
+    install_shipped_policy(&vault)?;
     let branch = BranchResources::open(
         &vault,
         vault.dreamer_authority()?,
