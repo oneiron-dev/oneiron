@@ -1,6 +1,8 @@
 use super::*;
 
-use crate::llm::{DispatchBinding, DispatchRefused, FAILED_RUNGS_KEY, answered_units};
+use crate::llm::{
+    DispatchBinding, DispatchRefused, FAILED_RUNGS_KEY, answered_units, answered_units_wide,
+};
 
 const ROUTE: &str = "fake@https://model.test:443";
 
@@ -189,6 +191,12 @@ fn an_answer_is_charged_its_tokens_or_the_floor_plus_a_floor_per_failed_rung() {
     assert_eq!(answered_units(&usage, 8), 4);
     usage.raw_provider = serde_json::json!({ FAILED_RUNGS_KEY: 2 });
     assert_eq!(answered_units(&usage, 8), 20);
+    // Wide, nothing is lost before a caller converts it; narrow, it clamps.
+    usage.input.total = u64::MAX;
+    usage.output.total = u64::MAX;
+    let wide = u128::from(u64::MAX) * 2 + 16;
+    assert_eq!(answered_units_wide(&usage, 8), wide);
+    assert_eq!(answered_units(&usage, 8), u64::MAX);
 }
 
 #[test]

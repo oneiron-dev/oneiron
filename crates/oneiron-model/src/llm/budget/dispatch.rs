@@ -162,9 +162,17 @@ pub const FAILED_RUNGS_KEY: &str = "failed_rungs";
 /// before a later one answered is still charged.
 #[must_use]
 pub fn answered_units(usage: &LlmUsage, floor: u64) -> u64 {
-    let tokens = usage.input.total.saturating_add(usage.output.total);
+    u64::try_from(answered_units_wide(usage, floor)).unwrap_or(u64::MAX)
+}
+
+/// [`answered_units`] before it is narrowed to `u64`, for a caller that
+/// converts the amount into another unit before it meters it.
+#[must_use]
+pub fn answered_units_wide(usage: &LlmUsage, floor: u64) -> u128 {
+    let tokens = u128::from(usage.input.total) + u128::from(usage.output.total);
+    let floor = u128::from(floor);
     let answer = if tokens == 0 { floor } else { tokens };
-    answer.saturating_add(failed_rungs(usage).saturating_mul(floor))
+    answer + u128::from(failed_rungs(usage)) * floor
 }
 
 /// How many rungs a fallback chain tried and lost before the one that
