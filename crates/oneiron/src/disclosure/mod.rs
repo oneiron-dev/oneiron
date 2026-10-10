@@ -11,9 +11,12 @@
 //! assembly); this module owns mode/tier/Scope classification, storage, and
 //! the agent-visible assembly block.
 
+mod disclosable_set;
 mod scope_codec;
 mod tier_classification;
 mod vault_context;
+
+pub use self::disclosable_set::{DisclosableSet, disclosable_set};
 
 pub use self::scope_codec::{
     DISCLOSURE_SCOPE_BODY_KEYS, DISCLOSURE_SCOPE_SCHEMA_VERSION, DisclosureScope,

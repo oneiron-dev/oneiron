@@ -466,8 +466,12 @@ impl Vault {
         }
         if let Some(evidence) = generated_evidence {
             let reader = crate::WriteActor::new(record.actor_entity_ref, actor_class);
-            let source = super::derived_attachment::verify(self, wtxn, subject, &evidence, reader)?;
+            let (source, project) =
+                super::derived_attachment::verify(self, wtxn, subject, &evidence, reader)?;
             claim_body.source = Some(source);
+            // The row lands in the one project its source and head share,
+            // never the constructor's default (ONE-1592 P3).
+            claim_body.scope_project = project;
             claim_body.scope = Some(Value::Map(vec![
                 (
                     Value::from(crate::claim::CLAIM_SCOPE_EVIDENCE_TAINT_KEY),

@@ -79,17 +79,23 @@ impl BranchResources<'_> {
                     .scope
                     .relationship
                     .is_some_and(|r| keys.identity.rel != Some(r))
+                || self
+                    .scope
+                    .project
+                    .is_some_and(|p| keys.identity.project != p)
             {
                 continue;
             }
-            // A project is exactly the admitted document slice, not a new
-            // claim identity axis. The exact read above binds it.
+            // The exact read above binds the admitted document slice; the
+            // project axis of the identity keeps a head in another project
+            // from ever matching a candidate here.
             self.sources.insert(
                 id,
                 SourcePin {
                     resource,
                     entity_type: kind,
                     learned_at,
+                    project: Some(prior.body.scope_project),
                     #[cfg(test)]
                     trust_class: Some(crate::dreamer_consolidation::provenance::source_meet(
                         prior.body.source.unwrap_or(crate::ClaimSource::Imported),
@@ -210,7 +216,7 @@ fn prior_keys(prior: &PriorHead, rules: &PredicateKeyRules) -> Result<CandidateK
     if let Some(scope) = &body.scope {
         candidate = candidate.with_scope(scope.clone());
     }
-    candidate_keys(
+    let mut keys = candidate_keys(
         &PromotionCandidate {
             claim_id: prior.claim_id,
             candidate,
@@ -222,5 +228,9 @@ fn prior_keys(prior: &PriorHead, rules: &PredicateKeyRules) -> Result<CandidateK
             learned_at: 0,
         },
         rules,
-    )
+    )?;
+    // The stored body's own stamp is the head's project; a scope-map entry
+    // can never move it.
+    keys.identity.project = body.scope_project;
+    Ok(keys)
 }

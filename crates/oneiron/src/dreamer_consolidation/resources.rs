@@ -26,6 +26,7 @@ use crate::claim::{
 use crate::dreamer_runner::{dreamer_extraction_role_admissible, dreamer_turn_role};
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::federation::record_scope::disclosure_scope_for_stored_row;
 use crate::llm::{LlmResponse, Scope, ScopeResource, StepEffectBinding};
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
@@ -40,6 +41,8 @@ struct SourcePin {
     resource: ScopeResource,
     entity_type: u8,
     learned_at: u64,
+    /// The source's PROJECT; `None` for a stamp that does not decode.
+    project: Option<EntityId>,
     #[cfg(test)]
     trust_class: Option<crate::claim::ClaimSource>,
 }
@@ -180,6 +183,7 @@ impl<'a> BranchResources<'a> {
             } = super::turn_text::read_sources(&read, &source_ids)?;
             (rows, receipt, Some(texts))
         };
+        let position_txn = vault.store.env.read_txn()?;
         for (id, row) in source_ids.iter().zip(source_rows) {
             let (entity_type, learned_at, body) =
                 row.ok_or_else(|| invalid_consolidation("branch source is not readable"))?;
@@ -191,6 +195,7 @@ impl<'a> BranchResources<'a> {
             }
             let resource = document_version(*id, &body);
             readable.insert(resource.clone());
+            let project = stored_project(&vault.store, &position_txn, *id, entity_type, &body)?;
             #[cfg(test)]
             let trust_class = (entity_type == ENTITY_TYPE_TURN)
                 .then(|| {
@@ -210,11 +215,14 @@ impl<'a> BranchResources<'a> {
                     resource,
                     entity_type,
                     learned_at,
+                    project,
                     #[cfg(test)]
                     trust_class,
                 },
             );
         }
+        // One read txn per thread: the admission reads below open their own.
+        drop(position_txn);
         let texts = match (texts, prepared_wake) {
             (Some(texts), _) => texts,
             (None, Some(pin)) => pin.turn_texts(turns)?,
@@ -224,7 +232,8 @@ impl<'a> BranchResources<'a> {
         readable.extend(messages.map(|(_, version)| version.clone()));
         // The queued/caller scope is an actual upper bound supplied by the
         // trusted host. It binds TURNs to relationship/project slices through
-        // exact versions: neither axis is a TURN or conversation column.
+        // exact versions: neither axis is a conversation column. A TURN's own
+        // project stamp (pinned above) still bounds what it may support.
         let mut granted = Scope {
             world: partition.world_ref,
             facet: partition.facet_ref,
@@ -268,6 +277,33 @@ impl<'a> BranchResources<'a> {
         }
         resources.admit_priors()?;
         Ok(resources)
+    }
+
+    /// The one PROJECT a claim drawn from these sources may land in: a
+    /// consolidated claim inherits its sources' exposure and never mixes
+    /// scopes (ONE-1592 P3). The default project is a project like any other.
+    /// A project-bound branch restricts the result to its project; it never
+    /// moves a source into it. `None` when the sources span projects, lie
+    /// outside the branch's project, or a project stamp does not decode.
+    pub(in crate::dreamer_consolidation) fn evidence_project(
+        &self,
+        refs: &[EntityId],
+    ) -> Result<Option<EntityId>> {
+        let mut project = self.scope.project;
+        for id in refs {
+            let pin = self
+                .sources
+                .get(id)
+                .ok_or_else(|| invalid_consolidation("unadmitted evidence source"))?;
+            match (pin.project, project) {
+                (None, _) => return Ok(None),
+                (Some(source), Some(project)) if source != project => return Ok(None),
+                (source, _) => project = source,
+            }
+        }
+        Ok(Some(
+            project.unwrap_or_else(crate::claim::default_project_id),
+        ))
     }
 
     pub(super) fn source_version(&self, id: &EntityId) -> Result<ScopeResource> {
@@ -544,6 +580,7 @@ impl<'a> BranchResources<'a> {
                         facts.world,
                         facts.facet,
                         facts.rel,
+                        facts.project,
                         facts.topic.as_deref(),
                     )?
             {
@@ -561,6 +598,11 @@ impl<'a> BranchResources<'a> {
                     self.prior(*id)?;
                     self.source(scope, id)?;
                 }
+            }
+            if self.evidence_project(&candidate.evidence_turn_refs)? != Some(facts.project) {
+                return Err(invalid_consolidation(
+                    "candidate crossed its sources' project",
+                ));
             }
         }
         Ok(())
@@ -730,6 +772,33 @@ pub(super) fn document_version(document: EntityId, body: &[u8]) -> ScopeResource
             bytes_to_hex_lower(&swarm_evidence_content_hash(body))
         ),
     }
+}
+
+/// A stored row's PROJECT: a CLAIM's own body stamp; for any other row its
+/// record position, where both TURN write doors stamp a leader-chat turn's
+/// project, the same stamp the scoped read doors select. The vault default
+/// where the row carries no position; `None` where the position's audience
+/// is not exactly one project.
+pub(crate) fn stored_project(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    body: &[u8],
+) -> Result<Option<EntityId>> {
+    if kind == ENTITY_TYPE_CLAIM {
+        return Ok(Some(
+            crate::claim::decode_claim_body(body, true)?.scope_project,
+        ));
+    }
+    let position = disclosure_scope_for_stored_row(store, txn, id, kind, body)?;
+    Ok(match position.map(|position| position.audience) {
+        None => Some(crate::claim::default_project_id()),
+        Some(crate::federation::ScopeAxis::Some(ids)) if ids.len() == 1 => {
+            ids.into_iter().next().map(|id| id.0)
+        }
+        Some(_) => None,
+    })
 }
 
 /// Named mechanical projection for the real queued TURN slice. Its scope

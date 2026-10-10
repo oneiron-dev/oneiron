@@ -162,8 +162,9 @@ pub(super) fn import_claim_gate_decisions_for_scores(
 /// whether it may be disclosed — stamp-absence is never invariant evidence.
 /// The exposure decision lives on the disclosure axis: the unstamped
 /// sensitivity floor (`claim_sensitivity_band` reads band 2 on a missing
-/// stamp) today, and the ONE-1646 `disclosable_set` conjunct inside
-/// `admits()` next. Relevance never bypasses that conjunct (P7).
+/// stamp) and the ONE-1646 conjunct, [`crate::disclosure::DisclosableSet`],
+/// that `DisclosureContext::admits` applies. Relevance never bypasses that
+/// conjunct (P7).
 ///
 /// Scope of the CLAIM-only reading: this stage is the LOCAL QUERY door, and a
 /// non-CLAIM `FacetOf` stamp being inert HERE is not a statement about the
@@ -271,11 +272,12 @@ enum ClaimFacetScope {
     /// No `FacetOf` edge — a relevance-neutral claim. Passes every mode.
     ///
     /// NOT invariant evidence: absence of a facet stamp never widens
-    /// disclosure (ONE-1645, P3/V2). The disclosure conjunct (ONE-1646) must
-    /// derive invariant admission from POSITIVE evidence only — a stored
-    /// public stamp or a promotion record — never from this variant. The
-    /// live disclosure floor for unstamped provenance is
-    /// `claim_sensitivity_band`, which reads band 2 on a missing stamp.
+    /// disclosure (ONE-1645, P3/V2). The disclosure conjunct (ONE-1646,
+    /// [`crate::disclosure::DisclosableSet::admits`]) derives public admission
+    /// from POSITIVE evidence only — a stored public sensitivity stamp —
+    /// never from this variant. The disclosure floor for unstamped
+    /// provenance is `claim_sensitivity_band`, which reads band 2 on a
+    /// missing stamp.
     Unfaceted,
     /// At least one `FacetOf` edge targets the active facet.
     ActiveFacet,
@@ -700,7 +702,7 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
 /// disclosure contract (ONE-1645): this is a RELEVANCE decision. Admitting an
 /// unfaceted claim here is not evidence that it is invariant or publicly
 /// disclosable — the unstamped sensitivity floor and the ONE-1646
-/// `disclosable_set` conjunct own that axis.
+/// [`crate::disclosure::DisclosableSet`] conjunct own that axis.
 fn pipeline_candidate_matches_facet_filter(
     store: &Store,
     rtxn: &RoTxn<'_>,
