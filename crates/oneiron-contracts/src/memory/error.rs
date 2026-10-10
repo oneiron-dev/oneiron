@@ -383,6 +383,15 @@ impl From<Error> for MemoryError {
                 message,
                 &["Refresh the resource, merge local changes, then retry."],
             ),
+            // The host skipped a setup step, so neither the request nor the
+            // caller's standing is what has to change.
+            ErrorKind::EngineIdentitiesNotProvisioned => Self::new(
+                MEMORY_CODE_INTERNAL,
+                message,
+                &[
+                    "The host must provision the engine's machine identities after it opens the vault, then retry.",
+                ],
+            ),
             ErrorKind::Storage
             | ErrorKind::Io
             | ErrorKind::CorruptedIndex

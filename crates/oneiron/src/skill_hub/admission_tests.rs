@@ -2356,19 +2356,45 @@ fn rollback_that_widens_permissions_waits_for_the_owner() -> Result<()> {
     );
     // Astra #1336 R3 repro: another vault's owner proof answers nothing here.
     let elsewhere = Fixture::new();
-    let error = fixture
-        .vault
-        .roll_back_shared_skill_merge(&merged, Some(&elsewhere.owner), at(30), 30)
-        .expect_err("another vault's owner does not roll this one back");
-    assert_eq!(error.kind(), ErrorKind::ConsentOwnerNotAuthenticated);
-    assert_eq!(
-        fixture
+    // CodeRabbit #1336 repro: a deleted owner keeps a PERSON shell that the
+    // owner proof's liveness check still reads as live; only the deletion
+    // tombstone tells, and that owner rolls nothing back either.
+    let deleted = EntityId::now();
+    fixture.vault.put_entity(
+        &deleted,
+        crate::registry::ENTITY_TYPE_PERSON,
+        at(1),
+        1,
+        b"deleted owner",
+    )?;
+    let deleted = fixture.vault.authenticate_owner(
+        deleted,
+        "principal:deleted-owner",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    assert!(fixture.vault.delete_entity(&deleted.actor())?);
+    for (stranger, why) in [
+        (
+            &elsewhere.owner,
+            "another vault's owner does not roll this one back",
+        ),
+        (&deleted, "a deleted owner does not roll back"),
+    ] {
+        let error = fixture
             .vault
-            .get_skill_record(&merged)?
-            .expect("merged")
-            .lifecycle_status,
-        SkillLifecycle::Active
-    );
+            .roll_back_shared_skill_merge(&merged, Some(stranger), at(30), 30)
+            .expect_err(why);
+        assert_eq!(error.kind(), ErrorKind::ConsentOwnerNotAuthenticated);
+        assert_eq!(
+            fixture
+                .vault
+                .get_skill_record(&merged)?
+                .expect("merged")
+                .lifecycle_status,
+            SkillLifecycle::Active
+        );
+    }
     let SharedSkillRollback::Restored(restored) =
         fixture
             .vault

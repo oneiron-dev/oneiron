@@ -19,7 +19,15 @@ impl Vault {
     /// lower confidence closes `claim_id`, which stays readable as history.
     /// The weakening is the Dreamer's act (ARCH-0026 Curate), so its successor
     /// is the Dreamer's own `Generated` claim, and a `UserStated` or legacy
-    /// unstamped claim is refused before anything parks or is written.
+    /// unstamped claim is refused before anything parks or is written. The
+    /// Dreamer signs its successor with the signer the host retains on this
+    /// handle, so the host provisions the engine's identities
+    /// ([`Vault::provision_engine_machine_identities`]) after every open.
+    /// Until then a weakening, direct or replayed from its critical hold,
+    /// returns [`ClaimError::EngineIdentitiesNotProvisioned`] and writes
+    /// nothing.
+    ///
+    /// [`ClaimError::EngineIdentitiesNotProvisioned`]: crate::error::ClaimError::EngineIdentitiesNotProvisioned
     pub fn apply_claim_demotion(
         &self,
         claim_id: &EntityId,

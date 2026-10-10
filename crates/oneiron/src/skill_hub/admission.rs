@@ -52,9 +52,10 @@ pub enum HubAdmissionDisposition {
     Ruled(Box<HubAdmissionReceipt>),
 }
 impl Vault {
-    /// Restore is owner-only even for a no-op. Plain user delete retains a
-    /// PERSON shell; the generic registry-lifecycle check alone cannot see
-    /// its deletion tombstone.
+    /// Restore, and a shared merge's rollback where it asks, is owner-only
+    /// even for a no-op. Plain user delete retains a PERSON shell; the
+    /// generic registry-lifecycle check alone cannot see its deletion
+    /// tombstone.
     pub(super) fn check_restore_owner_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,

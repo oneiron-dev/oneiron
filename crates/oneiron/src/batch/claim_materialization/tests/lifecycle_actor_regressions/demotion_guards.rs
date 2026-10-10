@@ -430,6 +430,119 @@ fn a_dreamer_weakening_never_closes_user_truth() -> Result<()> {
     Ok(())
 }
 
+/// Marks the fixtures' predicate critical in the stored default policy, every
+/// other row kept: a demotion of it then waits for the owner's bound clear.
+fn hold_fixture_predicate(vault: &Vault) -> Result<()> {
+    let id = crate::gate::default_policy_manifest_id()?;
+    let body = vault.get(&id)?.expect("default policy");
+    let Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut body.as_slice()).expect("policy map")
+    else {
+        panic!("policy map");
+    };
+    let (_, Value::Array(rules)) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("rules"))
+        .expect("rules")
+    else {
+        panic!("rule rows");
+    };
+    rules.push(Value::Map(vec![
+        ("prefix".into(), "profile.lifecycle_actor".into()),
+        ("exact".into(), true.into()),
+        (
+            "axes".into(),
+            Value::Map(vec![
+                ("criticality".into(), "critical".into()),
+                ("sensitivity".into(), "normal".into()),
+            ]),
+        ),
+    ]));
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &Value::Map(entries)).expect("policy encode");
+    crate::test_util::put_policy_manifest_bytes(vault, id, &data)
+}
+
+/// CodeRabbit #1336 repro: a reopened vault holds no machine signer until the
+/// host provisions the engine's identities again. A weakening on that handle,
+/// direct or replayed from its critical hold, names the missing setup and
+/// writes nothing; once the host provisions, the same weakening lands.
+#[test]
+fn a_weakening_before_the_host_provisions_names_the_missing_setup() -> Result<()> {
+    let (dir, vault, _) = fixture()?;
+    let (direct, held) = (entity(0x64), entity(0x65));
+    for id in [direct, held] {
+        dreamer_claim(&vault, id)?;
+        vault.apply_claim_demotion(
+            &id,
+            ClaimDemotionAction::Decay {
+                new_claim_of_weight: 0.1,
+            },
+            20,
+        )?;
+    }
+    let weaken = ClaimDemotionAction::Weaken {
+        new_confidence: 0.5,
+    };
+    let reopen = |vault: Vault| {
+        drop(vault);
+        Vault::open(dir.path(), crate::config::VaultConfig::default())
+    };
+    let unprovisioned = |error: Error| {
+        assert_eq!(
+            error.kind(),
+            crate::ErrorKind::EngineIdentitiesNotProvisioned,
+            "{error:?}"
+        );
+    };
+
+    let vault = reopen(vault)?;
+    let raw = vault.get_raw(&direct)?.expect("decayed");
+    unprovisioned(
+        vault
+            .apply_claim_demotion(&direct, weaken, 21)
+            .expect_err("no signer on this handle"),
+    );
+    assert_eq!(vault.get_raw(&direct)?.expect("unchanged"), raw);
+    crate::test_util::provision_engine_machines(&vault);
+    assert_ne!(
+        vault.apply_claim_demotion(&direct, weaken, 21)?.claim,
+        direct
+    );
+
+    hold_fixture_predicate(&vault)?;
+    let error = vault
+        .apply_claim_demotion(&held, weaken, 22)
+        .expect_err("held for the owner");
+    assert!(
+        matches!(
+            error,
+            Error::Gate(GateError::GateWriteRejected {
+                outcome: "pending",
+                ..
+            })
+        ),
+        "{error:?}"
+    );
+    // The owner's clear replays the held weakening on a handle the host has
+    // not provisioned again.
+    let vault = reopen(vault)?;
+    let raw = vault.get_raw(&held)?.expect("held");
+    let settle = |vault: &Vault| {
+        vault.with_write_txn(|txn| vault.complete_deferred_claim_in_txn(txn, &held, true, 23))
+    };
+    unprovisioned(settle(&vault).expect_err("no signer for the replay"));
+    assert_eq!(vault.get_raw(&held)?.expect("unchanged"), raw);
+    assert_eq!(vault.pending_claim_demotion(&held)?, Some(weaken));
+    crate::test_util::provision_engine_machines(&vault);
+    settle(&vault)?;
+    assert_eq!(
+        vault.get_claim(&held)?.expect("weakened").lifecycle,
+        ClaimLifecycleStatus::Superseded
+    );
+    Ok(())
+}
+
 /// Astra #1336 R2 repro: a host's unattributed successor carries no
 /// envelope, so its predecessor's restricted history must still clear the
 /// Gate under the host. A ToolOutput claim whose ToolOutput permit names

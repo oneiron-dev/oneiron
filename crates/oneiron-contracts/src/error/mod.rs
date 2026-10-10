@@ -307,6 +307,7 @@ pub enum ErrorKind {
     InvalidMachineClaimProof,
     MachineClaimHistoryIncomplete,
     RemoteMachineHistoryPending,
+    EngineIdentitiesNotProvisioned,
     SideTableRow,
     SideTableKeyUndeclared,
     ScopedReadOwnerNotLive,

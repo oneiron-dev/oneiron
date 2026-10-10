@@ -7,7 +7,7 @@ use crate::Vault;
 use crate::claim::ClaimBody;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{ClaimError, Error, Result};
 use crate::write_envelope::{MachineWriteSignature, WriteEnvelope};
 
 impl Vault {
@@ -26,9 +26,8 @@ impl Vault {
         if envelope.actor().actor_class() != EdgeActorClass::System {
             return Err(denied());
         }
-        let (public_key, sign) = self
-            .retained_machine_signer(envelope.actor().entity_ref())?
-            .ok_or_else(denied)?;
+        let (public_key, sign) =
+            self.retained_successor_signer_in_txn(txn, envelope.actor().entity_ref())?;
         let vault_id = self
             .authority_fold_readonly_in_txn(txn)?
             .vault_id
@@ -50,5 +49,32 @@ impl Vault {
         ]);
         *envelope = envelope.clone().with_machine_signature(proof);
         Ok(())
+    }
+
+    /// The signer the host retained on this handle for `machine`. A reopened
+    /// vault holds none until the host provisions the engine's identities
+    /// again, and that missing setup step is named as such. A writer whose
+    /// every binding is dead stays an authority denial: provisioning never
+    /// revives a revoked key.
+    fn retained_successor_signer_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        machine: EntityId,
+    ) -> Result<([u8; 32], crate::store::MachineWriteSigner)> {
+        if let Some(signer) = self.retained_machine_signer(machine)? {
+            return Ok(signer);
+        }
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        if fold
+            .actor_bindings
+            .values()
+            .any(|binding| binding.actor_ref == machine)
+            && !crate::authority::actor_binding_is_active(&fold, &machine, "system")
+        {
+            return Err(denied());
+        }
+        Err(Error::Claim(ClaimError::EngineIdentitiesNotProvisioned {
+            machine,
+        }))
     }
 }
