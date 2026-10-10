@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use oneiron::{
     code_run::SelfEffect, code_sandbox::SANDBOX_WIT_WORLD_NAME,
     code_sandbox::SandboxBoundaryContract, code_sandbox::SandboxGuestTier,
-    code_sandbox::SandboxImportClass,
+    code_sandbox::SandboxImportClass, task_verb::sdk::RunVerb,
 };
 
 // Which FILES count as production is decided once, in the shared scanner
@@ -523,9 +523,19 @@ fn of060_p3_code_mode_guest_surface_links_named_verbs_only() {
         assert!(
             write_imports
                 .insert(
-                    import.name(),
+                    import.name().to_owned(),
                     import.write_trap_effect().expect("named write trap"),
                 )
+                .is_none(),
+            "write-import names must be unique",
+        );
+    }
+    // The memory writes reach the guest as verb-table rows the run answers
+    // itself, each its own named, gated effect: the same closed set.
+    for verb in RunVerb::ALL.iter().filter(|verb| verb.writes()) {
+        assert!(
+            write_imports
+                .insert(format!("self.memory.{}", verb.as_str()), verb.effect())
                 .is_none(),
             "write-import names must be unique",
         );
@@ -533,16 +543,26 @@ fn of060_p3_code_mode_guest_surface_links_named_verbs_only() {
     assert_eq!(
         write_imports,
         BTreeMap::from([
-            ("self.memory.put_claim", SelfEffect::MemoryPutClaim),
             (
-                "self.memory.supersede_claim",
+                "self.memory.put_claim".to_owned(),
+                SelfEffect::MemoryPutClaim
+            ),
+            (
+                "self.memory.supersede_claim".to_owned(),
                 SelfEffect::MemorySupersedeClaim,
             ),
-            ("self.memory.put_edge", SelfEffect::MemoryPutEdge),
-            ("self.report_blocked", SelfEffect::ReportBlocked),
+            ("self.memory.put_edge".to_owned(), SelfEffect::MemoryPutEdge),
+            ("self.report_blocked".to_owned(), SelfEffect::ReportBlocked),
         ]),
         "OF-060 P3: write imports must map exactly to authorized memory effects and the blocked-report receipt",
     );
+    for verb in RunVerb::ALL {
+        assert_ne!(
+            verb.effect(),
+            SelfEffect::MemoryWriteFixture,
+            "OF-060 P3: a run row must not expose the fixture write effect",
+        );
+    }
 
     for tier in [
         SandboxGuestTier::FirstPartyDreamer,

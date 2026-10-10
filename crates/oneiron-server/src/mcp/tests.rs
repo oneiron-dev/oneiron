@@ -1546,6 +1546,15 @@ fn agent_verb_schemas_follow_manifest_inputs_and_argument_paths() {
             continue;
         }
         let input = oneiron::task_verb::sdk::input_schema(name).expect("input schema");
+        // A run row is answered by the code run itself: code mode serves it
+        // from its input schema, and no tool can carry a run.
+        if row["context"] == "run" {
+            assert!(oneiron::task_verb::sdk::RunVerb::from_name(name).is_some());
+            assert!(oneiron::task_verb::sdk::AgentVerb::from_name(name).is_none());
+            assert!(surface.resolve(name).is_none(), "{name} is a tool");
+            assert_eq!(input["additionalProperties"], false, "{name}");
+            continue;
+        }
         if name == "tasks.ask" {
             let branches = input["anyOf"]
                 .as_array()

@@ -330,7 +330,7 @@
      "path": "src/affect/consolidation.rs",
      "purpose": "Vault claim-VAD transaction surface: annotation, consolidation, approvals, and state scans",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 4,
       "fn": 6
      }
     },
@@ -8700,7 +8700,7 @@
      "surface": {
       "crate-vis": 5,
       "mod": 4,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -8735,6 +8735,23 @@
       "crate-vis": 1,
       "fn": 16,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MemoryClaimInput",
+      "MemoryEdgeInput",
+      "MemorySearchInput",
+      "MemorySupersedeInput",
+      "MemoryTimeRange"
+     ],
+     "path": "src/code_run/run_verbs.rs",
+     "purpose": "The inputs of the verb-table rows a code run answers itself (`context: \"run\"` in…",
+     "surface": {
+      "const": 1,
+      "struct": 5
      }
     },
     {
@@ -8858,6 +8875,7 @@
      "path": "src/code_run/types.rs",
      "purpose": "—",
      "surface": {
+      "const": 1,
       "enum": 5,
       "fn": 17,
       "struct": 23,
@@ -16508,6 +16526,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "src/engine_executor/tests/memory_rows.rs",
+     "purpose": "The memory rows a run answers itself (`search`, `put_claim`, `supersede_claim`, `put_edge`) are verb-table…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "src/engine_executor/tests/output_decay.rs",
      "purpose": "Model-facing output decay and successful native compaction on the real REPL path",
      "surface": {}
@@ -20266,7 +20292,7 @@
      "path": "src/ingest/identity_key.rs",
      "purpose": "Per-kind identity hints and the lookup-before-mint entity-resolution door",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 3
      }
     },
@@ -22105,7 +22131,7 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "crate-vis": 8,
-      "mod": 7,
+      "mod": 8,
       "re-export": 10
      }
     },
@@ -22213,6 +22239,184 @@
      "path": "src/llm/routing/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RunAdmission",
+      "RunCall",
+      "RunCallError",
+      "RunDenied"
+     ],
+     "path": "src/llm/run_admission/admission.rs",
+     "purpose": "One run admission: each paid call of a run, to a model or to a paid connector, is admitted against the run's…",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 2,
+      "fn": 13,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BudgetLine",
+      "DeclarationEditor",
+      "DeclarationError",
+      "DeclaredTeachers",
+      "LeaseUnit",
+      "RunDeclaration"
+     ],
+     "path": "src/llm/run_admission/declaration.rs",
+     "purpose": "The run declaration: the teachers a run pinned at its start, the aliases frozen with them, the paid…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 2,
+      "fn": 15,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GatedBackend"
+     ],
+     "path": "src/llm/run_admission/gate.rs",
+     "purpose": "The run's model backend: every call starts its permit here, before any byte leaves, and leaves a dispatch…",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AccountStatus",
+      "Allocation",
+      "AllocationGrantError",
+      "AllocationRef",
+      "AllocationRefusal",
+      "HostAccount",
+      "KeyCustody",
+      "OfferBinding",
+      "OfferRoute",
+      "OfferRouteError",
+      "PaidConnector",
+      "Payer",
+      "UnitRate"
+     ],
+     "path": "src/llm/run_admission/host.rs",
+     "purpose": "What a host feeds the run admission: the offers it bound, the money a vault may commit and the account's…",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 5,
+      "fn": 8,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AddFundsNotice",
+      "CheckpointRef",
+      "DeclaredMaximum",
+      "JobMaximum",
+      "JobSignal",
+      "JobStartRefused",
+      "MaximumShown",
+      "MaximumStop",
+      "ResumeOffer",
+      "ResumeRefused",
+      "StopRefused"
+     ],
+     "path": "src/llm/run_admission/job_maximum.rs",
+     "purpose": "The stop at a paid job's declared maximum (CROSS-ARCH-0023 C2)",
+     "surface": {
+      "enum": 4,
+      "fn": 9,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/run_admission/mod.rs",
+     "purpose": "The run admission (ARCH-0053 `#run-admission`): one door every paid call of a run passes, to a model through…",
+     "surface": {
+      "re-export": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RunPermit"
+     ],
+     "path": "src/llm/run_admission/permit.rs",
+     "purpose": "Building a run's permits: the declared teachers, the host's offer, the key's rung, the run's line and the…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CalledTeacher",
+      "MemoryReceipts",
+      "PermitFacts",
+      "RunEvent",
+      "RunReceipt",
+      "RunReceiptSink",
+      "TeacherReport"
+     ],
+     "path": "src/llm/run_admission/receipt.rs",
+     "purpose": "The run admission's receipts: every admission, refusal, dispatch, settlement and revision, keyed by lease",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 5,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CallOutcome"
+     ],
+     "path": "src/llm/run_admission/settle.rs",
+     "purpose": "Settling a run's permits: an answer pays its usage or its reservation, a started call that failed pays its…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "XL",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/run_admission/tests.rs",
+     "purpose": "The research-connector fixture (ARCH-0053 `#training-fixture-cases`) on local fakes",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/run_admission/tests/support.rs",
+     "purpose": "Local fakes for the research-connector fixture",
+     "surface": {
+      "crate-vis": 16
+     }
     },
     {
      "bucket": "s",
@@ -22829,7 +23033,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/extraction/mod.rs",
-     "purpose": "Host-served extraction beside witness, followed by separately authorized atomic persistence",
+     "purpose": "Host-served extraction beside witness, followed by a separately authorized save of its tags",
      "surface": {
       "crate-vis": 1,
       "re-export": 1
@@ -22840,7 +23044,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/extraction/persist.rs",
-     "purpose": "One transaction composes mention, VAD and identity-proposal doors",
+     "purpose": "A host's shadow output, once it clears parity, saved as its turn's tags the way the tagging slot saves an…",
      "surface": {
       "fn": 1
      }
@@ -22857,7 +23061,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/memory/extraction/tests.rs",
@@ -22876,7 +23080,6 @@
       "EncoderParity",
       "EncoderTurn",
       "ExtractionEncoder",
-      "ExtractionReceipt",
       "NerSpan",
       "ShadowTrace",
       "WitnessWithShadow"
@@ -22885,7 +23088,7 @@
      "purpose": "Typed serving payloads and observable extraction receipts",
      "surface": {
       "fn": 5,
-      "struct": 11,
+      "struct": 10,
       "trait": 1
      }
     },
@@ -23512,7 +23715,7 @@
      "purpose": "Base witness landing: container resolve, K7 door, batch write, text ops, session bump",
      "surface": {
       "crate-vis": 13,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -23543,7 +23746,7 @@
      "path": "src/memory/witness/program.rs",
      "purpose": "The one witness program: request checks, one plan, the ONE-1686 ceiling door and the ONE-1767 mint contract…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -27127,7 +27330,9 @@
      "notable": [],
      "path": "src/ports/lmdb_visibility.rs",
      "purpose": "Transaction-local visibility ledger for canonical and composed session views",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -27185,7 +27390,7 @@
      "path": "src/ports/mod.rs",
      "purpose": "Transaction-composable storage ports",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 6
      }
     },
@@ -27333,7 +27538,7 @@
      "path": "src/ports/time.rs",
      "purpose": "Per-store clock and id source",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 6,
       "struct": 1,
       "trait": 2
@@ -34947,12 +35152,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "HeldTagsOutcome"
+      "HeldTagsOutcome",
+      "UnreadText"
      ],
      "path": "src/tagging/held.rs",
      "purpose": "An importer completes a turn's marker with tags it already holds: no tagger call",
      "surface": {
-      "enum": 1,
+      "crate-vis": 1,
+      "enum": 2,
       "fn": 1
      }
     },
@@ -34985,6 +35192,7 @@
      "kind": "src",
      "notable": [
       "TaggingMarkerConfig",
+      "TaggingMode",
       "TaggingTraceHistory"
      ],
      "path": "src/tagging/marker.rs",
@@ -34992,7 +35200,8 @@
      "surface": {
       "const": 6,
       "crate-vis": 9,
-      "fn": 4,
+      "enum": 1,
+      "fn": 7,
       "struct": 2
      }
     },
@@ -35003,8 +35212,8 @@
      "path": "src/tagging/mod.rs",
      "purpose": "The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036…",
      "surface": {
-      "crate-vis": 3,
-      "re-export": 6
+      "crate-vis": 7,
+      "re-export": 8
      }
     },
     {
@@ -35016,9 +35225,22 @@
      "path": "src/tagging/output.rs",
      "purpose": "What a tagger's answer must satisfy before a marker settles on it",
      "surface": {
-      "crate-vis": 2,
-      "enum": 1,
-      "fn": 1
+      "crate-vis": 1,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ProvisionalEntity"
+     ],
+     "path": "src/tagging/provisional.rs",
+     "purpose": "Provisional entities: what a save mints when the identity key names nothing (ARCH-0055 §10), for the Dreamer…",
+     "surface": {
+      "crate-vis": 8,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -35033,8 +35255,46 @@
      "purpose": "The drain pass a host worker drives: claim ready markers, read each turn, call the tagger outside any write…",
      "surface": {
       "crate-vis": 1,
-      "fn": 10,
+      "fn": 9,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/tagging/save.rs",
+     "purpose": "Save mode: a checked answer becomes the turn's tag set (ARCH-0036, serving the tagger)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/tagging/save_tests.rs",
+     "purpose": "Save mode end to end, observed through the read doors (ARCH-0036, serving the tagger): a tagged turn's…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DerivationEnvelope",
+      "MentionHit",
+      "MentionLink",
+      "MergeEvidence",
+      "TaggedMention",
+      "TurnTags"
+     ],
+     "path": "src/tagging/tags.rs",
+     "purpose": "The saved tag sets: what save mode keeps for a tagged turn, the index of the entities they name, and the…",
+     "surface": {
+      "crate-vis": 13,
+      "enum": 1,
+      "fn": 6,
+      "struct": 5
      }
     },
     {
@@ -35677,6 +35937,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "RunVerb"
+     ],
+     "path": "src/task_verb/run_verb_catalog.rs",
+     "purpose": "—",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/task_verb/scheduling.rs",
      "purpose": "Live TASK dependency and symbol readiness at every attempt-claim door",
@@ -35712,7 +35986,7 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "enum": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 18
      }
     },
@@ -38515,6 +38789,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it_sync/tagging_local_only.rs",
+     "purpose": "What a saved tag set and a provisional entity do across two devices of one vault (ARCH-0036, serving the…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -38898,7 +39180,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39213,7 +39495,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39430,7 +39712,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 63,
+     "files": 74,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39871,7 +40153,7 @@
      "purpose": "CRDT sync layer for Oneiron"
     },
     "tagging": {
-     "files": 10,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -39885,7 +40167,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 71,
+     "files": 72,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40006,8 +40288,8 @@
    },
    "over_bar": 33,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2422,
-   "test_files": 787
+   "source_files": 2436,
+   "test_files": 792
   },
   "oneiron-android": {
    "files": [
@@ -44274,6 +44556,14 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/lib/tests.rs",
+     "purpose": "The adapter under a run admission's gate: its preflight refuses what its send would, before the call's…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "OpenAiCompatHttpRequest",
@@ -44305,7 +44595,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -44315,7 +44605,7 @@
    "over_bar": 0,
    "purpose": "OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam",
    "source_files": 7,
-   "test_files": 0
+   "test_files": 1
   },
   "oneiron-llm-own-server": {
    "files": [
@@ -44588,7 +44878,9 @@
      "notable": [
       "BudgetLease",
       "LlmBackend",
-      "LlmStream"
+      "LlmStream",
+      "SingleRouteBackend",
+      "SingleSend"
      ],
      "path": "src/llm/backend.rs",
      "purpose": "Raw-call primitive: result aliases, the terminal-EOF stream wrapper, the host backend trait, and the budget…",
@@ -44596,8 +44888,24 @@
       "crate-vis": 1,
       "fn": 3,
       "struct": 2,
-      "trait": 1,
+      "trait": 3,
       "type": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DispatchBinding",
+      "DispatchRefused"
+     ],
+     "path": "src/llm/budget/dispatch.rs",
+     "purpose": "Bound admissions and the one-use dispatch check: a lease that records what it was granted for, and is…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 8,
+      "struct": 1
      }
     },
     {
@@ -44641,7 +44949,7 @@
      "path": "src/llm/budget/mod.rs",
      "purpose": "—",
      "surface": {
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -44668,6 +44976,7 @@
      "path": "src/llm/budget/settlement.rs",
      "purpose": "—",
      "surface": {
+      "crate-vis": 1,
       "fn": 2
      }
     },
@@ -44699,6 +45008,14 @@
      "kind": "test",
      "notable": [],
      "path": "src/llm/budget/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/budget/tests/dispatch.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -44923,7 +45240,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ContentPart",
@@ -44943,9 +45260,17 @@
      "purpose": "Wire protocol: requests, responses, messages, content parts, stream events, usage, tool specs, and canonical…",
      "surface": {
       "enum": 5,
-      "fn": 5,
+      "fn": 6,
       "struct": 7
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/protocol/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -45019,7 +45344,7 @@
      "purpose": "—"
     },
     "llm": {
-     "files": 29,
+     "files": 32,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -45028,8 +45353,8 @@
    },
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
-   "source_files": 30,
-   "test_files": 4
+   "source_files": 31,
+   "test_files": 6
   },
   "oneiron-napi": {
    "files": [
@@ -50221,7 +50546,7 @@
      "path": "src/oneironer/tests/support.rs",
      "purpose": "A stub tagger server inside the test process, and the vaults and servers the slot's tests share",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -50229,7 +50554,7 @@
      "kind": "test",
      "notable": [],
      "path": "src/oneironer/tests/worker.rs",
-     "purpose": "The worker against the stub tagger: shadow writes nothing but the job tables, a failing tagger never fails a…",
+     "purpose": "The worker against the stub tagger: save mode saves each turn's tags, shadow writes nothing but the job…",
      "surface": {}
     },
     {

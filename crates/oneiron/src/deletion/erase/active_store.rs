@@ -53,6 +53,9 @@ impl Vault {
         crate::workspace_roster::retire_goal_for_delete(self, wtxn, *id)?;
         #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
+        // Saved tags read the turn's messages through their PartOf edges, so
+        // they go before the graph is torn down.
+        let had_tags = crate::tagging::erase_in_txn(self, wtxn, id)?;
         // The content-hash index row is dropped by `deindex_entity` below;
         // ONE-1741 removed the verdict relocation that this hook also carried.
         //
@@ -84,7 +87,7 @@ impl Vault {
         }
         crate::embed::erase_turn_vectors_in_txn(self, wtxn, turns)?;
         Ok((
-            existed || note_removed || had_refinement || had_merge_receipt,
+            existed || note_removed || had_refinement || had_merge_receipt || had_tags,
             citing,
         ))
     }
@@ -100,6 +103,7 @@ impl Vault {
         crate::conversation_dag::capture_before_erase(self, wtxn, id, false)?;
         crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
+        let had_tags = crate::tagging::erase_in_txn(self, wtxn, id)?;
         self.record_invalid_participant_dispositions_for_delete_in_txn(wtxn, id)?;
         self.moot_identity_proposals_for_participant_in_txn(wtxn, id)?;
         crate::workspace_roster::retire_goal_for_delete(self, wtxn, *id)?;
@@ -167,7 +171,7 @@ impl Vault {
                 ppr::increment_graph_version(&self.store, wtxn)?;
             }
             return Ok((
-                had_refinement || had_merge_receipt,
+                had_refinement || had_merge_receipt || had_tags,
                 had_vector,
                 ledger_changed,
             ));

@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
+use super::dispatch::DispatchBinding;
 use super::ledger::{
     BudgetRowTally, FloorAllocation, LeaseRecord, LeaseState, ReserveAllocation, ReservePlan,
 };
@@ -48,31 +49,7 @@ impl BudgetState {
             .iter()
             .filter_map(BudgetPolicyRow::floor_units)
             .fold(0, u64::saturating_add);
-        let mut selector_floor_units = HashMap::new();
-        for row in policy.rows() {
-            let Some(floor_units) = row.floor_units() else {
-                continue;
-            };
-            selector_floor_units
-                .entry(row.selector().clone())
-                .and_modify(|sum: &mut u64| *sum = sum.saturating_add(floor_units))
-                .or_insert(floor_units);
-        }
-        let row_horizons = policy
-            .rows()
-            .iter()
-            .map(|row| {
-                let leaseable_floor_units = selector_floor_units
-                    .get(row.selector())
-                    .copied()
-                    .unwrap_or(0);
-                let inaccessible_floor_units =
-                    total_floor_units.saturating_sub(leaseable_floor_units);
-                row.cap_units()
-                    .unwrap_or(u64::MAX)
-                    .min(limit_units.saturating_sub(inaccessible_floor_units))
-            })
-            .collect();
+        let row_horizons = row_horizons(&policy, limit_units, total_floor_units);
         Self {
             guard_identity: Arc::new(()),
             attempt_id,
@@ -94,6 +71,14 @@ impl BudgetState {
         }
     }
 
+    /// Moves the line's limit and per-call reservation, recomputing the row
+    /// horizons the limit bounds. Spend, reservations and fired thresholds stay.
+    pub(super) fn revise_line(&mut self, limit_units: u64, reserve_units: u64) {
+        self.limit_units = limit_units;
+        self.reserve_units = reserve_units;
+        self.row_horizons = row_horizons(&self.policy, limit_units, self.total_floor_units);
+    }
+
     pub(super) fn check_lease_provenance(&self, lease: &BudgetLease) -> Result<(), BudgetDenied> {
         if Arc::ptr_eq(&self.guard_identity, &lease.guard_identity) {
             Ok(())
@@ -113,6 +98,16 @@ impl BudgetState {
         reserve_units: u64,
         purpose: Option<&CallPurpose>,
     ) -> Result<BudgetLease, BudgetDenied> {
+        self.reserve_bound(reserve_units, purpose, None)
+    }
+
+    /// [`Self::reserve_for`], recording what the lease is granted for.
+    pub(super) fn reserve_bound(
+        &mut self,
+        reserve_units: u64,
+        purpose: Option<&CallPurpose>,
+        binding: Option<DispatchBinding>,
+    ) -> Result<BudgetLease, BudgetDenied> {
         if reserve_units == 0 {
             return Err(BudgetDenied::AdmissionDenied);
         }
@@ -125,7 +120,7 @@ impl BudgetState {
         };
 
         self.commit_reservation(reserve_units, &allocation);
-        Ok(self.issue_lease_with(reserve_units, true, "metered", allocation))
+        Ok(self.issue_lease_with(reserve_units, true, "metered", allocation, binding))
     }
 
     /// Projects one admission without mutating any global, shared, row, floor,
@@ -148,8 +143,16 @@ impl BudgetState {
         }
 
         let (floor_allocations, shared_units) = self.allocate_floors(&matched_rows, reserve_units);
-        let shared_projected = self.shared_committed().saturating_add(shared_units);
-        if shared_units > 0 && shared_projected > self.shared_admission_ceiling() {
+        if shared_units > 0
+            && exceeds(
+                [
+                    self.shared_used_units,
+                    self.shared_reserved_units,
+                    shared_units,
+                ],
+                self.shared_admission_ceiling(),
+            )
+        {
             return ReservePlan::DeniedByCapacity;
         }
         if self.global_denies(reserve_units) {
@@ -172,7 +175,10 @@ impl BudgetState {
     }
 
     pub(super) fn global_denies(&self, reserve_units: u64) -> bool {
-        self.global_committed().saturating_add(reserve_units) > self.cap_units()
+        exceeds(
+            [self.used_units, self.reserved_units, reserve_units],
+            self.cap_units(),
+        )
     }
 
     /// Row indices whose selector matches this call, in resolved order.
@@ -198,11 +204,10 @@ impl BudgetState {
             let Some(tally) = self.row_tally(row_index) else {
                 return false;
             };
-            tally
-                .used_units
-                .saturating_add(tally.reserved_units)
-                .saturating_add(reserve_units)
-                > cap_units
+            exceeds(
+                [tally.used_units, tally.reserved_units, reserve_units],
+                cap_units,
+            )
         })
     }
 
@@ -291,15 +296,6 @@ impl BudgetState {
         self.shared_slice_units().saturating_add(overdraft)
     }
 
-    pub(super) fn shared_committed(&self) -> u64 {
-        self.shared_used_units
-            .saturating_add(self.shared_reserved_units)
-    }
-
-    pub(super) fn global_committed(&self) -> u64 {
-        self.used_units.saturating_add(self.reserved_units)
-    }
-
     pub(super) fn policy_row(&self, row_index: u16) -> Option<&BudgetPolicyRow> {
         self.policy.rows().get(usize::from(row_index))
     }
@@ -331,8 +327,15 @@ impl BudgetState {
         reserve_units: u64,
         metered: bool,
         kind: &str,
+        binding: Option<DispatchBinding>,
     ) -> BudgetLease {
-        self.issue_lease_with(reserve_units, metered, kind, ReserveAllocation::default())
+        self.issue_lease_with(
+            reserve_units,
+            metered,
+            kind,
+            ReserveAllocation::default(),
+            binding,
+        )
     }
 
     /// The lease id stays `<attempt>:<kind>:<seq>`: row indices, actor refs,
@@ -343,6 +346,7 @@ impl BudgetState {
         metered: bool,
         kind: &str,
         allocation: ReserveAllocation,
+        binding: Option<DispatchBinding>,
     ) -> BudgetLease {
         self.next_lease_seq = self.next_lease_seq.saturating_add(1);
         let lease_id = format!("{}:{kind}:{}", self.attempt_id, self.next_lease_seq);
@@ -356,6 +360,8 @@ impl BudgetState {
                 matched_rows: allocation.matched_rows,
                 floor_allocations: allocation.floor_allocations,
                 shared_reserved_units: allocation.shared_units,
+                binding,
+                dispatched: false,
             },
         );
         lease
@@ -375,4 +381,40 @@ impl BudgetState {
             fired_thresholds: self.fired_thresholds.iter().copied().collect(),
         }
     }
+}
+
+/// Each row's ladder horizon: its cap, bounded by the limit less every floor
+/// the row cannot lease.
+fn row_horizons(policy: &BudgetPolicyTable, limit_units: u64, total_floor_units: u64) -> Vec<u64> {
+    let mut selector_floor_units = HashMap::new();
+    for row in policy.rows() {
+        let Some(floor_units) = row.floor_units() else {
+            continue;
+        };
+        selector_floor_units
+            .entry(row.selector().clone())
+            .and_modify(|sum: &mut u64| *sum = sum.saturating_add(floor_units))
+            .or_insert(floor_units);
+    }
+    policy
+        .rows()
+        .iter()
+        .map(|row| {
+            let leaseable_floor_units = selector_floor_units
+                .get(row.selector())
+                .copied()
+                .unwrap_or(0);
+            let inaccessible_floor_units = total_floor_units.saturating_sub(leaseable_floor_units);
+            row.cap_units()
+                .unwrap_or(u64::MAX)
+                .min(limit_units.saturating_sub(inaccessible_floor_units))
+        })
+        .collect()
+}
+
+/// Whether `parts` sum past `cap`, summed wide: an admission is never let
+/// through because its total saturated at `u64::MAX`, and a reservation it
+/// admits always fits the counters.
+fn exceeds(parts: [u64; 3], cap: u64) -> bool {
+    parts.into_iter().map(u128::from).sum::<u128>() > u128::from(cap)
 }

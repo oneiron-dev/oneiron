@@ -1,18 +1,12 @@
 // Generated from code-run.wit; do not edit.
 declare namespace OneironCodeRun {
   interface TimeRange { start: number; end: number; }
-  interface SearchInput { query: string; limit?: number | undefined; }
   interface ClaimInput { id: string; predicate: string; subject: unknown; value: unknown; confidence?: number | undefined; occurred?: OneironCodeRun.TimeRange | undefined; learnedAt?: number | undefined; }
-  interface SearchOutput { results: unknown[]; }
-  interface ClaimOutput { id: string; }
-  interface EdgeOutput { src: string; kind: string; tgt: string; }
   interface WaitOutput { waitId: string; }
   interface SpeechOutput { order: number; isVisible: boolean; }
   interface BlockedOutput { receipt: string; }
   interface AgentPutInput { id: string; definition: unknown; }
   interface AgentPutOutput { id: string; disposition: string; }
-  interface SupersedeInput { newId: string; oldId: string; now: number; }
-  interface EdgeInput { src: string; kind: string; tgt: string; weight?: number | undefined; }
   interface PromptInput { prompt: string; }
   interface TextInput { text: string; }
   interface CredentialInput { operation: string; credentialHandle: string; args: unknown; }
@@ -46,12 +40,6 @@ declare namespace vault {
 declare namespace self {
   namespace json {
     function validate(schema: unknown, value: unknown): Promise<boolean>;
-  }
-  namespace memory {
-    function search(input: OneironCodeRun.SearchInput): Promise<OneironCodeRun.SearchOutput>;
-    function put_claim(input: OneironCodeRun.ClaimInput): Promise<OneironCodeRun.ClaimOutput>;
-    function supersede_claim(input: OneironCodeRun.SupersedeInput): Promise<OneironCodeRun.ClaimOutput>;
-    function put_edge(input: OneironCodeRun.EdgeInput): Promise<OneironCodeRun.EdgeOutput>;
   }
   function report_blocked(category: string, detail: string): Promise<OneironCodeRun.BlockedOutput>;
   function speak(input: OneironCodeRun.TextInput): Promise<OneironCodeRun.SpeechOutput>;
