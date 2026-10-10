@@ -160,32 +160,47 @@ async fn host_emits_signed_oversight_receipts_the_owner_reads() {
 /// abort the cadence and go on while the write was still running.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shutdown_waits_for_an_admitted_receipt_write() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-    let dir = tempfile::tempdir().unwrap();
-    let clock = oneiron::store::ports::ManualClock::new(1_000);
-    let mut config = oneiron::VaultConfig::device();
-    config.store_clock = clock.bundle();
-    let vault = Arc::new(oneiron::Vault::open(dir.path(), config).unwrap());
-    let server =
-        Arc::new(SyncServer::new(Arc::clone(&vault), SyncServerConfig::default()).unwrap());
+    /// What an admitted emission holds until its write has ended.
+    struct Admitted(Arc<AtomicUsize>);
+    impl Drop for Admitted {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let (_dir, server) = auth_test_server();
+    // Each arming admits exactly one emission; every other tick is skipped.
+    let armed = Arc::new(AtomicBool::new(true));
     let admitted = Arc::new(AtomicUsize::new(0));
+    let ended = Arc::new(AtomicUsize::new(0));
     let oversight = server
         .start_healer_oversight(std::time::Duration::from_millis(20), {
-            let admitted = Arc::clone(&admitted);
-            move || Some(admitted.fetch_add(1, Ordering::SeqCst))
+            let (armed, admitted, ended) = (
+                Arc::clone(&armed),
+                Arc::clone(&admitted),
+                Arc::clone(&ended),
+            );
+            move || {
+                armed.swap(false, Ordering::SeqCst).then(|| {
+                    admitted.fetch_add(1, Ordering::SeqCst);
+                    Admitted(Arc::clone(&ended))
+                })
+            }
         })
         .await
         .unwrap();
-    clock.set(2_000);
+    assert_eq!(ended.load(Ordering::SeqCst), 1, "the first set is signed");
 
-    // The vault's writer, held, so the next emission waits inside its write.
+    // The vault's writer, held, so the next admitted emission waits inside
+    // its write.
     let (entered, entered_rx) = std::sync::mpsc::channel();
     let (release, released) = std::sync::mpsc::channel::<()>();
     let holder = std::thread::spawn({
-        let vault = Arc::clone(&vault);
+        let server = Arc::clone(&server);
         move || {
-            vault.with_write_txn(|_| {
+            server.vault().with_write_txn(|_| {
                 entered.send(()).unwrap();
                 released.recv().unwrap();
                 Ok(())
@@ -193,6 +208,7 @@ async fn shutdown_waits_for_an_admitted_receipt_write() {
         }
     });
     entered_rx.recv().unwrap();
+    armed.store(true, Ordering::SeqCst);
     while admitted.load(Ordering::SeqCst) < 2 {
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
@@ -207,12 +223,11 @@ async fn shutdown_waits_for_an_admitted_receipt_write() {
     release.send(()).unwrap();
     holder.join().unwrap().unwrap();
     stopping.await.unwrap();
-    // The held write ended before the stop did.
-    let receipts = vault.healer_oversight_receipts().unwrap();
-    assert_eq!(receipts.len(), 3);
-    for (receipt, _) in &receipts {
-        assert_eq!(receipt.counts.observed_at, 2_000, "{receipt:?}");
-    }
+    assert_eq!(
+        ended.load(Ordering::SeqCst),
+        2,
+        "the admitted write ended before the stop did"
+    );
 }
 
 /// A custom AGENT_DEF the ladder's scope can bind to.
