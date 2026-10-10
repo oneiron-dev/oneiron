@@ -22,6 +22,13 @@ pub fn promote_scoped_consolidation(
     }
     let mut outcome = PromotionOutcome::default();
     for (head, candidate, evidence) in write.attachments {
+        // Imported material reaches the vault only through the owner's import
+        // review (ARCH-0027), and an attachment is no claim that review could
+        // hold: a head imported words restate keeps its own evidence.
+        if evidence.meet() == ClaimSource::Imported {
+            outcome.held.push(head);
+            continue;
+        }
         match attach_evidence(
             vault,
             run,
@@ -38,6 +45,17 @@ pub fn promote_scoped_consolidation(
     for (mut candidate, evidence) in write.candidates.into_iter().zip(write.candidate_evidence) {
         candidate.evidence_meet = evidence.meet();
         let id = candidate.claim_id;
+        // The owner declined this claim from these same imported words; a
+        // message landing later in their TURN re-reads them and the Dreamer
+        // finds it again. It is not proposed again.
+        if let Some(declined) = crate::dreamer_consolidation::reviewed::declined_from_same_words(
+            vault,
+            &candidate,
+            &evidence.cited_messages(),
+        )? {
+            outcome.held.push(declined);
+            continue;
+        }
         match promote_one(
             vault,
             run,
@@ -70,7 +88,7 @@ fn attach_evidence(
     let envelope = WriteEnvelope::with_lineage(
         run.agent_actor,
         source,
-        WriteProvenance::new(promotion_provenance(run, &candidate.provenance_chain))?,
+        WriteProvenance::new(promotion_provenance(run, &candidate.provenance_chain, None))?,
         ClaimApprovalStatus::Auto,
         SourceLineage::of(ClaimSource::Generated).with(source),
     );

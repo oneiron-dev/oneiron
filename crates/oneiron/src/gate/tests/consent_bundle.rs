@@ -338,6 +338,57 @@ fn gate_consent_bundle_decline_closes_every_member_with_one_receipt() -> Result<
     Ok(())
 }
 
+/// Wave 9a lane 3b: one history import can leave more proposals waiting than
+/// the whole-tray scan read (10,000), which refused every review. A run's
+/// review and resolution read the run's own rows, so it resolves whole however
+/// many rows other runs have waiting.
+#[test]
+fn gate_consent_bundle_resolves_whole_however_many_rows_other_runs_have_waiting() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0x70), &encode_policy_manifest(vec![]))?;
+    let run = "consent-bundle-beside-a-large-import";
+    let first = test_id(0x30);
+    let second = test_id(0x31);
+    park_consent_bundle_member(&vault, first, test_id(0x40), 0x50, run, "first", 3)?;
+    park_consent_bundle_member(&vault, second, test_id(0x40), 0x51, run, "second", 3)?;
+    let template = vault.store.pending_gate_consents(1)?.remove(0);
+    vault.with_write_txn(|wtxn| {
+        for _ in 0..10_001 {
+            let mut row = template.clone();
+            row.claim_id = *EntityId::now().as_bytes();
+            row.decision_id = GateDecisionId::now();
+            row.dreamer_run_id = Some("import:chatgpt:1800000000".to_owned());
+            vault.store.put_pending_gate_consent_in_txn(wtxn, &row)?;
+        }
+        Ok(())
+    })?;
+
+    let reviewer = WriteActor::new(test_id(0x40), EdgeActorClass::Agent);
+    let bundle = vault.review_gate_consent_bundle(&reviewer, run)?;
+    let members: Vec<EntityId> = bundle
+        .members
+        .iter()
+        .map(|member| member.claim_id)
+        .collect();
+    assert_eq!(members, vec![first, second]);
+    let owner = consent_bundle_owner(&vault, test_id(0x60))?;
+    let receipt = vault.resolve_gate_consent_bundle(
+        &owner,
+        bundle.bundle_id,
+        run,
+        GateConsentBundleAction::Approve,
+        9,
+    )?;
+    assert_eq!(receipt.member_claim_ids, vec![first, second]);
+    for id in [first, second] {
+        assert_eq!(
+            vault.get_claim(&id)?.expect("member claim").approval,
+            ClaimApprovalStatus::Approved
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn gate_consent_bundle_rolls_back_when_one_member_is_stale() -> Result<()> {
     let (_tmp, vault) = temp_vault();

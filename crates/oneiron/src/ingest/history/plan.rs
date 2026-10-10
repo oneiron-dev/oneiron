@@ -157,7 +157,7 @@ impl HistoryLedgerSnapshot {
             for message in run {
                 let hash = content_hash(message);
                 let landed = dry_run.landed(self, &txn, source, message)?;
-                if landed.contains(&hash) {
+                if ledger::holds(landed, message) {
                     report.skipped += 1;
                 } else {
                     pending.push((message, hash, !landed.is_empty()));

@@ -8,8 +8,8 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::gate::constants::{
-    DREAMER_PROVENANCE_RUN_ID_KEY, DREAMER_PROVENANCE_RUN_KEY, DREAMER_PROVENANCE_RUNNER_KEY,
-    DREAMER_PROVENANCE_SURFACE_KEY,
+    DREAMER_PROVENANCE_IMPORT_REVIEW_KEY, DREAMER_PROVENANCE_RUN_ID_KEY,
+    DREAMER_PROVENANCE_RUN_KEY, DREAMER_PROVENANCE_RUNNER_KEY, DREAMER_PROVENANCE_SURFACE_KEY,
 };
 use crate::gate::decision::{GateDecision, GateReasonCode};
 use crate::gate::dreamer_precommit::{DreamerPrecommitInput, validate_dreamer_precommit};
@@ -22,13 +22,34 @@ pub(super) fn pending_consent_dreamer_run_id(
     envelope: Option<&WriteEnvelope>,
     body: &ClaimBody,
 ) -> Option<String> {
-    if body.approval != ClaimApprovalStatus::Proposed || body.source != Some(ClaimSource::Generated)
-    {
+    if body.approval != ClaimApprovalStatus::Proposed {
         return None;
     }
-
     let envelope = envelope?;
-    dreamer_run_id_from_write_envelope(envelope)
+    match body.source {
+        Some(ClaimSource::Generated) => dreamer_run_id_from_write_envelope(envelope),
+        // A claim from imported evidence waits in its import's review
+        // (ARCH-0027): one group per import, whichever runs extracted it. One
+        // with no imported TURN behind it waits with its run.
+        Some(ClaimSource::Imported) => {
+            let run = dreamer_run_id_from_write_envelope(envelope)?;
+            Some(import_review_from_provenance(envelope.provenance().value()).unwrap_or(run))
+        }
+        _ => None,
+    }
+}
+
+fn import_review_from_provenance(value: &Value) -> Option<String> {
+    let Value::Map(entries) = value else {
+        return None;
+    };
+    entries.iter().find_map(|(key, value)| {
+        if key.as_str() != Some(DREAMER_PROVENANCE_IMPORT_REVIEW_KEY) {
+            return None;
+        }
+        let review = value.as_str()?.trim();
+        (!review.is_empty()).then(|| review.to_owned())
+    })
 }
 
 /// The Dreamer run this write is authored by, if any.
