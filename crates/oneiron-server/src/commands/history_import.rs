@@ -18,7 +18,7 @@ use oneiron::ingest::history::{
     HistoryConversation, HistoryDryRun, HistoryFile, HistoryImportReport, HistoryLedgerSnapshot,
     HistoryMessage, HistorySkips, HistorySource,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::cli::ImportSourceArgs;
 use crate::config::{ServeConfig, resolve_serve_config};
@@ -340,47 +340,75 @@ fn decode(source: HistorySource, path: &Path) -> anyhow::Result<(Files, Vec<Hist
 impl Files {
     /// A session log under the folder, or `None` when it is over
     /// [`MAX_LOG_BYTES`]: that log is left out with a warning, so one huge log
-    /// does not keep the rest from landing. Its size is checked before it is
-    /// read, so a log left out costs no memory, and the read holds a log that
-    /// grew since to the same bound.
+    /// does not keep the rest from landing.
     fn read_log(&mut self, file: &File, shown: &Path) -> anyhow::Result<Option<String>> {
-        let size = || {
-            file.metadata()
-                .map(|metadata| metadata.len())
-                .map_err(|error| anyhow::anyhow!("read {}: {error}", shown.display()))
+        let left_out = match read_log(file, shown)? {
+            Ok(text) => return Ok(Some(text)),
+            Err(left_out) => left_out,
         };
-        if size()? <= MAX_LOG_BYTES
-            && let Some(text) = read_within(file, shown, MAX_LOG_BYTES)?
-        {
-            return Ok(Some(text));
+        if let ImportWarning::LogTooLarge { bytes, .. } = &left_out {
+            progress(&format!(
+                "left out {}: {bytes} bytes, over the {MAX_LOG_BYTES}-byte limit for one log",
+                shown.display()
+            ));
         }
-        let bytes = size()?.max(MAX_LOG_BYTES + 1);
-        progress(&format!(
-            "left out {}: {bytes} bytes, over the {MAX_LOG_BYTES}-byte limit for one log",
-            shown.display()
-        ));
         self.too_large += 1;
-        self.warnings.push(ImportWarning::LogTooLarge {
-            path: shown.to_string_lossy().into_owned(),
-            bytes,
-            limit: MAX_LOG_BYTES,
-        });
+        self.warnings.push(left_out);
         Ok(None)
     }
 }
 
+/// A session log, or why it is left out: one over [`MAX_LOG_BYTES`] is never
+/// read. Its size is checked before it is read, so a log left out costs no
+/// memory, and the read holds a log that grew since to the same bound.
+fn read_log(file: &File, shown: &Path) -> anyhow::Result<Result<String, ImportWarning>> {
+    let size = || {
+        file.metadata()
+            .map(|metadata| metadata.len())
+            .map_err(|error| anyhow::anyhow!("read {}: {error}", shown.display()))
+    };
+    if size()? <= MAX_LOG_BYTES
+        && let Some(text) = read_within(file, shown, MAX_LOG_BYTES)?
+    {
+        return Ok(Ok(text));
+    }
+    Ok(Err(ImportWarning::LogTooLarge {
+        path: shown.to_string_lossy().into_owned(),
+        bytes: size()?.max(MAX_LOG_BYTES + 1),
+        limit: MAX_LOG_BYTES,
+    }))
+}
+
 /// What decoded conversations hold in memory: their messages, and every
 /// byte they keep, titles and ids included.
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 struct Decoded {
     messages: usize,
     bytes: usize,
 }
 
 impl Decoded {
+    /// What one import may hold decoded.
+    const LIMIT: Self = Self {
+        messages: MAX_DECODED_MESSAGES,
+        bytes: MAX_DECODED_BYTES,
+    };
+
     /// Within what one import may hold decoded.
     fn fits(self) -> bool {
-        self.messages <= MAX_DECODED_MESSAGES && self.bytes <= MAX_DECODED_BYTES
+        self.within(Self::LIMIT)
+    }
+
+    fn within(self, budget: Self) -> bool {
+        self.messages <= budget.messages && self.bytes <= budget.bytes
+    }
+
+    /// Both held at once.
+    fn and(self, other: Self) -> Self {
+        Self {
+            messages: self.messages.saturating_add(other.messages),
+            bytes: self.bytes.saturating_add(other.bytes),
+        }
     }
 
     fn add(&mut self, conversations: &[HistoryConversation]) {
@@ -414,20 +442,79 @@ use confined::{open_in, walk_logs, walk_notes};
 #[cfg(unix)]
 pub(super) mod queue;
 
-/// One session log queued for a running `serve`, read only below `root`:
-/// `path` must name a session log there, and every folder between `root` and
-/// it is opened relative to the one above and never through a link. A Claude
-/// Code session brings its own subagent logs from the folder beside it.
-///
-/// Also says whether a log ended mid-line, the session's or a subagent's: a
-/// live log whose last record was still being written, which a later pass
-/// reads whole.
+/// A queued session as read: its conversations, whether a log ended
+/// mid-line, each log left out for being over [`MAX_LOG_BYTES`], and the
+/// stamp of the logs it read.
 #[cfg(unix)]
-fn read_queued(
+#[derive(Default)]
+struct QueuedSession {
+    conversations: Vec<HistoryConversation>,
+    /// A live log whose last record was still being written, the session's
+    /// or a subagent's, which a later pass reads whole.
+    mid_line: bool,
+    left_out: Vec<ImportWarning>,
+    stamp: String,
+}
+
+/// One session log queued for a running `serve`, read only below `root`. A
+/// log over [`MAX_LOG_BYTES`], the session's or a subagent's, is left out, as
+/// in a folder import, and the rest of the session lands.
+#[cfg(unix)]
+fn read_queued(source: HistorySource, root: &Path, path: &Path) -> anyhow::Result<QueuedSession> {
+    let mut session = QueuedSession::default();
+    let mut stamp = Stamp::default();
+    let mut decoded = Decoded::default();
+    queued_logs(source, root, path, &mut |shown: &Path, file: File| {
+        // Taken before the read: a log that grows during it stamps older.
+        stamp.add(&file, shown)?;
+        let text = match read_log(&file, shown)? {
+            Ok(text) => text,
+            Err(left_out) => {
+                session.left_out.push(left_out);
+                return Ok(());
+            }
+        };
+        session.mid_line |= cut(&text);
+        let read = source
+            .decode(&text, &history_file(source, shown))
+            .map_err(|error| anyhow::anyhow!("{}: {error}", shown.display()))?;
+        drop(text);
+        decoded.add(&read);
+        anyhow::ensure!(
+            decoded.fits(),
+            "the session {} and its subagent logs hold more than {MAX_DECODED_MESSAGES} \
+             messages or {MAX_DECODED_BYTES} bytes of them; nothing was imported",
+            path.display()
+        );
+        session.conversations.extend(read);
+        Ok(())
+    })?;
+    session.stamp = stamp.finish();
+    Ok(session)
+}
+
+/// The stamp of a queued session's logs as they are now, read from their
+/// metadata alone: what [`read_queued`] would stamp them.
+#[cfg(unix)]
+fn queued_stamp(source: HistorySource, root: &Path, path: &Path) -> anyhow::Result<String> {
+    let mut stamp = Stamp::default();
+    queued_logs(source, root, path, &mut |shown: &Path, file: File| {
+        stamp.add(&file, shown)
+    })?;
+    Ok(stamp.finish())
+}
+
+/// Visits each log of a queued session: `path` must name a session log below
+/// `root`, and every folder between `root` and it is opened relative to the
+/// one above and never through a link. A Claude Code session brings its own
+/// subagent logs from the folder beside it.
+#[cfg(unix)]
+fn queued_logs(
     source: HistorySource,
     root: &Path,
     path: &Path,
-) -> anyhow::Result<(Vec<HistoryConversation>, bool)> {
+    visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
     let relative = below(root, path)?;
     anyhow::ensure!(
         session_log_name(source, path),
@@ -435,28 +522,8 @@ fn read_queued(
         path.display(),
         source.source_id()
     );
-    let decode_one = |text: &str, shown: &Path| {
-        source
-            .decode(text, &history_file(source, shown))
-            .map_err(|error| anyhow::anyhow!("{}: {error}", shown.display()))
-    };
-    let mut decoded = Decoded::default();
-    let mut keep = |read: &[HistoryConversation]| {
-        decoded.add(read);
-        anyhow::ensure!(
-            decoded.fits(),
-            "the session {} and its subagent logs hold more than {MAX_DECODED_MESSAGES} \
-             messages or {MAX_DECODED_BYTES} bytes of them; nothing was imported",
-            path.display()
-        );
-        Ok(())
-    };
     let (dir, file) = confined::open_below(root, relative)?;
-    let text = read_limited(file, path, MAX_LOG_BYTES)?;
-    let mut mid_line = cut(&text);
-    let mut conversations = decode_one(&text, path)?;
-    drop(text);
-    keep(&conversations)?;
+    visit(path, file)?;
     if source == HistorySource::ClaudeCode
         && let Some(stem) = path.file_stem()
         && let Some(folder) = confined::open_dir_in(&dir, stem)?
@@ -469,17 +536,54 @@ fn read_queued(
                 if !session_log_name(source, shown) {
                     return Ok(());
                 }
-                let text = read_limited(file, shown, MAX_LOG_BYTES)?;
-                mid_line |= cut(&text);
-                let read = decode_one(&text, shown)?;
-                drop(text);
-                keep(&read)?;
-                conversations.extend(read);
-                Ok(())
+                visit(shown, file)
             },
         )?;
     }
-    Ok((conversations, mid_line))
+    Ok(())
+}
+
+/// What a queued session's logs are: each one's path, file, length and
+/// times, hashed in a stable order. Logs whose stamp did not change decode
+/// to the same conversations.
+#[cfg(unix)]
+#[derive(Default)]
+struct Stamp(Vec<(std::path::PathBuf, [i128; 6])>);
+
+#[cfg(unix)]
+impl Stamp {
+    fn add(&mut self, file: &File, shown: &Path) -> anyhow::Result<()> {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = file
+            .metadata()
+            .map_err(|error| anyhow::anyhow!("read {}: {error}", shown.display()))?;
+        self.0.push((
+            shown.to_path_buf(),
+            [
+                i128::from(metadata.ino()),
+                i128::from(metadata.len()),
+                i128::from(metadata.mtime()),
+                i128::from(metadata.mtime_nsec()),
+                i128::from(metadata.ctime()),
+                i128::from(metadata.ctime_nsec()),
+            ],
+        ));
+        Ok(())
+    }
+
+    fn finish(mut self) -> String {
+        self.0.sort();
+        let mut hasher = blake3::Hasher::new();
+        for (path, fields) in &self.0 {
+            let path = path.as_os_str().as_encoded_bytes();
+            hasher.update(&path.len().to_le_bytes());
+            hasher.update(path);
+            for field in fields {
+                hasher.update(&field.to_le_bytes());
+            }
+        }
+        hasher.finalize().to_hex()[..32].to_owned()
+    }
 }
 
 /// A log whose last record is not whole yet.
