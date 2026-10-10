@@ -2,8 +2,8 @@
 //! vault here, so the vault-wide width only has to agree with the model's.
 
 use super::*;
-use crate::config::{EmbedderArgs, EmbedderDevice};
 use crate::config::embedder::DEFAULT_DIMENSIONS;
+use crate::config::{EmbedderArgs, EmbedderDevice};
 
 fn serve_args(
     config: Option<PathBuf>,
@@ -53,8 +53,7 @@ fn widths_the_environment_names_are_served() {
         ("ONEIRON_EMBEDDER_DIMENSIONS", "2560"),
     ])
     .expect("environment");
-    let served =
-        served_config_from(&serve_args(None, on_cpu(), None), &env, None).expect("served");
+    let served = served_config_from(&serve_args(None, on_cpu(), None), &env, None).expect("served");
     assert_eq!(served.dimensions, 2560);
 }
 

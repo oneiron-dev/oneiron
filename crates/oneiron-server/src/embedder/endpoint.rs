@@ -232,8 +232,7 @@ impl HttpEmbedder {
             locality: engine_locality(config.endpoint.locality),
             max_input_chars: config.max_input_tokens.saturating_mul(CHARS_PER_TOKEN),
             query_instruction: config.query_instruction.clone().or_else(|| {
-                super::local::model_manager::pinned_endpoint_evidence(config)
-                    .map(|_| String::new())
+                super::local::model_manager::pinned_endpoint_evidence(config).map(|_| String::new())
             }),
             listing: Mutex::new(None),
             admitted: Mutex::new(Admitted::Unchecked),

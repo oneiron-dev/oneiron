@@ -64,8 +64,11 @@ fn served_config_from(
             .embedder
             .map(|embedder| embedder.dimensions),
     };
-    let resolved =
-        resolve_serve_config_with_sources(&serve_args(dimensions), env.clone(), default_config_path)?;
+    let resolved = resolve_serve_config_with_sources(
+        &serve_args(dimensions),
+        env.clone(),
+        default_config_path,
+    )?;
     match resolved.embedder {
         Some(embedder) if embedder.provider == EmbedderProvider::Local => Ok(embedder),
         Some(embedder) if embedder.provider == EmbedderProvider::Endpoint => anyhow::bail!(
