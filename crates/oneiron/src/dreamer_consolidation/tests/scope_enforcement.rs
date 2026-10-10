@@ -942,7 +942,9 @@ fn graph_signals_enforce_relationship_and_exact_project_slice() -> Result<()> {
     )?;
     let mut scope = initial.scope().clone();
     scope.relationship = Some(relationship);
-    scope.project = Some(EntityId::now());
+    // A project bound admits only its own project's sources: the turn and
+    // the reference claims sit in the default project.
+    scope.project = Some(crate::claim::default_project_id());
     let mut allowed = None;
     for (rel, pinned) in [
         (Some(relationship), true),
