@@ -466,7 +466,10 @@ async fn a_landed_turn_wakes_the_dreamer_on_the_vault_grain() {
 /// The same wake through the generated facade: a turn witnessed at
 /// `POST /v1/core/facade/witness` is read by a Micro round. The handler is
 /// generated (the verb-table row's `lands_turn`), so this fails if
-/// `scripts/sdk/generate.py` stops emitting the wake.
+/// `scripts/sdk/generate.py` stops emitting the wake. Start's own turn scan
+/// runs off the request path and could pick the witnessed turn up instead,
+/// so a turn captured before start must be read first: that scan's one
+/// write transaction planned it, so the scan is over before the witness.
 #[tokio::test]
 async fn a_facade_witness_turn_wakes_the_dreamer() {
     let reply = Reply::Text {
@@ -476,11 +479,21 @@ async fn a_facade_witness_turn_wakes_the_dreamer() {
     let fake = FakeLlm::start(vec![], Some(reply)).await;
     let (_dir, vault) = rooted_vault();
     route_extraction(&vault);
+    crate::ai_host::test_support::capture_user_turn(&vault, "my aunt Mei lives in Kyoto");
     let models = models(
         &fake.base_url,
         "[dreamer]\nsummary_prompt = \"Summarize these records.\"",
     );
     let host = AiHost::start(Arc::clone(&vault), Some(&models), true).await;
+    let read = |text: &str| {
+        fake.seen()
+            .iter()
+            .any(|seen| seen.body["messages"].to_string().contains(text))
+    };
+    assert!(
+        eventually(Duration::from_secs(30), || read("Kyoto")).await,
+        "start's turn scan queued no Micro round for the earlier turn"
+    );
     let config = SyncServerConfig {
         auth_secret: Some(crate::ai_host::test_support::TEST_SECRET.to_owned()),
         ..Default::default()
@@ -518,11 +531,7 @@ async fn a_facade_witness_turn_wakes_the_dreamer() {
     let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
     assert_eq!(status, StatusCode::OK, "{body:?}");
     assert!(
-        eventually(Duration::from_secs(30), || fake
-            .seen()
-            .iter()
-            .any(|seen| seen.body["messages"].to_string().contains("Sapporo")))
-        .await,
+        eventually(Duration::from_secs(30), || read("Sapporo")).await,
         "no Micro round read the witnessed turn; status {:?}",
         server.ai.status().dreamer
     );
