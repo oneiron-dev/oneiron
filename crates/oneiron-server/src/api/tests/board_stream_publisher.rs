@@ -256,12 +256,9 @@ async fn publisher_passed(
     eventually(server, |streams| streams.next_wake(connection)).await;
 }
 
-/// The carrier rows the next few tool results deliver to `actor`.
-async fn delivered_rows(
-    server: &Arc<SyncServer>,
-    credential: &str,
-    actor: oneiron::EntityId,
-) -> Vec<Value> {
+/// The carrier rows the next few tool results deliver to the connection
+/// `credential` holds, each call sent under `envelope`.
+async fn delivered_rows(server: &Arc<SyncServer>, credential: &str, envelope: Value) -> Vec<Value> {
     let mut rows = Vec::new();
     for attempt in 0..3 {
         let (status, result) = route_json(
@@ -271,7 +268,7 @@ async fn delivered_rows(
                 credential,
                 &format!("delivered-{attempt}"),
                 "describe",
-                mcp_endpoint_envelope(actor, "read_tasks"),
+                envelope.clone(),
             ),
         )
         .await;
@@ -291,24 +288,16 @@ fn names_any(rows: &[Value], tasks: &[oneiron::EntityId]) -> bool {
     })
 }
 
-/// Astra #1353 finding 1: a subscription is not a read grant. The owner's
-/// live read admits TURNs only, so its own TASKs never reach its STREAM: no
-/// WAKE for its open consult, and no done delta on its next results.
-#[tokio::test]
-async fn a_task_outside_its_owners_read_grant_never_reaches_their_stream() {
-    let (_dir, server) = auth_test_server();
-    let _publisher = server.spawn_board_publisher();
-    let (actor, connection) = stream_actor(&server, 0xd2b1_0010, "d2b1-turns-only").await;
-    let (witness, witness_connection) = stream_actor(&server, 0xd2b1_0011, "d2b1-witness").await;
-    // A matching core:read grant narrows the actor's read to TURNs; without
-    // one, its slip alone would read its own TASK.
+/// A matching core:read grant narrows `actor`'s read to TURNs; without one,
+/// its slip alone would read its own TASK.
+fn reads_turns_only(server: &SyncServer, actor: oneiron::EntityId, seed: u128) {
     let mut read = oneiron::federation::Scope::top();
     read.verbs = oneiron::federation::ScopeAxis::Some(["read".to_owned()].into());
     let owner = server.vault().ensure_embedded_owner_actor().expect("owner");
     oneiron::conversation_dag::test_support::put_test_policy_manifest(
         server.vault(),
         oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
-        seeded_test_entity_id(0xd2b1_0012),
+        seeded_test_entity_id(seed),
         &json!({
             "schema_version": "1.2", "pack_id": "turns-only", "pack_version": "1",
             "min_engine_version": "0.0.0", "defaults": {}, "rules": [], "actor_ceilings": [],
@@ -322,6 +311,18 @@ async fn a_task_outside_its_owners_read_grant_never_reaches_their_stream() {
         }),
     )
     .expect("turns-only read grant");
+}
+
+/// Astra #1353 finding 1: a subscription is not a read grant. The owner's
+/// live read admits TURNs only, so its own TASKs never reach its STREAM: no
+/// WAKE for its open consult, and no done delta on its next results.
+#[tokio::test]
+async fn a_task_outside_its_owners_read_grant_never_reaches_their_stream() {
+    let (_dir, server) = auth_test_server();
+    let _publisher = server.spawn_board_publisher();
+    let (actor, connection) = stream_actor(&server, 0xd2b1_0010, "d2b1-turns-only").await;
+    let (witness, witness_connection) = stream_actor(&server, 0xd2b1_0011, "d2b1-witness").await;
+    reads_turns_only(&server, actor, 0xd2b1_0012);
 
     // An open consult would wake its owner; a done one would ride a result.
     ask(&server, actor, 0xd2b1_0015);
@@ -338,7 +339,12 @@ async fn a_task_outside_its_owners_read_grant_never_reaches_their_stream() {
             .is_none(),
         "an unreadable TASK woke its owner"
     );
-    let rows = delivered_rows(&server, "d2b1-turns-only", actor).await;
+    let rows = delivered_rows(
+        &server,
+        "d2b1-turns-only",
+        mcp_endpoint_envelope(actor, "read_tasks"),
+    )
+    .await;
     assert!(!names_any(&rows, &tasks), "{rows:?}");
 }
 
@@ -361,6 +367,251 @@ async fn an_erased_tasks_queued_line_is_never_delivered() {
             .expect("erase the TASK");
     }
 
-    let rows = delivered_rows(&server, "d2b1-erased", actor).await;
+    let rows = delivered_rows(
+        &server,
+        "d2b1-erased",
+        mcp_endpoint_envelope(actor, "read_tasks"),
+    )
+    .await;
     assert!(!names_any(&rows, &tasks), "{rows:?}");
+}
+
+/// Claims the next queued realization and fails it: the TASK it realizes
+/// folds to `failed`.
+fn fail_next_realization(server: &SyncServer) {
+    let queue = oneiron::AttemptQueue::new(server.vault());
+    let now = server.vault().now_recorded_at();
+    let oneiron::attempt_queue::ClaimOutcome::Claimed(leased) = queue
+        .claim_kind(
+            "tasks.realize",
+            oneiron::attempt_queue::ClaimAttempt {
+                lease_owner: "board-wake-worker".to_owned(),
+                now,
+            },
+        )
+        .expect("claim")
+    else {
+        panic!("a realization is queued");
+    };
+    queue
+        .fail(oneiron::attempt_queue::FailAttempt {
+            id: leased.id,
+            lease_owner: "board-wake-worker".to_owned(),
+            attempt_count: leased.attempt_count,
+            reason: "the worker stopped".to_owned(),
+            now,
+        })
+        .expect("fail");
+}
+
+/// ARCH-0067 `#wake-envelope-id`: a TASK that fails, is realized again and
+/// fails again queues two WAKEs with two envelope ids, and the host's drain
+/// hands each over once. Nothing between the two failures is announced.
+#[tokio::test]
+async fn a_task_that_fails_twice_wakes_its_owner_twice_and_each_wake_drains_once() {
+    let (_dir, server) = auth_test_server();
+    let _publisher = server.spawn_board_publisher();
+    let (actor, connection) = stream_actor(&server, 0xb0a1_0001, "wake-fails-twice").await;
+    let (witness, witness_connection) =
+        stream_actor(&server, 0xb0a1_0002, "wake-fails-twice-witness").await;
+    let task = server
+        .vault()
+        .memory(actor, oneiron::EdgeActorClass::Human)
+        .tasks_create(&oneiron::task_verb::TaskCreateSpec::new(
+            rmpv::Value::from("fails twice"),
+            None,
+            None,
+            None,
+        ))
+        .expect("create")
+        .task_ref
+        .expect("task ref");
+
+    fail_next_realization(&server);
+    let mut wakes = Vec::new();
+    eventually(&server, |streams| {
+        wakes.extend(streams.drain_wakes(&connection));
+        (!wakes.is_empty()).then_some(())
+    })
+    .await;
+    // The TASK is realized again, and that try fails too.
+    oneiron::AttemptQueue::new(server.vault())
+        .enqueue_with_task_ref(
+            oneiron::attempt_queue::EnqueueAttempt {
+                kind: "tasks.realize".to_owned(),
+                payload: Vec::new(),
+                dedupe_key: None,
+                run_id: None,
+                now: server.vault().now_recorded_at(),
+            },
+            Some(task.to_hex()),
+        )
+        .expect("realize again");
+    fail_next_realization(&server);
+    eventually(&server, |streams| {
+        wakes.extend(streams.drain_wakes(&connection));
+        (wakes.len() >= 2).then_some(())
+    })
+    .await;
+
+    assert_eq!(wakes.len(), 2, "{wakes:?}");
+    let failed = format!("{}:failed:", task.to_hex());
+    for wake in &wakes {
+        assert_eq!(wake.task_ref, task.to_hex());
+        assert!(wake.event_ref.starts_with(&failed), "{}", wake.event_ref);
+    }
+    assert_ne!(wakes[0].event_ref, wakes[1].event_ref);
+    // Each was handed over once: once the publisher has passed, nothing is
+    // left to drain.
+    publisher_passed(&server, witness, &witness_connection, 0xb0a1_0003).await;
+    assert!(
+        server
+            .mcp_registry
+            .lock()
+            .await
+            .streams_mut()
+            .drain_wakes(&connection)
+            .is_empty()
+    );
+}
+
+/// `actor`'s STREAM connection under a credential narrowed to `world`, holding
+/// its keyframe (the setup call also binds its reader).
+async fn narrowed_stream(
+    server: &Arc<SyncServer>,
+    actor: oneiron::EntityId,
+    credential: &str,
+    world: oneiron::EntityId,
+) -> (Value, oneiron::context_board::StreamConnectionId) {
+    let scope = crate::mcp::McpConnectorScope::scoped(Some(world), None);
+    register_scoped_mcp_actor(server, credential, actor, scope.clone()).await;
+    let connection = server
+        .mcp_registry
+        .lock()
+        .await
+        .resolve(&mcp_registered_credential(server, credential), 1, |_, _| {
+            true
+        })
+        .expect("credential resolves")
+        .stream_connection;
+    let (status, result) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(
+            "/mcp",
+            credential,
+            "narrowed-setup",
+            "setup_oneiron",
+            mcp_scoped_envelope(actor, "read_board", &scope),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(result.get("error").is_none(), "{result:#}");
+    (mcp_scoped_envelope(actor, "read_tasks", &scope), connection)
+}
+
+/// ARCH-0067 §5, "Default subscription: my tasks · my children · consults to
+/// me", for a world-narrowed connection. One actor holds two credentials: one
+/// narrowed to base reality, where its TASKs are born, and one narrowed to
+/// another world. The first hears its own task's failed WAKE and done CARRIER
+/// delta; the second hears neither.
+#[tokio::test]
+async fn a_world_narrowed_connection_hears_its_own_tasks_only_inside_its_world() {
+    let (_dir, server) = auth_test_server();
+    let _publisher = server.spawn_board_publisher();
+    let actor = seeded_test_entity_id(0xb0a1_0010);
+    let (inside, inside_connection) = narrowed_stream(
+        &server,
+        actor,
+        "wake-base-reality",
+        oneiron::claim::base_world_id(),
+    )
+    .await;
+    let (outside, outside_connection) = narrowed_stream(
+        &server,
+        actor,
+        "wake-other-world",
+        seeded_test_entity_id(0xb0a1_0011),
+    )
+    .await;
+    let (witness, witness_connection) =
+        stream_actor(&server, 0xb0a1_0012, "wake-narrowed-witness").await;
+    let failed = server
+        .vault()
+        .memory(actor, oneiron::EdgeActorClass::Human)
+        .tasks_create(&oneiron::task_verb::TaskCreateSpec::new(
+            rmpv::Value::from("fails inside its world"),
+            None,
+            None,
+            None,
+        ))
+        .expect("create")
+        .task_ref
+        .expect("task ref");
+
+    fail_next_realization(&server);
+    let wake = eventually(&server, |streams| streams.next_wake(&inside_connection)).await;
+    assert_eq!(wake.task_ref, failed.to_hex());
+    assert!(
+        wake.event_ref
+            .starts_with(&format!("{}:failed:", failed.to_hex()))
+    );
+    let done = ask_and_answer(&server, actor, 0xb0a1_0013);
+    publisher_passed(&server, witness, &witness_connection, 0xb0a1_0014).await;
+
+    let rows = delivered_rows(&server, "wake-base-reality", inside).await;
+    assert!(names_any(&rows, &done), "{rows:?}");
+    assert!(
+        server
+            .mcp_registry
+            .lock()
+            .await
+            .streams_mut()
+            .next_wake(&outside_connection)
+            .is_none(),
+        "a TASK outside the world woke its owner"
+    );
+    let rows = delivered_rows(&server, "wake-other-world", outside).await;
+    assert!(
+        !names_any(&rows, &done) && !names_any(&rows, &[failed]),
+        "{rows:?}"
+    );
+}
+
+/// Both read checks hold for a narrowed connection: a queued `tasks:` line is
+/// read again when it would ride. Of two answered asks, the erased one never
+/// rides; and once the reader can no longer read TASKs, a third never does.
+#[tokio::test]
+async fn a_narrowed_connection_never_carries_an_erased_or_unreadable_task() {
+    let (_dir, server) = auth_test_server();
+    let _publisher = server.spawn_board_publisher();
+    let actor = seeded_test_entity_id(0xb0a1_0020);
+    let (envelope, _) = narrowed_stream(
+        &server,
+        actor,
+        "wake-narrowed-reads",
+        oneiron::claim::base_world_id(),
+    )
+    .await;
+    let (witness, witness_connection) =
+        stream_actor(&server, 0xb0a1_0021, "wake-reads-witness").await;
+
+    let kept = ask_and_answer(&server, actor, 0xb0a1_0022);
+    let erased = ask_and_answer(&server, actor, 0xb0a1_0023);
+    publisher_passed(&server, witness, &witness_connection, 0xb0a1_0024).await;
+    for task in &erased {
+        server
+            .vault()
+            .delete_entity_with_reason(task, oneiron::DeleteReason::UserHardDelete)
+            .expect("erase the TASK");
+    }
+    let rows = delivered_rows(&server, "wake-narrowed-reads", envelope.clone()).await;
+    assert!(names_any(&rows, &kept), "{rows:?}");
+    assert!(!names_any(&rows, &erased), "{rows:?}");
+
+    let hidden = ask_and_answer(&server, actor, 0xb0a1_0025);
+    publisher_passed(&server, witness, &witness_connection, 0xb0a1_0026).await;
+    reads_turns_only(&server, actor, 0xb0a1_0027);
+    let rows = delivered_rows(&server, "wake-narrowed-reads", envelope).await;
+    assert!(!names_any(&rows, &hidden), "{rows:?}");
 }
