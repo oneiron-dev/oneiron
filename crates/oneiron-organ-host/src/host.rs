@@ -174,17 +174,16 @@ impl OrganHost {
         true
     }
 
-    /// Stops every process idle longer than `idle_unload`, and forgets
-    /// every process that has ended (an organ that exited on its own).
+    /// Stops every process idle longer than `idle_unload`.
     pub fn unload_idle(&self) -> usize {
         let slots: Vec<Arc<Slot>> = lock(&self.slots).values().cloned().collect();
         let mut unloaded = 0;
         for slot in slots {
             if let Some(process) = slot.take_if_idle(self.config.idle_unload) {
                 process.shutdown(Duration::from_secs(1));
+                slot.prune();
                 unloaded += 1;
             }
-            slot.prune();
         }
         unloaded
     }

@@ -47,7 +47,8 @@ struct SlotState {
     /// Every process this slot started that may still run: the current
     /// one, and older ones a call in flight may still hold. Held strongly
     /// until each has been killed and reaped, so none can end in some other
-    /// thread's drop, out of a revocation's sight.
+    /// thread's drop, out of a revocation's sight. Each process's reader
+    /// thread forgets it once it has been reaped.
     generations: Vec<Arc<OrganProcess>>,
     crashes: VecDeque<Instant>,
     not_before: Option<Instant>,
@@ -84,7 +85,7 @@ impl Slot {
     /// The live process, started if needed. Concurrent first calls wait for
     /// one start, which is bounded by the handshake timeout or `deadline`.
     pub(crate) fn process(
-        &self,
+        self: &Arc<Self>,
         config: &HostConfig,
         deadline: Option<Instant>,
     ) -> Result<Arc<OrganProcess>, HostError> {
@@ -117,9 +118,15 @@ impl Slot {
         if self.spec.tier == OrganTier::ThirdParty {
             return Err(self.unavailable(Unavailable::ThirdPartyUnconfined));
         }
-        match OrganProcess::spawn(&self.spec, config, deadline) {
+        let slot = Arc::downgrade(self);
+        let forget = move || {
+            if let Some(slot) = slot.upgrade() {
+                slot.prune();
+            }
+        };
+        match OrganProcess::spawn(&self.spec, config, deadline, forget) {
             Ok(process) => {
-                state.generations.retain(|old| old.is_running());
+                state.generations.retain(|old| !old.has_ended());
                 state.generations.push(Arc::clone(&process));
                 state.spawns += 1;
                 state.last_spawn = Some(process.spawn_time);
@@ -154,7 +161,6 @@ impl Slot {
                 record_crash(&mut state);
             }
         }
-        state.generations.retain(|old| old.is_running());
     }
 
     /// The host stopped the process on purpose (deadline, unload, revoke):
@@ -168,7 +174,7 @@ impl Slot {
         {
             state.process = None;
         }
-        state.generations.retain(|old| old.is_running());
+        state.generations.retain(|old| !old.has_ended());
     }
 
     pub(crate) fn current(&self) -> Option<Arc<OrganProcess>> {
@@ -185,9 +191,10 @@ impl Slot {
     }
 
     /// Forgets every process that has been killed and reaped. Until then a
-    /// stopped process is held here; after, it holds only its sockets.
+    /// stopped process is held here; after, it holds only its sockets. It
+    /// never waits for an end in progress.
     pub(crate) fn prune(&self) {
-        self.lock().generations.retain(|old| old.is_running());
+        self.lock().generations.retain(|old| !old.has_ended());
     }
 
     /// Whether this slot was retired and every process it started has
@@ -195,7 +202,7 @@ impl Slot {
     /// retired yet can still start one, however empty it is now.
     pub(crate) fn finished(&self) -> bool {
         let mut state = self.lock();
-        state.generations.retain(|old| old.is_running());
+        state.generations.retain(|old| !old.has_ended());
         state.unavailable.is_some() && state.generations.is_empty()
     }
 
