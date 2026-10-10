@@ -571,26 +571,22 @@ fn federation_three_way_divergence_heals_to_global_tiebreak_winner() {
 }
 
 #[test]
-fn federation_equal_key_merge_picks_peer_fields_by_total_order() {
-    // Two concurrent Connects with an identical (scope_digest, grant_ref)
-    // key can still be dual-signed with DIFFERENT peers: the combined state
-    // must pick the peer fields by a total order, never by which side the
-    // fold happened to hold on the left.
+fn equal_key_peer_histories_converge_in_both_orders_and_duplicate_replay() {
     let fixture = pact_fixture(192);
-    let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
-    let connect_a = lifecycle_entry(&fixture, vec![genesis_hash], 1, connect_action(&fixture));
-
+    let root = authority_entry_hash(&fixture.genesis).unwrap();
+    let a = lifecycle_entry(&fixture, vec![root], 1, connect_action(&fixture));
     let other_peer = ed_key(212);
-    let other_peer_vault_id = genesis_vault_id(&genesis_entry(212, 86_400, 1)).unwrap();
-    let connect_b = lifecycle_entry(
+    let other_vault = genesis_vault_id(&genesis_entry(212, 86_400, 1)).unwrap();
+    assert_ne!(fixture.peer_vault_id, other_vault);
+    let b = lifecycle_entry(
         &fixture,
-        vec![genesis_hash],
+        vec![root],
         2,
         FederationLifecycleAction {
             kind: FederationLifecycleKind::Connect,
             pact_id: fixture.pact_id,
             grant_ref: fixture.grant_ref,
-            peer_vault_id: other_peer_vault_id,
+            peer_vault_id: other_vault,
             pact_epoch: 1,
             pact_scope: Some(fixture.scope.clone()),
             effective_scope: None,
@@ -599,7 +595,7 @@ fn federation_equal_key_merge_picks_peer_fields_by_total_order() {
                 FederationLifecycleKind::Connect,
                 &fixture.pact_id,
                 &fixture.vault_id,
-                &other_peer_vault_id,
+                &other_vault,
                 1,
                 &fixture.scope_digest,
                 None,
@@ -610,18 +606,74 @@ fn federation_equal_key_merge_picks_peer_fields_by_total_order() {
             pact_nonce: fixture.pact_nonce,
         },
     );
-
-    let fold = fold_authority_log(&[fixture.genesis.clone(), connect_a, connect_b]);
-    assert!(fold.issues.is_empty());
-    let pact = &fold.federation_pacts[&fixture.pact_id];
-    assert_eq!(pact.status, FederationPactStatus::Active);
+    let expected = fold_authority_log(&[fixture.genesis.clone(), a.clone(), b.clone()]);
+    assert!(expected.issues.is_empty());
+    assert_eq!(expected.valid_entries.len(), 3);
     assert_eq!(
-        pact.peer_vault_id,
-        fixture.peer_vault_id.min(other_peer_vault_id)
+        expected.federation_pacts[&fixture.pact_id].status,
+        FederationPactStatus::Active
     );
     assert_eq!(
-        pact.peer_owner_key,
-        authority_key_from_ed(&fixture.peer).min(authority_key_from_ed(&other_peer))
+        expected.federation_pacts[&fixture.pact_id].pact_scope,
+        fixture.scope
     );
-    assert_eq!(pact.pact_scope, fixture.scope);
+    for history in [
+        vec![fixture.genesis.clone(), b.clone(), a.clone()],
+        vec![
+            fixture.genesis.clone(),
+            a.clone(),
+            b.clone(),
+            a.clone(),
+            b.clone(),
+        ],
+        vec![
+            b.clone(),
+            a.clone(),
+            fixture.genesis.clone(),
+            b.clone(),
+            a.clone(),
+            fixture.genesis.clone(),
+        ],
+    ] {
+        let actual = fold_authority_log(&history);
+        assert!(actual.issues.is_empty());
+        assert_eq!(actual, expected);
+    }
+    let a_hash = authority_entry_hash(&a).unwrap();
+    let b_hash = authority_entry_hash(&b).unwrap();
+    let owner_key = authority_key_from_ed(&fixture.owner);
+    for parents in [vec![a_hash, b_hash], vec![b_hash, a_hash]] {
+        let join = sign_ed(
+            unsigned_entry(
+                Some(fixture.vault_id),
+                3,
+                parents,
+                bind_op(&owner_key, fixture.grant_ref, "human", 1),
+                owner_key.clone(),
+                103,
+            ),
+            &fixture.owner,
+        );
+        let joined =
+            fold_authority_log(&[fixture.genesis.clone(), a.clone(), b.clone(), join.clone()]);
+        assert!(joined.issues.is_empty());
+        assert_eq!(joined.valid_entries.len(), 4);
+        assert_eq!(joined.federation_pacts, expected.federation_pacts);
+        assert_eq!(
+            joined.federation_grant_bindings,
+            expected.federation_grant_bindings
+        );
+        let replayed = fold_authority_log(&[
+            join.clone(),
+            b.clone(),
+            fixture.genesis.clone(),
+            a.clone(),
+            join,
+            a.clone(),
+            b.clone(),
+            fixture.genesis.clone(),
+        ]);
+        assert!(replayed.issues.is_empty());
+        assert_eq!(replayed, joined);
+    }
 }
