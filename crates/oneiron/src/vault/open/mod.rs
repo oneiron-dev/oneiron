@@ -546,6 +546,8 @@ impl Vault {
             live_window_manager: std::sync::Mutex::new(std::sync::Weak::new()),
             #[cfg(feature = "sync")]
             live_window_manager_attached: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(any(test, feature = "test-hooks"))]
+            slow_retrieval_stage: Default::default(),
         };
         // A published deletion must finish its request-bound topology tear
         // before any caller can apply a new merge or observe this vault.

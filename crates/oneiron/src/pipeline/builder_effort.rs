@@ -1,9 +1,11 @@
 //! Shared five-level stage selection for the raw pipeline and memory facade.
 use super::PipelineBuilder;
 use crate::entity_id::EntityId;
+use crate::error::{Error, Result};
 use crate::memory::Effort;
 use crate::pipeline::DEFAULT_RECENCY_HALF_LIFE_DAYS;
 use crate::retrieval_depth::RetrievalDeadline;
+use crate::store::RetrievalSignal;
 
 impl<'a> PipelineBuilder<'a> {
     /// Checks the same monotonic deadline before optional retrieval stages.
@@ -15,6 +17,38 @@ impl<'a> PipelineBuilder<'a> {
     pub(in crate::pipeline) fn deadline_reached(&self) -> bool {
         self.deadline
             .is_some_and(RetrievalDeadline::stop_before_stage)
+    }
+    /// Runs one channel stage, the next of `stages_left`, under its share of
+    /// the deadline. `None` when the deadline skipped the stage or cut it at
+    /// a checkpoint: the stage's partial work is dropped, and the stages that
+    /// finished are fused without it. With no deadline the stage just runs.
+    pub(in crate::pipeline) fn run_stage<T>(
+        &self,
+        signal: RetrievalSignal,
+        stages_left: usize,
+        stage: impl FnOnce() -> Result<T>,
+    ) -> Result<Option<T>> {
+        let Some(deadline) = self.deadline else {
+            return stage().map(Some);
+        };
+        if !deadline.open_stage(stages_left) {
+            return Ok(None);
+        }
+        #[cfg(any(test, feature = "test-hooks"))]
+        let outcome = self
+            .vault
+            .run_slow_retrieval_stage(signal, deadline)
+            .and_then(|()| stage());
+        #[cfg(not(any(test, feature = "test-hooks")))]
+        let outcome = {
+            let _ = signal;
+            stage()
+        };
+        deadline.close_stage();
+        match outcome {
+            Err(Error::RetrievalStageCut) => Ok(None),
+            outcome => outcome.map(Some),
+        }
     }
     /// Adds the graph and temporal stages for one canonical effort level.
     /// Dense/phonetic inputs and a prepared reranker remain explicit host inputs.

@@ -2273,3 +2273,34 @@ async fn erasing_a_folded_message_refreshes_the_live_recall_of_its_turn() {
         }
     }
 }
+
+/// Call mode on the read RPC (retrieval hub #call-mode): `effort: "call"` and
+/// `deadline_ms` ride the recall request, and a deadline outside 1..=60000 is
+/// refused with a typed error.
+#[tokio::test]
+async fn rpc_recall_takes_call_mode_and_refuses_a_deadline_out_of_range() {
+    let (_dir, server) = server();
+    let auth = auth(&server, "human");
+    for value in [
+        json!({"query":"solar","effort":"call"}),
+        json!({"query":"solar","effort":"call","deadline_ms":30_000}),
+        json!({"query":"solar","deadline_ms":60_000}),
+    ] {
+        let reply = rpc(&server, &auth, "recall", value);
+        assert!(reply.get("error").is_none(), "{reply}");
+        assert_eq!(reply["result"]["pack_version"], 1);
+    }
+    for deadline_ms in [0, 60_001] {
+        let reply = rpc(
+            &server,
+            &auth,
+            "recall",
+            json!({"query":"solar","effort":"call","deadline_ms":deadline_ms}),
+        );
+        assert_error(&reply, "BAD_REQUEST");
+        assert_eq!(
+            reply["error"]["message"],
+            "deadline_ms must be a whole number between 1 and 60000"
+        );
+    }
+}

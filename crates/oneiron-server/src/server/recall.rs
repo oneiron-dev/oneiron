@@ -7,14 +7,20 @@
 //! under the slip it presented (ONE-1187-D6).
 //! A vault with no embedder, or one still loading its model, recalls on its
 //! sparse signals and says so (`sparse: true`).
+//!
+//! A request with a deadline (call mode, or its own `deadline_ms`) is a hard
+//! cut here: the async door stops waiting when the answer is due and answers
+//! with the best pack ready, so a slow stage, a writer it waits on or a busy
+//! blocking pool never holds the turn (retrieval hub #call-mode).
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use oneiron::authority::VerifiedSlip;
 use oneiron::memory::{
-    Effort, MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryPack, MemoryResult,
+    Effort, MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryPack, MemoryResult, RecallEffort,
 };
-use oneiron::task_verb::sdk::RecallRequest;
+use oneiron::task_verb::sdk::{RecallDoor, RecallRequest};
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::core::SyncServer;
@@ -38,14 +44,22 @@ impl SyncServer {
     /// The query embedder recall runs with. Light is pure retrieval with no
     /// model call (ARCH-0044 S6); every other effort embeds the query when
     /// the vault's embedder serves.
-    fn recall_embed(&self, effort: Option<Effort>) -> impl FnOnce(&str) -> Option<Vec<f32>> + '_ {
-        let embeds = effort.unwrap_or(Effort::Medium) != Effort::Light;
+    fn recall_embed(
+        &self,
+        effort: Option<RecallEffort>,
+    ) -> impl FnOnce(&str) -> Option<Vec<f32>> + '_ {
+        let embeds = effort.map_or(Effort::Medium, RecallEffort::level) != Effort::Light;
         move |query| embeds.then(|| self.recall_query_vector(query)).flatten()
     }
 
     /// [`Self::recall`] for `actor` under the slip it presented, on the
     /// blocking pool. When the request names a room turn, every read recall
     /// makes runs inside that room (ARCH-0067 §8).
+    ///
+    /// A request with a deadline answers by it whatever the blocking work is
+    /// doing: past it, the door returns the pack recall published before its
+    /// retrieval ran (no items, `partial`, under the reader's receipt), and the
+    /// cut work stops at its next checkpoint.
     pub(crate) async fn recall_off_runtime(
         self: &Arc<Self>,
         actor: EntityId,
@@ -54,23 +68,55 @@ impl SyncServer {
         room: Option<EntityId>,
         input: RecallRequest,
     ) -> MemoryResult<MemoryPack> {
+        let arrived = Instant::now();
+        let (_, budget) = oneiron::memory::resolve_recall_dial(
+            input.effort,
+            input.deadline_ms,
+            self.vault.call_mode_deadline(),
+        )?;
+        let (cut_sender, cut) = std::sync::mpsc::sync_channel(1);
         let server = Arc::clone(self);
-        tokio::task::spawn_blocking(move || {
+        let task = tokio::task::spawn_blocking(move || {
+            let publish = move |pack| {
+                // The door reads at most one; a full or closed slot is moot.
+                let _ = cut_sender.try_send(pack);
+            };
+            let door = RecallDoor {
+                arrived,
+                on_cut: budget.map(|_| &publish as &(dyn Fn(MemoryPack) + Sync)),
+            };
             let memory = server.vault.memory(actor, class);
             let memory = match &proof {
                 Some(proof) => memory.with_read_proof(proof),
                 None => memory,
             };
+            let embed = server.recall_embed(input.effort);
             match room {
-                Some(room) => {
-                    let embed = server.recall_embed(input.effort);
-                    memory.for_room_turn(room)?.recall_with_vector(input, embed)
-                }
-                None => server.recall(&memory, input),
+                Some(room) => memory
+                    .for_room_turn(room)?
+                    .recall_at_door(input, embed, &door),
+                None => oneiron::task_verb::sdk::recall_at_door(&memory, input, embed, &door),
             }
-        })
-        .await
-        .unwrap_or_else(|error| {
+        });
+        let joined = match budget {
+            None => task.await,
+            Some(budget) => {
+                let due = tokio::time::Instant::from_std(arrived + budget);
+                match tokio::time::timeout_at(due, task).await {
+                    Ok(joined) => joined,
+                    Err(_) => {
+                        return cut.try_recv().map_err(|_| {
+                            MemoryError::new(
+                                MEMORY_CODE_INTERNAL,
+                                "recall reached its deadline before it could read",
+                                &["Retry the call, or allow a longer deadline_ms."],
+                            )
+                        });
+                    }
+                }
+            }
+        };
+        joined.unwrap_or_else(|error| {
             tracing::warn!(%error, "recall task failed to join");
             Err(MemoryError::new(
                 MEMORY_CODE_INTERNAL,

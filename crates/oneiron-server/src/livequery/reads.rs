@@ -113,6 +113,7 @@ impl Read {
             "recall" => {
                 let mut request: RecallRequest = params(value)?;
                 request.limit = Some(facade_limit(request.limit, 10)?);
+                oneiron::memory::caps::check_deadline_ms(request.deadline_ms)?;
                 Self::Recall(request)
             }
             _ => return Err(AppError::bad_request("unknown read RPC", Some("method"))),

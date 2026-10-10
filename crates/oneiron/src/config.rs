@@ -358,6 +358,13 @@ pub struct VaultConfig {
     /// ([`VectorEvidenceFloors`]), as the host's embedder states it. Opening
     /// a vault refuses floors outside [`VectorEvidenceFloors::validate`].
     pub vector_evidence: VectorEvidenceFloors,
+    /// How long a call-mode recall may take before it answers with the best
+    /// results ready (retrieval hub #call-mode). Defaults to
+    /// [`crate::memory::DEFAULT_CALL_MODE_DEADLINE`], the ARCH-0042
+    /// #call-mode-budget bar; a request's `deadline_ms` overrides it. Opening
+    /// a vault refuses one outside 1 ms to
+    /// [`crate::memory::caps::MAX_RECALL_DEADLINE_MS`].
+    pub call_mode_deadline: std::time::Duration,
     /// Arms the tagging marker (ARCH-0036, serving the tagger): a base witness
     /// commits one marker per touched turn inside its own transaction, keyed
     /// by the turn and this tagger checkpoint. `None` commits none.
@@ -607,6 +614,7 @@ impl VaultConfig {
             embedding_model: None,
             embedding_transform: None,
             vector_evidence: VectorEvidenceFloors::default(),
+            call_mode_deadline: crate::memory::DEFAULT_CALL_MODE_DEADLINE,
             tagging: None,
             privacy: VaultPrivacyConfig::default(),
             map_size: 1 << 30,
@@ -635,6 +643,7 @@ impl VaultConfig {
             embedding_model: None,
             embedding_transform: None,
             vector_evidence: VectorEvidenceFloors::default(),
+            call_mode_deadline: crate::memory::DEFAULT_CALL_MODE_DEADLINE,
             tagging: None,
             // The server preset is still self-host/local by default: running a
             // server does not by itself mean a third party hosts the vault.

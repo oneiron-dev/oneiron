@@ -105,7 +105,7 @@ impl SpeculativeRetrievalBridge {
             .ok_or_else(|| invalid("no open utterance"))?;
         let decision = open.session.observe_partial(as_partial(text, &enriched))?;
         let context = match &decision {
-            SpeculativeFireDecision::Fired { run_id } => {
+            SpeculativeFireDecision::Fired { run_id, .. } => {
                 Some(project(open.session.warm_candidates(), *run_id, false))
             }
             _ => None,

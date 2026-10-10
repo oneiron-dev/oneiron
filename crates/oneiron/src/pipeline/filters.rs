@@ -570,6 +570,9 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     metadata_cache: &mut EntityMetadataCache,
     claim_gate: &mut ClaimStatusGateCache,
 ) -> Result<bool> {
+    if let Some(deadline) = filters.deadline {
+        deadline.checkpoint()?;
+    }
     if let Some(filter) = filters.candidate_filter
         && !filter(store, rtxn, id)?
     {

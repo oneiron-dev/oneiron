@@ -36,6 +36,10 @@ impl NativeClient {
         let output = self.inner.claim_upsert(&claim).map_err(facade_error)?;
         Ok(commit_receipt_from_engine(output))
     }
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one parameter per SDK argument of the verb"
+    )]
     #[napi]
     pub fn recall(
         &self,
@@ -45,6 +49,7 @@ impl NativeClient {
         limit: Option<f64>,
         format: Option<String>,
         as_of: Option<f64>,
+        deadline_ms: Option<f64>,
     ) -> napi::Result<NapiMemoryPack> {
         let effort = oneiron_remote::parse_effort(effort.as_deref().unwrap_or("medium"))
             .map_err(facade_error)?;
@@ -59,9 +64,21 @@ impl NativeClient {
             .map(|value| oneiron_remote::check_unix_seconds("as_of", value))
             .transpose()
             .map_err(facade_error)?;
+        let deadline_ms = deadline_ms
+            .map(oneiron_remote::check_deadline_ms_number)
+            .transpose()
+            .map_err(facade_error)?;
         let output = self
             .inner
-            .recall(&query, effort, &scope, limit, format.as_deref(), as_of)
+            .recall(
+                &query,
+                effort,
+                &scope,
+                limit,
+                format.as_deref(),
+                as_of,
+                deadline_ms,
+            )
             .map_err(facade_error)?;
         memory_pack_from_engine(output).map_err(boundary_error)
     }
