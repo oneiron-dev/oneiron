@@ -44,6 +44,9 @@ const PDF: &str = "application/pdf";
 const MAX_SIGNS: u32 = 3;
 const MAX_FETCHES: u32 = 32;
 const MIB: u64 = 1024 * 1024;
+/// The seal's own response caps: a CRL, and any other fetch (a timestamp).
+const MAX_CRL_BYTES: u64 = 8 * MIB;
+const MAX_FETCH_BYTES: u64 = MIB;
 /// The engine's 64 MiB prepared limit plus the seal's 32 MiB growth limit.
 const MAX_SEALED_BYTES: u64 = 96 * MIB;
 
@@ -168,6 +171,9 @@ pub fn seal_spec(program: impl Into<PathBuf>, fetch: FetchGrant) -> OrganSpec {
         AskGrant::new(ASK_NET_FETCH, MAX_FETCHES),
     ];
     spec.max_asks = 1 + MAX_SIGNS + MAX_FETCHES;
+    // Room for several CRLs for B-LT, inside the call's booking beside the
+    // sealed output.
+    spec.max_ask_bytes = 64 * MIB;
     spec.memory_bytes = 1024 * MIB;
     spec.call_memory_bytes = 256 * MIB;
     spec.max_output_bytes = MAX_SEALED_BYTES;
@@ -538,7 +544,9 @@ impl AskHandler for Sign<'_> {
 }
 
 /// `net.fetch`: the host's guarded fetch, each fetch inside the fetch
-/// timeout as well as the call's deadline.
+/// timeout as well as the call's deadline, and inside the seal's own cap
+/// for its purpose, so an oversized timestamp reply is cut off before it
+/// spends the call's answer bytes.
 struct TimedFetch {
     timeout: Duration,
 }
@@ -546,7 +554,23 @@ struct TimedFetch {
 impl AskHandler for TimedFetch {
     fn answer(&self, ask: &AskRequest<'_>) -> Result<Answered, AskRefusal> {
         let deadline = ask.deadline.min(Instant::now() + self.timeout);
-        GuardedFetch.answer(&AskRequest { deadline, ..*ask })
+        let purpose = ask.value.as_map().and_then(|fields| {
+            fields
+                .iter()
+                .find(|(key, _)| key.as_str() == Some("purpose"))
+                .and_then(|(_, value)| value.as_str())
+        });
+        // The seal's caps: a CRL may be 8 MiB, anything else 1 MiB.
+        let cap = if purpose == Some("crl") {
+            MAX_CRL_BYTES
+        } else {
+            MAX_FETCH_BYTES
+        };
+        GuardedFetch.answer(&AskRequest {
+            deadline,
+            max_bytes: ask.max_bytes.min(cap),
+            ..*ask
+        })
     }
 }
 
