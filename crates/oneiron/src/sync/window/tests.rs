@@ -3231,9 +3231,7 @@ fn forward_remat_quarantines_off_table_facet_of_and_admits_the_on_table_row() ->
 ///
 /// * a legacy-encoded carrier AT ITS OWN derived key is ADMISSIBLE and is
 ///   preserved as-is — the codebase never normalizes legacy bytes, it keys
-///   off them (`authority/tests.rs::legacy_signed_genesis_derives_a_stable_
-///   store_key_from_its_legacy_bytes`), so there is no re-encode posture to
-///   follow here;
+///   off them, so there is no re-encode posture to follow here;
 /// * the current re-encoding of that same legacy-signed entry carries no
 ///   verifying signature, so it fails the BODY check and is dominated — for
 ///   INADMISSIBILITY, not for differing from the local bytes.

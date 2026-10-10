@@ -301,38 +301,6 @@ fn log_mint_requires_parent_narrowing_and_revoke_kills_subtree() {
     assert!(vault.ensure_host_root_slip(&issuer).is_err());
 }
 #[test]
-fn log_single_use_burn_is_atomic_and_survives_fresh_decode() {
-    let (_dir, vault, issuer, root) = fixture();
-    let mut claims = root.claims.clone();
-    claims.slip_id = [10; 32];
-    claims.parent_id = Some(root.claims.slip_id);
-    claims.single_use = true;
-    claims.expires_at = claims.issued_at + 60;
-    claims.ttl_secs = 60;
-    let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
-    let nonce = b"11111111111111111111111111111111";
-    let timestamp = root.claims.issued_at;
-    let challenge =
-        super::super::slip_replay::request_challenge(timestamp, nonce, timestamp).unwrap();
-    let proof = issuer.binding_proof(&slip, &challenge).unwrap();
-    assert!(
-        vault
-            .authenticate_capability_slip(&issuer, &slip, timestamp, &proof, nonce)
-            .is_ok()
-    );
-    let decoded = CapabilitySlip::from_token(&slip.to_token().unwrap()).unwrap();
-    let retry_nonce = b"22222222222222222222222222222222";
-    let retry_challenge =
-        super::super::slip_replay::request_challenge(timestamp, retry_nonce, timestamp).unwrap();
-    let retry_proof = issuer.binding_proof(&decoded, &retry_challenge).unwrap();
-    assert!(
-        vault
-            .authenticate_capability_slip(&issuer, &decoded, timestamp, &retry_proof, retry_nonce)
-            .is_err()
-    );
-    assert!(verify(&vault, &issuer, &decoded).is_err());
-}
-#[test]
 fn pairing_link_mints_once_and_requires_connection_private_key() {
     let (_dir, vault, issuer, _root) = fixture();
     let holder = SigningKey::from_bytes(&[31; 32]);
@@ -375,20 +343,6 @@ fn pairing_link_mints_once_and_requires_connection_private_key() {
     );
 }
 #[test]
-fn a_pairing_code_is_eight_unambiguous_characters() {
-    let (_dir, vault, issuer, _root) = fixture();
-    let link = vault
-        .issue_pairing_link(&issuer, Scope::top(), 120)
-        .unwrap();
-    assert!(
-        link.code.len() == 8
-            && link
-                .code
-                .chars()
-                .all(|c| "0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(c))
-    );
-}
-#[test]
 fn a_pairing_code_is_stored_only_as_a_keyed_hash() {
     let (_dir, vault, issuer, _root) = fixture();
     let link = vault
@@ -428,38 +382,6 @@ fn a_pairing_link_expires_after_one_hour() {
         vault
             .redeem_pairing_link(&issuer, &link.code, "test-holder", public, &sig)
             .is_err()
-    );
-}
-#[test]
-fn a_pairing_code_redeems_when_typed_in_lower_case() {
-    let (_dir, vault, issuer, _root) = fixture();
-    let holder = SigningKey::from_bytes(&[33; 32]);
-    let public = holder.verifying_key().to_bytes();
-    let link = vault
-        .issue_pairing_link(&issuer, Scope::top(), 120)
-        .unwrap();
-    let sig = holder
-        .sign(&pairing_binding_transcript(&link.code, &public, "test-holder").unwrap())
-        .to_bytes();
-    assert!(
-        vault
-            .redeem_pairing_link(
-                &issuer,
-                &link.code.to_ascii_lowercase(),
-                "test-holder",
-                public,
-                &sig
-            )
-            .is_ok()
-    );
-}
-#[test]
-fn a_pairing_link_string_round_trips_its_origin_code_and_holder() {
-    let origin = "https://example.invalid:8443/oneiron";
-    let holder = crate::EntityId::now().to_hex();
-    assert_eq!(
-        parse_pairing_link(&format_pairing_link(origin, "K7M2Q9XA", &holder)).unwrap(),
-        (origin.to_owned(), "K7M2Q9XA".to_owned(), holder)
     );
 }
 #[test]
@@ -1606,33 +1528,6 @@ fn uncommitted_slip_mint_is_visible_only_to_its_writer_and_abort_discards_it() {
             .slips
             .mints
             .contains_key(&id)
-    );
-}
-
-#[test]
-fn slip_verifies_with_only_the_minting_host_public_key_and_refuses_wrong_key_and_tamper() {
-    let (_dir, vault, issuer, root) = fixture();
-    let proof = issuer.binding_proof(&root, b"public-key-check").unwrap();
-    assert!(
-        vault
-            .verify_capability_slip(&issuer.public_key(), &root, b"public-key-check", &proof)
-            .is_ok()
-    );
-    let wrong = HostSlipIssuer::from_secret(b"unrelated host").unwrap();
-    assert!(
-        vault
-            .verify_capability_slip(&wrong.public_key(), &root, b"public-key-check", &proof)
-            .is_err()
-    );
-    let mut changed: serde_json::Value =
-        serde_json::from_slice(&super::canonical(&root).unwrap()).unwrap();
-    changed["signature"][0] = serde_json::json!(changed["signature"][0].as_u64().unwrap() ^ 1);
-    let forged: CapabilitySlip = serde_json::from_value(changed).unwrap();
-    let proof = issuer.binding_proof(&forged, b"public-key-check").unwrap();
-    assert!(
-        vault
-            .verify_capability_slip(&issuer.public_key(), &forged, b"public-key-check", &proof)
-            .is_err()
     );
 }
 

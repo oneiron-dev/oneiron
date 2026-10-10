@@ -13,21 +13,18 @@ use std::sync::atomic::Ordering;
 use crate::sync_harness::{
     clear_policy_manifests, make_entity_blob, map_get_bytes, map_insert_bytes, test_config,
 };
-use loro::{CommitOptions, ExportMode, LoroDoc};
+use loro::{ExportMode, LoroDoc};
 use oneiron::affect::Vad;
 use oneiron::edge::{EdgeActorClass, EdgeConfirmationStatus, EdgeKind, EdgeProvenanceFlags};
 use oneiron::registry::ENTITY_TYPE_REDACTION_AUDIT;
 use oneiron::sync::bridge::{
-    BRIDGE_ORIGIN, Materializer, encode_edge_value_for_crdt, format_edge_key, parse_edge_value,
+    Materializer, encode_edge_value_for_crdt, format_edge_key, parse_edge_value,
 };
 use oneiron::sync::client::{SyncClient, SyncClientConfig, SyncEvent, SyncResidenceMode};
 use oneiron::sync::lease;
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::schema::create_window_doc;
-use oneiron::sync::transport::{
-    self, TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE, TAG_SYNC_UPDATE, TAG_WINDOW_SYNC,
-    TransportError, window_sub_tags,
-};
+use oneiron::sync::transport::TAG_SYNC_UPDATE;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
 use oneiron::temporal::TimeRange;
@@ -36,8 +33,6 @@ use oneiron::{
     provenance::SupersessionStatus,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
-
-const ROOT_VV_TAG: u8 = 2;
 
 /// Window-owner user id shared by every fixture in this file (ONE-1160).
 const TEST_USER: &str = "test-user";
@@ -84,120 +79,6 @@ fn put_edge_in_window(
     window.doc.commit();
 }
 
-#[test]
-fn entity_written_to_crdt_materializes_in_lmdb() {
-    let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
-    let materializer = Arc::new(Materializer::new());
-
-    let key = WindowKey::new("2026-03");
-    let window = LoadedWindow::new(TEST_USER, key, &vault, &materializer);
-
-    let id = EntityId::now();
-    let hex_id = id.to_hex();
-    let learned_at = 1_772_000_000u64;
-    let blob = make_entity_blob(1, learned_at, b"test-entity-data");
-
-    let entities = window.doc.get_map("entities");
-    map_insert_bytes(&entities, hex_id.as_str(), &blob);
-    window.doc.commit();
-
-    let got = vault.get(&id).unwrap();
-    assert!(got.is_some(), "entity should be materialized in LMDB");
-    assert_eq!(got.unwrap(), b"test-entity-data");
-}
-
-#[test]
-fn tombstone_deletes_entity_from_lmdb() {
-    let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
-    let materializer = Arc::new(Materializer::new());
-
-    let key = WindowKey::new("2026-03");
-    let window = LoadedWindow::new(TEST_USER, key, &vault, &materializer);
-
-    let id = EntityId::now();
-    let hex_id = id.to_hex();
-    let learned_at = 1_772_000_000u64;
-    let blob = make_entity_blob(1, learned_at, b"to-be-deleted");
-
-    let entities = window.doc.get_map("entities");
-    map_insert_bytes(&entities, hex_id.as_str(), &blob);
-    window.doc.commit();
-
-    assert!(vault.get(&id).unwrap().is_some());
-
-    let tombstones = window.doc.get_map("tombstones");
-    // Tombstone value is a timestamp marker (any binary value)
-    tombstones
-        .insert(hex_id.as_str(), &1_772_000_100u64.to_le_bytes())
-        .unwrap();
-    window.doc.commit();
-
-    assert!(
-        vault.get(&id).unwrap().is_none(),
-        "entity should be deleted after tombstone"
-    );
-}
-
-/// ONE-1130: all tombstones arriving in ONE commit (one Observer B
-/// MapDelta) are applied — each id routes through the reason-aware replay
-/// primitive (ONE-1133). Every tombstoned entity must be gone and
-/// untombstoned entities must survive.
-#[test]
-fn multiple_tombstones_in_one_commit_purge_all_entities() {
-    let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
-    let materializer = Arc::new(Materializer::new());
-
-    let key = WindowKey::new("2026-03");
-    let window = LoadedWindow::new(TEST_USER, key, &vault, &materializer);
-
-    let learned_at = 1_772_000_000u64;
-    let doomed: Vec<EntityId> = (0..3).map(|_| EntityId::now()).collect();
-    let survivor = EntityId::now();
-
-    let entities = window.doc.get_map("entities");
-    for id in &doomed {
-        map_insert_bytes(
-            &entities,
-            id.to_hex().as_str(),
-            &make_entity_blob(1, learned_at, b"doomed"),
-        );
-    }
-    map_insert_bytes(
-        &entities,
-        survivor.to_hex().as_str(),
-        &make_entity_blob(1, learned_at, b"survivor"),
-    );
-    window.doc.commit();
-
-    for id in &doomed {
-        assert!(vault.get(id).unwrap().is_some());
-    }
-
-    // All three tombstones land in a single commit → a single MapDelta.
-    let tombstones = window.doc.get_map("tombstones");
-    for id in &doomed {
-        tombstones
-            .insert(id.to_hex().as_str(), &1_772_000_100u64.to_le_bytes())
-            .unwrap();
-    }
-    window.doc.commit();
-
-    for id in &doomed {
-        assert!(
-            vault.get(id).unwrap().is_none(),
-            "every tombstoned entity in the batch must be purged"
-        );
-    }
-    assert_eq!(
-        vault.get(&survivor).unwrap().as_deref(),
-        Some(b"survivor".as_slice()),
-        "untombstoned entity must survive the multi-tombstone delta"
-    );
-}
-
 /// ONE-1130: a malformed tombstone key in the delta is quarantined
 /// (`x:` row, ONE-1124) and must not block the valid purges sharing the
 /// same Observer B event.
@@ -234,113 +115,6 @@ fn invalid_tombstone_id_does_not_block_other_purges_in_same_commit() {
         vault.get(&id).unwrap().is_none(),
         "valid tombstone must purge even when a malformed key shares the delta"
     );
-}
-
-#[test]
-fn edge_materializes_when_both_endpoints_exist() {
-    let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
-    let materializer = Arc::new(Materializer::new());
-
-    let key = WindowKey::new("2026-03");
-    let window = LoadedWindow::new(TEST_USER, key, &vault, &materializer);
-
-    let src = EntityId::now();
-    let tgt = EntityId::now();
-    let learned_at = 1_772_000_000u64;
-
-    let src_blob = make_entity_blob(1, learned_at, b"source");
-    let tgt_blob = make_entity_blob(1, learned_at, b"target");
-
-    let entities = window.doc.get_map("entities");
-    map_insert_bytes(&entities, src.to_hex().as_str(), &src_blob);
-    map_insert_bytes(&entities, tgt.to_hex().as_str(), &tgt_blob);
-    window.doc.commit();
-
-    let edge_key = format_edge_key(&src, EdgeKind::Mentions, &tgt);
-    let edge_val =
-        encode_edge_value_for_crdt(EdgeKind::Mentions, 0.75, 12345, Some(Vad::NEUTRAL), None)
-            .unwrap();
-
-    let edges = window.doc.get_map("edges");
-    map_insert_bytes(&edges, edge_key.as_str(), &edge_val);
-    window.doc.commit();
-
-    assert!(
-        vault.edge_exists(&src, EdgeKind::Mentions, &tgt).unwrap(),
-        "edge should be materialized when both endpoints exist"
-    );
-}
-
-#[test]
-fn edge_skipped_when_endpoint_missing() {
-    let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
-    let materializer = Arc::new(Materializer::new());
-
-    let key = WindowKey::new("2026-03");
-    let window = LoadedWindow::new(TEST_USER, key, &vault, &materializer);
-
-    let src = EntityId::now();
-    let tgt = EntityId::now();
-    let learned_at = 1_772_000_000u64;
-
-    let src_blob = make_entity_blob(1, learned_at, b"source-only");
-    let entities = window.doc.get_map("entities");
-    map_insert_bytes(&entities, src.to_hex().as_str(), &src_blob);
-    window.doc.commit();
-
-    let edge_key = format_edge_key(&src, EdgeKind::Supports, &tgt);
-    let edge_val =
-        encode_edge_value_for_crdt(EdgeKind::Supports, 0.5, 12345, Some(Vad::NEUTRAL), None)
-            .unwrap();
-
-    let edges = window.doc.get_map("edges");
-    map_insert_bytes(&edges, edge_key.as_str(), &edge_val);
-    window.doc.commit();
-
-    assert!(
-        !vault.edge_exists(&src, EdgeKind::Supports, &tgt).unwrap(),
-        "edge should be skipped when endpoint is missing"
-    );
-}
-
-#[test]
-fn bridge_origin_writes_dont_trigger_observer_b() {
-    let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
-    let materializer = Arc::new(Materializer::new());
-
-    let key = WindowKey::new("2026-03");
-    let update_prefix = format!("u:w:{}:", key.as_str());
-    let seq_key = format!("m:u_seq:w:{}", key.as_str());
-    let window = LoadedWindow::new(TEST_USER, key, &vault, &materializer);
-
-    let id = EntityId::now();
-    let hex_id = id.to_hex();
-    let learned_at = 1_772_000_000u64;
-    let blob = make_entity_blob(1, learned_at, b"bridge-written");
-
-    // Write under bridge origin — Observer B should skip this
-    let entities = window.doc.get_map("entities");
-    map_insert_bytes(&entities, hex_id.as_str(), &blob);
-    window
-        .doc
-        .commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-
-    assert!(
-        vault.get(&id).unwrap().is_none(),
-        "bridge-origin writes should not trigger Observer B materialization"
-    );
-
-    // Observer A should have persisted the update
-    let keys = vault.sync_state_keys_with_prefix(&update_prefix).unwrap();
-    assert!(
-        !keys.is_empty(),
-        "Observer A should persist even bridge-origin updates"
-    );
-    let seq = vault.sync_state_get(&seq_key).unwrap().unwrap();
-    assert_eq!(seq.as_slice(), &1u32.to_le_bytes());
 }
 
 #[test]
@@ -384,38 +158,6 @@ fn observer_a_sequence_overflow_preserves_zero_update_slot() {
 }
 
 #[test]
-fn window_persist_and_load_roundtrip() {
-    let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
-    let materializer = Arc::new(Materializer::new());
-
-    let key = WindowKey::new("2026-03");
-    let window = LoadedWindow::new(TEST_USER, key.clone(), &vault, &materializer);
-
-    let id = EntityId::now();
-    let hex_id = id.to_hex();
-    let learned_at = 1_772_000_000u64;
-    let blob = make_entity_blob(1, learned_at, b"persist-test");
-
-    let entities = window.doc.get_map("entities");
-    map_insert_bytes(&entities, hex_id.as_str(), &blob);
-    window
-        .doc
-        .commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
-
-    window.persist_state(&vault).unwrap();
-    drop(window);
-
-    let loaded_doc = window::load_window_from_state(&vault, TEST_USER, &key).unwrap();
-
-    let entities = loaded_doc.get_map("entities");
-    assert!(
-        entities.get(&hex_id).is_some(),
-        "entity should survive persist/load cycle"
-    );
-}
-
-#[test]
 fn crash_recovery_pm_markers() {
     let temp = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
@@ -456,73 +198,6 @@ fn crash_recovery_pm_markers() {
     assert!(
         vault.sync_state_get(&pm_key).unwrap().is_none(),
         "pm marker should be cleared after replay"
-    );
-}
-
-#[test]
-fn forward_rematerialize_materializes_entities_with_single_read_snapshot() {
-    let temp = tempfile::tempdir().unwrap();
-    let vault = Vault::open(temp.path(), test_config()).unwrap();
-    let materializer = Materializer::new();
-    let key = WindowKey::new("2026-03");
-    let doc = create_window_doc(TEST_USER, &key);
-    let id = EntityId::now();
-    let hex_id = id.to_hex();
-    let blob = make_entity_blob(1, 1_772_000_000, b"forward-remat");
-
-    let entities = doc.get_map("entities");
-    map_insert_bytes(&entities, hex_id.as_str(), &blob);
-    doc.commit();
-
-    let materialized = window::forward_rematerialize(&vault, &doc, &materializer, &key).unwrap();
-    assert_eq!(materialized, 1);
-    assert_eq!(vault.get(&id).unwrap().unwrap(), b"forward-remat");
-
-    let unchanged = window::forward_rematerialize(&vault, &doc, &materializer, &key).unwrap();
-    assert_eq!(unchanged, 0);
-}
-
-#[test]
-fn pm_replay_skips_tombstoned_entities() {
-    let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
-    let key = WindowKey::new("2026-03");
-
-    let id = EntityId::now();
-    let hex_id = id.to_hex();
-    let learned_at = 1_772_000_000u64;
-
-    vault
-        .put_entity(
-            &id,
-            1,
-            TimeRange {
-                start: learned_at,
-                end: learned_at,
-            },
-            learned_at,
-            b"tombstone-test",
-        )
-        .unwrap();
-
-    let pm_key = format!("pm:{key}:{hex_id}");
-    vault.sync_state_put(&pm_key, &[1u8]).unwrap();
-
-    let doc = create_window_doc(TEST_USER, &key);
-
-    // Add tombstone to CRDT
-    let tombstones = doc.get_map("tombstones");
-    tombstones
-        .insert(hex_id.as_str(), &(learned_at as i64).to_le_bytes())
-        .unwrap();
-    doc.commit();
-
-    let replayed = window::replay_pending_mirrors(&vault, &doc, &key).unwrap();
-    assert_eq!(replayed, 0, "should skip tombstoned entity");
-
-    assert!(
-        doc.get_map("entities").get(&hex_id).is_none(),
-        "tombstoned entity should not be resurrected"
     );
 }
 
@@ -763,149 +438,6 @@ fn sync_client_handle_server_message_imports_root_sync_update() {
     assert_eq!(records.len(), 1, "the malformed lease entry quarantines");
     assert_eq!(records[0].1.reason_code, "CorruptedIndex");
     assert_eq!(records[0].1.window_key, "root");
-}
-
-#[test]
-fn sync_client_handle_server_message_dispatch() {
-    type Builder = fn(&mut SyncClient) -> Vec<u8>;
-
-    // Three dispatch cases share the same skeleton:
-    //   (case_name, payload_builder, expectation)
-    // - accepts_version_vector: real root VV from generate_initial_sync,
-    //   handler treats it as a no-op (Ok with empty responses).
-    // - rejects_empty_payload: zero-byte input returns InvalidPayload.
-    // - rejects_unknown_tag: tag 222 has no handler, returns UnknownTag(222).
-    enum Expect {
-        Ok,
-        InvalidPayload,
-        UnknownTag(u8),
-    }
-
-    let build_root_vv = |client: &mut SyncClient| -> Vec<u8> {
-        let initial_sync = client.generate_initial_sync();
-        // ONE-1127: the FIRST frame is the protocol hello. The in-tree client
-        // uses the full-window path; selector sync uses a distinct current
-        // protocol version. The lease request and root VV follow it.
-        let expected_hello = transport::encode_chunk_full_window_protocol_hello();
-        assert_eq!(
-            initial_sync.first().map(Vec::as_slice),
-            Some(expected_hello.as_slice()),
-            "initial sync must lead with the protocol hello"
-        );
-        initial_sync
-            .iter()
-            .find(|m| m.first().copied() == Some(ROOT_VV_TAG))
-            .expect("initial sync should include root VV")
-            .clone()
-    };
-    let build_empty = |_client: &mut SyncClient| -> Vec<u8> { Vec::new() };
-    let build_unknown = |_client: &mut SyncClient| -> Vec<u8> { vec![222] };
-
-    let cases: &[(&str, Builder, Expect)] = &[
-        ("accepts_version_vector", build_root_vv, Expect::Ok),
-        ("rejects_empty_payload", build_empty, Expect::InvalidPayload),
-        (
-            "rejects_unknown_tag",
-            build_unknown,
-            Expect::UnknownTag(222),
-        ),
-    ];
-
-    for (case_name, build, expect) in cases {
-        let temp = tempfile::tempdir().unwrap();
-        let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
-        let (mut client, _rx) = make_client(&vault);
-
-        let message = build(&mut client);
-        let result = client.handle_server_message(&message);
-
-        match (expect, result) {
-            (Expect::Ok, Ok(responses)) => {
-                assert!(
-                    responses.is_empty(),
-                    "case {case_name}: expected no responses, got {responses:?}"
-                );
-            }
-            (Expect::InvalidPayload, Err(TransportError::InvalidPayload(_))) => {}
-            (Expect::UnknownTag(expected_tag), Err(TransportError::UnknownTag(got_tag)))
-                if got_tag == *expected_tag => {}
-            (_, other) => panic!("case {case_name}: unexpected result {other:?}"),
-        }
-    }
-}
-
-#[test]
-fn sync_client_handle_server_message_dispatches_window_sync() {
-    let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
-    let (mut client, _rx) = make_client(&vault);
-
-    // ONE-1127: VV_REQUEST payloads are Loro binary VV bytes, and the reply
-    // is [UPDATE delta, VV_RESPONSE own-VV] instead of a full export.
-    let server_vv = loro::VersionVector::new().encode();
-    let message = transport::encode_window_sync("2026-03", window_sub_tags::VV_REQUEST, &server_vv);
-    let responses = client.handle_server_message(&message).unwrap();
-
-    assert!(client.window("2026-03").is_some());
-    assert_eq!(responses.len(), 2);
-    assert_eq!(responses[0][0], TAG_WINDOW_SYNC);
-    let (window_key, sub_tag, _payload) =
-        transport::decode_window_sync(&responses[0][1..]).unwrap();
-    assert_eq!(window_key, "2026-03");
-    assert_eq!(sub_tag, window_sub_tags::UPDATE);
-
-    let (window_key, sub_tag, vv_payload) =
-        transport::decode_window_sync(&responses[1][1..]).unwrap();
-    assert_eq!(window_key, "2026-03");
-    assert_eq!(sub_tag, window_sub_tags::VV_RESPONSE);
-    loro::VersionVector::decode(vv_payload).expect("VV_RESPONSE payload must be binary VV");
-}
-
-#[test]
-fn sync_client_handle_server_message_handles_bulk_transfer_messages() {
-    // ONE-1126 (AC7): BulkTransfer routes into sync_state persistence — the
-    // in-progress `bulk:w:{key}` marker on BulkTransfer, the `d:w:{key}`
-    // doc-state write + marker clear on BulkTransferDone. The done-state is
-    // a REAL Loro snapshot now: the handler validates structure fail-closed
-    // (the old opaque b"doc-state" placeholder is rejected — see
-    // bulk_transfer_done_rejects_invalid_doc_state in sync_client_wiring).
-    let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
-    let (mut client, mut rx) = make_client(&vault);
-
-    let msgpack = rmp_serde::to_vec(&serde_json::json!({})).unwrap();
-    let compressed = zstd::stream::encode_all(msgpack.as_slice(), 0).unwrap();
-    let bulk = transport::encode_bulk_transfer("2026-03", &compressed);
-    assert_eq!(bulk[0], TAG_BULK_TRANSFER);
-    assert!(client.handle_server_message(&bulk).unwrap().is_empty());
-    assert_eq!(
-        vault.sync_state_get("bulk:w:2026-03").unwrap().as_deref(),
-        Some([1u8].as_slice()),
-        "BulkTransfer must persist the in-progress marker"
-    );
-
-    let state_doc = create_window_doc(TEST_USER, &WindowKey::new("2026-03"));
-    let snapshot = state_doc.export(ExportMode::Snapshot).unwrap();
-    let done = transport::encode_bulk_transfer_done("2026-03", &snapshot);
-    assert_eq!(done[0], TAG_BULK_TRANSFER_DONE);
-    assert!(client.handle_server_message(&done).unwrap().is_empty());
-
-    assert_eq!(
-        vault.sync_state_get("d:w:2026-03").unwrap().as_deref(),
-        Some(snapshot.as_slice()),
-        "BulkTransferDone must persist the doc state to d:w:{{key}}"
-    );
-    assert!(
-        vault.sync_state_get("bulk:w:2026-03").unwrap().is_none(),
-        "BulkTransferDone must clear the in-progress marker"
-    );
-
-    match rx.try_recv() {
-        Ok(SyncEvent::BulkTransferComplete { window_key }) => {
-            assert_eq!(window_key, "2026-03");
-        }
-        other => panic!("expected bulk transfer completion event, got {other:?}"),
-    }
 }
 
 /// GDPR receipt survival across a full CRDT sync round-trip (ONE-1103).

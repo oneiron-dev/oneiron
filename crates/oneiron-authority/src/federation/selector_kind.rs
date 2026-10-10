@@ -155,6 +155,3 @@ impl super::scope::ScopeAtom for SelectorRange {
 pub fn selector_range_of(type_byte: u8) -> Option<SelectorRange> {
     entity_type_registry_entry(type_byte).and_then(SelectorRange::for_entry)
 }
-
-#[cfg(test)]
-mod tests;

@@ -126,7 +126,7 @@ use crate::claim::{
 #[cfg(test)]
 use crate::edge::EdgeKind;
 #[cfg(test)]
-use crate::entity_id::{EntityId, ForeignWorldId, bytes_to_hex_lower, is_foreign_world_id_range};
+use crate::entity_id::{EntityId, ForeignWorldId, bytes_to_hex_lower};
 #[cfg(test)]
 use crate::error::{Error, Result};
 #[cfg(test)]
