@@ -63,6 +63,4 @@ pub(in crate::store) use self::orcb::arm_after_key_marker_check;
 #[cfg(test)]
 pub(in crate::store) use self::types::GATE_DECISION_LEDGER_VERSION_REDACTED;
 #[cfg(test)]
-pub(in crate::store) use self::vet::GATE_SYSTEM_NOTICE_PLANE_TOKENS;
-#[cfg(test)]
-pub(in crate::store) use self::vet::{valid_gate_receipt_reason, valid_gate_system_notice_record};
+pub(in crate::store) use self::vet::valid_gate_receipt_reason;

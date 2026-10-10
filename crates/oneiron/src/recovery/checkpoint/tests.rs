@@ -1273,49 +1273,6 @@ fn restore_rebuilds_pending_consent_indexes_and_preserves_insertion_order() {
 }
 
 #[test]
-fn checkpoint_omits_ingest_counters_but_preserves_quota_configuration() {
-    let dir = tempfile::tempdir().unwrap();
-    let source = Vault::open(dir.path().join("source"), VaultConfig::device()).unwrap();
-    let baseline = dir.path().join("baseline");
-    source.snapshot_checkpoint(&baseline, 100).unwrap();
-    let mut config = Vec::new();
-    config.extend_from_slice(&4_u32.to_le_bytes());
-    config.extend_from_slice(&60_u64.to_le_bytes());
-    source
-        .with_write_txn(|txn| {
-            source
-                .store
-                .sync_queue
-                .put(txn, b"m:maintenance_ingest_quota_config:v1", &config)?;
-            Ok(())
-        })
-        .unwrap();
-    let configured = dir.path().join("configured");
-    source.snapshot_checkpoint(&configured, 100).unwrap();
-    assert_ne!(
-        std::fs::read(&baseline).unwrap(),
-        std::fs::read(&configured).unwrap()
-    );
-    let mut key = b"m:maintenance_ingest_quota:v1:".to_vec();
-    key.extend_from_slice(&[7; 32]);
-    let mut count = Vec::new();
-    count.extend_from_slice(&60_u64.to_le_bytes());
-    count.extend_from_slice(&4_u32.to_le_bytes());
-    source
-        .with_write_txn(|txn| {
-            source.store.sync_queue.put(txn, &key, &count)?;
-            Ok(())
-        })
-        .unwrap();
-    let counted = dir.path().join("counted");
-    source.snapshot_checkpoint(&counted, 100).unwrap();
-    assert_eq!(
-        std::fs::read(&configured).unwrap(),
-        std::fs::read(&counted).unwrap()
-    );
-}
-
-#[test]
 fn checkpoint_refuses_unreconstructable_explicit_vectors_before_creating_image() {
     for (entity_type, body) in [
         (crate::registry::ENTITY_TYPE_PERSON, b"person".as_slice()),

@@ -64,11 +64,11 @@ pub use self::types::{
 mod tests;
 
 #[cfg(test)]
-use self::{federated::*, types::*};
+use self::types::*;
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]
-use crate::error::{Error, SyncConfigField, SyncProtocolValidation};
+use crate::error::{Error, SyncProtocolValidation};
 #[cfg(test)]
 use crate::sync::loro_support::export_updates_since;
 #[cfg(test)]

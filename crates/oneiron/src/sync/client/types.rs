@@ -222,12 +222,5 @@ pub(super) const KEY_ROOT_DOC: &str = "d:root";
 #[cfg(test)]
 pub(super) const KEY_CLIENT_ID: &str = "m:client_id";
 
-/// Last successful sync timestamp (u64 LE, 8 bytes).
-///
-/// Production goes through the typed `LAST_SYNC` table
-/// (`crate::sync::window_rows`); this stays only for this module's tests.
-#[cfg(test)]
-pub(super) const KEY_LAST_SYNC: &str = "m:last_sync";
-
 /// `svf:*` byte meaning "the persisted `sv:*` reflects the full doc state".
 pub(super) const SVF_FRESH: u8 = 1;

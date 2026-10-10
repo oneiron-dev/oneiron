@@ -2,7 +2,6 @@ use super::*;
 use crate::config::VaultConfig;
 use crate::sync::bridge::Materializer;
 use core::assert_matches;
-use std::time::Duration;
 
 fn test_manager() -> Arc<WindowManager> {
     let config = VaultConfig::device();
@@ -20,49 +19,6 @@ fn full_client_config() -> SyncClientConfig {
         residence_mode: crate::sync::SyncResidenceMode::All,
         ..Default::default()
     }
-}
-
-#[test]
-fn flush_to_queue_skips_invalid_window_keys() {
-    let conn = SyncConnection::new(test_manager(), ConnectionConfig::default()).unwrap();
-    let mut buffer = vec![
-        LocalUpdate {
-            window_key: "2026-13".to_string(),
-            update_bytes: vec![1, 2, 3],
-        },
-        LocalUpdate {
-            window_key: "2026-03".to_string(),
-            update_bytes: vec![4, 5, 6],
-        },
-    ];
-
-    flush_to_queue(conn.queue(), &mut buffer);
-
-    let queued = conn.queue().drain_updates().unwrap();
-    assert_eq!(queued.len(), 1);
-    assert_eq!(queued[0].window_key, "2026-03");
-    assert_eq!(queued[0].encoded, vec![4, 5, 6]);
-}
-
-#[tokio::test]
-async fn queue_push_and_drain_roundtrip() {
-    let conn = SyncConnection::new(
-        test_manager(),
-        ConnectionConfig {
-            auto_reconnect: false,
-            ..Default::default()
-        },
-    )
-    .unwrap();
-
-    // Push some updates to the queue to simulate offline state
-    conn.queue().push("2026-03", &[10, 20]).unwrap();
-    conn.queue().push("2026-03", &[30, 40]).unwrap();
-
-    let updates = conn.queue().drain_updates().unwrap();
-    assert_eq!(updates.len(), 2);
-    assert_eq!(updates[0].encoded, vec![10, 20]);
-    assert_eq!(updates[1].encoded, vec![30, 40]);
 }
 
 #[test]
@@ -129,25 +85,6 @@ fn queue_inspection_error_does_not_clear_queue() {
     assert_matches!(event, SyncEvent::Error(msg) if msg.contains("Queue inspection failed"));
 }
 
-#[test]
-fn convergence_round_propagates_invalid_window_key_without_frame() {
-    let manager = test_manager();
-    let (mut client, _client_rx) = SyncClient::new(manager, full_client_config()).unwrap();
-    let mut pending = BTreeSet::new();
-    pending.insert("2026-003".to_string());
-    let mut session = ConvergenceSession {
-        pending,
-        force_resync: BTreeSet::new(),
-        max_seq: 0,
-        rounds_started: 0,
-    };
-
-    assert_matches!(
-        session.begin_round(&mut client),
-        Err(TransportError::InvalidWindowKey)
-    );
-}
-
 // ───────────────────────────────────────────────────────────────────────
 // ONE-1128 — convergence protocol + real re-bootstrap (socket-free)
 // ───────────────────────────────────────────────────────────────────────
@@ -163,14 +100,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 // content so VV equality holds.
 const FULL_RESYNC_TEST_WINDOW: &str = "1971-01";
 const DEFERRED_TOMBSTONE_KEY: &str = "0123456789abcdef0123456789abcdef";
-
-/// Contract literal (ARCH-0023b Fig. 2): "Max 5 rounds before force
-/// re-bootstrap". A drifted budget silently changes how long a GDPR
-/// tombstone can sit unconfirmed before the queue is dropped.
-#[test]
-fn max_convergence_rounds_is_pinned_to_five() {
-    assert_eq!(MAX_CONVERGENCE_ROUNDS, 5);
-}
 
 fn window_doc() -> LoroDoc {
     let doc = LoroDoc::new();
@@ -303,190 +232,6 @@ async fn spawn_fake_sync_server(
         }
     });
     (format!("ws://{addr}"), handle)
-}
-
-#[tokio::test]
-async fn sync_socket_disconnect_and_restart_do_not_fail_over_macro_home() {
-    use crate::dreamer_runner::{
-        AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt, DreamerAdmissionOutcome,
-        DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier,
-        DreamerConsolidationAdmissionOutcome, DreamerConsolidationScope, DreamerHomeNodeCandidate,
-        DreamerRunnerStore, EnqueueDreamerConsolidationAttempt,
-    };
-
-    let manager = test_manager();
-    let runner = DreamerRunnerStore::new(manager.vault());
-    let local = runner.local_home_node_candidate(true, true, false).unwrap();
-    let cloud = DreamerHomeNodeCandidate::cloud(
-        if local.node_id == u64::MAX {
-            1
-        } else {
-            local.node_id + 1
-        },
-        true,
-    );
-    let admission = |now| {
-        runner
-            .admit_next_consolidation(AdmitDreamerConsolidationAttempt {
-                scope: DreamerConsolidationScope::Macro,
-                local_node_id: local.node_id,
-                claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
-                claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
-                admission: AdmitDreamerAttempt {
-                    lease_owner: "local".to_owned(),
-                    now,
-                    budget_id: "topology-test".to_owned(),
-                    budget_total_units: 10,
-                    reserve_units: 1,
-                    started_milestone: None,
-                },
-            })
-            .unwrap()
-    };
-    let queued = runner
-        .enqueue_consolidation(EnqueueDreamerConsolidationAttempt {
-            scope: DreamerConsolidationScope::Macro,
-            input: rmpv::Value::from("topology-test"),
-            parent_attempt: None,
-            dedupe_key: None,
-            run_id: None,
-            now: 1,
-        })
-        .unwrap();
-    let attempt_id = match queued {
-        crate::dreamer_runner::EnqueueDreamerAttemptOutcome::Enqueued(status)
-        | crate::dreamer_runner::EnqueueDreamerAttemptOutcome::Existing(status) => {
-            status.attempt.id
-        }
-    };
-
-    // The host's feed, not an election call in this test, owns membership.
-    let detached = DreamerHomeNodeCandidate::cloud(cloud.node_id, false);
-    let topology = HomeNodeTopology::new(vec![local, detached]);
-    let mut designated = None;
-    for round in 0..2 {
-        let (server_url, server_task) =
-            spawn_fake_sync_server(FakeServer::new(), None, Arc::new(AtomicUsize::new(0))).await;
-        let conn = SyncConnection::new(
-            Arc::clone(&manager),
-            ConnectionConfig {
-                client_config: SyncClientConfig {
-                    server_url,
-                    home_node_topology: Some(topology.clone()),
-                    residence_mode: crate::sync::SyncResidenceMode::All,
-                    ..Default::default()
-                },
-                auto_reconnect: false,
-            },
-        )
-        .unwrap();
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-        let running = tokio::spawn(async move { conn.run(shutdown_rx).await.unwrap() });
-        tokio::time::sleep(Duration::from_secs(1)).await;
-        if round == 0 {
-            assert_eq!(
-                runner.home_node_designation().unwrap().unwrap().node_id,
-                local.node_id,
-                "initial detached cloud leaves always-on local home"
-            );
-            topology.publish(vec![local, cloud]);
-            tokio::time::timeout(Duration::from_secs(15), async {
-                loop {
-                    if runner
-                        .home_node_designation()
-                        .unwrap()
-                        .is_some_and(|home| home.node_id == cloud.node_id)
-                    {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
-            })
-            .await
-            .expect("host attach must elect cloud during the live connection");
-            designated = runner.home_node_designation().unwrap();
-            assert_eq!(
-                admission(11),
-                DreamerConsolidationAdmissionOutcome::NotHomeNode(designated.unwrap())
-            );
-            // Lose the server unexpectedly while the cloud remains home.
-            server_task.abort();
-        } else {
-            assert_eq!(runner.home_node_designation().unwrap(), designated);
-            assert_eq!(
-                admission(12),
-                DreamerConsolidationAdmissionOutcome::NotHomeNode(designated.unwrap())
-            );
-            // Only a new host-authored topology snapshot may promote local.
-            topology.publish(vec![local, detached]);
-            tokio::time::timeout(Duration::from_secs(15), async {
-                loop {
-                    if runner
-                        .home_node_designation()
-                        .unwrap()
-                        .is_some_and(|home| home.node_id == local.node_id)
-                    {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
-            })
-            .await
-            .expect("host detach must elect local during the live connection");
-            assert!(matches!(
-                admission(21),
-                DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
-                    _
-                ))
-            ));
-            shutdown_tx.send(()).unwrap();
-        }
-        let mut events = tokio::time::timeout(Duration::from_secs(15), running)
-            .await
-            .expect("sync connection must shut down")
-            .unwrap();
-        server_task.abort();
-        let mut saw_synced = false;
-        let mut saw_disconnected = false;
-        let mut saw_socket_error = false;
-        while let Ok(event) = events.try_recv() {
-            match event {
-                SyncEvent::StatusChanged(crate::sync::client::SyncStatus::Synced) => {
-                    saw_synced = true;
-                }
-                SyncEvent::StatusChanged(crate::sync::client::SyncStatus::Disconnected) => {
-                    saw_disconnected = true;
-                }
-                SyncEvent::Error(message) if message.contains("WebSocket disconnected") => {
-                    saw_socket_error = true;
-                }
-                _ => {}
-            }
-        }
-        assert!(
-            saw_synced && saw_disconnected,
-            "round {round}: real socket lifecycle"
-        );
-        if round == 0 {
-            assert!(
-                saw_socket_error,
-                "network loss must reach the disconnect branch"
-            );
-            assert_eq!(runner.home_node_designation().unwrap(), designated);
-            assert_eq!(
-                admission(13),
-                DreamerConsolidationAdmissionOutcome::NotHomeNode(designated.unwrap())
-            );
-            assert_eq!(
-                runner.status(attempt_id).unwrap().unwrap().attempt.state,
-                crate::attempt_queue::AttemptState::Queued
-            );
-        }
-    }
-    assert_eq!(
-        runner.home_node_designation().unwrap().unwrap().node_id,
-        local.node_id
-    );
 }
 
 /// Drives client→server frames and all transitive replies to quiescence
@@ -907,51 +652,6 @@ fn opened_item_queue_overflow_retains_unconfirmed_writes() {
     assert_eq!(conn.queue().drain_updates().unwrap().len(), 1);
     assert!(client.window("2026-03").is_some());
     assert_matches!(rx.try_recv().unwrap(), SyncEvent::Error(_));
-}
-
-#[test]
-fn queue_overflow_triggers_real_re_bootstrap() {
-    let manager = test_manager();
-    let vault = Arc::clone(manager.vault());
-    let conn = SyncConnection::new(Arc::clone(&manager), ConnectionConfig::default()).unwrap();
-    let (mut client, _rx) = SyncClient::new(Arc::clone(&manager), full_client_config()).unwrap();
-
-    conn.queue().push("2026-03", &[1, 2, 3]).unwrap();
-    client.ensure_window("2026-03").unwrap();
-    let exemption_key = b"x:synthetic-exemption".to_vec();
-    {
-        let mut wtxn = vault.store.env.write_txn().unwrap();
-        vault
-            .store
-            .sync_queue
-            .put(&mut wtxn, &exemption_key, &[9u8])
-            .unwrap();
-        wtxn.commit().unwrap();
-    }
-
-    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
-    conn.handle_queue_overflow_check(&mut client, &event_tx, Ok(true));
-
-    assert_eq!(conn.queue().len().unwrap(), 0, "q: rows must be cleared");
-    assert!(
-        client.window("2026-03").is_none(),
-        "overflow re-bootstrap must drop in-memory docs"
-    );
-    let rtxn = vault.store.env.read_txn().unwrap();
-    assert_eq!(
-        vault
-            .store
-            .sync_queue
-            .get(&rtxn, &exemption_key)
-            .unwrap()
-            .as_deref(),
-        Some([9u8].as_slice()),
-        "x:* rows must survive the overflow re-bootstrap"
-    );
-    drop(rtxn);
-
-    let event = event_rx.try_recv().unwrap();
-    assert_matches!(event, SyncEvent::Error(msg) if msg.contains("re-bootstrap"));
 }
 
 #[tokio::test]

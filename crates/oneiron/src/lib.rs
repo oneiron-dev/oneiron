@@ -5,11 +5,6 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[cfg(test)]
-thread_local! {
-    static PANIC_ON_UNIX_SECONDS_NOW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
 // ===== Vault core & maintenance ===== LMDB substrate: Vault, store, ABI, ids, config, repair
 pub mod batch;
 pub mod config;
@@ -558,21 +553,9 @@ pub use crate::write_envelope::{
 };
 
 pub(crate) fn unix_seconds_now() -> u64 {
-    #[cfg(test)]
-    PANIC_ON_UNIX_SECONDS_NOW.with(|panic_on_call| {
-        assert!(
-            !panic_on_call.get(),
-            "unix_seconds_now must not be called by this path",
-        );
-    });
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs())
-}
-
-#[cfg(test)]
-pub(crate) fn panic_on_unix_seconds_now_for_current_thread(enabled: bool) {
-    PANIC_ON_UNIX_SECONDS_NOW.with(|panic_on_call| panic_on_call.set(enabled));
 }
 
 pub(crate) fn le_bytes_to_f32_vec(bytes: &[u8], dimensions: usize) -> Result<Vec<f32>> {

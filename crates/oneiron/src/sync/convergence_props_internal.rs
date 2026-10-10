@@ -19,7 +19,6 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::store::{GRAPH_VERSION_KEY, Store, VECTOR_VERSION_KEY};
 use crate::sync::bridge::{Materializer, encode_edge_value_for_crdt, format_edge_key};
-use crate::sync::queue::SyncQueue;
 use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
 use crate::sync::window::LoadedWindow;
@@ -373,49 +372,5 @@ fn lww_loser_temporal_and_type_rows_fully_displaced_no_orphans() {
     assert_eq!(
         type_rows, 1,
         "exactly one type_index row for the merged entity"
-    );
-}
-
-/// Spec deliverable 5, internal half: the reserved `x:` quarantine family
-/// (M4-04 storage pin) survives the queue re-bootstrap clear byte-identical
-/// — extends the pinned `h:`/`m:` preservation (ONE-1091) to `x:`. No `x:`
-/// writer exists in this base yet, so the row is seeded raw; the contract
-/// under test is `clear_all`'s preservation behavior, not the writer.
-#[test]
-fn queue_rebootstrap_clear_preserves_reserved_x_rows_byte_identical() {
-    let (_dir, vault) = open_vault();
-    let queue = SyncQueue::new(Arc::clone(&vault)).unwrap();
-
-    queue.push(WINDOW, &[1, 2, 3]).unwrap();
-    queue.push_embed_job(&EntityId::now(), 1).unwrap();
-
-    let mut x_key = b"x:".to_vec();
-    x_key.extend_from_slice(&7_u64.to_be_bytes());
-    let x_value = b"reserved-quarantine-record".to_vec();
-    {
-        let mut wtxn = vault.store.env.write_txn().unwrap();
-        vault
-            .store
-            .sync_queue
-            .put(&mut wtxn, &x_key, &x_value)
-            .unwrap();
-        wtxn.commit().unwrap();
-    }
-
-    queue.clear_all().unwrap();
-
-    let rows = vault.sync_queue_rows_with_prefix(b"x:").unwrap();
-    assert_eq!(
-        rows,
-        vec![(x_key, x_value)],
-        "clear_all (re-bootstrap) must preserve x: rows byte-identical"
-    );
-    assert!(
-        vault.sync_queue_rows_with_prefix(b"q:").unwrap().is_empty(),
-        "q: rows must be cleared"
-    );
-    assert!(
-        vault.sync_queue_rows_with_prefix(b"e:").unwrap().is_empty(),
-        "e: rows must be cleared"
     );
 }

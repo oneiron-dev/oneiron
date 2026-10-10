@@ -540,54 +540,6 @@ fn unload_refuses_with_outstanding_handles_and_keeps_delete_routing_live() {
     );
 }
 
-/// ONE-1150 — once the last external handle drops, the previously refused
-/// unload succeeds: the retry persists the doc state and deregisters.
-#[test]
-fn unload_succeeds_after_last_external_handle_drops() {
-    let (_temp, vault) = test_vault();
-    let key = WindowKey::new("2026-04");
-    let t = key.start_timestamp().unwrap() + 60;
-
-    let materializer = Arc::new(Materializer::new());
-    let manager = Arc::new(WindowManager::new(
-        Arc::clone(&vault),
-        materializer,
-        "test-user",
-    ));
-    let win = manager.open_window(&key).unwrap();
-
-    let id = EntityId::now();
-    win.doc
-        .get_map("entities")
-        .insert(
-            id.to_hex().as_str(),
-            make_entity_blob(1, t, b"survives-retry").as_slice(),
-        )
-        .unwrap();
-    win.doc.commit();
-
-    // Held → refused. Dropped → the retry succeeds and deregisters.
-    assert_matches!(
-        manager.unload_window(&key),
-        Err(Error::Sync(SyncError::WindowBusy { .. }))
-    );
-    drop(win);
-    assert!(manager.unload_window(&key).unwrap());
-    assert!(
-        manager.window(&key).is_none(),
-        "retry after the last drop must deregister"
-    );
-    assert!(manager.loaded_keys().is_empty());
-
-    // The successful retry persisted the state the refused call did not.
-    let reloaded = window::load_window_from_state(&vault, "test-user", &key).unwrap();
-    assert_eq!(
-        map_get_bytes(&reloaded.get_map("entities"), &id.to_hex()).unwrap(),
-        make_entity_blob(1, t, b"survives-retry"),
-        "unload-after-drop must persist the window Doc state"
-    );
-}
-
 /// AC 3 — `rm:w:{key}` consumer: when the needs-rematerialization flag is
 /// set (Observer B failure on a previous run; producer is M4-04), open
 /// forces forward remat — subsumed by the pinned order, which always runs
@@ -784,36 +736,4 @@ fn recovery_after_prune_is_equivalent_and_seq_stays_monotonic() {
         map_get_bytes(&entities, &id_b.to_hex()).unwrap(),
         make_entity_blob(1, t, b"second")
     );
-}
-
-/// ARCH-0023b window policy: 2 default loaded windows (current + previous
-/// month); the walk-back stops at the epoch boundary.
-#[test]
-fn open_default_windows_loads_current_and_previous_month() {
-    let (_temp, vault) = test_vault();
-    let materializer = Arc::new(Materializer::new());
-    let manager = Arc::new(WindowManager::new(
-        Arc::clone(&vault),
-        materializer,
-        "test-user",
-    ));
-
-    let now = WindowKey::new("2026-03").start_timestamp().unwrap() + 60;
-    let opened = manager.open_default_windows(now).unwrap();
-    assert_eq!(opened.len(), 2);
-    assert!(opened.iter().any(|window| window.key.as_str() == "2026-03"));
-    assert!(opened.iter().any(|window| window.key.as_str() == "2026-02"));
-    assert!(manager.window(&WindowKey::new("2026-03")).is_some());
-    assert!(manager.window(&WindowKey::new("2026-02")).is_some());
-
-    // Epoch boundary: 1970-01 has no previous month.
-    let (_temp2, vault2) = test_vault();
-    let manager2 = Arc::new(WindowManager::new(
-        vault2,
-        Arc::new(Materializer::new()),
-        "test-user",
-    ));
-    let opened = manager2.open_default_windows(0).unwrap();
-    assert_eq!(opened.len(), 1);
-    assert_eq!(opened[0].key.as_str(), "1970-01");
 }

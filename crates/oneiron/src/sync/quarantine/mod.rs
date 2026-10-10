@@ -104,9 +104,7 @@ use self::remat_markers::{remat_marker_key, set_remat_marker};
 // private ones here so `tests.rs` resolves exactly as it did before the
 // split.
 #[cfg(test)]
-use self::{
-    remat_markers::replay_remat_marker_provenance_key, retention_reports::enforce_retention_in_txn,
-};
+use self::remat_markers::replay_remat_marker_provenance_key;
 #[cfg(test)]
 use crate::error::Error;
 #[cfg(test)]

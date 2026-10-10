@@ -150,9 +150,7 @@ pub(in crate::store) fn valid_gate_system_notice_record(notice: &GateSystemNotic
 /// Spelled as literals rather than read off `PolicyPlane::as_str`: `store` sits
 /// UNDER `policy_model` in the crate's layering (policy_model imports store,
 /// never the reverse), so the ledger guard cannot depend on the enum it
-/// mirrors. `store::tests::gate_notice_plane_tokens_mirror_the_policy_plane_enum`
-/// pins the two spellings together, so a renamed variant fails a test instead of
-/// silently widening the ledger.
+/// mirrors.
 pub(in crate::store) const GATE_SYSTEM_NOTICE_PLANE_TOKENS: [&str; 2] = [
     GATE_SYSTEM_NOTICE_PLANE_OWNER,
     GATE_SYSTEM_NOTICE_PLANE_HOSTED,

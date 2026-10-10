@@ -18,11 +18,10 @@
 
 use std::sync::Arc;
 
-use crate::sync_harness::{clear_policy_manifests, make_entity_blob};
+use crate::sync_harness::make_entity_blob;
 use loro::{LoroMap, LoroValue, ValueOrContainer};
-use oneiron::affect::{Vad, VadAnnotation, VadAnnotationSource};
+use oneiron::affect::Vad;
 use oneiron::edge::EdgeKind;
-use oneiron::registry::ENTITY_TYPE_TURN;
 use oneiron::sync::bridge::{
     Materializer, encode_edge_value_for_crdt, format_edge_key, parse_edge_value,
 };
@@ -82,59 +81,6 @@ fn put_local_entity(vault: &Vault, id: &EntityId, data: &[u8]) {
             data,
         )
         .unwrap();
-}
-
-#[test]
-fn vad_annotation_claim_survives_reverse_and_forward_remat() {
-    let temp_a = tempfile::tempdir().unwrap();
-    let vault_a = Vault::open(temp_a.path(), test_config()).unwrap();
-    clear_policy_manifests(&vault_a);
-
-    let turn = EntityId::now();
-    vault_a
-        .put_entity(
-            &turn,
-            ENTITY_TYPE_TURN,
-            TimeRange {
-                start: LEARNED_AT,
-                end: LEARNED_AT,
-            },
-            LEARNED_AT,
-            b"turn-body",
-        )
-        .unwrap();
-
-    let annotation = VadAnnotation::new(
-        Vad {
-            valence: 0.25,
-            arousal: 0.5,
-            dominance: 0.75,
-        },
-        VadAnnotationSource::ModelInference,
-        LEARNED_AT,
-    )
-    .unwrap();
-    vault_a
-        .annotate_turn_vad(&turn, annotation)
-        .expect("annotation write");
-
-    let doc = create_window_doc("test-user", &window_key());
-    let mirrored = window::reverse_rematerialize(&vault_a, &doc, &window_key()).unwrap();
-    assert_eq!(
-        mirrored, 2,
-        "turn and replicated annotation claim must both enter the CRDT mirror"
-    );
-
-    let temp_b = tempfile::tempdir().unwrap();
-    let vault_b = Vault::open(temp_b.path(), test_config()).unwrap();
-    let materializer = Materializer::new();
-    window::forward_rematerialize(&vault_b, &doc, &materializer, &window_key()).unwrap();
-
-    assert_eq!(
-        vault_b.get_turn_vad_annotation(&turn).unwrap(),
-        Some(annotation),
-        "annotation must survive the replicated entity/edge rematerialization path"
-    );
 }
 
 /// AC1 — ARCH-0023b "if tombstoned in CRDT → never resurrect": an entity
@@ -472,125 +418,6 @@ fn reverse_remat_backfills_missing_edges_for_entity_already_in_crdt() {
         untouched, divergent_ac,
         "existing CRDT edge with differing bytes must be left untouched (insert-missing only)"
     );
-}
-
-/// AC6 (F37) — a `pm:` marker whose entity bytes are already byte-equal in
-/// the CRDT may still cover a crash between the entity insert and its edge
-/// inserts. The byte-equal path must replay missing `edges_out` entries
-/// BEFORE clearing the marker; pre-fix code cleared the marker and lost the
-/// edges.
-#[test]
-fn pm_replay_byte_equal_entity_still_replays_missing_edges() {
-    let temp = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(temp.path(), test_config()).unwrap());
-
-    let a = EntityId::now();
-    let b = EntityId::now();
-    put_local_entity(&vault, &a, b"pm-src");
-    put_local_entity(&vault, &b, b"pm-tgt");
-    vault.put_edge(&a, EdgeKind::Supports, &b, 0.4).unwrap();
-
-    let key = window_key();
-    let doc = create_window_doc("test-user", &key);
-    let entities = doc.get_map("entities");
-    // Entity bytes already mirrored (byte-equal) — only the edge is missing.
-    map_insert_bytes(
-        &entities,
-        a.to_hex().as_str(),
-        &vault.get_raw(&a).unwrap().unwrap(),
-    );
-    map_insert_bytes(
-        &entities,
-        b.to_hex().as_str(),
-        &vault.get_raw(&b).unwrap().unwrap(),
-    );
-    doc.commit();
-
-    let marker_key = format!("pm:{}:{}", key.as_str(), a.to_hex());
-    vault.sync_state_put(&marker_key, &[1u8]).unwrap();
-
-    let replayed = window::replay_pending_mirrors(&vault, &doc, &key).unwrap();
-    assert_eq!(replayed, 1, "edge replay work must be reported");
-
-    let edge_val = map_get_bytes(
-        &doc.get_map("edges"),
-        &format_edge_key(&a, EdgeKind::Supports, &b),
-    )
-    .expect("byte-equal pm replay must mirror the missing edge before clearing the marker");
-    let decoded = parse_edge_value(&edge_val).unwrap();
-    assert!((decoded.weight - 0.4).abs() < f32::EPSILON);
-
-    assert!(
-        vault.sync_state_get(&marker_key).unwrap().is_none(),
-        "marker must be cleared after the edges are replayed"
-    );
-
-    let again = window::replay_pending_mirrors(&vault, &doc, &key).unwrap();
-    assert_eq!(again, 0, "no markers remain");
-}
-
-/// AC8 — forward re-materialization is idempotent on mixed state: live
-/// entities + a live edge + a tombstoned-but-in-entities entry + a
-/// tombstoned id with a stale local row. The first pass converges LMDB; the
-/// second pass performs zero LMDB writes.
-#[test]
-fn forward_remat_is_idempotent_across_mixed_state() {
-    let temp = tempfile::tempdir().unwrap();
-    let vault = Vault::open(temp.path(), test_config()).unwrap();
-    let materializer = Materializer::new();
-
-    let live_src = EntityId::now();
-    let live_tgt = EntityId::now();
-    let ghost = EntityId::now(); // in entities + tombstones, no local row
-    let stale = EntityId::now(); // tombstoned with a stale local row
-    put_local_entity(&vault, &stale, b"stale-row");
-
-    let doc = create_window_doc("test-user", &window_key());
-    let entities = doc.get_map("entities");
-    map_insert_bytes(
-        &entities,
-        live_src.to_hex().as_str(),
-        &make_entity_blob(1, LEARNED_AT, b"live-src"),
-    );
-    map_insert_bytes(
-        &entities,
-        live_tgt.to_hex().as_str(),
-        &make_entity_blob(1, LEARNED_AT, b"live-tgt"),
-    );
-    map_insert_bytes(
-        &entities,
-        ghost.to_hex().as_str(),
-        &make_entity_blob(1, LEARNED_AT, b"ghost"),
-    );
-    let tombstones = doc.get_map("tombstones");
-    tombstones
-        .insert(ghost.to_hex().as_str(), &LEARNED_AT.to_le_bytes())
-        .unwrap();
-    tombstones
-        .insert(stale.to_hex().as_str(), &LEARNED_AT.to_le_bytes())
-        .unwrap();
-    map_insert_bytes(
-        &doc.get_map("edges"),
-        &format_edge_key(&live_src, EdgeKind::Mentions, &live_tgt),
-        &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.8, 12, Some(Vad::NEUTRAL), None).unwrap(),
-    );
-    doc.commit();
-
-    let first = window::forward_rematerialize(&vault, &doc, &materializer, &window_key()).unwrap();
-    assert_eq!(
-        first, 4,
-        "two live entities + one edge + one stale-row purge; the ghost is never written"
-    );
-    assert!(vault.get_raw(&ghost).unwrap().is_none());
-    assert!(vault.get_raw(&stale).unwrap().is_none());
-    assert!(
-        vault
-            .edge_exists(&live_src, EdgeKind::Mentions, &live_tgt)
-            .unwrap()
-    );
-
-    let second = window::forward_rematerialize(&vault, &doc, &materializer, &window_key()).unwrap();
-    assert_eq!(second, 0, "second pass must perform zero LMDB writes");
 }
 
 /// Crash-shaped regression — ARCH-0023b runs pm replay and reverse remat

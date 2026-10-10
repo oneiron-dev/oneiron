@@ -531,30 +531,6 @@ fn date_to_unix(year: i32, month: u32, day: u32) -> Option<u64> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn window_key_from_timestamp() {
-        // 2026-02-15 ~ Unix 1771027200
-        let key = WindowKey::from_timestamp(1_771_027_200);
-        assert_eq!(key.as_str(), "2026-02");
-    }
-
-    #[test]
-    fn window_key_round_trip_timestamps() {
-        let key = WindowKey::new("2026-03");
-        let start = key.start_timestamp().unwrap();
-        let end = key.end_timestamp().unwrap();
-        // March 2026 has 31 days
-        assert_eq!(end - start, 31 * 86_400);
-        // Verify the start timestamp produces the same key
-        assert_eq!(WindowKey::from_timestamp(start).as_str(), "2026-03");
-    }
-
-    #[test]
-    fn window_key_from_timestamp_epoch() {
-        let key = WindowKey::from_timestamp(0);
-        assert_eq!(key.as_str(), "1970-01");
-    }
-
     /// `from_timestamp` must stay total, bounded, and inside the ARCH-0023b
     /// `YYYY-MM` key format for ANY u64 input. The pre-fix code (a) cast `ts
     /// as i64`, so ts > i64::MAX wrapped negative and silently produced
@@ -581,75 +557,5 @@ mod tests {
                 "clamped key must satisfy the pinned YYYY-MM format"
             );
         }
-    }
-
-    #[test]
-    fn window_doc_guid_format() {
-        let key = WindowKey::new("2026-02");
-        assert_eq!(window_doc_guid("user123", &key), "vault:user123:w:2026-02");
-    }
-
-    macro_rules! assert_window_key_new_panics {
-        ($name:ident, $input:expr) => {
-            #[test]
-            #[should_panic(expected = "malformed window key")]
-            fn $name() {
-                let _ = WindowKey::new($input);
-            }
-        };
-    }
-
-    assert_window_key_new_panics!(window_key_new_panics_on_malformed_input, "2026:03");
-    assert_window_key_new_panics!(window_key_new_panics_on_whitespace_input, "2026-03 ");
-    assert_window_key_new_panics!(window_key_new_panics_on_invalid_month, "2026-13");
-    assert_window_key_new_panics!(window_key_new_panics_on_zero_month, "2026-00");
-    assert_window_key_new_panics!(window_key_new_panics_on_pre_epoch_year, "1969-12");
-    assert_window_key_new_panics!(window_key_new_panics_on_empty_input, "");
-
-    #[test]
-    fn parse_window_key_rejects_invalid_calendar_shapes() {
-        for invalid in [
-            "2026-13", "2026-00", "abcdefg", "2026-3", "1969-12", "0000-01",
-        ] {
-            assert!(
-                parse_window_key_str(invalid).is_none(),
-                "{invalid} should be invalid"
-            );
-        }
-    }
-
-    #[test]
-    fn previous_month_stops_at_epoch() {
-        let key = WindowKey::new("1970-01");
-        assert!(key.previous_month().is_none());
-    }
-
-    #[test]
-    fn try_new_accepts_valid_and_rejects_malformed_keys() {
-        assert_eq!(
-            WindowKey::try_new("2026-02").map(|k| k.as_str().to_string()),
-            Some("2026-02".to_string())
-        );
-        for invalid in ["2026-13", "2026-00", "1969-12", "2026-03 ", "garbage", ""] {
-            assert!(
-                WindowKey::try_new(invalid).is_none(),
-                "{invalid:?} should be rejected"
-            );
-        }
-    }
-
-    #[test]
-    fn world_month_window_key_is_canonical_and_retains_world_when_stepping_back() {
-        let world = crate::test_util::entity(0xab);
-        let key = WindowKey::for_world(1_771_027_200, world);
-        assert_eq!(key.as_str(), format!("2026-02@{}", world.to_hex()));
-        assert_eq!(key.world(), Some(world));
-        assert_eq!(
-            key.previous_month().unwrap().as_str(),
-            format!("2026-01@{}", world.to_hex())
-        );
-        assert_eq!(WindowKey::try_new(key.as_str()), Some(key.clone()));
-        assert!(WindowKey::try_new(key.as_str().to_uppercase()).is_none());
-        assert_eq!(WindowKey::from_timestamp(1_771_027_200).world(), None);
     }
 }

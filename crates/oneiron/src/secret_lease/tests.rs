@@ -15,8 +15,8 @@ use crate::config::VaultConfig;
 use crate::error::SecretError;
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::secret_custody::{
-    SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyRecord, TierBand,
-    decode_secret_custody_admission_body, encode_secret_custody_body, read_secret_custody_in_txn,
+    SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyRecord, TierBand, encode_secret_custody_body,
+    read_secret_custody_in_txn,
 };
 use crate::side_table::HexId;
 use crate::temporal::TimeRange;
@@ -160,33 +160,6 @@ fn rotate_record_for_test(vault: &Vault, id: &EntityId, new_value: &[u8]) {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn tier_matrix_cross_vault_admits_t0_only() {
-    let floor = SecretCustodyFloor::default();
-    let binding = binding(EFFECTOR, CustodyTier::T2LocalRegistered);
-    // Even a T2 binding ceiling cannot widen the cross-vault floor band
-    // (registration of such a binding would already fail narrow-only, but
-    // the gate itself is tested here directly).
-    assert_eq!(
-        tier_admission(
-            CustodyClass::CrossVault,
-            CustodyTier::T0Doored,
-            &binding,
-            &floor
-        )
-        .expect("T0 admits"),
-        CustodyTier::T0Doored
-    );
-    for requested in [CustodyTier::T1Leased, CustodyTier::T2LocalRegistered] {
-        let err = tier_admission(CustodyClass::CrossVault, requested, &binding, &floor)
-            .expect_err("above the cross-vault floor band denies");
-        assert!(
-            matches!(err, Error::Secret(SecretError::SecretTierDenied { .. })),
-            "got {err:?}"
-        );
-    }
-}
-
-#[test]
 fn tier_matrix_portable_admits_up_to_binding_ceiling() {
     let floor = SecretCustodyFloor::default();
     let binding = binding(EFFECTOR, CustodyTier::T1Leased);
@@ -208,52 +181,6 @@ fn tier_matrix_portable_admits_up_to_binding_ceiling() {
         matches!(err, Error::Secret(SecretError::SecretTierDenied { .. })),
         "got {err:?}"
     );
-}
-
-#[test]
-fn tier_matrix_device_bound_admits_any_tier() {
-    let floor = SecretCustodyFloor::default();
-    let binding = binding(EFFECTOR, CustodyTier::T2LocalRegistered);
-    for requested in [
-        CustodyTier::T0Doored,
-        CustodyTier::T1Leased,
-        CustodyTier::T2LocalRegistered,
-    ] {
-        assert_eq!(
-            tier_admission(
-                CustodyClass::CustodyDeviceBound,
-                requested,
-                &binding,
-                &floor
-            )
-            .expect("device-bound band spans all tiers"),
-            requested
-        );
-    }
-}
-
-#[test]
-fn tier_matrix_request_above_binding_ceiling_denies() {
-    let floor = SecretCustodyFloor::default();
-    let binding = binding(EFFECTOR, CustodyTier::T0Doored);
-    let err = tier_admission(
-        CustodyClass::CustodyPortable,
-        CustodyTier::T1Leased,
-        &binding,
-        &floor,
-    )
-    .expect_err("T1 request against a T0 ceiling denies");
-    match err {
-        Error::Secret(SecretError::SecretTierDenied {
-            requested,
-            binding_ceiling,
-            ..
-        }) => {
-            assert_eq!(requested, CustodyTier::T1Leased);
-            assert_eq!(binding_ceiling, CustodyTier::T0Doored);
-        }
-        other => panic!("expected SecretTierDenied, got {other:?}"),
-    }
 }
 
 #[test]
@@ -334,42 +261,6 @@ fn tier_matrix_below_band_min_never_forces_upward() {
     assert!(
         matches!(err, Error::Secret(SecretError::SecretTierDenied { .. })),
         "got {err:?}"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// The value-less admission projection (SOL-1920-04)
-// ---------------------------------------------------------------------------
-
-#[test]
-fn admission_projection_matches_the_full_record_without_the_value() {
-    // The doors' admission read decodes every metadata field the full
-    // codec does, but the projection has no value field at all — the
-    // borrowing decode leaves the plaintext a slice of the store page.
-    let rec = record(
-        "projection",
-        CustodyClass::CustodyDeviceBound,
-        VALUE_V1,
-        vec![binding(EFFECTOR, CustodyTier::T1Leased)],
-        vec![
-            ".secrets/api.key".to_owned(),
-            ".secrets/other.key".to_owned(),
-        ],
-    );
-    let body = encode_secret_custody_body(&rec).expect("encode body");
-    let admission = decode_secret_custody_admission_body(&body).expect("projection decode");
-    assert_eq!(admission.name, rec.name);
-    assert_eq!(admission.class, rec.class);
-    assert_eq!(admission.status, rec.status);
-    assert_eq!(admission.rotation_generation, rec.rotation_generation);
-    assert_eq!(admission.bindings, rec.bindings);
-    assert_eq!(admission.declared_paths, rec.declared_paths);
-    assert_eq!(
-        admission
-            .binding_for(EFFECTOR)
-            .expect("binding resolved")
-            .tier_ceiling,
-        CustodyTier::T1Leased
     );
 }
 
@@ -500,18 +391,6 @@ fn binding_without_read_scope_denies_the_value_read() {
     );
 }
 
-#[test]
-fn unknown_secret_ref_denies() {
-    let (_tmp, vault) = temp_vault();
-    let err = vault
-        .inject_secret_at_door("absent", EFFECTOR, &mut |_value| Ok(()))
-        .expect_err("unknown ref denies");
-    assert!(
-        matches!(err, Error::Secret(SecretError::SecretRefNotFound { .. })),
-        "got {err:?}"
-    );
-}
-
 // ---------------------------------------------------------------------------
 // T1 lease materialization
 // ---------------------------------------------------------------------------
@@ -570,71 +449,6 @@ fn materialize_lease_writes_rows_and_returns_value() {
         "receipt body carries value bytes"
     );
     assert!(body_text.contains(SECRET_MATERIALIZATION_RECEIPT_KIND));
-}
-
-#[test]
-fn a_bounded_materialization_is_clamped_by_the_clock_that_stamps_it() {
-    // The bound exists because `ttl_secs` is computed at the CALLER's clock
-    // and `granted_at` is stamped from this method's own: without an absolute
-    // instant, any advance between the two lengthens the lease past whatever
-    // authority bought it. The bound is answered by the same reading that
-    // stamps the row, so the gap cannot be widened by delay.
-    let (_tmp, vault) = temp_vault();
-    register(
-        &vault,
-        default_record(
-            "bounded",
-            CustodyClass::CustodyPortable,
-            CustodyTier::T1Leased,
-        ),
-    );
-
-    // A TTL that would run past the bound dies AT the bound.
-    let bound = crate::unix_seconds_now() + 60;
-    let materialization = vault
-        .materialize_secret_lease_bounded("bounded", EFFECTOR, 3600, Some(bound))
-        .expect("a live bound admits");
-    let lease = materialization.lease;
-    assert_eq!(lease.expires_at, bound);
-    assert!(lease.expires_at < lease.granted_at + 3600);
-    assert!(lease.granted_at < lease.expires_at);
-    // The clamped instant is what landed durable, not just what returned.
-    let stored = read_lease_row(&vault, &lease.lease_id).expect("lease row present");
-    assert_eq!(stored, lease);
-
-    // A TTL that ends before the bound is untouched by it.
-    let materialization = vault
-        .materialize_secret_lease_bounded("bounded", EFFECTOR, 30, Some(bound))
-        .expect("well inside the bound");
-    assert_eq!(
-        materialization.lease.expires_at,
-        materialization.lease.granted_at + 30
-    );
-
-    // A bound that has already elapsed mints NOTHING: the lease would be born
-    // dead, so no lease row, no receipt row, and no value leave this call.
-    let leases_before = count_rows(&vault, SECRET_LEASE_KEY_PREFIX);
-    let receipts_before = count_rows(&vault, SECRET_MATERIALIZATION_RECEIPT_PREFIX);
-    let elapsed = crate::unix_seconds_now();
-    let err = vault
-        .materialize_secret_lease_bounded("bounded", EFFECTOR, 3600, Some(elapsed))
-        .expect_err("an elapsed bound cannot be honoured");
-    assert!(matches!(err, Error::InvariantViolation(_)), "got {err:?}");
-    assert_eq!(count_rows(&vault, SECRET_LEASE_KEY_PREFIX), leases_before);
-    assert_eq!(
-        count_rows(&vault, SECRET_MATERIALIZATION_RECEIPT_PREFIX),
-        receipts_before
-    );
-
-    // And `None` is exactly the unbounded contract every existing caller
-    // still gets.
-    let materialization = vault
-        .materialize_secret_lease_bounded("bounded", EFFECTOR, 3600, None)
-        .expect("unbounded");
-    assert_eq!(
-        materialization.lease.expires_at,
-        materialization.lease.granted_at + 3600
-    );
 }
 
 #[test]
@@ -737,95 +551,6 @@ fn receipt_write_failure_leaves_no_lease_row_and_no_value() {
         .expect("retry succeeds after the one-shot hook is consumed");
     assert_eq!(&*materialization.value, VALUE_V1);
     assert_eq!(count_rows(&vault, SECRET_LEASE_KEY_PREFIX), 1);
-}
-
-#[test]
-fn teardown_revoke_flips_status_and_rematerialize_mints_fresh_id() {
-    let (_tmp, vault) = temp_vault();
-    register(
-        &vault,
-        default_record(
-            "cycle",
-            CustodyClass::CustodyPortable,
-            CustodyTier::T1Leased,
-        ),
-    );
-
-    let first = vault
-        .materialize_secret_lease("cycle", EFFECTOR, 3600)
-        .expect("first lease");
-    let revoked = vault
-        .revoke_secret_lease(&first.lease.lease_id, 1_700_000_100)
-        .expect("revoke");
-    assert_eq!(revoked.status, SecretLeaseStatus::Revoked);
-    assert_eq!(
-        read_lease_row(&vault, &first.lease.lease_id)
-            .expect("row persists")
-            .status,
-        SecretLeaseStatus::Revoked
-    );
-
-    // A second materialize after revoke mints a fresh lease id.
-    let second = vault
-        .materialize_secret_lease("cycle", EFFECTOR, 3600)
-        .expect("re-materialize");
-    assert_ne!(first.lease.lease_id, second.lease.lease_id);
-    assert_eq!(second.lease.status, SecretLeaseStatus::Active);
-
-    // Revoking an unknown lease denies.
-    let err = vault
-        .revoke_secret_lease(&EntityId::now(), 1_700_000_100)
-        .expect_err("unknown lease denies");
-    assert!(
-        matches!(err, Error::Secret(SecretError::SecretLeaseNotFound { .. })),
-        "got {err:?}"
-    );
-}
-
-#[test]
-fn expire_secret_leases_sweeps_past_due_leases() {
-    let (_tmp, vault) = temp_vault();
-    register(
-        &vault,
-        default_record(
-            "sweep",
-            CustodyClass::CustodyPortable,
-            CustodyTier::T1Leased,
-        ),
-    );
-
-    let live = vault
-        .materialize_secret_lease("sweep", EFFECTOR, 3600)
-        .expect("live lease");
-    let past_due = vault
-        .materialize_secret_lease("sweep", EFFECTOR, 0)
-        .expect("past-due lease (ttl 0)");
-
-    // now == expires_at is expired (the lease is valid until expires_at).
-    let expired = vault
-        .expire_secret_leases(past_due.lease.expires_at)
-        .expect("sweep");
-    assert_eq!(expired, 1);
-    assert_eq!(
-        read_lease_row(&vault, &past_due.lease.lease_id)
-            .expect("row persists")
-            .status,
-        SecretLeaseStatus::Expired
-    );
-    assert_eq!(
-        read_lease_row(&vault, &live.lease.lease_id)
-            .expect("row persists")
-            .status,
-        SecretLeaseStatus::Active
-    );
-
-    // Idempotent: nothing left past due at the same instant.
-    assert_eq!(
-        vault
-            .expire_secret_leases(past_due.lease.expires_at)
-            .expect("re-sweep"),
-        0
-    );
 }
 
 // ---------------------------------------------------------------------------

@@ -28,16 +28,12 @@ use std::sync::Arc;
 
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 use oneiron::affect::Vad;
-use oneiron::edge::EdgeActorClass;
 use oneiron::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use oneiron::sync::bridge::{Materializer, encode_edge_value_for_crdt, format_edge_key};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, LoadedWindow};
 use oneiron::temporal::TimeRange;
-use oneiron::{
-    EdgeInfo, EdgeKind, EntityId, HnswConfig, Vault, VaultConfig,
-    provenance::EdgeProvenanceClaimBody, provenance::EdgeRef, provenance::SupersessionStatus,
-};
+use oneiron::{EdgeInfo, EdgeKind, EntityId, HnswConfig, Vault, VaultConfig};
 
 /// The harness window every suite shares: March 2026.
 pub(crate) const WINDOW: &str = "2026-03";
@@ -770,63 +766,6 @@ pub(crate) fn reencode_edge_value(edge: &EdgeInfo) -> Vec<u8> {
         edge.provenance,
     )
     .unwrap()
-}
-
-/// Builds an `edge.provenance` Claim body (contracts.ts
-/// `edgeProvenanceClaim.fields`): required actor ref + confidence +
-/// supersession status; optional refs stay absent.
-pub(crate) fn edge_provenance_claim_body(
-    actor: EntityId,
-    confidence: f32,
-    status: SupersessionStatus,
-) -> EdgeProvenanceClaimBody {
-    EdgeProvenanceClaimBody::new(actor, confidence, status)
-}
-
-/// Writes a PROVENANCED subject edge through the real unit (ARCH-0034
-/// EDGE-PROVENANCE = C): `put_edge` + `put_edge_provenance` derive the two
-/// hot flags from the truth-Claim — never hand-stamped. For
-/// `confirmation_status == Retracted` the Claim goes through the REAL
-/// retraction lifecycle (`retract_edge_provenance`), which re-stamps the
-/// edge and KEEPS it (contracts.ts retractionRules RETRACT).
-///
-/// Returns the Claim id. Caller must have created `src`, `tgt`, and the
-/// `actor` entity already.
-#[allow(clippy::too_many_arguments)] // mirrors the pinned provenance field set
-pub(crate) fn provenanced_edge(
-    node: &TestNode,
-    actor: &EntityId,
-    src: &EntityId,
-    kind: EdgeKind,
-    tgt: &EntityId,
-    weight: f32,
-    confirmation_status: SupersessionStatus,
-    learned_at: u64,
-) -> EntityId {
-    node.vault.put_edge(src, kind, tgt, weight).unwrap();
-    let claim_id = EntityId::now();
-    let subject = EdgeRef::new(*src, kind, *tgt);
-    let initial_status = match confirmation_status {
-        // Retraction is a lifecycle transition, not an authored state.
-        SupersessionStatus::Retracted => SupersessionStatus::Confirmed,
-        other => other,
-    };
-    let body = edge_provenance_claim_body(*actor, 0.75, initial_status);
-    node.vault
-        .put_edge_provenance(
-            &claim_id,
-            &subject,
-            &body,
-            EdgeActorClass::Human,
-            learned_at,
-        )
-        .unwrap();
-    if confirmation_status == SupersessionStatus::Retracted {
-        node.vault
-            .retract_edge_provenance(&claim_id, learned_at + 1)
-            .unwrap();
-    }
-    claim_id
 }
 
 /// Hyphen-stripped lowercase hex of raw bytes.

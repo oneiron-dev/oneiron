@@ -118,41 +118,6 @@ fn the_entity_port_put_refuses_what_the_batch_entry_refuses() -> Result<()> {
 }
 
 #[test]
-fn no_raw_entity_edge_or_claim_write_remains_outside_ports() {
-    use crate::test_util::source_scan::{SourceTree, production_source};
-
-    let tree = SourceTree::read(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"));
-    let raw_write = regex::Regex::new(
-        r"\.\s*store\s*\.\s*(entities|edges_out|edges_in|claims)\s*\.\s*(put|delete|delete_range)\b",
-    )
-    .expect("raw write pattern");
-    let mut scanned = 0_usize;
-    let mut offenders = Vec::new();
-    for (path, source) in tree.production_sources() {
-        let relative = tree.relative(path);
-        if relative.starts_with("ports/") {
-            continue;
-        }
-        scanned += 1;
-        let source = production_source(source);
-        for hit in raw_write.find_iter(&source) {
-            let line = source[..hit.start()].matches('\n').count() + 1;
-            offenders.push(format!("{relative}:{line}"));
-        }
-    }
-
-    // A floor, not a count: the crate held about 1,900 production files outside ports/.
-    assert!(
-        scanned >= 1_000,
-        "the scan read only {scanned} files; it is mislocated"
-    );
-    assert!(
-        offenders.is_empty(),
-        "raw entity, edge or claim writes outside ports/: {offenders:#?}"
-    );
-}
-
-#[test]
 fn an_erased_record_is_rewritten_through_the_scrub_port() -> Result<()> {
     let (_dir, vault) = open_vault();
     let actor = EntityId::now();

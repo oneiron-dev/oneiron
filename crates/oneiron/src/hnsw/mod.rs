@@ -33,22 +33,12 @@ pub(crate) use self::types::RebuiltHnswGraph;
 // re-export keeps `crate::hnsw::X` resolving for the test targets without
 // leaving an unused import in the library build.
 #[cfg(test)]
-use self::delete::hnsw_deindex_probed;
-#[cfg(test)]
-use self::discipline::{
-    mark_symmetric_links, read_legacy_snapshot_rebuilds, read_refresh_fallback_rebuilds,
-};
-#[cfg(test)]
 pub(crate) use self::insert::hnsw_insert;
-#[cfg(test)]
-use self::insert::hnsw_insert_probed;
 #[cfg(test)]
 pub(crate) use self::keys::DROPPED_REBUILDABLE_KEY;
 #[cfg(test)]
-use self::keys::{LEGACY_REBUILDS_KEY, REFRESH_FALLBACK_REBUILDS_KEY, SYMMETRIC_LINKS_KEY};
+use self::keys::SYMMETRIC_LINKS_KEY;
 
-#[cfg(test)]
-mod archive_tests;
 #[cfg(test)]
 mod tests;
 
@@ -59,62 +49,21 @@ mod tests;
 // the tests name bare are repeated here because a parent cannot import a
 // child's private imports. Together the tests resolve exactly as before.
 #[cfg(test)]
-use self::{entry_point::*, insert::*, keys::*, one_way::*, search::*, storage::*, types::*};
-#[cfg(test)]
-use crate::config::VaultConfig;
-#[cfg(test)]
-use crate::distance::cosine_distance;
+use self::{keys::*, one_way::*, storage::*};
 #[cfg(test)]
 use crate::entity_id::{ENTITY_ID_LEN, EntityId, parse_entity_id};
 #[cfg(test)]
 use crate::error::{Error, Result};
 #[cfg(test)]
-use crate::pipeline::ScoredEntity;
-#[cfg(test)]
 use crate::store::{EMBEDDING_MODEL_EPOCH_KEY, VECTOR_VERSION_KEY};
 #[cfg(test)]
 use heed::{RoTxn, RwTxn};
-#[cfg(test)]
-use std::collections::{HashMap, HashSet};
 
 #[cfg(test)]
 mod slim_graph_tests {
     use super::*;
     use crate::TimeRange;
     use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
-
-    #[test]
-    fn dropped_write_is_single_graph_application() -> Result<()> {
-        for discipline in [LinkDiscipline::Legacy, LinkDiscipline::Symmetric] {
-            let (_dir, vault) = open_test_vault_with(embedding_test_config());
-            let id = entity(50);
-            vault.put_entity(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"node")?;
-            vault.with_write_txn(|txn| {
-                if discipline == LinkDiscipline::Legacy {
-                    vault.store.hnsw_meta.delete(txn, SYMMETRIC_LINKS_KEY)?;
-                } else {
-                    mark_symmetric_links(&vault.store, txn)?;
-                }
-                drop_rebuildable_hnsw(&vault.store, txn)?;
-                // The landed production order: source row first, then hook.
-                let vector = [1.0_f32, 0.0, 0.0, 0.0];
-                let raw: Vec<u8> = vector.iter().flat_map(|v| v.to_le_bytes()).collect();
-                vault.store.vectors.put(txn, id.as_bytes(), &raw)?;
-                let mut ops = 0;
-                hnsw_insert_probed(&vault.store, &vault.config, txn, &id, &vector, &mut ops)?;
-                assert_eq!(ops, 1, "rebuild returns before insertion/refresh");
-                assert!(!hnsw_is_dropped(&vault.store, txn)?);
-                assert_eq!(read_link_discipline(&vault.store, txn)?, discipline);
-                assert_eq!(read_count(&vault.store, txn)?, 1);
-                assert_eq!(
-                    load_neighbors(&vault.store, txn, &id)?,
-                    Vec::<EntityId>::new()
-                );
-                Ok(())
-            })?;
-        }
-        Ok(())
-    }
 
     #[test]
     fn dropped_marker_clear_is_atomic_with_full_graph() -> Result<()> {

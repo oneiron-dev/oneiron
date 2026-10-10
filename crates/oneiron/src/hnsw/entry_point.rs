@@ -296,16 +296,6 @@ fn best_source_scc_member(condensation: &SccCondensation, ops: &mut u64) -> Opti
     best.map(|(_, id)| id)
 }
 
-/// Test-facing wrapper: production code paths use
-/// [`reachable_from_entry_probed`] so op counts cover the BFS fast path.
-#[cfg(test)]
-pub(super) fn reachable_from_entry(
-    neighbors_by_id: &HashMap<EntityId, Vec<EntityId>>,
-    entry_point: EntityId,
-) -> HashSet<EntityId> {
-    reachable_from_entry_probed(neighbors_by_id, entry_point, &mut 0)
-}
-
 fn reachable_from_entry_probed(
     neighbors_by_id: &HashMap<EntityId, Vec<EntityId>>,
     entry_point: EntityId,

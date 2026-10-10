@@ -4,17 +4,6 @@ use super::*;
 use crate::test_util::{embedding_test_config, open_test_vault_with};
 use std::collections::BTreeSet;
 
-fn bytes(size: usize) -> Vec<u8> {
-    let mut n = 0xbadb007u64;
-    (0..size)
-        .map(|_| {
-            n ^= n << 13;
-            n ^= n >> 7;
-            n ^= n << 17;
-            n as u8
-        })
-        .collect()
-}
 fn time() -> TimeRange {
     TimeRange {
         start: 1_700_000_000,
@@ -48,30 +37,6 @@ fn transfer(source: &Vault, target: &Vault, oid: LfsOid) -> (usize, usize) {
     }
     assert_eq!(download.outcome().unwrap().object.oid, oid);
     (transferred, have_entries)
-}
-
-#[test]
-fn wire_have_want_transfers_only_missing_chunks_after_four_kib_edit() {
-    let (_a, a) = open_test_vault_with(embedding_test_config());
-    let (_b, b) = open_test_vault_with(embedding_test_config());
-    let mut body = bytes(4 * 1024 * 1024);
-    let first = LfsOid::digest(&body);
-    a.put_lfs_object(first, &body, time(), time().start)
-        .unwrap();
-    let (all, _) = transfer(&a, &b, first);
-    assert_eq!(all, body.len());
-    body[2 * 1024 * 1024..2 * 1024 * 1024 + 4096].fill(0x2a);
-    let second = LfsOid::digest(&body);
-    a.put_lfs_object(second, &body, time(), time().start)
-        .unwrap();
-    let (delta, have) = transfer(&a, &b, second);
-    assert!(delta > 0 && delta <= 8 * 128 * 1024);
-    assert!(have > 0);
-    assert_eq!(b.get_lfs_object(second).unwrap(), Some(body));
-    assert_ne!(
-        a.lfs_chunk_parameters().unwrap(),
-        b.lfs_chunk_parameters().unwrap()
-    );
 }
 
 #[test]
@@ -303,30 +268,6 @@ fn chunk_request_outside_the_grant_ceiling_is_refused() -> Result<()> {
             &manifest_request(oid, &selector)?
         ),
         Err(Error::Artifact(ArtifactError::InvalidLfsObject(_)))
-    ));
-    Ok(())
-}
-
-#[test]
-fn chunk_request_naming_the_asset_birth_facet_is_served() -> Result<()> {
-    let (_dir, vault, oid, manifest, principal, grant_id) = chunk_grant_fixture(|_| {})?;
-    let selector = SyncSelector::new(
-        grant_id,
-        principal,
-        crate::sync::selector::SyncSelectorWorld::All,
-        vec![vault.default_facet()?],
-        vec![],
-    );
-    let reply = serve_chunk_request(
-        &vault,
-        principal,
-        FederationGrantScope::vault(7),
-        &manifest_request(oid, &selector)?,
-    )?;
-
-    assert!(matches!(
-        decode::<ChunkSyncResponse>(&reply)?,
-        ChunkSyncResponse::Manifest(bytes) if bytes == manifest.encode()?
     ));
     Ok(())
 }

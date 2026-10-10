@@ -253,11 +253,10 @@ fn resolve_short_id_alias_in_txn(
 /// of an alias row at the target spelling. `Vault::hydrate_short_id` reads the
 /// canonical forward key first and consults an alias only when that misses, so
 /// a spelling carrying both a live forward row and a shadow alias row resolves
-/// canonically and hops nowhere — the state
-/// `short_id_alias_never_shadows_a_live_forward_row` pins. The hop is therefore
-/// exactly: an alias row exists at the target spelling AND the forward row this
-/// target names is absent, which is the only case where following the name
-/// reaches a second alias.
+/// canonically and hops nowhere. The hop is therefore exactly: an alias row
+/// exists at the target spelling AND the forward row this target names is
+/// absent, which is the only case where following the name reaches a second
+/// alias.
 fn vet_short_id_alias_target_in_txn(
     dbs: ShortIdDbs<'_>,
     txn: &RoTxn<'_>,

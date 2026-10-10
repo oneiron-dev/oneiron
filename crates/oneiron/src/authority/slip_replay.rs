@@ -4,10 +4,6 @@ use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::{Vault, error::Result};
 
 const WINDOW_SECS: u64 = 60;
-/// Kept for [`tests`], which seed rows directly under the raw prefix; production code reaches
-/// this table only through [`REPLAY_NONCE`] now.
-#[cfg(test)]
-const REPLAY_PREFIX: &str = "authority:slip-replay:v2:";
 
 /// Key of one admitted replay-nonce marker: the signed timestamp as 16 lowercase hex digits,
 /// then `:`, then the keyed digest of (binding key + nonce) as 64 lowercase hex digits — the

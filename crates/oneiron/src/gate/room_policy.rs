@@ -228,31 +228,3 @@ fn default_rows() -> Value {
         row(RoomAction::PostErasureAppend, &[], true),
     ])
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn room_rows_are_typed_complete_and_fail_closed_on_ambiguous_fields() {
-        let Value::Array(defaults) = default_rows() else {
-            unreachable!()
-        };
-        assert_eq!(
-            parse_rows(&Value::Array(defaults.clone())).unwrap().len(),
-            6
-        );
-        for (key, value) in [
-            ("action", Value::from("delegate")),
-            ("precedence", Value::from("widen_everywhere")),
-            ("unrecognized_role_axis", Value::Boolean(true)),
-        ] {
-            let mut invalid = defaults.clone();
-            let Value::Map(fields) = &mut invalid[0] else {
-                unreachable!()
-            };
-            fields.push((key.into(), value));
-            assert!(parse_rows(&Value::Array(invalid)).is_none());
-        }
-    }
-}

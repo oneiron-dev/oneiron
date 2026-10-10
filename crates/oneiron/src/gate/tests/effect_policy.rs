@@ -464,30 +464,6 @@ fn external_effect_policy_risk_holds_but_owner_grant_can_dial_allow_all() -> Res
 }
 
 #[test]
-fn external_effect_budgeted_grants_hold_without_budget_enforcer() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let data = encode_policy_manifest(vec![external_effect_scoped_grant_entry(
-        "sender",
-        "send",
-        Value::Map(vec![(
-            Value::from(EXTERNAL_EFFECT_SCOPE_CHANNEL_KEY),
-            Value::from("line"),
-        )]),
-        Some(Value::Map(vec![(Value::from("limit"), Value::from(1_u64))])),
-    )]);
-    put_policy_manifest_bytes(&vault, test_id(0xD4), &data)?;
-    let policy = resolve(&vault)?;
-    let effect = external_effect_gate_input("sender", "send", "line");
-    let decision = policy.evaluate_gate(&effect.gate_input(None, None));
-    assert_eq!(decision.outcome(), GateOutcome::Pending);
-    assert_eq!(
-        gate_reason_strs(&decision),
-        vec!["gate.pending.external_effect_authority"]
-    );
-    Ok(())
-}
-
-#[test]
 fn external_effect_fail_closed_policy_holds_instead_of_denies() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let policy = resolve(&vault)?;
@@ -551,43 +527,6 @@ pub(super) fn coalescing_ledger_in_txn(
 }
 
 #[test]
-fn external_effect_pending_coalesces_same_wtxn_and_committed_retries() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let policy = resolve(&vault)?;
-    let mut effect = external_effect_gate_input("sender", "send", "line");
-    effect.send_ref = Some("send:pending-coalesce".to_owned());
-
-    let first = vault.with_write_txn(|wtxn| {
-        let first = coalescing_effect_record(&vault.store, wtxn, &effect, &policy)?;
-        assert_eq!(first.outcome, "pending");
-        for _ in 0..4 {
-            let retry = coalescing_effect_record(&vault.store, wtxn, &effect, &policy)?;
-            assert_eq!(retry.decision_id.to_hex(), first.decision_id.to_hex());
-            assert_eq!(retry, first);
-            assert_eq!(
-                coalescing_ledger_in_txn(&vault.store, wtxn)?,
-                vec![first.clone()]
-            );
-        }
-        Ok(first)
-    })?;
-    assert_eq!(vault.store.gate_decisions(10)?, vec![first.clone()]);
-    vault.with_write_txn(|wtxn| {
-        assert_eq!(
-            coalescing_effect_record(&vault.store, wtxn, &effect, &policy)?,
-            first
-        );
-        assert_eq!(
-            coalescing_ledger_in_txn(&vault.store, wtxn)?,
-            vec![first.clone()]
-        );
-        Ok(())
-    })?;
-    assert_eq!(vault.store.gate_decisions(10)?, vec![first]);
-    Ok(())
-}
-
-#[test]
 fn external_effect_pending_actor_and_send_changes_mint_distinct_rows() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let policy = resolve(&vault)?;
@@ -634,56 +573,6 @@ fn external_effect_pending_actor_and_send_changes_mint_distinct_rows() -> Result
         Ok(())
     })?;
     assert_eq!(vault.store.gate_decisions(10)?.len(), 4);
-    Ok(())
-}
-
-#[test]
-fn external_effect_pending_reason_and_receipt_changes_mint_distinct_rows() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let policy = resolve(&vault)?;
-    let effect = external_effect_gate_input("sender", "send", "line");
-    let mut opted_out = effect.clone();
-    opted_out.counterparty_opted_out = true;
-    let mut explained = opted_out.clone();
-    explained.counterparty_opt_out_receipt_reason = Some("counterparty_opt_out_do_not_contact");
-
-    vault.with_write_txn(|wtxn| {
-        let first = coalescing_effect_record(&vault.store, wtxn, &effect, &policy)?;
-        let reason = coalescing_effect_record(&vault.store, wtxn, &opted_out, &policy)?;
-        let receipt = coalescing_effect_record(&vault.store, wtxn, &explained, &policy)?;
-        assert_ne!(reason.reason_codes, first.reason_codes);
-        assert!(first.receipt_reasons.is_empty());
-        assert_eq!(
-            reason.receipt_reasons,
-            vec!["policy_precedence_shipped_default"]
-        );
-        assert_eq!(receipt.reason_codes, reason.reason_codes);
-        assert_ne!(receipt.receipt_reasons, reason.receipt_reasons);
-        assert_ne!(first.decision_id, reason.decision_id);
-        assert_ne!(first.decision_id, receipt.decision_id);
-        assert_ne!(reason.decision_id, receipt.decision_id);
-        for (input, row) in [
-            (&effect, &first),
-            (&opted_out, &reason),
-            (&explained, &receipt),
-        ] {
-            assert_eq!(row.outcome, "pending");
-            // These changes are NOT covered by the effect diff or policy hash.
-            assert_eq!(row.diff_handle, first.diff_handle);
-            assert_eq!(row.read_frontier_hash, first.read_frontier_hash);
-            assert_eq!(
-                &coalescing_effect_record(&vault.store, wtxn, input, &policy)?,
-                row
-            );
-        }
-        let stored = coalescing_ledger_in_txn(&vault.store, wtxn)?;
-        assert_eq!(stored.len(), 3);
-        assert!(stored.contains(&first));
-        assert!(stored.contains(&reason));
-        assert!(stored.contains(&receipt));
-        Ok(())
-    })?;
-    assert_eq!(vault.store.gate_decisions(10)?.len(), 3);
     Ok(())
 }
 

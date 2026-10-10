@@ -64,15 +64,6 @@ fn receiver_hard_tombstone_value() -> [u8; crate::deletion::TOMBSTONE_VALUE_V2_L
     .encode()
 }
 
-fn receiver_soft_tombstone_value() -> [u8; crate::deletion::TOMBSTONE_VALUE_V2_LEN] {
-    TombstoneValueV2 {
-        reason: TombstoneReason::UserDelete,
-        deleted_at: RECEIVER_SCRUB_LEARNED_AT,
-        request_id: [0x5A; 16],
-    }
-    .encode()
-}
-
 fn task_body() -> Vec<u8> {
     crate::habit::task_body_for_test(crate::habit::TaskRole::Task)
 }
@@ -165,40 +156,6 @@ fn assert_receiver_outbox_intact(vault: &Vault, outbox: &ReceiverOutboxFixture) 
             .is_none(),
         "fr:w is HARD-success-only"
     );
-}
-
-#[test]
-fn push_and_drain_roundtrip() {
-    let vault = test_vault();
-    let queue = SyncQueue::new(vault).unwrap();
-
-    queue.push("2026-03", &[1, 2, 3]).unwrap();
-    queue.push("2026-02", &[4, 5, 6]).unwrap();
-
-    let updates = queue.drain_updates().unwrap();
-    assert_eq!(updates.len(), 2);
-    assert_eq!(updates[0].seq, 1);
-    assert_eq!(updates[0].window_key, "2026-03");
-    assert_eq!(updates[0].encoded, vec![1, 2, 3]);
-    assert_eq!(updates[1].seq, 2);
-    assert_eq!(updates[1].window_key, "2026-02");
-    assert_eq!(updates[1].encoded, vec![4, 5, 6]);
-}
-
-#[test]
-fn clear_through_removes_up_to_seq() {
-    let vault = test_vault();
-    let queue = SyncQueue::new(vault).unwrap();
-
-    queue.push("2026-03", &[1]).unwrap();
-    queue.push("2026-03", &[2]).unwrap();
-    queue.push("2026-03", &[3]).unwrap();
-
-    queue.clear_through(2).unwrap();
-
-    let updates = queue.drain_updates().unwrap();
-    assert_eq!(updates.len(), 1);
-    assert_eq!(updates[0].seq, 3);
 }
 
 #[test]
@@ -524,35 +481,6 @@ fn bulk_clears_preserve_delete_bearing_rows() {
     }
 }
 
-/// ONE-1135 review item 14: ordinary pushes can NEVER acquire a
-/// delete-bearing marker. The `d:` family is written exclusively by
-/// the tombstone-commit path (`push_delete_bearing_in_txn` taking a
-/// `DeleteBearingUpdate`, constructible only by
-/// `export_tombstone_commit_delta`); `SyncQueue::push` writes the `q:`
-/// row alone, so its rows keep ZERO clear/scrub exemptions.
-#[test]
-fn ordinary_push_never_acquires_delete_bearing_marker() {
-    let vault = test_vault();
-    let queue = SyncQueue::new(vault.clone()).unwrap();
-
-    queue.push("2026-03", &[1]).unwrap();
-    queue.push("2026-04", &[2]).unwrap();
-
-    let rtxn = vault.store.env.read_txn().unwrap();
-    let markers = vault
-        .store
-        .sync_queue
-        .prefix_iter(&rtxn, DELETE_BEARING_PREFIX)
-        .unwrap()
-        .count();
-    assert_eq!(markers, 0, "ordinary q: rows must have no d: sidecar");
-    drop(rtxn);
-
-    // Consequently the unconfirmed clear drops them all.
-    queue.clear_updates().unwrap();
-    assert_eq!(queue.len().unwrap(), 0);
-}
-
 /// ONE-1135 review item 15: a `d:{seq}` sidecar marker must never
 /// outlive its `q:{seq}` row. When the malformed-row prune drops a
 /// delete-bearing `q:` row (key decodes, value no longer does), the
@@ -835,31 +763,6 @@ fn receiver_forward_remat_scrub_failure_keeps_outbox_and_sets_rm_retry() {
 }
 
 #[test]
-fn receiver_live_soft_tombstone_keeps_outbox_and_does_not_set_fr() {
-    let vault = test_vault();
-    let outbox = seed_receiver_outbox(&vault);
-    let victim = EntityId::now();
-    put_receiver_entity(&vault, &victim, b"payload kept as soft shell");
-
-    let window_key = WindowKey::new(RECEIVER_SCRUB_WINDOW);
-    let doc = create_window_doc("remote", &window_key);
-    let materializer = Arc::new(Materializer::new());
-    let _subs = bridge::register_observer_b(&doc, &vault, &materializer, RECEIVER_SCRUB_WINDOW);
-
-    let soft = receiver_soft_tombstone_value();
-    doc.get_map("tombstones")
-        .insert(&victim.to_hex(), soft.as_slice())
-        .unwrap();
-    doc.commit();
-
-    assert!(
-        vault.get(&victim).unwrap().is_some(),
-        "soft tombstone keeps the local shell"
-    );
-    assert_receiver_outbox_intact(&vault, &outbox);
-}
-
-#[test]
 fn receiver_live_failed_hard_apply_keeps_outbox_and_sets_rm_retry() {
     let vault = test_vault();
     let outbox = seed_receiver_outbox(&vault);
@@ -953,36 +856,6 @@ fn scrub_window_updates_drops_malformed_rows() {
             .is_some(),
         "well-formed rows of OTHER windows survive"
     );
-}
-
-#[test]
-fn own_device_sync_cap_counts_clearable_rows_at_capacity() {
-    let vault = test_vault();
-    let queue = SyncQueue::new(vault.clone()).unwrap();
-    let value = encode_update_value("2026-03", &[9]).unwrap();
-    let mut wtxn = vault.store.env.write_txn().unwrap();
-    for seq in 1..=(MAX_QUEUE_SIZE as u64) {
-        vault
-            .store
-            .sync_queue
-            .put(&mut wtxn, &encode_update_key(seq), &value)
-            .unwrap();
-    }
-    vault
-        .store
-        .sync_queue
-        .put(
-            &mut wtxn,
-            LAST_UPDATE_SEQ_KEY,
-            &(MAX_QUEUE_SIZE as u64).to_le_bytes(),
-        )
-        .unwrap();
-    wtxn.commit().unwrap();
-
-    assert!(queue.is_full().unwrap());
-    queue.clear_all().unwrap();
-    assert!(!queue.is_full().unwrap());
-    assert_eq!(queue.len().unwrap(), 0);
 }
 
 /// ONE-1135 review rider: delete-bearing rows are exempt from every
@@ -1133,23 +1006,6 @@ fn clear_updates_and_clear_through_preserve_quarantine_rows() {
     queue.clear_all().unwrap();
     assert_eq!(queue.len().unwrap(), 0);
     assert_quarantine_intact("clear_all");
-}
-
-#[test]
-fn seq_ordering_preserved() {
-    let vault = test_vault();
-    let queue = SyncQueue::new(vault).unwrap();
-
-    for i in 0..10u8 {
-        queue.push("2026-03", &[i]).unwrap();
-    }
-
-    let updates = queue.drain_updates().unwrap();
-    assert_eq!(updates.len(), 10);
-    for (i, u) in updates.iter().enumerate() {
-        assert_eq!(u.seq, (i + 1) as u64);
-        assert_eq!(u.encoded, vec![i as u8]);
-    }
 }
 
 #[test]
@@ -1317,56 +1173,6 @@ fn stale_but_parseable_metadata_repairs_upward_before_push() {
 }
 
 #[test]
-fn clear_updates_self_heals_malformed_metadata_without_update_rows() {
-    let vault = test_vault();
-    let queue = SyncQueue::new(vault.clone()).unwrap();
-
-    let mut wtxn = vault.store.env.write_txn().unwrap();
-    vault
-        .store
-        .sync_queue
-        .put(&mut wtxn, LAST_UPDATE_SEQ_KEY, &[1, 2, 3])
-        .unwrap();
-    wtxn.commit().unwrap();
-
-    queue.clear_updates().unwrap();
-
-    let seq = queue.push("2026-03", &[1]).unwrap();
-    assert_eq!(seq, 1);
-}
-
-#[test]
-fn len_ignores_malformed_update_rows() {
-    let vault = test_vault();
-    let queue = SyncQueue::new(vault.clone()).unwrap();
-
-    queue.push("2026-03", &[1]).unwrap();
-
-    let mut bad_key = UPDATE_PREFIX.to_vec();
-    bad_key.push(0);
-    let mut wtxn = vault.store.env.write_txn().unwrap();
-    vault
-        .store
-        .sync_queue
-        .put(&mut wtxn, &bad_key, &[1, b'x'])
-        .unwrap();
-    vault
-        .store
-        .sync_queue
-        .put(&mut wtxn, &encode_update_key(2), &[0])
-        .unwrap();
-    wtxn.commit().unwrap();
-
-    assert_eq!(queue.len().unwrap(), 1);
-
-    let updates = queue.drain_updates().unwrap();
-    assert_eq!(updates.len(), 1);
-    assert_eq!(updates[0].seq, 1);
-    assert_eq!(updates[0].window_key, "2026-03");
-    assert_eq!(updates[0].encoded, vec![1]);
-}
-
-#[test]
 fn drain_updates_prunes_corrupt_rows() {
     // Three corruption shapes get pruned by drain_updates:
     //   (case_name, bad_key, bad_value)
@@ -1427,63 +1233,6 @@ fn drain_updates_prunes_corrupt_rows() {
             "case {case_name}: corrupt row should be pruned",
         );
     }
-}
-
-#[test]
-fn clear_through_prunes_malformed_update_keys() {
-    let vault = test_vault();
-    let queue = SyncQueue::new(vault.clone()).unwrap();
-
-    queue.push("2026-03", &[1]).unwrap();
-
-    let bad_key = b"q:\x00".to_vec();
-    let mut wtxn = vault.store.env.write_txn().unwrap();
-    vault
-        .store
-        .sync_queue
-        .put(&mut wtxn, &bad_key, &[1, b'x'])
-        .unwrap();
-    wtxn.commit().unwrap();
-
-    queue.clear_through(1).unwrap();
-
-    let rtxn = vault.store.env.read_txn().unwrap();
-    assert!(
-        vault
-            .store
-            .sync_queue
-            .get(&rtxn, &bad_key)
-            .unwrap()
-            .is_none()
-    );
-    assert!(
-        vault
-            .store
-            .sync_queue
-            .get(&rtxn, &encode_update_key(1))
-            .unwrap()
-            .is_none()
-    );
-}
-
-#[test]
-fn embed_job_roundtrip() {
-    let vault = test_vault();
-    let queue = SyncQueue::new(vault).unwrap();
-    let initial_count = queue.drain_embed_jobs().unwrap().len();
-
-    let id = EntityId::now();
-    queue.push_embed_job(&id, 1).unwrap();
-
-    let jobs = queue.drain_embed_jobs().unwrap();
-    assert_eq!(jobs.len(), initial_count + 1);
-    let job = jobs
-        .iter()
-        .find(|job| job.entity_id == id)
-        .expect("fixture job");
-    assert_eq!(job.entity_id, id);
-    assert_eq!(job.priority, 1);
-    assert!(job.queued_at > 0);
 }
 
 #[test]

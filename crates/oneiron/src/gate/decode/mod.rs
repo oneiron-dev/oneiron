@@ -15,9 +15,5 @@ pub(super) use self::decode_manifest::{
 pub(super) use self::decode_residence_operation_budgets::{
     POLICY_RESIDENCE_OPERATION_BUDGETS_KEY, parse_residence_operation_budgets,
 };
-// Test-only name the gate test seam reaches through `use self::decode::*`
-// (gate/mod.rs); gating the re-export keeps the non-test build warning-free.
-#[cfg(test)]
-pub(super) use self::decode_policy_tables::parse_delegated_grants;
 
 pub(crate) use self::policy_scope_migration::normalize_policy_manifest_scope;

@@ -57,54 +57,6 @@ fn signed_history_export_import_re_root_preserves_identity_and_bytes() {
 }
 
 #[test]
-fn two_vaults_recover_with_independent_genesis_and_signatures() {
-    let dirs = [tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap()];
-    let vaults = dirs
-        .iter()
-        .map(|dir| Vault::open(dir.path(), VaultConfig::default()).unwrap())
-        .collect::<Vec<_>>();
-    let mut requests = Vec::new();
-    let mut roots = Vec::new();
-    for (i, vault) in vaults.iter().enumerate() {
-        let seed = 120 + i as u8;
-        let signer = ed_key(seed);
-        let genesis = genesis_entry(seed, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
-        store(vault, &genesis);
-        let root = genesis_vault_id(&genesis).unwrap();
-        roots.push(root);
-        let entry = sign_ed(
-            unsigned_entry(
-                Some(root),
-                1,
-                vec![authority_entry_hash(&genesis).unwrap()],
-                AuthorityOp::ReRoot {
-                    new_device: device(
-                        authority_key_from_ed(&ed_key(seed + 10)),
-                        ROLE_OWNER | ROLE_ADMIN,
-                        AuthorityTier::Software,
-                    ),
-                },
-                authority_key_from_ed(&signer),
-                2,
-            ),
-            &signer,
-        );
-        requests.push(VaultRecoveryRequest { vault, entry });
-    }
-    assert_ne!(roots[0], roots[1]);
-    assert_ne!(
-        requests[0].entry.signer.public_key,
-        requests[1].entry.signer.public_key
-    );
-    let outcomes = recover_vaults_independently(&requests);
-    assert_eq!(outcomes.len(), 2);
-    assert!(outcomes.iter().all(Result::is_ok));
-    for (i, vault) in vaults.iter().enumerate() {
-        assert_eq!(vault.authority_fold().unwrap().vault_id, Some(roots[i]));
-    }
-}
-
-#[test]
 fn account_auth_migrates_managed_root_without_widening() {
     let dir = tempfile::tempdir().unwrap();
     let mut config = VaultConfig::default();

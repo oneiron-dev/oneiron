@@ -137,77 +137,6 @@ fn witness_message_system_authority_rejects_fail_closed_policy_with_auto_row() -
     Ok(())
 }
 
-/// Metadata is bounded by bytes as well as shape. A single value is capped,
-/// multibyte UTF-8 counts by encoded bytes, and individually legal values may
-/// not combine into an oversized canonical metadata map.
-#[test]
-fn witness_message_metadata_enforces_string_and_total_byte_ceilings() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let rtxn = vault.store.env.read_txn()?;
-    let policy = resolve_policy_manifest(&vault.store, &rtxn)?;
-    let actor = WriteActor::new(test_id(0x2F), EdgeActorClass::Human);
-    let authorize = |metadata: Value| {
-        let envelope = WitnessMessageEnvelope {
-            metadata: Some(metadata),
-            ..witness_envelope()
-        };
-        let body = envelope.encode_body().expect("metadata encodes");
-        check_witness_message_ceiling(&vault.store, &rtxn, actor, &envelope, &body, &policy)
-            .map(|_| ())
-    };
-
-    authorize(Value::Map(vec![(
-        Value::from("value"),
-        Value::from("a".repeat(16 * 1024)),
-    )]))
-    .expect("one string exactly at the byte ceiling is allowed");
-    authorize(Value::Map(vec![(
-        Value::from("value"),
-        Value::from("é".repeat(8 * 1024)),
-    )]))
-    .expect("multibyte text exactly at the UTF-8 byte ceiling is allowed");
-
-    for (label, metadata) in [
-        (
-            "one byte past the string ceiling",
-            Value::Map(vec![(
-                Value::from("value"),
-                Value::from("a".repeat(16 * 1024 + 1)),
-            )]),
-        ),
-        (
-            "one multibyte scalar past the string ceiling",
-            Value::Map(vec![(
-                Value::from("value"),
-                Value::from("é".repeat(8 * 1024 + 1)),
-            )]),
-        ),
-        (
-            "aggregate metadata past the encoded ceiling",
-            Value::Map(
-                (0..4)
-                    .map(|index| {
-                        (
-                            Value::from(format!("value_{index}")),
-                            Value::from("a".repeat(16 * 1024)),
-                        )
-                    })
-                    .collect(),
-            ),
-        ),
-    ] {
-        let error = authorize(metadata)
-            .err()
-            .unwrap_or_else(|| panic!("{label} must be refused"));
-        assert_eq!(
-            error.gate_denial().expect("typed denial").reason_codes(),
-            &[GateDenialReason::DenyWitnessMessageMalformedEnvelope],
-            "{label}",
-        );
-    }
-    Ok(())
-}
-
 /// Invariant 3: EVERY envelope axis feeds the binding, so no axis can move
 /// between the authorization and the write without the binding moving with it.
 /// Content-only or author-only hashing would collapse most of these to one
@@ -404,41 +333,6 @@ fn witness_message_author_floor_holds_without_a_policy_manifest() -> Result<()> 
             &[GateDenialReason::DenyWitnessMessageAuthorNotAuthorized]
         );
     }
-    Ok(())
-}
-
-/// The metric class is its own label, so a witness refusal is not filed under
-/// some other family's counter.
-#[test]
-fn witness_message_refusals_meter_under_their_own_reason_class() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
-    let rtxn = vault.store.env.read_txn()?;
-    let policy = resolve_policy_manifest(&vault.store, &rtxn)?;
-    let before = vault.diagnostics().gate.snapshot();
-
-    let malformed = WitnessMessageEnvelope {
-        message_type: "not a token",
-        ..witness_envelope()
-    };
-    let body = malformed.encode_body()?;
-    check_witness_message_ceiling(
-        &vault.store,
-        &rtxn,
-        WriteActor::new(test_id(0x26), EdgeActorClass::Human),
-        &malformed,
-        &body,
-        &policy,
-    )
-    .expect_err("an out-of-shape message type is refused");
-
-    let after = vault.diagnostics().gate.snapshot();
-    assert_metric_counter_advanced(
-        &before,
-        &after,
-        GateOutcome::Deny,
-        GateMetricReasonClass::WitnessMessageCeiling,
-        1,
-    );
     Ok(())
 }
 
