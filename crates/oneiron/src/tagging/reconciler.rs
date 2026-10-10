@@ -677,9 +677,9 @@ impl TaggingReconciler {
         })
     }
 
-    /// Nothing is owed: the marker completes with no tagger call. A turn
-    /// left with no text loses the tags it held, in the settling write: none
-    /// of them was read from text it still has.
+    /// Nothing is owed: the marker completes with no tagger call. In save
+    /// mode a turn left with no text loses the tags it held, in the settling
+    /// write: none of them was read from text it still has.
     ///
     /// The skip stands only for the turn it read: a witness that added text
     /// since then was absorbed by this leased marker, so the settling
@@ -698,7 +698,7 @@ impl TaggingReconciler {
             if matches!(read, TurnInput::Ready { .. }) {
                 return Ok(false);
             }
-            if matches!(read, TurnInput::Empty) {
+            if self.config.mode == TaggingMode::Save && matches!(read, TurnInput::Empty) {
                 super::tags::replace_in_txn(&self.vault, txn, turn, None)?;
             }
             self.settle_in_txn(txn, record, &trace)?;

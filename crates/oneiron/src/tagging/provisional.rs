@@ -278,16 +278,29 @@ pub(crate) fn hold_id_in_txn(
     id: &EntityId,
     replicated: bool,
 ) -> Result<()> {
-    if !PROVISIONAL.contains(store, txn, id)? {
-        return Ok(());
-    }
     if !replicated {
+        return refuse_held_id_in_txn(store, txn, id);
+    }
+    if PROVISIONAL.contains(store, txn, id)? {
+        tags::strip_in_txn(store, txn, id)?;
+        retire_in_txn(store, txn, id)?;
+    }
+    Ok(())
+}
+
+/// Refuses a local write under a provisional id, reading only: a session
+/// overlay stages through this, so a row promote would replay into base is
+/// refused before it is staged.
+pub(crate) fn refuse_held_id_in_txn(
+    dbs: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    if PROVISIONAL.contains(dbs, txn, id)? {
         return Err(Error::InvariantViolation(
             "an entity write names a provisional entity's id",
         ));
     }
-    tags::strip_in_txn(store, txn, id)?;
-    retire_in_txn(store, txn, id)?;
     Ok(())
 }
 

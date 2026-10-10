@@ -132,6 +132,9 @@ pub(in crate::batch) fn apply_put(
     // transaction rematerializing its OWN session's closure, carried on the
     // same write origin the K4 decode-point guard reads.
     reject_overlay_member_base_write(store, &id, origin)?;
+    // A provisional entity's id is held for its confirmation, on the same
+    // choke point, so no claim candidate or replay lands under it either.
+    crate::tagging::hold_id_in_txn(store, wtxn, &id, replicated)?;
     validate_refinement_admission(store, wtxn, &id, entity_type, data, refinement_admission)?;
     crate::claim::validate_claim_write_target_in_txn(store, wtxn, &id, allow_reserved_predicate)?;
     // Type-byte validation runs in `apply_ops` (public-vs-maintenance gate:

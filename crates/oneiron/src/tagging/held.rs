@@ -116,7 +116,9 @@ pub(crate) fn settle_held_tags_in_txn(
         ),
         TurnInput::Empty => {
             // A turn with no text keeps no tags read from text it lost.
-            super::tags::replace_in_txn(vault, txn, turn, None)?;
+            if config.mode == TaggingMode::Save {
+                super::tags::replace_in_txn(vault, txn, turn, None)?;
+            }
             (
                 TaggingOutcome::Skipped {
                     reason: SkipReason::NoText,

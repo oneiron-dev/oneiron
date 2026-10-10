@@ -114,12 +114,18 @@ fn names_in(input: &EncoderInput, known: &[&str]) -> EncoderOutput {
 /// leaving `PRONOUN` out. Its id source starts over at every open, as a new
 /// manual clock's does.
 fn open(path: &std::path::Path) -> Arc<Vault> {
+    open_in(path, TaggingMode::Save)
+}
+
+/// [`open`] with the tagger in `mode`.
+fn open_in(path: &std::path::Path, mode: TaggingMode) -> Arc<Vault> {
     let mut config = VaultConfig::device();
     config.store_clock = ManualClock::new(NOW).bundle();
     config.tagging = Some(
         TaggingMarkerConfig::new(CHECKPOINT)
             .expect("checkpoint")
-            .with_labels(BTreeMap::from([("PERSON".to_owned(), ENTITY_TYPE_PERSON)])),
+            .with_labels(BTreeMap::from([("PERSON".to_owned(), ENTITY_TYPE_PERSON)]))
+            .with_mode(mode),
     );
     Arc::new(Vault::open(path, config).expect("open vault"))
 }
@@ -524,22 +530,80 @@ fn a_minted_id_is_never_allocated_again_after_a_reopen() {
 #[cfg(feature = "sync")]
 #[test]
 fn a_turn_whose_text_is_erased_loses_its_tags() {
+    let erased = erase_a_saved_turns_text(TaggingMode::Save);
+
+    assert_eq!(erased.vault.turn_tags(&erased.turn).expect("read"), None);
+    assert_eq!(
+        erased
+            .vault
+            .provisional_entity(&erased.mirela)
+            .expect("read"),
+        None
+    );
+    assert!(found(&erased.vault, "Mirela").is_empty());
+    assert!(
+        erased
+            .vault
+            .get_turn_vad_annotation(&erased.turn)
+            .expect("mood read")
+            .is_none()
+    );
+}
+
+/// Shadow writes nothing but job state: the same pass, run by a vault
+/// reopened in shadow, settles its marker and leaves the saved tags as they
+/// were.
+#[cfg(feature = "sync")]
+#[test]
+fn a_shadow_pass_over_an_erased_turn_leaves_its_saved_tags() {
+    let erased = erase_a_saved_turns_text(TaggingMode::Shadow);
+
+    assert_eq!(
+        erased.vault.turn_tags(&erased.turn).expect("read"),
+        Some(erased.saved)
+    );
+    assert!(
+        erased
+            .vault
+            .provisional_entity(&erased.mirela)
+            .expect("read")
+            .is_some()
+    );
+}
+
+/// What [`erase_a_saved_turns_text`] leaves.
+#[cfg(feature = "sync")]
+struct Erased {
+    vault: Arc<Vault>,
+    turn: EntityId,
+    mirela: EntityId,
+    saved: TurnTags,
+    _dir: tempfile::TempDir,
+}
+
+/// Saves a turn naming Mirela, reopens the vault in `mode`, empties the
+/// turn's only message through the entity-document edit door, and drains
+/// the pass that owes the turn, which skips it for having no text.
+#[cfg(feature = "sync")]
+fn erase_a_saved_turns_text(mode: TaggingMode) -> Erased {
     use crate::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb, TextField};
     use crate::write_envelope::WriteActor;
 
     let dir = tempfile::tempdir().expect("dir");
-    let vault = open(dir.path());
     let tagger = Names::new(&["Mirela"]);
-    let turn = witness(
-        &vault,
-        "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a",
-        &[(0, "Mirela called")],
-    );
-    reconciler(&vault, &tagger).drain_once().expect("drain");
-    let saved = tags(&vault, &turn);
+    let (turn, saved) = {
+        let vault = open(dir.path());
+        let turn = witness(
+            &vault,
+            "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a",
+            &[(0, "Mirela called")],
+        );
+        reconciler(&vault, &tagger).drain_once().expect("drain");
+        (turn, tags(&vault, &turn))
+    };
+    let vault = open_in(dir.path(), mode);
     let mirela = minted(&saved.mentions[0].link);
     let message = saved.mentions[0].message;
-
     let writer = speaker(&vault);
     let actor = WriteActor::new(writer, EdgeActorClass::Human);
     let owner = vault
@@ -570,6 +634,7 @@ fn a_turn_whose_text_is_erased_loses_its_tags() {
     vault
         .edit_entity_text(&message, &[erase], &authorization, NOW)
         .expect("erase the text");
+
     let pass = reconciler(&vault, &tagger).drain_once().expect("drain");
 
     assert!(matches!(
@@ -581,15 +646,13 @@ fn a_turn_whose_text_is_erased_loses_its_tags() {
             ..
         }]
     ));
-    assert_eq!(vault.turn_tags(&turn).expect("read"), None);
-    assert_eq!(vault.provisional_entity(&mirela).expect("read"), None);
-    assert!(found(&vault, "Mirela").is_empty());
-    assert!(
-        vault
-            .get_turn_vad_annotation(&turn)
-            .expect("mood read")
-            .is_none()
-    );
+    Erased {
+        vault,
+        turn,
+        mirela,
+        saved,
+        _dir: dir,
+    }
 }
 
 /// A batch delete tears an entity down as the erase doors do: a deleted
@@ -764,13 +827,21 @@ fn an_entity_with_more_part_of_edges_than_a_query_returns_is_deleted() {
         .expect("delete");
 }
 
-/// A provisional id is held until it is confirmed, resolved or retired. A
-/// witness that names it as a new turn's id is refused, and the provisional
-/// entity, the tags that name it and the entity rows are as they were.
+/// A provisional id is held until it is confirmed, resolved or retired, at
+/// every door that names an entity's id: a witness that names it as a new
+/// turn, a session witness that names it as a message (refused before it is
+/// staged, so promote never meets it), and a claim candidate written under
+/// it are all refused. The provisional entity, the tags that name it and the
+/// entity rows are as they were.
 #[test]
 fn an_entity_write_never_lands_under_a_provisional_id() {
+    use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
+    use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
+
     let dir = tempfile::tempdir().expect("dir");
     let vault = open(dir.path());
+    let ada = person(&vault, 0x22, "Ada");
+    let bea = person(&vault, 0x25, "Bea");
     let tagger = Names::new(&["Mirela"]);
     let tagged = witness(
         &vault,
@@ -779,12 +850,59 @@ fn an_entity_write_never_lands_under_a_provisional_id() {
     );
     reconciler(&vault, &tagger).drain_once().expect("drain");
     let mirela = minted(&tags(&vault, &tagged).mentions[0].link);
+    let memory = vault.memory(speaker(&vault), EdgeActorClass::Human);
 
-    let taken = vault
-        .memory(speaker(&vault), EdgeActorClass::Human)
-        .witness(&turn(&mirela.to_hex(), &[(0, "a turn under that id")]));
+    let as_turn = memory.witness(&turn(&mirela.to_hex(), &[(0, "a turn under that id")]));
 
-    assert!(taken.is_err());
+    let session = vault
+        .off_record_session_vault()
+        .enter(
+            "tagging-held-id",
+            crate::off_record::OffRecordBackendClass::Local,
+        )
+        .expect("enter session");
+    let mut message = turn(
+        "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f",
+        &[(0, "a message under that id")],
+    );
+    message.conversation_ref = String::new();
+    message.turn_ref = None;
+    message.messages[0].id = Some(mirela.to_hex());
+    let as_message = memory.witness_into_session(&session, &message, None);
+    session.close().expect("close session");
+
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(speaker(&vault), EdgeActorClass::Human),
+        ClaimSource::UserStated,
+        WriteProvenance::new(rmpv::Value::from("tagging-held-id")).expect("provenance"),
+        ClaimApprovalStatus::Approved,
+    );
+    let claim = |subject: EntityId, name: &str| {
+        ClaimCandidate::new(
+            "profile.name",
+            ClaimSubject::Entity(subject),
+            rmpv::Value::from(name),
+            1.0,
+        )
+    };
+    let at = TimeRange {
+        start: NOW,
+        end: NOW,
+    };
+    let free = EntityId::from_bytes([0x26; 16]).expect("free id");
+    vault
+        .batch()
+        .claim_candidate(&free, claim(ada, "Ada"), &envelope, at, NOW)
+        .commit()
+        .expect("the claim lands at a free id");
+    let as_claim = vault
+        .batch()
+        .claim_candidate(&mirela, claim(bea, "Bea"), &envelope, at, NOW)
+        .commit();
+
+    assert!(as_turn.is_err());
+    assert!(as_message.is_err());
+    assert!(as_claim.is_err());
     assert_eq!(vault.get(&mirela).expect("read"), None);
     assert_eq!(
         vault
