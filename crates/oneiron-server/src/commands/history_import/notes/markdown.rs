@@ -113,8 +113,10 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
     let mut fence: Option<Fence> = None;
     let mut indented_code = false;
     let mut in_list = false;
-    // Where the current list item's content starts.
+    // Where the current list item's content starts, and the block-quote
+    // depth the outermost open list sits at.
     let mut item_column = 0;
+    let mut list_depth = 0;
     let mut after_blank = true;
     for line in body.lines() {
         let line = expand_prefix(line);
@@ -138,6 +140,15 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
             in_list &= !item_ended;
         }
         let (depth, inner) = unquote(&line, None);
+        // Where the line starts at the list's own depth, which decides
+        // whether a block ends the list: a quote inside a list item is
+        // indented within the item, and a line outside the list's quote is
+        // at the margin.
+        let margin = if depth < list_depth {
+            0
+        } else {
+            indent(unquote(&line, Some(list_depth)).1)
+        };
         let indent = indent(inner);
         let mut content = inner.trim_start();
         if content.is_empty() {
@@ -158,12 +169,17 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
         let mut item = false;
         if let Some(rest) = list_item(content).filter(|_| !thematic_break(content)) {
             span_links(&std::mem::take(&mut paragraph), &mut links);
+            list_depth = if in_list {
+                list_depth.min(depth)
+            } else {
+                depth
+            };
             in_list = true;
             item = true;
             let text = rest.trim_start();
             item_column = indent + content.len() - text.len() + usize::from(text.is_empty());
             content = text;
-        } else if indent < 2 && after_blank {
+        } else if margin < 2 && after_blank {
             in_list = false;
         }
         after_blank = false;
@@ -177,19 +193,20 @@ pub(super) fn wikilinks(body: &str) -> Vec<Link> {
         if thematic_break(content) || heading(content) {
             span_links(&std::mem::take(&mut paragraph), &mut links);
             span_links(content, &mut links);
-            in_list &= item || indent >= 2;
+            in_list &= item || margin >= 2;
             continue;
         }
         if let Some(mark) = fence_mark(content)
             && (indent < 4 || in_list)
         {
             span_links(&std::mem::take(&mut paragraph), &mut links);
-            in_list &= item || indent >= 2;
+            in_list &= item || margin >= 2;
+            // A fence in a quote inside the item ends with that quote.
             fence = Some(Fence {
                 mark,
                 len: run(content, mark),
                 depth,
-                item_column: in_list.then_some(item_column),
+                item_column: (in_list && depth == list_depth).then_some(item_column),
             });
             continue;
         }
@@ -485,6 +502,15 @@ mod tests {
         assert_eq!(targets("> ```\n> code\n    [[alpha]]\n"), none);
         assert_eq!(targets("Text and\n    [[alpha]]\n"), ["alpha"]);
         assert_eq!(targets("# Heading\nText and\n    [[alpha]]\n"), ["alpha"]);
+        // Sol on this fix: a block in a quote inside a list item does not
+        // end the list, so the item's next line is its text, not code.
+        assert_eq!(targets("- item\n  > # Heading\n    [[alpha]]\n"), ["alpha"]);
+        assert_eq!(targets("- item\n  > ***\n    [[alpha]]\n"), ["alpha"]);
+        assert_eq!(
+            targets("- item\n  > ```\n  > [[a]]\n  > ```\n    [[alpha]]\n"),
+            ["alpha"]
+        );
+        assert_eq!(targets("- item\n\n> # Heading\n\n    [[alpha]]\n"), none);
     }
 
     /// Astra 4 and Greptile (markdown.rs:301): at every `[[` the scan looked
