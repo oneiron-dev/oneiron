@@ -31,6 +31,31 @@ def release(ty, value):
         return ""
     return "guest_" + token(ty) + "_free(&" + value + ");"
 
+def first_party(row):
+    return row['js'].startswith(('self.', 'vault.')) or row['js'] == 'ask'
+
+def reachable(ty, out):
+    if ty in out or ty == "proposal-delta":
+        return
+    out.add(ty)
+    if ty.startswith("option<"):
+        reachable(ty[7:-1], out)
+    elif ty.startswith("list<"):
+        reachable(ty[5:-1], out)
+    for field in records.get(ty, []):
+        reachable(field["type"], out)
+
+# The foreign projection keeps every record but no first-party import, so a
+# type only a first-party signature names (verb-names' list<string>) has no C
+# type there: its adapters are first-party only.
+foreign_types = set()
+for name in records:
+    reachable(name, foreign_types)
+for row in schema['imports']:
+    if not first_party(row):
+        for p in row['params']: reachable(p['type'], foreign_types)
+        reachable(row['result'], foreign_types)
+
 parts = ['/* Generated from the canonical WIT inventory. */']
 seen = set()
 
@@ -97,8 +122,10 @@ def emit(ty):
                   f'if (!isfinite(n) || n > {maxval}' + (f' || n < -{maxval}' if ty=='f32' else ' || n < 0 || floor(n) != n') + ') return bad_value(ctx);',
                   f'*out = ({ct})n; return true;']
         encode = ['return JS_NewFloat64(ctx, *v);']
+    if ty not in foreign_types: parts.append('#ifndef ONEIRON_FOREIGN')
     parts.append(f'static bool from_{token(ty)}(JSContext *ctx, JSValueConst v, {ct} *out) {{\n' + '\n'.join(decode) + '\n}')
     parts.append(f'static JSValue to_{token(ty)}(JSContext *ctx, const {ct} *v) {{\n' + '\n'.join(encode) + '\n}')
+    if ty not in foreign_types: parts.append('#endif')
 
 for row in schema['imports']:
     for p in row['params']: emit(p['type'])
@@ -110,8 +137,7 @@ emit('file-rename-proposal')
 emit('claim-input')
 
 for row in schema['imports']:
-    first_party = row['js'].startswith(('self.', 'vault.')) or row['js'] == 'ask'
-    if first_party: parts.append('#ifndef ONEIRON_FOREIGN')
+    if first_party(row): parts.append('#ifndef ONEIRON_FOREIGN')
     name, result = snake(row['wit']), row['result']
     lines = [f'static JSValue call_{name}(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv) {{',
              '(void)this_val;', f'if (argc != {len(row["params"])}) return JS_ThrowTypeError(ctx, "wrong host argument count");']
@@ -133,12 +159,12 @@ for row in schema['imports']:
                      ['if (!ok) { JSValue thrown = JS_NewStringLen(ctx, (char *)error.ptr, error.len); guest_string_free(&error); return JS_Throw(ctx, thrown); }',
                       f'JSValue value = to_{token(result)}(ctx, &result);', release(result, 'result'), 'return value;'])
     parts.append('\n'.join(lines + ['}']))
-    if first_party: parts.append('#endif')
+    if first_party(row): parts.append('#endif')
 parts.append('static JSValue make_abi(JSContext *ctx) {\n JSValue abi = JS_NewObject(ctx);')
 for row in schema['imports']:
-    if row['js'].startswith(('self.', 'vault.')) or row['js'] == 'ask': parts.append('#ifndef ONEIRON_FOREIGN')
+    if first_party(row): parts.append('#ifndef ONEIRON_FOREIGN')
     name = snake(row['wit'])
     parts.append(f'JS_SetPropertyStr(ctx, abi, "{row["wit"]}", JS_NewCFunction(ctx, call_{name}, "{row["wit"]}", {len(row["params"])}));')
-    if row['js'].startswith(('self.', 'vault.')) or row['js'] == 'ask': parts.append('#endif')
+    if first_party(row): parts.append('#endif')
 parts.append('return abi;\n}')
 Path(sys.argv[2]).write_text('\n\n'.join(parts) + '\n')
