@@ -360,6 +360,20 @@ fn a_reader_who_may_not_read_the_message_reads_no_summary_of_it() -> Result<()> 
         "the summary is served"
     );
     assert!(!narrow.is_entity_readable(&reply)?, "the reply is served");
+    // The same association under a longer string encoding of its key,
+    // written through the raw put door, is still a reply to the summary.
+    let mut copy = vec![0x82];
+    rmpv::encode::write_value(&mut copy, &Value::from("txt")).expect("key");
+    rmpv::encode::write_value(&mut copy, &Value::from(format!("They said {SECRET}.")))
+        .expect("text");
+    copy.extend_from_slice(b"\xd9\x07summary");
+    rmpv::encode::write_value(&mut copy, &Value::from(summary.to_hex())).expect("ref");
+    let forged = EntityId::now();
+    vault.put_entity(&forged, ENTITY_TYPE_TURN, time(30), 30, &copy)?;
+    assert!(
+        !narrow.is_entity_readable(&forged)?,
+        "a str8 key serves the copy"
+    );
     Ok(())
 }
 

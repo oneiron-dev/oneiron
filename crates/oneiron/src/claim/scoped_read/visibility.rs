@@ -71,22 +71,22 @@ impl ScopedRead<'_> {
     ) -> Result<bool> {
         Ok(
             self.is_entity_raw_readable_own_in(rtxn, policy, id, raw, filter)?
-                && self.derived_sources_readable_in(rtxn, policy, id, raw, filter)?,
+                && self.derived_sources_readable_in(rtxn, policy, id, raw)?,
         )
     }
 
     /// A summary, the reply copied from it and its merge header carry words
     /// from every record and MESSAGE the summary was written from, so this
     /// reader reads one only while it reads each of those, under the same
-    /// policy and floor (ARCH-0006a). Each source is judged by its own row
-    /// admission; a body whose sources no longer resolve refuses.
+    /// policy and its own floor (ARCH-0006a); a request's narrowing applies
+    /// to the row, not to what it was written from. Each source is judged by
+    /// its own row admission; a body whose sources no longer resolve refuses.
     fn derived_sources_readable_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         id: &EntityId,
         raw: &[u8],
-        filter: &ResolvedRetrievalFilter,
     ) -> Result<bool> {
         if self.actor_key.vault_owner_ref().is_some() {
             return Ok(true);
@@ -103,8 +103,9 @@ impl ScopedRead<'_> {
                 header.entity_type,
                 body,
             ),
-            // A reply carries its summary under the `summary` key.
-            crate::registry::ENTITY_TYPE_TURN if names(b"\xa7summary") => {
+            // A reply carries its summary under the `summary` key, in any
+            // string encoding; the decoder below decides.
+            crate::registry::ENTITY_TYPE_TURN if names(b"summary") => {
                 crate::scope_summary::body_covers_in_txn(
                     self.vault,
                     rtxn,
@@ -135,11 +136,12 @@ impl ScopedRead<'_> {
             ) => return Ok(false),
             Err(error) => return Err(error),
         };
+        let floor = self.actor_retrieval_floor(policy)?;
         for source in &sources {
             let Some(raw) = self.entity_record_in(rtxn, source)?.map(|row| row.encode()) else {
                 return Ok(false);
             };
-            if !self.is_entity_raw_readable_own_in(rtxn, policy, source, &raw, filter)? {
+            if !self.is_entity_raw_readable_own_in(rtxn, policy, source, &raw, &floor)? {
                 return Ok(false);
             }
         }
