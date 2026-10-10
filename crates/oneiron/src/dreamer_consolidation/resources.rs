@@ -195,19 +195,7 @@ impl<'a> BranchResources<'a> {
             }
             let resource = document_version(*id, &body);
             readable.insert(resource.clone());
-            // Both TURN write doors stamp a leader-chat turn's project on its
-            // record position, the same stamp the scoped read doors select.
-            let project = if entity_type == ENTITY_TYPE_TURN {
-                source_project(disclosure_scope_for_stored_row(
-                    &vault.store,
-                    &position_txn,
-                    *id,
-                    entity_type,
-                    &body,
-                )?)
-            } else {
-                Some(crate::claim::default_project_id())
-            };
+            let project = stored_project(&vault.store, &position_txn, *id, entity_type, &body)?;
             #[cfg(test)]
             let trust_class = (entity_type == ENTITY_TYPE_TURN)
                 .then(|| {
@@ -786,17 +774,31 @@ pub(super) fn document_version(document: EntityId, body: &[u8]) -> ScopeResource
     }
 }
 
-/// A source's PROJECT from its stored record position: the vault default
-/// where the row carries no position, `None` where its audience is not
-/// exactly one project.
-fn source_project(position: Option<crate::federation::Scope>) -> Option<EntityId> {
-    match position.map(|position| position.audience) {
+/// A stored row's PROJECT: a CLAIM's own body stamp; for any other row its
+/// record position, where both TURN write doors stamp a leader-chat turn's
+/// project, the same stamp the scoped read doors select. The vault default
+/// where the row carries no position; `None` where the position's audience
+/// is not exactly one project.
+pub(super) fn stored_project(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    body: &[u8],
+) -> Result<Option<EntityId>> {
+    if kind == ENTITY_TYPE_CLAIM {
+        return Ok(Some(
+            crate::claim::decode_claim_body(body, true)?.scope_project,
+        ));
+    }
+    let position = disclosure_scope_for_stored_row(store, txn, id, kind, body)?;
+    Ok(match position.map(|position| position.audience) {
         None => Some(crate::claim::default_project_id()),
         Some(crate::federation::ScopeAxis::Some(ids)) if ids.len() == 1 => {
             ids.into_iter().next().map(|id| id.0)
         }
         Some(_) => None,
-    }
+    })
 }
 
 /// Named mechanical projection for the real queued TURN slice. Its scope
