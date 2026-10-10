@@ -58,10 +58,20 @@ impl Drop for Held<'_> {
     }
 }
 
+/// What the cache counts for one entry beside its pixels: its key, its
+/// `Arc` and image headers, and allocator slack.
+const ENTRY_OVERHEAD: u64 = 4096;
+/// The most entries the cache keeps, however small.
+const MAX_ENTRIES: usize = 64;
+
 #[derive(Debug, Default)]
 struct Decoded {
     entries: VecDeque<(Hash32, Arc<RgbaImage>)>,
     bytes: u64,
+}
+
+fn entry_bytes(image: &RgbaImage) -> u64 {
+    (image.as_raw().capacity() as u64).saturating_add(ENTRY_OVERHEAD)
 }
 
 impl Decoded {
@@ -74,15 +84,15 @@ impl Decoded {
     }
 
     fn insert(&mut self, hash: Hash32, image: Arc<RgbaImage>, cap: u64) {
-        let size = image.as_raw().len() as u64;
+        let size = entry_bytes(&image);
         if size > cap || self.entries.iter().any(|(key, _)| *key == hash) {
             return;
         }
-        while self.bytes + size > cap {
+        while self.bytes + size > cap || self.entries.len() >= MAX_ENTRIES {
             let Some((_, old)) = self.entries.pop_front() else {
                 break;
             };
-            self.bytes -= old.as_raw().len() as u64;
+            self.bytes -= entry_bytes(&old);
         }
         self.bytes += size;
         self.entries.push_back((hash, image));
@@ -104,18 +114,43 @@ fn work_budget(call: &CallContext<'_>) -> u64 {
     call.limits.memory_bytes / 2
 }
 
-/// The copy of the whole file a JPEG decoder makes before it decodes.
+/// The copy of the whole file a decoder may make: a JPEG decoder copies its
+/// input first, and a WebP whose alpha the header hides is decoded from a
+/// copy.
 fn file_copy(header: &Header, input: &InputBytes) -> u64 {
-    if header.format == Format::Jpeg {
-        input.len() as u64
-    } else {
+    if header.format == Format::Png {
         0
+    } else {
+        input.len() as u64
     }
 }
 
-/// What decoding `header` holds at once: the pixels and the file copy.
+/// A JPEG decoder keeps a 16-bit coefficient plane per component (up to
+/// four), each padded to whole 32-pixel blocks, beside its output.
+fn jpeg_scratch(header: &Header) -> u64 {
+    if header.format != Format::Jpeg {
+        return 0;
+    }
+    let padded = |side: u32| u64::from(side).div_ceil(32) * 32;
+    let components = if header.channels == 1 { 1 } else { 4 };
+    padded(header.stored_width) * padded(header.stored_height) * components * 2
+}
+
+/// What decoding `header` holds at its peak. While it decodes: the file
+/// copy, the scratch and the decoded pixels (counted at four bytes, the
+/// widest a decoder gives). Then the turned copy an EXIF orientation makes,
+/// and the RGBA kept beside the decoded pixels it comes from.
 fn decode_cost(header: &Header, input: &InputBytes) -> u64 {
-    header.rgba_bytes().saturating_add(file_copy(header, input))
+    let decoded = header.rgba_bytes();
+    let decoding = file_copy(header, input)
+        .saturating_add(jpeg_scratch(header))
+        .saturating_add(decoded);
+    let turning = if header.orientation == 1 {
+        0
+    } else {
+        decoded.saturating_mul(2)
+    };
+    decoding.max(turning).max(decoded.saturating_mul(2))
 }
 
 #[derive(Deserialize)]
@@ -379,8 +414,8 @@ impl ImageOrgan {
         if source_from(input, &header, icc) != body.source {
             return Err(bad("the input does not match the body's source"));
         }
-        // The peak counts the source's pixels already.
-        let _held = self.hold(call, peak.saturating_add(file_copy(&header, input)))?;
+        // A cold source decodes first, then renders: book the larger.
+        let _held = self.hold(call, peak.max(decode_cost(&header, input)))?;
         let source = self.decode_and_keep(call, input, &header)?;
         call.check_cancel()?;
         let pixels = render(&source, &body, &|| call.check_cancel())?;

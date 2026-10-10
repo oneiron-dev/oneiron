@@ -134,6 +134,34 @@ fn s15f16(value: f64) -> [u8; 4] {
 /// sRGB's tone curve as a `para` tag.
 #[must_use]
 pub(crate) fn icc_profile(name: &str, colorants: [[f64; 3]; 3]) -> Vec<u8> {
+    let srgb = [2.4, 1.0 / 1.055, 0.055 / 1.055, 1.0 / 12.92, 0.040_45];
+    icc_profile_with(name, colorants, para(3, &srgb))
+}
+
+/// A `para` tone curve of function type `kind`.
+#[must_use]
+pub(crate) fn para(kind: u16, params: &[f64]) -> Vec<u8> {
+    let mut para = b"para\0\0\0\0".to_vec();
+    para.extend(kind.to_be_bytes());
+    para.extend([0, 0]);
+    for value in params {
+        para.extend(s15f16(*value));
+    }
+    para
+}
+
+/// A `curv` tone curve table.
+#[must_use]
+pub(crate) fn curv(entries: &[u16]) -> Vec<u8> {
+    let mut curv = b"curv\0\0\0\0".to_vec();
+    curv.extend((entries.len() as u32).to_be_bytes());
+    curv.extend(entries.iter().flat_map(|entry| entry.to_be_bytes()));
+    curv
+}
+
+/// [`icc_profile`] with `curve` as all three tone curves.
+#[must_use]
+pub(crate) fn icc_profile_with(name: &str, colorants: [[f64; 3]; 3], curve: Vec<u8>) -> Vec<u8> {
     let mut desc = b"desc\0\0\0\0".to_vec();
     desc.extend((name.len() as u32 + 1).to_be_bytes());
     desc.extend(name.as_bytes());
@@ -146,18 +174,12 @@ pub(crate) fn icc_profile(name: &str, colorants: [[f64; 3]; 3]) -> Vec<u8> {
         tag.extend([x, y, z].into_iter().flat_map(s15f16));
         tag
     };
-    let mut para = b"para\0\0\0\0".to_vec();
-    para.extend(3u16.to_be_bytes());
-    para.extend([0, 0]);
-    for value in [2.4, 1.0 / 1.055, 0.055 / 1.055, 1.0 / 12.92, 0.040_45] {
-        para.extend(s15f16(value));
-    }
     let blocks: Vec<(&[u8; 4], Vec<u8>)> = vec![
         (b"desc", desc),
         (b"rXYZ", xyz(colorants[0])),
         (b"gXYZ", xyz(colorants[1])),
         (b"bXYZ", xyz(colorants[2])),
-        (b"rTRC", para),
+        (b"rTRC", curve),
     ];
     // The three curves share one block, as real profiles often do.
     let entries = blocks.len() + 2;
@@ -247,7 +269,7 @@ pub(crate) fn png_animated(png: &[u8]) -> Vec<u8> {
     png_insert(png, b"acTL", &actl)
 }
 
-fn riff_chunk(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
+pub(crate) fn riff_chunk(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
     let mut chunk = kind.to_vec();
     chunk.extend((data.len() as u32).to_le_bytes());
     chunk.extend(data);
@@ -257,7 +279,7 @@ fn riff_chunk(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
     chunk
 }
 
-fn le24(value: u32) -> [u8; 3] {
+pub(crate) fn le24(value: u32) -> [u8; 3] {
     let [a, b, c, _] = value.to_le_bytes();
     [a, b, c]
 }
@@ -282,6 +304,36 @@ pub(crate) fn webp_extended(w: u32, h: u32, still: &[u8]) -> Vec<u8> {
     out.extend((body.len() as u32).to_le_bytes());
     out.extend(body);
     out
+}
+
+/// A WebP of exactly these chunks, its RIFF size exact.
+#[must_use]
+pub(crate) fn webp_of(chunks: &[(&[u8; 4], Vec<u8>)]) -> Vec<u8> {
+    let mut body = b"WEBP".to_vec();
+    for (kind, data) in chunks {
+        body.extend(riff_chunk(kind, data));
+    }
+    let mut out = b"RIFF".to_vec();
+    out.extend((body.len() as u32).to_le_bytes());
+    out.extend(body);
+    out
+}
+
+/// A `VP8X` payload: `flags`, then the canvas.
+#[must_use]
+pub(crate) fn vp8x(flags: u8, w: u32, h: u32) -> Vec<u8> {
+    let mut vp8x = vec![flags, 0, 0, 0];
+    vp8x.extend(le24(w - 1));
+    vp8x.extend(le24(h - 1));
+    vp8x
+}
+
+/// A simple lossless still's `VP8L` payload.
+#[must_use]
+pub(crate) fn vp8l_of(still: &[u8]) -> Vec<u8> {
+    assert_eq!(&still[12..16], b"VP8L", "a simple lossless still");
+    let len = u32::from_le_bytes(still[16..20].try_into().expect("len")) as usize;
+    still[20..20 + len].to_vec()
 }
 
 /// An animated WebP of one frame, wrapping a lossless still's bitstream.

@@ -4,9 +4,10 @@
 
 use std::borrow::Cow;
 
-use image::codecs::png::PngEncoder;
+use std::io::Write;
+
 use image::imageops::{self, FilterType};
-use image::{ExtendedColorType, ImageBuffer, ImageEncoder, Rgba, Rgba32FImage, RgbaImage};
+use image::{ImageBuffer, Rgba, Rgba32FImage, RgbaImage};
 use oneiron_organ_protocol::{ErrorCode, OrganError};
 
 use crate::body::{Filter, ImageBody, Overlay, Point, Size, Step};
@@ -20,9 +21,11 @@ const PAINT_FACTOR: f64 = 16.0;
 const PAINT_FLOOR: f64 = 16_777_216.0;
 
 /// Pixels painting `overlay` on a `canvas` visits: each segment's part on
-/// the canvas, swept by the brush and its one-pixel ramp.
+/// the canvas, swept by the brush and its one-pixel ramp, and never more
+/// than its pieces' boxes on the canvas (each piece paints inside it).
 fn paint_work(canvas: Size, overlay: &Overlay) -> f64 {
-    let reach = overlay.stroke.width / 2.0 + 1.0;
+    let radius = overlay.stroke.width / 2.0;
+    let reach = radius + 1.0;
     let area = (
         -reach,
         -reach,
@@ -30,12 +33,22 @@ fn paint_work(canvas: Size, overlay: &Overlay) -> f64 {
         canvas.h as f32 + reach,
     );
     let side = f64::from(2.0 * reach);
+    // A box's span on one axis, in whole pixels, as `paint` rounds it.
+    let span =
+        |lo: f32, hi: f32, edge: u32| f64::from((hi.min(edge as f32) - lo.max(0.0)).max(0.0)) + 2.0;
     overlay
         .shape
         .segments(overlay.stroke.width)
         .into_iter()
         .filter_map(|(a, b)| clip(a, b, area))
-        .map(|(a, b)| (f64::from((b.x - a.x).hypot(b.y - a.y)) + side) * side)
+        .map(|(a, b)| {
+            let len = (b.x - a.x).hypot(b.y - a.y);
+            let swept = (f64::from(len) + side) * side;
+            let boxed = span(a.x.min(b.x) - reach, a.x.max(b.x) + reach, canvas.w)
+                * span(a.y.min(b.y) - reach, a.y.max(b.y) + reach, canvas.h);
+            let count = f64::from((len / PIECE.max(radius)).ceil().max(1.0));
+            swept.min(count * boxed)
+        })
         .sum()
 }
 
@@ -180,6 +193,7 @@ fn paint(
     }
     let [r, g, b, a] = overlay.stroke.rgba.map(|c| f32::from(c) / 255.0);
     for y in y0..y1 {
+        check()?;
         for x in x0..x1 {
             let at = (y - y0) as usize * mw as usize + (x - x0) as usize;
             let cover = mask.get(at).copied().unwrap_or(0);
@@ -277,25 +291,51 @@ fn distance(x: f32, y: f32, p: Point, q: Point) -> f32 {
     (x - (p.x + t * dx)).hypot(y - (p.y + t * dy))
 }
 
+/// The most a PNG of `w x h` at `channels` bytes a pixel takes when its
+/// deflate stream falls back to stored blocks: the filtered rows, five bytes
+/// a block, twelve an IDAT chunk, and the header.
+pub(crate) fn png_bound(w: u32, h: u32, channels: u8) -> u64 {
+    let raw = (u64::from(w) * u64::from(channels) + 1) * u64::from(h);
+    raw.saturating_add(raw / 1024 * 5)
+        .saturating_add(raw / 4096 * 12)
+        .saturating_add(4096)
+}
+
 /// Encodes PNG with no metadata: RGB when the source has no alpha (painting
-/// never adds transparency), RGBA otherwise.
+/// never adds transparency), RGBA otherwise. Rows stream through the
+/// compressor into an output sized up front, so no second whole image or
+/// whole compressed copy exists.
 ///
 /// # Errors
 /// `internal` if the encoder fails.
 pub(crate) fn encode_png(image: &RgbaImage, alpha: bool) -> Result<Vec<u8>, OrganError> {
-    let (w, h) = image.dimensions();
-    let mut out = Vec::new();
-    let encoder = PngEncoder::new(&mut out);
-    let written = if alpha {
-        encoder.write_image(image.as_raw(), w, h, ExtendedColorType::Rgba8)
-    } else {
-        let rgb: Vec<u8> = image
-            .as_raw()
-            .chunks_exact(4)
-            .flat_map(|px| [px[0], px[1], px[2]])
-            .collect();
-        encoder.write_image(&rgb, w, h, ExtendedColorType::Rgb8)
+    let fail = |err: &dyn std::fmt::Display| {
+        OrganError::new(ErrorCode::Internal, format!("png encode: {err}"))
     };
-    written.map_err(|err| OrganError::new(ErrorCode::Internal, format!("png encode: {err}")))?;
+    let (w, h) = image.dimensions();
+    let channels = if alpha { 4 } else { 3 };
+    let mut out = Vec::with_capacity(usize::try_from(png_bound(w, h, channels)).unwrap_or(0));
+    let mut encoder = png::Encoder::new(&mut out, w, h);
+    encoder.set_color(if alpha {
+        png::ColorType::Rgba
+    } else {
+        png::ColorType::Rgb
+    });
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().map_err(|err| fail(&err))?;
+    let mut stream = writer.stream_writer().map_err(|err| fail(&err))?;
+    let mut rgb = Vec::with_capacity(w as usize * 3);
+    for row in image.as_raw().chunks_exact((w as usize * 4).max(1)) {
+        let line: &[u8] = if alpha {
+            row
+        } else {
+            rgb.clear();
+            rgb.extend(row.chunks_exact(4).flat_map(|px| [px[0], px[1], px[2]]));
+            &rgb
+        };
+        stream.write_all(line).map_err(|err| fail(&err))?;
+    }
+    stream.finish().map_err(|err| fail(&err))?;
+    writer.finish().map_err(|err| fail(&err))?;
     Ok(out)
 }

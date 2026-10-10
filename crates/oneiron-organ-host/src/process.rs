@@ -72,6 +72,9 @@ impl Inbox {
 struct Lifeline {
     pid: u32,
     child: Mutex<Option<Child>>,
+    /// Set once `end` has reaped the child; read without waiting for an
+    /// `end` in progress.
+    reaped: AtomicBool,
     /// A handle on the host's end of the socket, kept to shut it down.
     socket: UnixStream,
 }
@@ -99,6 +102,7 @@ impl Lifeline {
         let _ = child.kill();
         let _ = child.wait();
         *slot = None;
+        self.reaped.store(true, Ordering::SeqCst);
     }
 
     /// Whether the organ has exited. It looks without reaping: a reaped
@@ -193,10 +197,13 @@ impl OrganProcess {
     /// (the handshake timeout, or the caller's deadline if sooner). A start
     /// cut short by the caller's deadline is the caller's
     /// [`HostError::DeadlineExceeded`], never the organ's failure.
+    /// `on_end` runs on the reader thread once the process has been ended
+    /// and reaped, however it ended.
     pub(crate) fn spawn(
         spec: &OrganSpec,
         config: &HostConfig,
         deadline: Option<Instant>,
+        on_end: impl FnOnce() + Send + 'static,
     ) -> Result<Arc<Self>, HostError> {
         let started = Instant::now();
         if deadline.is_some_and(|deadline| deadline <= started) {
@@ -216,6 +223,7 @@ impl OrganProcess {
         let lifeline = Arc::new(Lifeline {
             pid,
             child: Mutex::new(Some(child)),
+            reaped: AtomicBool::new(false),
             socket: shutdown,
         });
         let mut guard = EndOnDrop(Some(Arc::clone(&lifeline)));
@@ -227,7 +235,10 @@ impl OrganProcess {
         let limit = spec.max_reply_frame;
         thread::Builder::new()
             .name(format!("organ-{}", spec.name))
-            .spawn(move || read_replies(&reader, &reader_inbox, &reader_lifeline, limit))?;
+            .spawn(move || {
+                read_replies(&reader, &reader_inbox, &reader_lifeline, limit);
+                on_end();
+            })?;
         guard.0 = None;
         Ok(Arc::new(Self {
             pid,
@@ -255,9 +266,15 @@ impl OrganProcess {
     }
 
     /// Whether the process may still run, even with its socket closed: only
-    /// `end` makes this false.
+    /// `end` makes this false. Waits for an `end` in progress.
     pub(crate) fn is_running(&self) -> bool {
         !self.lifeline.ended()
+    }
+
+    /// Whether `end` has finished, without waiting: a process being ended
+    /// still counts as running here.
+    pub(crate) fn has_ended(&self) -> bool {
+        self.lifeline.reaped.load(Ordering::SeqCst)
     }
 
     /// How long the process has had no call in flight; `None` while busy.

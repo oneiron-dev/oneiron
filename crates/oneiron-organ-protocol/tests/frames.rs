@@ -1,6 +1,7 @@
 //! A frame is bounded by what it decodes to, not only by its bytes: a peer
 //! cannot make the other side materialize gigabytes from a compact frame.
-//! And a frame's deadline ends with the frame.
+//! And a frame's deadline ends with the frame, while an untimed frame keeps
+//! to whatever the caller set on its socket.
 #![cfg(unix)]
 
 use std::io::Write;
@@ -104,4 +105,36 @@ fn a_timed_frame_leaves_no_timeout_behind() {
     send_frame(&ours, &big, &[], DEFAULT_FRAME_LIMIT).expect("an untimed send waits");
     let (got, _) = slow.join().expect("reader").expect("frame");
     assert_eq!(got.len(), big.len());
+}
+
+#[test]
+fn an_untimed_frame_ends_where_the_callers_socket_says() {
+    // The caller's own receive timeout ends an untimed read (round-4 repro).
+    let (_ours, theirs) = UnixStream::pair().expect("pair");
+    theirs
+        .set_read_timeout(Some(Duration::from_millis(20)))
+        .expect("timeout");
+    let (done, ended) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let _ = done.send(recv_frame::<u8>(&theirs, DEFAULT_FRAME_LIMIT).map(|(n, _)| n));
+    });
+    let got = ended
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the read ends at the socket's timeout");
+    assert!(matches!(got, Err(FrameError::Io(_))), "{got:?}");
+
+    // So does a nonblocking socket with nothing to read.
+    let (_ours, theirs) = UnixStream::pair().expect("pair");
+    theirs.set_nonblocking(true).expect("nonblocking");
+    let (done, ended) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let _ = done.send(recv_frame::<u8>(&theirs, DEFAULT_FRAME_LIMIT).map(|(n, _)| n));
+    });
+    let got = ended
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the read returns at once");
+    assert!(
+        matches!(&got, Err(FrameError::Io(err)) if err.kind() == std::io::ErrorKind::WouldBlock),
+        "{got:?}"
+    );
 }

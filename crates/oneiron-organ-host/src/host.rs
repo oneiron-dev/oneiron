@@ -87,8 +87,9 @@ pub struct OrganHost {
     budget: Budget,
     regions: RegionCache,
     slots: Mutex<HashMap<String, Arc<Slot>>>,
-    /// Slots a reinstall replaced, kept in sight of revocations until no
-    /// process of theirs runs.
+    /// Slots a reinstall replaced, kept in sight of revocations until they
+    /// are retired (no call can start a process in them) and no process of
+    /// theirs runs.
     retired: Mutex<Vec<Arc<Slot>>>,
     revoked: Mutex<HashSet<String>>,
 }
@@ -126,10 +127,7 @@ impl OrganHost {
             }
         }
         let retired: Vec<Arc<Slot>> = lock(&self.retired).clone();
-        let finished: Vec<Arc<Slot>> = retired
-            .into_iter()
-            .filter(|slot| slot.live().is_empty())
-            .collect();
+        let finished: Vec<Arc<Slot>> = retired.into_iter().filter(|slot| slot.finished()).collect();
         lock(&self.retired).retain(|slot| !finished.iter().any(|done| Arc::ptr_eq(done, slot)));
     }
 
@@ -172,6 +170,7 @@ impl OrganHost {
         };
         slot.stopped(&process);
         process.shutdown(Duration::from_secs(1));
+        slot.prune();
         true
     }
 
@@ -182,6 +181,7 @@ impl OrganHost {
         for slot in slots {
             if let Some(process) = slot.take_if_idle(self.config.idle_unload) {
                 process.shutdown(Duration::from_secs(1));
+                slot.prune();
                 unloaded += 1;
             }
         }
@@ -199,6 +199,7 @@ impl OrganHost {
             process.cancel_all(CancelReason::Revoked, cancel_by);
             process.stop();
         }
+        slot.prune();
     }
 
     /// Withdraws a call grant. Calls under it are cancelled, and every
@@ -230,6 +231,7 @@ impl OrganHost {
         for (slot, process) in holders {
             slot.stopped(&process);
             process.stop();
+            slot.prune();
         }
     }
 

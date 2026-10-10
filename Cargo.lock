@@ -8058,10 +8058,12 @@ name = "oneiron-image"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "crc32fast",
  "image",
  "oneiron",
  "oneiron-organ-host",
  "oneiron-organ-protocol",
+ "png 0.18.1",
  "rmp-serde",
  "rmpv",
  "serde",

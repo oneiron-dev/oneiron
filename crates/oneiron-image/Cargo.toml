@@ -25,6 +25,10 @@ path = "src/bin/oneiron-image-organ.rs"
 oneiron-organ-protocol = { version = "0.1.0", path = "../oneiron-organ-protocol" }
 # Static PNG, JPEG and WebP only; no default formats, no rayon.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+# The PNG encoder image wraps, used directly to stream rows; and the
+# checksum PNG chunks carry, to read colour chunks as the decoder does.
+png = "0.18"
+crc32fast = "1"
 rmp-serde = { workspace = true }
 rmpv = { workspace = true }
 serde = { workspace = true }

@@ -148,21 +148,57 @@ pub fn read_header(bytes: &[u8]) -> Result<Header, OrganError> {
         }
         Format::Jpeg => {
             let prefix = &bytes[..bytes.len().min(JPEG_HEADER_PREFIX)];
-            let mut decoder = JpegDecoder::new(Cursor::new(prefix)).map_err(image_error)?;
-            decoder.set_limits(header_limits()).map_err(image_error)?;
-            header_of(decoder, format, false, None)
+            let header = JpegDecoder::new(Cursor::new(prefix))
+                .and_then(|mut decoder| {
+                    decoder.set_limits(header_limits())?;
+                    Ok(decoder)
+                })
+                .map_err(image_error)
+                .and_then(|decoder| header_of(decoder, format, false, None));
+            match header {
+                // The prefix ended before the header did: refused as too
+                // large, not called corrupt.
+                Err(err) if err.code == ErrorCode::BadRequest && bytes.len() > prefix.len() => {
+                    Err(OrganError::new(
+                        ErrorCode::TooLarge,
+                        format!("the JPEG's header runs past {JPEG_HEADER_PREFIX} bytes"),
+                    ))
+                }
+                header => header,
+            }
         }
         Format::Webp => {
             // The WebP decoder takes no allocation limit for its metadata,
-            // and trusts the frame's own size over the canvas: check both
-            // here, before it reads anything.
-            let frame = webp_frame(bytes)?;
-            let decoder = WebPDecoder::new(Cursor::new(bytes)).map_err(image_error)?;
-            let animated = decoder.has_animation();
-            if !animated && frame.is_some_and(|frame| frame != decoder.dimensions()) {
-                return Err(bad("the WebP frame does not match its canvas"));
+            // reads past the declared end, keeps the first of repeated
+            // chunks and trusts the frame's own size over the canvas: the
+            // walk checks all of it before the decoder reads anything.
+            match webp_chunks(bytes)? {
+                Webp::Animated { canvas, alpha } => Ok(Header {
+                    format,
+                    stored_width: canvas.0,
+                    stored_height: canvas.1,
+                    orientation: 1,
+                    depth: 8,
+                    channels: if alpha { 4 } else { 3 },
+                    alpha,
+                    profile: Profile::Untagged,
+                    animated: true,
+                }),
+                Webp::Still {
+                    riff,
+                    frame,
+                    orientation,
+                    ..
+                } => {
+                    let decoder = WebPDecoder::new(Cursor::new(riff)).map_err(image_error)?;
+                    if frame != decoder.dimensions() {
+                        return Err(bad("the WebP frame does not match its canvas"));
+                    }
+                    let mut header = header_of(decoder, format, false, None)?;
+                    header.orientation = orientation;
+                    Ok(header)
+                }
             }
-            header_of(decoder, format, animated, None)
         }
     }
 }
@@ -223,6 +259,9 @@ const SRGB_COLORANTS: [(&[u8; 4], [f64; 3]); 3] = [
 const COLORANT_SLACK: f64 = 0.003;
 
 fn icc_is_srgb(icc: &[u8]) -> bool {
+    let Some(icc) = icc_whole(icc) else {
+        return false;
+    };
     let rgb = icc.get(16..20) == Some(b"RGB ".as_slice());
     let xyz = icc.get(20..24) == Some(b"XYZ ".as_slice());
     rgb && xyz
@@ -236,6 +275,26 @@ fn icc_is_srgb(icc: &[u8]) -> bool {
         && [b"rTRC", b"gTRC", b"bTRC"]
             .iter()
             .all(|tag| icc_tag(icc, tag).is_some_and(curve_is_srgb))
+}
+
+/// The profile as its header sizes it, if the whole tag table and every tag
+/// it lists lie inside.
+fn icc_whole(icc: &[u8]) -> Option<&[u8]> {
+    let icc = icc.get(..be32(icc, 0)?)?;
+    let count = be32(icc, 128)?;
+    let table_end = count.checked_mul(12)?.checked_add(132)?;
+    if table_end > icc.len() {
+        return None;
+    }
+    (0..count)
+        .all(|i| {
+            let entry = 132 + i * 12;
+            be32(icc, entry + 4)
+                .zip(be32(icc, entry + 8))
+                .and_then(|(offset, size)| offset.checked_add(size))
+                .is_some_and(|end| end <= icc.len())
+        })
+        .then_some(icc)
 }
 
 /// One tag's bytes, by its signature.
@@ -272,30 +331,36 @@ fn srgb_to_linear(v: f64) -> f64 {
     }
 }
 
-/// A `para` curve with sRGB's parameters, or a `curv` table that follows
-/// sRGB's curve within one percent at nine points. A bare gamma is not sRGB.
+/// A table curve needs this many entries for straight lines between them
+/// to stay on sRGB's curve.
+const MIN_CURVE_ENTRIES: usize = 16;
+
+/// A `para` curve of sRGB's form with sRGB's parameters, every one of them;
+/// or a `curv` table of at least [`MIN_CURVE_ENTRIES`] whose every entry is
+/// within one percent of sRGB's curve. A bare gamma is not sRGB.
 fn curve_is_srgb(tag: &[u8]) -> bool {
     match tag.get(0..4) {
         Some(b"para") => {
-            let kind = tag.get(8..10).map(|k| u16::from_be_bytes([k[0], k[1]]));
-            let params: Option<Vec<f64>> = (0..5).map(|i| s15f16(tag, 12 + i * 4)).collect();
-            let want = [2.4, 1.0 / 1.055, 0.055 / 1.055, 1.0 / 12.92, 0.040_45];
-            matches!(kind, Some(3 | 4))
-                && params.is_some_and(|got| {
-                    got.iter()
-                        .zip(want)
-                        .all(|(got, want)| (got - want).abs() <= 0.002 + want * 0.002)
-                })
+            // Type 3 is sRGB's form; type 4 adds two offsets, which must be zero.
+            let (count, want): (usize, &[f64]) =
+                match tag.get(8..10).map(|k| u16::from_be_bytes([k[0], k[1]])) {
+                    Some(3) => (5, &SRGB_PARAMETERS[..5]),
+                    Some(4) => (7, &SRGB_PARAMETERS),
+                    _ => return false,
+                };
+            (0..count).all(|i| {
+                s15f16(tag, 12 + i * 4)
+                    .is_some_and(|got| (got - want[i]).abs() <= 0.002 + want[i] * 0.002)
+            })
         }
         Some(b"curv") => {
-            let Some(count) = be32(tag, 8).filter(|count| *count >= 2) else {
+            let Some(count) = be32(tag, 8).filter(|count| *count >= MIN_CURVE_ENTRIES) else {
                 return false;
             };
-            (0..=8).all(|step| {
-                let i = (count - 1) * step / 8;
-                let Some(entry) = tag.get(12 + i * 2..14 + i * 2) else {
-                    return false;
-                };
+            let Some(entries) = count.checked_mul(2).and_then(|len| tag.get(12..12 + len)) else {
+                return false;
+            };
+            entries.chunks_exact(2).enumerate().all(|(i, entry)| {
                 let got = f64::from(u16::from_be_bytes([entry[0], entry[1]])) / 65_535.0;
                 let want = srgb_to_linear(i as f64 / (count - 1) as f64);
                 (got - want).abs() <= 0.01
@@ -304,6 +369,17 @@ fn curve_is_srgb(tag: &[u8]) -> bool {
         _ => false,
     }
 }
+
+/// sRGB's curve as an ICC parametric curve: g, a, b, c, d, then e and f.
+const SRGB_PARAMETERS: [f64; 7] = [
+    2.4,
+    1.0 / 1.055,
+    0.055 / 1.055,
+    1.0 / 12.92,
+    0.040_45,
+    0.0,
+    0.0,
+];
 
 /// The colour chunks a PNG carries before its pixels.
 #[derive(Debug, Default)]
@@ -368,6 +444,7 @@ impl PngColour {
 pub(crate) fn png_colour(bytes: &[u8]) -> Result<PngColour, OrganError> {
     let cut = || bad("the PNG is cut short");
     let mut colour = PngColour::default();
+    let mut seen = std::collections::BTreeSet::new();
     let mut at = 8usize;
     loop {
         let len = be32(bytes, at).ok_or_else(cut)?;
@@ -381,6 +458,26 @@ pub(crate) fn png_colour(bytes: &[u8]) -> Result<PngColour, OrganError> {
             .checked_add(len)
             .and_then(|stop| bytes.get(start..stop))
             .ok_or_else(cut)?;
+        let colour_chunk = matches!(kind, b"sRGB" | b"iCCP" | b"gAMA" | b"cHRM" | b"cICP");
+        if colour_chunk {
+            // The decoder skips a colour chunk it finds malformed and keeps
+            // the next one down; this walk would not. Refuse the file
+            // rather than disagree with it about its colour.
+            let crc = be32(bytes, start + len).ok_or_else(cut)?;
+            let mut hasher = crc32fast::Hasher::new();
+            hasher.update(kind);
+            hasher.update(data);
+            let exact = match kind {
+                b"sRGB" => len == 1 && data[0] <= 3,
+                b"gAMA" | b"cICP" => len == 4,
+                b"cHRM" => len == 32,
+                _ => len >= 3,
+            };
+            if !exact || hasher.finalize() as usize != crc || !seen.insert(kind) {
+                let name = String::from_utf8_lossy(kind);
+                return Err(bad(format!("a malformed or repeated {name} chunk")));
+            }
+        }
         match kind {
             b"sRGB" => colour.srgb = true,
             b"iCCP" => colour.iccp = true,
@@ -417,29 +514,54 @@ fn vp8_size(data: &[u8]) -> Option<(u32, u32)> {
     Some((w, h))
 }
 
-/// A lossless frame's size, from its header.
-fn vp8l_size(data: &[u8]) -> Option<(u32, u32)> {
+/// A lossless frame's size and its alpha hint, from its header.
+fn vp8l_header(data: &[u8]) -> Option<((u32, u32), bool)> {
     if *data.first()? != 0x2f {
         return None;
     }
     let bits = u32::from_le_bytes(data.get(1..5)?.try_into().ok()?);
-    Some(((bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1))
+    Some((
+        ((bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1),
+        bits & (1 << 28) != 0,
+    ))
 }
 
-/// Checks a WebP's chunks before any decoder sees them: each chunk fits the
-/// file and metadata fits the header allowance. Returns a still image's
-/// frame size, which must match the canvas.
+/// A WebP as its chunks say, checked before any decoder sees it.
+enum Webp<'a> {
+    /// One frame. `riff` is the file up to its declared end: the decoder
+    /// sees nothing past it.
+    Still {
+        riff: &'a [u8],
+        frame: (u32, u32),
+        /// EXIF orientation, 1 when absent.
+        orientation: u8,
+        /// Bytes whose 0x10 bit, set, makes the decoder keep transparency
+        /// the header calls absent (a lossless frame's alpha hint, the
+        /// extended header's alpha flag): offsets into `riff`.
+        alpha_bits: Vec<usize>,
+    },
+    /// Refused unread: its frames hold chunks of their own.
+    Animated { canvas: (u32, u32), alpha: bool },
+}
+
+/// Walks a WebP's top-level chunks: each must fit the declared RIFF, its
+/// metadata must fit the header allowance, a still image has exactly one
+/// frame, and an animation is refused before a decoder reads its frames.
 ///
 /// # Errors
-/// `bad_request` for a cut-short file or frame header, `too_large` for
-/// metadata past the allowance.
-fn webp_frame(bytes: &[u8]) -> Result<Option<(u32, u32)>, OrganError> {
+/// `bad_request` for a cut-short file, a bad or repeated frame header;
+/// `too_large` for metadata past the allowance; `unsupported` for a
+/// lossless side of 16,384, which the decoder misreads.
+fn webp_chunks(bytes: &[u8]) -> Result<Webp<'_>, OrganError> {
     let cut = || bad("the WebP is cut short");
     let end = le32(bytes, 4)
         .and_then(|riff| riff.checked_add(8))
         .filter(|end| *end <= bytes.len())
         .ok_or_else(cut)?;
     let mut frame = None;
+    let mut vp8x: Option<(u8, (u32, u32), usize)> = None;
+    let (mut lossless_hint, mut alph, mut animation) = (None, false, false);
+    let mut orientation = 1;
     let mut at = 12;
     while at < end {
         let kind = bytes.get(at..at + 4).ok_or_else(cut)?;
@@ -457,15 +579,82 @@ fn webp_frame(bytes: &[u8]) -> Result<Option<(u32, u32)>, OrganError> {
                     format!("a WebP metadata chunk of {len} bytes is past {HEADER_ALLOC}"),
                 ));
             }
+            b"VP8X" => {
+                let canvas = (
+                    le24(data, 4).ok_or_else(cut)? + 1,
+                    le24(data, 7).ok_or_else(cut)? + 1,
+                );
+                vp8x = Some((*data.first().ok_or_else(cut)?, canvas, start));
+            }
+            b"ANIM" | b"ANMF" => animation = true,
+            b"ALPH" if alph => return Err(bad("a WebP with two alpha chunks")),
+            b"ALPH" => alph = true,
+            b"VP8 " | b"VP8L" if frame.is_some() => {
+                return Err(bad("a still WebP with more than one frame"));
+            }
             b"VP8 " => frame = Some(vp8_size(data).ok_or_else(|| bad("a bad VP8 frame header"))?),
             b"VP8L" => {
-                frame = Some(vp8l_size(data).ok_or_else(|| bad("a bad VP8L frame header"))?);
+                let (size, hint) =
+                    vp8l_header(data).ok_or_else(|| bad("a bad VP8L frame header"))?;
+                if size.0 == 16_384 || size.1 == 16_384 {
+                    return Err(OrganError::new(
+                        ErrorCode::Unsupported,
+                        "a lossless WebP side of 16,384 is not supported yet",
+                    ));
+                }
+                frame = Some(size);
+                lossless_hint = Some((hint, start + 4));
             }
+            b"EXIF" => orientation = exif_orientation(data),
             _ => {}
         }
         at = stop + (len & 1);
     }
-    Ok(frame)
+    if let Some((flags, canvas, _)) = vp8x
+        && (animation || flags & 0x02 != 0)
+    {
+        return Ok(Webp::Animated {
+            canvas,
+            alpha: flags & 0x10 != 0,
+        });
+    }
+    let frame = frame.ok_or_else(|| bad("a WebP with no frame"))?;
+    let mut alpha_bits = Vec::new();
+    match (vp8x, lossless_hint) {
+        // An extended file's alpha flag decides; set it, and the lossless
+        // hint, when a frame or chunk may carry alpha the flag denies.
+        (Some((flags, _, flags_at)), hint) if flags & 0x10 == 0 && (alph || hint.is_some()) => {
+            alpha_bits.push(flags_at);
+            alpha_bits.extend(hint.map(|(_, at)| at));
+        }
+        // A simple lossless file's hint decides.
+        (None, Some((false, at))) => alpha_bits.push(at),
+        _ => {}
+    }
+    if animation {
+        return Ok(Webp::Animated {
+            canvas: frame,
+            alpha: true,
+        });
+    }
+    Ok(Webp::Still {
+        riff: &bytes[..end],
+        frame,
+        orientation,
+        alpha_bits,
+    })
+}
+
+fn le24(bytes: &[u8], at: usize) -> Option<u32> {
+    let [a, b, c]: [u8; 3] = bytes.get(at..at.checked_add(3)?)?.try_into().ok()?;
+    Some(u32::from_le_bytes([a, b, c, 0]))
+}
+
+/// An EXIF chunk's orientation, 1 when it has none. WebP writers differ on
+/// whether the chunk starts with `Exif\0\0`; both are read.
+fn exif_orientation(data: &[u8]) -> u8 {
+    let tiff = data.strip_prefix(b"Exif\0\0").unwrap_or(data);
+    Orientation::from_exif_chunk(tiff).map_or(1, Orientation::to_exif)
 }
 
 fn be32(bytes: &[u8], at: usize) -> Option<usize> {
@@ -535,11 +724,53 @@ pub(crate) fn decode(
             pixels(decoder, None)
         }
         Format::Jpeg => pixels(JpegDecoder::new(cursor).map_err(image_error)?, Some(limits)),
-        Format::Webp => pixels(WebPDecoder::new(cursor).map_err(image_error)?, Some(limits)),
+        Format::Webp => decode_webp(bytes, limits),
     }?;
     let mut image = image;
     image.apply_orientation(orientation);
     Ok(image.into_rgba8())
+}
+
+/// Decodes a still WebP from its checked RIFF. When its header calls alpha
+/// absent but a lossless frame or an alpha chunk may still carry it, the
+/// decoder would drop it unseen: decode a copy that keeps it, and refuse
+/// the file if any pixel is not opaque.
+fn decode_webp(bytes: &[u8], limits: Limits) -> Result<DynamicImage, OrganError> {
+    let Webp::Still {
+        riff, alpha_bits, ..
+    } = webp_chunks(bytes)?
+    else {
+        return Err(OrganError::new(
+            ErrorCode::Unsupported,
+            "animated images are not supported",
+        ));
+    };
+    if alpha_bits.is_empty() {
+        return pixels(
+            WebPDecoder::new(Cursor::new(riff)).map_err(image_error)?,
+            Some(limits),
+        );
+    }
+    let mut copy = riff.to_vec();
+    for at in alpha_bits {
+        if let Some(byte) = copy.get_mut(at) {
+            *byte |= 0x10;
+        }
+    }
+    let image = pixels(
+        WebPDecoder::new(Cursor::new(copy.as_slice())).map_err(image_error)?,
+        Some(limits),
+    )?;
+    drop(copy);
+    if image
+        .as_rgba8()
+        .is_some_and(|rgba| rgba.pixels().any(|px| px.0[3] != u8::MAX))
+    {
+        return Err(bad(
+            "the WebP holds transparency its header says it does not have",
+        ));
+    }
+    Ok(image)
 }
 
 fn pixels(
