@@ -27,7 +27,7 @@ const PENDING_MOVE: [&str; 2] = ["oneiron-docedit", "oneiron-xlsx-formula"];
 
 /// Organs that run behind the host. Each must say so in its manifest, so the
 /// fence walks it; the list only grows.
-const HOSTED: [&str; 1] = ["oneiron-image"];
+const HOSTED: [&str; 2] = ["oneiron-image", "oneiron-seal"];
 
 struct Manifest {
     organ: bool,
