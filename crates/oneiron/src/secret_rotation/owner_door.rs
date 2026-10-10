@@ -71,7 +71,7 @@ impl Vault {
         // registration enforces: a rotation is a fresh authorization of this
         // record's exposure, not a grandfather clause for the posture it
         // registered under.
-        refuse_bindings_wider_than_live_floor(&self.store, wtxn, &rec)?;
+        refuse_bindings_wider_than_live_floor(&self.store, wtxn, rec)?;
 
         let from_generation = rec.rotation_generation;
         let to_generation = from_generation
