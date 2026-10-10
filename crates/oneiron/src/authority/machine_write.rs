@@ -22,6 +22,8 @@ use super::{
     ActorBindingStatus, AuthorityKey, AuthorityOp, AuthorityTier, HostSlipIssuer, ROLE_AGENT,
 };
 
+mod successor;
+
 const DOMAIN: &[u8] = b"oneiron/machine-claim/v1";
 const SIGNATURE_KEY: &str = "machine_signature";
 
