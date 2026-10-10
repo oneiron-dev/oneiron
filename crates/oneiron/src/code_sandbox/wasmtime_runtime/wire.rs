@@ -88,6 +88,15 @@ fn js_time(value: u64) -> Result<u64> {
     Ok(value)
 }
 
+/// A guest number for an `f32` field. As the typed import did, a number past
+/// `f32`'s range is refused, not rounded to its edge or to infinity.
+fn js_f32(value: f64) -> Result<f32> {
+    if !value.is_finite() || value.abs() > f64::from(f32::MAX) {
+        return Err(failure("invalid guest number"));
+    }
+    Ok(value as f32)
+}
+
 /// Fit a recoverable chunk inside the *encoded* host reply ceiling. The
 /// byte-array JSON representation can take four times the raw byte length;
 /// the caller advances by the returned array length, never by a guessed cap.
@@ -242,11 +251,7 @@ fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
         }
         RunVerb::PutClaim => {
             let args: MemoryClaimInput = decode(input)?;
-            // JSON carries no NaN, but an out-of-range number decodes as an
-            // infinite f32.
-            if args.confidence.is_some_and(|value| !value.is_finite()) {
-                return Err(failure("non-finite claim confidence"));
-            }
+            let confidence = args.confidence.map(js_f32).transpose()?;
             let occurred = args.occurred.unwrap_or(MemoryTimeRange {
                 start: now,
                 end: now,
@@ -259,7 +264,7 @@ fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
                 args.predicate,
                 ClaimSubject::Entity(EntityId::from_hex(&args.subject)?),
                 json_value(args.value),
-                args.confidence.unwrap_or(1.0),
+                confidence.unwrap_or(1.0),
             );
             SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
                 EntityId::from_hex(&args.id)?,
@@ -278,13 +283,10 @@ fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> {
         }
         RunVerb::PutEdge => {
             let args: MemoryEdgeInput = decode(input)?;
-            if args.weight.is_some_and(|value| !value.is_finite()) {
-                return Err(failure("non-finite edge weight"));
-            }
+            let weight = args.weight.map(js_f32).transpose()?;
             let kind =
                 EdgeKind::from_name(&args.kind).ok_or_else(|| failure("invalid edge kind"))?;
-            let weight = args
-                .weight
+            let weight = weight
                 .or_else(|| kind.default_weight())
                 .ok_or(failure("edge weight required"))?;
             SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(

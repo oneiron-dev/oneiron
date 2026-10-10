@@ -34,7 +34,9 @@ pub struct MemoryClaimInput {
     /// The subject entity's id, hex.
     pub subject: String,
     pub value: serde_json::Value,
-    pub confidence: Option<f32>,
+    /// An `f32`: a number past its range is refused, never rounded.
+    #[schemars(range(min = "f32::MIN", max = "f32::MAX"))]
+    pub confidence: Option<f64>,
     /// When the claim held, unix seconds; the run's clock when absent.
     pub occurred: Option<MemoryTimeRange>,
     /// When it was learned, unix seconds; the run's clock when absent.
@@ -70,6 +72,7 @@ pub struct MemoryEdgeInput {
     /// The edge kind's snake_case name.
     pub kind: String,
     pub tgt: String,
-    /// The kind's default weight when absent.
-    pub weight: Option<f32>,
+    /// The kind's default weight when absent; an `f32`, as `confidence` is.
+    #[schemars(range(min = "f32::MIN", max = "f32::MAX"))]
+    pub weight: Option<f64>,
 }

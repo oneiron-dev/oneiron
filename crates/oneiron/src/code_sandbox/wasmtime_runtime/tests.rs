@@ -296,9 +296,10 @@ fn component_post_return_trap_fails_closed() {
     }
 }
 
-/// A row's input is JSON, which carries no NaN, but a number past f32's range
-/// decodes as infinite: the bridge refuses it before any dispatch, as the
-/// typed import refused a non-finite float.
+/// A row's input is JSON, which carries no NaN, but a number can still be
+/// past `f32`'s range: one that would round to infinity, or one just past
+/// `f32::MAX` that would round down to it. The bridge refuses both before any
+/// dispatch, as the typed import's adapter did; `f32::MAX` itself dispatches.
 #[test]
 fn non_finite_run_row_numbers_refuse_before_dispatch() {
     struct Counting(usize);
@@ -308,29 +309,41 @@ fn non_finite_run_row_numbers_refuse_before_dispatch() {
             Err(crate::Error::InvalidConfig("test host".into()))
         }
     }
-    let claim = serde_json::json!({
-        "verb": "put_claim",
-        "id": "11111111111111111111111111111111",
-        "subject": "22222222222222222222222222222222",
-        "predicate": "profile.favorite_drink",
-        "value": "sencha",
-        "confidence": 1e39
-    });
-    let edge = serde_json::json!({
-        "verb": "put_edge",
-        "src": "11111111111111111111111111111111",
-        "kind": "about",
-        "tgt": "22222222222222222222222222222222",
-        "weight": 1e39
-    });
-    for input in [claim, edge] {
+    let claim = |confidence: f64| {
+        serde_json::json!({
+            "verb": "put_claim",
+            "id": "11111111111111111111111111111111",
+            "subject": "22222222222222222222222222222222",
+            "predicate": "profile.favorite_drink",
+            "value": "sencha",
+            "confidence": confidence
+        })
+    };
+    let edge = |weight: f64| {
+        serde_json::json!({
+            "verb": "put_edge",
+            "src": "11111111111111111111111111111111",
+            "kind": "about",
+            "tgt": "22222222222222222222222222222222",
+            "weight": weight
+        })
+    };
+    let past_max = 3.402_823_5e38;
+    assert!(past_max > f64::from(f32::MAX) && past_max as f32 == f32::MAX);
+    for (input, dispatched) in [
+        (claim(1e39), 0),
+        (edge(1e39), 0),
+        (claim(past_max), 0),
+        (edge(-past_max), 0),
+        (claim(f64::from(f32::MAX)), 1),
+    ] {
         let mut host = Counting(0);
         assert!(
             runtime_with("verb-call", &input)
                 .run_step(step("", SandboxGuestTier::FirstPartyDreamer), &mut host)
                 .is_err()
         );
-        assert_eq!(host.0, 0, "{input}");
+        assert_eq!(host.0, dispatched, "{input}");
     }
 }
 
