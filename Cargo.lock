@@ -8209,6 +8209,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-organ-host"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "libc",
+ "oneiron",
+ "oneiron-organ-protocol",
+ "rmp-serde",
+ "rmpv",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.20",
+ "toml 0.8.2",
+]
+
+[[package]]
+name = "oneiron-organ-protocol"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "memmap2",
+ "rmp-serde",
+ "rmpv",
+ "rustix",
+ "serde",
+ "serde_bytes",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "oneiron-py"
 version = "1.0.0"
 dependencies = [

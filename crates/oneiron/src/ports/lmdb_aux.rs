@@ -274,3 +274,48 @@ impl JobQueue for Vault {
         AttemptQueue::new(self).port_job_fail(txn, input)
     }
 }
+impl Vault {
+    /// The borrowed twin of `port_blob_get`: the same liveness checks
+    /// (tombstone, stale index, stale body, entity type), but the bytes stay
+    /// in the store's pages whenever the store lends them. The caller checks the content hash when it
+    /// first reads them ([`crate::blob_artifact::BlobBytes::verified`]).
+    pub(crate) fn lend_blob_in_txn<'t>(
+        &self,
+        txn: &'t RoTxn<'_>,
+        hash: &[u8; 32],
+    ) -> Result<Option<std::borrow::Cow<'t, [u8]>>> {
+        use std::borrow::Cow;
+        let id = blob_artifact_asset_entity_id(hash)?;
+        let Some(raw) = self.store.entities.get(txn, id.as_bytes())? else {
+            return Ok(None);
+        };
+        let header = crate::batch::EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != crate::registry::ENTITY_TYPE_ASSET {
+            return Err(Error::CorruptedIndex("blob content hash"));
+        }
+        if self.port_tombstone_is_deleted(txn, &id)?
+            || super::integrity::stale_in_txn(&self.store, txn, &id)?
+        {
+            return Ok(None);
+        }
+        let body = match raw {
+            Cow::Borrowed(raw) => Cow::Borrowed(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]),
+            Cow::Owned(mut raw) => {
+                raw.drain(..crate::batch::ENTITY_METADATA_HEADER_LEN);
+                Cow::Owned(raw)
+            }
+        };
+        if super::safe_read::body_is_stale(&body) {
+            return Ok(None);
+        }
+        // A body migrated into an entity document resolves as
+        // `port_entity_get` resolves it; only an unmigrated body is lent in place.
+        #[cfg(feature = "sync")]
+        if crate::entity_doc::has_record_head(&self.store, txn, &id)? {
+            let resolved = crate::entity_doc::resolve_record_body(&self.store, txn, &id, &body)?;
+            return Ok(Some(Cow::Owned(resolved)));
+        }
+        Ok(Some(body))
+    }
+}
