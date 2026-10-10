@@ -366,6 +366,22 @@ impl From<Error> for MemoryError {
                     "A route is generation-stamped on purpose: a stale one refuses before staging anything.",
                 ],
             ),
+            ErrorKind::OffRecordSavingStopped => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &[
+                    "Nothing of this write was kept, and the stretch is off record again.",
+                    "Witness the turn again to say it off record; only the vault's owner, in the room, puts it back on record.",
+                ],
+            ),
+            // One answer for "no such stretch" and "not in its room", as the
+            // HTTP boundary gives, so a stranger learns nothing of a room's
+            // stretches here either.
+            ErrorKind::OffRecordSessionNotFound | ErrorKind::OffRecordNotInRoom => Self::new(
+                MEMORY_CODE_NOT_FOUND,
+                message,
+                &["Verify the room and the stretch, and join the room before acting in it."],
+            ),
             ErrorKind::OffRecordOverlayFull => Self::new(
                 MEMORY_CODE_INVALID_STATE,
                 message,

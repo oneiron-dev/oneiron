@@ -198,6 +198,7 @@ fn allowed_gate_consent_resolution_rejects_drifted_source_trust_pending() -> Res
         &envelope,
         test_time(3),
         3,
+        |_| Ok(()),
     )?;
 
     let pending = vault.with_write_txn(|wtxn| {

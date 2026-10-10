@@ -69,6 +69,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/off-record/mode", post(flip_off_record))
         .route("/off-record/witness", post(witness_off_record))
         .route("/off-record/promote", post(promote_off_record))
+        .route("/off-record/save", post(save_off_record))
         .route("/off-record/close", post(close_off_record))
         .route("/graph-fs", get(read_graph_fs))
         .route("/feedback/preview", post(preview_feedback))
@@ -579,9 +580,10 @@ async fn off_record_session(
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<off_record::SessionName>, QueryRejection>,
 ) -> OwnerReply<off_record::Session> {
-    owner(&auth, &server)?;
+    let owner = owner(&auth, &server)?;
     let query = query_params(query)?;
-    let session = blocking(move || off_record::record(server.vault(), &query.session_ref)).await?;
+    let session =
+        blocking(move || off_record::record(server.vault(), &owner, &query.session_ref)).await?;
     Ok(Json(session))
 }
 
@@ -616,6 +618,17 @@ async fn promote_off_record(
     let request = json_payload(payload)?;
     let promoted = blocking(move || off_record::promote(server.vault(), &owner, &request)).await?;
     Ok(Json(promoted))
+}
+
+async fn save_off_record(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<off_record::SessionName>, JsonRejection>,
+) -> OwnerReply<off_record::Saved> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let saved = blocking(move || off_record::save(server.vault(), &owner, &request)).await?;
+    Ok(Json(saved))
 }
 
 async fn close_off_record(

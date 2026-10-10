@@ -1110,6 +1110,7 @@ fn valid_tool_output_dreamer_write_pends_without_joining_a_run_group() -> Result
         &envelope,
         test_time(3),
         3,
+        |_| Ok(()),
     )?;
 
     let stored = stored_claim_body(&vault, &claim_id)?;

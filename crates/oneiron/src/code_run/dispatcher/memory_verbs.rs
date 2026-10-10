@@ -190,6 +190,7 @@ impl HostSelfDispatcher<'_> {
                     &envelope,
                     call.occurred,
                     call.learned_at,
+                    |_| Ok(()),
                 )?,
             ExecutorStorage::Session(binding) => binding.session.executor_put_claim_candidate(
                 &binding.route,
@@ -290,6 +291,7 @@ impl HostSelfDispatcher<'_> {
                 &claim_gate_body,
                 edge_gate_id,
                 &edge_gate_body,
+                |_| Ok(()),
             )?,
             ExecutorStorage::Session(binding) => binding.session.executor_supersede_claim(
                 &binding.route,
@@ -343,6 +345,7 @@ impl HostSelfDispatcher<'_> {
                 &envelope,
                 gate_id,
                 &gate_body,
+                |_| Ok(()),
             )?,
             ExecutorStorage::Session(binding) => binding.session.executor_put_edge(
                 &binding.route,

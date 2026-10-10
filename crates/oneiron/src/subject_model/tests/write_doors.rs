@@ -98,8 +98,14 @@ fn generic_write(vault: &Vault, door: Door, id: &EntityId, body: &ClaimBody) -> 
                 )
                 .apply(txn)
         }),
-        Door::CodeRunCandidate => vault
-            .put_claim_candidate_without_lexical_query_reconcile(id, candidate, &envelope, at, 200),
+        Door::CodeRunCandidate => vault.put_claim_candidate_without_lexical_query_reconcile(
+            id,
+            candidate,
+            &envelope,
+            at,
+            200,
+            |_| Ok(()),
+        ),
     }
 }
 
@@ -237,6 +243,7 @@ fn substrate_lifecycle_is_closed_to_generic_retract_supersede_and_demotion() -> 
         &body,
         EntityId::now(),
         &body,
+        |_| Ok(()),
     ));
     assert_eq!(vault.get(&old)?, before);
     assert_eq!(vault.get(&other)?, other_before);

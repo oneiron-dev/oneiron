@@ -278,6 +278,9 @@ impl Memory<'_> {
             ));
         }
         let session_route;
+        let mut on_record_session = None;
+        // A room on record's saver, checked again where the turn lands.
+        let mut saver = None;
         let landing = match target {
             WitnessTarget::Base { route } => Landing::Base {
                 route,
@@ -316,7 +319,8 @@ impl Memory<'_> {
                 }
             }
             WitnessTarget::Session { session, summary } => {
-                session_route = session.write_route()?;
+                on_record_session = Some(session);
+                (session_route, saver) = session.landing_route()?;
                 // WitnessReceipt promises materialized turns and messages.
                 // Anonymous sessions cannot fulfill that promise, so refuse
                 // before shell reservation, transaction acquisition, or policy
@@ -468,6 +472,11 @@ impl Memory<'_> {
             if let WitnessSink::Base(base) = &sink
                 && let Some(route) = base.route
             {
+                // A room on record saves into its saver's vault only while
+                // they hold it in the room, whoever speaks (ARCH-0052 D5).
+                if let Some(saver) = &saver {
+                    saver.in_txn(wtxn)?;
+                }
                 route.revalidate()?;
             }
             Ok(landed)
@@ -475,7 +484,21 @@ impl Memory<'_> {
 
         match landed {
             Landed::HardDeleted(id) => Err(hard_deleted_refusal(&id)),
-            Landed::Base => self.base_receipt(&plan),
+            Landed::Base => {
+                // A room on record took this turn into base; a copy of the
+                // talk reads its messages there.
+                if let Some(session) = on_record_session {
+                    let messages: Vec<(EntityId, u64, &[u8])> = plan
+                        .messages
+                        .iter()
+                        .map(|planned| {
+                            (planned.id, planned.occurred.start, planned.body.as_slice())
+                        })
+                        .collect();
+                    session.note_on_record_messages(plan.turn_id, &messages);
+                }
+                self.base_receipt(&plan)
+            }
             Landed::Overlay { segment, aliases } => {
                 // The overlay segment and the base txn commit together: the
                 // segment applies staged rows only now, so a failure anywhere

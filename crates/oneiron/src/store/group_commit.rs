@@ -621,6 +621,16 @@ fn replicate(err: &heed::Error) -> heed::Error {
 }
 
 #[cfg(test)]
+impl GroupCommit {
+    /// Writes queued for the writer behind the open group. Each one has done
+    /// everything it does before its transaction, so a test can act between
+    /// a write's checks and its transaction.
+    pub(crate) fn queued(&self) -> usize {
+        self.lock().queue.len()
+    }
+}
+
+#[cfg(test)]
 pub(crate) mod hooks {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
