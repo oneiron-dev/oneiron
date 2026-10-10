@@ -280,7 +280,9 @@ impl RunInner {
     }
 
     /// Reserves a host-paid call on the vault's live allocation. A refused
-    /// fresh allocation only matters once the live one cannot fit the call.
+    /// fresh allocation only matters once the live one cannot fit the call. A
+    /// run with no host account has no allocation to draw on, so it admits no
+    /// host-paid call.
     fn hold_allocation(
         &self,
         payer: Payer,
@@ -288,8 +290,11 @@ impl RunInner {
         native: &LeaseUnit,
         rates: &[UnitRate],
     ) -> Result<Option<(AllocationRef, AllocationHold)>, RunDenied> {
-        let Some(host) = self.host.as_ref().filter(|_| payer == Payer::Host) else {
+        if payer != Payer::Host {
             return Ok(None);
+        }
+        let Some(host) = self.host.as_ref() else {
+            return Err(RunDenied::NoAllocation);
         };
         let (live, refused) = host.live();
         let short = || match refused {

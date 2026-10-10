@@ -1084,6 +1084,44 @@ fn a_permit_never_dispatches_under_another_offer_at_the_same_endpoint() {
 }
 
 #[test]
+fn a_host_paid_call_on_a_run_without_a_host_account_holds_nothing() {
+    // Astra #1355 P2: no host account is no allocation, never an exemption.
+    let world = World::new();
+    let before = world.before();
+    assert_eq!(
+        admit(&world.a, None, &request(SMALL), &host_offer(SMALL)).expect_err("no account"),
+        RunDenied::NoAllocation
+    );
+    world.assert_refused_cleanly(&before);
+    let host_search = PaidConnector {
+        payer: Payer::Host,
+        ..search()
+    };
+    let before = world.before();
+    assert_eq!(
+        world
+            .a
+            .admission
+            .admit_paid(&host_search, 1)
+            .expect_err("no account"),
+        RunDenied::NoAllocation
+    );
+    world.assert_refused_cleanly(&before);
+    // The customer's own key on the same run goes on.
+    block_on(world.a.admission.call(
+        &world.gated_a,
+        RunCall {
+            selector: None,
+            request: &request(SMALL),
+            offer: &offer(SMALL),
+        },
+    ))
+    .expect("BYOK");
+    assert_eq!(world.provider.sent().len(), 1);
+    assert_eq!((world.a.used(), world.a.reserved()), (4, 0));
+}
+
+#[test]
 fn a_declared_run_keeps_paid_keys_at_t0_unless_the_owner_says_otherwise() {
     let mut t1 = offer(SMALL);
     t1.custody = KeyCustody::T1;

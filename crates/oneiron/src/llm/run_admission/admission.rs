@@ -123,7 +123,7 @@ pub(super) struct CallFacts {
 impl RunAdmission {
     /// Starts a run at revision 1 of `declaration`, on its own budget line.
     /// `host` is the account whose allocation pays host-paid offers; a
-    /// self-hosted vault has none.
+    /// self-hosted vault has none, and its runs admit no host-paid offer.
     #[must_use]
     pub fn new(
         run: impl Into<String>,
