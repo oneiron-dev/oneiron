@@ -69,6 +69,94 @@ impl ScopedRead<'_> {
         raw: &[u8],
         filter: &ResolvedRetrievalFilter,
     ) -> Result<bool> {
+        Ok(
+            self.is_entity_raw_readable_own_in(rtxn, policy, id, raw, filter)?
+                && self.derived_sources_readable_in(rtxn, policy, id, raw)?,
+        )
+    }
+
+    /// A summary, the reply copied from it and its merge header carry words
+    /// from every record and MESSAGE the summary was written from, so this
+    /// reader reads one only while it reads each of those, under the same
+    /// policy and its own floor (ARCH-0006a); a request's narrowing applies
+    /// to the row, not to what it was written from. Each source is judged by
+    /// its own row admission; a body whose sources no longer resolve refuses.
+    fn derived_sources_readable_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+        raw: &[u8],
+    ) -> Result<bool> {
+        if self.actor_key.vault_owner_ref().is_some() {
+            return Ok(true);
+        }
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        let names = |needle: &[u8]| body.windows(needle.len()).any(|window| window == needle);
+        let sources = match header.entity_type {
+            crate::registry::ENTITY_TYPE_SUMMARY => crate::scope_summary::body_covers_in_txn(
+                self.vault,
+                rtxn,
+                id,
+                header.entity_type,
+                body,
+            ),
+            // A reply carries its summary under the `summary` key, in any
+            // string encoding; the decoder below decides.
+            crate::registry::ENTITY_TYPE_TURN if names(b"summary") => {
+                crate::scope_summary::body_covers_in_txn(
+                    self.vault,
+                    rtxn,
+                    id,
+                    header.entity_type,
+                    body,
+                )
+            }
+            ENTITY_TYPE_CLAIM if names(b"merge.summary") => {
+                crate::scope_summary::merge_word_sources_in_txn(
+                    self.vault,
+                    rtxn,
+                    &crate::claim::decode_claim_body(body, true)?,
+                )
+            }
+            _ => return Ok(true),
+        };
+        let sources = match sources {
+            Ok(Some(sources)) if !sources.is_empty() => sources,
+            Ok(None) => return Ok(true),
+            Ok(Some(_))
+            | Err(
+                Error::EntityNotFound
+                | Error::Record(
+                    crate::error::RecordError::InvalidScopeSummary(_)
+                    | crate::error::RecordError::InvalidConversationDag(_),
+                ),
+            ) => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        let floor = self.actor_retrieval_floor(policy)?;
+        for source in &sources {
+            let Some(raw) = self.entity_record_in(rtxn, source)?.map(|row| row.encode()) else {
+                return Ok(false);
+            };
+            if !self.is_entity_raw_readable_own_in(rtxn, policy, source, &raw, &floor)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// The row's own admission, before what it was written from.
+    fn is_entity_raw_readable_own_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+        raw: &[u8],
+        filter: &ResolvedRetrievalFilter,
+    ) -> Result<bool> {
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if filter.deny_all

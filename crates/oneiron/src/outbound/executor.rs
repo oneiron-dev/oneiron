@@ -159,6 +159,20 @@ impl Vault {
                 complete_connector_task_attempt(self, &attempt, now)?;
                 continue;
             }
+            // A commitment wake sends only while its approval stands. Asked on
+            // every attempt, so a retraction after scheduling stops the send.
+            if !crate::commitment_wake::scheduled_commitment_wake_authorised(self, &task)? {
+                fail_connector_task_attempt_and_project(
+                    self,
+                    &queue,
+                    &attempt,
+                    task_ref,
+                    now,
+                    "commitment_wake_approval_withdrawn",
+                    ConnectorSendTaskOutcome::Failed,
+                )?;
+                continue;
+            }
             #[cfg(test)]
             run_before_attempt_start_hook(self);
             let attempt_started_node_id = crate::identity::load_or_mint_client_id(self)?;
