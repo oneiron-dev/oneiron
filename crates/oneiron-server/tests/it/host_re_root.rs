@@ -216,6 +216,27 @@ fn a_leaked_host_secret_moves_to_a_new_one_and_the_vault_keeps_its_id() {
     ));
     assert!(error.contains("broken.toml"), "{error}");
     assert!(!error.contains(OLD), "{error}");
+    // On macOS an ACL entry lets others read a file its mode keeps to the
+    // owner, so an owner-only secret file that carries one is refused too.
+    #[cfg(target_os = "macos")]
+    {
+        let shared = dir.path().join("acl-host-secret");
+        secret_file(&shared, NEW, 0o600);
+        let added = Command::new("/bin/chmod")
+            .args(["+a", "everyone allow read"])
+            .arg(&shared)
+            .status()
+            .expect("run chmod +a");
+        assert!(added.success(), "chmod +a on {}", shared.display());
+        let shared_arg = shared.to_str().unwrap();
+        let error = refused(oneiron(
+            &["host", "re-root", "--new-secret-file", shared_arg],
+            &config,
+            OLD,
+        ));
+        assert!(error.contains("access control list"), "{error}");
+        assert!(!error.contains(NEW) && !error.contains(OLD), "{error}");
+    }
 
     secret_file(&new_secret, NEW, 0o600);
     let output = run(oneiron(
