@@ -1449,6 +1449,8 @@ fn oneiron_api_and_token_pair_keep_the_credential_out_of_curls_environment() {
             .env_remove("ONEIRON_SECRET")
             .env_remove("ONEIRON_BINDING_KEY")
             .env_remove("ONEIRON_TOKEN")
+            .env_remove("AGENT_SLIP")
+            .env_remove("AGENT_SEED")
             .env("ONEIRON_AUTH_SECRET", SECRET)
             .envs(env.iter().copied())
             .output()
