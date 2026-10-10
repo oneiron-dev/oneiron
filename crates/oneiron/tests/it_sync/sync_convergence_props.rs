@@ -1333,49 +1333,69 @@ fn child_of_projection_follows_a_restamped_stored_winner_down() {
     );
 }
 
-/// A re-stamp downward that STILL leads keeps the slot. The repair discounts
-/// the stale row by deleting it, so the winning re-add must land after that
-/// delete — a repair that fired in the wrong order would demolish the slot it
-/// exists to correct and leave the child parentless with a live candidate in
-/// hand.
 #[test]
-fn child_of_restamp_that_still_leads_keeps_the_slot() {
-    let mut node = TestNode::new("node-m", 1);
-    node.open_window(WINDOW);
-
+fn still_winning_downward_restamp_matches_fresh_recovery_edge_bytes() {
+    let mut incremental = TestNode::new("restamp-incremental", 1);
+    incremental.open_window(WINDOW);
     let child = fixed_id(0x33);
-    let restamped = fixed_id(0x41); // A@100, re-stamped down to A@80 — still max
-    let live_loser = fixed_id(0x52); // B@70 — stranded, and outranked either way
-    plain_node(&node, &child, b"child");
-    plain_node(&node, &restamped, b"a");
-    plain_node(&node, &live_loser, b"b");
-
+    let winner = fixed_id(0x41);
+    let loser = fixed_id(0x52);
+    plain_node(&incremental, &child, b"child");
+    plain_node(&incremental, &winner, b"a");
+    plain_node(&incremental, &loser, b"b");
     deliver_child_of_candidates(
-        &node,
+        &incremental,
         &child,
-        &[(restamped, T0 + 100), (live_loser, T0 + 70)],
+        &[(winner, T0 + 100), (loser, T0 + 70)],
     );
-    assert_eq!(child_of_parents(&node.vault, &child), vec![restamped]);
-
-    deliver_child_of_candidates(&node, &child, &[(restamped, T0 + 80)]);
+    assert_eq!(child_of_parents(&incremental.vault, &child), vec![winner]);
+    let before = edge_bytes_out(&incremental.vault, &child);
+    deliver_child_of_candidates(&incremental, &child, &[(winner, T0 + 80)]);
+    assert_eq!(child_of_parents(&incremental.vault, &child), vec![winner]);
+    let after = edge_bytes_out(&incremental.vault, &child);
+    assert_ne!(
+        after, before,
+        "a still-winning restamp must update its stored edge clock"
+    );
+    let key = WindowKey::new(WINDOW);
+    let snapshot = incremental
+        .window(WINDOW)
+        .doc
+        .export(ExportMode::snapshot())
+        .expect("final window snapshot");
+    let fresh = TestNode::new("restamp-fresh", 2);
+    let fresh_doc = oneiron::sync::schema::create_window_doc("fresh-recovery", &key);
+    fresh_doc.import(&snapshot).expect("same final CRDT state");
     assert_eq!(
-        child_of_parents(&node.vault, &child),
-        vec![restamped],
-        "a re-stamped winner that still outranks the live set keeps its slot"
+        map_entries(&fresh_doc.get_map("edges")),
+        map_entries(&incremental.window(WINDOW).doc.get_map("edges"))
     );
-
-    let window = node.window(WINDOW);
-    let edges = window.doc.get_map("edges");
+    window::forward_rematerialize(&fresh.vault, &fresh_doc, &fresh.materializer, &key)
+        .expect("forward recovery into an empty vault");
+    assert_eq!(child_of_parents(&fresh.vault, &child), vec![winner]);
+    assert_eq!(after.len(), 1);
+    assert_eq!(after, edge_bytes_out(&fresh.vault, &child));
+    assert!(
+        !fresh
+            .vault
+            .edge_exists(&child, EdgeKind::ChildOf, &loser)
+            .unwrap()
+    );
+    // Recovery of the incremental replica must not resurrect the old clock.
+    incremental.recover(WINDOW);
+    assert_eq!(
+        edge_bytes_out(&incremental.vault, &child),
+        edge_bytes_out(&fresh.vault, &child)
+    );
     assert_eq!(
         map_get_bytes(
-            &edges,
-            &format_edge_key(&child, EdgeKind::ChildOf, &live_loser)
+            &incremental.window(WINDOW).doc.get_map("edges"),
+            &format_edge_key(&child, EdgeKind::ChildOf, &loser)
         ),
-        Some(
-            encode_edge_value_for_crdt(EdgeKind::ChildOf, 1.0, T0 + 70, None, None)
-                .expect("structural ChildOf value")
-        ),
-        "the stranded candidate is read, never rewritten"
+        map_get_bytes(
+            &fresh_doc.get_map("edges"),
+            &format_edge_key(&child, EdgeKind::ChildOf, &loser)
+        )
     );
 }
 
