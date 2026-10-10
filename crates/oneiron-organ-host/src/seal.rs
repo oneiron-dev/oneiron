@@ -44,9 +44,9 @@ const PDF: &str = "application/pdf";
 const MAX_SIGNS: u32 = 3;
 const MAX_FETCHES: u32 = 32;
 const MIB: u64 = 1024 * 1024;
-/// The seal's own response caps: a CRL, and any other fetch (a timestamp).
+/// The seal's own response caps: a CRL, and a timestamp.
 const MAX_CRL_BYTES: u64 = 8 * MIB;
-const MAX_FETCH_BYTES: u64 = MIB;
+const MAX_TSA_BYTES: u64 = MIB;
 /// The engine's 64 MiB prepared limit plus the seal's 32 MiB growth limit.
 const MAX_SEALED_BYTES: u64 = 96 * MIB;
 
@@ -550,10 +550,10 @@ impl AskHandler for Sign<'_> {
     }
 }
 
-/// `net.fetch`: the host's guarded fetch, each fetch inside the fetch
-/// timeout as well as the call's deadline, and inside the seal's own cap
-/// for its purpose, so an oversized timestamp reply is cut off before it
-/// spends the call's answer bytes.
+/// `net.fetch`: the host's guarded fetch, for a timestamp or a CRL only,
+/// each fetch inside the fetch timeout as well as the call's deadline, and
+/// inside the seal's own cap for its purpose, so an oversized timestamp
+/// reply is cut off before it spends the call's answer bytes.
 struct TimedFetch {
     timeout: Duration,
 }
@@ -567,11 +567,16 @@ impl AskHandler for TimedFetch {
                 .find(|(key, _)| key.as_str() == Some("purpose"))
                 .and_then(|(_, value)| value.as_str())
         });
-        // The seal's caps: a CRL may be 8 MiB, anything else 1 MiB.
-        let cap = if purpose == Some("crl") {
-            MAX_CRL_BYTES
-        } else {
-            MAX_FETCH_BYTES
+        // The seal's caps: a CRL may be 8 MiB, a timestamp 1 MiB.
+        let cap = match purpose {
+            Some("crl") => MAX_CRL_BYTES,
+            Some("tsa") => MAX_TSA_BYTES,
+            _ => {
+                return Err(AskRefusal::new(
+                    AskCode::NotGranted,
+                    "the seal fetches only timestamps and CRLs",
+                ));
+            }
         };
         GuardedFetch.answer(&AskRequest {
             deadline,

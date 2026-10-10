@@ -487,8 +487,9 @@ impl SealFetcher for AskedFetcher {
         let (purpose, cap) = match request.purpose {
             FetchPurpose::Timestamp => ("tsa", caps.max_tsa_bytes),
             FetchPurpose::Crl => ("crl", caps.max_crl_bytes),
-            FetchPurpose::Ocsp => ("ocsp", caps.max_ocsp_bytes),
-            FetchPurpose::AuthorityInformationAccess => ("aia", caps.max_aia_bytes),
+            FetchPurpose::Ocsp | FetchPurpose::AuthorityInformationAccess => {
+                return Err(FetchError::Denied);
+            }
         };
         let post = request.method == FetchMethod::Post;
         let ask = FetchAsk {
