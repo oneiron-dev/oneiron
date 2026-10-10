@@ -153,6 +153,7 @@ impl LiveQuerySource for BoundSource {
         // The same verified principal/class pair binds RPC and subscription reads.
         let memory = bound_memory(server.vault(), &self.auth)?;
         let mut dependencies = BTreeSet::new();
+        let mut followed = BTreeSet::new();
         let value = match channel {
             Channel::View => {
                 let scope = RecallScope {
@@ -171,13 +172,29 @@ impl LiveQuerySource for BoundSource {
                     .map_err(AppError::from)?;
                 // Do not publish out-of-scope-world accounting: a world-B
                 // mutation must not produce a world-A push through metadata.
+                let mut served = BTreeSet::new();
                 for item in &pack.items {
                     for id in &item.provenance.source_revision_ids {
-                        if let Ok(id) = oneiron::EntityId::from_hex(id) {
-                            dependencies.insert(format!("e:{}", id.to_hex()));
+                        let Ok(id) = oneiron::EntityId::from_hex(id) else {
+                            continue;
+                        };
+                        let path = format!("e:{}", id.to_hex());
+                        // A TURN item names its messages so the view follows
+                        // a change to any of them; it reads their words live,
+                        // never at their index position.
+                        let message = item.kind == "TURN"
+                            && server.vault().get_entity_type(&id).map_err(|_| {
+                                AppError::internal_server_error("dependency type read failed")
+                            })? == Some(oneiron::registry::ENTITY_TYPE_MESSAGE);
+                        if message {
+                            followed.insert(path.clone());
+                        } else {
+                            served.insert(path.clone());
                         }
+                        dependencies.insert(path);
                     }
                 }
+                followed.retain(|path| !served.contains(path));
                 serde_json::to_value(pack.items)
             }
             Channel::Receipts => serde_json::to_value(
@@ -253,7 +270,7 @@ impl LiveQuerySource for BoundSource {
         // A live edit cannot move this cursor while its index is still behind.
         let indexed = dependencies
             .iter()
-            .filter(|path| path.starts_with("e:"))
+            .filter(|path| path.starts_with("e:") && !followed.contains(*path))
             .map(|path| {
                 let id = oneiron::EntityId::from_hex(path.strip_prefix("e:").ok_or_else(|| {
                     AppError::internal_server_error("invalid indexed dependency")
@@ -338,6 +355,7 @@ impl LiveQuerySource for BoundSource {
                 dependencies.insert(format!("membership:{key}"));
                 dependencies
             },
+            followed,
         })
     }
 

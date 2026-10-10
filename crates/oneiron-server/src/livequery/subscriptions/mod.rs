@@ -20,6 +20,11 @@ pub(crate) struct DerivedView {
     /// Include membership containers, not only current result ids, so
     /// an insertion into an empty view also invalidates it.
     pub dependencies: BTreeSet<String>,
+    /// The dependencies a view follows but serves at no index position, such
+    /// as a TURN's messages, whose words a recall reads live. A change to one
+    /// invalidates the view; its index neither pins the cursor nor holds a
+    /// session that opens while it lags.
+    pub followed: BTreeSet<String>,
 }
 
 /// Implementations must use one authority-bound facade, honor every view
@@ -410,7 +415,12 @@ impl LiveQueries {
             self.source.derive(&view, channel)?
         };
         if new_subscription && channel == Channel::View {
-            let missing = self.source.pending_at_open(&derived.dependencies)?;
+            let served: BTreeSet<String> = derived
+                .dependencies
+                .difference(&derived.followed)
+                .cloned()
+                .collect();
+            let missing = self.source.pending_at_open(&served)?;
             self.tracker.mark_unavailable_at_open(&missing);
         }
         if channel != Channel::OwnerFeed
