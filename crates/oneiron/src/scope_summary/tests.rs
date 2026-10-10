@@ -1,5 +1,6 @@
 //! Exact covers, gated merge atomicity and revision-bound late results.
 
+use super::doors::merge_covers_in_txn;
 use super::*;
 use crate::conversation_dag::fixtures as support;
 use crate::conversation_dag::{ScopePath, ScopeSelector};
