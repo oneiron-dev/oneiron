@@ -1,7 +1,6 @@
 //! grep, ls, find, cat, head and wc verbs with pushdown, walk, visibility and telemetry helpers, and the claim-grep render path.
 
 use crate::ports::EntityStoreRead;
-use std::collections::VecDeque;
 use std::ops::Bound;
 use std::time::Instant;
 
@@ -14,7 +13,7 @@ use crate::gate::{PolicyManifestResolution, SCOPED_READ_EFFECTOR_CORE_READ};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD};
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalSignal, Store};
 
-use super::coreutils_text::{append_grep_file_matches, join_graph_path, literal_grep_pattern};
+use super::coreutils_text::{HeadPosition, literal_grep_pattern, page_lines};
 use super::model::{
     GRAPH_FS_COREUTILS_MAX_RESULT_CAP, GRAPH_FS_MAX_SCAN_ROWS, GraphFsCommandOutput,
     GraphFsCoreutilsDecision, GraphFsCoreutilsVerb, GraphFsEntryKind, GraphFsResolver,
@@ -208,19 +207,35 @@ impl GraphFsResolver<'_, '_> {
         )
     }
 
-    pub fn head(&self, path: &str, lines: usize) -> Result<GraphFsCommandOutput> {
+    /// The first `lines` lines of a file. A page that fills before them
+    /// hands out a cursor to the rest.
+    pub fn head(
+        &self,
+        path: &str,
+        lines: usize,
+        cursor: Option<&str>,
+    ) -> Result<GraphFsCommandOutput> {
         let started = Instant::now();
         let started_at = self.scoped_read.vault().now_recorded_at();
+        let scope = self.cursor_scope(&format!("head -n {lines} {path}"));
+        let from: HeadPosition = scope.open(cursor)?.unwrap_or_default();
         let mut out = CommandOutputBuilder::new(self.options);
+        let mut next_cursor = None;
         let read = self.read_file(path)?;
         if let Some(file) = &read.value {
-            for line in String::from_utf8_lossy(file.bytes()).lines().take(lines) {
-                let mut rendered = line.to_owned();
-                rendered.push('\n');
-                if !out.try_push(rendered.as_bytes()) {
-                    break;
-                }
-            }
+            let (finished, next) = page_lines(
+                file.bytes(),
+                from.lines,
+                &mut out,
+                lines.saturating_sub(from.printed),
+                |line| Some(format!("{line}\n")),
+            );
+            next_cursor = next.map(|at| {
+                scope.seal(&HeadPosition {
+                    lines: at,
+                    printed: from.printed + finished,
+                })
+            });
         }
         let total = out.entries();
         self.finish_coreutils_command(
@@ -230,7 +245,7 @@ impl GraphFsResolver<'_, '_> {
             GraphFsCoreutilsDecision::Walk,
             "graph-fs read_file",
             out.into_bytes(),
-            None,
+            next_cursor,
             Vec::new(),
             total,
             read.receipt,
@@ -263,45 +278,6 @@ impl GraphFsResolver<'_, '_> {
         )
     }
 
-    fn grep_walk(
-        &self,
-        pattern: &str,
-        path: &str,
-        recursive: bool,
-        cursor: Option<&str>,
-    ) -> Result<WalkOutput> {
-        let mut out = CommandOutputBuilder::new(self.options);
-        let mut last_emitted = cursor.map(str::to_owned);
-        let mut total = 0;
-        if !recursive {
-            let read = self.read_file(path)?;
-            if let Some(file) = &read.value {
-                append_grep_file_matches(path, file.bytes(), pattern, &mut out, &mut total);
-            }
-            return Ok(WalkOutput::new(out, None, total, read.receipt));
-        }
-
-        let (paths, mut receipt) = self.walk_paths(path, cursor)?;
-        for path in paths {
-            let read = self.read_file(&path)?;
-            if let Some(read_receipt) = read.receipt {
-                fold_receipt(&mut receipt, read_receipt);
-            }
-            let Some(file) = read.value else {
-                continue;
-            };
-            let before_entries = out.entries();
-            append_grep_file_matches(&path, file.bytes(), pattern, &mut out, &mut total);
-            if out.entries() > before_entries {
-                last_emitted = Some(path);
-            }
-            if out.is_full() {
-                return Ok(WalkOutput::new(out, last_emitted, total, receipt));
-            }
-        }
-        Ok(WalkOutput::new(out, None, total, receipt))
-    }
-
     fn ls_claims_by_time_pushdown(
         &self,
         cursor: Option<&str>,
@@ -316,7 +292,7 @@ impl GraphFsResolver<'_, '_> {
     ) -> Result<(Vec<u8>, Option<String>, usize)> {
         let mut out = CommandOutputBuilder::new(self.options);
         let scope = self.cursor_scope("ls -t /claims");
-        let cursor = scope.open_temporal(cursor)?;
+        let cursor = scope.open::<TemporalCursor>(cursor)?;
         let mut last_emitted = cursor;
         let mut last_scanned: Option<TemporalCursor> = None;
         let mut total = 0;
@@ -341,7 +317,7 @@ impl GraphFsResolver<'_, '_> {
                 let next_cursor = last_scanned.or(last_emitted);
                 return Ok((
                     out.into_bytes(),
-                    next_cursor.map(|cursor| scope.seal_temporal(cursor)),
+                    next_cursor.map(|cursor| scope.seal(&cursor)),
                     total,
                 ));
             }
@@ -365,7 +341,7 @@ impl GraphFsResolver<'_, '_> {
             if !out.try_push(line.as_bytes()) {
                 return Ok((
                     out.into_bytes(),
-                    last_emitted.map(|cursor| scope.seal_temporal(cursor)),
+                    last_emitted.map(|cursor| scope.seal(&cursor)),
                     total,
                 ));
             }
@@ -393,7 +369,7 @@ impl GraphFsResolver<'_, '_> {
     ) -> Result<(Vec<u8>, Option<String>, usize)> {
         let mut out = CommandOutputBuilder::new(self.options);
         let scope = self.cursor_scope(&format!("find -newer {newer_than} {path}"));
-        let cursor = scope.open_temporal(cursor)?;
+        let cursor = scope.open::<TemporalCursor>(cursor)?;
         let mut last_emitted = cursor;
         let mut last_scanned: Option<TemporalCursor> = None;
         let mut total = 0;
@@ -422,7 +398,7 @@ impl GraphFsResolver<'_, '_> {
                 let next_cursor = last_scanned.or(last_emitted);
                 return Ok((
                     out.into_bytes(),
-                    next_cursor.map(|cursor| scope.seal_temporal(cursor)),
+                    next_cursor.map(|cursor| scope.seal(&cursor)),
                     total,
                 ));
             }
@@ -441,7 +417,7 @@ impl GraphFsResolver<'_, '_> {
             if !out.try_push(line.as_bytes()) {
                 return Ok((
                     out.into_bytes(),
-                    last_emitted.map(|cursor| scope.seal_temporal(cursor)),
+                    last_emitted.map(|cursor| scope.seal(&cursor)),
                     total,
                 ));
             }
@@ -449,76 +425,6 @@ impl GraphFsResolver<'_, '_> {
             last_emitted = Some(temporal);
         }
         Ok((out.into_bytes(), None, total))
-    }
-
-    fn find_walk(&self, path: &str, cursor: Option<&str>) -> Result<WalkOutput> {
-        let mut out = CommandOutputBuilder::new(self.options);
-        let mut last_emitted = cursor.map(str::to_owned);
-        let mut total = 0;
-        let (paths, receipt) = self.walk_paths(path, cursor)?;
-        for path in paths {
-            let mut line = path.clone();
-            line.push('\n');
-            if !out.try_push(line.as_bytes()) {
-                return Ok(WalkOutput::new(out, last_emitted, total, receipt));
-            }
-            total += 1;
-            last_emitted = Some(path);
-        }
-        Ok(WalkOutput::new(out, None, total, receipt))
-    }
-
-    /// Visible paths under `path`, with the folded receipt of every listing
-    /// the walk read.
-    fn walk_paths(
-        &self,
-        path: &str,
-        cursor: Option<&str>,
-    ) -> Result<(Vec<String>, Option<ScopedReadReceipt>)> {
-        let mut receipt = None;
-        let mut paths = Vec::new();
-        let mut queue = VecDeque::from([path.to_owned()]);
-        let mut scanned = 0usize;
-        let mut skipping = cursor.is_some();
-        while let Some(current) = queue.pop_front() {
-            if scanned >= GRAPH_FS_MAX_SCAN_ROWS {
-                break;
-            }
-            scanned += 1;
-            if !self.coreutils_path_visible(&current)? {
-                continue;
-            }
-            if skipping {
-                if cursor == Some(current.as_str()) {
-                    skipping = false;
-                }
-            } else {
-                paths.push(current.clone());
-                if paths.len() >= self.coreutils_result_cap() {
-                    break;
-                }
-            }
-
-            let page = self.readdir(&current, None)?;
-            if let Some(read) = page.read_receipt() {
-                fold_receipt(&mut receipt, read.clone());
-            }
-            for entry in page.entries() {
-                if entry.kind() == GraphFsEntryKind::Cursor {
-                    continue;
-                }
-                let child = join_graph_path(&current, entry.name());
-                if matches!(entry.kind(), GraphFsEntryKind::Directory) {
-                    queue.push_back(child);
-                } else if !skipping && self.coreutils_path_visible(&child)? {
-                    paths.push(child);
-                    if paths.len() >= self.coreutils_result_cap() {
-                        return Ok((paths, receipt));
-                    }
-                }
-            }
-        }
-        Ok((paths, receipt))
     }
 
     fn find_path_for_temporal_hit_in(
@@ -547,7 +453,7 @@ impl GraphFsResolver<'_, '_> {
         Ok(Some(format!("{output}\n")))
     }
 
-    fn coreutils_path_visible(&self, path: &str) -> Result<bool> {
+    pub(super) fn coreutils_path_visible(&self, path: &str) -> Result<bool> {
         let components = path_components(path)?;
         match components.as_slice() {
             ["claims", "by-id"] | ["claims", "by-time"] | ["claims", "by-time", _] => Ok(true),
@@ -664,37 +570,6 @@ impl GraphFsResolver<'_, '_> {
             telemetry_run_id,
             read_receipt,
         })
-    }
-}
-
-/// A walk's rendered output and the folded receipt of the reads behind it.
-struct WalkOutput {
-    bytes: Vec<u8>,
-    next_cursor: Option<String>,
-    total: usize,
-    receipt: Option<ScopedReadReceipt>,
-}
-
-impl WalkOutput {
-    fn new(
-        out: CommandOutputBuilder,
-        next_cursor: Option<String>,
-        total: usize,
-        receipt: Option<ScopedReadReceipt>,
-    ) -> Self {
-        Self {
-            bytes: out.into_bytes(),
-            next_cursor,
-            total,
-            receipt,
-        }
-    }
-}
-
-fn fold_receipt(into: &mut Option<ScopedReadReceipt>, later: ScopedReadReceipt) {
-    match into {
-        Some(receipt) => receipt.restrict_with(&later),
-        None => *into = Some(later),
     }
 }
 

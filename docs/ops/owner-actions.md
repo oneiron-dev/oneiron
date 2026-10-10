@@ -280,9 +280,12 @@ The session lives in the server process: a restart ends it, and only saved turns
 `GET /v1/owner/graph-fs?path=/entities` reads the vault as a read-only tree (OF-355): `/worlds`,
 `/entities`, `/claims` (by time and by id) and `/backlinks`. `op` is `ls` (default), `cat`,
 `head` (`lines`), `wc`, `find` (`newer_than`), `grep` (`pattern`, `recursive`) or `readlink`.
-Listings and searches are bounded; pass `next_cursor` back as `cursor` for the next page. A
-listing's cursor is sealed: it names no row, and it works only for you, on that path, until the
-server restarts (then list again). Reads go through your own scoped read, so scopes excluded
+Listings and searches are bounded; pass `next_cursor` back as `cursor` for the next page. Every
+page that a limit cut hands out a cursor, so only the last page has none: `find` walks depth first
+through every page of every directory, `grep` and `head` resume inside a file, and a line longer
+than a page continues on the next one, cut on a character boundary. A listing's or search's cursor
+is sealed: it names no row, and it works only for you, on that path with those parameters, until
+the server restarts (then list again). Reads go through your own scoped read, so scopes excluded
 from you are absent. Sealed secret custody is never part of the tree: walks pass over it, and a
 direct read of it is refused. `output` comes with its `encoding`: `utf8` for text, or `base64`
 for bytes that are not text, such as a MessagePack body. `cat` pages a text body on character

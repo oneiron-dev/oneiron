@@ -86,7 +86,7 @@ pub(crate) fn run(
     let output = match query.op {
         Command::Ls => tree.ls(path, query.by_time, cursor)?,
         Command::Cat => tree.cat(path, cursor)?,
-        Command::Head => tree.head(path, query.lines.unwrap_or(HEAD_LINES))?,
+        Command::Head => tree.head(path, query.lines.unwrap_or(HEAD_LINES), cursor)?,
         Command::Wc => tree.wc(path)?,
         Command::Find => tree.find(path, query.newer_than, cursor)?,
         Command::Grep => {

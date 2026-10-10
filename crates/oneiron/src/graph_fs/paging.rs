@@ -25,8 +25,10 @@ impl TemporalCursor {
             timestamp: self.learned_at,
         }
     }
+}
 
-    fn to_bytes(self) -> Vec<u8> {
+impl SealedPosition for TemporalCursor {
+    fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = self.learned_at.to_be_bytes().to_vec();
         bytes.extend_from_slice(self.id.as_bytes());
         bytes
@@ -36,7 +38,7 @@ impl TemporalCursor {
         let (learned_at, id) = bytes.split_first_chunk::<8>()?;
         Some(Self {
             learned_at: u64::from_be_bytes(*learned_at),
-            id: EntityId::from_bytes(id.try_into().ok()?).ok()?,
+            id: entity_id(id)?,
         })
     }
 }
@@ -57,8 +59,10 @@ impl EdgeCursor {
             source: edge.target,
         }
     }
+}
 
-    fn to_bytes(self) -> Vec<u8> {
+impl SealedPosition for EdgeCursor {
+    fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = vec![self.kind];
         bytes.extend_from_slice(self.source.as_bytes());
         bytes
@@ -68,9 +72,65 @@ impl EdgeCursor {
         let (kind, source) = bytes.split_first()?;
         Some(Self {
             kind: *kind,
-            source: EntityId::from_bytes(source.try_into().ok()?).ok()?,
+            source: entity_id(source)?,
         })
     }
+}
+
+/// Where the day listing resumes: after a timeline row, and whether that
+/// row's day is already listed (every later row is in that day or after it,
+/// so this is all the listing needs to pass over the days it listed). Sealed,
+/// it fits the page's `_more` reserve.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct DayPosition {
+    pub(super) after: Option<TemporalCursor>,
+    pub(super) day_listed: bool,
+}
+
+impl SealedPosition for DayPosition {
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = vec![u8::from(self.day_listed)];
+        if let Some(after) = self.after {
+            bytes.extend_from_slice(&after.to_bytes());
+        }
+        bytes
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        let (flag, after) = bytes.split_first()?;
+        Some(Self {
+            after: match after {
+                [] => None,
+                after => Some(TemporalCursor::from_bytes(after)?),
+            },
+            day_listed: match flag {
+                0 => false,
+                1 => true,
+                _ => return None,
+            },
+        })
+    }
+}
+
+/// An id listing resumes after the last id it read.
+impl SealedPosition for EntityId {
+    fn to_bytes(&self) -> Vec<u8> {
+        self.as_bytes().to_vec()
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        entity_id(bytes)
+    }
+}
+
+/// What a sealed token carries: a position, as bytes.
+pub(super) trait SealedPosition: Sized {
+    fn to_bytes(&self) -> Vec<u8>;
+    fn from_bytes(bytes: &[u8]) -> Option<Self>;
+}
+
+fn entity_id(bytes: &[u8]) -> Option<EntityId> {
+    EntityId::from_bytes(bytes.try_into().ok()?).ok()
 }
 
 /// A sealed position is its nonce, its tag, then the position's own bytes:
@@ -115,31 +175,17 @@ impl GraphFsResolver<'_, '_> {
 }
 
 impl CursorScope {
-    pub(super) fn seal_temporal(&self, cursor: TemporalCursor) -> String {
-        self.seal(&cursor.to_bytes())
+    pub(super) fn seal<P: SealedPosition>(&self, position: &P) -> String {
+        self.seal_bytes(&position.to_bytes())
     }
 
-    pub(super) fn open_temporal(&self, token: Option<&str>) -> Result<Option<TemporalCursor>> {
+    /// The position a token sealed, if this scope sealed it.
+    pub(super) fn open<P: SealedPosition>(&self, token: Option<&str>) -> Result<Option<P>> {
         token
             .map(|token| {
-                self.open(token)
+                self.open_bytes(token)
                     .as_deref()
-                    .and_then(TemporalCursor::from_bytes)
-                    .ok_or_else(invalid_cursor)
-            })
-            .transpose()
-    }
-
-    pub(super) fn seal_edge(&self, cursor: EdgeCursor) -> String {
-        self.seal(&cursor.to_bytes())
-    }
-
-    pub(super) fn open_edge(&self, token: Option<&str>) -> Result<Option<EdgeCursor>> {
-        token
-            .map(|token| {
-                self.open(token)
-                    .as_deref()
-                    .and_then(EdgeCursor::from_bytes)
+                    .and_then(P::from_bytes)
                     .ok_or_else(invalid_cursor)
             })
             .transpose()
@@ -149,7 +195,7 @@ impl CursorScope {
     /// of the nonce and the position, and the position travels XORed with a
     /// stream keyed by that tag. Two tokens never compare equal, even for one
     /// position, so comparing them says nothing about where a walk stopped.
-    fn seal(&self, position: &[u8]) -> String {
+    fn seal_bytes(&self, position: &[u8]) -> String {
         let mut nonce = [0; SEALED_NONCE_LEN];
         OsRng.fill_bytes(&mut nonce);
         let tag = self.tag(&nonce, position);
@@ -160,7 +206,7 @@ impl CursorScope {
         bytes_to_hex_lower(&token)
     }
 
-    fn open(&self, token: &str) -> Option<Vec<u8>> {
+    fn open_bytes(&self, token: &str) -> Option<Vec<u8>> {
         if !token.len().is_multiple_of(2) || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return None;
         }
@@ -317,6 +363,33 @@ impl CommandOutputBuilder {
         self.bytes.extend_from_slice(bytes);
         self.entries += 1;
         true
+    }
+
+    /// Pushes `line` from byte `printed` on (what earlier pages printed of
+    /// it). Returns `None` once all of it is in, else how much of it has
+    /// printed when the page filled: no more, on a page holding other lines;
+    /// as much as fits, cut on a character boundary, on an empty one, so a
+    /// line longer than any page prints across pages.
+    pub(super) fn push_line(&mut self, line: &str, printed: usize) -> Option<usize> {
+        let printed = if line.is_char_boundary(printed) {
+            printed
+        } else {
+            0
+        };
+        let rest = &line[printed..];
+        if self.try_push(rest.as_bytes()) {
+            return None;
+        }
+        if self.entries > 0 {
+            return Some(printed);
+        }
+        let mut end = self.byte_cap.min(rest.len());
+        while !rest.is_char_boundary(end) {
+            end -= 1;
+        }
+        self.bytes.extend_from_slice(&rest.as_bytes()[..end]);
+        self.entries += 1;
+        Some(printed + end)
     }
 
     pub(super) fn entries(&self) -> usize {

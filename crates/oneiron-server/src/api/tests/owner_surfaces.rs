@@ -310,7 +310,7 @@ async fn an_archived_attempt_is_in_the_review_and_restores_onto_the_queue() {
     assert_eq!(status, StatusCode::CONFLICT, "{again}");
 }
 
-fn claim_about(server: &SyncServer, subject: EntityId, predicate: &str, text: &str) {
+fn claim_about(server: &SyncServer, subject: EntityId, predicate: &str, text: &str) -> EntityId {
     let mut body = oneiron::ClaimBody::new(
         predicate,
         oneiron::ClaimSubject::Entity(subject),
@@ -322,15 +322,12 @@ fn claim_about(server: &SyncServer, subject: EntityId, predicate: &str, text: &s
     .unwrap();
     body.salience = Some(0.9);
     body.source = Some(ClaimSource::UserStated);
+    let id = EntityId::now();
     server
         .vault()
-        .put_claim(
-            &EntityId::now(),
-            &body,
-            TimeRange { start: 10, end: 10 },
-            10,
-        )
+        .put_claim(&id, &body, TimeRange { start: 10, end: 10 }, 10)
         .unwrap();
+    id
 }
 
 /// OF-325 mode A: the owner previews the card and strikes a row; the export
@@ -789,6 +786,129 @@ async fn graph_fs_cat_rejoins_to_the_stored_bytes() {
         assert_eq!(encodings, expected);
         assert_eq!(joined, body);
     }
+}
+
+/// Every page of one Graph-FS read, following `next_cursor` to the end:
+/// each page's output, and whether it handed out a cursor. Every page is
+/// text on its own.
+async fn graph_fs_pages(server: &Arc<SyncServer>, owner: &str, query: &str) -> Vec<(String, bool)> {
+    let mut pages = Vec::new();
+    let mut cursor = String::new();
+    loop {
+        assert!(pages.len() < 64, "{query}: paging must end");
+        let (status, page) = call(
+            server,
+            "GET",
+            &format!("/v1/owner/graph-fs?{query}{cursor}"),
+            owner.to_owned(),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{query}: {page}");
+        assert_eq!(page["encoding"], "utf8", "{query}: {page}");
+        let next = page["next_cursor"].as_str().map(str::to_owned);
+        pages.push((page["output"].as_str().unwrap().to_owned(), next.is_some()));
+        let Some(next) = next else {
+            return pages;
+        };
+        cursor = format!("&cursor={next}");
+    }
+}
+
+/// `find` walks every page of every directory: a tree past the 512 paths
+/// where the walk used to stop, in listings longer than one page, comes back
+/// with each visible path exactly once, and only the last page has no cursor
+/// (Greptile P1 on #1341).
+#[tokio::test]
+async fn graph_fs_find_pages_through_every_path_once() {
+    use std::collections::BTreeSet;
+    let (_dir, server) = auth_test_server();
+    let owner = owner_recipe(&server);
+    let subject = person(&server, b"Ada");
+    let claims: BTreeSet<String> = (0..400)
+        .map(|at| claim_about(&server, subject, "profile.note", &format!("note {at}")).to_hex())
+        .collect();
+    let root = format!("/entities/{}", subject.to_hex());
+    let listing = |dir: &str| {
+        let (server, owner, dir) = (server.clone(), owner.clone(), dir.to_owned());
+        async move {
+            let pages = graph_fs_pages(&server, &owner, &format!("path={dir}")).await;
+            (
+                pages.len(),
+                pages
+                    .iter()
+                    .flat_map(|(output, _)| output.lines())
+                    .map(|name| format!("{dir}/{name}"))
+                    .collect::<Vec<_>>(),
+            )
+        }
+    };
+    // The subject's claims and backlinks each list over more than one page.
+    let (claim_pages, claim_paths) = listing(&format!("{root}/claims")).await;
+    let (backlink_pages, backlink_paths) = listing(&format!("{root}/backlinks")).await;
+    assert!(claim_pages > 1 && backlink_pages > 1);
+    let named = |paths: &[String], dir: &str| -> BTreeSet<String> {
+        paths
+            .iter()
+            .filter_map(|path| path.strip_prefix(&format!("{root}/{dir}/")))
+            .map(|name| name.rsplit('-').next().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(named(&claim_paths, "claims"), claims);
+    assert!(claims.is_subset(&named(&backlink_paths, "backlinks")));
+    let mut expected: BTreeSet<String> = [
+        root.clone(),
+        format!("{root}/backlinks"),
+        format!("{root}/body"),
+        format!("{root}/claims"),
+    ]
+    .into();
+    expected.extend(claim_paths);
+    expected.extend(backlink_paths);
+    assert!(expected.len() > 512, "{}", expected.len());
+
+    let pages = graph_fs_pages(&server, &owner, &format!("path={root}&op=find")).await;
+    assert!(pages.len() > 1);
+    let (last, cut) = pages.split_last().unwrap();
+    assert!(cut.iter().all(|(_, more)| *more) && !last.1);
+    let found: Vec<&str> = pages.iter().flat_map(|(output, _)| output.lines()).collect();
+    let unique: BTreeSet<String> = found.iter().map(|path| (*path).to_owned()).collect();
+    assert_eq!(unique.len(), found.len(), "a path came back twice");
+    assert_eq!(unique, expected);
+}
+
+/// `grep` in one file pages through its matches: 513 short matching lines
+/// come back over two pages, each once, in order; and a matching line longer
+/// than a page prints across pages, cut on a character boundary, so the
+/// pages rejoin exactly (Greptile P1 on #1341).
+#[tokio::test]
+async fn graph_fs_grep_pages_through_one_file() {
+    let (_dir, server) = auth_test_server();
+    let owner = owner_recipe(&server);
+    let short: Vec<String> = (0..513).map(|at| format!("é match {at:03}")).collect();
+    let id = person(&server, short.join("\n").as_bytes()).to_hex();
+    let query = format!("path=/entities/{id}/body&op=grep&pattern=match");
+    let pages = graph_fs_pages(&server, &owner, &query).await;
+    assert_eq!(pages.len(), 2);
+    let matches: Vec<&str> = pages.iter().flat_map(|(output, _)| output.lines()).collect();
+    let expected: Vec<String> = short
+        .iter()
+        .map(|line| format!("/entities/{id}/body:{line}"))
+        .collect();
+    assert_eq!(matches, expected);
+
+    // A page is 16 KiB, and a rendered match starts with the 48-byte
+    // `/entities/<id>/body:`: the two-byte `é` straddles the first page's end.
+    let mut long = "match ".to_owned();
+    long.push_str(&"a".repeat(16 * 1024 - 1 - 48 - long.len()));
+    long.push_str("é, then the rest");
+    let id = person(&server, format!("{long}\nno hit\nmatch two").as_bytes()).to_hex();
+    let query = format!("path=/entities/{id}/body&op=grep&pattern=match");
+    let pages = graph_fs_pages(&server, &owner, &query).await;
+    assert_eq!(pages.len(), 2);
+    let joined: String = pages.iter().map(|(output, _)| output.as_str()).collect();
+    let prefix = format!("/entities/{id}/body:");
+    assert_eq!(joined, format!("{prefix}{long}\n{prefix}match two\n"));
 }
 
 fn feedback_server(endpoint: &str) -> (tempfile::TempDir, Arc<SyncServer>) {
