@@ -5,13 +5,10 @@ use super::*;
 use crate::edge::EdgeActorClass;
 use crate::memory::{SafeDeleteReason, WitnessAuthor, WitnessMessage, WitnessTurn};
 use crate::registry::ENTITY_TYPE_PERSON;
+use crate::test_util::entity;
 use crate::{TimeRange, Vault, VaultConfig};
 
 const AT: u64 = 1_790_000_000;
-
-fn id(byte: u8) -> EntityId {
-    EntityId::from_bytes([byte; 16]).expect("id")
-}
 
 fn said(order: u32, author: WitnessAuthor, content: &str) -> WitnessMessage {
     WitnessMessage {
@@ -95,8 +92,8 @@ fn a_transcript_reads_turns_in_order_and_never_returns_an_erased_message() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
-    let room = id(0xD7);
-    let (first, second, third) = (id(0xD3), id(0xD1), id(0xD2));
+    let room = entity(0xD0);
+    let (first, second, third) = (entity(0xD3), entity(0xD1), entity(0xD2));
     let last = witness(
         &vault,
         owner,
@@ -111,9 +108,10 @@ fn a_transcript_reads_turns_in_order_and_never_returns_an_erased_message() {
         room,
         first,
         AT,
+        // Given out of order: the transcript reads them by their order.
         vec![
-            said(0, WitnessAuthor::User, "first words"),
             said(1, WitnessAuthor::User, "and more"),
+            said(0, WitnessAuthor::User, "first words"),
         ],
     );
     witness(
@@ -155,7 +153,8 @@ fn a_transcript_reads_turns_in_order_and_never_returns_an_erased_message() {
 
     let memory = vault.memory(owner, EdgeActorClass::Human);
     memory
-        .safe_delete(&opening[1], SafeDeleteReason::UserHardDelete)
+        // The receipt names the messages as given: "and more" first.
+        .safe_delete(&opening[0], SafeDeleteReason::UserHardDelete)
         .expect("erase one message of the first turn");
     memory
         .safe_delete(&last[0], SafeDeleteReason::UserDelete)
@@ -179,8 +178,8 @@ fn a_turn_that_moves_while_a_page_is_read_is_served_where_it_now_is() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
-    let room = id(0xD9);
-    let (early, later) = (id(0xDA), id(0xDB));
+    let room = entity(0xD9);
+    let (early, later) = (entity(0xDA), entity(0xDB));
     witness(
         &vault,
         owner,
@@ -250,7 +249,7 @@ fn a_scoped_reader_gets_exactly_the_messages_it_may_read() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
     let owner = vault.ensure_embedded_owner_actor().expect("owner");
-    let scoped = id(0x67);
+    let scoped = entity(0x67);
     vault
         .put_entity(
             &scoped,
@@ -260,14 +259,14 @@ fn a_scoped_reader_gets_exactly_the_messages_it_may_read() {
             b"scoped reader",
         )
         .expect("put the scoped reader");
-    let space = id(0x68);
+    let space = entity(0x68);
     let granted = |order, author, content| {
         let mut message = said(order, author, content);
         message.metadata = Some(serde_json::json!({"rel": space.to_hex()}));
         message
     };
-    let room = id(0xD8);
-    let (first, second, third) = (id(0xD4), id(0xD5), id(0xD6));
+    let room = entity(0xD8);
+    let (first, second, third) = (entity(0xD4), entity(0xD5), entity(0xD6));
     witness(
         &vault,
         owner,
@@ -322,7 +321,7 @@ fn a_scoped_reader_gets_exactly_the_messages_it_may_read() {
         .expect("scoped read permit");
     vault
         .create_access_grant(
-            &id(0x6b),
+            &entity(0x6b),
             &AccessGrant {
                 authority_scope: crate::federation::scope_codec::read_preset(),
                 principal_ref: scoped,
