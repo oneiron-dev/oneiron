@@ -1,5 +1,6 @@
 //! Exact covers, gated merge atomicity and revision-bound late results.
 
+use super::doors::merge_covers_in_txn;
 use super::*;
 use crate::conversation_dag::fixtures as support;
 use crate::conversation_dag::{ScopePath, ScopeSelector};
@@ -255,6 +256,8 @@ fn scope_summary_codec_is_distinct_strict_and_versioned() {
         actor: actor.to_hex(),
         covers: vec![EntityId::now()],
         minted_at: 1,
+        messages: Vec::new(),
+        memo: None,
     };
     let encoded = encode_scope_summary_body(&summary).unwrap();
     assert_eq!(decode_scope_summary_body(&encoded).unwrap(), summary);

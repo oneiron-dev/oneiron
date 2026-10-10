@@ -14,6 +14,9 @@ use super::wake::{
     WakeEnvelope,
 };
 
+/// Pending wakes one connection holds before the oldest is dropped.
+const PENDING_WAKES_CAP: usize = 256;
+
 #[derive(Debug)]
 pub struct StreamConnectionState {
     pub mode: BoardRenderMode,
@@ -33,6 +36,7 @@ pub struct BoardStreamRegistry {
     pub(super) connections: HashMap<StreamConnectionId, StreamConnectionState>,
     pub(super) instances: BTreeMap<HarnessInstanceKey, InstanceAdapterState>,
     pub(super) wake_observations: WakeDispatchObservations,
+    pub(super) published_tasks: super::publish::PublishedTasks,
 }
 
 impl BoardStreamRegistry {
@@ -202,14 +206,23 @@ impl BoardStreamRegistry {
     }
 
     pub fn route_event(&mut self, e: BoardEvent) -> RouteObservation {
+        self.route_event_where(e, |_, _| true)
+    }
+
+    /// [`Self::route_event`] over the connections `admit` accepts.
+    pub(super) fn route_event_where(
+        &mut self,
+        e: BoardEvent,
+        admit: impl Fn(&StreamConnectionId, &StreamConnectionState) -> bool,
+    ) -> RouteObservation {
         let mut o = RouteObservation::default();
         let class = e.class();
         if !class.is_pushable() {
             o.on_demand_ignored = self.connections.len();
             return o;
         }
-        for st in self.connections.values_mut() {
-            if !st.subscribed.contains(&e.subscription_scope()) {
+        for (c, st) in &mut self.connections {
+            if !admit(c, st) || !st.subscribed.contains(&e.subscription_scope()) {
                 continue;
             }
             let matches = match &e {
@@ -226,6 +239,11 @@ impl BoardStreamRegistry {
             match e.clone() {
                 BoardEvent::ConsultArrived { event, line }
                 | BoardEvent::OwnTaskFailed { event, line } => {
+                    // Wakes wait for a host-side adapter that may never come.
+                    // The oldest goes first; the durable TASK still stands.
+                    if st.wakes.len() >= PENDING_WAKES_CAP {
+                        st.wakes.pop_front();
+                    }
                     st.wakes.push_back(WakeEnvelope {
                         event_ref: event.event_ref().into(),
                         task_ref: event.task_ref().into(),

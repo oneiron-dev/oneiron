@@ -67,6 +67,21 @@ pub(crate) struct RunResolved {
     pub(crate) action: &'static str,
     pub(crate) receipt_id: String,
     pub(crate) claim_ids: Vec<String>,
+    /// Approved commitment wakes in the run, each with the outbound intent it
+    /// scheduled or why it could not (ARCH-0046 O2).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) commitment_wakes: Vec<CommitmentWakeScheduled>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct CommitmentWakeScheduled {
+    pub(crate) claim_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) intent_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) outcome: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) error: Option<String>,
 }
 
 /// Runs with proposals waiting, most proposals first.
@@ -212,6 +227,37 @@ pub(crate) fn resolve(
             ),
             _ => OwnerError::from(error),
         })?;
+    // The approval half of a commitment wake: an approved proposal schedules
+    // its outbound intent now, after the approval committed.
+    let commitment_wakes = match receipt.action {
+        GateConsentBundleAction::Approve => {
+            oneiron::commitment_wake::schedule_approved_commitment_wakes(
+                vault,
+                &receipt.member_claim_ids,
+            )
+        }
+        _ => Vec::new(),
+    }
+    .into_iter()
+    .map(|(claim, scheduled)| {
+        let (intent_ref, outcome, error) = match scheduled {
+            Ok(receipt) => (Some(receipt.intent_ref), Some(receipt.outcome), None),
+            Err(error) => {
+                // The message can quote proposal text, which this endpoint
+                // masks everywhere else.
+                let error = redacted(error.to_string());
+                tracing::warn!(claim = %claim.to_hex(), %error, "approved commitment wake did not schedule");
+                (None, None, Some(error))
+            }
+        };
+        CommitmentWakeScheduled {
+            claim_id: claim.to_hex(),
+            intent_ref,
+            outcome,
+            error,
+        }
+    })
+    .collect();
     Ok(RunResolved {
         run_ref: run_ref(&receipt.dreamer_run_id),
         run_id: redacted(receipt.dreamer_run_id),
@@ -223,6 +269,7 @@ pub(crate) fn resolve(
             .iter()
             .map(EntityId::to_hex)
             .collect(),
+        commitment_wakes,
     })
 }
 

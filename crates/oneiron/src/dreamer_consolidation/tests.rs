@@ -30,6 +30,7 @@ mod persistent_conflicts;
 mod person_extraction;
 mod prior_heads;
 mod scope_enforcement;
+mod scope_summaries;
 mod support;
 mod weave_grant;
 mod witnessed_turns;

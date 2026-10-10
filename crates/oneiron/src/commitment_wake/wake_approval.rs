@@ -374,6 +374,96 @@ pub fn schedule_approved_commitment_wake(
     })
 }
 
+/// The approval half of a commitment wake (ARCH-0046 O2): every approved
+/// `commitment.wake_proposal` among `claims` schedules its outbound intent as
+/// the agent that authored it. Run after an approval door commits; other
+/// claims are passed over, and a replay is idempotent on the phase key.
+///
+/// One result per wake proposal, so the door can report a proposal whose
+/// approval left it inert (a commitment closed meanwhile, a refused channel).
+pub fn schedule_approved_commitment_wakes(
+    vault: &Vault,
+    claims: &[EntityId],
+) -> Vec<(EntityId, MemoryResult<OutboundIntentReceipt>)> {
+    let dreamer = vault.dreamer_authority().ok();
+    claims
+        .iter()
+        .filter_map(|id| {
+            // A claim that cannot be read is reported, never passed over: the
+            // owner learns which approval did not schedule.
+            let claim = match vault.get_claim(id) {
+                Ok(claim) => claim?,
+                Err(error) => return Some((*id, Err(MemoryError::from(error)))),
+            };
+            if claim.predicate != PREDICATE_COMMITMENT_WAKE_PROPOSAL
+                || claim.approval != ClaimApprovalStatus::Approved
+            {
+                return None;
+            }
+            let scheduled = approved_commitment_wake(vault, id)
+                .map_err(MemoryError::from)
+                .and_then(|approved| {
+                    let class = dreamer
+                        .filter(|actor| actor.entity_ref() == approved.bound_actor)
+                        .map_or(crate::EdgeActorClass::Agent, crate::WriteActor::actor_class);
+                    let facade = vault.memory(approved.bound_actor, class);
+                    schedule_approved_commitment_wake(&facade, approved)
+                });
+            Some((*id, scheduled))
+        })
+        .collect()
+}
+
+/// Whether a scheduled send still holds the approval that scheduled it.
+///
+/// A send whose trigger names a commitment (`commitment:<instance>`) was
+/// scheduled from one approved `commitment.wake_proposal`, and the TASK keeps
+/// what identifies it: the commitment and the phase key. The connector
+/// executor asks this before every attempt, the first and each retry. Some
+/// proposal about that commitment must still be active and approved, its
+/// commitment live, and its phase key, delivery fields and author the ones
+/// the send carries. A retraction, a revoked approval or a closed commitment
+/// therefore stops a send that has not crossed yet. Any other send is not this
+/// check's to judge.
+pub(crate) fn scheduled_commitment_wake_authorised(
+    vault: &Vault,
+    task: &crate::outbound::ConnectorSendTask,
+) -> Result<bool> {
+    let intent = &task.intent;
+    let Some(instance) = intent
+        .trigger_ref
+        .strip_prefix(super::COMMITMENT_WAKE_TRIGGER_REF_PREFIX)
+    else {
+        return Ok(true);
+    };
+    if crate::outbound::OutboundIntentSource::parse(&intent.intent_source)
+        != Some(crate::outbound::OutboundIntentSource::Commitment)
+    {
+        return Ok(true);
+    }
+    let Ok(instance) = EntityId::from_hex(instance) else {
+        return Ok(false);
+    };
+    for claim in vault.claims_for_subject(&instance)? {
+        // Anything that is not a live approved wake proposal authorises nothing.
+        let Ok(approved) = approved_commitment_wake(vault, &claim) else {
+            continue;
+        };
+        if approved.bound_actor == task.actor_ref
+            && intent.idempotency_key.as_deref() == Some(approved.idempotency_key.as_str())
+            && intent.verb == approved.verb
+            && intent.channel == approved.channel
+            && intent.target == approved.target
+            && intent.on_behalf_of == approved.on_behalf_of
+            && intent.content_ref == approved.content_ref
+            && intent.dedupe_key == approved.dedupe_key
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn stale_commitment_wake_token() -> MemoryError {
     MemoryError::from(Error::InvalidClaimBody(
         "approved commitment wake token is stale",

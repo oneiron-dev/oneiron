@@ -3,6 +3,7 @@
 mod events;
 mod frames;
 mod provenance;
+mod publish;
 mod registry;
 mod wake;
 mod wake_dispatch;
@@ -21,6 +22,7 @@ pub use self::frames::{
     CoalesceOutcome, DeltaRow, FrameApplyOutcome, FrameEnqueueOutcome, FrameKind,
     StreamConnectionId,
 };
+pub use self::publish::CommittedTaskBoardState;
 pub use self::registry::{BoardStreamRegistry, StreamConnectionState};
 pub use self::wake::{
     BindInstanceError, HarnessInstanceKey, InstanceBindingReceipt, WakeAdapterKind,

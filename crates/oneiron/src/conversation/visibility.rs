@@ -178,7 +178,7 @@ impl AudienceCache {
         }
         if h.entity_type == ENTITY_TYPE_CLAIM {
             let claim = crate::claim::decode_claim_body(body, true)?;
-            let covers = crate::scope_summary::merge_covers_in_txn(vault, txn, &claim);
+            let covers = crate::scope_summary::merge_word_sources_in_txn(vault, txn, &claim);
             if !self.covers_readable(vault, txn, covers, audience, depth)? {
                 return Ok(false);
             }

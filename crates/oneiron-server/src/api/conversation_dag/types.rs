@@ -137,7 +137,8 @@ pub(crate) struct DagSpawnRequest {
 #[serde(deny_unknown_fields)]
 pub(crate) struct DagSummaryRequest {
     pub scope: DagScopeRequest,
-    pub text: String,
+    /// Lands the merge header. The Dreamer writes the body, so a request
+    /// carries no text (ARCH-0006a).
     pub actor: DagActor,
     pub land_on: Option<String>,
     #[serde(default)]
@@ -218,11 +219,12 @@ pub(crate) struct DagMigrationResponse {
     pub migrated: bool,
 }
 
+/// A declared summary, queued for the Dreamer to write.
 #[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct DagSummaryResponse {
-    pub summary: String,
-    pub claim: Option<String>,
-    pub record: Option<String>,
+pub(crate) struct DagSummaryQueuedResponse {
+    pub attempt: String,
+    /// An identical declaration was still queued; this joined it.
+    pub coalesced: bool,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -240,7 +242,7 @@ pub(crate) struct DagThreadMetaResponse {
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DagThreadSummaryRequest {
-    pub text: String,
+    /// Lands the merge header on the trunk; the Dreamer writes the body.
     pub actor: DagActor,
 }
 

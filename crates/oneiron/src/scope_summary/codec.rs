@@ -6,14 +6,18 @@ use crate::{EntityId, limits::MAX_ANCESTOR_DEPTH};
 use rmpv::Value;
 use std::collections::HashSet;
 
-/// Version-one scope-summary payload. The caller owns the text verbatim.
+/// Scope-summary payload. Outside tests the text is the Dreamer's.
+///
+/// Version 1 names the covered records. Version 2, the Dreamer's composed
+/// body, also names the MESSAGEs its words came from and the composition
+/// memo.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScopeSummaryBody {
-    /// Codec version; currently exactly 1.
+    /// Codec version: 1, or 2 for a composed body.
     pub v: u8,
     /// Selector resolved in the mint transaction.
     pub scope: ScopeSelector,
-    /// Caller-provided text, never composed or rewritten by the engine.
+    /// The body as its producer wrote it, never rewritten by the engine.
     pub text: String,
     /// Validated producer's 32-hex entity id.
     pub actor: String,
@@ -21,6 +25,22 @@ pub struct ScopeSummaryBody {
     pub covers: Vec<EntityId>,
     /// Mint timestamp in Unix seconds.
     pub minted_at: u64,
+    /// The MESSAGEs whose text the body was written from, each at the
+    /// revision read (version 2). The summary is served only while every one
+    /// still stands.
+    pub messages: Vec<SummarySourceMessage>,
+    /// What was composed (version 2): the scope, every source at its version
+    /// and the composing policy. A declaration whose memo matches a standing
+    /// summary reuses it instead of composing again.
+    pub memo: Option<[u8; 32]>,
+}
+
+/// One MESSAGE a composed summary's words came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SummarySourceMessage {
+    pub id: EntityId,
+    /// Content hash of the logical body the Dreamer read.
+    pub revision: [u8; 32],
 }
 
 pub(super) fn invalid(reason: &'static str) -> Error {
@@ -91,7 +111,7 @@ fn id(value: &Value) -> Result<EntityId> {
         .map_err(|_| invalid("invalid summary id"))
 }
 
-fn parse_scope(value: &Value) -> Result<ScopeSelector> {
+pub(super) fn parse_scope(value: &Value) -> Result<ScopeSelector> {
     let v = closed_map(value, &["conversation", "session", "path", "include_forks"])?;
     let path = if v[2].as_str() == Some("canonical") {
         ScopePath::Canonical
@@ -125,8 +145,17 @@ fn parse_scope(value: &Value) -> Result<ScopeSelector> {
 }
 
 fn validate(body: &ScopeSummaryBody) -> Result<()> {
-    if body.v != 1 {
-        return Err(invalid("unsupported scope summary version"));
+    match body.v {
+        1 if body.messages.is_empty() && body.memo.is_none() => {}
+        2 if body.memo.is_some() => {}
+        _ => return Err(invalid("unsupported scope summary version")),
+    }
+    if body.messages.len() > MAX_ANCESTOR_DEPTH {
+        return Err(invalid("summary messages exceed walk limit"));
+    }
+    let unique: HashSet<_> = body.messages.iter().map(|message| message.id).collect();
+    if unique.len() != body.messages.len() {
+        return Err(invalid("duplicate source message"));
     }
     if body.text.trim().is_empty() {
         return Err(invalid("summary text is blank"));
@@ -152,10 +181,35 @@ fn validate(body: &ScopeSummaryBody) -> Result<()> {
     Ok(())
 }
 
-/// Encodes exactly the six pinned keys after validating the complete body.
+const V1_KEYS: [&str; 6] = ["v", "scope", "text", "actor", "covers", "minted_at"];
+const V2_KEYS: [&str; 8] = [
+    "v",
+    "scope",
+    "text",
+    "actor",
+    "covers",
+    "minted_at",
+    "messages",
+    "memo",
+];
+
+fn hash_hex(hash: &[u8; 32]) -> Value {
+    Value::from(blake3::Hash::from_bytes(*hash).to_hex().as_str())
+}
+
+fn hash(value: &Value) -> Result<[u8; 32]> {
+    value
+        .as_str()
+        .and_then(|text| blake3::Hash::from_hex(text).ok())
+        .map(|hash| *hash.as_bytes())
+        .ok_or_else(|| invalid("expected a 32-byte hex hash"))
+}
+
+/// Encodes exactly the pinned keys of the body's version after validating
+/// the complete body.
 pub fn encode_scope_summary_body(body: &ScopeSummaryBody) -> Result<Vec<u8>> {
     validate(body)?;
-    let value = Value::Map(vec![
+    let mut entries = vec![
         (Value::from("v"), Value::from(body.v)),
         (Value::from("scope"), scope_value(&body.scope)),
         (Value::from("text"), Value::from(body.text.clone())),
@@ -170,7 +224,25 @@ pub fn encode_scope_summary_body(body: &ScopeSummaryBody) -> Result<Vec<u8>> {
             ),
         ),
         (Value::from("minted_at"), Value::from(body.minted_at)),
-    ]);
+    ];
+    if let Some(memo) = &body.memo {
+        entries.push((
+            Value::from("messages"),
+            Value::Array(
+                body.messages
+                    .iter()
+                    .map(|message| {
+                        Value::Array(vec![
+                            Value::from(message.id.to_hex()),
+                            hash_hex(&message.revision),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ));
+        entries.push((Value::from("memo"), hash_hex(memo)));
+    }
+    let value = Value::Map(entries);
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &value).map_err(|_| invalid("summary encode failed"))?;
     Ok(bytes)
@@ -184,9 +256,20 @@ pub fn decode_scope_summary_body(bytes: &[u8]) -> Result<ScopeSummaryBody> {
     if !bytes.is_empty() {
         return Err(invalid("trailing summary bytes"));
     }
+    let version = match &value {
+        Value::Map(entries) => entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("v"))
+            .and_then(|(_, v)| v.as_u64()),
+        _ => None,
+    };
     let v = closed_map(
         &value,
-        &["v", "scope", "text", "actor", "covers", "minted_at"],
+        if version == Some(2) {
+            &V2_KEYS[..]
+        } else {
+            &V1_KEYS[..]
+        },
     )?;
     let covers = v[4]
         .as_array()
@@ -194,6 +277,28 @@ pub fn decode_scope_summary_body(bytes: &[u8]) -> Result<ScopeSummaryBody> {
     if covers.len() > MAX_ANCESTOR_DEPTH {
         return Err(invalid("summary covers exceed walk limit"));
     }
+    let (messages, memo) = match (v.get(6), v.get(7)) {
+        (Some(messages), Some(memo)) => {
+            let messages = messages
+                .as_array()
+                .ok_or_else(|| invalid("messages must be an array"))?;
+            if messages.len() > MAX_ANCESTOR_DEPTH {
+                return Err(invalid("summary messages exceed walk limit"));
+            }
+            let messages = messages
+                .iter()
+                .map(|pair| match pair.as_array().map(Vec::as_slice) {
+                    Some([message, revision]) => Ok(SummarySourceMessage {
+                        id: id(message)?,
+                        revision: hash(revision)?,
+                    }),
+                    _ => Err(invalid("source message must be an id and a revision")),
+                })
+                .collect::<Result<_>>()?;
+            (messages, Some(hash(memo)?))
+        }
+        _ => (Vec::new(), None),
+    };
     let body = ScopeSummaryBody {
         v: v[0]
             .as_u64()
@@ -212,6 +317,8 @@ pub fn decode_scope_summary_body(bytes: &[u8]) -> Result<ScopeSummaryBody> {
         minted_at: v[5]
             .as_u64()
             .ok_or_else(|| invalid("minted_at must be a timestamp"))?,
+        messages,
+        memo,
     };
     validate(&body)?;
     Ok(body)

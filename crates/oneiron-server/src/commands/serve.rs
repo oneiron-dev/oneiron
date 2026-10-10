@@ -127,6 +127,7 @@ pub(super) async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()>
     let linear_handle = crate::linear_host::spawn(sync_server.clone()).await?;
     let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
     let mut workers = sync_server.spawn_slot_workers();
+    workers.push(sync_server.spawn_board_publisher());
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
     #[cfg(unix)]
     workers.extend(import_queue.map(|queue| queue.spawn(Arc::clone(&sync_server))));
