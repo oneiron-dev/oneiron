@@ -8700,7 +8700,7 @@
      "surface": {
       "crate-vis": 5,
       "mod": 4,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -8735,6 +8735,23 @@
       "crate-vis": 1,
       "fn": 16,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MemoryClaimInput",
+      "MemoryEdgeInput",
+      "MemorySearchInput",
+      "MemorySupersedeInput",
+      "MemoryTimeRange"
+     ],
+     "path": "src/code_run/run_verbs.rs",
+     "purpose": "The inputs of the verb-table rows a code run answers itself (`context: \"run\"` in…",
+     "surface": {
+      "const": 1,
+      "struct": 5
      }
     },
     {
@@ -8858,6 +8875,7 @@
      "path": "src/code_run/types.rs",
      "purpose": "—",
      "surface": {
+      "const": 1,
       "enum": 5,
       "fn": 17,
       "struct": 23,
@@ -16502,6 +16520,14 @@
      "notable": [],
      "path": "src/engine_executor/tests/agent_verb_regressions.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/engine_executor/tests/memory_rows.rs",
+     "purpose": "The memory rows a run answers itself (`search`, `put_claim`, `supersede_claim`, `put_edge`) are verb-table…",
      "surface": {}
     },
     {
@@ -35733,6 +35759,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "RunVerb"
+     ],
+     "path": "src/task_verb/run_verb_catalog.rs",
+     "purpose": "—",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/task_verb/scheduling.rs",
      "purpose": "Live TASK dependency and symbol readiness at every attempt-claim door",
@@ -35768,7 +35808,7 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "enum": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 18
      }
     },
@@ -38962,7 +39002,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39277,7 +39317,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39949,7 +39989,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 71,
+     "files": 72,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -40070,8 +40110,8 @@
    },
    "over_bar": 33,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2425,
-   "test_files": 789
+   "source_files": 2427,
+   "test_files": 790
   },
   "oneiron-android": {
    "files": [
