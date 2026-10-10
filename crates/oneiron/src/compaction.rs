@@ -61,6 +61,7 @@
 use crate::ports::EntityStoreRead;
 mod driver;
 mod epoch;
+mod gate;
 pub mod output;
 
 pub use driver::{
@@ -71,8 +72,13 @@ pub use driver::{
 pub(crate) use epoch::EpochMint;
 pub use epoch::{
     EPOCH_SUMMARY_BODY_KEYS, EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL,
-    EPOCH_SUMMARY_MAX_DERIVED_EDGES, EpochSummaryBody, decode_epoch_summary_body,
-    encode_epoch_summary_body,
+    EPOCH_SUMMARY_MAX_DERIVED_EDGES, EPOCH_SUMMARY_MAX_SOURCES, EpochSummaryBody,
+    decode_epoch_summary_body, encode_epoch_summary_body,
+};
+pub use gate::{
+    CompactionCheck, CompactionGateFailure, CompactionGatePolicy, CompactionOff,
+    CompactionRefusal, CompactionSuppression, GatedCompaction, compaction_reply_schema,
+    gate_compaction,
 };
 
 use crate::entity_id::EntityId;

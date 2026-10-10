@@ -61,9 +61,14 @@ impl CompactionBackend for Cheap {
     fn tier_class(&self) -> CompactionTierClass {
         CompactionTierClass::Cheap
     }
-    fn compact(&self, _request: &CompactionRequest) -> Result<CompactionProduct> {
+    fn compact(
+        &self,
+        _request: &CompactionRequest,
+        _retry: Option<crate::compaction::CompactionCheck>,
+    ) -> std::result::Result<CompactionProduct, crate::compaction::CompactionRefusal> {
         Ok(CompactionProduct {
             summary_text: "compacted".into(),
+            finish: crate::FinishReason::Stop,
             latency: Duration::from_millis(1),
         })
     }
@@ -333,7 +338,11 @@ fn guest_output_with_old_marker_bytes_cannot_create_compaction_coverage() {
 
     // Now the accepted SUMMARY, not the guest's identical old marker bytes,
     // creates the sole run-bound coverage decision for step zero.
-    let session = match vault.mint_session(10).expect("session") {
+    // The run's own compaction session: a request for any other session is
+    // refused at the swap.
+    let session = crate::code_run::executor_compaction_session_id(gated.run_ref(), run_id)
+        .expect("run session");
+    let _sitting = match vault.mint_session(10).expect("session") {
         SessionMintOutcome::Minted(id) => id,
         other => panic!("unexpected session: {other:?}"),
     };
@@ -373,13 +382,12 @@ fn guest_output_with_old_marker_bytes_cannot_create_compaction_coverage() {
             }],
         )
         .expect("sealed window");
-    let product = driver.backend().compact(&request).expect("product");
+    let product = driver.backend().compact(&request, None).expect("product");
     let plan = restarted
         .integrate_compaction(
             &mut driver,
             WriteActor::new(entity(0xA0), EdgeActorClass::Agent),
-            &request,
-            product,
+            crate::compaction::GatedCompaction::ungated_for_test(&request, product),
             &[],
         )
         .expect("summary and typed run coverage committed together");

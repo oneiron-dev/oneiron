@@ -1,0 +1,517 @@
+//! The compaction host in the executor (agent-runtime-v1 §d7).
+//!
+//! In first-party code mode Oneiron compacts the run's own window. Each step
+//! boundary feeds the assembled request's size to the run's
+//! [`CompactionDriver`]; a crossing snapshots the steps up to the watermark
+//! and hands them to the backend OFF the step loop, so the run keeps working.
+//! A finished pass must clear the six-check gate before its summary replaces
+//! those steps, and the swap lands as an epoch SUMMARY bound to the run's
+//! replay. A run whose window fills with no accepted swap parks with the
+//! typed reason instead of truncating.
+
+use std::sync::Arc;
+use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use std::time::Instant;
+
+use crate::code_run::{CodeRunHistoryTurn, CodeRunReplayRecord};
+use crate::compaction::{
+    CompactionBackend, CompactionCheck, CompactionDirective, CompactionDriver,
+    CompactionGateFailure, CompactionGatePolicy, CompactionOff, CompactionRefusal,
+    CompactionRequest, CompactionSuppression, CompactionWatermark, CompactionWindowMessage,
+    GatedCompaction, gate_compaction,
+};
+use crate::entity_id::EntityId;
+use crate::tokenizer::count_context_pack_tokens;
+use crate::{ContentPart, LlmRequest, WriteActor};
+
+/// Runs one background pass where the host chooses: a thread, a blocking
+/// pool. The executor never spawns one itself.
+pub trait CompactionSpawn: Send + Sync {
+    fn spawn(&self, pass: Box<dyn FnOnce() + Send + 'static>);
+}
+
+/// One run's compaction state, kept by the HOST across `run` calls: the
+/// single flight, the margin law and the last outcome outlive one call.
+pub struct RunCompaction {
+    seat: Seat,
+    report: CompactionReport,
+}
+
+enum Seat {
+    Off(CompactionOff),
+    Live(Box<LiveSeat>),
+}
+
+struct LiveSeat {
+    driver: CompactionDriver,
+    policy: CompactionGatePolicy,
+    byline: WriteActor,
+    hot_steps: u64,
+    spawn: Arc<dyn CompactionSpawn>,
+    flight: Option<Receiver<PassOutcome>>,
+    /// Set for the rest of one `run` call when its pass ended without a swap.
+    held: Option<CompactionSuppression>,
+    last_feed: Option<(Instant, u64)>,
+}
+
+enum PassOutcome {
+    Accepted(GatedCompaction),
+    Rejected(CompactionGateFailure),
+    Refused(CompactionRefusal),
+}
+
+/// What a caller can know about a run's compaction after a call.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CompactionReport {
+    /// Tokens of the last assembled request.
+    pub used_tokens: u64,
+    /// The soft threshold that starts a pass.
+    pub compact_at: u64,
+    /// The window budget: the end of the headroom band.
+    pub window_tokens: u64,
+    pub in_flight: bool,
+    /// The epoch the last swap landed, and the steps it covers.
+    pub last_swap: Option<(u64, u64, u64)>,
+    /// Why compaction did not run, typed.
+    pub suppressed: Option<CompactionSuppression>,
+}
+
+/// Why a run parked at its window budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowFullReason {
+    /// A pass is running; the same run continues once it lands.
+    InFlight,
+    /// No pass can run now, for this typed reason.
+    Suppressed(CompactionSuppression),
+    /// Every step outside the hot window is already compacted.
+    NothingToCompact,
+}
+
+impl RunCompaction {
+    /// A run whose compaction is off, saying why. It never calls a model and
+    /// never parks.
+    #[must_use]
+    pub fn off(why: CompactionOff) -> Self {
+        Self {
+            seat: Seat::Off(why),
+            report: CompactionReport {
+                suppressed: Some(CompactionSuppression::Sticky { why }),
+                ..CompactionReport::default()
+            },
+        }
+    }
+
+    /// A live seat: `driver` from the run's profile, the gate `policy`, the
+    /// byline its epoch summaries carry, the newest `hot_steps` steps that
+    /// never compact, and where passes run.
+    #[must_use]
+    pub fn live(
+        driver: CompactionDriver,
+        policy: CompactionGatePolicy,
+        byline: WriteActor,
+        hot_steps: u64,
+        spawn: Arc<dyn CompactionSpawn>,
+    ) -> Self {
+        let report = CompactionReport {
+            compact_at: driver.compact_at(),
+            window_tokens: driver.window_token_budget(),
+            ..CompactionReport::default()
+        };
+        Self {
+            seat: Seat::Live(Box::new(LiveSeat {
+                driver,
+                policy,
+                byline,
+                hot_steps,
+                spawn,
+                flight: None,
+                held: None,
+                last_feed: None,
+            })),
+            report,
+        }
+    }
+
+    #[must_use]
+    pub const fn report(&self) -> &CompactionReport {
+        &self.report
+    }
+
+    /// A new `run` call is a new turn: a turn-scoped hold ends.
+    pub(super) fn begin_turn(&mut self) {
+        if let Seat::Live(seat) = &mut self.seat
+            && matches!(seat.held, Some(CompactionSuppression::TurnScoped { .. }))
+        {
+            seat.held = None;
+            self.report.suppressed = None;
+        }
+    }
+
+    /// Takes a finished pass, if one is ready, without waiting.
+    pub(super) fn take_finished(&mut self) -> Option<Result<GatedCompaction, CompactionSuppression>> {
+        let Seat::Live(seat) = &mut self.seat else {
+            return None;
+        };
+        let outcome = match seat.flight.as_ref()?.try_recv() {
+            Ok(outcome) => outcome,
+            Err(TryRecvError::Empty) => return None,
+            Err(TryRecvError::Disconnected) => PassOutcome::Refused(CompactionRefusal {
+                suppression: CompactionSuppression::TurnScoped { check: None },
+                detail: "the compaction pass ended without an answer".to_owned(),
+            }),
+        };
+        seat.flight = None;
+        self.report.in_flight = false;
+        match outcome {
+            PassOutcome::Accepted(gated) => Some(Ok(gated)),
+            PassOutcome::Rejected(failure) => {
+                tracing::warn!(%failure, "a compaction pass failed the pre-swap gate on every try");
+                Some(Err(CompactionSuppression::TurnScoped {
+                    check: Some(failure.check),
+                }))
+            }
+            PassOutcome::Refused(refusal) => {
+                tracing::warn!(
+                    reason = refusal.suppression.as_str(),
+                    detail = %refusal.detail,
+                    "the compaction backend refused a pass"
+                );
+                Some(Err(refusal.suppression))
+            }
+        }
+    }
+
+    /// The pass did not swap: the run keeps its raw window, and this reason
+    /// holds for the rest of the turn (a sticky one for the run's life).
+    pub(super) fn hold(&mut self, suppression: CompactionSuppression) {
+        if let Seat::Live(seat) = &mut self.seat {
+            seat.driver.abandon();
+            seat.held = Some(suppression);
+        }
+        self.report.suppressed = Some(suppression);
+    }
+
+    pub(super) fn swapped(&mut self, epoch: u64, first: u64, last: u64) {
+        self.report.last_swap = Some((epoch, first, last));
+        self.report.suppressed = None;
+    }
+
+    /// The live driver and byline, for the swap.
+    pub(super) fn driver_and_byline(&mut self) -> Option<(&mut CompactionDriver, WriteActor)> {
+        match &mut self.seat {
+            Seat::Live(seat) => Some((&mut seat.driver, seat.byline)),
+            Seat::Off(_) => None,
+        }
+    }
+
+    /// Feeds one assembled request's size. On a crossing, `window` builds
+    /// the snapshot (steps `start..=watermark`) and a pass starts in the
+    /// background. Returns why the run must park, when its window is full.
+    pub(super) fn feed(
+        &mut self,
+        used_tokens: u64,
+        completed_steps: u64,
+        build: impl FnOnce(
+            &mut CompactionDriver,
+            u64,
+        ) -> super::EngineExecutorResult<Option<CompactionRequest>>,
+    ) -> Option<WindowFullReason> {
+        self.report.used_tokens = used_tokens;
+        let Seat::Live(seat) = &mut self.seat else {
+            return None;
+        };
+        let now = Instant::now();
+        if let Some((at, tokens)) = seat.last_feed {
+            let seconds = now.duration_since(at).as_secs_f64();
+            if seconds > 0.0 && used_tokens >= tokens {
+                seat.driver
+                    .observe_velocity((used_tokens - tokens) as f64 / seconds);
+            }
+        }
+        seat.last_feed = Some((now, used_tokens));
+        self.report.compact_at = seat.driver.compact_at();
+        if seat.flight.is_none() && seat.held.is_none() {
+            match completed_steps.checked_sub(seat.hot_steps.saturating_add(1)) {
+                None => {}
+                Some(watermark) => {
+                    let directive = seat.driver.observe_positioned(
+                        used_tokens,
+                        CompactionWatermark {
+                            learned_at: 0,
+                            turn_id: None,
+                            turn: Some(watermark),
+                        },
+                    );
+                    if let CompactionDirective::Begin { .. } = directive {
+                        match build(&mut seat.driver, watermark) {
+                            Ok(Some(request)) => {
+                                let backend = Arc::clone(seat.driver.backend());
+                                let policy = seat.policy;
+                                let (sender, receiver) = channel();
+                                seat.spawn.spawn(Box::new(move || {
+                                    let _ = sender.send(run_pass(&*backend, &request, &policy));
+                                }));
+                                seat.flight = Some(receiver);
+                                self.report.in_flight = true;
+                            }
+                            Ok(None) => seat.driver.abandon(),
+                            Err(error) => {
+                                tracing::warn!(%error, "a compaction window could not be sealed");
+                                seat.driver.abandon();
+                                let held = CompactionSuppression::TurnScoped { check: None };
+                                seat.held = Some(held);
+                                self.report.suppressed = Some(held);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if used_tokens < seat.driver.window_token_budget() {
+            return None;
+        }
+        Some(if seat.flight.is_some() {
+            WindowFullReason::InFlight
+        } else if let Some(held) = seat.held {
+            WindowFullReason::Suppressed(held)
+        } else {
+            WindowFullReason::NothingToCompact
+        })
+    }
+}
+
+/// Up to `policy.tries` tries; each retry names the check the last failed.
+fn run_pass(
+    backend: &dyn CompactionBackend,
+    request: &CompactionRequest,
+    policy: &CompactionGatePolicy,
+) -> PassOutcome {
+    let mut retry: Option<CompactionCheck> = None;
+    let mut last = None;
+    for _ in 0..policy.tries.max(1) {
+        let product = match backend.compact(request, retry) {
+            Ok(product) => product,
+            Err(refusal) => return PassOutcome::Refused(refusal),
+        };
+        match gate_compaction(request, &product, policy) {
+            Ok(gated) => return PassOutcome::Accepted(gated),
+            Err(failure) => {
+                retry = Some(failure.check);
+                last = Some(failure);
+            }
+        }
+    }
+    match last {
+        Some(failure) => PassOutcome::Rejected(failure),
+        None => PassOutcome::Refused(CompactionRefusal {
+            suppression: CompactionSuppression::TurnScoped { check: None },
+            detail: "the compaction pass made no try".to_owned(),
+        }),
+    }
+}
+
+/// Every token the model is sent, by the context-pack tokenizer.
+pub(super) fn request_tokens(request: &LlmRequest) -> u64 {
+    request
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .map(|part| match part {
+            ContentPart::Text { text } => count_context_pack_tokens(text) as u64,
+            _ => 0,
+        })
+        .sum()
+}
+
+/// One step as the backend reads it: its program and its whole console.
+pub(super) fn window_message(
+    message_id: EntityId,
+    turn_id: EntityId,
+    seq: u64,
+    code: String,
+    console: String,
+) -> CompactionWindowMessage {
+    let turn = CodeRunHistoryTurn { code, console };
+    let content = format!("{}\n{}", turn.assistant_exec(), turn.user_console(seq));
+    CompactionWindowMessage {
+        message_id,
+        turn_id,
+        tokens: count_context_pack_tokens(&content) as u64,
+        content,
+        turn: seq,
+    }
+}
+
+/// Every existing entity a run's calls returned so far: a superset of what
+/// any step could have printed, because the guest keeps state across steps
+/// and no step boundary is stored with its calls.
+pub(super) fn served_sources(
+    vault: &crate::Vault,
+    record: &CodeRunReplayRecord,
+) -> crate::Result<Vec<EntityId>> {
+    let mut found = std::collections::BTreeSet::new();
+    for call in &record.bridge_calls {
+        collect_ids(&call.outcome, &mut found);
+    }
+    let rtxn = vault.store.env.read_txn()?;
+    let mut sources = Vec::new();
+    for id in found {
+        if crate::ports::EntityStoreRead::port_entity_record(&vault.store, &rtxn, &id)?.is_some() {
+            sources.push(id);
+        }
+    }
+    Ok(sources)
+}
+
+fn collect_ids(value: &rmpv::Value, found: &mut std::collections::BTreeSet<EntityId>) {
+    match value {
+        rmpv::Value::Binary(bytes) => {
+            if let Ok(bytes) = <[u8; 16]>::try_from(bytes.as_slice())
+                && let Ok(id) = EntityId::from_bytes(bytes)
+            {
+                found.insert(id);
+            }
+        }
+        rmpv::Value::String(text) => {
+            if let Some(text) = text.as_str() {
+                hex_ids(text, found);
+            }
+        }
+        rmpv::Value::Array(items) => items.iter().for_each(|item| collect_ids(item, found)),
+        rmpv::Value::Map(entries) => entries.iter().for_each(|(key, item)| {
+            collect_ids(key, found);
+            collect_ids(item, found);
+        }),
+        _ => {}
+    }
+}
+
+/// Every maximal run of exactly 32 lowercase hex digits in `text`.
+fn hex_ids(text: &str, found: &mut std::collections::BTreeSet<EntityId>) {
+    let bytes = text.as_bytes();
+    let hex = |byte: u8| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte);
+    let mut start = 0;
+    while start < bytes.len() {
+        if !hex(bytes[start]) {
+            start += 1;
+            continue;
+        }
+        let mut end = start;
+        while end < bytes.len() && hex(bytes[end]) {
+            end += 1;
+        }
+        if end - start == 32
+            && let Ok(id) = EntityId::from_hex(&text[start..end])
+        {
+            found.insert(id);
+        }
+        start = end;
+    }
+}
+
+/// The window identity of one step: stable per (run, step), never stored.
+pub(super) fn step_message_id(run_id: EntityId, seq: u64) -> EntityId {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"oneiron:executor-compaction-step:v1");
+    hasher.update(run_id.as_bytes());
+    hasher.update(&seq.to_be_bytes());
+    let mut bytes = [0_u8; 16];
+    bytes.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
+    loop {
+        if let Ok(id) = EntityId::from_bytes(bytes) {
+            return id;
+        }
+        bytes[0] ^= 0x42;
+    }
+}
+
+/// The engine-authored first words of a failed step's console.
+pub(super) const FAILED_STEP_PREFIXES: [&str; 3] = [
+    "Runtime error after host bridge calls: ",
+    "Host bridge call failed: ",
+    "Runtime output recording failed after host bridge calls: ",
+];
+
+/// Longest pin, in bytes: a failure's first line, cut at a char boundary.
+const PIN_MAX_BYTES: usize = 240;
+
+/// A failed step's first console line, verbatim from `content`: failures
+/// are never compacted away (agent-runtime-v1 §d7).
+pub(super) fn failure_pin(content: &str) -> Option<String> {
+    let line = content
+        .lines()
+        .find(|line| FAILED_STEP_PREFIXES.iter().any(|prefix| line.starts_with(prefix)))?;
+    let mut end = line.len().min(PIN_MAX_BYTES);
+    while !line.is_char_boundary(end) {
+        end -= 1;
+    }
+    Some(line[..end].to_owned())
+}
+
+/// Frame marks a summary may not forge: the record marks and this frame.
+pub(super) fn escape_compacted_text(text: &str) -> String {
+    text.replace("<exec>", r"<\exec>")
+        .replace("</exec>", r"<\/exec>")
+        .replace("<console>", r"<\console>")
+        .replace("</console>", r"<\/console>")
+        .replace("<compacted", r"<\compacted")
+        .replace("</compacted", r"<\/compacted")
+}
+
+/// One epoch's steps as the model reads them after a swap: the accepted
+/// summary (none once it is withdrawn) and a handle to every original
+/// output, so nothing a reader may still need leaves reach.
+pub(super) fn compacted_frame(
+    epoch: u64,
+    first: u64,
+    last: u64,
+    text: Option<&str>,
+    handles: &[String],
+) -> String {
+    let mut frame = format!("<compacted epoch=\"{epoch}\" steps=\"{first}-{last}\">\n");
+    if let Some(text) = text {
+        frame.push_str(&escape_compacted_text(text));
+        frame.push('\n');
+    }
+    for handle in handles {
+        frame.push_str(handle);
+        frame.push('\n');
+    }
+    frame.push_str("</compacted>");
+    frame
+}
+
+/// The model-facing message for step `seq` when a swapped epoch covers it:
+/// `Some(Some(frame))` at the epoch's first step, `Some(None)` for its other
+/// steps, `None` when no epoch covers the step.
+pub(super) fn epoch_frame(
+    epochs: &[(crate::code_run::CodeRunCompactionCoverage, Option<String>)],
+    run_id: EntityId,
+    seq: usize,
+    views: &[crate::compaction::output::OutputContextView],
+) -> super::EngineExecutorResult<Option<Option<crate::LlmMessage>>> {
+    let Some((row, text)) = epochs.iter().find(|(row, _)| row.covers(run_id, seq as u64)) else {
+        return Ok(None);
+    };
+    if seq as u64 != row.first() {
+        return Ok(Some(None));
+    }
+    let mut handles = Vec::new();
+    for covered in row.first()..=row.last() {
+        let Some(view) = usize::try_from(covered).ok().and_then(|index| views.get(index)) else {
+            continue;
+        };
+        handles.push(serde_json::to_string(&serde_json::json!({
+            "step": covered,
+            "sandbox.fs.read_file": super::store::recoverable_chunk_path(covered, view.source, 0),
+            "byte_len": view.source.byte_len,
+            "max_chunk_bytes": super::store::RECOVERABLE_OUTPUT_CHUNK_BYTES,
+        }))?);
+    }
+    Ok(Some(Some(crate::LlmMessage {
+        role: crate::LlmMessageRole::User,
+        content: vec![ContentPart::Text {
+            text: compacted_frame(row.epoch(), row.first(), row.last(), text.as_deref(), &handles),
+        }],
+    })))
+}

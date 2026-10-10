@@ -19,6 +19,8 @@ const EXECUTOR_SPEECH_CONVERSATION_DOMAIN: &[u8] = b"oneiron:executor-speech-con
 const EXECUTOR_SPEECH_TURN_DOMAIN: &[u8] = b"oneiron:executor-speech-turn:v1";
 
 const EXECUTOR_SPEECH_MESSAGE_DOMAIN: &[u8] = b"oneiron:executor-speech-message:v1";
+/// Domain tag for a run's compaction session.
+const EXECUTOR_COMPACTION_SESSION_DOMAIN: &[u8] = b"oneiron:executor-compaction-session:v1";
 
 /// Derives one deterministic entity id from a domain tag and length-prefixed
 /// material, re-salting past a reserved sentinel rather than truncating into
@@ -179,4 +181,22 @@ pub(super) fn canonical_witness_executor_turn(
                     "executor witness door rejected the canonical turn",
                 ))
         })
+}
+
+/// The compaction session of one durable run (agent-runtime-v1 §d7).
+///
+/// A run's REPL window is its own session: one log, one epoch lineage, its
+/// steps as the turns. The ref is derived, never minted, so a resumed run
+/// (same run ref, same credential scope) re-enters its lineage and no other
+/// run can address it.
+pub(crate) fn executor_compaction_session_id(run_ref: &str, run_id: EntityId) -> Result<EntityId> {
+    derived_executor_id(
+        EXECUTOR_COMPACTION_SESSION_DOMAIN,
+        &[run_ref.as_bytes(), run_id.as_bytes()],
+    )
+}
+
+/// The speech TURN of a canonical durable run, whether or not it spoke yet.
+pub(crate) fn executor_speech_turn_id_for_run(run_ref: &str, run_id: EntityId) -> Result<EntityId> {
+    executor_speech_turn_id(run_ref, Some(run_id))
 }

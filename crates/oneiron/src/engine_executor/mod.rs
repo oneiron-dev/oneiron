@@ -6,6 +6,8 @@
 //! the pinned component boundary, and every `self.*` import is routed through a
 //! host dispatcher that records the typed bridge call in the durable replay log.
 
+mod compaction;
+mod compaction_host;
 mod driver;
 mod host;
 mod record;
@@ -14,6 +16,7 @@ mod store;
 mod types;
 mod wire;
 
+pub use self::compaction::{CompactionReport, CompactionSpawn, RunCompaction, WindowFullReason};
 pub use self::driver::EngineNativeExecutor;
 #[cfg(test)]
 use self::record::step_state_hash;

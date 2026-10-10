@@ -48,6 +48,13 @@ pub const EPOCH_SUMMARY_LEVEL: u64 = 0;
 /// covered turn regardless of this cap.
 pub const EPOCH_SUMMARY_MAX_DERIVED_EDGES: usize = 256;
 
+/// Hard cap on the sources a host-numbered log's summary derives from.
+///
+/// For an executor run the `DerivedFrom` set IS the erasure and disclosure
+/// fence (there is no turn range to fall back on), so a window naming more
+/// sources is refused, never cut.
+pub const EPOCH_SUMMARY_MAX_SOURCES: usize = 1024;
+
 const KEY_EPOCH_V: &str = EPOCH_SUMMARY_BODY_KEYS[0];
 const KEY_EPOCH_SESSION: &str = EPOCH_SUMMARY_BODY_KEYS[1];
 const KEY_EPOCH_EPOCH: &str = EPOCH_SUMMARY_BODY_KEYS[2];
@@ -469,17 +476,10 @@ pub(super) fn mint_epoch_summary_with(
         ));
     }
 
-    // `DerivedFrom` targets come from the REQUEST's window, deduplicated in
-    // first-seen order and hard-capped. The body's turn range stays truth.
-    let mut derived: Vec<EntityId> = Vec::new();
-    for message in &request.window {
-        if derived.len() >= EPOCH_SUMMARY_MAX_DERIVED_EDGES {
-            break;
-        }
-        if !derived.contains(&message.turn_id) {
-            derived.push(message.turn_id);
-        }
-    }
+    // `DerivedFrom` targets are the sealed request's sources: a conversation
+    // window's turns (deduplicated, hard-capped; the body's turn range stays
+    // truth), or every record a host-numbered log was read from.
+    let derived = &request.sources;
 
     // The keyframe's temporal position IS the compaction moment: the recorded
     // watermark. Wall-clock would make an otherwise byte-stable row depend on
@@ -488,7 +488,15 @@ pub(super) fn mint_epoch_summary_with(
     let summary_id = vault.store.clock.entity_id()?;
 
     let epoch = vault.with_write_txn_grouped(|wtxn| {
-        refuse_overlay_derived_mint(&vault.store, &request.window)?;
+        refuse_overlay_derived_mint(
+            &vault.store,
+            request
+                .window
+                .iter()
+                .map(|message| &message.turn_id)
+                .filter(|_| request.folds_board_turns)
+                .chain(&request.sources),
+        )?;
         let prior = prior_epoch_in_txn(&vault.store, &*wtxn, session_ref)?;
         validate_epoch_boundary(prior, turn_start)?;
         let epoch = match prior {
@@ -514,7 +522,7 @@ pub(super) fn mint_epoch_summary_with(
             at,
             &body,
         );
-        for target in &derived {
+        for target in derived {
             batch = batch.edge(&summary_id, EdgeKind::DerivedFrom, target, 1.0);
         }
         batch.apply(wtxn)?;
@@ -526,11 +534,13 @@ pub(super) fn mint_epoch_summary_with(
             .mark_pending_embedding(wtxn, &summary_id, &body)?;
         // The compacted turns leave their boards' retained history in the
         // same act: reconstructing one now fails explicitly (ARCH-0067).
-        crate::context_board::fold_board_turns_in_txn(
-            vault,
-            wtxn,
-            request.window.iter().map(|message| message.turn_id),
-        )?;
+        if request.folds_board_turns {
+            crate::context_board::fold_board_turns_in_txn(
+                vault,
+                wtxn,
+                request.window.iter().map(|message| message.turn_id),
+            )?;
+        }
         extra(
             wtxn,
             &EpochMint {
@@ -566,18 +576,18 @@ pub(super) fn mint_epoch_summary_with(
 /// from live registry state INSIDE the applying transaction, which is the
 /// state the transaction applies against — the same TOCTOU-free discipline
 /// the K4 guard uses.
-fn refuse_overlay_derived_mint(store: &Store, window: &[CompactionWindowMessage]) -> Result<()> {
+fn refuse_overlay_derived_mint<'a>(
+    store: &Store,
+    covered: impl Iterator<Item = &'a EntityId>,
+) -> Result<()> {
     if !store.off_record_sessions.has_overlay_entities()? {
         return Ok(());
     }
-    for message in window {
-        if store
-            .off_record_sessions
-            .contains_entity(&message.turn_id)?
-        {
+    for id in covered {
+        if store.off_record_sessions.contains_entity(id)? {
             return Err(Error::OffRecord(
                 OffRecordError::OffRecordTaintedBaseWrite {
-                    entity_ref: message.turn_id.to_hex(),
+                    entity_ref: id.to_hex(),
                 },
             ));
         }

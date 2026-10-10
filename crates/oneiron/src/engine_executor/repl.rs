@@ -88,14 +88,12 @@ impl EngineNativeExecutor<'_> {
             self.output_context = OutputWorkingContext::default();
             self.output_run = Some(config.run_id);
         }
+        if let Some(seat) = self.compaction.as_deref_mut() {
+            seat.begin_turn();
+        }
         if let Some(status) = loaded.terminal_status {
             self.recover_checkpointed_implicit_speak(&loaded.record, &status, config)?;
-            return Ok(EngineExecutorOutcome {
-                status,
-                steps_run: 0,
-                replay_record: loaded.record,
-                seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
-            });
+            return Ok(self.outcome(status, 0, loaded.record));
         }
         let mut record = loaded.record;
         let mut expected_generation = loaded.generation;
@@ -104,12 +102,7 @@ impl EngineNativeExecutor<'_> {
         loop {
             let completed_steps = completed_step_count(&record)?;
             if completed_steps >= u64::from(config.limits.hard_steps) {
-                return Ok(EngineExecutorOutcome {
-                    status: EngineExecutorStatus::HardStepLimitReached,
-                    steps_run,
-                    replay_record: record,
-                    seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
-                });
+                return Ok(self.outcome(EngineExecutorStatus::HardStepLimitReached, steps_run, record));
             }
             if steps_run >= config.limits.soft_steps {
                 return Ok(EngineExecutorOutcome {
@@ -122,7 +115,19 @@ impl EngineNativeExecutor<'_> {
                 });
             }
 
+            self.land_finished_compaction()?;
             let request = self.build_llm_request(config, &record, &wire_prompt.text)?;
+            if let Some(reason) = self.feed_compaction(config, &record, &request)? {
+                return Ok(EngineExecutorOutcome {
+                    status: EngineExecutorStatus::WindowFull {
+                        next_step_seq: completed_steps,
+                        reason,
+                    },
+                    steps_run,
+                    replay_record: record,
+                    seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
+                });
+            }
             let request_hash = request.canonical_hash()?;
             let response = self.backend.generate(request, self.lease).await?;
             // ONE-1929: the ONE normalization seam. Only `code` is executed,
@@ -184,12 +189,7 @@ impl EngineNativeExecutor<'_> {
                             config,
                         )?
                     {
-                        return Ok(EngineExecutorOutcome {
-                            status,
-                            steps_run: steps_run + 1,
-                            replay_record: record,
-                            seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
-                        });
+                        return Ok(self.outcome(status, steps_run + 1, record));
                     }
                     return Err(err.into());
                 }
@@ -213,12 +213,7 @@ impl EngineNativeExecutor<'_> {
                     repairs.healed(),
                     config,
                 )? {
-                    return Ok(EngineExecutorOutcome {
-                        status,
-                        steps_run: steps_run + 1,
-                        replay_record: record,
-                        seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
-                    });
+                    return Ok(self.outcome(status, steps_run + 1, record));
                 }
                 return Err(failure.into());
             }
@@ -245,12 +240,7 @@ impl EngineNativeExecutor<'_> {
                                 config,
                             )?
                         {
-                            return Ok(EngineExecutorOutcome {
-                                status,
-                                steps_run: steps_run + 1,
-                                replay_record: record,
-                                seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
-                            });
+                            return Ok(self.outcome(status, steps_run + 1, record));
                         }
                         return Err(err);
                     }
@@ -346,12 +336,7 @@ impl EngineNativeExecutor<'_> {
             steps_run += 1;
 
             if let Some(status) = terminal_status {
-                return Ok(EngineExecutorOutcome {
-                    status,
-                    steps_run,
-                    replay_record: record,
-                    seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
-                });
+                return Ok(self.outcome(status, steps_run, record));
             }
             expected_generation = Some(next_generation);
         }
@@ -712,7 +697,17 @@ impl EngineNativeExecutor<'_> {
                         .map(|text| text.as_bytes().to_vec())
                         .ok_or(Error::CorruptedIndex("missing executor observation"))
                 })?;
-        for (seq, view) in views.into_iter().enumerate() {
+        let epochs = self.compaction_epochs(record.run_id)?;
+        for (seq, view) in views.iter().enumerate() {
+            match super::compaction::epoch_frame(&epochs, record.run_id, seq, &views)? {
+                Some(Some(frame)) => {
+                    messages.push(frame);
+                    continue;
+                }
+                Some(None) => continue,
+                None => {}
+            }
+            let view = view.clone();
             // ONE-1929 framing remains engine-authored. The stored program and
             // observation never change; only this model-facing projection does.
             let console = match view.tier {

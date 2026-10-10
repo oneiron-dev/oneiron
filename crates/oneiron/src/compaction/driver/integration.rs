@@ -1,6 +1,10 @@
 //! Transactional epoch integration, typed executor coverage, and swap plans.
+//!
+//! Every door here takes a [`GatedCompaction`]: no summary reaches a mint
+//! without passing the pre-swap gate against its own sealed request.
 
 use super::*;
+use crate::compaction::gate::GatedCompaction;
 
 impl CompactionDriver {
     /// Commit a compaction and move its covered working outputs to references.
@@ -10,27 +14,25 @@ impl CompactionDriver {
         &mut self,
         vault: &Vault,
         byline: WriteActor,
-        request: &CompactionRequest,
-        product: CompactionProduct,
+        gated: GatedCompaction,
         accumulated: &[CompactionWindowMessage],
         outputs: &mut crate::compaction::output::OutputWorkingContext,
     ) -> Result<SwapPlan> {
-        let plan = self.integrate(
-            vault,
-            &request.session_ref,
-            byline,
-            request,
-            product,
-            accumulated,
-        )?;
-        let last = request
-            .window
-            .last()
-            .expect("integrated window is nonempty")
-            .turn;
-        outputs.compact_span(request.turn_start, last);
+        let session_ref = gated.request.session_ref;
+        let (turn_start, last) = (
+            gated.request.turn_start,
+            gated
+                .request
+                .window
+                .last()
+                .expect("integrated window is nonempty")
+                .turn,
+        );
+        let plan = self.integrate(vault, &session_ref, byline, gated, accumulated)?;
+        outputs.compact_span(turn_start, last);
         Ok(plan)
     }
+
 
     /// Commit executor run/span coverage with the actual minted SUMMARY.
     /// Read-time views project this record; the driver advances only on commit.
@@ -38,17 +40,16 @@ impl CompactionDriver {
         &mut self,
         vault: &Vault,
         byline: WriteActor,
-        request: &CompactionRequest,
-        product: CompactionProduct,
+        gated: GatedCompaction,
         accumulated: &[CompactionWindowMessage],
         span: &crate::code_run::ExecutorOutputSpan,
     ) -> Result<SwapPlan> {
+        let session_ref = gated.request.session_ref;
         self.integrate_inner(
             vault,
-            &request.session_ref,
+            &session_ref,
             byline,
-            request,
-            product,
+            gated,
             accumulated,
             |txn, mint| vault.put_code_run_compaction_coverage_in_txn(txn, span, mint),
         )
@@ -72,32 +73,25 @@ impl CompactionDriver {
         vault: &Vault,
         session_ref: &EntityId,
         byline: WriteActor,
-        request: &CompactionRequest,
-        product: CompactionProduct,
+        gated: GatedCompaction,
         accumulated: &[CompactionWindowMessage],
     ) -> Result<SwapPlan> {
         self.integrate_inner(
             vault,
             session_ref,
             byline,
-            request,
-            product,
+            gated,
             accumulated,
             |_, _| Ok(()),
         )
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "sealed compaction input and atomic extra write"
-    )]
     fn integrate_inner(
         &mut self,
         vault: &Vault,
         session_ref: &EntityId,
         byline: WriteActor,
-        request: &CompactionRequest,
-        product: CompactionProduct,
+        gated: GatedCompaction,
         accumulated: &[CompactionWindowMessage],
         extra: impl FnOnce(&mut heed::RwTxn<'_>, &crate::compaction::EpochMint) -> Result<()>,
     ) -> Result<SwapPlan> {
@@ -112,6 +106,8 @@ impl CompactionDriver {
         // Compare both the unique job identity and the sealed input. A stale,
         // duplicate, foreign-driver, or edited request cannot mint or clear
         // the current flight, nor feed its latency into the margin law.
+        let GatedCompaction { request, product } = gated;
+        let request = &request;
         if active.as_deref() != Some(request) {
             return Err(Error::InvariantViolation(
                 "compaction result does not match the active request",

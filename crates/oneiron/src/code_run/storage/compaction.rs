@@ -95,9 +95,17 @@ impl CodeRunCompactionCoverage {
     pub(crate) fn summary_id(&self) -> EntityId {
         self.summary_id
     }
-    #[cfg(test)]
     pub(crate) fn epoch(&self) -> u64 {
         self.epoch
+    }
+    pub(crate) fn first(&self) -> u64 {
+        self.first
+    }
+    pub(crate) fn last(&self) -> u64 {
+        self.last
+    }
+    pub(crate) fn session_ref(&self) -> EntityId {
+        self.session_ref
     }
 }
 
@@ -150,16 +158,21 @@ fn decode(raw: &[u8]) -> Result<CodeRunCompactionCoverage> {
     Ok(row)
 }
 
+/// The bound SUMMARY's prose, or `None` once it is withdrawn: erased, or
+/// stale because a record it was written from was erased. A withdrawn
+/// summary leaves its steps covered (as references) and renders no words.
 fn verify_summary(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     row: &CodeRunCompactionCoverage,
-) -> Result<()> {
+) -> Result<Option<String>> {
     let corrupt = || Error::CorruptedIndex("code-run compaction summary binding");
-    let summary = vault
-        .store
-        .port_entity_record(txn, &row.summary_id)?
-        .ok_or_else(corrupt)?;
+    let Some(summary) = vault.store.port_entity_record(txn, &row.summary_id)? else {
+        return Ok(None);
+    };
+    if crate::ports::stale_in_txn(&vault.store, txn, &row.summary_id)? {
+        return Ok(None);
+    }
     if summary.entity_type != ENTITY_TYPE_SUMMARY {
         return Err(corrupt());
     }
@@ -171,7 +184,7 @@ fn verify_summary(
     {
         return Err(corrupt());
     }
-    Ok(())
+    Ok(Some(body.text))
 }
 
 impl Vault {
@@ -209,7 +222,9 @@ impl Vault {
             first: span.first,
             last: span.last,
         };
-        verify_summary(self, &*txn, &row)?;
+        verify_summary(self, &*txn, &row)?.ok_or(Error::InvariantViolation(
+            "executor coverage names no live summary",
+        ))?;
         let key = (row.run_id, row.summary_id);
         if COVERAGE.contains(&self.store, txn, &key)? {
             return Err(Error::InvariantViolation(
@@ -232,6 +247,19 @@ impl Vault {
         &self,
         run_id: EntityId,
     ) -> Result<Vec<CodeRunCompactionCoverage>> {
+        Ok(self
+            .code_run_compaction_epochs(run_id)?
+            .into_iter()
+            .map(|(row, _)| row)
+            .collect())
+    }
+
+    /// Every coverage row of `run_id` with its summary's prose, `None` when
+    /// the summary is withdrawn.
+    pub(crate) fn code_run_compaction_epochs(
+        &self,
+        run_id: EntityId,
+    ) -> Result<Vec<(CodeRunCompactionCoverage, Option<String>)>> {
         let txn = self.store.env.read_txn()?;
         let mut rows = Vec::new();
         for item in COVERAGE.iter_from(&self.store, &txn, run_id.as_bytes())? {
@@ -239,8 +267,8 @@ impl Vault {
             if (key_run, key_summary) != (row.run_id, row.summary_id) || row.run_id != run_id {
                 return Err(Error::CorruptedIndex("code-run compaction coverage key"));
             }
-            verify_summary(self, &txn, &row)?;
-            rows.push(row);
+            let text = verify_summary(self, &txn, &row)?;
+            rows.push((row, text));
         }
         Ok(rows)
     }

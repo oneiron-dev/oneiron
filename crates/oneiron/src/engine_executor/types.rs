@@ -261,6 +261,12 @@ pub enum EngineExecutorStatus {
     Waiting(SelfDurableWait),
     Yielded { next_step_seq: u64 },
     HardStepLimitReached,
+    /// The window reached its budget with no accepted swap (agent-runtime-v1
+    /// §d7). Not terminal: the same run continues once a swap lands.
+    WindowFull {
+        next_step_seq: u64,
+        reason: super::compaction::WindowFullReason,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
