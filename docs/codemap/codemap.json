@@ -48374,7 +48374,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/commands/history_import.rs",
@@ -48422,6 +48422,14 @@
      "surface": {
       "crate-vis": 4
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/commands/history_import/queue/tests.rs",
+     "purpose": "The queue's passes on a vault held as `serve` holds it, one pass at a time, over invented Claude Code…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -50962,7 +50970,7 @@
      "purpose": "—"
     },
     "commands": {
-     "files": 19,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -51137,10 +51145,10 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 7,
+   "over_bar": 8,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 302,
-   "test_files": 114
+   "test_files": 115
   },
   "oneiron-uniffi": {
    "files": [
