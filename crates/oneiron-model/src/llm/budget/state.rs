@@ -143,8 +143,16 @@ impl BudgetState {
         }
 
         let (floor_allocations, shared_units) = self.allocate_floors(&matched_rows, reserve_units);
-        let shared_projected = self.shared_committed().saturating_add(shared_units);
-        if shared_units > 0 && shared_projected > self.shared_admission_ceiling() {
+        if shared_units > 0
+            && exceeds(
+                [
+                    self.shared_used_units,
+                    self.shared_reserved_units,
+                    shared_units,
+                ],
+                self.shared_admission_ceiling(),
+            )
+        {
             return ReservePlan::DeniedByCapacity;
         }
         if self.global_denies(reserve_units) {
@@ -167,7 +175,10 @@ impl BudgetState {
     }
 
     pub(super) fn global_denies(&self, reserve_units: u64) -> bool {
-        self.global_committed().saturating_add(reserve_units) > self.cap_units()
+        exceeds(
+            [self.used_units, self.reserved_units, reserve_units],
+            self.cap_units(),
+        )
     }
 
     /// Row indices whose selector matches this call, in resolved order.
@@ -193,11 +204,10 @@ impl BudgetState {
             let Some(tally) = self.row_tally(row_index) else {
                 return false;
             };
-            tally
-                .used_units
-                .saturating_add(tally.reserved_units)
-                .saturating_add(reserve_units)
-                > cap_units
+            exceeds(
+                [tally.used_units, tally.reserved_units, reserve_units],
+                cap_units,
+            )
         })
     }
 
@@ -284,15 +294,6 @@ impl BudgetState {
     pub(super) fn shared_admission_ceiling(&self) -> u64 {
         let overdraft = self.cap_units().saturating_sub(self.limit_units);
         self.shared_slice_units().saturating_add(overdraft)
-    }
-
-    pub(super) fn shared_committed(&self) -> u64 {
-        self.shared_used_units
-            .saturating_add(self.shared_reserved_units)
-    }
-
-    pub(super) fn global_committed(&self) -> u64 {
-        self.used_units.saturating_add(self.reserved_units)
     }
 
     pub(super) fn policy_row(&self, row_index: u16) -> Option<&BudgetPolicyRow> {
@@ -409,4 +410,11 @@ fn row_horizons(policy: &BudgetPolicyTable, limit_units: u64, total_floor_units:
                 .min(limit_units.saturating_sub(inaccessible_floor_units))
         })
         .collect()
+}
+
+/// Whether `parts` sum past `cap`, summed wide: an admission is never let
+/// through because its total saturated at `u64::MAX`, and a reservation it
+/// admits always fits the counters.
+fn exceeds(parts: [u64; 3], cap: u64) -> bool {
+    parts.into_iter().map(u128::from).sum::<u128>() > u128::from(cap)
 }

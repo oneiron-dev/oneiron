@@ -200,6 +200,28 @@ fn an_answer_is_charged_its_tokens_or_the_floor_plus_a_floor_per_failed_rung() {
 }
 
 #[test]
+fn a_line_at_u64_max_never_admits_past_its_limit() {
+    let guard = guard(u64::MAX);
+    let binding = || binding("fake/small@v1", ModelLocality::ThirdParty);
+    let whole = guard
+        .admit_reserve_bound(u64::MAX, binding())
+        .expect("the whole line")
+        .lease;
+    assert_eq!(
+        guard.admit_reserve_bound(1, binding()),
+        Err(BudgetDenied::Exhausted)
+    );
+    guard.abort(&whole).expect("release unsent");
+    let one = guard.admit_reserve_bound(1, binding()).expect("one unit");
+    assert_eq!(guard.read().reserved_units, 1);
+    guard.settle_usage(&one.lease, u64::MAX).expect("overrun");
+    assert_eq!(
+        guard.admit_reserve_bound(1, binding()),
+        Err(BudgetDenied::Exhausted)
+    );
+}
+
+#[test]
 fn a_revised_line_moves_the_limit_and_keeps_its_spend() {
     let guard = guard(12);
     let spent = bound_lease(&guard);
