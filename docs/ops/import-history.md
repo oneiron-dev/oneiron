@@ -39,6 +39,10 @@ Only logs under `claude_code_root` (default `~/.claude/projects`) or
 them is followed. The [Claude Code hooks](claude-code-hooks.md) queue each
 session this way at every stop.
 
+Each pass lands what is queued, earliest session first, up to the size
+limit of one import below. What is past it waits for the next pass, which
+comes 5 seconds later; a waiting log is not read again until it lands.
+
 ## What lands
 
 - Each source conversation becomes a conversation in the vault; each message a
@@ -84,7 +88,10 @@ Each session log is read up to 1 GiB. A larger log in a folder is left out,
 unread, and the rest of the folder lands: the report counts it under
 `files.too_large` and names it in `warnings`, and the import still succeeds.
 Importing the folder again once the limit allows that log lands it, and only
-what is new. A larger log named on its own is refused.
+what is new. A larger log named on its own is refused. A queued session is
+read the same way: a log over the limit, the session's own or a subagent's,
+is left out with a `log_too_large` warning in `serve`'s log (its `path`,
+`bytes` and `limit`), the rest of the session lands, and the entry is done.
 
 ## The report
 

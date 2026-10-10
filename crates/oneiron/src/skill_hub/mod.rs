@@ -61,7 +61,8 @@ pub(crate) use refinement_custody::{
 pub(crate) use refinement_custody::{refinement_carrier_holder, refinement_carrier_matches_id};
 pub use shared_delta::{SharedSkillDelta, SharedSkillLane};
 pub use shared_gate::{
-    SharedSkillMergeAsk, SharedSkillMergeDisposition, SharedSkillMergeReceipt, UsefulUpstreamJudge,
+    SharedSkillMergeAsk, SharedSkillMergeDisposition, SharedSkillMergeReceipt, SharedSkillRollback,
+    UsefulUpstreamJudge,
 };
 
 #[cfg(test)]
