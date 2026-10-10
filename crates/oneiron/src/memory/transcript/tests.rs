@@ -236,11 +236,19 @@ fn a_turn_that_moves_while_a_page_is_read_is_served_where_it_now_is() {
     assert_eq!(second.next, None);
 }
 
-/// The reader recall reads as (ARCH-0004, ARCH-0040): a reader whose grants
-/// admit some of a conversation's messages gets exactly those, each in its
-/// turn; a turn with none of them is left out. The owner reads them all.
-#[test]
-fn a_scoped_reader_gets_exactly_the_messages_it_may_read() {
+/// A rooted vault whose owner witnessed three turns in one room: the first
+/// holds a message in a space a scoped reader holds a Messages grant on and
+/// one outside it, the second only one outside it, the third only one in it.
+struct ScopedRoom {
+    _dir: tempfile::TempDir,
+    vault: Vault,
+    owner: EntityId,
+    scoped: EntityId,
+    room: EntityId,
+    turns: [EntityId; 3],
+}
+
+fn scoped_room() -> ScopedRoom {
     use crate::access_grant::{
         AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
     };
@@ -334,6 +342,29 @@ fn a_scoped_reader_gets_exactly_the_messages_it_may_read() {
             },
         )
         .expect("scoped message grant");
+    ScopedRoom {
+        _dir: dir,
+        vault,
+        owner,
+        scoped,
+        room,
+        turns: [first, second, third],
+    }
+}
+
+/// The reader recall reads as (ARCH-0004, ARCH-0040): a reader whose grants
+/// admit some of a conversation's messages gets exactly those, each in its
+/// turn; a turn with none of them is left out. The owner reads them all.
+#[test]
+fn a_scoped_reader_gets_exactly_the_messages_it_may_read() {
+    let ScopedRoom {
+        _dir,
+        vault,
+        owner,
+        scoped,
+        room,
+        turns: [first, second, third],
+    } = scoped_room();
 
     assert_eq!(
         read(&transcript(&vault, owner, room, None, 50)),
@@ -355,5 +386,45 @@ fn a_scoped_reader_gets_exactly_the_messages_it_may_read() {
             turn(first, &[("user", "harbor view table for two")]),
             turn(third, &[("user", "book it for friday")]),
         ]
+    );
+}
+
+/// DEC-0005, a read never silently narrows: when a conversation's turns keep
+/// moving while a page is read, the refusal carries the receipt of the reads
+/// that were made, with what they withheld from the reader.
+#[test]
+fn a_page_refused_for_moving_turns_says_what_its_reads_withheld() {
+    let ScopedRoom {
+        _dir,
+        vault,
+        scoped,
+        room,
+        turns: [first, ..],
+        ..
+    } = scoped_room();
+    let raw = vault.get_raw(&first).expect("read the turn").expect("turn");
+    let body = raw[crate::batch::ENTITY_METADATA_HEADER_LEN..].to_vec();
+    let learned = vault.get_learned_at(&first).expect("learned at");
+    let mut at = AT;
+    let error = vault
+        .memory(scoped, EdgeActorClass::Human)
+        .conversation_transcript_listed(&room, None, 50, || {
+            at += 1;
+            vault
+                .put_entity(
+                    &first,
+                    ENTITY_TYPE_TURN,
+                    TimeRange { start: at, end: at },
+                    learned,
+                    &body,
+                )
+                .expect("move the first turn");
+        })
+        .expect_err("the turns kept moving");
+    assert_eq!(error.code, MEMORY_CODE_INVALID_STATE, "{error:?}");
+    let receipt = error.read_receipt.expect("the refusal's receipt");
+    assert!(
+        receipt.suppressed_count > 0,
+        "the withheld message is counted: {receipt:?}"
     );
 }

@@ -176,10 +176,11 @@ impl Memory<'_> {
         // whose time moved in between is listed again where it now is, so a
         // page stays in order, its cursor names a time it served, and no turn
         // is passed over.
+        let mut read = receipt.clone();
         for _ in 0..TRANSCRIPT_READ_ATTEMPTS {
             let turns = self.transcript_turns(conversation, after)?;
             listed();
-            let mut read = receipt.clone();
+            read = receipt.clone();
             if let Some((turns, next)) = self.transcript_page(&lane, &turns, limit, &mut read)? {
                 return Ok(ScopedReadResult {
                     value: TranscriptPage {
@@ -191,12 +192,13 @@ impl Memory<'_> {
                 });
             }
         }
+        // The refusal says what the last attempt's reads withheld.
         Err(MemoryError::new(
             MEMORY_CODE_INVALID_STATE,
             "the conversation's turns kept moving while the page was read",
             &["Read the page again."],
         )
-        .with_read_receipt(receipt))
+        .with_read_receipt(read))
     }
 
     /// Up to `limit` readable turns of `turns`, in order, and the cursor of
