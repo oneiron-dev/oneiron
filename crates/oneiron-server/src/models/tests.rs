@@ -381,6 +381,54 @@ rungs = [
     );
 }
 
+/// Review repro (Astra R10, #1338): a call that fails is charged for the
+/// provider calls its backend made. Without a manifest the seat's ladder
+/// tries every rung; with one pinning a rung's model, the call goes to that
+/// model alone. A route's `attempts` is what the provider saw.
+#[tokio::test]
+async fn a_routes_attempts_are_the_provider_calls_a_failed_request_makes() {
+    let fake = FakeLlm::start(vec![], Some(Reply::Status(500))).await;
+    let runtime = ModelRuntime::build(Some(&config(&format!(
+        r#"
+[providers.local]
+kind = "local-openai-compat"
+base_url = "{}"
+[roles.generative_reasoner]
+rungs = [
+  {{ model = "local:first" }},
+  {{ model = "local:second" }},
+  {{ model = "local:third" }},
+]
+"#,
+        fake.base_url
+    ))));
+    let seat = runtime.seat(ModelRole::GenerativeReasoner).expect("seat");
+    let (_dir, vault) = crate::ai_host::test_support::rooted_vault();
+    let guard = BudgetGuard::new("models-test", 100_000, BudgetExhaustionPolicy::Suspend);
+    let mut made = Vec::new();
+    for pinned in [false, true] {
+        if pinned {
+            crate::ai_host::test_support::pin_every_role(
+                &vault,
+                "local/second@live",
+                ModelLocality::OwnServer,
+            );
+        }
+        let route = runtime
+            .route_role(&vault, ModelRole::GenerativeReasoner, seat)
+            .unwrap();
+        let before = fake.seen().len();
+        let lease = guard.admit().unwrap().lease;
+        route
+            .backend
+            .generate(request(&route.model, "hi"), &lease)
+            .await
+            .expect_err("every provider call fails");
+        made.push((route.attempts, fake.seen().len() - before));
+    }
+    assert_eq!(made, [(3, 3), (1, 1)]);
+}
+
 /// Once a rung has spoken, its stream is the answer, cut or whole: one that
 /// ends or breaks after its first event is reported cut, and never hands the
 /// call to the next rung.

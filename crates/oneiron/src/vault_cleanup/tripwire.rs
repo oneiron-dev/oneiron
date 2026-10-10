@@ -263,7 +263,7 @@ pub(super) fn cleanup_posture_in_txn(
 ///
 /// Storage errors.
 pub fn set_cleanup_posture(vault: &Vault, posture: CleanupPosture) -> Result<()> {
-    vault.with_write_txn(|wtxn| set_cleanup_posture_in_txn(vault, wtxn, posture))
+    vault.with_write_txn_grouped(|wtxn| set_cleanup_posture_in_txn(vault, wtxn, posture))
 }
 
 pub(super) fn set_cleanup_posture_in_txn(

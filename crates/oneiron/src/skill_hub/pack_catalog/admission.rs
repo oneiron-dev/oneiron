@@ -117,7 +117,7 @@ impl Vault {
     /// transaction, every saved query reading a predicate the update dropped
     /// or remapped runs the pack-drift repair ladder (ARCH-0059 §4).
     pub fn install_pack(&self, ask: &PackInstallAsk) -> Result<PackInstallDisposition> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let source = self.check_pack_install_ask(txn, ask)?;
             if let Some(reason) = self.screen_pack_in_txn(
                 txn,

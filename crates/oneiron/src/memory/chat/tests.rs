@@ -198,22 +198,23 @@ fn seeded_vault(seed: u8, content: &str) -> (tempfile::TempDir, crate::Vault, En
     (dir, vault, actor)
 }
 
-/// The same, with two separately citable messages in the turn.
+/// The same, with two separately citable turns of one message each. Recall
+/// returns a matched message as its turn (ARCH-0004), so two messages in one
+/// turn are one citable item.
 fn seeded_pair(seed: u8, one: &str, two: &str) -> (tempfile::TempDir, crate::Vault, EntityId) {
     let (dir, vault) = open_vault();
     let actor = put_person(&vault, seed);
     let conversation = EntityId::from_bytes([seed ^ 0xFF; 16]).expect("conversation id");
-    facade_for(&vault, actor)
-        .witness(&WitnessTurn {
-            conversation_ref: conversation.to_hex(),
-            turn_ref: None,
-            messages: vec![
-                witness_message(0, WitnessAuthor::User, one),
-                witness_message(1, WitnessAuthor::User, two),
-            ],
-            occurred_at: 2100,
-        })
-        .expect("witness");
+    for content in [one, two] {
+        facade_for(&vault, actor)
+            .witness(&WitnessTurn {
+                conversation_ref: conversation.to_hex(),
+                turn_ref: None,
+                messages: vec![witness_message(0, WitnessAuthor::User, content)],
+                occurred_at: 2100,
+            })
+            .expect("witness");
+    }
     (dir, vault, actor)
 }
 

@@ -44,7 +44,7 @@ impl Vault {
         mode: SessionMode,
         actor: WriteActor,
     ) -> Result<()> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             authorize(self, txn, actor)?;
             let raw = require_kind(self, txn, session, ENTITY_TYPE_SESSION)?;
             let h =

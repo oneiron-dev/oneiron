@@ -12,6 +12,7 @@ pub(crate) mod feedback;
 pub(crate) mod graph_fs;
 pub(crate) mod imports;
 pub(crate) mod location;
+pub(crate) mod note_imports;
 pub(crate) mod off_record;
 pub(crate) mod pack_drift;
 pub(crate) mod persona;

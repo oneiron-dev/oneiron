@@ -76,7 +76,7 @@ pub fn record_amendment_evidence(vault: &Vault, evidence: &AmendmentEvidence) ->
         skill_covered_step: evidence.skill_covered_step,
         at: evidence.at,
     };
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         EVIDENCE.put(&vault.store, wtxn, &evidence.receipt_id, &row)?;
         Ok(())
     })
@@ -277,7 +277,7 @@ pub fn judge_amendment_hunks(
     });
 
     let receipt_id_owned = receipt_id.to_owned();
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let mut row = row.clone();
         row.proposal = settle_edit_proposal_in_txn(vault, wtxn, &receipt_id_owned, &judgment)?;
         JUDGMENT.put(&vault.store, wtxn, &receipt_id_owned, &row)?;
@@ -369,7 +369,7 @@ fn withdraw_judgment(vault: &Vault, receipt_id: &str) -> Result<()> {
             return Ok(());
         }
     }
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         if let Some(sequence) = JUDGMENT
             .get(&vault.store, wtxn, &receipt_id)?
             .and_then(|stored| stored.proposal)

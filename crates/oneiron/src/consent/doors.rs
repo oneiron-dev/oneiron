@@ -295,7 +295,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         effect_digest: EffectDigest,
     ) -> Result<ConsentReceipt> {
-        self.with_write_txn(|wtxn| self.approve_once_in_txn(wtxn, owner, effect_digest))
+        self.with_write_txn_grouped(|wtxn| self.approve_once_in_txn(wtxn, owner, effect_digest))
     }
 
     /// Composes the exact consent receipt with the effect it authorizes.
@@ -355,7 +355,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         bound: GrantBound,
     ) -> Result<ConsentReceipt> {
-        self.with_write_txn(|wtxn| self.create_standing_grant_in_txn(wtxn, owner, bound))
+        self.with_write_txn_grouped(|wtxn| self.create_standing_grant_in_txn(wtxn, owner, bound))
     }
 
     /// Transaction-composable [`Vault::create_standing_grant`].

@@ -23,7 +23,7 @@ pub(super) fn reconcile(ctx: &RematCtx<'_>) -> Result<()> {
             candidates.insert(id, ctx.window_key.as_str().to_owned());
         }
     });
-    ctx.vault.with_write_txn(|txn| {
+    ctx.vault.with_write_txn_grouped(|txn| {
         // A claim can arrive through a different window. Retry only pending
         // EVENTs rather than scanning every calendar row on every import.
         for (id, window) in CALENDAR_ORIGIN_PENDING.scan(&ctx.vault.store, txn)? {

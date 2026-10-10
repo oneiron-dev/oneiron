@@ -79,7 +79,7 @@ pub fn set_miner_k(vault: &Vault, k: u32) -> Result<()> {
     if k == 0 {
         return Err(invalid("the substitution miner's K must be at least 1"));
     }
-    vault.with_write_txn(|wtxn| MINER_K.put(&vault.store, wtxn, &(), &MinerK(k)))
+    vault.with_write_txn_grouped(|wtxn| MINER_K.put(&vault.store, wtxn, &(), &MinerK(k)))
 }
 
 // ---------------------------------------------------------------------------
@@ -156,7 +156,7 @@ pub fn run_substitution_miner_at(
     // still new evidence to its replay.
     outcomes.extend(super::win::mine_untouched_approvals(vault, run, now, k)?);
     if let Some(observed) = observed {
-        vault.with_write_txn(|wtxn| advance_watermark_in_txn(vault, wtxn, observed))?;
+        vault.with_write_txn_grouped(|wtxn| advance_watermark_in_txn(vault, wtxn, observed))?;
     }
     Ok(outcomes)
 }

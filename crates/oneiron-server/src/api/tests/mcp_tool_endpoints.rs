@@ -964,3 +964,22 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
         );
     }
 }
+
+#[tokio::test]
+async fn mcp_malformed_call_returns_stable_json_rpc_error() {
+    let (_dir, server) = auth_test_server();
+    let request = Request::builder()
+        .method("POST")
+        .uri("/mcp")
+        .header(CONTENT_TYPE, "application/json")
+        .body(Body::from("{"))
+        .expect("malformed MCP request");
+
+    let (status, body) = route_json(server, request).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["jsonrpc"], Value::from("2.0"));
+    assert_eq!(body["id"], Value::Null);
+    assert_eq!(body["error"]["code"], Value::from(-32700));
+    assert_eq!(body["error"]["data"]["kind"], Value::from("parse_error"));
+}

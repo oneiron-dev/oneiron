@@ -139,7 +139,7 @@ pub(in crate::dreamer_runner::maintenance) fn run(
         1.0,
     )
     .with_evidence(evidence);
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         if let Some(existing) = PROPOSAL.get(&vault.store, &*txn, &id)? {
             if existing.packet != packet || vault.get_claim_in_txn(&*txn, &id)?.is_none() {
                 return Err(invalid());

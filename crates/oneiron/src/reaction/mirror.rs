@@ -193,7 +193,7 @@ fn named_in(
 impl Vault {
     /// The single normalized connector-in door for reactions.
     pub fn ingest_reaction(&self, input: ReactionIngress) -> Result<ReactionChange> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let fold = admission_in(self, txn)?;
             match &input {
                 ReactionIngress::ProviderAdd {

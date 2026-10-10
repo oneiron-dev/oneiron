@@ -136,7 +136,9 @@ pub fn run_session_end_actor_distill(
         // Nothing to learn from, and nothing that can arrive later: the sitting
         // is closed and its turns are what they are. The job is spent.
         return vault
-            .with_write_txn(|wtxn| consume_distill_job_in_txn(vault, wtxn, session, ended_at))
+            .with_write_txn_grouped(|wtxn| {
+                consume_distill_job_in_txn(vault, wtxn, session, ended_at)
+            })
             .map(|()| Vec::new());
     }
 
@@ -153,7 +155,7 @@ pub fn run_session_end_actor_distill(
         .filter(|row| ground_actor_claim(vault, row, &evidence).is_ok())
         .collect();
 
-    vault.with_write_txn(|wtxn| {
+    vault.with_write_txn_grouped(|wtxn| {
         let mut written = Vec::with_capacity(rows.len());
         for row in &rows {
             written.push(write_actor_claim_in_txn(vault, wtxn, row, &evidence)?);

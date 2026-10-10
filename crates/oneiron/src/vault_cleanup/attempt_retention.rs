@@ -222,7 +222,7 @@ impl Vault {
     /// Restores a completed queue record without changing its state or payload.
     /// Direct `AttemptQueue::get` always reads it, even while archived.
     pub fn restore_archived_attempt(&self, id: AttemptId) -> Result<()> {
-        self.with_write_txn(|txn| restore_archived_attempt_in_txn(self, txn, id))
+        self.with_write_txn_grouped(|txn| restore_archived_attempt_in_txn(self, txn, id))
     }
 }
 

@@ -166,7 +166,7 @@ fn propose(
         option_b: option_b.into(),
         delivered_at: None,
     };
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         let policy = super::policy::resolved_in_txn(vault, &*txn)?;
         if [campaign, evidence, option_a, option_b]
             .iter()
@@ -218,7 +218,7 @@ pub fn set_judge_digest_minutes(
     owner: &AuthenticatedOwner,
     minutes: u32,
 ) -> Result<()> {
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         crate::dreamer_runner::maintenance::validate_owner_in_txn(vault, &*txn, owner)?;
         MINUTES.put(&vault.store, txn, &owner.actor(), &JudgeMinutes(minutes))
     })
@@ -254,7 +254,7 @@ pub fn record_judge_pick(
     choose_b: bool,
     at: u64,
 ) -> Result<JudgeLabel> {
-    vault.with_write_txn(|txn| {
+    vault.with_write_txn_grouped(|txn| {
         crate::dreamer_runner::maintenance::validate_owner_in_txn(vault, &*txn, owner)?;
         let ask = ASKS
             .get(&vault.store, &*txn, &ask_id)?

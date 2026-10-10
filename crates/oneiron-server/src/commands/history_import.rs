@@ -73,6 +73,10 @@ enum ImportWarning {
         bytes: u64,
         limit: u64,
     },
+    /// Notes whose file has another name (a hard link), never read: that
+    /// name can be outside the folder. Counted, not named, as stdout names
+    /// no note.
+    HardLinked { files: usize },
 }
 
 #[derive(Serialize, Default)]
@@ -376,10 +380,12 @@ impl Decoded {
     }
 }
 
+pub(super) mod notes;
+
 #[cfg(unix)]
 mod confined;
 #[cfg(unix)]
-use confined::{open_in, walk_logs};
+use confined::{open_in, walk_logs, walk_notes};
 #[cfg(unix)]
 pub(super) mod queue;
 
@@ -434,6 +440,7 @@ fn read_queued(
             &folder,
             &path.with_extension(""),
             0,
+            confined::LOGS,
             &mut |shown: &Path, file: File| {
                 if !session_log_name(source, shown) {
                     return Ok(());
@@ -490,6 +497,14 @@ fn walk_logs(
         "importing a folder ({}) needs a unix host; give one session log",
         path.display()
     )
+}
+
+#[cfg(not(unix))]
+fn walk_notes(
+    path: &Path,
+    _visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    anyhow::bail!("importing a folder ({}) needs a unix host", path.display())
 }
 
 #[cfg(not(unix))]
