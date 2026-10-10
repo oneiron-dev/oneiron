@@ -139,15 +139,24 @@ impl RecoveryArtifactFailure {
 
 /// Builds canonical shell bytes for a recovery artifact payload.
 pub fn encode_recovery_artifact(artifact_type: u16, payload: &[u8]) -> Result<Vec<u8>> {
-    let payload_len = payload.len() as u64;
     let mut bytes = Vec::with_capacity(HEADER_LEN + payload.len());
-    bytes.extend_from_slice(&RECOVERY_ARTIFACT_MAGIC);
-    bytes.extend_from_slice(&RECOVERY_ARTIFACT_VERSION.to_le_bytes());
-    bytes.extend_from_slice(&artifact_type.to_le_bytes());
-    bytes.extend_from_slice(&payload_len.to_le_bytes());
-    bytes.extend_from_slice(&recovery_artifact_checksum(artifact_type, payload));
+    bytes.resize(HEADER_LEN, 0);
     bytes.extend_from_slice(payload);
+    seal_recovery_artifact(artifact_type, &mut bytes);
     Ok(bytes)
+}
+
+/// Writes the shell header into the first `HEADER_LEN` bytes of `bytes`, for
+/// the payload that follows them, so a payload encoded in place behind a
+/// reserved header is never copied into a second buffer.
+fn seal_recovery_artifact(artifact_type: u16, bytes: &mut [u8]) {
+    let (header, payload) = bytes.split_at_mut(HEADER_LEN);
+    let checksum = recovery_artifact_checksum(artifact_type, payload);
+    header[..VERSION_OFFSET].copy_from_slice(&RECOVERY_ARTIFACT_MAGIC);
+    header[VERSION_OFFSET..KIND_OFFSET].copy_from_slice(&RECOVERY_ARTIFACT_VERSION.to_le_bytes());
+    header[KIND_OFFSET..LEN_OFFSET].copy_from_slice(&artifact_type.to_le_bytes());
+    header[LEN_OFFSET..CHECKSUM_OFFSET].copy_from_slice(&(payload.len() as u64).to_le_bytes());
+    header[CHECKSUM_OFFSET..].copy_from_slice(&checksum);
 }
 
 /// Validates shell bytes and returns payload only after every gate passes.

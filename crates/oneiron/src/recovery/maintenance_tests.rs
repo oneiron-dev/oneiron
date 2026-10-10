@@ -1,6 +1,7 @@
 //! The canonical snapshot as one owner maintenance act (ARCH-0038 escape
 //! hatch, recovery ladder and the no-kept-snapshot ordering).
 
+use super::canonical::held_bytes;
 use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{ArtifactError, GateError};
@@ -29,17 +30,23 @@ fn files(dir: &Path) -> Vec<String> {
 }
 
 /// A personal vault owned by this process, holding one window's durable
-/// CRDT state over two rows, as a window open mirrors and persists it; no
+/// CRDT state over its rows, as a window open mirrors and persists it; no
 /// window stays loaded afterwards.
 struct Fixture {
     root: tempfile::TempDir,
     vault: Arc<Vault>,
     owner: AuthenticatedOwner,
-    rows: [EntityId; 2],
+    rows: Vec<EntityId>,
     key: WindowKey,
 }
 
+/// The window over two small rows.
 fn fixture() -> Result<Fixture> {
+    fixture_of(&["first", "second"])
+}
+
+/// The window over one row per name.
+fn fixture_of(names: &[&str]) -> Result<Fixture> {
     let root = tempfile::tempdir()?;
     let vault = Arc::new(Vault::open_owned(
         root.path().join("vault"),
@@ -48,8 +55,8 @@ fn fixture() -> Result<Fixture> {
     let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let owner = vault.authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())?;
     let learned_at = 1_772_400_000; // 2026-03
-    let rows = [EntityId::now(), EntityId::now()];
-    for (row, name) in rows.iter().zip(["first", "second"]) {
+    let rows: Vec<_> = names.iter().map(|_| EntityId::now()).collect();
+    for (row, name) in rows.iter().zip(names) {
         vault.put_entity(
             row,
             crate::registry::ENTITY_TYPE_PERSON,
@@ -262,5 +269,65 @@ fn owner_window_recovery_refuses_a_vault_without_the_writer_lease() -> Result<()
         Err(Error::ConcurrentWrite(_))
     ));
     assert!(!dir.exists());
+    Ok(())
+}
+
+/// Greptile P2 (#1340): the act's budget bounds the memory it spends, not
+/// only the artifact it keeps. A window many times the budget is refused
+/// with `OverlayLimit` once its capture has copied the budget's worth, never
+/// the whole window; an artifact over its limit is written up to the limit
+/// and no further.
+#[test]
+fn owner_window_recovery_stops_copying_a_window_at_its_budget() -> Result<()> {
+    let names: Vec<String> = (0..64).map(|row| format!("{row:0>8192}")).collect();
+    let Fixture {
+        root,
+        vault,
+        owner,
+        key,
+        ..
+    } = fixture_of(&names.iter().map(String::as_str).collect::<Vec<_>>())?;
+    let window = key.as_str();
+    let budget = RecoveryBudget {
+        max_bytes: 32 * 1024,
+        max_obligations: 4096,
+    };
+    held_bytes::take_peak();
+    let refused = vault.recover_window_from_canonical_snapshot(
+        &owner,
+        window,
+        &root.path().join("recovery"),
+        budget,
+    );
+    let held = held_bytes::take_peak();
+    assert!(
+        matches!(
+            refused,
+            Err(Error::Artifact(ArtifactError::OverlayLimit { limit, .. }))
+                if limit == budget.max_bytes
+        ),
+        "a 512 KiB window over a 32 KiB budget is refused, got {refused:?}"
+    );
+    assert!(
+        held > 0 && held <= budget.max_bytes,
+        "the act held {held} bytes of the window, over its {} byte budget",
+        budget.max_bytes
+    );
+
+    let loaded = LoadedWindow::new("local", key.clone(), &vault, &Arc::new(Materializer::new()));
+    let snapshot = capture_canonical_window(&vault, window, &loaded.doc)?;
+    let whole = snapshot.encode()?.len();
+    assert!(whole > 8 * budget.max_bytes, "the whole window encodes");
+    held_bytes::take_peak();
+    assert!(matches!(
+        snapshot.encode_within(budget.max_bytes),
+        Err(Error::Artifact(ArtifactError::OverlayLimit { .. }))
+    ));
+    let written = held_bytes::take_peak();
+    assert!(
+        written > 0 && written <= budget.max_bytes,
+        "the encoding wrote {written} of {whole} bytes past its {} byte limit",
+        budget.max_bytes
+    );
     Ok(())
 }

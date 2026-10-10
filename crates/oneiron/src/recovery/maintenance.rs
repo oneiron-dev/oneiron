@@ -5,12 +5,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::canonical::invalid;
-use super::{
-    CanonicalSnapshot, RecoveryBudget, RecoveryTier, capture_canonical_window, recover_vault_window,
-};
+use super::canonical::{capture_canonical_window_within, invalid};
+use super::{CanonicalSnapshot, RecoveryBudget, RecoveryTier, recover_vault_window};
 use crate::consent::AuthenticatedOwner;
-use crate::error::{ArtifactError, Error, GateError, Result};
+use crate::error::{Error, GateError, Result};
 use crate::sync::types::WindowKey;
 use crate::{Vault, VaultWriterLease};
 
@@ -41,8 +39,11 @@ impl Vault {
     /// custody land (ARCH-0038 `#erasure-completeness`). The artifact is
     /// encoded and decoded in memory instead, and a window whose artifact
     /// exceeds `budget.max_bytes` is refused with
-    /// [`ArtifactError::OverlayLimit`] rather than spilled. `dir` holds only
-    /// the window's manifest and any manifest the ladder quarantined beside it.
+    /// [`ArtifactError::OverlayLimit`](crate::error::ArtifactError::OverlayLimit)
+    /// rather than spilled. The budget bounds what the act copies, not only
+    /// what it keeps: the capture stops copying, and the encoding writing, at
+    /// `budget.max_bytes`. `dir` holds only the window's manifest and any
+    /// manifest the ladder quarantined beside it.
     pub fn recover_window_from_canonical_snapshot(
         &self,
         owner: &AuthenticatedOwner,
@@ -83,14 +84,8 @@ impl Vault {
         let doc = durable_window_doc(self, &key)?;
         // The artifact envelope round trip, in memory: what recovers is what
         // a written snapshot would have held, byte for byte.
-        let bytes = capture_canonical_window(self, window, &doc)?.encode()?;
-        if bytes.len() > budget.max_bytes {
-            return Err(ArtifactError::OverlayLimit {
-                required: bytes.len(),
-                limit: budget.max_bytes,
-            }
-            .into());
-        }
+        let bytes = capture_canonical_window_within(self, window, &doc, budget.max_bytes)?
+            .encode_within(budget.max_bytes)?;
         let snapshot_blake3 = *blake3::hash(&bytes).as_bytes();
         let snapshot = CanonicalSnapshot::decode(&bytes)?;
         drop(bytes);
