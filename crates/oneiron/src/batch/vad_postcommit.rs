@@ -20,6 +20,8 @@ type TransactionKey = (usize, usize);
 pub(crate) struct PostcommitWork {
     pub(crate) vad_ids: BTreeSet<EntityId>,
     pub(crate) proactivity_changed: bool,
+    /// TASKs this transaction wrote, announced only after it commits.
+    pub(crate) task_ids: BTreeSet<EntityId>,
 }
 
 thread_local! {
@@ -82,6 +84,33 @@ pub(crate) fn queue_proactivity_change(vault: &Vault, txn: &RwTxn<'_>) {
             queued.proactivity_changed = true;
         }
     });
+}
+
+/// Mark TASK writes for the owner's post-commit announcement. A rolled-back
+/// scope drops them, so a subscriber never hears of a write that did not land.
+pub(crate) fn queue_task_updates(
+    vault: &Vault,
+    txn: &RwTxn<'_>,
+    ids: impl IntoIterator<Item = EntityId>,
+) {
+    PENDING_VAD.with(|pending| {
+        if let Some(queued) = pending.borrow_mut().get_mut(&transaction_key(vault, txn)) {
+            queued.task_ids.extend(ids);
+        }
+    });
+}
+
+pub(super) fn ops_put_tasks(ops: &[BatchOp]) -> Vec<EntityId> {
+    ops.iter()
+        .filter_map(|op| match op {
+            BatchOp::Put {
+                id,
+                entity_type: crate::registry::ENTITY_TYPE_TASK,
+                ..
+            } => Some(*id),
+            _ => None,
+        })
+        .collect()
 }
 
 pub(super) fn ops_change_proactivity(ops: &[BatchOp]) -> bool {

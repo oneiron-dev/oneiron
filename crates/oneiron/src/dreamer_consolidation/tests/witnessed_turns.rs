@@ -12,13 +12,13 @@ use crate::vault_cleanup::{CleanupKind, zero_live_members};
 
 const SAID: &str = "call me Oleksii";
 
-struct RecordingBackend {
-    inner: ScriptedBackend,
-    requests: Mutex<Vec<LlmRequest>>,
+pub(super) struct RecordingBackend {
+    pub(super) inner: ScriptedBackend,
+    pub(super) requests: Mutex<Vec<LlmRequest>>,
 }
 
 impl RecordingBackend {
-    fn new(script: Vec<LlmResult<crate::LlmResponse>>) -> Self {
+    pub(super) fn new(script: Vec<LlmResult<crate::LlmResponse>>) -> Self {
         Self {
             inner: ScriptedBackend::new(script),
             requests: Mutex::new(Vec::new()),
@@ -76,14 +76,14 @@ impl ConsolidationSink for DriftSink<'_> {
     }
 }
 
-fn delete_message(vault: &Vault, id: EntityId) -> Result<()> {
+pub(super) fn delete_message(vault: &Vault, id: EntityId) -> Result<()> {
     vault.delete_room_record_unchecked_for_test(&id, crate::deletion::DeleteReason::UserDelete)?;
     Ok(())
 }
 
 /// The fixture vault on an injected clock at 50, so a grant can expire
 /// between preparation and a write with nothing else changing.
-fn open_clocked_vault() -> (
+pub(super) fn open_clocked_vault() -> (
     tempfile::TempDir,
     Vault,
     std::sync::Arc<crate::ports::ManualClock>,
@@ -99,7 +99,7 @@ fn open_clocked_vault() -> (
 }
 
 /// The Dreamer's own `MessagesRead` grant on one relationship space.
-fn grant_messages(vault: &Vault, space: EntityId, expires_at: u64) -> Result<EntityId> {
+pub(super) fn grant_messages(vault: &Vault, space: EntityId, expires_at: u64) -> Result<EntityId> {
     let grant = EntityId::now();
     vault.create_access_grant(
         &grant,
@@ -209,7 +209,12 @@ fn allow_system_rows(vault: &Vault, writer: EntityId) -> Result<()> {
     )
 }
 
-fn message(order: u32, author: WitnessAuthor, content: &str, is_visible: bool) -> WitnessMessage {
+pub(super) fn message(
+    order: u32,
+    author: WitnessAuthor,
+    content: &str,
+    is_visible: bool,
+) -> WitnessMessage {
     WitnessMessage {
         id: Some(EntityId::now().to_hex()),
         author,
@@ -222,7 +227,11 @@ fn message(order: u32, author: WitnessAuthor, content: &str, is_visible: bool) -
 }
 
 /// One turn witnessed by a PERSON into a fresh conversation: (turn, conversation).
-fn witness(vault: &Vault, seed: u8, messages: Vec<WitnessMessage>) -> (EntityId, EntityId) {
+pub(super) fn witness(
+    vault: &Vault,
+    seed: u8,
+    messages: Vec<WitnessMessage>,
+) -> (EntityId, EntityId) {
     let person = EntityId::from_bytes([seed; 16]).expect("person id");
     vault
         .put_entity(&person, ENTITY_TYPE_PERSON, occurred(1), 1, b"witness")
@@ -254,7 +263,7 @@ fn queue_micro(vault: &Vault) -> Result<AttemptId> {
     Ok(row.attempt.id)
 }
 
-fn admit(vault: &Vault) -> Result<crate::dreamer_runner::DreamerAdmittedAttempt> {
+pub(super) fn admit(vault: &Vault) -> Result<crate::dreamer_runner::DreamerAdmittedAttempt> {
     match DreamerRunnerStore::new(vault).admit_next_consolidation(
         AdmitDreamerConsolidationAttempt {
             scope: DreamerConsolidationScope::Micro,
@@ -297,7 +306,7 @@ fn executor<'a>(
     })
 }
 
-fn guard() -> crate::BudgetGuard {
+pub(super) fn guard() -> crate::BudgetGuard {
     crate::BudgetGuard::with_reserve_units("wake", 10_000, 100, BudgetExhaustionPolicy::Suspend)
 }
 

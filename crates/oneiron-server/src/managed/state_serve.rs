@@ -605,7 +605,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         tracing::warn!(%error, "initial wake ledger push failed");
     }
 
-    let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
+    let background = sync_server.spawn_serve_background();
     // The managed surface, not the bare one: the reap freeze has to be
     // enforceable by the socket the supervisor routes traffic to, or
     // `quiescent: true` is a claim about a gate that nothing reaches.
@@ -619,8 +619,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // Drain observation writes without thawing a previously quiescent process.
     let telemetry_drained = state.freeze();
     // No new durable background work from here on.
-    lifecycle_handle.abort();
-    let _ = lifecycle_handle.await;
+    background.stop().await;
     // Frozen, so nothing new is admitted; an admitted write ends before exit.
     oversight.stop().await;
 

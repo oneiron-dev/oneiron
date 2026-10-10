@@ -21,6 +21,7 @@ mod slips;
 use crate::test_credentials as slip_credentials;
 mod billing_usage;
 mod board_host_events;
+mod board_stream_publisher;
 mod companion;
 mod context_board_history;
 mod context_board_standing;

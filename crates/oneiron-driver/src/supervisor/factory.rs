@@ -2,6 +2,7 @@
 use std::sync::Arc;
 
 use crate::wave_dispatch::{WaveDispatchCandidate, WaveHandoffOutcome};
+use oneiron::dreamer_consolidation::ScopeSummaryExecutor;
 use oneiron::dreamer_wake::{WeaveRecipeExecutor, WeaveRecipeRuntime};
 use oneiron::edge::EdgeActorClass;
 use oneiron::llm::{ExtractionEgressPredicate, HostInferenceBinding, HostInferenceContext};
@@ -91,6 +92,9 @@ pub struct ConsolidationExecutorFactory {
     /// factory must not offer.
     commitment_wake_planner: Option<Box<dyn CommitmentWakeProposalPlanner>>,
     weave_recipe_runtime: Option<Box<dyn WeaveRecipeRuntime>>,
+    /// The host's instruction for declared scope summaries. `None` leaves a
+    /// declaration unable to run; the host refuses declarations up front.
+    summary_instruction: Option<String>,
     wave_planner: Option<Arc<dyn WavePlanner + Send + Sync>>,
     wave_dispatch: Option<WaveReadyDispatcher>,
     attachment: Option<Box<dyn PassAttachmentSource>>,
@@ -118,6 +122,7 @@ impl ConsolidationExecutorFactory {
             sink,
             commitment_wake_planner: None,
             weave_recipe_runtime: None,
+            summary_instruction: None,
             wave_planner: None,
             wave_dispatch: None,
             attachment: None,
@@ -166,6 +171,14 @@ impl ConsolidationExecutorFactory {
         }
         self.commitment_wake_planner = Some(planner);
         Ok(self)
+    }
+
+    /// The instruction the Dreamer composes declared scope summaries with
+    /// (ARCH-0006a). Host configuration; the engine ships no summary prompt.
+    #[must_use]
+    pub fn with_scope_summary_instruction(mut self, instruction: String) -> Self {
+        self.summary_instruction = Some(instruction);
+        self
     }
 
     /// Enables the per-vault owner-admitted weave recipe executor. Without a
@@ -222,7 +235,7 @@ impl ConsolidationExecutorFactory {
 
 impl PassExecutorFactory for ConsolidationExecutorFactory {
     type Exec<'p> = WeaveRecipeExecutor<
-        CommitmentWakeExecutor<'p, ConsolidationExecutor<'p>>,
+        ScopeSummaryExecutor<'p, CommitmentWakeExecutor<'p, ConsolidationExecutor<'p>>>,
         Option<&'p mut dyn WeaveRecipeRuntime>,
     >;
 
@@ -256,6 +269,18 @@ impl PassExecutorFactory for ConsolidationExecutorFactory {
         // System-class one — and a tagged event completes as a typed no-planner
         // skip instead of reaching the partition decoder.
         let inner = CommitmentWakeExecutor::new(inner, planner, self.actor)?;
+        let inner = ScopeSummaryExecutor::new(
+            inner,
+            self.backend.as_ref(),
+            guard,
+            self.actor,
+            self.model.clone(),
+            HostInferenceContext {
+                binding: self.binding.clone(),
+                extraction_egress: self.extraction_egress.as_deref(),
+            },
+            self.summary_instruction.as_deref(),
+        );
         let runtime = self.weave_recipe_runtime.as_mut().map(|runtime| {
             let runtime: &mut dyn WeaveRecipeRuntime = runtime.as_mut();
             runtime

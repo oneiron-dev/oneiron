@@ -237,11 +237,8 @@ impl Memory<'_> {
                 super::ask_settlement::settle_in(self.vault(), wtxn, group, self.vault().store.clock.now_recorded_at())?;
             }
 
-            // ONE-1702 SEAM (own-task settlement → WAKE/CARRIER): this is the
-            // producer call site for `mint_own_task_event` → `route_event`.
-            // ONE-1702 has not landed on this base and owns both signatures and
-            // every `context_board/stream.rs` edit, so the call is added on its
-            // rebase; no oracle-only event injection substitutes for it.
+            // The TASK put above is announced after commit; the board
+            // publisher (`context_board::stream::publish`) routes it.
             Ok((landed.clone(), false))
         })?;
 

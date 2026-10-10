@@ -2,6 +2,7 @@
 
 use rmpv::Value;
 
+use crate::Vault;
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerConsolidationScope, DreamerRunnerStore,
     EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
@@ -184,16 +185,7 @@ pub fn request_turn_wake(
     };
     let vault = store.vault();
     let mut txn = vault.store.env.write_txn()?;
-    let policy = super::policy::policy_in_txn(vault, &txn)?;
-    let due = match subject {
-        WakeTurnSubject::Vault => {
-            super::grain::WakeGrain::new(policy.wake_grain_turns)?.due(turn_ordinal)
-        }
-        WakeTurnSubject::Agent { id, signals } => vault
-            .read_agent_definition_in_txn(&txn, &id)?
-            .dream_wake_due(&policy, turn_ordinal, signals),
-    };
-    if !due {
+    if !turn_wake_due_in_txn(vault, &txn, subject, turn_ordinal..=turn_ordinal)? {
         return Ok(None);
     }
     if vault.queued_wake_projection_in_txn(&txn)? == Some(projection_digest) {
@@ -226,4 +218,85 @@ pub fn request_turn_wake(
     txn.commit()?;
     vault.store.notify_attempt_observers();
     Ok(Some(outcome))
+}
+
+/// Whether any of `ordinals` is due on the per-vault wake grain, or on the
+/// agent's stored cadence dial on top of it, read in the caller's transaction.
+fn turn_wake_due_in_txn(
+    vault: &Vault,
+    txn: &heed::RwTxn<'_>,
+    subject: WakeTurnSubject,
+    mut ordinals: std::ops::RangeInclusive<u64>,
+) -> Result<bool> {
+    let policy = super::policy::policy_in_txn(vault, txn)?;
+    Ok(match subject {
+        WakeTurnSubject::Vault => {
+            let grain = super::grain::WakeGrain::new(policy.wake_grain_turns)?;
+            ordinals.any(|ordinal| grain.due(ordinal))
+        }
+        WakeTurnSubject::Agent { id, signals } => {
+            let definition = vault.read_agent_definition_in_txn(txn, &id)?;
+            ordinals.any(|ordinal| definition.dream_wake_due(&policy, ordinal, signals))
+        }
+    })
+}
+
+impl Vault {
+    /// The turn producer (ARCH-0026 RD-26): a landed turn counts against the
+    /// wake grain, and a due turn queues the Micro rounds for every turn no
+    /// Micro round has read yet.
+    ///
+    /// A turn's ordinal is its place in that unread window, so the Nth new
+    /// turn closes an N-turn grain; turns that landed together are due when
+    /// any of their ordinals is. The window's round hash is the image a
+    /// due wake compares against the last one queued: a wake with nothing new
+    /// writes nothing. Enqueue, projection cursor and Micro watermark land in
+    /// one transaction, so a crash cannot queue a window twice or lose one.
+    /// Returns whether a wake was queued.
+    pub fn wake_dreamer_on_turn(&self, subject: WakeTurnSubject, now: u64) -> Result<bool> {
+        use crate::dreamer_consolidation::{
+            advance_watermark_in_txn, carried_round_hash, collect_dirty_turn_ids_in_txn,
+            enqueue_partition_attempts_in_txn, read_partition_turns_in_txn, read_watermark_in_txn,
+        };
+        let scope = DreamerConsolidationScope::Micro;
+        let queued = self.with_write_txn(|txn| {
+            let watermark = read_watermark_in_txn(self, txn, scope)?;
+            let ids = collect_dirty_turn_ids_in_txn(
+                self,
+                txn,
+                scope,
+                watermark.last_learned_at,
+                u64::MAX,
+            )?;
+            let mut window = read_partition_turns_in_txn(self, txn, scope, &ids)?;
+            // Session close's cut rule: a turn without its conversation edge
+            // stops the window at its second, same-second ties with it.
+            if let Some(cut) = window
+                .iter()
+                .find(|turn| turn.conversation.is_none())
+                .map(|turn| turn.learned_at)
+            {
+                window.retain(|turn| turn.learned_at < cut);
+            }
+            let Some(through) = window.iter().map(|turn| turn.learned_at).max() else {
+                return Ok(false);
+            };
+            if !turn_wake_due_in_txn(self, txn, subject, 1..=window.len() as u64)? {
+                return Ok(false);
+            }
+            let image = carried_round_hash(&window);
+            if self.queued_wake_projection_in_txn(txn)? == Some(image) {
+                return Ok(false);
+            }
+            let ids: Vec<_> = window.iter().map(|turn| turn.turn_id).collect();
+            enqueue_partition_attempts_in_txn(self, txn, scope, &ids, &watermark, None, now)?;
+            advance_watermark_in_txn(self, txn, scope, through)?;
+            self.set_queued_wake_projection_in_txn(txn, &image)?;
+            Ok(true)
+        })?;
+        if queued {
+            self.store.notify_attempt_observers();
+        }
+        Ok(queued)
+    }
 }

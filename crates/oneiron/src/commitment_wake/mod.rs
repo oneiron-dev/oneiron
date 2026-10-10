@@ -37,8 +37,10 @@ mod wake_event;
 mod wake_fire;
 mod wake_proposal;
 
+pub(crate) use self::wake_approval::scheduled_commitment_wake_authorised;
 pub use self::wake_approval::{
     ApprovedCommitmentWake, approved_commitment_wake, schedule_approved_commitment_wake,
+    schedule_approved_commitment_wakes,
 };
 pub use self::wake_event::{
     COMMITMENT_WAKE_PROPOSAL_SCHEMA_VERSION, COMMITMENT_WAKE_RUN_PREFIX,
@@ -49,6 +51,7 @@ pub use self::wake_event::{
 pub use self::wake_fire::{
     CommitmentWakeFireOutcome, CommitmentWakeSkip, fire_due_commitment_wake,
 };
+pub(crate) use self::wake_proposal::entity_id_from_digest_prefix;
 pub use self::wake_proposal::{
     CommitmentWakeExecutor, CommitmentWakeProposalDraft, CommitmentWakeProposalPlanner,
     CommitmentWakeProposalSkip, commitment_wake_proposal_claim_id,
@@ -61,10 +64,8 @@ mod tests;
 // test module through `use super::*`: its own private crate/std import header,
 // and the private helpers the tests name bare. After the directory split the
 // seam re-imports both so `tests.rs` resolves exactly as it did before. The
-// public names arrive through the `pub use` seam above; only `wake_proposal`
-// needs a glob, for the sentinel-perturb helper the tests call directly.
-#[cfg(test)]
-use self::wake_proposal::*;
+// public names arrive through the `pub use` seam above, and the
+// sentinel-perturb helper the tests call directly through its crate re-export.
 #[cfg(test)]
 use crate::Vault;
 #[cfg(test)]

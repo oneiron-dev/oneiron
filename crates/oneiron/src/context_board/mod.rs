@@ -49,10 +49,10 @@ mod stream;
 
 pub use stream::{
     AppliedStreamState, BoardEvent, BoardRenderMode, BoardSnapshot, BoardStreamFrame,
-    BoardStreamRegistry, CarrierCoalesceBuffer, CoalesceOutcome, DeliveryClass, DeliveryPolicy,
-    DeltaRow, FrameApplyOutcome, FrameEnqueueOutcome, FrameKind, RouteObservation,
-    StreamConnectionId, StreamConnectionState, SubscriptionError, SubscriptionReceipt,
-    SubscriptionScope, WakeEnvelope,
+    BoardStreamRegistry, CarrierCoalesceBuffer, CoalesceOutcome, CommittedTaskBoardState,
+    DeliveryClass, DeliveryPolicy, DeltaRow, FrameApplyOutcome, FrameEnqueueOutcome, FrameKind,
+    RouteObservation, StreamConnectionId, StreamConnectionState, SubscriptionError,
+    SubscriptionReceipt, SubscriptionScope, WakeEnvelope,
 };
 pub use stream::{
     BindInstanceError, HarnessInstanceKey, InstanceBindingReceipt, WakeAdapterKind,
