@@ -148,21 +148,12 @@ struct BatchOut {
     decline: String,
 }
 
-/// What the owner should know before approving, by name.
-#[derive(Serialize)]
-#[serde(tag = "warning", rename_all = "snake_case")]
-enum Warning {
-    /// Files with another name were passed over: a hard link can bring in a
-    /// file from outside the folder.
-    HardLinked { files: usize },
-}
-
 #[derive(Serialize)]
 struct Outcome {
     source: &'static str,
     folder: String,
     notes: NoteCounts,
-    warnings: Vec<Warning>,
+    warnings: Vec<super::ImportWarning>,
     /// New notes per kind.
     kinds: BTreeMap<String, usize>,
     /// New notes per frontmatter `type`: `""` when they have none,
@@ -336,7 +327,7 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
         })
     };
     let warnings = (counts.hard_linked > 0)
-        .then_some(Warning::HardLinked {
+        .then_some(super::ImportWarning::HardLinked {
             files: counts.hard_linked,
         })
         .into_iter()

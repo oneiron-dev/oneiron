@@ -73,6 +73,10 @@ enum ImportWarning {
         bytes: u64,
         limit: u64,
     },
+    /// Notes whose file has another name (a hard link), never read: that
+    /// name can be outside the folder. Counted, not named, as stdout names
+    /// no note.
+    HardLinked { files: usize },
 }
 
 #[derive(Serialize, Default)]
